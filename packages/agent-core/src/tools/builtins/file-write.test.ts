@@ -4,6 +4,7 @@ import {
   beforeEach,
   describe,
   expect,
+  mock,
   test,
 } from "bun:test";
 import { storeManager } from "../../store/store";
@@ -25,6 +26,7 @@ import { fileWriteTool } from "./file-write";
 import { createTestProjectContext } from "../test-project-context";
 
 const testDir = join(import.meta.dir, "__test_tmp__", "file-write");
+const canonicalProjectDir = join(import.meta.dir, "__test_tmp__", "file-write-canonical-project");
 
 function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   return { store: createMockStore(),
@@ -35,7 +37,7 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
   abort: new AbortController().signal,
   startedAt: Date.now(),
   allowedTools: new Set(["file_write"]),
-  workspaceRoot: testDir,
+  cwd: testDir,
   storeManager,
     projectContext: createTestProjectContext(testDir), ...overrides,  };
 }
@@ -62,7 +64,9 @@ async function executeThroughRegistry(
 
 beforeEach(async () => {
   await rm(testDir, { recursive: true, force: true });
+  await rm(canonicalProjectDir, { recursive: true, force: true });
   await mkdir(testDir, { recursive: true });
+  await mkdir(canonicalProjectDir, { recursive: true });
 });
 
 afterEach(() => {
@@ -71,9 +75,31 @@ afterEach(() => {
 
 afterAll(async () => {
   await rm(testDir, { recursive: true, force: true });
+  await rm(canonicalProjectDir, { recursive: true, force: true });
 });
 
 describe("fileWriteTool", () => {
+  test("hard-denies an absolute canonical project-state path from a worktree Session", async () => {
+    const target = join(canonicalProjectDir, ".archcode", "blocked.json");
+    const confirmPermission = mock(async () => "approve_once" as const);
+
+    const result = await executeThroughRegistry(
+      { path: target, content: "{}" },
+      makeCtx({
+        projectContext: createTestProjectContext(canonicalProjectDir),
+        confirmPermission,
+      }),
+    );
+
+    expect(result.isError).toBe(true);
+    expect(inferToolErrorKindFromResult(result)).toBe("permission-denied");
+    expect(result.meta?.[TOOL_ERROR_META_KEY]).toMatchObject({
+      code: "PROTECTED_PATH_WRITE_DENIED",
+    });
+    expect(confirmPermission).not.toHaveBeenCalled();
+    expect(existsSync(target)).toBe(false);
+  });
+
   test("successfully creates a new file and writes content", async () => {
     const output = await fileWriteTool.execute(
       { path: "sample.txt", content: "hello\nworld\n" },

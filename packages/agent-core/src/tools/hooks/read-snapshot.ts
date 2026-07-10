@@ -31,7 +31,7 @@ export function createReadSnapshotAfterHook(): AfterHook {
     const inputRecord = ctx.input as { path: string };
     const { resolved } = resolveAndValidatePath(
       inputRecord.path,
-      ctx.workspaceRoot,
+      ctx.cwd,
     );
 
     let mtimeMs: number;

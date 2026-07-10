@@ -25,6 +25,7 @@ import {
 import { createRegistry as createProviderRegistry, type ProviderRegistry } from "./provider/index";
 import { ProjectContextResolver } from "./projects/context-resolver";
 import { ProjectRegistry } from "./projects/registry";
+import { SessionLifecycleService } from "./projects/session-lifecycle-service";
 import { SkillService } from "./skills";
 import type { SessionFile, SessionSummary } from "./store/helpers";
 import type { CompressionOriginalRangeResult } from "./compression";
@@ -37,10 +38,18 @@ import type {
 } from "@archcode/protocol";
 import { CONFIG_FILE_NAME, ENV_WORKSPACE_ROOT } from "@archcode/protocol";
 import { createRegistry as createToolRegistry, DuplicateToolError, type ToolRegistry } from "./tools/index";
-import { SessionExecutionManager, SessionHitlResumeAdapter } from "./execution";
+import {
+  SessionCwdReferenceMigrationService,
+  SessionExecutionManager,
+  SessionExecutionScopeValidator,
+  SessionHitlResumeAdapter,
+  assertSessionHitlJournalAllowsExecution,
+} from "./execution";
 import type { ActiveSessionExecution, StartSessionExecutionInput, SubscribeSessionEventsInput } from "./execution";
 import { GoalHitlResumeAdapter } from "./goals/hitl-resume-adapter";
 import { GoalRunner } from "./goals/runner";
+import { withGoalExecutionClaimLock } from "./goals/execution-claim";
+import { GoalCancellationService, type GoalCancellationRequest } from "./goals/cancellation";
 import { HitlService } from "./hitl/service";
 import { ResumeCoordinator, type ResumeRecoverySummary } from "./hitl/resume-coordinator";
 import { createGitHubConnector } from "./integrations/github";
@@ -53,6 +62,10 @@ import { LoopJobQueue } from "./loops/job-queue";
 import { LoopTriggerPoller } from "./loops/triggers";
 import { LoopScheduler, type LoopSchedulerTimer } from "./loops/scheduler";
 import { LoopWorktreeManager } from "./loops/worktree-manager";
+import { LoopCleanupService } from "./loops/cleanup";
+import { LoopJobCoordinator } from "./loops/coordinator";
+import { LoopSessionExecutionClaimResolver } from "./loops/session-execution-claim";
+import { LoopSessionHitlContinuationCoordinator } from "./loops/session-hitl-continuation";
 import type { LoopBudgetSnapshot, LoopCollisionSnapshot, LoopConfig, LoopIntegrationError, LoopIntegrationSnapshot, LoopRunReport, LoopState, LoopUpdateInput } from "./loops/state";
 import { scopedKey } from "./store/key";
 import { Logger, createConsoleLogger } from "./logger";
@@ -75,6 +88,8 @@ export interface AgentRuntimeOptions {
 }
 
 export interface CreateRuntimeSessionOptions {
+  /** Current execution directory; Session persistence remains under workspaceRoot. */
+  readonly cwd?: string;
   readonly goalId?: string;
   readonly loopId?: string;
   readonly sessionRole?: SessionRole;
@@ -111,6 +126,7 @@ export interface AgentRuntime {
   subscribeHitlEvents(listener: (event: GlobalSSEHitlRealtimeEvent) => void): () => void;
   subscribeResourceChanges?(listener: (event: GlobalSSEResourceChangedEvent) => void): () => void;
   queueGoalTitleGeneration?(workspaceRoot: string, goalId: string): void;
+  cancelGoal(workspaceRoot: string, goalId: string, request: GoalCancellationRequest): Promise<GoalState>;
   queueLoopTitleGeneration?(workspaceRoot: string, loopId: string): void;
   subscribeMcpStatusChanges(listener: (serverName: string, status: McpServerStatus) => void): () => void;
   getMcpServerStatuses(): Map<string, McpServerStatus>;
@@ -119,6 +135,8 @@ export interface AgentRuntime {
   resolveCompressionOriginalRange(workspaceRoot: string, sessionId: string, blockRef: string): Promise<CompressionOriginalRangeResult>;
   listSessions(workspaceRoot: string): Promise<SessionSummary[]>;
   startSessionExecution(input: StartSessionExecutionInput): ActiveSessionExecution;
+  /** User-message entry point with cold Session/root cwd validation. */
+  startSessionMessageExecution(input: StartSessionExecutionInput): Promise<ActiveSessionExecution>;
   abortSessionExecution(workspaceRoot: string, sessionId: string): boolean;
   abortSessionExecutionAndWait(workspaceRoot: string, sessionId: string): Promise<void>;
   abortAllSessionExecutions(): Promise<void>;
@@ -226,11 +244,29 @@ export async function createRuntime(
     const publishResourceChanged = (event: GlobalSSEResourceChangedEvent): void => {
       for (const listener of resourceChangeListeners) listener(event);
     };
-    const hitl = new HitlService({ sessions: sessionStoreManager, realtimePublisher: publishHitlEvent });
+    const hitl = new HitlService({
+      sessions: sessionStoreManager,
+      realtimePublisher: publishHitlEvent,
+      logger: runtimeLogger.child({ module: "hitl" }),
+    });
     let contextResolver!: ProjectContextResolver;
+    let executionScopeValidator!: SessionExecutionScopeValidator;
     contextResolver = new ProjectContextResolver({
       projectInfoFactory: (workspaceRoot) => projectRegistry.getByWorkspace(workspaceRoot),
-      hitlFactory: (workspaceRoot) => new HitlService({ workspaceRoot, realtimePublisher: publishHitlEvent }),
+      hitlFactory: (workspaceRoot) => new HitlService({
+        workspaceRoot,
+        realtimePublisher: publishHitlEvent,
+        logger: runtimeLogger.child({ module: "hitl" }),
+      }),
+      goalCancellationFactory: ({ workspaceRoot, goalState, hitl }) => new GoalCancellationService({
+        workspaceRoot,
+        goalStateManager: goalState,
+        hitlService: hitl,
+        sessionStoreManager,
+        sessionFamilyController: {
+          acquireStop: (input) => executionManager.acquireSessionFamilyStop(input),
+        },
+      }),
       sessionStoreManager,
       resumeCoordinatorFactory: ({ workspaceRoot, hitl, goalState, loopState }) => new ResumeCoordinator({
         hitl,
@@ -240,12 +276,19 @@ export async function createRuntime(
             storeManager: sessionStoreManager,
             toolRegistry,
             projectContextResolver: contextResolver,
+            executionScopeValidator,
             skillService,
             getAgent: (agentWorkspaceRoot, sessionId) => sessionAgentManager.getOrCreate(agentWorkspaceRoot, sessionId),
             startChildExecution: (childWorkspaceRoot, request) => executionManager.startChildExecution(childWorkspaceRoot, request),
             cancelChildSession: (childWorkspaceRoot, parentSessionId, childSessionId) => executionManager.cancelChildSession(childWorkspaceRoot, parentSessionId, childSessionId),
             resumeChildSession: (childWorkspaceRoot, request) => executionManager.resumeChildExecution(childWorkspaceRoot, request),
             abortSessionExecutionAndWait: (childWorkspaceRoot, sessionId) => executionManager.abortAndWait(childWorkspaceRoot, sessionId),
+            acquireSessionHitlResume: (childWorkspaceRoot, sessionId, acquireOptions) => (
+              executionManager.acquireSessionHitlResume(childWorkspaceRoot, sessionId, acquireOptions)
+            ),
+            loopContinuation: {
+              acquire: async (input) => await (await getLoopSessionHitlContinuation(workspaceRoot)).acquire(input),
+            },
             attachSessionEvents: (eventWorkspaceRoot, sessionId, store) => executionManager.attachSessionEvents(eventWorkspaceRoot, sessionId, store),
             detachSessionEvents: (eventWorkspaceRoot, sessionId) => executionManager.detachSessionEvents(eventWorkspaceRoot, sessionId),
           }),
@@ -262,6 +305,15 @@ export async function createRuntime(
             workspaceRoot,
             goalStateManager: goalState,
             hitlService: hitl,
+            goalCancellation: new GoalCancellationService({
+              workspaceRoot,
+              goalStateManager: goalState,
+              hitlService: hitl,
+              sessionStoreManager,
+              sessionFamilyController: {
+                acquireStop: (input) => executionManager.acquireSessionFamilyStop(input),
+              },
+            }),
           }),
         },
         logger: runtimeLogger.child({ module: "projects" }),
@@ -272,6 +324,10 @@ export async function createRuntime(
         loop: { resume: async () => { throw new Error("Loop HITL adapter factory was not used"); } },
       },
       logger: runtimeLogger.child({ module: "projects" }),
+    });
+    executionScopeValidator = new SessionExecutionScopeValidator({
+      projectContextResolver: contextResolver,
+      loopExecutionClaimResolver: new LoopSessionExecutionClaimResolver(),
     });
     const sessionAgentManager = new SessionAgentManager({
       definitions: defaultAgentDefinitions,
@@ -308,15 +364,41 @@ export async function createRuntime(
     const executionManager = new SessionExecutionManager({
       sessionAgentManager,
       createSessionStore: (sessionId, workspaceRoot, createOptions) => sessionStoreManager.create(sessionId, workspaceRoot, createOptions),
+      flushSessionStore: (sessionId, workspaceRoot) => sessionStoreManager.flushSession(sessionId, workspaceRoot),
       getSessionStore: (sessionId, workspaceRoot) => sessionStoreManager.get(sessionId, workspaceRoot),
+      loadSessionStore: (sessionId, workspaceRoot) => sessionStoreManager.getOrLoad(sessionId, workspaceRoot),
       deleteSessionStore: (sessionId, workspaceRoot, deleteOptions) => sessionStoreManager.delete(sessionId, workspaceRoot, deleteOptions),
       resolveRootSessionId: (sessionId, workspaceRoot) => sessionStoreManager.resolveRootSessionId(sessionId, workspaceRoot),
       buildSessionTree: (workspaceRoot, rootSessionId) => sessionStoreManager.buildSessionTree(workspaceRoot, rootSessionId),
       trackSession,
       untrackSession,
+      executionScopeValidator,
+      executionClaimCoordinator: {
+        run: (ownerId, action) => withGoalExecutionClaimLock(ownerId, action),
+      },
+      sessionHitlExecutionGate: {
+        assertAllowed: (workspaceRoot, sessionId) => (
+          assertSessionHitlJournalAllowsExecution(workspaceRoot, sessionId)
+        ),
+      },
+      deletionPreflight: new SessionLifecycleService({
+        storeManager: sessionStoreManager,
+        projectContextResolver: contextResolver,
+      }),
       logger,
     });
-    const loopSchedulers = new Map<string, LoopScheduler>();
+    const sessionCwdReferenceMigration = new SessionCwdReferenceMigrationService({
+      storeManager: sessionStoreManager,
+      acquireIdleSessionFamilyCwdTransitions: (projectRoot, rootSessionIds) => (
+        executionManager.acquireIdleSessionFamilyCwdTransitions(projectRoot, rootSessionIds)
+      ),
+      releaseSessionAgent: (projectRoot, sessionId) => sessionAgentManager.releaseAgent(projectRoot, sessionId),
+    });
+    type LoopRuntimeServices = {
+      readonly scheduler: LoopScheduler;
+      readonly sessionHitlContinuation: LoopSessionHitlContinuationCoordinator;
+    };
+    const loopRuntimeServices = new Map<string, Promise<LoopRuntimeServices>>();
     let loopSchedulersStarted = false;
 
     const createGoalRunnerForLoop = (workspaceRoot: string, loopId?: string): Promise<GoalRunner> => {
@@ -328,43 +410,35 @@ export async function createRuntime(
           ...createOptions,
           ...(loopId !== undefined && createOptions?.loopId === undefined ? { loopId } : {}),
         })).sessionId,
+        getSessionCwd: async (sessionId) => (await sessionStoreManager.getSessionFile(workspaceRoot, sessionId)).cwd ?? workspaceRoot,
         isSessionActive: async (sessionId) => executionManager.isRunning(workspaceRoot, sessionId),
       }));
     };
 
-    async function createLoopRunner(workspaceRoot: string, collisionLedger?: CollisionLedger): Promise<LoopRunner> {
+    async function createLoopRunner(
+      workspaceRoot: string,
+      collisionLedger?: CollisionLedger,
+      worktreeManager = new LoopWorktreeManager({ canonicalRoot: workspaceRoot }),
+    ): Promise<LoopRunner> {
       const projectContext = await contextResolver.resolve(workspaceRoot);
       return new LoopRunner({
         stateManager: projectContext.loopState,
         runtime: {
-          createSession: (sessionWorkspaceRoot, createOptions) => sessionStoreManager.createSessionFile(sessionWorkspaceRoot, createOptions),
-          getSessionFile: (sessionWorkspaceRoot, sessionId) => sessionStoreManager.getSessionFile(sessionWorkspaceRoot, sessionId),
+          createSession: (projectRoot, createOptions) => sessionStoreManager.createSessionFile(projectRoot, createOptions),
+          getSessionFile: (projectRoot, sessionId) => sessionStoreManager.getSessionFile(projectRoot, sessionId),
           startSessionExecution: (input) => executionManager.startExecution(input),
-          prepareSessionWorkspace: async (sessionWorkspaceRoot, canonicalWorkspaceRoot) => {
-            const canonicalContext = await contextResolver.resolve(canonicalWorkspaceRoot);
-            contextResolver.alias(sessionWorkspaceRoot, {
-              ...canonicalContext,
-              project: {
-                ...canonicalContext.project,
-                workspaceRoot: sessionWorkspaceRoot,
-              },
-            });
-          },
-          releaseSessionWorkspace: (sessionWorkspaceRoot, sessionId) => {
-            if (sessionId !== undefined) sessionAgentManager.release(sessionWorkspaceRoot, sessionId);
-            sessionAgentManager.releaseWorkspace(sessionWorkspaceRoot);
-            sessionStoreManager.releaseWorkspace(sessionWorkspaceRoot);
-            contextResolver.dispose(sessionWorkspaceRoot);
-          },
+          releaseSessionAgent: (projectRoot, sessionId) => sessionAgentManager.releaseAgent(projectRoot, sessionId),
         },
         goalStateManager: projectContext.goalState,
         goalRunner: {
-          start: async (goalId, startOptions) => (await createGoalRunnerForLoop(startOptions?.workspaceRoot ?? workspaceRoot, startOptions?.loopId)).start(goalId, startOptions),
+          start: async (goalId, startOptions) => (
+            await createGoalRunnerForLoop(workspaceRoot, startOptions.executionScope.loopId)
+          ).start(goalId, startOptions),
         },
         workspaceRoot,
         projectSlug: projectContext.project.slug,
         ...(collisionLedger === undefined ? {} : { collisionLedger }),
-        worktreeManager: new LoopWorktreeManager({ canonicalRoot: workspaceRoot }),
+        worktreeManager,
         queueGoalTitleGeneration: (goalId) => queueGoalTitleGeneration(workspaceRoot, goalId),
       });
     }
@@ -414,10 +488,7 @@ export async function createRuntime(
       return await generateTitle({ kind, text, modelInfo, modelOptions });
     }
 
-    async function getLoopScheduler(workspaceRoot: string): Promise<LoopScheduler> {
-      const existing = loopSchedulers.get(workspaceRoot);
-      if (existing) return existing;
-
+    async function createLoopRuntimeServices(workspaceRoot: string): Promise<LoopRuntimeServices> {
       const projectContext = await contextResolver.resolve(workspaceRoot);
       const schedulerClock = options.loopSchedulerClock ?? { now: () => Date.now() };
       const budgetLedger = new LoopBudgetLedger({
@@ -434,6 +505,7 @@ export async function createRuntime(
         workspaceRoot,
         clock: schedulerClock,
       });
+      const jobCoordinator = new LoopJobCoordinator({ queue: jobQueue, clock: schedulerClock });
       const github = createGitHubConnector({ config: config.integrations?.github });
       const triggerPoller = new LoopTriggerPoller({
         workspaceRoot,
@@ -445,7 +517,19 @@ export async function createRuntime(
           : { owner: config.integrations.github.defaultOwner, repo: config.integrations.github.defaultRepo },
         clock: schedulerClock,
       });
-      const runner = await createLoopRunner(workspaceRoot, collisionLedger);
+      const worktreeManager = new LoopWorktreeManager({ canonicalRoot: workspaceRoot });
+      const runner = await createLoopRunner(workspaceRoot, collisionLedger, worktreeManager);
+      const cleanupService = new LoopCleanupService({
+        stateManager: projectContext.loopState,
+        jobQueue,
+        collisionLedger,
+        worktreeManager,
+        workspaceRoot,
+        clock: schedulerClock,
+        migrateSessionCwdReferencesForRemoval: (migrationInput, operation) => (
+          sessionCwdReferenceMigration.migrateForRemoval(migrationInput, operation)
+        ),
+      });
       const scheduler = new LoopScheduler({
         stateManager: projectContext.loopState,
         runner: runner.createSchedulerRunner(),
@@ -454,7 +538,17 @@ export async function createRuntime(
         budgetLedger,
         collisionLedger,
         jobQueue,
+        coordinator: jobCoordinator,
         hitl: projectContext.hitl,
+        cleanupJob: (jobId) => cleanupService.cleanupJob(jobId),
+        readSessionAttempt: async (sessionId, executionId) => {
+          const session = await sessionStoreManager.getSessionFile(workspaceRoot, sessionId);
+          return {
+            execution: session.executions.find((execution) => execution.id === executionId),
+            blockedByHitlIds: session.blockedByHitlIds
+              ?? (session.blockedHitl === undefined ? undefined : [session.blockedHitl.hitlId]),
+          };
+        },
         triggerPoller,
         killStateManager: new LoopKillStateManager(workspaceRoot, {
           clock: schedulerClock,
@@ -463,8 +557,56 @@ export async function createRuntime(
         abortSessionExecutionAndWait: (sessionId) => executionManager.abortAndWait(workspaceRoot, sessionId),
         logger: runtimeLogger.child({ module: "loops.scheduler" }),
       });
-      loopSchedulers.set(workspaceRoot, scheduler);
-      return scheduler;
+      const sessionHitlContinuation = new LoopSessionHitlContinuationCoordinator({
+        stateManager: projectContext.loopState,
+        jobQueue,
+        jobCoordinator,
+        collisionLedger,
+        now: schedulerClock.now,
+        scheduleCleanup: ({ loopId, runId, jobId }) => {
+          const timer = setTimeout(() => {
+            void (async () => {
+              await cleanupService.cleanupJob(jobId);
+              const completed = await jobQueue.read(jobId);
+              if (completed.cleanupState === undefined || completed.cleanupState === "in_progress") return;
+              await projectContext.loopState.recordRunCleanupCompletion(loopId, runId, {
+                cleanupState: completed.cleanupState,
+                cleanupWarning: completed.cleanupWarning,
+                observedArtifacts: completed.observedArtifacts,
+              });
+            })().catch((error) => {
+              runtimeLogger.warn("loops.session_hitl.cleanup.failed", {
+                error,
+                meta: { workspaceRoot, loopId, runId, jobId },
+              });
+            });
+          }, 0);
+          if (typeof timer === "object" && "unref" in timer) timer.unref();
+        },
+      });
+      return { scheduler, sessionHitlContinuation };
+    }
+
+    async function getLoopRuntimeServices(workspaceRoot: string): Promise<LoopRuntimeServices> {
+      const existing = loopRuntimeServices.get(workspaceRoot);
+      if (existing !== undefined) return await existing;
+
+      const pending = createLoopRuntimeServices(workspaceRoot);
+      loopRuntimeServices.set(workspaceRoot, pending);
+      try {
+        return await pending;
+      } catch (error) {
+        if (loopRuntimeServices.get(workspaceRoot) === pending) loopRuntimeServices.delete(workspaceRoot);
+        throw error;
+      }
+    }
+
+    async function getLoopScheduler(workspaceRoot: string): Promise<LoopScheduler> {
+      return (await getLoopRuntimeServices(workspaceRoot)).scheduler;
+    }
+
+    async function getLoopSessionHitlContinuation(workspaceRoot: string): Promise<LoopSessionHitlContinuationCoordinator> {
+      return (await getLoopRuntimeServices(workspaceRoot)).sessionHitlContinuation;
     }
 
     async function scheduleLoopIfStarted(workspaceRoot: string, loopId: string): Promise<void> {
@@ -496,14 +638,14 @@ export async function createRuntime(
     }
 
     async function pauseLoop(workspaceRoot: string, loopId: string): Promise<LoopState> {
-      const scheduler = loopSchedulers.get(workspaceRoot);
-      if (scheduler) return await scheduler.pause(loopId);
+      const services = loopRuntimeServices.get(workspaceRoot);
+      if (services !== undefined) return await (await services).scheduler.pause(loopId);
       return await (await contextResolver.resolve(workspaceRoot)).loopState.pause(loopId);
     }
 
     async function resumeLoop(workspaceRoot: string, loopId: string): Promise<LoopState> {
-      const scheduler = loopSchedulers.get(workspaceRoot);
-      if (scheduler) return await scheduler.resume(loopId);
+      const services = loopRuntimeServices.get(workspaceRoot);
+      if (services !== undefined) return await (await services).scheduler.resume(loopId);
       const resumed = await (await contextResolver.resolve(workspaceRoot)).loopState.resume(loopId);
       await scheduleLoopIfStarted(workspaceRoot, loopId);
       return resumed;
@@ -587,14 +729,16 @@ export async function createRuntime(
 
     async function stopLoopSchedulers(): Promise<void> {
       loopSchedulersStarted = false;
-      await Promise.all([...loopSchedulers.values()].map((scheduler) => scheduler.stop()));
-      loopSchedulers.clear();
+      const services = await Promise.allSettled([...loopRuntimeServices.values()]);
+      await Promise.all(services.flatMap((result) => result.status === "fulfilled" ? [result.value.scheduler.stop()] : []));
+      loopRuntimeServices.clear();
     }
 
     sessionAgentManager.setStartChildExecution((workspaceRoot, request) => executionManager.startChildExecution(workspaceRoot, request));
     sessionAgentManager.setCancelChildSession((workspaceRoot, parentSessionId, childSessionId) => executionManager.cancelChildSession(workspaceRoot, parentSessionId, childSessionId));
     sessionAgentManager.setResumeChildSession((workspaceRoot, request) => executionManager.resumeChildExecution(workspaceRoot, request));
     sessionAgentManager.setAbortSessionExecutionAndWait((workspaceRoot, sessionId) => executionManager.abortAndWait(workspaceRoot, sessionId));
+    sessionAgentManager.setAcquireSessionCwdTransition((workspaceRoot, sessionId) => executionManager.acquireSessionCwdTransition(workspaceRoot, sessionId));
 
     return {
       mcpManager,
@@ -642,6 +786,11 @@ export async function createRuntime(
         };
       },
       queueGoalTitleGeneration,
+      cancelGoal: async (workspaceRoot, goalId, request) => {
+        const service = (await contextResolver.resolve(workspaceRoot)).goalCancellation;
+        if (service === undefined) throw new Error("Goal cancellation service is unavailable");
+        return await service.cancel(goalId, request);
+      },
       queueLoopTitleGeneration,
       subscribeMcpStatusChanges: (listener) => mcpManager.onStatusChange(listener),
       getMcpServerStatuses: () => mcpManager.getStatus(),
@@ -650,6 +799,7 @@ export async function createRuntime(
       resolveCompressionOriginalRange: (workspaceRoot, sessionId, blockRef) => sessionStoreManager.resolveCompressionOriginalRange(workspaceRoot, sessionId, blockRef),
       listSessions: (workspaceRoot) => sessionStoreManager.listSessionSummaries(workspaceRoot),
       startSessionExecution: (input) => executionManager.startExecution(input),
+      startSessionMessageExecution: (input) => executionManager.startCheckedExecution(input),
       abortSessionExecution: (workspaceRoot, sessionId) => executionManager.abort(workspaceRoot, sessionId),
       abortSessionExecutionAndWait: (workspaceRoot, sessionId) => executionManager.abortAndWait(workspaceRoot, sessionId),
       abortAllSessionExecutions: () => executionManager.abortAll(),

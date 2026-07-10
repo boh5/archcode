@@ -51,7 +51,7 @@ export const lspDiagnosticsTool = defineTool({
     // Out-of-workspace paths may have been explicitly approved.
     const { resolved: resolvedPath } = resolveAndValidatePath(
       input.filePath,
-      ctx.workspaceRoot,
+      ctx.cwd,
     );
 
     try {
@@ -78,7 +78,7 @@ export async function handleFileDiagnostics(
   resolvedPath: string,
   displayPath: string,
   severity: LspDiagnosticSeverityFilter,
-  ctx: { workspaceRoot: string },
+  ctx: { cwd: string },
 ): Promise<string | ToolExecutionResult> {
   const languageId = getLanguageIdFromFilename(resolvedPath);
   if (!languageId) {
@@ -100,7 +100,7 @@ export async function handleFileDiagnostics(
   }
 
   const pool = getLspClientPool();
-  const poolKey = { workspaceRoot: ctx.workspaceRoot, serverId: serverDefinition.id };
+  const poolKey = { workspaceRoot: ctx.cwd, serverId: serverDefinition.id };
   const uri = pathToFileUri(resolvedPath);
   let lastDiagnostics: LspDiagnostic[] = [];
 
@@ -109,7 +109,7 @@ export async function handleFileDiagnostics(
     const client = await pool.acquire(poolKey, {
       command: serverDefinition.command[0],
       args: serverDefinition.command.slice(1),
-      cwd: ctx.workspaceRoot,
+      cwd: ctx.cwd,
       ...(serverDefinition.initializationOptions ? { initializationOptions: serverDefinition.initializationOptions } : {}),
     });
 
@@ -273,7 +273,7 @@ function formatDirectoryDiagnostics(
 async function handleDirectoryDiagnostics(
   dirPath: string,
   severity: LspDiagnosticSeverityFilter,
-  ctx: { workspaceRoot: string },
+  ctx: { cwd: string },
 ): Promise<string | ToolExecutionResult> {
   const { supportedFiles, totalFilesFound } = await walkSupportedFiles(dirPath);
 
@@ -304,7 +304,7 @@ async function handleDirectoryDiagnostics(
 
   for (const [, serverFiles] of serverGroups) {
     const serverId = serverFiles[0].serverId;
-    const poolKey = { workspaceRoot: ctx.workspaceRoot, serverId };
+    const poolKey = { workspaceRoot: ctx.cwd, serverId };
     const firstEntry = serverFiles[0];
 
     let client;
@@ -312,7 +312,7 @@ async function handleDirectoryDiagnostics(
       client = await pool.acquire(poolKey, {
         command: firstEntry.command[0],
         args: firstEntry.command.slice(1),
-        cwd: ctx.workspaceRoot,
+        cwd: ctx.cwd,
         ...(firstEntry.initializationOptions ? { initializationOptions: firstEntry.initializationOptions } : {}),
       });
     } catch (error) {

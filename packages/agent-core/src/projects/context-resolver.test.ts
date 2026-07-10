@@ -3,6 +3,9 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
 
 import { GoalStateManager } from "../goals/state";
+import { SessionHitlBlockedError } from "../agents/errors";
+import type { SessionAgentManager } from "../agents/session-agent-manager";
+import { SessionExecutionManager } from "../execution/session-execution-manager";
 import { HitlService } from "../hitl/service";
 import { ResumeCoordinator } from "../hitl/resume-coordinator";
 import { LoopStateManager, type LoopConfig } from "../loops/state";
@@ -298,6 +301,157 @@ describe("ProjectContextResolver", () => {
     });
   });
 
+  test("exposes a context after claimed Session recovery is scheduled without waiting for the agent tail", async () => {
+    const workspace = await makeWorkspace("hitl-recovery-ready-gate");
+    const sessions = new SessionStoreManager({ logger: silentLogger });
+    const sessionId = crypto.randomUUID();
+    sessions.create(sessionId, workspace);
+    await sessions.flushSession(sessionId, workspace);
+    const claimed = await seedClaimedSessionHitl(workspace, sessions, sessionId, "ordinary-recovery");
+    sessions.get(sessionId, workspace)!.setState({ blockedByHitlIds: [claimed.hitlId] });
+    await sessions.flushSession(sessionId, workspace);
+    const executionManager = createExecutionManager(sessions);
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    let recoveredContext: Awaited<ReturnType<ProjectContextResolver["resolve"]>> | undefined;
+    let resolver!: ProjectContextResolver;
+    const adapter = {
+      resume: async () => {
+        const lease = executionManager.acquireSessionHitlResume(workspace, sessionId);
+        try {
+          recoveredContext = await resolver.resolve(workspace);
+          entered.resolve(undefined);
+          await release.promise;
+        } finally {
+          lease.release();
+        }
+      },
+    };
+    resolver = new ProjectContextResolver({
+      sessionStoreManager: sessions,
+      resumeAdapters: { session: adapter },
+      resumeCoordinatorFactory: ({ hitl }) => new ResumeCoordinator({
+        hitl,
+        adapters: { session: adapter },
+        logger: silentLogger,
+      }),
+    });
+
+    let publiclyResolved = false;
+    const publicResolution = resolver.resolve(workspace).then((context) => {
+      publiclyResolved = true;
+      return context;
+    });
+    const resolvedBeforeAgentTail = await Promise.race([
+      publicResolution.then(() => true),
+      Bun.sleep(1_000).then(() => false),
+    ]);
+    if (resolvedBeforeAgentTail) {
+      await entered.promise;
+      await expect(executionManager.startCheckedExecution({
+        slug: basename(workspace),
+        workspaceRoot: workspace,
+        sessionId,
+        userMessage: "must remain blocked while recovery continues",
+      })).rejects.toThrow(SessionHitlBlockedError);
+    }
+    release.resolve(undefined);
+    const context = await publicResolution;
+    expect(resolvedBeforeAgentTail).toBe(true);
+    expect(publiclyResolved).toBe(true);
+    expect(recoveredContext).toBe(context);
+    await waitFor(async () => await isHitlStatus(context.hitl, claimed.hitlId, "resolved"));
+  });
+
+  test("lets Loop dependencies re-enter after claimed Session recovery is scheduled", async () => {
+    const workspace = await makeWorkspace("loop-hitl-recovery-ready-gate");
+    const sessions = new SessionStoreManager({ logger: silentLogger });
+    const loopState = new LoopStateManager(workspace, silentLogger);
+    const loop = await loopState.create(basename(workspace), LOOP_CONFIG);
+    const sessionId = crypto.randomUUID();
+    sessions.create(sessionId, workspace, { loopId: loop.loopId, sessionRole: "main" });
+    await sessions.flushSession(sessionId, workspace);
+    const claimed = await seedClaimedSessionHitl(workspace, sessions, sessionId, "loop-recovery");
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    let resolver!: ProjectContextResolver;
+    const adapter = {
+      resume: async () => {
+        const adapterContext = await resolver.resolve(workspace);
+        await adapterContext.loopState.read(loop.loopId);
+        // Mirrors getLoopSessionHitlContinuation -> getLoopScheduler resolving
+        // the same project again from a deeper recovery dependency.
+        const schedulerContext = await resolver.resolve(workspace);
+        expect(schedulerContext).toBe(adapterContext);
+        entered.resolve(undefined);
+        await release.promise;
+      },
+    };
+    resolver = new ProjectContextResolver({
+      sessionStoreManager: sessions,
+      resumeAdapters: { session: adapter },
+      resumeCoordinatorFactory: ({ hitl }) => new ResumeCoordinator({
+        hitl,
+        adapters: { session: adapter },
+        logger: silentLogger,
+      }),
+    });
+
+    const publicResolution = resolver.resolve(workspace);
+    const resolvedBeforeAdapterTail = await Promise.race([
+      publicResolution.then(() => true),
+      Bun.sleep(1_000).then(() => false),
+    ]);
+    if (resolvedBeforeAdapterTail) await entered.promise;
+    release.resolve(undefined);
+    const context = await publicResolution;
+    expect(resolvedBeforeAdapterTail).toBe(true);
+    await waitFor(async () => await isHitlStatus(context.hitl, claimed.hitlId, "resolved"));
+  });
+
+  test("lets Loop-owner runtime callbacks re-enter after recovery is scheduled", async () => {
+    const workspace = await makeWorkspace("loop-owner-hitl-recovery-ready-gate");
+    const sessions = new SessionStoreManager({ logger: silentLogger });
+    const loopState = new LoopStateManager(workspace, silentLogger);
+    const loop = await loopState.create(basename(workspace), LOOP_CONFIG);
+    const claimed = await seedClaimedLoopHitl(workspace, sessions, loop.loopId);
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    let resolver!: ProjectContextResolver;
+    const adapter = {
+      resume: async () => {
+        const adapterContext = await resolver.resolve(workspace);
+        await adapterContext.loopState.read(loop.loopId);
+        // Mirrors LoopHitlResumeAdapter.onContinuationQueued ->
+        // getLoopScheduler -> contextResolver.resolve during cold recovery.
+        const schedulerContext = await resolver.resolve(workspace);
+        expect(schedulerContext).toBe(adapterContext);
+        entered.resolve(undefined);
+        await release.promise;
+      },
+    };
+    resolver = new ProjectContextResolver({
+      sessionStoreManager: sessions,
+      resumeAdapters: { loop: adapter },
+      resumeCoordinatorFactory: ({ hitl }) => new ResumeCoordinator({
+        hitl,
+        adapters: { loop: adapter },
+        logger: silentLogger,
+      }),
+    });
+
+    const publicResolution = resolver.resolve(workspace);
+    const resolvedBeforeAdapterTail = await Promise.race([
+      publicResolution.then(() => true),
+      Bun.sleep(1_000).then(() => false),
+    ]);
+    if (resolvedBeforeAdapterTail) await entered.promise;
+    release.resolve(undefined);
+    const context = await publicResolution;
+    expect(resolvedBeforeAdapterTail).toBe(true);
+    await waitFor(async () => await isHitlStatus(context.hitl, claimed.hitlId, "resolved"));
+  });
+
   test("custom Goal/HITL factories are used per resolved context", async () => {
     const workspace = await makeWorkspace("custom-factories");
     const goalState = new GoalStateManager(workspace);
@@ -333,6 +487,37 @@ describe("ProjectContextResolver", () => {
   });
 });
 
+function createExecutionManager(sessions: SessionStoreManager): SessionExecutionManager {
+  return new SessionExecutionManager({
+    sessionAgentManager: {} as SessionAgentManager,
+    createSessionStore: (sessionId, workspaceRoot, options) => sessions.create(sessionId, workspaceRoot, options),
+    flushSessionStore: (sessionId, workspaceRoot) => sessions.flushSession(sessionId, workspaceRoot),
+    getSessionStore: (sessionId, workspaceRoot) => sessions.get(sessionId, workspaceRoot),
+    loadSessionStore: (sessionId, workspaceRoot) => sessions.getOrLoad(sessionId, workspaceRoot),
+    deleteSessionStore: (sessionId, workspaceRoot, options) => sessions.delete(sessionId, workspaceRoot, options),
+    resolveRootSessionId: (sessionId, workspaceRoot) => sessions.resolveRootSessionId(sessionId, workspaceRoot),
+    buildSessionTree: (workspaceRoot, rootSessionId) => sessions.buildSessionTree(workspaceRoot, rootSessionId),
+    trackSession: () => undefined,
+    untrackSession: () => undefined,
+    executionScopeValidator: { validate: async () => undefined },
+    logger: silentLogger,
+  });
+}
+
+async function isHitlStatus(hitl: HitlService, hitlId: string, status: "resolved" | "cancelled"): Promise<boolean> {
+  const lookup = await hitl.lookup(hitlId);
+  return lookup.status === "found" && lookup.record.status === status;
+}
+
+async function waitFor(predicate: () => boolean | Promise<boolean>): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await Bun.sleep(5);
+  }
+  throw new Error("condition was not met");
+}
+
 async function waitForSession(workspaceRoot: string, sessionId: string): Promise<void> {
   const path = join(workspaceRoot, ".archcode", "sessions", sessionId, "session.json");
   for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -340,4 +525,71 @@ async function waitForSession(workspaceRoot: string, sessionId: string): Promise
     await Bun.sleep(5);
   }
   throw new Error(`session was not persisted: ${sessionId}`);
+}
+
+async function seedClaimedSessionHitl(
+  workspaceRoot: string,
+  sessions: SessionStoreManager,
+  sessionId: string,
+  suffix: string,
+) {
+  const project = { slug: basename(workspaceRoot), name: basename(workspaceRoot) };
+  const hitl = new HitlService({
+    workspaceRoot,
+    project,
+    sessions,
+    goalState: new GoalStateManager(workspaceRoot, silentLogger),
+    loopState: new LoopStateManager(workspaceRoot, silentLogger),
+  });
+  await hitl.load(workspaceRoot);
+  const created = await hitl.create({
+    owner: { projectSlug: project.slug, ownerType: "session", ownerId: sessionId },
+    blockingKey: `session:${sessionId}:ask:${suffix}`,
+    source: { type: "ask_user", sessionId, toolCallId: suffix },
+    displayPayload: { title: "Resume after restart", redacted: true },
+  });
+  await hitl.claim(created.hitlId, { type: "question_answer", answers: ["continue"] }, {
+    claimId: `claim-${suffix}`,
+    claimedAt: new Date().toISOString(),
+    intent: "respond",
+    attempt: 1,
+  });
+  return created;
+}
+
+async function seedClaimedLoopHitl(
+  workspaceRoot: string,
+  sessions: SessionStoreManager,
+  loopId: string,
+) {
+  const project = { slug: basename(workspaceRoot), name: basename(workspaceRoot) };
+  const hitl = new HitlService({
+    workspaceRoot,
+    project,
+    sessions,
+    goalState: new GoalStateManager(workspaceRoot, silentLogger),
+    loopState: new LoopStateManager(workspaceRoot, silentLogger),
+  });
+  await hitl.load(workspaceRoot);
+  const created = await hitl.create({
+    owner: { projectSlug: project.slug, ownerType: "loop", ownerId: loopId },
+    blockingKey: `loop:${loopId}:question:recovery`,
+    source: { type: "loop_question", loopId, questionKey: "recovery" },
+    displayPayload: { title: "Resume Loop after restart", redacted: true },
+  });
+  await hitl.claim(created.hitlId, { type: "question_answer", answers: ["continue"] }, {
+    claimId: "claim-loop-owner-recovery",
+    claimedAt: new Date().toISOString(),
+    intent: "respond",
+    attempt: 1,
+  });
+  return created;
+}
+
+function deferred<T>(): { readonly promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }

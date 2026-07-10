@@ -35,7 +35,7 @@ function makeContext(): ToolExecutionContext {
     abort: new AbortController().signal,
     startedAt: 0,
     allowedTools: new Set(["view_tool_output"]),
-    workspaceRoot: import.meta.dir,
+    cwd: import.meta.dir,
     projectContext: createTestProjectContext(import.meta.dir),
   };
 }

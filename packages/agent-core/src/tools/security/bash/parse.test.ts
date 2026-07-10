@@ -73,6 +73,22 @@ describe("parseShellRequest", () => {
     expect(decision.approval?.eligible).toBe(false);
   });
 
+  test("marks combined shell command flags uncertain and ineligible", () => {
+    const request = parse('bash -lc "echo hi"');
+    if ("ok" in request) throw new Error("unexpected parse failure");
+    expect(request.invocations[0]?.uncertainty).toContainEqual({
+      kind: "parse",
+      reason: "Shell -c wrapper requires recursive review",
+      token: "bash -lc",
+    });
+    const decision = classifyCommand('bash -lc "echo hi"', { workspaceRoot });
+    expect(decision).toMatchObject({
+      outcome: "ask",
+      ruleId: "ask-parser-uncertainty",
+      approval: { eligible: false },
+    });
+  });
+
   test("keeps compound segments independent with deny winning downstream", () => {
     const request = parse("pwd ; rm -rf src || git status | tee out.txt");
     if ("ok" in request) throw new Error("unexpected parse failure");

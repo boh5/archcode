@@ -13,9 +13,11 @@ import { SkillReadInputSchema, skillReadTool } from "./skill-read";
 const tmpRoot = join(import.meta.dir, "__test_tmp__", "skill-read-tool");
 const projectRoot = join(tmpRoot, "project");
 const projectSkillsRoot = join(projectRoot, ".archcode", "skills");
+const executionCwd = join(tmpRoot, "project.worktrees", "session-skill");
+const executionSkillsRoot = join(executionCwd, ".archcode", "skills");
 const userSkillsRoot = join(tmpRoot, "user", ".archcode", "skills");
 
-function makeContext(agentSkills: readonly string[]): ToolExecutionContext {
+function makeContext(agentSkills: readonly string[], cwd = projectRoot): ToolExecutionContext {
   return createToolExecutionContext({ store: createMockStore(), storeManager, toolName: "skill_read",
   toolCallId: "skill-read-call",
   input: {},
@@ -25,11 +27,18 @@ function makeContext(agentSkills: readonly string[]): ToolExecutionContext {
   allowedTools: new Set(["skill_read"]),
   agentSkills,
   skillService: new SkillService({ userSkillsRoot }),
-  projectContext: createTestProjectContext(projectRoot), });
+  projectContext: createTestProjectContext(projectRoot),
+  cwd, });
 }
 
 async function writeProjectSkill(name: string, content: string): Promise<void> {
   const skillDir = join(projectSkillsRoot, name);
+  await mkdir(skillDir, { recursive: true });
+  await Bun.write(join(skillDir, "SKILL.md"), content);
+}
+
+async function writeExecutionSkill(name: string, content: string): Promise<void> {
+  const skillDir = join(executionSkillsRoot, name);
   await mkdir(skillDir, { recursive: true });
   await Bun.write(join(skillDir, "SKILL.md"), content);
 }
@@ -54,6 +63,35 @@ describe("skill_read tool", () => {
     expect(result as string).toContain("when_to_use:");
     expect(result as string).toContain("source: builtin");
     expect(result as string).toContain("Trace entry points");
+  });
+
+  test("resolves project-local Skills from execution cwd, not canonical project root", async () => {
+    await writeProjectSkill("codemap", `---
+name: codemap
+description: canonical marker
+when_to_use: Test canonical Skill resolution.
+---
+
+CANONICAL_SKILL_BODY
+`);
+    await writeExecutionSkill("codemap", `---
+name: codemap
+description: worktree marker
+when_to_use: Test worktree Skill resolution.
+---
+
+WORKTREE_SKILL_BODY
+`);
+
+    const result = await skillReadTool.execute(
+      { name: "codemap" },
+      makeContext(["codemap"], executionCwd),
+    );
+
+    expect(typeof result).toBe("string");
+    if (typeof result !== "string") throw new Error(result.output);
+    expect(result).toContain("WORKTREE_SKILL_BODY");
+    expect(result).not.toContain("CANONICAL_SKILL_BODY");
   });
 
   test("not-allowed skill returns structured error", async () => {

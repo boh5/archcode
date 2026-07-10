@@ -40,13 +40,13 @@ export const lspSymbolsTool = defineTool({
 
 async function handleDocumentSymbols(
   filePath: string,
-  ctx: { workspaceRoot: string },
+  ctx: { cwd: string },
 ): Promise<string | ToolExecutionResult> {
   // Workspace access is enforced by createWorkspacePermission() guard.
   // Out-of-workspace paths may have been explicitly approved.
   const { resolved: resolvedPath } = resolveAndValidatePath(
     filePath,
-    ctx.workspaceRoot,
+    ctx.cwd,
   );
 
   const languageId = getLanguageIdFromFilename(resolvedPath);
@@ -69,7 +69,7 @@ async function handleDocumentSymbols(
   }
 
   const pool = getLspClientPool();
-  const poolKey = { workspaceRoot: ctx.workspaceRoot, serverId: serverDefinition.id };
+  const poolKey = { workspaceRoot: ctx.cwd, serverId: serverDefinition.id };
   const uri = pathToFileUri(resolvedPath);
 
   try {
@@ -77,7 +77,7 @@ async function handleDocumentSymbols(
     const client = await pool.acquire(poolKey, {
       command: serverDefinition.command[0],
       args: serverDefinition.command.slice(1),
-      cwd: ctx.workspaceRoot,
+      cwd: ctx.cwd,
       ...(serverDefinition.initializationOptions ? { initializationOptions: serverDefinition.initializationOptions } : {}),
     });
 
@@ -103,7 +103,7 @@ async function handleDocumentSymbols(
 
 async function handleWorkspaceSymbols(
   query: string,
-  ctx: { workspaceRoot: string },
+  ctx: { cwd: string },
 ): Promise<string | ToolExecutionResult> {
   // Workspace symbols have no file path to infer a language server from, so use
   // the first built-in server (TypeScript) as the default broad workspace indexer.
@@ -117,13 +117,13 @@ async function handleWorkspaceSymbols(
   }
 
   const pool = getLspClientPool();
-  const poolKey = { workspaceRoot: ctx.workspaceRoot, serverId: serverDefinition.id };
+  const poolKey = { workspaceRoot: ctx.cwd, serverId: serverDefinition.id };
 
   try {
     const client = await pool.acquire(poolKey, {
       command: serverDefinition.command[0],
       args: serverDefinition.command.slice(1),
-      cwd: ctx.workspaceRoot,
+      cwd: ctx.cwd,
       ...(serverDefinition.initializationOptions ? { initializationOptions: serverDefinition.initializationOptions } : {}),
     });
 
@@ -311,4 +311,3 @@ function toLspToolErrorResult(error: unknown, label: string): ToolExecutionResul
     message: `${label}: ${error instanceof Error ? error.message : String(error)}`,
   });
 }
-

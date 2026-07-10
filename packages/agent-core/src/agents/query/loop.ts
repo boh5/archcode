@@ -3,14 +3,15 @@ import type { StoreApi } from "zustand";
 import type { Logger } from "../../logger";
 import type { ErrorToolPart, ExecutionEndEvent, SessionStoreState, StreamEvent } from "../../store/types";
 import { createToolExecutionContext } from "../../tools/index";
+import type { ToolExecutionControl } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
 import { partitionToolCalls } from "../../tools/concurrency/partition";
 import { DOOM_LOOP_MESSAGE, type NormalizedToolCall, type QueryLoopOptions, type QueryLoopResult } from "./types";
 import { redactValue } from "../../tools/security";
-import { MissingProjectContextError } from "../errors";
 import { classifyLlmError, runLlmStream } from "../../llm";
 import type { BeforeModelBuildContext, BeforeModelCallContext } from "./loop-hooks";
 import { SessionHitlPause } from "../../execution/session-hitl-pause";
+import { createToolErrorResult } from "../../tools/errors";
 
 const DEFAULT_MAX_STEPS = 50;
 const ZERO_OUTPUT_SHORT_ATTEMPTS = 3;
@@ -80,6 +81,11 @@ type ToolCallArray = Array<{
   toolName: string;
   input: unknown;
 }>;
+
+interface ToolBatchExecutionResult {
+  readonly sessionCwdChanged: boolean;
+  readonly executionControl?: ToolExecutionControl;
+}
 
 class DoomTracker {
   private previous?: NormalizedToolCall;
@@ -182,7 +188,7 @@ export async function runQueryLoop(
   } = options;
   const { beforeModelBuild, beforeModelCall, afterStepEnd, afterLoopEnd } = options.hooks ?? {};
   const abort = options.abort ?? new AbortController().signal;
-  let resolvedWorkspaceRoot = options.workspaceRoot;
+  const executionCwd = options.cwd;
   const sessionId = store.getState().sessionId;
   const agentName = options.agentName;
   const logger = options.logger.child({
@@ -368,14 +374,7 @@ export async function runQueryLoop(
 
       const toolCalls = finalized.toolCalls ?? [];
       if (abort.aborted) break;
-      if (resolvedWorkspaceRoot === undefined) {
-        resolvedWorkspaceRoot = options.projectContext.project.workspaceRoot;
-      }
-      if (resolvedWorkspaceRoot === undefined) {
-        throw new MissingProjectContextError("Query loop requires options.workspaceRoot before executing tools");
-      }
-      options.projectContext.project.workspaceRoot = resolvedWorkspaceRoot;
-      await executeToolCalls(
+      const toolExecution = await executeToolCalls(
         toolCalls,
         toolRegistry,
         store,
@@ -383,12 +382,14 @@ export async function runQueryLoop(
         abort,
         allowedTools,
         options.projectContext,
+        executionCwd,
         confirmPermission,
         options.askUser,
         options.startChildExecution,
         options.cancelChildSession,
         options.resumeChildSession,
         options.abortSessionExecutionAndWait,
+        options.acquireSessionCwdTransition,
         options.agentName,
         options.agentSkills,
         options.skillService,
@@ -399,6 +400,19 @@ export async function runQueryLoop(
       );
 
       steps++;
+      if (toolExecution.sessionCwdChanged) {
+        return {
+          text: lastText,
+          steps,
+          cwdChanged: {
+            previousCwd: executionCwd,
+            cwd: store.getState().cwd,
+          },
+        };
+      }
+      if (toolExecution.executionControl !== undefined) {
+        return { text: lastText, steps, executionControl: toolExecution.executionControl };
+      }
     }
 
     if (steps >= maxSteps) {
@@ -487,7 +501,7 @@ export async function maybeHandleCommand(
     logger: options.logger,
     modelOptions,
     abort,
-    workspaceRoot: options.workspaceRoot,
+    cwd: options.cwd,
     agentName: options.agentName,
     agentSkills: options.agentSkills,
     skillService: options.skillService,
@@ -901,12 +915,14 @@ async function executeToolCalls(
   abort: AbortSignal,
   allowedTools: readonly string[],
   projectContext: QueryLoopOptions["projectContext"],
+  cwd: string,
   confirmPermission: QueryLoopOptions["confirmPermission"],
   askUser: QueryLoopOptions["askUser"] | undefined,
   startChildExecution: NonNullable<QueryLoopOptions["startChildExecution"]> | undefined,
   cancelChildSession: NonNullable<QueryLoopOptions["cancelChildSession"]> | undefined,
   resumeChildSession: NonNullable<QueryLoopOptions["resumeChildSession"]> | undefined,
   abortSessionExecutionAndWait: NonNullable<QueryLoopOptions["abortSessionExecutionAndWait"]> | undefined,
+  acquireSessionCwdTransition: NonNullable<QueryLoopOptions["acquireSessionCwdTransition"]> | undefined,
   agentName: string | undefined,
   agentSkills: QueryLoopOptions["agentSkills"],
   skillService: QueryLoopOptions["skillService"],
@@ -914,7 +930,7 @@ async function executeToolCalls(
   executionOrigin: QueryLoopOptions["origin"],
   currentDepth?: number,
   doomTracker?: DoomTracker,
-): Promise<void> {
+): Promise<ToolBatchExecutionResult> {
   const executableToolCalls: ToolCallArray = [];
 
   for (const toolCall of toolCalls) {
@@ -926,9 +942,11 @@ async function executeToolCalls(
   }
 
   const completedToolResults: Array<{ toolCallId: string; toolName: string; output: string; isError: boolean; meta?: Record<string, unknown> }> = [];
+  let sessionCwdChanged = false;
+  let executionControl: ToolExecutionControl | undefined;
   const durableHitlMode = confirmPermission === undefined && askUser === undefined;
   if (durableHitlMode) {
-    await executeToolCallsSequentially({
+    return await executeToolCallsSequentially({
       toolCalls: executableToolCalls,
       registry,
       store,
@@ -936,10 +954,12 @@ async function executeToolCalls(
       abort,
       allowedTools,
       projectContext,
+      cwd,
       startChildExecution,
       cancelChildSession,
       resumeChildSession,
       abortSessionExecutionAndWait,
+      acquireSessionCwdTransition,
       agentName,
       agentSkills,
       skillService,
@@ -948,7 +968,6 @@ async function executeToolCalls(
       currentDepth,
       completedToolResults,
     });
-    return;
   }
 
   const batches = partitionToolCalls(executableToolCalls, registry);
@@ -985,6 +1004,7 @@ async function executeToolCalls(
             startedAt: Date.now(),
             allowedTools: new Set(allowedTools),
             projectContext,
+            cwd,
             agentSkills,
             skillService,
             storeManager,
@@ -994,6 +1014,7 @@ async function executeToolCalls(
             ...(cancelChildSession ? { cancelChildSession } : {}),
             ...(resumeChildSession ? { resumeChildSession } : {}),
             ...(abortSessionExecutionAndWait ? { abortSessionExecutionAndWait } : {}),
+            ...(acquireSessionCwdTransition ? { acquireSessionCwdTransition } : {}),
             ...(agentName ? { agentName } : {}),
             ...(currentDepth !== undefined ? { currentDepth } : {}),
             ...(executionOrigin === undefined ? {} : { origin: executionOrigin }),
@@ -1012,7 +1033,7 @@ async function executeToolCalls(
                 input: redactedInput,
               });
             },
-            onToolAttempt(attempt) {
+            async onToolAttempt(attempt) {
               store.getState().append({
                 type: "tool-attempt",
                 toolCallId: attempt.toolCallId,
@@ -1021,9 +1042,12 @@ async function executeToolCalls(
                 timestamp: attempt.timestamp,
                 destructive: attempt.destructive,
               });
+              await storeManager.flushSession(store.getState().sessionId, projectContext.project.workspaceRoot);
             },
           });
           const result = await registry.execute(toolCall, ctx);
+          if (result.meta?.sessionCwdChanged === true) sessionCwdChanged = true;
+          executionControl ??= executionControlFromMeta(result.meta);
           completedToolResults.push({ toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, output: result.output, isError: result.isError, ...(result.meta === undefined ? {} : { meta: result.meta }) });
           appendToolResult(store, toolCall, result.output, result.isError, result.meta);
         }),
@@ -1052,6 +1076,7 @@ async function executeToolCalls(
         startedAt: Date.now(),
         allowedTools: new Set(allowedTools),
         projectContext,
+        cwd,
         agentSkills,
         skillService,
         storeManager,
@@ -1061,6 +1086,7 @@ async function executeToolCalls(
         ...(cancelChildSession ? { cancelChildSession } : {}),
         ...(resumeChildSession ? { resumeChildSession } : {}),
         ...(abortSessionExecutionAndWait ? { abortSessionExecutionAndWait } : {}),
+        ...(acquireSessionCwdTransition ? { acquireSessionCwdTransition } : {}),
         ...(agentName ? { agentName } : {}),
         ...(currentDepth !== undefined ? { currentDepth } : {}),
         ...(executionOrigin === undefined ? {} : { origin: executionOrigin }),
@@ -1079,7 +1105,7 @@ async function executeToolCalls(
             input: redactedInput,
           });
         },
-        onToolAttempt(attempt) {
+        async onToolAttempt(attempt) {
           store.getState().append({
             type: "tool-attempt",
             toolCallId: attempt.toolCallId,
@@ -1088,13 +1114,31 @@ async function executeToolCalls(
             timestamp: attempt.timestamp,
             destructive: attempt.destructive,
           });
+          await storeManager.flushSession(store.getState().sessionId, projectContext.project.workspaceRoot);
         },
       });
       const result = await registry.execute(toolCall, ctx);
+      if (result.meta?.sessionCwdChanged === true) sessionCwdChanged = true;
+      executionControl ??= executionControlFromMeta(result.meta);
       completedToolResults.push({ toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, output: result.output, isError: result.isError, ...(result.meta === undefined ? {} : { meta: result.meta }) });
       appendToolResult(store, toolCall, result.output, result.isError, result.meta);
     }
+    if (sessionCwdChanged || executionControl !== undefined) {
+      for (let remainingIndex = i + 1; remainingIndex < batches.length; remainingIndex += 1) {
+        const remaining = batches[remainingIndex]!;
+        const calls = remaining.type === "parallel" ? remaining.calls : [remaining.call];
+        for (const call of calls) {
+          if (sessionCwdChanged) appendCwdTransitionSkipped(store, call);
+          else appendExecutionStopped(store, call, executionControl!);
+        }
+      }
+      break;
+    }
   }
+  return {
+    sessionCwdChanged,
+    ...(executionControl === undefined ? {} : { executionControl }),
+  };
 }
 
 async function executeToolCallsSequentially(input: {
@@ -1105,10 +1149,12 @@ async function executeToolCallsSequentially(input: {
   abort: AbortSignal;
   allowedTools: readonly string[];
   projectContext: QueryLoopOptions["projectContext"];
+  cwd: string;
   startChildExecution: NonNullable<QueryLoopOptions["startChildExecution"]> | undefined;
   cancelChildSession: NonNullable<QueryLoopOptions["cancelChildSession"]> | undefined;
   resumeChildSession: NonNullable<QueryLoopOptions["resumeChildSession"]> | undefined;
   abortSessionExecutionAndWait: NonNullable<QueryLoopOptions["abortSessionExecutionAndWait"]> | undefined;
+  acquireSessionCwdTransition: NonNullable<QueryLoopOptions["acquireSessionCwdTransition"]> | undefined;
   agentName: string | undefined;
   agentSkills: QueryLoopOptions["agentSkills"];
   skillService: QueryLoopOptions["skillService"];
@@ -1116,7 +1162,9 @@ async function executeToolCallsSequentially(input: {
   executionOrigin: QueryLoopOptions["origin"];
   currentDepth?: number;
   completedToolResults: Array<{ toolCallId: string; toolName: string; output: string; isError: boolean; meta?: Record<string, unknown> }>;
-}): Promise<void> {
+}): Promise<ToolBatchExecutionResult> {
+  let sessionCwdChanged = false;
+  let executionControl: ToolExecutionControl | undefined;
   for (let index = 0; index < input.toolCalls.length; index++) {
     const toolCall = input.toolCalls[index]!;
     if (input.abort.aborted) {
@@ -1135,6 +1183,7 @@ async function executeToolCallsSequentially(input: {
       startedAt: Date.now(),
       allowedTools: new Set(input.allowedTools),
       projectContext: input.projectContext,
+      cwd: input.cwd,
       agentSkills: input.agentSkills,
       skillService: input.skillService,
       storeManager: input.storeManager,
@@ -1142,6 +1191,7 @@ async function executeToolCallsSequentially(input: {
       ...(input.cancelChildSession ? { cancelChildSession: input.cancelChildSession } : {}),
       ...(input.resumeChildSession ? { resumeChildSession: input.resumeChildSession } : {}),
       ...(input.abortSessionExecutionAndWait ? { abortSessionExecutionAndWait: input.abortSessionExecutionAndWait } : {}),
+      ...(input.acquireSessionCwdTransition ? { acquireSessionCwdTransition: input.acquireSessionCwdTransition } : {}),
       ...(input.agentName ? { agentName: input.agentName } : {}),
       ...(input.currentDepth !== undefined ? { currentDepth: input.currentDepth } : {}),
       ...(input.executionOrigin === undefined ? {} : { origin: input.executionOrigin }),
@@ -1155,7 +1205,7 @@ async function executeToolCallsSequentially(input: {
       onInputResolved(redactedInput) {
         input.store.getState().append({ type: "tool-input-resolved", toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, input: redactedInput });
       },
-      onToolAttempt(attempt) {
+      async onToolAttempt(attempt) {
         input.store.getState().append({
           type: "tool-attempt",
           toolCallId: attempt.toolCallId,
@@ -1164,12 +1214,57 @@ async function executeToolCallsSequentially(input: {
           timestamp: attempt.timestamp,
           destructive: attempt.destructive,
         });
+        await input.storeManager.flushSession(input.store.getState().sessionId, input.projectContext.project.workspaceRoot);
       },
     });
     const result = await input.registry.execute(toolCall, ctx);
+    if (result.meta?.sessionCwdChanged === true) sessionCwdChanged = true;
+    executionControl ??= executionControlFromMeta(result.meta);
     input.completedToolResults.push({ toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, output: result.output, isError: result.isError, ...(result.meta === undefined ? {} : { meta: result.meta }) });
     appendToolResult(input.store, toolCall, result.output, result.isError, result.meta);
+    if (sessionCwdChanged || executionControl !== undefined) {
+      for (const remaining of input.toolCalls.slice(index + 1)) {
+        if (sessionCwdChanged) appendCwdTransitionSkipped(input.store, remaining);
+        else appendExecutionStopped(input.store, remaining, executionControl!);
+      }
+      break;
+    }
   }
+  return {
+    sessionCwdChanged,
+    ...(executionControl === undefined ? {} : { executionControl }),
+  };
+}
+
+function appendCwdTransitionSkipped(store: StoreApi<SessionStoreState>, toolCall: ToolCallArray[number]): void {
+  const result = createToolErrorResult({
+    kind: "execution",
+    code: "SESSION_CWD_CHANGED",
+    message: "Skipped because a previous tool changed Session cwd; retry from the rebuilt Agent context.",
+  });
+  appendToolResult(store, toolCall, result.output, result.isError, result.meta);
+}
+
+function appendExecutionStopped(
+  store: StoreApi<SessionStoreState>,
+  toolCall: ToolCallArray[number],
+  control: ToolExecutionControl,
+): void {
+  const result = createToolErrorResult({
+    kind: "execution",
+    code: "SESSION_EXECUTION_STOPPED",
+    message: `Skipped because a previous tool stopped this Session family (${control.reason}).`,
+  });
+  appendToolResult(store, toolCall, result.output, result.isError, result.meta);
+}
+
+function executionControlFromMeta(meta: Record<string, unknown> | undefined): ToolExecutionControl | undefined {
+  const value = meta?.executionControl;
+  if (typeof value !== "object" || value === null) return undefined;
+  const control = value as Partial<ToolExecutionControl>;
+  return control.action === "stop_session_family" && control.reason === "goal_cancelled"
+    ? { action: control.action, reason: control.reason }
+    : undefined;
 }
 
 function appendToolResult(

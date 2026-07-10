@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { AgentRuntime } from "@archcode/agent-core";
-import { NotRootSessionError, ProjectRegistry, SessionDeleteConflictError, silentLogger } from "@archcode/agent-core";
+import { NotRootSessionError, ProjectRegistry, SessionDeleteConflictError, SessionDeleteInProgressError, SessionDeleteOwnerConflictError, SessionFamilyStopInProgressError, silentLogger } from "@archcode/agent-core";
 import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "sessions-routes");
@@ -147,6 +147,18 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
       calls.deleteSession.push({ workspaceRoot, sessionId });
       if (sessionId === "conflict-session") {
         throw new SessionDeleteConflictError([sessionId]);
+      }
+      if (sessionId === "deleting-session") {
+        throw new SessionDeleteInProgressError(sessionId, "root-session");
+      }
+      if (sessionId === "stopping-session") {
+        throw new SessionFamilyStopInProgressError(sessionId, "root-session");
+      }
+      if (sessionId === "owned-session") {
+        throw new SessionDeleteOwnerConflictError([
+          { sessionId, ownerType: "goal", ownerId: "goal-1" },
+          { sessionId, ownerType: "session_hitl", ownerId: sessionId, hitlIds: ["hitl-1"] },
+        ]);
       }
       const key = `${workspaceRoot}\0${sessionId}`;
       if (!sessions.has(key)) throw new MissingSessionFileError();
@@ -432,6 +444,72 @@ describe("sessions routes", () => {
     const body = await res.json();
     expect(body.error.code).toBe("DELETE_CONFLICT");
     expect(body.error.details).toEqual({ sessionIds: ["conflict-session"] });
+  });
+
+  test("DELETE returns stable 409 details while a Session family deletion is in progress", async () => {
+    const { app, project } = await createTestApp("delete-in-progress");
+
+    const res = await app.request(`/api/projects/${project.slug}/sessions/deleting-session`, {
+      method: "DELETE",
+    });
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: {
+        code: "DELETE_CONFLICT",
+        message: 'Session "deleting-session" cannot start or resume while Session family "root-session" is being deleted',
+        details: {
+          sessionIds: ["deleting-session"],
+          scopeCode: "SESSION_DELETE_IN_PROGRESS",
+          rootSessionId: "root-session",
+        },
+      },
+    });
+  });
+
+  test("DELETE returns stable 409 details while Goal cancellation stops the Session family", async () => {
+    const { app, project } = await createTestApp("family-stop-in-progress");
+
+    const res = await app.request(`/api/projects/${project.slug}/sessions/stopping-session`, {
+      method: "DELETE",
+    });
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: {
+        code: "DELETE_CONFLICT",
+        message: 'Session "stopping-session" cannot start or transition while Session family "root-session" is stopping',
+        details: {
+          sessionIds: ["stopping-session"],
+          scopeCode: "SESSION_FAMILY_STOP_IN_PROGRESS",
+          rootSessionId: "root-session",
+        },
+      },
+    });
+  });
+
+  test("DELETE returns stable 409 owner details for managed or HITL-bound Sessions", async () => {
+    const { app, project } = await createTestApp("delete-owner-conflict");
+
+    const res = await app.request(`/api/projects/${project.slug}/sessions/owned-session`, {
+      method: "DELETE",
+    });
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: {
+        code: "DELETE_CONFLICT",
+        message: "Unable to delete owned Session subtree: owned-session",
+        details: {
+          sessionIds: ["owned-session"],
+          scopeCode: "SESSION_DELETE_OWNER_CONFLICT",
+          owners: [
+            { sessionId: "owned-session", ownerType: "goal", ownerId: "goal-1" },
+            { sessionId: "owned-session", ownerType: "session_hitl", ownerId: "owned-session", hitlIds: ["hitl-1"] },
+          ],
+        },
+      },
+    });
   });
 
   test("session routes expose tree contracts and delete conflict across persisted hierarchy", async () => {

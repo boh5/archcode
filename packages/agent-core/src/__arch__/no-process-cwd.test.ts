@@ -7,7 +7,7 @@
  *   - src/agents/query/loop.ts  → MissingProjectContextError
  *   - src/agents/configured-agent.ts → MissingProjectContextError
  *   - src/agents/query/hooks/title-generation.ts → explicit workspaceRoot arg
- *   - src/tools/builtins/bash.ts → ctx.workspaceRoot via ProjectContext
+ *   - src/tools/builtins/bash.ts → ctx.cwd from the current Session
  *
  * This test locks in M5's win by failing if anyone reintroduces implicit cwd lookup
  * outside of .test.ts files or __test_tmp__/ test fixtures.

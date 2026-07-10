@@ -2,6 +2,7 @@ export type ServerErrorCode =
   | "PROJECT_NOT_FOUND"
   | "WORKSPACE_NOT_FOUND"
   | "SESSION_NOT_FOUND"
+  | "SESSION_CWD_INVALID"
   | "QUESTION_NOT_FOUND"
   | "PROJECT_SCOPED_HITL_REQUIRED"
   | "PERMISSION_TIMEOUT"
@@ -84,12 +85,12 @@ export class ConcurrentSessionLimitHttpError extends ServerError {
 }
 
 export class ConflictError extends ServerError {
-  constructor(sessionIds: string[], message?: string) {
+  constructor(sessionIds: string[], message?: string, details?: Record<string, unknown>) {
     super(
       "DELETE_CONFLICT",
       message ?? `Unable to delete session subtree; running sessions did not stop: ${sessionIds.join(", ")}`,
       409,
-      { sessionIds },
+      { sessionIds, ...details },
     );
     this.name = "ConflictError";
   }

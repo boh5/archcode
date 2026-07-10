@@ -145,6 +145,62 @@ describe("HitlOwnerStore", () => {
 
     await expectRejects(store.lookup("duplicated-file-hitl"), HitlRecordStateError);
   });
+
+  test("serializes reads with concurrent owner-file mutations", async () => {
+    const workspace = await mkdtemp(join(TMP_ROOT, "workspace-"));
+    const owner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "session", ownerId: crypto.randomUUID() };
+    const filePath = join(workspace, ".archcode", "sessions", owner.ownerId, "hitl.json");
+    const store = new HitlOwnerStore(filePath, owner);
+    for (let index = 0; index < 24; index += 1) {
+      await store.create(record(owner, `concurrent-read-${index}`, `concurrent-block-${index}`));
+    }
+
+    await Promise.all([
+      ...Array.from({ length: 12 }, (_, index) => (
+        new HitlOwnerStore(filePath, owner).complete(
+          `concurrent-read-${index}`,
+          "resolved",
+          { type: "question_answer", answers: ["done"] },
+        )
+      )),
+      ...Array.from({ length: 48 }, () => new HitlOwnerStore(filePath, owner).read()),
+    ]);
+
+    const file = await store.read();
+    expect(file.pending).toHaveLength(12);
+    expect(file.recentTerminal).toHaveLength(12);
+  });
+
+  test("serializes create claim and complete across store instances sharing one owner file", async () => {
+    const workspace = await mkdtemp(join(TMP_ROOT, "workspace-"));
+    const owner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "session", ownerId: crypto.randomUUID() };
+    const filePath = join(workspace, ".archcode", "sessions", owner.ownerId, "hitl.json");
+    const first = new HitlOwnerStore(filePath, owner);
+    const second = new HitlOwnerStore(filePath, owner);
+    const third = new HitlOwnerStore(filePath, owner);
+
+    await Promise.all([
+      first.create(record(owner, "hitl-create-a", "block-create-a")),
+      second.create(record(owner, "hitl-create-b", "block-create-b")),
+      third.create(record(owner, "hitl-create-c", "block-create-c")),
+    ]);
+
+    await Promise.all([
+      new HitlOwnerStore(filePath, owner).create(record(owner, "hitl-created-concurrently", "block-created-concurrently")),
+      new HitlOwnerStore(filePath, owner).claim("hitl-create-a", { type: "question_answer", answers: ["approved"] }),
+      new HitlOwnerStore(filePath, owner).complete("hitl-create-b", "resolved", { type: "question_answer", answers: ["done"] }),
+    ]);
+
+    const file = await new HitlOwnerStore(filePath, owner).read();
+    expect(file.pending.map((entry) => [entry.hitlId, entry.status]).sort()).toEqual([
+      ["hitl-create-a", "resume_claimed"],
+      ["hitl-create-c", "pending"],
+      ["hitl-created-concurrently", "pending"],
+    ]);
+    expect(file.recentTerminal.map((entry) => [entry.hitlId, entry.status])).toEqual([
+      ["hitl-create-b", "resolved"],
+    ]);
+  });
 });
 
 async function expectRejects(promise: Promise<unknown>, expectedError?: new (...args: never[]) => Error): Promise<void> {

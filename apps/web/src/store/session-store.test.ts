@@ -64,6 +64,39 @@ describe("web session store registry", () => {
     expect(childStore.getState()).not.toHaveProperty("subAgentDescriptions");
   });
 
+  test("tracks Session cwd from snapshots and formal cwd transition events", () => {
+    const store = createWebSessionStore("session-1", "demo");
+    store.getState().initializeFromSnapshot({ cwd: "/repo", eventCursor: -1 });
+    expect(store.getState().cwd).toBe("/repo");
+
+    store.getState().applyRemoteEnvelope(event(0, {
+      type: "session.cwd_changed",
+      previousCwd: "/repo",
+      cwd: "/repo.worktrees/session-1",
+    }));
+
+    expect(store.getState().cwd).toBe("/repo.worktrees/session-1");
+  });
+
+  test("does not infer Session cwd from worktree tool-result metadata", () => {
+    const store = createWebSessionStore("session-cwd-meta", "demo");
+    store.getState().initializeFromSnapshot({ cwd: "/repo", eventCursor: -1 });
+
+    store.getState().applyRemoteEnvelope({
+      ...event(0, {
+        type: "tool-result",
+        toolCallId: "worktree-enter-1",
+        toolName: "worktree_enter",
+        output: "changed",
+        isError: false,
+        meta: { sessionCwdChanged: true, previousCwd: "/repo", cwd: "/wrong-source" },
+      }),
+      sessionId: "session-cwd-meta",
+    });
+
+    expect(store.getState().cwd).toBe("/repo");
+  });
+
   test("projects child session links from remote events and snapshots", () => {
     const store = createWebSessionStore("session-1", "demo");
     const link = {

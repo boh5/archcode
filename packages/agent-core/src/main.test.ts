@@ -130,7 +130,7 @@ function makeContext(toolName: string, input: unknown): ToolExecutionContext {
     abort: new AbortController().signal,
     startedAt: 0,
     allowedTools: new Set([toolName]),
-    workspaceRoot,
+    cwd: workspaceRoot,
     projectContext: createTestProjectContext(workspaceRoot),
   };
 }

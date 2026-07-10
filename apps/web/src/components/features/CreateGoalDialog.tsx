@@ -23,11 +23,13 @@ export function CreateGoalDialog({ open, onClose, slug, onCreated }: CreateGoalD
 
   const [objective, setObjective] = useState("");
   const [acceptanceCriteria, setAcceptanceCriteria] = useState("");
+  const [useWorktree, setUseWorktree] = useState(false);
 
   useEffect(() => {
     if (open) {
       setObjective("");
       setAcceptanceCriteria("");
+      setUseWorktree(false);
     }
   }, [open]);
 
@@ -48,6 +50,7 @@ export function CreateGoalDialog({ open, onClose, slug, onCreated }: CreateGoalD
           slug,
           objective: trimmedObjective,
           acceptanceCriteria: trimmedAcceptanceCriteria,
+          useWorktree,
         },
         {
           onSuccess: (goal) => {
@@ -62,6 +65,7 @@ export function CreateGoalDialog({ open, onClose, slug, onCreated }: CreateGoalD
       slug,
       trimmedObjective,
       trimmedAcceptanceCriteria,
+      useWorktree,
       onCreated,
     ],
   );
@@ -129,6 +133,23 @@ export function CreateGoalDialog({ open, onClose, slug, onCreated }: CreateGoalD
                 className="w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none transition-colors duration-150 resize-y"
               />
             </div>
+
+            <label className="flex items-start gap-3 rounded-sm border border-border-subtle bg-bg-elevated px-3 py-3 cursor-pointer">
+              <input
+                id="new-goal-use-worktree"
+                type="checkbox"
+                checked={useWorktree}
+                onChange={(event) => setUseWorktree(event.target.checked)}
+                disabled={createGoal.isPending}
+                className="mt-0.5 h-4 w-4 accent-accent"
+              />
+              <span className="flex flex-col gap-0.5">
+                <span className="text-[13px] font-medium text-text-secondary">Isolated worktree</span>
+                <span className="text-[11.5px] text-text-muted">
+                  Run this Goal and its retries in a dedicated Git worktree. Disabled by default.
+                </span>
+              </span>
+            </label>
           </div>
 
           {errorMessage && (

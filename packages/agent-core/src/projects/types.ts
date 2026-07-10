@@ -1,5 +1,6 @@
 import { z } from "zod/v4";
 import type { GoalStateManager } from "../goals/state";
+import type { GoalCancellationCapability } from "../goals/cancellation";
 import type { HitlService } from "../hitl/service";
 import type { ResumeCoordinator } from "../hitl/resume-coordinator";
 import type { LoopStateManager } from "../loops/state";
@@ -23,6 +24,7 @@ export interface ProjectInfo {
 export interface ProjectContext {
   project: ProjectInfo;
   goalState: GoalStateManager;
+  goalCancellation?: GoalCancellationCapability;
   loopState: LoopStateManager;
   hitl: HitlService;
   hitlResumeCoordinator?: ResumeCoordinator;

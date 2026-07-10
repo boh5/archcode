@@ -4,6 +4,7 @@ import {
   beforeEach,
   describe,
   expect,
+  mock,
   test,
 } from "bun:test";
 import { storeManager } from "../../store/store";
@@ -12,6 +13,7 @@ import {
   mkdir,
   rm,
   stat,
+  symlink,
   utimes,
 } from "node:fs/promises";
 import path, { join } from "node:path";
@@ -28,6 +30,7 @@ import { fileEditTool } from "./file-edit";
 import { createTestProjectContext } from "../test-project-context";
 
 const testDir = join(import.meta.dir, "__test_tmp__", "file-edit");
+const canonicalProjectDir = join(import.meta.dir, "__test_tmp__", "file-edit-canonical-project");
 
 function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   return { store: createMockStore(),
@@ -38,7 +41,7 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
   abort: new AbortController().signal,
   startedAt: Date.now(),
   allowedTools: new Set(["file_edit"]),
-  workspaceRoot: testDir,
+  cwd: testDir,
   storeManager,
     projectContext: createTestProjectContext(testDir), ...overrides,  };
 }
@@ -85,7 +88,9 @@ function expectToolErrorKind(
 
 beforeEach(async () => {
   await rm(testDir, { recursive: true, force: true });
+  await rm(canonicalProjectDir, { recursive: true, force: true });
   await mkdir(testDir, { recursive: true });
+  await mkdir(canonicalProjectDir, { recursive: true });
 });
 
 afterEach(() => {
@@ -94,9 +99,39 @@ afterEach(() => {
 
 afterAll(async () => {
   await rm(testDir, { recursive: true, force: true });
+  await rm(canonicalProjectDir, { recursive: true, force: true });
 });
 
 describe("fileEditTool", () => {
+  test("hard-denies canonical project state through a worktree symlink", async () => {
+    const canonicalState = join(canonicalProjectDir, ".archcode");
+    const target = join(canonicalState, "blocked.txt");
+    const stateLink = join(testDir, "canonical-state");
+    await mkdir(canonicalState, { recursive: true });
+    await Bun.write(target, "before\n");
+    await symlink(canonicalState, stateLink);
+    const confirmPermission = mock(async () => "approve_once" as const);
+
+    const result = await executeThroughRegistry(
+      {
+        path: join(stateLink, "blocked.txt"),
+        edits: [{ oldString: "before", newString: "after" }],
+      },
+      makeCtx({
+        projectContext: createTestProjectContext(canonicalProjectDir),
+        store: await createReadStore(target),
+        confirmPermission,
+      }),
+    );
+
+    expectToolErrorKind(result, "permission-denied");
+    expect(result.meta?.[TOOL_ERROR_META_KEY]).toMatchObject({
+      code: "PROTECTED_PATH_WRITE_DENIED",
+    });
+    expect(confirmPermission).not.toHaveBeenCalled();
+    expect(await Bun.file(target).text()).toBe("before\n");
+  });
+
   test("successfully applies a single edit", async () => {
     await writeWorkspaceFile("single.txt", "hello world\n");
     const ctx = await makeReadCtx("single.txt");

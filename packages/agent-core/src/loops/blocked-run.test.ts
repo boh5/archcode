@@ -3,7 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createEmptySessionStats, type SessionEventEnvelope, type SessionExecutionRecord } from "@archcode/protocol";
 
-import type { ActiveSessionExecution, StartSessionExecutionInput } from "../execution";
+import type { ActiveSessionExecution, SessionCwdReferenceMigrationInput, SessionCwdRemovalLifecycle, SessionCwdRemovalResult, StartSessionExecutionInput } from "../execution";
 import type { SessionFile } from "../store/helpers";
 import { LoopJobCoordinator } from "./coordinator";
 import { LoopJobQueue } from "./job-queue";
@@ -37,7 +37,7 @@ afterAll(async () => {
 describe("blocked queued loop runs", () => {
   test("pending hitl Goal confirmation request maps to needs_user", async () => {
     const fixture = await createRunnerFixture({ events: [hitlRequestEvent("hitl-1")] });
-    const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
+    const loop = await fixture.stateManager.create("project-a", { ...sessionLoopConfig, useWorktree: false });
 
     const result = await fixture.runner.createSchedulerRunner()({
       loop,
@@ -54,9 +54,11 @@ describe("blocked queued loop runs", () => {
 
   test("loop-started Session ask_user hitl maps to needs_user with child blockedByHitlIds", async () => {
     const fixture = await createRunnerFixture({ blockedByHitlIds: ["session-hitl-1"] });
-    const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
+    const loop = await fixture.stateManager.create("project-a", { ...sessionLoopConfig, useWorktree: false });
 
     const result = await fixture.runner.createSchedulerRunner()({
+      checkpointBaseSha: async () => {},
+      checkpointWorktree: async () => {},
       loop,
       trigger: "manual",
       runId: "session-hitl-run",
@@ -80,6 +82,8 @@ describe("blocked queued loop runs", () => {
     const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
 
     const result = await fixture.runner.createSchedulerRunner()({
+      checkpointBaseSha: async () => {},
+      checkpointWorktree: async () => {},
       loop,
       trigger: "manual",
       runId: "dirty-run",
@@ -92,7 +96,6 @@ describe("blocked queued loop runs", () => {
     expect(worktreeManager.createMock).toHaveBeenCalledTimes(1);
     expect(fixture.runtime.createSessionMock).not.toHaveBeenCalled();
     expect(fixture.runtime.startSessionExecutionMock).not.toHaveBeenCalled();
-    expect(fixture.runtime.prepareSessionWorkspaceMock).not.toHaveBeenCalled();
   });
 
   test("scheduler writes canonical run-log and blocked job metadata from worktree result", async () => {
@@ -203,8 +206,6 @@ class FakeLoopRuntime {
     if (session === undefined) throw new Error(`Missing fake session ${sessionId}`);
     return session;
   });
-  readonly prepareSessionWorkspaceMock = mock(async (_workspaceRoot: string, _canonicalWorkspaceRoot: string): Promise<void> => {});
-  readonly releaseSessionWorkspaceMock = mock((_workspaceRoot: string, _sessionId?: string): void => {});
 
   constructor(
     private readonly events: SessionEventEnvelope[],
@@ -223,12 +224,15 @@ class FakeLoopRuntime {
     return this.startSessionExecutionMock(input);
   }
 
-  async prepareSessionWorkspace(workspaceRoot: string, canonicalWorkspaceRoot: string): Promise<void> {
-    await this.prepareSessionWorkspaceMock(workspaceRoot, canonicalWorkspaceRoot);
-  }
-
-  releaseSessionWorkspace(workspaceRoot: string, sessionId?: string): void {
-    this.releaseSessionWorkspaceMock(workspaceRoot, sessionId);
+  async migrateSessionCwdReferencesForRemoval<T extends SessionCwdRemovalResult>(
+    _input: SessionCwdReferenceMigrationInput,
+    operation: (lifecycle: SessionCwdRemovalLifecycle) => Promise<T>,
+  ): Promise<T> {
+    return await operation({
+      beforeRemove: async () => undefined,
+      onRemoveFailureBeforeDetach: async () => undefined,
+      onRemoveDetached: async () => undefined,
+    });
   }
 }
 

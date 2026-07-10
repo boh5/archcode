@@ -10,14 +10,21 @@ import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult, type FormattedToolEr
 import { ToolRegistry } from "../../registry";
 import type { ToolExecutionContext, ToolExecutionResult } from "../../types";
 import { lspDiagnosticsTool } from "./lsp-diagnostics";
-import { createTestProjectContext } from "../../test-project-context";
+import { createDurableTestSessionContext, createTestProjectContext } from "../../test-project-context";
 import { SessionHitlPause } from "../../../execution/session-hitl-pause";
 
 const testDir = path.join(import.meta.dir, "__test_tmp__", "lsp-diagnostics");
+const canonicalProjectDir = path.join(import.meta.dir, "__test_tmp__", "lsp-diagnostics-project");
 
 beforeEach(async () => {
-  await rm(testDir, { recursive: true, force: true });
-  await mkdir(testDir, { recursive: true });
+  await Promise.all([
+    rm(testDir, { recursive: true, force: true }),
+    rm(canonicalProjectDir, { recursive: true, force: true }),
+  ]);
+  await Promise.all([
+    mkdir(testDir, { recursive: true }),
+    mkdir(canonicalProjectDir, { recursive: true }),
+  ]);
 });
 
 afterEach(() => {
@@ -25,7 +32,10 @@ afterEach(() => {
 });
 
 afterAll(async () => {
-  await rm(testDir, { recursive: true, force: true });
+  await Promise.all([
+    rm(testDir, { recursive: true, force: true }),
+    rm(canonicalProjectDir, { recursive: true, force: true }),
+  ]);
 });
 
 describe("lspDiagnosticsTool", () => {
@@ -156,8 +166,13 @@ describe("lspDiagnosticsTool", () => {
     const registry = new ToolRegistry();
     registry.register(lspDiagnosticsTool);
     const sessionId = crypto.randomUUID();
-    const ctx = makeCtx({ toolName: "lsp_diagnostics", toolCallId: "call-1", input: { filePath: "../outside.ts" }, store: createMockStore({ sessionId }) });
-    await ctx.projectContext.hitl.load(testDir);
+    const durable = await createDurableTestSessionContext(canonicalProjectDir, sessionId, testDir);
+    const ctx = makeCtx({
+      toolName: "lsp_diagnostics",
+      toolCallId: "call-1",
+      input: { filePath: "../outside.ts" },
+      ...durable,
+    });
 
     try {
       await registry.execute(
@@ -375,9 +390,9 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
   abort: new AbortController().signal,
   startedAt: Date.now(),
   allowedTools: new Set(["lsp_diagnostics"]),
-  workspaceRoot: testDir,
+  cwd: testDir,
   storeManager,
-    projectContext: createTestProjectContext(testDir), ...overrides,  };
+    projectContext: createTestProjectContext(canonicalProjectDir), ...overrides,  };
 }
 
 class RecordingPool {

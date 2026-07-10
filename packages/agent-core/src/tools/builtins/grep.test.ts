@@ -37,7 +37,7 @@ function createMockCtx(overrides?: Partial<ToolExecutionContext>): ToolExecution
   agentName: "orchestrator-agent",
   startedAt: Date.now(),
   allowedTools: new Set(["grep"]),
-  workspaceRoot: "/workspace",
+  cwd: "/workspace",
   storeManager,
     projectContext: createTestProjectContext("/workspace"), ...overrides,  };
 }
@@ -92,6 +92,22 @@ describe("grep tool", () => {
   test("returns formatted results for successful search", async () => {
     const result = await tool.execute({ pattern: "hello" }, createMockCtx());
     expect(result).toBe("file1.ts:42:hello world\nfile2.ts:10:hello foo");
+  });
+
+  test("runs from execution cwd instead of the canonical project root", async () => {
+    const executionCwd = "/worktrees/session-grep";
+    let spawnedCwd: string | undefined;
+    setProcessRunnerForTest(mock((_argv: unknown, options: { cwd?: string }) => {
+      spawnedCwd = options.cwd;
+      return mockSpawnResult(sampleNdjson);
+    }) as NonNullable<Parameters<typeof setProcessRunnerForTest>[0]>);
+
+    await tool.execute({ pattern: "hello" }, createMockCtx({
+      cwd: executionCwd,
+      projectContext: createTestProjectContext("/canonical/project"),
+    }));
+
+    expect(spawnedCwd).toBe(executionCwd);
   });
 
   test("returns no matches message when result is empty", async () => {

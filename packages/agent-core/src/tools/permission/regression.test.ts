@@ -94,7 +94,7 @@ function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecuti
   abort: new AbortController().signal,
   startedAt: 0,
   allowedTools: new Set(["regression_tool"]),
-  workspaceRoot: WORKSPACE,
+  cwd: WORKSPACE,
   storeManager,
     projectContext: createTestProjectContext(WORKSPACE), ...overrides,  };
 }
@@ -294,6 +294,51 @@ describe("permission integration regressions", () => {
 });
 
 describe("bash permission bypass regressions", () => {
+  test("opaque interpreter execution cannot bypass worktree policy or persist approval", async () => {
+    const command = `python -c 'import subprocess; subprocess.run(["git", "work" + "tree", "remove", "../feature"])'`;
+    const decision = classify(command);
+    expect(decision).toMatchObject({
+      outcome: "ask",
+      ruleId: "ask-opaque-interpreter-execution",
+      approval: { eligible: false },
+    });
+    expect(decision.approval?.scope).toBeUndefined();
+
+    const manager = new ProjectApprovalManager(silentLogger);
+    const first = await executeWithConfirmation(
+      bashTool(),
+      { command },
+      "approve_always",
+      manager,
+    );
+    expect(first.result.isError).toBe(false);
+    expect(first.confirmPermission).toHaveBeenCalledTimes(1);
+    expect(first.confirmPermission.mock.calls[0]?.[0]?.approval?.eligible).toBe(false);
+    expect(manager.listApprovals()).toEqual([]);
+
+    const second = await executeWithConfirmation(
+      bashTool(),
+      { command },
+      "approve_once",
+      manager,
+    );
+    expect(second.result.isError).toBe(false);
+    expect(second.confirmPermission).toHaveBeenCalledTimes(1);
+    expect(manager.listApprovals()).toEqual([]);
+  });
+
+  test("direct worktree deny still wins over opaque interpreter confirmation", () => {
+    const decision = classify(
+      `node -e 'console.log("opaque")' && git worktree remove ../feature`,
+    );
+
+    expect(decision).toMatchObject({
+      outcome: "deny",
+      ruleId: "deny-direct-worktree-command",
+    });
+    expect(decision.approval).toBeUndefined();
+  });
+
   test(".archcode direct mutation and explicit permissions file reads are denied", async () => {
     for (const command of [
       "rm -rf .archcode/",

@@ -71,6 +71,7 @@ function sessionFile(messages: StoredMessage[], compression = createEmptyCompres
   return {
     sessionId: "session-1",
     createdAt: 100,
+    cwd: "/workspace",
     agentName: "orchestrator",
     title: null,
     messages,
@@ -90,6 +91,7 @@ function compressedSession(): SessionFile {
   const storeState: SessionStoreState = {
     sessionId: "session-1",
     createdAt: 100,
+    cwd: "/workspace",
     agentName: "orchestrator",
     title: null,
     messages,
@@ -117,6 +119,7 @@ function compressedSession(): SessionFile {
     eventOffset: 0,
     nextEventId: 0,
     append: () => undefined,
+    setCwd: () => undefined,
     setTitle: () => undefined,
     setParentSessionId: () => undefined,
     setGoalId: () => undefined,
@@ -138,6 +141,7 @@ function nestedCompressedSession(): SessionFile {
   const storeState: SessionStoreState = {
     sessionId: "session-1",
     createdAt: 100,
+    cwd: "/workspace",
     agentName: "orchestrator",
     title: null,
     messages,
@@ -165,6 +169,7 @@ function nestedCompressedSession(): SessionFile {
     eventOffset: 0,
     nextEventId: 0,
     append: () => undefined,
+    setCwd: () => undefined,
     setTitle: () => undefined,
     setParentSessionId: () => undefined,
     setGoalId: () => undefined,

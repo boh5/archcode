@@ -33,7 +33,7 @@ function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecuti
   abort: new AbortController().signal,
   startedAt: 0,
   allowedTools: new Set(["mcp__context7__resolve-library-id"]),
-  workspaceRoot: "/tmp",
+  cwd: "/tmp",
   storeManager,
     projectContext: createTestProjectContext("/tmp"), ...overrides,  };
 }

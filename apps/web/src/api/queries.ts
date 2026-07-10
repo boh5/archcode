@@ -45,7 +45,7 @@ export const queryKeys = {
   session: (slug: string, sessionId: string) => ["projects", slug, "sessions", sessionId] as const,
   focusedSession: (slug: string, sessionId: string) => ["projects", slug, "sessions", sessionId, "focused"] as const,
   tree: (slug: string, rootSessionId: string) => ["projects", slug, "sessions", rootSessionId, "tree"] as const,
-  diff: (slug: string) => ["projects", slug, "diff"] as const,
+  diff: (slug: string, sessionId?: string) => ["projects", slug, "diff", sessionId ?? "project"] as const,
   directories: {
     list: (path: string, limit?: number) => ["directories", "list", path, limit] as const,
     search: (query: string, limit?: number) => ["directories", "search", query, limit] as const,
@@ -195,12 +195,14 @@ export function activeGoalsQueryOptions() {
   });
 }
 
-export function diffQueryOptions(slug: string) {
+export function diffQueryOptions(slug: string, sessionId?: string) {
+  const scopedSessionId = sessionId?.trim() || undefined;
   return queryOptions({
-    queryKey: queryKeys.diff(slug),
+    queryKey: queryKeys.diff(slug, scopedSessionId),
     queryFn: async () => {
+      const query = scopedSessionId === undefined ? "" : `?sessionId=${encodeURIComponent(scopedSessionId)}`;
       const response = await apiFetch<{ files: DiffFile[] } | DiffFile[]>(
-        `/api/projects/${encodeURIComponent(slug)}/diff`,
+        `/api/projects/${encodeURIComponent(slug)}/diff${query}`,
       );
       return Array.isArray(response) ? response : response.files;
     },
@@ -282,8 +284,8 @@ export function useDashboardHitl() {
   };
 }
 
-export function useDiff(slug: string) {
-  return useQuery(diffQueryOptions(slug));
+export function useDiff(slug: string, sessionId?: string) {
+  return useQuery(diffQueryOptions(slug, sessionId));
 }
 
 export function useDirectoryList(path: string, limit?: number) {
@@ -484,6 +486,7 @@ function normalizeSessionSummary(session: SessionSummary): Session {
   return {
     id: session.sessionId,
     sessionId: session.sessionId,
+    cwd: session.cwd,
     rootSessionId: session.rootSessionId,
     parentSessionId: session.parentSessionId,
     title: session.title,

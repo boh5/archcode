@@ -46,7 +46,7 @@ function makeCtx(
   abort: new AbortController().signal,
   startedAt: Date.now(),
   allowedTools: new Set(["file_read", "file_edit", "file_write"]),
-  workspaceRoot: workspaceDir,
+  cwd: workspaceDir,
   storeManager,
     projectContext: createTestProjectContext(workspaceDir), ...overrides,  };
 }
@@ -103,7 +103,7 @@ describe("createReadSnapshotAfterHook", () => {
     const file = workspaceFile("after-hook-ok.txt");
     const realpath = realpathSync.native(file);
     const store = createMockStore();
-    const ctx = makeCtx({ store, input: { path: file }, workspaceRoot: workspaceDir });
+    const ctx = makeCtx({ store, input: { path: file }, cwd: workspaceDir });
 
     const hook = createReadSnapshotAfterHook();
     await hook(makeResult({ output: "content" }), ctx);
@@ -117,7 +117,7 @@ describe("createReadSnapshotAfterHook", () => {
   test("does NOT record on failed read (isError = true)", async () => {
     const file = workspaceFile("after-hook-fail.txt");
     const store = createMockStore();
-    const ctx = makeCtx({ store, input: { path: file }, workspaceRoot: workspaceDir });
+    const ctx = makeCtx({ store, input: { path: file }, cwd: workspaceDir });
 
     const hook = createReadSnapshotAfterHook();
     await hook(makeResult({ isError: true, output: "error" }), ctx);
@@ -128,7 +128,7 @@ describe("createReadSnapshotAfterHook", () => {
   test("does not modify the result object", async () => {
     const file = workspaceFile("after-hook-identity.txt");
     const store = createMockStore();
-    const ctx = makeCtx({ store, input: { path: file }, workspaceRoot: workspaceDir });
+    const ctx = makeCtx({ store, input: { path: file }, cwd: workspaceDir });
     const result = makeResult({ output: "hello" });
 
     const hook = createReadSnapshotAfterHook();
@@ -211,7 +211,7 @@ describe("LRU eviction", () => {
     const ctx = makeCtx({
       store,
       input: { path: file },
-      workspaceRoot: workspaceDir,
+      cwd: workspaceDir,
     projectContext: createTestProjectContext(workspaceDir),
     });
 
@@ -238,7 +238,7 @@ describe("LRU eviction", () => {
     const ctx = makeCtx({
       store,
       input: { path: file },
-      workspaceRoot: workspaceDir,
+      cwd: workspaceDir,
     projectContext: createTestProjectContext(workspaceDir),
     });
 

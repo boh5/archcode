@@ -41,6 +41,19 @@ describe("classifyCommand allowlist", () => {
     expect(outcome("git log --oneline")).toBe("allow");
   });
 
+  test("denies git worktree enumeration even though it is read-only", () => {
+    for (const command of [
+      "git worktree list",
+      "git worktree list --porcelain",
+      "command git worktree list --porcelain",
+      "env -- git worktree list --porcelain",
+      "sh -c 'git worktree list --porcelain'",
+    ]) {
+      const decision = classifyCommand(command, { workspaceRoot: workspaceDir });
+      expect(decision).toMatchObject({ outcome: "deny", ruleId: "deny-direct-worktree-command" });
+    }
+  });
+
   test("allows ls path arguments inside workspace", () => {
     expect(outcome("ls src")).toBe("allow");
   });
@@ -98,6 +111,55 @@ describe("classifyCommand denylist", () => {
     expect(outcome("pwd && sudo echo hi")).toBe("deny");
   });
 
+  test("denies direct git worktree lifecycle mutations", () => {
+    for (const command of [
+      "git worktree add ../feature -b feature",
+      "git worktree move ../feature ../renamed",
+      "git worktree remove ../feature",
+      "git worktree lock ../feature",
+      "git worktree unlock ../feature",
+      "git worktree prune",
+      "git worktree repair",
+    ]) {
+      const decision = classifyCommand(command, { workspaceRoot: workspaceDir });
+      expect(decision).toMatchObject({ outcome: "deny", ruleId: "deny-direct-worktree-command" });
+    }
+  });
+
+  test("hard-denies wrapped git worktree lifecycle mutations", () => {
+    for (const command of [
+      "command git worktree remove ../feature",
+      "env -- git worktree prune",
+      "GIT_OPTIONAL_LOCKS=0 git worktree add ../feature -b feature",
+      'bash -c "git worktree add ../feature -b feature"',
+      "sh -c 'git worktree repair'",
+    ]) {
+      const decision = classifyCommand(command, { workspaceRoot: workspaceDir });
+      expect(decision).toMatchObject({ outcome: "deny", ruleId: "deny-direct-worktree-command" });
+    }
+  });
+
+  test("hard-denies direct mutation of ArchCode-managed branch refs", () => {
+    for (const command of [
+      "git branch -d archcode/session/session-1",
+      "git branch -D archcode/loop/loop-1/job-1",
+      "git branch --delete archcode/goal/goal-1",
+      "git branch -m archcode/session/session-1 renamed",
+      "git branch -M old archcode/session/session-1",
+      "git branch -f archcode/session/session-1 HEAD",
+      "git branch -c archcode/session/session-1 copied",
+      "git branch -C source archcode/session/session-1",
+      "git update-ref -d refs/heads/archcode/session/session-1",
+      "git update-ref refs/heads/archcode/session/session-1 HEAD",
+      "command git update-ref -d refs/heads/archcode/session/session-1",
+      "env -- git branch -d archcode/session/session-1",
+      "sh -c 'git update-ref -d refs/heads/archcode/session/session-1'",
+    ]) {
+      const decision = classifyCommand(command, { workspaceRoot: workspaceDir });
+      expect(decision).toMatchObject({ outcome: "deny", ruleId: "deny-managed-worktree-ref-mutation" });
+    }
+  });
+
   test("asks for parser-uncertain command substitution", () => {
     expect(outcome("echo $(rm -rf .)")).toBe("ask");
   });
@@ -115,6 +177,8 @@ describe("classifyCommand ask cases", () => {
     expect(outcome("mkdir src/newdir")).toBe("ask");
     expect(outcome("cp src/main.ts src/copy.ts")).toBe("ask");
     expect(outcome("mv src/main.ts src/other.ts")).toBe("ask");
+    expect(outcome("git branch -d feature")).toBe("ask");
+    expect(outcome("git branch feature")).toBe("ask");
   });
 
   test("asks for redirection writes", () => {
@@ -130,6 +194,10 @@ describe("classifyCommand ask cases", () => {
 
   test("does not deny sudo text inside quoted parser-uncertain echo", () => {
     expect(outcome('echo "sudo echo hi"')).toBe("ask");
+  });
+
+  test("does not treat inert quoted worktree text as a lifecycle mutation", () => {
+    expect(outcome('echo "git worktree add ../feature"')).toBe("ask");
   });
 
   test("asks for read-only commands that may wait for stdin", () => {

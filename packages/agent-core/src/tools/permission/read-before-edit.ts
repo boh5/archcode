@@ -7,7 +7,7 @@ export function createReadBeforeEditPermission(): ToolPermission {
     const inputRecord = input as { path: string };
     const { resolved } = resolveAndValidatePath(
       inputRecord.path,
-      ctx.workspaceRoot,
+      ctx.cwd,
     );
 
     const snapshots = ctx.store.getState().readSnapshots;

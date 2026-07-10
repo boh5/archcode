@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { rmSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -177,6 +177,53 @@ describe("AgentRuntime Loop wiring", () => {
     expect(await unregisteredRuntimeView.loopState.read(unregisteredLoop.loopId)).toEqual(expect.objectContaining({ loopId: unregisteredLoop.loopId }));
   });
 
+  test("single-flights concurrent cold Loop scheduler construction", async () => {
+    const fixture = await createRuntimeFixture();
+    const originalResolve = fixture.runtime.contextResolver.resolve.bind(fixture.runtime.contextResolver);
+    const firstResolveEntered = createDeferred();
+    const releaseFirstResolve = createDeferred();
+    let resolveCalls = 0;
+    const resolve = mock(async (workspaceRoot: string) => {
+      resolveCalls += 1;
+      if (resolveCalls === 1) {
+        firstResolveEntered.resolve();
+        await releaseFirstResolve.promise;
+      }
+      return await originalResolve(workspaceRoot);
+    });
+    fixture.runtime.contextResolver.resolve = resolve;
+
+    const first = fixture.runtime.readLoopKillState(fixture.workspaceRoot);
+    await firstResolveEntered.promise;
+    const second = fixture.runtime.readLoopKillState(fixture.workspaceRoot);
+    await Bun.sleep(5);
+    releaseFirstResolve.resolve();
+    await Promise.all([first, second]);
+
+    // One scheduler build resolves the context once directly and once for its
+    // LoopRunner. A second cold build would double this to four calls.
+    expect(resolve).toHaveBeenCalledTimes(2);
+    await fixture.runtime.stopLoopSchedulers();
+  });
+
+  test("evicts a failed Loop scheduler build so a later call can retry", async () => {
+    const fixture = await createRuntimeFixture();
+    const originalResolve = fixture.runtime.contextResolver.resolve.bind(fixture.runtime.contextResolver);
+    let resolveCalls = 0;
+    fixture.runtime.contextResolver.resolve = mock(async (workspaceRoot: string) => {
+      resolveCalls += 1;
+      if (resolveCalls === 1) throw new Error("transient context failure");
+      return await originalResolve(workspaceRoot);
+    });
+
+    await expect(fixture.runtime.readLoopKillState(fixture.workspaceRoot))
+      .rejects.toThrow("transient context failure");
+    expect(await fixture.runtime.readLoopKillState(fixture.workspaceRoot))
+      .toEqual({ globalKillActive: false });
+    expect(resolveCalls).toBe(3);
+    await fixture.runtime.stopLoopSchedulers();
+  });
+
   test("scheduler shutdown clears timers and prevents scheduled runs", async () => {
     const fixture = await createRuntimeFixture({ now: 0 });
     await fixture.runtime.projectRegistry.add({ workspaceRoot: fixture.workspaceRoot, name: "Registered" });
@@ -217,6 +264,71 @@ describe("AgentRuntime Loop wiring", () => {
     expect(persisted.title).not.toBe(`Loop Goal: ${loop.config.title}`);
     expect(persisted.title).not.toBe(`Goal: ${loop.config.goalTemplate?.title}`);
     expect(persisted.executions).toEqual([expect.objectContaining({ status: "completed" })]);
+  });
+
+  test("worktree cleanup migrates the canonical Session cwd before deleting its checkout", async () => {
+    const fixture = await createRuntimeFixture();
+    await initializeGitRepo(fixture.workspaceRoot);
+    const loop = await fixture.runtime.createLoop(fixture.workspaceRoot, {
+      ...manualLoopConfig,
+      useWorktree: true,
+      cleanupPolicy: { deleteUnchangedWorktrees: true },
+    });
+
+    const report = await fixture.runtime.triggerLoopRun(fixture.workspaceRoot, loop.loopId);
+    const sessionId = report?.sessionId;
+    const worktreePath = report?.worktreePath;
+    if (sessionId === undefined || worktreePath === undefined) throw new Error("Expected cleaned Loop worktree session");
+
+    expect(report).toMatchObject({ status: "succeeded", cleanupState: "cleaned" });
+    expect((await fixture.runtime.getSessionFile(fixture.workspaceRoot, sessionId)).cwd).toBe(fixture.workspaceRoot);
+    expect(await pathExists(worktreePath)).toBe(false);
+  });
+
+  test("worktree cleanup migrates every old and retry Session that still references the checkout", async () => {
+    const fixture = await createRuntimeFixture();
+    await initializeGitRepo(fixture.workspaceRoot);
+    const loop = await fixture.runtime.createLoop(fixture.workspaceRoot, {
+      ...manualLoopConfig,
+      useWorktree: true,
+      cleanupPolicy: { deleteUnchangedWorktrees: true },
+    });
+    let oldSessionId: string | undefined;
+    setLlmAdapterForTest({
+      streamText: mock(() => ({
+        fullStream: (async function* () {
+          const retrySession = (await fixture.runtime.listSessions(fixture.workspaceRoot)).find(
+            (session) => session.loopId === loop.loopId && session.cwd !== fixture.workspaceRoot,
+          );
+          if (retrySession?.cwd === undefined) throw new Error("Expected retry Session to reference the Loop worktree");
+          const oldSession = await fixture.runtime.createSession(fixture.workspaceRoot, {
+            cwd: retrySession.cwd,
+            loopId: loop.loopId,
+            sessionRole: "main",
+            title: "Interrupted Loop attempt",
+          });
+          oldSessionId = oldSession.sessionId;
+          yield { type: "text-delta", text: "Loop retry complete." };
+        })(),
+        finishReason: Promise.resolve("stop"),
+        usage: Promise.resolve({ totalTokens: 1 }),
+        text: Promise.resolve("Loop retry complete."),
+        toolCalls: Promise.resolve([]),
+      })) as never,
+      generateText: mock(async () => ({ text: "Runtime retry loop" })) as never,
+    });
+
+    const report = await fixture.runtime.triggerLoopRun(fixture.workspaceRoot, loop.loopId);
+    const retrySessionId = report?.sessionId;
+    const worktreePath = report?.worktreePath;
+    if (retrySessionId === undefined || oldSessionId === undefined || worktreePath === undefined) {
+      throw new Error("Expected cleanup report and old Session");
+    }
+
+    expect(report).toMatchObject({ status: "succeeded", cleanupState: "cleaned" });
+    expect((await fixture.runtime.getSessionFile(fixture.workspaceRoot, retrySessionId)).cwd).toBe(fixture.workspaceRoot);
+    expect((await fixture.runtime.getSessionFile(fixture.workspaceRoot, oldSessionId)).cwd).toBe(fixture.workspaceRoot);
+    expect(await pathExists(worktreePath)).toBe(false);
   });
 
   test("triggerLoopRun rejects overlapping manual trigger through real scheduler without skipped report", async () => {
@@ -348,10 +460,40 @@ async function readPersistedSession(path: string): Promise<Record<string, unknow
       return JSON.parse(await readFile(path, "utf8"));
     } catch (error) {
       lastError = error;
-      await Promise.resolve();
+      await Bun.sleep(2);
     }
   }
   throw lastError;
+}
+
+async function initializeGitRepo(cwd: string): Promise<void> {
+  await git(cwd, ["init", "--initial-branch=main"]);
+  await git(cwd, ["config", "user.email", "runtime-loop@example.com"]);
+  await git(cwd, ["config", "user.name", "Runtime Loop"]);
+  await writeFile(join(cwd, "README.md"), "# Runtime Loop\n");
+  await git(cwd, ["add", "README.md"]);
+  await git(cwd, ["commit", "-m", "initial commit"]);
+}
+
+async function git(cwd: string, args: readonly string[]): Promise<string> {
+  const process = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe", env: { ...Bun.env, GIT_TERMINAL_PROMPT: "0" } });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(process.stdout).text(),
+    new Response(process.stderr).text(),
+    process.exited,
+  ]);
+  if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${stderr}`);
+  return stdout.trim();
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+    throw error;
+  }
 }
 
 function createDeferred<T = void>(): { promise: Promise<T>; resolve: (value: T) => void } {

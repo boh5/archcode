@@ -344,6 +344,11 @@ function validateCancelAction(record: HitlRecord): void {
 
 function nonPendingPreflight(record: HitlRecord, response: HitlResponse): { statusCode: 200 | 409; record: HitlRecord } | undefined {
   if (record.status === "pending") return undefined;
+  // A failed resume may represent a durable manual_unknown continuation. An
+  // explicit cancel is the user's acknowledgement that the external state was
+  // inspected; it must reach the adapter so the Session blocker can unwind
+  // without ever re-running the model.
+  if (record.status === "resume_failed" && response.type === "cancel") return undefined;
   if (record.response !== undefined) return { statusCode: responsesEquivalent(record.response, response) ? 200 : 409, record };
   if (TERMINAL_STATUSES.has(record.status)) return { statusCode: 409, record };
   throw new BadRequestError(`Cannot mutate HITL with status ${record.status}`);

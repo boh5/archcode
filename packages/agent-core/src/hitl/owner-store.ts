@@ -15,6 +15,7 @@ import { atomicWrite } from "../utils/safe-file";
 
 const ACTIVE_HITL_STATUSES = new Set<HitlStatus>(["pending", "resume_claimed", "resume_failed"]);
 const TERMINAL_HITL_STATUSES = new Set<HitlStatus>(["resolved", "cancelled"]);
+const ownerFileMutationLocks = new Map<string, Promise<void>>();
 
 const HitlOwnerKeySchema: z.ZodType<HitlOwnerKey> = z.strictObject({
   projectSlug: z.string().trim().min(1),
@@ -174,6 +175,12 @@ export class HitlOwnerStore {
   ) {}
 
   async read(): Promise<HitlFile> {
+    // Bun.file().text() can otherwise observe a concurrent commit before the
+    // replacement payload is fully readable, so readers share the RMW lock.
+    return await withOwnerFileMutationLock(this.filePath, async () => await this.#readUnlocked());
+  }
+
+  async #readUnlocked(): Promise<HitlFile> {
     const file = Bun.file(this.filePath);
     if (!(await file.exists())) return emptyHitlFile(this.owner);
 
@@ -184,6 +191,10 @@ export class HitlOwnerStore {
   }
 
   async write(file: HitlFile): Promise<void> {
+    await withOwnerFileMutationLock(this.filePath, async () => await this.#writeUnlocked(file));
+  }
+
+  async #writeUnlocked(file: HitlFile): Promise<void> {
     assertSameOwner(this.owner, file.owner);
     const parsed = HitlFileSchema.parse(file);
     assertUniqueHitlIds(parsed);
@@ -193,27 +204,29 @@ export class HitlOwnerStore {
   }
 
   async create(record: HitlRecord): Promise<HitlCreateResult> {
-    assertSameOwner(this.owner, record.owner);
-    const parsed = HitlRecordSchema.parse(record);
-    if (!ACTIVE_HITL_STATUSES.has(parsed.status)) {
-      throw new HitlRecordStateError(parsed.hitlId, `Cannot create non-active HITL record with status ${parsed.status}`);
-    }
+    return await withOwnerFileMutationLock(this.filePath, async () => {
+      assertSameOwner(this.owner, record.owner);
+      const parsed = HitlRecordSchema.parse(record);
+      if (!ACTIVE_HITL_STATUSES.has(parsed.status)) {
+        throw new HitlRecordStateError(parsed.hitlId, `Cannot create non-active HITL record with status ${parsed.status}`);
+      }
 
-    const file = await this.read();
-    const existing = file.pending.find((entry) => entry.blockingKey === parsed.blockingKey && ACTIVE_HITL_STATUSES.has(entry.status));
-    if (existing !== undefined) return { created: false, record: cloneRecord(existing), reason: "active_blocking_key_exists" };
+      const file = await this.#readUnlocked();
+      const existing = file.pending.find((entry) => entry.blockingKey === parsed.blockingKey && ACTIVE_HITL_STATUSES.has(entry.status));
+      if (existing !== undefined) return { created: false, record: cloneRecord(existing), reason: "active_blocking_key_exists" };
 
-    const hitlIdCollision = [...file.pending, ...file.recentTerminal].find((entry) => entry.hitlId === parsed.hitlId);
-    if (hitlIdCollision !== undefined) {
-      throw new HitlRecordStateError(parsed.hitlId, `Cannot create duplicate HITL id ${parsed.hitlId}`);
-    }
+      const hitlIdCollision = [...file.pending, ...file.recentTerminal].find((entry) => entry.hitlId === parsed.hitlId);
+      if (hitlIdCollision !== undefined) {
+        throw new HitlRecordStateError(parsed.hitlId, `Cannot create duplicate HITL id ${parsed.hitlId}`);
+      }
 
-    await this.write({
-      ...file,
-      pending: [...file.pending, parsed],
-      updatedAt: parsed.updatedAt,
+      await this.#writeUnlocked({
+        ...file,
+        pending: [...file.pending, parsed],
+        updatedAt: parsed.updatedAt,
+      });
+      return { created: true, record: cloneRecord(parsed) };
     });
-    return { created: true, record: cloneRecord(parsed) };
   }
 
   async list(): Promise<HitlRecord[]> {
@@ -229,102 +242,133 @@ export class HitlOwnerStore {
   }
 
   async claim(hitlId: string, response: HitlResponse, resume: HitlResumeMetadata = {}): Promise<HitlRecord> {
-    const file = await this.read();
-    const index = file.pending.findIndex((entry) => entry.hitlId === hitlId);
-    if (index === -1) throw new HitlRecordStateError(hitlId, "Cannot claim missing or terminal HITL record");
+    return await withOwnerFileMutationLock(this.filePath, async () => {
+      const file = await this.#readUnlocked();
+      const index = file.pending.findIndex((entry) => entry.hitlId === hitlId);
+      if (index === -1) throw new HitlRecordStateError(hitlId, "Cannot claim missing or terminal HITL record");
 
-    const current = file.pending[index]!;
-    if (!ACTIVE_HITL_STATUSES.has(current.status)) {
-      throw new HitlRecordStateError(hitlId, `Cannot claim HITL record with status ${current.status}`);
-    }
+      const current = file.pending[index]!;
+      if (!ACTIVE_HITL_STATUSES.has(current.status)) {
+        throw new HitlRecordStateError(hitlId, `Cannot claim HITL record with status ${current.status}`);
+      }
 
-    const now = new Date().toISOString();
-    const previousAttempt = current.resume?.attempt ?? current.resume?.attempts ?? 0;
-    const next = HitlRecordSchema.parse({
-      ...current,
-      status: "resume_claimed",
-      response,
-      resume: {
-        ...current.resume,
-        ...resume,
-        claimedAt: resume.claimedAt ?? now,
-        attempt: resume.attempt ?? (previousAttempt + 1),
-      },
-      updatedAt: now,
+      const now = new Date().toISOString();
+      const previousAttempt = current.resume?.attempt ?? current.resume?.attempts ?? 0;
+      const next = HitlRecordSchema.parse({
+        ...current,
+        status: "resume_claimed",
+        response,
+        resume: {
+          ...current.resume,
+          ...resume,
+          claimedAt: resume.claimedAt ?? now,
+          attempt: resume.attempt ?? (previousAttempt + 1),
+        },
+        updatedAt: now,
+      });
+      const pending = [...file.pending];
+      pending[index] = next;
+      await this.#writeUnlocked({ ...file, pending, updatedAt: now });
+      return cloneRecord(next);
     });
-    const pending = [...file.pending];
-    pending[index] = next;
-    await this.write({ ...file, pending, updatedAt: now });
-    return cloneRecord(next);
   }
 
   async markResumeFailed(hitlId: string, reason: string): Promise<HitlRecord> {
-    const file = await this.read();
-    const index = file.pending.findIndex((entry) => entry.hitlId === hitlId);
-    if (index === -1) throw new HitlRecordStateError(hitlId, "Cannot fail missing or terminal HITL record");
+    return await withOwnerFileMutationLock(this.filePath, async () => {
+      const file = await this.#readUnlocked();
+      const index = file.pending.findIndex((entry) => entry.hitlId === hitlId);
+      if (index === -1) throw new HitlRecordStateError(hitlId, "Cannot fail missing or terminal HITL record");
 
-    const current = file.pending[index]!;
-    const now = new Date().toISOString();
-    const next = HitlRecordSchema.parse({
-      ...current,
-      status: "resume_failed",
-      resume: {
-        ...current.resume,
-        failedAt: now,
-        failureReason: reason,
-        lastError: reason,
-      },
-      updatedAt: now,
+      const current = file.pending[index]!;
+      const now = new Date().toISOString();
+      const next = HitlRecordSchema.parse({
+        ...current,
+        status: "resume_failed",
+        resume: {
+          ...current.resume,
+          failedAt: now,
+          failureReason: reason,
+          lastError: reason,
+        },
+        updatedAt: now,
+      });
+      const pending = [...file.pending];
+      pending[index] = next;
+      await this.#writeUnlocked({ ...file, pending, updatedAt: now });
+      return cloneRecord(next);
     });
-    const pending = [...file.pending];
-    pending[index] = next;
-    await this.write({ ...file, pending, updatedAt: now });
-    return cloneRecord(next);
   }
 
   async complete(hitlId: string, status: Extract<HitlStatus, "resolved" | "cancelled">, response?: HitlResponse): Promise<HitlRecord> {
-    const file = await this.read();
-    const index = file.pending.findIndex((entry) => entry.hitlId === hitlId);
-    if (index === -1) throw new HitlRecordStateError(hitlId, "Cannot complete missing or terminal HITL record");
+    return await withOwnerFileMutationLock(this.filePath, async () => {
+      const file = await this.#readUnlocked();
+      const index = file.pending.findIndex((entry) => entry.hitlId === hitlId);
+      if (index === -1) throw new HitlRecordStateError(hitlId, "Cannot complete missing or terminal HITL record");
 
-    const now = new Date().toISOString();
-    const current = file.pending[index]!;
-    const next = HitlRecordSchema.parse({
-      ...current,
-      status,
-      response: response ?? current.response,
-      updatedAt: now,
-      resolvedAt: now,
+      const now = new Date().toISOString();
+      const current = file.pending[index]!;
+      const next = HitlRecordSchema.parse({
+        ...current,
+        status,
+        response: response ?? current.response,
+        updatedAt: now,
+        resolvedAt: now,
+      });
+      const pending = file.pending.filter((entry) => entry.hitlId !== hitlId);
+      await this.#writeUnlocked({
+        ...file,
+        pending,
+        recentTerminal: [...file.recentTerminal, next],
+        updatedAt: now,
+      });
+      return cloneRecord(next);
     });
-    const pending = file.pending.filter((entry) => entry.hitlId !== hitlId);
-    await this.write({
-      ...file,
-      pending,
-      recentTerminal: [...file.recentTerminal, next],
-      updatedAt: now,
-    });
-    return cloneRecord(next);
   }
 
   async cancelActive(reason: string, cancelledBy?: string): Promise<HitlRecord[]> {
-    const file = await this.read();
-    const now = new Date().toISOString();
-    const cancelled = file.pending.map((record) => HitlRecordSchema.parse({
-      ...record,
-      status: "cancelled",
-      response: { type: "cancel", reason, cancelledBy } satisfies HitlResponse,
-      updatedAt: now,
-      resolvedAt: now,
-    }));
-    if (cancelled.length === 0) return [];
+    return await withOwnerFileMutationLock(this.filePath, async () => {
+      const file = await this.#readUnlocked();
+      const now = new Date().toISOString();
+      const cancelled = file.pending.map((record) => HitlRecordSchema.parse({
+        ...record,
+        status: "cancelled",
+        response: { type: "cancel", reason, cancelledBy } satisfies HitlResponse,
+        updatedAt: now,
+        resolvedAt: now,
+      }));
+      if (cancelled.length === 0) return [];
 
-    await this.write({
-      ...file,
-      pending: [],
-      recentTerminal: [...file.recentTerminal, ...cancelled],
-      updatedAt: now,
+      await this.#writeUnlocked({
+        ...file,
+        pending: [],
+        recentTerminal: [...file.recentTerminal, ...cancelled],
+        updatedAt: now,
+      });
+      return cancelled.map(cloneRecord);
     });
-    return cancelled.map(cloneRecord);
+  }
+}
+
+/**
+ * Serializes owner-file read/modify/write sequences across store instances in
+ * this process. Deployments with multiple ArchCode processes still require an
+ * OS/distributed file lock.
+ */
+async function withOwnerFileMutationLock<T>(filePath: string, action: () => Promise<T>): Promise<T> {
+  const previous = ownerFileMutationLocks.get(filePath) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolveRelease) => {
+    release = resolveRelease;
+  });
+  const tail = previous.then(() => current, () => current);
+  ownerFileMutationLocks.set(filePath, tail);
+
+  await previous.catch(() => undefined);
+  try {
+    return await action();
+  } finally {
+    release();
+    if (ownerFileMutationLocks.get(filePath) === tail) ownerFileMutationLocks.delete(filePath);
   }
 }
 

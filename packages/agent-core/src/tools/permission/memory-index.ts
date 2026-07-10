@@ -23,10 +23,10 @@ export function createMemoryIndexPermission(): ToolPermission {
       return { outcome: "allow" };
     }
 
-    const inputAbsolute = resolve(ctx.workspaceRoot, data.path);
+    const inputAbsolute = resolve(ctx.cwd, data.path);
     const resolvedInput = resolveRealPath(inputAbsolute);
 
-    const expectedIndexPath = resolve(ctx.workspaceRoot, MEMORY_INDEX_SUFFIX);
+    const expectedIndexPath = resolve(ctx.cwd, MEMORY_INDEX_SUFFIX);
     const resolvedExpected = resolveRealPath(expectedIndexPath);
 
     if (resolvedInput === resolvedExpected) {

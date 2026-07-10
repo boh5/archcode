@@ -41,7 +41,7 @@ function createMockCtx(overrides?: Partial<ToolExecutionContext>): ToolExecution
   allowedTools: new Set(["glob"]),
   agentSkills: [],
   skillService: new SkillService({ builtinSkills: {} }),
-  workspaceRoot: "/workspace",
+  cwd: "/workspace",
   storeManager,
     projectContext: createTestProjectContext("/workspace"), ...overrides,  };
 }
@@ -120,6 +120,22 @@ describe("glob tool", () => {
 
     const result = await tool.execute({ pattern: "*.ts" }, createMockCtx());
     expect(result).toBe("c.ts\na.ts\nb.ts");
+  });
+
+  test("runs from execution cwd instead of the canonical project root", async () => {
+    const executionCwd = "/worktrees/session-glob";
+    let spawnedCwd: string | undefined;
+    setProcessRunnerForTest(mock((_argv: unknown, options: { cwd?: string }) => {
+      spawnedCwd = options.cwd;
+      return mockSpawnResult("file.ts\n");
+    }) as NonNullable<Parameters<typeof setProcessRunnerForTest>[0]>);
+
+    await tool.execute({ pattern: "*.ts" }, createMockCtx({
+      cwd: executionCwd,
+      projectContext: createTestProjectContext("/canonical/project"),
+    }));
+
+    expect(spawnedCwd).toBe(executionCwd);
   });
 
   test("respects path parameter", async () => {

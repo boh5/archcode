@@ -58,7 +58,8 @@ function createContext(projectContext: ProjectContext): ToolExecutionContext {
   allowedTools: new Set(["ctx_sensitive_tool"]),
   agentSkills: [],
   skillService: testSkillService,
-  projectContext, });
+  projectContext,
+  cwd: projectContext.project.workspaceRoot, });
 }
 
 function createSensitiveDescriptor(traits: ToolDescriptor["traits"] = { readOnly: false, destructive: false, concurrencySafe: false }): ToolDescriptor {

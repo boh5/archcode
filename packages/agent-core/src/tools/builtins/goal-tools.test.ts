@@ -1,10 +1,12 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { StoreApi } from "zustand";
 
 import { TOOL_GOAL_MANAGE, type GoalBlockerKind, type GoalReviewReceipt, type GoalState } from "@archcode/protocol";
 import { GoalStateManager } from "../../goals/state";
+import { GoalCancellationCleanupError } from "../../goals/cancellation";
+import { WorktreeService } from "../../worktrees";
 import { HitlService } from "../../hitl/service";
 import { LoopStateManager } from "../../loops/state";
 import { MemoryFileManager } from "../../memory/file-manager";
@@ -21,6 +23,7 @@ import { GoalManageInputSchema, goalManageTool } from "./goal-tools";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "goal-tools");
 const testSkillService = new SkillService({ builtinSkills: {} });
+const DEFAULT_GOAL_ID = "11111111-1111-4111-8111-111111111111";
 
 interface GoalManageCall {
   readonly method: string;
@@ -30,16 +33,24 @@ interface GoalManageCall {
 class SimplifiedGoalStateManagerMock {
   readonly calls: GoalManageCall[] = [];
 
+  constructor(private readonly readableGoal: GoalState = makeGoalState()) {}
+
+  async read(goalId: string): Promise<GoalState> {
+    return { ...this.readableGoal, id: goalId };
+  }
+
   async create(input: {
     projectId: string;
     objective: string;
     acceptanceCriteria: string;
+    useWorktree?: boolean;
   }): Promise<GoalState> {
     this.calls.push({ method: "create", payload: input });
     return makeGoalState({
       projectId: input.projectId,
       objective: input.objective,
       acceptanceCriteria: input.acceptanceCriteria,
+      useWorktree: input.useWorktree,
     });
   }
 
@@ -120,6 +131,7 @@ function mainStore(overrides: Partial<SessionStoreState> = {}): StoreApi<Session
     sessionId: "main-session",
     agentName: "orchestrator",
     sessionRole: "main",
+    goalId: DEFAULT_GOAL_ID,
     ...overrides,
   });
 }
@@ -150,6 +162,9 @@ function makeProjectContext(
       addedAt: new Date().toISOString(),
     },
     goalState: goalState as unknown as GoalStateManager,
+    goalCancellation: {
+      cancel: (goalId, request) => goalState.cancel(goalId, request.reason),
+    },
     loopState: new LoopStateManager(workspaceRoot),
     hitl: new HitlService(),
     memory: new MemoryFileManager({
@@ -164,6 +179,7 @@ function makeCtx(
   input: unknown,
   store: StoreApi<SessionStoreState>,
   projectContext: ProjectContext,
+  executionCwd = projectContext.project.workspaceRoot,
 ): ToolExecutionContext {
   return createToolExecutionContext({
     store,
@@ -179,6 +195,7 @@ function makeCtx(
     agentSkills: [],
     skillService: testSkillService,
     projectContext,
+    cwd: executionCwd,
   });
 }
 
@@ -213,7 +230,7 @@ function normalizeOutput(output: string | ToolExecutionResult): ToolExecutionRes
 
 function makeGoalState(overrides: Partial<GoalState> = {}): GoalState {
   return {
-    id: overrides.id ?? "11111111-1111-4111-8111-111111111111",
+    id: overrides.id ?? DEFAULT_GOAL_ID,
     projectId: "test-project",
     title: null,
     objective: "Simplify Goal tools.",
@@ -237,6 +254,32 @@ function validEvidenceRef() {
   };
 }
 
+async function initializeGitRepo(cwd: string): Promise<{ readonly firstSha: string; readonly baseSha: string }> {
+  await mkdir(cwd, { recursive: true });
+  await runGit(cwd, ["init", "--initial-branch=main"]);
+  await runGit(cwd, ["config", "user.email", "goal-tool@example.com"]);
+  await runGit(cwd, ["config", "user.name", "Goal Tool Test"]);
+  await writeFile(join(cwd, "README.md"), "# Goal tool claim\n");
+  await runGit(cwd, ["add", "README.md"]);
+  await runGit(cwd, ["commit", "-m", "initial commit"]);
+  const firstSha = await runGit(cwd, ["rev-parse", "HEAD"]);
+  await writeFile(join(cwd, "base.txt"), "Goal creation base\n");
+  await runGit(cwd, ["add", "base.txt"]);
+  await runGit(cwd, ["commit", "-m", "Goal creation base"]);
+  return { firstSha, baseSha: await runGit(cwd, ["rev-parse", "HEAD"]) };
+}
+
+async function runGit(cwd: string, args: readonly string[]): Promise<string> {
+  const process = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(process.stdout).text(),
+    new Response(process.stderr).text(),
+    process.exited,
+  ]);
+  if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${stderr}`);
+  return stdout.trim();
+}
+
 describe("goal_manage builtin tool", () => {
   it("exports only the simplified lifecycle descriptor from the goal-tools barrel", () => {
     expect(goalManageTool.name).toBe(TOOL_GOAL_MANAGE);
@@ -246,7 +289,7 @@ describe("goal_manage builtin tool", () => {
   it("accepts exactly the simplified action allowlist and rejects legacy fields", () => {
     const goalId = "11111111-1111-4111-8111-111111111111";
     const validCases = [
-      { action: "create", objective: "Do the thing", acceptanceCriteria: "It works" },
+      { action: "create", objective: "Do the thing", acceptanceCriteria: "It works", useWorktree: true },
       { action: "start", goalId },
       { action: "block", goalId, kind: "approval", summary: "Waiting on approval", hitlId: "hitl-1", source: "test", resumeStatus: "running" },
       { action: "resume", goalId, hitlId: "hitl-1" },
@@ -270,10 +313,10 @@ describe("goal_manage builtin tool", () => {
   });
 
   it("dispatches create/start/block/resume/begin_review/retry/cancel to the simplified manager", async () => {
-    const goalId = "11111111-1111-4111-8111-111111111111";
+    const goalId = DEFAULT_GOAL_ID;
     const goalState = new SimplifiedGoalStateManagerMock();
     const inputs = [
-      { action: "create", objective: "Do the thing", acceptanceCriteria: "It works" },
+      { action: "create", objective: "Do the thing", acceptanceCriteria: "It works", useWorktree: true },
       { action: "start", goalId },
       { action: "block", goalId, kind: "permission", summary: "Need permission", source: "tool", resumeStatus: "reviewing" },
       { action: "resume", goalId, hitlId: "hitl-1" },
@@ -296,6 +339,89 @@ describe("goal_manage builtin tool", () => {
       "retry",
       "cancel",
     ]);
+    expect(goalState.calls[0]?.payload).toEqual({
+      projectId: "test-project",
+      objective: "Do the thing",
+      acceptanceCriteria: "It works",
+      useWorktree: true,
+    });
+  });
+
+  it("marks self-cancellation as an explicit Session-family execution stop", async () => {
+    const goalState = new SimplifiedGoalStateManagerMock();
+
+    const { result } = await execute(
+      { action: "cancel", goalId: DEFAULT_GOAL_ID, reason: "Stop this Goal" },
+      { goalState },
+    );
+
+    expect(result).toMatchObject({
+      isError: false,
+      meta: {
+        executionControl: {
+          action: "stop_session_family",
+          reason: "goal_cancelled",
+        },
+      },
+    });
+  });
+
+  it("still stops the current Session family when cleanup fails after durable cancellation", async () => {
+    const goalState = new SimplifiedGoalStateManagerMock();
+    const input = { action: "cancel" as const, goalId: DEFAULT_GOAL_ID, reason: "Stop this Goal" };
+    const projectContext: ProjectContext = {
+      ...makeProjectContext(goalState),
+      goalCancellation: {
+        cancel: async () => {
+          const cancelled = makeGoalState({ id: DEFAULT_GOAL_ID, status: "cancelled" });
+          throw new GoalCancellationCleanupError(DEFAULT_GOAL_ID, cancelled, new Error("checkpoint cleanup failed"));
+        },
+      },
+    };
+
+    const output = await goalManageTool.execute(input, makeCtx(input, mainStore(), projectContext));
+    const result = normalizeOutput(output);
+
+    expect(result.isError).toBe(true);
+    expect(result.meta?.executionControl).toEqual({
+      action: "stop_session_family",
+      reason: "goal_cancelled_cleanup_incomplete",
+    });
+  });
+
+  it("keeps create available to an unbound main Session but rejects every targeted action across Goals", async () => {
+    const targetGoalId = DEFAULT_GOAL_ID;
+    const currentGoalId = "22222222-2222-4222-8222-222222222222";
+    const goalState = new SimplifiedGoalStateManagerMock();
+
+    const create = await execute(
+      { action: "create", objective: "Create a follow-up Goal", acceptanceCriteria: "The Goal is created" },
+      { store: mainStore({ goalId: undefined }), goalState },
+    );
+    expect(create.result.isError).toBe(false);
+    expect(goalState.calls.map((call) => call.method)).toEqual(["create"]);
+
+    const targetedInputs = [
+      { action: "start", goalId: targetGoalId },
+      { action: "block", goalId: targetGoalId, kind: "approval", summary: "Wait" },
+      { action: "resume", goalId: targetGoalId },
+      { action: "begin_review", goalId: targetGoalId },
+      { action: "retry", goalId: targetGoalId },
+      { action: "cancel", goalId: targetGoalId },
+    ] as const;
+
+    for (const input of targetedInputs) {
+      const { result } = await execute(input, {
+        store: mainStore({ goalId: currentGoalId }),
+        goalState,
+      });
+      expect(result.isError).toBe(true);
+      expect(inferToolErrorKindFromResult(result)).toBe("permission-denied");
+      expect(result.output).toContain("GOAL_CONTEXT_REQUIRED");
+      expect(result.output).toContain(currentGoalId);
+      expect(result.output).toContain(targetGoalId);
+    }
+    expect(goalState.calls.map((call) => call.method)).toEqual(["create"]);
   });
 
   it("enforces start claim ownership through the Goal state manager", async () => {
@@ -309,9 +435,9 @@ describe("goal_manage builtin tool", () => {
     });
     const input = { action: "start", goalId: created.id } as const;
 
-    const first = normalizeOutput(await goalManageTool.execute(input, makeCtx(input, mainStore({ sessionId: "main-session-a" }), projectContext)));
-    const second = normalizeOutput(await goalManageTool.execute(input, makeCtx(input, mainStore({ sessionId: "main-session-a" }), projectContext)));
-    const conflicting = normalizeOutput(await goalManageTool.execute(input, makeCtx(input, mainStore({ sessionId: "main-session-b" }), projectContext)));
+    const first = normalizeOutput(await goalManageTool.execute(input, makeCtx(input, mainStore({ sessionId: "main-session-a", goalId: created.id }), projectContext)));
+    const second = normalizeOutput(await goalManageTool.execute(input, makeCtx(input, mainStore({ sessionId: "main-session-a", goalId: created.id }), projectContext)));
+    const conflicting = normalizeOutput(await goalManageTool.execute(input, makeCtx(input, mainStore({ sessionId: "main-session-b", goalId: created.id }), projectContext)));
 
     expect(first.isError).toBe(false);
     expect(JSON.parse(first.output) as GoalState).toMatchObject({ status: "running", mainSessionId: "main-session-a" });
@@ -322,6 +448,107 @@ describe("goal_manage builtin tool", () => {
     expect(conflicting.output).toContain("Invalid goal transition running -> running");
     const persisted = await manager.read(created.id);
     expect(persisted).toMatchObject({ status: "running", mainSessionId: "main-session-a" });
+  });
+
+  it("denies start and retry when an isolated Goal Session is not executing in its persisted worktree", async () => {
+    const goalId = "11111111-1111-4111-8111-111111111111";
+    const worktreePath = join(TMP_DIR, "managed-goal-worktree");
+    const isolated = makeGoalState({
+      id: goalId,
+      useWorktree: true,
+      worktree: {
+        path: worktreePath,
+        branchName: "archcode/goal/11111111-111",
+        baseSha: "a".repeat(40),
+        createdAt: "2026-07-08T00:00:00.000Z",
+      },
+    });
+    const manager = new SimplifiedGoalStateManagerMock(isolated);
+    const context = makeProjectContext(manager, TMP_DIR);
+    const store = mainStore({ goalId });
+
+    for (const action of ["start", "retry"] as const) {
+      const input = { action, goalId };
+      const denied = normalizeOutput(await goalManageTool.execute(input, makeCtx(input, store, context)));
+      expect(denied).toMatchObject({ isError: true });
+      expect(denied.output).toContain("GOAL_WORKTREE_MISMATCH");
+    }
+    expect(manager.calls).toEqual([]);
+  });
+
+  it("validates the persisted Goal branch claim before lifecycle actions", async () => {
+    const goalId = crypto.randomUUID();
+    const workspaceRoot = join(TMP_DIR, `claim-${crypto.randomUUID()}`);
+    const { firstSha } = await initializeGitRepo(workspaceRoot);
+    const created = await new WorktreeService({ canonicalRoot: workspaceRoot }).create({
+      owner: { type: "goal", id: goalId },
+    });
+    const isolated = makeGoalState({
+      id: goalId,
+      useWorktree: true,
+      worktree: {
+        path: created.worktreePath,
+        branchName: created.branchName,
+        baseSha: created.baseSha,
+        createdAt: "2026-07-08T00:00:00.000Z",
+      },
+    });
+    const manager = new SimplifiedGoalStateManagerMock(isolated);
+    const context = makeProjectContext(manager, workspaceRoot);
+
+    await writeFile(join(created.worktreePath, "descendant.txt"), "committed descendant\n");
+    await runGit(created.worktreePath, ["add", "descendant.txt"]);
+    await runGit(created.worktreePath, ["commit", "-m", "Goal descendant"]);
+    await writeFile(join(created.worktreePath, "dirty.txt"), "in-progress review state\n");
+    const finalizeInput = {
+      action: "finalize_review",
+      goalId,
+      verdict: "DONE",
+      summary: "Validated descendant work.",
+      evidenceRefs: [validEvidenceRef()],
+    } as const;
+
+    const allowed = normalizeOutput(await goalManageTool.execute(
+      finalizeInput,
+      makeCtx(finalizeInput, reviewStore(goalId), context, created.worktreePath),
+    ));
+    expect(allowed.isError).toBe(false);
+    expect(manager.calls.map((call) => call.method)).toEqual(["finalizeReview"]);
+
+    await runGit(created.worktreePath, ["switch", "-c", "foreign-review-branch"]);
+    const wrongBranch = normalizeOutput(await goalManageTool.execute(
+      finalizeInput,
+      makeCtx(finalizeInput, reviewStore(goalId), context, created.worktreePath),
+    ));
+    expect(wrongBranch.isError).toBe(true);
+    expect(wrongBranch.output).toContain("GOAL_WORKTREE_CHANGED");
+    expect(manager.calls.map((call) => call.method)).toEqual(["finalizeReview"]);
+
+    await runGit(created.worktreePath, ["switch", created.branchName]);
+    await runGit(created.worktreePath, ["reset", "--hard", firstSha]);
+    const beginReviewInput = { action: "begin_review", goalId } as const;
+    const resetBehind = normalizeOutput(await goalManageTool.execute(
+      beginReviewInput,
+      makeCtx(beginReviewInput, mainStore({ goalId }), context, created.worktreePath),
+    ));
+    expect(resetBehind.isError).toBe(true);
+    expect(resetBehind.output).toContain("GOAL_WORKTREE_CHANGED");
+    expect(manager.calls.map((call) => call.method)).toEqual(["finalizeReview"]);
+  });
+
+  it("denies isolated Goal lifecycle claims before a worktree resource is prepared", async () => {
+    const goalId = "11111111-1111-4111-8111-111111111111";
+    const manager = new SimplifiedGoalStateManagerMock(makeGoalState({ id: goalId, useWorktree: true }));
+    const input = { action: "start", goalId } as const;
+
+    const result = normalizeOutput(await goalManageTool.execute(
+      input,
+      makeCtx(input, mainStore({ goalId }), makeProjectContext(manager, TMP_DIR)),
+    ));
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("GOAL_WORKTREE_REQUIRED");
+    expect(manager.calls).toEqual([]);
   });
 
   it("denies lifecycle actions for Reviewer sessions", async () => {

@@ -304,11 +304,39 @@ describe("hitl routes", () => {
     expect(cancelDuplicate.body.hitlId).toBe(cancellable.hitlId);
     expect(fixture.sessionResumeCalls()).toBe(2);
 
+    await waitForHitlStatus(context.hitl, cancellable.hitlId, "cancelled");
     const respondAfterCancel = await postJson<HitlMutationBody>(fixture.app, `/api/projects/${project.slug}/hitl/${cancellable.hitlId}/respond`, {
       answers: ["late answer"],
     });
     expect(respondAfterCancel.status).toBe(409);
     expect(respondAfterCancel.body.hitlId).toBe(cancellable.hitlId);
+  });
+
+  test("explicit cancel retries a resume_failed session HITL so its blocker can unwind", async () => {
+    const fixture = await createTestApp("resume-failed-cancel");
+    const project = await addProject(fixture.runtime, "resume-failed-cancel", "Resume Failed Project");
+    const context = await fixture.runtime.contextResolver.resolve(project.workspaceRoot);
+    const sessionId = await createSession(fixture, project, {});
+    const hitl = await createSessionHitl(context.hitl, project.slug, sessionId, "Unknown continuation");
+
+    await context.hitl.claim(hitl.hitlId, { type: "question_answer", answers: ["continue"] }, {
+      claimId: crypto.randomUUID(),
+      claimedAt: new Date().toISOString(),
+      intent: "respond",
+      attempt: 1,
+    });
+    await context.hitl.markResumeFailed(hitl.hitlId, "LLM continuation outcome is unknown");
+
+    const cancelled = await postJson<HitlMutationBody>(fixture.app, `/api/projects/${project.slug}/hitl/${hitl.hitlId}/cancel`, {
+      reason: "I inspected the external state; unlock without replaying",
+    });
+
+    expect(cancelled.status).toBe(200);
+    expect(cancelled.body.hitlId).toBe(hitl.hitlId);
+    expect(cancelled.body.status).toBe("resume_claimed");
+    expect(fixture.sessionResumeCalls()).toBe(1);
+
+    await waitForHitlStatus(context.hitl, hitl.hitlId, "cancelled");
   });
 });
 
@@ -339,6 +367,18 @@ async function waitForSessionFile(runtime: AgentRuntime, workspaceRoot: string, 
     }
   }
   throw lastError instanceof Error ? lastError : new Error(`Timed out waiting for session ${sessionId}`);
+}
+
+async function waitForHitlStatus(hitl: TestHitlService, hitlId: string, status: HitlRecord["status"]): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  let latest = "missing";
+  while (Date.now() < deadline) {
+    const lookup = await hitl.lookup(hitlId);
+    latest = lookup.status === "found" ? lookup.record.status : lookup.status;
+    if (latest === status) return;
+    await Bun.sleep(10);
+  }
+  throw new Error(`Timed out waiting for HITL ${hitlId} to become ${status}; latest status was ${latest}`);
 }
 
 async function createGoal(manager: GoalStateManager, projectSlug: string, title: string, loopId?: string) {

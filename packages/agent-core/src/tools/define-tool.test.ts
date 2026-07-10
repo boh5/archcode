@@ -25,7 +25,7 @@ function mockCtx(): ToolExecutionContext {
     allowedTools: new Set(),
     agentSkills: [],
     skillService: new SkillService({ builtinSkills: {} }),
-    workspaceRoot: "/tmp",
+    cwd: "/tmp",
     projectContext: createTestProjectContext("/tmp"),
   };
 }

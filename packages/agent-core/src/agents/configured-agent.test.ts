@@ -10,8 +10,13 @@ import { storeManager } from "../store/store";
 import { __setSessionsDirForTest } from "../store/sessions-dir";
 import { createRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
+import { worktreeEnterTool, worktreeExitTool } from "../tools/builtins/worktree";
 import { DELEGATION_TOOLS, EXPLORER_READ_ONLY_TOOLS, MAX_SUB_AGENT_DEPTH } from "./constants";
-import { ConfiguredAgent, UnknownExtraToolError } from "./configured-agent";
+import {
+  ConfiguredAgent,
+  IneligibleSessionWorktreeToolError,
+  UnknownExtraToolError,
+} from "./configured-agent";
 import { exploreAgentDefinition, orchestratorAgentDefinition } from "./definitions";
 import type { AgentDefinition } from "./factory-types";
 import { setLlmAdapterForTest } from "../llm/adapter";
@@ -21,6 +26,7 @@ import { silentLogger } from "../logger";
 import { GoalStateManager } from "../goals/state";
 
 const tmpRoot = join(import.meta.dir, "__test_tmp__", "configured-agent");
+const worktreeRoot = join(import.meta.dir, "__test_tmp__", "configured-agent-worktree");
 
 function createTestSkillService(): SkillService {
   return new SkillService({ builtinSkills: {} });
@@ -185,7 +191,8 @@ function createAgent(options: {
   store?: ReturnType<typeof storeManager.create>;
   btm?: RecordingBackgroundTaskManager;
   quotaEnforcer?: (directory: string) => Promise<void>;
-  workspaceRoot?: string;
+  projectRoot?: string;
+  cwd?: string;
   depth?: number;
   toolRegistry?: ReturnType<typeof makeToolRegistry>;
   providerRegistry?: ProviderRegistry;
@@ -206,7 +213,8 @@ function createAgent(options: {
     activeSkills: options.activeSkills,
     store: options.store ?? storeManager.create(`configured-agent-${crypto.randomUUID()}`),
     storeManager,
-    workspaceRoot: options.workspaceRoot ?? tmpRoot,
+    projectRoot: options.projectRoot ?? tmpRoot,
+    cwd: options.cwd ?? options.projectRoot ?? tmpRoot,
     depth: options.depth,
     backgroundTaskManager: options.btm as never,
     memoryConfig: options.memoryConfig,
@@ -228,6 +236,8 @@ describe("ConfiguredAgent", () => {
     await mkdir(join(tmpRoot, ".archcode", "memory"), { recursive: true });
     await writeFile(join(tmpRoot, ".archcode", "memory", "index.md"), "");
     await writeFile(join(tmpRoot, "AGENTS.md"), "# Test Project\n\nMinimal project context.");
+    await mkdir(worktreeRoot, { recursive: true });
+    await writeFile(join(worktreeRoot, "AGENTS.md"), "# Worktree Instructions\n\nUse the worktree checkout.");
     __setSessionsDirForTest(() => join(tmpRoot, "sessions"));
   });
 
@@ -238,6 +248,7 @@ describe("ConfiguredAgent", () => {
   afterAll(async () => {
     __setSessionsDirForTest(undefined);
     await rm(tmpRoot, { recursive: true, force: true });
+    await rm(worktreeRoot, { recursive: true, force: true });
   });
 
   test("orchestrator definition produces all configured lifecycle hooks", async () => {
@@ -277,7 +288,7 @@ describe("ConfiguredAgent", () => {
     expect(btm.drainCalls).toBe(1);
   });
 
-  test("throws MissingProjectContextError when workspaceRoot is not provided", () => {
+  test("throws MissingProjectContextError when projectRoot is not provided", () => {
     const providerRegistry = makeProviderRegistry();
 
     expect(() => new ConfiguredAgent({
@@ -353,6 +364,40 @@ describe("ConfiguredAgent", () => {
 
     expect(capturedContext?.agentSkills).toEqual(agentSkills);
     expect(capturedContext?.skillService).toBe(skillService);
+  });
+
+  test("uses Session cwd for prompt and tools while resolving project state from the canonical root", async () => {
+    let capturedContext: { cwd: string; projectRoot: string } | undefined;
+    const toolRegistry = createRegistry([{
+      name: "capture_workspace",
+      description: "Capture workspace roots",
+      inputSchema: z.object({}).strict(),
+      traits: { readOnly: true, destructive: false, concurrencySafe: false },
+      execute: (_input, ctx) => {
+        capturedContext = {
+          cwd: ctx.cwd,
+          projectRoot: ctx.projectContext.project.workspaceRoot,
+        };
+        return "captured";
+      },
+    } satisfies AnyToolDescriptor]);
+    const streamFn = setupToolCallStreamText("capture_workspace");
+    const agent = createAgent({
+      definition: definitionWith({ tools: { tools: ["capture_workspace"] } }),
+      toolRegistry,
+      projectRoot: tmpRoot,
+      cwd: worktreeRoot,
+    });
+
+    await agent.run("capture workspace context");
+
+    expect(capturedContext).toEqual({ cwd: worktreeRoot, projectRoot: tmpRoot });
+    const system = (streamFn.mock.calls[0]![0] as { system: string }).system;
+    expect(system).toContain(`Project root: ${tmpRoot}`);
+    expect(system).toContain(`Working directory: ${worktreeRoot}`);
+    expect(system).toContain("Execution mode: worktree");
+    expect(system).toContain("Use the worktree checkout.");
+    expect(system).not.toContain("Minimal project context.");
   });
 
   test("explorer definition produces auto-compact, auto-inject, and todo-continuation hooks", async () => {
@@ -549,6 +594,83 @@ describe("ConfiguredAgent", () => {
     expect(callArgs.system).toContain("- bash");
     expect(callArgs.system).not.toContain("github_get_pull_request");
     expect(callArgs.system).not.toContain("github_create_issue_comment");
+  });
+
+  test("exposes exactly one cwd transition to eligible interactive root Sessions", async () => {
+    const toolRegistry = createRegistry([
+      ...orchestratorAgentDefinition.tools.tools.map(makeTool),
+      worktreeEnterTool,
+      worktreeExitTool,
+    ]);
+
+    const rootStream = setupMockStreamText("root tools");
+    await createAgent({
+      definition: orchestratorAgentDefinition,
+      toolRegistry,
+      projectRoot: tmpRoot,
+      cwd: tmpRoot,
+    }).run("show root tools");
+    const rootSystem = (rootStream.mock.calls[0]![0] as { system: string }).system;
+    expect(rootSystem).toContain("- worktree_enter");
+    expect(rootSystem).not.toContain("- worktree_exit");
+
+    const worktreeStream = setupMockStreamText("worktree tools");
+    await createAgent({
+      definition: orchestratorAgentDefinition,
+      toolRegistry,
+      projectRoot: tmpRoot,
+      cwd: worktreeRoot,
+    }).run("show worktree tools");
+    const worktreeSystem = (worktreeStream.mock.calls[0]![0] as { system: string }).system;
+    expect(worktreeSystem).not.toContain("- worktree_enter");
+    expect(worktreeSystem).toContain("- worktree_exit");
+  });
+
+  test("does not expose cwd transitions to Goal-owned root Sessions", async () => {
+    const streamFn = setupMockStreamText("goal tools");
+    const toolRegistry = createRegistry([
+      ...orchestratorAgentDefinition.tools.tools.map(makeTool),
+      worktreeEnterTool,
+      worktreeExitTool,
+    ]);
+    const store = storeManager.create(`configured-goal-worktree-${crypto.randomUUID()}`, tmpRoot, {
+      goalId: crypto.randomUUID(),
+    });
+    await createAgent({
+      definition: orchestratorAgentDefinition,
+      toolRegistry,
+      store,
+      projectRoot: tmpRoot,
+      cwd: tmpRoot,
+    }).run("show goal tools");
+
+    const system = (streamFn.mock.calls[0]![0] as { system: string }).system;
+    expect(system).not.toContain("- worktree_enter");
+    expect(system).not.toContain("- worktree_exit");
+  });
+
+  test("extraTools cannot grant cwd transitions to an ineligible Session", async () => {
+    const streamFn = setupMockStreamText("should not run");
+    const toolRegistry = createRegistry([
+      ...orchestratorAgentDefinition.tools.tools.map(makeTool),
+      worktreeEnterTool,
+      worktreeExitTool,
+    ]);
+    const store = storeManager.create(`configured-goal-worktree-extra-${crypto.randomUUID()}`, tmpRoot, {
+      goalId: crypto.randomUUID(),
+    });
+    const agent = createAgent({
+      definition: orchestratorAgentDefinition,
+      toolRegistry,
+      store,
+      projectRoot: tmpRoot,
+      cwd: tmpRoot,
+    });
+
+    await expect(agent.run("enter a worktree", {
+      extraTools: ["worktree_enter"],
+    })).rejects.toThrow(IneligibleSessionWorktreeToolError);
+    expect(streamFn).not.toHaveBeenCalled();
   });
 
   test("extraTools add registered tools without narrowing baseline prompt tools", async () => {

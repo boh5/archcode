@@ -3,7 +3,12 @@ import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { CollisionLedger } from "./collision-ledger";
-import { LoopCleanupService, normalizeLoopCleanupPolicy, type LoopCleanupWorktreeManager } from "./cleanup";
+import {
+  LoopCleanupService,
+  normalizeLoopCleanupPolicy,
+  type LoopCleanupServiceOptions,
+  type LoopCleanupWorktreeManager,
+} from "./cleanup";
 import { LoopJobQueue, type LoopJobRecord } from "./job-queue";
 import { LoopStateManager, type LoopConfig, type LoopRunReport, type LoopRunReportStatus, type LoopState, type LoopWorktreeArtifact } from "./state";
 import { LoopWorktreeManager, type LoopWorktreeInspection } from "./worktree-manager";
@@ -77,6 +82,146 @@ describe("LoopCleanupService", () => {
     expect(afterLog).toHaveLength(1);
     expect(afterLog[0]?.runId).toBe(beforeLog[0]?.runId);
     expect(await fixture.jobQueue.read(job.jobId)).toMatchObject({ cleanupState: "cleaned" });
+  });
+
+  test("uses the Session-owned migration capability at the final removal boundary", async () => {
+    const repo = await createGitRepo("session-cwd-transition");
+    const worktreeManager = new LoopWorktreeManager({ canonicalRoot: repo });
+    const baseSha = await git(repo, ["rev-parse", "HEAD"]);
+    const created = await worktreeManager.create({ loopSlug: "cleanup", subjectSlug: "session-cwd", jobId: "session-cwd-job-123456", baseSha });
+    let migrationCalls = 0;
+    let migrationHeld = false;
+    let observedInput: Parameters<NonNullable<LoopCleanupServiceOptions["migrateSessionCwdReferencesForRemoval"]>>[0] | undefined;
+    const migrateSessionCwdReferencesForRemoval: NonNullable<LoopCleanupServiceOptions["migrateSessionCwdReferencesForRemoval"]> = async (input, operation) => {
+      migrationCalls += 1;
+      migrationHeld = true;
+      observedInput = input;
+      try {
+        const result = await operation({
+          beforeRemove: async () => {
+            expect(migrationHeld).toBe(true);
+            expect(await pathExists(input.fromCwd)).toBe(true);
+            expect(await git(repo, ["rev-parse", `refs/heads/${created.branchName}`])).toBe(baseSha);
+          },
+          onRemoveFailureBeforeDetach: async () => undefined,
+          onRemoveDetached: async () => undefined,
+        });
+        expect(await pathExists(input.fromCwd)).toBe(false);
+        return result;
+      } finally {
+        migrationHeld = false;
+      }
+    };
+    const fixture = await createFixture(repo, {
+      cleanupPolicy: { enabled: true, action: "mark", deleteUnchangedWorktrees: true, noFindingRuns: 10 },
+      worktreeManager,
+      migrateSessionCwdReferencesForRemoval,
+    });
+    const { job } = await appendJobAndReport(fixture, {
+      status: "succeeded",
+      reportStatus: "succeeded",
+      subjectKey: "manual:session-cwd",
+      sessionId: "session-loop-cleanup",
+      worktreePath: created.worktreePath,
+      baseSha,
+      resolvedHeadSha: created.resolvedHeadSha,
+      observedArtifacts: [{ path: `git:branch:${created.branchName}`, status: "observed" }],
+    });
+
+    const result = await fixture.service.scanLoop(fixture.loop.loopId);
+
+    expect(migrationCalls).toBe(1);
+    expect(migrationHeld).toBe(false);
+    expect(observedInput).toEqual({
+      projectRoot: repo,
+      fromCwd: created.worktreePath,
+      toCwd: repo,
+    });
+    expect(result.worktrees).toContainEqual(expect.objectContaining({ jobId: job.jobId, cleanupState: "cleaned", removed: true }));
+    expect(await pathExists(created.worktreePath)).toBe(false);
+  });
+
+  test("fails closed when the Session cwd reference migration capability is unavailable", async () => {
+    const repo = await createGitRepo("session-cwd-callback-missing");
+    const worktreeManager = new LoopWorktreeManager({ canonicalRoot: repo });
+    const baseSha = await git(repo, ["rev-parse", "HEAD"]);
+    const created = await worktreeManager.create({ loopSlug: "cleanup", subjectSlug: "missing-callback", jobId: "missing-callback-job-123456", baseSha });
+    const fixture = await createFixture(repo, {
+      cleanupPolicy: { enabled: true, action: "mark", deleteUnchangedWorktrees: true, noFindingRuns: 10 },
+      worktreeManager,
+      migrateSessionCwdReferencesForRemoval: null,
+    });
+    const { job } = await appendJobAndReport(fixture, {
+      status: "succeeded",
+      reportStatus: "succeeded",
+      subjectKey: "manual:missing-callback",
+      sessionId: "session-missing-callback",
+      worktreePath: created.worktreePath,
+      baseSha,
+      resolvedHeadSha: created.resolvedHeadSha,
+      observedArtifacts: [{ path: `git:branch:${created.branchName}`, status: "observed" }],
+    });
+
+    const result = await fixture.service.scanLoop(fixture.loop.loopId);
+
+    expect(result.decision).toBe("cleanup_failed");
+    expect(result.worktrees).toContainEqual(expect.objectContaining({
+      jobId: job.jobId,
+      cleanupState: "cleanup_failed",
+      removed: false,
+      reason: expect.stringContaining("Session cwd reference migration capability"),
+    }));
+    expect(await pathExists(created.worktreePath)).toBe(true);
+    expect(await git(repo, ["rev-parse", `refs/heads/${created.branchName}`])).toBe(baseSha);
+  });
+
+  test("preserves the worktree when Session cwd reference migration fails", async () => {
+    const repo = await createGitRepo("session-cwd-transition-failure");
+    const worktreeManager = new LoopWorktreeManager({ canonicalRoot: repo });
+    const baseSha = await git(repo, ["rev-parse", "HEAD"]);
+    const created = await worktreeManager.create({ loopSlug: "cleanup", subjectSlug: "transition-failure", jobId: "transition-failure-job-123456", baseSha });
+    let migrationReleased = false;
+    const migrateSessionCwdReferencesForRemoval: NonNullable<LoopCleanupServiceOptions["migrateSessionCwdReferencesForRemoval"]> = async (_input, operation) => {
+      try {
+        return await operation({
+          beforeRemove: async () => {
+            throw new Error("Session cwd changed concurrently");
+          },
+          onRemoveFailureBeforeDetach: async () => undefined,
+          onRemoveDetached: async () => undefined,
+        });
+      } finally {
+        migrationReleased = true;
+      }
+    };
+    const fixture = await createFixture(repo, {
+      cleanupPolicy: { enabled: true, action: "mark", deleteUnchangedWorktrees: true, noFindingRuns: 10 },
+      worktreeManager,
+      migrateSessionCwdReferencesForRemoval,
+    });
+    const { job } = await appendJobAndReport(fixture, {
+      status: "succeeded",
+      reportStatus: "succeeded",
+      subjectKey: "manual:transition-failure",
+      sessionId: "session-transition-failure",
+      worktreePath: created.worktreePath,
+      baseSha,
+      resolvedHeadSha: created.resolvedHeadSha,
+      observedArtifacts: [{ path: `git:branch:${created.branchName}`, status: "observed" }],
+    });
+
+    const result = await fixture.service.scanLoop(fixture.loop.loopId);
+
+    expect(migrationReleased).toBe(true);
+    expect(result.decision).toBe("cleanup_failed");
+    expect(result.worktrees).toContainEqual(expect.objectContaining({
+      jobId: job.jobId,
+      cleanupState: "cleanup_failed",
+      removed: false,
+      reason: "Session cwd changed concurrently",
+    }));
+    expect(await pathExists(created.worktreePath)).toBe(true);
+    expect(await git(repo, ["rev-parse", `refs/heads/${created.branchName}`])).toBe(baseSha);
   });
 
   test("preserves an unchanged worktree when deletion is not explicitly enabled", async () => {
@@ -319,6 +464,190 @@ describe("LoopCleanupService", () => {
     expect(state.loopId).toBe(fixture.loop.loopId);
     expect(await fixture.stateManager.readRunLog(fixture.loop.loopId)).toHaveLength(1);
   });
+
+  test("does not overwrite a newer terminal-job revision when cleanup fails", async () => {
+    const workspaceRoot = await createWorkspace("cleanup-stale-revision");
+    const worktreePath = join(workspaceRoot, "stale-revision-worktree");
+    await mkdir(worktreePath, { recursive: true });
+    let mutateBeforeFailure: () => Promise<void> = async () => {};
+    const worktreeManager: LoopCleanupWorktreeManager = {
+      inspect: async (input) => {
+        await mutateBeforeFailure();
+        throw new Error(`inspection failed for ${input.worktreePath}`);
+      },
+      cleanup: async () => {
+        throw new Error("cleanup must not run after inspection failure");
+      },
+    };
+    const fixture = await createFixture(workspaceRoot, {
+      cleanupPolicy: { enabled: true, action: "mark", deleteUnchangedWorktrees: true, noFindingRuns: 10 },
+      worktreeManager,
+    });
+    const { job } = await appendJobAndReport(fixture, {
+      status: "succeeded",
+      reportStatus: "succeeded",
+      subjectKey: "manual:stale-cleanup-revision",
+      worktreePath,
+      baseSha: "a".repeat(40),
+      resolvedHeadSha: "a".repeat(40),
+      observedArtifacts: [{ path: "git:branch:archcode/loop/cleanup/stale-revision", status: "observed" }],
+    });
+    mutateBeforeFailure = async () => {
+      await fixture.jobQueue.update(job.jobId, {
+        cleanupState: "preserved",
+        blockedReason: "review_required",
+      });
+    };
+
+    const result = await fixture.service.scanLoop(fixture.loop.loopId);
+
+    expect(result.decision).toBe("no_action");
+    expect(result.worktrees).toContainEqual(expect.objectContaining({
+      jobId: job.jobId,
+      cleanupState: "preserved",
+      removed: false,
+      reviewRequired: true,
+      reason: expect.stringContaining("changed during cleanup"),
+    }));
+    expect(await fixture.jobQueue.read(job.jobId)).toMatchObject({
+      cleanupState: "preserved",
+      blockedReason: "review_required",
+    });
+    expect((await fixture.stateManager.read(fixture.loop.loopId)).cleanupState).not.toBe("cleanup_failed");
+  });
+
+  test("cleanupJob reconciles an already-missing worktree without rerunning execution", async () => {
+    const repo = await createGitRepo("cleanup-saga-missing-path");
+    const worktreeManager = new LoopWorktreeManager({ canonicalRoot: repo });
+    const baseSha = await git(repo, ["rev-parse", "HEAD"]);
+    const created = await worktreeManager.create({
+      loopSlug: "cleanup",
+      subjectSlug: "missing",
+      jobId: "missing-path-job-123456",
+      baseSha,
+    });
+    const fixture = await createFixture(repo, {
+      cleanupPolicy: { enabled: true, deleteUnchangedWorktrees: true },
+      worktreeManager,
+    });
+    const { job } = await appendJobAndReport(fixture, {
+      status: "succeeded",
+      reportStatus: "succeeded",
+      subjectKey: "manual:missing-path",
+      worktreePath: created.worktreePath,
+      baseSha,
+      resolvedHeadSha: created.resolvedHeadSha,
+      observedArtifacts: [{ path: `git:branch:${created.branchName}`, status: "observed" }],
+    });
+    const intent = await fixture.jobQueue.update(job.jobId, { cleanupState: "in_progress" });
+    await rm(created.worktreePath, { recursive: true, force: true });
+
+    const result = await fixture.service.cleanupJob(intent.jobId);
+
+    expect(result).toMatchObject({ cleanupState: "cleaned", removed: true, cleanupWarning: expect.stringContaining("orphan branch") });
+    expect(await fixture.jobQueue.read(intent.jobId)).toMatchObject({
+      status: "succeeded",
+      cleanupState: "cleaned",
+      cleanupWarning: expect.stringContaining(created.branchName),
+    });
+    expect(await git(repo, ["rev-parse", `refs/heads/${created.branchName}`])).toBe(baseSha);
+  });
+
+  test("cleanupJob honors the enabled=false master switch even when deletion is configured", async () => {
+    const repo = await createGitRepo("cleanup-saga-disabled");
+    const worktreeManager = new LoopWorktreeManager({ canonicalRoot: repo });
+    const baseSha = await git(repo, ["rev-parse", "HEAD"]);
+    const created = await worktreeManager.create({
+      loopSlug: "cleanup",
+      subjectSlug: "disabled",
+      jobId: "disabled-job-123456",
+      baseSha,
+    });
+    const fixture = await createFixture(repo, {
+      cleanupPolicy: { enabled: false, deleteUnchangedWorktrees: true },
+      worktreeManager,
+    });
+    const { job } = await appendJobAndReport(fixture, {
+      status: "succeeded",
+      reportStatus: "succeeded",
+      subjectKey: "manual:disabled",
+      worktreePath: created.worktreePath,
+      worktreeBranchName: created.branchName,
+      baseSha,
+      resolvedHeadSha: created.resolvedHeadSha,
+    });
+    await fixture.jobQueue.update(job.jobId, { cleanupState: "in_progress" });
+
+    const result = await fixture.service.cleanupJob(job.jobId);
+
+    expect(result).toMatchObject({ cleanupState: "preserved", removed: false });
+    expect(await pathExists(created.worktreePath)).toBe(true);
+  });
+
+  test("cleanupJob records a detached worktree as cleaned when orphan branch deletion warns", async () => {
+    const workspace = await createWorkspace("cleanup-saga-branch-warning");
+    const worktreePath = join(workspace, "managed-worktree");
+    await mkdir(worktreePath, { recursive: true });
+    const branchName = "archcode/loop/cleanup/warning";
+    const baseSha = "d".repeat(40);
+    const manager: LoopCleanupWorktreeManager = {
+      inspect: async () => ({
+        worktreePath,
+        branchName,
+        baseSha,
+        headSha: baseSha,
+        status: { dirty: false, entries: [] },
+        untrackedFiles: [],
+        localCommitsAhead: 0,
+        changedRefs: [],
+        diffStats: { committed: "", workingTree: "" },
+        evidenceArtifacts: [],
+        hasChanges: false,
+      }),
+      cleanup: async (input) => {
+        await input.beforeRemove?.();
+        await input.onRemoveDetached?.();
+        return {
+          cleanupState: "cleaned",
+          removed: true,
+          reviewRequired: false,
+          reason: "branch delete failed",
+          worktreePath,
+          branchDeleted: false,
+          warning: {
+            code: "BRANCH_DELETE_FAILED",
+            branchName,
+            message: "expected ref changed",
+          },
+        };
+      },
+    };
+    const fixture = await createFixture(workspace, {
+      cleanupPolicy: { enabled: true, deleteUnchangedWorktrees: true },
+      worktreeManager: manager,
+    });
+    const { job } = await appendJobAndReport(fixture, {
+      status: "succeeded",
+      reportStatus: "succeeded",
+      subjectKey: "manual:branch-warning",
+      worktreePath,
+      baseSha,
+      resolvedHeadSha: baseSha,
+      observedArtifacts: [{ path: `git:branch:${branchName}`, status: "observed" }],
+    });
+    await fixture.jobQueue.update(job.jobId, { cleanupState: "in_progress" });
+
+    const result = await fixture.service.cleanupJob(job.jobId);
+
+    expect(result).toMatchObject({ cleanupState: "cleaned", removed: true, cleanupWarning: "expected ref changed" });
+    expect(await fixture.jobQueue.read(job.jobId)).toMatchObject({
+      cleanupState: "cleaned",
+      cleanupWarning: "expected ref changed",
+      observedArtifacts: expect.arrayContaining([
+        { path: `cleanup:orphan-branch:${branchName}`, status: "observed" },
+      ]),
+    });
+  });
 });
 
 interface Fixture {
@@ -332,6 +661,7 @@ interface Fixture {
 async function createFixture(workspaceRoot: string, options: {
   readonly cleanupPolicy?: Record<string, unknown>;
   readonly worktreeManager?: LoopCleanupWorktreeManager;
+  readonly migrateSessionCwdReferencesForRemoval?: LoopCleanupServiceOptions["migrateSessionCwdReferencesForRemoval"] | null;
 } = {}): Promise<Fixture> {
   const stateManager = new LoopStateManager(workspaceRoot);
   const jobQueue = new LoopJobQueue({ workspaceRoot, clock: { now: () => START } });
@@ -340,20 +670,38 @@ async function createFixture(workspaceRoot: string, options: {
     stateManager,
     jobQueue,
     collisionLedger,
+    workspaceRoot,
     clock: { now: () => START },
     ...(options.worktreeManager === undefined ? {} : { worktreeManager: options.worktreeManager }),
+    ...(options.migrateSessionCwdReferencesForRemoval === null
+      ? {}
+      : {
+        migrateSessionCwdReferencesForRemoval: options.migrateSessionCwdReferencesForRemoval
+          ?? runWithoutSessionCwdReferences,
+      }),
   });
   const config = { ...baseConfig, ...(options.cleanupPolicy === undefined ? {} : { cleanupPolicy: options.cleanupPolicy }) };
   const loop = await stateManager.create("project-a", config as LoopConfig);
   return { stateManager, jobQueue, collisionLedger, service, loop };
 }
 
+const runWithoutSessionCwdReferences: NonNullable<LoopCleanupServiceOptions["migrateSessionCwdReferencesForRemoval"]> = async (
+  _input,
+  operation,
+) => await operation({
+  beforeRemove: async () => undefined,
+  onRemoveFailureBeforeDetach: async () => undefined,
+  onRemoveDetached: async () => undefined,
+});
+
 async function appendJobAndReport(fixture: Fixture, input: {
   readonly status: LoopJobRecord["status"];
   readonly reportStatus: LoopRunReportStatus;
   readonly subjectKey: string;
+  readonly sessionId?: string;
   readonly blockedReason?: string;
   readonly worktreePath?: string;
+  readonly worktreeBranchName?: string;
   readonly baseSha?: string;
   readonly resolvedHeadSha?: string;
   readonly observedArtifacts?: LoopWorktreeArtifact[];
@@ -363,6 +711,7 @@ async function appendJobAndReport(fixture: Fixture, input: {
     triggerKind: "manual",
     subjectKey: input.subjectKey,
     worktreePath: input.worktreePath,
+    worktreeBranchName: input.worktreeBranchName,
     baseSha: input.baseSha,
     resolvedHeadSha: input.resolvedHeadSha,
   });
@@ -372,6 +721,7 @@ async function appendJobAndReport(fixture: Fixture, input: {
     endedAt: START + 100,
     blockedReason: input.blockedReason,
     worktreePath: input.worktreePath,
+    worktreeBranchName: input.worktreeBranchName,
     baseSha: input.baseSha,
     resolvedHeadSha: input.resolvedHeadSha,
     observedArtifacts: input.observedArtifacts,
@@ -383,12 +733,14 @@ async function appendJobAndReport(fixture: Fixture, input: {
     trigger: "manual",
     startedAt: START,
     endedAt: START + 100,
+    sessionId: input.sessionId,
     jobId: job.jobId,
     triggerKind: job.triggerKind,
     subjectKey: job.subjectKey,
     dedupeKey: job.dedupeKey,
     blockedReason: input.blockedReason,
     worktreePath: input.worktreePath,
+    worktreeBranchName: input.worktreeBranchName,
     baseSha: input.baseSha,
     resolvedHeadSha: input.resolvedHeadSha,
     observedArtifacts: input.observedArtifacts,

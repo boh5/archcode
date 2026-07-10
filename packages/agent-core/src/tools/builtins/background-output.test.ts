@@ -41,7 +41,7 @@ function makeContext(parentId = crypto.randomUUID()): ToolExecutionContext {
     abort: new AbortController().signal,
     startedAt: 0,
     allowedTools: new Set(["background_output"]),
-    workspaceRoot,
+    cwd: workspaceRoot,
     projectContext: createTestProjectContext(workspaceRoot),
   };
 }

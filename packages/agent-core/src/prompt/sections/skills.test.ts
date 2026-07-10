@@ -7,12 +7,12 @@ function makeCtx(
   overrides?: Partial<Pick<PromptContext, "availableSkills" | "activeSkills">>,
 ): PromptContext {
   return { allowedTools: [],
-  workspaceRoot: "/workspace",
   promptProfileId: "test",
   env: {
     platform: "darwin",
     timezone: "America/Los_Angeles",
     locale: "en-US",
+    projectRoot: "/workspace",
     cwd: "/workspace",
     date: "2026-05-25",
   }, ...overrides,  };

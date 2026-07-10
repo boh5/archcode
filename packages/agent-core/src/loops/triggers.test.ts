@@ -102,7 +102,8 @@ describe("LoopTriggerPoller", () => {
       rerunAfterCurrent: true,
       subjectKey: "commit:test-owner/test-repo:main",
       dedupeKey: `${loop.loopId}:on_commit:commit:test-owner/test-repo:main`,
-      resolvedHeadSha: newSha,
+      resolvedHeadSha: oldSha,
+      rerunInput: { resolvedHeadSha: newSha },
     });
     expect(jobs[0]?.eventSummaries.map((entry) => entry.payloadSha)).toEqual([oldSha, newSha]);
     expect(jobs[0]?.eventSummaries.map((entry) => entry.summary)).toEqual([

@@ -80,6 +80,7 @@ export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionCo
       background: input.background ?? false,
       currentDepth: ctx.currentDepth ?? 0,
       parentAbort: ctx.abort,
+      ...(ctx.origin === undefined ? {} : { origin: ctx.origin }),
     });
   } catch (error) {
     const safeError = error instanceof Error ? error : new Error(String(error));
@@ -123,7 +124,7 @@ async function executeResumeDelegate(input: DelegateInput, ctx: ToolExecutionCon
 
   let handle: ChildExecutionHandle;
   try {
-    handle = await ctx.resumeChildSession(ctx.workspaceRoot, {
+    handle = await ctx.resumeChildSession(ctx.projectContext.project.workspaceRoot, {
       parentStore: ctx.store,
       parentSessionId: ctx.store.getState().sessionId,
       parentToolCallId: ctx.toolCallId,
@@ -134,6 +135,7 @@ async function executeResumeDelegate(input: DelegateInput, ctx: ToolExecutionCon
       background: input.background ?? false,
       currentDepth: ctx.currentDepth ?? 0,
       parentAbort: ctx.abort,
+      ...(ctx.origin === undefined ? {} : { origin: ctx.origin }),
     });
   } catch (error) {
     const safeError = error instanceof Error ? error : new Error(String(error));

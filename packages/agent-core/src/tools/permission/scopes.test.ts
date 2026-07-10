@@ -20,7 +20,7 @@ describe("deriveApprovalScope", () => {
     expect(deriveApprovalScope({
       operation: "read",
       path: ".env",
-      workspaceRoot: WORKSPACE,
+      cwd: WORKSPACE,
       reason: 'File ".env" is a sensitive file.',
     })).toEqual({
       kind: "file-path",
@@ -34,7 +34,7 @@ describe("deriveApprovalScope", () => {
     expect(deriveApprovalScope({
       operation: "read",
       path: ".env.example",
-      workspaceRoot: WORKSPACE,
+      cwd: WORKSPACE,
     })).toBeUndefined();
   });
 
@@ -45,7 +45,7 @@ describe("deriveApprovalScope", () => {
       expect(deriveApprovalScope({
         operation,
         path: outsidePath,
-        workspaceRoot: WORKSPACE,
+        cwd: WORKSPACE,
         reason: `"${outsidePath}" is outside workspace "${WORKSPACE}" [TOOL_FILE_OUTSIDE_WORKSPACE]`,
       })).toEqual({
         kind: "file-path",
@@ -60,7 +60,7 @@ describe("deriveApprovalScope", () => {
     const scope = deriveApprovalScope({
       operation: "read",
       path: join(TMP_DIR, "outside-dir", "child.txt"),
-      workspaceRoot: WORKSPACE,
+      cwd: WORKSPACE,
       reason: "outside workspace",
     });
 
@@ -72,7 +72,7 @@ describe("deriveApprovalScope", () => {
     expect(deriveApprovalScope({
       operation: "write",
       path: "src/main.ts",
-      workspaceRoot: WORKSPACE,
+      cwd: WORKSPACE,
       reason: "file exists",
     })).toBeUndefined();
   });

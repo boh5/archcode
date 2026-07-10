@@ -16,6 +16,8 @@ import type { Agent } from "./types";
 import type { SlashCommandResult } from "../commands/types";
 import type { Logger } from "../logger";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
+import { assertValidSessionCwd } from "../store/session-cwd";
+import { SessionFileNotFoundError } from "../store/errors";
 
 export interface SessionAgentManagerConfig {
   readonly definitions: readonly AgentDefinition[];
@@ -31,6 +33,7 @@ export interface SessionAgentManagerConfig {
   readonly cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
   readonly resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
   readonly abortSessionExecutionAndWait?: (workspaceRoot: string, sessionId: string) => Promise<void>;
+  readonly acquireSessionCwdTransition?: (workspaceRoot: string, sessionId: string) => () => void;
   readonly logger: Logger;
 }
 
@@ -51,6 +54,7 @@ export class SessionAgentManager {
   #cancelChildSession: SessionAgentManagerConfig["cancelChildSession"];
   #resumeChildSession: SessionAgentManagerConfig["resumeChildSession"];
   #abortSessionExecutionAndWait: SessionAgentManagerConfig["abortSessionExecutionAndWait"];
+  #acquireSessionCwdTransition: SessionAgentManagerConfig["acquireSessionCwdTransition"];
 
   constructor(config: SessionAgentManagerConfig) {
     this.#config = config;
@@ -60,6 +64,7 @@ export class SessionAgentManager {
     this.#cancelChildSession = config.cancelChildSession;
     this.#resumeChildSession = config.resumeChildSession;
     this.#abortSessionExecutionAndWait = config.abortSessionExecutionAndWait;
+    this.#acquireSessionCwdTransition = config.acquireSessionCwdTransition;
     this.maxConcurrentSessions = config.maxConcurrentSessions ?? 4;
     this.tombstoneTtlMs = config.tombstoneTtlMs ?? DEFAULT_TOMBSTONE_TTL_MS;
   }
@@ -80,6 +85,10 @@ export class SessionAgentManager {
     this.#abortSessionExecutionAndWait = callback;
   }
 
+  setAcquireSessionCwdTransition(callback: SessionAgentManagerConfig["acquireSessionCwdTransition"]): void {
+    this.#acquireSessionCwdTransition = callback;
+  }
+
   async getOrCreate(workspaceRoot: string, sessionId: string, agentName?: string): Promise<Agent> {
     const key = scopedKey(workspaceRoot, sessionId);
     if (this.#isTombstonedKey(key)) {
@@ -87,7 +96,12 @@ export class SessionAgentManager {
     }
 
     const existing = this.#agents.get(key);
-    if (existing) return existing;
+    if (existing) {
+      const currentCwd = existing.store.getState().cwd;
+      if (existing.cwd === undefined || existing.cwd === currentCwd) return existing;
+      existing.dispose();
+      this.#agents.delete(key);
+    }
 
     const pending = this.#pendingAgents.get(key);
     if (pending) return pending;
@@ -113,15 +127,17 @@ export class SessionAgentManager {
   }
 
   async #createAgent(workspaceRoot: string, sessionId: string, requestedAgentName?: string): Promise<Agent> {
-    const factory = this.getFactory(workspaceRoot);
     let store: StoreApi<SessionStoreState>;
     try {
       store = await this.#storeManager.getOrLoad(sessionId, workspaceRoot);
-    } catch {
+    } catch (error) {
+      if (!(error instanceof SessionFileNotFoundError)) throw error;
       store = this.#storeManager.create(sessionId, workspaceRoot);
     }
+    const factory = this.getFactory(workspaceRoot);
     const agentName = requestedAgentName ?? store.getState().agentName ?? "orchestrator";
-    return factory.createRootAgent(agentName, { store });
+    const cwd = await this.#validateSessionCwd(workspaceRoot, store.getState().cwd);
+    return factory.createRootAgent(agentName, { store, cwd });
   }
 
   createChildAgent(input: {
@@ -141,6 +157,7 @@ export class SessionAgentManager {
     const factory = this.getFactory(input.workspaceRoot);
     const agent = factory.createAgent(input.agentName, {
       store: input.store,
+      cwd: input.store.getState().cwd,
       depth: input.depth,
       parentSessionId: input.parentSessionId,
       ...(input.title === undefined ? {} : { title: input.title }),
@@ -160,7 +177,17 @@ export class SessionAgentManager {
     name: string,
     args?: string,
   ): Promise<SlashCommandResult | null> {
-    const agent = this.get(workspaceRoot, sessionId);
+    const key = scopedKey(workspaceRoot, sessionId);
+    let agent = this.#agents.get(key);
+    if (!agent) {
+      // SessionExecutionManager publishes the execution claim before Agent
+      // construction finishes. Join only that existing registration so an
+      // immediate command cannot observe a false 404, while an idle command
+      // still cannot create an Agent as a side effect.
+      const pending = this.#pendingAgents.get(key);
+      if (!pending) return null;
+      agent = await pending;
+    }
     if (!agent?.dispatchCommand) return null;
 
     return await agent.dispatchCommand(name, args);
@@ -187,6 +214,15 @@ export class SessionAgentManager {
     this.#agents.delete(key);
     this.#pendingAgents.delete(key);
     this.#storeManager.delete(sessionId, workspaceRoot);
+  }
+
+  /** Dispose only the cached Agent runtime while preserving the canonical Session store. */
+  releaseAgent(workspaceRoot: string, sessionId: string): void {
+    const key = scopedKey(workspaceRoot, sessionId);
+    const agent = this.#agents.get(key);
+    agent?.dispose();
+    this.#agents.delete(key);
+    this.#pendingAgents.delete(key);
   }
 
   releaseWorkspace(workspaceRoot: string): void {
@@ -268,6 +304,7 @@ export class SessionAgentManager {
         cancelChildSession: this.#cancelChildSession,
         resumeChildSession: this.#resumeChildSession,
         abortSessionExecutionAndWait: this.#abortSessionExecutionAndWait,
+        acquireSessionCwdTransition: this.#acquireSessionCwdTransition,
         logger: this.#logger,
       });
       this.#factories.set(workspaceRoot, factory);
@@ -285,5 +322,10 @@ export class SessionAgentManager {
     }
 
     return true;
+  }
+
+  async #validateSessionCwd(workspaceRoot: string, cwd: string): Promise<string> {
+    await assertValidSessionCwd(workspaceRoot, cwd);
+    return cwd;
   }
 }

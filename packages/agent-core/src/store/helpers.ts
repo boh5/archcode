@@ -409,6 +409,9 @@ const SessionEventEnvelopeSchema = z.strictObject({
 export const SessionFileSchema = z.strictObject({
   sessionId: z.string(),
   createdAt: z.number(),
+  // Optional only for backward compatibility. SessionStoreManager hydrates
+  // legacy files to their canonical project root and all new files persist it.
+  cwd: z.string().optional(),
   agentName: z.string(),
   modelInfo: SessionModelInfoSchema.nullable().optional(),
   title: z.string().nullable().optional(),
@@ -444,6 +447,7 @@ export type SessionFile = Omit<HydratedSessionFile, "compression"> & {
 
 export interface SessionSummary {
   sessionId: string;
+  cwd?: string;
   rootSessionId: string;
   parentSessionId?: string;
   goalId?: string;
@@ -461,7 +465,7 @@ type PersistableSessionState = Pick<
   "sessionId" | "createdAt" | "agentName" | "modelInfo" | "title" | "messages" | "steps" | "stats" | "executions" | "todos" | "rootSessionId"
 > & Partial<Pick<
   SessionStoreState,
-  "compression" | "reminders" | "childSessionLinks" | "parentSessionId" | "goalId" | "loopId" | "sessionRole" | "blockedHitl" | "blockedByHitlIds" | "events"
+  "cwd" | "compression" | "reminders" | "childSessionLinks" | "parentSessionId" | "goalId" | "loopId" | "sessionRole" | "blockedHitl" | "blockedByHitlIds" | "events"
 >>;
 
 export function getAssistantText(messages: StoredMessage[]): string {
@@ -497,6 +501,7 @@ async function saveSessionTranscript(
   const data: HydratedSessionFile = {
     sessionId: state.sessionId,
     createdAt: state.createdAt,
+    ...(state.cwd === undefined ? {} : { cwd: state.cwd }),
     agentName: state.agentName,
     title: state.title ?? null,
     messages: state.messages,
@@ -555,6 +560,7 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
   return {
     sessionId: state.sessionId,
     createdAt: state.createdAt,
+    ...(state.cwd === undefined ? {} : { cwd: state.cwd }),
     agentName: state.agentName,
     title: state.title ?? null,
     messages: state.messages,
@@ -591,6 +597,7 @@ async function listSessionSummaries(workspaceRoot: string): Promise<SessionSumma
       sessions.push({
         summary: {
           sessionId: parsed.sessionId,
+          cwd: parsed.cwd ?? workspaceRoot,
           rootSessionId: parsed.rootSessionId,
           ...(parsed.parentSessionId === undefined ? {} : { parentSessionId: parsed.parentSessionId }),
           ...(parsed.goalId === undefined ? {} : { goalId: parsed.goalId }),
@@ -656,6 +663,7 @@ async function scanAllSessionSummaries(workspaceRoot: string): Promise<SessionSu
       const timestamps = readSessionTimestamps(parsed);
       sessions.push({
         sessionId: parsed.sessionId,
+        cwd: parsed.cwd ?? workspaceRoot,
         rootSessionId: parsed.rootSessionId,
         ...(parsed.parentSessionId === undefined ? {} : { parentSessionId: parsed.parentSessionId }),
         ...(parsed.goalId === undefined ? {} : { goalId: parsed.goalId }),

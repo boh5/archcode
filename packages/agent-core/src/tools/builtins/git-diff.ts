@@ -75,7 +75,7 @@ export const gitDiffTool = defineTool({
     try {
       const result = await createProcessRunner().run({
         argv: ["git", ...args],
-        cwd: ctx.workspaceRoot,
+        cwd: ctx.cwd,
         env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
         signal: ctx.abort,
       });

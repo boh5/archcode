@@ -22,7 +22,7 @@ function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecuti
     abort: new AbortController().signal,
     startedAt: 0,
     allowedTools: new Set(["cancel_session"]),
-    workspaceRoot: WORKSPACE_ROOT,
+    cwd: WORKSPACE_ROOT,
     storeManager,
     projectContext: createTestProjectContext(WORKSPACE_ROOT),
     agentName: "orchestrator",

@@ -39,9 +39,9 @@ function mockCtx(
   abort: new AbortController().signal,
   startedAt: Date.now(),
   allowedTools: new Set(["git_status"]),
-  workspaceRoot: tmpDir,
+  cwd: tmpDir,
   storeManager,
-    projectContext: createTestProjectContext(tmpDir), ...overrides,  };
+    projectContext: createTestProjectContext("/canonical/project"), ...overrides,  };
 }
 
 describe("parseGitStatusOutput", () => {

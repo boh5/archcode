@@ -328,6 +328,7 @@ export const LoopRunReportSchema = z.strictObject({
   dedupeKey: LoopIdentifierSchema.optional(),
   branchKey: LoopIdentifierSchema.optional(),
   worktreePath: LoopTextSchema.optional(),
+  worktreeBranchName: LoopIdentifierSchema.optional(),
   baseSha: ShaSchema.optional(),
   resolvedHeadSha: ShaSchema.optional(),
   missedCount: z.number().int().nonnegative().optional(),
@@ -336,6 +337,7 @@ export const LoopRunReportSchema = z.strictObject({
   attentionStatus: z.enum(["clear", "waiting_for_human"]).optional(),
   resumeCheckpoint: LoopHitlCheckpointSchema.optional(),
   cleanupState: LoopCleanupStateSchema.optional(),
+  cleanupWarning: LoopTextSchema.optional(),
   observedArtifacts: z.array(LoopWorktreeArtifactSchema).max(100).optional(),
 }) satisfies z.ZodType<ProtocolLoopRunReport>;
 
@@ -396,6 +398,11 @@ export type LoopWorktreeArtifact = ProtocolLoopWorktreeArtifact;
 export type LoopCleanupState = ProtocolLoopCleanupState;
 export type LoopCleanupPolicy = ProtocolLoopCleanupPolicy;
 export type LoopRunReport = ProtocolLoopRunReport;
+
+export interface LoopRunBlockedConditionalResult {
+  readonly outcome: "recorded" | "terminal" | "not_current";
+  readonly state: LoopState;
+}
 export type LoopState = ProtocolLoopState;
 
 export type LoopUpdateInput = Partial<Pick<LoopState,
@@ -630,6 +637,114 @@ export class LoopStateManager {
     });
   }
 
+  /**
+   * Projects an already-durable terminal JSONL outcome into state.json. This is
+   * intentionally independent from worktree cleanup so non-worktree and HITL
+   * runs recover from the same report-first crash window.
+   */
+  async recoverRunProjection(loopId: string, durableReport: LoopRunReport): Promise<LoopState> {
+    return await this.withLoopMutation(loopId, async () => {
+      const state = await this.read(loopId);
+      const report = this.parseRunReport(loopId, durableReport);
+      if (report.status === "running") throw new LoopRunLogError(loopId, "Cannot recover a running report as a terminal projection");
+
+      const currentMatches = state.currentRun?.runId === report.runId;
+      const lastMatches = state.lastRun?.runId === report.runId && state.lastRun.status !== "running";
+      if (!currentMatches && !lastMatches) return state;
+      const finishedAt = report.endedAt ?? Date.now();
+      const blocked = report.status === "needs_user";
+      const lastRunAlreadyCounted = lastMatches && state.lastRun?.status !== "needs_user";
+      const clearsOwnedBlocker = currentMatches
+        || state.resumeCheckpoint?.runId === report.runId
+        || (lastMatches && state.currentRun === undefined);
+      const updated = this.nextState({
+        ...state,
+        lastRun: report,
+        currentRun: blocked ? report : currentMatches ? undefined : state.currentRun,
+        ...(blocked ? {
+          blockedByHitlIds: report.blockedByHitlIds,
+          attentionStatus: "waiting_for_human" as const,
+          resumeCheckpoint: report.resumeCheckpoint,
+        } : {
+          blockedByHitlIds: clearsOwnedBlocker ? undefined : state.blockedByHitlIds,
+          attentionStatus: clearsOwnedBlocker ? "clear" as const : state.attentionStatus,
+          resumeCheckpoint: clearsOwnedBlocker ? undefined : state.resumeCheckpoint,
+          nextRunAt: state.status === "active" ? nextRunAtFrom(state.config.schedule, finishedAt) : undefined,
+          runCount: lastRunAlreadyCounted ? state.runCount : state.runCount + 1,
+          latestIntegrations: report.integrationErrors === undefined ? state.latestIntegrations : LoopIntegrationSnapshotSchema.parse({
+            errors: report.integrationErrors,
+            updatedAt: finishedAt,
+          }),
+        }),
+        ...(report.cleanupState === undefined ? {} : { cleanupState: report.cleanupState }),
+      }, finishedAt);
+      await this.write(updated);
+      return updated;
+    });
+  }
+
+  /**
+   * Appends the durable completion step of the worktree-cleanup saga without
+   * counting the already-terminal execution as another run.
+   */
+  async recordRunCleanupCompletion(
+    loopId: string,
+    runId: string,
+    updates: Pick<LoopRunReport, "cleanupState" | "cleanupWarning" | "observedArtifacts">,
+  ): Promise<LoopRunReport> {
+    return await this.withLoopMutation(loopId, async () => {
+      const state = await this.read(loopId);
+      const stateReport = state.lastRun?.runId === runId
+        ? state.lastRun
+        : state.currentRun?.runId === runId
+          ? state.currentRun
+          : undefined;
+      const loggedReport = (await this.readRunLog(loopId)).find((report) => report.runId === runId);
+      // The terminal report is the write-ahead record. Prefer it over a stale
+      // running currentRun left by a crash between JSONL append and state write.
+      const existing = loggedReport !== undefined && loggedReport.status !== "running"
+        ? loggedReport
+        : stateReport ?? loggedReport;
+      if (existing === undefined) {
+        throw new LoopRunLogError(loopId, `Cannot complete cleanup for unknown run ${runId}`);
+      }
+      const report = this.parseRunReport(loopId, { ...existing, ...updates });
+      const currentMatches = state.currentRun?.runId === runId;
+      const lastMatches = state.lastRun?.runId === runId;
+      const staleRunningCurrent = currentMatches
+        && state.currentRun?.status === "running"
+        && report.status !== "running";
+      const recoversMissingTerminalState = staleRunningCurrent && !lastMatches;
+      const recoversBlockedState = recoversMissingTerminalState && report.status === "needs_user";
+      const recoversFinishedState = recoversMissingTerminalState && report.status !== "needs_user";
+      const finishedAt = report.endedAt ?? Date.now();
+      const updated = this.nextState({
+        ...state,
+        ...(lastMatches || recoversMissingTerminalState ? { lastRun: report } : {}),
+        ...(currentMatches
+          ? { currentRun: staleRunningCurrent && report.status !== "needs_user" ? undefined : report }
+          : {}),
+        ...(recoversFinishedState ? {
+          nextRunAt: state.status === "active" ? nextRunAtFrom(state.config.schedule, finishedAt) : undefined,
+          runCount: state.runCount + 1,
+          latestIntegrations: report.integrationErrors === undefined ? state.latestIntegrations : LoopIntegrationSnapshotSchema.parse({
+            errors: report.integrationErrors,
+            updatedAt: finishedAt,
+          }),
+        } : {}),
+        ...(recoversBlockedState ? {
+          blockedByHitlIds: report.blockedByHitlIds,
+          attentionStatus: "waiting_for_human" as const,
+          resumeCheckpoint: report.resumeCheckpoint,
+        } : {}),
+        ...(lastMatches || currentMatches ? { cleanupState: report.cleanupState } : {}),
+      }, staleRunningCurrent ? finishedAt : undefined);
+      await this.appendRunReport(loopId, report);
+      await this.write(updated);
+      return report;
+    });
+  }
+
   async recordRunBlocked(loopId: string, reportBlocked: LoopRunReport): Promise<LoopState> {
     return await this.withLoopMutation(loopId, async () => {
       const state = await this.read(loopId);
@@ -650,6 +765,47 @@ export class LoopStateManager {
       await this.appendRunReport(loopId, report);
       await this.write(updated);
       return updated;
+    });
+  }
+
+  /**
+   * Records a continuation rollback only while the same run still owns the
+   * current projection. A late abort must never overwrite an already-terminal
+   * state written by cancellation or restart recovery.
+   */
+  async recordRunBlockedIfCurrent(
+    loopId: string,
+    reportBlocked: LoopRunReport,
+  ): Promise<LoopRunBlockedConditionalResult> {
+    return await this.withLoopMutation(loopId, async () => {
+      const state = await this.read(loopId);
+      const report = this.parseRunReport(loopId, reportBlocked);
+      if (report.status !== "needs_user") {
+        throw new LoopRunLogError(loopId, "Blocked Loop run reports must use needs_user status");
+      }
+      if (
+        state.lastRun?.runId === report.runId
+        && state.lastRun.status !== "running"
+        && state.lastRun.status !== "needs_user"
+      ) {
+        return { outcome: "terminal", state };
+      }
+      if (state.currentRun?.runId !== report.runId) {
+        return { outcome: "not_current", state };
+      }
+
+      const blockedAt = report.endedAt ?? Date.now();
+      const updated = this.nextState({
+        ...state,
+        lastRun: report,
+        currentRun: report,
+        blockedByHitlIds: report.blockedByHitlIds,
+        attentionStatus: "waiting_for_human",
+        resumeCheckpoint: report.resumeCheckpoint,
+      }, blockedAt);
+      await this.appendRunReport(loopId, report);
+      await this.write(updated);
+      return { outcome: "recorded", state: updated };
     });
   }
 
@@ -731,7 +887,12 @@ export class LoopStateManager {
     const content = await Bun.file(filePath).text();
     const lines = content.split("\n").filter((line) => line.trim().length > 0);
     const reports = lines.map((line, index) => this.parseRunLogLine(loopId, line, index));
-    const newestFirst = reports.reverse();
+    const seenRunIds = new Set<string>();
+    const newestFirst = reports.reverse().filter((report) => {
+      if (seenRunIds.has(report.runId)) return false;
+      seenRunIds.add(report.runId);
+      return true;
+    });
 
     if (limit === undefined) return newestFirst;
     if (!Number.isInteger(limit) || limit < 0) {

@@ -62,9 +62,9 @@ const createMutate = mock(
   (
     _args: {
       slug: string;
-      title: string;
       objective: string;
       acceptanceCriteria: string;
+      useWorktree: boolean;
     },
     _options?: { onSuccess?: (goal: GoalState) => void },
   ) => {},
@@ -138,6 +138,8 @@ describe("CreateGoalDialog", () => {
     expect(copy).toContain("New Goal");
     expect(copy).toContain("Objective");
     expect(copy).toContain("Acceptance Criteria");
+    expect(copy).toContain("Isolated worktree");
+    expect(copy).toContain("Disabled by default");
     expect(copy).toContain("title is generated asynchronously");
     expect(copy).toContain("Create Draft");
   });
@@ -192,5 +194,8 @@ describe("CreateGoalDialog", () => {
     const authorInput = inputs.find((i) => i.props?.id === "new-goal-author");
     expect(reviewerInput).toBeUndefined();
     expect(authorInput).toBeUndefined();
+    const worktreeCheckbox = inputs.find((input) => input.props?.id === "new-goal-use-worktree");
+    expect(worktreeCheckbox?.props?.type).toBe("checkbox");
+    expect(worktreeCheckbox?.props?.checked).toBe(false);
   });
 });

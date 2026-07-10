@@ -13,6 +13,7 @@ export function GoalOverview({ goal, slug }: GoalOverviewProps) {
   return (
     <div data-testid="goal-overview" className="flex flex-col gap-6 p-5 max-w-3xl mx-auto w-full">
       <GoalMetaSection goal={goal} />
+      <GoalWorktreeSection goal={goal} />
       <ObjectiveSection goal={goal} />
       <AcceptanceCriteriaSection goal={goal} />
       <BlockerSection goal={goal} />
@@ -48,6 +49,7 @@ function GoalMetaSection({ goal }: { goal: GoalState }) {
       <div className="flex items-center gap-3 flex-wrap">
         <MetaItem label="Status" value={goal.status} />
         <MetaItem label="Attempt" value={String(goal.attempt)} />
+        <MetaItem label="Worktree" value={goal.useWorktree === true ? (goal.worktree ? "active" : "pending") : "disabled"} />
       </div>
       {goal.lastError && (
         <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-error-muted border border-error/20 text-[12.5px] text-error">
@@ -61,6 +63,21 @@ function GoalMetaSection({ goal }: { goal: GoalState }) {
           <span className="break-words">{goal.lastFailureSummary}</span>
         </div>
       )}
+    </div>
+  );
+}
+
+function GoalWorktreeSection({ goal }: { goal: GoalState }) {
+  if (goal.worktree === undefined) return null;
+  return (
+    <div data-testid="goal-worktree">
+      <h3 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-2">
+        Worktree
+      </h3>
+      <div className="flex flex-col gap-1 rounded-md border border-border-subtle bg-bg-elevated px-3 py-2.5 font-mono text-[11px] text-text-tertiary">
+        <span className="break-all">{goal.worktree.path}</span>
+        <span className="break-all">{goal.worktree.branchName}</span>
+      </div>
     </div>
   );
 }

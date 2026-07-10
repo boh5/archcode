@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { GoalState, HitlProjection, LoopRunReport, LoopState, SessionSummary, SessionTreeResponse } from "@archcode/protocol";
 import type { DashboardGoal, DashboardLoop } from "./types";
-import { activeGoalsQueryOptions, activeLoopsQueryOptions, focusedSessionQueryOptions, goalQueryOptions, goalsQueryOptions, loopBudgetQueryOptions, loopCollisionsQueryOptions, loopIntegrationsQueryOptions, loopKillStateQueryOptions, loopQueryOptions, loopRunsQueryOptions, loopStateQueryOptions, loopsQueryOptions, projectHitlQueryOptions, queryKeys, sessionTreeQueryOptions, sessionsQueryOptions } from "./queries";
+import { activeGoalsQueryOptions, activeLoopsQueryOptions, diffQueryOptions, focusedSessionQueryOptions, goalQueryOptions, goalsQueryOptions, loopBudgetQueryOptions, loopCollisionsQueryOptions, loopIntegrationsQueryOptions, loopKillStateQueryOptions, loopQueryOptions, loopRunsQueryOptions, loopStateQueryOptions, loopsQueryOptions, projectHitlQueryOptions, queryKeys, sessionTreeQueryOptions, sessionsQueryOptions } from "./queries";
 
 const originalFetch = globalThis.fetch;
 const originalDocument = globalThis.document;
@@ -22,10 +22,42 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
 }
 
 describe("web session query contracts", () => {
+  test("diffQueryOptions scopes the cache and request to the Session", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/diff?sessionId=session-1`);
+      return jsonResponse({ files: [] });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const options = diffQueryOptions(TEST_PROJECT_SLUG, "session-1");
+    const result = await (options as unknown as QueryOptionWithFn<unknown[]>).queryFn();
+
+    expect([...options.queryKey]).toEqual(["projects", TEST_PROJECT_SLUG, "diff", "session-1"]);
+    expect(result).toEqual([]);
+  });
+
+  test("diffQueryOptions keeps project-level Diff when no Session route is active", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/diff`);
+      return jsonResponse({ files: [] });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const options = diffQueryOptions(TEST_PROJECT_SLUG, "");
+    const result = await (options as unknown as QueryOptionWithFn<unknown[]>).queryFn();
+
+    expect([...options.queryKey]).toEqual(["projects", TEST_PROJECT_SLUG, "diff", "project"]);
+    expect(options.enabled).toBe(true);
+    expect(result).toEqual([]);
+  });
+
   test("sessionsQueryOptions normalizes identity fields and preserves root-only server list", async () => {
     globalThis.document = { cookie: "" } as Document;
     const rootSession: SessionSummary = {
       sessionId: "root-session",
+      cwd: "/workspace",
       rootSessionId: "root-session",
       goalId: "goal-root",
       loopId: "loop-root",
@@ -35,6 +67,7 @@ describe("web session query contracts", () => {
     };
     const childSession: SessionSummary = {
       sessionId: "child-session",
+      cwd: "/workspace",
       rootSessionId: "root-session",
       parentSessionId: "root-session",
       title: "Child",
@@ -53,6 +86,7 @@ describe("web session query contracts", () => {
       {
         id: "root-session",
         sessionId: "root-session",
+        cwd: "/workspace",
         rootSessionId: "root-session",
         parentSessionId: undefined,
         goalId: "goal-root",
@@ -65,6 +99,7 @@ describe("web session query contracts", () => {
       {
         id: "child-session",
         sessionId: "child-session",
+        cwd: "/workspace",
         rootSessionId: "root-session",
         parentSessionId: "root-session",
         title: "Child",
@@ -114,11 +149,12 @@ describe("web session query contracts", () => {
     globalThis.document = { cookie: "" } as Document;
     const tree: SessionTreeResponse = {
       root: {
-        session: { sessionId: "root-session", rootSessionId: "root-session", title: "Root", createdAt: 1_000 },
+        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", title: "Root", createdAt: 1_000 },
         children: [
           {
             session: {
               sessionId: "child-session",
+              cwd: "/workspace",
               rootSessionId: "root-session",
               parentSessionId: "root-session",
               title: "Child",

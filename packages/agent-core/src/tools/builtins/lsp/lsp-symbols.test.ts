@@ -10,7 +10,7 @@ import { inferToolErrorKindFromResult } from "../../errors";
 import { ToolRegistry } from "../../registry";
 import type { ToolExecutionContext, ToolExecutionResult } from "../../types";
 import { lspSymbolsTool } from "./lsp-symbols";
-import { createTestProjectContext } from "../../test-project-context";
+import { createDurableTestSessionContext, createTestProjectContext } from "../../test-project-context";
 import { SessionHitlPause } from "../../../execution/session-hitl-pause";
 
 const testDir = path.join(import.meta.dir, "__test_tmp__", "lsp-symbols");
@@ -188,8 +188,8 @@ describe("lspSymbolsTool", () => {
 
     const input = { scope: "document", filePath: "../outside.ts" };
     const sessionId = crypto.randomUUID();
-    const ctx = makeCtx({ toolName: "lsp_symbols", toolCallId: "call-1", input, store: createMockStore({ sessionId }) });
-    await ctx.projectContext.hitl.load(testDir);
+    const durable = await createDurableTestSessionContext(testDir, sessionId);
+    const ctx = makeCtx({ toolName: "lsp_symbols", toolCallId: "call-1", input, ...durable });
 
     try {
       await registry.execute(
@@ -237,7 +237,7 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
   abort: new AbortController().signal,
   startedAt: Date.now(),
   allowedTools: new Set(["lsp_symbols"]),
-  workspaceRoot: testDir,
+  cwd: testDir,
   storeManager,
     projectContext: createTestProjectContext(testDir), ...overrides,  };
 }

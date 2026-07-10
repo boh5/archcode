@@ -71,6 +71,10 @@ export function reduceStreamEvent(
     };
   }
 
+  if (event.type === "session.cwd_changed") {
+    return { cwd: event.cwd, readSnapshots: new Map() };
+  }
+
   // Delegate to protocol reducer (SessionStoreState structurally satisfies
   // SessionProjection on all shared fields)
   const protocolState: SessionProjection = { ...state, compression: undefined };

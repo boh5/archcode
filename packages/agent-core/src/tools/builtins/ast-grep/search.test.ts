@@ -30,7 +30,7 @@ function ctx(overrides?: Partial<ToolExecutionContext>): ToolExecutionContext {
   allowedTools: new Set(["ast_grep_search"]),
   agentSkills: [],
   skillService: new SkillService({ builtinSkills: {} }),
-  workspaceRoot: "/workspace",
+  cwd: "/workspace",
   storeManager,
     projectContext: createTestProjectContext("/workspace"), ...overrides,  };
 }
@@ -90,6 +90,22 @@ describe("ast_grep_search tool", () => {
     setProcessRunnerForTest(mock((cmd: readonly [string, ...string[]]) => { argv = cmd; return spawnResult(sampleJson); }));
     await astGrepSearchTool.execute({ pattern: "console.log($MSG)", lang: "ts", paths: ["src"], globs: ["*.ts"] }, ctx());
     expect(argv).toEqual(["/managed/bin/ast-grep", "run", "--pattern", "console.log($MSG)", "--json", "--lang", "ts", "--globs", "*.ts", "src"]);
+  });
+
+  test("runs from execution cwd instead of the canonical project root", async () => {
+    const executionCwd = "/worktrees/session-ast";
+    let spawnedCwd: string | undefined;
+    setProcessRunnerForTest(mock((_argv: unknown, options: { cwd?: string }) => {
+      spawnedCwd = options.cwd;
+      return spawnResult(sampleJson);
+    }) as NonNullable<Parameters<typeof setProcessRunnerForTest>[0]>);
+
+    await astGrepSearchTool.execute({ pattern: "console.log($MSG)" }, ctx({
+      cwd: executionCwd,
+      projectContext: createTestProjectContext("/canonical/project"),
+    }));
+
+    expect(spawnedCwd).toBe(executionCwd);
   });
 
   test("normalizes ast-grep JSON results", async () => {

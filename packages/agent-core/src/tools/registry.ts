@@ -210,7 +210,7 @@ export class ToolRegistry {
         }
 
         if (isEffectfulTool(descriptor)) {
-          ctx.onToolAttempt?.({
+          await ctx.onToolAttempt?.({
             attemptId: crypto.randomUUID(),
             toolCallId: toolCall.toolCallId,
             toolName: descriptor.name,

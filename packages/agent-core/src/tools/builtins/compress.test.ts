@@ -28,7 +28,7 @@ function makeCtx(store: StoreApi<SessionStoreState>): ToolExecutionContext {
     abort: new AbortController().signal,
     startedAt: Date.now(),
     allowedTools: new Set([TOOL_COMPRESS]),
-    workspaceRoot,
+    cwd: workspaceRoot,
     projectContext: createTestProjectContext(workspaceRoot),
   };
 }

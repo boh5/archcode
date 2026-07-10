@@ -1,4 +1,11 @@
+import { lstat } from "node:fs/promises";
+
 import type { CollisionLedger } from "./collision-ledger";
+import type {
+  SessionCwdReferenceMigrationInput,
+  SessionCwdRemovalLifecycle,
+  SessionCwdRemovalResult,
+} from "../execution";
 import { isTerminalStatus, type LoopJobQueue, type LoopJobRecord } from "./job-queue";
 import { LoopWorktreeManager } from "./worktree-manager";
 import type { LoopWorktreeCleanupResult, LoopWorktreeInspection, LoopWorktreeInspectionInput } from "./worktree-manager";
@@ -11,7 +18,14 @@ export interface LoopCleanupClock {
 
 export interface LoopCleanupWorktreeManager {
   inspect(input: LoopWorktreeInspectionInput): Promise<LoopWorktreeInspection>;
-  cleanup(input: { readonly inspection: LoopWorktreeInspection; readonly jobStatus?: LoopJobStatus }): Promise<LoopWorktreeCleanupResult>;
+  cleanup(input: {
+    readonly inspection: LoopWorktreeInspection;
+    readonly jobStatus?: LoopJobStatus;
+    /** Must run after final safety validation and before the actual removal. */
+    readonly beforeRemove?: () => Promise<void>;
+    readonly onRemoveFailureBeforeDetach?: () => Promise<void>;
+    readonly onRemoveDetached?: () => Promise<void>;
+  }): Promise<LoopWorktreeCleanupResult>;
 }
 
 export interface LoopCleanupServiceOptions {
@@ -21,6 +35,11 @@ export interface LoopCleanupServiceOptions {
   readonly worktreeManager?: LoopCleanupWorktreeManager;
   readonly workspaceRoot?: string;
   readonly clock?: LoopCleanupClock;
+  /** Session-owned capability; Loop cleanup never scans or selects Session ids. */
+  readonly migrateSessionCwdReferencesForRemoval?: <T extends SessionCwdRemovalResult>(
+    input: SessionCwdReferenceMigrationInput,
+    operation: (lifecycle: SessionCwdRemovalLifecycle) => Promise<T>,
+  ) => Promise<T>;
 }
 
 export type LoopCleanupDecision = "disabled" | "no_action" | "cleanup_candidate" | "auto_paused" | "cleanup_failed";
@@ -57,6 +76,7 @@ export interface LoopCleanupWorktreeResult {
   readonly removed: boolean;
   readonly reviewRequired: boolean;
   readonly reason: string;
+  readonly cleanupWarning?: string;
 }
 
 export interface LoopCleanupScanResult {
@@ -91,6 +111,8 @@ export class LoopCleanupService {
   readonly #jobQueue: LoopJobQueue;
   readonly #collisionLedger?: CollisionLedger;
   readonly #worktreeManager?: LoopCleanupWorktreeManager;
+  readonly #workspaceRoot?: string;
+  readonly #migrateSessionCwdReferencesForRemoval?: LoopCleanupServiceOptions["migrateSessionCwdReferencesForRemoval"];
   readonly #clock: LoopCleanupClock;
 
   constructor(options: LoopCleanupServiceOptions) {
@@ -98,6 +120,8 @@ export class LoopCleanupService {
     this.#jobQueue = options.jobQueue;
     this.#collisionLedger = options.collisionLedger;
     this.#worktreeManager = options.worktreeManager ?? (options.workspaceRoot === undefined ? undefined : new LoopWorktreeManager({ canonicalRoot: options.workspaceRoot }));
+    this.#workspaceRoot = options.workspaceRoot;
+    this.#migrateSessionCwdReferencesForRemoval = options.migrateSessionCwdReferencesForRemoval;
     this.#clock = options.clock ?? systemClock;
   }
 
@@ -154,17 +178,49 @@ export class LoopCleanupService {
     return results;
   }
 
+  /** Executes or resumes one durable cleanup intent. Safe to call on startup. */
+  async cleanupJob(jobId: string): Promise<LoopCleanupWorktreeResult | undefined> {
+    const job = await this.#jobQueue.read(jobId);
+    if (job.cleanupState !== "in_progress" && job.cleanupState !== "not_started") return undefined;
+    if (job.worktreePath === undefined || job.baseSha === undefined) {
+      const update = await this.#jobQueue.updateIfCurrent(job.jobId, job, {
+        cleanupState: "cleanup_failed",
+        cleanupWarning: "Cleanup intent is missing durable worktree path or base SHA.",
+      });
+      if (update.outcome === "condition_mismatch") return changedDuringCleanupResult(job, update.job);
+      return {
+        jobId,
+        worktreePath: job.worktreePath ?? "<missing>",
+        cleanupState: "cleanup_failed",
+        removed: false,
+        reviewRequired: true,
+        reason: "Cleanup intent is missing durable worktree path or base SHA.",
+      };
+    }
+    const loop = await this.#stateManager.read(job.loopId);
+    const reports = await this.#stateManager.readRunLog(job.loopId);
+    return await this.#cleanupTerminalWorktree(job, reports, normalizeLoopCleanupPolicy(loop.config.cleanupPolicy));
+  }
+
   async #cleanupTerminalWorktree(job: LoopJobRecord, reports: readonly LoopRunReport[], policy: NormalizedLoopCleanupPolicy): Promise<LoopCleanupWorktreeResult> {
     if (job.status === "blocked" || job.status === "needs_user") {
-      return preservedWorktreeResult(job, job.blockedReason ?? job.status);
+      const reason = job.blockedReason ?? job.status;
+      const update = await this.#jobQueue.updateIfCurrent(job.jobId, job, {
+        cleanupState: "preserved",
+        observedArtifacts: mergeArtifacts(job.observedArtifacts, [{ path: "cleanup:preserved", status: "observed" }]),
+      });
+      if (update.outcome === "condition_mismatch") return changedDuringCleanupResult(job, update.job);
+      return preservedWorktreeResult(update.updated, reason);
     }
 
     if (job.status === "expired") {
-      const updated = await this.#jobQueue.update(job.jobId, {
+      const update = await this.#jobQueue.updateIfCurrent(job.jobId, job, {
         cleanupState: "expired_needs_review",
         blockedReason: "expired_needs_review",
         observedArtifacts: mergeArtifacts(job.observedArtifacts, [{ path: "cleanup:expired_needs_review", status: "observed" }]),
       });
+      if (update.outcome === "condition_mismatch") return changedDuringCleanupResult(job, update.job);
+      const updated = update.updated;
       return {
         jobId: job.jobId,
         worktreePath: job.worktreePath!,
@@ -178,22 +234,29 @@ export class LoopCleanupService {
     const manager = this.#worktreeManager;
     if (manager === undefined) return preservedWorktreeResult(job, "worktree manager unavailable");
 
-    const branchName = branchNameFromArtifacts(job.observedArtifacts ?? reportForJob(reports, job.jobId)?.observedArtifacts);
+    const report = reportForJob(reports, job.jobId);
+    const branchName = job.worktreeBranchName
+      ?? report?.worktreeBranchName
+      ?? branchNameFromArtifacts(job.observedArtifacts ?? report?.observedArtifacts);
     if (branchName === undefined) return preservedWorktreeResult(job, "missing loop branch metadata");
 
     try {
+      if (!await pathExists(job.worktreePath!)) {
+        return await this.#completeAlreadyDetached(job, branchName);
+      }
       const inspection = await manager.inspect({
         worktreePath: job.worktreePath!,
         branchName,
         baseSha: job.baseSha!,
         evidencePaths: evidencePaths(job.observedArtifacts),
       });
-      if (!policy.deleteUnchangedWorktrees && !inspection.hasChanges && job.status !== "failed") {
+      if ((!policy.enabled || !policy.deleteUnchangedWorktrees) && !inspection.hasChanges && job.status !== "failed") {
         const cleanupState: LoopCleanupState = "preserved";
-        await this.#jobQueue.update(job.jobId, {
+        const update = await this.#jobQueue.updateIfCurrent(job.jobId, job, {
           cleanupState,
           observedArtifacts: observedArtifactsFromInspection(inspection, cleanupState),
         });
+        if (update.outcome === "condition_mismatch") return changedDuringCleanupResult(job, update.job);
         return {
           jobId: job.jobId,
           worktreePath: inspection.worktreePath,
@@ -203,16 +266,50 @@ export class LoopCleanupService {
           reason: "unchanged worktree deletion disabled",
         };
       }
-      const cleanup = await manager.cleanup({ inspection, jobStatus: job.status });
+      const removalCandidate = !inspection.hasChanges
+        && job.status !== "failed";
+      let cleanup: LoopWorktreeCleanupResult;
+      const migrate = this.#migrateSessionCwdReferencesForRemoval;
+      const projectRoot = this.#workspaceRoot;
+      if (migrate !== undefined && projectRoot !== undefined) {
+        cleanup = await migrate({
+          projectRoot,
+          fromCwd: inspection.worktreePath,
+          toCwd: projectRoot,
+        }, async (lifecycle) => await manager.cleanup({
+          inspection,
+          jobStatus: job.status,
+          ...lifecycle,
+        }));
+      } else {
+        if (removalCandidate) {
+          throw new Error(`Session cwd reference migration capability is required before removing Loop worktree ${inspection.worktreePath}.`);
+        }
+        cleanup = await manager.cleanup({ inspection, jobStatus: job.status });
+      }
       const cleanupState = cleanup.cleanupState;
-      const artifacts = observedArtifactsFromInspection(inspection, cleanupState);
+      const warning = cleanup.warning?.message;
+      const artifacts = mergeArtifacts(
+        observedArtifactsFromInspection(inspection, cleanupState),
+        warning === undefined ? [] : [{ path: `cleanup:orphan-branch:${cleanup.warning!.branchName}`, status: "observed" }],
+      );
       const reviewRequired = cleanup.reviewRequired;
       const blockedReason = reviewRequired ? blockedReasonForReview(job.status, cleanup.reason) : job.blockedReason;
-      await this.#jobQueue.update(job.jobId, {
+      const update = await this.#jobQueue.updateIfCurrent(job.jobId, job, {
         cleanupState,
+        ...(warning === undefined ? { cleanupWarning: undefined } : { cleanupWarning: warning }),
         ...(blockedReason === undefined ? {} : { blockedReason }),
         observedArtifacts: artifacts,
       });
+      if (update.outcome === "condition_mismatch") {
+        return {
+          ...changedDuringCleanupResult(job, update.job),
+          cleanupState,
+          removed: cleanup.removed,
+          reviewRequired: true,
+          reason: "Worktree cleanup completed, but the Loop job changed before its cleanup checkpoint could be recorded.",
+        };
+      }
       return {
         jobId: job.jobId,
         worktreePath: cleanup.worktreePath,
@@ -220,13 +317,15 @@ export class LoopCleanupService {
         removed: cleanup.removed,
         reviewRequired,
         reason: cleanup.reason,
+        ...(warning === undefined ? {} : { cleanupWarning: warning }),
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      await this.#jobQueue.update(job.jobId, {
+      const update = await this.#jobQueue.updateIfCurrent(job.jobId, job, {
         cleanupState: "cleanup_failed",
         blockedReason: "cleanup_failed",
       });
+      if (update.outcome === "condition_mismatch") return changedDuringCleanupResult(job, update.job, message);
       return {
         jobId: job.jobId,
         worktreePath: job.worktreePath!,
@@ -236,6 +335,42 @@ export class LoopCleanupService {
         reason: message,
       };
     }
+  }
+
+  async #completeAlreadyDetached(job: LoopJobRecord, branchName: string): Promise<LoopCleanupWorktreeResult> {
+    const migrate = this.#migrateSessionCwdReferencesForRemoval;
+    const projectRoot = this.#workspaceRoot;
+    if (migrate === undefined || projectRoot === undefined) {
+      throw new Error(`Session cwd reference migration capability is required to reconcile detached Loop worktree ${job.worktreePath}.`);
+    }
+    await migrate({
+      projectRoot,
+      fromCwd: job.worktreePath!,
+      toCwd: projectRoot,
+    }, async (lifecycle) => {
+      await lifecycle.beforeRemove();
+      await lifecycle.onRemoveDetached();
+      return { removed: true };
+    });
+    const warning = `Worktree path was already detached; orphan branch ${branchName} requires reconciliation.`;
+    const update = await this.#jobQueue.updateIfCurrent(job.jobId, job, {
+      cleanupState: "cleaned",
+      cleanupWarning: warning,
+      observedArtifacts: mergeArtifacts(job.observedArtifacts, [
+        { path: "cleanup:cleaned", status: "observed" },
+        { path: `cleanup:orphan-branch:${branchName}`, status: "observed" },
+      ]),
+    });
+    if (update.outcome === "condition_mismatch") return changedDuringCleanupResult(job, update.job, warning);
+    return {
+      jobId: job.jobId,
+      worktreePath: job.worktreePath!,
+      cleanupState: "cleaned",
+      removed: true,
+      reviewRequired: false,
+      reason: warning,
+      cleanupWarning: warning,
+    };
   }
 
   async #stateBlockers(loop: LoopState, jobs: readonly LoopJobRecord[]): Promise<LoopCleanupBlocker[]> {
@@ -344,6 +479,16 @@ function mergeArtifacts(existing: readonly LoopWorktreeArtifact[] | undefined, n
   return [...artifacts.values()].slice(0, 100);
 }
 
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 function blockedReasonForReview(status: LoopJobStatus, cleanupReason: string): string {
   if (status === "failed") return "failed_with_changes";
   if (status === "expired") return "expired_needs_review";
@@ -358,6 +503,22 @@ function preservedWorktreeResult(job: LoopJobRecord, reason: string): LoopCleanu
     removed: false,
     reviewRequired: true,
     reason,
+  };
+}
+
+function changedDuringCleanupResult(
+  original: LoopJobRecord,
+  current: LoopJobRecord,
+  cause?: string,
+): LoopCleanupWorktreeResult {
+  const cleanupState = current.cleanupState ?? "preserved";
+  return {
+    jobId: current.jobId,
+    worktreePath: current.worktreePath ?? original.worktreePath ?? "",
+    cleanupState,
+    removed: cleanupState === "cleaned",
+    reviewRequired: cleanupState !== "cleaned",
+    reason: `Loop job changed during cleanup; preserved the newer revision.${cause === undefined ? "" : ` Original cleanup error: ${cause}`}`,
   };
 }
 

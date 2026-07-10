@@ -5,12 +5,12 @@ import type { PromptContext } from "./types";
 function makeCtx(overrides?: Partial<PromptContext>): PromptContext {
   return {
     allowedTools: ["file_read", "file_write"],
-    workspaceRoot: "/home/user/project",
     promptProfileId: "default",
     env: {
       platform: "darwin",
       timezone: "America/Los_Angeles",
       locale: "en-US",
+      projectRoot: "/home/user/project",
       cwd: "/home/user/project",
       date: "2025-01-15",
     },

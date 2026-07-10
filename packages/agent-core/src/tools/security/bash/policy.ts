@@ -4,7 +4,7 @@ import type { NormalizedShellInvocation, NormalizedShellRequest, PermissionAppro
 import type { PermissionDecision } from "../../types";
 import { PathValidator } from "../path-validator";
 import { attachShellEffects } from "./effects";
-import type { ShellParseFailure } from "./parse";
+import { parseShellRequest, type ShellParseFailure } from "./parse";
 import { deriveShellApprovalScope } from "./scopes";
 
 export interface ClassifyCommandOptions {
@@ -42,10 +42,13 @@ const RULE_REASONS = {
   credentialExfil: "Credential material exfiltration is blocked",
   permissionsFile: "Protected permission file access is blocked",
   pathMutation: "Direct mutation of .archcode is blocked",
+  worktreeCommand: "Git worktree enumeration and lifecycle commands are blocked for Agents; use ArchCode worktree capabilities",
+  managedWorktreeRefMutation: "ArchCode-managed worktree refs can be changed only by ArchCode worktree management",
   background: "Background execution with & is not supported",
   outOfWorkspace: "Bash path access outside the workspace requires confirmation",
   sensitivePath: "Sensitive file access requires confirmation",
   parserUncertainty: "Parser uncertainty requires confirmation",
+  opaqueInterpreterExecution: "Opaque interpreter execution requires confirmation",
   writeRedirection: "Write redirection requires confirmation",
   outsideTransfer: "File transfer touching paths outside the workspace requires confirmation",
   remoteCommand: "Remote command execution requires confirmation",
@@ -81,11 +84,15 @@ const COMMON_ALLOWED_COMMANDS = new Set([
   "cargo",
   "rustc",
   "go",
-  "python",
-  "python3",
-  "node",
-  "deno",
   "tsc",
+]);
+const OPAQUE_INTERPRETER_METADATA_ARGS = new Map<string, ReadonlySet<string>>([
+  ["python", new Set(["--version", "-V", "-VV", "--help", "-h"])],
+  ["python3", new Set(["--version", "-V", "-VV", "--help", "-h"])],
+  ["node", new Set(["--version", "-v", "--help", "-h"])],
+  ["ruby", new Set(["--version", "-v", "--help", "-h"])],
+  ["perl", new Set(["--version", "-v", "--help", "-h"])],
+  ["deno", new Set(["--version", "-V", "--help", "-h"])],
 ]);
 const PROTECTED_PERMISSIONS_TEXT_PATTERN = /(?:\.\/)?\.archcode\/permissions\.json/;
 
@@ -267,6 +274,187 @@ function isDestructiveLocalInvocation(invocation: NormalizedShellInvocation): bo
   return invocation.effects.some((effect) => effect.kind === "delete");
 }
 
+function isInterpreterMetadataOnlyInvocation(invocation: NormalizedShellInvocation): boolean {
+  const metadataArgs = OPAQUE_INTERPRETER_METADATA_ARGS.get(invocation.command);
+  const args = invocation.argv.slice(1);
+  return metadataArgs !== undefined && args.length === 1 && metadataArgs.has(args[0]!);
+}
+
+function isOpaqueInterpreterExecution(invocation: NormalizedShellInvocation): boolean {
+  return OPAQUE_INTERPRETER_METADATA_ARGS.has(invocation.command)
+    && !isInterpreterMetadataOnlyInvocation(invocation);
+}
+
+const WORKTREE_SHELL_WRAPPERS = new Set(["sh", "bash", "zsh"]);
+const SHELL_ASSIGNMENT_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const GIT_GLOBAL_OPTIONS_WITH_VALUE = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--exec-path"]);
+const MANAGED_BRANCH_PREFIXES = ["archcode/", "refs/heads/archcode/"] as const;
+const BRANCH_MUTATION_LONG_OPTIONS = new Set([
+  "--delete",
+  "--move",
+  "--copy",
+  "--force",
+  "--edit-description",
+  "--set-upstream-to",
+  "--unset-upstream",
+  "--create-reflog",
+  "--track",
+  "--no-track",
+]);
+const BRANCH_READ_ONLY_OPTIONS = new Set([
+  "--list",
+  "--all",
+  "--remotes",
+  "--show-current",
+  "--contains",
+  "--no-contains",
+  "--merged",
+  "--no-merged",
+  "--points-at",
+  "--format",
+  "--sort",
+  "--column",
+  "--no-column",
+  "--verbose",
+]);
+
+function isGitWorktreeCommand(invocation: NormalizedShellInvocation): boolean {
+  return matchesGitCommand(invocation.argv, invocation.cwd, (subcommand) => subcommand === "worktree");
+}
+
+function mutatesManagedWorktreeRef(invocation: NormalizedShellInvocation): boolean {
+  return matchesGitCommand(invocation.argv, invocation.cwd, (subcommand, args) => {
+    if (!args.some(isManagedBranchRef)) return false;
+    if (subcommand === "update-ref") return true;
+    if (subcommand !== "branch") return false;
+    return !isReadOnlyBranchInvocation(args);
+  });
+}
+
+function matchesGitCommand(
+  argv: readonly string[],
+  cwd: string,
+  predicate: (subcommand: string, args: readonly string[]) => boolean,
+): boolean {
+  let index = 0;
+  while (SHELL_ASSIGNMENT_PATTERN.test(argv[index] ?? "")) index += 1;
+  const command = commandBasename(argv[index]);
+  if (command === undefined) return false;
+
+  if (command === "command") {
+    index += 1;
+    while ((argv[index] ?? "").startsWith("-")) index += 1;
+    return matchesGitCommand(argv.slice(index), cwd, predicate);
+  }
+
+  if (command === "env") {
+    index = envCommandIndex(argv, index + 1);
+    return matchesGitCommand(argv.slice(index), cwd, predicate);
+  }
+
+  if (WORKTREE_SHELL_WRAPPERS.has(command)) {
+    const payload = shellCommandPayload(argv.slice(index + 1));
+    if (payload === undefined) return false;
+    const parsed = parseShellRequest(payload, { workspaceRoot: cwd, cwd });
+    if (!("invocations" in parsed)) return rawGitCommandMatches(payload, predicate);
+    return parsed.invocations.some((nested) => matchesGitCommand(nested.argv, nested.cwd, predicate));
+  }
+
+  if (command !== "git") return false;
+  const subcommandIndex = gitSubcommandIndex(argv, index + 1);
+  const subcommand = argv[subcommandIndex];
+  return subcommand === undefined ? false : predicate(subcommand, argv.slice(subcommandIndex + 1));
+}
+
+function gitSubcommandIndex(argv: readonly string[], startIndex: number): number {
+  let index = startIndex;
+  while (index < argv.length) {
+    const token = argv[index]!;
+    if (!token.startsWith("-")) return index;
+    const optionName = token.includes("=") ? token.slice(0, token.indexOf("=")) : token;
+    if (GIT_GLOBAL_OPTIONS_WITH_VALUE.has(optionName) && !token.includes("=")) index += 2;
+    else index += 1;
+  }
+  return index;
+}
+
+function rawGitCommandMatches(
+  payload: string,
+  predicate: (subcommand: string, args: readonly string[]) => boolean,
+): boolean {
+  if (/(^|[^\w.-])git\b[^\n;&|]*\bworktree(?:\s|$)/.test(payload) && predicate("worktree", [])) return true;
+  const managedRef = payload.match(/(?:refs\/heads\/)?archcode\/[A-Za-z0-9._\/-]+/)?.[0];
+  if (managedRef === undefined) return false;
+  if (/(^|[^\w.-])git\b[^\n;&|]*\bupdate-ref\b/.test(payload) && predicate("update-ref", [managedRef])) return true;
+  return /(^|[^\w.-])git\b[^\n;&|]*\bbranch\b/.test(payload) && predicate("branch", [managedRef]);
+}
+
+function isManagedBranchRef(value: string): boolean {
+  return MANAGED_BRANCH_PREFIXES.some((prefix) => value.startsWith(prefix));
+}
+
+function isReadOnlyBranchInvocation(args: readonly string[]): boolean {
+  if (args.length === 0) return true;
+  if (args.some(isBranchMutationOption)) return false;
+  if (args.some((arg) => BRANCH_READ_ONLY_OPTIONS.has(optionName(arg)))) return true;
+  return args.every((arg) => arg.startsWith("-") && isReadOnlyBranchShortOption(arg));
+}
+
+function isBranchMutationOption(value: string): boolean {
+  const name = optionName(value);
+  if (BRANCH_MUTATION_LONG_OPTIONS.has(name)) return true;
+  return /^-[^-]*[dDmMcCf]$/.test(value) || /^-[^-]*[dDmMcCf][^-]*$/.test(value);
+}
+
+function isReadOnlyBranchShortOption(value: string): boolean {
+  return /^-[arv]+$/.test(value);
+}
+
+function optionName(value: string): string {
+  const equalsIndex = value.indexOf("=");
+  return equalsIndex < 0 ? value : value.slice(0, equalsIndex);
+}
+
+function commandBasename(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const normalized = value.replace(/\\/g, "/");
+  return normalized.slice(normalized.lastIndexOf("/") + 1);
+}
+
+function envCommandIndex(argv: readonly string[], startIndex: number): number {
+  let index = startIndex;
+  while (index < argv.length) {
+    const token = argv[index]!;
+    if (token === "--") return index + 1;
+    if (SHELL_ASSIGNMENT_PATTERN.test(token)) {
+      index += 1;
+      continue;
+    }
+    if (token === "-u" || token === "--unset" || token === "-C" || token === "--chdir") {
+      index += 2;
+      continue;
+    }
+    if (token.startsWith("--unset=") || token.startsWith("--chdir=")) {
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("-")) {
+      index += 1;
+      continue;
+    }
+    return index;
+  }
+  return index;
+}
+
+function shellCommandPayload(args: readonly string[]): string | undefined {
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index]!;
+    if (token === "-c" || (/^-[A-Za-z]+$/.test(token) && token.includes("c"))) return args[index + 1];
+  }
+  return undefined;
+}
+
 function isSafePackageRunnerParserUncertainty(request: NormalizedShellRequest): boolean {
   if (request.invocations.length !== 1) return false;
   const invocation = request.invocations[0]!;
@@ -312,6 +500,16 @@ function matchesEffect(request: NormalizedShellRequest, reasonIncludes: string, 
 }
 
 const DENY_RULES: DenyRule[] = [
+  {
+    ruleId: "deny-direct-worktree-command",
+    reason: RULE_REASONS.worktreeCommand,
+    matches: (request) => request.invocations.some(isGitWorktreeCommand),
+  },
+  {
+    ruleId: "deny-managed-worktree-ref-mutation",
+    reason: RULE_REASONS.managedWorktreeRefMutation,
+    matches: (request) => request.invocations.some(mutatesManagedWorktreeRef),
+  },
   {
     ruleId: "deny-protected-permissions-file",
     reason: RULE_REASONS.permissionsFile,
@@ -370,6 +568,16 @@ const DENY_RULES: DenyRule[] = [
 ];
 
 const ASK_RULES: AskRule[] = [
+  {
+    ruleId: "ask-opaque-interpreter-execution",
+    reason: RULE_REASONS.opaqueInterpreterExecution,
+    match: (request) => {
+      // This is a per-run confirmation boundary for code the parser cannot inspect.
+      // It does not claim to sandbox, isolate, or determine what that code will do.
+      const invocation = request.invocations.find(isOpaqueInterpreterExecution);
+      return invocation ? { display: invocation.display, eligible: false } : undefined;
+    },
+  },
   {
     ruleId: "ask-parser-uncertainty",
     reason: RULE_REASONS.parserUncertainty,
@@ -437,7 +645,7 @@ const ASK_RULES: AskRule[] = [
 ];
 
 function hasUnsafePathEffect(request: NormalizedShellRequest, validator: PathValidator): boolean {
-  return ASK_RULES.some((rule) => !["ask-parser-uncertainty", "ask-remote-command-execution", "ask-git-push", "ask-destructive-local"].includes(rule.ruleId) && rule.match(request, validator));
+  return ASK_RULES.some((rule) => !["ask-opaque-interpreter-execution", "ask-parser-uncertainty", "ask-remote-command-execution", "ask-git-push", "ask-destructive-local"].includes(rule.ruleId) && rule.match(request, validator));
 }
 
 function isAllowedGitInvocation(args: string[]): boolean {
@@ -445,7 +653,7 @@ function isAllowedGitInvocation(args: string[]): boolean {
   if (!subcommand) return false;
   if (["status", "diff", "log", "show", "blame", "fetch", "pull", "add", "commit"].includes(subcommand)) return true;
   if (subcommand === "stash") return args[1] !== "drop";
-  if (subcommand === "branch") return !args.some((arg) => arg === "-D" || arg === "--delete" || arg === "--force");
+  if (subcommand === "branch") return isReadOnlyBranchInvocation(args.slice(1));
   if (subcommand === "tag") return args.length === 1 || args[1] === "-l" || args[1] === "--list";
   return false;
 }
@@ -497,6 +705,12 @@ function classifyReadOnlyInvocation(invocation: NormalizedShellInvocation, valid
   }
   if (name === "git") {
     return isAllowedGitInvocation(args) ? allow(invocation.display) : ask("Git command requires confirmation", invocation.display, true, request, "ask-git-command");
+  }
+  if (OPAQUE_INTERPRETER_METADATA_ARGS.has(name)) {
+    if (isInterpreterMetadataOnlyInvocation(invocation)) return allow(invocation.display);
+    // The request-level rule makes this ineligible decision outrank other
+    // eligible Ask rules; retain a safe invocation-level fallback as well.
+    return ask(RULE_REASONS.opaqueInterpreterExecution, invocation.display, false, request, "ask-opaque-interpreter-execution");
   }
   if (isAllowedPackageManagerInvocation(name, args)) return allow(invocation.display);
   if (isAllowedNetworkInvocation(name)) return allow(invocation.display);

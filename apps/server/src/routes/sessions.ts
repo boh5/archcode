@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { NotRootSessionError, SessionDeleteConflictError, SessionFileNotFoundError } from "@archcode/agent-core";
+import { NotRootSessionError, SessionDeleteConflictError, SessionDeleteInProgressError, SessionDeleteOwnerConflictError, SessionFamilyStopInProgressError, SessionFileNotFoundError } from "@archcode/agent-core";
 import type { AgentRuntime } from "@archcode/agent-core";
 import { BadRequestError, ConflictError, SessionNotFoundError } from "../errors";
 import { resolveProject } from "../resolve";
@@ -60,6 +60,24 @@ export function createSessionsRoutes(runtime: AgentRuntime): Hono {
     } catch (error) {
       if (error instanceof SessionDeleteConflictError) {
         throw new ConflictError(error.sessionIds);
+      }
+      if (error instanceof SessionDeleteInProgressError) {
+        throw new ConflictError([error.sessionId], error.message, {
+          scopeCode: error.code,
+          rootSessionId: error.rootSessionId,
+        });
+      }
+      if (error instanceof SessionFamilyStopInProgressError) {
+        throw new ConflictError([error.sessionId], error.message, {
+          scopeCode: error.code,
+          rootSessionId: error.rootSessionId,
+        });
+      }
+      if (error instanceof SessionDeleteOwnerConflictError) {
+        throw new ConflictError(error.sessionIds, error.message, {
+          scopeCode: error.code,
+          owners: error.owners,
+        });
       }
       if (error instanceof SessionFileNotFoundError || isMissingFileError(error)) {
         throw new SessionNotFoundError(sessionId);

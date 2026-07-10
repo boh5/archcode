@@ -8,6 +8,7 @@ export function createMockStore(
 ): StoreApi<SessionStoreState> {
   const state: SessionStoreState = {
     sessionId: "test",
+    cwd: "/workspace",
     agentName: "orchestrator",
     title: null,
     createdAt: Date.now(),
@@ -63,6 +64,10 @@ export function createMockStore(
           break;
         }
       }
+    },
+    setCwd: (cwd) => {
+      state.cwd = cwd;
+      state.readSnapshots = new Map();
     },
     setTitle: (title) => {
       state.title = title;

@@ -32,7 +32,7 @@ function makeCtx(
   abort: new AbortController().signal,
   startedAt: Date.now(),
   allowedTools: new Set(["file_read", "file_edit", "file_write"]),
-  workspaceRoot: workspaceDir,
+  cwd: workspaceDir,
   storeManager,
     projectContext: createTestProjectContext(workspaceDir), ...overrides,  };
 }
@@ -47,7 +47,7 @@ describe("createWorkspacePermission", () => {
   test("allows path inside workspace", async () => {
     const file = workspaceFile("ws-inner.txt");
     const permission = createWorkspacePermission();
-    const decision = await permission({ path: file }, makeCtx({ workspaceRoot: workspaceDir }));
+    const decision = await permission({ path: file }, makeCtx({ cwd: workspaceDir }));
 
     expect(decision).toEqual({ outcome: "allow" });
   });
@@ -59,7 +59,7 @@ describe("createWorkspacePermission", () => {
     const permission = createWorkspacePermission();
     const decision = await permission(
       { path: outsideFile },
-      makeCtx({ workspaceRoot: workspaceDir }),
+      makeCtx({ cwd: workspaceDir }),
     );
 
     expect(decision.outcome).toBe("ask");
@@ -81,7 +81,7 @@ describe("createWorkspacePermission", () => {
 
   test("allows when path is missing from input", async () => {
     const permission = createWorkspacePermission();
-    const decision = await permission({ content: "no path" }, makeCtx({ workspaceRoot: workspaceDir }));
+    const decision = await permission({ content: "no path" }, makeCtx({ cwd: workspaceDir }));
 
     expect(decision).toEqual({ outcome: "allow" });
   });
@@ -92,7 +92,7 @@ describe("createWorkspacePermission", () => {
     const permission = createWorkspacePermission();
     const decision = await permission(
       { path: outsideFile },
-      makeCtx({ workspaceRoot: workspaceDir }),
+      makeCtx({ cwd: workspaceDir }),
     );
 
     expect(decision.outcome).toBe("ask");
@@ -110,7 +110,7 @@ describe("createWorkspacePermission", () => {
       const permission = createWorkspacePermission({ pathKey: "filePath" });
       const decision = await permission(
         { filePath: outsideFile, path: workspaceDir },
-        makeCtx({ workspaceRoot: workspaceDir }),
+        makeCtx({ cwd: workspaceDir }),
       );
 
       expect(decision.outcome).toBe("ask");
@@ -126,7 +126,7 @@ describe("createWorkspacePermission", () => {
       const permission = createWorkspacePermission({ pathKey: "filePath" });
       const decision = await permission(
         { filePath: file },
-        makeCtx({ workspaceRoot: workspaceDir }),
+        makeCtx({ cwd: workspaceDir }),
       );
 
       expect(decision).toEqual({ outcome: "allow" });
@@ -138,7 +138,7 @@ describe("createWorkspacePermission", () => {
       const permission = createWorkspacePermission({ pathKey: "filePath" });
       const decision = await permission(
         { filePath: join(workspaceDir, "safe.txt"), path: outsideFile },
-        makeCtx({ workspaceRoot: workspaceDir }),
+        makeCtx({ cwd: workspaceDir }),
       );
 
       expect(decision).toEqual({ outcome: "allow" });

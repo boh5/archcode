@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { rm } from "node:fs/promises";
 import type { ModelMessage } from "ai";
 import type { StoreApi } from "zustand";
 import { z } from "zod";
@@ -6,11 +7,11 @@ import type { ModelInfo } from "../../provider/model";
 import { SkillService } from "../../skills";
 import { CommandRegistry } from "../../commands/registry";
 import { createSkillCommand } from "../../commands/skill";
-import { storeManager } from "../../store/store";
+import { createSessionStore, storeManager } from "../../store/store";
 import type { Reminder, ExecutionEndEvent, SessionEventPayload, SessionStoreState, StoredMessage, StoredTodo } from "../../store/types";
 import { createRegistry, defineTool } from "../../tools/index";
 import { REDACTION_MARKER } from "../../tools/index";
-import { createTestProjectContext } from "../../tools/test-project-context";
+import { createDurableTestSessionContext, createTestProjectContext } from "../../tools/test-project-context";
 import type { AskUserCallback, PermissionErrorCode, ToolExecutionContext } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
 import { silentLogger } from "../../logger";
@@ -20,7 +21,6 @@ import { setLlmAdapterForTest } from "../../llm/adapter";
 import { maybeHandleCommand, runQueryLoop } from "./loop";
 import type { BeforeModelBuildContext } from "./loop-hooks";
 import { DOOM_LOOP_MESSAGE, type QueryLoopOptions } from "./types";
-import { MissingProjectContextError } from "../errors";
 
 type StreamTextFn = typeof import("ai").streamText;
 
@@ -165,7 +165,7 @@ function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOption
   skillService: testSkillService,
   storeManager,
   projectContext: createTestProjectContext(workspaceRoot),
-  workspaceRoot, ...overrides,  };
+  cwd: workspaceRoot, ...overrides,  };
 }
 
 function createMockStreamText(rounds: MockRound[]) {
@@ -776,17 +776,10 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
   });
 
   test("permission ask without legacy callback pauses for durable Session HITL", async () => {
-    const store = createStore();
+    const workspaceRoot = `${import.meta.dir}/__test_tmp__/durable-permission-${crypto.randomUUID()}`;
+    const durable = await createDurableTestSessionContext(workspaceRoot);
+    const { store, projectContext, storeManager: durableStoreManager } = durable;
     const events = captureEvents(store);
-    const workspaceRoot = import.meta.dir;
-    const projectContext = createTestProjectContext(workspaceRoot);
-    projectContext.hitl.configure({
-      workspaceRoot,
-      project: projectContext.project,
-      sessions: storeManager,
-      goalState: projectContext.goalState,
-      loopState: projectContext.loopState,
-    });
     const executor = mock(async (_input: z.infer<typeof testToolSchema>, _ctx: ToolExecutionContext) => "should not run");
     const registry = createPermissionBranchRegistry(async (_name, input, ctx) => executor(input, ctx));
     const descriptor = registry.get("sensitiveReadTool");
@@ -800,34 +793,40 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       { text: "Done" },
     ]);
 
-    await runQueryLoop(
-      makeOptions({
-        store,
-        toolRegistry: registry,
-        allowedTools: ["sensitiveReadTool"],
-        projectContext,
-        workspaceRoot,
-      }),
-      "Use sensitiveReadTool",
-    );
+    try {
+      await runQueryLoop(
+        makeOptions({
+          store,
+          storeManager: durableStoreManager,
+          toolRegistry: registry,
+          allowedTools: ["sensitiveReadTool"],
+          projectContext,
+          cwd: workspaceRoot,
+        }),
+        "Use sensitiveReadTool",
+      );
 
-    expect(executor).not.toHaveBeenCalled();
-    const part = assistantMessages(store)[0].parts[0];
-    expect(part).toMatchObject({
-      state: "running",
-      toolCallId: "tc-durable-permission",
-      toolName: "sensitiveReadTool",
-    });
-    const executionEnd = lastExecutionEnd(events);
-    expect(executionEnd).toMatchObject({
-      status: "waiting_for_human",
-      blockedToolCallId: "tc-durable-permission",
-    });
-    expect(executionEnd?.blockedHitl).toMatchObject({
-      source: { type: "tool_permission", sessionId: store.getState().sessionId, toolCallId: "tc-durable-permission", toolName: "sensitiveReadTool" },
-      toolCallId: "tc-durable-permission",
-      toolName: "sensitiveReadTool",
-    });
+      expect(executor).not.toHaveBeenCalled();
+      const part = assistantMessages(store)[0].parts[0];
+      expect(part).toMatchObject({
+        state: "running",
+        toolCallId: "tc-durable-permission",
+        toolName: "sensitiveReadTool",
+      });
+      const executionEnd = lastExecutionEnd(events);
+      expect(executionEnd).toMatchObject({
+        status: "waiting_for_human",
+        blockedToolCallId: "tc-durable-permission",
+      });
+      expect(executionEnd?.blockedHitl).toMatchObject({
+        source: { type: "tool_permission", sessionId: store.getState().sessionId, toolCallId: "tc-durable-permission", toolName: "sensitiveReadTool" },
+        toolCallId: "tc-durable-permission",
+        toolName: "sensitiveReadTool",
+      });
+    } finally {
+      await durableStoreManager.flushSession(store.getState().sessionId, workspaceRoot);
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
   });
 
   test("throwing registry tool stores error message", async () => {
@@ -1043,7 +1042,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     ]);
 
     const workspaceRoot = import.meta.dir;
-    await runQueryLoop(makeOptions({ store, toolRegistry: registry, allowedTools: ["echo"], workspaceRoot }), "Hi");
+    await runQueryLoop(makeOptions({ store, toolRegistry: registry, allowedTools: ["echo"], cwd: workspaceRoot }), "Hi");
 
     expect(executedIds).toEqual(["tc-1", "tc-2"]);
     expect(executeSpy).toHaveBeenCalledTimes(2);
@@ -2195,7 +2194,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     const workspaceRoot = import.meta.dir;
     await runQueryLoop(
-      makeOptions({ store, toolRegistry: registry, allowedTools: ["echo"], workspaceRoot }),
+      makeOptions({ store, toolRegistry: registry, allowedTools: ["echo"], cwd: workspaceRoot }),
       "Hi",
     );
 
@@ -2210,7 +2209,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       toolCallId: "tc-1",
       input: { message: "x" },
       step: 0,
-      workspaceRoot,
+      cwd: workspaceRoot,
     });
     expect([...contexts[0]!.allowedTools]).toEqual(["echo"]);
     expect(assistantMessages(store)[0].parts[0]).toMatchObject({
@@ -2304,10 +2303,10 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     expect([...contexts[0]!.allowedTools]).toEqual(["safeTool", "missingTool"]);
   });
 
-  test("passes provided workspaceRoot to tool execution context", async () => {
-    let contextWorkspaceRoot: string | undefined;
+  test("passes the provided cwd to the tool execution context", async () => {
+    let contextCwd: string | undefined;
     const registry = createTestRegistry(async (_, ctx) => {
-      contextWorkspaceRoot = ctx.workspaceRoot;
+      contextCwd = ctx.cwd;
       return "ok";
     });
     createMockStreamText([
@@ -2322,42 +2321,165 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       makeOptions({
         toolRegistry: registry,
         allowedTools: ["echo"],
-        workspaceRoot: "/canonical/workspace",
+        cwd: "/execution/worktree",
       }),
       "Hi",
     );
 
-    expect(contextWorkspaceRoot).toBe("/canonical/workspace");
+    expect(contextCwd).toBe("/execution/worktree");
   });
 
-  test("returns MissingProjectContextError when tool execution lacks workspaceRoot", async () => {
-    const store = createStore();
+  test("keeps canonical project context separate from the tool execution cwd", async () => {
+    let context: ToolExecutionContext | undefined;
     const projectContext = createTestProjectContext("/canonical/workspace");
-    Object.defineProperty(projectContext.project, "workspaceRoot", {
-      configurable: true,
-      value: undefined,
+    const registry = createTestRegistry(async (_, ctx) => {
+      context = ctx;
+      return "ok";
     });
     createMockStreamText([
       {
         finishReason: "tool-calls",
         chunks: [{ type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: {} }],
       },
+      { text: "Done" },
     ]);
 
     await runQueryLoop(
       makeOptions({
-        store,
-        toolRegistry: createTestRegistry(),
+        toolRegistry: registry,
         allowedTools: ["echo"],
         projectContext,
-        workspaceRoot: undefined,
+        cwd: "/repo.worktrees/task-1",
       }),
       "Hi",
     );
 
-    expect(store.getState().steps[0]).toMatchObject({
-      error: new MissingProjectContextError("Query loop requires options.workspaceRoot before executing tools").message,
-    });
+    expect(context?.cwd).toBe("/repo.worktrees/task-1");
+    expect(context?.projectContext).toBe(projectContext);
+    expect(projectContext.project.workspaceRoot).toBe("/canonical/workspace");
+  });
+
+  test("stops before another model call when a tool changes Session cwd", async () => {
+    const projectRoot = import.meta.dir;
+    const nextCwd = `${projectRoot}.worktrees/session-switch`;
+    const store = createSessionStore(crypto.randomUUID(), projectRoot);
+    const registry = createRegistry([defineTool({
+      name: "change_cwd",
+      description: "Change cwd",
+      inputSchema: z.object({}).strict(),
+      traits: { readOnly: false, destructive: false, concurrencySafe: false },
+      execute: async (_input, ctx) => {
+        ctx.store.setState({ cwd: nextCwd });
+        return {
+          output: "cwd changed",
+          isError: false,
+          meta: { sessionCwdChanged: true },
+        };
+      },
+    })]);
+    const streamFn = createMockStreamText([
+      {
+        finishReason: "tool-calls",
+        chunks: [{ type: "tool-call", toolCallId: "cwd-change-1", toolName: "change_cwd", input: {} }],
+      },
+    ]);
+
+    const result = await runQueryLoop(
+      makeOptions({ store, toolRegistry: registry, allowedTools: ["change_cwd"], cwd: projectRoot }),
+      "switch cwd",
+    );
+
+    expect(result.cwdChanged).toEqual({ previousCwd: projectRoot, cwd: nextCwd });
+    expect(streamFn).toHaveBeenCalledTimes(1);
+  });
+
+  test("explicit execution control stops the Session family and skips later tools without pretending cwd changed", async () => {
+    const store = createStore();
+    const laterExecute = mock(async () => "must not run");
+    const registry = createRegistry([
+      defineTool({
+        name: "cancel_goal",
+        description: "Cancel Goal",
+        inputSchema: z.object({}).strict(),
+        traits: { readOnly: false, destructive: false, concurrencySafe: false },
+        execute: async () => ({
+          output: "cancelled",
+          isError: false,
+          meta: { executionControl: { action: "stop_session_family", reason: "goal_cancelled" } },
+        }),
+      }),
+      defineTool({
+        name: "later_write",
+        description: "Later write",
+        inputSchema: z.object({}).strict(),
+        traits: { readOnly: false, destructive: false, concurrencySafe: false },
+        execute: laterExecute,
+      }),
+    ]);
+    const streamFn = createMockStreamText([{
+      finishReason: "tool-calls",
+      chunks: [
+        { type: "tool-call", toolCallId: "cancel-1", toolName: "cancel_goal", input: {} },
+        { type: "tool-call", toolCallId: "later-1", toolName: "later_write", input: {} },
+      ],
+    }]);
+
+    const result = await runQueryLoop(
+      makeOptions({ store, toolRegistry: registry, allowedTools: ["cancel_goal", "later_write"] }),
+      "cancel",
+    );
+
+    expect(result.cwdChanged).toBeUndefined();
+    expect(result.executionControl).toEqual({ action: "stop_session_family", reason: "goal_cancelled" });
+    expect(laterExecute).not.toHaveBeenCalled();
+    expect(streamFn).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(assistantMessages(store)[0]?.parts)).toContain("SESSION_EXECUTION_STOPPED");
+  });
+
+  test("skips later tool calls emitted from the stale context after Session cwd changes", async () => {
+    const projectRoot = import.meta.dir;
+    const nextCwd = `${projectRoot}.worktrees/session-switch`;
+    const store = createSessionStore(crypto.randomUUID(), projectRoot);
+    const staleExecute = mock(async () => "must not run");
+    const registry = createRegistry([
+      defineTool({
+        name: "change_cwd",
+        description: "Change cwd",
+        inputSchema: z.object({}).strict(),
+        traits: { readOnly: false, destructive: false, concurrencySafe: false },
+        execute: async (_input, ctx) => {
+          ctx.store.setState({ cwd: nextCwd });
+          return { output: "cwd changed", isError: false, meta: { sessionCwdChanged: true } };
+        },
+      }),
+      defineTool({
+        name: "stale_write",
+        description: "A stale write",
+        inputSchema: z.object({}).strict(),
+        traits: { readOnly: false, destructive: true, concurrencySafe: false },
+        permissions: [async () => ({ outcome: "allow" })],
+        execute: staleExecute,
+      }),
+    ]);
+    createMockStreamText([{
+      finishReason: "tool-calls",
+      chunks: [
+        { type: "tool-call", toolCallId: "cwd-change-2", toolName: "change_cwd", input: {} },
+        { type: "tool-call", toolCallId: "stale-write-1", toolName: "stale_write", input: {} },
+      ],
+    }]);
+
+    await runQueryLoop(
+      makeOptions({ store, toolRegistry: registry, allowedTools: ["change_cwd", "stale_write"], cwd: projectRoot }),
+      "switch then write",
+    );
+
+    expect(staleExecute).not.toHaveBeenCalled();
+    const stalePart = store.getState().messages
+      .flatMap((message) => message.parts)
+      .find((part) => part.type === "tool" && part.toolCallId === "stale-write-1");
+    expect(stalePart).toMatchObject({ state: "error" });
+    expect(JSON.stringify(stalePart)).toContain("SESSION_CWD_CHANGED");
   });
 
   test("passes confirmPermission callback to tool execution context", async () => {

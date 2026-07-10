@@ -986,6 +986,7 @@ describe("Loop types", () => {
   test("SessionSummary can carry loopId alongside goalId", () => {
     const summary: SessionSummary = {
       sessionId: "session-1",
+      cwd: "/workspace",
       rootSessionId: "session-1",
       goalId: "goal-1",
       loopId: "loop-1",
@@ -1000,6 +1001,7 @@ describe("Loop types", () => {
   test("SessionSummary without loopId still works", () => {
     const summary: SessionSummary = {
       sessionId: "session-1",
+      cwd: "/workspace",
       rootSessionId: "session-1",
       goalId: "goal-1",
       createdAt: 1000,

@@ -5,19 +5,27 @@ import { createEmptySessionStats } from "@archcode/protocol";
 import { createEmptyCompressionState, resolveCompressionOriginalRange, type CompressionOriginalRangeResult } from "../compression";
 import type {
   SessionModelInfo,
+  SessionHitlCheckpoint,
   SessionTreeDiagnostic,
   SessionTreeDiagnosticType,
   SessionTreeNode,
   SessionTreeResponse,
 } from "@archcode/protocol";
 import { readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import type { Logger } from "../logger";
-import { NotRootSessionError, SessionFileNotFoundError } from "./errors";
+import {
+  InvalidSessionCwdError,
+  NotRootSessionError,
+  SessionCwdPathBarrierError,
+  SessionCwdReferenceScanError,
+  SessionFileNotFoundError,
+  SessionInitialPersistenceError,
+} from "./errors";
 import { SessionFileSchema, sessionFileInternals, type HydratedSessionFile, type SessionSummary } from "./helpers";
 import { projectModelMessagesFromStoredMessages } from "./projection";
 import { reduceStreamEvent } from "./reduce";
-import { __hasSessionsDirOverrideForTest, getSessionPath, getSessionsDir } from "./sessions-dir";
+import { __hasSessionsDirOverrideForTest, assertSafeSessionId, getSessionPath, getSessionsDir } from "./sessions-dir";
 import {
   type ReasoningPart,
   type SessionEventEnvelope,
@@ -34,6 +42,7 @@ export interface SessionStoreManagerOptions {
 }
 
 export interface CreateSessionOptions {
+  readonly cwd?: string;
   readonly rootSessionId?: string;
   readonly parentSessionId?: string;
   readonly goalId?: string;
@@ -44,6 +53,18 @@ export interface CreateSessionOptions {
   readonly title?: string;
 }
 
+export interface SessionCwdReference {
+  readonly sessionId: string;
+  readonly rootSessionId: string;
+  readonly cwd: string;
+}
+
+export interface SessionCwdPathBarrierLease {
+  readonly cwd: string;
+  readonly generation: symbol;
+  release(): void;
+}
+
 export class SessionStoreManager {
   #registry = new Map<string, StoreApi<SessionStoreState>>();
   #pendingLoads = new Map<string, Promise<StoreApi<SessionStoreState>>>();
@@ -52,6 +73,7 @@ export class SessionStoreManager {
   // Disposable acceleration for child lookups; source of truth stays on disk.
   #rootIdIndex = new Map<string, string>();
   #scanPromiseByWorkspace = new Map<string, Promise<void>>();
+  #cwdPathBarriers = new Map<string, symbol>();
   readonly #logger: Logger;
 
   constructor(options: SessionStoreManagerOptions) {
@@ -89,6 +111,9 @@ export class SessionStoreManager {
     const shouldPersist = workspaceRoot !== undefined || __hasSessionsDirOverrideForTest();
     const persistWorkspaceRoot = workspaceRoot ?? "__test__";
     const rootSessionId = options.rootSessionId ?? sessionId;
+    const cwd = options.cwd ?? workspaceRoot ?? "";
+    if (cwd !== "" && !isAbsolute(cwd)) throw new InvalidSessionCwdError(cwd, "must be an absolute path");
+    if (cwd !== "" && !this.#hydrating.has(key)) this.#assertCwdTargetAllowed(cwd);
     const parentSessionId = options.parentSessionId;
     const goalId = options.goalId;
     const loopId = options.loopId;
@@ -98,21 +123,7 @@ export class SessionStoreManager {
     const persist = () => {
       if (!shouldPersist) return;
       const state = store.getState();
-      const pending = this.#pendingPersists.get(key) ?? Promise.resolve();
-      const next = pending
-        .catch(() => { /* previous persist already logged — continue chain */ })
-        .then(() => sessionFileInternals.saveSessionTranscript(state, persistWorkspaceRoot))
-        .catch((err) => {
-          this.#logger.warn("session.persist.failed", {
-            error: err,
-            context: { sessionId },
-            meta: { workspaceRoot: persistWorkspaceRoot === "__test__" ? undefined : persistWorkspaceRoot },
-          });
-        })
-        .finally(() => {
-          if (this.#pendingPersists.get(key) === next) this.#pendingPersists.delete(key);
-        });
-      this.#pendingPersists.set(key, next);
+      void this.#enqueuePersist(key, sessionId, persistWorkspaceRoot, state).catch(() => undefined);
     };
 
     const persistForEvent = (event: SessionEventPayload) => {
@@ -121,6 +132,7 @@ export class SessionStoreManager {
         || event.type === "execution-end"
         || event.type === "tool-attempt"
         || event.type === "tool-result"
+        || event.type === "session.cwd_changed"
         || event.type === "llm-retry"
         || event.type === "llm-recovery"
         || event.type === "llm-recovery-failed"
@@ -139,6 +151,7 @@ export class SessionStoreManager {
     store = createStore<SessionStoreState>((set, get) => ({
       sessionId,
       createdAt: Date.now(),
+      cwd,
       agentName: options.agentName ?? "orchestrator",
       modelInfo: options.modelInfo ?? null,
       title: options.title ?? null,
@@ -198,6 +211,11 @@ export class SessionStoreManager {
         });
         persistForEvent(event);
       },
+      setCwd: (nextCwd: string) => {
+        const previousCwd = get().cwd;
+        if (previousCwd === nextCwd) return;
+        get().append({ type: "session.cwd_changed", previousCwd, cwd: nextCwd });
+      },
       setTitle: (title: string | null) => {
         set({ title });
         persist();
@@ -242,6 +260,49 @@ export class SessionStoreManager {
     return this.#registry.get(this.key(sessionId, workspaceRoot));
   }
 
+  /** Waits until every Session snapshot queued before or during this call is durable. */
+  async flushSession(sessionId: string, workspaceRoot: string): Promise<void> {
+    const key = this.key(sessionId, workspaceRoot);
+    while (true) {
+      const pending = this.#pendingPersists.get(key);
+      if (pending === undefined) return;
+      await pending;
+    }
+  }
+
+  /** Clears durable Session HITL execution blockers with an awaited snapshot write. */
+  async clearHitlBlockers(sessionId: string, workspaceRoot: string): Promise<void> {
+    const store = await this.getOrLoad(sessionId, workspaceRoot);
+    store.setState({ blockedHitl: undefined, blockedByHitlIds: undefined });
+    await this.#enqueuePersist(this.key(sessionId, workspaceRoot), sessionId, workspaceRoot, store.getState());
+  }
+
+  /**
+   * Installs one fail-closed durable HITL blocker. `replacesHitlId` is used by
+   * journal repair when an existing owner blocking key wins the create race.
+   */
+  async setHitlBlocker(
+    sessionId: string,
+    workspaceRoot: string,
+    blocker: SessionHitlCheckpoint,
+    replacesHitlId?: string,
+  ): Promise<void> {
+    const store = await this.getOrLoad(sessionId, workspaceRoot);
+    const blockedByHitlIds = new Set(store.getState().blockedByHitlIds ?? []);
+    if (replacesHitlId !== undefined) blockedByHitlIds.delete(replacesHitlId);
+    blockedByHitlIds.add(blocker.hitlId);
+    store.setState({
+      blockedHitl: blocker,
+      blockedByHitlIds: [...blockedByHitlIds].sort(),
+    });
+    await this.#enqueuePersist(this.key(sessionId, workspaceRoot), sessionId, workspaceRoot, store.getState());
+  }
+
+  /** Lists roots and descendants for project startup repair services. */
+  async listAllSessionSummaries(workspaceRoot: string): Promise<SessionSummary[]> {
+    return await sessionFileInternals.scanAllSessionSummaries(workspaceRoot);
+  }
+
   async getOrLoad(
     sessionId: string,
     workspaceRoot: string,
@@ -264,7 +325,25 @@ export class SessionStoreManager {
   }
 
   async createSessionFile(workspaceRoot: string, options: CreateSessionOptions = {}): Promise<HydratedSessionFile> {
-    const store = this.create(crypto.randomUUID(), workspaceRoot, options);
+    const sessionId = crypto.randomUUID();
+    const store = this.create(sessionId, workspaceRoot, options);
+    const key = this.key(sessionId, workspaceRoot);
+    const initialPersist = this.#pendingPersists.get(key);
+    if (initialPersist === undefined) {
+      this.delete(sessionId, workspaceRoot);
+      throw new SessionInitialPersistenceError(
+        sessionId,
+        workspaceRoot,
+        new Error("Initial Session persistence was not scheduled"),
+      );
+    }
+
+    try {
+      await initialPersist;
+    } catch (error) {
+      this.delete(sessionId, workspaceRoot);
+      throw new SessionInitialPersistenceError(sessionId, workspaceRoot, error);
+    }
     return sessionFileInternals.toSessionFile(store.getState());
   }
 
@@ -293,6 +372,255 @@ export class SessionStoreManager {
     if (store === undefined) throw new SessionFileNotFoundError(sessionId);
     store.getState().setGoalId(goalId);
     return store.getState();
+  }
+
+  /**
+   * Atomically changes the execution directory without moving Session storage.
+   * Tool callers await this method before rebuilding their Agent runtime.
+   */
+  async updateCwd(
+    sessionId: string,
+    workspaceRoot: string,
+    cwd: string,
+    expectedCwd?: string,
+  ): Promise<SessionStoreState> {
+    if (!isAbsolute(cwd)) throw new InvalidSessionCwdError(cwd);
+    this.#assertCwdTargetAllowed(cwd);
+    return await this.#updateCwd(sessionId, workspaceRoot, cwd, expectedCwd);
+  }
+
+  async updateCwdForMigration(
+    sessionId: string,
+    workspaceRoot: string,
+    cwd: string,
+    expectedCwd: string,
+    barrier: SessionCwdPathBarrierLease,
+  ): Promise<SessionStoreState> {
+    if (!isAbsolute(cwd) || !isAbsolute(expectedCwd)) {
+      throw new InvalidSessionCwdError(!isAbsolute(cwd) ? cwd : expectedCwd);
+    }
+    this.#assertActiveCwdPathBarrier(barrier);
+    if (!sameResolvedPath(cwd, barrier.cwd) && !sameResolvedPath(expectedCwd, barrier.cwd)) {
+      throw new SessionCwdPathBarrierError(barrier.cwd, "target_blocked");
+    }
+    return await this.#updateCwd(sessionId, workspaceRoot, cwd, expectedCwd, barrier);
+  }
+
+  async #updateCwd(
+    sessionId: string,
+    workspaceRoot: string,
+    cwd: string,
+    expectedCwd?: string,
+    barrier?: SessionCwdPathBarrierLease,
+  ): Promise<SessionStoreState> {
+    if (!isAbsolute(cwd)) throw new InvalidSessionCwdError(cwd);
+    const store = await this.getOrLoad(sessionId, workspaceRoot);
+    const previousCwd = store.getState().cwd;
+    const previousSnapshots = store.getState().readSnapshots;
+    if (expectedCwd !== undefined && previousCwd !== expectedCwd) {
+      throw new InvalidSessionCwdError(cwd, `expected current cwd ${expectedCwd}, got ${previousCwd}`);
+    }
+    if (previousCwd === cwd) return store.getState();
+    this.#assertCwdTargetAllowed(cwd, barrier);
+
+    const key = this.key(sessionId, workspaceRoot);
+    store.getState().append({ type: "session.cwd_changed", previousCwd, cwd });
+    try {
+      await this.#pendingPersists.get(key);
+    } catch (error) {
+      store.getState().append({ type: "session.cwd_changed", previousCwd: cwd, cwd: previousCwd });
+      store.setState({ readSnapshots: previousSnapshots });
+      try {
+        await this.#pendingPersists.get(key);
+      } catch (rollbackError) {
+        throw new AggregateError([error, rollbackError], `Failed to persist or roll back Session cwd for ${sessionId}`);
+      }
+      throw error;
+    }
+    return store.getState();
+  }
+
+  acquireCwdPathBarrier(cwd: string): SessionCwdPathBarrierLease {
+    if (!isAbsolute(cwd)) throw new InvalidSessionCwdError(cwd);
+    const key = resolve(cwd);
+    if (this.#cwdPathBarriers.has(key)) throw new SessionCwdPathBarrierError(cwd, "already_held");
+    const generation = Symbol(`session-cwd-path-barrier:${key}`);
+    this.#cwdPathBarriers.set(key, generation);
+    let released = false;
+    return {
+      cwd: key,
+      generation,
+      release: () => {
+        if (released) return;
+        released = true;
+        if (this.#cwdPathBarriers.get(key) === generation) this.#cwdPathBarriers.delete(key);
+      },
+    };
+  }
+
+  async scanCwdReferencesStrict(workspaceRoot: string, cwd: string): Promise<SessionCwdReference[]> {
+    if (!isAbsolute(cwd)) throw new InvalidSessionCwdError(cwd);
+    await this.#flushWorkspacePersists(workspaceRoot);
+
+    const disk = new Map<string, SessionCwdReference>();
+    const names = await this.#strictSessionDirectoryNames(workspaceRoot);
+    for (const name of names.sort()) {
+      const fallbackPath = join(getSessionsDir(workspaceRoot), name, "session.json");
+      try {
+        assertSafeSessionId(name);
+        const parsed = await sessionFileInternals.readSessionFile(name, workspaceRoot);
+        assertSafeSessionId(parsed.rootSessionId);
+        const parsedCwd = parsed.cwd ?? workspaceRoot;
+        if (!isAbsolute(parsedCwd)) throw new InvalidSessionCwdError(parsedCwd);
+        disk.set(parsed.sessionId, {
+          sessionId: parsed.sessionId,
+          rootSessionId: parsed.rootSessionId,
+          cwd: parsedCwd,
+        });
+      } catch (error) {
+        throw new SessionCwdReferenceScanError(
+          workspaceRoot,
+          fallbackPath,
+          `Invalid Session file blocks cwd reference migration: ${fallbackPath}`,
+          error,
+        );
+      }
+    }
+
+    const live = new Map<string, SessionCwdReference>();
+    const prefix = `${workspaceRoot}\0`;
+    for (const [key, store] of this.#registry.entries()) {
+      if (!key.startsWith(prefix)) continue;
+      const state = store.getState();
+      try {
+        assertSafeSessionId(state.sessionId);
+        assertSafeSessionId(state.rootSessionId);
+      } catch (error) {
+        throw new SessionCwdReferenceScanError(
+          workspaceRoot,
+          undefined,
+          `Loaded Session has invalid identity: ${state.sessionId}`,
+          error,
+        );
+      }
+      if (!isAbsolute(state.cwd)) {
+        throw new SessionCwdReferenceScanError(
+          workspaceRoot,
+          undefined,
+          `Loaded Session ${state.sessionId} has invalid cwd: ${state.cwd}`,
+        );
+      }
+      live.set(state.sessionId, {
+        sessionId: state.sessionId,
+        rootSessionId: state.rootSessionId,
+        cwd: state.cwd,
+      });
+    }
+
+    for (const [sessionId, liveReference] of live) {
+      const diskReference = disk.get(sessionId);
+      if (diskReference === undefined) continue;
+      if (
+        diskReference.rootSessionId !== liveReference.rootSessionId
+        || !sameResolvedPath(diskReference.cwd, liveReference.cwd)
+      ) {
+        throw new SessionCwdReferenceScanError(
+          workspaceRoot,
+          getSessionPath(workspaceRoot, sessionId),
+          `Loaded and persisted Session identity diverged during cwd reference migration: ${sessionId}`,
+        );
+      }
+    }
+
+    const references = new Map(disk);
+    for (const [sessionId, reference] of live) references.set(sessionId, reference);
+    return [...references.values()]
+      .filter((reference) => sameResolvedPath(reference.cwd, cwd))
+      .sort((left, right) => left.sessionId.localeCompare(right.sessionId));
+  }
+
+  #assertCwdTargetAllowed(cwd: string, barrier?: SessionCwdPathBarrierLease): void {
+    const key = resolve(cwd);
+    const active = this.#cwdPathBarriers.get(key);
+    if (active === undefined) return;
+    if (barrier !== undefined && barrier.generation === active && resolve(barrier.cwd) === key) return;
+    throw new SessionCwdPathBarrierError(cwd, "target_blocked");
+  }
+
+  #assertActiveCwdPathBarrier(barrier: SessionCwdPathBarrierLease): void {
+    if (this.#cwdPathBarriers.get(resolve(barrier.cwd)) !== barrier.generation) {
+      throw new SessionCwdPathBarrierError(barrier.cwd, "lease_expired");
+    }
+  }
+
+  async #flushWorkspacePersists(workspaceRoot: string): Promise<void> {
+    const prefix = `${workspaceRoot}\0`;
+    try {
+      while (true) {
+        const pending = [...this.#pendingPersists.entries()]
+          .filter(([key]) => key.startsWith(prefix))
+          .map(([, operation]) => operation);
+        if (pending.length === 0) return;
+        await Promise.all(pending);
+      }
+    } catch (error) {
+      throw new SessionCwdReferenceScanError(
+        workspaceRoot,
+        undefined,
+        "Pending Session persistence failed before cwd reference migration",
+        error,
+      );
+    }
+  }
+
+  async #strictSessionDirectoryNames(workspaceRoot: string): Promise<string[]> {
+    const sessionsDir = getSessionsDir(workspaceRoot);
+    let entries;
+    try {
+      entries = await readdir(sessionsDir, { withFileTypes: true });
+    } catch (error) {
+      if (isMissingFileError(error)) return [];
+      throw new SessionCwdReferenceScanError(
+        workspaceRoot,
+        sessionsDir,
+        `Unable to enumerate Session files for cwd reference migration: ${sessionsDir}`,
+        error,
+      );
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) continue;
+      throw new SessionCwdReferenceScanError(
+        workspaceRoot,
+        join(sessionsDir, entry.name),
+        `Unexpected entry blocks strict Session cwd reference scan: ${entry.name}`,
+      );
+    }
+    return entries.map((entry) => entry.name);
+  }
+
+  #enqueuePersist(
+    key: string,
+    sessionId: string,
+    workspaceRoot: string,
+    state: SessionStoreState,
+  ): Promise<void> {
+    const pending = this.#pendingPersists.get(key) ?? Promise.resolve();
+    const operation = pending
+      .catch(() => { /* the observed queue logs failures and remains usable */ })
+      .then(() => sessionFileInternals.saveSessionTranscript(state, workspaceRoot));
+    this.#pendingPersists.set(key, operation);
+    void operation
+      .catch((error) => {
+        this.#logger.warn("session.persist.failed", {
+          error,
+          context: { sessionId },
+          meta: { workspaceRoot: workspaceRoot === "__test__" ? undefined : workspaceRoot },
+        });
+      })
+      .finally(() => {
+        if (this.#pendingPersists.get(key) === operation) this.#pendingPersists.delete(key);
+      });
+    return operation;
   }
 
   appendSessionEvent(sessionId: string, event: SessionEventPayload, workspaceRoot?: string): boolean {
@@ -345,7 +673,7 @@ export class SessionStoreManager {
     }
 
     const diagnostics: SessionTreeDiagnostic[] = [];
-    const rootNode: SessionTreeNode = { session: toSessionSummary(rootFile), children: [] };
+    const rootNode: SessionTreeNode = { session: toSessionSummary(rootFile, workspaceRoot), children: [] };
     const sessions = new Map<string, SessionSummary>([[rootSessionId, rootNode.session]]);
     const childrenByParent = new Map<string, SessionSummary[]>();
 
@@ -377,7 +705,7 @@ export class SessionStoreManager {
         continue;
       }
 
-      const summary = toSessionSummary(parsed);
+      const summary = toSessionSummary(parsed, workspaceRoot);
       sessions.set(summary.sessionId, summary);
       const parentSessionId = parsed.parentSessionId;
       const siblings = childrenByParent.get(parentSessionId) ?? [];
@@ -426,6 +754,7 @@ export class SessionStoreManager {
     this.#hydrating.add(key);
     try {
       const store = this.create(sessionId, workspaceRoot, {
+        cwd: parsed.cwd ?? workspaceRoot,
         rootSessionId: parsed.rootSessionId,
         parentSessionId: parsed.parentSessionId,
         goalId: parsed.goalId,
@@ -438,6 +767,7 @@ export class SessionStoreManager {
       store.setState({
         sessionId: parsed.sessionId,
         createdAt: parsed.createdAt,
+        cwd: parsed.cwd ?? workspaceRoot,
         agentName: parsed.agentName,
         modelInfo: parsed.modelInfo ?? null,
         title: parsed.title ?? null,
@@ -555,6 +885,7 @@ function isStreamEvent(event: SessionEventPayload): event is StreamEvent {
 const STREAM_EVENT_TYPES = new Set<StreamEvent["type"]>([
   "execution-start",
   "execution-end",
+  "session.cwd_changed",
   "user-message",
   "system-notice",
   "text-start",
@@ -597,6 +928,10 @@ function nextEventIdFromEvents(events: readonly SessionEventEnvelope[]): number 
 
 function isMissingFileError(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+function sameResolvedPath(left: string, right: string): boolean {
+  return resolve(left) === resolve(right);
 }
 
 async function readDescendantSessionEntries(
@@ -656,10 +991,11 @@ function readDiagnosticSessionId(value: unknown): string | undefined {
   return typeof sessionId === "string" ? sessionId : undefined;
 }
 
-function toSessionSummary(file: HydratedSessionFile): SessionSummary {
+function toSessionSummary(file: HydratedSessionFile, workspaceRoot: string): SessionSummary {
   const lastUpdatedAt = readLastUpdatedAt(file);
   return {
     sessionId: file.sessionId,
+    cwd: file.cwd ?? workspaceRoot,
     rootSessionId: file.rootSessionId,
     ...(file.parentSessionId === undefined ? {} : { parentSessionId: file.parentSessionId }),
     ...(file.goalId === undefined ? {} : { goalId: file.goalId }),

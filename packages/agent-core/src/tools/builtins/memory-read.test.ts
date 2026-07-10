@@ -89,7 +89,8 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
   agentSkills: [],
   skillService: testSkillService,
   projectContext,
-  ...overrides, });
+  ...overrides,
+  cwd: overrides.cwd ?? workspaceRoot, });
 }
 
 // ---------------------------------------------------------------------------

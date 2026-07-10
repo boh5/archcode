@@ -11,6 +11,9 @@ import { ConcurrentSessionLimitError } from "./errors";
 import { orchestratorAgentDefinition } from "./definitions";
 import { SessionAgentManager } from "./session-agent-manager";
 import { silentLogger } from "../logger";
+import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { getSessionPath } from "../store/sessions-dir";
 
 function makeTool(name: string): AnyToolDescriptor {
   return {
@@ -42,14 +45,18 @@ function makeProviderRegistry(): ProviderRegistry {
   } as ProviderRegistry;
 }
 
-function createManager(maxConcurrentSessions = 4, tombstoneTtlMs?: number): SessionAgentManager {
+function createManager(
+  maxConcurrentSessions = 4,
+  tombstoneTtlMs?: number,
+  storeManager = new SessionStoreManager({ logger: silentLogger }),
+): SessionAgentManager {
   const providerRegistry = makeProviderRegistry();
   return new SessionAgentManager({
     definitions: [orchestratorAgentDefinition],
     providerRegistry,
     toolRegistry: createRegistry([makeTool("unknown_tool")]),
     skillService: new SkillService({ builtinSkills: {} }),
-    storeManager: new SessionStoreManager({ logger: silentLogger }),
+    storeManager,
     config: {
       provider: {},
       agents: { orchestrator: { model: providerRegistry.modelIds[0]! } },
@@ -61,6 +68,82 @@ function createManager(maxConcurrentSessions = 4, tombstoneTtlMs?: number): Sess
 }
 
 describe("SessionAgentManager", () => {
+  test("cold malformed Session fails closed instead of recreating the same identity", async () => {
+    const workspaceRoot = join(import.meta.dir, "__test_tmp__", `malformed-session-${crypto.randomUUID()}`);
+    const sessionId = crypto.randomUUID();
+    const storeManager = new SessionStoreManager({ logger: silentLogger });
+    await mkdir(join(getSessionPath(workspaceRoot, sessionId), ".."), { recursive: true });
+    await writeFile(getSessionPath(workspaceRoot, sessionId), "{ malformed json");
+    const manager = createManager(4, undefined, storeManager);
+
+    await expect(manager.getOrCreate(workspaceRoot, sessionId)).rejects.toBeDefined();
+    expect(storeManager.get(sessionId, workspaceRoot)).toBeUndefined();
+
+    await rm(workspaceRoot, { recursive: true, force: true });
+  });
+
+  test("cold schema-invalid Session fails closed instead of washing persisted identity", async () => {
+    const workspaceRoot = join(import.meta.dir, "__test_tmp__", `invalid-session-${crypto.randomUUID()}`);
+    const sessionId = crypto.randomUUID();
+    const storeManager = new SessionStoreManager({ logger: silentLogger });
+    await mkdir(join(getSessionPath(workspaceRoot, sessionId), ".."), { recursive: true });
+    await writeFile(getSessionPath(workspaceRoot, sessionId), JSON.stringify({
+      sessionId,
+      rootSessionId: sessionId,
+      cwd: "relative-cwd-must-not-survive",
+    }));
+    const manager = createManager(4, undefined, storeManager);
+
+    await expect(manager.getOrCreate(workspaceRoot, sessionId)).rejects.toBeDefined();
+    expect(storeManager.get(sessionId, workspaceRoot)).toBeUndefined();
+
+    await rm(workspaceRoot, { recursive: true, force: true });
+  });
+
+  test("rejects a persisted Session cwd outside the project repository", async () => {
+    const root = join(import.meta.dir, "__test_tmp__", `invalid-cwd-${crypto.randomUUID()}`);
+    const projectRoot = join(root, "project");
+    const outside = join(root, "outside");
+    await mkdir(projectRoot, { recursive: true });
+    await mkdir(outside, { recursive: true });
+    const git = Bun.spawn(["git", "init", "--initial-branch=main"], { cwd: projectRoot, stdout: "pipe", stderr: "pipe" });
+    await git.exited;
+    const storeManager = new SessionStoreManager({ logger: silentLogger });
+    const sessionId = crypto.randomUUID();
+    storeManager.create(sessionId, projectRoot, { cwd: outside });
+    const manager = createManager(4, undefined, storeManager);
+
+    await expect(manager.getOrCreate(projectRoot, sessionId)).rejects.toMatchObject({
+      name: "InvalidSessionCwdError",
+      cwd: outside,
+    });
+    await rm(root, { recursive: true, force: true });
+  });
+
+  test("rejects the canonical checkout through a different persisted path spelling", async () => {
+    const root = join(import.meta.dir, "__test_tmp__", `canonical-cwd-alias-${crypto.randomUUID()}`);
+    const realProjectRoot = join(root, "project-real");
+    const projectRoot = join(root, "project-alias");
+    await mkdir(realProjectRoot, { recursive: true });
+    const git = Bun.spawn(["git", "init", "--initial-branch=main"], {
+      cwd: realProjectRoot,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await git.exited;
+    await symlink(realProjectRoot, projectRoot, "dir");
+    const storeManager = new SessionStoreManager({ logger: silentLogger });
+    const sessionId = crypto.randomUUID();
+    storeManager.create(sessionId, projectRoot, { cwd: realProjectRoot });
+    const manager = createManager(4, undefined, storeManager);
+
+    await expect(manager.getOrCreate(projectRoot, sessionId)).rejects.toMatchObject({
+      name: "InvalidSessionCwdError",
+      cwd: realProjectRoot,
+    });
+    await rm(root, { recursive: true, force: true });
+  });
+
   test("enforces per-workspace concurrent session limit", () => {
     const manager = createManager(2);
     const workspaceRoot = "/tmp/archcode-workspace";
@@ -105,37 +188,54 @@ describe("SessionAgentManager", () => {
   test("concurrent getOrCreate returns the same agent instance", async () => {
     const manager = createManager();
     const workspaceRoot = "/tmp/archcode-workspace";
+    const sessionId = crypto.randomUUID();
 
     const [first, second] = await Promise.all([
-      manager.getOrCreate(workspaceRoot, "same-session"),
-      manager.getOrCreate(workspaceRoot, "same-session"),
+      manager.getOrCreate(workspaceRoot, sessionId),
+      manager.getOrCreate(workspaceRoot, sessionId),
     ]);
 
     expect(first).toBe(second);
-    expect(manager.get(workspaceRoot, "same-session")).toBe(first);
+    expect(manager.get(workspaceRoot, sessionId)).toBe(first);
+  });
+
+  test("dispatchCommand waits for an already-pending Agent registration", async () => {
+    const manager = createManager();
+    const workspaceRoot = "/tmp/archcode-workspace";
+    const sessionId = crypto.randomUUID();
+
+    const pendingAgent = manager.getOrCreate(workspaceRoot, sessionId);
+
+    await expect(manager.dispatchCommand(workspaceRoot, sessionId, "missing-command")).resolves.toEqual({
+      success: false,
+      message: "Unknown command: missing-command",
+    });
+    expect(manager.get(workspaceRoot, sessionId)).toBe(await pendingAgent);
   });
 
   test("tombstone expiry allows recreating a deleted session", async () => {
     const manager = createManager(4, 25);
     const workspaceRoot = "/tmp/archcode-workspace";
+    const sessionId = crypto.randomUUID();
 
-    manager.dispose(workspaceRoot, "expired");
-    expect(manager.isTombstoned(workspaceRoot, "expired")).toBe(true);
+    manager.dispose(workspaceRoot, sessionId);
+    expect(manager.isTombstoned(workspaceRoot, sessionId)).toBe(true);
 
     await new Promise((resolve) => setTimeout(resolve, 35));
 
-    await expect(manager.getOrCreate(workspaceRoot, "expired")).resolves.toBeDefined();
-    expect(manager.isTombstoned(workspaceRoot, "expired")).toBe(false);
+    await expect(manager.getOrCreate(workspaceRoot, sessionId)).resolves.toBeDefined();
+    expect(manager.isTombstoned(workspaceRoot, sessionId)).toBe(false);
   });
 
   test("clearTombstone allows recreating a deleted session", async () => {
     const manager = createManager();
     const workspaceRoot = "/tmp/archcode-workspace";
+    const sessionId = crypto.randomUUID();
 
-    manager.dispose(workspaceRoot, "cleared");
-    expect(manager.clearTombstone(workspaceRoot, "cleared")).toBe(true);
+    manager.dispose(workspaceRoot, sessionId);
+    expect(manager.clearTombstone(workspaceRoot, sessionId)).toBe(true);
 
-    await expect(manager.getOrCreate(workspaceRoot, "cleared")).resolves.toBeDefined();
-    expect(manager.isTombstoned(workspaceRoot, "cleared")).toBe(false);
+    await expect(manager.getOrCreate(workspaceRoot, sessionId)).resolves.toBeDefined();
+    expect(manager.isTombstoned(workspaceRoot, sessionId)).toBe(false);
   });
 });

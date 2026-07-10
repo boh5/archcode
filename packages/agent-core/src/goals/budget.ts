@@ -2,6 +2,7 @@ import { addUsage, normalizeUsage } from "@archcode/protocol";
 import type { GoalBudgetSummary, GoalState, NormalizedUsage, ToolChildSessionLink } from "@archcode/protocol";
 
 import { sessionFileInternals, type SessionFile } from "../store/helpers";
+import { withGoalExecutionClaimLock } from "./execution-claim";
 import type { GoalStateManager } from "./state";
 
 const MAINTENANCE_NAMES = new Set([
@@ -99,10 +100,12 @@ export async function updateGoalBudget(
   goalId: string,
   options: GoalBudgetOptions = {},
 ): Promise<GoalBudgetCalculation> {
-  const goal = await goalStateManager.read(goalId);
-  const calculation = await calculateGoalBudget(workspaceRoot, goal, options);
-  await goalStateManager.updateBudgetSummary(goalId, calculation.budget);
-  return calculation;
+  return await withGoalExecutionClaimLock(goalId, async () => {
+    const goal = await goalStateManager.read(goalId);
+    const calculation = await calculateGoalBudget(workspaceRoot, goal, options);
+    await goalStateManager.updateBudgetSummary(goalId, calculation.budget);
+    return calculation;
+  });
 }
 
 async function readAllSessionFiles(workspaceRoot: string): Promise<SessionFile[]> {

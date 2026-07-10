@@ -4,7 +4,7 @@ import type { ModelInfo } from "../../provider/model";
 import type { CommandRegistry } from "../../commands/registry";
 import type { SessionStoreManager } from "../../store/session-store-manager";
 import type { SessionStoreState } from "../../store/types";
-import type { AskUserCallback, ToolConfirmationCallback, ToolExecutionOrigin } from "../../tools/index";
+import type { AskUserCallback, ToolConfirmationCallback, ToolExecutionControl, ToolExecutionOrigin } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
 import type { ProjectContext } from "../../projects/types";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../../delegation/types";
@@ -23,7 +23,8 @@ export interface QueryLoopOptions {
   agentSkills: readonly string[];
   skillService: SkillService;
   storeManager: SessionStoreManager;
-  workspaceRoot?: string;
+  /** Current Session execution directory, independent of the canonical project context. */
+  cwd: string;
   projectContext: ProjectContext;
   confirmPermission?: ToolConfirmationCallback;
   askUser?: AskUserCallback;
@@ -37,6 +38,7 @@ export interface QueryLoopOptions {
   cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
   resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
   abortSessionExecutionAndWait?: (workspaceRoot: string, sessionId: string) => Promise<void>;
+  acquireSessionCwdTransition?: (workspaceRoot: string, sessionId: string) => () => void;
   agentName?: string;
   currentDepth?: number;
   hooks?: QueryLoopHooks;
@@ -45,6 +47,11 @@ export interface QueryLoopOptions {
 export interface QueryLoopResult {
   text: string;
   steps: number;
+  executionControl?: ToolExecutionControl;
+  cwdChanged?: {
+    previousCwd: string;
+    cwd: string;
+  };
 }
 
 export interface NormalizedToolCall {

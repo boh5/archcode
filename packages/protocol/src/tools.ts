@@ -17,6 +17,10 @@ export const TOOL_AST_GREP_REPLACE = "ast_grep_replace";
 export const TOOL_GIT_STATUS = "git_status";
 export const TOOL_GIT_DIFF = "git_diff";
 
+// Session worktree transitions (dynamically exposed to interactive root sessions)
+export const TOOL_WORKTREE_ENTER = "worktree_enter";
+export const TOOL_WORKTREE_EXIT = "worktree_exit";
+
 // GitHub connectors (Loop profile-only; not default agent tools)
 export const TOOL_GITHUB_GET_PULL_REQUEST = "github_get_pull_request";
 export const TOOL_GITHUB_LIST_PULL_REQUESTS = "github_list_pull_requests";
@@ -75,6 +79,8 @@ export type BuiltinToolName =
   | typeof TOOL_AST_GREP_REPLACE
   | typeof TOOL_GIT_STATUS
   | typeof TOOL_GIT_DIFF
+  | typeof TOOL_WORKTREE_ENTER
+  | typeof TOOL_WORKTREE_EXIT
   | typeof TOOL_GITHUB_GET_PULL_REQUEST
   | typeof TOOL_GITHUB_LIST_PULL_REQUESTS
   | typeof TOOL_GITHUB_GET_PULL_REQUEST_CHECKS
@@ -131,6 +137,8 @@ export const TOOL_CATEGORY_MAP = {
   [TOOL_AST_GREP_REPLACE]: "fileWrite",
   [TOOL_GIT_STATUS]: "git",
   [TOOL_GIT_DIFF]: "git",
+  [TOOL_WORKTREE_ENTER]: "git",
+  [TOOL_WORKTREE_EXIT]: "git",
   [TOOL_GITHUB_GET_PULL_REQUEST]: "git",
   [TOOL_GITHUB_LIST_PULL_REQUESTS]: "git",
   [TOOL_GITHUB_GET_PULL_REQUEST_CHECKS]: "git",

@@ -150,6 +150,121 @@ export class ChildSessionParentMismatchError extends Error {
   }
 }
 
+export class ChildSessionCwdMismatchError extends Error {
+  constructor(
+    public readonly sessionId: string,
+    public readonly parentSessionId: string,
+    public readonly expectedCwd: string,
+    public readonly actualCwd: string,
+  ) {
+    super(
+      `Child session "${sessionId}" uses working directory "${actualCwd}", but parent session "${parentSessionId}" now uses "${expectedCwd}". Create a new child session in the parent's current working directory instead of resuming this one.`,
+    );
+    this.name = "ChildSessionCwdMismatchError";
+  }
+}
+
+export class ChildSessionLoopScopeMismatchError extends Error {
+  constructor(
+    public readonly parentSessionId: string,
+    public readonly childSessionId: string | undefined,
+    public readonly parentLoopId: string | undefined,
+    public readonly childLoopId: string | undefined,
+    public readonly originLoopId: string | undefined,
+  ) {
+    const child = childSessionId === undefined ? "new child session" : `child session "${childSessionId}"`;
+    super(
+      `Loop execution scope mismatch for parent session "${parentSessionId}" and ${child}: `
+      + `parent=${parentLoopId ?? "<none>"}, child=${childLoopId ?? "<none>"}, origin=${originLoopId ?? "<none>"}`,
+    );
+    this.name = "ChildSessionLoopScopeMismatchError";
+  }
+}
+
+export class SessionCwdTransitionConflictError extends Error {
+  constructor(
+    public readonly sessionId: string,
+    public readonly activeDescendantSessionIds: readonly string[],
+  ) {
+    super(
+      `Session "${sessionId}" cannot change working directory while descendant sessions are starting or running: ${activeDescendantSessionIds.join(", ")}. Wait for or cancel those sessions before changing worktrees.`,
+    );
+    this.name = "SessionCwdTransitionConflictError";
+  }
+}
+
+export class SessionCwdTransitionInProgressError extends Error {
+  constructor(
+    public readonly sessionId: string,
+    public readonly rootSessionId: string,
+  ) {
+    super(
+      `Session "${sessionId}" cannot start or resume while root session "${rootSessionId}" is changing working directory. Retry after the worktree transition finishes.`,
+    );
+    this.name = "SessionCwdTransitionInProgressError";
+  }
+}
+
+export class SessionHitlResumeInProgressError extends Error {
+  constructor(
+    public readonly sessionId: string,
+    public readonly rootSessionId: string,
+  ) {
+    super(
+      `Session "${sessionId}" cannot start or resume while session "${rootSessionId}" is exclusively continuing a durable human-in-the-loop response. Retry after the continuation finishes.`,
+    );
+    this.name = "SessionHitlResumeInProgressError";
+  }
+}
+
+export class SessionHitlBlockedError extends Error {
+  constructor(
+    public readonly sessionId: string,
+    public readonly hitlIds: readonly string[],
+  ) {
+    super(
+      `Session "${sessionId}" is waiting for a human-in-the-loop response: ${hitlIds.join(", ")}. Respond to or cancel the pending request before sending another message.`,
+    );
+    this.name = "SessionHitlBlockedError";
+  }
+}
+
+export class SessionHitlResumeConflictError extends Error {
+  constructor(
+    public readonly sessionId: string,
+    public readonly conflictingSessionIds: readonly string[],
+  ) {
+    super(
+      `Session "${sessionId}" cannot continue a durable human-in-the-loop response while related sessions are starting or running: ${conflictingSessionIds.join(", ")}.`,
+    );
+    this.name = "SessionHitlResumeConflictError";
+  }
+}
+
+export class SessionHitlResumeLeaseExpiredError extends Error {
+  constructor(
+    public readonly sessionId: string,
+    public readonly rootSessionId: string,
+  ) {
+    super(
+      `Durable human-in-the-loop continuation ownership for session "${sessionId}" is no longer active for root session "${rootSessionId}".`,
+    );
+    this.name = "SessionHitlResumeLeaseExpiredError";
+  }
+}
+
+export class SessionHitlCancelOnlyLeaseError extends Error {
+  constructor(
+    public readonly sessionId: string,
+    public readonly rootSessionId: string,
+  ) {
+    super(
+      `Cancel-only durable human-in-the-loop ownership for session "${sessionId}" cannot change the working directory of root session "${rootSessionId}".`,
+    );
+    this.name = "SessionHitlCancelOnlyLeaseError";
+  }
+}
+
 export class ChildSessionNotDescendantError extends Error {
   constructor(
     public readonly parentSessionId: string,

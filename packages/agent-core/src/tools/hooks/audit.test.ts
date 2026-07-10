@@ -19,7 +19,7 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
   startedAt: Date.now(),
   durationMs: 25,
   allowedTools: new Set<string>(),
-  workspaceRoot: "/tmp",
+  cwd: "/tmp",
   storeManager,
     projectContext: createTestProjectContext("/tmp"), ...overrides,  };
 }

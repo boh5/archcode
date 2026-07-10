@@ -3,10 +3,11 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createEmptySessionStats, type SessionExecutionRecord } from "@archcode/protocol";
 
-import type { ActiveSessionExecution, StartSessionExecutionInput } from "../execution";
+import type { ActiveSessionExecution, SessionCwdReferenceMigrationInput, SessionCwdRemovalLifecycle, SessionCwdRemovalResult, StartSessionExecutionInput } from "../execution";
 import type { GitHubCiPollingConnectorApi, GitHubPullRequest, GitHubReadCiFailuresForRefOptions, GitHubReadCiFailuresForRefResult, GitHubResponse } from "../integrations/github";
 import type { SessionFile } from "../store/helpers";
 import { CollisionLedger } from "./collision-ledger";
+import { LoopCleanupService } from "./cleanup";
 import { LoopJobCoordinator } from "./coordinator";
 import { LoopJobQueue } from "./job-queue";
 import { LoopKillStateManager } from "./kill-state";
@@ -61,14 +62,26 @@ describe("Loop hardening e2e", () => {
     });
     const runtime = new FakeLoopRuntime();
     const worktreeManager = new FakeWorktreeManager(TMP_DIR);
+    const collisionLedger = new CollisionLedger({ stateManager, workspaceRoot: TMP_DIR, clock, leaseTtlMs: 60_000 });
     const runner = new LoopRunner({
       stateManager,
       runtime,
       workspaceRoot: TMP_DIR,
       projectSlug: "project-a",
       now: () => clock.now(),
-      collisionLedger: new CollisionLedger({ stateManager, workspaceRoot: TMP_DIR, clock, leaseTtlMs: 60_000 }),
+      collisionLedger,
       worktreeManager,
+    });
+    const cleanupService = new LoopCleanupService({
+      stateManager,
+      jobQueue: queue,
+      collisionLedger,
+      worktreeManager,
+      workspaceRoot: TMP_DIR,
+      clock,
+      migrateSessionCwdReferencesForRemoval: (input, operation) => (
+        runtime.migrateSessionCwdReferencesForRemoval(input, operation)
+      ),
     });
     const scheduler = new LoopScheduler({
       stateManager,
@@ -79,6 +92,7 @@ describe("Loop hardening e2e", () => {
       coordinator,
       killStateManager: new LoopKillStateManager(TMP_DIR, { clock }),
       triggerPoller: poller,
+      cleanupJob: (jobId) => cleanupService.cleanupJob(jobId),
     });
     const loop = await stateManager.create("project-a", loopHardeningConfig);
 
@@ -148,13 +162,13 @@ describe("Loop hardening e2e", () => {
     expect(latest.lastRun).toMatchObject({ runId: preservedReport?.runId, jobId: jobs[1]?.jobId, cleanupState: "preserved" });
     expect(latest.currentRun).toBeUndefined();
     expect(latest.triggerHealth?.[0]).toMatchObject({ triggerKind: "on_pr", status: "healthy", cadenceMs: 60_000 });
-    expect(runtime.prepareSessionWorkspaceMock.mock.calls).toEqual([
-      [join(TMP_DIR, "worktrees", "worktree-1"), TMP_DIR],
-      [join(TMP_DIR, "worktrees", "worktree-2"), TMP_DIR],
+    expect(runtime.createSessionMock.mock.calls.map(([projectRoot, options]) => [projectRoot, options?.cwd])).toEqual([
+      [TMP_DIR, join(TMP_DIR, "worktrees", "worktree-1")],
+      [TMP_DIR, join(TMP_DIR, "worktrees", "worktree-2")],
     ]);
-    expect(runtime.releaseSessionWorkspaceMock.mock.calls).toEqual([
-      [join(TMP_DIR, "worktrees", "worktree-1"), "session-1"],
-      [join(TMP_DIR, "worktrees", "worktree-2"), "session-2"],
+    expect(runtime.releaseSessionAgentMock.mock.calls).toEqual([
+      [TMP_DIR, "session-1"],
+      [TMP_DIR, "session-2"],
     ]);
     expect(github.listOpenPullRequestsMock).toHaveBeenCalledTimes(4);
   });
@@ -197,9 +211,8 @@ class FakeLoopRuntime {
     this.#resolveExecution = resolve;
   });
   readonly #sessions = new Map<string, SessionFile>();
-  readonly prepareSessionWorkspaceMock = mock(async (_workspaceRoot: string, _canonicalWorkspaceRoot: string): Promise<void> => {});
-  readonly releaseSessionWorkspaceMock = mock((_workspaceRoot: string, _sessionId?: string): void => {});
-  readonly createSessionMock = mock(async (_workspaceRoot: string, options?: { loopId?: string; sessionRole?: "main"; title?: string }): Promise<SessionFile> => {
+  readonly releaseSessionAgentMock = mock((_projectRoot: string, _sessionId: string): void => {});
+  readonly createSessionMock = mock(async (_projectRoot: string, options?: { cwd?: string; loopId?: string; sessionRole?: "main"; title?: string }): Promise<SessionFile> => {
     const sessionId = `session-${this.#nextSession++}`;
     const session = makeSession(sessionId, options);
     this.#sessions.set(sessionId, session);
@@ -225,8 +238,8 @@ class FakeLoopRuntime {
     this.#resolveExecution();
   }
 
-  async createSession(workspaceRoot: string, options?: { loopId?: string; sessionRole?: "main"; title?: string }): Promise<SessionFile> {
-    return await this.createSessionMock(workspaceRoot, options);
+  async createSession(projectRoot: string, options?: { cwd?: string; loopId?: string; sessionRole?: "main"; title?: string }): Promise<SessionFile> {
+    return await this.createSessionMock(projectRoot, options);
   }
 
   async getSessionFile(workspaceRoot: string, sessionId: string): Promise<SessionFile> {
@@ -237,12 +250,27 @@ class FakeLoopRuntime {
     return this.startSessionExecutionMock(input);
   }
 
-  async prepareSessionWorkspace(workspaceRoot: string, canonicalWorkspaceRoot: string): Promise<void> {
-    await this.prepareSessionWorkspaceMock(workspaceRoot, canonicalWorkspaceRoot);
+  releaseSessionAgent(projectRoot: string, sessionId: string): void {
+    this.releaseSessionAgentMock(projectRoot, sessionId);
   }
 
-  releaseSessionWorkspace(workspaceRoot: string, sessionId?: string): void {
-    this.releaseSessionWorkspaceMock(workspaceRoot, sessionId);
+  async migrateSessionCwdReferencesForRemoval<T extends SessionCwdRemovalResult>(
+    input: SessionCwdReferenceMigrationInput,
+    operation: (lifecycle: SessionCwdRemovalLifecycle) => Promise<T>,
+  ): Promise<T> {
+    return await operation({
+      beforeRemove: async () => {
+        for (const [sessionId, session] of this.#sessions) {
+          if (session.cwd === input.fromCwd) this.#sessions.set(sessionId, { ...session, cwd: input.toCwd });
+        }
+      },
+      onRemoveFailureBeforeDetach: async () => {
+        for (const [sessionId, session] of this.#sessions) {
+          if (session.cwd === input.toCwd) this.#sessions.set(sessionId, { ...session, cwd: input.fromCwd });
+        }
+      },
+      onRemoveDetached: async () => undefined,
+    });
   }
 }
 
@@ -251,6 +279,7 @@ class FakeWorktreeManager implements LoopRunnerWorktreeManager {
   readonly createMock = mock(async (input: { loopSlug: string; subjectSlug: string; jobId: string; baseSha: string; jobClass?: "local" | "remote" }): Promise<LoopWorktreeCreateResult> => {
     this.#createCount += 1;
     const worktreePath = join(this.root, "worktrees", `worktree-${this.#createCount}`);
+    await mkdir(worktreePath, { recursive: true });
     return {
       canonicalRoot: this.root,
       managedRoot: join(this.root, "worktrees"),
@@ -279,13 +308,19 @@ class FakeWorktreeManager implements LoopRunnerWorktreeManager {
       hasChanges,
     };
   });
-  readonly cleanupMock = mock(async (input: { inspection: LoopWorktreeInspection }) => ({
-    cleanupState: input.inspection.hasChanges ? "preserved" as const : "cleaned" as const,
-    removed: !input.inspection.hasChanges,
-    reviewRequired: input.inspection.hasChanges,
-    reason: input.inspection.hasChanges ? "worktree contains changes" : "worktree has no changes",
-    worktreePath: input.inspection.worktreePath,
-  }));
+  readonly cleanupMock = mock(async (input: Parameters<LoopRunnerWorktreeManager["cleanup"]>[0]) => {
+    if (!input.inspection.hasChanges) {
+      await input.beforeRemove?.();
+      await input.onRemoveDetached?.();
+    }
+    return {
+      cleanupState: input.inspection.hasChanges ? "preserved" as const : "cleaned" as const,
+      removed: !input.inspection.hasChanges,
+      reviewRequired: input.inspection.hasChanges,
+      reason: input.inspection.hasChanges ? "worktree contains changes" : "worktree has no changes",
+      worktreePath: input.inspection.worktreePath,
+    };
+  });
 
   constructor(private readonly root: string) {}
 
@@ -313,11 +348,12 @@ function makePullRequest(headSha: string): GitHubPullRequest {
   };
 }
 
-function makeSession(sessionId: string, options?: { loopId?: string; sessionRole?: "main"; title?: string }): SessionFile {
+function makeSession(sessionId: string, options?: { cwd?: string; loopId?: string; sessionRole?: "main"; title?: string }): SessionFile {
   const executions: SessionExecutionRecord[] = [{ id: `${sessionId}-execution`, startedAt: 100, status: "completed", endedAt: 150, durationMs: 50 }];
   return {
     sessionId,
     createdAt: Date.now(),
+    cwd: options?.cwd ?? TMP_DIR,
     agentName: "orchestrator",
     title: options?.title ?? null,
     messages: [],

@@ -27,7 +27,11 @@ export type GoalManageAction =
 export type GoalToolAuthorizationCode =
   | "GOAL_CONTEXT_REQUIRED"
   | "GOAL_MANAGE_ACTION_DENIED"
-  | "GOAL_REVIEWER_REQUIRED";
+  | "GOAL_REVIEWER_REQUIRED"
+  | "GOAL_CANCELLATION_UNAVAILABLE"
+  | "GOAL_WORKTREE_REQUIRED"
+  | "GOAL_WORKTREE_MISMATCH"
+  | "GOAL_WORKTREE_CHANGED";
 
 export interface GoalToolAuthorizationContext {
   readonly sessionId: string;
@@ -79,6 +83,12 @@ export function assertGoalManageActionAuthorized(
     throw new GoalToolAuthorizationError(
       "GOAL_MANAGE_ACTION_DENIED",
       `goal_manage.${action} requires an orchestrator main session, got ${authorization.agentName ?? "unknown"}/${authorization.sessionRole ?? "unknown"}`,
+    );
+  }
+  if (action !== "create" && authorization.sessionGoalId !== goalId) {
+    throw new GoalToolAuthorizationError(
+      "GOAL_CONTEXT_REQUIRED",
+      `goal_manage.${action} requires matching session goal ${goalId ?? "unknown"}, got ${authorization.sessionGoalId ?? "unknown"}`,
     );
   }
   return authorization;

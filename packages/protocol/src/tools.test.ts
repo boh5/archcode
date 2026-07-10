@@ -9,6 +9,8 @@ import {
   TOOL_AST_GREP_REPLACE,
   TOOL_GIT_STATUS,
   TOOL_GIT_DIFF,
+  TOOL_WORKTREE_ENTER,
+  TOOL_WORKTREE_EXIT,
   TOOL_GITHUB_GET_PULL_REQUEST,
   TOOL_GITHUB_LIST_PULL_REQUESTS,
   TOOL_GITHUB_GET_PULL_REQUEST_CHECKS,
@@ -51,6 +53,8 @@ const ALL_BUILTIN_NAMES = [
   TOOL_AST_GREP_REPLACE,
   TOOL_GIT_STATUS,
   TOOL_GIT_DIFF,
+  TOOL_WORKTREE_ENTER,
+  TOOL_WORKTREE_EXIT,
   TOOL_GITHUB_GET_PULL_REQUEST,
   TOOL_GITHUB_LIST_PULL_REQUESTS,
   TOOL_GITHUB_GET_PULL_REQUEST_CHECKS,
@@ -90,6 +94,8 @@ describe("tool name constants", () => {
     expect(TOOL_AST_GREP_REPLACE).toBe("ast_grep_replace");
     expect(TOOL_GIT_STATUS).toBe("git_status");
     expect(TOOL_GIT_DIFF).toBe("git_diff");
+    expect(TOOL_WORKTREE_ENTER).toBe("worktree_enter");
+    expect(TOOL_WORKTREE_EXIT).toBe("worktree_exit");
     expect(TOOL_GITHUB_GET_PULL_REQUEST).toBe("github_get_pull_request");
     expect(TOOL_GITHUB_LIST_PULL_REQUESTS).toBe("github_list_pull_requests");
     expect(TOOL_GITHUB_GET_PULL_REQUEST_CHECKS).toBe("github_get_pull_request_checks");
@@ -190,6 +196,8 @@ describe("TOOL_CATEGORY_MAP", () => {
     expect(TOOL_CATEGORY_MAP[TOOL_GLOB]).toBe("search");
     expect(TOOL_CATEGORY_MAP[TOOL_AST_GREP_SEARCH]).toBe("search");
     expect(TOOL_CATEGORY_MAP[TOOL_AST_GREP_REPLACE]).toBe("fileWrite");
+    expect(TOOL_CATEGORY_MAP[TOOL_WORKTREE_ENTER]).toBe("git");
+    expect(TOOL_CATEGORY_MAP[TOOL_WORKTREE_EXIT]).toBe("git");
     expect(TOOL_CATEGORY_MAP[TOOL_GITHUB_GET_PULL_REQUEST]).toBe("git");
     expect(TOOL_CATEGORY_MAP[TOOL_GITHUB_CREATE_ISSUE_COMMENT]).toBe("git");
     expect(TOOL_CATEGORY_MAP[TOOL_GITHUB_RERUN_WORKFLOW_RUN]).toBe("git");
@@ -224,6 +232,8 @@ describe("getToolCategory()", () => {
     expect(getToolCategory("file_read")).toBe("fileRead");
     expect(getToolCategory("grep")).toBe("search");
     expect(getToolCategory("bash")).toBe("shell");
+    expect(getToolCategory("worktree_enter")).toBe("git");
+    expect(getToolCategory("worktree_exit")).toBe("git");
     expect(getToolCategory("github_get_pull_request")).toBe("git");
     expect(getToolCategory("github_create_issue_comment")).toBe("git");
     expect(getToolCategory("github_rerun_workflow_run")).toBe("git");

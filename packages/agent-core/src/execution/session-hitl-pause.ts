@@ -5,7 +5,8 @@ import { formatAskUserAnswers } from "../tools/builtins/ask-user-format";
 import { createToolErrorResult } from "../tools/errors";
 import type { ToolExecutionContext, ToolConfirmationRequest } from "../tools/types";
 import { redactString, redactValue } from "../tools/security/redaction";
-import { writeSessionHitlCheckpoint, type SessionHitlCheckpointRecord } from "./session-hitl-checkpoint";
+import type { SessionHitlCheckpointRecord } from "./session-hitl-checkpoint";
+import { prepareSessionHitlPause, sessionHitlBlockerFromJournal } from "./session-hitl-journal";
 
 export class SessionHitlPause extends Error {
   constructor(
@@ -22,14 +23,14 @@ export async function pauseForAskUser(input: AskUserInput, ctx: ToolExecutionCon
   const source: HitlSource = { type: "ask_user", sessionId, toolCallId: ctx.toolCallId };
   const blockingKey = `session:${sessionId}:ask:${ctx.toolCallId}`;
   const displayPayload = askUserDisplayPayload(input);
-  const record = await createRecordAndCheckpoint({
+  const prepared = await createRecordAndCheckpoint({
     ctx,
     source,
     blockingKey,
     displayPayload,
     kind: "ask_user",
   });
-  throw new SessionHitlPause(record, checkpointProjection(record, ctx, source));
+  throw new SessionHitlPause(prepared.record, sessionHitlBlockerFromJournal(prepared.checkpoint));
 }
 
 export async function pauseForPermission(request: ToolConfirmationRequest, ctx: ToolExecutionContext): Promise<never> {
@@ -37,7 +38,7 @@ export async function pauseForPermission(request: ToolConfirmationRequest, ctx: 
   const source: HitlSource = { type: "tool_permission", sessionId, toolCallId: ctx.toolCallId, toolName: ctx.toolName };
   const blockingKey = `session:${sessionId}:tool:${ctx.toolCallId}`;
   const displayPayload = permissionDisplayPayload(request);
-  const record = await createRecordAndCheckpoint({
+  const prepared = await createRecordAndCheckpoint({
     ctx,
     source,
     blockingKey,
@@ -51,7 +52,7 @@ export async function pauseForPermission(request: ToolConfirmationRequest, ctx: 
       ...(request.ruleId === undefined ? {} : { ruleId: request.ruleId }),
     },
   });
-  throw new SessionHitlPause(record, checkpointProjection(record, ctx, source));
+  throw new SessionHitlPause(prepared.record, sessionHitlBlockerFromJournal(prepared.checkpoint));
 }
 
 export function askUserResponseToToolResult(input: AskUserInput, response: HitlResponse): { output: string; isError: boolean } {
@@ -75,7 +76,7 @@ async function createRecordAndCheckpoint(input: {
   readonly displayPayload: HitlDisplayPayload;
   readonly kind: "ask_user" | "permission";
   readonly permission?: SessionHitlCheckpointRecord["permission"];
-}): Promise<HitlRecord> {
+}): Promise<{ readonly record: HitlRecord; readonly checkpoint: SessionHitlCheckpointRecord }> {
   const { ctx } = input;
   const sessionId = ctx.store.getState().sessionId;
   const owner: HitlOwnerKey = {
@@ -83,18 +84,14 @@ async function createRecordAndCheckpoint(input: {
     ownerType: "session",
     ownerId: sessionId,
   };
-  const record = await ctx.projectContext.hitl.create({
-    owner,
-    blockingKey: input.blockingKey,
-    source: input.source,
-    displayPayload: input.displayPayload,
-  });
   const createdAt = new Date().toISOString();
   const checkpoint: SessionHitlCheckpointRecord = {
     version: 1,
-    hitlId: record.hitlId,
-    blockingKey: record.blockingKey,
-    source: record.source,
+    phase: "preparing",
+    phaseUpdatedAt: createdAt,
+    hitlId: crypto.randomUUID(),
+    blockingKey: input.blockingKey,
+    source: input.source,
     toolCallId: ctx.toolCallId,
     toolName: ctx.toolName,
     step: ctx.step,
@@ -118,28 +115,21 @@ async function createRecordAndCheckpoint(input: {
     blockedToolIndex: ctx.hitlCheckpoint?.blockedToolIndex ?? 0,
     createdAt,
     kind: input.kind,
+    request: {
+      owner,
+      displayPayload: input.displayPayload,
+      createdAt,
+    },
     ...(input.permission === undefined ? {} : { permission: input.permission }),
   };
-  await writeSessionHitlCheckpoint(checkpoint, ctx.workspaceRoot, sessionId);
-  ctx.store.getState().append({ type: "hitl.request", request: record });
-  await ctx.projectContext.hitl.publishRequest(record);
-  return record;
-}
-
-function checkpointProjection(record: HitlRecord, ctx: ToolExecutionContext, source: HitlSource): SessionHitlCheckpoint {
-  return {
-    version: 1,
-    hitlId: record.hitlId,
-    blockingKey: record.blockingKey,
-    source,
-    toolCallId: ctx.toolCallId,
-    toolName: ctx.toolName,
-    step: ctx.step,
-    ...(ctx.hitlCheckpoint?.assistantMessageId === undefined ? {} : { assistantMessageId: ctx.hitlCheckpoint.assistantMessageId }),
-    displayInput: ctx.redactedInput ?? redactValue(ctx.input),
-    blockedAt: new Date().toISOString(),
-    reason: record.displayPayload.title,
-  };
+  return await prepareSessionHitlPause({
+    workspaceRoot: ctx.projectContext.project.workspaceRoot,
+    sessionId,
+    store: ctx.store,
+    sessions: ctx.storeManager,
+    hitl: ctx.projectContext.hitl,
+    checkpoint,
+  });
 }
 
 function askUserDisplayPayload(input: AskUserInput): HitlDisplayPayload {

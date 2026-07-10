@@ -92,6 +92,9 @@ export function reduceStreamEvent(
       };
     }
 
+    case "session.cwd_changed":
+      return { cwd: event.cwd };
+
     case "user-message": {
       const part: TextPart = {
         type: "text",
@@ -654,19 +657,26 @@ export function reduceStreamEvent(
     case "hitl.resolved": {
       const hitlRequests = state.hitlRequests?.slice() ?? [];
       const existingIndex = hitlRequests.findIndex((r) => r.hitlId === event.hitlId);
-
-      if (existingIndex === -1) return {};
-
-      const update: Partial<HitlRecord> = {
-        status: event.status,
-        ...(event.response ? { response: event.response } : {}),
-      };
-      if (event.status === "resolved") {
-        update.resolvedAt = new Date(timestamp).toISOString();
+      const matchesBlocker = state.blockedHitl?.hitlId === event.hitlId
+        || state.blockedByHitlIds?.includes(event.hitlId) === true;
+      if (existingIndex === -1 && !matchesBlocker) return {};
+      if (existingIndex !== -1) {
+        const update: Partial<HitlRecord> = {
+          status: event.status,
+          ...(event.response ? { response: event.response } : {}),
+        };
+        if (event.status === "resolved") {
+          update.resolvedAt = new Date(timestamp).toISOString();
+        }
+        hitlRequests[existingIndex] = { ...hitlRequests[existingIndex]!, ...update };
       }
-
-      hitlRequests[existingIndex] = { ...hitlRequests[existingIndex]!, ...update };
-      return { hitlRequests };
+      if (event.status === "resume_failed") return { hitlRequests };
+      const blockedByHitlIds = state.blockedByHitlIds?.filter((hitlId) => hitlId !== event.hitlId);
+      return {
+        hitlRequests,
+        blockedHitl: state.blockedHitl?.hitlId === event.hitlId ? undefined : state.blockedHitl,
+        blockedByHitlIds: blockedByHitlIds === undefined || blockedByHitlIds.length === 0 ? undefined : blockedByHitlIds,
+      };
     }
 
     case "loop.state_change": {

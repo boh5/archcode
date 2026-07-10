@@ -233,7 +233,7 @@ describe("PermissionErrorCode", () => {
 
 // ─── Extended ToolExecutionContext ───
 
-test("ToolExecutionContext accepts allowedTools and workspaceRoot", () => {
+test("ToolExecutionContext accepts allowedTools and cwd", () => {
   const ctx = createToolExecutionContext({ store: {} as any, storeManager, toolName: "test",
   toolCallId: "call_1",
   input: {},
@@ -245,11 +245,12 @@ test("ToolExecutionContext accepts allowedTools and workspaceRoot", () => {
   allowedTools: new Set(["echo"]),
   agentSkills: ["git-master"],
   skillService: testSkillService,
-  projectContext: makeProjectContext("/tmp/workspace"), });
+  projectContext: makeProjectContext("/tmp/workspace"),
+  cwd: "/tmp/workspace", });
   expect(ctx.allowedTools.has("echo")).toBe(true);
   expect(ctx.agentSkills).toEqual(["git-master"]);
   expect(ctx.skillService).toBe(testSkillService);
-  expect(ctx.workspaceRoot).toBe("/tmp/workspace");
+  expect(ctx.cwd).toBe("/tmp/workspace");
 });
 
 test("ToolExecutionContext confirmPermission is optional", () => {
@@ -262,7 +263,8 @@ test("ToolExecutionContext confirmPermission is optional", () => {
   allowedTools: new Set(),
   agentSkills: [],
   skillService: testSkillService,
-  projectContext: makeProjectContext("/tmp"), });
+  projectContext: makeProjectContext("/tmp"),
+  cwd: "/tmp", });
   expect(ctx.confirmPermission).toBeUndefined();
 });
 
@@ -393,6 +395,7 @@ describe("ToolExecutionContext — permissionOutcome preserved", () => {
     agentSkills: [],
     skillService: testSkillService,
     projectContext: makeProjectContext("/tmp"),
+    cwd: "/tmp",
     permissionOutcome: "allow", });
     expect(ctx.permissionOutcome).toBe("allow");
 
@@ -419,7 +422,8 @@ describe("ToolExecutionContext — permissionOutcome preserved", () => {
     allowedTools: new Set(),
     agentSkills: [],
     skillService: testSkillService,
-    projectContext: makeProjectContext("/tmp"), });
+    projectContext: makeProjectContext("/tmp"),
+    cwd: "/tmp", });
     expect(ctx.permissionOutcome).toBeUndefined();
   });
 });

@@ -6,11 +6,47 @@ export { createProcessRunner } from "./process/runner";
 export type { ProcessRunner, ProcessRunnerInput, ProcessRunnerResult } from "./process/types";
 
 export type { Agent, AgentResult, AgentRunOptions } from "./agents/types";
-export { AgentRunningError, ConcurrentSessionLimitError } from "./agents/errors";
+export { AgentRunningError, ChildSessionCwdMismatchError, ConcurrentSessionLimitError, SessionCwdTransitionInProgressError, SessionHitlBlockedError, SessionHitlResumeInProgressError } from "./agents/errors";
 
 export type { CommandResult, SlashCommandResult } from "./commands/types";
-export { SessionExecutionManager } from "./execution";
-export type { ActiveSessionExecution, StartSessionExecutionInput, SubscribeSessionEventsInput } from "./execution";
+export {
+  SessionCwdReferenceMigrationService,
+  SessionDeleteInProgressError,
+  SessionDeleteOwnerConflictError,
+  SessionFamilyStopConflictError,
+  SessionFamilyStopInProgressError,
+  SessionExecutionManager,
+  SessionExecutionScopeConflictError,
+  SessionExecutionScopeValidator,
+  SessionHitlJournalBlockedError,
+} from "./execution";
+export type {
+  AcquireSessionHitlResumeOptions,
+  ActiveSessionExecution,
+  SessionCwdReferenceMigrationInput,
+  SessionCwdReferenceMigrationServiceOptions,
+  SessionCwdRemovalLifecycle,
+  SessionCwdRemovalResult,
+  SessionDeletionOwnerDetail,
+  SessionDeletionOwnerType,
+  SessionDeletionPreflight,
+  SessionDeletionPreflightInput,
+  SessionExecutionClaimCoordinator,
+  AcquireSessionFamilyStopInput,
+  SessionFamilyController,
+  SessionFamilyStopLease,
+  SessionHitlResumeLease,
+  SessionExecutionScopeConflictCode,
+  SessionExecutionScopeEntry,
+  SessionExecutionScopeSubject,
+  SessionExecutionScopeValidationInput,
+  SessionExecutionScopeValidatorOptions,
+  SessionLoopExecutionClaimDecision,
+  SessionLoopExecutionClaimInput,
+  SessionLoopExecutionClaimResolver,
+  StartSessionExecutionInput,
+  SubscribeSessionEventsInput,
+} from "./execution";
 export { SessionEventBridge } from "./events";
 export type { SessionEventBridgeOptions } from "./events";
 
@@ -26,8 +62,50 @@ export type { ConsoleLike, LogEntry, LogFields, Logger, LogLevel } from "./logge
 
 export { ProjectContextResolver } from "./projects/context-resolver";
 export { ProjectRegistry, ProjectRegistryError } from "./projects/registry";
+export { SessionLifecycleService } from "./projects/session-lifecycle-service";
+export type { SessionLifecycleServiceOptions } from "./projects/session-lifecycle-service";
 export type { ProjectContext, ProjectInfo } from "./projects/types";
 export type { ResumeCoordinatorResult } from "./hitl/resume-coordinator";
+export { GoalRunner, GoalRunnerError } from "./goals/runner";
+export type {
+  GoalRunnerCreateSessionOptions,
+  GoalRunnerLoopExecutionScope,
+  GoalRunnerOptions,
+  GoalRunnerRetryInput,
+  GoalRunnerStartInput,
+} from "./goals/runner";
+export { GoalCancellationInProgressError, withGoalExecutionClaimLock } from "./goals/execution-claim";
+export {
+  GoalCancellationCleanupError,
+  GoalCancellationError,
+  GoalCancellationService,
+} from "./goals/cancellation";
+export type {
+  GoalCancellationCapability,
+  GoalCancellationCleanupOperations,
+  GoalCancellationRequest,
+  GoalCancellationServiceOptions,
+  GoalCancellationSource,
+} from "./goals/cancellation";
+export { goalExecutionStatusEligibility } from "./goals/execution-policy";
+export type { GoalExecutionAction, GoalExecutionStatusEligibility } from "./goals/execution-policy";
+export { GoalWorkspaceError, GoalWorkspaceService } from "./goals/workspace";
+export type { GoalWorkspaceServiceOptions, GoalWorkspaceStateManager, PreparedGoalWorkspace } from "./goals/workspace";
+export { WorktreeService, WorktreeServiceError } from "./worktrees";
+export type {
+  ManagedWorktreeLookup,
+  WorktreeCreateInput,
+  WorktreeCreateResult,
+  WorktreeInfo,
+  WorktreeManagedClaim,
+  WorktreeManagedClaimInput,
+  WorktreeReconcilePreserved,
+  WorktreeReconcileResult,
+  WorktreeReconcileWarning,
+  WorktreeRemoveInput,
+  WorktreeRemoveResult,
+  WorktreeRemoveWarning,
+} from "./worktrees";
 
 export * from "./integrations";
 
@@ -39,13 +117,25 @@ export {
   LoopConfigSchema,
   LoopNotFoundError,
   LoopRunLogError,
+  LoopSessionExecutionClaimResolver,
   LoopStateError,
   LoopUuidSchema,
 } from "./loops";
 export type { LoopConfig, LoopKillActivateInput, LoopKillState, LoopRunReport, LoopState, LoopUpdateInput } from "./loops";
+export type { LoopSessionExecutionClaimResolverOptions } from "./loops";
 
-export { NotRootSessionError, SessionDeleteConflictError, SessionFileNotFoundError } from "./store/errors";
+export {
+  InvalidSessionCwdError,
+  NotRootSessionError,
+  SessionCwdPathBarrierError,
+  SessionCwdReferenceMigrationError,
+  SessionCwdReferenceScanError,
+  SessionDeleteConflictError,
+  SessionFileNotFoundError,
+  SessionInitialPersistenceError,
+} from "./store/errors";
 export { reduceStreamEvent } from "./store/reduce";
+export { assertValidSessionCwd, resolveValidSessionCwd } from "./store/session-cwd";
 export type {
   BusyError,
   InvalidTodoStateError,

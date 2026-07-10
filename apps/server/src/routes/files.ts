@@ -1,6 +1,13 @@
 import { Hono } from "hono";
-import { createProcessRunner, type AgentRuntime } from "@archcode/agent-core";
-import { BadRequestError, ServerError } from "../errors";
+import { resolve } from "node:path";
+import {
+  createProcessRunner,
+  InvalidSessionCwdError,
+  resolveValidSessionCwd,
+  SessionFileNotFoundError,
+  type AgentRuntime,
+} from "@archcode/agent-core";
+import { BadRequestError, ServerError, SessionNotFoundError } from "../errors";
 import { resolveProject } from "../resolve";
 
 export type DiffLineType = "context" | "add" | "delete";
@@ -35,13 +42,15 @@ export function createFilesRoutes(runtime: AgentRuntime): Hono {
 
   app.get("/:slug/diff", async (c) => {
     const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
+    const sessionId = optionalQuery(c.req.query("sessionId"), "sessionId");
+    const cwd = await resolveDiffCwd(runtime, project.workspaceRoot, sessionId);
 
-    if (!(await isGitRepository(project.workspaceRoot))) {
+    if (!(await isGitRepository(cwd))) {
       return c.json({ files: [] });
     }
 
     const [rawDiff, untrackedPaths] = await Promise.all([
-      runGit(project.workspaceRoot, [
+      runGit(cwd, [
         "diff",
         "HEAD",
         "--no-color",
@@ -49,7 +58,7 @@ export function createFilesRoutes(runtime: AgentRuntime): Hono {
         "--no-ext-diff",
         "--no-renames",
       ]),
-      runGit(project.workspaceRoot, ["ls-files", "--others", "--exclude-standard"]),
+      runGit(cwd, ["ls-files", "--others", "--exclude-standard"]),
     ]);
 
     const files = parseUnifiedDiff(rawDiff);
@@ -64,6 +73,50 @@ export function createFilesRoutes(runtime: AgentRuntime): Hono {
   });
 
   return app;
+}
+
+async function resolveDiffCwd(
+  runtime: AgentRuntime,
+  projectRoot: string,
+  sessionId: string | undefined,
+): Promise<string> {
+  if (sessionId === undefined) return projectRoot;
+
+  let session: Awaited<ReturnType<AgentRuntime["getSessionFile"]>>;
+  try {
+    session = await runtime.getSessionFile(projectRoot, sessionId);
+  } catch (error) {
+    if (error instanceof SessionFileNotFoundError || isMissingFileError(error)) {
+      throw new SessionNotFoundError(sessionId);
+    }
+    throw error;
+  }
+
+  const persistedCwd = session.cwd ?? projectRoot;
+  if (resolve(persistedCwd) === resolve(projectRoot)) return projectRoot;
+
+  try {
+    return (await resolveValidSessionCwd(projectRoot, persistedCwd))?.path ?? projectRoot;
+  } catch (error) {
+    if (error instanceof InvalidSessionCwdError) {
+      throw new ServerError(
+        "SESSION_CWD_INVALID",
+        `Session ${sessionId} does not have a valid worktree execution directory`,
+        409,
+      );
+    }
+    throw error;
+  }
+}
+
+function optionalQuery(value: string | undefined, name: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (value.trim().length === 0) throw new BadRequestError(`${name} must not be empty`);
+  return value;
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
 export function parseUnifiedDiff(raw: string): DiffFile[] {

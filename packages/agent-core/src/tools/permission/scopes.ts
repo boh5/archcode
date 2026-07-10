@@ -8,7 +8,7 @@ export type FileApprovalOperation = "read" | "write" | "edit" | "delete";
 export interface FileApprovalDecisionContext {
   operation: FileApprovalOperation;
   path: string;
-  workspaceRoot: string;
+  cwd: string;
   reason?: string;
 }
 
@@ -36,7 +36,7 @@ function isSensitiveApprovalPath(filePath: string): boolean {
 }
 
 export function deriveApprovalScope(decisionContext: FileApprovalDecisionContext): PermissionApprovalScope | undefined {
-  const validator = new PathValidator(decisionContext.workspaceRoot);
+  const validator = new PathValidator(decisionContext.cwd);
   const validation = validator.validate(decisionContext.path);
 
   if (!validation.ok || mentionsOutsideWorkspace(decisionContext.reason)) {

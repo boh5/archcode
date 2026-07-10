@@ -10,9 +10,6 @@ export interface PromptContext {
   /** Ordered list of tool names the agent is allowed to use this session */
   readonly allowedTools: readonly string[];
 
-  /** Absolute path to workspace root (used for project context section) */
-  readonly workspaceRoot: string;
-
   /** Identifier for the prompt profile used by the current role (e.g. "default", "test") */
   readonly promptProfileId: string;
 
@@ -51,6 +48,9 @@ export interface PromptEnv {
 
   /** BCP-47 locale string (e.g. "en-US") */
   readonly locale: string;
+
+  /** Canonical project root that owns Session, Goal, Loop, HITL, and memory state. */
+  readonly projectRoot: string;
 
   /** Current working directory */
   readonly cwd: string;

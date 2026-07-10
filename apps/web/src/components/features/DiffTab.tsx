@@ -3,10 +3,11 @@ import { DiffView } from "../diff/DiffView";
 
 interface DiffTabProps {
   slug: string;
+  sessionId?: string;
 }
 
-export function DiffTab({ slug }: DiffTabProps) {
-  const { data: files, isLoading, error } = useDiff(slug);
+export function DiffTab({ slug, sessionId }: DiffTabProps) {
+  const { data: files, isLoading, error } = useDiff(slug, sessionId);
 
   if (isLoading) {
     return (

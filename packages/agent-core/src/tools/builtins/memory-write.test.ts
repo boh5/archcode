@@ -35,7 +35,8 @@ function makeCtx(fileManager: MemoryFileManager, toolCallId = "call-1"): ToolExe
   allowedTools: new Set<string>() as ReadonlySet<string>,
   agentSkills: [],
   skillService: testSkillService,
-  projectContext, });
+  projectContext,
+  cwd: projectContext.project.workspaceRoot, });
 }
 
 function parseErrorResult(result: string | ToolExecutionResult): ToolExecutionResult {

@@ -89,6 +89,31 @@ Then open the Web UI in your browser and add a project workspace.
 5. **Review evidence** — inspect diffs, tool output, tests, reviewer summaries, and session history before accepting work.
 6. **Keep it running** — leave ArchCode online so long-running coding work can continue across sessions.
 
+## Worktree isolation
+
+ArchCode keeps project ownership separate from execution location: a Session is
+always stored under its registered project, while its working directory can be
+the canonical checkout or a registered worktree from the same Git repository.
+All file, shell, Git, Skill, and LSP tools use that Session working directory;
+Goal, Loop, HITL, memory, and Session state remain owned by the project root.
+This is working-directory and Git-branch isolation, not an operating-system
+sandbox: the normal permission policy still governs commands and explicit path
+access outside the worktree.
+
+- An ordinary root Session can enter or exit a worktree when the user explicitly
+  asks. The Agent capability surface exposes only enter/exit transitions; it
+  does not provide worktree list or remove tools.
+- A Goal can opt into a dedicated worktree when the draft is created. Retries
+  reuse the same validated worktree; terminal Goals preserve it for review.
+- Loop jobs use isolated worktrees when configured. Cleanup removes only proven
+  unchanged worktrees, treats ignored files as changes, and first migrates every
+  Session reference back to the project checkout.
+- Git worktree lifecycle changes go through ArchCode's shared worktree service,
+  so ownership checks and cleanup policy stay centralized. Agent shell policy
+  additionally denies direct worktree enumeration/lifecycle commands and direct
+  filesystem writes to Git metadata as defense in depth; this is not an OS
+  sandbox boundary.
+
 ## Agent roles
 
 ArchCode ships with six specialized roles:
@@ -149,6 +174,8 @@ ArchCode can run on a remote server so it stays available while agents work. For
 - Put ArchCode behind HTTPS or a trusted reverse proxy.
 - Keep `.archcode.json` and environment variables private.
 - Register only project directories you intend ArchCode to access.
+- Use a single ArchCode server process as the writer for a registered project.
+  Repository lifecycle and durable queue locks are process-local in this version.
 
 ## Contributing
 

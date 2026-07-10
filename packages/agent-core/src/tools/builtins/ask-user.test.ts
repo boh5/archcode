@@ -65,7 +65,7 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     allowedTools: new Set(["ask_user"]),
     agentSkills: [],
     skillService: new SkillService({ builtinSkills: {} }),
-    workspaceRoot,
+    cwd: workspaceRoot,
     storeManager,
     projectContext: createTestProjectContext(workspaceRoot),
     ...overrides,
@@ -79,7 +79,7 @@ async function makeDurableCtx(overrides: Partial<ToolExecutionContext> = {}): Pr
   await projectContext.hitl.load(workspaceRoot);
   return makeCtx({
     store: createSessionStore(crypto.randomUUID(), workspaceRoot),
-    workspaceRoot,
+    cwd: workspaceRoot,
     projectContext,
     ...overrides,
   });
@@ -223,7 +223,10 @@ describe("executeAskUser", () => {
       expect(pause.record.source).toEqual({ type: "ask_user", sessionId: ctx.store.getState().sessionId, toolCallId: "call-1" });
       expect(pause.checkpoint).toMatchObject({ hitlId: pause.record.hitlId, toolCallId: "call-1", toolName: "ask_user" });
 
-      const hitlFile = await Bun.file(getSessionHitlPath(ctx.workspaceRoot, ctx.store.getState().sessionId)).json() as { pending: Array<{ hitlId: string }> };
+      const hitlFile = await Bun.file(getSessionHitlPath(
+        ctx.projectContext.project.workspaceRoot,
+        ctx.store.getState().sessionId,
+      )).json() as { pending: Array<{ hitlId: string }> };
       expect(hitlFile.pending.map((record) => record.hitlId)).toContain(pause.record.hitlId);
     }
   });

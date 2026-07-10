@@ -27,7 +27,7 @@ export async function executeCancelSession(
   }
 
   const callingSessionId = ctx.store.getState().sessionId;
-  const workspaceRoot = ctx.workspaceRoot;
+  const workspaceRoot = ctx.projectContext.project.workspaceRoot;
 
   if (input.session_id === callingSessionId) {
     return createToolErrorResult({

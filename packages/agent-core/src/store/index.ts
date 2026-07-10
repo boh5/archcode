@@ -49,4 +49,5 @@ export type {
 export { BusyError } from "./types";
 export { getAssistantText } from "./helpers";
 export { toModelMessagesFromStoredMessages } from "./projection";
+export { assertValidSessionCwd, resolveValidSessionCwd } from "./session-cwd";
 export type { ProjectionMode, ProjectionOptions } from "./projection";

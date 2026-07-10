@@ -5,7 +5,7 @@ import { classifyCommand } from "../security";
  * Creates a permission check for bash commands that classifies the command
  * using the low-level `classifyCommand` primitive and returns a PermissionDecision.
  *
- * Uses the workspace root from the execution context.
+ * Uses the current Session cwd as the command confinement root.
  */
 export function createBashPermission(): ToolPermission {
   return (input: unknown, ctx: ToolExecutionContext): PermissionDecision => {
@@ -13,6 +13,6 @@ export function createBashPermission(): ToolPermission {
       return { outcome: "ask", reason: "Bash permission requires a command string", prompt: "Review this bash command before execution." };
     }
     const cwd = "cwd" in input && typeof input.cwd === "string" ? input.cwd : undefined;
-    return classifyCommand(input.command, { workspaceRoot: ctx.workspaceRoot, cwd });
+    return classifyCommand(input.command, { workspaceRoot: ctx.cwd, cwd });
   };
 }

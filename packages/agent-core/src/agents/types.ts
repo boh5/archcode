@@ -1,7 +1,7 @@
 import type { StoreApi } from "zustand";
 import type { SlashCommandResult } from "../commands/types";
 import type { SessionStoreState } from "../store/types";
-import type { AskUserCallback, ToolConfirmationCallback, ToolExecutionOrigin } from "../tools/index";
+import type { AskUserCallback, ToolConfirmationCallback, ToolExecutionControl, ToolExecutionOrigin } from "../tools/index";
 
 export interface AgentRunOptions {
   abort?: AbortSignal;
@@ -14,6 +14,8 @@ export interface AgentRunOptions {
 
 export interface Agent {
   readonly store: StoreApi<SessionStoreState>;
+  /** Immutable execution directory captured when this Agent runtime was built. */
+  readonly cwd?: string;
   run(
     userMessage: string,
     abort?: AbortSignal,
@@ -28,4 +30,9 @@ export interface Agent {
 export interface AgentResult {
   readonly text: string;
   readonly steps: number;
+  readonly executionControl?: ToolExecutionControl;
+  readonly cwdChanged?: {
+    readonly previousCwd: string;
+    readonly cwd: string;
+  };
 }

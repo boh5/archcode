@@ -311,7 +311,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
     overrides?: Partial<ToolExecutionContext>,
   ): ToolExecutionContext {
     const ac = new AbortController();
-    const workspaceRoot = overrides?.projectContext?.project.workspaceRoot ?? overrides?.workspaceRoot ?? "/tmp";
+    const workspaceRoot = overrides?.projectContext?.project.workspaceRoot ?? overrides?.cwd ?? "/tmp";
     return createToolExecutionContext({ store: { getState: () => ({ sessionId: "test-session" }) } as ToolExecutionContext["store"], storeManager, toolName: "echo",
     toolCallId: "call-1",
     input: { msg: "hello" },
@@ -322,7 +322,8 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
     agentSkills: [],
     skillService: new SkillService({ builtinSkills: {} }),
     projectContext: makeProjectContext(workspaceRoot),
-    ...overrides, });
+    ...overrides,
+    cwd: workspaceRoot, });
   }
 
   function makeToolCall(
@@ -394,6 +395,35 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
 
       expect(result.isError).toBe(false);
       expect(result.output).toBe("echo: world");
+    });
+
+    test("awaits durable effectful attempt recording before execute", async () => {
+      let releaseAttempt!: () => void;
+      const attemptDurable = new Promise<void>((resolve) => {
+        releaseAttempt = resolve;
+      });
+      const execute = mock(async () => "written");
+      registry.register({
+        name: "write",
+        description: "effectful write",
+        inputSchema: z.object({}).strict(),
+        traits: { readOnly: false, destructive: false, concurrencySafe: false },
+        execute,
+      });
+      const onToolAttempt = mock(async () => await attemptDurable);
+      const execution = registry.execute(
+        makeToolCall({ toolName: "write", input: {} }),
+        makeContext({ toolName: "write", allowedTools: new Set(["write"]), onToolAttempt }),
+      );
+
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(onToolAttempt).toHaveBeenCalledTimes(1);
+      expect(execute).not.toHaveBeenCalled();
+
+      releaseAttempt();
+      expect((await execution).isError).toBe(false);
+      expect(execute).toHaveBeenCalledTimes(1);
     });
 
     // 4. Executor throw becomes error result
@@ -1255,7 +1285,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       const workspaceRoot = join(import.meta.dir, "__test_tmp__", `permission-pause-${crypto.randomUUID()}`);
       const sessionId = crypto.randomUUID();
       const ctx = makeContext({
-        workspaceRoot,
+        cwd: workspaceRoot,
         store: createSessionStore(sessionId, workspaceRoot),
         projectContext: await makeLoadedProjectContext(workspaceRoot),
       });
@@ -1396,7 +1426,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       const ctx = makeContext({
         toolName: "sensitiveReadTool",
         allowedTools: new Set(["sensitiveReadTool"]),
-        workspaceRoot,
+        cwd: workspaceRoot,
         store: createSessionStore(sessionId, workspaceRoot),
         projectContext: await makeLoadedProjectContext(workspaceRoot),
       });
@@ -1717,7 +1747,7 @@ describe("hook integration with registry", () => {
     overrides?: Partial<ToolExecutionContext>,
   ): ToolExecutionContext {
     const ac = new AbortController();
-    const workspaceRoot = overrides?.projectContext?.project.workspaceRoot ?? overrides?.workspaceRoot ?? "/tmp";
+    const workspaceRoot = overrides?.projectContext?.project.workspaceRoot ?? overrides?.cwd ?? "/tmp";
     return createToolExecutionContext({ store: { getState: () => ({ sessionId: "test-session" }) } as ToolExecutionContext["store"], storeManager, toolName: "echo",
     toolCallId: "call-1",
     input: { msg: "hello" },
@@ -1728,7 +1758,8 @@ describe("hook integration with registry", () => {
     agentSkills: [],
     skillService: new SkillService({ builtinSkills: {} }),
     projectContext: makeProjectContext(workspaceRoot),
-    ...overrides, });
+    ...overrides,
+    cwd: workspaceRoot, });
   }
 
   function makeToolCall(
@@ -2011,7 +2042,7 @@ describe("Permission API contract — registry", () => {
       overrides?: Partial<ToolExecutionContext>,
     ): ToolExecutionContext {
       const ac = new AbortController();
-      const workspaceRoot = overrides?.projectContext?.project.workspaceRoot ?? overrides?.workspaceRoot ?? "/tmp";
+      const workspaceRoot = overrides?.projectContext?.project.workspaceRoot ?? overrides?.cwd ?? "/tmp";
       return createToolExecutionContext({ store: { getState: () => ({ sessionId: "test-session" }) } as ToolExecutionContext["store"], storeManager, toolName: "echo",
       toolCallId: "call-1",
       input: { msg: "hello" },
@@ -2022,7 +2053,8 @@ describe("Permission API contract — registry", () => {
       agentSkills: [],
       skillService: new SkillService({ builtinSkills: {} }),
       projectContext: makeProjectContext(workspaceRoot),
-      ...overrides, });
+      ...overrides,
+      cwd: workspaceRoot, });
     }
 
     function makeToolCall(
@@ -2088,7 +2120,7 @@ describe("Permission API contract — registry", () => {
       const sessionId = crypto.randomUUID();
 
       const ctx = makeContext({
-        workspaceRoot,
+        cwd: workspaceRoot,
         store: createSessionStore(sessionId, workspaceRoot),
         projectContext: await makeLoadedProjectContext(workspaceRoot),
       });

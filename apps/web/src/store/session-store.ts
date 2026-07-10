@@ -26,6 +26,7 @@ const MAX_PENDING_REMOTE_EVENTS = 1000;
 export interface WebSessionStoreState extends SessionProjection {
   [key: string]: unknown;
   createdAt: number;
+  cwd: string | undefined;
   rootSessionId: string;
   parentSessionId: string | undefined;
   agentName: string;
@@ -51,6 +52,7 @@ export interface WebSessionStoreState extends SessionProjection {
     childSessionLinks?: ToolChildSessionLink[];
     title?: string | null;
     createdAt?: number;
+    cwd?: string;
     rootSessionId?: string;
     parentSessionId?: string;
     agentName?: string;
@@ -122,6 +124,7 @@ function isReducibleStreamEvent(event: SessionEventPayload): event is StreamEven
   switch (event.type) {
     case "execution-start":
     case "execution-end":
+    case "session.cwd_changed":
     case "user-message":
     case "system-notice":
     case "text-start":
@@ -238,6 +241,7 @@ export function createWebSessionStore(
   store = createStore<WebSessionStoreState>((set) => ({
     sessionId,
     createdAt: Date.now(),
+    cwd: undefined,
     title: null,
     modelInfo: null,
     agentName: "orchestrator",
@@ -331,6 +335,9 @@ export function createWebSessionStore(
         }
         if (data.createdAt !== undefined && data.createdAt > 0) {
           updates.createdAt = data.createdAt;
+        }
+        if (data.cwd !== undefined && (!stale || state.cwd === undefined)) {
+          updates.cwd = data.cwd;
         }
         if (data.stats !== undefined && !stale) {
           updates.stats = data.stats;

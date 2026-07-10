@@ -51,7 +51,7 @@ function formatLines(content: string, input: FileReadInput): string {
 export const fileReadTool = defineTool({
   name: "file_read",
   description:
-    "Reads a file from the filesystem and returns line-numbered text. Paths are resolved relative to the workspace root.",
+    "Reads a file from the filesystem and returns line-numbered text. Relative paths resolve from the current Session cwd.",
   inputSchema: FileReadInputSchema,
   traits: { readOnly: true, destructive: false, concurrencySafe: true },
   permissions: [createWorkspacePermission(), createSensitiveFilePermission()],
@@ -62,7 +62,7 @@ export const fileReadTool = defineTool({
     // may have been explicitly approved and should not be re-checked here.
     const { resolved } = resolveAndValidatePath(
       input.path,
-      ctx.workspaceRoot,
+      ctx.cwd,
     );
 
     try {

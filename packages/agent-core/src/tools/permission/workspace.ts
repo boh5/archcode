@@ -11,7 +11,7 @@ export interface WorkspacePermissionOptions {
 
 /**
  * Creates a permission check that verifies the target path is within the
- * workspace root. Supports configurable input key via `pathKey` option.
+ * current Session cwd. Supports configurable input key via `pathKey` option.
  *
  * Default `pathKey` is `"path"` (used by file_read, file_write, etc.).
  * LSP tools should pass `{ pathKey: "filePath" }` to check the `filePath` field.
@@ -27,13 +27,13 @@ export function createWorkspacePermission(
     if (pathValue) {
       const { resolved, isWithinWorkspace } = resolveAndValidatePath(
         pathValue,
-        ctx.workspaceRoot,
+        ctx.cwd,
       );
 
       if (!isWithinWorkspace) {
         return {
           outcome: "ask",
-          reason: `"${resolved}" is outside workspace "${ctx.workspaceRoot}" [TOOL_FILE_OUTSIDE_WORKSPACE]`,
+          reason: `"${resolved}" is outside workspace "${ctx.cwd}" [TOOL_FILE_OUTSIDE_WORKSPACE]`,
           approval: {
             eligible: true,
             scope: {

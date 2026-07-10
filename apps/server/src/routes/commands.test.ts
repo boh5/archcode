@@ -42,6 +42,10 @@ function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
       running.add(input.sessionId);
       return makeExecution(input.sessionId, input.workspaceRoot);
     }),
+    startSessionMessageExecution: mock(async (input) => {
+      running.add(input.sessionId);
+      return makeExecution(input.sessionId, input.workspaceRoot);
+    }),
     abortSessionExecution: mock((_workspaceRoot: string, sessionId: string) => running.delete(sessionId)),
     abortSessionExecutionAndWait: mock(async (_workspaceRoot: string, sessionId: string) => {
       running.delete(sessionId);

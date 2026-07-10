@@ -70,7 +70,7 @@ function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOption
     skillService: testSkillService,
     storeManager,
     projectContext: createTestProjectContext(workspaceRoot),
-    workspaceRoot,
+    cwd: workspaceRoot,
     ...overrides,
   };
 }

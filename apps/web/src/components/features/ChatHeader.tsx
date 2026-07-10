@@ -19,12 +19,14 @@ interface ChatHeaderProps {
   slug: string;
   sessionId: string;
   goalId?: string;
+  projectRoot?: string;
   onToggleDetail: () => void;
 }
 
-export function ChatHeader({ slug, sessionId, goalId, onToggleDetail }: ChatHeaderProps) {
+export function ChatHeader({ slug, sessionId, goalId, projectRoot, onToggleDetail }: ChatHeaderProps) {
   const title = useSessionStore(sessionId, (s) => s.title, slug);
   const stats = useSessionStore(sessionId, (s) => s.stats, slug);
+  const cwd = useSessionStore(sessionId, (s) => s.cwd, slug);
   const postCommand = usePostCommand();
   const { data: goal } = useGoal(slug, goalId ?? "");
 
@@ -46,6 +48,15 @@ export function ChatHeader({ slug, sessionId, goalId, onToggleDetail }: ChatHead
             <span className={`px-1.5 py-0.5 rounded-sm ${STATUS_BADGE_CLASS[goal.status]}`}>
               {goal.status}
             </span>
+          </span>
+        )}
+        {cwd !== undefined && projectRoot !== undefined && cwd !== projectRoot && (
+          <span
+            data-testid="session-worktree-badge"
+            title={cwd}
+            className="rounded-sm bg-info-muted px-1.5 py-0.5 font-mono text-[10.5px] text-info whitespace-nowrap"
+          >
+            worktree
           </span>
         )}
         {hasStats && (

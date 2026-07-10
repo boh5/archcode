@@ -12,6 +12,7 @@ function createTestStore(sessionId: string): StoreApi<SessionStoreState> {
   store = createStore<SessionStoreState>((set, get) => ({
     sessionId,
     createdAt: Date.now(),
+    cwd: workspaceRoot,
     agentName: "orchestrator",
     title: null,
     messages: [],
@@ -56,6 +57,7 @@ function createTestStore(sessionId: string): StoreApi<SessionStoreState> {
         return { events, eventOffset, nextEventId };
       });
     },
+    setCwd: (cwd) => set({ cwd, readSnapshots: new Map() }),
     setTitle: (title) => set({ title }),
     setParentSessionId: (parentSessionId) => {
       if (get().parentSessionId !== undefined) return;
@@ -99,6 +101,36 @@ describe("SessionEventBridge", () => {
       payload: { type: "system-notice", message: "hello" },
     });
     unsubscribe();
+  });
+
+  test("forwards Session cwd transitions as first-class realtime events", () => {
+    const store = createTestStore("root");
+    bridge.attachSession(workspaceRoot, "root", store);
+    const received: unknown[] = [];
+    bridge.subscribe({
+      slug: "project",
+      workspaceRoot,
+      sessionId: "root",
+      onEvent: (event) => received.push(event),
+    });
+
+    store.getState().append({
+      type: "session.cwd_changed",
+      previousCwd: workspaceRoot,
+      cwd: "/workspace-worktree",
+    });
+
+    expect(received).toEqual([
+      expect.objectContaining({
+        type: "event",
+        kind: "session.cwd_changed",
+        payload: {
+          type: "session.cwd_changed",
+          previousCwd: workspaceRoot,
+          cwd: "/workspace-worktree",
+        },
+      }),
+    ]);
   });
 
   test("attaches a child store after a subscription already exists", () => {

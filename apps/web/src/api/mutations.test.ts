@@ -18,7 +18,7 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
 }
 
 describe("web goal mutation API calls", () => {
-  test("createGoal calls POST /api/projects/:slug/goals with title/objective/acceptanceCriteria", async () => {
+  test("createGoal calls POST /api/projects/:slug/goals with optional worktree isolation", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/goals`);
@@ -29,7 +29,7 @@ describe("web goal mutation API calls", () => {
 
     const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/goals`, {
       method: "POST",
-      body: { title: "New Goal", objective: "Simplify Goal", acceptanceCriteria: "Reviewer can decide DONE from logs and diff." },
+      body: { objective: "Simplify Goal", acceptanceCriteria: "Reviewer can decide DONE from logs and diff.", useWorktree: true },
     });
 
     expect(result).toMatchObject({ id: "goal-new" });

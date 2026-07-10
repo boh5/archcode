@@ -36,7 +36,7 @@ export const lspFindReferencesTool = defineTool({
     // Out-of-workspace paths may have been explicitly approved.
     const { resolved: resolvedPath } = resolveAndValidatePath(
       input.filePath,
-      ctx.workspaceRoot,
+      ctx.cwd,
     );
 
     const languageId = getLanguageIdFromFilename(resolvedPath);
@@ -59,7 +59,7 @@ export const lspFindReferencesTool = defineTool({
     }
 
     const pool = getLspClientPool();
-    const poolKey = { workspaceRoot: ctx.workspaceRoot, serverId: serverDefinition.id };
+    const poolKey = { workspaceRoot: ctx.cwd, serverId: serverDefinition.id };
     const uri = pathToFileUri(resolvedPath);
 
     try {
@@ -67,7 +67,7 @@ export const lspFindReferencesTool = defineTool({
       const client = await pool.acquire(poolKey, {
         command: serverDefinition.command[0],
         args: serverDefinition.command.slice(1),
-        cwd: ctx.workspaceRoot,
+        cwd: ctx.cwd,
         ...(serverDefinition.initializationOptions ? { initializationOptions: serverDefinition.initializationOptions } : {}),
       });
 

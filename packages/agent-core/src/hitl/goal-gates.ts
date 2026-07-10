@@ -1,6 +1,7 @@
 import type { GoalReviewReceipt, HitlRecord, HitlResponse } from "@archcode/protocol";
 
 import type { GoalStateManager } from "../goals/state";
+import { withGoalExecutionClaimLock } from "../goals/execution-claim";
 import type { CreateHitlRecordInput } from "./service";
 
 export type ApprovalOutcome = {
@@ -41,32 +42,34 @@ export class GoalApprovalGate {
     summary: string;
     resumeStatus?: "running" | "reviewing";
   }): Promise<HitlRecord> {
-    const record = await this.#hitlService.create({
-      owner: { projectSlug: input.projectSlug, ownerType: "goal", ownerId: input.goalId },
-      blockingKey: `goal:${input.goalId}:approval:${input.approvalPoint}`,
-      source: { type: "goal_approval", goalId: input.goalId, approvalPoint: input.approvalPoint },
-      displayPayload: {
-        title: "Approve Goal continuation",
-        summary: input.summary,
-        fields: [
-          { label: "Goal ID", value: input.goalId },
-          { label: "Approval point", value: input.approvalPoint },
-          { label: "Recommended option", value: "approved" },
-        ],
-        redacted: true,
-      },
-    });
+    return await withGoalExecutionClaimLock(input.goalId, async () => {
+      const record = await this.#hitlService.create({
+        owner: { projectSlug: input.projectSlug, ownerType: "goal", ownerId: input.goalId },
+        blockingKey: `goal:${input.goalId}:approval:${input.approvalPoint}`,
+        source: { type: "goal_approval", goalId: input.goalId, approvalPoint: input.approvalPoint },
+        displayPayload: {
+          title: "Approve Goal continuation",
+          summary: input.summary,
+          fields: [
+            { label: "Goal ID", value: input.goalId },
+            { label: "Approval point", value: input.approvalPoint },
+            { label: "Recommended option", value: "approved" },
+          ],
+          redacted: true,
+        },
+      });
 
-    await this.#goalStateManager.block(input.goalId, {
-      kind: "approval",
-      summary: input.summary,
-      hitlId: record.hitlId,
-      source: input.approvalPoint,
-      resumeStatus: input.resumeStatus ?? "running",
+      await this.#goalStateManager.block(input.goalId, {
+        kind: "approval",
+        summary: input.summary,
+        hitlId: record.hitlId,
+        source: input.approvalPoint,
+        resumeStatus: input.resumeStatus ?? "running",
+      });
+      await this.#goalStateManager.recordHitlRef(input.goalId, { hitlId: record.hitlId, approvalRef: record.hitlId });
+      await this.#hitlService.publishRequest?.(record);
+      return record;
     });
-    await this.#goalStateManager.recordHitlRef(input.goalId, { hitlId: record.hitlId, approvalRef: record.hitlId });
-    await this.#hitlService.publishRequest?.(record);
-    return record;
   }
 
   async requestReview(input: {
@@ -74,28 +77,30 @@ export class GoalApprovalGate {
     projectSlug: string;
     summary?: string;
   }): Promise<HitlRecord> {
-    const summary = input.summary ?? `Reviewer outcome required for Goal ${input.goalId}.`;
-    const record = await this.#hitlService.create({
-      owner: { projectSlug: input.projectSlug, ownerType: "goal", ownerId: input.goalId },
-      blockingKey: `goal:${input.goalId}:review`,
-      source: { type: "goal_review", goalId: input.goalId },
-      displayPayload: {
-        title: "Review Goal outcome",
+    return await withGoalExecutionClaimLock(input.goalId, async () => {
+      const summary = input.summary ?? `Reviewer outcome required for Goal ${input.goalId}.`;
+      const record = await this.#hitlService.create({
+        owner: { projectSlug: input.projectSlug, ownerType: "goal", ownerId: input.goalId },
+        blockingKey: `goal:${input.goalId}:review`,
+        source: { type: "goal_review", goalId: input.goalId },
+        displayPayload: {
+          title: "Review Goal outcome",
+          summary,
+          fields: [{ label: "Goal ID", value: input.goalId }],
+          redacted: true,
+        },
+      });
+      await this.#goalStateManager.block(input.goalId, {
+        kind: "approval",
         summary,
-        fields: [{ label: "Goal ID", value: input.goalId }],
-        redacted: true,
-      },
+        hitlId: record.hitlId,
+        source: "goal_review",
+        resumeStatus: "reviewing",
+      });
+      await this.#goalStateManager.recordHitlRef(input.goalId, { hitlId: record.hitlId, approvalRef: record.hitlId });
+      await this.#hitlService.publishRequest?.(record);
+      return record;
     });
-    await this.#goalStateManager.block(input.goalId, {
-      kind: "approval",
-      summary,
-      hitlId: record.hitlId,
-      source: "goal_review",
-      resumeStatus: "reviewing",
-    });
-    await this.#goalStateManager.recordHitlRef(input.goalId, { hitlId: record.hitlId, approvalRef: record.hitlId });
-    await this.#hitlService.publishRequest?.(record);
-    return record;
   }
 
   async recordApprovalResponse(goalId: string, approvalPoint: string, response: HitlResponse): Promise<ApprovalOutcome> {

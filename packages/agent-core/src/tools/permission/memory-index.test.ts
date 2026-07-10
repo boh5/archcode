@@ -24,7 +24,7 @@ function makeCtx(
   abort: new AbortController().signal,
   startedAt: Date.now(),
   allowedTools: new Set<string>(),
-  workspaceRoot: WORKSPACE,
+  cwd: WORKSPACE,
   storeManager,
     projectContext: createTestProjectContext(WORKSPACE), ...overrides,  };
 }

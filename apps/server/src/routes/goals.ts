@@ -1,6 +1,12 @@
 import { Hono } from "hono";
 import type { GoalState, GoalStatus } from "@archcode/protocol";
-import type { AgentRuntime } from "@archcode/agent-core";
+import {
+  GoalWorkspaceService,
+  goalExecutionStatusEligibility,
+  withGoalExecutionClaimLock,
+  type AgentRuntime,
+  type GoalWorkspaceStateManager,
+} from "@archcode/agent-core";
 import { z } from "zod/v4";
 import { BadRequestError, ConcurrentSessionLimitHttpError, ServerError } from "../errors";
 import { resolveProject } from "../resolve";
@@ -22,11 +28,13 @@ const GoalNaturalLanguageSchema = z.string().trim().min(1).max(8_000);
 const CreateGoalBodySchema = z.strictObject({
   objective: GoalNaturalLanguageSchema,
   acceptanceCriteria: GoalNaturalLanguageSchema,
+  useWorktree: z.boolean().optional(),
 });
 
 const PatchGoalBodySchema = z.strictObject({
   objective: GoalNaturalLanguageSchema.optional(),
   acceptanceCriteria: GoalNaturalLanguageSchema.optional(),
+  useWorktree: z.boolean().optional(),
 });
 
 const SessionIdSchema = z.uuid();
@@ -46,6 +54,7 @@ interface GoalStateManagerForRoute {
     readonly title?: string | null;
     readonly objective: string;
     readonly acceptanceCriteria: string;
+    readonly useWorktree?: boolean;
   }): Promise<GoalState>;
   read(goalId: string): Promise<GoalState>;
   patchDraft(goalId: string, updates: GoalPatchBody): Promise<GoalState>;
@@ -54,10 +63,9 @@ interface GoalStateManagerForRoute {
   cancel(goalId: string, reason?: string): Promise<GoalState>;
   setMainSession(goalId: string, mainSessionId: string): Promise<GoalState>;
   addChildSession(goalId: string, childSessionId: string): Promise<GoalState>;
+  setWorktree: GoalWorkspaceStateManager["setWorktree"];
   fail?(goalId: string, error: Error | string): Promise<GoalState>;
 }
-
-const goalRunReservationLocks = new Map<string, Promise<void>>();
 
 export function createGoalsRoutes(runtime: AgentRuntime): Hono {
   const app = new Hono();
@@ -86,6 +94,7 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
         projectId: project.slug,
         objective: body.objective,
         acceptanceCriteria: body.acceptanceCriteria,
+        useWorktree: body.useWorktree ?? false,
       });
       runtime.queueGoalTitleGeneration?.(project.workspaceRoot, goal.id);
       return c.json(toPublicGoal(goal), 201);
@@ -116,7 +125,7 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
 
     const manager = await goalStateFor(runtime, workspaceRoot);
     try {
-      return c.json(toPublicGoal(await manager.patchDraft(goalId, body)));
+      return c.json(toPublicGoal(await withGoalExecutionClaimLock(goalId, () => manager.patchDraft(goalId, body))));
     } catch (error) {
       throw mapGoalError(error);
     }
@@ -129,14 +138,30 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
     const manager = await goalStateFor(runtime, project.workspaceRoot);
 
     try {
-      const reserved = await withGoalRunReservationLock(project.workspaceRoot, goalId, async () => {
-        const goal = await manager.read(goalId);
+      const reserved = await withGoalExecutionClaimLock(goalId, async () => {
+        let goal = await manager.read(goalId);
+        assertHttpGoalOwnership(goal);
         assertGoalCanRun(goal);
-        await validateProvidedSessions(runtime, project.workspaceRoot, goal, body);
-        const updated = await reserveGoalSession(runtime, manager, project.workspaceRoot, goal, body);
-        if (updated.mainSessionId !== undefined && runtime.isSessionExecutionRunning(project.workspaceRoot, updated.mainSessionId)) {
-          return updated;
+        await validateGoalSessionIdentities(runtime, project.workspaceRoot, goal, body);
+        if (goal.status === "running") {
+          const runningSessionId = requireRunningMainSession(goal, body.mainSessionId);
+          if (runtime.isSessionExecutionRunning(project.workspaceRoot, runningSessionId)) {
+            const expectedCwd = goalExecutionCwdFromState(goal, project.workspaceRoot);
+            await validateProvidedSessions(runtime, project.workspaceRoot, goal, body, expectedCwd);
+            await assertSessionAssignable(runtime, project.workspaceRoot, goal, runningSessionId, "main", expectedCwd);
+            return goal;
+          }
         }
+        assertNoActiveGoalSessions(runtime, project.workspaceRoot, goal, body);
+        const prepared = await prepareGoalWorkspace(manager, project.workspaceRoot, goal);
+        goal = prepared.goal;
+        await validateProvidedSessions(runtime, project.workspaceRoot, goal, body, prepared.cwd);
+        const selectedExistingMainSessionId = goal.mainSessionId ?? body.mainSessionId;
+        if (selectedExistingMainSessionId !== undefined) {
+          await assertSessionAssignable(runtime, project.workspaceRoot, goal, selectedExistingMainSessionId, "main", prepared.cwd);
+        }
+        assertNoActiveGoalSessions(runtime, project.workspaceRoot, goal, body);
+        const updated = await reserveGoalSession(runtime, manager, project.workspaceRoot, goal, body, prepared.cwd);
 
         const running = updated.status === "running" ? updated : await manager.start(goalId, { mainSessionId: updated.mainSessionId });
         const withSessions = await ensureReservedSessions(manager, running, updated.mainSessionId, updated.childSessionIds);
@@ -171,21 +196,35 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
     const manager = await goalStateFor(runtime, project.workspaceRoot);
 
     try {
-      const reserved = await withGoalRunReservationLock(project.workspaceRoot, goalId, async () => {
-        const goal = await manager.read(goalId);
+      const reserved = await withGoalExecutionClaimLock(goalId, async () => {
+        let goal = await manager.read(goalId);
+        assertHttpGoalOwnership(goal);
         assertGoalCanRetry(goal);
-        await validateProvidedSessions(runtime, project.workspaceRoot, goal, body);
-
-        const activeReservedSessionId = goal.mainSessionId && runtime.isSessionExecutionRunning(project.workspaceRoot, goal.mainSessionId)
-          ? goal.mainSessionId
-          : undefined;
-        if (activeReservedSessionId !== undefined && body.mainSessionId !== undefined && body.mainSessionId !== activeReservedSessionId) {
-          throw new ServerError("BAD_REQUEST", `Goal ${goal.id} is already reserved for session ${activeReservedSessionId}`, 409);
+        await validateGoalSessionIdentities(runtime, project.workspaceRoot, goal, body);
+        if (goal.status === "running") {
+          const runningSessionId = requireRunningMainSession(goal, body.mainSessionId);
+          if (!runtime.isSessionExecutionRunning(project.workspaceRoot, runningSessionId)) {
+            throw new ServerError(
+              "BAD_REQUEST",
+              `Running Goal ${goal.id} can retry only through its active main Session`,
+              409,
+            );
+          }
+          const expectedCwd = goalExecutionCwdFromState(goal, project.workspaceRoot);
+          await validateProvidedSessions(runtime, project.workspaceRoot, goal, body, expectedCwd);
+          await assertSessionAssignable(runtime, project.workspaceRoot, goal, runningSessionId, "main", expectedCwd);
+          return goal;
         }
+        assertNoActiveGoalSessions(runtime, project.workspaceRoot, goal, body);
+        const prepared = await prepareGoalWorkspace(manager, project.workspaceRoot, goal);
+        goal = prepared.goal;
+        await validateProvidedSessions(runtime, project.workspaceRoot, goal, body, prepared.cwd);
+        assertNoActiveGoalSessions(runtime, project.workspaceRoot, goal, body);
 
-        const mainSessionId = activeReservedSessionId ?? body.mainSessionId ?? (await runtime.createSession(project.workspaceRoot, {
+        const mainSessionId = body.mainSessionId ?? (await runtime.createSession(project.workspaceRoot, {
           goalId,
           sessionRole: "main",
+          cwd: prepared.cwd,
         })).sessionId;
 
         const retried = goal.status === "running" ? goal : await manager.retry(goalId, { mainSessionId });
@@ -218,9 +257,9 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
     const manager = await goalStateFor(runtime, workspaceRoot);
 
     try {
-      return c.json(toPublicGoal(await manager.cancel(goalId)));
+      return c.json(toPublicGoal(await runtime.cancelGoal(workspaceRoot, goalId, { source: "http" })));
     } catch (error) {
-      throw mapGoalError(error);
+      throw mapExecutionOrGoalError(error);
     }
   });
 
@@ -269,13 +308,40 @@ function buildGoalRetryUserMessage(goal: GoalState): string {
 }
 
 function assertGoalCanRun(goal: GoalState): void {
-  if (goal.status === "draft" || goal.status === "running") return;
+  if (goalExecutionStatusEligibility("start", goal.status) !== "reject") return;
   throw new ServerError("BAD_REQUEST", `Invalid goal state for ${goal.id}`, 409);
 }
 
+function assertHttpGoalOwnership(goal: GoalState): void {
+  if (goal.loopId === undefined) return;
+  throw new ServerError(
+    "BAD_REQUEST",
+    `Goal ${goal.id} is owned by Loop ${goal.loopId} and must be resumed by its owning Loop`,
+    409,
+  );
+}
+
 function assertGoalCanRetry(goal: GoalState): void {
-  if (goal.status === "not_done" || goal.status === "failed" || goal.status === "running") return;
+  if (goalExecutionStatusEligibility("retry", goal.status) !== "reject") return;
   throw new ServerError("BAD_REQUEST", `Invalid goal state for ${goal.id}`, 409);
+}
+
+function requireRunningMainSession(goal: GoalState, requestedMainSessionId: string | undefined): string {
+  if (goal.mainSessionId === undefined) {
+    throw new ServerError("BAD_REQUEST", `Running Goal ${goal.id} has no main Session claim`, 409);
+  }
+  if (requestedMainSessionId !== undefined && requestedMainSessionId !== goal.mainSessionId) {
+    throw new ServerError("BAD_REQUEST", `Goal ${goal.id} is already reserved for session ${goal.mainSessionId}`, 409);
+  }
+  return goal.mainSessionId;
+}
+
+function goalExecutionCwdFromState(goal: GoalState, workspaceRoot: string): string {
+  if (goal.useWorktree !== true) return workspaceRoot;
+  if (goal.worktree === undefined) {
+    throw new ServerError("BAD_REQUEST", `Running Goal ${goal.id} has no managed worktree claim`, 409);
+  }
+  return goal.worktree.path;
 }
 
 
@@ -284,14 +350,56 @@ async function validateProvidedSessions(
   workspaceRoot: string,
   goal: GoalState,
   body: SessionIdsBody,
+  expectedCwd?: string,
 ): Promise<void> {
   if (body.mainSessionId !== undefined) {
-    await assertSessionAssignable(runtime, workspaceRoot, goal, body.mainSessionId, "main");
+    await assertSessionAssignable(runtime, workspaceRoot, goal, body.mainSessionId, "main", expectedCwd);
   }
 
   for (const childSessionId of body.childSessionIds ?? []) {
+    await assertSessionAssignable(runtime, workspaceRoot, goal, childSessionId, "child", expectedCwd);
+  }
+}
+
+async function validateGoalSessionIdentities(
+  runtime: AgentRuntime,
+  workspaceRoot: string,
+  goal: GoalState,
+  body: SessionIdsBody,
+): Promise<void> {
+  const mainSessionIds = new Set([goal.mainSessionId, body.mainSessionId].filter((id): id is string => id !== undefined));
+  for (const mainSessionId of mainSessionIds) {
+    await assertSessionAssignable(runtime, workspaceRoot, goal, mainSessionId, "main");
+  }
+
+  const childSessionIds = new Set([...(goal.childSessionIds ?? []), ...(body.childSessionIds ?? [])]);
+  for (const childSessionId of childSessionIds) {
+    if (mainSessionIds.has(childSessionId)) continue;
     await assertSessionAssignable(runtime, workspaceRoot, goal, childSessionId, "child");
   }
+}
+
+function assertNoActiveGoalSessions(
+  runtime: AgentRuntime,
+  workspaceRoot: string,
+  goal: GoalState,
+  body: SessionIdsBody,
+): void {
+  const sessionIds = new Set([
+    goal.mainSessionId,
+    ...goal.childSessionIds,
+    body.mainSessionId,
+    ...(body.childSessionIds ?? []),
+  ].filter((id): id is string => id !== undefined));
+  const activeSessionId = [...sessionIds].find((sessionId) => (
+    runtime.isSessionExecutionRunning(workspaceRoot, sessionId)
+  ));
+  if (activeSessionId === undefined) return;
+  throw new ServerError(
+    "BAD_REQUEST",
+    `Goal ${goal.id} cannot transition while Session ${activeSessionId} is active`,
+    409,
+  );
 }
 
 async function assertSessionAssignable(
@@ -300,6 +408,7 @@ async function assertSessionAssignable(
   goal: GoalState,
   sessionId: string,
   role: "main" | "child",
+  expectedCwd?: string,
 ): Promise<void> {
   let session: Awaited<ReturnType<AgentRuntime["getSessionFile"]>>;
   try {
@@ -308,11 +417,17 @@ async function assertSessionAssignable(
     throw new BadRequestError(`${role === "main" ? "mainSessionId" : "childSessionIds"} must reference an existing session in this project`);
   }
 
-  if (session.goalId !== undefined && session.goalId !== goal.id) {
+  if (session.goalId === undefined) {
+    throw new ServerError("BAD_REQUEST", `Session ${sessionId} is not assigned to Goal ${goal.id}`, 409);
+  }
+  if (session.goalId !== goal.id) {
     throw new ServerError("BAD_REQUEST", `Session ${sessionId} belongs to a different goal`, 409);
   }
-  if (role === "main" && session.sessionRole !== undefined && session.sessionRole !== "main") {
+  if (role === "main" && session.sessionRole !== "main") {
     throw new ServerError("BAD_REQUEST", `Session ${sessionId} is not a main goal session`, 409);
+  }
+  if (expectedCwd !== undefined && (session.cwd ?? workspaceRoot) !== expectedCwd) {
+    throw new ServerError("BAD_REQUEST", `Session ${sessionId} does not use the Goal execution directory`, 409);
   }
 }
 
@@ -322,6 +437,7 @@ async function reserveGoalSession(
   workspaceRoot: string,
   goal: GoalState,
   body: SessionIdsBody,
+  cwd: string,
 ): Promise<GoalState> {
   if (goal.mainSessionId !== undefined && body.mainSessionId !== undefined && goal.mainSessionId !== body.mainSessionId) {
     throw new ServerError("BAD_REQUEST", `Goal ${goal.id} is already reserved for session ${goal.mainSessionId}`, 409);
@@ -330,6 +446,7 @@ async function reserveGoalSession(
   const mainSessionId = goal.mainSessionId ?? body.mainSessionId ?? (await runtime.createSession(workspaceRoot, {
     goalId: goal.id,
     sessionRole: "main",
+    cwd,
   })).sessionId;
 
   return await ensureReservedSessions(manager, goal, mainSessionId, body.childSessionIds);
@@ -360,6 +477,18 @@ async function goalStateFor(runtime: AgentRuntime, workspaceRoot: string): Promi
   return context.goalState as unknown as GoalStateManagerForRoute;
 }
 
+async function prepareGoalWorkspace(
+  manager: GoalStateManagerForRoute,
+  workspaceRoot: string,
+  goal: GoalState,
+): Promise<{ goal: GoalState; cwd: string }> {
+  const prepared = await new GoalWorkspaceService({
+    canonicalRoot: workspaceRoot,
+    goalStateManager: manager,
+  }).prepare(goal.id);
+  return prepared;
+}
+
 async function markGoalRunStartFailure(
   manager: GoalStateManagerForRoute,
   goalId: string,
@@ -370,26 +499,6 @@ async function markGoalRunStartFailure(
     await manager.fail(goalId, new Error(`Goal run could not start: ${errorMessage(error)}`));
   } catch {
     // Best-effort annotation: preserve the original execution-start error.
-  }
-}
-
-async function withGoalRunReservationLock<T>(workspaceRoot: string, goalId: string, action: () => Promise<T>): Promise<T> {
-  const key = `${workspaceRoot}:${goalId}`;
-  const previous = goalRunReservationLocks.get(key) ?? Promise.resolve();
-  let release!: () => void;
-  const current = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  goalRunReservationLocks.set(key, previous.then(() => current, () => current));
-
-  await previous.catch(() => undefined);
-  try {
-    return await action();
-  } finally {
-    release();
-    if (goalRunReservationLocks.get(key) === current) {
-      goalRunReservationLocks.delete(key);
-    }
   }
 }
 
@@ -431,6 +540,8 @@ function toPublicGoal(goal: GoalState): GoalState {
     title: goal.title,
     objective: goal.objective,
     acceptanceCriteria: goal.acceptanceCriteria,
+    useWorktree: goal.useWorktree ?? false,
+    ...(goal.worktree === undefined ? {} : { worktree: goal.worktree }),
     status: goal.status,
     ...(goal.blocker === undefined ? {} : { blocker: goal.blocker }),
     attempt: goal.attempt,
@@ -468,6 +579,12 @@ function mapGoalError(error: unknown): Error {
     || hasErrorName(error, "GoalTransitionError")
     || hasErrorName(error, "GoalReviewerAuthorizationError")
     || hasErrorName(error, "GoalReviewFinalizationError")
+    || hasErrorName(error, "GoalWorkspaceError")
+    || hasErrorName(error, "GoalCancellationError")
+    || hasErrorName(error, "GoalCancellationInProgressError")
+    || hasErrorName(error, "SessionFamilyStopConflictError")
+    || hasErrorName(error, "SessionFamilyStopInProgressError")
+    || hasErrorName(error, "WorktreeServiceError")
   ) {
     return new ServerError("BAD_REQUEST", error.message, 409);
   }

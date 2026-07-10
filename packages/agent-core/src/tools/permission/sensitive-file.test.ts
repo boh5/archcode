@@ -15,7 +15,7 @@ function makeCtx(
   abort: new AbortController().signal,
   startedAt: Date.now(),
   allowedTools: new Set(["file_read", "file_edit", "file_write"]),
-  workspaceRoot: "/workspace",
+  cwd: "/workspace",
   storeManager,
     projectContext: createTestProjectContext("/workspace"), ...overrides,  };
 }

@@ -12,15 +12,15 @@ import {
 } from "@archcode/protocol";
 
 import { GoalStateManager } from "../goals/state";
-import { silentLogger } from "../logger";
+import { silentLogger, type Logger } from "../logger";
 import { LoopStateManager } from "../loops/state";
 import type { ProjectInfo } from "../projects/types";
 import type { SessionStoreManager } from "../store/session-store-manager";
-import { HitlOwnerStore } from "./owner-store";
+import { HitlOwnerStore, type HitlCreateResult } from "./owner-store";
 import { resolveHitlOwnerPath } from "./owner-paths";
 import { aggregateHitlProjections, collectKnownHitlOwners, type HitlAggregationQuery } from "./aggregation";
 
-export type HitlRealtimeListener = (event: GlobalSSEHitlRealtimeEvent) => void;
+export type HitlRealtimeListener = (event: GlobalSSEHitlRealtimeEvent) => unknown;
 
 export interface HitlServiceManagers {
   readonly sessions?: SessionStoreManager;
@@ -32,6 +32,7 @@ export interface HitlServiceOptions extends HitlServiceManagers {
   readonly workspaceRoot?: string;
   readonly project?: Pick<ProjectInfo, "slug" | "name">;
   readonly realtimePublisher?: HitlRealtimeListener;
+  readonly logger?: Logger;
 }
 
 export interface CreateHitlRecordInput {
@@ -55,6 +56,7 @@ export class HitlService {
   #goalState: GoalStateManager | undefined;
   #loopState: LoopStateManager | undefined;
   #realtimePublisher: HitlRealtimeListener | undefined;
+  #logger: Logger;
   readonly #localOwners = new Map<string, HitlOwnerKey>();
   readonly #realtimeListeners = new Set<HitlRealtimeListener>();
 
@@ -65,6 +67,7 @@ export class HitlService {
     this.#goalState = options.goalState;
     this.#loopState = options.loopState;
     this.#realtimePublisher = options.realtimePublisher;
+    this.#logger = (options.logger ?? silentLogger).child({ module: "hitl" });
   }
 
   async load(workspaceRoot: string): Promise<void> {
@@ -80,6 +83,7 @@ export class HitlService {
     this.#goalState = options.goalState ?? this.#goalState;
     this.#loopState = options.loopState ?? this.#loopState;
     this.#realtimePublisher = options.realtimePublisher ?? this.#realtimePublisher;
+    this.#logger = options.logger?.child({ module: "hitl" }) ?? this.#logger;
   }
 
   async flush(): Promise<void> {
@@ -87,6 +91,10 @@ export class HitlService {
   }
 
   async create(input: CreateHitlRecordInput): Promise<HitlRecord> {
+    return (await this.createWithResult(input)).record;
+  }
+
+  async createWithResult(input: CreateHitlRecordInput): Promise<HitlCreateResult> {
     const now = input.createdAt ?? new Date().toISOString();
     const record: HitlRecord = {
       hitlId: input.hitlId ?? crypto.randomUUID(),
@@ -100,7 +108,7 @@ export class HitlService {
     };
     const result = await (await this.#storeFor(input.owner)).create(record);
     this.#localOwners.set(ownerKey(result.record.owner), result.record.owner);
-    return result.record;
+    return result;
   }
 
   subscribeRealtimeEvents(listener: HitlRealtimeListener): () => void {
@@ -203,17 +211,49 @@ export class HitlService {
 
   async #publish(payload: GlobalSSEHitlEventPayload, record: HitlRecord): Promise<void> {
     if (this.#realtimeListeners.size === 0 && this.#realtimePublisher === undefined) return;
-    const event: GlobalSSEHitlRealtimeEvent = {
-      type: "hitl.event",
-      projectSlug: record.owner.projectSlug,
-      owner: record.owner,
-      hitlId: record.hitlId,
-      createdAt: Date.now(),
-      payload,
-      projection: await this.#projectionFor(record),
+    let event: GlobalSSEHitlRealtimeEvent;
+    try {
+      event = {
+        type: "hitl.event",
+        projectSlug: record.owner.projectSlug,
+        owner: record.owner,
+        hitlId: record.hitlId,
+        createdAt: Date.now(),
+        payload,
+        projection: await this.#projectionFor(record),
+      };
+    } catch (error) {
+      this.#logger.warn("hitl.realtime.projection_failed", {
+        error,
+        context: { hitlId: record.hitlId, ownerType: record.owner.ownerType, ownerId: record.owner.ownerId },
+      });
+      return;
+    }
+
+    if (this.#realtimePublisher !== undefined) this.#deliverRealtime("publisher", this.#realtimePublisher, event, record);
+    for (const listener of this.#realtimeListeners) {
+      this.#deliverRealtime("listener", listener, event, record);
+    }
+  }
+
+  #deliverRealtime(
+    kind: "publisher" | "listener",
+    listener: HitlRealtimeListener,
+    event: GlobalSSEHitlRealtimeEvent,
+    record: HitlRecord,
+  ): void {
+    const logFailure = (error: unknown): void => {
+      this.#logger.warn(`hitl.realtime.${kind}_failed`, {
+        error,
+        context: { hitlId: record.hitlId, ownerType: record.owner.ownerType, ownerId: record.owner.ownerId },
+      });
     };
-    this.#realtimePublisher?.(event);
-    for (const listener of this.#realtimeListeners) listener(event);
+    try {
+      const result = listener(event);
+      if (result instanceof Promise) void result.catch(logFailure);
+    } catch (error) {
+      logFailure(error);
+    }
   }
 
   async #projectionFor(record: HitlRecord): Promise<HitlProjection> {

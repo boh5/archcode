@@ -12,7 +12,7 @@ export const AstGrepSearchInputSchema = z
   .object({
     pattern: z.string().min(1).describe("ast-grep pattern with meta-variables ($VAR, $$$). Must be a complete AST node, not a fragment. See ast-grep docs for syntax."),
     lang: z.string().min(1).optional().describe("Target language for the pattern. One of: bash, c, cpp, csharp, css, elixir, go, haskell, html, java, javascript, json, kotlin, lua, nix, php, python, ruby, rust, scala, solidity, swift, typescript, tsx, yaml."),
-    paths: z.array(z.string().min(1)).optional().describe("Directories or files to search in (absolute or workspace-relative). Defaults to workspace root."),
+    paths: z.array(z.string().min(1)).optional().describe("Directories or files to search in (absolute or relative to the current Session cwd). Defaults to the current Session cwd."),
     globs: z.array(z.string().min(1)).optional().describe("Include/exclude glob patterns. Prefix ! to exclude (e.g. [\"*.ts\", \"!*.test.ts\"])."),
   })
   .strict();
@@ -114,7 +114,7 @@ export const astGrepSearchTool = defineTool({
       const astGrepPath = await createBinaryManager().resolve("ast-grep");
       const result = await createProcessRunner().run({
         argv: [astGrepPath, ...buildAstGrepSearchArgs(input)],
-        cwd: ctx.workspaceRoot,
+        cwd: ctx.cwd,
         env: { ...process.env },
         signal: ctx.abort,
       });
@@ -243,11 +243,11 @@ function createAstGrepWorkspacePermission(): ToolPermission {
 
     for (const path of paths) {
       if (typeof path !== "string") continue;
-      const { resolved, isWithinWorkspace } = resolveAndValidatePath(path, ctx.workspaceRoot);
+      const { resolved, isWithinWorkspace } = resolveAndValidatePath(path, ctx.cwd);
       if (!isWithinWorkspace) {
         return {
           outcome: "ask",
-          reason: `"${resolved}" is outside workspace "${ctx.workspaceRoot}" [TOOL_FILE_OUTSIDE_WORKSPACE]`,
+          reason: `"${resolved}" is outside workspace "${ctx.cwd}" [TOOL_FILE_OUTSIDE_WORKSPACE]`,
           approval: {
             eligible: true,
             scope: {

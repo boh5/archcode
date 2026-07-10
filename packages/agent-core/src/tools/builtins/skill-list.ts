@@ -19,7 +19,7 @@ export function createSkillListTool(): AnyToolDescriptor {
       ctx: ToolExecutionContext,
     ): Promise<string | ToolExecutionResult> => {
       try {
-        const entries = await ctx.skillService?.listForAgent(ctx.workspaceRoot, ctx.agentSkills);
+        const entries = await ctx.skillService?.listForAgent(ctx.cwd, ctx.agentSkills);
         return JSON.stringify(entries ?? []);
       } catch (error) {
         return createToolErrorResult({

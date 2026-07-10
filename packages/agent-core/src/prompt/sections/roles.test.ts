@@ -13,13 +13,13 @@ import {
 function makeCtx(rolePrompt?: string): PromptContext {
   return {
     allowedTools: [],
-    workspaceRoot: "/workspace",
     promptProfileId: "test",
     rolePrompt,
     env: {
       platform: "darwin",
       timezone: "America/Los_Angeles",
       locale: "en-US",
+      projectRoot: "/workspace",
       cwd: "/workspace",
       date: "2026-05-18",
     },

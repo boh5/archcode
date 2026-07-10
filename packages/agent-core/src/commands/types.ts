@@ -13,7 +13,7 @@ export interface CommandContext {
   modelOptions?: ModelCallOptions;
   circuitBreaker?: CircuitBreaker;
   abort?: AbortSignal;
-  workspaceRoot?: string;
+  cwd?: string;
   agentName?: string;
   agentSkills?: readonly string[];
   skillService?: SkillService;

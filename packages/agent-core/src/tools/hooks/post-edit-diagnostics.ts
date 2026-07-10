@@ -26,7 +26,7 @@ export function createPostEditDiagnosticsHook(options: PostEditDiagnosticsHookOp
 
     for (const path of paths.slice(0, MAX_DIAGNOSTIC_FILES)) {
       try {
-        const { resolved } = resolveAndValidatePath(path, ctx.workspaceRoot);
+        const { resolved } = resolveAndValidatePath(path, ctx.cwd);
         const diagnostic = await handleFileDiagnostics(resolved, path, "all", ctx);
         appendDiagnosticsEntry(diagnostics, unavailable, path, diagnostic, paths.length);
       } catch (error) {

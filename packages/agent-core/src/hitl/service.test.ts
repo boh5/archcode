@@ -1,10 +1,10 @@
-import { afterAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { GlobalSSEHitlRealtimeEvent, HitlOwnerKey } from "@archcode/protocol";
 
 import { GoalStateManager } from "../goals/state";
-import { silentLogger } from "../logger";
+import { silentLogger, type Logger } from "../logger";
 import { LoopStateManager } from "../loops/state";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { getSessionHitlPath } from "../store/sessions-dir";
@@ -138,6 +138,47 @@ describe("HitlService owner-local storage", () => {
       projection: { status: "resolved", allowedActions: [] },
     });
     unsubscribe();
+  });
+
+  test("realtime publisher and listener failures never change durable mutation results", async () => {
+    const { service, sessions, workspaceRoot } = await createLoadedService();
+    const publisher = mock(async () => { throw new Error("publisher unavailable"); });
+    const failingListener = mock(async () => { throw new Error("listener unavailable"); });
+    const healthyEvents: GlobalSSEHitlRealtimeEvent[] = [];
+    const warn = mock((_event: string) => undefined);
+    const logger: Logger = {
+      debug: () => undefined,
+      info: () => undefined,
+      warn,
+      error: () => undefined,
+      child: () => logger,
+    };
+    service.configure({ realtimePublisher: publisher, logger });
+    service.subscribeRealtimeEvents(failingListener);
+    service.subscribeRealtimeEvents((event) => healthyEvents.push(event));
+    const sessionId = crypto.randomUUID();
+    sessions.create(sessionId, workspaceRoot);
+    await waitForSession(workspaceRoot, sessionId);
+    const owner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "session", ownerId: sessionId };
+
+    const record = await service.create(input(owner, "realtime-failure-block"));
+    await expect(service.publishRequest(record)).resolves.toBeUndefined();
+    const claimed = await service.claim(record.hitlId, { type: "question_answer", answers: ["yes"] });
+    expect(claimed?.status).toBe("resume_claimed");
+    const resolved = await service.finishResume(record.hitlId, "resolved", { type: "question_answer", answers: ["yes"] });
+    expect(resolved?.status).toBe("resolved");
+
+    const second = await service.create(input(owner, "realtime-failure-cancel"));
+    const cancelled = await service.cancelOwner(owner, "owner_deleted");
+    expect(cancelled).toContainEqual(expect.objectContaining({ hitlId: second.hitlId, status: "cancelled" }));
+    expect(await service.lookup(record.hitlId)).toMatchObject({ status: "found", record: { status: "resolved" } });
+    expect(await service.lookup(second.hitlId)).toMatchObject({ status: "found", record: { status: "cancelled" } });
+    expect(publisher).toHaveBeenCalledTimes(4);
+    expect(failingListener).toHaveBeenCalledTimes(4);
+    expect(healthyEvents).toHaveLength(4);
+    await Promise.resolve();
+    expect(warn.mock.calls.some(([event]) => event === "hitl.realtime.publisher_failed")).toBe(true);
+    expect(warn.mock.calls.some(([event]) => event === "hitl.realtime.listener_failed")).toBe(true);
   });
 });
 

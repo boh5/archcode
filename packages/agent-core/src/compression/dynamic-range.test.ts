@@ -35,6 +35,7 @@ function baseState(messages: StoredMessage[]): SessionStoreState {
   return {
     sessionId: "session-1",
     createdAt: 100,
+    cwd: "/workspace",
     agentName: "orchestrator",
     title: null,
     messages,
@@ -62,6 +63,7 @@ function baseState(messages: StoredMessage[]): SessionStoreState {
     eventOffset: 0,
     nextEventId: 0,
     append: () => {},
+    setCwd: () => {},
     setTitle: () => {},
     setParentSessionId: () => {},
     setGoalId: () => {},

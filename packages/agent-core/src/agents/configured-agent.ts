@@ -24,6 +24,7 @@ import type { SessionStoreState } from "../store/types";
 import type { Logger } from "../logger";
 import type { AskUserCallback, ToolConfirmationCallback, ToolRegistry } from "../tools/index";
 import { TOOL_OUTPUT_DIR, enforceQuota } from "../tools/index";
+import { TOOL_WORKTREE_ENTER, TOOL_WORKTREE_EXIT } from "../tools/names";
 import { AgentRunningError, MissingProjectContextError } from "./errors";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
 import type { AgentDefinition } from "./factory-types";
@@ -46,6 +47,13 @@ export class UnknownExtraToolError extends Error {
   }
 }
 
+export class IneligibleSessionWorktreeToolError extends Error {
+  constructor(public readonly toolName: string) {
+    super(`Session worktree tool "${toolName}" is not eligible for this Agent context.`);
+    this.name = "IneligibleSessionWorktreeToolError";
+  }
+}
+
 export interface ConfiguredAgentOptions {
   readonly definition: AgentDefinition;
   readonly providerRegistry: ProviderRegistry;
@@ -58,7 +66,10 @@ export interface ConfiguredAgentOptions {
   readonly store: StoreApi<SessionStoreState>;
   readonly confirmPermission?: ToolConfirmationCallback;
   readonly askUser?: AskUserCallback;
-  readonly workspaceRoot?: string;
+  /** Canonical project root used for persistent project/session state. */
+  readonly projectRoot?: string;
+  /** Current Session execution directory used by prompts and filesystem tools. */
+  readonly cwd?: string;
   readonly depth?: number;
   readonly backgroundTaskManager?: BackgroundTaskManager;
   readonly projectContextResolver?: ProjectContextResolver;
@@ -67,17 +78,19 @@ export interface ConfiguredAgentOptions {
   readonly cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
   readonly resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
   readonly abortSessionExecutionAndWait?: (workspaceRoot: string, sessionId: string) => Promise<void>;
+  readonly acquireSessionCwdTransition?: (workspaceRoot: string, sessionId: string) => () => void;
   readonly quotaEnforcer?: (directory: string) => Promise<void>;
   readonly memoryConfig?: MemoryExtractionConfig;
   readonly logger: Logger;
 }
 
-function buildEnv(workspaceRoot: string): PromptEnv {
+function buildEnv(projectRoot: string, cwd: string): PromptEnv {
   return {
     platform: process.platform,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     locale: Intl.DateTimeFormat().resolvedOptions().locale,
-    cwd: workspaceRoot,
+    projectRoot,
+    cwd,
     date: new Date().toISOString().slice(0, 10),
   };
 }
@@ -93,7 +106,8 @@ export class ConfiguredAgent implements Agent {
   private readonly modelOptions: ModelCallOptions | undefined;
   private readonly confirmPermission: ToolConfirmationCallback | undefined;
   private readonly askUserDefault: AskUserCallback | undefined;
-  private readonly workspaceRoot: string;
+  private readonly projectRoot: string;
+  readonly cwd: string;
   private readonly projectContextResolver: ProjectContextResolver;
   private readonly depth: number;
   private readonly memoryRoots: MemoryRoots;
@@ -106,6 +120,7 @@ export class ConfiguredAgent implements Agent {
   private readonly cancelChildSession: ((workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean) | undefined;
   private readonly resumeChildSession: ((workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>) | undefined;
   private readonly abortSessionExecutionAndWait: ((workspaceRoot: string, sessionId: string) => Promise<void>) | undefined;
+  private readonly acquireSessionCwdTransition: ((workspaceRoot: string, sessionId: string) => () => void) | undefined;
   private readonly quotaEnforcer: (directory: string) => Promise<void>;
   private readonly memoryConfig: MemoryExtractionConfig | undefined;
   private readonly logger: Logger;
@@ -131,10 +146,14 @@ export class ConfiguredAgent implements Agent {
     this.askUserDefault = options.askUser;
     if (!options.store) throw new Error("ConfiguredAgent requires an explicit store");
     this.store = options.store;
-    if (options.workspaceRoot === undefined) {
-      throw new MissingProjectContextError("ConfiguredAgent requires options.workspaceRoot");
+    if (options.projectRoot === undefined) {
+      throw new MissingProjectContextError("ConfiguredAgent requires options.projectRoot");
     }
-    this.workspaceRoot = options.workspaceRoot;
+    if (options.cwd === undefined) {
+      throw new MissingProjectContextError("ConfiguredAgent requires options.cwd");
+    }
+    this.projectRoot = options.projectRoot;
+    this.cwd = options.cwd;
     this.projectContextResolver = options.projectContextResolver ?? new ProjectContextResolver();
     this.depth = options.depth ?? 0;
     this.backgroundTaskManager = options.backgroundTaskManager ?? new DefaultBackgroundTaskManager({
@@ -146,12 +165,13 @@ export class ConfiguredAgent implements Agent {
     this.cancelChildSession = options.cancelChildSession;
     this.resumeChildSession = options.resumeChildSession;
     this.abortSessionExecutionAndWait = options.abortSessionExecutionAndWait;
+    this.acquireSessionCwdTransition = options.acquireSessionCwdTransition;
     this.memoryConfig = options.memoryConfig;
     this.quotaEnforcer = options.quotaEnforcer ?? (async (directory) => {
       await enforceQuota(directory, { logger: this.logger.child({ module: "tool.output.cache" }) });
     });
     this.memoryRoots = {
-      project: join(this.workspaceRoot, PROJECT_STATE_DIR_NAME, "memory"),
+      project: join(this.projectRoot, PROJECT_STATE_DIR_NAME, "memory"),
       user: join(homedir(), USER_DATA_DIR_NAME, "memory"),
     };
 
@@ -168,7 +188,7 @@ export class ConfiguredAgent implements Agent {
     this.commandRegistry.register(
       createSkillCommand(
         this.skillService,
-        this.workspaceRoot,
+        this.cwd,
         this.definition.name,
         this.definition.skills,
       ),
@@ -198,19 +218,21 @@ export class ConfiguredAgent implements Agent {
       await this.enforceToolOutputQuotaIfNeeded();
       await this.ensureAgentsMd();
 
-      const definitionAllowedTools = [...this.resolveAllowedTools(this.definition, this.depth)];
+      const definitionAllowedTools = [
+        ...this.resolveAllowedTools(this.definition, this.depth),
+        ...this.resolveSessionWorktreeTools(),
+      ];
       const allowedTools = this.resolveEffectiveTools(definitionAllowedTools, extraTools);
       const agentSkills = this.definition.skills;
-      const projectContext: ProjectContext = await this.projectContextResolver.resolve(this.workspaceRoot);
-      const availableSkills = await this.skillService.listForAgent(this.workspaceRoot, agentSkills);
+      const projectContext: ProjectContext = await this.projectContextResolver.resolve(this.projectRoot);
+      const availableSkills = await this.skillService.listForAgent(this.cwd, agentSkills);
       const storeState = this.store.getState();
       const promptContext: PromptContext = {
         allowedTools,
-        workspaceRoot: this.workspaceRoot,
         promptProfileId: this.definition.promptProfileId,
         rolePrompt: this.definition.rolePrompt,
         agentsMd: this.agentsMd,
-        env: buildEnv(this.workspaceRoot),
+        env: buildEnv(this.projectRoot, this.cwd),
         availableSkills,
         ...(this.activeSkills.length > 0 ? { activeSkills: this.activeSkills } : {}),
         ...(this.definition.includeMemoryInPrompt
@@ -237,7 +259,7 @@ export class ConfiguredAgent implements Agent {
             skillService: this.skillService,
             storeManager: this.storeManager,
             projectContext,
-            workspaceRoot: this.workspaceRoot,
+            cwd: this.cwd,
             confirmPermission: confirm,
             askUser,
             abort,
@@ -248,6 +270,7 @@ export class ConfiguredAgent implements Agent {
             cancelChildSession: this.cancelChildSession,
             resumeChildSession: this.resumeChildSession,
             abortSessionExecutionAndWait: this.abortSessionExecutionAndWait,
+            acquireSessionCwdTransition: this.acquireSessionCwdTransition,
             agentName: this.definition.name,
             currentDepth: this.depth,
             hooks,
@@ -258,11 +281,14 @@ export class ConfiguredAgent implements Agent {
         );
 
         if (this.store.getState().blockedByHitlIds?.length) {
-          return { text: result.text, steps: result.steps };
+          return result;
         }
 
+        if (result.cwdChanged !== undefined) return result;
+        if (result.executionControl !== undefined) return result;
+
         if (!this.hasUnconsumedTodoContinuation() || abort?.aborted) {
-          return { text: result.text, steps: result.steps };
+          return result;
         }
 
         currentUserMessage = "";
@@ -303,7 +329,7 @@ export class ConfiguredAgent implements Agent {
         modelInfo: this.modelInfo,
         modelOptions: this.modelOptions,
         abort: undefined,
-        workspaceRoot: this.workspaceRoot,
+        cwd: this.cwd,
         agentName: this.definition.name,
         agentSkills: this.definition.skills,
         skillService: this.skillService,
@@ -366,7 +392,7 @@ export class ConfiguredAgent implements Agent {
 
   private async ensureAgentsMd(): Promise<void> {
     if (this.agentsMdLoaded) return;
-    this.agentsMd = (await loadAgentsMd(this.workspaceRoot)) ?? undefined;
+    this.agentsMd = (await loadAgentsMd(this.cwd)) ?? undefined;
     this.agentsMdLoaded = true;
   }
 
@@ -403,7 +429,7 @@ export class ConfiguredAgent implements Agent {
       policy.titleGeneration === "enabled" ||
       (policy.titleGeneration === "unless-supplied" && !this.store.getState().title?.trim())
     ) {
-      beforeModelCall.push(createTitleGenerationHook(btm, this.workspaceRoot, isCancelled));
+      beforeModelCall.push(createTitleGenerationHook(btm, this.projectRoot, isCancelled));
     }
     const budgetEnforcement = createGoalBudgetEnforcementHooks();
     const loopBudgetEnforcement = createLoopBudgetEnforcementHooks({
@@ -446,6 +472,7 @@ export class ConfiguredAgent implements Agent {
     extraTools: readonly string[] | undefined,
   ): string[] {
     const seen = new Set<string>();
+    const eligible = new Set(definitionAllowedTools);
     const merged: string[] = [];
 
     for (const toolName of definitionAllowedTools) {
@@ -455,6 +482,12 @@ export class ConfiguredAgent implements Agent {
     }
 
     for (const toolName of extraTools ?? []) {
+      if (
+        (toolName === TOOL_WORKTREE_ENTER || toolName === TOOL_WORKTREE_EXIT)
+        && !eligible.has(toolName)
+      ) {
+        throw new IneligibleSessionWorktreeToolError(toolName);
+      }
       if (this.toolRegistry.get(toolName) === undefined) {
         throw new UnknownExtraToolError(toolName);
       }
@@ -464,6 +497,20 @@ export class ConfiguredAgent implements Agent {
     }
 
     return merged;
+  }
+
+  private resolveSessionWorktreeTools(): string[] {
+    const state = this.store.getState();
+    if (
+      this.depth !== 0
+      || this.definition.name !== "orchestrator"
+      || state.parentSessionId !== undefined
+      || state.goalId !== undefined
+      || state.loopId !== undefined
+    ) return [];
+
+    const toolName = this.cwd === this.projectRoot ? TOOL_WORKTREE_ENTER : TOOL_WORKTREE_EXIT;
+    return this.toolRegistry.get(toolName) === undefined ? [] : [toolName];
   }
 
   private hasUnconsumedTodoContinuation(): boolean {

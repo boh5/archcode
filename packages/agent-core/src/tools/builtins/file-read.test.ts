@@ -31,7 +31,7 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
   abort: new AbortController().signal,
   startedAt: Date.now(),
   allowedTools: new Set(["file_read"]),
-  workspaceRoot: testDir,
+  cwd: testDir,
   storeManager,
     projectContext: createTestProjectContext(testDir), ...overrides,  };
 }

@@ -74,11 +74,12 @@ async function getChildStore(
   input: BackgroundOutputInput,
   ctx: ToolExecutionContext,
 ): Promise<StoreApi<SessionStoreState> | undefined> {
-  const liveStore = ctx.storeManager.get(input.session_id, ctx.workspaceRoot);
+  const projectRoot = ctx.projectContext.project.workspaceRoot;
+  const liveStore = ctx.storeManager.get(input.session_id, projectRoot);
   if (liveStore !== undefined) return liveStore;
 
   try {
-    return await ctx.storeManager.getOrLoad(input.session_id, ctx.workspaceRoot);
+    return await ctx.storeManager.getOrLoad(input.session_id, projectRoot);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`Failed to load child session ${input.session_id}: ${msg}`);

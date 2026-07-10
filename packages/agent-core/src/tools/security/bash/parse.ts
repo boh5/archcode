@@ -43,6 +43,7 @@ const TRANSPARENT_WRAPPERS = new Set(["env", "timeout", "time", "nice", "nohup"]
 const CONSERVATIVE_WRAPPERS = new Set(["xargs", "npx", "bunx"]);
 const EVAL_TOKENS = new Set(["eval", "source", "."]);
 const REDIRECTION_OPERATORS = new Set(["<", ">", ">>", "2>", "2>>", "&>", "&>>"]);
+const SHELL_ASSIGNMENT_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
 function isWhitespace(ch: string): boolean {
   return ch === " " || ch === "\t" || ch === "\n" || ch === "\r";
@@ -322,7 +323,7 @@ function positionalArgs(tokens: Token[], optionsWithValues = new Set<string>()):
 }
 
 function appendPath(paths: ShellPathReference[], token: Token | undefined, operation: ShellPathReference["operation"], source: ShellPathReference["source"]): void {
-  if (!token || token.quoted || token.value.length === 0) return;
+  if (!token || token.value.length === 0) return;
   paths.push({ path: token.value, operation, source });
 }
 
@@ -347,7 +348,17 @@ function derivePaths(command: string, args: Token[], redirections: ShellRedirect
     appendPath(paths, positional.at(-1), "write", "argument");
   }
   if (command === "cp") for (const token of positionalArgs(args)) appendPath(paths, token, "unknown", "argument");
-  if (command === "tee") for (const token of positionalArgs(args, new Set(["-a"]))) appendPath(paths, token, "write", "argument");
+  if (command === "tee") for (const token of positionalArgs(args)) appendPath(paths, token, "write", "argument");
+  if (command === "mkdir") {
+    for (const token of positionalArgs(args, new Set(["-m", "--mode"]))) appendPath(paths, token, "write", "argument");
+  }
+  if (command === "touch") {
+    for (const token of positionalArgs(args, new Set(["-d", "--date", "-r", "--reference", "-t"]))) appendPath(paths, token, "write", "argument");
+  }
+  if (command === "chmod" || command === "chown") {
+    const positional = positionalArgs(args, new Set(["--reference", "--from"]));
+    for (const token of positional.slice(1)) appendPath(paths, token, "write", "argument");
+  }
   if (command === "curl") {
     for (let i = 0; i < args.length; i += 1) {
       const arg = args[i]!;
@@ -369,8 +380,93 @@ function derivePaths(command: string, args: Token[], redirections: ShellRedirect
   return paths;
 }
 
+function deriveWrappedPaths(command: string, args: Token[], cwd: string): ShellPathReference[] {
+  if (SHELL_WRAPPERS.has(command)) {
+    const payload = shellPayloadToken(args);
+    if (payload === undefined) return [];
+    const nested = parseShellRequest(payload.value, { workspaceRoot: cwd });
+    if (!("invocations" in nested)) return [];
+    return nested.invocations.flatMap((invocation) => invocation.paths.map((pathRef) => ({
+      ...pathRef,
+      path: path.isAbsolute(pathRef.path) ? pathRef.path : path.resolve(invocation.cwd, pathRef.path),
+    })));
+  }
+
+  const unwrapped = unwrapDirectCommand(command, args, cwd);
+  if (unwrapped === undefined || unwrapped.tokens.length === 0) return [];
+  const commandToken = unwrapped.tokens[0]!;
+  const nestedCommand = normalizeCommandName(commandToken.value);
+  const nestedArgs = unwrapped.tokens.slice(1);
+  const direct = derivePaths(nestedCommand, nestedArgs, []);
+  const nested = deriveWrappedPaths(nestedCommand, nestedArgs, unwrapped.cwd);
+  return [...direct, ...nested].map((pathRef) => ({
+    ...pathRef,
+    path: path.isAbsolute(pathRef.path) ? pathRef.path : path.resolve(unwrapped.cwd, pathRef.path),
+  }));
+}
+
+function shellPayloadToken(args: Token[]): Token | undefined {
+  for (let index = 0; index < args.length; index += 1) {
+    const value = args[index]!.value;
+    if (value === "-c" || (/^-[A-Za-z]+$/.test(value) && value.includes("c"))) return args[index + 1];
+  }
+  return undefined;
+}
+
+function unwrapDirectCommand(
+  command: string,
+  args: Token[],
+  cwd: string,
+): { readonly tokens: Token[]; readonly cwd: string } | undefined {
+  if (command === "command") {
+    let index = 0;
+    while (args[index]?.value.startsWith("-") && args[index]?.value !== "--") index += 1;
+    if (args[index]?.value === "--") index += 1;
+    return { tokens: args.slice(index), cwd };
+  }
+  if (command !== "env") return undefined;
+
+  let index = 0;
+  let nestedCwd = cwd;
+  while (index < args.length) {
+    const value = args[index]!.value;
+    if (value === "--") {
+      index += 1;
+      break;
+    }
+    if (SHELL_ASSIGNMENT_PATTERN.test(value)) {
+      index += 1;
+      continue;
+    }
+    if (value === "-u" || value === "--unset") {
+      index += 2;
+      continue;
+    }
+    if (value === "-C" || value === "--chdir") {
+      const nextCwd = args[index + 1]?.value;
+      if (nextCwd !== undefined) nestedCwd = path.resolve(cwd, nextCwd);
+      index += 2;
+      continue;
+    }
+    if (value.startsWith("--chdir=")) {
+      nestedCwd = path.resolve(cwd, value.slice("--chdir=".length));
+      index += 1;
+      continue;
+    }
+    if (value.startsWith("-")) {
+      index += 1;
+      continue;
+    }
+    break;
+  }
+  return { tokens: args.slice(index), cwd: nestedCwd };
+}
+
 function wrapperUncertainty(command: string, argv: string[]): ShellUncertainty[] {
-  if (SHELL_WRAPPERS.has(command) && argv.includes("-c")) return [uncertainty("parse", "Shell -c wrapper requires recursive review", `${command} -c`)];
+  const shellCommandFlag = argv.slice(1).find((value) => value === "-c" || (/^-[A-Za-z]+$/.test(value) && value.includes("c")));
+  if (SHELL_WRAPPERS.has(command) && shellCommandFlag !== undefined) {
+    return [uncertainty("parse", "Shell -c wrapper requires recursive review", `${command} ${shellCommandFlag}`)];
+  }
   if (TRANSPARENT_WRAPPERS.has(command)) return [uncertainty("parse", "Wrapper command requires conservative review", command)];
   if (CONSERVATIVE_WRAPPERS.has(command)) return [uncertainty("parse", "Command wrapper may execute dynamic code", command)];
   if (EVAL_TOKENS.has(command)) return [uncertainty("parse", "Shell eval/source requires confirmation", command)];
@@ -384,7 +480,11 @@ function toInvocation(segment: Segment, segmentIndex: number, cwd: string): Norm
   const command = commandToken ? normalizeCommandName(commandToken.value) : "";
   const argv = parsed.argvTokens.map((token) => token.value);
   const uncertaintyList = [...parsed.uncertainty, ...wrapperUncertainty(command, argv)];
-  const paths = derivePaths(command, parsed.argvTokens.slice(1), parsed.redirections);
+  const args = parsed.argvTokens.slice(1);
+  const paths = [
+    ...derivePaths(command, args, parsed.redirections),
+    ...deriveWrappedPaths(command, args, cwd),
+  ];
   if (!command) uncertaintyList.push(uncertainty("parse", "Empty command segment requires confirmation"));
 
   return {

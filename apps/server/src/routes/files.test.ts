@@ -216,6 +216,69 @@ Binary files a/assets/logo.png and b/assets/logo.png differ
     });
   });
 
+  test("GET /api/projects/:slug/diff resolves changes from the requested Session worktree", async () => {
+    const testName = "session-worktree-changes";
+    const homeDir = join(tempRoot, "homes", testName);
+    const workspaceRoot = join(tempRoot, "workspaces", testName);
+    const worktreeRoot = join(tempRoot, "worktrees", testName);
+    await mkdir(homeDir, { recursive: true });
+    await initGitRepo(workspaceRoot);
+    await mkdir(join(tempRoot, "worktrees"), { recursive: true });
+    await run(workspaceRoot, ["git", "worktree", "add", "-b", "session-worktree", worktreeRoot]);
+    await Bun.write(join(worktreeRoot, "README.md"), "# Session worktree\n");
+
+    const projectRegistry = new ProjectRegistry({ homeDir, logger: silentLogger });
+    const project = await projectRegistry.add({ workspaceRoot, name: testName });
+    const runtime = createTestRuntime(projectRegistry);
+    const getSessionFile = runtime.getSessionFile.bind(runtime);
+    runtime.getSessionFile = async (projectRoot: string, sessionId: string) => ({
+      ...await getSessionFile(projectRoot, sessionId),
+      cwd: worktreeRoot,
+    });
+    const app = createServerApp(runtime, { dev: true }).app;
+
+    const canonical = await app.request(`/api/projects/${project.slug}/diff`);
+    const session = await app.request(`/api/projects/${project.slug}/diff?sessionId=session-1`);
+
+    expect(await canonical.json()).toEqual({ files: [] });
+    expect(session.status).toBe(200);
+    expect(fileByPath(((await session.json()) as DiffResponseBody).files, "README.md")).toMatchObject({
+      status: "modified",
+      additions: 1,
+      deletions: 1,
+    });
+  });
+
+  test("GET /api/projects/:slug/diff rejects a Session cwd from another repository", async () => {
+    const testName = "foreign-session-cwd";
+    const homeDir = join(tempRoot, "homes", testName);
+    const workspaceRoot = join(tempRoot, "workspaces", testName);
+    const foreignRoot = join(tempRoot, "foreign", testName);
+    await mkdir(homeDir, { recursive: true });
+    await initGitRepo(workspaceRoot);
+    await initGitRepo(foreignRoot);
+
+    const projectRegistry = new ProjectRegistry({ homeDir, logger: silentLogger });
+    const project = await projectRegistry.add({ workspaceRoot, name: testName });
+    const runtime = createTestRuntime(projectRegistry);
+    const getSessionFile = runtime.getSessionFile.bind(runtime);
+    runtime.getSessionFile = async (projectRoot: string, sessionId: string) => ({
+      ...await getSessionFile(projectRoot, sessionId),
+      cwd: foreignRoot,
+    });
+    const app = createServerApp(runtime, { dev: true }).app;
+
+    const response = await app.request(`/api/projects/${project.slug}/diff?sessionId=session-1`);
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "SESSION_CWD_INVALID",
+        message: "Session session-1 does not have a valid worktree execution directory",
+      },
+    });
+  });
+
   test("GET /api/projects/:slug/diff returns deleted files", async () => {
     const { app, project, workspaceRoot } = await createTestApp("deleted-file");
     await rm(join(workspaceRoot, "README.md"));

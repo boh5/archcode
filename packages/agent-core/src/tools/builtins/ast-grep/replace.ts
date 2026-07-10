@@ -9,7 +9,7 @@ import { defineTool } from "../../define-tool";
 import { computeToolDiffs } from "../../diff";
 import { createToolErrorResult } from "../../errors";
 import { createPostEditDiagnosticsHook } from "../../hooks";
-import { createProtectedPathPermission, isProtectedProjectPath } from "../../permission";
+import { createProtectedPathPermission, isProtectedToolWritePath } from "../../permission";
 import { resolveAndValidatePath } from "../../security";
 import type { PermissionDecision, ToolExecutionContext, ToolExecutionResult, ToolPermission } from "../../types";
 
@@ -18,7 +18,7 @@ export const AstGrepReplaceInputSchema = z
     pattern: z.string().min(1).describe("ast-grep pattern with meta-variables ($VAR, $$$) to match. Must be a complete AST node."),
     rewrite: z.string().min(1).describe("Replacement pattern. Use $VAR from the pattern to preserve matched content. Can use literal text."),
     lang: z.string().min(1).optional().describe("Target language. See ast_grep_search lang param for supported values."),
-    paths: z.array(z.string().min(1)).optional().describe("Directories or files to search in (absolute or workspace-relative). Defaults to workspace root."),
+    paths: z.array(z.string().min(1)).optional().describe("Directories or files to search in (absolute or relative to the current Session cwd). Defaults to the current Session cwd."),
     globs: z.array(z.string().min(1)).optional().describe("Include/exclude glob patterns. Prefix ! to exclude."),
     dryRun: z.boolean().default(true).describe("true = preview only, no files written. false = apply changes to disk. Default true."),
   })
@@ -125,8 +125,8 @@ export const astGrepReplaceTool = defineTool({
         if ("isError" in previewResult) return previewResult;
         matches = previewResult;
 
-        const protectedProtectedCheck = checkApplyProtectedPath(matches, ctx);
-        if (protectedProtectedCheck) return protectedProtectedCheck;
+        const protectedPreviewCheck = checkApplyProtectedPath(matches, ctx);
+        if (protectedPreviewCheck) return protectedPreviewCheck;
 
         const snapshotCheck = checkApplyReadSnapshots(matches, ctx);
         if (snapshotCheck) return snapshotCheck;
@@ -136,6 +136,9 @@ export const astGrepReplaceTool = defineTool({
           const applyResult = await runAstGrepReplace(astGrepPath, input, ctx, runner);
           if ("isError" in applyResult) return applyResult;
           matches = applyResult;
+
+          const protectedApplyCheck = checkApplyProtectedPath(matches, ctx);
+          if (protectedApplyCheck) return protectedApplyCheck;
 
           const output = JSON.stringify(normalizeAstGrepReplaceResult(matches, input.dryRun), null, 2);
           const diffs = await computeApplyDiffs(beforeFiles);
@@ -168,7 +171,7 @@ async function runAstGrepReplace(
 ): Promise<AstGrepReplacementMatch[] | ToolExecutionResult> {
   const result = await runner.run({
     argv: [astGrepPath, ...buildAstGrepReplaceArgs(input)],
-    cwd: ctx.workspaceRoot,
+    cwd: ctx.cwd,
     env: { ...process.env },
     signal: ctx.abort,
   });
@@ -183,7 +186,7 @@ function checkApplyProtectedPath(
   matches: AstGrepReplacementMatch[],
   ctx: ToolExecutionContext,
 ): ToolExecutionResult | undefined {
-  const protectedMatch = matches.find((match) => isProtectedProjectPath(match.file, ctx.workspaceRoot));
+  const protectedMatch = matches.find((match) => isProtectedToolWritePath(match.file, ctx));
   if (!protectedMatch) return undefined;
 
   return createToolErrorResult({
@@ -203,7 +206,7 @@ function checkApplyReadSnapshots(
   const files = new Set(matches.map((match) => match.file));
 
   for (const file of files) {
-    const { resolved } = resolveAndValidatePath(file, ctx.workspaceRoot);
+    const { resolved } = resolveAndValidatePath(file, ctx.cwd);
     if (!snapshots.has(resolved)) {
       return createToolErrorResult({
         kind: "read-before-write",
@@ -287,7 +290,7 @@ function getUniqueApplyFiles(
   const files = new Map<string, { path: string; resolved: string }>();
 
   for (const match of matches) {
-    const { resolved } = resolveAndValidatePath(match.file, ctx.workspaceRoot);
+    const { resolved } = resolveAndValidatePath(match.file, ctx.cwd);
     files.set(resolved, { path: match.file, resolved });
   }
 
@@ -427,11 +430,11 @@ function createAstGrepReplaceWorkspacePermission(): ToolPermission {
 
     for (const path of paths) {
       if (typeof path !== "string") continue;
-      const { resolved, isWithinWorkspace } = resolveAndValidatePath(path, ctx.workspaceRoot);
+      const { resolved, isWithinWorkspace } = resolveAndValidatePath(path, ctx.cwd);
       if (!isWithinWorkspace) {
         return {
           outcome: "ask",
-          reason: `"${resolved}" is outside workspace "${ctx.workspaceRoot}" [TOOL_FILE_OUTSIDE_WORKSPACE]`,
+          reason: `"${resolved}" is outside workspace "${ctx.cwd}" [TOOL_FILE_OUTSIDE_WORKSPACE]`,
           approval: {
             eligible: true,
             scope: {

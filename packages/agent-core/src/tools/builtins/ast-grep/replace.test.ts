@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { storeManager } from "../../../store/store";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -37,7 +37,7 @@ function ctx(overrides?: Partial<ToolExecutionContext>): ToolExecutionContext {
   allowedTools: new Set(["ast_grep_replace"]),
   agentSkills: [],
   skillService: new SkillService({ builtinSkills: {} }),
-  workspaceRoot: "/workspace",
+  cwd: "/workspace",
   storeManager,
     projectContext: createTestProjectContext("/workspace"), ...overrides,  };
 }
@@ -212,7 +212,7 @@ describe("ast_grep_replace tool", () => {
       }));
       const result = await astGrepReplaceTool.execute(
         { pattern: "console.log($MSG)", rewrite: "logger.info($MSG)", dryRun: false },
-        ctx({ workspaceRoot: workspace, projectContext: createTestProjectContext(workspace), store: createSnapshotStore(file) }),
+        ctx({ cwd: workspace, projectContext: createTestProjectContext(workspace), store: createSnapshotStore(file) }),
       );
 
       expect(argv).toContain("--update-all");
@@ -245,7 +245,7 @@ describe("ast_grep_replace tool", () => {
 
       const result = await astGrepReplaceTool.execute(
         { pattern: "console.log($MSG)", rewrite: "logger.info($MSG)", dryRun: false },
-        ctx({ workspaceRoot: workspace, projectContext: createTestProjectContext(workspace), store: createMockStore() }),
+        ctx({ cwd: workspace, projectContext: createTestProjectContext(workspace), store: createMockStore() }),
       );
 
       expect(run).toHaveBeenCalledTimes(1);
@@ -268,7 +268,7 @@ describe("ast_grep_replace tool", () => {
 
       const result = await astGrepReplaceTool.execute(
         { pattern: "console.log($MSG)", rewrite: "logger.info($MSG)", dryRun: false },
-        ctx({ workspaceRoot: workspace, projectContext: createTestProjectContext(workspace), store: createSnapshotStore(artifact) }),
+        ctx({ cwd: workspace, projectContext: createTestProjectContext(workspace), store: createSnapshotStore(artifact) }),
       );
 
       expect(run).toHaveBeenCalledTimes(1);
@@ -276,6 +276,115 @@ describe("ast_grep_replace tool", () => {
       expectToolError(result, { kind: "permission-denied", code: "PROTECTED_PATH_WRITE_DENIED", messageIncludes: "system-managed .archcode path" });
     } finally {
       rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test("apply mode refuses preview matches under canonical project state from a worktree Session", async () => {
+    const projectRoot = tempWorkspace();
+    const worktree = tempWorkspace();
+    try {
+      const artifact = join(projectRoot, ".archcode", "memory", "index.md");
+      mkdirSync(join(projectRoot, ".archcode", "memory"), { recursive: true });
+      writeFileSync(artifact, "console.log(message)", "utf-8");
+      const run = mock((cmd: readonly [string, ...string[]]) => {
+        void cmd;
+        return spawnResult(replacementJsonFor(artifact));
+      });
+      setProcessRunnerForTest(run);
+
+      const result = await astGrepReplaceTool.execute(
+        { pattern: "console.log($MSG)", rewrite: "logger.info($MSG)", dryRun: false },
+        ctx({
+          cwd: worktree,
+          projectContext: createTestProjectContext(projectRoot),
+          store: createSnapshotStore(artifact),
+        }),
+      );
+
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(run.mock.calls[0]?.[0]).not.toContain("--update-all");
+      expectToolError(result, {
+        kind: "permission-denied",
+        code: "PROTECTED_PATH_WRITE_DENIED",
+        messageIncludes: "system-managed .archcode path",
+      });
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+      rmSync(worktree, { recursive: true, force: true });
+    }
+  });
+
+  test("apply mode refuses preview matches that reach canonical project state through a worktree symlink", async () => {
+    const projectRoot = tempWorkspace();
+    const worktree = tempWorkspace();
+    try {
+      const artifact = join(projectRoot, ".archcode", "memory", "index.md");
+      mkdirSync(join(projectRoot, ".archcode", "memory"), { recursive: true });
+      writeFileSync(artifact, "console.log(message)", "utf-8");
+      symlinkSync(join(projectRoot, ".archcode"), join(worktree, "canonical-state"));
+      const run = mock((cmd: readonly [string, ...string[]]) => {
+        void cmd;
+        return spawnResult(replacementJsonFor("canonical-state/memory/index.md"));
+      });
+      setProcessRunnerForTest(run);
+
+      const result = await astGrepReplaceTool.execute(
+        { pattern: "console.log($MSG)", rewrite: "logger.info($MSG)", dryRun: false },
+        ctx({
+          cwd: worktree,
+          projectContext: createTestProjectContext(projectRoot),
+          store: createSnapshotStore(artifact),
+        }),
+      );
+
+      expect(run).toHaveBeenCalledTimes(1);
+      expectToolError(result, {
+        kind: "permission-denied",
+        code: "PROTECTED_PATH_WRITE_DENIED",
+        messageIncludes: "system-managed .archcode path",
+      });
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+      rmSync(worktree, { recursive: true, force: true });
+    }
+  });
+
+  test("apply mode checks protected project state again against apply output", async () => {
+    const projectRoot = tempWorkspace();
+    const worktree = tempWorkspace();
+    try {
+      const sourceFile = join(worktree, "source.ts");
+      const artifact = join(projectRoot, ".archcode", "memory", "index.md");
+      writeFileSync(sourceFile, "console.log(message)", "utf-8");
+      mkdirSync(join(projectRoot, ".archcode", "memory"), { recursive: true });
+      writeFileSync(artifact, "console.log(message)", "utf-8");
+      let callCount = 0;
+      const run = mock((cmd: readonly [string, ...string[]]) => {
+        void cmd;
+        callCount++;
+        return spawnResult(replacementJsonFor(callCount === 1 ? "source.ts" : artifact));
+      });
+      setProcessRunnerForTest(run);
+
+      const result = await astGrepReplaceTool.execute(
+        { pattern: "console.log($MSG)", rewrite: "logger.info($MSG)", dryRun: false },
+        ctx({
+          cwd: worktree,
+          projectContext: createTestProjectContext(projectRoot),
+          store: createSnapshotStore(sourceFile),
+        }),
+      );
+
+      expect(run).toHaveBeenCalledTimes(2);
+      expect(run.mock.calls[1]?.[0]).toContain("--update-all");
+      expectToolError(result, {
+        kind: "permission-denied",
+        code: "PROTECTED_PATH_WRITE_DENIED",
+        messageIncludes: "system-managed .archcode path",
+      });
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+      rmSync(worktree, { recursive: true, force: true });
     }
   });
 
@@ -289,7 +398,7 @@ describe("ast_grep_replace tool", () => {
 
       const result = await astGrepReplaceTool.execute(
         { pattern: "console.log($MSG)", rewrite: "logger.info($MSG)", dryRun: false },
-        ctx({ workspaceRoot: workspace, projectContext: createTestProjectContext(workspace), store: createSnapshotStore(file, 12345) }),
+        ctx({ cwd: workspace, projectContext: createTestProjectContext(workspace), store: createSnapshotStore(file, 12345) }),
       );
 
       expect(run).toHaveBeenCalledTimes(1);
@@ -313,7 +422,7 @@ describe("ast_grep_replace tool", () => {
 
       const result = await astGrepReplaceTool.execute(
         { pattern: "console.log($MSG)", rewrite: "logger.info($MSG)", dryRun: false },
-        ctx({ workspaceRoot: workspace, projectContext: createTestProjectContext(workspace), store }),
+        ctx({ cwd: workspace, projectContext: createTestProjectContext(workspace), store }),
       );
 
       expect(run).toHaveBeenCalledTimes(1);
@@ -338,7 +447,7 @@ describe("ast_grep_replace tool", () => {
 
       const result = await astGrepReplaceTool.execute(
         { pattern: "console.log($MSG)", rewrite: "logger.info($MSG)", dryRun: false },
-        ctx({ workspaceRoot: workspace, projectContext: createTestProjectContext(workspace), store: createSnapshotStore(file) }),
+        ctx({ cwd: workspace, projectContext: createTestProjectContext(workspace), store: createSnapshotStore(file) }),
       );
 
       expect(run).toHaveBeenCalledTimes(2);
@@ -379,7 +488,7 @@ describe("ast_grep_replace tool", () => {
       const registry = new ToolRegistry();
       registry.register(astGrepReplaceTool);
       const context = ctx({
-        workspaceRoot: workspace,
+        cwd: workspace,
         projectContext: createTestProjectContext(workspace),
         store: createSnapshotStore(file),
         allowedTools: new Set(["ast_grep_replace", "lsp_diagnostics"]),
@@ -417,7 +526,7 @@ describe("ast_grep_replace tool", () => {
 
       const result = await astGrepReplaceTool.execute(
         { pattern: "console.log($MSG)", rewrite: "logger.info($MSG)", dryRun: false },
-        ctx({ workspaceRoot: workspace, projectContext: createTestProjectContext(workspace), store: createSnapshotStore(file) }),
+        ctx({ cwd: workspace, projectContext: createTestProjectContext(workspace), store: createSnapshotStore(file) }),
       );
 
       expect(run).toHaveBeenCalledTimes(2);
@@ -438,7 +547,7 @@ describe("ast_grep_replace tool", () => {
 
       const result = await astGrepReplaceTool.execute(
         { pattern: "nope", rewrite: "replacement", dryRun: false },
-        ctx({ workspaceRoot: workspace, projectContext: createTestProjectContext(workspace), store: createMockStore() }),
+        ctx({ cwd: workspace, projectContext: createTestProjectContext(workspace), store: createMockStore() }),
       );
 
       expect(run).toHaveBeenCalledTimes(2);
@@ -518,6 +627,26 @@ describe("ast_grep_replace tool", () => {
     const protectedPermission = astGrepReplaceTool.permissions![1];
 
     const decision = await protectedPermission({ pattern: "x", rewrite: "y", dryRun: false, paths: [".archcode/goals/goal_test/goal.json"] }, ctx());
+
+    expect(decision.outcome).toBe("deny");
+    expect(decision.errorCode).toBe("PROTECTED_PATH_WRITE_DENIED");
+  });
+
+  test("checks canonical project .archcode permission for explicit paths from a worktree Session", async () => {
+    const protectedPermission = astGrepReplaceTool.permissions![1];
+    const projectRoot = "/canonical/project";
+    const decision = await protectedPermission(
+      {
+        pattern: "x",
+        rewrite: "y",
+        dryRun: false,
+        paths: [join(projectRoot, ".archcode", "memory")],
+      },
+      ctx({
+        cwd: "/worktrees/session-1",
+        projectContext: createTestProjectContext(projectRoot),
+      }),
+    );
 
     expect(decision.outcome).toBe("deny");
     expect(decision.errorCode).toBe("PROTECTED_PATH_WRITE_DENIED");

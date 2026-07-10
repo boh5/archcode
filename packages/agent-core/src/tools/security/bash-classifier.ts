@@ -20,6 +20,8 @@ const RAW_DENY_RULES: RawDenyRule[] = [
   { ruleId: "deny-credential-exfiltration", reason: "Credential material exfiltration is blocked", pattern: /(\.env(?:\.[\w.-]+)?|\.ssh\/|\.aws\/|\.config\/gcloud\/|\.azure\/)[^\n;&|]*(curl|wget|scp|rsync|nc|netcat)|(^|[^\w.-])tar\b[^\n;&|]*(\.env|\.ssh|\.aws|\.config\/gcloud|\.azure)[^\n]*\|\s*(curl|wget|nc|netcat|ssh)\b/ },
   { ruleId: "deny-protected-permissions-file", reason: "Protected permission file access is blocked", pattern: /(?:\.\/)?\.archcode\/permissions\.json/ },
   { ruleId: "deny-direct-path-mutation", reason: "Direct mutation of .archcode is blocked", pattern: /(^|[^\w.-])(rm|mv|cp|tee|mkdir|touch|chmod|chown)\b[^\n;&|]*\.archcode(\/|\s|$)|(^|[^\w.-])git\s+clean\b[^\n;&|]*\.archcode(\/|\s|$)|(^|\s)(>|>>|2>|2>>|&>|&>>)\s*\.archcode\// },
+  { ruleId: "deny-direct-worktree-command", reason: "Git worktree enumeration and lifecycle commands are blocked for Agents; use ArchCode worktree capabilities", pattern: /(^|[^\w.-])git\b[^\n;&|]*\bworktree(?:\s|$)/ },
+  { ruleId: "deny-managed-worktree-ref-mutation", reason: "ArchCode-managed worktree refs can be changed only by ArchCode worktree management", pattern: /(^|[^\w.-])git\b[^\n;&|]*\b(branch|update-ref)\b[^\n;&|]*(refs\/heads\/)?archcode\// },
 ];
 
 function findRawDeny(command: string): RawDenyRule | undefined {

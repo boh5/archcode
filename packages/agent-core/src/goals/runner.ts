@@ -5,6 +5,7 @@ import type {
   GoalReviewVerdict,
   GoalState,
 } from "@archcode/protocol";
+import { isAbsolute, resolve } from "node:path";
 
 import type {
   GoalCreateInput,
@@ -14,20 +15,45 @@ import type {
   GoalStateManager,
 } from "./state";
 import type { SessionRole } from "../store/types";
+import { assertValidSessionCwd } from "../store/session-cwd";
+import { withGoalExecutionClaimLock } from "./execution-claim";
+import { goalExecutionStatusEligibility } from "./execution-policy";
+import { GoalWorkspaceService } from "./workspace";
+import type { WorktreeService } from "../worktrees";
 
 export interface GoalRunnerCreateSessionOptions {
+  readonly cwd?: string;
   readonly goalId?: string;
   readonly loopId?: string;
   readonly sessionRole?: SessionRole;
   readonly title?: string;
 }
 
+export interface GoalRunnerLoopExecutionScope {
+  readonly kind: "loop";
+  readonly loopId: string;
+  readonly cwd: string;
+}
+
+export interface GoalRunnerStartInput {
+  readonly mainSessionId?: string;
+  readonly sessionTitle?: string;
+  readonly executionScope?: GoalRunnerLoopExecutionScope;
+}
+
+export interface GoalRunnerRetryInput {
+  readonly mainSessionId?: string;
+  readonly sessionTitle?: string;
+}
+
 export interface GoalRunnerOptions {
   readonly goalStateManager: GoalStateManager;
   readonly createSession?: (options?: GoalRunnerCreateSessionOptions) => Promise<string>;
+  readonly getSessionCwd?: (sessionId: string) => Promise<string | undefined>;
   readonly isSessionActive?: (sessionId: string) => Promise<boolean>;
   readonly workspaceRoot?: string;
   readonly hitlService?: unknown;
+  readonly worktreeService?: Pick<WorktreeService, "create" | "findManaged" | "validateManagedClaim" | "remove">;
 }
 
 export interface GoalRunnerFinalizeInput {
@@ -49,15 +75,27 @@ export class GoalRunnerError extends Error {
   }
 }
 
-const goalClaimLocks = new Map<string, Promise<void>>();
-
 export class GoalRunner {
   readonly #goalStateManager: GoalStateManager;
   readonly #createSession?: (options?: GoalRunnerCreateSessionOptions) => Promise<string>;
+  readonly #getSessionCwd?: (sessionId: string) => Promise<string | undefined>;
+  readonly #isSessionActive?: (sessionId: string) => Promise<boolean>;
+  readonly #workspaceRoot?: string;
+  readonly #workspaceService?: GoalWorkspaceService;
 
   constructor(options: GoalRunnerOptions) {
     this.#goalStateManager = options.goalStateManager;
     this.#createSession = options.createSession;
+    this.#getSessionCwd = options.getSessionCwd;
+    this.#isSessionActive = options.isSessionActive;
+    if (options.workspaceRoot !== undefined) {
+      this.#workspaceRoot = resolve(options.workspaceRoot);
+      this.#workspaceService = new GoalWorkspaceService({
+        canonicalRoot: this.#workspaceRoot,
+        goalStateManager: options.goalStateManager,
+        ...(options.worktreeService === undefined ? {} : { worktreeService: options.worktreeService }),
+      });
+    }
   }
 
   async create(input: GoalCreateInput): Promise<GoalState> {
@@ -65,93 +103,168 @@ export class GoalRunner {
   }
 
   async patchDraft(goalId: string, updates: GoalDraftPatch): Promise<GoalState> {
-    return this.#goalStateManager.patchDraft(goalId, updates);
+    return withGoalExecutionClaimLock(goalId, () => this.#goalStateManager.patchDraft(goalId, updates));
   }
 
-  async start(goalId: string, input: { readonly mainSessionId?: string; readonly loopId?: string; readonly sessionTitle?: string } = {}): Promise<GoalState> {
-    return withGoalClaimLock(goalId, async () => {
+  async start(goalId: string, input: GoalRunnerStartInput = {}): Promise<GoalState> {
+    return withGoalExecutionClaimLock(goalId, async () => {
       const current = await this.#goalStateManager.read(goalId);
-      const mainSessionId = input.mainSessionId ?? current.mainSessionId ?? await this.createMainSession(goalId, input);
-      if (current.status === "running" && current.mainSessionId === mainSessionId) return current;
-      return this.#goalStateManager.start(goalId, { mainSessionId, loopId: input.loopId });
+      const eligibility = goalExecutionStatusEligibility("start", current.status);
+      if (eligibility === "reject") {
+        throw new GoalRunnerError(goalId, `Goal ${goalId} cannot start from ${current.status}`);
+      }
+      const requestedSessionId = input.mainSessionId ?? current.mainSessionId;
+      if (eligibility === "running_claim" && (
+        requestedSessionId === undefined
+        || current.mainSessionId !== requestedSessionId
+      )) {
+        throw new GoalRunnerError(goalId, `Running Goal ${goalId} is claimed by ${current.mainSessionId ?? "no main Session"}`);
+      }
+      const cwd = await this.resolveExecutionCwd(current, input.executionScope);
+      if (requestedSessionId !== undefined) await this.assertSessionCwd(goalId, requestedSessionId, cwd);
+      if (eligibility === "running_claim") return current;
+      const mainSessionId = requestedSessionId ?? await this.createMainSession(goalId, { ...input, cwd });
+      return this.#goalStateManager.start(goalId, {
+        mainSessionId,
+        ...(input.executionScope === undefined ? {} : { loopId: input.executionScope.loopId }),
+      });
     });
   }
 
   async block(goalId: string, blocker: Omit<GoalBlocker, "createdAt"> & { readonly createdAt?: string }): Promise<GoalState> {
-    return this.#goalStateManager.block(goalId, blocker);
+    return withGoalExecutionClaimLock(goalId, () => this.#goalStateManager.block(goalId, blocker));
   }
 
   async clearBlocker(goalId: string, hitlId?: string): Promise<GoalState> {
-    return this.#goalStateManager.clearBlocker(goalId, hitlId);
+    return withGoalExecutionClaimLock(goalId, () => this.#goalStateManager.clearBlocker(goalId, hitlId));
   }
 
   async beginReview(goalId: string): Promise<GoalState> {
-    return this.#goalStateManager.beginReview(goalId);
+    return withGoalExecutionClaimLock(goalId, () => this.#goalStateManager.beginReview(goalId));
   }
 
   async finalizeReview(goalId: string, input: GoalRunnerFinalizeInput): Promise<GoalState> {
-    return this.#goalStateManager.finalizeReview(goalId, input satisfies GoalFinalizeReviewInput);
+    return withGoalExecutionClaimLock(goalId, () => (
+      this.#goalStateManager.finalizeReview(goalId, input satisfies GoalFinalizeReviewInput)
+    ));
   }
 
-  async retry(goalId: string, input: { readonly mainSessionId?: string; readonly sessionTitle?: string } = {}): Promise<GoalState> {
-    return withGoalClaimLock(goalId, async () => {
-      await this.#goalStateManager.read(goalId);
-      const mainSessionId = input.mainSessionId ?? await this.createMainSession(goalId, input);
+  async retry(goalId: string, input: GoalRunnerRetryInput = {}): Promise<GoalState> {
+    return withGoalExecutionClaimLock(goalId, async () => {
+      const current = await this.#goalStateManager.read(goalId);
+      const eligibility = goalExecutionStatusEligibility("retry", current.status);
+      if (eligibility === "reject") {
+        throw new GoalRunnerError(goalId, `Goal ${goalId} cannot retry from ${current.status}`);
+      }
+      if (eligibility === "running_claim") {
+        const runningSessionId = current.mainSessionId;
+        if (
+          runningSessionId === undefined
+          || (input.mainSessionId !== undefined && input.mainSessionId !== runningSessionId)
+          || this.#isSessionActive === undefined
+          || !(await this.#isSessionActive(runningSessionId))
+        ) {
+          throw new GoalRunnerError(goalId, `Running Goal ${goalId} can retry only through its active main Session`);
+        }
+        const cwd = await this.resolveExecutionCwd(current);
+        await this.assertSessionCwd(goalId, runningSessionId, cwd);
+        return current;
+      }
+      const cwd = await this.resolveExecutionCwd(current);
+      const mainSessionId = input.mainSessionId ?? await this.createMainSession(goalId, { ...input, cwd });
+      if (input.mainSessionId !== undefined) await this.assertSessionCwd(goalId, input.mainSessionId, cwd);
       return this.#goalStateManager.retry(goalId, { mainSessionId });
     });
   }
 
   async fail(goalId: string, error: Error | string): Promise<GoalState> {
-    return this.#goalStateManager.fail(goalId, error);
+    return withGoalExecutionClaimLock(goalId, () => this.#goalStateManager.fail(goalId, error));
   }
 
   async cancel(goalId: string, reason?: string): Promise<GoalState> {
-    return this.#goalStateManager.cancel(goalId, reason);
+    return withGoalExecutionClaimLock(goalId, () => this.#goalStateManager.cancel(goalId, reason));
   }
 
   async addChildSession(goalId: string, sessionId: string): Promise<GoalState> {
-    return this.#goalStateManager.addChildSession(goalId, sessionId);
+    return withGoalExecutionClaimLock(goalId, () => this.#goalStateManager.addChildSession(goalId, sessionId));
   }
 
   async setMainSession(goalId: string, sessionId: string): Promise<GoalState> {
-    return this.#goalStateManager.setMainSession(goalId, sessionId);
+    return withGoalExecutionClaimLock(goalId, () => this.#goalStateManager.setMainSession(goalId, sessionId));
   }
 
   async updateBudgetSummary(goalId: string, budget: GoalBudgetSummary): Promise<GoalState> {
-    return this.#goalStateManager.updateBudgetSummary(goalId, budget);
+    return withGoalExecutionClaimLock(goalId, () => this.#goalStateManager.updateBudgetSummary(goalId, budget));
   }
 
   async recordHitlRef(goalId: string, input: { readonly hitlId: string; readonly approvalRef?: string }): Promise<GoalState> {
-    return this.#goalStateManager.recordHitlRef(goalId, input);
+    return withGoalExecutionClaimLock(goalId, () => this.#goalStateManager.recordHitlRef(goalId, input));
   }
 
   private async createMainSession(
     goalId: string,
-    input: { readonly loopId?: string; readonly sessionTitle?: string },
+    input: {
+      readonly sessionTitle?: string;
+      readonly cwd?: string;
+      readonly executionScope?: GoalRunnerLoopExecutionScope;
+    },
   ): Promise<string> {
     if (this.#createSession === undefined) throw new GoalRunnerError(goalId, "Goal runner cannot create a main session");
     return this.#createSession({
       goalId,
-      loopId: input.loopId,
+      ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
+      loopId: input.executionScope?.loopId,
       sessionRole: "main",
       ...(input.sessionTitle === undefined ? {} : { title: input.sessionTitle }),
     });
   }
-}
 
-async function withGoalClaimLock<T>(goalId: string, action: () => Promise<T>): Promise<T> {
-  const previous = goalClaimLocks.get(goalId) ?? Promise.resolve();
-  let release!: () => void;
-  const current = new Promise<void>((resolveRelease) => {
-    release = resolveRelease;
-  });
-  goalClaimLocks.set(goalId, previous.then(() => current, () => current));
+  private async resolveExecutionCwd(
+    goal: GoalState,
+    executionScope?: GoalRunnerLoopExecutionScope,
+  ): Promise<string | undefined> {
+    if (executionScope !== undefined) {
+      if (goal.useWorktree === true) {
+        throw new GoalRunnerError(goal.id, `Goal ${goal.id} cannot combine Goal and Loop worktree ownership`);
+      }
+      if (goal.loopId === undefined || goal.loopId !== executionScope.loopId) {
+        throw new GoalRunnerError(goal.id, `Loop execution scope ${executionScope.loopId} does not own Goal ${goal.id}`);
+      }
+      if (!isAbsolute(executionScope.cwd)) {
+        throw new GoalRunnerError(goal.id, "Loop execution scope cwd must be an absolute path");
+      }
+      if (this.#workspaceRoot !== undefined) {
+        try {
+          await assertValidSessionCwd(this.#workspaceRoot, executionScope.cwd);
+        } catch (error) {
+          throw new GoalRunnerError(
+            goal.id,
+            `Loop execution scope cwd is invalid: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
+      return resolve(executionScope.cwd);
+    }
+    if (goal.loopId !== undefined) {
+      throw new GoalRunnerError(goal.id, `Loop-owned Goal ${goal.id} requires an explicit Loop execution scope`);
+    }
+    if (this.#workspaceService === undefined) return undefined;
+    const prepared = await this.#workspaceService.prepare(goal.id);
+    return prepared.cwd;
+  }
 
-  await previous.catch(() => undefined);
-  try {
-    return await action();
-  } finally {
-    release();
-    if (goalClaimLocks.get(goalId) === current) goalClaimLocks.delete(goalId);
+  private async assertSessionCwd(
+    goalId: string,
+    sessionId: string,
+    expectedCwd: string | undefined,
+  ): Promise<void> {
+    if (expectedCwd === undefined) return;
+    if (this.#getSessionCwd === undefined) {
+      throw new GoalRunnerError(goalId, `Cannot verify Session ${sessionId} cwd for this Goal`);
+    }
+    const actualCwd = await this.#getSessionCwd(sessionId);
+    if (actualCwd !== expectedCwd) {
+      throw new GoalRunnerError(goalId, `Session ${sessionId} cwd ${actualCwd ?? "unknown"} does not match Goal cwd ${expectedCwd}`);
+    }
   }
 }

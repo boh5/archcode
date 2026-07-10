@@ -26,7 +26,8 @@ function makeContext(agentSkills: readonly string[]): ToolExecutionContext {
   allowedTools: new Set(["skill_list"]),
   agentSkills,
   skillService: new SkillService({ userSkillsRoot }),
-  projectContext: createTestProjectContext(projectRoot), });
+  projectContext: createTestProjectContext(projectRoot),
+  cwd: projectRoot, });
 }
 
 describe("skill_list tool", () => {

@@ -11,7 +11,7 @@ const DEFAULT_REQUEST = "Apply this Skill to the current task.";
 
 export function createSkillCommand(
   skillService: SkillService,
-  workspaceRoot: string,
+  cwd: string,
   agentName: string,
   agentSkills: readonly string[],
 ): CommandDescriptor {
@@ -20,7 +20,7 @@ export function createSkillCommand(
     description: "Use an allowed Skill for the next request.",
     handler: async (ctx, args) => {
       const activeSkillService = ctx.skillService ?? skillService;
-      const activeWorkspaceRoot = ctx.workspaceRoot ?? workspaceRoot;
+      const activeCwd = ctx.cwd ?? cwd;
       const activeAgentName = ctx.agentName ?? agentName;
       const activeAgentSkills = ctx.agentSkills ?? agentSkills;
       const tokens = parseArgs(args);
@@ -42,7 +42,7 @@ export function createSkillCommand(
       }
 
       try {
-        const skill = await activeSkillService.readForAgent(activeWorkspaceRoot, name, activeAgentSkills);
+        const skill = await activeSkillService.readForAgent(activeCwd, name, activeAgentSkills);
         if (skill === null) {
           return unavailable(name, activeAgentName);
         }

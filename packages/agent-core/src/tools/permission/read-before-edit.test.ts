@@ -39,7 +39,7 @@ function makeCtx(
   abort: new AbortController().signal,
   startedAt: Date.now(),
   allowedTools: new Set(["file_read", "file_edit", "file_write"]),
-  workspaceRoot: workspaceDir,
+  cwd: workspaceDir,
   storeManager,
     projectContext: createTestProjectContext(workspaceDir), ...overrides,  };
 }
@@ -56,7 +56,7 @@ describe("createReadBeforeEditPermission", () => {
     const realpath = realpathSync.native(file);
     const snapshots = new Map([[realpath, statSync(realpath).mtimeMs]]);
     const store = createMockStore({ readSnapshots: snapshots });
-    const ctx = makeCtx({ store, workspaceRoot: workspaceDir });
+    const ctx = makeCtx({ store, cwd: workspaceDir });
 
     const permission = createReadBeforeEditPermission();
     const decision = await permission({ path: file }, ctx);
@@ -69,7 +69,7 @@ describe("createReadBeforeEditPermission", () => {
     const realpath = realpathSync.native(file);
     const snapshots = new Map([[realpath, statSync(realpath).mtimeMs]]);
     const store = createMockStore({ readSnapshots: snapshots });
-    const ctx = makeCtx({ store, workspaceRoot: workspaceDir });
+    const ctx = makeCtx({ store, cwd: workspaceDir });
 
     const permission = createReadBeforeEditPermission();
     const decision = await permission({ path: "subdir/../subdir/canonical-edit.txt" }, ctx);
@@ -80,7 +80,7 @@ describe("createReadBeforeEditPermission", () => {
   test("denies when path not in snapshots (not read first)", async () => {
     const file = workspaceFile("edit-not-read.txt");
     const store = createMockStore();
-    const ctx = makeCtx({ store, workspaceRoot: workspaceDir });
+    const ctx = makeCtx({ store, cwd: workspaceDir });
 
     const permission = createReadBeforeEditPermission();
     const decision = await permission({ path: file }, ctx);
@@ -94,7 +94,7 @@ describe("createReadBeforeEditPermission", () => {
     const realpath = realpathSync.native(file);
     const snapshots = new Map([[realpath, 12345]]);
     const store = createMockStore({ readSnapshots: snapshots });
-    const ctx = makeCtx({ store, workspaceRoot: workspaceDir });
+    const ctx = makeCtx({ store, cwd: workspaceDir });
 
     const permission = createReadBeforeEditPermission();
     const decision = await permission({ path: file }, ctx);
@@ -106,7 +106,7 @@ describe("createReadBeforeEditPermission", () => {
   test("denies with permission-like reason for non-existent snapshots entry", async () => {
     const file = workspaceFile("edit-never-snapshotted.txt");
     const store = createMockStore();
-    const ctx = makeCtx({ store, workspaceRoot: workspaceDir });
+    const ctx = makeCtx({ store, cwd: workspaceDir });
 
     const permission = createReadBeforeEditPermission();
     const decision = await permission({ path: file }, ctx);

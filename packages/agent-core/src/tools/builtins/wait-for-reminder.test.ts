@@ -26,7 +26,7 @@ function makeCtx(store: StoreApi<SessionStoreState>, abort = new AbortController
     abort: abort.signal,
     startedAt: Date.now(),
     allowedTools: new Set(["wait_for_reminder"]),
-    workspaceRoot: testDir,
+    cwd: testDir,
     projectContext: createTestProjectContext(testDir),
   };
 }

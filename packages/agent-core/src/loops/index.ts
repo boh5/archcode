@@ -19,3 +19,5 @@ export * from "./poll-state";
 export * from "./triggers";
 export * from "./cleanup";
 export * from "./hitl-resume-adapter";
+export * from "./session-execution-claim";
+export * from "./session-hitl-continuation";

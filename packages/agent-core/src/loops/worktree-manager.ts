@@ -1,9 +1,15 @@
-import { lstat, mkdir, realpath, rm, stat } from "node:fs/promises";
+import { lstat, realpath, stat } from "node:fs/promises";
 import { basename, dirname, relative, resolve, sep } from "node:path";
 
 import { createProcessRunner } from "../process/runner";
 import type { ProcessRunner, ProcessRunnerResult } from "../process/types";
 import { isContained } from "../utils/safe-file";
+import {
+  managedWorktreeNames,
+  WorktreeService,
+  WorktreeServiceError,
+  type WorktreeRemoveWarning,
+} from "../worktrees";
 import type { LoopCleanupState, LoopJobStatus, LoopWorktreeArtifact } from "./state";
 
 export type LoopWorktreeErrorCode =
@@ -16,6 +22,9 @@ export type LoopWorktreeErrorCode =
   | "BASE_SHA_NOT_FOUND"
   | "WORKTREE_PATH_ESCAPE"
   | "WORKTREE_PATH_EXISTS"
+  | "WORKTREE_NOT_REGISTERED"
+  | "WORKTREE_CHANGED"
+  | "WORKTREE_BRANCH_MISMATCH"
   | "GIT_COMMAND_FAILED"
   | "UNSAFE_ARTIFACT_PATH";
 
@@ -26,6 +35,7 @@ export interface LoopWorktreeManagerOptions {
   readonly git?: ProcessRunner;
   readonly timeoutMs?: number;
   readonly maxOutputBytes?: number;
+  readonly service?: Pick<WorktreeService, "create" | "findManaged" | "validate" | "validateManagedClaim" | "status" | "remove">;
 }
 
 export interface LoopWorktreeCreateInput {
@@ -45,6 +55,10 @@ export interface LoopWorktreeCreateResult {
   readonly baseSha: string;
   readonly resolvedHeadSha: string;
   readonly canonicalStatus: LoopGitStatusSnapshot;
+}
+
+export interface LoopWorktreeReuseInput extends LoopWorktreeCreateInput {
+  readonly worktreePath: string;
 }
 
 export interface LoopGitStatusSnapshot {
@@ -94,6 +108,12 @@ export interface LoopWorktreeDiffStats {
 export interface LoopWorktreeCleanupInput {
   readonly inspection: LoopWorktreeInspection;
   readonly jobStatus?: LoopJobStatus;
+  /** Runs after the final safety inspection and immediately before Git removal. */
+  readonly beforeRemove?: () => Promise<void>;
+  /** Runs before the repository lifecycle lock is released when detach fails. */
+  readonly onRemoveFailureBeforeDetach?: () => Promise<void>;
+  /** Marks the removal irreversible immediately after detach succeeds. */
+  readonly onRemoveDetached?: () => Promise<void>;
 }
 
 export interface LoopWorktreeCleanupResult {
@@ -102,6 +122,8 @@ export interface LoopWorktreeCleanupResult {
   readonly reviewRequired: boolean;
   readonly reason: string;
   readonly worktreePath: string;
+  readonly branchDeleted?: boolean;
+  readonly warning?: WorktreeRemoveWarning;
 }
 
 export class LoopWorktreeManagerError extends Error {
@@ -134,59 +156,127 @@ export class LoopWorktreeManager {
   readonly #git: ProcessRunner;
   readonly #timeoutMs: number;
   readonly #maxOutputBytes: number;
+  readonly #service: Pick<WorktreeService, "create" | "findManaged" | "validate" | "validateManagedClaim" | "status" | "remove">;
 
   constructor(options: LoopWorktreeManagerOptions) {
     this.#canonicalRootInput = resolve(options.canonicalRoot);
     this.#git = options.git ?? createProcessRunner();
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.#maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
+    this.#service = options.service ?? new WorktreeService(options);
   }
 
   async create(input: LoopWorktreeCreateInput): Promise<LoopWorktreeCreateResult> {
-    const root = await this.#resolveCanonicalRoot();
-    const canonicalStatus = await this.#status(root.canonicalRoot);
-    if ((input.jobClass ?? "local") === "local" && canonicalStatus.dirty) {
-      throw new LoopWorktreeManagerError("CANONICAL_DIRTY", "Canonical checkout must be clean before creating a loop worktree", {
+    try {
+      const orphan = await this.#adoptPreCheckpointOrphan(input);
+      if (orphan !== undefined) return orphan;
+      return await this.#service.create({
+        owner: { type: "loop", id: input.loopSlug },
+        label: input.subjectSlug,
+        uniqueId: input.jobId,
+        baseSha: input.baseSha,
+        requireCleanCanonical: (input.jobClass ?? "local") === "local",
+      });
+    } catch (error) {
+      if (!(error instanceof WorktreeServiceError)) throw error;
+      if (error.code === "WORKTREE_PATH_EXISTS") {
+        const racedOrphan = await this.#adoptPreCheckpointOrphan(input);
+        if (racedOrphan !== undefined) return racedOrphan;
+      }
+      throw new LoopWorktreeManagerError(loopCreateErrorCode(error.code), error.message, error.details, error);
+    }
+  }
+
+  async reuse(input: LoopWorktreeReuseInput): Promise<LoopWorktreeCreateResult> {
+    try {
+      const root = await this.#resolveCanonicalRoot();
+      const managed = await this.#managedRootFor(root.canonicalRoot);
+      const expected = managedWorktreeNames({
+        owner: { type: "loop", id: input.loopSlug },
+        label: input.subjectSlug,
+        uniqueId: input.jobId,
+        baseSha: input.baseSha,
+      });
+      const claim = await this.#service.validateManagedClaim({
+        path: input.worktreePath,
+        branchName: expected.branchName,
+        mode: "persisted",
+        baseSha: input.baseSha,
+      });
+      const existing = claim.worktree;
+      const expectedPath = resolve(managed.managedRoot, expected.worktreeName);
+      if (!existing.isManaged || existing.path !== expectedPath || existing.branchName !== expected.branchName) {
+        throw new LoopWorktreeManagerError("WORKTREE_BRANCH_MISMATCH", "Persisted Loop worktree no longer matches its managed branch", {
+          path: existing.path,
+          expectedPath,
+          expectedBranch: expected.branchName,
+          actualBranch: existing.branchName,
+        });
+      }
+      return {
         canonicalRoot: root.canonicalRoot,
-        entries: canonicalStatus.entries,
+        managedRoot: managed.managedRoot,
+        worktreePath: existing.path,
+        worktreeName: basename(existing.path),
+        branchName: expected.branchName,
+        baseSha: claim.baseSha,
+        resolvedHeadSha: claim.headSha,
+        canonicalStatus: await this.#status(root.canonicalRoot),
+      };
+    } catch (error) {
+      if (error instanceof LoopWorktreeManagerError) throw error;
+      if (!(error instanceof WorktreeServiceError)) throw error;
+      throw new LoopWorktreeManagerError(loopCreateErrorCode(error.code), error.message, error.details, error);
+    }
+  }
+
+  async #adoptPreCheckpointOrphan(input: LoopWorktreeCreateInput): Promise<LoopWorktreeCreateResult | undefined> {
+    const owner = { type: "loop" as const, id: input.loopSlug };
+    const existing = await this.#service.findManaged({ owner, uniqueId: input.jobId });
+    if (existing === undefined) return undefined;
+
+    const root = await this.#resolveCanonicalRoot();
+    const managed = await this.#managedRootFor(root.canonicalRoot);
+    const expected = managedWorktreeNames({ owner, label: input.subjectSlug, uniqueId: input.jobId, baseSha: input.baseSha });
+    const expectedPath = resolve(managed.managedRoot, expected.worktreeName);
+    // The base SHA is already durably write-ahead checkpointed even though the
+    // path is not. Use the common persisted-claim proof to validate the
+    // registered HEAD/branch pair and ancestry under one Git lifecycle lock,
+    // then apply the stricter orphan requirement to that same snapshot.
+    const claim = await this.#service.validateManagedClaim({
+      path: existing.path,
+      branchName: expected.branchName,
+      mode: "persisted",
+      baseSha: input.baseSha,
+    });
+    if (claim.worktree.path !== expectedPath || claim.worktree.branchName !== expected.branchName) {
+      throw new LoopWorktreeManagerError("WORKTREE_BRANCH_MISMATCH", "Refusing to adopt a Loop worktree outside the deterministic job path", {
+        expectedPath,
+        actualPath: claim.worktree.path,
+        expectedBranch: expected.branchName,
+        actualBranch: claim.worktree.branchName,
       });
     }
 
-    const baseSha = await this.#resolveBaseSha(root.canonicalRoot, input.baseSha);
-    const managed = await this.#managedRootFor(root.canonicalRoot);
-    const names = worktreeNames(input);
-    const worktreePath = resolve(managed.managedRoot, names.worktreeName);
-    await this.#assertContainedPath(worktreePath, managed.managedRoot, "WORKTREE_PATH_ESCAPE");
-    await this.#assertPathDoesNotExist(worktreePath);
-    await mkdir(managed.managedRoot, { recursive: true });
-    await this.#assertRealPathContained(managed.managedRoot, managed.parentRoot, "WORKTREE_PATH_ESCAPE");
-
-    await this.#gitSuccess(root.canonicalRoot, ["show-ref", "--verify", "--quiet", `refs/heads/${names.branchName}`], {
-      allowNonZero: true,
-      operation: "check branch availability",
-    }).then((result) => {
-      if (result.kind === "success") {
-        throw new LoopWorktreeManagerError("WORKTREE_PATH_EXISTS", "Loop technical branch already exists", {
-          branchName: names.branchName,
-        });
-      }
-    });
-
-    await this.#gitSuccess(root.canonicalRoot, ["worktree", "add", "-b", names.branchName, worktreePath, baseSha], {
-      operation: "create loop worktree",
-    });
-    await this.#assertRealPathContained(worktreePath, managed.managedRoot, "WORKTREE_PATH_ESCAPE");
-    const resolvedHeadSha = await this.#gitStdout(worktreePath, ["rev-parse", "--verify", "HEAD"], "resolve worktree HEAD");
+    if (claim.headSha !== claim.baseSha || claim.status.dirty) {
+      throw new LoopWorktreeManagerError("WORKTREE_CHANGED", "Refusing to adopt a changed Loop worktree that was not checkpointed", {
+        worktreePath: claim.worktree.path,
+        branchName: claim.worktree.branchName,
+        expectedHeadSha: claim.baseSha,
+        actualHeadSha: claim.headSha,
+        dirty: claim.status.dirty,
+      });
+    }
 
     return {
       canonicalRoot: root.canonicalRoot,
       managedRoot: managed.managedRoot,
-      worktreePath,
-      worktreeName: names.worktreeName,
-      branchName: names.branchName,
-      baseSha,
-      resolvedHeadSha: resolvedHeadSha.trim(),
-      canonicalStatus,
+      worktreePath: claim.worktree.path,
+      worktreeName: expected.worktreeName,
+      branchName: expected.branchName,
+      baseSha: claim.baseSha,
+      resolvedHeadSha: claim.headSha,
+      canonicalStatus: await this.#status(root.canonicalRoot),
     };
   }
 
@@ -195,6 +285,20 @@ export class LoopWorktreeManager {
     const managed = await this.#managedRootFor(root.canonicalRoot);
     const worktreePath = resolve(input.worktreePath);
     await this.#assertRealPathContained(worktreePath, managed.managedRoot, "WORKTREE_PATH_ESCAPE");
+    let registered: Awaited<ReturnType<WorktreeService["validate"]>>;
+    try {
+      registered = await this.#service.validate(worktreePath);
+    } catch (error) {
+      if (!(error instanceof WorktreeServiceError)) throw error;
+      throw new LoopWorktreeManagerError(loopCreateErrorCode(error.code), error.message, error.details, error);
+    }
+    if (!registered.isManaged || registered.branchName !== input.branchName) {
+      throw new LoopWorktreeManagerError("WORKTREE_BRANCH_MISMATCH", "Loop worktree path does not match the expected registered branch", {
+        worktreePath: registered.path,
+        expectedBranch: input.branchName,
+        actualBranch: registered.branchName,
+      });
+    }
     const baseSha = await this.#resolveBaseSha(root.canonicalRoot, input.baseSha);
     const status = await this.#status(worktreePath);
     const headSha = (await this.#gitStdout(worktreePath, ["rev-parse", "--verify", "HEAD"], "resolve inspected HEAD")).trim();
@@ -246,21 +350,31 @@ export class LoopWorktreeManager {
       };
     }
 
-    await this.#gitSuccess(root.canonicalRoot, ["worktree", "remove", currentInspection.worktreePath], {
-      operation: "remove unchanged loop worktree",
-    });
-    await this.#gitSuccess(root.canonicalRoot, ["branch", "-D", currentInspection.branchName], {
-      allowNonZero: true,
-      operation: "delete unchanged loop branch",
-    });
-    await rm(currentInspection.worktreePath, { recursive: true, force: true }).catch(() => undefined);
+    let removal;
+    try {
+      removal = await this.#service.remove({
+        path: currentInspection.worktreePath,
+        branchName: currentInspection.branchName,
+        baseSha: currentInspection.baseSha,
+        ...(input.beforeRemove === undefined ? {} : { beforeRemove: input.beforeRemove }),
+        ...(input.onRemoveFailureBeforeDetach === undefined
+          ? {}
+          : { onRemoveFailureBeforeDetach: input.onRemoveFailureBeforeDetach }),
+        ...(input.onRemoveDetached === undefined ? {} : { onRemoveDetached: input.onRemoveDetached }),
+      });
+    } catch (error) {
+      if (!(error instanceof WorktreeServiceError)) throw error;
+      throw new LoopWorktreeManagerError(loopCreateErrorCode(error.code), error.message, error.details, error);
+    }
 
     return {
       cleanupState: "cleaned",
       removed: true,
       reviewRequired: false,
-      reason: "worktree had no changes",
+      reason: removal.warning?.message ?? "worktree had no changes",
       worktreePath: currentInspection.worktreePath,
+      branchDeleted: removal.branchDeleted,
+      ...(removal.warning === undefined ? {} : { warning: removal.warning }),
     };
   }
 
@@ -329,7 +443,11 @@ export class LoopWorktreeManager {
   }
 
   async #status(cwd: string): Promise<LoopGitStatusSnapshot> {
-    const stdout = await this.#gitStdout(cwd, ["status", "--porcelain=v1", "-z"], "inspect git status");
+    const stdout = await this.#gitStdout(
+      cwd,
+      ["status", "--porcelain=v1", "-z", "--ignored=matching"],
+      "inspect git status including ignored files",
+    );
     const entries = parsePorcelainStatus(stdout);
     return { dirty: entries.length > 0, entries };
   }
@@ -394,16 +512,6 @@ export class LoopWorktreeManager {
     }
     if (!pathStat.isSymbolicLink()) return;
     throw new LoopWorktreeManagerError("WORKTREE_PATH_ESCAPE", "Managed worktree root must not be a symlink", { path, root });
-  }
-
-  async #assertPathDoesNotExist(path: string): Promise<void> {
-    try {
-      await lstat(path);
-    } catch (error) {
-      if (isMissingPathError(error)) return;
-      throw error;
-    }
-    throw new LoopWorktreeManagerError("WORKTREE_PATH_EXISTS", "Loop worktree path already exists", { path });
   }
 
   #assertLoopBranchName(branchName: string): void {
@@ -505,6 +613,27 @@ function isMissingPathError(error: unknown): boolean {
 function outputFromGitResult(result: ProcessRunnerResult): string | undefined {
   if (result.kind === "spawn-failure") return undefined;
   return result.output.combined;
+}
+
+function loopCreateErrorCode(code: WorktreeServiceError["code"]): LoopWorktreeErrorCode {
+  switch (code) {
+    case "INVALID_CANONICAL_ROOT":
+    case "BARE_REPOSITORY":
+    case "CANONICAL_ROOT_MISMATCH":
+    case "CANONICAL_DIRTY":
+    case "MISSING_BASE_SHA":
+    case "INVALID_BASE_SHA":
+    case "BASE_SHA_NOT_FOUND":
+    case "WORKTREE_PATH_ESCAPE":
+    case "WORKTREE_PATH_EXISTS":
+    case "WORKTREE_NOT_REGISTERED":
+    case "WORKTREE_CHANGED":
+    case "WORKTREE_BRANCH_MISMATCH":
+    case "GIT_COMMAND_FAILED":
+      return code;
+    default:
+      return "GIT_COMMAND_FAILED";
+  }
 }
 
 export const LOOP_EMPTY_TREE_SHA_FOR_TESTS = EMPTY_TREE_SHA;

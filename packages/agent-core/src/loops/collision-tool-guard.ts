@@ -21,7 +21,7 @@ export function createLoopCollisionToolPermission(options: LoopCollisionToolPerm
     if (origin.runId === undefined) return { outcome: "allow" };
     const runId = origin.runId;
 
-    const targets = extractorRegistry.extract(ctx.toolName, input, { workspaceRoot: ctx.workspaceRoot });
+    const targets = extractorRegistry.extract(ctx.toolName, input, { cwd: ctx.cwd });
     if (targets.length === 0) return { outcome: "allow" };
 
     const priority = typeof options.priority === "function"
@@ -29,7 +29,7 @@ export function createLoopCollisionToolPermission(options: LoopCollisionToolPerm
       : options.priority ?? 0;
     const ledger = new CollisionLedger({
       stateManager: ctx.projectContext.loopState,
-      workspaceRoot: ctx.workspaceRoot,
+      workspaceRoot: ctx.projectContext.project.workspaceRoot,
       ...(options.leaseTtlMs === undefined ? {} : { leaseTtlMs: options.leaseTtlMs }),
     });
     const results = await ledger.acquireAll(targets.map((target) => ({
@@ -54,7 +54,7 @@ export function createLoopCollisionToolReleaseHook(options: Pick<LoopCollisionTo
 
     const ledger = new CollisionLedger({
       stateManager: ctx.projectContext.loopState,
-      workspaceRoot: ctx.workspaceRoot,
+      workspaceRoot: ctx.projectContext.project.workspaceRoot,
       ...(options.leaseTtlMs === undefined ? {} : { leaseTtlMs: options.leaseTtlMs }),
     });
     await ledger.releaseToolCall(origin.loopId, origin.runId, ctx.toolCallId);

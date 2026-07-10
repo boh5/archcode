@@ -13,7 +13,7 @@ import {
 import { TOOL_FILE_EDIT, TOOL_FILE_WRITE } from "../tools/names";
 
 export interface ToolTargetExtractorContext {
-  readonly workspaceRoot: string;
+  readonly cwd: string;
 }
 
 export type ToolTargetExtractor = (input: unknown, ctx: ToolTargetExtractorContext) => CollisionTarget[];
@@ -49,7 +49,7 @@ export function createDefaultToolTargetExtractorRegistry(): ToolTargetExtractorR
 function extractFileToolTargets(input: unknown, ctx: ToolTargetExtractorContext): CollisionTarget[] {
   const path = stringField(input, "path");
   if (path === undefined) return [];
-  return [normalizeCollisionTarget({ type: "file", path }, ctx.workspaceRoot)];
+  return [normalizeCollisionTarget({ type: "file", path }, ctx.cwd)];
 }
 
 function extractPullRequestTarget(input: unknown): CollisionTarget[] {

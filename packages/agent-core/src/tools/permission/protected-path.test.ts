@@ -8,6 +8,7 @@ import { createTestProjectContext } from "../test-project-context";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "protected-path-permission");
 const WORKSPACE = join(TMP_DIR, "workspace");
+const WORKTREE = join(TMP_DIR, "worktree");
 const SYMLINK_DIR = join(TMP_DIR, "symlinks");
 
 const permission = createProtectedPathPermission();
@@ -23,9 +24,19 @@ function makeCtx(
   abort: new AbortController().signal,
   startedAt: Date.now(),
   allowedTools: new Set<string>(),
-  workspaceRoot: WORKSPACE,
+  cwd: WORKSPACE,
   storeManager,
     projectContext: createTestProjectContext(WORKSPACE), ...overrides,  };
+}
+
+function makeWorktreeCtx(
+  overrides: Partial<ToolExecutionContext> = {},
+): ToolExecutionContext {
+  return makeCtx({
+    cwd: WORKTREE,
+    projectContext: createTestProjectContext(WORKSPACE),
+    ...overrides,
+  });
 }
 
 beforeAll(() => {
@@ -36,6 +47,11 @@ beforeAll(() => {
   mkdirSync(join(WORKSPACE, ".archcode", "sessions"), {
     recursive: true,
   });
+  mkdirSync(join(WORKTREE, ".archcode"), { recursive: true });
+  mkdirSync(join(WORKSPACE, ".git", "worktrees", "managed"), { recursive: true });
+  writeFileSync(join(WORKSPACE, ".git", "config"), "[core]\n\tbare = false\n");
+  writeFileSync(join(WORKSPACE, ".git", "worktrees", "managed", "gitdir"), `${join(WORKTREE, ".git")}\n`);
+  writeFileSync(join(WORKTREE, ".git"), `gitdir: ${join(WORKSPACE, ".git", "worktrees", "managed")}\n`);
   writeFileSync(
     join(WORKSPACE, ".archcode", "memory", "index.md"),
     "# Memory Index\n\n- [Test](test.md) — A test entry\n",
@@ -52,6 +68,12 @@ beforeAll(() => {
     join(WORKSPACE, ".archcode"),
     join(SYMLINK_DIR, "link-to-archcode"),
   );
+  symlinkSync(
+    join(WORKSPACE, ".archcode"),
+    join(WORKTREE, "canonical-project-state"),
+  );
+  symlinkSync(join(WORKSPACE, ".git"), join(SYMLINK_DIR, "link-to-git"));
+  symlinkSync(join(WORKSPACE, ".git"), join(WORKTREE, "canonical-git-metadata"));
 });
 
 afterAll(() => {
@@ -129,6 +151,51 @@ describe("createProtectedPathPermission", () => {
     }
   });
 
+  test("denies direct writes to canonical and linked-worktree Git metadata", async () => {
+    for (const { input, ctx } of [
+      { input: { path: ".git/config", content: "tampered" }, ctx: makeCtx() },
+      { input: { path: join(WORKSPACE, ".git", "worktrees", "managed", "gitdir"), content: "tampered" }, ctx: makeWorktreeCtx() },
+      { input: { path: ".git", content: "tampered" }, ctx: makeWorktreeCtx() },
+      { input: { path: "vendor/nested/.git/config", content: "tampered" }, ctx: makeCtx() },
+      { input: { path: join(SYMLINK_DIR, "link-to-git", "config"), content: "tampered" }, ctx: makeCtx() },
+    ]) {
+      const decision = await permission(input, ctx);
+      expect(decision).toMatchObject({
+        outcome: "deny",
+        errorKind: "permission-denied",
+        errorCode: "PROTECTED_PATH_WRITE_DENIED",
+      });
+    }
+  });
+
+  test("denies Bash direct-path mutations of Git metadata from project and worktree cwd", async () => {
+    for (const { command, ctx } of [
+      { command: "echo tampered > .git/config", ctx: makeCtx({ toolName: "bash" }) },
+      { command: "echo tampered > .git", ctx: makeWorktreeCtx({ toolName: "bash" }) },
+      { command: "rm -rf canonical-git-metadata/worktrees/managed", ctx: makeWorktreeCtx({ toolName: "bash" }) },
+      { command: "touch vendor/nested/.git/config", ctx: makeCtx({ toolName: "bash" }) },
+    ]) {
+      const decision = await permission({ command }, ctx);
+      expect(decision, command).toMatchObject({
+        outcome: "deny",
+        errorKind: "permission-denied",
+        errorCode: "PROTECTED_PATH_WRITE_DENIED",
+      });
+    }
+  });
+
+  test("does not confuse ordinary Git CLI and nearby dot paths with direct metadata writes", async () => {
+    for (const input of [
+      { path: ".gitignore", content: "dist/\n" },
+      { path: ".github/workflows/ci.yml", content: "name: ci\n" },
+    ]) {
+      expect(await permission(input, makeCtx())).toEqual({ outcome: "allow" });
+    }
+    for (const command of ["git status", "git add src/main.ts", "git commit -m test"]) {
+      expect(await permission({ command }, makeCtx({ toolName: "bash" }))).toEqual({ outcome: "allow" });
+    }
+  });
+
   // ─── Deny: traversal & symlink attacks ───
 
   test("denies path traversal into .archcode/", async () => {
@@ -173,6 +240,125 @@ describe("createProtectedPathPermission", () => {
       outcome: "deny",
       errorCode: "PROTECTED_PATH_WRITE_DENIED",
     });
+  });
+
+  test("denies both worktree and canonical project state from a worktree Session", async () => {
+    for (const { toolName, input } of [
+      {
+        toolName: "file_write",
+        input: { path: ".archcode/local.json", content: "{}" },
+      },
+      {
+        toolName: "file_edit",
+        input: {
+          path: join(WORKSPACE, ".archcode", "memory", "index.md"),
+          edits: [{ oldString: "old", newString: "new" }],
+        },
+      },
+      {
+        toolName: "ast_grep_replace",
+        input: {
+          paths: [join(WORKSPACE, ".archcode", "memory")],
+          pattern: "old",
+          rewrite: "new",
+          dryRun: false,
+        },
+      },
+    ] as const) {
+      const decision = await permission(input, makeWorktreeCtx({ toolName }));
+
+      expect(decision, toolName).toMatchObject({
+        outcome: "deny",
+        errorKind: "permission-denied",
+        errorCode: "PROTECTED_PATH_WRITE_DENIED",
+      });
+    }
+  });
+
+  test("denies canonical project state reached through a worktree symlink", async () => {
+    const decision = await permission(
+      { path: join(WORKTREE, "canonical-project-state", "permissions.json") },
+      makeWorktreeCtx(),
+    );
+
+    expect(decision).toMatchObject({
+      outcome: "deny",
+      errorCode: "PROTECTED_PATH_WRITE_DENIED",
+    });
+  });
+
+  test("denies Bash mutations that reach canonical project state through a worktree symlink", async () => {
+    const commands = [
+      "rm -rf canonical-project-state/cache",
+      'rm -rf "canonical-project-state/cache"',
+      "command rm -rf canonical-project-state/cache",
+      "env TEST_MODE=1 touch canonical-project-state/cache/from-env.txt",
+      "bash -c 'rm -rf canonical-project-state/cache'",
+      "mv source.txt canonical-project-state/cache/moved.txt",
+      "cp source.txt canonical-project-state/cache/copied.txt",
+      "tee canonical-project-state/cache/output.log",
+      "tee -a canonical-project-state/cache/output.log",
+      "mkdir -p canonical-project-state/cache/nested",
+      "touch canonical-project-state/cache/touched.txt",
+      "chmod 600 canonical-project-state/cache/output.log",
+      "chown user canonical-project-state/cache/output.log",
+      "echo output > canonical-project-state/cache/redirected.txt",
+    ];
+
+    for (const command of commands) {
+      const decision = await permission(
+        { command },
+        makeWorktreeCtx({ toolName: "bash" }),
+      );
+
+      expect(decision, command).toMatchObject({
+        outcome: "deny",
+        errorKind: "permission-denied",
+        errorCode: "PROTECTED_PATH_WRITE_DENIED",
+      });
+    }
+  });
+
+  test("resolves Bash mutation targets from the requested command cwd", async () => {
+    mkdirSync(join(WORKTREE, "packages", "app"), { recursive: true });
+
+    const decision = await permission(
+      {
+        command: "touch ../../canonical-project-state/cache/from-package.txt",
+        cwd: "packages/app",
+      },
+      makeWorktreeCtx({ toolName: "bash" }),
+    );
+
+    expect(decision).toMatchObject({
+      outcome: "deny",
+      errorKind: "permission-denied",
+      errorCode: "PROTECTED_PATH_WRITE_DENIED",
+    });
+  });
+
+  test("allows ordinary Bash mutations and reads through the protected-path guard", async () => {
+    for (const command of [
+      "touch build/output.txt",
+      "echo output > build/output.txt",
+      "cat canonical-project-state/cache/output.log",
+    ]) {
+      const decision = await permission(
+        { command },
+        makeWorktreeCtx({ toolName: "bash" }),
+      );
+
+      expect(decision, command).toEqual({ outcome: "allow" });
+    }
+  });
+
+  test("does not protect ordinary canonical project files from the project-state guard", async () => {
+    const decision = await permission(
+      { path: join(WORKSPACE, "src", "main.ts"), content: "export {};" },
+      makeWorktreeCtx(),
+    );
+
+    expect(decision).toEqual({ outcome: "allow" });
   });
 
   // ─── Allow: non-.archcode paths ───

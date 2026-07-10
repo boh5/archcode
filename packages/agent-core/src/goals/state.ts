@@ -11,11 +11,13 @@ import type {
   GoalReviewVerdict,
   GoalState as ProtocolGoalState,
   GoalStatus as ProtocolGoalStatus,
+  GoalWorktree as ProtocolGoalWorktree,
 } from "@archcode/protocol";
 import { z } from "zod/v4";
 
 import type { Logger } from "../logger";
 import { silentLogger } from "../logger";
+import { goalExecutionStatusEligibility } from "./execution-policy";
 
 export const GoalStatusSchema = z.enum([
   "draft",
@@ -80,12 +82,21 @@ export const GoalLastErrorSchema = z.strictObject({
   at: z.string().trim().min(1),
 });
 
+export const GoalWorktreeSchema = z.strictObject({
+  path: z.string().trim().min(1),
+  branchName: z.string().trim().min(1),
+  baseSha: z.string().regex(/^[0-9a-f]{40,64}$/i),
+  createdAt: z.string().trim().min(1),
+}) satisfies z.ZodType<ProtocolGoalWorktree>;
+
 export const GoalStateSchema = z.strictObject({
   id: GoalUuidSchema,
   projectId: z.string().trim().min(1),
   title: GoalNullableTitleSchema,
   objective: GoalNaturalLanguageSchema,
   acceptanceCriteria: GoalNaturalLanguageSchema,
+  useWorktree: z.boolean().optional(),
+  worktree: GoalWorktreeSchema.optional(),
   status: GoalStatusSchema,
   blocker: GoalBlockerSchema.optional(),
   attempt: z.number().int().nonnegative(),
@@ -112,6 +123,7 @@ export type GoalEvidenceRef = ProtocolGoalEvidenceRef;
 export type GoalReviewReceipt = ProtocolGoalReviewReceipt;
 export type GoalBlocker = ProtocolGoalBlocker;
 export type GoalBudgetSummary = ProtocolGoalBudgetSummary;
+export type GoalWorktree = ProtocolGoalWorktree;
 
 export interface GoalCreateInput {
   readonly projectId: string;
@@ -119,9 +131,10 @@ export interface GoalCreateInput {
   readonly acceptanceCriteria: string;
   readonly mainSessionId?: string;
   readonly loopId?: string;
+  readonly useWorktree?: boolean;
 }
 
-export type GoalDraftPatch = Partial<Pick<GoalState, "objective" | "acceptanceCriteria" | "mainSessionId" | "loopId">>;
+export type GoalDraftPatch = Partial<Pick<GoalState, "objective" | "acceptanceCriteria" | "mainSessionId" | "loopId" | "useWorktree">>;
 
 export interface GoalReviewerAuthorization {
   readonly agentName?: string;
@@ -228,6 +241,7 @@ export class GoalStateManager {
       title: null,
       objective: input.objective,
       acceptanceCriteria: input.acceptanceCriteria,
+      useWorktree: input.useWorktree ?? false,
       status: "draft",
       attempt: 1,
       pendingHitlIds: [],
@@ -278,6 +292,13 @@ export class GoalStateManager {
     return await this.withGoalMutation(goalId, async () => {
       const state = await this.read(goalId);
       this.assertMutableDraft(state);
+      if (
+        updates.useWorktree !== undefined
+        && state.worktree !== undefined
+        && updates.useWorktree !== state.useWorktree
+      ) {
+        throw new GoalStateError(goalId, `Goal ${goalId} worktree isolation cannot change after its resource is claimed`);
+      }
       return this.update(state, updates);
     });
   }
@@ -299,7 +320,9 @@ export class GoalStateManager {
         && (input.loopId === undefined || state.loopId === input.loopId);
       if (alreadyClaimedByMainSession) return state;
 
-      this.assertTransition(state, "running");
+      if (goalExecutionStatusEligibility("start", state.status) !== "proceed") {
+        throw new GoalTransitionError(state.id, state.status, "running");
+      }
       return this.update(state, {
         status: "running",
         blocker: undefined,
@@ -387,7 +410,9 @@ export class GoalStateManager {
   async retry(goalId: string, input: { readonly mainSessionId?: string } = {}): Promise<GoalState> {
     return await this.withGoalMutation(goalId, async () => {
       const state = await this.read(goalId);
-      this.assertTransition(state, "running");
+      if (goalExecutionStatusEligibility("retry", state.status) !== "proceed") {
+        throw new GoalTransitionError(state.id, state.status, "running");
+      }
       const now = new Date().toISOString();
       return this.update(state, {
         status: "running",
@@ -425,6 +450,8 @@ export class GoalStateManager {
       return this.update(state, {
         status: "cancelled",
         cancelledAt: now,
+        pendingHitlIds: [],
+        blocker: undefined,
         ...(reason === undefined ? {} : { lastFailureSummary: reason }),
       });
     });
@@ -443,6 +470,24 @@ export class GoalStateManager {
       const state = await this.read(goalId);
       this.assertNotTerminal(state);
       return this.update(state, { mainSessionId: sessionId });
+    });
+  }
+
+  async setWorktree(goalId: string, worktree: GoalWorktree): Promise<GoalState> {
+    return await this.withGoalMutation(goalId, async () => {
+      const state = await this.read(goalId);
+      if (state.status === "done" || state.status === "cancelled") {
+        throw new GoalStateError(goalId, `Goal ${goalId} is terminal: ${state.status}`);
+      }
+      if (state.useWorktree !== true) {
+        throw new GoalStateError(goalId, `Goal ${goalId} does not have worktree isolation enabled`);
+      }
+      const parsed = GoalWorktreeSchema.parse(worktree);
+      if (state.worktree !== undefined) {
+        if (sameGoalWorktree(state.worktree, parsed)) return state;
+        throw new GoalStateError(goalId, `Goal ${goalId} worktree resource is already claimed`);
+      }
+      return this.update(state, { worktree: parsed });
     });
   }
 
@@ -579,6 +624,12 @@ export class GoalStateManager {
   private isMissingDirectoryError(error: unknown): boolean {
     return error instanceof Error && "code" in error && error.code === "ENOENT";
   }
+}
+
+function sameGoalWorktree(left: GoalWorktree, right: GoalWorktree): boolean {
+  return left.path === right.path
+    && left.branchName === right.branchName
+    && left.baseSha === right.baseSha;
 }
 
 function normalizeError(error: Error | string): NonNullable<GoalState["lastError"]> {

@@ -247,6 +247,7 @@ function toolContext(
     skillService: new SkillService({ builtinSkills: {} }),
     origin: { kind: "loop", loopId, runId, trigger: "manual", approvalPolicy: "interactive" },
     ...overrides,
+    cwd: overrides.cwd ?? TMP_DIR,
   });
 }
 

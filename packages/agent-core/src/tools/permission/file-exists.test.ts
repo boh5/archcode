@@ -29,7 +29,7 @@ function makeCtx(
   abort: new AbortController().signal,
   startedAt: Date.now(),
   allowedTools: new Set<string>(),
-  workspaceRoot: workspaceDir,
+  cwd: workspaceDir,
   storeManager,
     projectContext: createTestProjectContext(workspaceDir), ...overrides,  };
 }

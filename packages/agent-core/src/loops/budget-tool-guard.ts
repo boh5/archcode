@@ -15,7 +15,7 @@ export function createLoopBudgetToolPermission(): ToolPermission {
 
     const ledger = new LoopBudgetLedger({
       stateManager: ctx.projectContext.loopState,
-      workspaceRoot: ctx.workspaceRoot,
+      workspaceRoot: ctx.projectContext.project.workspaceRoot,
     });
     const loop = await ctx.projectContext.loopState.read(origin.loopId);
     const usage = loop.latestBudget?.usage;
@@ -31,7 +31,7 @@ export function createLoopBudgetToolPermission(): ToolPermission {
         summary: "Loop hard budget exceeded; effectful tool blocked and run paused.",
       });
       if (ctx.abortSessionExecutionAndWait !== undefined) {
-        void ctx.abortSessionExecutionAndWait(ctx.workspaceRoot, ctx.store.getState().sessionId);
+        void ctx.abortSessionExecutionAndWait(ctx.projectContext.project.workspaceRoot, ctx.store.getState().sessionId);
       }
       return {
         outcome: "deny",

@@ -427,6 +427,122 @@ describe("LoopStateManager", () => {
     expect((await manager.readRunLog(created.loopId, 1))[0]?.status).toBe("succeeded");
   });
 
+  test("recordRunCleanupCompletion advances the cleanup saga without double-counting the run", async () => {
+    const manager = new LoopStateManager(TMP_DIR);
+    const created = await manager.create("project-a", intervalConfig);
+    const running: LoopRunReport = {
+      runId: "run-cleanup-saga",
+      loopId: created.loopId,
+      jobId: "job-cleanup-saga",
+      status: "running",
+      trigger: "interval",
+      startedAt: 10_000,
+      cleanupState: "in_progress",
+    };
+    await manager.recordRunStart(created.loopId, running);
+    await manager.recordRunFinish(created.loopId, {
+      ...running,
+      status: "succeeded",
+      endedAt: 20_000,
+      summary: "execution complete; cleanup pending",
+      observedArtifacts: [{ path: "cleanup:in_progress", status: "observed" }],
+    });
+
+    const completed = await manager.recordRunCleanupCompletion(created.loopId, running.runId, {
+      cleanupState: "cleaned",
+      cleanupWarning: "orphan branch retained",
+      observedArtifacts: [{ path: "cleanup:orphan-branch:archcode/loop/test", status: "observed" }],
+    });
+
+    expect(completed).toMatchObject({
+      runId: running.runId,
+      cleanupState: "cleaned",
+      cleanupWarning: "orphan branch retained",
+    });
+    const state = await manager.read(created.loopId);
+    expect(state.runCount).toBe(1);
+    expect(state.currentRun).toBeUndefined();
+    expect(state.lastRun).toEqual(completed);
+    const runLog = await manager.readRunLog(created.loopId);
+    expect(runLog.map((entry) => entry.cleanupState)).toEqual(["cleaned"]);
+    const rawLog = await Bun.file(join(TMP_DIR, ".archcode", "loops", created.loopId, "run-log.jsonl")).text();
+    expect(rawLog.trim().split("\n")).toHaveLength(2);
+  });
+
+  test("recordRunCleanupCompletion repairs a historical run without overwriting newer Loop state", async () => {
+    const manager = new LoopStateManager(TMP_DIR);
+    const created = await manager.create("project-a", intervalConfig);
+    const first: LoopRunReport = {
+      runId: "run-cleanup-historical",
+      loopId: created.loopId,
+      jobId: "job-cleanup-historical",
+      status: "succeeded",
+      trigger: "interval",
+      startedAt: 10_000,
+      endedAt: 11_000,
+      cleanupState: "in_progress",
+    };
+    const second: LoopRunReport = {
+      runId: "run-newer",
+      loopId: created.loopId,
+      jobId: "job-newer",
+      status: "failed",
+      trigger: "interval",
+      startedAt: 20_000,
+      endedAt: 21_000,
+      cleanupState: "cleanup_failed",
+    };
+    await manager.recordRunFinish(created.loopId, first);
+    await manager.recordRunFinish(created.loopId, second);
+    await manager.update(created.loopId, { cleanupState: "cleanup_failed" });
+
+    const completed = await manager.recordRunCleanupCompletion(created.loopId, first.runId, {
+      cleanupState: "cleaned",
+      cleanupWarning: undefined,
+      observedArtifacts: [{ path: "cleanup:cleaned", status: "observed" }],
+    });
+
+    expect(completed).toMatchObject({ runId: first.runId, cleanupState: "cleaned" });
+    const state = await manager.read(created.loopId);
+    expect(state.runCount).toBe(2);
+    expect(state.lastRun).toEqual(second);
+    expect(state.cleanupState).toBe("cleanup_failed");
+    expect((await manager.readRunLog(created.loopId))[0]).toEqual(completed);
+  });
+
+  test("recoverRunProjection counts a run that advances from needs_user to terminal", async () => {
+    const manager = new LoopStateManager(TMP_DIR);
+    const created = await manager.create("project-a", intervalConfig);
+    const blocked: LoopRunReport = {
+      runId: "run-recovered-after-hitl",
+      loopId: created.loopId,
+      jobId: "job-recovered-after-hitl",
+      status: "needs_user",
+      trigger: "interval",
+      startedAt: 10_000,
+      endedAt: 11_000,
+      blockedReason: "needs_user",
+      blockedByHitlIds: ["hitl-recovered-after-hitl"],
+      attentionStatus: "waiting_for_human",
+    };
+    await manager.recordRunBlocked(created.loopId, blocked);
+
+    const recovered = await manager.recoverRunProjection(created.loopId, {
+      ...blocked,
+      status: "succeeded",
+      endedAt: 12_000,
+      blockedReason: undefined,
+      blockedByHitlIds: undefined,
+      attentionStatus: "clear",
+    });
+
+    expect(recovered.currentRun).toBeUndefined();
+    expect(recovered.lastRun?.status).toBe("succeeded");
+    expect(recovered.runCount).toBe(1);
+    expect(recovered.blockedByHitlIds).toBeUndefined();
+    expect(recovered.attentionStatus).toBe("clear");
+  });
+
   test("pause preserves currentRun and resume computes interval nextRunAt from injected now", async () => {
     const manager = new LoopStateManager(TMP_DIR);
     const created = await manager.create("project-a", intervalConfig);

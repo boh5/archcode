@@ -92,7 +92,7 @@ export function createSkillReadTool(): AnyToolDescriptor {
       ctx: ToolExecutionContext,
     ): Promise<string | ToolExecutionResult> => {
       try {
-        const skill = await ctx.skillService?.readForAgent(ctx.workspaceRoot, input.name, ctx.agentSkills);
+        const skill = await ctx.skillService?.readForAgent(ctx.cwd, input.name, ctx.agentSkills);
         if (skill === undefined || skill === null) {
           return createToolErrorResult({
             kind: "file-not-found",

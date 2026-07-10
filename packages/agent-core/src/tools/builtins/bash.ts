@@ -12,7 +12,7 @@ export const BashInputSchema = z
   .object({
     description: z.string().min(1).describe("Brief summary of what the command does"),
     command: z.string().min(1).describe("The bash command(s) to execute. Can be chained with && or ;"),
-    cwd: z.string().optional().describe("Working directory for the command (absolute or workspace-relative). Defaults to workspace root."),
+    cwd: z.string().optional().describe("Working directory for the command (absolute or relative to the current Session cwd). Defaults to the current Session cwd."),
     timeoutMs: z.number().int().positive().optional().describe("Command timeout in milliseconds. Command is killed if it exceeds this."),
   })
   .strict();
@@ -37,10 +37,10 @@ export function formatBashOutput(stdout: string, stderr: string, exitCode: numbe
   return `STDOUT:\n${stdout}\nSTDERR:\n${stderr}\nEXIT_CODE: ${exitCode}`;
 }
 
-function resolveCwd(workspaceRoot: string, cwd?: string): string {
-  if (!cwd) return new PathValidator(workspaceRoot).workspaceRealPath;
+function resolveCwd(executionCwd: string, cwd?: string): string {
+  if (!cwd) return new PathValidator(executionCwd).workspaceRealPath;
 
-  const result = new PathValidator(workspaceRoot).validate(cwd);
+  const result = new PathValidator(executionCwd).validate(cwd);
   if (!result.ok) {
     throw new Error(`cwd must resolve inside workspace: ${cwd}`);
   }
@@ -52,7 +52,7 @@ export async function runBashCommand(
   input: BashInput,
   ctx: ToolExecutionContext,
 ): Promise<ToolExecutionResult> {
-  const cwd = resolveCwd(ctx.workspaceRoot, input.cwd);
+  const cwd = resolveCwd(ctx.cwd, input.cwd);
   const env = buildBashEnv();
   const result = await createProcessRunner().run({
     argv: ["bash", "-c", input.command],
@@ -120,7 +120,7 @@ export const bashTool = defineTool({
   traits: { readOnly: false, destructive: true, concurrencySafe: false },
   prepareInput: (raw, ctx) => {
     if (raw && typeof raw === "object" && "cwd" in raw && typeof raw.cwd === "string") {
-      resolveCwd(ctx.workspaceRoot, raw.cwd);
+      resolveCwd(ctx.cwd, raw.cwd);
     }
     return raw;
   },

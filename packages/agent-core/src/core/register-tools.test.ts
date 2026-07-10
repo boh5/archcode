@@ -37,6 +37,8 @@ import {
   TOOL_GITHUB_LIST_WORKFLOW_RUNS,
   TOOL_GITHUB_RERUN_WORKFLOW_RUN,
   TOOL_COMPRESS,
+  TOOL_WORKTREE_ENTER,
+  TOOL_WORKTREE_EXIT,
 } from "@archcode/protocol";
 
 const tmpRoots: string[] = [];
@@ -76,6 +78,7 @@ function makeContext(
     skillService: testSkillService,
     projectContext,
     ...overrides,
+    cwd: overrides.cwd ?? workspaceRoot,
   });
 }
 
@@ -107,7 +110,7 @@ function makeLogger(): Logger & { debug: ReturnType<typeof mock> } {
 }
 
 describe("registerBuiltinTools", () => {
-  it("registers all 25 builtins including 4 LSP, 2 ast-grep, and active compression", () => {
+  it("registers all 27 builtins including dynamic Session worktree transitions", () => {
     const descriptors = createBuiltinToolDescriptors();
     const names = descriptors.map((descriptor) => descriptor.name);
 
@@ -137,6 +140,8 @@ describe("registerBuiltinTools", () => {
       "skill_read",
       "view_tool_output",
       TOOL_COMPRESS,
+      TOOL_WORKTREE_ENTER,
+      TOOL_WORKTREE_EXIT,
     ]);
   });
 

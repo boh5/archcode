@@ -17,7 +17,7 @@ function mockCtx(overrides?: Partial<ToolExecutionContext>): ToolExecutionContex
   abort: new AbortController().signal,
   startedAt: Date.now(),
   allowedTools: new Set(["web_fetch"]),
-  workspaceRoot,
+  cwd: workspaceRoot,
   storeManager,
     projectContext: createTestProjectContext(workspaceRoot), ...overrides,  };
 }

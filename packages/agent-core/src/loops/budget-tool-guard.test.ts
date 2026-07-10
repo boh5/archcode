@@ -121,6 +121,7 @@ async function createFixture() {
       startedAt: clock.now(),
       allowedTools: new Set([toolName]),
       projectContext,
+      cwd: TMP_DIR,
       agentSkills: [],
       skillService: new SkillService({ builtinSkills: {} }),
       origin: { kind: "loop", loopId: loop.loopId, runId: "run-1", trigger: "manual", approvalPolicy: "interactive" },

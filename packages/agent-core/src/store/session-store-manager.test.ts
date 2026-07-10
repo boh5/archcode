@@ -3,7 +3,7 @@ import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createEmptySessionStats, type CompressionBlockSnapshot, type GoalState, type HitlRecord, type LoopState, type SessionProjection } from "@archcode/protocol";
 import { SessionStoreManager } from "./session-store-manager";
-import { NotRootSessionError } from "./errors";
+import { NotRootSessionError, SessionInitialPersistenceError } from "./errors";
 import { sessionFileInternals } from "./helpers";
 import { silentLogger } from "../logger";
 
@@ -38,6 +38,61 @@ describe("SessionStoreManager", () => {
       updatedAt: 1001,
     };
   }
+
+  test("createSessionFile does not publish a Session before its initial snapshot is durable", async () => {
+    const originalSave = sessionFileInternals.saveSessionTranscript;
+    let releaseSave!: () => void;
+    const saveReleased = new Promise<void>((resolve) => { releaseSave = resolve; });
+    let markSaveStarted!: () => void;
+    const saveStarted = new Promise<void>((resolve) => { markSaveStarted = resolve; });
+    sessionFileInternals.saveSessionTranscript = async (state, workspaceRoot) => {
+      markSaveStarted();
+      await saveReleased;
+      await originalSave(state, workspaceRoot);
+    };
+
+    try {
+      const manager = new SessionStoreManager({ logger: silentLogger });
+      let settled = false;
+      const createdPromise = manager.createSessionFile(TMP_DIR).finally(() => { settled = true; });
+      await saveStarted;
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      releaseSave();
+      const created = await createdPromise;
+      expect(await Bun.file(join(TMP_DIR, ".archcode", "sessions", created.sessionId, "session.json")).exists()).toBe(true);
+    } finally {
+      releaseSave();
+      sessionFileInternals.saveSessionTranscript = originalSave;
+    }
+  });
+
+  test("createSessionFile propagates initial persistence failure and retracts the in-memory identity", async () => {
+    const originalSave = sessionFileInternals.saveSessionTranscript;
+    const failure = new Error("simulated initial persistence failure");
+    sessionFileInternals.saveSessionTranscript = async () => {
+      throw failure;
+    };
+
+    try {
+      const manager = new SessionStoreManager({ logger: silentLogger });
+      let captured: unknown;
+      try {
+        await manager.createSessionFile(TMP_DIR, { goalId: crypto.randomUUID(), sessionRole: "main" });
+      } catch (error) {
+        captured = error;
+      }
+
+      expect(captured).toBeInstanceOf(SessionInitialPersistenceError);
+      const persistenceError = captured as SessionInitialPersistenceError;
+      expect(persistenceError.cause).toBe(failure);
+      expect(manager.has(persistenceError.sessionId, TMP_DIR)).toBe(false);
+      expect(await Bun.file(join(TMP_DIR, ".archcode", "sessions", persistenceError.sessionId, "session.json")).exists()).toBe(false);
+    } finally {
+      sessionFileInternals.saveSessionTranscript = originalSave;
+    }
+  });
 
   async function writeSessionFile(input: {
     sessionId: string;
@@ -122,6 +177,124 @@ describe("SessionStoreManager", () => {
     const store = manager.create(sessionId(), TMP_DIR);
 
     expect(store.getState().childSessionLinks).toEqual([]);
+  });
+
+  test("create() defaults cwd to the canonical workspace root", () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const store = manager.create(sessionId(), TMP_DIR);
+
+    expect(store.getState().cwd).toBe(TMP_DIR);
+  });
+
+  test("persists an execution cwd independently from the canonical session directory", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    const worktreeCwd = join(TMP_DIR, "..", "worktree");
+    const store = manager.create(id, TMP_DIR, { cwd: worktreeCwd });
+
+    expect(store.getState().cwd).toBe(worktreeCwd);
+    const persisted = await waitForSessionJson(canonicalSessionPath(id), (json) => json.cwd === worktreeCwd);
+    expect(persisted.cwd).toBe(worktreeCwd);
+
+    const restarted = new SessionStoreManager({ logger: silentLogger });
+    const loaded = await restarted.getOrLoad(id, TMP_DIR);
+    expect(loaded.getState().cwd).toBe(worktreeCwd);
+    expect((await restarted.getSessionFile(TMP_DIR, id)).cwd).toBe(worktreeCwd);
+    expect((await restarted.listSessionSummaries(TMP_DIR))[0]?.cwd).toBe(worktreeCwd);
+  });
+
+  test("updateCwd persists atomically in the canonical Session and clears read snapshots", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    const store = manager.create(id, TMP_DIR);
+    store.getState().readSnapshots.set(join(TMP_DIR, "old.ts"), 1);
+    const worktreeCwd = join(TMP_DIR, "..", "atomic-worktree");
+
+    const observedCwds: string[] = [];
+    const unsubscribe = store.subscribe((state, previous) => {
+      if (state.cwd !== previous.cwd) observedCwds.push(state.cwd);
+    });
+    await manager.updateCwd(id, TMP_DIR, worktreeCwd);
+    unsubscribe();
+
+    expect(store.getState().cwd).toBe(worktreeCwd);
+    expect(store.getState().readSnapshots.size).toBe(0);
+    expect(observedCwds).toEqual([worktreeCwd]);
+    expect(store.getState().events.at(-1)?.payload).toEqual({
+      type: "session.cwd_changed",
+      previousCwd: TMP_DIR,
+      cwd: worktreeCwd,
+    });
+    expect((await manager.getSessionFile(TMP_DIR, id)).cwd).toBe(worktreeCwd);
+    expect((await manager.getSessionFile(TMP_DIR, id)).events?.at(-1)?.payload).toEqual({
+      type: "session.cwd_changed",
+      previousCwd: TMP_DIR,
+      cwd: worktreeCwd,
+    });
+    expect(await Bun.file(join(worktreeCwd, ".archcode", "sessions", id, "session.json")).exists()).toBe(false);
+    await expect(manager.updateCwd(id, TMP_DIR, "relative/path")).rejects.toMatchObject({ name: "InvalidSessionCwdError" });
+  });
+
+  test("updateCwd is an awaited barrier behind older queued Session snapshots", async () => {
+    const originalSave = sessionFileInternals.saveSessionTranscript;
+    let releaseFirstSave!: () => void;
+    const firstSaveReleased = new Promise<void>((resolve) => {
+      releaseFirstSave = resolve;
+    });
+    let markFirstSaveStarted!: () => void;
+    const firstSaveStarted = new Promise<void>((resolve) => {
+      markFirstSaveStarted = resolve;
+    });
+    let saveCount = 0;
+    sessionFileInternals.saveSessionTranscript = async (state, workspaceRoot) => {
+      saveCount += 1;
+      if (saveCount === 1) {
+        markFirstSaveStarted();
+        await firstSaveReleased;
+      }
+      await originalSave(state, workspaceRoot);
+    };
+
+    try {
+      const manager = new SessionStoreManager({ logger: silentLogger });
+      const id = sessionId();
+      const store = manager.create(id, TMP_DIR);
+      await firstSaveStarted;
+      store.getState().setTitle("queued before cwd transition");
+      const worktreeCwd = join(TMP_DIR, "..", "queued-worktree");
+
+      const update = manager.updateCwd(id, TMP_DIR, worktreeCwd, TMP_DIR);
+      releaseFirstSave();
+      await update;
+
+      const persisted = await waitForSessionJson(
+        canonicalSessionPath(id),
+        (json) => json.title === "queued before cwd transition",
+      );
+      expect(persisted.cwd).toBe(worktreeCwd);
+      expect(persisted.title).toBe("queued before cwd transition");
+    } finally {
+      sessionFileInternals.saveSessionTranscript = originalSave;
+    }
+  });
+
+  test("updateCwd rejects a stale expected cwd without changing memory or disk", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    const store = manager.create(id, TMP_DIR);
+    await waitForSessionJson(canonicalSessionPath(id), (json) => json.cwd === TMP_DIR);
+
+    await expect(manager.updateCwd(id, TMP_DIR, join(TMP_DIR, "..", "next"), "/stale/cwd"))
+      .rejects.toMatchObject({ name: "InvalidSessionCwdError" });
+
+    expect(store.getState().cwd).toBe(TMP_DIR);
+    expect((await readSessionJson(canonicalSessionPath(id))).cwd).toBe(TMP_DIR);
+  });
+
+  test("create rejects a relative execution cwd", () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    expect(() => manager.create(sessionId(), TMP_DIR, { cwd: "relative/worktree" }))
+      .toThrow(expect.objectContaining({ name: "InvalidSessionCwdError" }));
   });
 
   test("create() does not expose legacy pending interactions", () => {
@@ -312,6 +485,7 @@ describe("SessionStoreManager", () => {
     const store = await manager.getOrLoad(sessionId, TMP_DIR);
     expect(store.getState().sessionId).toBe(sessionId);
     expect(store.getState().title).toBe("disk-title");
+    expect(store.getState().cwd).toBe(TMP_DIR);
   });
 
   test("persists background child session completion link events", async () => {

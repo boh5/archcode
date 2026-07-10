@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { HitlOwnerKey, HitlRecord, HitlResponse } from "@archcode/protocol";
 
 import { GoalStateManager } from "../goals/state";
-import { silentLogger } from "../logger";
+import { createInMemoryLogger, silentLogger } from "../logger";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { HitlService } from "./service";
 import { ResumeCoordinator, type SessionHitlResumeAdapter } from "./resume-coordinator";
@@ -151,6 +151,41 @@ describe("ResumeCoordinator", () => {
     });
   });
 
+  test("restart recovery schedules a claimed resume without waiting for its adapter tail", async () => {
+    const fixture = await createFixture();
+    const hitl = await fixture.createSessionHitl();
+    const response: HitlResponse = { type: "question_answer", answers: ["continue in background"] };
+    await (await fixture.service.ownerStore(hitl.owner)).claim(hitl.hitlId, response, {
+      claimId: "persisted-background-claim",
+      claimedAt: new Date().toISOString(),
+      intent: "respond",
+      attempt: 1,
+    });
+    let releaseAdapter!: () => void;
+    const adapter = new RecordingSessionAdapter({
+      waitForRelease: new Promise<void>((resolve) => { releaseAdapter = resolve; }),
+    });
+    const reloaded = await createFixture(fixture.workspaceRoot, fixture.sessions, fixture.sessionId);
+    const coordinator = new ResumeCoordinator({ hitl: reloaded.service, adapters: { session: adapter } });
+
+    const recovery = coordinator.recover();
+    const recoveredBeforeAdapterTail = await Promise.race([
+      recovery.then(() => true),
+      Bun.sleep(1_000).then(() => false),
+    ]);
+    const claimedDuringTail = await reloaded.service.lookup(hitl.hitlId);
+    releaseAdapter();
+    const summary = await recovery;
+
+    expect(recoveredBeforeAdapterTail).toBe(true);
+    expect(summary.scheduled).toBe(1);
+    expect(claimedDuringTail).toMatchObject({
+      status: "found",
+      record: { status: "resume_claimed", resume: { claimId: "persisted-background-claim" } },
+    });
+    await waitForLookup(reloaded.service, hitl.hitlId, "resolved");
+  });
+
   test("partial adapter recovery skips claimed owner types without a matching adapter", async () => {
     const fixture = await createFixture();
     const sessionHitl = await fixture.createSessionHitl();
@@ -231,7 +266,50 @@ describe("ResumeCoordinator", () => {
     expect(recovering.calls[0]?.resume?.claimId).not.toBe(resultRecord(claimed).resume?.claimId);
     expect(terminal.status).toBe("resolved");
   });
+
+  test("background recovery observes a secondary resume-failure persistence rejection", async () => {
+    const fixture = await createFixture();
+    const hitl = await fixture.createSessionHitl();
+    await (await fixture.service.ownerStore(hitl.owner)).claim(
+      hitl.hitlId,
+      { type: "question_answer", answers: ["retry"] },
+      {
+        claimId: "persist-failure-claim",
+        claimedAt: new Date().toISOString(),
+        intent: "respond",
+        attempt: 1,
+      },
+    );
+    const service = new ResumeFailurePersistenceHitlService({
+      workspaceRoot: fixture.workspaceRoot,
+      project: { slug: "archcode", name: "ArchCode" },
+      sessions: fixture.sessions,
+      goalState: fixture.goalState,
+    });
+    await service.load(fixture.workspaceRoot);
+    const { logger, entries } = createInMemoryLogger();
+    const coordinator = new ResumeCoordinator({
+      hitl: service,
+      adapters: { session: new RecordingSessionAdapter({ failWith: new Error("adapter failed") }) },
+      logger,
+    });
+
+    expect((await coordinator.recover()).scheduled).toBe(1);
+    await waitFor(() => entries.some((entry) => entry.event === "hitl.resume.dispatch.failed"));
+
+    expect(entries).toContainEqual(expect.objectContaining({
+      level: "error",
+      event: "hitl.resume.dispatch.failed",
+      context: expect.objectContaining({ hitlId: hitl.hitlId, claimId: "persist-failure-claim" }),
+    }));
+  });
 });
+
+class ResumeFailurePersistenceHitlService extends HitlService {
+  override async markResumeFailed(): Promise<undefined> {
+    throw new Error("resume failure persistence unavailable");
+  }
+}
 
 class RecordingSessionAdapter implements SessionHitlResumeAdapter {
   readonly calls: HitlRecord[] = [];

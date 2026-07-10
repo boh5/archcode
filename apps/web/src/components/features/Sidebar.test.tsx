@@ -409,11 +409,12 @@ describe("Sidebar", () => {
     ];
     sessionTree = {
       root: {
-        session: { sessionId: "root-session", rootSessionId: "root-session", agentName: "orchestrator", title: "Root Session", createdAt: 1 },
+        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", agentName: "orchestrator", title: "Root Session", createdAt: 1 },
         children: [
           {
             session: {
               sessionId: "child-session",
+              cwd: "/workspace",
               rootSessionId: "root-session",
               parentSessionId: "root-session",
               agentName: "explore",
@@ -465,11 +466,12 @@ describe("Sidebar", () => {
     ];
     sessionTree = {
       root: {
-        session: { sessionId: "root-session", rootSessionId: "root-session", title: "Root Session", createdAt: 1 },
+        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", title: "Root Session", createdAt: 1 },
         children: [
           {
             session: {
               sessionId: "child-session",
+              cwd: "/workspace",
               rootSessionId: "root-session",
               parentSessionId: "root-session",
               title: "Child Session",
@@ -524,11 +526,12 @@ describe("Sidebar", () => {
     ];
     sessionTree = {
       root: {
-        session: { sessionId: "root-session", rootSessionId: "root-session", title: "Root Session", createdAt: 1 },
+        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", title: "Root Session", createdAt: 1 },
         children: [
           {
             session: {
               sessionId: "child-session",
+              cwd: "/workspace",
               rootSessionId: "root-session",
               parentSessionId: "root-session",
               title: "Child Session",

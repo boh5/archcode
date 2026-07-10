@@ -122,66 +122,85 @@ export function createServerApp(
 }
 
 export function createServerEventRuntime(runtime: AgentRuntime): AgentRuntime {
-  return {
-    ...runtime,
-    startSessionExecution(input) {
-      const subscriptions = new Map<string, () => void>();
-      const terminalChildren = new Set<string>();
-      const rootKey = scopedSessionSubscriptionKey(input.slug, input.sessionId);
-      let rootCompleted = false;
+  const prepareSessionForwarding = (input: Parameters<AgentRuntime["startSessionExecution"]>[0]) => {
+    const subscriptions = new Map<string, () => void>();
+    const terminalChildren = new Set<string>();
+    const rootKey = scopedSessionSubscriptionKey(input.slug, input.sessionId);
+    let rootCompleted = false;
 
-      const unsubscribeSession = (slug: string, sessionId: string) => {
-        const key = scopedSessionSubscriptionKey(slug, sessionId);
-        if (key === rootKey) return;
-        subscriptions.get(key)?.();
-        subscriptions.delete(key);
-      };
+    const unsubscribeSession = (slug: string, sessionId: string) => {
+      const key = scopedSessionSubscriptionKey(slug, sessionId);
+      if (key === rootKey) return;
+      subscriptions.get(key)?.();
+      subscriptions.delete(key);
+    };
 
-      const maybeReleaseRoot = () => {
-        if (!rootCompleted) return;
-        const activeChildren = [...subscriptions.keys()].filter((key) => key !== rootKey && !terminalChildren.has(key));
-        if (activeChildren.length > 0) return;
-        for (const unsubscribe of subscriptions.values()) unsubscribe();
-        subscriptions.clear();
-      };
+    const maybeReleaseRoot = () => {
+      if (!rootCompleted) return;
+      const activeChildren = [...subscriptions.keys()].filter((key) => key !== rootKey && !terminalChildren.has(key));
+      if (activeChildren.length > 0) return;
+      for (const unsubscribe of subscriptions.values()) unsubscribe();
+      subscriptions.clear();
+    };
 
-      const subscribe = (sessionId: string) => {
-        const key = scopedSessionSubscriptionKey(input.slug, sessionId);
-        if (subscriptions.has(key)) return;
-        const unsubscribe = runtime.subscribeSessionEvents({
-          slug: input.slug,
-          workspaceRoot: input.workspaceRoot,
-          sessionId,
-          onEvent: (event) => {
-            if (!isHitlSessionEvent(event)) globalEventBus.emit(event);
-            if (!isChildSessionLinkEvent(event)) return;
+    const subscribe = (sessionId: string) => {
+      const key = scopedSessionSubscriptionKey(input.slug, sessionId);
+      if (subscriptions.has(key)) return;
+      const unsubscribe = runtime.subscribeSessionEvents({
+        slug: input.slug,
+        workspaceRoot: input.workspaceRoot,
+        sessionId,
+        onEvent: (event) => {
+          if (!isHitlSessionEvent(event)) globalEventBus.emit(event);
+          if (!isChildSessionLinkEvent(event)) return;
 
-            const childSessionId = event.payload.link.childSessionId;
-            const childKey = scopedSessionSubscriptionKey(input.slug, childSessionId);
-            if (isTerminalChildLinkStatus(event.payload.link.status)) {
-              terminalChildren.add(childKey);
-              unsubscribeSession(input.slug, childSessionId);
-              maybeReleaseRoot();
-              return;
-            }
-            subscribe(childSessionId);
-          },
-        });
-        subscriptions.set(key, unsubscribe);
-      };
+          const childSessionId = event.payload.link.childSessionId;
+          const childKey = scopedSessionSubscriptionKey(input.slug, childSessionId);
+          if (isTerminalChildLinkStatus(event.payload.link.status)) {
+            terminalChildren.add(childKey);
+            unsubscribeSession(input.slug, childSessionId);
+            maybeReleaseRoot();
+            return;
+          }
+          subscribe(childSessionId);
+        },
+      });
+      subscriptions.set(key, unsubscribe);
+    };
 
-      subscribe(input.sessionId);
-
-      try {
-        const execution = runtime.startSessionExecution(input);
+    subscribe(input.sessionId);
+    return {
+      attach(execution: ReturnType<AgentRuntime["startSessionExecution"]>) {
         void execution.promise.finally(() => {
           rootCompleted = true;
           maybeReleaseRoot();
         });
         return execution;
-      } catch (error) {
+      },
+      dispose() {
         for (const unsubscribe of subscriptions.values()) unsubscribe();
         subscriptions.clear();
+      },
+    };
+  };
+
+  return {
+    ...runtime,
+    startSessionExecution(input) {
+      const forwarding = prepareSessionForwarding(input);
+      try {
+        return forwarding.attach(runtime.startSessionExecution(input));
+      } catch (error) {
+        forwarding.dispose();
+        throw error;
+      }
+    },
+    async startSessionMessageExecution(input) {
+      const forwarding = prepareSessionForwarding(input);
+      try {
+        return forwarding.attach(await runtime.startSessionMessageExecution(input));
+      } catch (error) {
+        forwarding.dispose();
         throw error;
       }
     },

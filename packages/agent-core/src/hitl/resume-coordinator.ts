@@ -6,6 +6,8 @@ import { HitlService, type HitlLookupResult } from "./service";
 
 export interface SessionHitlResumeAdapter {
   resume(record: HitlRecord, response: HitlResponse): Promise<void>;
+  /** Runs only after the owner record is durably terminal. */
+  finalize?(record: HitlRecord): Promise<void>;
 }
 
 export interface GoalHitlResumeAdapter {
@@ -70,7 +72,6 @@ export class ResumeCoordinator {
     let scheduled = 0;
     let skippedPending = 0;
     let missingResponse = 0;
-
     for (const owner of await this.#hitl.knownOwners()) {
       const store = await this.#hitl.ownerStore(owner);
       const file = await store.read();
@@ -88,8 +89,10 @@ export class ResumeCoordinator {
 
         const result = await this.#withHitlLock(record.hitlId, async () => {
           const current = await this.#lookupFound(record.hitlId);
-          if (current === undefined) return undefined;
-          if (current.record.status === "resume_claimed") return this.#scheduleDispatch(current.record);
+          if (current === undefined) return false;
+          if (current.record.status === "resume_claimed") {
+            return this.#scheduleDispatch(current.record);
+          }
           if (current.record.status === "resume_failed" && current.record.response !== undefined) {
             const claimed = await this.#hitl.claim(current.record.hitlId, current.record.response, {
               claimId: crypto.randomUUID(),
@@ -97,14 +100,19 @@ export class ResumeCoordinator {
               intent: current.record.resume?.intent ?? (current.record.response.type === "cancel" ? "cancel" : "respond"),
               attempt: (current.record.resume?.attempt ?? current.record.resume?.attempts ?? 0) + 1,
             });
-            return claimed === undefined ? false : this.#scheduleDispatch(claimed);
+            if (claimed === undefined) return false;
+            return this.#scheduleDispatch(claimed);
           }
-          return undefined;
+          return false;
         });
-        if (result === true) scheduled += 1;
+        if (result) scheduled += 1;
       }
     }
 
+    // Durable claims and owner-local blockers are the readiness boundary.
+    // Adapter work may include a full agent or Loop run, so recovery only
+    // registers each claim exactly once and lets that work continue after the
+    // project context becomes available.
     return { scanned, scheduled, skippedPending, missingResponse };
   }
 
@@ -120,6 +128,16 @@ export class ResumeCoordinator {
       }
       if (current.status === "resume_claimed") {
         return { status: "claimed", scheduled: false, record: current };
+      }
+      if (current.status === "resume_failed" && intent === "cancel") {
+        const claimed = await this.#hitl.claim(hitlId, response, {
+          claimId: crypto.randomUUID(),
+          claimedAt: new Date().toISOString(),
+          intent,
+          attempt: (current.resume?.attempt ?? current.resume?.attempts ?? 0) + 1,
+        });
+        if (claimed === undefined) return { status: "missing", scheduled: false };
+        return { status: "claimed", scheduled: this.#scheduleDispatch(claimed), record: claimed };
       }
       if (current.status !== "pending") {
         return { status: "active", scheduled: false, record: current };
@@ -138,30 +156,50 @@ export class ResumeCoordinator {
   }
 
   #scheduleDispatch(record: HitlRecord): boolean {
-    const claimId = record.resume?.claimId;
-    if (claimId === undefined || record.response === undefined) return false;
-    if (!this.#hasAdapterFor(record.owner)) return false;
-    if (this.#dispatchedClaimIds.has(claimId)) return false;
-    this.#dispatchedClaimIds.add(claimId);
-    void this.#dispatch(record);
+    const completion = this.#beginDispatch(record);
+    if (completion === undefined) return false;
+    void completion.catch((error: unknown) => {
+      this.#logger.error("hitl.resume.dispatch.failed", {
+        error,
+        context: {
+          hitlId: record.hitlId,
+          ownerType: record.owner.ownerType,
+          ownerId: record.owner.ownerId,
+          claimId: record.resume?.claimId,
+        },
+      });
+    });
     return true;
+  }
+
+  #beginDispatch(record: HitlRecord): Promise<void> | undefined {
+    const claimId = record.resume?.claimId;
+    if (claimId === undefined || record.response === undefined) return undefined;
+    if (!this.#hasAdapterFor(record.owner)) return undefined;
+    if (this.#dispatchedClaimIds.has(claimId)) return undefined;
+    this.#dispatchedClaimIds.add(claimId);
+    return this.#dispatch(record);
   }
 
   async #dispatch(record: HitlRecord): Promise<void> {
     try {
       const response = record.response;
       if (response === undefined) throw new Error(`Cannot resume HITL ${record.hitlId} without a response`);
-      await this.#adapterFor(record.owner).resume(record, response);
-      await this.#withHitlLock(record.hitlId, async () => {
+      const adapter = this.#adapterFor(record.owner);
+      await adapter.resume(record, response);
+      const terminal = await this.#withHitlLock(record.hitlId, async () => {
         const current = await this.#lookupFound(record.hitlId);
-        if (current?.record.status !== "resume_claimed") return;
-        if (current.record.resume?.claimId !== record.resume?.claimId) return;
-        await this.#hitl.finishResume(
+        if (current?.record.status !== "resume_claimed") return undefined;
+        if (current.record.resume?.claimId !== record.resume?.claimId) return undefined;
+        return await this.#hitl.finishResume(
           record.hitlId,
           current.record.resume?.intent === "cancel" ? "cancelled" : "resolved",
           current.record.response,
         );
       });
+      if (terminal !== undefined && "finalize" in adapter && adapter.finalize !== undefined) {
+        await adapter.finalize(terminal);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.#logger.warn("hitl.resume.failed", {

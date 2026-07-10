@@ -5,7 +5,7 @@ import { resolveAndValidatePath } from "../security";
 export function createFileExistsPermission(): ToolPermission {
   return (input: unknown, ctx: ToolExecutionContext): PermissionDecision => {
     const inputRecord = input as { path: string };
-    const { resolved } = resolveAndValidatePath(inputRecord.path, ctx.workspaceRoot);
+    const { resolved } = resolveAndValidatePath(inputRecord.path, ctx.cwd);
 
     if (existsSync(resolved)) {
       return {

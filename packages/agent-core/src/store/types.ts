@@ -82,6 +82,8 @@ export interface SessionStoreState {
   createdAt: number;
 
   // Persistent layer
+  /** Current execution directory. Session files remain owned by the canonical project root. */
+  cwd: string;
   agentName: string;
   modelInfo?: SessionModelInfo | null;
   title: string | null;
@@ -133,6 +135,7 @@ export interface SessionStoreState {
 
   // Methods
   append: (event: SessionEventPayload) => void;
+  setCwd: (cwd: string) => void;
   setTitle: (title: string | null) => void;
   setParentSessionId: (parentSessionId: string | undefined) => void;
   setGoalId: (goalId: string | undefined) => void;

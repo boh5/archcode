@@ -2,7 +2,9 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 
+import { createProcessRunner } from "../process/runner";
 import type { ProcessRunner, ProcessRunnerInput, ProcessRunnerResult } from "../process/types";
+import { WorktreeService } from "../worktrees";
 import {
   LoopWorktreeManager,
   parsePorcelainStatus,
@@ -39,6 +41,148 @@ describe("LoopWorktreeManager", () => {
     expect(created.branchName).toBe("archcode/loop/daily-loop/1234567890ab");
     expect(created.resolvedHeadSha).toBe(baseSha);
     expect(await git(created.worktreePath, ["rev-parse", "HEAD"])).toBe(baseSha);
+  });
+
+  test("reuses the exact persisted managed worktree instead of creating another one", async () => {
+    const repo = await createGitRepo("reuse-existing");
+    const baseSha = await git(repo, ["rev-parse", "HEAD"]);
+    const manager = new LoopWorktreeManager({ canonicalRoot: repo });
+    const input = {
+      loopSlug: "loop-reuse",
+      subjectSlug: "PR #42",
+      jobId: "reuse-job-123456",
+      baseSha,
+    };
+    const created = await manager.create(input);
+    await writeFile(join(created.worktreePath, "committed.txt"), "keep committed work\n");
+    await git(created.worktreePath, ["add", "committed.txt"]);
+    await git(created.worktreePath, ["commit", "-m", "persisted descendant"]);
+    const descendantSha = await git(created.worktreePath, ["rev-parse", "HEAD"]);
+    await writeFile(join(created.worktreePath, "partial.txt"), "keep partial work\n");
+
+    const reused = await manager.reuse({ ...input, worktreePath: created.worktreePath });
+
+    expect(reused).toMatchObject({
+      worktreePath: created.worktreePath,
+      branchName: created.branchName,
+      baseSha,
+      resolvedHeadSha: descendantSha,
+    });
+    expect(await Bun.file(join(reused.worktreePath, "partial.txt")).text()).toBe("keep partial work\n");
+  });
+
+  test("rejects persisted Loop worktrees reset behind or away from their recorded base", async () => {
+    const repo = await createGitRepo("reuse-rejects-invalid-lineage");
+    const firstSha = await git(repo, ["rev-parse", "HEAD"]);
+    await writeFile(join(repo, "second.txt"), "second canonical commit\n");
+    await git(repo, ["add", "second.txt"]);
+    await git(repo, ["commit", "-m", "second canonical commit"]);
+    const baseSha = await git(repo, ["rev-parse", "HEAD"]);
+    const manager = new LoopWorktreeManager({ canonicalRoot: repo });
+    const input = {
+      loopSlug: "loop-lineage",
+      subjectSlug: "manual:lineage",
+      jobId: "lineage-job-123456",
+      baseSha,
+    };
+    const created = await manager.create(input);
+
+    await git(created.worktreePath, ["reset", "--hard", firstSha]);
+    await expect(manager.reuse({ ...input, worktreePath: created.worktreePath })).rejects.toMatchObject({
+      code: "WORKTREE_CHANGED",
+    });
+
+    const treeSha = await git(repo, ["rev-parse", "HEAD^{tree}"]);
+    const unrelatedSha = await git(repo, ["commit-tree", treeSha, "-m", "unrelated Loop root"]);
+    await git(created.worktreePath, ["reset", "--hard", unrelatedSha]);
+    await expect(manager.reuse({ ...input, worktreePath: created.worktreePath })).rejects.toMatchObject({
+      code: "WORKTREE_CHANGED",
+    });
+  });
+
+  test("adopts the deterministic clean orphan at its write-ahead base after canonical HEAD advances", async () => {
+    const repo = await createGitRepo("adopt-pre-checkpoint-orphan");
+    const baseSha = await git(repo, ["rev-parse", "HEAD"]);
+    const service = new WorktreeService({ canonicalRoot: repo });
+    const validateManagedClaim = mock(service.validateManagedClaim.bind(service));
+    const sharedService = {
+      create: service.create.bind(service),
+      findManaged: service.findManaged.bind(service),
+      validate: service.validate.bind(service),
+      validateManagedClaim,
+      status: service.status.bind(service),
+      remove: service.remove.bind(service),
+    };
+    const input = {
+      loopSlug: "loop-orphan",
+      subjectSlug: "manual:orphan",
+      jobId: "orphan-job-123456",
+      baseSha,
+    };
+    const firstManager = new LoopWorktreeManager({ canonicalRoot: repo, service: sharedService });
+    const orphan = await firstManager.create(input);
+    await writeFile(join(repo, "canonical-advance.txt"), "new canonical head\n");
+    await git(repo, ["add", "canonical-advance.txt"]);
+    await git(repo, ["commit", "-m", "advance canonical after orphan creation"]);
+    expect(await git(repo, ["rev-parse", "HEAD"])).not.toBe(baseSha);
+
+    const adopted = await new LoopWorktreeManager({ canonicalRoot: repo, service: sharedService }).create(input);
+
+    expect(adopted).toMatchObject({
+      worktreePath: orphan.worktreePath,
+      branchName: orphan.branchName,
+      baseSha,
+      resolvedHeadSha: baseSha,
+    });
+    expect(validateManagedClaim).toHaveBeenCalledWith({
+      path: orphan.worktreePath,
+      branchName: orphan.branchName,
+      mode: "persisted",
+      baseSha,
+    });
+    expect((await git(repo, ["worktree", "list", "--porcelain"])).match(/^worktree /gm)).toHaveLength(2);
+  });
+
+  test("does not adopt an expected branch registered at another managed path", async () => {
+    const repo = await createGitRepo("reject-wrong-orphan-path");
+    const baseSha = await git(repo, ["rev-parse", "HEAD"]);
+    const service = new WorktreeService({ canonicalRoot: repo });
+    const jobId = "wrong-path-job-123456";
+    const orphan = await service.create({
+      owner: { type: "loop", id: "loop-owner" },
+      label: "different-subject",
+      uniqueId: jobId,
+      baseSha,
+    });
+
+    await expect(new LoopWorktreeManager({ canonicalRoot: repo }).create({
+      loopSlug: "loop-owner",
+      subjectSlug: "expected-subject",
+      jobId,
+      baseSha,
+    })).rejects.toMatchObject({
+      code: "WORKTREE_BRANCH_MISMATCH",
+      details: expect.objectContaining({ actualPath: orphan.worktreePath }),
+    });
+  });
+
+  test("preserves a changed deterministic orphan instead of adopting it before execution", async () => {
+    const repo = await createGitRepo("reject-changed-orphan");
+    const baseSha = await git(repo, ["rev-parse", "HEAD"]);
+    const input = {
+      loopSlug: "loop-changed-orphan",
+      subjectSlug: "manual:changed",
+      jobId: "changed-orphan-job-123456",
+      baseSha,
+    };
+    const manager = new LoopWorktreeManager({ canonicalRoot: repo });
+    const orphan = await manager.create(input);
+    await writeFile(join(orphan.worktreePath, "unexpected.txt"), "preserve me\n");
+
+    await expect(new LoopWorktreeManager({ canonicalRoot: repo }).create(input)).rejects.toMatchObject({
+      code: "WORKTREE_CHANGED",
+    });
+    expect(await Bun.file(join(orphan.worktreePath, "unexpected.txt")).text()).toBe("preserve me\n");
   });
 
   test("blocks dirty local canonical checkout before a worktree path exists", async () => {
@@ -116,6 +260,31 @@ describe("LoopWorktreeManager", () => {
     expect(inspection.evidenceArtifacts[0]).toMatchObject({ path: "evidence.txt", status: "created" });
   });
 
+  test("inspection treats ignored files as changes so automatic cleanup preserves them", async () => {
+    const repo = await createGitRepo("ignored-inspection");
+    await writeFile(join(repo, ".gitignore"), "node_modules/\n");
+    await git(repo, ["add", ".gitignore"]);
+    await git(repo, ["commit", "-m", "ignore dependencies"]);
+    const baseSha = await git(repo, ["rev-parse", "HEAD"]);
+    const manager = new LoopWorktreeManager({ canonicalRoot: repo });
+    const created = await manager.create({ loopSlug: "loop", subjectSlug: "ignored", jobId: "ignored-job", baseSha });
+    const ignoredFile = join(created.worktreePath, "node_modules", "cache.bin");
+    await mkdir(dirname(ignoredFile), { recursive: true });
+    await writeFile(ignoredFile, "preserve ignored evidence\n");
+
+    const inspection = await manager.inspect({
+      worktreePath: created.worktreePath,
+      branchName: created.branchName,
+      baseSha,
+    });
+    const cleanup = await manager.cleanup({ inspection, jobStatus: "succeeded" });
+
+    expect(inspection).toMatchObject({ hasChanges: true, status: { dirty: true } });
+    expect(inspection.status.entries).toContainEqual(expect.objectContaining({ path: "node_modules/", index: "!", worktree: "!" }));
+    expect(cleanup).toMatchObject({ cleanupState: "preserved", removed: false, reviewRequired: true });
+    expect(await Bun.file(ignoredFile).text()).toBe("preserve ignored evidence\n");
+  });
+
   test("hashes dash-prefixed evidence paths as files, not git options", async () => {
     const repo = await createGitRepo("dash-evidence");
     const baseSha = await git(repo, ["rev-parse", "HEAD"]);
@@ -140,15 +309,100 @@ describe("LoopWorktreeManager", () => {
   test("removes unchanged worktree and branch without review requirement", async () => {
     const repo = await createGitRepo("cleanup-unchanged");
     const baseSha = await git(repo, ["rev-parse", "HEAD"]);
-    const manager = new LoopWorktreeManager({ canonicalRoot: repo });
+    const service = new WorktreeService({ canonicalRoot: repo });
+    const remove = mock(service.remove.bind(service));
+    const manager = new LoopWorktreeManager({
+      canonicalRoot: repo,
+      service: {
+        create: service.create.bind(service),
+        findManaged: service.findManaged.bind(service),
+        validate: service.validate.bind(service),
+        validateManagedClaim: service.validateManagedClaim.bind(service),
+        status: service.status.bind(service),
+        remove,
+      },
+    });
     const created = await manager.create({ loopSlug: "loop", subjectSlug: "clean", jobId: "cleanup-job", baseSha });
+    const inspection = await manager.inspect({ worktreePath: created.worktreePath, branchName: created.branchName, baseSha });
+
+    let existedWhenRemovalStarted = false;
+    const beforeRemove = mock(async () => {
+      existedWhenRemovalStarted = await pathExists(created.worktreePath);
+    });
+    const onRemoveFailureBeforeDetach = mock(async () => undefined);
+    const onRemoveDetached = mock(async () => undefined);
+    const cleanup = await manager.cleanup({
+      inspection,
+      jobStatus: "succeeded",
+      beforeRemove,
+      onRemoveFailureBeforeDetach,
+      onRemoveDetached,
+    });
+
+    expect(cleanup).toMatchObject({ cleanupState: "cleaned", removed: true, reviewRequired: false });
+    expect(remove).toHaveBeenCalledWith(expect.objectContaining({
+      path: created.worktreePath,
+      branchName: created.branchName,
+      baseSha,
+      beforeRemove,
+      onRemoveFailureBeforeDetach,
+      onRemoveDetached,
+    }));
+    expect(beforeRemove).toHaveBeenCalledTimes(1);
+    expect(onRemoveFailureBeforeDetach).not.toHaveBeenCalled();
+    expect(onRemoveDetached).toHaveBeenCalledTimes(1);
+    expect(existedWhenRemovalStarted).toBe(true);
+    expect(await pathExists(created.worktreePath)).toBe(false);
+    expect(await git(repo, ["branch", "--list", created.branchName])).toBe("");
+  });
+
+  test("reports cleanup complete with a warning when detach succeeds but branch deletion fails", async () => {
+    const repo = await createGitRepo("cleanup-orphan-branch-warning");
+    const baseSha = await git(repo, ["rev-parse", "HEAD"]);
+    const delegate = createProcessRunner();
+    const runner: ProcessRunner = {
+      async run(input) {
+        if (isGitInvocation(input, "update-ref", "--no-deref", "-d")) {
+          return await delegate.run({
+            ...input,
+            argv: [
+              "git",
+              "update-ref",
+              "--no-deref",
+              "-d",
+              input.argv[4]!,
+              "ffffffffffffffffffffffffffffffffffffffff",
+            ],
+          });
+        }
+        return await delegate.run(input);
+      },
+    };
+    const service = new WorktreeService({ canonicalRoot: repo, git: runner });
+    const manager = new LoopWorktreeManager({
+      canonicalRoot: repo,
+      service: {
+        create: service.create.bind(service),
+        findManaged: service.findManaged.bind(service),
+        validate: service.validate.bind(service),
+        validateManagedClaim: service.validateManagedClaim.bind(service),
+        status: service.status.bind(service),
+        remove: service.remove.bind(service),
+      },
+    });
+    const created = await manager.create({ loopSlug: "loop", subjectSlug: "warning", jobId: "warning-job", baseSha });
     const inspection = await manager.inspect({ worktreePath: created.worktreePath, branchName: created.branchName, baseSha });
 
     const cleanup = await manager.cleanup({ inspection, jobStatus: "succeeded" });
 
-    expect(cleanup).toMatchObject({ cleanupState: "cleaned", removed: true, reviewRequired: false });
+    expect(cleanup).toMatchObject({
+      cleanupState: "cleaned",
+      removed: true,
+      branchDeleted: false,
+      warning: { code: "BRANCH_DELETE_FAILED", branchName: created.branchName },
+    });
     expect(await pathExists(created.worktreePath)).toBe(false);
-    expect(await git(repo, ["branch", "--list", created.branchName])).toBe("");
+    expect(await git(repo, ["rev-parse", `refs/heads/${created.branchName}`])).toBe(baseSha);
   });
 
   test("preserves changed and failed worktrees with review required", async () => {
@@ -159,7 +413,8 @@ describe("LoopWorktreeManager", () => {
     await writeFile(join(changed.worktreePath, "changed.txt"), "review me\n");
     const changedInspection = await manager.inspect({ worktreePath: changed.worktreePath, branchName: changed.branchName, baseSha });
 
-    expect(await manager.cleanup({ inspection: changedInspection, jobStatus: "succeeded" })).toMatchObject({
+    const beforeRemove = mock(async () => {});
+    expect(await manager.cleanup({ inspection: changedInspection, jobStatus: "succeeded", beforeRemove })).toMatchObject({
       cleanupState: "preserved",
       removed: false,
       reviewRequired: true,
@@ -169,12 +424,53 @@ describe("LoopWorktreeManager", () => {
     const failed = await manager.create({ loopSlug: "loop", subjectSlug: "failed", jobId: "failed-job", baseSha });
     const failedInspection = await manager.inspect({ worktreePath: failed.worktreePath, branchName: failed.branchName, baseSha });
 
-    expect(await manager.cleanup({ inspection: failedInspection, jobStatus: "failed" })).toMatchObject({
+    expect(await manager.cleanup({ inspection: failedInspection, jobStatus: "failed", beforeRemove })).toMatchObject({
       cleanupState: "preserved",
       removed: false,
       reviewRequired: true,
     });
     expect(await pathExists(failed.worktreePath)).toBe(true);
+    expect(beforeRemove).not.toHaveBeenCalled();
+  });
+
+  test("aborts deletion when the pre-remove Session migration fails", async () => {
+    const repo = await createGitRepo("cleanup-callback-failure");
+    const baseSha = await git(repo, ["rev-parse", "HEAD"]);
+    const manager = new LoopWorktreeManager({ canonicalRoot: repo });
+    const created = await manager.create({ loopSlug: "loop", subjectSlug: "callback", jobId: "callback-job", baseSha });
+    const inspection = await manager.inspect({ worktreePath: created.worktreePath, branchName: created.branchName, baseSha });
+
+    await expect(manager.cleanup({
+      inspection,
+      jobStatus: "succeeded",
+      beforeRemove: async () => { throw new Error("Session cwd changed concurrently"); },
+    })).rejects.toThrow("Session cwd changed concurrently");
+    expect(await pathExists(created.worktreePath)).toBe(true);
+    expect(await git(repo, ["branch", "--list", created.branchName])).toContain(created.branchName);
+  });
+
+  test("inspect and cleanup reject a registered path paired with another managed branch", async () => {
+    const repo = await createGitRepo("branch-path-mismatch");
+    const baseSha = await git(repo, ["rev-parse", "HEAD"]);
+    const manager = new LoopWorktreeManager({ canonicalRoot: repo });
+    const first = await manager.create({ loopSlug: "loop", subjectSlug: "first", jobId: "first-job-123", baseSha });
+    const second = await manager.create({ loopSlug: "loop", subjectSlug: "second", jobId: "second-job-456", baseSha });
+
+    await expect(manager.inspect({
+      worktreePath: first.worktreePath,
+      branchName: second.branchName,
+      baseSha,
+    })).rejects.toMatchObject({ code: "WORKTREE_BRANCH_MISMATCH" });
+
+    const firstInspection = await manager.inspect({ worktreePath: first.worktreePath, branchName: first.branchName, baseSha });
+    await expect(manager.cleanup({
+      inspection: { ...firstInspection, branchName: second.branchName },
+      jobStatus: "succeeded",
+    })).rejects.toMatchObject({ code: "WORKTREE_BRANCH_MISMATCH" });
+    expect(await pathExists(first.worktreePath)).toBe(true);
+    expect(await pathExists(second.worktreePath)).toBe(true);
+    expect(await git(repo, ["branch", "--list", first.branchName])).toContain(first.branchName);
+    expect(await git(repo, ["branch", "--list", second.branchName])).toContain(second.branchName);
   });
 
   test("cleanup re-inspects stale clean inspections and preserves late changes", async () => {
@@ -320,6 +616,10 @@ function nonzero(input: ProcessRunnerInput, stderr: string): ProcessRunnerResult
     durationMs: 1,
     output: { stdout: "", stderr, combined: stderr, stdoutTruncated: false, stderrTruncated: false, combinedTruncated: false },
   };
+}
+
+function isGitInvocation(input: ProcessRunnerInput, ...args: string[]): boolean {
+  return input.argv[0] === "git" && args.every((arg, index) => input.argv[index + 1] === arg);
 }
 
 async function pathExists(path: string): Promise<boolean> {

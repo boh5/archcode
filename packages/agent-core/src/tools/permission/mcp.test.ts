@@ -15,7 +15,7 @@ function mockCtx(): ToolExecutionContext {
     abort: new AbortController().signal,
     startedAt: Date.now(),
     allowedTools: new Set(),
-    workspaceRoot: "/tmp",
+    cwd: "/tmp",
     projectContext: createTestProjectContext("/tmp"),
   };
 }

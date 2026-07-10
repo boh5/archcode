@@ -34,7 +34,7 @@ function makeCtx(workspaceRoot = workspaceDir): ToolExecutionContext {
     abort: new AbortController().signal,
     startedAt: Date.now(),
     allowedTools: new Set(["bash"]),
-    workspaceRoot,
+    cwd: workspaceRoot,
     projectContext: createTestProjectContext(workspaceRoot),
   };
 }
@@ -61,7 +61,7 @@ describe("createBashPermission", () => {
     expect(decision.outcome).toBe("deny");
   });
 
-  test("uses the context workspaceRoot exclusively", async () => {
+  test("uses the ToolExecutionContext cwd", async () => {
     const permission = createBashPermission();
     const ctx = makeCtx();
     const decision = await permission({ command: "pwd" }, ctx);

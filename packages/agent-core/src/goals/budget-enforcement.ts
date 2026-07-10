@@ -4,6 +4,7 @@ import type { GoalBudgetSummary } from "@archcode/protocol";
 import type { ModelCallOptions } from "../config/provider";
 import type { ProjectContext } from "../projects/types";
 import type { SessionStoreState } from "../store/types";
+import { withGoalExecutionClaimLock } from "./execution-claim";
 import type { GoalState } from "./state";
 
 export const BUDGET_APPROVAL_POINT = "approval_budget_1";
@@ -35,41 +36,46 @@ export async function enforceGoalBudgetBeforeModelCall(ctx: GoalBudgetEnforcemen
   const resolved = await resolveGoalBudgetContext(ctx);
   if (resolved === undefined) return;
 
-  const { goal, projectContext } = resolved;
-  const budget = goal.budget;
-  if (budget === undefined) return;
+  const { goal: observedGoal, projectContext } = resolved;
+  await withGoalExecutionClaimLock(observedGoal.id, async () => {
+    const goal = await projectContext.goalState.read(observedGoal.id);
+    const budget = goal.budget;
+    if (budget === undefined) return;
 
-  if (isHardExceeded(budget)) {
-    await blockForHardStop(projectContext, goal, budget, "Budget hard limit exceeded");
-  }
+    if (isHardExceeded(budget)) {
+      await blockForHardStop(projectContext, goal, budget, "Budget hard limit exceeded");
+    }
 
-  const estimatedNextCallTokens = estimateNextModelCallTokens(ctx.modelOptions);
-  if (shouldRequestWarningApproval(budget, estimatedNextCallTokens)) {
-    await requestBudgetApproval(projectContext, goal, budget, estimatedNextCallTokens);
-  }
+    const estimatedNextCallTokens = estimateNextModelCallTokens(ctx.modelOptions);
+    if (shouldRequestWarningApproval(budget, estimatedNextCallTokens)) {
+      await requestBudgetApproval(projectContext, goal, budget, estimatedNextCallTokens);
+    }
+  });
 }
 
 export async function enforceGoalBudgetAfterStepEnd(ctx: GoalBudgetEnforcementContext): Promise<void> {
   const resolved = await resolveGoalBudgetContext(ctx);
   if (resolved === undefined) return;
-  const { goal, projectContext } = resolved;
-  const budget = goal.budget;
-  if (budget?.maxTokens === undefined) return;
-
   const latestUsage = normalizeUsage(ctx.store.getState().steps.at(-1)?.usage);
   if (latestUsage.totalTokens === 0) return;
+  const { goal: observedGoal, projectContext } = resolved;
+  await withGoalExecutionClaimLock(observedGoal.id, async () => {
+    const goal = await projectContext.goalState.read(observedGoal.id);
+    const budget = goal.budget;
+    if (budget?.maxTokens === undefined) return;
 
-  const nextBudget: GoalBudgetSummary = {
-    ...budget,
-    status: budget.usedTokens !== undefined && budget.usedTokens + latestUsage.totalTokens >= budget.maxTokens ? "blocked" : budget.status,
-    usedTokens: (budget.usedTokens ?? 0) + latestUsage.totalTokens,
-    updatedAt: new Date().toISOString(),
-  };
-  await projectContext.goalState.updateBudgetSummary(goal.id, nextBudget);
-  if (isHardExceeded(nextBudget)) {
-    const latest = await projectContext.goalState.read(goal.id);
-    await blockForHardStop(projectContext, latest, nextBudget, "Budget hard limit exceeded");
-  }
+    const nextBudget: GoalBudgetSummary = {
+      ...budget,
+      status: budget.usedTokens !== undefined && budget.usedTokens + latestUsage.totalTokens >= budget.maxTokens ? "blocked" : budget.status,
+      usedTokens: (budget.usedTokens ?? 0) + latestUsage.totalTokens,
+      updatedAt: new Date().toISOString(),
+    };
+    await projectContext.goalState.updateBudgetSummary(goal.id, nextBudget);
+    if (isHardExceeded(nextBudget)) {
+      const latest = await projectContext.goalState.read(goal.id);
+      await blockForHardStop(projectContext, latest, nextBudget, "Budget hard limit exceeded");
+    }
+  });
 }
 
 async function resolveGoalBudgetContext(ctx: GoalBudgetEnforcementContext): Promise<{

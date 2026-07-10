@@ -142,6 +142,18 @@ function makeCompressionBlock(overrides: Partial<CompressionBlockSnapshot> = {})
 }
 
 describe("reduceStreamEvent", () => {
+  test("projects a formal Session cwd transition", () => {
+    const state = createProjection({ cwd: "/repo" });
+
+    const result = reduceStreamEvent(state, {
+      type: "session.cwd_changed",
+      previousCwd: "/repo",
+      cwd: "/repo/.archcode/worktrees/session-1",
+    }, createDeterministicContext());
+
+    expect(result).toEqual({ cwd: "/repo/.archcode/worktrees/session-1" });
+  });
+
   test("defaults stats to all zeros and executions to empty for never-run sessions", () => {
     const state = createProjection();
 

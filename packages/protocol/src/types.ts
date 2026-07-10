@@ -12,6 +12,13 @@ export interface ExecutionEndEvent {
   blockedHitl?: SessionHitlCheckpoint;
 }
 
+/** Durable Session execution-directory transition. Session storage remains at the canonical project root. */
+export interface SessionCwdChangedEvent {
+  type: "session.cwd_changed";
+  previousCwd: string;
+  cwd: string;
+}
+
 export interface NormalizedUsage {
   inputTokens: number;
   outputTokens: number;
@@ -388,6 +395,7 @@ export interface LlmRecoveryFailedEvent {
 export type StreamEvent =
   | ExecutionStartEvent
   | ExecutionEndEvent
+  | SessionCwdChangedEvent
   | UserMessageEvent
   | SystemNoticeEvent
   | TextStartEvent
@@ -685,6 +693,8 @@ export interface SessionModelInfo {
 
 export interface SessionProjection {
   sessionId: string;
+  /** Current execution directory when the projection is used for a Session surface. */
+  cwd?: string;
   rootSessionId: string;
   parentSessionId?: string;
   title: string | null;
@@ -740,6 +750,8 @@ export interface DirectorySearchResponse {
 
 export interface SessionSummary {
   sessionId: string;
+  /** Current execution directory. Servers emit it; optional preserves source compatibility for older consumers. */
+  cwd?: string;
   // Tree relationships derive from child session files, not childSessionIds/subAgentDescriptions caches.
   rootSessionId: string;
   parentSessionId?: string;
@@ -783,6 +795,7 @@ export interface SessionTreeResponse {
 export interface Session {
   id: string;
   sessionId?: string;
+  cwd?: string;
   rootSessionId: string;
   title?: string | null;
   /** Goal this session belongs to. */
@@ -913,12 +926,21 @@ export interface GoalBudgetSummary {
   updatedAt: string;
 }
 
+export interface GoalWorktree {
+  path: string;
+  branchName: string;
+  baseSha: string;
+  createdAt: string;
+}
+
 export interface GoalState {
   id: string;
   projectId: string;
   title: string | null;
   objective: string;
   acceptanceCriteria: string;
+  useWorktree?: boolean;
+  worktree?: GoalWorktree;
   status: GoalStatus;
   blocker?: GoalBlocker;
   attempt: number;
@@ -1310,6 +1332,8 @@ export interface LoopRunReport {
   dedupeKey?: string;
   branchKey?: string;
   worktreePath?: string;
+  /** Exact managed Git branch owning worktreePath; never stored in lossy evidence artifacts. */
+  worktreeBranchName?: string;
   baseSha?: string;
   resolvedHeadSha?: string;
   missedCount?: number;
@@ -1318,6 +1342,7 @@ export interface LoopRunReport {
   attentionStatus?: HitlAttentionStatus;
   resumeCheckpoint?: LoopHitlCheckpoint;
   cleanupState?: LoopCleanupState;
+  cleanupWarning?: string;
   observedArtifacts?: LoopWorktreeArtifact[];
 }
 

@@ -53,6 +53,11 @@ export type ToolExecutionOrigin = {
   approvalPolicy: LoopApprovalPolicy;
 };
 
+export interface ToolExecutionControl {
+  readonly action: "stop_session_family";
+  readonly reason: "goal_cancelled";
+}
+
 export interface ToolExecutionContext {
   store: StoreApi<SessionStoreState>;
   storeManager: SessionStoreManager;
@@ -73,25 +78,27 @@ export interface ToolExecutionContext {
   /** Shared Skill service for agent-scoped skill lookup. */
   skillService?: SkillService;
   projectContext: ProjectContext;
-  /** Derived from projectContext.project.workspaceRoot by createToolExecutionContext(). */
-  workspaceRoot: string;
+  /** Current Session execution directory. This may be a worktree and is independent of the canonical project context. */
+  readonly cwd: string;
   confirmPermission?: ToolConfirmationCallback;
   askUser?: AskUserCallback;
   startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
   cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
   resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
   abortSessionExecutionAndWait?: (workspaceRoot: string, sessionId: string) => Promise<void>;
+  /** Acquires a root-scoped cwd-transition lease; callers must always release it. */
+  acquireSessionCwdTransition?: (workspaceRoot: string, sessionId: string) => () => void;
   currentDepth?: number;
   origin?: ToolExecutionOrigin;
   /** Called once after prepareInput + safeParse succeeds, with the resolved (defaults-filled, redacted) input. */
   onInputResolved?: (redactedInput: unknown) => void;
   /** Called immediately before an effectful tool's execute() can perform side effects. */
-  onToolAttempt?: (attempt: ToolAttemptMetadata) => void;
+  onToolAttempt?: (attempt: ToolAttemptMetadata) => MaybePromise<void>;
   /** Current ordered model tool-call batch details used to checkpoint HITL boundaries. */
   hitlCheckpoint?: ToolHitlCheckpointContext;
 }
 
-type ToolExecutionContextInput = Omit<ToolExecutionContext, "workspaceRoot">;
+type ToolExecutionContextInput = ToolExecutionContext;
 
 export function createToolExecutionContext(
   base: ToolExecutionContextInput,
@@ -101,13 +108,6 @@ export function createToolExecutionContext(
     agentSkills: base.agentSkills ?? [],
     skillService: base.skillService ?? createMissingSkillService(),
   } as ToolExecutionContext;
-  Object.defineProperty(ctx, "workspaceRoot", {
-    enumerable: true,
-    configurable: false,
-    get() {
-      return this.projectContext.project.workspaceRoot;
-    },
-  });
   return ctx;
 }
 

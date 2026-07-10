@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { AgentRunningError, ConcurrentSessionLimitError } from "@archcode/agent-core";
+import { AgentRunningError, ChildSessionCwdMismatchError, ConcurrentSessionLimitError, SessionCwdTransitionInProgressError, SessionDeleteInProgressError, SessionExecutionScopeConflictError, SessionFamilyStopInProgressError, SessionHitlBlockedError, SessionHitlJournalBlockedError, SessionHitlResumeInProgressError } from "@archcode/agent-core";
 import type { AgentRuntime } from "@archcode/agent-core";
 import {
   BadRequestError,
@@ -19,6 +19,13 @@ class AgentAlreadyRunningError extends ServerError {
   }
 }
 
+class SessionCwdTransitionHttpError extends ServerError {
+  constructor(error: SessionCwdTransitionInProgressError) {
+    super("BAD_REQUEST", error.message, 409);
+    this.name = "SessionCwdTransitionHttpError";
+  }
+}
+
 export function createMessagesRoutes(runtime: AgentRuntime): Hono {
   const app = new Hono();
 
@@ -30,7 +37,7 @@ export function createMessagesRoutes(runtime: AgentRuntime): Hono {
     const project = await resolveProject(runtime, slug);
 
     try {
-      runtime.startSessionExecution({ slug, sessionId, workspaceRoot: project.workspaceRoot, userMessage: text });
+      await runtime.startSessionMessageExecution({ slug, sessionId, workspaceRoot: project.workspaceRoot, userMessage: text });
       return c.json({ ok: true }, 202);
     } catch (error) {
       if (error instanceof AgentRunningError) {
@@ -38,6 +45,41 @@ export function createMessagesRoutes(runtime: AgentRuntime): Hono {
       }
       if (error instanceof ConcurrentSessionLimitError) {
         throw new ConcurrentSessionLimitHttpError(error.current, error.max);
+      }
+      if (error instanceof SessionCwdTransitionInProgressError) {
+        throw new SessionCwdTransitionHttpError(error);
+      }
+      if (error instanceof SessionHitlBlockedError || error instanceof SessionHitlResumeInProgressError || error instanceof ChildSessionCwdMismatchError) {
+        throw new ServerError("BAD_REQUEST", error.message, 409);
+      }
+      if (error instanceof SessionHitlJournalBlockedError) {
+        throw new ServerError("BAD_REQUEST", error.message, 409, {
+          scopeCode: error.code,
+          sessionId: error.sessionId,
+          hitlIds: [...error.hitlIds],
+          phases: [...error.phases],
+        });
+      }
+      if (error instanceof SessionDeleteInProgressError) {
+        throw new ServerError("BAD_REQUEST", error.message, 409, {
+          scopeCode: error.code,
+          sessionId: error.sessionId,
+          rootSessionId: error.rootSessionId,
+        });
+      }
+      if (error instanceof SessionFamilyStopInProgressError) {
+        throw new ServerError("BAD_REQUEST", error.message, 409, {
+          scopeCode: error.code,
+          sessionId: error.sessionId,
+          rootSessionId: error.rootSessionId,
+        });
+      }
+      if (error instanceof SessionExecutionScopeConflictError) {
+        throw new ServerError("BAD_REQUEST", error.message, 409, {
+          ...error.details,
+          scopeCode: error.code,
+          sessionId: error.sessionId,
+        });
       }
       throw error;
     }

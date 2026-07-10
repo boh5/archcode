@@ -50,6 +50,9 @@ function createCoordinator(hitlService: HitlService): ResumeCoordinator {
         workspaceRoot,
         goalStateManager: manager,
         hitlService,
+        goalCancellation: {
+          cancel: (goalId, request) => manager.cancel(goalId, request.reason),
+        },
       }),
     },
   });

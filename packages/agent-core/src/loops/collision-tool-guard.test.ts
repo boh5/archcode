@@ -142,7 +142,7 @@ describe("createLoopCollisionToolPermission", () => {
       repo: "test-repo",
       issueNumber: 42,
       body: "Looks good",
-    }, { workspaceRoot: TMP_DIR });
+    }, { cwd: TMP_DIR });
 
     expect(targets).toEqual([{ type: "issue", owner: "test-owner", repo: "test-repo", number: 42 }]);
   });
@@ -173,6 +173,7 @@ async function createFixture(options: { readonly failWriteExecution?: boolean; r
       startedAt: clock.now(),
       allowedTools: new Set([toolName]),
       projectContext,
+      cwd: TMP_DIR,
       agentSkills: [],
       skillService: new SkillService({ builtinSkills: {} }),
       origin: { kind: "loop", loopId, runId, trigger: "manual", approvalPolicy: "interactive" },

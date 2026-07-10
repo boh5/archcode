@@ -142,13 +142,15 @@ export function useCreateGoal() {
       slug,
       objective,
       acceptanceCriteria,
+      useWorktree,
     }: {
       slug: string;
       objective: string;
       acceptanceCriteria: string;
+      useWorktree: boolean;
     }) => apiFetch<GoalState>(`/api/projects/${encodeURIComponent(slug)}/goals`, {
       method: "POST",
-      body: { objective, acceptanceCriteria },
+      body: { objective, acceptanceCriteria, useWorktree },
     }),
     onSuccess: async (_data, variables) => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.projectGoals(variables.slug) });

@@ -27,7 +27,7 @@ function makeCtx(store: StoreApi<SessionStoreState>): ToolExecutionContext {
     abort: new AbortController().signal,
     startedAt: Date.now(),
     allowedTools: new Set(["todo_write"]),
-    workspaceRoot: testDir,
+    cwd: testDir,
     projectContext: createTestProjectContext(testDir),
   };
 }

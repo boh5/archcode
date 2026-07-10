@@ -4,7 +4,7 @@ import { ChatMessages } from "../components/composite/ChatMessages";
 import { HitlInbox } from "../components/features/HitlCard";
 import { ChatHeader } from "../components/features/ChatHeader";
 import { ChatInput } from "../components/features/ChatInput";
-import { useFocusedSession, useSession } from "../api/queries";
+import { useFocusedSession, useProjects, useSession } from "../api/queries";
 import { useRealtimeHitl } from "../store/hitl-store";
 import { getWebSessionStore, markSessionForeground, useSessionStore } from "../store/session-store";
 
@@ -17,6 +17,8 @@ export function SessionRoute() {
   const navigate = useNavigate();
 
   const { data: session } = useSession(slug, sessionId);
+  const { data: projects = [] } = useProjects();
+  const projectRoot = projects.find((project) => project.slug === slug)?.workspaceRoot;
   const focusSessionId = useSessionStore(sessionId, (s) => s.focusSessionId, slug);
   const { data: focusedSession, isLoading: isFocusedLoading, error: focusedError } = useFocusedSession(slug, focusSessionId);
   const sessionHitl = useRealtimeHitl({
@@ -50,6 +52,7 @@ export function SessionRoute() {
         childSessionLinks,
         eventCursor,
         modelInfo,
+        cwd,
       } = focusedSession;
       childStore.getState().initializeFromSnapshot({
         messages,
@@ -65,6 +68,7 @@ export function SessionRoute() {
         childSessionLinks,
         eventCursor,
         modelInfo,
+        cwd,
       });
     }
   }, [focusSessionId, focusedSession, slug]);
@@ -93,6 +97,7 @@ export function SessionRoute() {
         childSessionLinks,
         eventCursor,
         modelInfo,
+        cwd,
       } = session;
       store.getState().initializeFromSnapshot({
         messages,
@@ -108,6 +113,7 @@ export function SessionRoute() {
         childSessionLinks,
         eventCursor,
         modelInfo,
+        cwd,
       });
     }
   }, [session, sessionId, slug]);
@@ -202,6 +208,7 @@ export function SessionRoute() {
         slug={slug}
         sessionId={sessionId}
         goalId={session?.goalId}
+        projectRoot={projectRoot}
         onToggleDetail={() => {}}
       />
       <ChatMessages slug={slug} sessionId={sessionId} />

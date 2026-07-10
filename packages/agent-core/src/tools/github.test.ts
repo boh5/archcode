@@ -276,6 +276,7 @@ function context(
     agentSkills: [],
     skillService: new SkillService({ builtinSkills: {} }),
     ...overrides,
+    cwd: overrides.cwd ?? TMP_DIR,
   });
 }
 

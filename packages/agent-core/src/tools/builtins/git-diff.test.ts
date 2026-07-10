@@ -39,8 +39,8 @@ function mockCtx(): ToolExecutionContext {
     abort: new AbortController().signal,
     startedAt: Date.now(),
     allowedTools: new Set(["git_diff"]),
-    workspaceRoot: "/tmp/workspace",
-    projectContext: createTestProjectContext("/tmp/workspace"),
+    cwd: "/tmp/workspace",
+    projectContext: createTestProjectContext("/canonical/project"),
   };
 }
 
@@ -157,7 +157,7 @@ describe("gitDiffTool", () => {
     expect(result.output).toContain("Git diff was aborted");
   });
 
-  test("uses workspaceRoot as cwd", async () => {
+  test("uses execution cwd instead of the canonical project root", async () => {
     let capturedOpts: { cwd?: string } | null = null;
 
     setProcessRunnerForTest(mock((_cmd, opts) => {

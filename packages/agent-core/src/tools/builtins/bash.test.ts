@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { storeManager } from "../../store/store";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bashTool, BashInputSchema, buildBashEnv, formatBashOutput, runBashCommand } from "./bash";
@@ -47,7 +47,7 @@ function mockCtx(
   abort: new AbortController().signal,
   startedAt: Date.now(),
   allowedTools: new Set(["bash"]),
-  workspaceRoot,
+  cwd: workspaceRoot,
   storeManager,
     projectContext: createTestProjectContext(workspaceRoot), ...overrides,  };
 }
@@ -81,7 +81,7 @@ describe("bashTool", () => {
       );
       expect(negativeTimeout.isError).toBe(true);
     } finally {
-      rmSync(ctx.workspaceRoot, { recursive: true, force: true });
+      rmSync(ctx.cwd, { recursive: true, force: true });
     }
   });
 
@@ -148,26 +148,29 @@ describe("bashTool", () => {
   });
 
   test("safe pwd command with explicit cwd executes successfully", async () => {
-    const workspaceRoot = mkdtempSync(join(tmpdir(), "bash-pwd-test-"));
+    const executionCwd = mkdtempSync(join(tmpdir(), "bash-pwd-test-"));
     try {
       const captured: { argv?: readonly string[]; opts?: Record<string, unknown> } = {};
       setProcessRunnerForTest(((argv: readonly [string, ...string[]], opts: Record<string, unknown>) => {
         captured.argv = argv;
         captured.opts = opts;
-        return mockSpawnResult(realpathSync.native(workspaceRoot) + "\n", "", 0);
+        return mockSpawnResult(realpathSync.native(executionCwd) + "\n", "", 0);
       }) as any);
 
-      const result = await runBashCommand({ description: "Print working directory", command: "pwd", cwd: "." }, mockCtx(workspaceRoot));
+      const result = await runBashCommand(
+        { description: "Print working directory", command: "pwd", cwd: "." },
+        mockCtx(executionCwd, { projectContext: createTestProjectContext("/canonical/project") }),
+      );
 
       expect(result.isError).toBe(false);
       expect(result.output).toContain("EXIT_CODE: 0");
       expect(captured.argv).toEqual(["bash", "-c", "pwd"]);
-      expect(captured.opts?.cwd).toBe(realpathSync.native(workspaceRoot));
+      expect(captured.opts?.cwd).toBe(realpathSync.native(executionCwd));
       expect(captured.opts?.stdin).toBe("ignore");
       expect(captured.opts?.stdout).toBe("pipe");
       expect(captured.opts?.stderr).toBe("pipe");
     } finally {
-      rmSync(workspaceRoot, { recursive: true, force: true });
+      rmSync(executionCwd, { recursive: true, force: true });
     }
   });
 
@@ -292,6 +295,39 @@ describe("bashTool", () => {
     expect(result.isError).toBe(true);
     expect(result.output).toContain("Privilege escalation");
     expect(spawnMock).toHaveBeenCalledTimes(0);
+  });
+
+  test("worktree Bash cannot mutate canonical project state through a symlink", async () => {
+    const root = mkdtempSync(join(tmpdir(), "bash-protected-worktree-test-"));
+    const canonicalRoot = join(root, "project");
+    const worktreeRoot = join(root, "worktree");
+    mkdirSync(join(canonicalRoot, ".archcode", "cache"), { recursive: true });
+    mkdirSync(worktreeRoot, { recursive: true });
+    symlinkSync(join(canonicalRoot, ".archcode"), join(worktreeRoot, "canonical-state"));
+
+    try {
+      const registry = createRegistry([bashTool]);
+      const spawnMock = mock(() => mockSpawnResult(""));
+      setProcessRunnerForTest(spawnMock as any);
+
+      const result = await registry.execute(
+        {
+          toolName: "bash",
+          toolCallId: "protected-symlink",
+          input: {
+            description: "Clear a cache directory",
+            command: "rm -rf canonical-state/cache",
+          },
+        },
+        mockCtx(worktreeRoot, { projectContext: createTestProjectContext(canonicalRoot) }),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain("PROTECTED_PATH_WRITE_DENIED");
+      expect(spawnMock).toHaveBeenCalledTimes(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test("output format includes deterministic labeled sections", () => {

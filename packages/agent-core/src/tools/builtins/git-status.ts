@@ -29,12 +29,12 @@ const GIT_STATUS_ARGV = [
 ] as const;
 
 export async function runGitStatus(
-  workspaceRoot: string,
+  cwd: string,
   signal: AbortSignal,
 ): Promise<GitStatusResult> {
   const result = await createProcessRunner().run({
     argv: GIT_STATUS_ARGV,
-    cwd: workspaceRoot,
+    cwd,
     env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
     signal,
   });
@@ -82,7 +82,7 @@ export const gitStatusTool = defineTool({
   traits: { readOnly: true, destructive: false, concurrencySafe: true },
   execute: async (_input, ctx): Promise<string | ToolExecutionResult> => {
     try {
-      const result = await runGitStatus(ctx.workspaceRoot, ctx.abort);
+      const result = await runGitStatus(ctx.cwd, ctx.abort);
       if (result.exitCode !== 0) {
         return createToolErrorResult({
           kind: "execution",

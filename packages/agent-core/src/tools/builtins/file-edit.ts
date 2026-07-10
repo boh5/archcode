@@ -340,7 +340,7 @@ export const fileEditTool = defineTool({
     // Workspace access is enforced by createWorkspacePermission() guard.
     // If the permission pipeline allows execution, out-of-workspace paths
     // may have been explicitly approved and should not be re-checked here.
-    const { resolved: resolvedPath } = resolveAndValidatePath(input.path, ctx.workspaceRoot);
+    const { resolved: resolvedPath } = resolveAndValidatePath(input.path, ctx.cwd);
 
     try {
       const result = await sharedMutationQueue.enqueue(resolvedPath, async () => {
@@ -370,7 +370,7 @@ export const fileEditTool = defineTool({
           });
         }
 
-        refreshReadSnapshot(resolvedPath, ctx.store, ctx.workspaceRoot);
+        refreshReadSnapshot(resolvedPath, ctx.store, ctx.cwd);
         return {
           output: `Successfully applied ${matches.length} edit(s) to ${input.path}`,
           isError: false,

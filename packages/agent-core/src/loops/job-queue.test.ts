@@ -3,7 +3,7 @@ import { mkdir, readdir, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 
 import { canonicalTargetKey } from "./collision-ledger";
-import { LoopJobQueue, LoopJobQueueFileSchema, LoopJobQueueLimitError, LoopJobQueueSecurityError } from "./job-queue";
+import { __queueLockCountForTest, LoopJobQueue, LoopJobQueueFileSchema, LoopJobQueueLimitError, LoopJobQueueSecurityError } from "./job-queue";
 import type { LoopJobStatus } from "./state";
 import { FakeClock } from "./test-utils";
 
@@ -49,6 +49,26 @@ describe("LoopJobQueue", () => {
     expect((await readdir(join(TMP_DIR, ".archcode", "loops"))).filter((entry) => entry.startsWith(".tmp-"))).toEqual([]);
   });
 
+  test("loads pre-revision queue records and advances their first CAS revision", async () => {
+    const clock = new FakeClock(9_500);
+    const queue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock });
+    const { job } = await queue.enqueue({
+      loopId: LOOP_ID,
+      triggerKind: "manual",
+      subjectKey: "manual:legacy-revision",
+    });
+    const queuePath = await queue.queuePath();
+    const persisted = JSON.parse(await Bun.file(queuePath).text()) as { jobs: Array<Record<string, unknown>> };
+    delete persisted.jobs[0]?.revision;
+    await Bun.write(queuePath, `${JSON.stringify(persisted, null, 2)}\n`);
+
+    const restarted = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock });
+    const legacy = await restarted.read(job.jobId);
+    expect(legacy.revision).toBe(0);
+    const updated = await restarted.updateIfCurrent(job.jobId, legacy, { blockedReason: "legacy record updated" });
+    expect(updated).toMatchObject({ outcome: "updated", updated: { revision: 1 } });
+  });
+
   test("coalesces pending duplicate dedupeKey and keeps merged event summaries", async () => {
     const clock = new FakeClock(10_000);
     const queue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock });
@@ -86,16 +106,74 @@ describe("LoopJobQueue", () => {
   test("running duplicate sets rerunAfterCurrent once without unlimited pending jobs", async () => {
     const clock = new FakeClock(20_000);
     const queue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock });
-    const { job } = await queue.enqueue({ loopId: LOOP_ID, triggerKind: "on_pr", subjectKey: "pr:test-owner/test-repo#7" });
+    const originalSha = "1".repeat(40);
+    const updatedSha = "2".repeat(40);
+    const { job } = await queue.enqueue({
+      loopId: LOOP_ID,
+      triggerKind: "on_pr",
+      subjectKey: "pr:test-owner/test-repo#7",
+      resolvedHeadSha: originalSha,
+    });
     await queue.update(job.jobId, { status: "running", startedAt: 20_000, leaseExpiresAt: 50_000, attempts: 1 });
 
-    await queue.enqueue({ loopId: LOOP_ID, triggerKind: "on_pr", subjectKey: "pr:test-owner/test-repo#7", eventSummary: { summary: "PR updated" } });
+    await queue.enqueue({
+      loopId: LOOP_ID,
+      triggerKind: "on_pr",
+      subjectKey: "pr:test-owner/test-repo#7",
+      resolvedHeadSha: updatedSha,
+      eventSummary: { summary: "PR updated" },
+    });
     await queue.enqueue({ loopId: LOOP_ID, triggerKind: "on_pr", subjectKey: "pr:test-owner/test-repo#7", eventSummary: { summary: "PR updated again" } });
 
     const jobs = await queue.list();
     expect(jobs).toHaveLength(1);
-    expect(jobs[0]).toMatchObject({ status: "running", rerunAfterCurrent: true });
+    expect(jobs[0]).toMatchObject({
+      status: "running",
+      rerunAfterCurrent: true,
+      resolvedHeadSha: originalSha,
+      rerunInput: { resolvedHeadSha: updatedSha },
+    });
     expect(jobs[0]?.eventSummaries.map((entry) => entry.summary)).toEqual(["PR updated", "PR updated again"]);
+  });
+
+  test("keeps recovered execution input frozen before phase-two checkpoint", async () => {
+    const clock = new FakeClock(25_000);
+    const queue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock });
+    const oldBaseSha = "3".repeat(40);
+    const newHeadSha = "4".repeat(40);
+    const { job } = await queue.enqueue({
+      loopId: LOOP_ID,
+      triggerKind: "on_commit",
+      subjectKey: "branch:recovered-before-worktree",
+    });
+    await queue.update(job.jobId, {
+      status: "running",
+      attempts: 1,
+      startedAt: clock.now(),
+      leaseExpiresAt: clock.now() + 60_000,
+      leaseOwnerId: "old-process",
+      leaseToken: "old-execution-token",
+      baseSha: oldBaseSha,
+    });
+    const [recovered] = await queue.recoverRunningFromPriorIncarnation("new-process", clock.now() + 1);
+    expect(recovered).toMatchObject({ status: "pending", attempts: 1, baseSha: oldBaseSha });
+    expect(recovered?.worktreePath).toBeUndefined();
+
+    await queue.enqueue({
+      loopId: LOOP_ID,
+      triggerKind: "on_commit",
+      subjectKey: "branch:recovered-before-worktree",
+      resolvedHeadSha: newHeadSha,
+      eventSummary: { summary: "new commit after recovery", payloadSha: newHeadSha },
+    });
+
+    expect(await queue.read(job.jobId)).toMatchObject({
+      status: "pending",
+      attempts: 1,
+      baseSha: oldBaseSha,
+      rerunAfterCurrent: true,
+      rerunInput: { resolvedHeadSha: newHeadSha },
+    });
   });
 
   test("derives exact dedupe, branch, and collision keys", async () => {
@@ -129,6 +207,175 @@ describe("LoopJobQueue", () => {
     expect(await queue.list()).toEqual([]);
   });
 
+  test("conditional control-plane updates cannot overwrite a newer dispatch token", async () => {
+    const clock = new FakeClock(45_000);
+    const queue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock });
+    const { job: pending } = await queue.enqueue({
+      loopId: LOOP_ID,
+      triggerKind: "manual",
+      subjectKey: "manual:stale-control-plane",
+    });
+    const running = await queue.claimNextReady({
+      maxConcurrent: 1,
+      leaseOwnerId: "current-process",
+      leaseToken: "current-dispatch-token",
+      startedAt: 45_001,
+      leaseExpiresAt: 75_001,
+    });
+
+    const staleCancel = await queue.updateIfCurrent(pending.jobId, pending, {
+      status: "cancelled",
+      leaseOwnerId: undefined,
+      leaseToken: undefined,
+    });
+
+    expect(staleCancel).toMatchObject({ outcome: "condition_mismatch" });
+    expect(await queue.read(pending.jobId)).toMatchObject({
+      status: "running",
+      attempts: 1,
+      leaseOwnerId: running?.leaseOwnerId,
+      leaseToken: running?.leaseToken,
+    });
+  });
+
+  test("conditional control-plane updates compare the durable record revision", async () => {
+    const clock = new FakeClock(46_000);
+    const queue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock });
+    const { job: staleSnapshot } = await queue.enqueue({
+      loopId: LOOP_ID,
+      triggerKind: "manual",
+      subjectKey: "manual:stale-revision",
+    });
+    clock.set(46_001);
+    await queue.enqueue({
+      loopId: LOOP_ID,
+      triggerKind: "manual",
+      subjectKey: "manual:stale-revision",
+      priority: 10,
+      eventSummary: { summary: "coalesced newer input" },
+    });
+
+    const staleUpdate = await queue.updateIfCurrent(staleSnapshot.jobId, staleSnapshot, {
+      status: "cancelled",
+      blockedReason: "cancelled_by_user",
+    });
+
+    expect(staleUpdate).toMatchObject({ outcome: "condition_mismatch" });
+    expect(await queue.read(staleSnapshot.jobId)).toMatchObject({
+      status: "pending",
+      priority: 10,
+      updatedAt: 46_001,
+    });
+  });
+
+  test("atomically finishes the owned dispatch and materializes its coalesced rerun", async () => {
+    const clock = new FakeClock(47_000);
+    const queue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock });
+    const oldHead = "a".repeat(40);
+    const newHead = "b".repeat(40);
+    const { job } = await queue.enqueue({
+      loopId: LOOP_ID,
+      triggerKind: "on_commit",
+      subjectKey: "branch:atomic-finish",
+      resolvedHeadSha: oldHead,
+    });
+    const running = await queue.claimNextReady({
+      maxConcurrent: 1,
+      leaseOwnerId: "atomic-finish-process",
+      leaseToken: "atomic-finish-token",
+      startedAt: 47_001,
+      leaseExpiresAt: 77_001,
+    });
+    await queue.enqueue({
+      loopId: LOOP_ID,
+      triggerKind: "on_commit",
+      subjectKey: "branch:atomic-finish",
+      resolvedHeadSha: newHead,
+      eventSummary: { summary: "new commit while dispatch is running" },
+    });
+
+    const result = await queue.finishClaimedRunning(
+      job.jobId,
+      { leaseOwnerId: running!.leaseOwnerId!, leaseToken: running!.leaseToken! },
+      {
+        status: "succeeded",
+        endedAt: 47_002,
+        leaseExpiresAt: undefined,
+        leaseOwnerId: undefined,
+        leaseToken: undefined,
+      },
+      { summary: "queued atomic rerun", source: "loop-coordinator" },
+      47_002,
+    );
+
+    expect(result.outcome).toBe("updated");
+    if (result.outcome !== "updated") throw new Error("Expected owned finish");
+    expect(result.updated).toMatchObject({ status: "succeeded", resolvedHeadSha: oldHead });
+    expect(result.updated.rerunAfterCurrent).toBeUndefined();
+    expect(result.updated.rerunInput).toBeUndefined();
+    expect(result.rerun).toMatchObject({ status: "pending", resolvedHeadSha: newHead, attempts: 0 });
+    expect(result.rerun?.worktreePath).toBeUndefined();
+    expect((await queue.list()).map((entry) => entry.status)).toEqual(["succeeded", "pending"]);
+  });
+
+  test("stale finish token cannot update the job or materialize a rerun", async () => {
+    const clock = new FakeClock(48_000);
+    const queue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock });
+    const { job } = await queue.enqueue({
+      loopId: LOOP_ID,
+      triggerKind: "on_commit",
+      subjectKey: "branch:stale-atomic-finish",
+    });
+    const first = await queue.claimNextReady({
+      maxConcurrent: 1,
+      leaseOwnerId: "stale-finish-process",
+      leaseToken: "stale-token",
+      startedAt: 48_001,
+      leaseExpiresAt: 78_001,
+    });
+    await queue.enqueue({
+      loopId: LOOP_ID,
+      triggerKind: "on_commit",
+      subjectKey: "branch:stale-atomic-finish",
+      resolvedHeadSha: "c".repeat(40),
+    });
+    await queue.updateClaimedRunning(job.jobId, {
+      leaseOwnerId: first!.leaseOwnerId!,
+      leaseToken: first!.leaseToken!,
+    }, {
+      status: "pending",
+      startedAt: undefined,
+      leaseExpiresAt: undefined,
+      leaseOwnerId: undefined,
+      leaseToken: undefined,
+    });
+    const second = await queue.claimNextReady({
+      maxConcurrent: 1,
+      leaseOwnerId: "stale-finish-process",
+      leaseToken: "current-token",
+      startedAt: 48_002,
+      leaseExpiresAt: 78_002,
+    });
+
+    const result = await queue.finishClaimedRunning(
+      job.jobId,
+      { leaseOwnerId: "stale-finish-process", leaseToken: "stale-token" },
+      { status: "failed", rerunAfterCurrent: undefined, rerunInput: undefined },
+      { summary: "must not be queued" },
+      48_003,
+    );
+
+    expect(result).toMatchObject({ outcome: "lease_mismatch" });
+    expect(await queue.list()).toEqual([
+      expect.objectContaining({
+        jobId: job.jobId,
+        status: "running",
+        leaseToken: second?.leaseToken,
+        rerunAfterCurrent: true,
+      }),
+    ]);
+  });
+
   test("serializes concurrent enqueue mutations for the same queue file", async () => {
     const queue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock: new FakeClock(50_000) });
 
@@ -137,6 +384,7 @@ describe("LoopJobQueue", () => {
     }));
 
     expect(await queue.list()).toHaveLength(25);
+    expect(__queueLockCountForTest()).toBe(0);
   });
 
   test("rejects symlinked queue roots that escape the workspace", async () => {

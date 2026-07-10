@@ -147,6 +147,7 @@ describe("GoalStateManager", () => {
       projectId: "project-a",
       title: null,
       status: "draft",
+      useWorktree: false,
       attempt: 1,
       pendingHitlIds: [],
       approvalRefs: [],
@@ -166,7 +167,63 @@ describe("GoalStateManager", () => {
       "status",
       "title",
       "updatedAt",
+      "useWorktree",
     ]);
+  });
+
+  test("persists worktree opt-in only while a Goal is draft", async () => {
+    const manager = new GoalStateManager(TMP_DIR);
+    const created = await manager.create({
+      projectId: "project-a",
+      objective: "Run in isolation.",
+      acceptanceCriteria: "The Goal session executes from a managed worktree.",
+      useWorktree: true,
+    });
+
+    expect(created.useWorktree).toBe(true);
+    expect((await manager.patchDraft(created.id, { useWorktree: false })).useWorktree).toBe(false);
+    await manager.start(created.id, { mainSessionId: "main-session" });
+    expect(await captureAsyncError(() => manager.patchDraft(created.id, { useWorktree: true }))).toBeInstanceOf(GoalStateError);
+  });
+
+  test("worktree claim is write-once and cannot revive a disabled draft", async () => {
+    const manager = new GoalStateManager(TMP_DIR);
+    const disabled = await manager.create({
+      projectId: "project-a",
+      objective: "Allow a concurrent disable.",
+      acceptanceCriteria: "A stale worktree claim cannot turn isolation back on.",
+      useWorktree: true,
+    });
+    await manager.patchDraft(disabled.id, { useWorktree: false });
+    const resource = {
+      path: join(TMP_DIR, "goal-worktree"),
+      branchName: "archcode/goal/123456789abc",
+      baseSha: "a".repeat(40),
+      createdAt: new Date().toISOString(),
+    };
+
+    expect(await captureAsyncError(() => manager.setWorktree(disabled.id, resource))).toBeInstanceOf(GoalStateError);
+    const stillDisabled = await manager.read(disabled.id);
+    expect(stillDisabled.useWorktree).toBe(false);
+    expect(stillDisabled).not.toHaveProperty("worktree");
+
+    const claimed = await manager.create({
+      projectId: "project-a",
+      objective: "Claim one resource.",
+      acceptanceCriteria: "The resource identity cannot be replaced or disabled.",
+      useWorktree: true,
+    });
+    await manager.setWorktree(claimed.id, resource);
+    expect((await manager.setWorktree(claimed.id, resource)).worktree).toEqual(resource);
+    expect((await manager.setWorktree(claimed.id, {
+      ...resource,
+      createdAt: new Date(Date.parse(resource.createdAt) + 1_000).toISOString(),
+    })).worktree).toEqual(resource);
+    expect(await captureAsyncError(() => manager.setWorktree(claimed.id, {
+      ...resource,
+      path: join(TMP_DIR, "other-worktree"),
+    }))).toBeInstanceOf(GoalStateError);
+    expect(await captureAsyncError(() => manager.patchDraft(claimed.id, { useWorktree: false }))).toBeInstanceOf(GoalStateError);
   });
 
   test("patchDraft is limited to draft goals", async () => {
