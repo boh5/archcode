@@ -1,7 +1,7 @@
 import { Hono } from "hono";
-import { NotRootSessionError, SessionDeleteConflictError, SessionDeleteInProgressError, SessionDeleteOwnerConflictError, SessionFamilyStopInProgressError, SessionFileNotFoundError } from "@archcode/agent-core";
+import { NotRootSessionError, SessionDeleteConflictError, SessionDeleteInProgressError, SessionDeleteOwnerConflictError, SessionFamilyStopConflictError, SessionFamilyStopInProgressError, SessionFileNotFoundError } from "@archcode/agent-core";
 import type { AgentRuntime } from "@archcode/agent-core";
-import { BadRequestError, ConflictError, SessionNotFoundError } from "../errors";
+import { BadRequestError, ConflictError, SessionNotFoundError, SessionStopConflictHttpError } from "../errors";
 import { resolveProject } from "../resolve";
 
 export function createSessionsRoutes(runtime: AgentRuntime): Hono {
@@ -46,6 +46,34 @@ export function createSessionsRoutes(runtime: AgentRuntime): Hono {
       }
       if (error instanceof SessionFileNotFoundError || isMissingFileError(error)) {
         throw new SessionNotFoundError(sessionId);
+      }
+      throw error;
+    }
+  });
+
+  app.post("/:rootSessionId/stop", async (c) => {
+    await rejectRequestBody(c.req.text());
+    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
+    const rootSessionId = requiredParam(c.req.param("rootSessionId"), "rootSessionId");
+
+    try {
+      await runtime.stopSessionFamily(project.workspaceRoot, rootSessionId);
+      return c.json({ ok: true });
+    } catch (error) {
+      if (error instanceof NotRootSessionError) {
+        throw new BadRequestError(`Session "${rootSessionId}" is not a root session`);
+      }
+      if (error instanceof SessionFamilyStopConflictError) {
+        throw new SessionStopConflictHttpError(error.rootSessionId, error.stuckSessionIds, error.message);
+      }
+      if (error instanceof SessionFamilyStopInProgressError) {
+        throw new SessionStopConflictHttpError(error.rootSessionId, [error.sessionId], error.message);
+      }
+      if (error instanceof SessionDeleteInProgressError) {
+        throw new SessionStopConflictHttpError(error.rootSessionId, [error.sessionId], error.message);
+      }
+      if (error instanceof SessionFileNotFoundError || isMissingFileError(error)) {
+        throw new SessionNotFoundError(rootSessionId);
       }
       throw error;
     }

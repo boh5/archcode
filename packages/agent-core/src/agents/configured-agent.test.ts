@@ -708,6 +708,9 @@ describe("ConfiguredAgent", () => {
       },
     });
     const store = storeManager.create(crypto.randomUUID(), tmpRoot, { loopId });
+    // ProjectContextResolver scans durable Session identities. Mirror the
+    // production createSessionFile barrier instead of racing the queued write.
+    await storeManager.flushSession(store.getState().sessionId, tmpRoot);
     const agent = createAgent({ definition: orchestratorAgentDefinition, toolRegistry, store });
 
     await agent.run("comment on PR", {

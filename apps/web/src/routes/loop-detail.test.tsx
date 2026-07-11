@@ -449,11 +449,11 @@ function toPath(input: Parameters<typeof fetch>[0]): string {
 describe("LoopDetailRoute", () => {
   beforeEach(() => {
     mock.restore();
-    hitlStore.getState().resetProject("demo");
+    hitlStore.getState().removeProject("demo");
   });
 
   afterEach(() => {
-    hitlStore.getState().resetProject("demo");
+    hitlStore.getState().removeProject("demo");
     restoreGlobals();
     mock.restore();
   });

@@ -6,7 +6,7 @@ import { ChatHeader } from "../components/features/ChatHeader";
 import { ChatInput } from "../components/features/ChatInput";
 import { useFocusedSession, useProjects, useSession } from "../api/queries";
 import { useRealtimeHitl } from "../store/hitl-store";
-import { getWebSessionStore, markSessionForeground, useSessionStore } from "../store/session-store";
+import { getWebSessionStore, markSessionForeground } from "../store/session-store";
 
 export function SessionRoute() {
   const { slug = "", sessionId = "" } = useParams<{
@@ -16,15 +16,16 @@ export function SessionRoute() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
-  const { data: session } = useSession(slug, sessionId);
+  const { data: session, isLoading: isSessionLoading, error: sessionError } = useSession(slug, sessionId);
   const { data: projects = [] } = useProjects();
   const projectRoot = projects.find((project) => project.slug === slug)?.workspaceRoot;
-  const focusSessionId = useSessionStore(sessionId, (s) => s.focusSessionId, slug);
+  const rootSessionId = session?.rootSessionId ?? sessionId;
+  const focusSessionId = searchParams.get("focus");
   const { data: focusedSession, isLoading: isFocusedLoading, error: focusedError } = useFocusedSession(slug, focusSessionId);
   const sessionHitl = useRealtimeHitl({
     slug,
     scope: "session",
-    ownerId: sessionId,
+    ownerId: session?.rootSessionId,
     includeChildren: true,
   });
   const focusedHitl = useRealtimeHitl({
@@ -74,11 +75,12 @@ export function SessionRoute() {
   }, [focusSessionId, focusedSession, slug]);
 
   useEffect(() => {
-    markSessionForeground(slug, sessionId, true);
+    if (!session || session.rootSessionId !== sessionId) return;
+    markSessionForeground(slug, rootSessionId, true);
     return () => {
-      markSessionForeground(slug, sessionId, false);
+      markSessionForeground(slug, rootSessionId, false);
     };
-  }, [slug, sessionId]);
+  }, [rootSessionId, session, slug, sessionId]);
 
   useEffect(() => {
     if (session) {
@@ -119,13 +121,25 @@ export function SessionRoute() {
   }, [session, sessionId, slug]);
 
   useEffect(() => {
-    const focusId = searchParams.get("focus") ?? null;
-    const store = getWebSessionStore(sessionId, slug);
-    store.getState().setFocusSessionId(focusId);
-  }, [searchParams, sessionId, slug]);
+    if (!session || session.rootSessionId === sessionId) return;
+    const canonicalSearch = new URLSearchParams(searchParams);
+    canonicalSearch.set("focus", session.sessionId);
+    const query = canonicalSearch.toString();
+    navigate(
+      `/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(session.rootSessionId)}${query.length > 0 ? `?${query}` : ""}`,
+      { replace: true },
+    );
+  }, [navigate, searchParams, session, sessionId, slug]);
 
   useEffect(() => {
-    const store = getWebSessionStore(sessionId, slug);
+    if (!session || session.rootSessionId !== sessionId) return;
+    const store = getWebSessionStore(rootSessionId, slug);
+    store.getState().setFocusSessionId(focusSessionId);
+  }, [focusSessionId, rootSessionId, session, sessionId, slug]);
+
+  useEffect(() => {
+    if (!session || session.rootSessionId !== sessionId) return;
+    const store = getWebSessionStore(rootSessionId, slug);
     let prev = store.getState().focusSessionId;
     const unsub = store.subscribe((state) => {
       if (state.focusSessionId !== prev) {
@@ -143,7 +157,24 @@ export function SessionRoute() {
       }
     });
     return unsub;
-  }, [sessionId, slug, navigate]);
+  }, [rootSessionId, session, sessionId, slug, navigate]);
+
+  if (sessionError) {
+    return (
+      <div className="flex h-full items-center justify-center text-sm text-text-secondary">
+        Failed to load session
+      </div>
+    );
+  }
+
+  if (isSessionLoading || !session || session.rootSessionId !== sessionId) {
+    return (
+      <div className="flex h-full items-center justify-center gap-2 text-sm text-text-secondary">
+        <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-text-muted border-t-transparent" />
+        Loading session...
+      </div>
+    );
+  }
 
   // Focused view: breadcrumb bar + child session messages (read-only)
   if (focusSessionId) {
@@ -155,7 +186,7 @@ export function SessionRoute() {
         : focusedSession?.title ?? focusSessionId;
 
     const handleReturn = () => {
-      const store = getWebSessionStore(sessionId, slug);
+      const store = getWebSessionStore(rootSessionId, slug);
       store.getState().setFocusSessionId(null);
     };
 
@@ -206,17 +237,17 @@ export function SessionRoute() {
     <div className="flex h-full flex-col">
       <ChatHeader
         slug={slug}
-        sessionId={sessionId}
+        sessionId={rootSessionId}
         goalId={session?.goalId}
         projectRoot={projectRoot}
         onToggleDetail={() => {}}
       />
-      <ChatMessages slug={slug} sessionId={sessionId} />
+      <ChatMessages slug={slug} sessionId={rootSessionId} />
       <HitlInbox
         projections={sessionHitl}
         emptyMessage="No pending approvals for this session"
       />
-      <ChatInput slug={slug} sessionId={sessionId} />
+      <ChatInput slug={slug} sessionId={rootSessionId} />
     </div>
   );
 }

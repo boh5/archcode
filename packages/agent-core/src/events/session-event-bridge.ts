@@ -45,8 +45,15 @@ export class SessionEventBridge {
     return () => {
       registration.unsubscribeStore?.();
       registrations.delete(registration);
-      if (registrations.size === 0) this.#subscriptions.delete(key);
+      if (registrations.size === 0) {
+        this.#subscriptions.delete(key);
+        this.#attachedStores.delete(key);
+      }
     };
+  }
+
+  hasSubscriptions(workspaceRoot: string, sessionId: string): boolean {
+    return (this.#subscriptions.get(scopedKey(workspaceRoot, sessionId))?.size ?? 0) > 0;
   }
 
   attachSession(

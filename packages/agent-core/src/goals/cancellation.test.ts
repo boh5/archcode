@@ -129,6 +129,7 @@ function hitlInput(ownerId: string, ownerType: "session" | "goal", hitlId: strin
   return {
     hitlId,
     owner: { projectSlug: "project-a", ownerType, ownerId },
+    ...(ownerType === "session" ? { sessionRootId: ownerId } : {}),
     blockingKey: `${ownerType}:${ownerId}:${hitlId}`,
     source: ownerType === "session"
       ? { type: "ask_user" as const, sessionId: ownerId, toolCallId: "ask-1" }
@@ -485,15 +486,22 @@ describe("GoalCancellationService", () => {
       expect(committed.blocker).toBeUndefined();
       await expect(fixture.goalState.start(goal.id, { mainSessionId: mainId })).rejects.toThrow();
       await expect(fixture.goalState.retry(goal.id, { mainSessionId: mainId })).rejects.toThrow();
-      await expect(new GoalHitlResumeAdapter({
+      const goalResumeAdapter = new GoalHitlResumeAdapter({
         workspaceRoot: TMP_ROOT,
         goalStateManager: fixture.goalState,
         hitlService: fixture.hitl,
         goalCancellation: service,
-      }).resume(goalRecord, {
+      });
+      const goalResponse = {
         type: "approval_decision",
         decision: "approved",
-      })).rejects.toBeInstanceOf(GoalCancellationError);
+      } as const;
+      const preparedGoalResume = await goalResumeAdapter.prepare(goalRecord, goalResponse);
+      try {
+        await expect(preparedGoalResume.run(goalRecord, goalResponse)).rejects.toBeInstanceOf(GoalCancellationError);
+      } finally {
+        preparedGoalResume.release();
+      }
 
       expect((await service.cancel(goal.id, {
         source: "agent",

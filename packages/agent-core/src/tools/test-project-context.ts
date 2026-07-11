@@ -4,7 +4,7 @@ import type { StoreApi } from "zustand";
 
 import { GoalStateManager } from "../goals/state";
 import { HitlService } from "../hitl/service";
-import { ResumeCoordinator } from "../hitl/resume-coordinator";
+import { createPreparedHitlResume, ResumeCoordinator } from "../hitl/resume-coordinator";
 import { LoopStateManager } from "../loops/state";
 import { MemoryFileManager } from "../memory/file-manager";
 import { silentLogger } from "../logger";
@@ -89,9 +89,9 @@ function createTestResumeCoordinator(hitl: HitlService): ResumeCoordinator {
   return new ResumeCoordinator({
     hitl,
     adapters: {
-      session: { resume: async () => undefined },
-      goal: { resume: async () => undefined },
-      loop: { resume: async () => undefined },
+      session: { prepare: async () => createPreparedHitlResume(async () => undefined) },
+      goal: { prepare: async () => createPreparedHitlResume(async () => undefined) },
+      loop: { prepare: async () => createPreparedHitlResume(async () => undefined) },
     },
     logger: silentLogger,
   });

@@ -219,6 +219,7 @@ class FakeLoopRuntime {
   });
   readonly startSessionExecutionMock = mock((input: StartSessionExecutionInput): ActiveSessionExecution => ({
     sessionId: input.sessionId,
+    rootSessionId: input.sessionId,
     workspaceRoot: input.workspaceRoot,
     agentName: input.agentName ?? "orchestrator",
     origin: "user_message",
@@ -359,6 +360,7 @@ function hitlRequestEvent(hitlId: string): SessionEventEnvelope {
     request: {
       hitlId,
       owner: { projectSlug: "project-a", ownerType: "session", ownerId: "session-1" },
+      sessionRootId: "session-1",
       blockingKey: `session:session-1:approval:${hitlId}`,
       source: { type: "ask_user", sessionId: "session-1" },
       status: "pending",

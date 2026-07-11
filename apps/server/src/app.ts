@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import type { AgentRuntime } from "@archcode/agent-core";
+import type { AgentRuntime, ProjectInfo } from "@archcode/agent-core";
 import type { GlobalSSEEvent, GlobalSessionEventEnvelope, HitlStreamEvent, ToolChildSessionLinkEvent, ToolChildSessionLinkStatus } from "@archcode/protocol";
 import { errorHandler } from "./error-handler";
 import { UnauthorizedError } from "./errors";
@@ -73,7 +73,15 @@ export function createServerApp(
 
   app.get("/api/health", (c) => c.json({ ok: true }));
 
-  const projects = createProjectsRoutes(serverRuntime);
+  const projects = createProjectsRoutes(serverRuntime, {
+    onProjectRegistered: async (project) => {
+      await publishProjectControlPlaneSnapshot(serverRuntime, globalEventBus, project);
+    },
+    onProjectRemoved: async (snapshot) => {
+      globalEventBus.emit(snapshot.sessionRuntime);
+      globalEventBus.emit(snapshot.hitl);
+    },
+  });
   const dashboard = createDashboardRoutes(serverRuntime);
   const goals = createGoalsRoutes(serverRuntime);
   const projectHitl = createHitlRoutes(serverRuntime);
@@ -81,9 +89,13 @@ export function createServerApp(
   const sessions = createSessionsRoutes(serverRuntime);
   const messages = createMessagesRoutes(serverRuntime);
   const globalEvents = createGlobalEventsRoutes(globalEventBus, {
-    initialEvents: () => typeof serverRuntime.listPendingHitlEvents === "function"
-      ? serverRuntime.listPendingHitlEvents()
-      : [],
+    initialEvents: async () => {
+      const [sessionRuntimeEvents, hitlEvents] = await Promise.all([
+        serverRuntime.listSessionRuntimeEvents(),
+        serverRuntime.listPendingHitlEvents(),
+      ]);
+      return [...sessionRuntimeEvents, ...hitlEvents];
+    },
   });
   const commands = createCommandsRoutes(serverRuntime);
   const compression = createCompressionRoutes(serverRuntime);
@@ -115,6 +127,7 @@ export function createServerApp(
   }
 
   wireHitlRealtimeBridge(serverRuntime, globalEventBus);
+  wireSessionRuntimeBridge(serverRuntime, globalEventBus);
   wireMcpStatusBridge(serverRuntime, globalEventBus);
   wireResourceChangeBridge(serverRuntime, globalEventBus);
 
@@ -240,6 +253,13 @@ function wireHitlRealtimeBridge(runtime: AgentRuntime, bus: typeof globalEventBu
   runtime.subscribeHitlEvents((event) => bus.emit(event));
 }
 
+function wireSessionRuntimeBridge(
+  runtime: AgentRuntime,
+  bus: { emit(event: GlobalSSEEvent): void },
+): void {
+  runtime.subscribeSessionRuntimeChanges((event) => bus.emit(event));
+}
+
 /**
  * Bridges runtime MCP status changes to the global SSE event bus.
  *
@@ -267,4 +287,37 @@ function wireResourceChangeBridge(
   bus: { emit(event: GlobalSSEEvent): void },
 ): void {
   runtime.subscribeResourceChanges?.((event) => bus.emit(event));
+}
+
+async function publishProjectControlPlaneSnapshot(
+  runtime: AgentRuntime,
+  bus: typeof globalEventBus,
+  project: Pick<ProjectInfo, "slug" | "workspaceRoot">,
+): Promise<void> {
+  let liveRevision = 0;
+  const unsubscribe = bus.subscribe((event) => {
+    if (isProjectControlPlaneLiveEvent(event, project.slug)) liveRevision += 1;
+  });
+
+  try {
+    while (true) {
+      const revisionBeforeRead = liveRevision;
+      const snapshot = await runtime.getProjectControlPlaneSnapshot(project.workspaceRoot, project.slug);
+
+      if (liveRevision !== revisionBeforeRead) continue;
+
+      // There is deliberately no await between the stability check and these
+      // synchronous emits: live deltas cannot overtake the authoritative pair.
+      bus.emit(snapshot.sessionRuntime);
+      bus.emit(snapshot.hitl);
+      return;
+    }
+  } finally {
+    unsubscribe();
+  }
+}
+
+function isProjectControlPlaneLiveEvent(event: GlobalSSEEvent, projectSlug: string): boolean {
+  return (event.type === "session.runtime_changed" || event.type === "hitl.event")
+    && event.projectSlug === projectSlug;
 }

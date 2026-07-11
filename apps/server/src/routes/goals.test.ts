@@ -28,6 +28,7 @@ interface RuntimeFixture {
 
 interface TestSessionBinding {
   readonly goalId?: string;
+  readonly rootSessionId?: string;
   readonly sessionRole?: "main" | "plan" | "build" | "review" | "explore" | "librarian" | "standalone";
   readonly cwd?: string;
 }
@@ -42,6 +43,7 @@ const otherGoalSessionId = "77777777-7777-4777-8777-777777777777";
 const nonMainSessionId = "88888888-8888-4888-8888-888888888888";
 const missingSessionId = "99999999-9999-4999-8999-999999999999";
 const otherGoalId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const activeFamilyRootSessionId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 class FakeGoalStateError extends Error {
   constructor(message: string) {
@@ -237,8 +239,8 @@ function createRuntime(
   const contextResolver = {
     resolve: mock(async () => ({ goalState: manager, hitl: { cancelOwner } })),
   };
-  const abortSessionExecutionAndWait = mock(async (_workspaceRoot: string, _sessionId: string) => undefined);
-  const isSessionExecutionRunning = mock((_workspaceRoot: string, _sessionId: string) => false);
+  const stopSessionFamily = mock(async (_workspaceRoot: string, _sessionId: string) => undefined);
+  const getSessionFamilyActivity = mock((_workspaceRoot: string, _rootSessionId: string) => "idle" as const);
   const listSessionTree = mock(async (_workspaceRoot: string, rootSessionId: string) => ({
     root: {
       session: { sessionId: rootSessionId, rootSessionId, title: null, createdAt: Date.now() },
@@ -251,6 +253,7 @@ function createRuntime(
       get: mock(async (slug: string) => slug === project.slug ? project : undefined),
     },
     contextResolver,
+    subscribeSessionRuntimeChanges: mock(() => () => undefined),
     createSession: mock(async (_workspaceRoot: string, options?: TestSessionBinding) => {
       sessionBindings.set(createdMainSessionId, {
         ...(options?.goalId === undefined ? {} : { goalId: options.goalId }),
@@ -259,6 +262,7 @@ function createRuntime(
       });
       return {
         sessionId: createdMainSessionId,
+        rootSessionId: createdMainSessionId,
         title: null,
         createdAt: Date.now(),
         messages: [],
@@ -275,6 +279,7 @@ function createRuntime(
       const binding = sessionBindings.get(sessionId) ?? {};
       return {
         sessionId,
+        rootSessionId: binding.rootSessionId ?? sessionId,
         title: null,
         createdAt: Date.now(),
         messages: [],
@@ -296,8 +301,8 @@ function createRuntime(
       executionToken: Symbol("test-execution"),
       startedAt: Date.now(),
     })),
-    abortSessionExecutionAndWait,
-    isSessionExecutionRunning,
+    stopSessionFamily,
+    getSessionFamilyActivity,
     listSessionTree,
     cancelGoal: mock(async (workspaceRoot: string, goalId: string, request: { source: string; reason?: string }) => {
       const goal = await manager.read(goalId);
@@ -309,8 +314,8 @@ function createRuntime(
       const sessionIds = new Set(goal.childSessionIds);
       if (goal.mainSessionId !== undefined) {
         sessionIds.add(goal.mainSessionId);
-        await abortSessionExecutionAndWait(workspaceRoot, goal.mainSessionId);
-        if (isSessionExecutionRunning(workspaceRoot, goal.mainSessionId)) {
+        await stopSessionFamily(workspaceRoot, goal.mainSessionId);
+        if (getSessionFamilyActivity(workspaceRoot, goal.mainSessionId) !== "idle") {
           const error = new Error(`Goal ${goalId} cannot be cancelled until Session ${goal.mainSessionId} stops`);
           error.name = "GoalCancellationError";
           throw error;
@@ -982,8 +987,8 @@ describe("goals routes", () => {
     await manager.setReview(created.id);
     await manager.setMainSession(created.id, activeRetrySessionId);
     bindSession(activeRetrySessionId, { goalId: created.id, sessionRole: "main", cwd: project.workspaceRoot });
-    (runtime.isSessionExecutionRunning as ReturnType<typeof mock>).mockImplementation(
-      (_workspaceRoot: string, sessionId: string) => sessionId === activeRetrySessionId,
+    (runtime.getSessionFamilyActivity as ReturnType<typeof mock>).mockImplementation(
+      (_workspaceRoot: string, sessionId: string) => sessionId === activeRetrySessionId ? "running" : "idle",
     );
 
     const retryRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/retry`, { method: "POST" });
@@ -993,6 +998,34 @@ describe("goals routes", () => {
       error: { code: "BAD_REQUEST", message: `Goal ${created.id} cannot transition while Session ${activeRetrySessionId} is active` },
     });
     expect(runtime.startSessionExecution).toHaveBeenCalledTimes(1);
+  });
+
+  test("POST run checks a child Session through its root family activity", async () => {
+    const { app, bindSession, project, runtime } = await createFixture("child-root-family-activity");
+    const goal = await postGoal(app, project.slug);
+    bindSession(providedChildSessionId, {
+      goalId: goal.id,
+      rootSessionId: activeFamilyRootSessionId,
+      sessionRole: "build",
+    });
+    (runtime.getSessionFamilyActivity as ReturnType<typeof mock>).mockImplementation(
+      (_workspaceRoot: string, rootSessionId: string) => rootSessionId === activeFamilyRootSessionId ? "running" : "idle",
+    );
+
+    const response = await app.request(`/api/projects/${project.slug}/goals/${goal.id}/run`, {
+      method: "POST",
+      body: JSON.stringify({ childSessionIds: [providedChildSessionId] }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "BAD_REQUEST",
+        message: `Goal ${goal.id} cannot transition while Session ${providedChildSessionId} is active`,
+      },
+    });
+    expect(runtime.getSessionFamilyActivity).toHaveBeenCalledWith(project.workspaceRoot, activeFamilyRootSessionId);
   });
 
   test("POST retry treats only the same active running main Session as idempotent", async () => {
@@ -1014,8 +1047,8 @@ describe("goals routes", () => {
     bindSession(activeRetrySessionId, { goalId: activeGoal.id, sessionRole: "main" });
     await manager.setMainSession(activeGoal.id, activeRetrySessionId);
     await manager.setStatus(activeGoal.id, "running");
-    (runtime.isSessionExecutionRunning as ReturnType<typeof mock>).mockImplementation(
-      (_workspaceRoot: string, sessionId: string) => sessionId === activeRetrySessionId,
+    (runtime.getSessionFamilyActivity as ReturnType<typeof mock>).mockImplementation(
+      (_workspaceRoot: string, sessionId: string) => sessionId === activeRetrySessionId ? "running" : "idle",
     );
 
     const activeRes = await app.request(`/api/projects/${project.slug}/goals/${activeGoal.id}/retry`, {
@@ -1179,8 +1212,8 @@ describe("goals routes", () => {
       activeRetrySessionId,
       otherRetrySessionId,
     ]);
-    (runtime.isSessionExecutionRunning as ReturnType<typeof mock>).mockImplementation(
-      (_workspaceRoot: string, sessionId: string) => activeSessionIds.has(sessionId),
+    (runtime.getSessionFamilyActivity as ReturnType<typeof mock>).mockImplementation(
+      (_workspaceRoot: string, sessionId: string) => activeSessionIds.has(sessionId) ? "running" : "idle",
     );
 
     const draftMain = await postGoal(app, project.slug);
@@ -1302,7 +1335,9 @@ describe("goals routes", () => {
     bindSession(activeRetrySessionId, { goalId: created.id, sessionRole: "main" });
     bindSession(otherRetrySessionId, { goalId: created.id, sessionRole: "main" });
     await manager.setMainSession(created.id, activeRetrySessionId);
-    (runtime.isSessionExecutionRunning as ReturnType<typeof mock>).mockImplementation((_workspaceRoot: string, sessionId: string) => sessionId === activeRetrySessionId);
+    (runtime.getSessionFamilyActivity as ReturnType<typeof mock>).mockImplementation(
+      (_workspaceRoot: string, sessionId: string) => sessionId === activeRetrySessionId ? "running" : "idle",
+    );
 
     const retryRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/retry`, {
       method: "POST",
@@ -1337,15 +1372,15 @@ describe("goals routes", () => {
     await manager.setMainSession(created.id, providedMainSessionId);
     await manager.addChildSession(created.id, providedChildSessionId);
     let running = true;
-    (runtime.isSessionExecutionRunning as ReturnType<typeof mock>).mockImplementation(() => running);
-    (runtime.abortSessionExecutionAndWait as ReturnType<typeof mock>).mockImplementation(async () => {
+    (runtime.getSessionFamilyActivity as ReturnType<typeof mock>).mockImplementation(() => running ? "running" : "idle");
+    (runtime.stopSessionFamily as ReturnType<typeof mock>).mockImplementation(async () => {
       running = false;
     });
 
     const cancelRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/cancel`, { method: "POST" });
 
     expect(cancelRes.status).toBe(200);
-    expect(runtime.abortSessionExecutionAndWait).toHaveBeenCalledWith(project.workspaceRoot, providedMainSessionId);
+    expect(runtime.stopSessionFamily).toHaveBeenCalledWith(project.workspaceRoot, providedMainSessionId);
     const context = await runtime.contextResolver.resolve(project.workspaceRoot);
     expect(context.hitl.cancelOwner).toHaveBeenCalledWith({
       projectSlug: project.slug,
@@ -1369,7 +1404,7 @@ describe("goals routes", () => {
     const created = await postGoal(app, project.slug);
     await manager.setStatus(created.id, "running");
     await manager.setMainSession(created.id, providedMainSessionId);
-    (runtime.isSessionExecutionRunning as ReturnType<typeof mock>).mockReturnValue(true);
+    (runtime.getSessionFamilyActivity as ReturnType<typeof mock>).mockReturnValue("running");
 
     const cancelRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/cancel`, { method: "POST" });
 
@@ -1402,14 +1437,14 @@ describe("goals routes", () => {
     let releaseAbort!: () => void;
     const abortReleased = new Promise<void>((resolve) => { releaseAbort = resolve; });
     let running = true;
-    (runtime.isSessionExecutionRunning as ReturnType<typeof mock>).mockImplementation(() => running);
-    (runtime.abortSessionExecutionAndWait as ReturnType<typeof mock>).mockImplementation(async () => {
+    (runtime.getSessionFamilyActivity as ReturnType<typeof mock>).mockImplementation(() => running ? "running" : "idle");
+    (runtime.stopSessionFamily as ReturnType<typeof mock>).mockImplementation(async () => {
       await abortReleased;
       running = false;
     });
 
     const cancellation = app.request(`/api/projects/${project.slug}/goals/${created.id}/cancel`, { method: "POST" });
-    while ((runtime.abortSessionExecutionAndWait as ReturnType<typeof mock>).mock.calls.length === 0) await Bun.sleep(1);
+    while ((runtime.stopSessionFamily as ReturnType<typeof mock>).mock.calls.length === 0) await Bun.sleep(1);
     const concurrentRun = app.request(`/api/projects/${project.slug}/goals/${created.id}/run`, { method: "POST" });
     releaseAbort();
 

@@ -204,11 +204,11 @@ async function renderGoalDetailRoute(
 describe("GoalDetailRoute", () => {
   beforeEach(() => {
     mock.restore();
-    hitlStore.getState().resetProject("demo");
+    hitlStore.getState().removeProject("demo");
   });
 
   afterEach(() => {
-    hitlStore.getState().resetProject("demo");
+    hitlStore.getState().removeProject("demo");
     restoreGlobals();
     mock.restore();
   });

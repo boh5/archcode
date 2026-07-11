@@ -38,6 +38,7 @@ export interface HitlServiceOptions extends HitlServiceManagers {
 
 export interface CreateHitlRecordInput {
   readonly owner: HitlOwnerKey;
+  readonly sessionRootId?: string;
   readonly blockingKey: string;
   readonly source: HitlSource;
   readonly displayPayload: HitlDisplayPayload;
@@ -87,6 +88,7 @@ export class HitlService {
     const record: HitlRecord = {
       hitlId: input.hitlId ?? crypto.randomUUID(),
       owner: input.owner,
+      ...(input.sessionRootId === undefined ? {} : { sessionRootId: input.sessionRootId }),
       blockingKey: input.blockingKey,
       source: input.source,
       status: "pending",
@@ -185,6 +187,7 @@ export class HitlService {
   shutdown(): void {
     // Owner-local writes are committed per operation; no in-memory waiters remain.
     this.#realtimeListeners.clear();
+    this.#realtimePublisher = undefined;
   }
 
   async #publishResolved(record: HitlRecord): Promise<void> {

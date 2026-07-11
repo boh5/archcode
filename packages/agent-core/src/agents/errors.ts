@@ -253,6 +253,29 @@ export class SessionHitlResumeLeaseExpiredError extends Error {
   }
 }
 
+export class SessionHitlResumeIdentityMismatchError extends Error {
+  constructor(
+    public readonly sessionId: string,
+    public readonly expectedRootSessionId: string,
+    public readonly actualRootSessionId: string | undefined,
+  ) {
+    super(
+      `Durable human-in-the-loop continuation for session "${sessionId}" belongs to root "${expectedRootSessionId}", but the loaded Session belongs to "${actualRootSessionId ?? "missing"}".`,
+    );
+    this.name = "SessionHitlResumeIdentityMismatchError";
+  }
+}
+
+export class SessionHitlResumeLeaseNotActivatedError extends Error {
+  constructor(
+    public readonly sessionId: string,
+    public readonly rootSessionId: string,
+  ) {
+    super(`Durable human-in-the-loop continuation for session "${sessionId}" has not validated root "${rootSessionId}" yet.`);
+    this.name = "SessionHitlResumeLeaseNotActivatedError";
+  }
+}
+
 export class SessionHitlCancelOnlyLeaseError extends Error {
   constructor(
     public readonly sessionId: string,

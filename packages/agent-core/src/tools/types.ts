@@ -55,7 +55,7 @@ export type ToolExecutionOrigin = {
 
 export interface ToolExecutionControl {
   readonly action: "stop_session_family";
-  readonly reason: "goal_cancelled";
+  readonly reason: "goal_cancelled" | "loop_budget_exceeded";
 }
 
 export interface ToolExecutionContext {
@@ -85,7 +85,6 @@ export interface ToolExecutionContext {
   startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
   cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
   resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
-  abortSessionExecutionAndWait?: (workspaceRoot: string, sessionId: string) => Promise<void>;
   /** Acquires a root-scoped cwd-transition lease; callers must always release it. */
   acquireSessionCwdTransition?: (workspaceRoot: string, sessionId: string) => () => void;
   currentDepth?: number;
@@ -126,6 +125,7 @@ export type PermissionDecision = {
   source?: "builtin-policy" | "tool-guard" | "project-approval" | "mcp";
   ruleId?: string;
   display?: string;
+  executionControl?: ToolExecutionControl;
 };
 
 export type ToolPermission = (

@@ -1,5 +1,5 @@
-export { closeMcpManagerBestEffort, createRuntime } from "./runtime";
-export type { AgentRuntime, AgentRuntimeOptions, CreateRuntimeSessionOptions, LoopIntegrationStatus, LoopIntegrationStatusSnapshot } from "./runtime";
+export { closeMcpManagerBestEffort, createRuntime, ProjectRuntimeActiveError } from "./runtime";
+export type { AgentRuntime, AgentRuntimeOptions, CreateRuntimeSessionOptions, LoopIntegrationStatus, LoopIntegrationStatusSnapshot, ProjectControlPlaneSnapshot, ProjectRemovalResult } from "./runtime";
 export type { CompressionOriginalRangeResult } from "./compression";
 
 export { createProcessRunner } from "./process/runner";
@@ -13,15 +13,18 @@ export {
   SessionCwdReferenceMigrationService,
   SessionDeleteInProgressError,
   SessionDeleteOwnerConflictError,
+  SessionFamilyActiveError,
+  SessionFamilyIdentityUnavailableError,
   SessionFamilyStopConflictError,
   SessionFamilyStopInProgressError,
+  SessionWorkspaceClosingError,
   SessionExecutionManager,
   SessionExecutionScopeConflictError,
   SessionExecutionScopeValidator,
   SessionHitlJournalBlockedError,
 } from "./execution";
 export type {
-  AcquireSessionHitlResumeOptions,
+  ReserveSessionHitlResumeOptions,
   ActiveSessionExecution,
   SessionCwdReferenceMigrationInput,
   SessionCwdReferenceMigrationServiceOptions,
@@ -35,6 +38,7 @@ export type {
   AcquireSessionFamilyStopInput,
   SessionFamilyController,
   SessionFamilyStopLease,
+  SessionWorkspaceCloseLease,
   SessionHitlResumeLease,
   SessionExecutionScopeConflictCode,
   SessionExecutionScopeEntry,
@@ -44,6 +48,8 @@ export type {
   SessionLoopExecutionClaimDecision,
   SessionLoopExecutionClaimInput,
   SessionLoopExecutionClaimResolver,
+  SessionRuntimeChange,
+  SessionRuntimeChangeListener,
   StartSessionExecutionInput,
   SubscribeSessionEventsInput,
 } from "./execution";
@@ -62,6 +68,7 @@ export type { ConsoleLike, LogEntry, LogFields, Logger, LogLevel } from "./logge
 
 export { ProjectContextResolver } from "./projects/context-resolver";
 export { ProjectRegistry, ProjectRegistryError } from "./projects/registry";
+export type { ProjectRegistrationResult } from "./projects/registry";
 export { SessionLifecycleService } from "./projects/session-lifecycle-service";
 export type { SessionLifecycleServiceOptions } from "./projects/session-lifecycle-service";
 export type { ProjectContext, ProjectInfo } from "./projects/types";

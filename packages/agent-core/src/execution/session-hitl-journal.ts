@@ -86,6 +86,7 @@ export async function prepareSessionHitlPause(input: {
 
   const created = await input.hitl.createWithResult({
     owner: input.checkpoint.request.owner,
+    sessionRootId: input.store.getState().rootSessionId,
     hitlId: input.checkpoint.hitlId,
     blockingKey: input.checkpoint.blockingKey,
     source: input.checkpoint.source,
@@ -269,8 +270,10 @@ async function repairMissingOwner(input: {
 }): Promise<SessionHitlCheckpointRecord> {
   const request = input.checkpoint.request;
   assertSessionRequestOwner(request.owner, input.sessionId);
+  const sessionRootId = (await input.sessions.getOrLoad(input.sessionId, input.workspaceRoot)).getState().rootSessionId;
   const result = await input.hitl.createWithResult({
     owner: request.owner,
+    sessionRootId,
     hitlId: input.checkpoint.hitlId,
     blockingKey: input.checkpoint.blockingKey,
     source: input.checkpoint.source,
@@ -293,6 +296,12 @@ async function convergePreparedRecord(input: {
   readonly checkpoint: SessionHitlCheckpointRecord;
   readonly record: HitlRecord;
 }): Promise<SessionHitlCheckpointRecord> {
+  const canonicalRootId = (await input.sessions.getOrLoad(input.sessionId, input.workspaceRoot)).getState().rootSessionId;
+  if (input.record.sessionRootId !== canonicalRootId) {
+    throw new Error(
+      `Session HITL ${input.record.hitlId} root ${input.record.sessionRootId ?? "missing"} does not match canonical root ${canonicalRootId}`,
+    );
+  }
   if (input.record.hitlId === input.checkpoint.hitlId) return input.checkpoint;
   if (input.record.blockingKey !== input.checkpoint.blockingKey) {
     throw new Error(`Session HITL ${input.checkpoint.hitlId} cannot converge onto unrelated owner record ${input.record.hitlId}`);

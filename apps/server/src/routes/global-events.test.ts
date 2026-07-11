@@ -27,6 +27,19 @@ function createApp(bus: GlobalEventBus, options?: Parameters<typeof createGlobal
   return app;
 }
 
+function createGlobalServerRuntime(): AgentRuntime {
+  return {
+    listSessionRuntimeEvents: mock(async () => [{
+      type: "session.runtime.snapshot",
+      projectSlugs: [],
+      families: [],
+      createdAt: 0,
+    }]),
+    listPendingHitlEvents: mock(async () => []),
+    subscribeSessionRuntimeChanges: mock(() => () => undefined),
+  } as unknown as AgentRuntime;
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolveDone) => setTimeout(resolveDone, ms));
 }
@@ -72,8 +85,8 @@ function sessionEvent(input: { slug: string; sessionId: string; eventId: number;
   };
 }
 
-function hitlSnapshotEvent(hitlId: string): Extract<GlobalSSEEvent, { type: "hitl.event" }> {
-  const projection: HitlProjection = {
+function hitlProjection(hitlId: string): HitlProjection {
+  return {
     hitlId,
     project: { slug: "proj" },
     owner: { projectSlug: "proj", ownerType: "session", ownerId: "session-1" },
@@ -88,24 +101,37 @@ function hitlSnapshotEvent(hitlId: string): Extract<GlobalSSEEvent, { type: "hit
     createdAt: "2026-07-08T00:00:00.000Z",
     updatedAt: "2026-07-08T00:00:00.000Z",
   };
+}
+
+function hitlSnapshot(
+  projections: HitlProjection[] = [],
+  projectSlugs: string[] = ["proj"],
+): Extract<GlobalSSEEvent, { type: "hitl.snapshot" }> {
+  return { type: "hitl.snapshot", projectSlugs, projections, createdAt: 0 };
+}
+
+function sessionRuntimeSnapshot(): Extract<GlobalSSEEvent, { type: "session.runtime.snapshot" }> {
   return {
-    type: "hitl.event",
-    projectSlug: projection.project.slug,
-    owner: projection.owner,
-    hitlId,
-    createdAt: 1,
-    payload: { type: "hitl.snapshot", status: projection.status },
-    projection,
+    type: "session.runtime.snapshot",
+    projectSlugs: ["proj"],
+    families: [{ projectSlug: "proj", rootSessionId: "root-1", activity: "running" }],
+    createdAt: 2,
   };
 }
 
-function hitlSnapshotReset(projectSlugs: string[] = ["proj"]): Extract<GlobalSSEEvent, { type: "hitl.snapshot" }> {
-  return { type: "hitl.snapshot", projectSlugs, createdAt: 0 };
+function sessionRuntimeChange(rootSessionId: string, activity: "idle" | "running" | "stopping"): GlobalSSEEvent {
+  return {
+    type: "session.runtime_changed",
+    projectSlug: "proj",
+    rootSessionId,
+    activity,
+    createdAt: Date.now(),
+  };
 }
 
 describe("global events route", () => {
   test("inherits /api auth middleware when mounted in the server app", async () => {
-    const { app } = createServerApp({} as AgentRuntime, { dev: true, password: "secret" });
+    const { app } = createServerApp(createGlobalServerRuntime(), { dev: true, password: "secret" });
 
     const unauthorized = await app.request("/api/events");
     expect(unauthorized.status).toBe(401);
@@ -137,21 +163,32 @@ describe("global events route", () => {
     expect(text).toContain('data: {"type":"event","slug":"alpha","sessionId":"s1","eventId":7');
   });
 
-  test("writes initial pending HITL snapshot events when a client connects", async () => {
+  test("writes one atomic pending HITL snapshot when a client connects", async () => {
     const bus = new GlobalEventBus();
-    const response = await createApp(bus, { initialEvents: async () => [hitlSnapshotReset(), hitlSnapshotEvent("hitl-refresh")] }).request("/api/events");
+    const response = await createApp(bus, { initialEvents: async () => [hitlSnapshot([hitlProjection("hitl-refresh")])] }).request("/api/events");
 
     const text = await readUntil(response, (chunk) => chunk.includes("hitl-refresh"));
 
     expect(text).toContain("event: hitl.snapshot");
-    expect(text).toContain("event: hitl.event");
-    expect(text).toContain('\"payload\":{\"type\":\"hitl.snapshot\",\"status\":\"pending\"');
+    expect(text).not.toContain("event: hitl.event");
+    expect(text).toContain('\"projections\":[');
     expect(text).toContain('\"hitlId\":\"hitl-refresh\"');
+  });
+
+  test("writes the authoritative Session Family runtime snapshot on connect", async () => {
+    const bus = new GlobalEventBus();
+    const response = await createApp(bus, { initialEvents: () => [sessionRuntimeSnapshot()] }).request("/api/events");
+
+    const text = await readUntil(response, (chunk) => chunk.includes("session.runtime.snapshot"));
+
+    expect(text).toContain("event: session.runtime.snapshot");
+    expect(text).toContain('"projectSlugs":["proj"]');
+    expect(text).toContain('"families":[{"projectSlug":"proj","rootSessionId":"root-1","activity":"running"}]');
   });
 
   test("continues streaming live events after initial HITL snapshots", async () => {
     const bus = new GlobalEventBus();
-    const response = await createApp(bus, { initialEvents: () => [hitlSnapshotReset(), hitlSnapshotEvent("hitl-initial")] }).request("/api/events");
+    const response = await createApp(bus, { initialEvents: () => [hitlSnapshot([hitlProjection("hitl-initial")])] }).request("/api/events");
 
     bus.emit(sessionEvent({ slug: "alpha", sessionId: "s1", eventId: 9, message: "after-initial" }));
 
@@ -168,7 +205,7 @@ describe("global events route", () => {
       initialEvents: async () => {
         initialStarted.resolve();
         await releaseInitial.promise;
-        return [hitlSnapshotReset(), hitlSnapshotEvent("hitl-buffered-initial")];
+        return [hitlSnapshot([hitlProjection("hitl-buffered-initial")])];
       },
     }).request("/api/events");
 
@@ -219,6 +256,30 @@ describe("global events route", () => {
     expect(text).toContain("kept-three");
   });
 
+  test("emits lagged when Session Family runtime changes are dropped", async () => {
+    const bus = new GlobalEventBus();
+    const firstWriteStarted = Promise.withResolvers<void>();
+    const unblockWrites = Promise.withResolvers<void>();
+    const onBeforeWrite = mock(async () => {
+      firstWriteStarted.resolve();
+      await unblockWrites.promise;
+    });
+    const response = await createApp(bus, { maxQueuedEvents: 2, onBeforeWrite }).request("/api/events");
+
+    bus.emit(sessionRuntimeChange("active-write", "running"));
+    await firstWriteStarted.promise;
+    bus.emit(sessionRuntimeChange("dropped-runtime", "running"));
+    bus.emit(sessionRuntimeChange("kept-runtime-1", "stopping"));
+    bus.emit(sessionRuntimeChange("kept-runtime-2", "idle"));
+    unblockWrites.resolve();
+
+    const text = await readUntil(response, (chunk) => chunk.includes("kept-runtime-2"));
+    expect(text).toContain("event: lagged");
+    expect(text).not.toContain("dropped-runtime");
+    expect(text).toContain("kept-runtime-1");
+    expect(text).toContain("kept-runtime-2");
+  });
+
   test("client disconnect cleans up the bus subscription", async () => {
     const bus = new CountingGlobalEventBus();
     const response = await createApp(bus).request("/api/events");
@@ -241,7 +302,7 @@ describe("global events route", () => {
   });
 
   test("server app uses the shared global event bus singleton", async () => {
-    const { app } = createServerApp({} as AgentRuntime, { dev: true });
+    const { app } = createServerApp(createGlobalServerRuntime(), { dev: true });
     const response = await app.request("/api/events");
 
     globalEventBus.emit(sessionEvent({ slug: "shared", sessionId: "singleton", eventId: 1, message: "from-singleton" }));
@@ -315,7 +376,7 @@ describe("global events route", () => {
   });
 
   test("server app no longer registers the old per-session SSE endpoint", async () => {
-    const { app } = createServerApp({} as AgentRuntime, { dev: true });
+    const { app } = createServerApp(createGlobalServerRuntime(), { dev: true });
 
     const response = await app.request("/api/projects/project/sessions/session/events");
 

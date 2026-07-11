@@ -1,14 +1,19 @@
-import { afterAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { AgentRuntime } from "@archcode/agent-core";
-import { ProjectRegistry, silentLogger } from "@archcode/agent-core";
+import { ProjectRegistry, ProjectRuntimeActiveError, silentLogger } from "@archcode/agent-core";
 import type { ProjectInfo } from "@archcode/agent-core";
+import type { GlobalSSEEvent } from "@archcode/protocol";
 import { createServerApp } from "../app";
+import { globalEventBus } from "../events/global-event-bus";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "projects-routes");
 
-function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
+function createTestRuntime(
+  projectRegistry: ProjectRegistry,
+  overrides: Partial<AgentRuntime> = {},
+): AgentRuntime {
   return {
     projectRegistry,
     mcpManager: undefined,
@@ -17,16 +22,70 @@ function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
     providerRegistry: undefined,
     warnings: [],
     contextResolver: undefined,
+    removeProject: async (projectSlug: string) => {
+      const project = await projectRegistry.remove(projectSlug);
+      if (project === undefined) return undefined;
+      const createdAt = Date.now();
+      return {
+        project,
+        snapshot: {
+          sessionRuntime: {
+            type: "session.runtime.snapshot",
+            projectSlugs: [project.slug],
+            families: [],
+            createdAt,
+          },
+          hitl: {
+            type: "hitl.snapshot",
+            projectSlugs: [project.slug],
+            projections: [],
+            createdAt,
+          },
+        },
+      };
+    },
+    listSessionRuntimeEvents: async () => [{
+      type: "session.runtime.snapshot",
+      projectSlugs: (await projectRegistry.list()).map((project) => project.slug),
+      families: [],
+      createdAt: Date.now(),
+    }],
+    listPendingHitlEvents: async () => [{
+      type: "hitl.snapshot",
+      projectSlugs: (await projectRegistry.list()).map((project) => project.slug),
+      projections: [],
+      createdAt: Date.now(),
+    }],
+    getProjectControlPlaneSnapshot: async (workspaceRoot: string, projectSlug: string) => {
+      const project = await projectRegistry.get(projectSlug);
+      if (project?.workspaceRoot !== workspaceRoot) throw new Error("project scope mismatch");
+      const createdAt = Date.now();
+      return {
+        sessionRuntime: {
+          type: "session.runtime.snapshot",
+          projectSlugs: [projectSlug],
+          families: [],
+          createdAt,
+        },
+        hitl: {
+          type: "hitl.snapshot",
+          projectSlugs: [projectSlug],
+          projections: [],
+          createdAt,
+        },
+      };
+    },
+    subscribeHitlEvents: () => () => undefined,
+    subscribeSessionRuntimeChanges: () => () => undefined,
     createSession: async () => ({ sessionId: "session", title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] }),
     getSessionFile: async (_workspaceRoot: string, sessionId: string) => ({ sessionId, title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] }),
     listSessions: async () => [],
     startSessionExecution: () => {
       throw new Error("not implemented");
     },
-    abortSessionExecution: () => false,
-    abortSessionExecutionAndWait: async () => undefined,
+    stopSessionFamily: async () => undefined,
     abortAllSessionExecutions: async () => undefined,
-    isSessionExecutionRunning: () => false,
+    getSessionFamilyActivity: () => "idle",
     getSessionExecution: () => undefined,
     subscribeSessionEvents: () => () => undefined,
     deleteSession: async () => undefined,
@@ -35,6 +94,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
     isSessionTombstoned: () => false,
     dispatchCommand: async () => null,
     notifyRuntimeShutdown: () => undefined,
+    ...overrides,
   } as unknown as AgentRuntime;
 }
 
@@ -88,6 +148,149 @@ describe("projects routes", () => {
       workspaceRoot,
     });
     expect(typeof body.addedAt).toBe("string");
+  });
+
+  test("POST publishes authoritative runtime and HITL snapshots for only the added project before returning", async () => {
+    const homeDir = join(tempRoot, "homes", "control-plane-snapshot");
+    await mkdir(homeDir, { recursive: true });
+    const projectRegistry = new ProjectRegistry({ homeDir, logger: silentLogger });
+    const runtime = createTestRuntime(projectRegistry, {
+      listSessionRuntimeEvents: async () => {
+        throw new Error("must not scan unrelated projects");
+      },
+      listPendingHitlEvents: async () => {
+        throw new Error("must not scan unrelated projects");
+      },
+      getProjectControlPlaneSnapshot: async () => ({
+        sessionRuntime: {
+          type: "session.runtime.snapshot",
+          projectSlugs: ["alpha"],
+          families: [{ projectSlug: "alpha", rootSessionId: "root-1", activity: "running" }],
+          createdAt: 10,
+        },
+        hitl: {
+          type: "hitl.snapshot",
+          projectSlugs: ["alpha"],
+          projections: [],
+          createdAt: 11,
+        },
+      }),
+    });
+    const app = createServerApp(runtime, { dev: true }).app;
+    const observed: GlobalSSEEvent[] = [];
+    const unsubscribe = globalEventBus.subscribe((event) => observed.push(event));
+    const workspaceRoot = await makeWorkspace("alpha-control-plane");
+
+    try {
+      const response = await app.request("/api/projects", {
+        method: "POST",
+        body: JSON.stringify({ workspaceRoot, name: "Alpha" }),
+        headers: { "content-type": "application/json" },
+      });
+
+      expect(response.status).toBe(201);
+      expect(observed).toEqual([
+        {
+          type: "session.runtime.snapshot",
+          projectSlugs: ["alpha"],
+          families: [{ projectSlug: "alpha", rootSessionId: "root-1", activity: "running" }],
+          createdAt: 10,
+        },
+        {
+          type: "hitl.snapshot",
+          projectSlugs: ["alpha"],
+          projections: [],
+          createdAt: 11,
+        },
+      ]);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  test("POST retries snapshot capture when a project live event races the first read", async () => {
+    const homeDir = join(tempRoot, "homes", "control-plane-race");
+    await mkdir(homeDir, { recursive: true });
+    const projectRegistry = new ProjectRegistry({ homeDir, logger: silentLogger });
+    let running = false;
+    const getProjectControlPlaneSnapshot = mock(async () => {
+      const createdAt = Date.now();
+      const snapshot = {
+        sessionRuntime: {
+          type: "session.runtime.snapshot" as const,
+          projectSlugs: ["racing"],
+          families: running
+            ? [{ projectSlug: "racing", rootSessionId: "root-1", activity: "running" as const }]
+            : [],
+          createdAt,
+        },
+        hitl: {
+          type: "hitl.snapshot" as const,
+          projectSlugs: ["racing"],
+          projections: [],
+          createdAt,
+        },
+      };
+      if (!running) {
+        running = true;
+        globalEventBus.emit({
+          type: "session.runtime_changed",
+          projectSlug: "racing",
+          rootSessionId: "root-1",
+          activity: "running",
+          createdAt: Date.now(),
+        });
+      }
+      return snapshot;
+    });
+    const runtime = createTestRuntime(projectRegistry, {
+      getProjectControlPlaneSnapshot,
+    });
+    const app = createServerApp(runtime, { dev: true }).app;
+    const observed: GlobalSSEEvent[] = [];
+    const unsubscribe = globalEventBus.subscribe((event) => observed.push(event));
+    const workspaceRoot = await makeWorkspace("racing-control-plane");
+
+    try {
+      const response = await app.request("/api/projects", {
+        method: "POST",
+        body: JSON.stringify({ workspaceRoot, name: "Racing" }),
+        headers: { "content-type": "application/json" },
+      });
+
+      expect(response.status).toBe(201);
+      expect(getProjectControlPlaneSnapshot).toHaveBeenCalledTimes(2);
+      expect(observed.at(-2)).toMatchObject({
+        type: "session.runtime.snapshot",
+        projectSlugs: ["racing"],
+        families: [{ projectSlug: "racing", rootSessionId: "root-1", activity: "running" }],
+      });
+      expect(observed.at(-1)).toMatchObject({ type: "hitl.snapshot", projectSlugs: ["racing"] });
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  test("POST rolls back a new registry entry when its authoritative snapshot cannot be published", async () => {
+    const homeDir = join(tempRoot, "homes", "control-plane-failure");
+    await mkdir(homeDir, { recursive: true });
+    const projectRegistry = new ProjectRegistry({ homeDir, logger: silentLogger });
+    const runtime = createTestRuntime(projectRegistry, {
+      getProjectControlPlaneSnapshot: async () => {
+        throw new Error("snapshot failed");
+      },
+    });
+    const app = createServerApp(runtime, { dev: true }).app;
+    const workspaceRoot = await makeWorkspace("failed-control-plane");
+
+    const response = await app.request("/api/projects", {
+      method: "POST",
+      body: JSON.stringify({ workspaceRoot, name: "Failed" }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(response.status).toBe(500);
+    expect(await projectRegistry.list()).toEqual([]);
   });
 
   test("POST /api/projects rejects unknown body fields", async () => {
@@ -169,10 +372,46 @@ describe("projects routes", () => {
     });
     const project = (await created.json()) as ProjectInfo;
 
+    const events: GlobalSSEEvent[] = [];
+    const unsubscribe = globalEventBus.subscribe((event) => events.push(event));
     const res = await app.request(`/api/projects/${project.slug}`, { method: "DELETE" });
+    unsubscribe();
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
+    expect(events).toEqual([
+      expect.objectContaining({ type: "session.runtime.snapshot", projectSlugs: [project.slug], families: [] }),
+      expect.objectContaining({ type: "hitl.snapshot", projectSlugs: [project.slug], projections: [] }),
+    ]);
+  });
+
+  test("DELETE /api/projects/:slug rejects active Session families without unregistering", async () => {
+    const homeDir = join(tempRoot, "homes", "delete-active");
+    await mkdir(homeDir, { recursive: true });
+    const registry = new ProjectRegistry({ homeDir, logger: silentLogger });
+    const workspaceRoot = await makeWorkspace("delete-active");
+    const project = await registry.add({ workspaceRoot, name: "Delete Active" });
+    const runtime = createTestRuntime(registry, {
+      removeProject: async () => {
+        throw new ProjectRuntimeActiveError(project.slug, [{ rootSessionId: "root-running", activity: "running" }]);
+      },
+    });
+    const app = createServerApp(runtime, { dev: true }).app;
+
+    const res = await app.request(`/api/projects/${project.slug}`, { method: "DELETE" });
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: {
+        code: "PROJECT_REMOVE_CONFLICT",
+        message: `Project "${project.slug}" has active Session families and cannot be removed`,
+        details: {
+          projectSlug: project.slug,
+          activeFamilies: [{ rootSessionId: "root-running", activity: "running" }],
+        },
+      },
+    });
+    expect(await registry.get(project.slug)).toEqual(project);
   });
 
   test("DELETE /api/projects/:slug for non-existent slug returns ok", async () => {

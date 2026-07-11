@@ -10,6 +10,7 @@ const tempRoot = resolve(import.meta.dir, "__test_tmp__", "commands-routes");
 function makeExecution(sessionId: string, workspaceRoot: string): ActiveSessionExecution {
   return {
     sessionId,
+    rootSessionId: sessionId,
     workspaceRoot,
     agentName: "orchestrator",
     origin: "user_message",
@@ -35,6 +36,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
     providerRegistry: undefined,
     skillService: undefined,
     contextResolver: undefined,
+    subscribeSessionRuntimeChanges: mock(() => () => undefined),
     createSession: mock(async () => ({ sessionId: crypto.randomUUID(), title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] })),
     getSessionFile: mock(async (_workspaceRoot: string, sessionId: string) => ({ sessionId, title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] })),
     listSessions: mock(async () => []),
@@ -46,12 +48,11 @@ function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
       running.add(input.sessionId);
       return makeExecution(input.sessionId, input.workspaceRoot);
     }),
-    abortSessionExecution: mock((_workspaceRoot: string, sessionId: string) => running.delete(sessionId)),
-    abortSessionExecutionAndWait: mock(async (_workspaceRoot: string, sessionId: string) => {
+    stopSessionFamily: mock(async (_workspaceRoot: string, sessionId: string) => {
       running.delete(sessionId);
     }),
     abortAllSessionExecutions: mock(async () => running.clear()),
-    isSessionExecutionRunning: mock((_workspaceRoot: string, sessionId: string) => running.has(sessionId)),
+    getSessionFamilyActivity: mock((_workspaceRoot: string, sessionId: string) => running.has(sessionId) ? "running" : "idle"),
     getSessionExecution: mock(() => undefined),
     subscribeSessionEvents: mock(() => () => undefined),
     deleteSession: mock(async (_workspaceRoot: string, sessionId: string) => {

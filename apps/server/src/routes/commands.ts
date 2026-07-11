@@ -22,10 +22,6 @@ export function createCommandsRoutes(runtime: AgentRuntime): Hono {
     }
 
     const project = await resolveProject(runtime, slug);
-    if (!runtime.isSessionExecutionRunning(project.workspaceRoot, sessionId)) {
-      throw new SessionNotFoundError(sessionId);
-    }
-
     const result = await runtime.dispatchCommand(project.workspaceRoot, sessionId, parsed.data.name, parsed.data.args);
     if (!result) {
       throw new SessionNotFoundError(sessionId);

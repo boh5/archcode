@@ -1,8 +1,13 @@
 import { Hono } from "hono";
-import type { AgentRuntime } from "@archcode/agent-core";
-import { ProjectRegistryError } from "@archcode/agent-core";
+import type { AgentRuntime, ProjectControlPlaneSnapshot, ProjectInfo } from "@archcode/agent-core";
+import { ProjectRegistryError, ProjectRuntimeActiveError } from "@archcode/agent-core";
 import { z } from "zod/v4";
-import { BadRequestError, ProjectNotFoundError } from "../errors";
+import { BadRequestError, ProjectNotFoundError, ProjectRemoveConflictHttpError } from "../errors";
+
+export interface ProjectsRoutesOptions {
+  readonly onProjectRegistered: (project: ProjectInfo) => Promise<void>;
+  readonly onProjectRemoved: (snapshot: ProjectControlPlaneSnapshot) => Promise<void>;
+}
 
 const CreateProjectBodySchema = z.strictObject({
   workspaceRoot: z.string({ error: "workspaceRoot is required" }).min(1, "workspaceRoot is required"),
@@ -16,7 +21,7 @@ const UpdateProjectBodySchema = z.strictObject({
     .max(80, "name must be 80 characters or fewer"),
 });
 
-export function createProjectsRoutes(runtime: AgentRuntime): Hono {
+export function createProjectsRoutes(runtime: AgentRuntime, options: ProjectsRoutesOptions): Hono {
   const app = new Hono();
 
   app.get("/", async (c) => {
@@ -29,8 +34,14 @@ export function createProjectsRoutes(runtime: AgentRuntime): Hono {
     const { workspaceRoot, name } = body;
 
     try {
-      const project = await runtime.projectRegistry.add({ workspaceRoot, name });
-      return c.json(project, 201);
+      const registration = await runtime.projectRegistry.addWithResult({ workspaceRoot, name });
+      try {
+        await options.onProjectRegistered(registration.project);
+      } catch (error) {
+        if (registration.created) await runtime.projectRegistry.remove(registration.project.slug);
+        throw error;
+      }
+      return c.json(registration.project, 201);
     } catch (error) {
       if (error instanceof ProjectRegistryError) {
         throw new BadRequestError(error.message, { workspaceRoot });
@@ -40,8 +51,16 @@ export function createProjectsRoutes(runtime: AgentRuntime): Hono {
   });
 
   app.delete("/:slug", async (c) => {
-    await runtime.projectRegistry.remove(c.req.param("slug"));
-    return c.json({ ok: true });
+    try {
+      const removed = await runtime.removeProject(c.req.param("slug"));
+      if (removed !== undefined) await options.onProjectRemoved(removed.snapshot);
+      return c.json({ ok: true });
+    } catch (error) {
+      if (error instanceof ProjectRuntimeActiveError) {
+        throw new ProjectRemoveConflictHttpError(error.projectSlug, error.activeFamilies);
+      }
+      throw error;
+    }
   });
 
   app.patch("/:slug", async (c) => {

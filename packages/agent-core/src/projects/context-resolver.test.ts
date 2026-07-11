@@ -5,11 +5,11 @@ import { basename, join } from "node:path";
 import type { HitlIdentity } from "@archcode/protocol";
 
 import { GoalStateManager } from "../goals/state";
-import { SessionHitlBlockedError } from "../agents/errors";
+import { SessionFamilyActiveError } from "../execution/session-family-control";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
 import { SessionExecutionManager } from "../execution/session-execution-manager";
 import { HitlService } from "../hitl/service";
-import { ResumeCoordinator } from "../hitl/resume-coordinator";
+import { createPreparedHitlResume, ResumeCoordinator } from "../hitl/resume-coordinator";
 import { LoopStateManager, type LoopConfig } from "../loops/state";
 import { MemoryFileManager } from "../memory/file-manager";
 import { SessionStoreManager } from "../store/session-store-manager";
@@ -63,9 +63,9 @@ function createResolver(overrides: Partial<ProjectContextResolverOptions> = {}):
     resumeCoordinatorFactory: ({ hitl }) => new ResumeCoordinator({
       hitl,
       adapters: {
-        session: { resume: async () => undefined },
-        goal: { resume: async () => undefined },
-        loop: { resume: async () => undefined },
+        session: { prepare: async () => createPreparedHitlResume(async () => undefined) },
+        goal: { prepare: async () => createPreparedHitlResume(async () => undefined) },
+        loop: { prepare: async () => createPreparedHitlResume(async () => undefined) },
       },
       logger: silentLogger,
     }),
@@ -110,6 +110,91 @@ describe("ProjectContextResolver", () => {
     expect(second.hitl).not.toBe(first.hitl);
     expect(second.memory).not.toBe(first.memory);
     expect(second.approvals).not.toBe(first.approvals);
+  });
+
+  test("dispose shuts down the old HITL publisher before returning", async () => {
+    const workspace = await makeWorkspace("dispose-hitl");
+    const sessions = new SessionStoreManager({ logger: silentLogger });
+    const sessionId = crypto.randomUUID();
+    sessions.create(sessionId, workspace);
+    await sessions.flushSession(sessionId, workspace);
+    const events: string[] = [];
+    const resolver = createResolver({
+      sessionStoreManager: sessions,
+      hitlFactory: (input) => new HitlService({
+        ...input,
+        realtimePublisher: (event) => events.push(event.projectSlug),
+      }),
+    });
+    const first = await resolver.resolve(workspace);
+    const record = await first.hitl.create({
+      owner: { projectSlug: first.project.slug, ownerType: "session", ownerId: sessionId },
+      sessionRootId: sessionId,
+      blockingKey: `session:${sessionId}:dispose`,
+      source: { type: "ask_user", sessionId, toolCallId: "dispose" },
+      displayPayload: { title: "Continue?", redacted: true },
+    });
+
+    await resolver.dispose(workspace);
+    await first.hitl.publishRequest(record);
+
+    expect(events).toEqual([]);
+  });
+
+  test("fresh context migrates active and terminal owner history when the same workspace gets a new slug", async () => {
+    const workspace = await makeWorkspace("slug-migration");
+    const sessions = new SessionStoreManager({ logger: silentLogger });
+    const sessionId = crypto.randomUUID();
+    sessions.create(sessionId, workspace);
+    await sessions.flushSession(sessionId, workspace);
+    let projectSlug = "old-project";
+    const resolver = createResolver({
+      sessionStoreManager: sessions,
+      projectInfoFactory: () => ({
+        slug: projectSlug,
+        name: projectSlug,
+        workspaceRoot: workspace,
+        addedAt: new Date().toISOString(),
+      }),
+    });
+    const first = await resolver.resolve(workspace);
+    const oldOwner = { projectSlug, ownerType: "session" as const, ownerId: sessionId };
+    const pending = await first.hitl.create({
+      owner: oldOwner,
+      sessionRootId: sessionId,
+      hitlId: "pending-history-id",
+      blockingKey: `session:${sessionId}:pending`,
+      source: { type: "ask_user", sessionId, toolCallId: "pending" },
+      displayPayload: { title: "Pending", redacted: true },
+    });
+    const terminal = await first.hitl.create({
+      owner: oldOwner,
+      sessionRootId: sessionId,
+      hitlId: "terminal-history-id",
+      blockingKey: `session:${sessionId}:terminal`,
+      source: { type: "ask_user", sessionId, toolCallId: "terminal" },
+      displayPayload: { title: "Terminal", redacted: true },
+    });
+    await first.hitl.complete(
+      { owner: oldOwner, hitlId: terminal.hitlId },
+      { type: "cancel", reason: "preserve history" },
+    );
+    await resolver.dispose(workspace);
+
+    projectSlug = "new-project";
+    const second = await resolver.resolve(workspace);
+    const nextOwner = { ...oldOwner, projectSlug };
+    const records = await second.hitl.list({ scope: "project", status: "all" });
+
+    expect(second).not.toBe(first);
+    expect(records).toEqual(expect.arrayContaining([
+      expect.objectContaining({ hitlId: pending.hitlId, owner: nextOwner, status: "pending" }),
+      expect.objectContaining({ hitlId: terminal.hitlId, owner: nextOwner, status: "resolved" }),
+    ]));
+    expect(await second.hitl.lookup({ owner: nextOwner, hitlId: pending.hitlId })).toMatchObject({
+      status: "found",
+      record: { hitlId: pending.hitlId, blockingKey: pending.blockingKey, owner: nextOwner },
+    });
   });
 
   test("concurrent resolve calls load approvals once per unique workspace", async () => {
@@ -299,6 +384,7 @@ describe("ProjectContextResolver", () => {
     const owner = { projectSlug: first.project.slug, ownerType: "session" as const, ownerId: sessionId };
     const created = await first.hitl.create({
       owner,
+      sessionRootId: sessionId,
       blockingKey: `session:${sessionId}:ask:context-load`,
       source: { type: "ask_user", sessionId, toolCallId: "context-load" },
       displayPayload: { title: "Need answer", redacted: true },
@@ -348,15 +434,14 @@ describe("ProjectContextResolver", () => {
     let recoveredContext: Awaited<ReturnType<ProjectContextResolver["resolve"]>> | undefined;
     let resolver!: ProjectContextResolver;
     const adapter = {
-      resume: async () => {
-        const lease = executionManager.acquireSessionHitlResume(workspace, sessionId);
-        try {
+      prepare: async () => {
+        const lease = executionManager.reserveSessionHitlResume(workspace, sessionId, sessionId);
+        lease.activate();
+        return createPreparedHitlResume(async () => {
           recoveredContext = await resolver.resolve(workspace);
           entered.resolve(undefined);
           await release.promise;
-        } finally {
-          lease.release();
-        }
+        }, lease.release);
       },
     };
     resolver = createResolver({
@@ -384,7 +469,7 @@ describe("ProjectContextResolver", () => {
         workspaceRoot: workspace,
         sessionId,
         userMessage: "must remain blocked while recovery continues",
-      })).rejects.toThrow(SessionHitlBlockedError);
+      })).rejects.toThrow(SessionFamilyActiveError);
     }
     release.resolve(undefined);
     const context = await publicResolution;
@@ -407,7 +492,7 @@ describe("ProjectContextResolver", () => {
     const release = deferred<void>();
     let resolver!: ProjectContextResolver;
     const adapter = {
-      resume: async () => {
+      prepare: async () => createPreparedHitlResume(async () => {
         const adapterContext = await resolver.resolve(workspace);
         await adapterContext.loopState.read(loop.loopId);
         // Mirrors getLoopSessionHitlContinuation -> getLoopScheduler resolving
@@ -416,7 +501,7 @@ describe("ProjectContextResolver", () => {
         expect(schedulerContext).toBe(adapterContext);
         entered.resolve(undefined);
         await release.promise;
-      },
+      }),
     };
     resolver = createResolver({
       sessionStoreManager: sessions,
@@ -449,7 +534,7 @@ describe("ProjectContextResolver", () => {
     const release = deferred<void>();
     let resolver!: ProjectContextResolver;
     const adapter = {
-      resume: async () => {
+      prepare: async () => createPreparedHitlResume(async () => {
         const adapterContext = await resolver.resolve(workspace);
         await adapterContext.loopState.read(loop.loopId);
         // Mirrors LoopHitlResumeAdapter.onContinuationQueued ->
@@ -458,7 +543,7 @@ describe("ProjectContextResolver", () => {
         expect(schedulerContext).toBe(adapterContext);
         entered.resolve(undefined);
         await release.promise;
-      },
+      }),
     };
     resolver = createResolver({
       sessionStoreManager: sessions,
@@ -581,6 +666,7 @@ async function seedClaimedSessionHitl(
   });
   const created = await hitl.create({
     owner: { projectSlug: project.slug, ownerType: "session", ownerId: sessionId },
+    sessionRootId: sessionId,
     blockingKey: `session:${sessionId}:ask:${suffix}`,
     source: { type: "ask_user", sessionId, toolCallId: suffix },
     displayPayload: { title: "Resume after restart", redacted: true },

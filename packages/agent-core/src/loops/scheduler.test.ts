@@ -12,7 +12,7 @@ import { LoopKillStateManager } from "./kill-state";
 import { LoopActiveConflictError, LoopWorktreeScopeCheckpointError } from "./runner";
 import { LoopSessionHitlContinuationCoordinator } from "./session-hitl-continuation";
 import { LoopStateManager, type LoopConfig } from "./state";
-import { createLoopTestHitlService, FakeSessionExecutionManager } from "./test-utils";
+import { createLoopTestHitlService, FakeSessionFamilyStopper } from "./test-utils";
 import { LoopTriggerPoller, type LoopLocalGitReader } from "./triggers";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "loop-scheduler");
@@ -587,7 +587,7 @@ describe("LoopScheduler", () => {
     expect(fixture.timer.nextDue()).toBe(600);
   });
 
-  test("cancelCurrentRun aborts linked session and records cancelled_by_user in run log", async () => {
+  test("cancelCurrentRun stops the linked Session family and records cancelled_by_user in run log", async () => {
     const fixture = await createFixture(1_000);
     const loop = await fixture.manager.create("project-a", manualConfig);
     await fixture.manager.recordRunStart(loop.loopId, {
@@ -608,8 +608,8 @@ describe("LoopScheduler", () => {
       endedAt: 1_000,
       sessionId: "session-cancel",
     });
-    fixture.executionManager.assertCallCount("abortAndWait", 1);
-    expect(fixture.executionManager.getCalls("abortAndWait")[0]).toMatchObject({
+    fixture.executionManager.assertCallCount("stopSessionFamily", 1);
+    expect(fixture.executionManager.getCalls("stopSessionFamily")[0]).toMatchObject({
       workspaceRoot: TMP_DIR,
       sessionId: "session-cancel",
     });
@@ -767,7 +767,7 @@ describe("LoopScheduler", () => {
       budgetLedger: fixture.budgetLedger,
       collisionLedger: fixture.collisionLedger,
       killStateManager: fixture.killStateManager,
-      abortSessionExecutionAndWait: async (requestedSessionId) => {
+      stopSessionFamily: async (requestedSessionId) => {
         expect(requestedSessionId).toBe(sessionId);
         stopEntered.resolve();
         await releaseStop.promise;
@@ -839,7 +839,7 @@ describe("LoopScheduler", () => {
     const report = await fixture.scheduler.cancelCurrentRun(loop.loopId);
 
     expect(report).toBeUndefined();
-    fixture.executionManager.assertCallCount("abortAndWait", 0);
+    fixture.executionManager.assertCallCount("stopSessionFamily", 0);
     expect((await fixture.manager.read(loop.loopId)).lastRun).toMatchObject({ status: "succeeded" });
   });
 
@@ -860,7 +860,7 @@ describe("LoopScheduler", () => {
     const state = await fixture.scheduler.activateGlobalKill({ activatedBy: "architect", reason: "stop automation" });
 
     expect(state).toMatchObject({ globalKillActive: true, activatedAt: 0, activatedBy: "architect", reason: "stop automation" });
-    fixture.executionManager.assertCallCount("abortAndWait", 1);
+    fixture.executionManager.assertCallCount("stopSessionFamily", 1);
     expect((await fixture.manager.read(loop.loopId)).lastRun).toMatchObject({ status: "cancelled", reason: "global_kill_active" });
     expect(await new LoopKillStateManager(TMP_DIR).read()).toEqual(state);
 
@@ -1681,7 +1681,7 @@ async function createFixture(now: number = 0, options: { maxJobs?: number; local
   killStateManager: LoopKillStateManager;
   budgetLedger: LoopBudgetLedger;
   collisionLedger: CollisionLedger;
-  executionManager: FakeSessionExecutionManager;
+  executionManager: FakeSessionFamilyStopper;
   runs: LoopSchedulerRunInput[];
   runner: (input: LoopSchedulerRunInput) => Promise<LoopSchedulerRunResult>;
   createScheduler: (
@@ -1700,7 +1700,7 @@ async function createFixture(now: number = 0, options: { maxJobs?: number; local
   const budgetLedger = new LoopBudgetLedger({ stateManager: manager, workspaceRoot: TMP_DIR, clock });
   const collisionLedger = new CollisionLedger({ stateManager: manager, workspaceRoot: TMP_DIR, clock, leaseTtlMs: 60_000 });
   const coordinator = new LoopJobCoordinator({ queue: jobQueue, clock, leaseTtlMs: 60_000 });
-  const executionManager = new FakeSessionExecutionManager();
+  const executionManager = new FakeSessionFamilyStopper();
   const triggerPoller = new LoopTriggerPoller({
     workspaceRoot: TMP_DIR,
     stateManager: manager,
@@ -1746,7 +1746,7 @@ async function createFixture(now: number = 0, options: { maxJobs?: number; local
     collisionLedger,
     killStateManager,
     triggerPoller: nextTriggerPoller,
-    abortSessionExecutionAndWait: (sessionId) => executionManager.abortAndWait(TMP_DIR, sessionId),
+    stopSessionFamily: (sessionId) => executionManager.stopSessionFamily(TMP_DIR, sessionId),
     hitl: createLoopTestHitlService(TMP_DIR, manager),
     runner: async (input) => {
       runs.push(input);

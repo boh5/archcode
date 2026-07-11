@@ -233,6 +233,7 @@ async function createService(
 function input(owner: HitlOwnerKey, blockingKey: string) {
   return {
     owner,
+    ...(owner.ownerType === "session" ? { sessionRootId: owner.ownerId } : {}),
     blockingKey,
     source: owner.ownerType === "session"
       ? { type: "ask_user" as const, sessionId: owner.ownerId }

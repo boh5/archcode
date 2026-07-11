@@ -3,7 +3,12 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { HitlOwnerKey, HitlRecord, HitlResumeMetadata } from "@archcode/protocol";
 
-import { HitlOwnerMismatchError, HitlOwnerStore, HitlRecordStateError } from "./owner-store";
+import {
+  HitlOwnerMismatchError,
+  HitlOwnerStore,
+  HitlRecordStateError,
+  migrateHitlOwnerFileProjectSlug,
+} from "./owner-store";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "owner-store");
 
@@ -54,6 +59,30 @@ describe("HitlOwnerStore", () => {
     expect(file.recentTerminal).toHaveLength(20);
     expect(file.recentTerminal[0]?.hitlId).toBe("terminal-5");
     expect(file.recentTerminal.at(-1)?.hitlId).toBe("terminal-24");
+  });
+
+  test("migrates one workspace-local owner file to a new project slug without changing history identities", async () => {
+    const workspace = await mkdtemp(join(TMP_ROOT, "workspace-"));
+    const oldOwner: HitlOwnerKey = { projectSlug: "old-project", ownerType: "session", ownerId: crypto.randomUUID() };
+    const nextOwner: HitlOwnerKey = { ...oldOwner, projectSlug: "new-project" };
+    const filePath = join(workspace, ".archcode", "sessions", oldOwner.ownerId, "hitl.json");
+    const oldStore = new HitlOwnerStore(filePath, oldOwner);
+    await oldStore.create(record(oldOwner, "pending-id", "pending-key"));
+    const terminal = await oldStore.create(record(oldOwner, "terminal-id", "terminal-key"));
+    await oldStore.complete(terminal.record.hitlId, "cancelled", { type: "cancel", reason: "kept" });
+
+    await expect(migrateHitlOwnerFileProjectSlug(filePath, nextOwner)).resolves.toBe(true);
+
+    const migrated = await new HitlOwnerStore(filePath, nextOwner).read();
+    expect(migrated.owner).toEqual(nextOwner);
+    expect(migrated.pending).toEqual([
+      expect.objectContaining({ hitlId: "pending-id", blockingKey: "pending-key", status: "pending", owner: nextOwner }),
+    ]);
+    expect(migrated.recentTerminal).toEqual([
+      expect.objectContaining({ hitlId: "terminal-id", blockingKey: "terminal-key", status: "cancelled", owner: nextOwner }),
+    ]);
+    await expect(oldStore.read()).rejects.toBeInstanceOf(HitlOwnerMismatchError);
+    await expect(migrateHitlOwnerFileProjectSlug(filePath, nextOwner)).resolves.toBe(false);
   });
 
   test("rejects unknown raw response fields when reading owner-local files", async () => {
@@ -359,6 +388,7 @@ function record(owner: HitlOwnerKey, hitlId: string, blockingKey: string): HitlR
   return {
     hitlId,
     owner,
+    ...(owner.ownerType === "session" ? { sessionRootId: owner.ownerId } : {}),
     blockingKey,
     source: owner.ownerType === "session"
       ? { type: "ask_user", sessionId: owner.ownerId }

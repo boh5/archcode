@@ -119,6 +119,7 @@ const HitlResponseSchema: z.ZodType<HitlResponse> = z.union([
 const HitlRecordSchema: z.ZodType<HitlRecord> = z.strictObject({
   hitlId: z.string().trim().min(1),
   owner: HitlOwnerKeySchema,
+  sessionRootId: z.string().trim().min(1).optional(),
   blockingKey: z.string().trim().min(1),
   source: HitlSourceSchema,
   status: z.enum(["pending", "resume_claimed", "resolved", "cancelled", "resume_failed"]),
@@ -129,6 +130,12 @@ const HitlRecordSchema: z.ZodType<HitlRecord> = z.strictObject({
   updatedAt: z.string(),
   resolvedAt: z.string().optional(),
 }).superRefine((record, ctx) => {
+  if (record.owner.ownerType === "session" && record.sessionRootId === undefined) {
+    ctx.addIssue({ code: "custom", path: ["sessionRootId"], message: "Session-owned HITL requires canonical sessionRootId" });
+  }
+  if (record.owner.ownerType !== "session" && record.sessionRootId !== undefined) {
+    ctx.addIssue({ code: "custom", path: ["sessionRootId"], message: "Only Session-owned HITL may define sessionRootId" });
+  }
   if (record.status !== "resume_claimed" && record.status !== "resume_failed") return;
   if (record.response === undefined) {
     ctx.addIssue({ code: "custom", path: ["response"], message: `${record.status} requires a response` });
@@ -153,6 +160,42 @@ export type HitlCreateResult =
 export type HitlLookupResult =
   | { status: "found"; record: HitlRecord; file: HitlFile }
   | { status: "missing" };
+
+/**
+ * Rebinds an owner-local file to the current registration slug. The physical
+ * owner identity is its workspace-local type/id path; HITL ids, blocking keys,
+ * status buckets, responses, and history timestamps remain unchanged.
+ */
+export async function migrateHitlOwnerFileProjectSlug(
+  filePath: string,
+  nextOwner: HitlOwnerKey,
+): Promise<boolean> {
+  return await withOwnerFileMutationLock(filePath, async () => {
+    const file = Bun.file(filePath);
+    if (!(await file.exists())) return false;
+
+    const parsed = HitlFileSchema.parse(JSON.parse(await file.text()));
+    assertFileRecordIdentities(parsed);
+    assertUniqueHitlIds(parsed);
+    assertHitlBuckets(parsed);
+    if (parsed.owner.ownerType !== nextOwner.ownerType || parsed.owner.ownerId !== nextOwner.ownerId) {
+      throw new HitlOwnerMismatchError(nextOwner, parsed.owner);
+    }
+    if (parsed.owner.projectSlug === nextOwner.projectSlug) return false;
+
+    const migrated = HitlFileSchema.parse({
+      ...parsed,
+      owner: nextOwner,
+      pending: parsed.pending.map((record) => ({ ...record, owner: nextOwner })),
+      recentTerminal: parsed.recentTerminal.map((record) => ({ ...record, owner: nextOwner })),
+    });
+    assertFileRecordIdentities(migrated);
+    assertUniqueHitlIds(migrated);
+    assertHitlBuckets(migrated);
+    await atomicWrite(filePath, `${JSON.stringify(migrated, null, 2)}\n`);
+    return true;
+  });
+}
 
 export class HitlOwnerMismatchError extends Error {
   constructor(

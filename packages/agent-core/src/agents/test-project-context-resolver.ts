@@ -1,4 +1,4 @@
-import { ResumeCoordinator } from "../hitl/resume-coordinator";
+import { createPreparedHitlResume, ResumeCoordinator } from "../hitl/resume-coordinator";
 import { silentLogger } from "../logger";
 import { ProjectContextResolver } from "../projects/context-resolver";
 import type { SessionStoreManager } from "../store/session-store-manager";
@@ -21,9 +21,9 @@ export function createTestProjectContextResolver(
     resumeCoordinatorFactory: ({ hitl }) => new ResumeCoordinator({
       hitl,
       adapters: {
-        session: { resume: async () => undefined },
-        goal: { resume: async () => undefined },
-        loop: { resume: async () => undefined },
+        session: { prepare: async () => createPreparedHitlResume(async () => undefined) },
+        goal: { prepare: async () => createPreparedHitlResume(async () => undefined) },
+        loop: { prepare: async () => createPreparedHitlResume(async () => undefined) },
       },
       logger: silentLogger,
     }),

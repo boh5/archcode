@@ -1,7 +1,7 @@
 export { HitlService } from "./service";
 export { GoalApprovalGate } from "./goal-gates";
 export { HitlOwnerStore } from "./owner-store";
-export { ResumeCoordinator } from "./resume-coordinator";
+export { createPreparedHitlResume, ResumeCoordinator } from "./resume-coordinator";
 export { resolveHitlOwnerPath } from "./owner-paths";
 export { aggregateHitlProjections } from "./aggregation";
 export type { ApprovalOutcome, GoalApprovalGateOptions, ReviewOutcome } from "./goal-gates";
@@ -14,6 +14,7 @@ export type {
 export type {
   GoalHitlResumeAdapter,
   LoopHitlResumeAdapter,
+  PreparedHitlResume,
   ResumeCoordinatorAdapters,
   ResumeCoordinatorOptions,
   ResumeCoordinatorResult,

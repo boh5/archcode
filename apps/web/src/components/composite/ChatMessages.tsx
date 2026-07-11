@@ -161,6 +161,7 @@ export function parseToolOutput(output: string | undefined): Record<string, unkn
 export function mapLinkStatusToBadge(status: ToolChildSessionLinkStatus): BadgeStatus {
   switch (status) {
     case "completed": return "completed";
+    case "waiting_for_human": return "pending";
     case "running":
     case "linked": return "running";
     case "cancelling": return "running";
@@ -177,7 +178,7 @@ function DelegateToolCard({ part, projectSlug, focusStoreSessionId, childSession
   const link = childSessionLinks.find((l) => l.parentToolCallId === part.toolCallId);
 
   const sessionId = link?.childSessionId ?? "";
-  const agentType = link?.childAgentName ?? (parsedInput?.agent_type as string) ?? "explorer";
+  const agentType = link?.childAgentName ?? (parsedInput?.agent_type as string) ?? "explore";
   const agentName = link?.title ?? link?.description ?? (parsedInput?.description as string) ?? (parsedInput?.title as string) ?? "Sub-agent";
   const summary = link?.summary ?? link?.description ?? (parsedInput?.description as string) ?? "";
   const status: BadgeStatus = link

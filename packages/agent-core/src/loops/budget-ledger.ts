@@ -6,6 +6,7 @@ import { normalizeUsage, PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
 
 import type { ModelPricing } from "../config/provider";
 import type { ModelInfo } from "../provider/model";
+import type { ToolExecutionControl } from "../tools/types";
 import type {
   LoopBudgetConfig,
   LoopBudgetSnapshot,
@@ -67,7 +68,14 @@ export interface LoopBudgetStatus {
   readonly dimension?: "iterations" | "tokens" | "usd" | "wall_clock" | "runs_per_day";
 }
 
+export const LOOP_BUDGET_EXECUTION_CONTROL = {
+  action: "stop_session_family",
+  reason: "loop_budget_exceeded",
+} as const satisfies ToolExecutionControl;
+
 export class LoopBudgetHardStopError extends DOMException {
+  readonly executionControl = LOOP_BUDGET_EXECUTION_CONTROL;
+
   constructor(public readonly loopId: string, message: string) {
     super(message, "AbortError");
   }

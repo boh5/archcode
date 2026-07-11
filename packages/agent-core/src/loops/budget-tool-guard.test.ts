@@ -13,7 +13,7 @@ import { ProjectContextResolver } from "../projects/context-resolver";
 import { createTestProjectContextResolverOptions } from "../tools/test-project-context";
 import { createLoopBudgetToolPermission } from "./budget-tool-guard";
 import { LoopBudgetConfigSchema, LoopStateManager, type LoopBudgetConfig, type LoopConfig } from "./state";
-import { FakeClock, FakeSessionExecutionManager, makeEffectfulTestTools, makeReadOnlyTestTools } from "./test-utils";
+import { FakeClock, makeEffectfulTestTools, makeReadOnlyTestTools } from "./test-utils";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "loop-budget-tool-guard");
 const storeManager = new SessionStoreManager({ logger: silentLogger });
@@ -63,7 +63,7 @@ describe("createLoopBudgetToolPermission", () => {
     expect((await fixture.stateManager.read(fixture.loopId)).status).toBe("active");
   });
 
-  test("hard threshold blocks effectful tools, records budget_exceeded, pauses loop, and signals abort", async () => {
+  test("hard threshold blocks effectful tools, records budget_exceeded, and returns Session-family execution control", async () => {
     const fixture = await createFixture();
     await fixture.stateManager.recordRunStart(fixture.loopId, {
       runId: "run-1",
@@ -92,10 +92,13 @@ describe("createLoopBudgetToolPermission", () => {
 
     expect(result.isError).toBe(true);
     expect(result.output).toContain("LOOP_HARD_BUDGET_EXCEEDED");
+    expect(result.meta?.executionControl).toEqual({
+      action: "stop_session_family",
+      reason: "loop_budget_exceeded",
+    });
     const state = await fixture.stateManager.read(fixture.loopId);
     expect(state.status).toBe("paused");
     expect(state.lastRun).toMatchObject({ status: "budget_exceeded", reason: "hard_budget_exceeded" });
-    fixture.executionManager.assertCallCount("abortAndWait", 1);
   });
 });
 
@@ -112,8 +115,6 @@ async function createFixture() {
   registry.globalPermissions.push(createLoopBudgetToolPermission());
   const store = createSessionStore("session-1", TMP_DIR);
   store.setState({ loopId: loop.loopId });
-  const executionManager = new FakeSessionExecutionManager();
-
   function context(toolName: string): ToolExecutionContext {
     return createToolExecutionContext({
       store,
@@ -130,11 +131,10 @@ async function createFixture() {
       agentSkills: [],
       skillService: new SkillService({ builtinSkills: {} }),
       origin: { kind: "loop", loopId: loop.loopId, runId: "run-1", trigger: "manual", approvalPolicy: "interactive" },
-      abortSessionExecutionAndWait: (workspaceRoot, sessionId) => executionManager.abortAndWait(workspaceRoot, sessionId),
     });
   }
 
-  return { clock, stateManager, loop, loopId: loop.loopId, registry, context, executionManager };
+  return { clock, stateManager, loop, loopId: loop.loopId, registry, context };
 }
 
 function normalizedBudget(value: unknown): LoopBudgetConfig {

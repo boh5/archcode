@@ -112,7 +112,7 @@ export interface LoopSchedulerOptions {
   readonly jobQueue: LoopJobQueue;
   readonly coordinator: LoopJobCoordinator;
   readonly killStateManager: LoopKillStateManager;
-  readonly abortSessionExecutionAndWait: (sessionId: string) => Promise<void>;
+  readonly stopSessionFamily: (sessionId: string) => Promise<void>;
   readonly logger?: Logger;
   readonly cronAdapter?: CronAdapter;
   readonly triggerPoller?: LoopTriggerPoller;
@@ -166,7 +166,7 @@ export class LoopScheduler {
   readonly #jobQueue: LoopJobQueue;
   readonly #coordinator: LoopJobCoordinator;
   readonly #killStateManager: LoopKillStateManager;
-  readonly #abortSessionExecutionAndWait: (sessionId: string) => Promise<void>;
+  readonly #stopSessionFamily: (sessionId: string) => Promise<void>;
   readonly #logger: Logger;
   readonly #timers = new Map<string, LoopSchedulerTimerHandle>();
   readonly #triggerTimers = new Map<string, LoopSchedulerTimerHandle>();
@@ -187,7 +187,7 @@ export class LoopScheduler {
     if (options.budgetLedger === undefined) throw new Error("LoopScheduler requires budget enforcement.");
     if (options.collisionLedger === undefined) throw new Error("LoopScheduler requires collision enforcement.");
     if (options.killStateManager === undefined) throw new Error("LoopScheduler requires global kill-state enforcement.");
-    if (options.abortSessionExecutionAndWait === undefined) throw new Error("LoopScheduler requires Session cancellation ownership.");
+    if (options.stopSessionFamily === undefined) throw new Error("LoopScheduler requires Session family stop ownership.");
     if (options.hitl === undefined) throw new Error("LoopScheduler requires durable HITL.");
     this.#stateManager = options.stateManager;
     this.#runner = options.runner;
@@ -199,7 +199,7 @@ export class LoopScheduler {
     this.#jobQueue = options.jobQueue;
     this.#coordinator = options.coordinator;
     this.#killStateManager = options.killStateManager;
-    this.#abortSessionExecutionAndWait = options.abortSessionExecutionAndWait;
+    this.#stopSessionFamily = options.stopSessionFamily;
     this.#logger = (options.logger ?? silentLogger).child({ module: "loops.scheduler" });
     this.#triggerPoller = options.triggerPoller;
     this.#hitl = options.hitl;
@@ -1081,7 +1081,7 @@ export class LoopScheduler {
     // owner to finish before committing the terminal Loop state/job so the
     // continuation cannot move a cancelled run backwards afterward.
     if (active.sessionId !== undefined) {
-      await this.#abortSessionExecutionAndWait(active.sessionId);
+      await this.#stopSessionFamily(active.sessionId);
     }
 
     loop = await this.#stateManager.read(loopId);

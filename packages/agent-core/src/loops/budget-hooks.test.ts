@@ -11,7 +11,7 @@ import { createTestProjectContextResolverOptions } from "../tools/test-project-c
 import { LoopBudgetHardStopError, LoopBudgetLedger } from "./budget-ledger";
 import { enforceLoopBudgetAfterStepEnd } from "./budget-hooks";
 import { LoopStateManager, type LoopConfig } from "./state";
-import { FakeClock, FakeSessionExecutionManager } from "./test-utils";
+import { FakeClock } from "./test-utils";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "loop-budget-hooks");
 
@@ -34,7 +34,7 @@ afterAll(async () => {
 });
 
 describe("Loop budget query hooks", () => {
-  test("afterStepEnd records usage and hard-stops with abort seam", async () => {
+  test("afterStepEnd records usage and returns Session-family execution control at the hard limit", async () => {
     const clock = new FakeClock(Date.UTC(2026, 6, 4, 12, 0, 0));
     const stateManager = new LoopStateManager(TMP_DIR);
     const loop = await stateManager.create("project-a", config);
@@ -52,22 +52,23 @@ describe("Loop budget query hooks", () => {
     store.setState({ loopId: loop.loopId });
     store.getState().append({ type: "step-start", step: 0 });
     store.getState().append({ type: "step-end", step: 0, finishReason: "stop", usage: { inputTokens: 100, outputTokens: 0, totalTokens: 100 } });
-    const executionManager = new FakeSessionExecutionManager();
-
-    await expect(enforceLoopBudgetAfterStepEnd({
+    const error = await enforceLoopBudgetAfterStepEnd({
       store,
       modelInfo: makeModelInfo(),
       logger: { child: () => ({}) } as never,
       projectContext,
     }, {
       origin: { kind: "loop", loopId: loop.loopId, runId: "run-1", trigger: "manual", approvalPolicy: "interactive" },
-      abortSessionExecutionAndWait: (workspaceRoot, sessionId) => executionManager.abortAndWait(workspaceRoot, sessionId),
-    })).rejects.toBeInstanceOf(LoopBudgetHardStopError);
+    }).catch((cause: unknown) => cause);
 
     const state = await stateManager.read(loop.loopId);
+    expect(error).toBeInstanceOf(LoopBudgetHardStopError);
+    expect((error as LoopBudgetHardStopError).executionControl).toEqual({
+      action: "stop_session_family",
+      reason: "loop_budget_exceeded",
+    });
     expect(state.status).toBe("paused");
     expect(state.lastRun).toMatchObject({ status: "budget_exceeded", reason: "hard_budget_exceeded", sessionId: "session-1" });
-    executionManager.assertCallCount("abortAndWait", 1);
   });
 });
 

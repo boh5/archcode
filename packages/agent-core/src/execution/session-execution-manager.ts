@@ -1,5 +1,5 @@
 import { rm } from "node:fs/promises";
-import type { SessionExecutionRecord, SessionTreeNode, SessionTreeResponse, ToolChildSessionLink, ToolChildSessionLinkStatus } from "@archcode/protocol";
+import type { SessionExecutionRecord, SessionFamilyActivity, SessionTreeNode, SessionTreeResponse, ToolChildSessionLink, ToolChildSessionLinkStatus } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
 import {
@@ -19,9 +19,11 @@ import {
   SessionCwdTransitionInProgressError,
   SessionHitlBlockedError,
   SessionHitlCancelOnlyLeaseError,
+  SessionHitlResumeIdentityMismatchError,
   SessionHitlResumeConflictError,
   SessionHitlResumeInProgressError,
   SessionHitlResumeLeaseExpiredError,
+  SessionHitlResumeLeaseNotActivatedError,
 } from "../agents/errors";
 import type { AgentResult } from "../agents/types";
 import type { SlashCommandResult } from "../commands/types";
@@ -29,7 +31,7 @@ import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } 
 import { SessionEventBridge } from "../events/session-event-bridge";
 import type { SubscribeSessionEventsInput } from "../events/session-event-bridge";
 import { getSessionDir } from "../store/sessions-dir";
-import { SessionDeleteConflictError } from "../store/errors";
+import { NotRootSessionError, SessionDeleteConflictError } from "../store/errors";
 import { scopedKey } from "../store/key";
 import type { Reminder, SessionRole, SessionStoreState } from "../store/types";
 import type { StoredMessage } from "../store/types";
@@ -44,11 +46,17 @@ import {
   type SessionDeletionPreflight,
 } from "./session-deletion";
 import {
+  SessionFamilyActiveError,
+  SessionFamilyIdentityUnavailableError,
   SessionFamilyStopConflictError,
   SessionFamilyStopInProgressError,
   type AcquireSessionFamilyStopInput,
   type SessionFamilyStopLease,
 } from "./session-family-control";
+import {
+  SessionWorkspaceClosingError,
+  type SessionWorkspaceCloseLease,
+} from "./session-workspace-control";
 
 const ABORT_AND_WAIT_TIMEOUT_MS = 10000;
 const MAX_CWD_TRANSITIONS_PER_EXECUTION = 4;
@@ -67,6 +75,7 @@ export type SessionExecutionOrigin =
 
 export interface ActiveSessionExecution {
   readonly sessionId: string;
+  readonly rootSessionId: string;
   readonly workspaceRoot: string;
   readonly agentName: string;
   readonly origin: SessionExecutionOrigin;
@@ -82,12 +91,14 @@ export interface SessionHitlResumeLease {
   /** Unique in-process generation guarding stale releases. */
   readonly generation: symbol;
   readonly abortSignal: AbortSignal;
+  /** Validates the asynchronously loaded Session identity before replay. */
+  activate(): void;
   /** The only cwd transition allowed while this resume generation is active. */
   acquireSessionCwdTransition(workspaceRoot: string, sessionId: string): () => void;
   release(): void;
 }
 
-export interface AcquireSessionHitlResumeOptions {
+export interface ReserveSessionHitlResumeOptions {
   /**
    * Serializes a durable acknowledgement without permitting replay. This mode
    * may bypass stale child/root cwd alignment because the caller must not run
@@ -98,7 +109,7 @@ export interface AcquireSessionHitlResumeOptions {
 
 // Session execution lifecycle:
 //   active execution: starting -> running -> cancelling -> completed | failed | cancelled | timed_out | interrupted
-//   parent link:      linked   -> running -> cancelling -> completed | failed | cancelled | timed_out | interrupted
+//   parent link:      linked   -> running -> waiting_for_human -> running -> terminal
 // `executionToken` is the generation guard for every manager-owned completion path:
 // stale promises may resolve after abort/restart, but must not write terminal execution
 // events, child links, reminders, or deferred-request cleanup for a newer generation.
@@ -118,6 +129,7 @@ export interface StartSessionExecutionInput {
 
 interface PendingSessionExecution extends Omit<ActiveSessionExecution, "promise"> {
   promise?: Promise<void>;
+  familyStopLease?: SessionFamilyStopLease;
 }
 
 interface SessionCwdTransitionLeaseState {
@@ -130,9 +142,11 @@ interface SessionHitlResumeLeaseState {
   readonly workspaceRoot: string;
   readonly sessionId: string;
   readonly rootSessionId: string;
+  readonly mode: "replay" | "cancel_only";
   readonly abortController: AbortController;
   readonly completed: Promise<void>;
   readonly complete: () => void;
+  activated: boolean;
 }
 
 interface SessionDeletionLeaseState {
@@ -142,9 +156,24 @@ interface SessionDeletionLeaseState {
 
 interface SessionFamilyStopLeaseState {
   readonly token: symbol;
+  readonly workspaceRoot: string;
   readonly rootSessionId: string;
   readonly exemptSessionId?: string;
 }
+
+interface PendingChildLaunchFamilyState {
+  readonly workspaceRoot: string;
+  readonly rootSessionId: string;
+  readonly launches: Map<symbol, string>;
+}
+
+export interface SessionRuntimeChange {
+  readonly workspaceRoot: string;
+  readonly rootSessionId: string;
+  readonly activity: SessionFamilyActivity;
+}
+
+export type SessionRuntimeChangeListener = (change: SessionRuntimeChange) => void;
 
 interface SessionExecutionManagerConfig {
   readonly sessionAgentManager: SessionAgentManager;
@@ -194,9 +223,12 @@ export class SessionExecutionManager {
   readonly #childSlots = new Map<string, number>();
   readonly #cwdTransitions = new Map<string, SessionCwdTransitionLeaseState>();
   readonly #hitlResumes = new Map<string, SessionHitlResumeLeaseState>();
-  readonly #pendingChildLaunches = new Map<string, Map<symbol, string>>();
+  readonly #pendingChildLaunches = new Map<string, PendingChildLaunchFamilyState>();
   readonly #deletions = new Map<string, SessionDeletionLeaseState>();
   readonly #familyStops = new Map<string, SessionFamilyStopLeaseState>();
+  readonly #workspaceClosures = new Map<string, symbol>();
+  readonly #pendingCheckedStarts = new Map<symbol, { workspaceRoot: string; sessionId: string }>();
+  readonly #runtimeChangeListeners = new Set<SessionRuntimeChangeListener>();
   readonly #eventBridge: SessionEventBridge;
   readonly #config: SessionExecutionManagerConfig;
   readonly #logger: Logger;
@@ -210,16 +242,22 @@ export class SessionExecutionManager {
   }
 
   startExecution(input: StartSessionExecutionInput): ActiveSessionExecution {
+    this.#assertWorkspaceOpen(input.workspaceRoot);
     const key = scopedKey(input.workspaceRoot, input.sessionId);
     if (this.#active.has(key)) {
       throw new AgentRunningError();
     }
-    this.#assertSessionStartAllowed(input.workspaceRoot, input.sessionId);
+    const sessionState = this.#config.getSessionStore(input.sessionId, input.workspaceRoot)?.getState();
+    if (sessionState === undefined) throw new SessionFamilyIdentityUnavailableError(input.sessionId);
+    this.#assertSessionStartAllowed(input.workspaceRoot, input.sessionId, sessionState);
+    const rootSessionId = sessionState.rootSessionId;
+    const previousFamilyActivity = this.getSessionFamilyActivity(input.workspaceRoot, rootSessionId);
 
     const abortController = new AbortController();
     const executionToken = Symbol(`session-execution:${key}`);
     const pending: PendingSessionExecution = {
       sessionId: input.sessionId,
+      rootSessionId,
       workspaceRoot: input.workspaceRoot,
       agentName: input.agentName ?? "orchestrator",
       origin: sessionExecutionOrigin(input.origin),
@@ -230,6 +268,7 @@ export class SessionExecutionManager {
     };
 
     this.#active.set(key, pending);
+    this.#publishSessionRuntimeChange(input.workspaceRoot, rootSessionId, previousFamilyActivity);
 
     let slotAcquired = false;
     try {
@@ -245,7 +284,9 @@ export class SessionExecutionManager {
       return execution;
     } catch (error) {
       if (slotAcquired) this.#config.sessionAgentManager.releaseSlot(input.workspaceRoot, input.sessionId);
+      const activityBeforeRollback = this.getSessionFamilyActivity(input.workspaceRoot, rootSessionId);
       this.#active.delete(key);
+      this.#publishSessionRuntimeChange(input.workspaceRoot, rootSessionId, activityBeforeRollback);
       throw error;
     }
   }
@@ -256,15 +297,22 @@ export class SessionExecutionManager {
    * abandoned by its root Session.
    */
   async startCheckedExecution(input: StartSessionExecutionInput): Promise<ActiveSessionExecution> {
-    const store = await this.#config.loadSessionStore(input.sessionId, input.workspaceRoot);
-    const loadedState = store.getState();
-    if (loadedState.parentSessionId !== undefined) {
-      await this.#config.loadSessionStore(loadedState.rootSessionId, input.workspaceRoot);
-    }
-    await this.#config.sessionHitlExecutionGate?.assertAllowed(input.workspaceRoot, input.sessionId);
-    const claimedScope = executionScopeSnapshot(store.getState());
-    const claimGoalId = claimedScope.goalId;
-    const validateAndStart = async (): Promise<ActiveSessionExecution> => {
+    this.#assertWorkspaceOpen(input.workspaceRoot);
+    const pendingToken = Symbol(`checked-session-start:${input.sessionId}`);
+    this.#pendingCheckedStarts.set(pendingToken, {
+      workspaceRoot: input.workspaceRoot,
+      sessionId: input.sessionId,
+    });
+    try {
+      const store = await this.#config.loadSessionStore(input.sessionId, input.workspaceRoot);
+      const loadedState = store.getState();
+      if (loadedState.parentSessionId !== undefined) {
+        await this.#config.loadSessionStore(loadedState.rootSessionId, input.workspaceRoot);
+      }
+      await this.#config.sessionHitlExecutionGate?.assertAllowed(input.workspaceRoot, input.sessionId);
+      const claimedScope = executionScopeSnapshot(store.getState());
+      const claimGoalId = claimedScope.goalId;
+      const validateAndStart = async (): Promise<ActiveSessionExecution> => {
       const validationState = store.getState();
       const validationScope = executionScopeSnapshot(validationState);
       if (!sameExecutionScopeSnapshot(claimedScope, validationScope)) {
@@ -293,19 +341,26 @@ export class SessionExecutionManager {
         throw executionScopeChanged(currentState.sessionId, previousScope, currentScope, ["sessionRegistration"]);
       }
       this.#assertSessionFamilyCwdAligned(input.workspaceRoot, input.sessionId, currentState);
+      const activity = this.getSessionFamilyActivity(input.workspaceRoot, currentState.rootSessionId);
+      if (activity !== "idle") {
+        throw new SessionFamilyActiveError(input.sessionId, currentState.rootSessionId, activity);
+      }
 
       // Deliberately no await between the final identity check and this claim.
       // startExecution re-checks cwd/HITL leases synchronously before publishing
       // the active generation.
       return this.startExecution(input);
-    };
+      };
 
-    return claimGoalId === undefined || this.#config.executionClaimCoordinator === undefined
-      ? await validateAndStart()
-      : await this.#config.executionClaimCoordinator.run(claimGoalId, validateAndStart);
+      return claimGoalId === undefined || this.#config.executionClaimCoordinator === undefined
+        ? await validateAndStart()
+        : await this.#config.executionClaimCoordinator.run(claimGoalId, validateAndStart);
+    } finally {
+      this.#pendingCheckedStarts.delete(pendingToken);
+    }
   }
 
-  abort(workspaceRoot: string, sessionId: string): boolean {
+  #cancelSessionSubtree(workspaceRoot: string, sessionId: string): boolean {
     const executions = this.#collectActiveCascade(workspaceRoot, sessionId);
     const resumes = this.#collectHitlResumeCascade(workspaceRoot, sessionId);
     if (executions.length === 0 && resumes.length === 0) return false;
@@ -315,11 +370,14 @@ export class SessionExecutionManager {
     return true;
   }
 
-  async abortAndWait(workspaceRoot: string, sessionId: string): Promise<void> {
-    const state = this.#config.getSessionStore(sessionId, workspaceRoot)?.getState();
+  async stopSessionFamily(workspaceRoot: string, rootSessionId: string): Promise<void> {
+    const state = this.#config.getSessionStore(rootSessionId, workspaceRoot)?.getState();
+    if (state !== undefined && (state.parentSessionId !== undefined || state.rootSessionId !== rootSessionId)) {
+      throw new NotRootSessionError(rootSessionId, state.parentSessionId ?? state.rootSessionId);
+    }
     const lease = this.acquireSessionFamilyStop({
       workspaceRoot,
-      rootSessionId: state?.rootSessionId ?? sessionId,
+      rootSessionId,
     });
     try {
       await lease.stopAndWait();
@@ -338,11 +396,14 @@ export class SessionExecutionManager {
     }
 
     const token = Symbol(`session-family-stop:${key}`);
+    const previousFamilyActivity = this.getSessionFamilyActivity(input.workspaceRoot, input.rootSessionId);
     this.#familyStops.set(key, {
       token,
+      workspaceRoot: input.workspaceRoot,
       rootSessionId: input.rootSessionId,
       ...(input.exemptSessionId === undefined ? {} : { exemptSessionId: input.exemptSessionId }),
     });
+    this.#publishSessionRuntimeChange(input.workspaceRoot, input.rootSessionId, previousFamilyActivity);
     let released = false;
     return {
       rootSessionId: input.rootSessionId,
@@ -355,9 +416,37 @@ export class SessionExecutionManager {
       release: () => {
         if (released) return;
         released = true;
-        if (this.#familyStops.get(key)?.token === token) this.#familyStops.delete(key);
+        if (this.#familyStops.get(key)?.token === token) {
+          const activityBeforeRelease = this.getSessionFamilyActivity(input.workspaceRoot, input.rootSessionId);
+          this.#familyStops.delete(key);
+          this.#publishSessionRuntimeChange(input.workspaceRoot, input.rootSessionId, activityBeforeRelease);
+        }
       },
     };
+  }
+
+  /** Linearization gate used by project removal before it inspects live families. */
+  acquireWorkspaceClose(workspaceRoot: string): SessionWorkspaceCloseLease {
+    if (this.#workspaceClosures.has(workspaceRoot)) {
+      throw new SessionWorkspaceClosingError(workspaceRoot);
+    }
+    const token = Symbol(`session-workspace-close:${workspaceRoot}`);
+    this.#workspaceClosures.set(workspaceRoot, token);
+    let released = false;
+    return {
+      workspaceRoot,
+      release: () => {
+        if (released) return;
+        released = true;
+        if (this.#workspaceClosures.get(workspaceRoot) === token) {
+          this.#workspaceClosures.delete(workspaceRoot);
+        }
+      },
+    };
+  }
+
+  assertWorkspaceOpen(workspaceRoot: string): void {
+    this.#assertWorkspaceOpen(workspaceRoot);
   }
 
   async abortAll(): Promise<void> {
@@ -372,12 +461,57 @@ export class SessionExecutionManager {
     ]);
   }
 
-  isRunning(workspaceRoot: string, sessionId: string): boolean {
-    if (this.#isDirectlyRunning(workspaceRoot, sessionId)) return true;
-    for (const resume of this.#hitlResumes.values()) {
-      if (resume.workspaceRoot === workspaceRoot && resume.rootSessionId === sessionId) return true;
+  getSessionFamilyActivity(workspaceRoot: string, rootSessionId: string): SessionFamilyActivity {
+    const key = scopedKey(workspaceRoot, rootSessionId);
+    if (this.#familyStops.has(key)) return "stopping";
+    if ((this.#pendingChildLaunches.get(key)?.launches.size ?? 0) > 0) return "running";
+    if (this.#hitlResumes.has(key)) return "running";
+    for (const execution of this.#active.values()) {
+      if (execution.workspaceRoot === workspaceRoot && execution.rootSessionId === rootSessionId) return "running";
     }
-    return false;
+    return "idle";
+  }
+
+  listSessionFamilyActivities(): readonly SessionRuntimeChange[] {
+    const families = new Map<string, { workspaceRoot: string; rootSessionId: string }>();
+    for (const execution of this.#active.values()) {
+      const key = scopedKey(execution.workspaceRoot, execution.rootSessionId);
+      families.set(key, { workspaceRoot: execution.workspaceRoot, rootSessionId: execution.rootSessionId });
+    }
+    for (const pending of this.#pendingChildLaunches.values()) {
+      const key = scopedKey(pending.workspaceRoot, pending.rootSessionId);
+      families.set(key, { workspaceRoot: pending.workspaceRoot, rootSessionId: pending.rootSessionId });
+    }
+    for (const resume of this.#hitlResumes.values()) {
+      const key = scopedKey(resume.workspaceRoot, resume.rootSessionId);
+      families.set(key, { workspaceRoot: resume.workspaceRoot, rootSessionId: resume.rootSessionId });
+    }
+    for (const stop of this.#familyStops.values()) {
+      const key = scopedKey(stop.workspaceRoot, stop.rootSessionId);
+      families.set(key, { workspaceRoot: stop.workspaceRoot, rootSessionId: stop.rootSessionId });
+    }
+    return [...families.values()]
+      .map(({ workspaceRoot, rootSessionId }) => ({
+        workspaceRoot,
+        rootSessionId,
+        activity: this.getSessionFamilyActivity(workspaceRoot, rootSessionId),
+      }))
+      .filter((family) => family.activity !== "idle")
+      .sort((left, right) => left.workspaceRoot.localeCompare(right.workspaceRoot)
+        || left.rootSessionId.localeCompare(right.rootSessionId));
+  }
+
+  listPendingCheckedStarts(workspaceRoot: string): readonly { sessionId: string }[] {
+    return [...this.#pendingCheckedStarts.values()]
+      .filter((pending) => pending.workspaceRoot === workspaceRoot)
+      .map(({ sessionId }) => ({ sessionId }));
+  }
+
+  subscribeSessionRuntimeChanges(listener: SessionRuntimeChangeListener): () => void {
+    this.#runtimeChangeListeners.add(listener);
+    return () => {
+      this.#runtimeChangeListeners.delete(listener);
+    };
   }
 
   getExecution(workspaceRoot: string, sessionId: string): ActiveSessionExecution | undefined {
@@ -431,20 +565,18 @@ export class SessionExecutionManager {
    * continuation. The returned capability permits exactly this generation to
    * nest the worktree transition required by an approved worktree tool.
    */
-  acquireSessionHitlResume(
+  reserveSessionHitlResume(
     workspaceRoot: string,
     sessionId: string,
-    options: AcquireSessionHitlResumeOptions = {},
+    rootSessionId: string,
+    options: ReserveSessionHitlResumeOptions = {},
   ): SessionHitlResumeLease {
+    this.#assertWorkspaceOpen(workspaceRoot);
     const mode = options.mode ?? "replay";
-    const state = this.#config.getSessionStore(sessionId, workspaceRoot)?.getState();
-    if (state === undefined) {
-      throw new Error(`Session "${sessionId}" must be loaded before acquiring durable HITL resume ownership`);
+    const loadedState = this.#config.getSessionStore(sessionId, workspaceRoot)?.getState();
+    if (loadedState !== undefined && loadedState.rootSessionId !== rootSessionId) {
+      throw new SessionHitlResumeIdentityMismatchError(sessionId, rootSessionId, loadedState.rootSessionId);
     }
-    if (mode !== "cancel_only") {
-      this.#assertSessionFamilyCwdAligned(workspaceRoot, sessionId, state);
-    }
-    const rootSessionId = state.rootSessionId;
     const key = scopedKey(workspaceRoot, rootSessionId);
     if (this.#familyStops.has(key)) {
       throw new SessionFamilyStopInProgressError(sessionId, rootSessionId);
@@ -459,16 +591,14 @@ export class SessionExecutionManager {
       throw new SessionCwdTransitionInProgressError(sessionId, rootSessionId);
     }
 
-    const conflictingSessionIds = new Set(this.#pendingChildLaunches.get(key)?.values() ?? []);
+    const conflictingSessionIds = new Set(this.#pendingChildLaunches.get(key)?.launches.values() ?? []);
     for (const execution of this.#active.values()) {
       if (execution.workspaceRoot !== workspaceRoot) continue;
-      const executionState = this.#config.getSessionStore(execution.sessionId, workspaceRoot)?.getState();
-      if (executionState === undefined || executionState.rootSessionId === rootSessionId) {
+      if (execution.rootSessionId === rootSessionId) {
         conflictingSessionIds.add(execution.sessionId);
       }
     }
-    if (conflictingSessionIds.size > 0 || state.isRunning) {
-      if (state.isRunning) conflictingSessionIds.add(sessionId);
+    if (conflictingSessionIds.size > 0) {
       throw new SessionHitlResumeConflictError(sessionId, [...conflictingSessionIds].sort());
     }
 
@@ -476,22 +606,42 @@ export class SessionExecutionManager {
     const abortController = new AbortController();
     let complete!: () => void;
     const completed = new Promise<void>((resolve) => { complete = resolve; });
+    const previousFamilyActivity = this.getSessionFamilyActivity(workspaceRoot, rootSessionId);
     this.#hitlResumes.set(key, {
       token,
       workspaceRoot,
       sessionId,
       rootSessionId,
+      mode,
       abortController,
       completed,
       complete,
+      activated: false,
     });
+    this.#publishSessionRuntimeChange(workspaceRoot, rootSessionId, previousFamilyActivity);
     let released = false;
     return {
       generation: token,
       abortSignal: abortController.signal,
+      activate: () => {
+        const current = this.#hitlResumes.get(key);
+        if (released || current?.token !== token) {
+          throw new SessionHitlResumeLeaseExpiredError(sessionId, rootSessionId);
+        }
+        abortController.signal.throwIfAborted();
+        const state = this.#config.getSessionStore(sessionId, workspaceRoot)?.getState();
+        if (state === undefined || state.rootSessionId !== rootSessionId) {
+          throw new SessionHitlResumeIdentityMismatchError(sessionId, rootSessionId, state?.rootSessionId);
+        }
+        if (mode !== "cancel_only") this.#assertSessionFamilyCwdAligned(workspaceRoot, sessionId, state);
+        current.activated = true;
+      },
       acquireSessionCwdTransition: (nestedWorkspaceRoot, nestedSessionId) => {
         if (released || this.#hitlResumes.get(key)?.token !== token) {
           throw new SessionHitlResumeLeaseExpiredError(sessionId, rootSessionId);
+        }
+        if (this.#hitlResumes.get(key)?.activated !== true) {
+          throw new SessionHitlResumeLeaseNotActivatedError(sessionId, rootSessionId);
         }
         if (mode === "cancel_only") {
           throw new SessionHitlCancelOnlyLeaseError(sessionId, rootSessionId);
@@ -504,7 +654,11 @@ export class SessionExecutionManager {
       release: () => {
         if (released) return;
         released = true;
-        if (this.#hitlResumes.get(key)?.token === token) this.#hitlResumes.delete(key);
+        if (this.#hitlResumes.get(key)?.token === token) {
+          const activityBeforeRelease = this.getSessionFamilyActivity(workspaceRoot, rootSessionId);
+          this.#hitlResumes.delete(key);
+          this.#publishSessionRuntimeChange(workspaceRoot, rootSessionId, activityBeforeRelease);
+        }
         complete();
       },
     };
@@ -531,7 +685,7 @@ export class SessionExecutionManager {
       throw new SessionCwdTransitionInProgressError(sessionId, sessionId);
     }
 
-    const conflictingSessionIds = new Set(this.#pendingChildLaunches.get(key)?.values() ?? []);
+    const conflictingSessionIds = new Set(this.#pendingChildLaunches.get(key)?.launches.values() ?? []);
     for (const execution of this.#active.values()) {
       if (execution.workspaceRoot !== workspaceRoot) continue;
       if (execution.sessionId === sessionId) {
@@ -593,7 +747,7 @@ export class SessionExecutionManager {
     const childSessionId = crypto.randomUUID();
     const releaseChildLaunch = this.#reserveChildLaunch(
       workspaceRoot,
-      parentState.rootSessionId ?? request.parentSessionId,
+      parentState.rootSessionId,
       childSessionId,
     );
     let childLaunchReserved = true;
@@ -613,7 +767,7 @@ export class SessionExecutionManager {
       parentSlotReserved = true;
       childStore = this.#config.createSessionStore(childSessionId, workspaceRoot, {
         cwd: parentState.cwd,
-        rootSessionId: parentState.rootSessionId ?? request.parentSessionId,
+        rootSessionId: parentState.rootSessionId,
         parentSessionId: request.parentSessionId,
         goalId: parentState.goalId,
         loopId: parentState.loopId,
@@ -682,7 +836,7 @@ export class SessionExecutionManager {
         if (current !== undefined && current.executionToken !== execution.executionToken) return;
         const status = childTerminalStatus(childStore.getState().executions.at(-1), execution.abortController.signal);
         this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, status, childTitle, createdAt, background);
-        if (background && childPolicy.terminalReminders) {
+        if (background && childPolicy.terminalReminders && status !== "waiting_for_human") {
           appendTerminalReminder(request.parentStore, childSessionId, status);
         }
       });
@@ -695,11 +849,73 @@ export class SessionExecutionManager {
     };
   }
 
+  /**
+   * Projects a child-owned Session HITL continuation back onto the original
+   * delegate link. The child and its immediate parent are cold-loaded so a
+   * restart does not leave a durable `waiting_for_human` card stale.
+   */
+  async updateChildSessionLinkForHitl(
+    workspaceRoot: string,
+    childSessionId: string,
+    status: ToolChildSessionLinkStatus,
+  ): Promise<void> {
+    const childStore = await this.#config.loadSessionStore(childSessionId, workspaceRoot);
+    const childState = childStore.getState();
+    const parentSessionId = childState.parentSessionId;
+    if (parentSessionId === undefined) return;
+
+    const parentStore = await this.#config.loadSessionStore(parentSessionId, workspaceRoot);
+    const existing = [...parentStore.getState().childSessionLinks]
+      .reverse()
+      .find((link) => link.childSessionId === childSessionId);
+    if (existing === undefined) {
+      this.#logger.warn("session.child_link.hitl_missing", {
+        context: { sessionId: childSessionId, parentSessionId },
+        meta: { workspaceRoot, status },
+      });
+      return;
+    }
+
+    const now = Date.now();
+    const run = childState.executions.at(-1);
+    const { startedAt: _startedAt, endedAt: _endedAt, durationMs: _durationMs, error: _error, ...base } = existing;
+    const isTerminal = isSubAgentTerminalStatus(status);
+    const runMatchesStatus = childLinkStatusFromExecution(run) === status;
+    const startedAt = status === "running"
+      ? now
+      : runMatchesStatus ? run?.startedAt : existing.startedAt ?? now;
+    const endedAt = isTerminal || status === "waiting_for_human"
+      ? runMatchesStatus ? run?.endedAt ?? now : now
+      : undefined;
+    const durationMs = endedAt === undefined || startedAt === undefined
+      ? undefined
+      : Math.max(0, endedAt - startedAt);
+    parentStore.getState().append({
+      type: "tool-child-session-link",
+      link: {
+        ...base,
+        status,
+        ...(startedAt === undefined ? {} : { startedAt }),
+        ...(endedAt === undefined ? {} : { endedAt }),
+        ...(durationMs === undefined ? {} : { durationMs }),
+        ...(isTerminal && runMatchesStatus && run?.error !== undefined ? { error: run.error } : {}),
+      },
+    });
+    if (isTerminal && existing.background) {
+      const parentAgentName = parentStore.getState().agentName ?? "orchestrator";
+      const parentDefinition = this.#config.sessionAgentManager.getFactory(workspaceRoot).getDefinition(parentAgentName);
+      if (parentDefinition.childPolicy?.terminalReminders) {
+        appendTerminalReminder(parentStore, childSessionId, status);
+      }
+    }
+    await this.#config.flushSessionStore(parentSessionId, workspaceRoot);
+  }
+
   cancelChildSession(workspaceRoot: string, parentSessionId: string, childSessionId: string): boolean {
     if (!this.#isDescendantOf(workspaceRoot, childSessionId, parentSessionId)) {
       throw new ChildSessionNotDescendantError(parentSessionId, childSessionId);
     }
-    return this.abort(workspaceRoot, childSessionId);
+    return this.#cancelSessionSubtree(workspaceRoot, childSessionId);
   }
 
   async resumeChildExecution(workspaceRoot: string, request: ResumeChildRequest): Promise<ChildExecutionHandle> {
@@ -738,7 +954,7 @@ export class SessionExecutionManager {
     const resumeLinkCreatedAt = Date.now();
     const releaseChildLaunch = this.#reserveChildLaunch(
       workspaceRoot,
-      parentState.rootSessionId ?? request.parentSessionId,
+      parentState.rootSessionId,
       request.sessionId,
     );
     let childLaunchReserved = true;
@@ -771,7 +987,7 @@ export class SessionExecutionManager {
         if (current !== undefined && current.executionToken !== execution.executionToken) return;
         const status = childTerminalStatus(childStore.getState().executions.at(-1), execution.abortController.signal);
         this.#appendResumeChildLinkStatus(workspaceRoot, request, existingLink, status, resumeLinkCreatedAt);
-        if (background && parentDefinition.childPolicy?.terminalReminders) {
+        if (background && parentDefinition.childPolicy?.terminalReminders && status !== "waiting_for_human") {
           appendTerminalReminder(request.parentStore, request.sessionId, status);
         }
       });
@@ -806,6 +1022,7 @@ export class SessionExecutionManager {
   }
 
   detachSessionEvents(workspaceRoot: string, sessionId: string): void {
+    if (this.#eventBridge.hasSubscriptions(workspaceRoot, sessionId)) return;
     this.#eventBridge.detachSession(workspaceRoot, sessionId);
   }
 
@@ -824,7 +1041,7 @@ export class SessionExecutionManager {
 
       await this.#config.deletionPreflight?.assertDeletable({ workspaceRoot, rootSessionId, sessionIds });
 
-      const stuckSessionIds = await this.#abortAndWaitForSessions(workspaceRoot, sessionIds);
+      const stuckSessionIds = await this.#cancelAndWaitForSessions(workspaceRoot, sessionIds);
       if (stuckSessionIds.length > 0) {
         throw new SessionDeleteConflictError(stuckSessionIds);
       }
@@ -836,7 +1053,7 @@ export class SessionExecutionManager {
       for (const id of sessionIds) {
         this.#config.sessionAgentManager.dispose(workspaceRoot, id);
         this.#config.untrackSession(workspaceRoot, id);
-        this.#detachIfIdle(workspaceRoot, id);
+        this.#eventBridge.detachSession(workspaceRoot, id);
       }
 
       for (const id of sessionIds) {
@@ -876,12 +1093,16 @@ export class SessionExecutionManager {
           ...(loopOrigin === undefined ? {} : { origin: loopOrigin }),
         });
         if (result.executionControl?.action === "stop_session_family") {
-          this.#cancelSessionFamilyPeers(
-            input.workspaceRoot,
-            agent.store.getState().rootSessionId,
-            execution.executionToken,
-            result.executionControl.reason,
-          );
+          const rootSessionId = execution.rootSessionId;
+          const familyKey = scopedKey(input.workspaceRoot, rootSessionId);
+          if (!this.#familyStops.has(familyKey)) {
+            execution.familyStopLease = this.acquireSessionFamilyStop({
+              workspaceRoot: input.workspaceRoot,
+              rootSessionId,
+              exemptSessionId: execution.sessionId,
+            });
+            await execution.familyStopLease.stopAndWait();
+          }
           return;
         }
         if (result.cwdChanged === undefined) return;
@@ -913,6 +1134,8 @@ export class SessionExecutionManager {
   }
 
   #finalizeExecution(key: string, execution: PendingSessionExecution, slotAcquired: boolean): void {
+    const ownedFamilyStopLease = execution.familyStopLease;
+    execution.familyStopLease = undefined;
     const current = this.#active.get(key);
     const isCurrentExecution = current?.executionToken === execution.executionToken;
     if (isCurrentExecution) {
@@ -923,12 +1146,41 @@ export class SessionExecutionManager {
           status: execution.abortController.signal.aborted ? abortExecutionStatus(execution.abortController.signal) : "completed",
         });
       }
+      const previousFamilyActivity = this.getSessionFamilyActivity(execution.workspaceRoot, execution.rootSessionId);
       this.#active.delete(key);
+      this.#publishSessionRuntimeChange(execution.workspaceRoot, execution.rootSessionId, previousFamilyActivity);
     }
 
     if (isCurrentExecution) {
       if (slotAcquired) this.#config.sessionAgentManager.releaseSlot(execution.workspaceRoot, execution.sessionId);
       this.#detachIfIdle(execution.workspaceRoot, execution.sessionId);
+    }
+
+    if (ownedFamilyStopLease !== undefined) {
+      void this.#finishExecutionOwnedFamilyStop(execution, ownedFamilyStopLease);
+    }
+  }
+
+  /**
+   * A child self-stop cannot wait for an ancestor that is synchronously waiting
+   * on the child's result. Once the child releases its execution generation,
+   * this detached tail drains those ancestors while retaining the same family
+   * Stop lease, so runtime activity cannot flicker back to running.
+   */
+  async #finishExecutionOwnedFamilyStop(
+    execution: PendingSessionExecution,
+    lease: SessionFamilyStopLease,
+  ): Promise<void> {
+    try {
+      await this.#stopSessionFamily(execution.workspaceRoot, execution.rootSessionId, undefined);
+    } catch (error) {
+      this.#logger.error("session.family_stop.final_drain_failed", {
+        error,
+        context: { sessionId: execution.sessionId, rootSessionId: execution.rootSessionId },
+        meta: { workspaceRoot: execution.workspaceRoot },
+      });
+    } finally {
+      lease.release();
     }
   }
 
@@ -939,26 +1191,6 @@ export class SessionExecutionManager {
 
     this.#markParentLinkCancelling(execution.workspaceRoot, execution.sessionId);
     execution.abortController.abort(new Error(reason));
-  }
-
-  #cancelSessionFamilyPeers(
-    workspaceRoot: string,
-    rootSessionId: string,
-    currentExecutionToken: symbol,
-    reason: string,
-  ): void {
-    for (const execution of this.#active.values()) {
-      if (execution.workspaceRoot !== workspaceRoot || execution.executionToken === currentExecutionToken) continue;
-      const state = this.#config.getSessionStore(execution.sessionId, workspaceRoot)?.getState();
-      if (execution.sessionId === rootSessionId || state?.rootSessionId === rootSessionId) {
-        this.#cancelExecution(execution, `Session family stopped: ${reason}`);
-      }
-    }
-    for (const resume of this.#hitlResumes.values()) {
-      if (resume.workspaceRoot === workspaceRoot && resume.rootSessionId === rootSessionId) {
-        resume.abortController.abort(new Error(`Session family stopped: ${reason}`));
-      }
-    }
   }
 
   async #stopSessionFamily(
@@ -973,16 +1205,15 @@ export class SessionExecutionManager {
     while (true) {
       const familyExecutions = [...this.#active.values()].filter((execution) => {
         if (execution.workspaceRoot !== workspaceRoot || execution.sessionId === exemptSessionId) return false;
-        const state = this.#config.getSessionStore(execution.sessionId, workspaceRoot)?.getState();
-        return execution.sessionId === rootSessionId || state?.rootSessionId === rootSessionId;
+        return execution.rootSessionId === rootSessionId;
       });
       const executions = familyExecutions.filter((execution) => !deferredAncestorIds.has(execution.sessionId));
       const resumes = [...this.#hitlResumes.values()].filter((resume) => (
         resume.workspaceRoot === workspaceRoot && resume.rootSessionId === rootSessionId
       ));
-      const pendingChildSessionIds = [...(this.#pendingChildLaunches.get(key)?.values() ?? [])];
+      const pendingChildSessionIds = [...(this.#pendingChildLaunches.get(key)?.launches.values() ?? [])];
 
-      for (const execution of familyExecutions) this.#cancelExecution(execution, "Session family stopped");
+      for (const execution of familyExecutions) this.#cancelExecution(execution, "Session family cancelled");
       for (const resume of resumes) resume.abortController.abort(new Error("Session family stopped"));
 
       if (executions.length === 0 && resumes.length === 0 && pendingChildSessionIds.length === 0) return;
@@ -1024,7 +1255,7 @@ export class SessionExecutionManager {
     return ancestors;
   }
 
-  async #abortAndWaitForSessions(workspaceRoot: string, sessionIds: readonly string[]): Promise<string[]> {
+  async #cancelAndWaitForSessions(workspaceRoot: string, sessionIds: readonly string[]): Promise<string[]> {
     const sessionIdSet = new Set(sessionIds);
     const executions = sessionIds
       .map((sessionId) => this.#active.get(scopedKey(workspaceRoot, sessionId)))
@@ -1102,7 +1333,10 @@ export class SessionExecutionManager {
   }
 
   #detachIfIdle(workspaceRoot: string, sessionId: string): void {
-    if (this.isRunning(workspaceRoot, sessionId)) return;
+    if (this.#isDirectlyRunning(workspaceRoot, sessionId)) return;
+    // The SSE subscription, not the execution generation, owns live delivery.
+    // Parent links and HITL continuations may append after the root goes idle.
+    if (this.#eventBridge.hasSubscriptions(workspaceRoot, sessionId)) return;
     this.#eventBridge.detachSession(workspaceRoot, sessionId);
   }
 
@@ -1127,11 +1361,10 @@ export class SessionExecutionManager {
   #assertSessionStartAllowed(
     workspaceRoot: string,
     sessionId: string,
-    knownState?: SessionStoreState,
+    state: SessionStoreState,
   ): void {
-    const state = knownState ?? this.#config.getSessionStore(sessionId, workspaceRoot)?.getState();
-    if (state !== undefined) this.#assertSessionNotBlockedByHitl(sessionId, state);
-    const rootSessionId = state?.rootSessionId ?? sessionId;
+    this.#assertSessionNotBlockedByHitl(sessionId, state);
+    const rootSessionId = state.rootSessionId;
     if (this.#familyStops.has(scopedKey(workspaceRoot, rootSessionId))) {
       throw new SessionFamilyStopInProgressError(sessionId, rootSessionId);
     }
@@ -1187,6 +1420,7 @@ export class SessionExecutionManager {
   }
 
   #reserveChildLaunch(workspaceRoot: string, rootSessionId: string, childSessionId: string): () => void {
+    this.#assertWorkspaceOpen(workspaceRoot);
     const key = scopedKey(workspaceRoot, rootSessionId);
     if (this.#familyStops.has(key)) {
       throw new SessionFamilyStopInProgressError(childSessionId, rootSessionId);
@@ -1202,17 +1436,52 @@ export class SessionExecutionManager {
     }
 
     const token = Symbol(`child-launch:${childSessionId}`);
-    const launches = this.#pendingChildLaunches.get(key) ?? new Map<symbol, string>();
-    launches.set(token, childSessionId);
-    this.#pendingChildLaunches.set(key, launches);
+    const previousFamilyActivity = this.getSessionFamilyActivity(workspaceRoot, rootSessionId);
+    const family = this.#pendingChildLaunches.get(key) ?? {
+      workspaceRoot,
+      rootSessionId,
+      launches: new Map<symbol, string>(),
+    };
+    family.launches.set(token, childSessionId);
+    this.#pendingChildLaunches.set(key, family);
+    this.#publishSessionRuntimeChange(workspaceRoot, rootSessionId, previousFamilyActivity);
     let released = false;
     return () => {
       if (released) return;
       released = true;
       const current = this.#pendingChildLaunches.get(key);
-      current?.delete(token);
-      if (current?.size === 0) this.#pendingChildLaunches.delete(key);
+      const activityBeforeRelease = this.getSessionFamilyActivity(workspaceRoot, rootSessionId);
+      current?.launches.delete(token);
+      if (current?.launches.size === 0) this.#pendingChildLaunches.delete(key);
+      this.#publishSessionRuntimeChange(workspaceRoot, rootSessionId, activityBeforeRelease);
     };
+  }
+
+  #publishSessionRuntimeChange(
+    workspaceRoot: string,
+    rootSessionId: string,
+    previousActivity: SessionFamilyActivity,
+  ): void {
+    const activity = this.getSessionFamilyActivity(workspaceRoot, rootSessionId);
+    if (activity === previousActivity) return;
+    const change: SessionRuntimeChange = { workspaceRoot, rootSessionId, activity };
+    for (const listener of this.#runtimeChangeListeners) {
+      try {
+        listener(change);
+      } catch (error) {
+        this.#logger.warn("session.runtime.listener.failed", {
+          error,
+          context: { rootSessionId, activity },
+          meta: { workspaceRoot },
+        });
+      }
+    }
+  }
+
+  #assertWorkspaceOpen(workspaceRoot: string): void {
+    if (this.#workspaceClosures.has(workspaceRoot)) {
+      throw new SessionWorkspaceClosingError(workspaceRoot);
+    }
   }
 
   #acquireSessionDeletion(workspaceRoot: string, rootSessionId: string, sessionId: string): () => void {
@@ -1223,7 +1492,7 @@ export class SessionExecutionManager {
     if (this.#deletions.has(key)) {
       throw new SessionDeleteInProgressError(sessionId, rootSessionId);
     }
-    const pendingChildSessionIds = [...(this.#pendingChildLaunches.get(key)?.values() ?? [])];
+    const pendingChildSessionIds = [...(this.#pendingChildLaunches.get(key)?.launches.values() ?? [])];
     if (pendingChildSessionIds.length > 0) {
       throw new SessionDeleteConflictError(pendingChildSessionIds.sort());
     }
@@ -1461,6 +1730,21 @@ function assertChildLoopScope(input: ChildLoopScopeInput): void {
 }
 
 type SubAgentTerminalStatus = Extract<ToolChildSessionLinkStatus, "completed" | "failed" | "timed_out" | "cancelled" | "interrupted">;
+type SubAgentExecutionStatus = SubAgentTerminalStatus | "waiting_for_human";
+
+function isSubAgentTerminalStatus(status: ToolChildSessionLinkStatus): status is SubAgentTerminalStatus {
+  return TERMINAL_CHILD_LINK_STATUSES.has(status);
+}
+
+function childLinkStatusFromExecution(run: SessionExecutionRecord | undefined): SubAgentExecutionStatus | undefined {
+  if (run?.status === "completed") return "completed";
+  if (run?.status === "waiting_for_human") return "waiting_for_human";
+  if (run?.status === "timed_out") return "timed_out";
+  if (run?.status === "cancelled" || run?.status === "aborted") return "cancelled";
+  if (run?.status === "interrupted") return "interrupted";
+  if (run?.status === "failed" || run?.status === "max_steps") return "failed";
+  return undefined;
+}
 
 function wireAbortCascade(parentAbort: AbortSignal | undefined, childController: AbortController): () => void {
   if (parentAbort === undefined) return () => {};
@@ -1473,11 +1757,9 @@ function wireAbortCascade(parentAbort: AbortSignal | undefined, childController:
   return () => parentAbort.removeEventListener("abort", onAbort);
 }
 
-function childTerminalStatus(run: SessionExecutionRecord | undefined, signal: AbortSignal): SubAgentTerminalStatus {
-  if (run?.status === "completed") return "completed";
-  if (run?.status === "timed_out") return "timed_out";
-  if (run?.status === "cancelled") return "cancelled";
-  if (run?.status === "failed") return "failed";
+function childTerminalStatus(run: SessionExecutionRecord | undefined, signal: AbortSignal): SubAgentExecutionStatus {
+  const status = childLinkStatusFromExecution(run);
+  if (status !== undefined) return status;
   if (signal.aborted) {
     const reason = signal.reason;
     if (reason instanceof Error && /timed out/i.test(reason.message)) return "timed_out";

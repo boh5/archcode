@@ -393,7 +393,7 @@ test("creates and reads a manual session loop without readiness score", async ()
     expect(paused.loop.status).toBe("paused");
     expect(paused.loop.nextRunAt).toBeUndefined();
     expect(paused.loop.currentRun).toMatchObject({ runId: "run-1", status: "running" });
-    expect(runtime.abortSessionExecution).not.toHaveBeenCalled();
+    expect(runtime.stopSessionFamily).not.toHaveBeenCalled();
 
     runtime.releaseActiveRun();
     expect((await (await firstTrigger).json() as { report: LoopRunReport }).report.status).toBe("succeeded");
@@ -790,6 +790,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
     skillService: undefined,
     hitl: undefined,
     subscribeMcpStatusChanges: mock(() => () => undefined),
+    subscribeSessionRuntimeChanges: mock(() => () => undefined),
     getMcpServerStatuses: mock(() => new Map()),
     createSession: mock(async () => ({ sessionId: crypto.randomUUID(), title: null, createdAt: now, messages: [], steps: [], todos: [], reminders: [], executions: [] })),
     getSessionFile: mock(async (_workspaceRoot: string, sessionId: string) => ({ sessionId, title: null, createdAt: now, messages: [], steps: [], todos: [], reminders: [], executions: [] })),
@@ -804,10 +805,9 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
       executionToken: Symbol("test-execution"),
       startedAt: now,
     })),
-    abortSessionExecution: mock(() => false),
-    abortSessionExecutionAndWait: mock(async () => undefined),
+    stopSessionFamily: mock(async () => undefined),
     abortAllSessionExecutions: mock(async () => undefined),
-    isSessionExecutionRunning: mock(() => false),
+    getSessionFamilyActivity: mock(() => "idle" as const),
     getSessionExecution: mock(() => undefined),
     subscribeSessionEvents: mock(() => () => undefined),
     deleteSession: mock(async () => undefined),

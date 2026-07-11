@@ -156,7 +156,7 @@ describe("DelegationCard", () => {
   const baseProps = {
     sessionId: "session-child-1",
     focusStoreSessionId: "session-root-1",
-    agentType: "explorer",
+    agentType: "explore",
     agentName: "Explorer Agent",
     status: "running" as const,
     depth: 1,
@@ -207,7 +207,7 @@ describe("DelegationCard", () => {
     expect(text).toContain("depth 1");
   });
 
-  test("falls back to explorer for unknown agent type", () => {
+  test("falls back to explore for unknown agent type", () => {
     const result = DelegationCard({ ...baseProps, agentType: "unknown_type" });
     const text = textContent(result);
     expect(text).toContain("E");

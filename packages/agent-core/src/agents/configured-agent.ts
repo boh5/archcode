@@ -77,7 +77,6 @@ export interface ConfiguredAgentOptions {
   readonly startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
   readonly cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
   readonly resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
-  readonly abortSessionExecutionAndWait?: (workspaceRoot: string, sessionId: string) => Promise<void>;
   readonly acquireSessionCwdTransition?: (workspaceRoot: string, sessionId: string) => () => void;
   readonly quotaEnforcer?: (directory: string) => Promise<void>;
   readonly memoryConfig?: MemoryExtractionConfig;
@@ -119,7 +118,6 @@ export class ConfiguredAgent implements Agent {
   private readonly startChildExecution: ((request: ChildExecutionRequest) => Promise<ChildExecutionHandle>) | undefined;
   private readonly cancelChildSession: ((workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean) | undefined;
   private readonly resumeChildSession: ((workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>) | undefined;
-  private readonly abortSessionExecutionAndWait: ((workspaceRoot: string, sessionId: string) => Promise<void>) | undefined;
   private readonly acquireSessionCwdTransition: ((workspaceRoot: string, sessionId: string) => () => void) | undefined;
   private readonly quotaEnforcer: (directory: string) => Promise<void>;
   private readonly memoryConfig: MemoryExtractionConfig | undefined;
@@ -158,7 +156,6 @@ export class ConfiguredAgent implements Agent {
     this.startChildExecution = options.startChildExecution;
     this.cancelChildSession = options.cancelChildSession;
     this.resumeChildSession = options.resumeChildSession;
-    this.abortSessionExecutionAndWait = options.abortSessionExecutionAndWait;
     this.acquireSessionCwdTransition = options.acquireSessionCwdTransition;
     this.memoryConfig = options.memoryConfig;
     this.quotaEnforcer = options.quotaEnforcer ?? (async (directory) => {
@@ -258,7 +255,6 @@ export class ConfiguredAgent implements Agent {
             startChildExecution: this.startChildExecution,
             cancelChildSession: this.cancelChildSession,
             resumeChildSession: this.resumeChildSession,
-            abortSessionExecutionAndWait: this.abortSessionExecutionAndWait,
             acquireSessionCwdTransition: this.acquireSessionCwdTransition,
             agentName: this.definition.name,
             currentDepth: this.depth,
@@ -421,10 +417,7 @@ export class ConfiguredAgent implements Agent {
       beforeModelCall.push(createTitleGenerationHook(btm, this.projectRoot, isCancelled));
     }
     const budgetEnforcement = createGoalBudgetEnforcementHooks();
-    const loopBudgetEnforcement = createLoopBudgetEnforcementHooks({
-      origin,
-      abortSessionExecutionAndWait: this.abortSessionExecutionAndWait,
-    });
+    const loopBudgetEnforcement = createLoopBudgetEnforcementHooks({ origin });
     beforeModelCall.push(budgetEnforcement.beforeModelCall);
     beforeModelCall.push(loopBudgetEnforcement.beforeModelCall);
     if (beforeModelCall.length > 0) {

@@ -38,3 +38,26 @@ export class SessionFamilyStopConflictError extends Error {
     this.name = "SessionFamilyStopConflictError";
   }
 }
+
+export class SessionFamilyActiveError extends Error {
+  readonly code = "SESSION_FAMILY_ACTIVE";
+
+  constructor(
+    public readonly sessionId: string,
+    public readonly rootSessionId: string,
+    public readonly activity: Exclude<SessionFamilyActivity, "idle">,
+  ) {
+    super(`Session "${sessionId}" cannot accept a user message while Session family "${rootSessionId}" is ${activity}`);
+    this.name = "SessionFamilyActiveError";
+  }
+}
+
+export class SessionFamilyIdentityUnavailableError extends Error {
+  readonly code = "SESSION_FAMILY_IDENTITY_UNAVAILABLE";
+
+  constructor(public readonly sessionId: string) {
+    super(`Session "${sessionId}" must be loaded before claiming or stopping Session family ownership`);
+    this.name = "SessionFamilyIdentityUnavailableError";
+  }
+}
+import type { SessionFamilyActivity } from "@archcode/protocol";

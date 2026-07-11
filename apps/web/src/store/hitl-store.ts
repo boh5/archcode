@@ -1,7 +1,12 @@
 import { createStore } from "zustand/vanilla";
 import { useStore } from "zustand/react";
 import { useMemo } from "react";
-import { hitlIdentityKey, type GlobalSSEHitlRealtimeEvent, type HitlProjection } from "@archcode/protocol";
+import {
+  hitlIdentityKey,
+  type GlobalSSEHitlRealtimeEvent,
+  type GlobalSSEHitlSnapshotEvent,
+  type HitlProjection,
+} from "@archcode/protocol";
 
 export { hitlIdentityKey };
 
@@ -9,13 +14,18 @@ export type HitlScope = "project" | "session" | "goal" | "loop";
 
 interface HitlStoreState {
   projections: Record<string, HitlProjection>;
+  initializedProjects: Record<string, true>;
   applyRealtimeEvent: (event: GlobalSSEHitlRealtimeEvent) => void;
-  applySnapshotReset: (projectSlugs: readonly string[]) => void;
-  resetProject: (projectSlug: string) => void;
+  applySnapshot: (event: GlobalSSEHitlSnapshotEvent) => void;
+  removeProject: (projectSlug: string) => void;
+  invalidateSnapshots: () => void;
+  isProjectInitialized: (projectSlug: string) => boolean;
+  reset: () => void;
 }
 
-export const hitlStore = createStore<HitlStoreState>((set) => ({
+export const hitlStore = createStore<HitlStoreState>((set, get) => ({
   projections: {},
+  initializedProjects: {},
   applyRealtimeEvent: (event) => set((state) => {
     const next = { ...state.projections };
     const key = hitlIdentityKey(event.projection);
@@ -26,21 +36,42 @@ export const hitlStore = createStore<HitlStoreState>((set) => ({
     }
     return { projections: next };
   }),
-  applySnapshotReset: (projectSlugs) => set((state) => {
-    if (projectSlugs.length === 0) return { projections: {} };
-    const projects = new Set(projectSlugs);
+  applySnapshot: (event) => set((state) => {
+    if (event.projectSlugs.length === 0) {
+      return { projections: {}, initializedProjects: {} };
+    }
+
+    const snapshotProjects = new Set(event.projectSlugs);
+    const projections = Object.fromEntries(
+      Object.entries(state.projections).filter(([, projection]) => !snapshotProjects.has(projection.project.slug)),
+    );
+    for (const projection of event.projections) {
+      if (!snapshotProjects.has(projection.project.slug) || !isVisiblePendingHitlStatus(projection.status)) continue;
+      projections[hitlIdentityKey(projection)] = projection;
+    }
+
+    const initializedProjects = { ...state.initializedProjects };
+    for (const projectSlug of event.projectSlugs) initializedProjects[projectSlug] = true;
+    return { projections, initializedProjects };
+  }),
+  removeProject: (projectSlug) => set((state) => {
+    const initializedProjects = { ...state.initializedProjects };
+    delete initializedProjects[projectSlug];
     return {
+      initializedProjects,
       projections: Object.fromEntries(
-        Object.entries(state.projections).filter(([, projection]) => !projects.has(projection.project.slug)),
+        Object.entries(state.projections).filter(([, projection]) => projection.project.slug !== projectSlug),
       ),
     };
   }),
-  resetProject: (projectSlug) => set((state) => ({
-    projections: Object.fromEntries(
-      Object.entries(state.projections).filter(([, projection]) => projection.project.slug !== projectSlug),
-    ),
-  })),
+  invalidateSnapshots: () => set({ initializedProjects: {} }),
+  isProjectInitialized: (projectSlug) => get().initializedProjects[projectSlug] === true,
+  reset: () => set({ projections: {}, initializedProjects: {} }),
 }));
+
+export function useHitlProjectInitialized(projectSlug: string): boolean {
+  return useStore(hitlStore, (state) => state.initializedProjects[projectSlug] === true);
+}
 
 export function useRealtimeHitl(input: {
   readonly slug: string;

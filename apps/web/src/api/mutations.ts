@@ -1,6 +1,9 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 import { queryKeys } from "./queries";
+import {
+  removeProjectControlPlane,
+} from "../store/control-plane-readiness";
 import type {
   CancelCurrentRunResponse,
   ApiCommandResult,
@@ -52,9 +55,16 @@ export function useDeleteProject() {
     mutationFn: async (slug: string) => apiFetch<void>(`/api/projects/${encodeURIComponent(slug)}`, {
       method: "DELETE",
     }),
-    onSuccess: async () => {
+    onSuccess: async (_data, slug) => {
+      removeProjectControlPlane(slug);
       await queryClient.invalidateQueries({ queryKey: queryKeys.projects });
     },
+  });
+}
+
+export function createSession({ slug }: { slug: string }): Promise<Session> {
+  return apiFetch<Session>(`/api/projects/${encodeURIComponent(slug)}/sessions`, {
+    method: "POST",
   });
 }
 
@@ -62,13 +72,7 @@ export function useCreateSession() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ slug }: { slug: string }) => apiFetch<Session>(
-      `/api/projects/${encodeURIComponent(slug)}/sessions`,
-      {
-        method: "POST",
-        body: {},
-      },
-    ),
+    mutationFn: createSession,
     onSuccess: async (_session, variables) => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.sessions(variables.slug) });
     },
@@ -117,21 +121,20 @@ export function usePostCommand() {
   });
 }
 
-export function useAbortSession() {
-  return useMutation({
-    mutationFn: async ({
-      slug,
-      sessionId,
-    }: {
-      slug: string;
-      sessionId: string;
-    }) => apiFetch<{ ok: boolean; aborted: boolean }>(
-      `/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(sessionId)}/abort`,
-      {
-        method: "POST",
-      },
-    ),
-  });
+export interface StopSessionFamilyInput {
+  slug: string;
+  rootSessionId: string;
+}
+
+export function stopSessionFamily({ slug, rootSessionId }: StopSessionFamilyInput): Promise<{ ok: true }> {
+  return apiFetch<{ ok: true }>(
+    `/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(rootSessionId)}/stop`,
+    { method: "POST" },
+  );
+}
+
+export function useStopSessionFamily() {
+  return useMutation({ mutationFn: stopSessionFamily });
 }
 
 // ─── Goal Mutations ───

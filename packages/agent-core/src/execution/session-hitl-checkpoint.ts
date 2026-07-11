@@ -398,6 +398,35 @@ export async function deleteSessionHitlCheckpointFile(workspaceRoot: string, ses
   });
 }
 
+/** Rebinds durable Session journal request owners after a workspace is registered under a new slug. */
+export async function migrateSessionHitlCheckpointProjectSlug(
+  workspaceRoot: string,
+  sessionId: string,
+  projectSlug: string,
+): Promise<boolean> {
+  const path = getSessionHitlCheckpointPath(workspaceRoot, sessionId);
+  return await withCheckpointFileMutationLock(path, async () => {
+    const file = Bun.file(path);
+    if (!(await file.exists())) return false;
+    const parsed = parseCheckpointFile(JSON.parse(await file.text()), sessionId);
+    if (parsed.checkpoints.every((checkpoint) => checkpoint.request.owner.projectSlug === projectSlug)) {
+      return false;
+    }
+    const migrated = parseCheckpointFile({
+      ...parsed,
+      checkpoints: parsed.checkpoints.map((checkpoint) => ({
+        ...checkpoint,
+        request: {
+          ...checkpoint.request,
+          owner: { ...checkpoint.request.owner, projectSlug },
+        },
+      })),
+    }, sessionId);
+    await writeCheckpointFile(migrated, workspaceRoot, sessionId);
+    return true;
+  });
+}
+
 const allowedJournalTransitions: Record<SessionHitlJournalPhase, ReadonlySet<SessionHitlJournalPhase>> = {
   preparing: new Set(["paused"]),
   paused: new Set(["replaying", "continued", "resolving"]),

@@ -1,6 +1,5 @@
 import { z } from "zod";
-import { realpathSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 import { realpath } from "node:fs/promises";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
@@ -29,11 +28,12 @@ type ViewToolOutputInput = z.infer<typeof ViewToolOutputInputSchema>;
 
 // ─── Helpers ───
 
-/** Canonical TOOL_OUTPUT_DIR with trailing separator for prefix matching. */
-const CANONICAL_OUTPUT_DIR: string = (() => {
-  const dir = realpathSync.native(resolve(TOOL_OUTPUT_DIR));
-  return dir.endsWith("/") ? dir : dir + "/";
-})();
+function withTrailingSeparator(path: string): string {
+  return path.endsWith(sep) ? path : path + sep;
+}
+
+/** Lexically resolved output directory; canonicalization is deferred until a file is read. */
+const RESOLVED_OUTPUT_DIR = withTrailingSeparator(resolve(TOOL_OUTPUT_DIR));
 
 function findToolPartByCallId(
   messages: readonly StoredMessage[],
@@ -70,7 +70,7 @@ async function resolveSafePath(
   const resolved = resolve(fullOutputPath);
 
   // ── Check 1: Path containment ──
-  if (!resolved.startsWith(CANONICAL_OUTPUT_DIR)) {
+  if (!resolved.startsWith(RESOLVED_OUTPUT_DIR)) {
     return {
       error: createToolErrorResult({
         kind: "workspace",
@@ -82,8 +82,11 @@ async function resolveSafePath(
 
   // ── Check 2: Resolve symlinks (defense in depth) ──
   try {
-    const realPath = await realpath(resolved);
-    if (!realPath.startsWith(CANONICAL_OUTPUT_DIR)) {
+    const [canonicalOutputDir, realPath] = await Promise.all([
+      realpath(TOOL_OUTPUT_DIR),
+      realpath(resolved),
+    ]);
+    if (!realPath.startsWith(withTrailingSeparator(canonicalOutputDir))) {
       return {
         error: createToolErrorResult({
           kind: "workspace",
@@ -94,7 +97,7 @@ async function resolveSafePath(
     }
     return { path: realPath };
   } catch {
-    // realpath fails when file doesn't exist → check existence below
+    // Missing output is expected after cache eviction or on a fresh installation.
     const file = Bun.file(resolved);
     const exists = await file.exists();
     if (!exists) {
@@ -106,7 +109,13 @@ async function resolveSafePath(
         }),
       };
     }
-    return { path: resolved };
+    return {
+      error: createToolErrorResult({
+        kind: "workspace",
+        code: "TOOL_INVALID_OUTPUT_REFERENCE",
+        message: "Invalid tool output reference",
+      }),
+    };
   }
 }
 

@@ -7,15 +7,11 @@
 
 export const AGENT_TYPES = [
   "orchestrator",
-  "product",
-  "spec",
-  "critic",
-  "foreman",
-  "builder",
+  "plan",
+  "build",
   "reviewer",
-  "librarian",
   "explore",
-  "explorer",
+  "librarian",
 ] as const;
 
 export type AgentType = (typeof AGENT_TYPES)[number];
@@ -24,45 +20,33 @@ export type AgentType = (typeof AGENT_TYPES)[number];
 
 export const AGENT_INITIALS: Record<AgentType, string> = {
   orchestrator: "O",
-  product: "P",
-  spec: "S",
-  critic: "C",
-  foreman: "F",
-  builder: "B",
+  plan: "P",
+  build: "B",
   reviewer: "R",
-  librarian: "L",
   explore: "E",
-  explorer: "E",
+  librarian: "L",
 };
 
 // ─── Display names ───
 
 export const AGENT_DISPLAY_NAMES: Record<AgentType, string> = {
   orchestrator: "Orchestrator",
-  product: "Product",
-  spec: "Spec",
-  critic: "Critic",
-  foreman: "Foreman",
-  builder: "Builder",
+  plan: "Plan",
+  build: "Build",
   reviewer: "Reviewer",
+  explore: "Explore",
   librarian: "Librarian",
-  explore: "Explorer",
-  explorer: "Explorer",
 };
 
 // ─── Icon color classes (semantic Tailwind) ───
 
 export const AGENT_ICON_COLORS: Record<AgentType, string> = {
   orchestrator: "bg-agent-orchestrator/20 text-agent-orchestrator",
-  product: "bg-agent-product/20 text-agent-product",
-  spec: "bg-agent-spec/20 text-agent-spec",
-  critic: "bg-agent-critic/20 text-agent-critic",
-  foreman: "bg-agent-foreman/20 text-agent-foreman",
-  builder: "bg-agent-builder/20 text-agent-builder",
+  plan: "bg-agent-plan/20 text-agent-plan",
+  build: "bg-agent-build/20 text-agent-build",
   reviewer: "bg-agent-reviewer/20 text-agent-reviewer",
+  explore: "bg-agent-explore/20 text-agent-explore",
   librarian: "bg-agent-librarian/20 text-agent-librarian",
-  explore: "bg-agent-explorer/20 text-agent-explorer",
-  explorer: "bg-agent-explorer/20 text-agent-explorer",
 };
 
 // ─── Badge colors (semantic tokens shared with AGENT_ICON_COLORS) ───
@@ -72,41 +56,29 @@ export const AGENT_BADGE_COLORS: Record<AgentType, string> = AGENT_ICON_COLORS;
 
 export const AGENT_DOT_CLASS: Record<AgentType, string> = {
   orchestrator: "bg-agent-orchestrator",
-  product: "bg-agent-product",
-  spec: "bg-agent-spec",
-  critic: "bg-agent-critic",
-  foreman: "bg-agent-foreman",
-  builder: "bg-agent-builder",
+  plan: "bg-agent-plan",
+  build: "bg-agent-build",
   reviewer: "bg-agent-reviewer",
+  explore: "bg-agent-explore",
   librarian: "bg-agent-librarian",
-  explore: "bg-agent-explorer",
-  explorer: "bg-agent-explorer",
 };
 
 export const AGENT_NAME_CLASS: Record<AgentType, string> = {
   orchestrator: "text-agent-orchestrator font-semibold",
-  product: "text-agent-product font-semibold",
-  spec: "text-agent-spec font-semibold",
-  critic: "text-agent-critic font-semibold",
-  foreman: "text-agent-foreman font-semibold",
-  builder: "text-agent-builder font-semibold",
+  plan: "text-agent-plan font-semibold",
+  build: "text-agent-build font-semibold",
   reviewer: "text-agent-reviewer font-semibold",
+  explore: "text-agent-explore font-semibold",
   librarian: "text-agent-librarian font-semibold",
-  explore: "text-agent-explorer font-semibold",
-  explorer: "text-agent-explorer font-semibold",
 };
 
 export const AGENT_BORDER_CLASS: Record<AgentType, string> = {
   orchestrator: "border-agent-orchestrator",
-  product: "border-agent-product",
-  spec: "border-agent-spec",
-  critic: "border-agent-critic",
-  foreman: "border-agent-foreman",
-  builder: "border-agent-builder",
+  plan: "border-agent-plan",
+  build: "border-agent-build",
   reviewer: "border-agent-reviewer",
+  explore: "border-agent-explore",
   librarian: "border-agent-librarian",
-  explore: "border-agent-explorer",
-  explorer: "border-agent-explorer",
 };
 
 // ─── Type guard ───

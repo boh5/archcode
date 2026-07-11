@@ -2,13 +2,8 @@ import type { BeforeModelCallContext, AfterStepEndContext } from "../agents/quer
 import type { ToolExecutionOrigin } from "../tools/types";
 import { LoopBudgetHardStopError, LoopBudgetLedger } from "./budget-ledger";
 
-export interface LoopBudgetExecutionControl {
-  abortSessionExecutionAndWait(workspaceRoot: string, sessionId: string): Promise<void>;
-}
-
 export interface LoopBudgetHookContext {
   readonly origin?: ToolExecutionOrigin;
-  readonly abortSessionExecutionAndWait?: LoopBudgetExecutionControl["abortSessionExecutionAndWait"];
 }
 
 export function createLoopBudgetEnforcementHooks(control: LoopBudgetHookContext = {}) {
@@ -64,7 +59,6 @@ function resolveLoopContext(
   ledger: LoopBudgetLedger;
   loopId: string;
   runId?: string;
-  abortSessionExecutionAndWait?: LoopBudgetExecutionControl["abortSessionExecutionAndWait"];
 } | undefined {
   const projectContext = ctx.projectContext;
   if (projectContext === undefined) return undefined;
@@ -78,7 +72,6 @@ function resolveLoopContext(
     ledger: new LoopBudgetLedger({ stateManager: projectContext.loopState, workspaceRoot: projectContext.project.workspaceRoot }),
     loopId,
     runId: origin?.kind === "loop" ? origin.runId : undefined,
-    abortSessionExecutionAndWait: control.abortSessionExecutionAndWait,
   };
 }
 
@@ -88,7 +81,6 @@ async function hardStop(
     ledger: LoopBudgetLedger;
     loopId: string;
     runId?: string;
-    abortSessionExecutionAndWait?: LoopBudgetExecutionControl["abortSessionExecutionAndWait"];
   },
   source: string,
 ): Promise<never> {
@@ -100,8 +92,5 @@ async function hardStop(
     source,
     summary: "Loop hard budget exceeded; run paused until user action.",
   });
-  if (resolved.abortSessionExecutionAndWait !== undefined) {
-    void resolved.abortSessionExecutionAndWait(ctx.projectContext!.project.workspaceRoot, state.sessionId);
-  }
   throw new LoopBudgetHardStopError(resolved.loopId, "Loop paused: hard budget exceeded");
 }

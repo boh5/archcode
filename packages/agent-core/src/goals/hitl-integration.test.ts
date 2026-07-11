@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { GoalState } from "@archcode/protocol";
+import type { GoalState, HitlRecord, HitlResponse } from "@archcode/protocol";
 
 import { ResumeCoordinator } from "../hitl/resume-coordinator";
 import { HitlService } from "../hitl/service";
@@ -55,6 +55,15 @@ function createAdapter(hitlService: HitlService): GoalHitlResumeAdapter {
 
 function createCoordinator(hitlService: HitlService): ResumeCoordinator {
   return new ResumeCoordinator({ hitl: hitlService, adapters: { goal: createAdapter(hitlService) } });
+}
+
+async function runAdapter(adapter: GoalHitlResumeAdapter, record: HitlRecord, response: HitlResponse): Promise<void> {
+  const prepared = await adapter.prepare(record, response);
+  try {
+    await prepared.run(record, response);
+  } finally {
+    prepared.release();
+  }
 }
 
 async function createGoal(status: Extract<GoalState["status"], "running" | "reviewing"> = "running"): Promise<GoalState> {
@@ -182,8 +191,8 @@ describe("Goal HITL resume integration", () => {
     const goal = await createGoal("running");
     const record = await blockGoal(hitlService, goal, "running");
 
-    await adapter.resume(record, { type: "approval_decision", decision: "approved" });
-    await adapter.resume(record, { type: "approval_decision", decision: "denied", comment: "must not reapply" });
+    await runAdapter(adapter, record, { type: "approval_decision", decision: "approved" });
+    await runAdapter(adapter, record, { type: "approval_decision", decision: "denied", comment: "must not reapply" });
 
     const resumed = await manager.read(goal.id);
     expect(resumed).toMatchObject({
@@ -216,7 +225,7 @@ describe("Goal HITL resume integration", () => {
       approvalRef: record.hitlId,
     });
 
-    await adapter.resume(record, { type: "review_outcome", outcome: "DONE", comment: "criteria satisfied" });
+    await runAdapter(adapter, record, { type: "review_outcome", outcome: "DONE", comment: "criteria satisfied" });
 
     const completed = await manager.read(goal.id);
     expect(completed).toMatchObject({
@@ -245,7 +254,7 @@ describe("Goal HITL resume integration", () => {
       updatedAt: new Date().toISOString(),
     }, null, 2)}\n`);
 
-    await expect(adapter.resume(record, {
+    await expect(runAdapter(adapter, record, {
       type: "approval_decision",
       decision: "approved",
     })).rejects.toBeInstanceOf(GoalStateError);

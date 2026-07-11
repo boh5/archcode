@@ -55,6 +55,11 @@ type MutationResult<T> = {
   updated: ProjectInfo[];
 };
 
+export interface ProjectRegistrationResult {
+  readonly project: ProjectInfo;
+  readonly created: boolean;
+}
+
 function cloneProject(project: ProjectInfo): ProjectInfo {
   return { ...project };
 }
@@ -126,6 +131,10 @@ export class ProjectRegistry {
   }
 
   async add(input: { workspaceRoot: string; name?: string }): Promise<ProjectInfo> {
+    return (await this.addWithResult(input)).project;
+  }
+
+  async addWithResult(input: { workspaceRoot: string; name?: string }): Promise<ProjectRegistrationResult> {
     const workspaceRoot = resolve(input.workspaceRoot);
     if (workspaceRoot !== input.workspaceRoot) {
       throw new ProjectRegistryError("Project workspaceRoot must be an absolute path");
@@ -141,10 +150,13 @@ export class ProjectRegistry {
       throw new ProjectRegistryError("Project workspaceRoot must be an existing directory", error);
     }
 
-    return await this.#mutate((current) => {
+    return await this.#mutate<ProjectRegistrationResult>((current) => {
       const existing = current.find((project) => resolve(project.workspaceRoot) === workspaceRoot);
       if (existing) {
-        return { result: cloneProject(existing), updated: current };
+        return {
+          result: { project: cloneProject(existing), created: false },
+          updated: current,
+        };
       }
 
       const name = input.name ?? basename(workspaceRoot);
@@ -162,17 +174,22 @@ export class ProjectRegistry {
       };
 
       return {
-        result: cloneProject(project),
+        result: { project: cloneProject(project), created: true },
         updated: [...current, project],
       };
     });
   }
 
-  async remove(slug: string): Promise<void> {
-    await this.#mutate((current) => ({
-      result: undefined,
-      updated: current.filter((project) => project.slug !== slug),
-    }));
+  async remove(slug: string): Promise<ProjectInfo | undefined> {
+    return await this.#mutate((current) => {
+      const removed = current.find((project) => project.slug === slug);
+      return {
+        result: removed === undefined ? undefined : cloneProject(removed),
+        updated: removed === undefined
+          ? current
+          : current.filter((project) => project.slug !== slug),
+      };
+    });
   }
 
   async updateName(slug: string, name: string): Promise<ProjectInfo> {

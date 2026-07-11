@@ -25,15 +25,22 @@ import {
 import { createRegistry as createProviderRegistry, type ProviderRegistry } from "./provider/index";
 import { ProjectContextResolver } from "./projects/context-resolver";
 import { ProjectRegistry } from "./projects/registry";
+import type { ProjectInfo } from "./projects/types";
 import { SessionLifecycleService } from "./projects/session-lifecycle-service";
 import { SkillService } from "./skills";
 import type { SessionFile, SessionSummary } from "./store/helpers";
+import { NotRootSessionError } from "./store/errors";
 import type { CompressionOriginalRangeResult } from "./compression";
 import type {
   GlobalSSEEvent,
   GlobalSSEHitlRealtimeEvent,
+  GlobalSSEHitlSnapshotEvent,
   GlobalSSEResourceChangedEvent,
+  GlobalSSESessionRuntimeChangedEvent,
+  GlobalSSESessionRuntimeSnapshotEvent,
+  HitlProjection,
   McpServerStatus,
+  SessionFamilyActivity,
   SessionTreeResponse,
 } from "@archcode/protocol";
 import { CONFIG_FILE_NAME, ENV_WORKSPACE_ROOT } from "@archcode/protocol";
@@ -42,6 +49,7 @@ import {
   SessionCwdReferenceMigrationService,
   SessionExecutionManager,
   SessionExecutionScopeValidator,
+  SessionFamilyStopService,
   SessionHitlResumeAdapter,
   assertSessionHitlJournalAllowsExecution,
 } from "./execution";
@@ -112,6 +120,31 @@ export interface LoopIntegrationStatusSnapshot {
   readonly updatedAt: number;
 }
 
+export interface ProjectControlPlaneSnapshot {
+  readonly sessionRuntime: GlobalSSESessionRuntimeSnapshotEvent;
+  readonly hitl: GlobalSSEHitlSnapshotEvent;
+}
+
+export interface ProjectRemovalResult {
+  readonly project: ProjectInfo;
+  readonly snapshot: ProjectControlPlaneSnapshot;
+}
+
+export class ProjectRuntimeActiveError extends Error {
+  readonly code = "PROJECT_RUNTIME_ACTIVE";
+
+  constructor(
+    public readonly projectSlug: string,
+    public readonly activeFamilies: ReadonlyArray<{
+      readonly rootSessionId: string;
+      readonly activity: Exclude<SessionFamilyActivity, "idle">;
+    }>,
+  ) {
+    super(`Project "${projectSlug}" has active Session families and cannot be removed`);
+    this.name = "ProjectRuntimeActiveError";
+  }
+}
+
 export interface AgentRuntime {
   readonly mcpManager: McpManager;
   readonly toolRegistry: ToolRegistry;
@@ -120,9 +153,13 @@ export interface AgentRuntime {
   readonly warnings: McpWarning[];
   readonly projectRegistry: ProjectRegistry;
   readonly contextResolver: ProjectContextResolver;
+  removeProject(projectSlug: string): Promise<ProjectRemovalResult | undefined>;
   recoverHitlResumes(workspaceRoot: string): Promise<ResumeRecoverySummary | undefined>;
   listPendingHitlEvents(): Promise<GlobalSSEEvent[]>;
   subscribeHitlEvents(listener: (event: GlobalSSEHitlRealtimeEvent) => void): () => void;
+  listSessionRuntimeEvents(): Promise<GlobalSSESessionRuntimeSnapshotEvent[]>;
+  getProjectControlPlaneSnapshot(workspaceRoot: string, projectSlug: string): Promise<ProjectControlPlaneSnapshot>;
+  subscribeSessionRuntimeChanges(listener: (event: GlobalSSESessionRuntimeChangedEvent) => void): () => void;
   subscribeResourceChanges?(listener: (event: GlobalSSEResourceChangedEvent) => void): () => void;
   queueGoalTitleGeneration?(workspaceRoot: string, goalId: string): void;
   cancelGoal(workspaceRoot: string, goalId: string, request: GoalCancellationRequest): Promise<GoalState>;
@@ -136,10 +173,9 @@ export interface AgentRuntime {
   startSessionExecution(input: StartSessionExecutionInput): ActiveSessionExecution;
   /** User-message entry point with cold Session/root cwd validation. */
   startSessionMessageExecution(input: StartSessionExecutionInput): Promise<ActiveSessionExecution>;
-  abortSessionExecution(workspaceRoot: string, sessionId: string): boolean;
-  abortSessionExecutionAndWait(workspaceRoot: string, sessionId: string): Promise<void>;
+  getSessionFamilyActivity(workspaceRoot: string, rootSessionId: string): SessionFamilyActivity;
+  stopSessionFamily(workspaceRoot: string, rootSessionId: string): Promise<void>;
   abortAllSessionExecutions(): Promise<void>;
-  isSessionExecutionRunning(workspaceRoot: string, sessionId: string): boolean;
   getSessionExecution(workspaceRoot: string, sessionId: string): ActiveSessionExecution | undefined;
   subscribeSessionEvents(input: SubscribeSessionEventsInput): () => void;
   deleteSession(workspaceRoot: string, sessionId: string): Promise<void>;
@@ -232,8 +268,16 @@ export async function createRuntime(
 
     await resolveWorkspaceRoot(options);
     const projectRegistry = new ProjectRegistry({ homeDir: options.projectRegistryHomeDir, logger: logger.child({ module: "projects.registry" }) });
+    const projectSlugsByWorkspace = new Map(
+      (await projectRegistry.list()).map((project) => [project.workspaceRoot, project.slug]),
+    );
+    const rememberProject = async (workspaceRoot: string): Promise<void> => {
+      const project = await projectRegistry.getByWorkspace(workspaceRoot);
+      if (project !== undefined) projectSlugsByWorkspace.set(project.workspaceRoot, project.slug);
+    };
     const sessionStoreManager = new SessionStoreManager({ logger });
     const hitlListeners = new Set<(event: GlobalSSEHitlRealtimeEvent) => void>();
+    const sessionRuntimeListeners = new Set<(event: GlobalSSESessionRuntimeChangedEvent) => void>();
     const resourceChangeListeners = new Set<(event: GlobalSSEResourceChangedEvent) => void>();
     const resourceTitleTasks = new BackgroundTaskManager({ logger: runtimeLogger.child({ module: "title-generation.resources" }) });
     const publishHitlEvent = (event: GlobalSSEHitlRealtimeEvent): void => {
@@ -250,6 +294,7 @@ export async function createRuntime(
         if (project === undefined) {
           throw new Error(`Project is not registered: ${workspaceRoot}`);
         }
+        projectSlugsByWorkspace.set(project.workspaceRoot, project.slug);
         return project;
       },
       hitlFactory: (hitlOptions) => new HitlService({
@@ -281,9 +326,11 @@ export async function createRuntime(
             startChildExecution: (childWorkspaceRoot, request) => executionManager.startChildExecution(childWorkspaceRoot, request),
             cancelChildSession: (childWorkspaceRoot, parentSessionId, childSessionId) => executionManager.cancelChildSession(childWorkspaceRoot, parentSessionId, childSessionId),
             resumeChildSession: (childWorkspaceRoot, request) => executionManager.resumeChildExecution(childWorkspaceRoot, request),
-            abortSessionExecutionAndWait: (childWorkspaceRoot, sessionId) => executionManager.abortAndWait(childWorkspaceRoot, sessionId),
-            acquireSessionHitlResume: (childWorkspaceRoot, sessionId, acquireOptions) => (
-              executionManager.acquireSessionHitlResume(childWorkspaceRoot, sessionId, acquireOptions)
+            reserveSessionHitlResume: (childWorkspaceRoot, sessionId, rootSessionId, acquireOptions) => (
+              executionManager.reserveSessionHitlResume(childWorkspaceRoot, sessionId, rootSessionId, acquireOptions)
+            ),
+            updateChildSessionLinkForHitl: (childWorkspaceRoot, sessionId, status) => (
+              executionManager.updateChildSessionLinkForHitl(childWorkspaceRoot, sessionId, status)
             ),
             loopContinuation: {
               acquire: async (input) => await (await getLoopSessionHitlContinuation(workspaceRoot)).acquire(input),
@@ -381,6 +428,43 @@ export async function createRuntime(
       }),
       logger,
     });
+    const sessionFamilyStopService = new SessionFamilyStopService({
+      sessionFamilyController: {
+        acquireStop: (input) => executionManager.acquireSessionFamilyStop(input),
+      },
+      sessionStoreManager,
+      resolveHitlOwner: async (workspaceRoot) => {
+        const context = await contextResolver.resolve(workspaceRoot);
+        return { projectSlug: context.project.slug, hitl: context.hitl };
+      },
+    });
+    executionManager.subscribeSessionRuntimeChanges((change) => {
+      const projectSlug = projectSlugsByWorkspace.get(change.workspaceRoot);
+      if (projectSlug === undefined) {
+        runtimeLogger.warn("session.runtime.project_missing", {
+          message: "Dropped Session runtime change for an unregistered workspace",
+          context: { rootSessionId: change.rootSessionId, activity: change.activity },
+        });
+        return;
+      }
+      const event: GlobalSSESessionRuntimeChangedEvent = {
+        type: "session.runtime_changed",
+        projectSlug,
+        rootSessionId: change.rootSessionId,
+        activity: change.activity,
+        createdAt: Date.now(),
+      };
+      for (const listener of sessionRuntimeListeners) {
+        try {
+          listener(event);
+        } catch (error) {
+          runtimeLogger.warn("session.runtime.listener.failed", {
+            error,
+            context: { projectSlug, rootSessionId: change.rootSessionId, activity: change.activity },
+          });
+        }
+      }
+    });
     const sessionCwdReferenceMigration = new SessionCwdReferenceMigrationService({
       storeManager: sessionStoreManager,
       acquireIdleSessionFamilyCwdTransitions: (projectRoot, rootSessionIds) => (
@@ -404,7 +488,10 @@ export async function createRuntime(
           ...(loopId !== undefined && createOptions?.loopId === undefined ? { loopId } : {}),
         })).sessionId,
         getSessionCwd: async (sessionId) => (await sessionStoreManager.getSessionFile(workspaceRoot, sessionId)).cwd,
-        isSessionActive: async (sessionId) => executionManager.isRunning(workspaceRoot, sessionId),
+        isSessionActive: async (sessionId) => {
+          const session = await sessionStoreManager.getSessionFile(workspaceRoot, sessionId);
+          return executionManager.getSessionFamilyActivity(workspaceRoot, session.rootSessionId) !== "idle";
+        },
       }));
     };
 
@@ -547,7 +634,10 @@ export async function createRuntime(
           clock: schedulerClock,
           logger: runtimeLogger.child({ module: "loops.kill-state" }),
         }),
-        abortSessionExecutionAndWait: (sessionId) => executionManager.abortAndWait(workspaceRoot, sessionId),
+        stopSessionFamily: async (sessionId) => {
+          const session = await sessionStoreManager.getSessionFile(workspaceRoot, sessionId);
+          await executionManager.stopSessionFamily(workspaceRoot, session.rootSessionId);
+        },
         logger: runtimeLogger.child({ module: "loops.scheduler" }),
       });
       const sessionHitlContinuation = new LoopSessionHitlContinuationCoordinator({
@@ -726,8 +816,101 @@ export async function createRuntime(
     sessionAgentManager.setStartChildExecution((workspaceRoot, request) => executionManager.startChildExecution(workspaceRoot, request));
     sessionAgentManager.setCancelChildSession((workspaceRoot, parentSessionId, childSessionId) => executionManager.cancelChildSession(workspaceRoot, parentSessionId, childSessionId));
     sessionAgentManager.setResumeChildSession((workspaceRoot, request) => executionManager.resumeChildExecution(workspaceRoot, request));
-    sessionAgentManager.setAbortSessionExecutionAndWait((workspaceRoot, sessionId) => executionManager.abortAndWait(workspaceRoot, sessionId));
     sessionAgentManager.setAcquireSessionCwdTransition((workspaceRoot, sessionId) => executionManager.acquireSessionCwdTransition(workspaceRoot, sessionId));
+
+    async function getProjectControlPlaneSnapshot(
+      workspaceRoot: string,
+      projectSlug: string,
+    ): Promise<ProjectControlPlaneSnapshot> {
+      executionManager.assertWorkspaceOpen(workspaceRoot);
+      const project = await projectRegistry.get(projectSlug);
+      if (project === undefined || project.workspaceRoot !== workspaceRoot) {
+        throw new Error(`Project control-plane snapshot scope mismatch: ${projectSlug}`);
+      }
+      projectSlugsByWorkspace.set(workspaceRoot, projectSlug);
+      const context = await contextResolver.resolve(workspaceRoot);
+      const projections = await context.hitl.list({ scope: "project", status: "active" });
+      const families = executionManager.listSessionFamilyActivities().flatMap((family) => (
+        family.workspaceRoot === workspaceRoot
+          ? [{ projectSlug, rootSessionId: family.rootSessionId, activity: family.activity }]
+          : []
+      ));
+      const createdAt = Date.now();
+      return {
+        sessionRuntime: {
+          type: "session.runtime.snapshot",
+          projectSlugs: [projectSlug],
+          families,
+          createdAt,
+        },
+        hitl: {
+          type: "hitl.snapshot",
+          projectSlugs: [projectSlug],
+          projections,
+          createdAt,
+        },
+      };
+    }
+
+    async function removeProject(projectSlug: string): Promise<ProjectRemovalResult | undefined> {
+      const project = await projectRegistry.get(projectSlug);
+      if (project === undefined) return undefined;
+
+      const closeLease = executionManager.acquireWorkspaceClose(project.workspaceRoot);
+      try {
+        const liveFamilies = executionManager.listSessionFamilyActivities()
+          .filter((family) => family.workspaceRoot === project.workspaceRoot && family.activity !== "idle")
+          .map(({ rootSessionId, activity }) => ({
+            rootSessionId,
+            activity: activity as Exclude<SessionFamilyActivity, "idle">,
+          }));
+        const activeFamilies = [...liveFamilies];
+        const activeIds = new Set(liveFamilies.map((family) => family.rootSessionId));
+        for (const pending of executionManager.listPendingCheckedStarts(project.workspaceRoot)) {
+          if (activeIds.has(pending.sessionId)) continue;
+          activeIds.add(pending.sessionId);
+          activeFamilies.push({ rootSessionId: pending.sessionId, activity: "running" });
+        }
+        if (activeFamilies.length > 0) {
+          throw new ProjectRuntimeActiveError(project.slug, activeFamilies);
+        }
+
+        const loopServices = loopRuntimeServices.get(project.workspaceRoot);
+        if (loopServices !== undefined) await (await loopServices).scheduler.stop();
+
+        const removed = await projectRegistry.remove(project.slug);
+        if (removed === undefined) return undefined;
+        projectSlugsByWorkspace.delete(project.workspaceRoot);
+        loopRuntimeServices.delete(project.workspaceRoot);
+        await contextResolver.dispose(project.workspaceRoot);
+        sessionAgentManager.releaseWorkspace(project.workspaceRoot);
+        sessionStoreManager.releaseWorkspace(project.workspaceRoot);
+        for (const [key, active] of activeSessionKeys) {
+          if (active.workspaceRoot === project.workspaceRoot) activeSessionKeys.delete(key);
+        }
+
+        const createdAt = Date.now();
+        return {
+          project: removed,
+          snapshot: {
+            sessionRuntime: {
+              type: "session.runtime.snapshot",
+              projectSlugs: [removed.slug],
+              families: [],
+              createdAt,
+            },
+            hitl: {
+              type: "hitl.snapshot",
+              projectSlugs: [removed.slug],
+              projections: [],
+              createdAt,
+            },
+          },
+        };
+      } finally {
+        closeLease.release();
+      }
+    }
 
     return {
       mcpManager,
@@ -737,34 +920,52 @@ export async function createRuntime(
       warnings,
       projectRegistry,
       contextResolver,
+      removeProject,
       recoverHitlResumes: async (workspaceRoot) => (await contextResolver.resolve(workspaceRoot)).hitlResumeCoordinator.recover(),
       listPendingHitlEvents: async () => {
         const projects = await projectRegistry.list();
-        const events: GlobalSSEEvent[] = [{
-          type: "hitl.snapshot",
-          projectSlugs: projects.map((project) => project.slug),
-          createdAt: Date.now(),
-        }];
+        const projections: HitlProjection[] = [];
         for (const project of projects) {
           const context = await contextResolver.resolve(project.workspaceRoot);
-          for (const projection of await context.hitl.list({ scope: "project", status: "active" })) {
-            events.push({
-              type: "hitl.event",
-              projectSlug: projection.project.slug,
-              owner: projection.owner,
-              hitlId: projection.hitlId,
-              createdAt: Date.now(),
-              payload: { type: "hitl.snapshot", status: projection.status },
-              projection,
-            });
-          }
+          projections.push(...await context.hitl.list({ scope: "project", status: "active" }));
         }
-        return events;
+        return [{
+          type: "hitl.snapshot",
+          projectSlugs: projects.map((project) => project.slug),
+          projections,
+          createdAt: Date.now(),
+        }];
       },
       subscribeHitlEvents: (listener) => {
         hitlListeners.add(listener);
         return () => {
           hitlListeners.delete(listener);
+        };
+      },
+      listSessionRuntimeEvents: async () => {
+        const projects = await projectRegistry.list();
+        const registeredProjectSlugs = new Map(projects.map((project) => [project.workspaceRoot, project.slug]));
+        for (const project of projects) projectSlugsByWorkspace.set(project.workspaceRoot, project.slug);
+        const families = executionManager.listSessionFamilyActivities().flatMap((family) => {
+          const projectSlug = registeredProjectSlugs.get(family.workspaceRoot);
+          return projectSlug === undefined ? [] : [{
+            projectSlug,
+            rootSessionId: family.rootSessionId,
+            activity: family.activity,
+          }];
+        });
+        return [{
+          type: "session.runtime.snapshot",
+          projectSlugs: projects.map((project) => project.slug),
+          families,
+          createdAt: Date.now(),
+        }];
+      },
+      getProjectControlPlaneSnapshot,
+      subscribeSessionRuntimeChanges: (listener) => {
+        sessionRuntimeListeners.add(listener);
+        return () => {
+          sessionRuntimeListeners.delete(listener);
         };
       },
       subscribeResourceChanges: (listener) => {
@@ -782,16 +983,32 @@ export async function createRuntime(
       queueLoopTitleGeneration,
       subscribeMcpStatusChanges: (listener) => mcpManager.onStatusChange(listener),
       getMcpServerStatuses: () => mcpManager.getStatus(),
-      createSession: (workspaceRoot, createOptions) => sessionStoreManager.createSessionFile(workspaceRoot, createOptions),
+      createSession: (workspaceRoot, createOptions) => {
+        executionManager.assertWorkspaceOpen(workspaceRoot);
+        return sessionStoreManager.createSessionFile(workspaceRoot, createOptions);
+      },
       getSessionFile: (workspaceRoot, sessionId) => sessionStoreManager.getSessionFile(workspaceRoot, sessionId),
       resolveCompressionOriginalRange: (workspaceRoot, sessionId, blockRef) => sessionStoreManager.resolveCompressionOriginalRange(workspaceRoot, sessionId, blockRef),
       listSessions: (workspaceRoot) => sessionStoreManager.listSessionSummaries(workspaceRoot),
-      startSessionExecution: (input) => executionManager.startExecution(input),
-      startSessionMessageExecution: (input) => executionManager.startCheckedExecution(input),
-      abortSessionExecution: (workspaceRoot, sessionId) => executionManager.abort(workspaceRoot, sessionId),
-      abortSessionExecutionAndWait: (workspaceRoot, sessionId) => executionManager.abortAndWait(workspaceRoot, sessionId),
+      startSessionExecution: (input) => {
+        projectSlugsByWorkspace.set(input.workspaceRoot, input.slug);
+        return executionManager.startExecution(input);
+      },
+      startSessionMessageExecution: (input) => {
+        projectSlugsByWorkspace.set(input.workspaceRoot, input.slug);
+        return executionManager.startCheckedExecution(input);
+      },
+      getSessionFamilyActivity: (workspaceRoot, rootSessionId) => executionManager.getSessionFamilyActivity(workspaceRoot, rootSessionId),
+      stopSessionFamily: async (workspaceRoot, rootSessionId) => {
+        await rememberProject(workspaceRoot);
+        const store = await sessionStoreManager.getOrLoad(rootSessionId, workspaceRoot);
+        const state = store.getState();
+        if (state.parentSessionId !== undefined || state.rootSessionId !== rootSessionId) {
+          throw new NotRootSessionError(rootSessionId, state.parentSessionId ?? state.rootSessionId);
+        }
+        await sessionFamilyStopService.stop(workspaceRoot, rootSessionId);
+      },
       abortAllSessionExecutions: () => executionManager.abortAll(),
-      isSessionExecutionRunning: (workspaceRoot, sessionId) => executionManager.isRunning(workspaceRoot, sessionId),
       getSessionExecution: (workspaceRoot, sessionId) => executionManager.getExecution(workspaceRoot, sessionId),
       subscribeSessionEvents: (input) => executionManager.subscribe(input),
       deleteSession: (workspaceRoot, sessionId) => executionManager.deleteSession(workspaceRoot, sessionId),

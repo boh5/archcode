@@ -11,6 +11,7 @@ import { LoopStateManager } from "../loops/state";
 import { SessionStoreManager } from "../store/session-store-manager";
 import {
   getSessionHitlCheckpointPath,
+  migrateSessionHitlCheckpointProjectSlug,
   readSessionHitlCheckpoint,
   readSessionHitlCheckpointFile,
   sessionHitlJournalPhase,
@@ -112,6 +113,35 @@ describe("Session HITL journal", () => {
     await expect(readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId)).rejects.toThrow();
   });
 
+  test("migrates checkpoint request owners to the current project slug without changing journal identity", async () => {
+    const fixture = await createFixture();
+    const checkpoint = preparingCheckpoint(fixture);
+    await writeSessionHitlCheckpoint(checkpoint, fixture.workspaceRoot, fixture.sessionId);
+
+    await expect(migrateSessionHitlCheckpointProjectSlug(
+      fixture.workspaceRoot,
+      fixture.sessionId,
+      "re-added-project",
+    )).resolves.toBe(true);
+
+    const migrated = await readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId);
+    expect(migrated.checkpoints).toEqual([
+      expect.objectContaining({
+        hitlId: checkpoint.hitlId,
+        blockingKey: checkpoint.blockingKey,
+        phase: checkpoint.phase,
+        request: expect.objectContaining({
+          owner: { ...fixture.owner, projectSlug: "re-added-project" },
+        }),
+      }),
+    ]);
+    await expect(migrateSessionHitlCheckpointProjectSlug(
+      fixture.workspaceRoot,
+      fixture.sessionId,
+      "re-added-project",
+    )).resolves.toBe(false);
+  });
+
   test("rejects checkpoint owner source kind and permission mismatches", async () => {
     const fixture = await createFixture();
     const checkpoint = preparingCheckpoint(fixture);
@@ -173,7 +203,7 @@ describe("Session HITL journal", () => {
       name: "SessionHitlJournalBlockedError",
       hitlIds: [checkpoint.hitlId],
     });
-    expect(manager.isRunning(fixture.workspaceRoot, fixture.sessionId)).toBe(false);
+    expect(manager.getSessionFamilyActivity(fixture.workspaceRoot, fixture.sessionId)).toBe("idle");
   });
 
   test("cold recovery completes the owner-created boundary without duplicating the visible request", async () => {
@@ -182,6 +212,7 @@ describe("Session HITL journal", () => {
     await writeSessionHitlCheckpoint(checkpoint, fixture.workspaceRoot, fixture.sessionId);
     await fixture.hitl.create({
       owner: fixture.owner,
+      sessionRootId: fixture.sessionId,
       hitlId: checkpoint.hitlId,
       blockingKey: checkpoint.blockingKey,
       source: checkpoint.source,
@@ -207,6 +238,7 @@ describe("Session HITL journal", () => {
     const checkpoint = preparingCheckpoint(fixture);
     const existing = await fixture.hitl.create({
       owner: fixture.owner,
+      sessionRootId: fixture.sessionId,
       blockingKey: checkpoint.blockingKey,
       source: checkpoint.source,
       displayPayload: checkpoint.request!.displayPayload,

@@ -55,6 +55,16 @@ describe("ProjectRegistry", () => {
     expect((await registry.list()).map((project) => project.slug)).toEqual([first.slug]);
   });
 
+  test("addWithResult distinguishes a new registration from an existing workspace", async () => {
+    const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
+
+    const first = await registry.addWithResult({ workspaceRoot: tmpWorkspaceA, name: "Original" });
+    const second = await registry.addWithResult({ workspaceRoot: tmpWorkspaceA, name: "Ignored" });
+
+    expect(first.created).toBe(true);
+    expect(second).toEqual({ created: false, project: first.project });
+  });
+
   test("add rejects non-absolute workspaceRoot with ProjectRegistryError", async () => {
     const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
 
@@ -122,7 +132,7 @@ describe("ProjectRegistry", () => {
     expect(await registry.get(projectB.slug)).toEqual(projectB);
     expect(await registry.getByWorkspace(tmpWorkspaceA)).toEqual(projectA);
 
-    await registry.remove(projectA.slug);
+    await expect(registry.remove(projectA.slug)).resolves.toEqual(projectA);
     expect(await registry.list()).toEqual([projectB]);
     expect(await registry.get(projectA.slug)).toBeUndefined();
 

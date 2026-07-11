@@ -5,7 +5,7 @@ import type { GlobalSSEEvent, HitlDisplayPayload, HitlIdentity, HitlProjection, 
 import { ProjectContextResolver, ProjectRegistry, silentLogger } from "@archcode/agent-core";
 import type { AgentRuntime, ProjectContext, ProjectInfo } from "@archcode/agent-core";
 import { GoalStateManager } from "../../../../packages/agent-core/src/goals/state";
-import { ResumeCoordinator, type SessionHitlResumeAdapter } from "../../../../packages/agent-core/src/hitl/resume-coordinator";
+import { createPreparedHitlResume, ResumeCoordinator, type SessionHitlResumeAdapter } from "../../../../packages/agent-core/src/hitl/resume-coordinator";
 import type { LoopConfig } from "../../../../packages/agent-core/src/loops/state";
 import { SessionStoreManager } from "../../../../packages/agent-core/src/store/session-store-manager";
 import { getSessionPath } from "../../../../packages/agent-core/src/store/sessions-dir";
@@ -42,8 +42,10 @@ function createTestRuntime(projectRegistry: ProjectRegistry): Omit<TestFixture, 
   const sessionStoreManager = new SessionStoreManager({ logger: silentLogger });
   let sessionResumeCalls = 0;
   const sessionAdapter: SessionHitlResumeAdapter = {
-    async resume(): Promise<void> {
-      sessionResumeCalls += 1;
+    async prepare() {
+      return createPreparedHitlResume(async () => {
+        sessionResumeCalls += 1;
+      });
     },
   };
   const contextResolver = new ProjectContextResolver({
@@ -75,6 +77,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry): Omit<TestFixture, 
     hitl: undefined,
     recoverHitlResumes: mock(async () => undefined),
     subscribeHitlEvents: mock(() => () => undefined),
+    subscribeSessionRuntimeChanges: mock(() => () => undefined),
     subscribeMcpStatusChanges: mock(() => () => undefined),
     getMcpServerStatuses: mock(() => new Map()),
     createSession: mock(async (workspaceRoot: string) => sessionStoreManager.createSessionFile(workspaceRoot)),
@@ -83,10 +86,9 @@ function createTestRuntime(projectRegistry: ProjectRegistry): Omit<TestFixture, 
     startSessionExecution: mock(() => {
       throw new Error("not implemented");
     }),
-    abortSessionExecution: mock(() => false),
-    abortSessionExecutionAndWait: mock(async () => undefined),
+    stopSessionFamily: mock(async () => undefined),
     abortAllSessionExecutions: mock(async () => undefined),
-    isSessionExecutionRunning: mock(() => false),
+    getSessionFamilyActivity: mock(() => "idle" as const),
     getSessionExecution: mock(() => undefined),
     subscribeSessionEvents: mock(() => () => undefined),
     deleteSession: mock(async () => undefined),
@@ -334,6 +336,7 @@ describe("hitl routes", () => {
     const hitlId = "owner-local-shared-id";
     const first = await context.hitl.create({
       owner: { projectSlug: project.slug, ownerType: "session", ownerId: firstSessionId },
+      sessionRootId: firstSessionId,
       hitlId,
       blockingKey: "first-owner-shared-id",
       source: { type: "ask_user", sessionId: firstSessionId },
@@ -341,6 +344,7 @@ describe("hitl routes", () => {
     });
     const second = await context.hitl.create({
       owner: { projectSlug: project.slug, ownerType: "session", ownerId: secondSessionId },
+      sessionRootId: secondSessionId,
       hitlId,
       blockingKey: "second-owner-shared-id",
       source: { type: "ask_user", sessionId: secondSessionId },
@@ -518,6 +522,7 @@ async function createGoal(manager: GoalStateManager, projectSlug: string, title:
 async function createSessionHitl(hitl: TestHitlService, projectSlug: string, sessionId: string, title: string): Promise<HitlRecord> {
   return await hitl.create({
     owner: { projectSlug, ownerType: "session", ownerId: sessionId },
+    sessionRootId: sessionId,
     blockingKey: `session:${sessionId}:ask:${crypto.randomUUID()}`,
     source: { type: "ask_user", sessionId, toolCallId: crypto.randomUUID() },
     displayPayload: redactedPayload(title),
@@ -527,6 +532,7 @@ async function createSessionHitl(hitl: TestHitlService, projectSlug: string, ses
 async function createPermissionHitl(hitl: TestHitlService, projectSlug: string, sessionId: string, toolCallId: string): Promise<HitlRecord> {
   return await hitl.create({
     owner: { projectSlug, ownerType: "session", ownerId: sessionId },
+    sessionRootId: sessionId,
     blockingKey: `session:${sessionId}:tool:${toolCallId}`,
     source: { type: "tool_permission", sessionId, toolCallId, toolName: "bash" },
     displayPayload: redactedPayload("Permission for [REDACTED]"),
@@ -604,6 +610,7 @@ function hitlRequestEvent(): GlobalSSEEvent {
       request: {
         hitlId: "hitl-sse-1",
         owner: { projectSlug: "scoped-sse-project", ownerType: "session", ownerId: "session-1" },
+        sessionRootId: "session-1",
         blockingKey: "session:session-1:ask:call-1",
         source: { type: "ask_user", sessionId: "session-1", toolCallId: "call-1" },
         status: "pending",

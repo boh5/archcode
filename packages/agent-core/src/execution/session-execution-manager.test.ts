@@ -6,14 +6,15 @@ import type { Agent, AgentResult, AgentRunOptions } from "../agents/types";
 import { AgentRunningError, ConcurrentLimitError, ConcurrentSessionLimitError, DelegateTargetNotAllowedError, DepthLimitError, ChildSessionNotFoundError, ChildSessionAgentMismatchError, ChildSessionParentMismatchError, ChildSessionNotDescendantError, ChildSessionCwdMismatchError, ChildSessionLoopScopeMismatchError, SessionCwdTransitionConflictError, SessionCwdTransitionInProgressError, SessionHitlBlockedError, SessionHitlCancelOnlyLeaseError, SessionHitlResumeConflictError, SessionHitlResumeInProgressError, SessionHitlResumeLeaseExpiredError } from "../agents/errors";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
 import type { SlashCommandResult } from "../commands/types";
-import { SessionDeleteConflictError } from "../store/errors";
+import { NotRootSessionError, SessionDeleteConflictError } from "../store/errors";
 import { SessionDeleteInProgressError, SessionDeleteOwnerConflictError } from "./session-deletion";
-import { SessionFamilyStopConflictError, SessionFamilyStopInProgressError } from "./session-family-control";
+import { SessionFamilyActiveError, SessionFamilyIdentityUnavailableError, SessionFamilyStopConflictError, SessionFamilyStopInProgressError } from "./session-family-control";
 import type { SessionFile } from "../store/helpers";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { getSessionDir, getSessionPath } from "../store/sessions-dir";
 import { SessionExecutionManager } from "./session-execution-manager";
 import { SessionExecutionScopeConflictError } from "./session-execution-scope-validator";
+import { SessionWorkspaceClosingError } from "./session-workspace-control";
 import { silentLogger } from "../logger";
 import type { SessionStoreState, ToolChildSessionLink } from "../store/types";
 import type { AgentFactory } from "../agents/factory";
@@ -22,6 +23,7 @@ import type { ToolExecutionOrigin } from "../tools/types";
 import { createEmptyCompressionState } from "../compression";
 
 const workspaceRoot = join(import.meta.dir, "__test_tmp__", "session-execution-manager-workspace");
+const defaultAgentWorkspaceRoot = workspaceRoot;
 const storeManager = new SessionStoreManager({ logger: silentLogger });
 const LOOP_ORIGIN: ToolExecutionOrigin = {
   kind: "loop",
@@ -63,6 +65,17 @@ async function waitFor(predicate: () => boolean): Promise<void> {
   }
 }
 
+function reserveActivatedHitlResume(
+  manager: SessionExecutionManager,
+  sessionId: string,
+  rootSessionId = sessionId,
+  options?: Parameters<SessionExecutionManager["reserveSessionHitlResume"]>[3],
+) {
+  const lease = manager.reserveSessionHitlResume(workspaceRoot, sessionId, rootSessionId, options);
+  lease.activate();
+  return lease;
+}
+
 class MockAgent implements Agent {
   readonly store;
   readonly cwd: string;
@@ -79,7 +92,7 @@ class MockAgent implements Agent {
   constructor(
     readonly sessionId: string,
     readonly result: Promise<AgentResult>,
-    readonly workspaceRoot: string = "/workspace",
+    readonly workspaceRoot: string = defaultAgentWorkspaceRoot,
   ) {
     this.store = storeManager.create(sessionId, workspaceRoot);
     this.cwd = this.store.getState().cwd;
@@ -291,6 +304,210 @@ describe("SessionExecutionManager", () => {
     await rm(workspaceRoot, { recursive: true, force: true });
   });
 
+  test("projects root-family activity from live ownership and publishes only transitions", async () => {
+    const rootId = crypto.randomUUID();
+    const childId = crypto.randomUUID();
+    const rootRun = deferred<AgentResult>();
+    const childRun = deferred<AgentResult>();
+    storeManager.create(rootId, workspaceRoot, { agentName: "orchestrator" });
+    storeManager.create(childId, workspaceRoot, {
+      rootSessionId: rootId,
+      parentSessionId: rootId,
+      agentName: "explore",
+    });
+    const rootAgent = new MockAgent(rootId, rootRun.promise, workspaceRoot);
+    const childAgent = new MockAgent(childId, childRun.promise, workspaceRoot);
+    const { manager } = createManager({ [rootId]: rootAgent, [childId]: childAgent });
+    const changes: Array<{ rootSessionId: string; activity: string }> = [];
+    const unsubscribe = manager.subscribeSessionRuntimeChanges((change) => {
+      changes.push({ rootSessionId: change.rootSessionId, activity: change.activity });
+    });
+
+    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("idle");
+    const rootExecution = manager.startExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: rootId,
+      userMessage: "root",
+    });
+    const childExecution = manager.startExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: childId,
+      userMessage: "child",
+      origin: "tool_call",
+      agentName: "explore",
+    });
+    expect(rootExecution.rootSessionId).toBe(rootId);
+    expect(childExecution.rootSessionId).toBe(rootId);
+    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("running");
+
+    rootRun.resolve({ text: "root done", steps: 1 });
+    await rootExecution.promise;
+    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("running");
+    expect(manager.listSessionFamilyActivities()).toEqual([
+      { workspaceRoot, rootSessionId: rootId, activity: "running" },
+    ]);
+
+    childRun.resolve({ text: "child done", steps: 1 });
+    await childExecution.promise;
+    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("idle");
+    expect(manager.listSessionFamilyActivities()).toEqual([]);
+    expect(changes).toEqual([
+      { rootSessionId: rootId, activity: "running" },
+      { rootSessionId: rootId, activity: "idle" },
+    ]);
+    unsubscribe();
+  });
+
+  test("strong family stop exposes stopping until every descendant releases ownership", async () => {
+    const rootId = crypto.randomUUID();
+    const childId = crypto.randomUUID();
+    const childRun = deferred<AgentResult>();
+    storeManager.create(rootId, workspaceRoot, { agentName: "orchestrator" });
+    storeManager.create(childId, workspaceRoot, {
+      rootSessionId: rootId,
+      parentSessionId: rootId,
+      agentName: "explore",
+    });
+    const childAgent = new MockAgent(childId, childRun.promise, workspaceRoot);
+    const { manager } = createManager({ [childId]: childAgent });
+    const activities: string[] = [];
+    manager.subscribeSessionRuntimeChanges((change) => activities.push(change.activity));
+    const childExecution = manager.startExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: childId,
+      userMessage: "child",
+      origin: "tool_call",
+      agentName: "explore",
+    });
+
+    const stopping = manager.stopSessionFamily(workspaceRoot, rootId);
+    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("stopping");
+    expect(childExecution.abortController.signal.aborted).toBe(true);
+    await stopping;
+
+    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("idle");
+    expect(activities).toEqual(["running", "stopping", "idle"]);
+  });
+
+  test("rejects a new root user message while a descendant owns the family", async () => {
+    const rootId = crypto.randomUUID();
+    const childId = crypto.randomUUID();
+    const childRun = deferred<AgentResult>();
+    const rootStore = storeManager.create(rootId, workspaceRoot, { agentName: "orchestrator" });
+    storeManager.create(childId, workspaceRoot, {
+      rootSessionId: rootId,
+      parentSessionId: rootId,
+      agentName: "explore",
+    });
+    const rootAgent = new MockAgent(rootId, Promise.resolve({ text: "must not run", steps: 1 }), workspaceRoot);
+    const childAgent = new MockAgent(childId, childRun.promise, workspaceRoot);
+    const { manager } = createManager({ [rootId]: rootAgent, [childId]: childAgent });
+    const childExecution = manager.startExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: childId,
+      userMessage: "child",
+      origin: "tool_call",
+      agentName: "explore",
+    });
+
+    await expect(manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: rootId,
+      userMessage: "new root message",
+    })).rejects.toEqual(expect.objectContaining({
+      name: "SessionFamilyActiveError",
+      sessionId: rootId,
+      rootSessionId: rootId,
+      activity: "running",
+    }));
+    expect(rootStore.getState().isRunning).toBe(false);
+
+    childRun.resolve({ text: "done", steps: 1 });
+    await childExecution.promise;
+  });
+
+  test("rejects a direct child user message while a sibling owns the family", async () => {
+    const rootId = crypto.randomUUID();
+    const childId = crypto.randomUUID();
+    const siblingId = crypto.randomUUID();
+    const siblingRun = deferred<AgentResult>();
+    storeManager.create(rootId, workspaceRoot, { agentName: "orchestrator" });
+    const childStore = storeManager.create(childId, workspaceRoot, {
+      rootSessionId: rootId,
+      parentSessionId: rootId,
+      agentName: "explore",
+    });
+    storeManager.create(siblingId, workspaceRoot, {
+      rootSessionId: rootId,
+      parentSessionId: rootId,
+      agentName: "explore",
+    });
+    const childAgent = new MockAgent(childId, Promise.resolve({ text: "must not run", steps: 1 }), workspaceRoot);
+    const siblingAgent = new MockAgent(siblingId, siblingRun.promise, workspaceRoot);
+    const { manager } = createManager({ [childId]: childAgent, [siblingId]: siblingAgent });
+    const siblingExecution = manager.startExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: siblingId,
+      userMessage: "sibling",
+      origin: "tool_call",
+      agentName: "explore",
+    });
+
+    await expect(manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: childId,
+      userMessage: "direct child message",
+    })).rejects.toBeInstanceOf(SessionFamilyActiveError);
+    expect(childStore.getState().isRunning).toBe(false);
+
+    siblingRun.resolve({ text: "done", steps: 1 });
+    await siblingExecution.promise;
+  });
+
+  test("rejects a loaded child passed to the root-only family Stop contract", async () => {
+    const rootId = crypto.randomUUID();
+    const childId = crypto.randomUUID();
+    storeManager.create(rootId, workspaceRoot, { agentName: "orchestrator" });
+    storeManager.create(childId, workspaceRoot, { rootSessionId: rootId, parentSessionId: rootId, agentName: "explore" });
+    const { manager } = createManager({});
+
+    await expect(manager.stopSessionFamily(workspaceRoot, childId)).rejects.toBeInstanceOf(NotRootSessionError);
+  });
+
+  test("stops a canonical cold root without guessing a member identity", async () => {
+    const rootId = crypto.randomUUID();
+    const coldStores = new SessionStoreManager({ logger: silentLogger });
+    const { manager } = createManager({}, { storeManager: coldStores });
+    const changes: string[] = [];
+    manager.subscribeSessionRuntimeChanges((change) => changes.push(`${change.rootSessionId}:${change.activity}`));
+
+    await manager.stopSessionFamily(workspaceRoot, rootId);
+
+    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("idle");
+    expect(changes).toEqual([
+      `${rootId}:stopping`,
+      `${rootId}:idle`,
+    ]);
+  });
+
+  test("fails closed when execution identity has not been loaded", () => {
+    const { manager } = createManager({});
+
+    expect(() => manager.startExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: "unloaded-session",
+      userMessage: "must not guess family identity",
+    })).toThrow(SessionFamilyIdentityUnavailableError);
+  });
+
   test("startExecution starts an execution and rejects duplicate same-session starts", async () => {
     const run = deferred<AgentResult>();
     const agent = new MockAgent("session-start", run.promise);
@@ -302,7 +519,7 @@ describe("SessionExecutionManager", () => {
     expect(execution.agentName).toBe("orchestrator");
     expect(execution.origin).toBe("user_message");
     expect(typeof execution.executionToken).toBe("symbol");
-    expect(manager.isRunning(workspaceRoot, "session-start")).toBe(true);
+    expect(manager.getSessionFamilyActivity(workspaceRoot, "session-start")).toBe("running");
     expect(() => manager.startExecution({ slug: "project", workspaceRoot, sessionId: "session-start", userMessage: "again" })).toThrow(AgentRunningError);
     await Promise.resolve();
     expect(agent.runMock).toHaveBeenCalledWith("hello", expect.objectContaining({ abort: execution.abortController.signal }));
@@ -311,7 +528,7 @@ describe("SessionExecutionManager", () => {
     expect("maxSteps" in options).toBe(false);
     run.resolve({ text: "done", steps: 1 });
     await execution.promise;
-    expect(manager.isRunning(workspaceRoot, "session-start")).toBe(false);
+    expect(manager.getSessionFamilyActivity(workspaceRoot, "session-start")).toBe("idle");
   });
 
   test("rebuilds the Agent and continues the same Session after cwd changes", async () => {
@@ -402,6 +619,7 @@ describe("SessionExecutionManager", () => {
   });
 
   test("atomically rejects duplicate starts while agent creation is pending", () => {
+    storeManager.create("pending-create", workspaceRoot, { agentName: "orchestrator" });
     const sessionAgentManager = createFakeManager({});
     const pendingManager = new SessionExecutionManager({
       sessionAgentManager: {
@@ -420,7 +638,7 @@ describe("SessionExecutionManager", () => {
     expect(() => pendingManager.startExecution({ slug: "project", workspaceRoot, sessionId: "pending-create", userMessage: "two" })).toThrow(AgentRunningError);
   });
 
-  test("abort cancels execution and ignores late tool result after current execution is settled", async () => {
+  test("family stop cancels execution and ignores late tool result after current execution is settled", async () => {
     const run = deferred<AgentResult>();
     const agent = new MockAgent("stale", run.promise, workspaceRoot);
     const { manager } = createManager({ stale: agent });
@@ -429,9 +647,10 @@ describe("SessionExecutionManager", () => {
     await Promise.resolve();
     agent.store.getState().append({ type: "tool-input-start", toolCallId: "late-tool", toolName: "bash" });
     agent.store.getState().append({ type: "tool-call", toolCallId: "late-tool", toolName: "bash", input: {} });
-    expect(manager.abort(workspaceRoot, "stale")).toBe(true);
+    const stopping = manager.stopSessionFamily(workspaceRoot, "stale");
     run.resolve({ text: "done", steps: 1 });
     await execution.promise;
+    await stopping;
     agent.store.getState().append({ type: "tool-result", toolCallId: "late-tool", toolName: "bash", output: "late", isError: false });
 
     const state = agent.store.getState();
@@ -459,14 +678,15 @@ describe("SessionExecutionManager", () => {
     if (!runOptions || runOptions instanceof AbortSignal) throw new Error("Expected AgentRunOptions");
     expect(runOptions.confirmPermission).toBeUndefined();
     expect(runOptions.askUser).toBeUndefined();
-    expect(manager.abort(workspaceRoot, "deferred-cancel")).toBe(true);
+    const stopping = manager.stopSessionFamily(workspaceRoot, "deferred-cancel");
     run.resolve({ text: "done", steps: 1 });
     await execution.promise;
+    await stopping;
 
     expect(agent.store.getState().executions.at(-1)?.status).toBe("cancelled");
   });
 
-  test("abort cascades to active descendant sessions", async () => {
+  test("cancelChildSession cascades to active descendant sessions", async () => {
     const rootId = crypto.randomUUID();
     const childId = crypto.randomUUID();
     const grandchildId = crypto.randomUUID();
@@ -501,7 +721,7 @@ describe("SessionExecutionManager", () => {
     const siblingExecution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: siblingId, userMessage: "sibling", origin: "tool_call", agentName: "explore" });
     await Promise.resolve();
 
-    expect(manager.abort(workspaceRoot, childId)).toBe(true);
+    expect(manager.cancelChildSession(workspaceRoot, rootId, childId)).toBe(true);
     childRun.resolve({ text: "done", steps: 1 });
     grandchildRun.resolve({ text: "done", steps: 1 });
     await Promise.all([childExecution.promise, grandchildExecution.promise]);
@@ -550,7 +770,119 @@ describe("SessionExecutionManager", () => {
     await childExecution.promise;
   });
 
-  test("abort is isolated by workspace root for identical session ids", async () => {
+  test("execution-control stop owns the family until an already pending child launch drains", async () => {
+    const rootId = crypto.randomUUID();
+    const rootRun = deferred<AgentResult>();
+    const skillResolution = deferred<readonly []>();
+    let resolvingSkills = false;
+    const rootAgent = new MockAgent(rootId, rootRun.promise, workspaceRoot);
+    const factory = makeFactory({
+      resolveDelegatedSkills: mock(async () => {
+        resolvingSkills = true;
+        return await skillResolution.promise;
+      }),
+    });
+    const { manager } = createManager({ [rootId]: rootAgent }, { factory });
+    const activities: string[] = [];
+    manager.subscribeSessionRuntimeChanges((change) => activities.push(change.activity));
+
+    const pendingChild = manager.startChildExecution(workspaceRoot, {
+      parentStore: rootAgent.store,
+      parentSessionId: rootId,
+      parentToolCallId: "pending-before-self-stop",
+      toolName: "delegate",
+      targetAgentName: "explore",
+      prompt: "resolve slowly",
+      skills: [],
+    });
+    await waitFor(() => resolvingSkills);
+    const rootExecution = manager.startExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: rootId,
+      userMessage: "cancel Goal",
+    });
+
+    rootRun.resolve({
+      text: "Goal cancelled",
+      steps: 1,
+      executionControl: { action: "stop_session_family", reason: "goal_cancelled" },
+    });
+    await waitFor(() => manager.getSessionFamilyActivity(workspaceRoot, rootId) === "stopping");
+    let rootSettled = false;
+    void rootExecution.promise.then(() => { rootSettled = true; });
+    await Promise.resolve();
+    expect(rootSettled).toBe(false);
+
+    skillResolution.resolve([]);
+    await expect(pendingChild).rejects.toThrow(SessionFamilyStopInProgressError);
+    await rootExecution.promise;
+
+    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("idle");
+    expect(activities).toEqual(["running", "stopping", "idle"]);
+  });
+
+  test("child execution-control stop retains stopping until its aborted ancestor actually drains", async () => {
+    const rootId = crypto.randomUUID();
+    const childId = crypto.randomUUID();
+    const rootResult = deferred<AgentResult>();
+    let rootStarted = false;
+    const rootStore = storeManager.create(rootId, workspaceRoot, { agentName: "orchestrator" });
+    const rootAgent = {
+      store: rootStore,
+      cwd: workspaceRoot,
+      run: mock(async () => {
+        rootStarted = true;
+        // Deliberately ignores abort to expose the ancestor-drain handoff race.
+        return await rootResult.promise;
+      }),
+      dispose: mock(() => undefined),
+    } as Agent;
+    const childAgent = new MockAgent(childId, Promise.resolve({
+      text: "cancel family",
+      steps: 1,
+      executionControl: { action: "stop_session_family", reason: "goal_cancelled" },
+    }), workspaceRoot);
+    childAgent.store.setState({
+      rootSessionId: rootId,
+      parentSessionId: rootId,
+      agentName: "explore",
+    });
+    const { manager } = createManager({
+      [rootId]: rootAgent as MockAgent,
+      [childId]: childAgent,
+    });
+    const activities: string[] = [];
+    manager.subscribeSessionRuntimeChanges((change) => activities.push(change.activity));
+
+    const rootExecution = manager.startExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: rootId,
+      userMessage: "wait for child",
+    });
+    await waitFor(() => rootStarted);
+    const childExecution = manager.startExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: childId,
+      userMessage: "cancel from child",
+      origin: "tool_call",
+      agentName: "explore",
+    });
+
+    await childExecution.promise;
+    expect(rootExecution.abortController.signal.aborted).toBe(true);
+    expect(manager.getExecution(workspaceRoot, rootId)).toBeDefined();
+    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("stopping");
+
+    rootResult.resolve({ text: "late ancestor completion", steps: 1 });
+    await rootExecution.promise;
+    await waitFor(() => manager.getSessionFamilyActivity(workspaceRoot, rootId) === "idle");
+    expect(activities).toEqual(["running", "stopping", "idle"]);
+  });
+
+  test("family stop is isolated by workspace root for identical session ids", async () => {
     const otherWorkspaceRoot = join(import.meta.dir, "__test_tmp__", "session-execution-manager-other-workspace");
     await mkdir(otherWorkspaceRoot, { recursive: true });
     const runA = deferred<AgentResult>();
@@ -570,9 +902,10 @@ describe("SessionExecutionManager", () => {
     const executionA = manager.startExecution({ slug: "project-a", workspaceRoot, sessionId: "same-session", userMessage: "a" });
     const executionB = managerB.startExecution({ slug: "project-b", workspaceRoot: otherWorkspaceRoot, sessionId: "same-session", userMessage: "b" });
 
-    expect(manager.abort(workspaceRoot, "same-session")).toBe(true);
+    const stopping = manager.stopSessionFamily(workspaceRoot, "same-session");
     runA.resolve({ text: "done", steps: 1 });
     await executionA.promise;
+    await stopping;
 
     expect(executionA.abortController.signal.aborted).toBe(true);
     expect(executionB.abortController.signal.aborted).toBe(false);
@@ -581,33 +914,34 @@ describe("SessionExecutionManager", () => {
     await rm(otherWorkspaceRoot, { recursive: true, force: true });
   });
 
-  test("abort and abortAndWait cancel running executions", async () => {
+  test("stopSessionFamily cancels running executions and waits for quiescence", async () => {
     const agent = new MockAgent("abort", new Promise(() => undefined));
     const { manager } = createManager({ abort: agent });
 
     const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "abort", userMessage: "stop" });
-    expect(manager.abort(workspaceRoot, "abort")).toBe(true);
+    const stopping = manager.stopSessionFamily(workspaceRoot, "abort");
     await execution.promise;
+    await stopping;
     expect(execution.abortController.signal.aborted).toBe(true);
-    expect(manager.isRunning(workspaceRoot, "abort")).toBe(false);
+    expect(manager.getSessionFamilyActivity(workspaceRoot, "abort")).toBe("idle");
 
     const agentTwo = new MockAgent("abort-wait", new Promise(() => undefined));
     const second = createManager({ "abort-wait": agentTwo });
     const secondExecution = second.manager.startExecution({ slug: "project", workspaceRoot, sessionId: "abort-wait", userMessage: "stop" });
-    await second.manager.abortAndWait(workspaceRoot, "abort-wait");
+    await second.manager.stopSessionFamily(workspaceRoot, "abort-wait");
     await secondExecution.promise;
     expect(secondExecution.abortController.signal.aborted).toBe(true);
   });
 
-  test("abortAndWait reports a stuck HITL resume instead of silently timing out", async () => {
+  test("stopSessionFamily reports a stuck HITL resume instead of silently timing out", async () => {
     const rootId = crypto.randomUUID();
     storeManager.create(rootId, workspaceRoot, { agentName: "orchestrator" });
     const { manager } = createManager({}, { sessionFamilyStopTimeoutMs: 5 });
-    const resume = manager.acquireSessionHitlResume(workspaceRoot, rootId);
+    const resume = reserveActivatedHitlResume(manager, rootId);
 
     let captured: unknown;
     try {
-      await manager.abortAndWait(workspaceRoot, rootId);
+      await manager.stopSessionFamily(workspaceRoot, rootId);
     } catch (error) {
       captured = error;
     }
@@ -640,8 +974,13 @@ describe("SessionExecutionManager", () => {
       skills: [],
     });
     await waitFor(() => resolvingSkills);
+    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("running");
+    expect(manager.listSessionFamilyActivities()).toEqual([
+      { workspaceRoot, rootSessionId: rootId, activity: "running" },
+    ]);
 
     const stop = manager.acquireSessionFamilyStop({ workspaceRoot, rootSessionId: rootId });
+    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("stopping");
     let stopped = false;
     const stopping = stop.stopAndWait().then(() => { stopped = true; });
     await Promise.resolve();
@@ -652,7 +991,7 @@ describe("SessionExecutionManager", () => {
       sessionId: rootId,
       userMessage: "must not start",
     })).toThrow(SessionFamilyStopInProgressError);
-    expect(() => manager.acquireSessionHitlResume(workspaceRoot, rootId)).toThrow(SessionFamilyStopInProgressError);
+    expect(() => manager.reserveSessionHitlResume(workspaceRoot, rootId, rootId)).toThrow(SessionFamilyStopInProgressError);
     expect(() => manager.acquireSessionCwdTransition(workspaceRoot, rootId)).toThrow(SessionFamilyStopInProgressError);
     await expect(manager.startChildExecution(workspaceRoot, {
       parentStore: rootStore,
@@ -669,6 +1008,7 @@ describe("SessionExecutionManager", () => {
     await stopping;
     expect(stopped).toBe(true);
     stop.release();
+    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("idle");
   });
 
   test("root self-stop still waits for a stuck child while child self-stop defers only its ancestor", async () => {
@@ -741,8 +1081,8 @@ describe("SessionExecutionManager", () => {
 
     expect(first.abortController.signal.aborted).toBe(true);
     expect(second.abortController.signal.aborted).toBe(true);
-    expect(manager.isRunning(workspaceRoot, "abort-all-one")).toBe(false);
-    expect(manager.isRunning(workspaceRoot, "abort-all-two")).toBe(false);
+    expect(manager.getSessionFamilyActivity(workspaceRoot, "abort-all-one")).toBe("idle");
+    expect(manager.getSessionFamilyActivity(workspaceRoot, "abort-all-two")).toBe("idle");
   });
 
   test("startExecution omits legacy permission and question service callbacks", async () => {
@@ -1198,6 +1538,171 @@ describe("SessionExecutionManager", () => {
     expect(received.some((event) => "kind" in (event as { kind?: unknown }) && (event as { kind: unknown }).kind === "text-delta")).toBe(true);
   });
 
+  test("child HITL pause remains non-terminal and emits no failed reminder", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator" });
+    let childSessionId = "";
+    const { manager } = createManager({}, {
+      factory: makeFactory(),
+      childRunStarted: () => {
+        childSessionId = parentStore.getState().childSessionLinks.at(-1)?.childSessionId ?? "";
+        const childStore = storeManager.get(childSessionId, workspaceRoot);
+        childStore?.getState().append({
+          type: "execution-end",
+          status: "waiting_for_human",
+          blockedByHitlIds: ["permission-1"],
+        });
+      },
+    });
+
+    const handle = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "hitl-child",
+      toolName: "delegate",
+      targetAgentName: "explore",
+      prompt: "wait for approval",
+      skills: [],
+      background: true,
+      currentDepth: 0,
+      parentAbort: undefined,
+    });
+    await handle.result;
+
+    expect(childSessionId).toBe(handle.sessionId);
+    expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({
+      childSessionId,
+      status: "waiting_for_human",
+    });
+    expect(parentStore.getState().reminders).toEqual([]);
+  });
+
+  test("keeps an idle root SSE subscription live for late child-link and HITL continuation updates", async () => {
+    const parentId = crypto.randomUUID();
+    const parentRun = deferred<AgentResult>();
+    const childRun = deferred<AgentResult>();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator" });
+    const parentAgent = new MockAgent(parentId, parentRun.promise, workspaceRoot);
+    let childSessionId = "";
+    const { manager } = createManager({ [parentId]: parentAgent }, {
+      factory: makeFactory(),
+      childRun: childRun.promise,
+      childRunStarted: () => {
+        childSessionId = parentStore.getState().childSessionLinks.at(-1)?.childSessionId ?? "";
+      },
+    });
+    const received: Array<{ kind?: string; payload?: { link?: ToolChildSessionLink } }> = [];
+    const unsubscribe = manager.subscribe({
+      slug: "project",
+      workspaceRoot,
+      sessionId: parentId,
+      onEvent: (event) => received.push(event as { kind?: string; payload?: { link?: ToolChildSessionLink } }),
+    });
+    const parentExecution = manager.startExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: parentId,
+      userMessage: "launch child",
+    });
+    const childHandle = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "late-hitl-child",
+      toolName: "delegate",
+      targetAgentName: "explore",
+      prompt: "wait for approval",
+      skills: [],
+      background: true,
+      currentDepth: 0,
+      parentAbort: undefined,
+    });
+    await waitFor(() => childSessionId === childHandle.sessionId);
+
+    parentRun.resolve({ text: "child started", steps: 1 });
+    await parentExecution.promise;
+    const childStore = storeManager.get(childSessionId, workspaceRoot);
+    if (childStore === undefined) throw new Error("Expected child store");
+    childStore.getState().append({
+      type: "execution-end",
+      status: "waiting_for_human",
+      blockedByHitlIds: ["permission-1"],
+    });
+    childRun.resolve({ text: "", steps: 1 });
+    await childHandle.result;
+    await manager.updateChildSessionLinkForHitl(workspaceRoot, childSessionId, "running");
+    await manager.updateChildSessionLinkForHitl(workspaceRoot, childSessionId, "completed");
+
+    expect(received
+      .filter((event) => event.kind === "tool-child-session-link")
+      .map((event) => event.payload?.link?.status)).toEqual([
+        "linked",
+        "running",
+        "waiting_for_human",
+        "running",
+        "completed",
+      ]);
+    unsubscribe();
+  });
+
+  test("updates the same cold-loaded parent link through child HITL continuation", async () => {
+    const parentId = crypto.randomUUID();
+    const childId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator" });
+    storeManager.create(childId, workspaceRoot, {
+      rootSessionId: parentId,
+      parentSessionId: parentId,
+      agentName: "explore",
+    });
+    parentStore.getState().append({
+      type: "tool-child-session-link",
+      link: {
+        ...makeChildLink(parentId, childId, "explore"),
+        parentToolCallId: "cold-hitl-child",
+        status: "waiting_for_human",
+        endedAt: Date.now(),
+        durationMs: 10,
+      },
+    });
+    await Promise.all([
+      storeManager.flushSession(parentId, workspaceRoot),
+      storeManager.flushSession(childId, workspaceRoot),
+    ]);
+    storeManager.clearAll();
+
+    const { manager } = createManager({}, { factory: makeFactory() });
+    await manager.updateChildSessionLinkForHitl(workspaceRoot, childId, "running");
+    let coldParent = await storeManager.getOrLoad(parentId, workspaceRoot);
+    expect(coldParent.getState().childSessionLinks).toEqual([
+      expect.objectContaining({
+        parentToolCallId: "cold-hitl-child",
+        childSessionId: childId,
+        status: "running",
+      }),
+    ]);
+    expect(coldParent.getState().childSessionLinks[0]).not.toHaveProperty("endedAt");
+    expect(coldParent.getState().childSessionLinks[0]).not.toHaveProperty("durationMs");
+
+    await manager.updateChildSessionLinkForHitl(workspaceRoot, childId, "completed");
+    coldParent = await storeManager.getOrLoad(parentId, workspaceRoot);
+    expect(coldParent.getState().childSessionLinks).toEqual([
+      expect.objectContaining({
+        parentToolCallId: "cold-hitl-child",
+        childSessionId: childId,
+        status: "completed",
+        endedAt: expect.any(Number),
+      }),
+    ]);
+    expect(coldParent.getState().reminders).toEqual([
+      expect.objectContaining({
+        sessionId: childId,
+        terminalState: "completed",
+        source: { type: "subagent_completed", sessionId: childId },
+      }),
+    ]);
+
+    await expect(manager.updateChildSessionLinkForHitl(workspaceRoot, parentId, "running")).resolves.toBeUndefined();
+  });
+
   test("startChildExecution marks failed and timed-out children with terminal link statuses", async () => {
     const failedParentId = crypto.randomUUID();
     const failedParentStore = storeManager.create(failedParentId, workspaceRoot, { agentName: "orchestrator" });
@@ -1423,7 +1928,7 @@ describe("SessionExecutionManager", () => {
       prompt: "race deletion",
       skills: [],
     })).rejects.toThrow(SessionDeleteInProgressError);
-    expect(() => manager.acquireSessionHitlResume(workspaceRoot, rootId)).toThrow(SessionDeleteInProgressError);
+    expect(() => manager.reserveSessionHitlResume(workspaceRoot, rootId, rootId)).toThrow(SessionDeleteInProgressError);
     expect(() => manager.acquireSessionCwdTransition(workspaceRoot, rootId)).toThrow(SessionDeleteInProgressError);
 
     releasePreflight.resolve(undefined);
@@ -1590,9 +2095,18 @@ describe("SessionExecutionManager", () => {
     await writeSessionFile({ sessionId: childId, rootSessionId: rootId, parentSessionId: rootId });
     await writeSessionFile({ sessionId: grandchildId, rootSessionId: rootId, parentSessionId: childId });
     await writeSessionFile({ sessionId: siblingId, rootSessionId: rootId, parentSessionId: rootId });
+    await Promise.all([
+      storeManager.getOrLoad(rootId, workspaceRoot),
+      storeManager.getOrLoad(childId, workspaceRoot),
+      storeManager.getOrLoad(grandchildId, workspaceRoot),
+      storeManager.getOrLoad(siblingId, workspaceRoot),
+    ]);
     const childAgent = new MockAgent(childId, new Promise(() => undefined));
     const grandchildAgent = new MockAgent(grandchildId, new Promise(() => undefined));
     const siblingAgent = new MockAgent(siblingId, new Promise(() => undefined));
+    childAgent.store.setState({ rootSessionId: rootId, parentSessionId: rootId });
+    grandchildAgent.store.setState({ rootSessionId: rootId, parentSessionId: childId });
+    siblingAgent.store.setState({ rootSessionId: rootId, parentSessionId: rootId });
     const { manager } = createManager({ [childId]: childAgent, [grandchildId]: grandchildAgent, [siblingId]: siblingAgent });
     const childExecution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: childId, userMessage: "child" });
     const grandchildExecution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: grandchildId, userMessage: "grandchild" });
@@ -1604,11 +2118,12 @@ describe("SessionExecutionManager", () => {
     expect(childExecution.abortController.signal.aborted).toBe(true);
     expect(grandchildExecution.abortController.signal.aborted).toBe(true);
     expect(siblingExecution.abortController.signal.aborted).toBe(false);
-    expect(manager.isRunning(workspaceRoot, childId)).toBe(false);
-    expect(manager.isRunning(workspaceRoot, grandchildId)).toBe(false);
-    expect(manager.isRunning(workspaceRoot, siblingId)).toBe(true);
-    manager.abort(workspaceRoot, siblingId);
+    expect(manager.getExecution(workspaceRoot, childId)).toBeUndefined();
+    expect(manager.getExecution(workspaceRoot, grandchildId)).toBeUndefined();
+    expect(manager.getExecution(workspaceRoot, siblingId)).toBeDefined();
+    const stopping = manager.stopSessionFamily(workspaceRoot, rootId);
     await siblingExecution.promise;
+    await stopping;
   });
 
   test("abort timeout throws SessionDeleteConflictError and preserves target files", async () => {
@@ -1785,7 +2300,7 @@ describe("SessionExecutionManager", () => {
 
     expect(childRunCount).toBe(1);
     expect(child.store.getState().messages).toHaveLength(childMessagesBeforeResume);
-    expect(manager.isRunning(workspaceRoot, child.sessionId)).toBe(false);
+    expect(manager.getExecution(workspaceRoot, child.sessionId)).toBeUndefined();
   });
 
   test("serializes child launches and resumes against the full cwd transition lease", async () => {
@@ -1854,7 +2369,7 @@ describe("SessionExecutionManager", () => {
         parentAbort: undefined,
       })).rejects.toThrow(SessionCwdTransitionInProgressError);
       expect(childRunCount).toBe(1);
-      expect(manager.isRunning(workspaceRoot, child.sessionId)).toBe(false);
+      expect(manager.getExecution(workspaceRoot, child.sessionId)).toBeUndefined();
     } finally {
       releaseTransition();
     }
@@ -1910,7 +2425,7 @@ describe("SessionExecutionManager", () => {
       userMessage: "cleanup finished",
     });
     await afterCleanup.promise;
-    expect(manager.isRunning(workspaceRoot, sessionId)).toBe(false);
+    expect(manager.getSessionFamilyActivity(workspaceRoot, sessionId)).toBe("idle");
   });
 
   test("family cwd transition aggregation releases earlier roots when a later root is busy", async () => {
@@ -1951,7 +2466,7 @@ describe("SessionExecutionManager", () => {
     storeManager.create(firstRoot, workspaceRoot, { agentName: "orchestrator" });
     storeManager.create(hitlRoot, workspaceRoot, { agentName: "orchestrator" });
     const { manager } = createManager({}, { factory: makeFactory() });
-    const hitlLease = manager.acquireSessionHitlResume(workspaceRoot, hitlRoot);
+    const hitlLease = reserveActivatedHitlResume(manager, hitlRoot);
 
     expect(() => manager.acquireIdleSessionFamilyCwdTransitions(workspaceRoot, [hitlRoot, firstRoot]))
       .toThrow(SessionHitlResumeInProgressError);
@@ -1974,8 +2489,8 @@ describe("SessionExecutionManager", () => {
     });
     const { manager } = createManager({}, { factory: makeFactory() });
 
-    const lease = manager.acquireSessionHitlResume(workspaceRoot, rootId);
-    expect(manager.isRunning(workspaceRoot, rootId)).toBe(true);
+    const lease = reserveActivatedHitlResume(manager, rootId);
+    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("running");
     expect(() => manager.startExecution({
       slug: "project",
       workspaceRoot,
@@ -1987,7 +2502,7 @@ describe("SessionExecutionManager", () => {
       workspaceRoot,
       sessionId: childId,
       userMessage: "child must wait",
-    })).rejects.toThrow(SessionHitlResumeInProgressError);
+    })).rejects.toThrow(SessionFamilyActiveError);
     await expect(manager.startChildExecution(workspaceRoot, {
       parentStore: rootStore,
       parentSessionId: rootId,
@@ -2018,7 +2533,7 @@ describe("SessionExecutionManager", () => {
       .toThrow(SessionCwdTransitionInProgressError);
     releaseNestedTransition();
 
-    const aborted = manager.abortAndWait(workspaceRoot, rootId);
+    const aborted = manager.stopSessionFamily(workspaceRoot, rootId);
     expect(lease.abortSignal.aborted).toBe(true);
     let abortWaitSettled = false;
     void aborted.then(() => { abortWaitSettled = true; });
@@ -2026,7 +2541,7 @@ describe("SessionExecutionManager", () => {
     expect(abortWaitSettled).toBe(false);
     lease.release();
     await aborted;
-    expect(manager.isRunning(workspaceRoot, rootId)).toBe(false);
+    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("idle");
     expect(childStore.getState().cwd).toBe(rootStore.getState().cwd);
     const releaseTransition = manager.acquireSessionCwdTransition(workspaceRoot, rootId);
     releaseTransition();
@@ -2049,10 +2564,10 @@ describe("SessionExecutionManager", () => {
     });
     const { manager } = createManager({}, { factory: makeFactory() });
 
-    const lease = manager.acquireSessionHitlResume(workspaceRoot, childId);
-    expect(manager.isRunning(workspaceRoot, childId)).toBe(true);
-    expect(manager.isRunning(workspaceRoot, rootId)).toBe(true);
-    expect(manager.isRunning(workspaceRoot, siblingId)).toBe(false);
+    const lease = reserveActivatedHitlResume(manager, childId, rootId);
+    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("running");
+    expect(manager.getExecution(workspaceRoot, childId)).toBeUndefined();
+    expect(manager.getExecution(workspaceRoot, siblingId)).toBeUndefined();
     expect(await manager.dispatchCommand(workspaceRoot, rootId, "compact")).toBeNull();
     expect(() => manager.startExecution({
       slug: "project",
@@ -2080,11 +2595,12 @@ describe("SessionExecutionManager", () => {
       parentAbort: undefined,
     })).rejects.toThrow(SessionHitlResumeInProgressError);
 
-    expect(manager.abort(workspaceRoot, rootId)).toBe(true);
+    const stopping = manager.stopSessionFamily(workspaceRoot, rootId);
     expect(lease.abortSignal.aborted).toBe(true);
-    expect(manager.isRunning(workspaceRoot, childId)).toBe(true);
+    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("stopping");
     lease.release();
-    expect(manager.isRunning(workspaceRoot, childId)).toBe(false);
+    await stopping;
+    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("idle");
   });
 
   test("rejects HITL ownership while a related execution, transition, or child launch owns the family", async () => {
@@ -2108,13 +2624,13 @@ describe("SessionExecutionManager", () => {
       sessionId: rootId,
       userMessage: "active",
     });
-    expect(() => manager.acquireSessionHitlResume(workspaceRoot, rootId))
+    expect(() => manager.reserveSessionHitlResume(workspaceRoot, rootId, rootId))
       .toThrow(SessionHitlResumeConflictError);
     rootRun.resolve({ text: "done", steps: 1 });
     await execution.promise;
 
     const releaseTransition = manager.acquireSessionCwdTransition(workspaceRoot, rootId);
-    expect(() => manager.acquireSessionHitlResume(workspaceRoot, rootId))
+    expect(() => manager.reserveSessionHitlResume(workspaceRoot, rootId, rootId))
       .toThrow(SessionCwdTransitionInProgressError);
     releaseTransition();
 
@@ -2130,7 +2646,7 @@ describe("SessionExecutionManager", () => {
       parentAbort: undefined,
     });
     await waitFor(() => skillResolutionStarted);
-    expect(() => manager.acquireSessionHitlResume(workspaceRoot, rootId))
+    expect(() => manager.reserveSessionHitlResume(workspaceRoot, rootId, rootId))
       .toThrow(SessionHitlResumeConflictError);
     skillResolution.resolve([]);
     const child = await pendingChild;
@@ -2150,8 +2666,10 @@ describe("SessionExecutionManager", () => {
     });
     const { manager } = createManager({});
 
-    expect(() => manager.acquireSessionHitlResume(workspaceRoot, childId)).toThrow(ChildSessionCwdMismatchError);
-    expect(manager.isRunning(workspaceRoot, childId)).toBe(false);
+    const staleLease = manager.reserveSessionHitlResume(workspaceRoot, childId, rootId);
+    expect(() => staleLease.activate()).toThrow(ChildSessionCwdMismatchError);
+    staleLease.release();
+    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("idle");
   });
 
   test("a cancel-only HITL resume lease cannot acquire a cwd transition", () => {
@@ -2159,7 +2677,7 @@ describe("SessionExecutionManager", () => {
     storeManager.create(rootId, workspaceRoot, { agentName: "orchestrator" });
     const { manager } = createManager({});
 
-    const lease = manager.acquireSessionHitlResume(workspaceRoot, rootId, { mode: "cancel_only" });
+    const lease = reserveActivatedHitlResume(manager, rootId, rootId, { mode: "cancel_only" });
     expect(() => lease.acquireSessionCwdTransition(workspaceRoot, rootId))
       .toThrow(SessionHitlCancelOnlyLeaseError);
     expect(() => manager.acquireSessionCwdTransition(workspaceRoot, rootId))
@@ -2176,8 +2694,8 @@ describe("SessionExecutionManager", () => {
     storeManager.create(firstId, workspaceRoot, { agentName: "orchestrator" });
     storeManager.create(secondId, workspaceRoot, { agentName: "orchestrator" });
     const { manager } = createManager({});
-    const first = manager.acquireSessionHitlResume(workspaceRoot, firstId);
-    const second = manager.acquireSessionHitlResume(workspaceRoot, secondId);
+    const first = reserveActivatedHitlResume(manager, firstId);
+    const second = reserveActivatedHitlResume(manager, secondId);
 
     let settled = false;
     const abortAll = manager.abortAll().then(() => { settled = true; });
@@ -2203,7 +2721,7 @@ describe("SessionExecutionManager", () => {
     await coldStores.getOrLoad(rootId, workspaceRoot);
     await coldStores.getOrLoad(childId, workspaceRoot);
     const { manager } = createManager({}, { storeManager: coldStores });
-    const lease = manager.acquireSessionHitlResume(workspaceRoot, childId);
+    const lease = reserveActivatedHitlResume(manager, childId, rootId);
 
     let deleted = false;
     const deletion = manager.deleteSession(workspaceRoot, rootId).then(() => { deleted = true; });
@@ -2224,11 +2742,11 @@ describe("SessionExecutionManager", () => {
     storeManager.create(rootId, workspaceRoot, { agentName: "orchestrator" });
     const { manager } = createManager({});
 
-    const first = manager.acquireSessionHitlResume(workspaceRoot, rootId);
+    const first = reserveActivatedHitlResume(manager, rootId);
     first.release();
     expect(() => first.acquireSessionCwdTransition(workspaceRoot, rootId))
       .toThrow(SessionHitlResumeLeaseExpiredError);
-    const second = manager.acquireSessionHitlResume(workspaceRoot, rootId);
+    const second = reserveActivatedHitlResume(manager, rootId);
     first.release();
     expect(() => first.acquireSessionCwdTransition(workspaceRoot, rootId))
       .toThrow(SessionHitlResumeLeaseExpiredError);
@@ -2271,7 +2789,7 @@ describe("SessionExecutionManager", () => {
 
     expect(coldStores.get(childId, workspaceRoot)).toBeDefined();
     expect(coldStores.get(rootId, workspaceRoot)).toBeDefined();
-    expect(manager.isRunning(workspaceRoot, childId)).toBe(false);
+    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("idle");
   });
 
   test("cold-loads a Session and rejects messages while its durable HITL blocker remains", async () => {
@@ -2290,7 +2808,7 @@ describe("SessionExecutionManager", () => {
       sessionId,
       hitlIds: ["hitl-pending"],
     });
-    expect(manager.isRunning(workspaceRoot, sessionId)).toBe(false);
+    expect(manager.getSessionFamilyActivity(workspaceRoot, sessionId)).toBe("idle");
   });
 
   test("validates persisted execution scope before claiming a user-message execution", async () => {
@@ -2334,7 +2852,7 @@ describe("SessionExecutionManager", () => {
       entry: { kind: "user_message", origin },
     });
     expect(sessionAgentManager.getOrCreate).not.toHaveBeenCalled();
-    expect(manager.isRunning(workspaceRoot, sessionId)).toBe(false);
+    expect(manager.getSessionFamilyActivity(workspaceRoot, sessionId)).toBe("idle");
   });
 
   test("fails closed when Session cwd changes during asynchronous scope validation", async () => {
@@ -2366,7 +2884,43 @@ describe("SessionExecutionManager", () => {
       code: "SESSION_EXECUTION_SCOPE_CHANGED",
       sessionId,
     });
-    expect(manager.isRunning(workspaceRoot, sessionId)).toBe(false);
+    expect(manager.getSessionFamilyActivity(workspaceRoot, sessionId)).toBe("idle");
+  });
+
+  test("exposes an async checked-start claim before project close can observe a false idle workspace", async () => {
+    const sessionId = crypto.randomUUID();
+    storeManager.create(sessionId, workspaceRoot);
+    const validationStarted = deferred<void>();
+    const allowValidation = deferred<void>();
+    const { manager } = createManager({}, {
+      executionScopeValidator: {
+        validate: async () => {
+          validationStarted.resolve();
+          await allowValidation.promise;
+        },
+      },
+    });
+    const pending = manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId,
+      userMessage: "continue",
+    });
+    await validationStarted.promise;
+
+    expect(manager.listPendingCheckedStarts(workspaceRoot)).toEqual([{ sessionId }]);
+    const closeLease = manager.acquireWorkspaceClose(workspaceRoot);
+    await expect(manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: crypto.randomUUID(),
+      userMessage: "must not start while closing",
+    })).rejects.toBeInstanceOf(SessionWorkspaceClosingError);
+    closeLease.release();
+    allowValidation.resolve();
+    await (await pending).promise;
+
+    expect(manager.listPendingCheckedStarts(workspaceRoot)).toEqual([]);
   });
 
   test("fails closed when any persisted owner identity changes during scope validation", async () => {
@@ -2407,7 +2961,7 @@ describe("SessionExecutionManager", () => {
         changedFields: ["goalId", "loopId", "rootSessionId", "parentSessionId", "sessionRole"],
       },
     });
-    expect(manager.isRunning(workspaceRoot, sessionId)).toBe(false);
+    expect(manager.getSessionFamilyActivity(workspaceRoot, sessionId)).toBe("idle");
   });
 
   test("re-checks the synchronous resume guard after async message preparation", async () => {
@@ -2441,11 +2995,11 @@ describe("SessionExecutionManager", () => {
       sessionId: childId,
       userMessage: "race with durable resume",
     });
-    const resumeLease = manager.acquireSessionHitlResume(workspaceRoot, rootId);
+    const resumeLease = reserveActivatedHitlResume(manager, rootId);
     childLoad.resolve(storeManager.get(childId, workspaceRoot)!);
 
-    await expect(pendingMessage).rejects.toThrow(SessionHitlResumeInProgressError);
-    expect(manager.isRunning(workspaceRoot, childId)).toBe(false);
+    await expect(pendingMessage).rejects.toThrow(SessionFamilyActiveError);
+    expect(manager.getExecution(workspaceRoot, childId)).toBeUndefined();
     resumeLease.release();
   });
 
@@ -2488,7 +3042,7 @@ describe("SessionExecutionManager", () => {
     rootLoad.resolve(rootStore);
 
     await expect(pendingMessage).rejects.toThrow(SessionCwdTransitionInProgressError);
-    expect(manager.isRunning(workspaceRoot, childId)).toBe(false);
+    expect(manager.getExecution(workspaceRoot, childId)).toBeUndefined();
     releaseTransition();
   });
 
@@ -2790,7 +3344,7 @@ describe("SessionExecutionManager", () => {
     })).rejects.toThrow(SessionHitlBlockedError);
 
     expect(parentStore.getState().childSessionLinks).toHaveLength(linksBefore);
-    expect(manager.isRunning(workspaceRoot, childId)).toBe(false);
+    expect(manager.getExecution(workspaceRoot, childId)).toBeUndefined();
   });
 
   test("resumeChildExecution on non-existent session throws ChildSessionNotFoundError", async () => {

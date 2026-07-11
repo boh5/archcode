@@ -6,7 +6,7 @@ import type { ToolExecutionResult } from "../tools/types";
 import {
   FakeClock,
   FakeGitHubFetchAdapter,
-  FakeSessionExecutionManager,
+  FakeSessionFamilyStopper,
   expectJsonlRunCount,
   findJsonlRuns,
   fixtureCollisionConflict,
@@ -311,62 +311,35 @@ describe("FakeClock", () => {
   });
 });
 
-// ── FakeSessionExecutionManager ──
+// ── FakeSessionFamilyStopper ──
 
-describe("FakeSessionExecutionManager", () => {
-  test("abort records call and returns true", () => {
-    const manager = new FakeSessionExecutionManager();
+describe("FakeSessionFamilyStopper", () => {
+  test("stopSessionFamily records call and resolves", async () => {
+    const manager = new FakeSessionFamilyStopper();
 
-    const result = manager.abort("/workspace", "session-1");
+    await manager.stopSessionFamily("/workspace", "session-1");
 
-    expect(result).toBe(true);
-    expect(manager.calls).toHaveLength(1);
-    expect(manager.calls[0]).toMatchObject({ method: "abort", workspaceRoot: "/workspace", sessionId: "session-1" });
-  });
-
-  test("abortAndWait records call and resolves", async () => {
-    const manager = new FakeSessionExecutionManager();
-
-    await manager.abortAndWait("/workspace", "session-1");
-
-    expect(manager.getCalls("abortAndWait")).toHaveLength(1);
-  });
-
-  test("abortAll records call", async () => {
-    const manager = new FakeSessionExecutionManager();
-
-    await manager.abortAll();
-
-    expect(manager.getCalls("abortAll")).toHaveLength(1);
-  });
-
-  test("isRunning returns configured value", () => {
-    const manager = new FakeSessionExecutionManager();
-
-    expect(manager.isRunning("/workspace", "session-1")).toBe(false);
-
-    manager.setIsRunning(true);
-    expect(manager.isRunning("/workspace", "session-1")).toBe(true);
+    expect(manager.getCalls("stopSessionFamily")).toHaveLength(1);
   });
 
   test("assertCallCount passes when expected matches", () => {
-    const manager = new FakeSessionExecutionManager();
-    manager.abort("/w", "s1");
-    manager.abort("/w", "s2");
+    const manager = new FakeSessionFamilyStopper();
+    void manager.stopSessionFamily("/w", "s1");
+    void manager.stopSessionFamily("/w", "s2");
 
-    expect(() => manager.assertCallCount("abort", 2)).not.toThrow();
+    expect(() => manager.assertCallCount("stopSessionFamily", 2)).not.toThrow();
   });
 
   test("assertCallCount throws when expected does not match", () => {
-    const manager = new FakeSessionExecutionManager();
-    manager.abort("/w", "s1");
+    const manager = new FakeSessionFamilyStopper();
+    void manager.stopSessionFamily("/w", "s1");
 
-    expect(() => manager.assertCallCount("abort", 0)).toThrow();
+    expect(() => manager.assertCallCount("stopSessionFamily", 0)).toThrow();
   });
 
   test("clear removes recorded calls", () => {
-    const manager = new FakeSessionExecutionManager();
-    manager.abort("/w", "s1");
+    const manager = new FakeSessionFamilyStopper();
+    void manager.stopSessionFamily("/w", "s1");
 
     manager.clear();
 

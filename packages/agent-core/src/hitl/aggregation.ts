@@ -56,8 +56,11 @@ export async function aggregateHitlProjections(
 
 export async function collectKnownHitlOwners(context: HitlAggregationContext): Promise<HitlOwnerKey[]> {
   const sessions = await collectAllSessions(context.sessions, context.workspaceRoot);
-  const goals = await context.goalState.listGoals(context.project.slug);
-  const loops = await context.loopState.list(context.project.slug);
+  // These managers are already workspace-local. Do not filter by the current
+  // registration slug: remove/re-add may intentionally assign a new slug while
+  // durable owner history still belongs to the same workspace resources.
+  const goals = await context.goalState.listGoals();
+  const loops = await context.loopState.list();
   return [
     ...sessions.map((session) => ownerKey(context.project.slug, "session", session.sessionId)),
     ...goals.map((goal) => ownerKey(context.project.slug, "goal", goal.id)),
@@ -87,8 +90,8 @@ export function toHitlProjection(
 
 async function collectOwners(context: HitlAggregationContext, query: HitlAggregationQuery): Promise<OwnerDescriptor[]> {
   const sessions = await collectAllSessions(context.sessions, context.workspaceRoot);
-  const goals = await context.goalState.listGoals(context.project.slug);
-  const loops = await context.loopState.list(context.project.slug);
+  const goals = await context.goalState.listGoals();
+  const loops = await context.loopState.list();
 
   switch (query.scope) {
     case "project":

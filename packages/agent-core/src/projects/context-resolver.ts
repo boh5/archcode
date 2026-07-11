@@ -12,6 +12,10 @@ import { silentLogger } from "../logger";
 import type { Logger } from "../logger";
 import type { SessionStoreManager } from "../store/session-store-manager";
 import { recoverSessionHitlJournals } from "../execution/session-hitl-journal";
+import { migrateSessionHitlCheckpointProjectSlug } from "../execution/session-hitl-checkpoint";
+import { collectKnownHitlOwners } from "../hitl/aggregation";
+import { migrateHitlOwnerFileProjectSlug } from "../hitl/owner-store";
+import { resolveHitlOwnerPath } from "../hitl/owner-paths";
 import { ProjectApprovalManager } from "../tools/permission/project-approvals";
 import type { ProjectContext, ProjectInfo } from "./types";
 
@@ -93,8 +97,15 @@ export class ProjectContextResolver {
     this.#contexts.set(workspaceRoot, Promise.resolve(context));
   }
 
-  dispose(workspaceRoot: string): void {
+  async dispose(workspaceRoot: string): Promise<void> {
+    const pending = this.#contexts.get(workspaceRoot);
     this.#contexts.delete(workspaceRoot);
+    if (pending === undefined) return;
+    try {
+      (await pending).hitl.shutdown();
+    } catch (error) {
+      this.#logger.warn("projects.context.dispose_failed", { error, meta: { workspaceRoot } });
+    }
   }
 
   async #buildContext(workspaceRoot: string): Promise<ProjectContext> {
@@ -104,6 +115,13 @@ export class ProjectContextResolver {
     const goalState = this.#goalStateFactory(workspaceRoot);
     const loopState = this.#loopStateFactory(workspaceRoot);
     const hitl = this.#hitlFactory({
+      workspaceRoot,
+      project,
+      sessions: this.#sessionStoreManager,
+      goalState,
+      loopState,
+    });
+    await migrateWorkspaceHitlProjectSlug({
       workspaceRoot,
       project,
       sessions: this.#sessionStoreManager,
@@ -133,5 +151,35 @@ export class ProjectContextResolver {
     await hitlResumeCoordinator.recover();
 
     return context;
+  }
+}
+
+async function migrateWorkspaceHitlProjectSlug(input: {
+  readonly workspaceRoot: string;
+  readonly project: ProjectInfo;
+  readonly sessions: SessionStoreManager;
+  readonly goalState: GoalStateManager;
+  readonly loopState: LoopStateManager;
+}): Promise<void> {
+  const context = {
+    workspaceRoot: input.workspaceRoot,
+    project: input.project,
+    sessions: input.sessions,
+    goalState: input.goalState,
+    loopState: input.loopState,
+  };
+  for (const owner of await collectKnownHitlOwners(context)) {
+    const filePath = await resolveHitlOwnerPath(input.workspaceRoot, owner, {
+      goalState: input.goalState,
+      loopState: input.loopState,
+    });
+    await migrateHitlOwnerFileProjectSlug(filePath, owner);
+    if (owner.ownerType === "session") {
+      await migrateSessionHitlCheckpointProjectSlug(
+        input.workspaceRoot,
+        owner.ownerId,
+        input.project.slug,
+      );
+    }
   }
 }

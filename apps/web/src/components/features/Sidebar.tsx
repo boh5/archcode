@@ -12,6 +12,7 @@ import type {
   SessionSummary,
   SessionTreeNode,
 } from "../../api/types";
+import type { SessionFamilyActivity } from "@archcode/protocol";
 import { ProjectActionDropdown } from "./ProjectActionMenu";
 import { EditProjectDialog } from "./EditProjectDialog";
 import { CloseProjectDialog } from "./CloseProjectDialog";
@@ -21,17 +22,13 @@ import { AGENT_INITIALS, AGENT_ICON_COLORS, isValidAgentType } from "../../lib/a
 import type { AgentType } from "../../lib/agent-constants";
 import { formatRelativeTime } from "../../lib/time-format";
 import { getWebSessionStore, useSessionStore } from "../../store/session-store";
+import {
+  runtimeFamilyKey,
+  useSessionRuntimeFamilies,
+  useSessionRuntimeInitialized,
+} from "../../store/session-runtime-store";
 
 // Helpers
-
-function isSessionActive(session: SessionSummary): boolean {
-  return isTimestampActive(session.updatedAt);
-}
-
-function isTimestampActive(updatedAt: number): boolean {
-  const hourAgo = Date.now() - 60 * 60 * 1000;
-  return updatedAt > hourAgo;
-}
 
 /** Robust lowercase string conversion that never throws on nullish/unknown values. */
 function toSearchable(value: unknown): string {
@@ -64,15 +61,15 @@ function deriveTabFromPath(pathname: string): SidebarTab {
 
 // Status dots
 
-const STATUS_DOT_COLORS: Record<string, string> = {
+const STATUS_DOT_COLORS: Record<SessionFamilyActivity | "unknown", string> = {
   running: "bg-success shadow-[0_0_6px_var(--success)] animate-pulse",
-  completed: "bg-text-muted",
-  paused: "bg-warning",
-  failed: "bg-error",
+  stopping: "bg-warning animate-pulse",
+  idle: "bg-text-muted",
+  unknown: "border border-text-muted",
 };
 
-function SessionStatusDot({ status }: { status: "running" | "completed" | "paused" | "failed" }) {
-  return <div className={`w-[7px] h-[7px] rounded-full shrink-0 ${STATUS_DOT_COLORS[status] ?? ""}`} />;
+function SessionStatusDot({ activity }: { activity: SessionFamilyActivity | undefined }) {
+  return <div className={`w-[7px] h-[7px] rounded-full shrink-0 ${STATUS_DOT_COLORS[activity ?? "unknown"]}`} />;
 }
 
 const GOAL_STATUS_DOT_COLORS: Record<GoalStatus, string> = {
@@ -105,15 +102,16 @@ function LoopStatusDot({ status }: { status: LoopStatus }) {
 
 function SessionItem({
   session,
+  activity,
   isActive,
   onClick,
 }: {
   session: SessionSummary;
+  activity: SessionFamilyActivity | undefined;
   isActive: boolean;
   onClick: () => void;
 }) {
   const updatedAt = session.updatedAt;
-  const isRunning = isSessionActive(session);
 
   return (
     <div
@@ -130,14 +128,14 @@ function SessionItem({
       {isActive && (
         <div className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r-sm bg-accent" />
       )}
-      <SessionStatusDot status={isRunning ? "running" : "completed"} />
+      <SessionStatusDot activity={activity} />
       <div className="flex-1 min-w-0">
         <div className="text-[12.5px] font-medium text-text-primary whitespace-nowrap overflow-hidden text-ellipsis">
           {session.title || "Untitled"}
         </div>
         <div className="flex items-center gap-1.5 text-[11px] text-text-muted mt-px">
           <span>
-            {isRunning ? "active" : ""} · {formatRelativeTime(updatedAt)}
+            {activity ?? "status unavailable"} · {formatRelativeTime(updatedAt)}
           </span>
         </div>
       </div>
@@ -239,14 +237,12 @@ function LoopItem({
 function AgentNode({
   name,
   agentType,
-  status,
   depth,
   isActive,
   onClick,
 }: {
   name: string;
   agentType: AgentType;
-  status: "running" | "idle" | "pending" | "completed";
   depth: number;
   isActive: boolean;
   onClick?: () => void;
@@ -273,12 +269,6 @@ function AgentNode({
       </div>
       <span className={`flex-1 text-xs whitespace-nowrap overflow-hidden text-ellipsis ${isActive ? "text-accent font-medium" : "text-text-secondary"}`}>
         {name}
-      </span>
-      <span className={`text-[10px] flex items-center gap-1 ${status === "running" ? "text-success" : "text-text-muted"}`}>
-        {status === "running" && (
-          <span className="w-[5px] h-[5px] rounded-full bg-success animate-pulse" />
-        )}
-        {status}
       </span>
     </div>
   );
@@ -417,6 +407,8 @@ export function Sidebar() {
   const { data: sessions } = useSessions(slug);
   const { data: goals } = useGoals(slug);
   const { data: loops } = useLoops(slug);
+  const runtimeInitialized = useSessionRuntimeInitialized(slug);
+  const runtimeFamilies = useSessionRuntimeFamilies();
 
   // Root Dashboard ("/") has no route :slug; fall back to first project so Loop
   // create never POSTs to `/api/projects//loops` (404).
@@ -487,18 +479,26 @@ export function Sidebar() {
     });
   }, [sessions, sessionsSearch]);
 
-  const { activeSessions, completedSessions } = useMemo(() => {
+  const activityForSession = (session: SessionSummary): SessionFamilyActivity | undefined => {
+    if (!runtimeInitialized) return undefined;
+    return runtimeFamilies[runtimeFamilyKey(slug, session.sessionId)]?.activity ?? "idle";
+  };
+
+  const { activeSessions, inactiveSessions } = useMemo(() => {
     const active: SessionSummary[] = [];
-    const completed: SessionSummary[] = [];
+    const inactive: SessionSummary[] = [];
     for (const session of filteredSessions) {
-      if (isSessionActive(session)) {
+      const activity = runtimeInitialized
+        ? runtimeFamilies[runtimeFamilyKey(slug, session.sessionId)]?.activity ?? "idle"
+        : undefined;
+      if (activity === "running" || activity === "stopping") {
         active.push(session);
       } else {
-        completed.push(session);
+        inactive.push(session);
       }
     }
-    return { activeSessions: active, completedSessions: completed };
-  }, [filteredSessions]);
+    return { activeSessions: active, inactiveSessions: inactive };
+  }, [filteredSessions, runtimeFamilies, runtimeInitialized, slug]);
 
   const filteredGoals = useMemo(() => {
     const goalsList = goals ?? [];
@@ -531,7 +531,6 @@ export function Sidebar() {
     const agents: Array<{
       name: string;
       type: AgentType;
-      status: "running" | "idle" | "pending" | "completed";
       depth: number;
       isActive: boolean;
       sessionId: string;
@@ -543,7 +542,6 @@ export function Sidebar() {
         throw new Error(`Invalid Session agentName: ${s.agentName}`);
       }
       const agentType = s.agentName;
-      const isRunning = isTimestampActive(s.updatedAt);
       const isActive = focusSessionId === null
         ? s.sessionId === rootSessionId
         : s.sessionId === focusSessionId;
@@ -551,7 +549,6 @@ export function Sidebar() {
       agents.push({
         name: s.title || "Untitled",
         type: agentType,
-        status: isRunning ? "running" : "completed",
         depth,
         isActive,
         sessionId: s.sessionId,
@@ -673,6 +670,7 @@ export function Sidebar() {
                 <SessionItem
                   key={session.sessionId}
                   session={session}
+                  activity={activityForSession(session)}
                   isActive={session.sessionId === sessionId}
                   onClick={() => handleSessionClick(session.sessionId)}
                 />
@@ -680,13 +678,14 @@ export function Sidebar() {
             </div>
           )}
 
-          {completedSessions.length > 0 && (
+          {inactiveSessions.length > 0 && (
             <div className="mb-1">
-              <SubGroupHeader title="Completed" />
-              {completedSessions.map((session) => (
+              <SubGroupHeader title="Sessions" />
+              {inactiveSessions.map((session) => (
                 <SessionItem
                   key={session.sessionId}
                   session={session}
+                  activity={activityForSession(session)}
                   isActive={session.sessionId === sessionId}
                   onClick={() => handleSessionClick(session.sessionId)}
                 />
@@ -726,7 +725,6 @@ export function Sidebar() {
                   key={`${agent.type}-${agent.depth}-${i}`}
                   name={agent.name}
                   agentType={agent.type}
-                  status={agent.status}
                   depth={agent.depth}
                   isActive={agent.isActive}
                   onClick={() => handleAgentTreeClick(agent.sessionId)}

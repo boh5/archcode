@@ -6,6 +6,7 @@ import { globalEventBus } from "./events/global-event-bus";
 
 const mockRuntime = {
   subscribeHitlEvents: mock(() => () => undefined),
+  subscribeSessionRuntimeChanges: mock(() => () => undefined),
   subscribeMcpStatusChanges: mock(() => () => undefined),
   getMcpServerStatuses: mock(() => new Map()),
 } as unknown as AgentRuntime;
@@ -62,6 +63,31 @@ describe("createServerApp", () => {
     expect(question.status).toBe(404);
   });
 
+  test("includes Session Family runtime state in the initial global snapshot", async () => {
+    const snapshot: Extract<GlobalSSEEvent, { type: "session.runtime.snapshot" }> = {
+      type: "session.runtime.snapshot",
+      projectSlugs: ["proj"],
+      families: [{ projectSlug: "proj", rootSessionId: "root-1", activity: "running" }],
+      createdAt: 1,
+    };
+    const runtime = {
+      subscribeHitlEvents: mock(() => () => undefined),
+      subscribeSessionRuntimeChanges: mock(() => () => undefined),
+      subscribeMcpStatusChanges: mock(() => () => undefined),
+      getMcpServerStatuses: mock(() => new Map()),
+      listPendingHitlEvents: mock(async () => []),
+      listSessionRuntimeEvents: mock(async () => [snapshot]),
+    } as unknown as AgentRuntime;
+    const { app } = createServerApp(runtime, { dev: true });
+
+    const response = await app.request("/api/events");
+    const text = await readSSEUntil(response, "session.runtime.snapshot");
+
+    expect(text).toContain("event: session.runtime.snapshot");
+    expect(text).toContain('"rootSessionId":"root-1"');
+    expect(runtime.listSessionRuntimeEvents).toHaveBeenCalledTimes(1);
+  });
+
   test("recursively forwards child session events to global SSE", async () => {
     const runtime = createRuntimeWithManualSubscriptions();
     const serverRuntime = createServerEventRuntime(runtime);
@@ -99,6 +125,26 @@ describe("createServerApp", () => {
   });
 });
 
+async function readSSEUntil(response: Response, expected: string): Promise<string> {
+  const reader = response.body?.getReader();
+  if (reader === undefined) throw new Error("Expected SSE response body");
+  const decoder = new TextDecoder();
+  let text = "";
+  try {
+    while (!text.includes(expected)) {
+      const result = await Promise.race([
+        reader.read(),
+        new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("Timed out reading SSE")), 2_000)),
+      ]);
+      if (result.done) break;
+      text += decoder.decode(result.value, { stream: true });
+    }
+    return text;
+  } finally {
+    await reader.cancel();
+  }
+}
+
 function createRuntimeWithManualSubscriptions() {
   const subscriptions = new Map<string, (event: GlobalSSEEvent) => void>();
   let resolveExecution!: () => void;
@@ -112,6 +158,7 @@ function createRuntimeWithManualSubscriptions() {
       return () => subscriptions.delete(input.sessionId);
     }),
     subscribeHitlEvents: mock(() => () => undefined),
+    subscribeSessionRuntimeChanges: mock(() => () => undefined),
     startSessionExecution: mock(() => ({ promise })),
     emitSession: (sessionId: string, event: GlobalSSEEvent) => subscriptions.get(sessionId)?.(event),
     subscribedSessionIds: () => [...subscriptions.keys()],
@@ -130,6 +177,7 @@ describe("MCP status SSE bridge", () => {
     let mcpListener: ((serverName: string, status: McpServerStatus) => void) | undefined;
     const runtime = {
       subscribeHitlEvents: mock(() => () => undefined),
+      subscribeSessionRuntimeChanges: mock(() => () => undefined),
       subscribeMcpStatusChanges: mock((listener: (serverName: string, status: McpServerStatus) => void) => {
         mcpListener = listener;
         return () => {
@@ -166,6 +214,7 @@ describe("MCP status SSE bridge", () => {
     let mcpListener: ((serverName: string, status: McpServerStatus) => void) | undefined;
     const runtime = {
       subscribeHitlEvents: mock(() => () => undefined),
+      subscribeSessionRuntimeChanges: mock(() => () => undefined),
       subscribeMcpStatusChanges: mock((listener: (serverName: string, status: McpServerStatus) => void) => {
         mcpListener = listener;
         return () => {
@@ -206,6 +255,7 @@ describe("HITL realtime SSE bridge", () => {
           hitlListener = undefined;
         };
       }),
+      subscribeSessionRuntimeChanges: mock(() => () => undefined),
       subscribeMcpStatusChanges: mock(() => () => undefined),
       getMcpServerStatuses: mock(() => new Map<string, McpServerStatus>()),
     } as unknown as AgentRuntime;
@@ -220,6 +270,44 @@ describe("HITL realtime SSE bridge", () => {
     hitlListener!(event);
 
     expect(observed).toEqual([event]);
+    unsubscribeBus();
+  });
+});
+
+describe("Session Family runtime SSE bridge", () => {
+  test("emits runtime changes without leaking workspace paths", () => {
+    let runtimeListener: ((event: Extract<GlobalSSEEvent, { type: "session.runtime_changed" }>) => void) | undefined;
+    const runtime = {
+      subscribeHitlEvents: mock(() => () => undefined),
+      subscribeMcpStatusChanges: mock(() => () => undefined),
+      getMcpServerStatuses: mock(() => new Map<string, McpServerStatus>()),
+      subscribeSessionRuntimeChanges: mock((listener: typeof runtimeListener) => {
+        runtimeListener = listener;
+        return () => {
+          runtimeListener = undefined;
+        };
+      }),
+    } as unknown as AgentRuntime;
+    const observed: GlobalSSEEvent[] = [];
+    const unsubscribeBus = globalEventBus.subscribe((event) => observed.push(event));
+
+    createServerApp(runtime, { dev: true });
+    runtimeListener!({
+      type: "session.runtime_changed",
+      projectSlug: "proj",
+      rootSessionId: "root-1",
+      activity: "stopping",
+      createdAt: 10,
+    });
+
+    expect(observed).toContainEqual({
+      type: "session.runtime_changed",
+      projectSlug: "proj",
+      rootSessionId: "root-1",
+      activity: "stopping",
+      createdAt: 10,
+    });
+    expect(JSON.stringify(observed)).not.toContain("workspace");
     unsubscribeBus();
   });
 });
@@ -254,6 +342,7 @@ function hitlRealtimeEvent(): Extract<GlobalSSEEvent, { type: "hitl.event" }> {
   const record: HitlRecord = {
     hitlId: "hitl-1",
     owner: { projectSlug: "proj", ownerType: "session", ownerId: "session-1" } as const,
+    sessionRootId: "session-1",
     blockingKey: "session:session-1:ask:call-1",
     source: { type: "ask_user", sessionId: "session-1", toolCallId: "call-1" } as const,
     status: "pending" as const,

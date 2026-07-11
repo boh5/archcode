@@ -145,14 +145,14 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
         await validateGoalSessionIdentities(runtime, project.workspaceRoot, goal, body);
         if (goal.status === "running") {
           const runningSessionId = requireRunningMainSession(goal, body.mainSessionId);
-          if (runtime.isSessionExecutionRunning(project.workspaceRoot, runningSessionId)) {
+          if (await isSessionFamilyActive(runtime, project.workspaceRoot, runningSessionId)) {
             const expectedCwd = goalExecutionCwdFromState(goal, project.workspaceRoot);
             await validateProvidedSessions(runtime, project.workspaceRoot, goal, body, expectedCwd);
             await assertSessionAssignable(runtime, project.workspaceRoot, goal, runningSessionId, "main", expectedCwd);
             return goal;
           }
         }
-        assertNoActiveGoalSessions(runtime, project.workspaceRoot, goal, body);
+        await assertNoActiveGoalSessions(runtime, project.workspaceRoot, goal, body);
         const prepared = await prepareGoalWorkspace(manager, project.workspaceRoot, goal);
         goal = prepared.goal;
         await validateProvidedSessions(runtime, project.workspaceRoot, goal, body, prepared.cwd);
@@ -160,7 +160,7 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
         if (selectedExistingMainSessionId !== undefined) {
           await assertSessionAssignable(runtime, project.workspaceRoot, goal, selectedExistingMainSessionId, "main", prepared.cwd);
         }
-        assertNoActiveGoalSessions(runtime, project.workspaceRoot, goal, body);
+        await assertNoActiveGoalSessions(runtime, project.workspaceRoot, goal, body);
         const updated = await reserveGoalSession(runtime, manager, project.workspaceRoot, goal, body, prepared.cwd);
 
         const running = updated.status === "running" ? updated : await manager.start(goalId, { mainSessionId: updated.mainSessionId });
@@ -203,7 +203,7 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
         await validateGoalSessionIdentities(runtime, project.workspaceRoot, goal, body);
         if (goal.status === "running") {
           const runningSessionId = requireRunningMainSession(goal, body.mainSessionId);
-          if (!runtime.isSessionExecutionRunning(project.workspaceRoot, runningSessionId)) {
+          if (!await isSessionFamilyActive(runtime, project.workspaceRoot, runningSessionId)) {
             throw new ServerError(
               "BAD_REQUEST",
               `Running Goal ${goal.id} can retry only through its active main Session`,
@@ -215,11 +215,11 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
           await assertSessionAssignable(runtime, project.workspaceRoot, goal, runningSessionId, "main", expectedCwd);
           return goal;
         }
-        assertNoActiveGoalSessions(runtime, project.workspaceRoot, goal, body);
+        await assertNoActiveGoalSessions(runtime, project.workspaceRoot, goal, body);
         const prepared = await prepareGoalWorkspace(manager, project.workspaceRoot, goal);
         goal = prepared.goal;
         await validateProvidedSessions(runtime, project.workspaceRoot, goal, body, prepared.cwd);
-        assertNoActiveGoalSessions(runtime, project.workspaceRoot, goal, body);
+        await assertNoActiveGoalSessions(runtime, project.workspaceRoot, goal, body);
 
         const mainSessionId = body.mainSessionId ?? (await runtime.createSession(project.workspaceRoot, {
           goalId,
@@ -229,7 +229,7 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
 
         const retried = goal.status === "running" ? goal : await manager.retry(goalId, { mainSessionId });
         const withSessions = await ensureReservedSessions(manager, retried, mainSessionId, body.childSessionIds);
-        if (runtime.isSessionExecutionRunning(project.workspaceRoot, mainSessionId)) return withSessions;
+        if (await isSessionFamilyActive(runtime, project.workspaceRoot, mainSessionId)) return withSessions;
 
         try {
           runtime.startSessionExecution({
@@ -379,27 +379,40 @@ async function validateGoalSessionIdentities(
   }
 }
 
-function assertNoActiveGoalSessions(
+async function assertNoActiveGoalSessions(
   runtime: AgentRuntime,
   workspaceRoot: string,
   goal: GoalState,
   body: SessionIdsBody,
-): void {
+): Promise<void> {
   const sessionIds = new Set([
     goal.mainSessionId,
     ...goal.childSessionIds,
     body.mainSessionId,
     ...(body.childSessionIds ?? []),
   ].filter((id): id is string => id !== undefined));
-  const activeSessionId = [...sessionIds].find((sessionId) => (
-    runtime.isSessionExecutionRunning(workspaceRoot, sessionId)
-  ));
+  let activeSessionId: string | undefined;
+  for (const sessionId of sessionIds) {
+    if (await isSessionFamilyActive(runtime, workspaceRoot, sessionId)) {
+      activeSessionId = sessionId;
+      break;
+    }
+  }
   if (activeSessionId === undefined) return;
   throw new ServerError(
     "BAD_REQUEST",
     `Goal ${goal.id} cannot transition while Session ${activeSessionId} is active`,
     409,
   );
+}
+
+async function isSessionFamilyActive(
+  runtime: AgentRuntime,
+  workspaceRoot: string,
+  sessionId: string,
+): Promise<boolean> {
+  const session = await runtime.getSessionFile(workspaceRoot, sessionId);
+  return runtime.getSessionFamilyActivity(workspaceRoot, session.rootSessionId) !== "idle";
 }
 
 async function assertSessionAssignable(

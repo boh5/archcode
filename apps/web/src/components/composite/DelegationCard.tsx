@@ -63,7 +63,7 @@ export function DelegationCard({
   projectSlug,
   canNavigate = true,
 }: DelegationCardProps) {
-  const resolvedType = isValidAgentType(agentType) ? agentType : "explorer" as AgentType;
+  const resolvedType = isValidAgentType(agentType) ? agentType : "explore" as AgentType;
   const colorClasses = AGENT_ICON_COLORS[resolvedType];
   const initials = AGENT_INITIALS[resolvedType];
 

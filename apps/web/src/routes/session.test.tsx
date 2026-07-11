@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation, useNavigationType } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { JSDOM } from "jsdom";
 import { TOOL_DELEGATE, createEmptySessionStats } from "@archcode/protocol";
@@ -149,6 +149,16 @@ async function renderSessionRoute(root: Root, queryClient: QueryClient): Promise
   });
 }
 
+function LocationProbe() {
+  const location = useLocation();
+  const navigationType = useNavigationType();
+  return (
+    <output data-testid="location">
+      {location.pathname}{location.search}|{navigationType}
+    </output>
+  );
+}
+
 describe("SessionRoute store-level behavior", () => {
   beforeEach(() => {
     __resetWebSessionStoresForTest();
@@ -245,7 +255,7 @@ describe("SessionRoute focused view store behavior", () => {
               state: "completed",
               toolCallId: "delegate-call",
               toolName: TOOL_DELEGATE,
-              input: { agent_type: "explorer", description: "Explore child session" },
+              input: { agent_type: "explore", description: "Explore child session" },
               output: "Sub-agent completed.",
               createdAt: 1,
               startedAt: 1,
@@ -260,7 +270,7 @@ describe("SessionRoute focused view store behavior", () => {
           parentToolCallId: "delegate-call",
           toolName: "delegate",
           childSessionId: "child-session",
-          childAgentName: "explorer",
+          childAgentName: "explore",
           title: "Explore child session",
           description: "Explore child session",
           depth: 1,
@@ -339,6 +349,86 @@ describe("SessionRoute focused view store behavior", () => {
       await act(async () => {
         reactRoot.unmount();
       });
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
+  test("direct child URL is replaced by the canonical root URL focused on that child", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+
+    const rootSession = createSession({
+      id: "root-1",
+      rootSessionId: "root-1",
+      title: "Root Session",
+      messages: [],
+    });
+    const childSession = createSession({
+      id: "child-1",
+      rootSessionId: "root-1",
+      parentSessionId: "root-1",
+      title: "Child Session",
+      messages: [],
+    });
+
+    const fetchMock = mock(async (input: Parameters<typeof fetch>[0]) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const path = new URL(url, "http://localhost").pathname;
+      if (path === "/api/projects") {
+        return Response.json({
+          projects: [{
+            slug: "demo",
+            name: "Demo",
+            workspaceRoot: "/workspace",
+            addedAt: "2026-01-01T00:00:00.000Z",
+          }],
+        });
+      }
+      if (path === "/api/projects/demo/sessions/child-1") return Response.json(childSession);
+      if (path === "/api/projects/demo/sessions/root-1") return Response.json(rootSession);
+      return new Response("Not found", { status: 404 });
+    });
+    Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await act(async () => {
+        reactRoot.render(
+          <QueryClientProvider client={queryClient}>
+            <MemoryRouter initialEntries={["/projects/demo/sessions/child-1"]}>
+              <Routes>
+                <Route
+                  path="/projects/:slug/sessions/:sessionId"
+                  element={
+                    <>
+                      <SessionRoute />
+                      <LocationProbe />
+                    </>
+                  }
+                />
+              </Routes>
+            </MemoryRouter>
+          </QueryClientProvider>,
+        );
+      });
+
+      await waitFor(() => {
+        expect(container.querySelector('[data-testid="location"]')?.textContent).toBe(
+          "/projects/demo/sessions/root-1?focus=child-1|REPLACE",
+        );
+        expect(container.textContent).toContain("← Back to Root Session");
+      });
+
+      expect(container.querySelector("textarea")).toBeNull();
+      expect(container.querySelector('button[title="Stop"]')).toBeNull();
+    } finally {
+      await act(async () => reactRoot.unmount());
       queryClient.clear();
       dom.window.close();
     }

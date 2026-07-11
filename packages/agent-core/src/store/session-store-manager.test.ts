@@ -413,6 +413,7 @@ describe("SessionStoreManager", () => {
     const hitlRequest: HitlRecord = {
       hitlId: "hitl-1",
       owner: { projectSlug: "project-1", ownerType: "session", ownerId: id },
+      sessionRootId: id,
       blockingKey: "ask-user:call-1",
       source: { type: "ask_user", sessionId: id, toolCallId: "call-1" },
       status: "pending",

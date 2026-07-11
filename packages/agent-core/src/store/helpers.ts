@@ -149,6 +149,7 @@ const ToolChildSessionLinkSchema = z.strictObject({
   status: z.enum([
     "linked",
     "running",
+    "waiting_for_human",
     "cancelling",
     "completed",
     "failed",

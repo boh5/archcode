@@ -460,6 +460,7 @@ function redactDecision(decision: PermissionDecision): PermissionDecision {
     ...(decision.source ? { source: decision.source } : {}),
     ...(decision.ruleId ? { ruleId: decision.ruleId } : {}),
     ...(decision.display ? { display: redactString(decision.display) } : {}),
+    ...(decision.executionControl ? { executionControl: decision.executionControl } : {}),
   };
 }
 
@@ -469,7 +470,7 @@ function createDenyResult(
 ): ToolExecutionResult {
   const extractedCode = extractCode(decision.reason ?? "");
   const code = decision.errorCode ?? extractedCode ?? "TOOL_PERMISSION_DENIED";
-  if (decision.errorKind || decision.errorCode || extractedCode) {
+  if (decision.errorKind || decision.errorCode || extractedCode || decision.executionControl) {
     return createToolErrorResult({
       kind: decision.errorKind ?? kindFromCode(code) ?? "permission-denied",
       code,
@@ -477,6 +478,7 @@ function createDenyResult(
       meta: {
         permissionErrorCode: code,
         skippedExecution: true,
+        ...(decision.executionControl ? { executionControl: decision.executionControl } : {}),
       },
     });
   }

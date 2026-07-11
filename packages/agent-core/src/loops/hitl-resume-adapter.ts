@@ -1,6 +1,6 @@
 import type { HitlRecord, HitlResponse, LoopHitlCheckpoint, LoopRunReport } from "@archcode/protocol";
 
-import type { LoopHitlResumeAdapter as ResumeAdapterContract } from "../hitl/resume-coordinator";
+import { createPreparedHitlResume, type LoopHitlResumeAdapter as ResumeAdapterContract } from "../hitl/resume-coordinator";
 import type { LoopJobConditionalUpdateResult, LoopJobRecord, LoopJobUpdateExpectation, LoopJobUpdateInput } from "./job-queue";
 import { LoopStateManager } from "./state";
 
@@ -46,7 +46,14 @@ export class LoopHitlResumeAdapter implements ResumeAdapterContract {
     this.#onContinuationQueued = options.onContinuationQueued;
   }
 
-  async resume(record: HitlRecord, response: HitlResponse): Promise<void> {
+  async prepare(record: HitlRecord, response: HitlResponse) {
+    if (record.owner.ownerType !== "loop") throw new Error(`Loop adapter cannot prepare ${record.owner.ownerType} HITL`);
+    return createPreparedHitlResume(async (claimedRecord, claimedResponse) => {
+      await this.#resume(claimedRecord, claimedResponse);
+    });
+  }
+
+  async #resume(record: HitlRecord, response: HitlResponse): Promise<void> {
     if (record.owner.ownerType !== "loop") throw new Error(`Loop adapter cannot resume ${record.owner.ownerType} HITL`);
     const checkpoint = await this.#checkpoint(record);
     if (checkpoint.hitlId !== record.hitlId) throw new Error(`Loop HITL checkpoint mismatch for ${record.hitlId}`);

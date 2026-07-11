@@ -4,7 +4,7 @@ import { hitlIdentityKey, hitlStore, selectHitlProjections } from "./hitl-store"
 
 describe("hitlStore", () => {
   beforeEach(() => {
-    hitlStore.setState({ projections: {} });
+    hitlStore.getState().reset();
   });
 
   test("upserts active realtime projections and removes terminal projections", () => {
@@ -45,22 +45,59 @@ describe("hitlStore", () => {
     expect(Object.values(hitlStore.getState().projections)).toHaveLength(2);
   });
 
-  test("authoritative snapshot reset clears stale projections for listed projects", () => {
+  test("authoritative snapshot atomically replaces listed projects and marks them initialized", () => {
     const stale = projection({ hitlId: "stale", project: { slug: "proj" } });
+    const fresh = projection({ hitlId: "fresh", project: { slug: "proj" } });
     const otherProject = projection({ hitlId: "other", project: { slug: "other" } });
     hitlStore.setState({ projections: { stale, other: otherProject } });
 
-    hitlStore.getState().applySnapshotReset(["proj"]);
+    hitlStore.getState().applySnapshot({
+      type: "hitl.snapshot",
+      projectSlugs: ["proj"],
+      projections: [fresh],
+      createdAt: 1,
+    });
 
-    expect(hitlStore.getState().projections).toEqual({ other: otherProject });
+    expect(Object.values(hitlStore.getState().projections)).toEqual([otherProject, fresh]);
+    expect(hitlStore.getState().isProjectInitialized("proj")).toBe(true);
+    expect(hitlStore.getState().isProjectInitialized("other")).toBe(false);
   });
 
-  test("global snapshot reset with no project slugs clears all projections", () => {
+  test("global snapshot with no registered projects clears projections and readiness", () => {
     hitlStore.setState({ projections: { stale: projection({ hitlId: "stale" }) } });
 
-    hitlStore.getState().applySnapshotReset([]);
+    hitlStore.getState().applySnapshot({
+      type: "hitl.snapshot",
+      projectSlugs: [],
+      projections: [],
+      createdAt: 1,
+    });
 
     expect(hitlStore.getState().projections).toEqual({});
+    expect(hitlStore.getState().initializedProjects).toEqual({});
+  });
+
+  test("disconnect invalidates readiness without pretending cached projections are current", () => {
+    const pending = projection({ hitlId: "pending" });
+    hitlStore.getState().applySnapshot({
+      type: "hitl.snapshot",
+      projectSlugs: ["proj"],
+      projections: [pending],
+      createdAt: 1,
+    });
+
+    hitlStore.getState().invalidateSnapshots();
+
+    expect(hitlStore.getState().isProjectInitialized("proj")).toBe(false);
+    expect(Object.values(hitlStore.getState().projections)).toEqual([pending]);
+  });
+
+  test("an early live projection cannot initialize a newly registered project without a snapshot", () => {
+    const early = hitlEvent({ hitlId: "early" });
+    hitlStore.getState().applyRealtimeEvent(early);
+
+    expect(hitlStore.getState().isProjectInitialized("proj")).toBe(false);
+    expect(hitlStore.getState().projections[hitlIdentityKey(early.projection)]).toEqual(early.projection);
   });
 
   test("selects session descendants using ancestry", () => {

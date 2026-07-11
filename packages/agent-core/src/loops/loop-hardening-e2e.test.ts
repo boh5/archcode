@@ -224,6 +224,7 @@ class FakeLoopRuntime {
   });
   readonly startSessionExecutionMock = mock((input: StartSessionExecutionInput): ActiveSessionExecution => ({
     sessionId: input.sessionId,
+    rootSessionId: input.sessionId,
     workspaceRoot: input.workspaceRoot,
     agentName: input.agentName ?? "orchestrator",
     origin: "user_message",

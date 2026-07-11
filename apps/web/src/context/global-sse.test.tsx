@@ -8,6 +8,8 @@ import type {
   GlobalSSEMcpStatusEvent,
   GlobalSSEResetEvent,
   GlobalSSELaggedEvent,
+  GlobalSSESessionRuntimeChangedEvent,
+  GlobalSSESessionRuntimeSnapshotEvent,
   GlobalSSEShutdownEvent,
   HitlRecord,
   LoopState,
@@ -16,7 +18,19 @@ import type {
 import type { WebSessionStoreState } from "../store/session-store";
 import { hitlIdentityKey, hitlStore } from "../store/hitl-store";
 import { useMcpStatusStore } from "../store/mcp-status-store";
-import { parseSSEEvent, handleSSEEvent } from "./global-sse";
+import { runtimeFamilyKey, sessionRuntimeStore } from "../store/session-runtime-store";
+import {
+  SSE_WATCHDOG_TIMEOUT_MS,
+  SSE_SHUTDOWN_RECONNECT_DELAY_MS,
+  cancelSSEShutdownReconnect,
+  createSSEWatchdog,
+  handleSSEEvent,
+  isSessionSnapshotQueryKey,
+  parseSSEEvent,
+  requestSSEReconnectOnce,
+  requestSSEShutdownReconnectOnce,
+  type SSEReconnectState,
+} from "./global-sse";
 import type { SSEEventHandlerDeps } from "./global-sse";
 
 function createMockStore(): StoreApi<WebSessionStoreState> {
@@ -39,6 +53,8 @@ const mockInvalidateQueries = mock((_opts: { queryKey: readonly unknown[] }) => 
 const mockOnShutdown = mock(() => {});
 const mockOnHeartbeat = mock((_createdAt: number) => {});
 const mockRefreshMcpStatus = mock(() => {});
+const mockRequestReconnect = mock(() => {});
+const mockRefreshSessionSnapshots = mock(() => {});
 
 function createDeps(): SSEEventHandlerDeps {
   return {
@@ -48,8 +64,128 @@ function createDeps(): SSEEventHandlerDeps {
     onShutdown: mockOnShutdown,
     onHeartbeat: mockOnHeartbeat,
     refreshMcpStatus: mockRefreshMcpStatus,
+    requestReconnect: mockRequestReconnect,
+    refreshSessionSnapshots: mockRefreshSessionSnapshots,
   };
 }
+
+describe("SSE liveness watchdog", () => {
+  test("arms from connection attempt and re-arms from heartbeat with one live timer", () => {
+    let nextTimerId = 1;
+    const timers = new Map<number, () => void>();
+    const clearedTimerIds: number[] = [];
+    const onTimeout = mock(() => {});
+    const watchdog = createSSEWatchdog({
+      onTimeout,
+      schedule: (callback, delay) => {
+        expect(delay).toBe(SSE_WATCHDOG_TIMEOUT_MS);
+        const timerId = nextTimerId++;
+        timers.set(timerId, callback);
+        return timerId;
+      },
+      cancel: (timerId) => {
+        clearedTimerIds.push(timerId as number);
+        timers.delete(timerId as number);
+      },
+    });
+
+    watchdog.connectionAttemptStarted();
+    const connectionTimerId = nextTimerId - 1;
+    expect(timers.size).toBe(1);
+
+    watchdog.heartbeatReceived();
+    const heartbeatTimerId = nextTimerId - 1;
+    expect(clearedTimerIds).toEqual([connectionTimerId]);
+    expect(timers.size).toBe(1);
+    expect(timers.has(heartbeatTimerId)).toBe(true);
+
+    timers.get(heartbeatTimerId)?.();
+    expect(onTimeout).toHaveBeenCalledTimes(1);
+
+    watchdog.stop();
+    expect(clearedTimerIds).toEqual([connectionTimerId]);
+  });
+
+  test("stopping clears the watchdog without firing a stale timeout", () => {
+    const timers = new Map<number, () => void>();
+    const onTimeout = mock(() => {});
+    const watchdog = createSSEWatchdog({
+      onTimeout,
+      schedule: (callback) => {
+        timers.set(1, callback);
+        return 1;
+      },
+      cancel: (timerId) => timers.delete(timerId as number),
+    });
+
+    watchdog.connectionAttemptStarted();
+    watchdog.stop();
+
+    expect(timers.size).toBe(0);
+    expect(onTimeout).not.toHaveBeenCalled();
+  });
+
+  test("reconnect gate invalidates readiness first and coalesces duplicates", () => {
+    const state = { requested: false, shutdown: false };
+    const order: string[] = [];
+    const actions = {
+      invalidateReadiness: () => order.push("invalidate"),
+      markReconnecting: () => order.push("state"),
+      abortConnection: () => order.push("abort"),
+      scheduleReconnect: () => order.push("reconnect"),
+    };
+
+    expect(requestSSEReconnectOnce(state, actions)).toBe(true);
+    expect(requestSSEReconnectOnce(state, actions)).toBe(false);
+    expect(order).toEqual(["invalidate", "state", "abort", "reconnect"]);
+
+    state.requested = false;
+    state.shutdown = true;
+    expect(requestSSEReconnectOnce(state, actions)).toBe(false);
+    expect(order).toEqual(["invalidate", "state", "abort", "reconnect"]);
+  });
+
+  test("graceful shutdown schedules one delayed reconnect and can be cancelled", () => {
+    const state: SSEReconnectState = { requested: false, shutdown: false };
+    const order: string[] = [];
+    let scheduled: (() => void) | undefined;
+    const actions = {
+      markClosed: () => order.push("closed"),
+      stopWatchdog: () => order.push("watchdog"),
+      abortConnection: () => order.push("abort"),
+      markReconnecting: () => order.push("reconnecting"),
+      scheduleReconnect: () => order.push("reconnect"),
+      schedule: (callback: () => void, delay: number) => {
+        expect(delay).toBe(SSE_SHUTDOWN_RECONNECT_DELAY_MS);
+        scheduled = callback;
+        return 7;
+      },
+      cancel: (timer: unknown) => order.push(`cancel:${String(timer)}`),
+    };
+
+    expect(requestSSEShutdownReconnectOnce(state, actions)).toBe(true);
+    expect(requestSSEShutdownReconnectOnce(state, actions)).toBe(false);
+    expect(order).toEqual(["closed", "watchdog", "abort"]);
+    expect(state.shutdown).toBe(true);
+
+    scheduled?.();
+    expect(state).toMatchObject({ requested: false, shutdown: false, shutdownTimer: undefined });
+    expect(order).toEqual(["closed", "watchdog", "abort", "reconnecting", "reconnect"]);
+
+    expect(requestSSEShutdownReconnectOnce(state, actions)).toBe(true);
+    cancelSSEShutdownReconnect(state, actions.cancel);
+    expect(order.at(-1)).toBe("cancel:7");
+    expect(state.shutdown).toBe(true);
+  });
+
+  test("matches only project Session snapshot query keys", () => {
+    expect(isSessionSnapshotQueryKey(["projects", "demo", "sessions"])).toBe(true);
+    expect(isSessionSnapshotQueryKey(["projects", "demo", "sessions", "root-1"])).toBe(true);
+    expect(isSessionSnapshotQueryKey(["projects", "demo", "sessions", "child-1", "focused"])).toBe(true);
+    expect(isSessionSnapshotQueryKey(["projects", "demo", "goals", "goal-1"])).toBe(false);
+    expect(isSessionSnapshotQueryKey(["sessions", "root-1"])).toBe(false);
+  });
+});
 
 describe("parseSSEEvent", () => {
   test("parses valid event type", () => {
@@ -144,11 +280,36 @@ describe("parseSSEEvent", () => {
   });
 
   test("parses authoritative hitl.snapshot reset events", () => {
-    const event = { type: "hitl.snapshot" as const, projectSlugs: ["proj"], createdAt: 1700000000000 };
+    const projection = hitlRealtimeEvent({ projectSlug: "proj", hitlId: "hitl-1" }).projection;
+    const event = {
+      type: "hitl.snapshot" as const,
+      projectSlugs: ["proj"],
+      projections: [projection],
+      createdAt: 1700000000000,
+    };
 
     const result = parseSSEEvent("hitl.snapshot", JSON.stringify(event));
 
     expect(result).toEqual(event);
+  });
+
+  test("parses session runtime snapshot and change events", () => {
+    const snapshot: GlobalSSESessionRuntimeSnapshotEvent = {
+      type: "session.runtime.snapshot",
+      projectSlugs: ["proj"],
+      families: [{ projectSlug: "proj", rootSessionId: "root-1", activity: "running" }],
+      createdAt: 1,
+    };
+    const changed: GlobalSSESessionRuntimeChangedEvent = {
+      type: "session.runtime_changed",
+      projectSlug: "proj",
+      rootSessionId: "root-1",
+      activity: "stopping",
+      createdAt: 2,
+    };
+
+    expect(parseSSEEvent(snapshot.type, JSON.stringify(snapshot))).toEqual(snapshot);
+    expect(parseSSEEvent(changed.type, JSON.stringify(changed))).toEqual(changed);
   });
 
   test("returns null for malformed JSON", () => {
@@ -179,7 +340,10 @@ describe("handleSSEEvent", () => {
     mockOnShutdown.mockClear();
     mockOnHeartbeat.mockClear();
     mockRefreshMcpStatus.mockClear();
-    hitlStore.setState({ projections: {} });
+    mockRequestReconnect.mockClear();
+    mockRefreshSessionSnapshots.mockClear();
+    hitlStore.getState().reset();
+    sessionRuntimeStore.getState().reset();
     useMcpStatusStore.getState().clear();
     deps = createDeps();
   });
@@ -356,22 +520,25 @@ describe("handleSSEEvent", () => {
     expect(mockInvalidateQueries).toHaveBeenCalledTimes(1);
   });
 
-  test("applies authoritative hitl.snapshot resets before later hitl.event upserts", () => {
+  test("atomically applies the authoritative hitl.snapshot and marks projects initialized", () => {
     const stale = hitlRealtimeEvent({ projectSlug: "proj", hitlId: "stale" });
     hitlStore.getState().applyRealtimeEvent(stale);
+    const fresh = hitlRealtimeEvent({ projectSlug: "proj", hitlId: "fresh" });
 
     handleSSEEvent({
       event: "hitl.snapshot",
-      data: JSON.stringify({ type: "hitl.snapshot", projectSlugs: ["proj"], createdAt: 1700000000001 }),
+      data: JSON.stringify({
+        type: "hitl.snapshot",
+        projectSlugs: ["proj"],
+        projections: [fresh.projection],
+        createdAt: 1700000000001,
+      }),
     }, deps);
 
     expect(hitlStore.getState().projections[hitlIdentityKey(stale.projection)]).toBeUndefined();
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj"], exact: false });
-
-    const fresh = hitlRealtimeEvent({ projectSlug: "proj", hitlId: "fresh" });
-    handleSSEEvent({ event: "hitl.event", data: JSON.stringify(fresh) }, deps);
-
     expect(hitlStore.getState().projections[hitlIdentityKey(fresh.projection)]).toEqual(fresh.projection);
+    expect(hitlStore.getState().isProjectInitialized("proj")).toBe(true);
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj"], exact: false });
   });
 
   test("removes terminal hitl.event projection and invalidates related goal/loop queries", () => {
@@ -548,7 +715,7 @@ describe("handleSSEEvent", () => {
     expect(mockOnShutdown).not.toHaveBeenCalled();
   });
 
-  test("handles lagged event without side effects", () => {
+  test("lagged event requests reconnect and an authoritative Session snapshot refresh", () => {
     const laggedEvent: GlobalSSELaggedEvent = {
       type: "lagged",
       dropped: 50,
@@ -560,6 +727,82 @@ describe("handleSSEEvent", () => {
     expect(mockOnShutdown).not.toHaveBeenCalled();
     expect(mockInvalidateQueries).not.toHaveBeenCalled();
     expect(mockFindWebSessionStore).not.toHaveBeenCalled();
+    expect(mockRequestReconnect).toHaveBeenCalledTimes(1);
+    expect(mockRefreshSessionSnapshots).toHaveBeenCalledTimes(1);
+  });
+
+  test("runtime snapshot authoritatively clears stale running families", () => {
+    sessionRuntimeStore.getState().applySnapshot({
+      type: "session.runtime.snapshot",
+      projectSlugs: ["proj"],
+      families: [{ projectSlug: "proj", rootSessionId: "stale-root", activity: "running" }],
+      createdAt: 1,
+    });
+    const snapshot: GlobalSSESessionRuntimeSnapshotEvent = {
+      type: "session.runtime.snapshot",
+      projectSlugs: ["proj"],
+      families: [{ projectSlug: "proj", rootSessionId: "current-root", activity: "stopping" }],
+      createdAt: 2,
+    };
+
+    handleSSEEvent({ event: snapshot.type, data: JSON.stringify(snapshot) }, deps);
+
+    expect(sessionRuntimeStore.getState().families).toEqual({
+      [runtimeFamilyKey("proj", "current-root")]: snapshot.families[0],
+    });
+    expect(sessionRuntimeStore.getState().isProjectInitialized("proj")).toBe(true);
+    expect(mockRefreshSessionSnapshots).toHaveBeenCalledTimes(1);
+  });
+
+  test("runtime change upserts non-idle and removes idle activity", () => {
+    const snapshot: GlobalSSESessionRuntimeSnapshotEvent = {
+      type: "session.runtime.snapshot",
+      projectSlugs: ["proj"],
+      families: [],
+      createdAt: 1,
+    };
+    handleSSEEvent({ event: snapshot.type, data: JSON.stringify(snapshot) }, deps);
+
+    const running: GlobalSSESessionRuntimeChangedEvent = {
+      type: "session.runtime_changed",
+      projectSlug: "proj",
+      rootSessionId: "root-1",
+      activity: "running",
+      createdAt: 2,
+    };
+    handleSSEEvent({ event: running.type, data: JSON.stringify(running) }, deps);
+    expect(sessionRuntimeStore.getState().activityFor("proj", "root-1")).toBe("running");
+
+    const idle: GlobalSSESessionRuntimeChangedEvent = { ...running, activity: "idle", createdAt: 3 };
+    handleSSEEvent({ event: idle.type, data: JSON.stringify(idle) }, deps);
+    expect(sessionRuntimeStore.getState().activityFor("proj", "root-1")).toBe("idle");
+  });
+
+  test("lagged invalidates runtime and HITL readiness before forcing reconnect", () => {
+    sessionRuntimeStore.getState().applySnapshot({
+      type: "session.runtime.snapshot",
+      projectSlugs: ["proj"],
+      families: [{ projectSlug: "proj", rootSessionId: "root-1", activity: "running" }],
+      createdAt: 1,
+    });
+    hitlStore.getState().applySnapshot({
+      type: "hitl.snapshot",
+      projectSlugs: ["proj"],
+      projections: [],
+      createdAt: 1,
+    });
+    const laggedEvent: GlobalSSELaggedEvent = {
+      type: "lagged",
+      dropped: 1,
+      reason: "client_backpressure",
+    };
+
+    handleSSEEvent({ event: "lagged", data: JSON.stringify(laggedEvent) }, deps);
+
+    expect(sessionRuntimeStore.getState().activityFor("proj", "root-1")).toBeUndefined();
+    expect(hitlStore.getState().isProjectInitialized("proj")).toBe(false);
+    expect(mockRequestReconnect).toHaveBeenCalledTimes(1);
+    expect(mockRefreshSessionSnapshots).toHaveBeenCalledTimes(1);
   });
 
   test("updates heartbeat timestamp on heartbeat event", () => {
@@ -582,6 +825,7 @@ describe("handleSSEEvent", () => {
     handleSSEEvent({ event: "shutdown", data: JSON.stringify(shutdown) }, deps);
 
     expect(mockOnShutdown).toHaveBeenCalled();
+    expect(mockRefreshSessionSnapshots).toHaveBeenCalledTimes(1);
   });
 
   test("updates mcp status store on mcp_status event", () => {

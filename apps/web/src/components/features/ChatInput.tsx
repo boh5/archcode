@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { usePostMessage, usePostCommand, useAbortSession } from "../../api/mutations";
+import { usePostMessage, usePostCommand, useStopSessionFamily } from "../../api/mutations";
+import { useHitlProjectInitialized, useRealtimeHitl } from "../../store/hitl-store";
+import { useSessionFamilyActivity } from "../../store/session-runtime-store";
 import { useSessionStore } from "../../store/session-store";
 
 const SLASH_COMMANDS = [
@@ -23,14 +25,26 @@ export function ChatInput({ slug, sessionId }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const slashMenuRef = useRef<HTMLDivElement>(null);
 
-  const isRunning = useSessionStore(sessionId, (s) => s.isRunning, slug);
+  const activity = useSessionFamilyActivity(slug, sessionId);
+  const pendingHitl = useRealtimeHitl({
+    slug,
+    scope: "session",
+    ownerId: sessionId,
+    includeChildren: true,
+  });
+  const hitlReady = useHitlProjectInitialized(slug);
   const modelInfo = useSessionStore(sessionId, (s) => s.modelInfo, slug);
   const postMessage = usePostMessage();
   const postCommand = usePostCommand();
-  const abortSession = useAbortSession();
+  const stopSession = useStopSessionFamily();
 
-  const isPending = postMessage.isPending || postCommand.isPending;
-  const canSend = value.trim().length > 0 && !isPending;
+  const isPending = postMessage.isPending || postCommand.isPending || stopSession.isPending;
+  const isRunning = activity === "running";
+  const isStopping = activity === "stopping";
+  const runtimeReady = activity !== undefined;
+  const hasPendingHitl = pendingHitl.length > 0;
+  const canCompose = runtimeReady && hitlReady && activity === "idle" && !hasPendingHitl && !isPending;
+  const canSend = value.trim().length > 0 && canCompose;
 
   const filteredCommands = SLASH_COMMANDS.filter((cmd) =>
     cmd.name.startsWith(`/ ${slashFilter}`.replace(/\s/g, "")),
@@ -67,7 +81,7 @@ useEffect(() => {
 
   const sendMessage = useCallback(() => {
     const trimmed = value.trim();
-    if (!trimmed || isPending) return;
+    if (!trimmed || !canCompose) return;
 
     if (trimmed.startsWith("/")) {
       const parts = trimmed.split(/\s+/);
@@ -90,10 +104,11 @@ useEffect(() => {
         textareaRef.current.style.height = "auto";
       }
     });
-  }, [value, isPending, slug, sessionId, postMessage, postCommand]);
+  }, [value, canCompose, slug, sessionId, postMessage, postCommand]);
 
   const selectSlashCommand = useCallback(
     (cmd: SlashCommand) => {
+      if (!canCompose) return;
       postCommand.mutate(
         { slug, sessionId, name: cmd.name.slice(1) },
         { onSettled: () => setValue("") },
@@ -103,7 +118,7 @@ useEffect(() => {
       setSlashActiveIndex(0);
       textareaRef.current?.focus();
     },
-    [slug, sessionId, postCommand],
+    [canCompose, slug, sessionId, postCommand],
   );
 
   const handleKeyDown = useCallback(
@@ -143,9 +158,9 @@ useEffect(() => {
         return;
       }
 
-      if (e.key === "Escape" && isRunning) {
+      if (e.key === "Escape" && isRunning && !stopSession.isPending) {
         e.preventDefault();
-        abortSession.mutate({ slug, sessionId });
+        stopSession.mutate({ slug, rootSessionId: sessionId });
         return;
       }
     },
@@ -158,7 +173,7 @@ useEffect(() => {
       isRunning,
       slug,
       sessionId,
-      abortSession,
+      stopSession,
     ],
   );
 
@@ -181,7 +196,7 @@ useEffect(() => {
 
   return (
     <div className="border-t border-border-subtle bg-bg-surface px-5 py-3 flex flex-col gap-2 shrink-0 relative">
-      {showSlashMenu && filteredCommands.length > 0 && !isRunning && (
+      {showSlashMenu && filteredCommands.length > 0 && canCompose && (
         <div
           ref={slashMenuRef}
           className="absolute bottom-full left-5 right-5 bg-bg-elevated border border-border-default rounded-md shadow-lg max-h-[200px] overflow-y-auto z-10"
@@ -209,7 +224,7 @@ useEffect(() => {
           <button
             type="button"
             className="w-9 h-9 rounded-sm border border-border-default bg-transparent text-text-tertiary cursor-pointer flex items-center justify-center text-sm transition-all duration-150 hover:bg-bg-hover hover:text-text-primary hover:border-border-strong shrink-0 disabled:opacity-30 disabled:cursor-not-allowed"
-            disabled={isRunning}
+            disabled={!canCompose}
             onClick={() => setAttachTooltip((v) => !v)}
             onBlur={() => setAttachTooltip(false)}
             title="Attach file"
@@ -240,8 +255,20 @@ useEffect(() => {
             value={value}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
-            disabled={isRunning}
-            placeholder={isRunning ? "Thinking…" : "Send a message…"}
+            disabled={!canCompose}
+            placeholder={
+              !runtimeReady
+                ? "Connecting to runtime…"
+                : !hitlReady
+                  ? "Syncing pending requests…"
+                : hasPendingHitl
+                  ? "Answer the pending request to continue…"
+                  : isRunning
+                    ? "Running…"
+                    : isStopping
+                      ? "Stopping…"
+                      : "Send a message…"
+            }
             rows={1}
             style={
               isRunning
@@ -264,14 +291,22 @@ useEffect(() => {
           <button
             type="button"
             className="w-9 h-9 rounded-sm border border-border-default bg-transparent text-text-tertiary flex items-center justify-center cursor-pointer shrink-0 transition-all duration-150 hover:bg-error-muted hover:border-error hover:text-error"
-            onClick={() =>
-              abortSession.mutate({ slug, sessionId })
-            }
+            disabled={stopSession.isPending}
+            onClick={() => stopSession.mutate({ slug, rootSessionId: sessionId })}
             title="Stop"
           >
             <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
               <rect width="10" height="10" rx="1.5" />
             </svg>
+          </button>
+        ) : isStopping ? (
+          <button
+            type="button"
+            className="w-9 h-9 rounded-sm border border-border-default bg-transparent text-text-tertiary flex items-center justify-center shrink-0 disabled:cursor-wait"
+            disabled
+            title="Stopping"
+          >
+            <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-text-muted border-t-transparent" />
           </button>
         ) : (
           <button
@@ -295,8 +330,16 @@ useEffect(() => {
 
       <div className="flex items-center justify-between text-[11px] text-text-tertiary px-1">
         <span>{modelInfo?.displayName ?? "Unknown"}</span>
-        {isRunning ? (
-          <span className="text-text-secondary select-none">Thinking…</span>
+        {!runtimeReady ? (
+          <span className="text-text-secondary select-none">Connecting…</span>
+        ) : !hitlReady ? (
+          <span className="text-text-secondary select-none">Syncing pending requests…</span>
+        ) : isRunning ? (
+          <span className="text-text-secondary select-none">Running…</span>
+        ) : isStopping ? (
+          <span className="text-text-secondary select-none">Stopping…</span>
+        ) : hasPendingHitl ? (
+          <span className="text-warning select-none">Waiting for input…</span>
         ) : (
           <span>
             <kbd className="text-text-muted">Enter</kbd> send ·{" "}

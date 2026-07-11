@@ -1,4 +1,4 @@
-import type { HitlRecord, HitlResponse } from "@archcode/protocol";
+import type { HitlRecord, HitlResponse, ToolChildSessionLinkStatus } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 
 import type { Agent } from "../agents/types";
@@ -15,7 +15,7 @@ import { createToolErrorResult } from "../tools/errors";
 import { redactValue } from "../tools/security/redaction";
 import type { SessionHitlResumeAdapter as ResumeAdapterContract } from "../hitl/resume-coordinator";
 import { askUserResponseToToolResult } from "./session-hitl-pause";
-import type { AcquireSessionHitlResumeOptions, SessionHitlResumeLease } from "./session-execution-manager";
+import type { ReserveSessionHitlResumeOptions, SessionHitlResumeLease } from "./session-execution-manager";
 import type { SessionExecutionScopeValidator } from "./session-execution-scope-validator";
 import {
   isResponseForSessionCheckpoint,
@@ -59,12 +59,17 @@ export interface SessionHitlResumeAdapterOptions {
   readonly startChildExecution?: (workspaceRoot: string, request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
   readonly cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
   readonly resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
-  readonly abortSessionExecutionAndWait?: (workspaceRoot: string, sessionId: string) => Promise<void>;
-  readonly acquireSessionHitlResume: (
+  readonly reserveSessionHitlResume: (
     workspaceRoot: string,
     sessionId: string,
-    options?: AcquireSessionHitlResumeOptions,
+    rootSessionId: string,
+    options?: ReserveSessionHitlResumeOptions,
   ) => SessionHitlResumeLease;
+  readonly updateChildSessionLinkForHitl?: (
+    workspaceRoot: string,
+    childSessionId: string,
+    status: ToolChildSessionLinkStatus,
+  ) => Promise<void>;
   readonly loopContinuation?: SessionLoopHitlContinuationCoordinator;
   readonly readCheckpoint?: typeof readSessionHitlCheckpoint;
   readonly attachSessionEvents?: (workspaceRoot: string, sessionId: string, store: StoreApi<SessionStoreState>) => void;
@@ -74,21 +79,73 @@ export interface SessionHitlResumeAdapterOptions {
 export class SessionHitlResumeAdapter implements ResumeAdapterContract {
   constructor(private readonly options: SessionHitlResumeAdapterOptions) {}
 
-  async resume(record: HitlRecord, response: HitlResponse): Promise<void> {
-    if (record.owner.ownerType !== "session") throw new Error(`Session adapter cannot resume ${record.owner.ownerType} HITL`);
+  async prepare(record: HitlRecord, response: HitlResponse) {
+    if (record.owner.ownerType !== "session") throw new Error(`Session adapter cannot prepare ${record.owner.ownerType} HITL`);
     const sessionId = record.owner.ownerId;
-    const store = await this.options.storeManager.getOrLoad(sessionId, this.options.workspaceRoot);
-    const sessionState = store.getState();
-    if (sessionState.parentSessionId !== undefined) {
-      await this.options.storeManager.getOrLoad(sessionState.rootSessionId, this.options.workspaceRoot);
-    }
-    // No await after the family load: the execution manager validates child/root
-    // cwd identity and publishes the exclusive resume generation synchronously.
-    const resumeLease = this.options.acquireSessionHitlResume(
+    const rootSessionId = record.sessionRootId;
+    if (rootSessionId === undefined) throw new Error(`Session HITL ${record.hitlId} is missing canonical sessionRootId`);
+    // The reservation is deliberately the first operation. Stop sees and owns
+    // this generation even while Session identity is still loading from disk.
+    const resumeLease = this.options.reserveSessionHitlResume(
       this.options.workspaceRoot,
       sessionId,
+      rootSessionId,
       { mode: response.type === "cancel" ? "cancel_only" : "replay" },
     );
+    let store: StoreApi<SessionStoreState>;
+    try {
+      store = await this.options.storeManager.getOrLoad(sessionId, this.options.workspaceRoot);
+      const sessionState = store.getState();
+      if (sessionState.parentSessionId !== undefined) {
+        resumeLease.abortSignal.throwIfAborted();
+        await this.options.storeManager.getOrLoad(sessionState.rootSessionId, this.options.workspaceRoot);
+      }
+      resumeLease.activate();
+    } catch (error) {
+      resumeLease.release();
+      throw error;
+    }
+    let afterSessionRelease: (() => void) | undefined;
+    let started = false;
+    let released = false;
+    return {
+      run: async (claimedRecord: HitlRecord, claimedResponse: HitlResponse): Promise<void> => {
+        if (started) throw new Error(`Session HITL ${claimedRecord.hitlId} prepared resume was already started`);
+        started = true;
+        try {
+          resumeLease.abortSignal.throwIfAborted();
+          await this.#updateChildLink(sessionId, "running");
+          const pausedExecutionId = store.getState().executions.at(-1)?.id;
+          await this.#resumePrepared(claimedRecord, claimedResponse, store, resumeLease, (callback) => {
+            afterSessionRelease = callback;
+          });
+          await this.#updateChildLink(sessionId, resumedChildLinkStatus(store, claimedResponse, pausedExecutionId));
+        } catch (error) {
+          await this.#updateChildLink(
+            sessionId,
+            resumeLease.abortSignal.aborted ? "cancelled" : "failed",
+          );
+          throw error;
+        }
+      },
+      release: () => {
+        if (released) return;
+        released = true;
+        resumeLease.release();
+        afterSessionRelease?.();
+      },
+    };
+  }
+
+  async #resumePrepared(
+    record: HitlRecord,
+    response: HitlResponse,
+    store: StoreApi<SessionStoreState>,
+    resumeLease: SessionHitlResumeLease,
+    setAfterSessionRelease: (callback: (() => void) | undefined) => void,
+  ): Promise<void> {
+    if (record.owner.ownerType !== "session") throw new Error(`Session adapter cannot resume ${record.owner.ownerType} HITL`);
+    const sessionId = record.owner.ownerId;
     let eventsAttached = false;
     let loopContinuation: SessionLoopHitlContinuationLease | undefined;
     try {
@@ -253,13 +310,16 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
       throw error;
     } finally {
       if (eventsAttached) this.options.detachSessionEvents?.(this.options.workspaceRoot, sessionId);
-      resumeLease.release();
-      loopContinuation?.afterSessionRelease?.();
+      setAfterSessionRelease(loopContinuation?.afterSessionRelease);
     }
   }
 
   async finalize(record: HitlRecord): Promise<void> {
     await finalizeResolvedSessionHitlJournal(this.options.workspaceRoot, record);
+  }
+
+  async #updateChildLink(sessionId: string, status: ToolChildSessionLinkStatus): Promise<void> {
+    await this.options.updateChildSessionLinkForHitl?.(this.options.workspaceRoot, sessionId, status);
   }
 
   private async replayCheckpoint(
@@ -390,7 +450,6 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
       ...(this.options.startChildExecution === undefined ? {} : { startChildExecution: (request) => this.options.startChildExecution!(this.options.workspaceRoot, request) }),
       ...(this.options.cancelChildSession === undefined ? {} : { cancelChildSession: this.options.cancelChildSession }),
       ...(this.options.resumeChildSession === undefined ? {} : { resumeChildSession: this.options.resumeChildSession }),
-      ...(this.options.abortSessionExecutionAndWait === undefined ? {} : { abortSessionExecutionAndWait: this.options.abortSessionExecutionAndWait }),
       acquireSessionCwdTransition: resumeLease.acquireSessionCwdTransition,
       hitlCheckpoint: {
         toolCalls: checkpoint.toolCalls,
@@ -415,6 +474,27 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
       },
     });
     return await this.options.toolRegistry.execute(call, ctx);
+  }
+}
+
+function resumedChildLinkStatus(
+  store: StoreApi<SessionStoreState>,
+  response: HitlResponse,
+  pausedExecutionId: string | undefined,
+): ToolChildSessionLinkStatus {
+  if (response.type === "cancel") return "cancelled";
+  const execution = store.getState().executions.at(-1);
+  switch (execution?.status) {
+    case "waiting_for_human": return execution.id === pausedExecutionId ? "completed" : "waiting_for_human";
+    case "failed":
+    case "max_steps": return "failed";
+    case "aborted":
+    case "cancelled": return "cancelled";
+    case "timed_out": return "timed_out";
+    case "interrupted": return "interrupted";
+    case "completed": return "completed";
+    case "running":
+    case undefined: return "completed";
   }
 }
 

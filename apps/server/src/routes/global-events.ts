@@ -141,7 +141,12 @@ function appendBounded(events: QueuedGlobalEvent[], event: GlobalSSEEvent, maxQu
     }
     retained.push(queued);
   }
-  return dropped > 0 ? [createLaggedEvent(dropped), ...retained] : retained.slice(-maxQueuedEvents);
+  if (dropped < overflow) {
+    const additionalDropped = overflow - dropped;
+    retained.splice(0, additionalDropped);
+    dropped += additionalDropped;
+  }
+  return [createLaggedEvent(dropped), ...retained];
 }
 
 function toSSEMessage(event: GlobalSSEEvent): { event: string; data: string; id?: string } {

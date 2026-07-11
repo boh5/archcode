@@ -327,24 +327,24 @@ export function createLoopSchedulerRequiredDependencies(options: {
   | "budgetLedger"
   | "collisionLedger"
   | "killStateManager"
-  | "abortSessionExecutionAndWait"
+  | "stopSessionFamily"
   | "hitl"
 > {
   return {
     budgetLedger: new LoopBudgetLedger(options),
     collisionLedger: new CollisionLedger(options),
     killStateManager: new LoopKillStateManager(options.workspaceRoot, { clock: options.clock }),
-    abortSessionExecutionAndWait: async () => {},
+    stopSessionFamily: async () => {},
     hitl: createLoopTestHitlService(options.workspaceRoot, options.stateManager),
   };
 }
 
 // ────────────────────────────────────────────
-//  Fake SessionExecutionManager adapter
+//  Fake Session family stopper
 // ────────────────────────────────────────────
 
-export interface FakeSessionExecutionManagerCall {
-  method: "abort" | "abortAndWait" | "abortAll" | "isRunning";
+export interface FakeSessionFamilyStopCall {
+  method: "stopSessionFamily";
   workspaceRoot?: string;
   sessionId?: string;
   args: readonly unknown[];
@@ -352,40 +352,26 @@ export interface FakeSessionExecutionManagerCall {
 }
 
 /**
- * A lightweight fake SessionExecutionManager adapter that records calls
- * and can be controlled with deterministic return values.
+ * A lightweight fake Session family stopper that records calls.
  *
  * Use this in tests that need to assert that budget/kill/collision guardrails
- * call the appropriate abort methods.
+ * call the appropriate execution cancellation controls.
  */
-export class FakeSessionExecutionManager {
-  readonly #calls: FakeSessionExecutionManagerCall[] = [];
-  #isRunningResult = false;
-  #abortResult = true;
-  #abortAndWaitResult: Promise<void> = Promise.resolve();
-  #abortAllResult: Promise<void> = Promise.resolve();
+export class FakeSessionFamilyStopper {
+  readonly #calls: FakeSessionFamilyStopCall[] = [];
+  #stopSessionFamilyResult: Promise<void> = Promise.resolve();
 
-  get calls(): readonly FakeSessionExecutionManagerCall[] {
+  get calls(): readonly FakeSessionFamilyStopCall[] {
     return this.#calls;
   }
 
-  /** Configure what `isRunning` returns (default: false). */
-  setIsRunning(value: boolean): void {
-    this.#isRunningResult = value;
-  }
-
-  /** Configure what `abort` returns (default: true). */
-  setAbortResult(value: boolean): void {
-    this.#abortResult = value;
-  }
-
   /** Returns calls with the given method name. */
-  getCalls(method: FakeSessionExecutionManagerCall["method"]): FakeSessionExecutionManagerCall[] {
+  getCalls(method: FakeSessionFamilyStopCall["method"]): FakeSessionFamilyStopCall[] {
     return this.#calls.filter((c) => c.method === method);
   }
 
   /** Asserts that a specific method was called exactly N times. */
-  assertCallCount(method: FakeSessionExecutionManagerCall["method"], expected: number): void {
+  assertCallCount(method: FakeSessionFamilyStopCall["method"], expected: number): void {
     const count = this.getCalls(method).length;
     if (count !== expected) {
       throw new Error(
@@ -399,48 +385,15 @@ export class FakeSessionExecutionManager {
     this.#calls.length = 0;
   }
 
-  // --- Adapter interface ---
-
-  abort(workspaceRoot: string, sessionId: string): boolean {
+  async stopSessionFamily(workspaceRoot: string, sessionId: string): Promise<void> {
     this.#calls.push({
-      method: "abort",
+      method: "stopSessionFamily",
       workspaceRoot,
       sessionId,
       args: [workspaceRoot, sessionId],
       timestamp: Date.now(),
     });
-    return this.#abortResult;
-  }
-
-  async abortAndWait(workspaceRoot: string, sessionId: string): Promise<void> {
-    this.#calls.push({
-      method: "abortAndWait",
-      workspaceRoot,
-      sessionId,
-      args: [workspaceRoot, sessionId],
-      timestamp: Date.now(),
-    });
-    return this.#abortAndWaitResult;
-  }
-
-  async abortAll(): Promise<void> {
-    this.#calls.push({
-      method: "abortAll",
-      args: [],
-      timestamp: Date.now(),
-    });
-    return this.#abortAllResult;
-  }
-
-  isRunning(workspaceRoot: string, sessionId: string): boolean {
-    this.#calls.push({
-      method: "isRunning",
-      workspaceRoot,
-      sessionId,
-      args: [workspaceRoot, sessionId],
-      timestamp: Date.now(),
-    });
-    return this.#isRunningResult;
+    return this.#stopSessionFamilyResult;
   }
 }
 

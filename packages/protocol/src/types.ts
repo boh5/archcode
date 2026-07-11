@@ -184,6 +184,7 @@ export interface ToolResultEvent {
 export type ToolChildSessionLinkStatus =
   | "linked"
   | "running"
+  | "waiting_for_human"
   | "cancelling"
   | "completed"
   | "failed"
@@ -482,16 +483,40 @@ export interface GlobalSSEMcpStatusEvent {
   createdAt: number;
 }
 
+/** Live ownership of one root Session and every descendant execution. */
+export type SessionFamilyActivity = "idle" | "running" | "stopping";
+
+export interface SessionFamilyRuntimeProjection {
+  projectSlug: string;
+  rootSessionId: string;
+  activity: SessionFamilyActivity;
+}
+
+/** Authoritative reset for every project listed in projectSlugs. */
+export interface GlobalSSESessionRuntimeSnapshotEvent {
+  type: "session.runtime.snapshot";
+  projectSlugs: string[];
+  /** Idle families are omitted; consumers clear listed projects before applying these rows. */
+  families: SessionFamilyRuntimeProjection[];
+  createdAt: number;
+}
+
+export interface GlobalSSESessionRuntimeChangedEvent extends SessionFamilyRuntimeProjection {
+  type: "session.runtime_changed";
+  createdAt: number;
+}
+
 export interface GlobalSSEHitlSnapshotEvent {
   type: "hitl.snapshot";
   projectSlugs: string[];
+  /** Complete active HITL projection set for the listed projects. */
+  projections: HitlProjection[];
   createdAt: number;
 }
 
 export type GlobalSSEHitlEventPayload =
   | { type: "hitl.request"; status: Extract<HitlStatus, "pending"> }
   | { type: "hitl.updated"; status: HitlStatus }
-  | { type: "hitl.snapshot"; status: HitlStatus }
   | { type: "hitl.resolved"; status: Extract<HitlStatus, "resolved" | "cancelled" | "resume_failed"> };
 
 export interface GlobalSSEHitlRealtimeEvent {
@@ -520,6 +545,8 @@ export type GlobalSSEEvent =
   | GlobalSSELaggedEvent
   | GlobalSSEShutdownEvent
   | GlobalSSEMcpStatusEvent
+  | GlobalSSESessionRuntimeSnapshotEvent
+  | GlobalSSESessionRuntimeChangedEvent
   | GlobalSSEHitlSnapshotEvent
   | GlobalSSEHitlRealtimeEvent
   | GlobalSSEResourceChangedEvent;
@@ -1058,6 +1085,8 @@ export type HitlResponse =
 export interface HitlRecord {
   hitlId: string;
   owner: HitlOwnerKey;
+  /** Canonical root identity required exactly when owner.ownerType is session. */
+  sessionRootId?: string;
   blockingKey: string;
   source: HitlSource;
   status: HitlStatus;

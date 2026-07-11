@@ -71,6 +71,7 @@ describe("SessionLifecycleService", () => {
     const context = await fixture.resolver.resolve(TMP_ROOT);
     await context.hitl.create({
       owner: { projectSlug: "project", ownerType: "session", ownerId: BLOCKED_SESSION_ID },
+      sessionRootId: BLOCKED_SESSION_ID,
       blockingKey: "question-1",
       source: { type: "ask_user", sessionId: BLOCKED_SESSION_ID, toolCallId: "ask-1" },
       displayPayload: {

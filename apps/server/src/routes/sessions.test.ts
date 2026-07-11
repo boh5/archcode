@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { AgentRuntime } from "@archcode/agent-core";
-import { NotRootSessionError, ProjectRegistry, SessionDeleteConflictError, SessionDeleteInProgressError, SessionDeleteOwnerConflictError, SessionFamilyStopInProgressError, silentLogger } from "@archcode/agent-core";
+import { NotRootSessionError, ProjectRegistry, SessionDeleteConflictError, SessionDeleteInProgressError, SessionDeleteOwnerConflictError, SessionFamilyStopConflictError, SessionFamilyStopInProgressError, silentLogger } from "@archcode/agent-core";
 import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "sessions-routes");
@@ -70,6 +70,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
     createSession: 0,
     getSessionFile: 0,
     listSessions: 0,
+    stopSessionFamily: [] as Array<{ workspaceRoot: string; rootSessionId: string }>,
     deleteSession: [] as Array<{ workspaceRoot: string; sessionId: string }>,
   };
 
@@ -81,6 +82,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
     providerRegistry: undefined,
     warnings: [],
     contextResolver: undefined,
+    subscribeSessionRuntimeChanges: () => () => undefined,
     createSession: async (workspaceRoot: string) => {
       calls.createSession += 1;
       const session = createStoredSession();
@@ -140,10 +142,25 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
     startSessionExecution: () => {
       throw new Error("not implemented");
     },
-    abortSessionExecution: () => false,
-    abortSessionExecutionAndWait: async () => undefined,
+    stopSessionFamily: async (workspaceRoot: string, rootSessionId: string) => {
+      const session = sessions.get(`${workspaceRoot}\0${rootSessionId}`);
+      if (session === undefined) throw new MissingSessionFileError();
+      if (session.parentSessionId !== undefined || session.rootSessionId !== rootSessionId) {
+        throw new NotRootSessionError(rootSessionId, session.parentSessionId ?? session.rootSessionId);
+      }
+      calls.stopSessionFamily.push({ workspaceRoot, rootSessionId });
+      if (rootSessionId === "stuck-root") {
+        throw new SessionFamilyStopConflictError(rootSessionId, ["child-1"]);
+      }
+      if (rootSessionId === "stopping-root") {
+        throw new SessionFamilyStopInProgressError(rootSessionId, rootSessionId);
+      }
+      if (rootSessionId === "deleting-root") {
+        throw new SessionDeleteInProgressError(rootSessionId, rootSessionId);
+      }
+    },
     abortAllSessionExecutions: async () => undefined,
-    isSessionExecutionRunning: () => false,
+    getSessionFamilyActivity: () => "idle" as const,
     getSessionExecution: () => undefined,
     subscribeSessionEvents: () => () => undefined,
     deleteSession: async (workspaceRoot: string, sessionId: string) => {
@@ -240,6 +257,78 @@ describe("sessions routes", () => {
     expect(typeof body.sessionId).toBe("string");
     expect(typeof body.createdAt).toBe("number");
     expect(body.messages).toEqual([]);
+  });
+
+  test("POST /api/projects/:slug/sessions/:rootSessionId/stop drains the Session Family", async () => {
+    const { app, project, workspaceRoot, calls, sessions } = await createTestApp("stop-session-family");
+    saveEmptySession(workspaceRoot, sessions, "root-session", 1_000);
+
+    const res = await app.request(`/api/projects/${project.slug}/sessions/root-session/stop`, {
+      method: "POST",
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(calls.stopSessionFamily).toEqual([{ workspaceRoot, rootSessionId: "root-session" }]);
+  });
+
+  test("POST /api/projects/:slug/sessions/:rootSessionId/stop rejects a child Session", async () => {
+    const { app, project, workspaceRoot, calls, sessions } = await createTestApp("stop-child-session");
+    sessions.set(`${workspaceRoot}\0child-session`, createStoredSession({
+      sessionId: "child-session",
+      rootSessionId: "root-session",
+      parentSessionId: "root-session",
+    }));
+
+    const res = await app.request(`/api/projects/${project.slug}/sessions/child-session/stop`, {
+      method: "POST",
+    });
+
+    expect(res.status).toBe(400);
+    expect(calls.stopSessionFamily).toEqual([]);
+  });
+
+  test("POST /api/projects/:slug/sessions/:rootSessionId/stop returns 404 for a missing root", async () => {
+    const { app, project, calls } = await createTestApp("stop-missing-root");
+
+    const res = await app.request(`/api/projects/${project.slug}/sessions/missing-root/stop`, {
+      method: "POST",
+    });
+
+    expect(res.status).toBe(404);
+    expect(calls.stopSessionFamily).toEqual([]);
+  });
+
+  test("POST /api/projects/:slug/sessions/:rootSessionId/stop exposes a stable drain conflict", async () => {
+    const { app, project, workspaceRoot, calls, sessions } = await createTestApp("stop-stuck-root");
+    saveEmptySession(workspaceRoot, sessions, "stuck-root", 1_000);
+
+    const res = await app.request(`/api/projects/${project.slug}/sessions/stuck-root/stop`, {
+      method: "POST",
+    });
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: {
+        code: "SESSION_STOP_CONFLICT",
+        message: 'Session family "stuck-root" did not stop: child-1',
+        details: { rootSessionId: "stuck-root", sessionIds: ["child-1"] },
+      },
+    });
+    expect(calls.stopSessionFamily).toEqual([{ workspaceRoot, rootSessionId: "stuck-root" }]);
+  });
+
+  test("POST /api/projects/:slug/sessions/:rootSessionId/stop rejects a request body", async () => {
+    const { app, project, calls } = await createTestApp("stop-session-family-body");
+
+    const res = await app.request(`/api/projects/${project.slug}/sessions/root-session/stop`, {
+      method: "POST",
+      body: JSON.stringify({ force: true }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(res.status).toBe(400);
+    expect(calls.stopSessionFamily).toEqual([]);
   });
 
   test("POST /api/projects/:slug/sessions rejects any request body", async () => {

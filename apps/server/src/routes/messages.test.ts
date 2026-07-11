@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { AgentRunningError, ChildSessionCwdMismatchError, ProjectRegistry, SessionCwdTransitionInProgressError, SessionExecutionScopeConflictError, SessionFamilyStopInProgressError, SessionHitlBlockedError, SessionHitlJournalBlockedError, SessionHitlResumeInProgressError, silentLogger } from "@archcode/agent-core";
+import { AgentRunningError, ChildSessionCwdMismatchError, ProjectRegistry, SessionCwdTransitionInProgressError, SessionExecutionScopeConflictError, SessionFamilyActiveError, SessionFamilyStopInProgressError, SessionHitlBlockedError, SessionHitlJournalBlockedError, SessionHitlResumeInProgressError, silentLogger } from "@archcode/agent-core";
 import type { ActiveSessionExecution, AgentRuntime } from "@archcode/agent-core";
 import { createServerApp } from "../app";
 import { globalEventBus } from "../events/global-event-bus";
@@ -11,6 +11,7 @@ const tempRoot = resolve(import.meta.dir, "__test_tmp__", "messages-routes");
 function makeExecution(sessionId: string, workspaceRoot: string): ActiveSessionExecution {
   return {
     sessionId,
+    rootSessionId: sessionId,
     workspaceRoot,
     agentName: "orchestrator",
     origin: "user_message",
@@ -31,6 +32,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
     providerRegistry: undefined,
     skillService: undefined,
     contextResolver: undefined,
+    subscribeSessionRuntimeChanges: mock(() => () => undefined),
     createSession: mock(async () => ({ sessionId: crypto.randomUUID(), title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] })),
     getSessionFile: mock(async (_workspaceRoot: string, sessionId: string) => ({ sessionId, title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] })),
     listSessions: mock(async () => []),
@@ -44,12 +46,11 @@ function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
       running.add(input.sessionId);
       return makeExecution(input.sessionId, input.workspaceRoot);
     }),
-    abortSessionExecution: mock((_workspaceRoot: string, sessionId: string) => running.delete(sessionId)),
-    abortSessionExecutionAndWait: mock(async (_workspaceRoot: string, sessionId: string) => {
+    stopSessionFamily: mock(async (_workspaceRoot: string, sessionId: string) => {
       running.delete(sessionId);
     }),
     abortAllSessionExecutions: mock(async () => running.clear()),
-    isSessionExecutionRunning: mock((_workspaceRoot: string, sessionId: string) => running.has(sessionId)),
+    getSessionFamilyActivity: mock((_workspaceRoot: string, sessionId: string) => running.has(sessionId) ? "running" : "idle"),
     getSessionExecution: mock(() => undefined),
     subscribeSessionEvents: mock(() => () => undefined),
     deleteSession: mock(async (_workspaceRoot: string, sessionId: string) => {
@@ -101,6 +102,16 @@ describe("messages routes", () => {
 
     expect(res.status).toBe(202);
     expect(body).toEqual({ ok: true });
+  });
+
+  test("does not expose the removed per-execution abort route", async () => {
+    const { app, project } = await createTestApp("removed-abort-route");
+
+    const res = await app.request(`/api/projects/${project.slug}/sessions/session-valid/abort`, {
+      method: "POST",
+    });
+
+    expect(res.status).toBe(404);
   });
 
   test("POST message rejects unknown body fields", async () => {
@@ -238,6 +249,33 @@ describe("messages routes", () => {
     });
   });
 
+  test("POST root message while a descendant is active returns the family conflict", async () => {
+    const { app, project, runtime } = await createTestApp("family-active-conflict");
+    const conflict = new SessionFamilyActiveError("root-session", "root-session", "running");
+    const start = runtime.startSessionMessageExecution as unknown as ReturnType<typeof mock>;
+    start.mockImplementation(() => { throw conflict; });
+
+    const res = await app.request(`/api/projects/${project.slug}/sessions/root-session/messages`, {
+      method: "POST",
+      body: JSON.stringify({ text: "Do not overlap the child" }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: {
+        code: "BAD_REQUEST",
+        message: conflict.message,
+        details: {
+          scopeCode: "SESSION_FAMILY_ACTIVE",
+          sessionId: "root-session",
+          rootSessionId: "root-session",
+          activity: "running",
+        },
+      },
+    });
+  });
+
   test("POST message during durable HITL continuation returns stable 409", async () => {
     const { app, project, runtime } = await createTestApp("hitl-resume-conflict");
     const conflict = new SessionHitlResumeInProgressError("root-session", "root-session");
@@ -361,26 +399,4 @@ describe("messages routes", () => {
     });
   });
 
-  test("POST abort returns ok true and aborted true", async () => {
-    const { app, project } = await createTestApp("abort-running");
-
-    await app.request(`/api/projects/${project.slug}/sessions/session-abort/messages`, {
-      method: "POST",
-      body: JSON.stringify({ text: "Hello" }),
-      headers: { "content-type": "application/json" },
-    });
-    const res = await app.request(`/api/projects/${project.slug}/sessions/session-abort/abort`, { method: "POST" });
-
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, aborted: true });
-  });
-
-  test("POST abort for non-running session returns ok true and aborted false", async () => {
-    const { app, project } = await createTestApp("abort-idle");
-
-    const res = await app.request(`/api/projects/${project.slug}/sessions/session-idle/abort`, { method: "POST" });
-
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, aborted: false });
-  });
 });

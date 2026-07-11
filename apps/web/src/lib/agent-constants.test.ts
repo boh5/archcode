@@ -14,13 +14,12 @@ import {
 describe("AGENT_TYPES", () => {
   test("contains all expected agent types", () => {
     expect(AGENT_TYPES).toEqual([
-      "orchestrator", "product", "spec", "critic", "foreman",
-      "builder", "reviewer", "librarian", "explore", "explorer",
+      "orchestrator", "plan", "build", "reviewer", "explore", "librarian",
     ]);
   });
 
   test("is a readonly tuple", () => {
-    expect(AGENT_TYPES.length).toBe(10);
+    expect(AGENT_TYPES.length).toBe(6);
   });
 });
 
@@ -34,9 +33,9 @@ describe("AGENT_INITIALS", () => {
 
   test("maps specific initials correctly", () => {
     expect(AGENT_INITIALS.orchestrator).toBe("O");
+    expect(AGENT_INITIALS.plan).toBe("P");
+    expect(AGENT_INITIALS.build).toBe("B");
     expect(AGENT_INITIALS.explore).toBe("E");
-    expect(AGENT_INITIALS.explorer).toBe("E");
-    expect(AGENT_INITIALS.builder).toBe("B");
   });
 });
 
@@ -50,8 +49,9 @@ describe("AGENT_DISPLAY_NAMES", () => {
 
   test("capitalizes correctly", () => {
     expect(AGENT_DISPLAY_NAMES.orchestrator).toBe("Orchestrator");
-    expect(AGENT_DISPLAY_NAMES.explore).toBe("Explorer");
-    expect(AGENT_DISPLAY_NAMES.explorer).toBe("Explorer");
+    expect(AGENT_DISPLAY_NAMES.plan).toBe("Plan");
+    expect(AGENT_DISPLAY_NAMES.build).toBe("Build");
+    expect(AGENT_DISPLAY_NAMES.explore).toBe("Explore");
   });
 });
 
@@ -90,13 +90,15 @@ describe("AGENT_BADGE_COLORS", () => {
 describe("isValidAgentType", () => {
   test("returns true for valid agent types", () => {
     expect(isValidAgentType("orchestrator")).toBe(true);
+    expect(isValidAgentType("plan")).toBe(true);
+    expect(isValidAgentType("build")).toBe(true);
     expect(isValidAgentType("explore")).toBe(true);
-    expect(isValidAgentType("explorer")).toBe(true);
-    expect(isValidAgentType("builder")).toBe(true);
   });
 
   test("returns false for invalid strings", () => {
     expect(isValidAgentType("unknown")).toBe(false);
+    expect(isValidAgentType("builder")).toBe(false);
+    expect(isValidAgentType("explorer")).toBe(false);
     expect(isValidAgentType("")).toBe(false);
     expect(isValidAgentType("ORCHESTRATOR")).toBe(false);
   });

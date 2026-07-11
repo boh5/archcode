@@ -12,6 +12,7 @@ import { classifyLlmError, runLlmStream } from "../../llm";
 import type { BeforeModelBuildContext, BeforeModelCallContext } from "./loop-hooks";
 import { SessionHitlPause } from "../../execution/session-hitl-pause";
 import { createToolErrorResult } from "../../tools/errors";
+import { LoopBudgetHardStopError } from "../../loops/budget-ledger";
 
 const DEFAULT_MAX_STEPS = 50;
 const ZERO_OUTPUT_SHORT_ATTEMPTS = 3;
@@ -388,7 +389,6 @@ export async function runQueryLoop(
         options.startChildExecution,
         options.cancelChildSession,
         options.resumeChildSession,
-        options.abortSessionExecutionAndWait,
         options.acquireSessionCwdTransition,
         options.agentName,
         options.agentSkills,
@@ -411,6 +411,7 @@ export async function runQueryLoop(
         };
       }
       if (toolExecution.executionControl !== undefined) {
+        runEndStatus = executionEndStatusFromControl(toolExecution.executionControl);
         return { text: lastText, steps, executionControl: toolExecution.executionControl };
       }
     }
@@ -436,6 +437,10 @@ export async function runQueryLoop(
         blockedHitl: err.checkpoint,
       });
       return { text: lastText, steps };
+    }
+    if (err instanceof LoopBudgetHardStopError) {
+      runEndStatus = executionEndStatusFromControl(err.executionControl);
+      return { text: lastText, steps, executionControl: err.executionControl };
     }
     failed = true;
     runEndStatus = abort.aborted ? "aborted" : "failed";
@@ -921,7 +926,6 @@ async function executeToolCalls(
   startChildExecution: NonNullable<QueryLoopOptions["startChildExecution"]> | undefined,
   cancelChildSession: NonNullable<QueryLoopOptions["cancelChildSession"]> | undefined,
   resumeChildSession: NonNullable<QueryLoopOptions["resumeChildSession"]> | undefined,
-  abortSessionExecutionAndWait: NonNullable<QueryLoopOptions["abortSessionExecutionAndWait"]> | undefined,
   acquireSessionCwdTransition: NonNullable<QueryLoopOptions["acquireSessionCwdTransition"]> | undefined,
   agentName: string,
   agentSkills: QueryLoopOptions["agentSkills"],
@@ -958,7 +962,6 @@ async function executeToolCalls(
       startChildExecution,
       cancelChildSession,
       resumeChildSession,
-      abortSessionExecutionAndWait,
       acquireSessionCwdTransition,
       agentName,
       agentSkills,
@@ -1013,7 +1016,6 @@ async function executeToolCalls(
             ...(startChildExecution ? { startChildExecution } : {}),
             ...(cancelChildSession ? { cancelChildSession } : {}),
             ...(resumeChildSession ? { resumeChildSession } : {}),
-            ...(abortSessionExecutionAndWait ? { abortSessionExecutionAndWait } : {}),
             ...(acquireSessionCwdTransition ? { acquireSessionCwdTransition } : {}),
             agentName,
             ...(currentDepth !== undefined ? { currentDepth } : {}),
@@ -1085,7 +1087,6 @@ async function executeToolCalls(
         ...(startChildExecution ? { startChildExecution } : {}),
         ...(cancelChildSession ? { cancelChildSession } : {}),
         ...(resumeChildSession ? { resumeChildSession } : {}),
-        ...(abortSessionExecutionAndWait ? { abortSessionExecutionAndWait } : {}),
         ...(acquireSessionCwdTransition ? { acquireSessionCwdTransition } : {}),
         agentName,
         ...(currentDepth !== undefined ? { currentDepth } : {}),
@@ -1153,7 +1154,6 @@ async function executeToolCallsSequentially(input: {
   startChildExecution: NonNullable<QueryLoopOptions["startChildExecution"]> | undefined;
   cancelChildSession: NonNullable<QueryLoopOptions["cancelChildSession"]> | undefined;
   resumeChildSession: NonNullable<QueryLoopOptions["resumeChildSession"]> | undefined;
-  abortSessionExecutionAndWait: NonNullable<QueryLoopOptions["abortSessionExecutionAndWait"]> | undefined;
   acquireSessionCwdTransition: NonNullable<QueryLoopOptions["acquireSessionCwdTransition"]> | undefined;
   agentName: string;
   agentSkills: QueryLoopOptions["agentSkills"];
@@ -1190,7 +1190,6 @@ async function executeToolCallsSequentially(input: {
       ...(input.startChildExecution ? { startChildExecution: input.startChildExecution } : {}),
       ...(input.cancelChildSession ? { cancelChildSession: input.cancelChildSession } : {}),
       ...(input.resumeChildSession ? { resumeChildSession: input.resumeChildSession } : {}),
-      ...(input.abortSessionExecutionAndWait ? { abortSessionExecutionAndWait: input.abortSessionExecutionAndWait } : {}),
       ...(input.acquireSessionCwdTransition ? { acquireSessionCwdTransition: input.acquireSessionCwdTransition } : {}),
       agentName: input.agentName,
       ...(input.currentDepth !== undefined ? { currentDepth: input.currentDepth } : {}),
@@ -1262,9 +1261,15 @@ function executionControlFromMeta(meta: Record<string, unknown> | undefined): To
   const value = meta?.executionControl;
   if (typeof value !== "object" || value === null) return undefined;
   const control = value as Partial<ToolExecutionControl>;
-  return control.action === "stop_session_family" && control.reason === "goal_cancelled"
+  return control.action === "stop_session_family" && (
+    control.reason === "goal_cancelled" || control.reason === "loop_budget_exceeded"
+  )
     ? { action: control.action, reason: control.reason }
     : undefined;
+}
+
+function executionEndStatusFromControl(control: ToolExecutionControl): ExecutionEndEvent["status"] {
+  return control.reason === "goal_cancelled" ? "cancelled" : "interrupted";
 }
 
 function appendToolResult(

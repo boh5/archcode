@@ -4,6 +4,8 @@ import { connectSSE } from "../lib/sse-client";
 import { createWebSessionStore, findWebSessionStore } from "../store/session-store";
 import { hitlStore } from "../store/hitl-store";
 import { useMcpStatusStore } from "../store/mcp-status-store";
+import { sessionRuntimeStore } from "../store/session-runtime-store";
+import { invalidateControlPlaneReadiness } from "../store/control-plane-readiness";
 import { getMcpStatus } from "../api/mcp";
 import { queryKeys } from "../api/queries";
 import type {
@@ -15,6 +17,8 @@ import type {
   GlobalSSEMcpStatusEvent,
   GlobalSSEResetEvent,
   GlobalSSEResourceChangedEvent,
+  GlobalSSESessionRuntimeChangedEvent,
+  GlobalSSESessionRuntimeSnapshotEvent,
   SessionEventPayload,
 } from "@archcode/protocol";
 
@@ -24,6 +28,124 @@ export interface GlobalSSEContextValue {
   connectionState: GlobalSSEConnectionState;
   lastError: Error | null;
   lastHeartbeatAt: number;
+}
+
+export const SSE_HEARTBEAT_INTERVAL_MS = 15_000;
+export const SSE_WATCHDOG_TIMEOUT_MS = SSE_HEARTBEAT_INTERVAL_MS * 3;
+export const SSE_SHUTDOWN_RECONNECT_DELAY_MS = 1_000;
+
+interface SSEWatchdogOptions {
+  onTimeout: () => void;
+  schedule?: (callback: () => void, delay: number) => unknown;
+  cancel?: (timer: unknown) => void;
+}
+
+export interface SSEWatchdog {
+  connectionAttemptStarted: () => void;
+  connectionOpened: () => void;
+  heartbeatReceived: () => void;
+  stop: () => void;
+}
+
+export function createSSEWatchdog(options: SSEWatchdogOptions): SSEWatchdog {
+  const schedule = options.schedule ?? ((callback, delay) => setTimeout(callback, delay));
+  const cancel = options.cancel ?? ((timer) => clearTimeout(timer as ReturnType<typeof setTimeout>));
+  let timer: unknown;
+
+  const stop = () => {
+    if (timer === undefined) return;
+    cancel(timer);
+    timer = undefined;
+  };
+
+  const arm = () => {
+    stop();
+    timer = schedule(() => {
+      timer = undefined;
+      options.onTimeout();
+    }, SSE_WATCHDOG_TIMEOUT_MS);
+  };
+
+  return {
+    connectionAttemptStarted: arm,
+    connectionOpened: arm,
+    heartbeatReceived: arm,
+    stop,
+  };
+}
+
+export interface SSEReconnectState {
+  requested: boolean;
+  shutdown: boolean;
+  shutdownTimer?: unknown;
+}
+
+interface SSEReconnectActions {
+  invalidateReadiness: () => void;
+  markReconnecting: () => void;
+  abortConnection: () => void;
+  scheduleReconnect: () => void;
+}
+
+export function requestSSEReconnectOnce(
+  state: SSEReconnectState,
+  actions: SSEReconnectActions,
+): boolean {
+  if (state.shutdown || state.requested) return false;
+
+  state.requested = true;
+  actions.invalidateReadiness();
+  actions.markReconnecting();
+  actions.abortConnection();
+  actions.scheduleReconnect();
+  return true;
+}
+
+interface SSEShutdownReconnectActions {
+  markClosed: () => void;
+  stopWatchdog: () => void;
+  abortConnection: () => void;
+  markReconnecting: () => void;
+  scheduleReconnect: () => void;
+  schedule?: (callback: () => void, delay: number) => unknown;
+}
+
+export function requestSSEShutdownReconnectOnce(
+  state: SSEReconnectState,
+  actions: SSEShutdownReconnectActions,
+): boolean {
+  if (state.shutdownTimer !== undefined) return false;
+
+  state.shutdown = true;
+  state.requested = true;
+  actions.markClosed();
+  actions.stopWatchdog();
+  actions.abortConnection();
+
+  const schedule = actions.schedule ?? ((callback, delay) => setTimeout(callback, delay));
+  state.shutdownTimer = schedule(() => {
+    state.shutdownTimer = undefined;
+    state.shutdown = false;
+    state.requested = false;
+    actions.markReconnecting();
+    actions.scheduleReconnect();
+  }, SSE_SHUTDOWN_RECONNECT_DELAY_MS);
+  return true;
+}
+
+export function cancelSSEShutdownReconnect(
+  state: SSEReconnectState,
+  cancel: (timer: unknown) => void = (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
+): void {
+  if (state.shutdownTimer === undefined) return;
+  cancel(state.shutdownTimer);
+  state.shutdownTimer = undefined;
+}
+
+export function isSessionSnapshotQueryKey(queryKey: readonly unknown[]): boolean {
+  return queryKey[0] === "projects"
+    && typeof queryKey[1] === "string"
+    && queryKey[2] === "sessions";
 }
 
 const GlobalSSEContext = createContext<GlobalSSEContextValue | null>(null);
@@ -41,6 +163,8 @@ export function parseSSEEvent(_event: string, data: string): GlobalSSEEvent | nu
       case "hitl.snapshot":
       case "hitl.event":
       case "resource.changed":
+      case "session.runtime.snapshot":
+      case "session.runtime_changed":
         return parsed;
       default:
         return null;
@@ -57,6 +181,8 @@ export interface SSEEventHandlerDeps {
   onShutdown: () => void;
   onHeartbeat: (createdAt: number) => void;
   refreshMcpStatus: () => void;
+  requestReconnect: () => void;
+  refreshSessionSnapshots: () => void;
 }
 
 export function handleSSEEvent(
@@ -133,9 +259,14 @@ export function handleSSEEvent(
       break;
     }
     case "lagged": {
+      invalidateControlPlaneReadiness();
+      deps.refreshSessionSnapshots();
+      deps.requestReconnect();
       break;
     }
     case "shutdown": {
+      invalidateControlPlaneReadiness();
+      deps.refreshSessionSnapshots();
       deps.onShutdown();
       break;
     }
@@ -146,7 +277,7 @@ export function handleSSEEvent(
     }
     case "hitl.snapshot": {
       const snapshot = parsed as GlobalSSEHitlSnapshotEvent;
-      hitlStore.getState().applySnapshotReset(snapshot.projectSlugs);
+      hitlStore.getState().applySnapshot(snapshot);
       for (const projectSlug of snapshot.projectSlugs) {
         deps.invalidateQueries({ queryKey: ["projects", projectSlug], exact: false });
       }
@@ -160,6 +291,15 @@ export function handleSSEEvent(
     }
     case "resource.changed": {
       invalidateResourceQueries(deps, parsed as GlobalSSEResourceChangedEvent);
+      break;
+    }
+    case "session.runtime.snapshot": {
+      sessionRuntimeStore.getState().applySnapshot(parsed as GlobalSSESessionRuntimeSnapshotEvent);
+      deps.refreshSessionSnapshots();
+      break;
+    }
+    case "session.runtime_changed": {
+      sessionRuntimeStore.getState().applyChange(parsed as GlobalSSESessionRuntimeChangedEvent);
       break;
     }
   }
@@ -269,14 +409,31 @@ export function GlobalSSEProvider({ children }: { children: ReactNode }) {
   const [connectionState, setConnectionState] = useState<GlobalSSEConnectionState>("connecting");
   const [lastError, setLastError] = useState<Error | null>(null);
   const [lastHeartbeatAt, setLastHeartbeatAt] = useState(0);
+  const [reconnectEpoch, setReconnectEpoch] = useState(0);
   const abortRef = useRef<(() => void) | null>(null);
-  const shutdownRef = useRef(false);
+  const reconnectStateRef = useRef<SSEReconnectState>({ requested: false, shutdown: false });
+  const watchdogRef = useRef<SSEWatchdog | null>(null);
 
   const refreshMcpStatus = useCallback(() => {
     getMcpStatus()
       .then((servers) => useMcpStatusStore.getState().setServers(servers))
       .catch(() => {});
   }, []);
+
+  const requestReconnect = useCallback(() => {
+    requestSSEReconnectOnce(reconnectStateRef.current, {
+      invalidateReadiness: invalidateControlPlaneReadiness,
+      markReconnecting: () => setConnectionState("reconnecting"),
+      abortConnection: () => abortRef.current?.(),
+      scheduleReconnect: () => setReconnectEpoch((epoch) => epoch + 1),
+    });
+  }, []);
+
+  const refreshSessionSnapshots = useCallback(() => {
+    void queryClient.invalidateQueries({
+      predicate: (query) => isSessionSnapshotQueryKey(query.queryKey),
+    });
+  }, [queryClient]);
 
   const handleEvent = useCallback(
     (sseEvent: { event: string; data: string; id?: string }) => {
@@ -285,15 +442,24 @@ export function GlobalSSEProvider({ children }: { children: ReactNode }) {
         createStore: createWebSessionStore,
         invalidateQueries: (opts) => queryClient.invalidateQueries(opts),
         onShutdown: () => {
-          shutdownRef.current = true;
-          setConnectionState("closed");
-          abortRef.current?.();
+          requestSSEShutdownReconnectOnce(reconnectStateRef.current, {
+            markClosed: () => setConnectionState("closed"),
+            stopWatchdog: () => watchdogRef.current?.stop(),
+            abortConnection: () => abortRef.current?.(),
+            markReconnecting: () => setConnectionState("reconnecting"),
+            scheduleReconnect: () => setReconnectEpoch((epoch) => epoch + 1),
+          });
         },
-        onHeartbeat: (createdAt) => setLastHeartbeatAt(createdAt),
+        onHeartbeat: (createdAt) => {
+          watchdogRef.current?.heartbeatReceived();
+          setLastHeartbeatAt(createdAt);
+        },
         refreshMcpStatus,
+        requestReconnect,
+        refreshSessionSnapshots,
       });
     },
-    [queryClient, refreshMcpStatus],
+    [queryClient, refreshMcpStatus, refreshSessionSnapshots, requestReconnect],
   );
 
   const handleError = useCallback((error: unknown) => {
@@ -305,27 +471,50 @@ export function GlobalSSEProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    shutdownRef.current = false;
+    reconnectStateRef.current.shutdown = false;
+    const watchdog = createSSEWatchdog({ onTimeout: requestReconnect });
+    watchdogRef.current = watchdog;
+
+    return () => {
+      cancelSSEShutdownReconnect(reconnectStateRef.current);
+      reconnectStateRef.current.shutdown = true;
+      watchdog.stop();
+      if (watchdogRef.current === watchdog) watchdogRef.current = null;
+    };
+  }, [requestReconnect]);
+
+  useEffect(() => {
+    invalidateControlPlaneReadiness();
     setConnectionState("connecting");
 
     const client = connectSSE("/api/events", {
       onEvent: handleEvent,
       onError: handleError,
+      onConnectionAttempt: () => {
+        reconnectStateRef.current.requested = false;
+        watchdogRef.current?.connectionAttemptStarted();
+      },
+      onConnectionOpen: () => {
+        reconnectStateRef.current.requested = false;
+        watchdogRef.current?.connectionOpened();
+        refreshSessionSnapshots();
+        setConnectionState("open");
+      },
+      onConnectionLost: () => {
+        watchdogRef.current?.stop();
+        invalidateControlPlaneReadiness();
+        refreshSessionSnapshots();
+        setConnectionState("reconnecting");
+      },
     });
 
     abortRef.current = client.abort;
-
-    client.closed.then(() => {
-      if (!shutdownRef.current) {
-        setConnectionState("reconnecting");
-      }
-    });
 
     return () => {
       abortRef.current = null;
       client.abort();
     };
-  }, [handleEvent, handleError]);
+  }, [handleEvent, handleError, reconnectEpoch, refreshSessionSnapshots]);
 
   useEffect(() => {
     refreshMcpStatus();

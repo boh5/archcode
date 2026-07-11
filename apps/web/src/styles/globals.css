@@ -36,14 +36,11 @@
   --info-muted: #3b82f620;
 
   --agent-orchestrator: #8b5cf6;
-  --agent-product: #6366f1;
-  --agent-spec: #3b82f6;
-  --agent-critic: #f59e0b;
-  --agent-foreman: #10b981;
-  --agent-builder: #06b6d4;
+  --agent-plan: #3b82f6;
+  --agent-build: #06b6d4;
   --agent-reviewer: #ec4899;
+  --agent-explore: #64748b;
   --agent-librarian: #8b5cf6;
-  --agent-explorer: #64748b;
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
@@ -159,14 +156,11 @@
 
   /* Agent */
   --color-agent-orchestrator: var(--agent-orchestrator);
-  --color-agent-product: var(--agent-product);
-  --color-agent-spec: var(--agent-spec);
-  --color-agent-critic: var(--agent-critic);
-  --color-agent-foreman: var(--agent-foreman);
-  --color-agent-builder: var(--agent-builder);
+  --color-agent-plan: var(--agent-plan);
+  --color-agent-build: var(--agent-build);
   --color-agent-reviewer: var(--agent-reviewer);
+  --color-agent-explore: var(--agent-explore);
   --color-agent-librarian: var(--agent-librarian);
-  --color-agent-explorer: var(--agent-explorer);
 
   /* Shadows */
   --shadow-sm: var(--shadow-sm);

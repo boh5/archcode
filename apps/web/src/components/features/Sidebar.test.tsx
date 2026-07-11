@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { GoalState, LoopState, Project, SessionSummary, SessionTreeResponse } from "../../api/types";
+import type { SessionFamilyRuntimeProjection } from "@archcode/protocol";
 
 interface ElementLike {
   type?: unknown;
@@ -86,6 +87,8 @@ let goals: GoalState[] = [];
 let loops: LoopState[] = [];
 let sessionTree: SessionTreeResponse | null = null;
 let createSessionPending = false;
+let runtimeInitialized = false;
+let runtimeFamilies: Record<string, SessionFamilyRuntimeProjection> = {};
 const useProjects = mock(() => ({ data: projects }));
 const useSessions = mock((_slug: string) => ({ data: sessions }));
 const useGoals = mock((_slug: string) => ({ data: goals }));
@@ -141,6 +144,12 @@ const useSessionStore = mock((_sessionId: string, selector: (state: { focusSessi
 mock.module("../../store/session-store", () => ({
   getWebSessionStore,
   useSessionStore,
+}));
+
+mock.module("../../store/session-runtime-store", () => ({
+  runtimeFamilyKey: (projectSlug: string, rootSessionId: string) => `${projectSlug}\u0000${rootSessionId}`,
+  useSessionRuntimeInitialized: () => runtimeInitialized,
+  useSessionRuntimeFamilies: () => runtimeFamilies,
 }));
 
 mock.module("../../api/queries", () => ({
@@ -210,6 +219,8 @@ describe("Sidebar", () => {
     loops = [];
     sessionTree = null;
     createSessionPending = false;
+    runtimeInitialized = false;
+    runtimeFamilies = {};
     focusSessionId = null;
     currentPathname = "/projects/missing-project";
     useParams.mockImplementation(() => ({ slug: "missing-project", sessionId: "", goalId: "", loopId: "" }));
@@ -405,7 +416,7 @@ describe("Sidebar", () => {
         cwd: "/workspace",
         rootSessionId: "root-session",
         parentSessionId: "root-session",
-        agentName: "explore",
+        agentName: "build",
         modelInfo: null,
         title: "Child Session",
         createdAt: 2,
@@ -422,7 +433,7 @@ describe("Sidebar", () => {
               cwd: "/workspace",
               rootSessionId: "root-session",
               parentSessionId: "root-session",
-              agentName: "explore",
+              agentName: "build",
               modelInfo: null,
               title: "Child Session",
               createdAt: 2,
@@ -447,7 +458,79 @@ describe("Sidebar", () => {
     expect((sessionItems[0].props?.session as SessionSummary).sessionId).toBe("root-session");
     expect(agentNodes).toHaveLength(2);
     expect(agentNodes.map((node) => node.props?.name)).toEqual(["Root Session", "Child Session"]);
-    expect(agentNodes.map((node) => node.props?.agentType)).toEqual(["orchestrator", "explore"]);
+    expect(agentNodes.map((node) => node.props?.agentType)).toEqual(["orchestrator", "build"]);
+    expect(agentNodes.every((node) => node.props?.status === undefined)).toBe(true);
+  });
+
+  test("root session activity comes only from the runtime projection, never updatedAt", () => {
+    projects = [project];
+    sessions = [
+      {
+        sessionId: "root-running",
+        cwd: "/workspace",
+        rootSessionId: "root-running",
+        agentName: "orchestrator",
+        modelInfo: null,
+        title: "Old but running",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        sessionId: "root-idle",
+        cwd: "/workspace",
+        rootSessionId: "root-idle",
+        agentName: "orchestrator",
+        modelInfo: null,
+        title: "Fresh but idle",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      },
+    ];
+    runtimeInitialized = true;
+    runtimeFamilies = {
+      "archcode\u0000root-running": {
+        projectSlug: "archcode",
+        rootSessionId: "root-running",
+        activity: "running",
+      },
+    };
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "", loopId: "" }));
+    currentPathname = "/projects/archcode";
+
+    const tree = render();
+    const items = findAll(tree, (element) => typeName(element) === "SessionItem");
+    const byId = Object.fromEntries(items.map((item) => [
+      (item.props?.session as SessionSummary).sessionId,
+      item.props?.activity,
+    ]));
+
+    expect(byId).toEqual({ "root-running": "running", "root-idle": "idle" });
+    const subgroupTitles = findAll(tree, (element) => typeName(element) === "SubGroupHeader")
+      .map((element) => element.props?.title);
+    expect(subgroupTitles).toEqual(["Active", "Sessions"]);
+    expect(subgroupTitles).not.toContain("Completed");
+  });
+
+  test("uninitialized runtime gives root sessions a neutral unknown activity", () => {
+    projects = [project];
+    sessions = [{
+      sessionId: "root-1",
+      cwd: "/workspace",
+      rootSessionId: "root-1",
+      agentName: "orchestrator",
+      modelInfo: null,
+      title: "Session",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }];
+    runtimeInitialized = false;
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "", loopId: "" }));
+    currentPathname = "/projects/archcode";
+
+    const tree = render();
+    const item = findAll(tree, (element) => typeName(element) === "SessionItem")[0];
+
+    expect(item?.props?.activity).toBeUndefined();
   });
 
   test("agent tree click calls setFocusSessionId instead of navigate", () => {

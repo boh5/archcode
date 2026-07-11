@@ -122,6 +122,78 @@ describe("connectSSE", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  test("reports connection open and loss so authoritative snapshots can be invalidated", async () => {
+    const onConnectionOpen = mock(() => {});
+    const onConnectionLost = mock(() => {});
+    let client: ReturnType<typeof connectSSE> | undefined;
+    const fetchMock: FetchMock = mock(async () => createChunkedSseResponse([
+      "event: heartbeat\ndata: {\"type\":\"heartbeat\",\"createdAt\":1}\n\n",
+    ]));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    client = connectSSE("/api/events", {
+      onEvent: () => {},
+      onConnectionOpen,
+      onConnectionLost: () => {
+        onConnectionLost();
+        client?.abort();
+      },
+    });
+    await client.closed;
+
+    expect(onConnectionOpen).toHaveBeenCalledTimes(1);
+    expect(onConnectionLost).toHaveBeenCalledTimes(1);
+  });
+
+  test("reports a connection attempt before a fetch that only settles when aborted", async () => {
+    const order: string[] = [];
+    const onConnectionAttempt = mock(() => order.push("attempt"));
+    const fetchMock: FetchMock = mock((_input, init) => new Promise<Response>((_resolve, reject) => {
+      order.push("fetch");
+      const signal = init?.signal;
+      if (!(signal instanceof AbortSignal)) throw new Error("Expected an AbortSignal");
+      signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+    }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const client = connectSSE("/api/events", {
+      onEvent: () => {},
+      onConnectionAttempt,
+    });
+    await flushMicrotasks();
+
+    expect(onConnectionAttempt).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(["attempt", "fetch"]);
+
+    client.abort();
+    await client.closed;
+  });
+
+  test("does not report a stale open when an aborted fetch resolves late", async () => {
+    const pendingResponse = Promise.withResolvers<Response>();
+    const onConnectionOpen = mock(() => {});
+    const onEvent = mock(() => {});
+    const fetchMock: FetchMock = mock(() => pendingResponse.promise);
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const client = connectSSE("/api/events", {
+      onEvent,
+      onConnectionOpen,
+    });
+    await flushMicrotasks();
+
+    client.abort();
+    pendingResponse.resolve(createChunkedSseResponse([
+      "event: heartbeat\ndata: {\"type\":\"heartbeat\",\"createdAt\":1}\n\n",
+    ]));
+    await client.closed;
+
+    expect(client.signal.aborted).toBe(true);
+    expect(onConnectionOpen).not.toHaveBeenCalled();
+    expect(onEvent).not.toHaveBeenCalled();
+  });
+
   test("sends Basic auth header from ARCHCODE_SERVER_PASSWORD cookie", async () => {
     document.cookie = "ARCHCODE_SERVER_PASSWORD=secret%20value";
     const fetchMock: FetchMock = mock(async () => createOpenSseResponse());
@@ -169,6 +241,7 @@ describe("connectSSE", () => {
 
   test("retries HTTP 401 and 500 responses with status metadata and exponential backoff", async () => {
     const errors: HTTPStatusError[] = [];
+    const onConnectionAttempt = mock(() => {});
     const fetchMock: FetchMock = mock(async () => {
       const status = fetchMock.mock.calls.length === 1 ? 401 : 500;
       return new Response("failed", { status });
@@ -180,15 +253,18 @@ describe("connectSSE", () => {
       onError: (error) => {
         if (error instanceof HTTPStatusError) errors.push(error);
       },
+      onConnectionAttempt,
     });
 
     await flushMicrotasks();
     expect(errors.map((error) => error.status)).toEqual([401]);
+    expect(onConnectionAttempt).toHaveBeenCalledTimes(1);
     expect(scheduledTimers.map((timer) => timer.dueAt)).toEqual([1_000]);
 
     advanceTimers(1_000);
     await flushMicrotasks();
     expect(errors.map((error) => error.status)).toEqual([401, 500]);
+    expect(onConnectionAttempt).toHaveBeenCalledTimes(2);
     expect(scheduledTimers.map((timer) => timer.dueAt)).toEqual([3_000]);
 
     client.abort();

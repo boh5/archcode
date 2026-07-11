@@ -1,6 +1,6 @@
 import type { PermissionDecision, ToolExecutionContext, ToolPermission } from "../tools/types";
 import { TOOL_GOAL_MANAGE, TOOL_TODO_WRITE } from "../tools/names";
-import { evaluateBudget, effectiveBudget, LoopBudgetLedger } from "./budget-ledger";
+import { evaluateBudget, effectiveBudget, LOOP_BUDGET_EXECUTION_CONTROL, LoopBudgetLedger } from "./budget-ledger";
 
 const SOFT_ALLOWED_EFFECTFUL_TOOLS = new Set<string>([
   TOOL_TODO_WRITE,
@@ -30,9 +30,6 @@ export function createLoopBudgetToolPermission(): ToolPermission {
         source: `tool_guard:${ctx.toolName}`,
         summary: "Loop hard budget exceeded; effectful tool blocked and run paused.",
       });
-      if (ctx.abortSessionExecutionAndWait !== undefined) {
-        void ctx.abortSessionExecutionAndWait(ctx.projectContext.project.workspaceRoot, ctx.store.getState().sessionId);
-      }
       return {
         outcome: "deny",
         source: "tool-guard",
@@ -40,6 +37,7 @@ export function createLoopBudgetToolPermission(): ToolPermission {
         errorKind: "permission-denied",
         errorCode: "LOOP_HARD_BUDGET_EXCEEDED",
         reason: "[LOOP_HARD_BUDGET_EXCEEDED] Loop hard budget exceeded; effectful tool blocked and run paused until user action.",
+        executionControl: LOOP_BUDGET_EXECUTION_CONTROL,
       };
     }
 

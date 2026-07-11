@@ -1,7 +1,7 @@
 import type { GoalBlocker, GoalReviewReceipt, GoalReviewVerdict, GoalState, HitlRecord, HitlResponse } from "@archcode/protocol";
 
 import { GoalApprovalGate, approvalOutcomeFromResponse, reviewOutcomeFromResponse } from "../hitl/goal-gates";
-import type { GoalHitlResumeAdapter as ResumeAdapterContract } from "../hitl/resume-coordinator";
+import { createPreparedHitlResume, type GoalHitlResumeAdapter as ResumeAdapterContract } from "../hitl/resume-coordinator";
 import type { HitlService } from "../hitl/service";
 import { GoalStateError, type GoalFinalizeReviewInput, type GoalStateManager } from "./state";
 import { GoalCancellationError, type GoalCancellationCapability } from "./cancellation";
@@ -24,7 +24,14 @@ export class GoalHitlResumeAdapter implements ResumeAdapterContract {
     });
   }
 
-  async resume(record: HitlRecord, response: HitlResponse): Promise<void> {
+  async prepare(record: HitlRecord, response: HitlResponse) {
+    if (record.owner.ownerType !== "goal") throw new Error(`Goal adapter cannot prepare ${record.owner.ownerType} HITL`);
+    return createPreparedHitlResume(async (claimedRecord, claimedResponse) => {
+      await this.#resume(claimedRecord, claimedResponse);
+    });
+  }
+
+  async #resume(record: HitlRecord, response: HitlResponse): Promise<void> {
     void this.options.workspaceRoot;
     if (record.owner.ownerType !== "goal") throw new Error(`Goal adapter cannot resume ${record.owner.ownerType} HITL`);
     const goalId = record.owner.ownerId;

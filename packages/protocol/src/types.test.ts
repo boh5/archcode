@@ -19,6 +19,8 @@ import type {
   GlobalSSEHeartbeatEvent,
   GlobalSSELaggedEvent,
   GlobalSSEResetEvent,
+  GlobalSSESessionRuntimeChangedEvent,
+  GlobalSSESessionRuntimeSnapshotEvent,
   GlobalSSEShutdownEvent,
   GlobalSessionEventEnvelope,
   StreamEvent,
@@ -122,6 +124,25 @@ describe("global SSE wire protocol types", () => {
     expect(serializeRoundTrip(shutdown)).toEqual(shutdown);
   });
 
+  test("round-trips Session Family runtime snapshot and change events", () => {
+    const snapshot: GlobalSSESessionRuntimeSnapshotEvent = {
+      type: "session.runtime.snapshot",
+      projectSlugs: ["proj-a", "proj-b"],
+      families: [{ projectSlug: "proj-a", rootSessionId: "root-1", activity: "running" }],
+      createdAt: 10,
+    };
+    const changed: GlobalSSESessionRuntimeChangedEvent = {
+      type: "session.runtime_changed",
+      projectSlug: "proj-a",
+      rootSessionId: "root-1",
+      activity: "idle",
+      createdAt: 11,
+    };
+
+    expect(serializeRoundTrip(snapshot)).toEqual(snapshot);
+    expect(serializeRoundTrip(changed)).toEqual(changed);
+  });
+
   test("accepts all global SSE event subtypes in the union", () => {
     const events: GlobalSSEEvent[] = [
       {
@@ -139,8 +160,22 @@ describe("global SSE wire protocol types", () => {
       { type: "lagged", dropped: 5, reason: "client_backpressure" },
       { type: "shutdown" },
       {
+        type: "session.runtime.snapshot",
+        projectSlugs: ["proj-a"],
+        families: [{ projectSlug: "proj-a", rootSessionId: "s1", activity: "stopping" }],
+        createdAt: 3,
+      },
+      {
+        type: "session.runtime_changed",
+        projectSlug: "proj-a",
+        rootSessionId: "s1",
+        activity: "idle",
+        createdAt: 4,
+      },
+      {
         type: "hitl.snapshot",
         projectSlugs: ["proj-a"],
+        projections: [],
         createdAt: 3,
       },
       {
@@ -160,6 +195,8 @@ describe("global SSE wire protocol types", () => {
       "reset",
       "lagged",
       "shutdown",
+      "session.runtime.snapshot",
+      "session.runtime_changed",
       "hitl.snapshot",
       "hitl.event",
     ]);

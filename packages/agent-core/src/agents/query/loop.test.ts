@@ -16,6 +16,7 @@ import type { AskUserCallback, PermissionErrorCode, ToolExecutionContext } from 
 import type { ToolRegistry } from "../../tools/registry";
 import { silentLogger } from "../../logger";
 import { createMockLogger } from "../../logger.test-helper";
+import { LoopBudgetHardStopError } from "../../loops/budget-ledger";
 import { createAutoInjectReminderHook } from "./hooks/auto-inject-reminder";
 import { setLlmAdapterForTest } from "../../llm/adapter";
 import { maybeHandleCommand, runQueryLoop } from "./loop";
@@ -2436,6 +2437,67 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     expect(laterExecute).not.toHaveBeenCalled();
     expect(streamFn).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(assistantMessages(store)[0]?.parts)).toContain("SESSION_EXECUTION_STOPPED");
+    expect(store.getState().executions.at(-1)?.status).toBe("cancelled");
+  });
+
+  test("permission-denied Loop budget control stops the query and records an interrupted execution", async () => {
+    const store = createStore();
+    const execute = mock(async () => "must not run");
+    const registry = createRegistry([defineTool({
+      name: "budget_blocked_write",
+      description: "Budget blocked write",
+      inputSchema: z.object({}).strict(),
+      traits: { readOnly: false, destructive: false, concurrencySafe: false },
+      permissions: [async () => ({
+        outcome: "deny",
+        reason: "Loop hard budget exceeded",
+        errorKind: "permission-denied",
+        errorCode: "LOOP_HARD_BUDGET_EXCEEDED",
+        executionControl: { action: "stop_session_family", reason: "loop_budget_exceeded" },
+      })],
+      execute,
+    })]);
+    const streamFn = createMockStreamText([{
+      finishReason: "tool-calls",
+      chunks: [{ type: "tool-call", toolCallId: "write-1", toolName: "budget_blocked_write", input: {} }],
+    }]);
+
+    const result = await runQueryLoop(
+      makeOptions({ store, toolRegistry: registry, allowedTools: ["budget_blocked_write"] }),
+      "write",
+    );
+
+    expect(result.executionControl).toEqual({ action: "stop_session_family", reason: "loop_budget_exceeded" });
+    expect(store.getState().executions.at(-1)?.status).toBe("interrupted");
+    expect(execute).not.toHaveBeenCalled();
+    expect(streamFn).toHaveBeenCalledTimes(1);
+  });
+
+  test("Loop hard-budget hook is a controlled interruption instead of a fatal query error", async () => {
+    const store = createStore();
+    const events = captureEvents(store);
+    const logger = createMockLogger();
+    const loopId = crypto.randomUUID();
+    const streamFn = createMockStreamText([{ text: "must not start" }]);
+
+    const result = await runQueryLoop(
+      makeOptions({
+        store,
+        logger,
+        hooks: {
+          beforeModelCall: [async () => {
+            throw new LoopBudgetHardStopError(loopId, "Loop paused: hard budget exceeded");
+          }],
+        },
+      }),
+      "continue",
+    );
+
+    expect(result.executionControl).toEqual({ action: "stop_session_family", reason: "loop_budget_exceeded" });
+    expect(store.getState().executions.at(-1)?.status).toBe("interrupted");
+    expect(events.some((event) => event.type === "loop-error")).toBe(false);
+    expect(logger.error).not.toHaveBeenCalled();
+    expect(streamFn).not.toHaveBeenCalled();
   });
 
   test("skips later tool calls emitted from the stale context after Session cwd changes", async () => {

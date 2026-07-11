@@ -28,7 +28,8 @@ import { silentLogger } from "../logger";
 import { SessionHitlResumeAdapter } from "./session-hitl-resume-adapter";
 import { SessionExecutionManager } from "./session-execution-manager";
 import { SessionExecutionScopeValidator } from "./session-execution-scope-validator";
-import { SessionHitlBlockedError, SessionHitlResumeInProgressError } from "../agents/errors";
+import { SessionHitlResumeInProgressError } from "../agents/errors";
+import { SessionFamilyActiveError } from "./session-family-control";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "session-worktree-hitl-integration");
 const SKILL_NAME = "worktree-skill";
@@ -155,8 +156,8 @@ describe("durable Session worktree approval integration", () => {
       executionScopeValidator,
       skillService,
       getAgent: async (workspaceRoot, resumedSessionId) => await agents.getOrCreate(workspaceRoot, resumedSessionId),
-      acquireSessionHitlResume: (workspaceRoot, resumedSessionId) => (
-        executionManager.acquireSessionHitlResume(workspaceRoot, resumedSessionId)
+      reserveSessionHitlResume: (workspaceRoot, resumedSessionId, rootSessionId, options) => (
+        executionManager.reserveSessionHitlResume(workspaceRoot, resumedSessionId, rootSessionId, options)
       ),
     });
     const coordinator = new ResumeCoordinator({ hitl, adapters: { session: adapter } });
@@ -203,7 +204,7 @@ describe("durable Session worktree approval integration", () => {
       workspaceRoot: projectRoot,
       sessionId,
       userMessage: "must not interleave with durable continuation",
-    })).rejects.toThrow(SessionHitlBlockedError);
+    })).rejects.toThrow(SessionFamilyActiveError);
     expect(() => executionManager.acquireSessionCwdTransition(projectRoot, sessionId))
       .toThrow(SessionHitlResumeInProgressError);
 

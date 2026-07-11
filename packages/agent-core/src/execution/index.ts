@@ -15,20 +15,27 @@ export type {
   SessionLoopHitlContinuationLease,
 } from "./session-hitl-resume-adapter";
 export { SessionCwdReferenceMigrationService } from "./session-cwd-reference-migration";
+export { SessionFamilyStopService } from "./session-family-stop-service";
+export { SessionWorkspaceClosingError } from "./session-workspace-control";
+export type { SessionWorkspaceCloseLease } from "./session-workspace-control";
 export {
   SessionDeleteInProgressError,
   SessionDeleteOwnerConflictError,
 } from "./session-deletion";
 export {
+  SessionFamilyActiveError,
+  SessionFamilyIdentityUnavailableError,
   SessionFamilyStopConflictError,
   SessionFamilyStopInProgressError,
 } from "./session-family-control";
 export type {
-  AcquireSessionHitlResumeOptions,
+  ReserveSessionHitlResumeOptions,
   ActiveSessionExecution,
   SessionExecutionClaimCoordinator,
   SessionHitlResumeLease,
   SessionExecutionOrigin,
+  SessionRuntimeChange,
+  SessionRuntimeChangeListener,
   StartSessionExecutionInput,
 } from "./session-execution-manager";
 export type {

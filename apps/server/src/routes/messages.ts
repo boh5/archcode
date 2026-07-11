@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { AgentRunningError, ChildSessionCwdMismatchError, ConcurrentSessionLimitError, SessionCwdTransitionInProgressError, SessionDeleteInProgressError, SessionExecutionScopeConflictError, SessionFamilyStopInProgressError, SessionHitlBlockedError, SessionHitlJournalBlockedError, SessionHitlResumeInProgressError } from "@archcode/agent-core";
+import { AgentRunningError, ChildSessionCwdMismatchError, ConcurrentSessionLimitError, SessionCwdTransitionInProgressError, SessionDeleteInProgressError, SessionExecutionScopeConflictError, SessionFamilyActiveError, SessionFamilyStopInProgressError, SessionHitlBlockedError, SessionHitlJournalBlockedError, SessionHitlResumeInProgressError } from "@archcode/agent-core";
 import type { AgentRuntime } from "@archcode/agent-core";
 import { z } from "zod/v4";
 import {
@@ -75,6 +75,14 @@ export function createMessagesRoutes(runtime: AgentRuntime): Hono {
           rootSessionId: error.rootSessionId,
         });
       }
+      if (error instanceof SessionFamilyActiveError) {
+        throw new ServerError("BAD_REQUEST", error.message, 409, {
+          scopeCode: error.code,
+          sessionId: error.sessionId,
+          rootSessionId: error.rootSessionId,
+          activity: error.activity,
+        });
+      }
       if (error instanceof SessionExecutionScopeConflictError) {
         throw new ServerError("BAD_REQUEST", error.message, 409, {
           ...error.details,
@@ -84,15 +92,6 @@ export function createMessagesRoutes(runtime: AgentRuntime): Hono {
       }
       throw error;
     }
-  });
-
-  app.post("/abort", async (c) => {
-    const slug = requiredParam(c.req.param("slug"), "slug");
-    const sessionId = requiredParam(c.req.param("sessionId"), "sessionId");
-    const project = await resolveProject(runtime, slug);
-    const aborted = runtime.abortSessionExecution(project.workspaceRoot, sessionId);
-
-    return c.json({ ok: true, aborted });
   });
 
   return app;

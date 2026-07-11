@@ -16,6 +16,7 @@ function createTestRuntime(statuses: Map<string, McpServerStatus>): AgentRuntime
     providerRegistry: undefined,
     warnings: [],
     contextResolver: undefined,
+    subscribeSessionRuntimeChanges: mock(() => () => undefined),
     subscribeMcpStatusChanges: mock(() => () => undefined),
     getMcpServerStatuses: mock(() => statuses),
     createSession: async () => ({ sessionId: "session", title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] }),
@@ -24,10 +25,9 @@ function createTestRuntime(statuses: Map<string, McpServerStatus>): AgentRuntime
     startSessionExecution: () => {
       throw new Error("not implemented");
     },
-    abortSessionExecution: () => false,
-    abortSessionExecutionAndWait: async () => undefined,
+    stopSessionFamily: async () => undefined,
     abortAllSessionExecutions: async () => undefined,
-    isSessionExecutionRunning: () => false,
+    getSessionFamilyActivity: () => "idle" as const,
     getSessionExecution: () => undefined,
     subscribeSessionEvents: () => () => undefined,
     deleteSession: async () => undefined,

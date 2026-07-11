@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import type { HitlRecord, LoopHitlCheckpoint } from "@archcode/protocol";
+import type { HitlRecord, HitlResponse, LoopHitlCheckpoint } from "@archcode/protocol";
 
 import { LoopJobQueue, type LoopJobRecord } from "./job-queue";
 import { LoopHitlResumeAdapter } from "./hitl-resume-adapter";
@@ -23,7 +23,7 @@ describe("LoopHitlResumeAdapter recovery", () => {
     const fixture = await createBlockedFixture();
     await fixture.jobQueue.remove(fixture.job.jobId);
 
-    await expect(fixture.adapter.resume(fixture.record, approvedResponse())).rejects.toThrow("not found");
+    await expect(runAdapter(fixture.adapter, fixture.record, approvedResponse())).rejects.toThrow("not found");
 
     const state = await fixture.stateManager.read(fixture.loopId);
     expect(state.attentionStatus).toBe("waiting_for_human");
@@ -44,7 +44,7 @@ describe("LoopHitlResumeAdapter recovery", () => {
       resumeCheckpoint: undefined,
     });
 
-    await expect(fixture.adapter.resume(fixture.record, approvedResponse())).rejects.toThrow("unexpected");
+    await expect(runAdapter(fixture.adapter, fixture.record, approvedResponse())).rejects.toThrow("unexpected");
 
     const state = await fixture.stateManager.read(fixture.loopId);
     expect(state.attentionStatus).toBe("waiting_for_human");
@@ -54,7 +54,7 @@ describe("LoopHitlResumeAdapter recovery", () => {
   test("recovers a cleared Loop state from the blocked job checkpoint", async () => {
     const fixture = await createBlockedFixture({ recordStateBlocker: false });
 
-    await fixture.adapter.resume(fixture.record, approvedResponse());
+    await runAdapter(fixture.adapter, fixture.record, approvedResponse());
 
     expect(await fixture.jobQueue.read(fixture.job.jobId)).toMatchObject({
       status: "pending",
@@ -80,7 +80,7 @@ describe("LoopHitlResumeAdapter recovery", () => {
       jobQueue: mismatchQueue as unknown as LoopJobQueue,
     });
 
-    await adapter.resume(fixture.record, approvedResponse());
+    await runAdapter(adapter, fixture.record, approvedResponse());
 
     expect((await fixture.stateManager.read(fixture.loopId)).attentionStatus).toBe("clear");
     expect((await queue.read(fixture.job.jobId)).status).toBe("pending");
@@ -113,7 +113,7 @@ describe("LoopHitlResumeAdapter recovery", () => {
       jobQueue: mismatchQueue as unknown as LoopJobQueue,
     });
 
-    await expect(adapter.resume(fixture.record, approvedResponse())).rejects.toThrow("CAS");
+    await expect(runAdapter(adapter, fixture.record, approvedResponse())).rejects.toThrow("CAS");
 
     expect((await fixture.stateManager.read(fixture.loopId)).attentionStatus).toBe("waiting_for_human");
   });
@@ -132,7 +132,7 @@ describe("LoopHitlResumeAdapter recovery", () => {
       resumeCheckpoint: undefined,
     });
 
-    await expect(fixture.adapter.resume(fixture.record, {
+    await expect(runAdapter(fixture.adapter, fixture.record, {
       type: "approval_decision",
       decision: "denied",
       comment: "not now",
@@ -171,7 +171,7 @@ describe("LoopHitlResumeAdapter recovery", () => {
     });
     expect((await fixture.stateManager.read(fixture.loopId)).resumeCheckpoint?.hitlId).toBe(fixture.record.hitlId);
 
-    await fixture.adapter.resume(fixture.record, {
+    await runAdapter(fixture.adapter, fixture.record, {
       type: "approval_decision",
       decision: "denied",
       comment: reason,
@@ -184,6 +184,15 @@ describe("LoopHitlResumeAdapter recovery", () => {
     expect(recovered.attentionStatus).toBe("clear");
   });
 });
+
+async function runAdapter(adapter: LoopHitlResumeAdapter, record: HitlRecord, response: HitlResponse): Promise<void> {
+  const prepared = await adapter.prepare(record, response);
+  try {
+    await prepared.run(record, response);
+  } finally {
+    prepared.release();
+  }
+}
 
 async function createBlockedFixture(options: { readonly recordStateBlocker?: boolean } = {}) {
   const workspaceRoot = join(TMP_ROOT, crypto.randomUUID());

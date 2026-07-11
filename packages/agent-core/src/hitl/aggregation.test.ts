@@ -67,6 +67,7 @@ describe("HITL aggregation", () => {
     });
     const sessionHitl = await service.create({
       owner: { projectSlug: "archcode", ownerType: "session", ownerId: childSessionId },
+      sessionRootId: rootSessionId,
       blockingKey: `session:${childSessionId}:ask:tool`,
       source: { type: "ask_user", sessionId: childSessionId, toolCallId: "tool" },
       displayPayload: { title: "Answer child session", redacted: true },
@@ -121,12 +122,14 @@ describe("HITL aggregation", () => {
 
     const directLoopSessionHitl = await service.create({
       owner: { projectSlug: "archcode", ownerType: "session", ownerId: directLoopSessionId },
+      sessionRootId: directLoopSessionId,
       blockingKey: `session:${directLoopSessionId}:ask:tool`,
       source: { type: "ask_user", sessionId: directLoopSessionId, toolCallId: "tool" },
       displayPayload: { title: "Answer loop session", redacted: true },
     });
     const goalSessionHitl = await service.create({
       owner: { projectSlug: "archcode", ownerType: "session", ownerId: goalSessionId },
+      sessionRootId: goalSessionId,
       blockingKey: `session:${goalSessionId}:ask:tool`,
       source: { type: "ask_user", sessionId: goalSessionId, toolCallId: "tool" },
       displayPayload: { title: "Answer goal session", redacted: true },

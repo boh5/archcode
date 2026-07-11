@@ -12,6 +12,8 @@ export type ServerErrorCode =
   | "UNAUTHORIZED"
   | "INTERNAL_ERROR"
   | "DELETE_CONFLICT"
+  | "SESSION_STOP_CONFLICT"
+  | "PROJECT_REMOVE_CONFLICT"
   | "LOOP_ACTIVE_CONFLICT";
 
 export class ServerError extends Error {
@@ -94,5 +96,24 @@ export class ConflictError extends ServerError {
       { sessionIds, ...details },
     );
     this.name = "ConflictError";
+  }
+}
+
+export class SessionStopConflictHttpError extends ServerError {
+  constructor(rootSessionId: string, sessionIds: readonly string[], message: string) {
+    super("SESSION_STOP_CONFLICT", message, 409, { rootSessionId, sessionIds });
+    this.name = "SessionStopConflictHttpError";
+  }
+}
+
+export class ProjectRemoveConflictHttpError extends ServerError {
+  constructor(projectSlug: string, activeFamilies: readonly { rootSessionId: string; activity: string }[]) {
+    super(
+      "PROJECT_REMOVE_CONFLICT",
+      `Project "${projectSlug}" has active Session families and cannot be removed`,
+      409,
+      { projectSlug, activeFamilies },
+    );
+    this.name = "ProjectRemoveConflictHttpError";
   }
 }

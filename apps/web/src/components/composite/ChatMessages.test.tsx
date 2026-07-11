@@ -169,13 +169,17 @@ describe("mapLinkStatusToBadge", () => {
 
   test("all ToolChildSessionLinkStatus values are covered", () => {
     const statuses: ToolChildSessionLinkStatus[] = [
-      "linked", "running", "cancelling", "completed", "failed", "timed_out", "cancelled", "interrupted",
+      "linked", "running", "waiting_for_human", "cancelling", "completed", "failed", "timed_out", "cancelled", "interrupted",
     ];
     for (const status of statuses) {
       const result = mapLinkStatusToBadge(status);
       expect(typeof result).toBe("string");
-      expect(["running", "completed", "error"]).toContain(result);
+      expect(["running", "completed", "pending", "error"]).toContain(result);
     }
+  });
+
+  test("waiting_for_human maps to pending", () => {
+    expect(mapLinkStatusToBadge("waiting_for_human")).toBe("pending");
   });
 });
 

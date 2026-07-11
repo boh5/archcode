@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { apiFetch } from "./client";
+import { createSession, stopSessionFamily } from "./mutations";
 
 const originalFetch = globalThis.fetch;
 const originalDocument = globalThis.document;
@@ -75,6 +76,37 @@ describe("web goal mutation API calls", () => {
 
     const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/goals/goal-1/cancel`, { method: "POST" });
     expect(result).toMatchObject({ id: "goal-1" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("web session runtime mutation API calls", () => {
+  test("createSession calls the bodyless Session endpoint", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/sessions`);
+      expect(init?.method).toBe("POST");
+      expect(init?.body).toBeUndefined();
+      return jsonResponse({ sessionId: "root-session" }, { status: 201 });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await createSession({ slug: TEST_PROJECT_SLUG });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("stopSessionFamily calls the root Session Family stop endpoint", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/sessions/root-session/stop`);
+      expect(init?.method).toBe("POST");
+      return jsonResponse({ ok: true });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await stopSessionFamily({ slug: TEST_PROJECT_SLUG, rootSessionId: "root-session" });
+
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

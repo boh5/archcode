@@ -84,6 +84,32 @@ function setMessages(ctx: ToolExecutionContext, parts: StoredPart[]): void {
 }
 
 describe("view_tool_output tool", () => {
+  it("imports when the tool output directory does not exist", async () => {
+    const freshHome = join(import.meta.dir, "__test_tmp__", `fresh-home-${randomUUID()}`);
+    await mkdir(freshHome, { recursive: true });
+
+    try {
+      const process = Bun.spawn(
+        ["bun", "-e", 'await import("./view-tool-output.ts")'],
+        {
+          cwd: import.meta.dir,
+          env: { ...Bun.env, HOME: freshHome },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      const [exitCode, stderr] = await Promise.all([
+        process.exited,
+        new Response(process.stderr).text(),
+      ]);
+
+      expect(exitCode).toBe(0);
+      expect(stderr).toBe("");
+    } finally {
+      await rm(freshHome, { recursive: true, force: true });
+    }
+  });
+
   it("retrieves persisted output from disk via callId", async () => {
     const ctx = makeContext();
     setMessages(ctx, [

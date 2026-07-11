@@ -67,6 +67,83 @@ describe("AgentRuntime Loop wiring", () => {
     expect("cancelCurrentLoopRun" in fixture.runtime).toBe(false);
   });
 
+  test("project removal rejects an active Session family and leaves the registration intact", async () => {
+    const fixture = await createRuntimeFixture();
+    const project = await fixture.runtime.projectRegistry.getByWorkspace(fixture.workspaceRoot);
+    if (project === undefined) throw new Error("Expected registered project");
+    const session = await fixture.runtime.createSession(fixture.workspaceRoot, { title: "Active family" });
+    const streamStarted = createDeferred<void>();
+    const releaseStream = createDeferred<void>();
+    setLlmAdapterForTest({
+      streamText: mock(() => ({
+        fullStream: (async function* () {
+          streamStarted.resolve();
+          await releaseStream.promise;
+          yield { type: "text-delta", text: "done" };
+        })(),
+        finishReason: releaseStream.promise.then(() => "stop"),
+        usage: releaseStream.promise.then(() => ({ totalTokens: 1 })),
+        text: releaseStream.promise.then(() => "done"),
+        toolCalls: Promise.resolve([]),
+      })) as never,
+    });
+    const execution = fixture.runtime.startSessionExecution({
+      slug: project.slug,
+      workspaceRoot: fixture.workspaceRoot,
+      sessionId: session.sessionId,
+      userMessage: "keep running",
+    });
+    await streamStarted.promise;
+
+    await expect(fixture.runtime.removeProject(project.slug)).rejects.toMatchObject({
+      name: "ProjectRuntimeActiveError",
+      projectSlug: project.slug,
+      activeFamilies: [expect.objectContaining({ rootSessionId: session.sessionId, activity: "running" })],
+    });
+    expect(await fixture.runtime.projectRegistry.get(project.slug)).toEqual(project);
+
+    releaseStream.resolve();
+    await execution.promise;
+  });
+
+  test("Loop cancellation resolves an active child Session to its canonical root family", async () => {
+    const fixture = await createRuntimeFixture();
+    const loop = await fixture.runtime.createLoop(fixture.workspaceRoot, manualLoopConfig);
+    const root = await fixture.runtime.createSession(fixture.workspaceRoot, {
+      loopId: loop.loopId,
+      sessionRole: "main",
+    });
+    // Seed an internal delegated-session identity; the public create options do
+    // not advertise parent/root fields, but runtime composition must still
+    // canonicalize persisted Loop report session ids from real delegates.
+    const childIdentity = {
+      rootSessionId: root.sessionId,
+      parentSessionId: root.sessionId,
+      loopId: loop.loopId,
+      sessionRole: "explore" as const,
+    };
+    const child = await fixture.runtime.createSession(fixture.workspaceRoot, childIdentity);
+    const context = await fixture.runtime.contextResolver.resolve(fixture.workspaceRoot);
+    await context.loopState.recordRunStart(loop.loopId, {
+      runId: crypto.randomUUID(),
+      loopId: loop.loopId,
+      status: "running",
+      trigger: "manual",
+      startedAt: 1_000,
+      sessionId: child.sessionId,
+    });
+
+    const report = await fixture.runtime.cancelLoopCurrentRun(fixture.workspaceRoot, loop.loopId);
+
+    expect(report).toMatchObject({
+      loopId: loop.loopId,
+      status: "cancelled",
+      reason: "cancelled_by_user",
+      sessionId: child.sessionId,
+    });
+    expect(fixture.runtime.getSessionFamilyActivity(fixture.workspaceRoot, root.sessionId)).toBe("idle");
+  });
+
   test("createSession persists loopId and listSessions summaries expose loopId", async () => {
     const fixture = await createRuntimeFixture();
     const loopId = crypto.randomUUID();

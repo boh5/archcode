@@ -15,6 +15,9 @@ export interface ConnectSSEOptions {
   signal?: AbortSignal;
   onEvent: (event: SSEEvent) => void;
   onError?: (error: unknown) => void;
+  onConnectionAttempt?: () => void;
+  onConnectionOpen?: () => void;
+  onConnectionLost?: () => void;
 }
 
 export interface SSEClient {
@@ -99,6 +102,8 @@ async function runSSELoop(input: {
       input.options.onError?.(error);
     }
 
+    if (!input.signal.aborted) input.options.onConnectionLost?.();
+
     if (input.signal.aborted) break;
     const delay = input.getReconnectDelay();
     input.increaseReconnectDelay();
@@ -111,15 +116,20 @@ async function connectOnce(
   options: ConnectSSEOptions,
   signal: AbortSignal,
 ): Promise<void> {
+  options.onConnectionAttempt?.();
   const url = `${apiBaseUrl()}${path}`;
   const response = await fetch(url, {
     headers: createApiHeaders(options.headers),
     signal,
   });
 
+  if (signal.aborted) return;
+
   if (!response.ok) {
     throw new HTTPStatusError({ status: response.status, statusText: response.statusText, url });
   }
+
+  options.onConnectionOpen?.();
 
   if (!response.body) return;
 

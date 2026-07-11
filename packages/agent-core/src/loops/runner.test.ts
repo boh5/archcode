@@ -1337,6 +1337,7 @@ class FakeLoopRuntime {
     }
     return {
       sessionId: input.sessionId,
+      rootSessionId: input.sessionId,
       workspaceRoot: input.workspaceRoot,
       agentName: input.agentName ?? "orchestrator",
       origin: "user_message",

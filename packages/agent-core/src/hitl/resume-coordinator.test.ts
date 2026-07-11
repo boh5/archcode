@@ -62,6 +62,31 @@ describe("ResumeCoordinator", () => {
     expect(adapter.calls).toHaveLength(1);
   });
 
+  test("acquires Session runtime ownership before publishing the durable resume claim", async () => {
+    const fixture = await createFixture();
+    const hitl = await fixture.createSessionHitl();
+    let finishAcquire!: () => void;
+    const adapter = new RecordingSessionAdapter({
+      waitForAcquire: new Promise<void>((resolve) => {
+        finishAcquire = resolve;
+      }),
+    });
+    const coordinator = new ResumeCoordinator({ hitl: fixture.service, adapters: { session: adapter } });
+
+    const responding = coordinator.respond(identity(hitl), { type: "question_answer", answers: ["continue"] });
+    await waitFor(() => adapter.acquisitions.length === 1);
+    expect((await fixture.service.lookup(identity(hitl)))).toMatchObject({
+      status: "found",
+      record: { status: "pending" },
+    });
+
+    finishAcquire();
+    await expect(responding).resolves.toMatchObject({ status: "claimed", scheduled: true });
+    await waitForLookup(fixture.service, hitl, "resolved");
+    expect(adapter.calls).toHaveLength(1);
+    expect(adapter.releaseCount).toBe(1);
+  });
+
   test("same hitlId under different owners uses independent locks and dispatches", async () => {
     const fixture = await createFixture();
     const secondSessionId = crypto.randomUUID();
@@ -71,6 +96,7 @@ describe("ResumeCoordinator", () => {
     const hitlId = "shared-owner-local-id";
     const first = await fixture.service.create({
       owner: fixture.owner,
+      sessionRootId: fixture.sessionId,
       hitlId,
       blockingKey: "first-owner-block",
       source: { type: "ask_user", sessionId: fixture.owner.ownerId },
@@ -78,6 +104,7 @@ describe("ResumeCoordinator", () => {
     });
     const second = await fixture.service.create({
       owner: secondOwner,
+      sessionRootId: secondSessionId,
       hitlId,
       blockingKey: "second-owner-block",
       source: { type: "ask_user", sessionId: secondOwner.ownerId },
@@ -356,18 +383,33 @@ class ResumeFailurePersistenceHitlService extends HitlService {
 
 class RecordingSessionAdapter implements SessionHitlResumeAdapter {
   readonly calls: HitlRecord[] = [];
+  readonly acquisitions: HitlRecord[] = [];
+  releaseCount = 0;
 
   constructor(
     private readonly options: {
       readonly waitForRelease?: Promise<void>;
+      readonly waitForAcquire?: Promise<void>;
       readonly failWith?: Error;
     } = {},
   ) {}
 
-  async resume(record: HitlRecord, _response: HitlResponse): Promise<void> {
-    this.calls.push(structuredClone(record));
-    await this.options.waitForRelease;
-    if (this.options.failWith !== undefined) throw this.options.failWith;
+  async prepare(record: HitlRecord, _response: HitlResponse) {
+    this.acquisitions.push(structuredClone(record));
+    await this.options.waitForAcquire;
+    let released = false;
+    return {
+      run: async (claimedRecord: HitlRecord, _claimedResponse: HitlResponse): Promise<void> => {
+        this.calls.push(structuredClone(claimedRecord));
+        await this.options.waitForRelease;
+        if (this.options.failWith !== undefined) throw this.options.failWith;
+      },
+      release: () => {
+        if (released) return;
+        released = true;
+        this.releaseCount += 1;
+      },
+    };
   }
 }
 
@@ -399,6 +441,7 @@ async function createFixture(workspaceRoot?: string, sessions = new SessionStore
     owner,
     createSessionHitl: () => service.create({
       owner,
+      sessionRootId: sessionId,
       blockingKey: `session:${sessionId}:ask:test`,
       source: { type: "ask_user", sessionId, toolCallId: "test" },
       displayPayload: { title: "Need answer", redacted: true },
