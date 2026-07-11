@@ -559,7 +559,7 @@ describe("HitlCard", () => {
     expect(callArg.body.answers).toEqual(["Proceed"]);
   });
 
-  test("ask_user renders all structured questions and submits one answer per question", () => {
+  test("ask_user presents multiple questions as tabs and confirms the complete answer set", () => {
     const projection = makeProjection({
       source: { type: "ask_user", sessionId: "session-1" },
       allowedActions: ["answer", "cancel"],
@@ -573,26 +573,94 @@ describe("HitlCard", () => {
     });
 
     let result = HitlCard({ projection });
+    const tabs = findAll(result, (element) => element.props?.role === "tab");
+    expect(tabs).toHaveLength(3);
+    expect(tabs.map(textContent)).toEqual(["First", "Second", "Confirm"]);
+    expect(findByTestId(result, "hitl-question-tab-0")?.props?.["aria-selected"]).toBe(true);
     expect(textContent(findByTestId(result, "hitl-question-pane"))).toContain("Pick a path");
-    expect(textContent(findByTestId(result, "hitl-question-pane"))).toContain("Explain why");
+    expect(textContent(findByTestId(result, "hitl-question-pane"))).not.toContain("Explain why");
 
     const optionInput = findAll(result, (element) => element.type === "input" && element.props?.value === "A")[0];
     const onOptionChange = optionInput?.props?.onChange as (() => void) | undefined;
     onOptionChange?.();
+
+    prepareRerender();
+    result = HitlCard({ projection });
+    expect(findByTestId(result, "hitl-question-tab-1")?.props?.["aria-selected"]).toBe(true);
+    expect(textContent(findByTestId(result, "hitl-question-pane"))).toContain("Explain why");
+    expect(textContent(findByTestId(result, "hitl-question-pane"))).not.toContain("Pick a path");
+
     const customInput = findAll(result, (element) => element.type === "input" && element.props?.placeholder === "Type your own answer…")[0];
     const onCustomChange = customInput?.props?.onChange as ((event: { target: { value: string } }) => void) | undefined;
     onCustomChange?.({ target: { value: "Because it is safe" } });
 
     prepareRerender();
     result = HitlCard({ projection });
-    const submit = findByTestId(result, "hitl-approve-button");
-    expect(submit?.props?.disabled).toBe(false);
-    const onClick = submit?.props?.onClick as (() => void) | undefined;
-    onClick?.();
+    const next = findByTestId(result, "hitl-question-next-button");
+    expect(next?.props?.disabled).toBe(false);
+    const onNext = next?.props?.onClick as (() => void) | undefined;
+    onNext?.();
+
+    expect(respondHitl).not.toHaveBeenCalled();
+
+    prepareRerender();
+    result = HitlCard({ projection });
+    expect(findByTestId(result, "hitl-confirm-tab")?.props?.["aria-selected"]).toBe(true);
+    const confirmation = findByTestId(result, "hitl-confirm-pane");
+    expect(textContent(confirmation)).toContain("Pick a path");
+    expect(textContent(confirmation)).toContain("A");
+    expect(textContent(confirmation)).toContain("Explain why");
+    expect(textContent(confirmation)).toContain("Because it is safe");
+
+    const confirm = findByTestId(result, "hitl-approve-button");
+    expect(textContent(confirm)).toContain("Confirm Answers");
+    expect(confirm?.props?.disabled).toBe(false);
+    const onConfirm = confirm?.props?.onClick as (() => void) | undefined;
+    onConfirm?.();
 
     const callArg = respondHitl.mock.calls[0]?.[0] as unknown as RespondHitlArgs;
     expect(callArg.body.type).toBe("question_answer");
     expect(callArg.body.answers).toEqual(["A", "Because it is safe"]);
+  });
+
+  test("multiple-choice questions wait for Next instead of advancing after each selection", () => {
+    const projection = makeProjection({
+      source: { type: "ask_user", sessionId: "session-1" },
+      allowedActions: ["answer", "cancel"],
+      displayPayload: makeDisplayPayload({
+        title: "Need input",
+        questions: [
+          {
+            header: "Areas",
+            question: "Which areas?",
+            options: [
+              { label: "API", description: "Backend" },
+              { label: "UI", description: "Frontend" },
+            ],
+            multiple: true,
+            custom: false,
+          },
+          { header: "Confirm scope", question: "Ready?", options: [{ label: "Yes", description: "Continue" }], custom: false },
+        ],
+      }),
+    });
+
+    let result = HitlCard({ projection });
+    const apiOption = findAll(result, (element) => element.type === "input" && element.props?.value === "API")[0];
+    const onApiChange = apiOption?.props?.onChange as (() => void) | undefined;
+    onApiChange?.();
+
+    prepareRerender();
+    result = HitlCard({ projection });
+    expect(findByTestId(result, "hitl-question-tab-0")?.props?.["aria-selected"]).toBe(true);
+    const next = findByTestId(result, "hitl-question-next-button");
+    expect(next?.props?.disabled).toBe(false);
+    const onNext = next?.props?.onClick as (() => void) | undefined;
+    onNext?.();
+
+    prepareRerender();
+    result = HitlCard({ projection });
+    expect(findByTestId(result, "hitl-question-tab-1")?.props?.["aria-selected"]).toBe(true);
   });
 
   test("goal_question and loop_question render answer UI", () => {

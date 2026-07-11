@@ -225,7 +225,8 @@ export function SessionRoute() {
             <ChatMessages slug={slug} sessionId={focusSessionId} />
             <HitlInbox
               projections={focusedHitl}
-              emptyMessage="No pending approvals for this session"
+              hideWhenEmpty
+              className="gap-2 shrink-0 border-t border-border-subtle bg-bg-surface px-5 py-3"
             />
           </>
         )}
@@ -245,7 +246,8 @@ export function SessionRoute() {
       <ChatMessages slug={slug} sessionId={rootSessionId} />
       <HitlInbox
         projections={sessionHitl}
-        emptyMessage="No pending approvals for this session"
+        hideWhenEmpty
+        className="gap-2 shrink-0 border-t border-border-subtle bg-bg-surface px-5 py-3"
       />
       <ChatInput slug={slug} sessionId={rootSessionId} />
     </div>

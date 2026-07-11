@@ -12,6 +12,7 @@ import {
   Check,
   Loader2,
   Bell,
+  ChevronRight,
 } from "lucide-react";
 import { useRespondHitl, useCancelHitl } from "../../api/mutations";
 import { hitlIdentityKey, isVisiblePendingHitlStatus } from "../../store/hitl-store";
@@ -130,6 +131,7 @@ export function HitlCard({ projection }: HitlCardProps) {
   const [comment, setComment] = useState("");
   const [answers, setAnswers] = useState<string[][]>([]);
   const [customTexts, setCustomTexts] = useState<string[]>([]);
+  const [activeQuestionStep, setActiveQuestionStep] = useState(0);
 
   const source = projection.source;
   const sourceType: SourceType = source.type;
@@ -156,6 +158,13 @@ export function HitlCard({ projection }: HitlCardProps) {
   const showSummary = display.summary !== undefined && (!isQuestion || !questions.some((question) => question.question === display.summary));
 
   const allAnswered = isQuestion ? resolvedAnswers.every((answer) => answer.length > 0) : true;
+  const isMultiQuestion = questions.length > 1;
+  const confirmStep = questions.length;
+  const isConfirmStep = isMultiQuestion && activeQuestionStep === confirmStep;
+  const activeQuestion = activeQuestionStep < questions.length ? questions[activeQuestionStep] : undefined;
+  const activeQuestionAnswered = activeQuestion === undefined
+    ? false
+    : (resolvedAnswers[activeQuestionStep]?.length ?? 0) > 0;
 
   const handleApprove = useCallback(() => {
     if (respondPending) return;
@@ -221,13 +230,95 @@ export function HitlCard({ projection }: HitlCardProps) {
       next[qIndex] = current;
       return next;
     });
+    if (isMultiQuestion && !multiple) {
+      setActiveQuestionStep(Math.min(qIndex + 1, confirmStep));
+    }
+  }, [confirmStep, isMultiQuestion]);
+
+  const updateCustomText = useCallback((qIndex: number, value: string, multiple?: boolean) => {
+    setCustomTexts((prev) => {
+      const next = [...prev];
+      while (next.length <= qIndex) next.push("");
+      next[qIndex] = value;
+      return next;
+    });
+    if (!multiple && value.length > 0) {
+      setAnswers((prev) => {
+        const next = [...prev];
+        while (next.length <= qIndex) next.push([]);
+        next[qIndex] = [];
+        return next;
+      });
+    }
   }, []);
+
+  const advanceQuestion = useCallback((qIndex: number) => {
+    if ((resolvedAnswers[qIndex]?.length ?? 0) === 0) return;
+    setActiveQuestionStep(Math.min(qIndex + 1, confirmStep));
+  }, [confirmStep, resolvedAnswers]);
 
   const canApprove = allowed.includes("approve");
   const canDeny = allowed.includes("deny");
   const canAnswer = allowed.includes("answer");
   const canCancel = allowed.includes("cancel");
   const canRetryResume = allowed.includes("retry_resume");
+
+  const renderQuestion = (question: QuestionData, qIndex: number) => (
+    <div
+      id={isMultiQuestion ? `hitl-question-panel-${projection.hitlId}-${qIndex}` : undefined}
+      role={isMultiQuestion ? "tabpanel" : undefined}
+      aria-labelledby={isMultiQuestion ? `hitl-question-tab-${projection.hitlId}-${qIndex}` : undefined}
+    >
+      <div className="text-[11px] text-text-muted uppercase tracking-wide mb-1">{question.header}</div>
+      <div className="text-[12.5px] text-text-primary leading-[1.55] mb-1.5">{question.question}</div>
+      {question.options.length > 0 && (
+        <div className="flex flex-col gap-1.5 mb-1.5">
+          {question.options.map((option) => {
+            const selected = (answers[qIndex] ?? []).includes(option.label);
+            return (
+              <label
+                key={option.label}
+                className={`flex items-center gap-2 px-2.5 py-1.5 border rounded-sm cursor-pointer text-[12.5px] transition-all duration-150
+                  ${selected
+                    ? "bg-accent-subtle border-accent text-accent"
+                    : "border-border-default text-text-secondary hover:bg-bg-hover hover:border-border-strong hover:text-text-primary"
+                  }
+                `}
+              >
+                <input
+                  type={question.multiple ? "checkbox" : "radio"}
+                  name={`hitl-${projection.hitlId}-q-${qIndex}`}
+                  value={option.label}
+                  checked={selected}
+                  onChange={() => toggleOption(qIndex, option.label, question.multiple)}
+                  className="sr-only"
+                />
+                <span className="flex-1 min-w-0">{option.label}</span>
+                {option.description && (
+                  <span className="text-[11px] text-text-muted truncate">{option.description}</span>
+                )}
+              </label>
+            );
+          })}
+        </div>
+      )}
+      {question.custom !== false && (
+        <input
+          type="text"
+          value={customTexts[qIndex] ?? ""}
+          onChange={(event) => updateCustomText(qIndex, event.target.value, question.multiple)}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" || !isMultiQuestion) return;
+            event.preventDefault();
+            advanceQuestion(qIndex);
+          }}
+          placeholder="Type your own answer…"
+          disabled={anyPending}
+          className="w-full bg-bg-base border border-border-default rounded-sm px-2.5 py-2 text-[13px] text-text-primary font-sans outline-none transition-colors duration-150 focus:border-accent placeholder:text-text-muted disabled:opacity-50 disabled:cursor-not-allowed"
+        />
+      )}
+    </div>
+  );
 
   return (
     <div
@@ -276,6 +367,57 @@ export function HitlCard({ projection }: HitlCardProps) {
         </div>
       )}
 
+      {isQuestion && isMultiQuestion && (
+        <div
+          className="flex items-center gap-1 mb-2 overflow-x-auto border-b border-border-subtle"
+          role="tablist"
+          aria-label="Questions"
+        >
+          {questions.map((question, qIndex) => {
+            const selected = activeQuestionStep === qIndex;
+            const answered = (resolvedAnswers[qIndex]?.length ?? 0) > 0;
+            return (
+              <button
+                key={`${question.header}-${qIndex}`}
+                id={`hitl-question-tab-${projection.hitlId}-${qIndex}`}
+                data-testid={`hitl-question-tab-${qIndex}`}
+                type="button"
+                role="tab"
+                aria-selected={selected}
+                aria-controls={`hitl-question-panel-${projection.hitlId}-${qIndex}`}
+                onClick={() => setActiveQuestionStep(qIndex)}
+                className={`flex items-center gap-1.5 max-w-[150px] shrink-0 px-2.5 py-1.5 border-b-2 text-[11.5px] font-medium transition-colors duration-150 cursor-pointer ${
+                  selected
+                    ? "border-accent text-text-primary"
+                    : "border-transparent text-text-muted hover:text-text-secondary"
+                }`}
+                title={question.header}
+              >
+                {answered && <Check size={11} className="text-success shrink-0" aria-hidden="true" />}
+                <span className="truncate">{question.header}</span>
+              </button>
+            );
+          })}
+          <button
+            id={`hitl-confirm-tab-${projection.hitlId}`}
+            data-testid="hitl-confirm-tab"
+            type="button"
+            role="tab"
+            aria-selected={isConfirmStep}
+            aria-controls={`hitl-confirm-panel-${projection.hitlId}`}
+            onClick={() => setActiveQuestionStep(confirmStep)}
+            className={`flex items-center gap-1.5 shrink-0 px-2.5 py-1.5 border-b-2 text-[11.5px] font-medium transition-colors duration-150 cursor-pointer ${
+              isConfirmStep
+                ? "border-accent text-text-primary"
+                : "border-transparent text-text-muted hover:text-text-secondary"
+            }`}
+          >
+            {allAnswered && <Check size={11} className="text-success shrink-0" aria-hidden="true" />}
+            Confirm
+          </button>
+        </div>
+      )}
+
       {display.fields && display.fields.length > 0 && !isQuestion && (
         <div className="flex flex-col gap-0.5 mb-2 max-h-[100px] overflow-y-auto" data-testid="hitl-display-fields">
           {display.fields.map((field, idx) => (
@@ -287,84 +429,58 @@ export function HitlCard({ projection }: HitlCardProps) {
       )}
 
       {isQuestion && questions.length > 0 && (
-        <div className="flex flex-col gap-2 mb-2" data-testid="hitl-question-pane">
-          {questions.map((q, qIndex) => (
-            <div key={qIndex}>
-              <div className="text-[11px] text-text-muted uppercase tracking-wide mb-1">{q.header}</div>
-              <div className="text-[12.5px] text-text-primary leading-[1.55] mb-1.5">{q.question}</div>
-              {q.options.length > 0 && (
-                <div className="flex flex-col gap-1.5 mb-1.5">
-                  {q.options.map((opt) => {
-                    const selected = (answers[qIndex] ?? []).includes(opt.label);
-                    return (
-                      <label
-                        key={opt.label}
-                        className={`flex items-center gap-2 px-2.5 py-1.5 border rounded-sm cursor-pointer text-[12.5px] transition-all duration-150
-                          ${selected
-                            ? "bg-accent-subtle border-accent text-accent"
-                            : "border-border-default text-text-secondary hover:bg-bg-hover hover:border-border-strong hover:text-text-primary"
-                          }
-                        `}
-                      >
-                        <input
-                          type={q.multiple ? "checkbox" : "radio"}
-                          name={`hitl-q-${qIndex}`}
-                          value={opt.label}
-                          checked={selected}
-                          onChange={() => toggleOption(qIndex, opt.label, q.multiple)}
-                          className="sr-only"
-                        />
-                        <span className="flex-1 min-w-0">{opt.label}</span>
-                        {opt.description && (
-                          <span className="text-[11px] text-text-muted truncate">{opt.description}</span>
-                        )}
-                      </label>
-                    );
-                  })}
-                </div>
-              )}
-              {q.custom !== false && (
-                <div className="flex gap-1.5">
-                  <input
-                    type="text"
-                    value={customTexts[qIndex] ?? ""}
-                    onChange={(e) =>
-                      setCustomTexts((prev) => {
-                        const next = [...prev];
-                        while (next.length <= qIndex) next.push("");
-                        next[qIndex] = e.target.value;
-                        return next;
-                      })
-                    }
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        const text = (customTexts[qIndex] ?? "").trim();
-                        if (text) toggleOption(qIndex, text, q.multiple);
-                      }
-                    }}
-                    placeholder="Type your own answer…"
-                    disabled={anyPending}
-                    className="flex-1 bg-bg-base border border-border-default rounded-sm px-2.5 py-2 text-[13px] text-text-primary font-sans outline-none transition-colors duration-150 focus:border-accent placeholder:text-text-muted disabled:opacity-50 disabled:cursor-not-allowed"
-                  />
-                </div>
-              )}
+        <div className="mb-2" data-testid="hitl-question-pane">
+          {isConfirmStep ? (
+            <div
+              id={`hitl-confirm-panel-${projection.hitlId}`}
+              data-testid="hitl-confirm-pane"
+              role="tabpanel"
+              aria-labelledby={`hitl-confirm-tab-${projection.hitlId}`}
+              className="flex flex-col gap-1.5"
+            >
+              <div className="text-[12.5px] font-medium text-text-primary mb-0.5">Review your answers</div>
+              {questions.map((question, qIndex) => {
+                const answer = resolvedAnswers[qIndex] ?? "";
+                return (
+                  <button
+                    key={`${question.header}-${qIndex}`}
+                    type="button"
+                    onClick={() => setActiveQuestionStep(qIndex)}
+                    className="w-full flex items-start gap-2.5 text-left border border-border-subtle rounded-sm px-2.5 py-2 bg-bg-base hover:bg-bg-hover hover:border-border-default transition-colors duration-150 cursor-pointer"
+                  >
+                    <span className={`mt-0.5 shrink-0 ${answer ? "text-success" : "text-warning"}`} aria-hidden="true">
+                      {answer ? <Check size={13} /> : <CircleQuestionMark size={13} />}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[11px] text-text-muted">{question.header} · {question.question}</span>
+                      <span className={`block text-[12.5px] mt-0.5 break-words ${answer ? "text-text-primary" : "text-warning"}`}>
+                        {answer || "Answer required"}
+                      </span>
+                    </span>
+                    <ChevronRight size={13} className="text-text-muted mt-1 shrink-0" aria-hidden="true" />
+                  </button>
+                );
+              })}
             </div>
-          ))}
+          ) : activeQuestion ? (
+            renderQuestion(activeQuestion, activeQuestionStep)
+          ) : null}
         </div>
       )}
 
-      <input
-        type="text"
-        value={comment}
-        onChange={(e) => setComment(e.target.value)}
-        placeholder="Add a comment (optional)…"
-        disabled={anyPending}
-        className="w-full bg-bg-base border border-border-default rounded-sm px-2.5 py-1.5 text-[12px] text-text-primary font-sans outline-none transition-colors duration-150 focus:border-accent placeholder:text-text-muted mb-2 disabled:opacity-50 disabled:cursor-not-allowed"
-      />
+      {(!isMultiQuestion || isConfirmStep) && (
+        <input
+          type="text"
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
+          placeholder="Add a comment (optional)…"
+          disabled={anyPending}
+          className="w-full bg-bg-base border border-border-default rounded-sm px-2.5 py-1.5 text-[12px] text-text-primary font-sans outline-none transition-colors duration-150 focus:border-accent placeholder:text-text-muted mb-2 disabled:opacity-50 disabled:cursor-not-allowed"
+        />
+      )}
 
       <div className="flex flex-wrap gap-1.5">
-        {canAnswer && isQuestion && (
+        {canAnswer && isQuestion && !isMultiQuestion && (
           <button
             data-testid="hitl-approve-button"
             className="px-3.5 py-[5px] rounded-sm text-[12px] font-medium bg-accent text-white cursor-pointer transition-colors duration-150 hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
@@ -372,6 +488,30 @@ export function HitlCard({ projection }: HitlCardProps) {
             disabled={anyPending || !allAnswered}
           >
             {respondPending ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Submit Answer
+          </button>
+        )}
+
+        {canAnswer && isQuestion && isMultiQuestion && !isConfirmStep && activeQuestion && (
+          <button
+            data-testid="hitl-question-next-button"
+            type="button"
+            className="px-3.5 py-[5px] rounded-sm text-[12px] font-medium bg-accent text-white cursor-pointer transition-colors duration-150 hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+            onClick={() => advanceQuestion(activeQuestionStep)}
+            disabled={anyPending || !activeQuestionAnswered}
+          >
+            {activeQuestionStep === questions.length - 1 ? "Review answers" : "Next"} <ChevronRight size={12} />
+          </button>
+        )}
+
+        {canAnswer && isQuestion && isConfirmStep && (
+          <button
+            data-testid="hitl-approve-button"
+            type="button"
+            className="px-3.5 py-[5px] rounded-sm text-[12px] font-medium bg-accent text-white cursor-pointer transition-colors duration-150 hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+            onClick={handleAnswer}
+            disabled={anyPending || !allAnswered}
+          >
+            {respondPending ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Confirm Answers
           </button>
         )}
 

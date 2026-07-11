@@ -5,8 +5,8 @@ import { MemoryRouter, Route, Routes, useLocation, useNavigationType } from "rea
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { JSDOM } from "jsdom";
 import { TOOL_DELEGATE, createEmptySessionStats } from "@archcode/protocol";
-import type { ToolChildSessionLink } from "@archcode/protocol";
-import type { Session } from "../api/types";
+import type { GlobalSSEHitlRealtimeEvent, ToolChildSessionLink } from "@archcode/protocol";
+import type { HitlProjection, Session } from "../api/types";
 import {
   __resetWebSessionStoresForTest,
   createWebSessionStore,
@@ -15,6 +15,7 @@ import {
   getWebSessionStore,
   markSessionForeground,
 } from "../store/session-store";
+import { hitlStore } from "../store/hitl-store";
 import { focusedSessionQueryOptions } from "../api/queries";
 import { SessionRoute } from "./session";
 
@@ -227,6 +228,7 @@ describe("SessionRoute store-level behavior", () => {
 describe("SessionRoute focused view store behavior", () => {
   beforeEach(() => {
     __resetWebSessionStoresForTest();
+    hitlStore.getState().reset();
   });
 
   afterEach(() => {
@@ -322,6 +324,7 @@ describe("SessionRoute focused view store behavior", () => {
       await waitFor(() => {
         expect(getWebSessionStore("root-session", "demo").getState().focusSessionId).toBeNull();
         expect(container.textContent).toContain("View full conversation");
+        expect(container.querySelector('[data-testid="hitl-inbox"]')).toBeNull();
       });
 
       await act(async () => {
@@ -334,6 +337,7 @@ describe("SessionRoute focused view store behavior", () => {
         expect(getWebSessionStore("root-session", "demo").getState().focusSessionId).toBe("child-session");
         expect(container.textContent).toContain("← Back to Root Session");
         expect(container.textContent).toContain("Child Session");
+        expect(container.querySelector('[data-testid="hitl-inbox"]')).toBeNull();
       });
 
       await act(async () => {
@@ -349,6 +353,75 @@ describe("SessionRoute focused view store behavior", () => {
       await act(async () => {
         reactRoot.unmount();
       });
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
+  test("renders a pending approval queue as a padded session panel", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+
+    const rootSession = createSession({
+      id: "root-session",
+      rootSessionId: "root-session",
+      title: "Root Session",
+      messages: [],
+    });
+    const projection: HitlProjection = {
+      hitlId: "hitl-session-padding",
+      project: { slug: "demo" },
+      owner: { projectSlug: "demo", ownerType: "session", ownerId: "root-session" },
+      source: { type: "ask_user", sessionId: "root-session", toolCallId: "call-1" },
+      status: "pending",
+      displayPayload: {
+        title: "Need input",
+        questions: [{ header: "Scope", question: "Continue?", options: [], custom: true }],
+        redacted: true,
+      },
+      allowedActions: ["answer", "cancel"],
+      createdAt: "2026-07-11T00:00:00.000Z",
+      updatedAt: "2026-07-11T00:00:00.000Z",
+    };
+    const event: GlobalSSEHitlRealtimeEvent = {
+      type: "hitl.event",
+      projectSlug: "demo",
+      owner: projection.owner,
+      hitlId: projection.hitlId,
+      createdAt: 1,
+      payload: { type: "hitl.request", status: "pending" },
+      projection,
+    };
+    hitlStore.getState().applyRealtimeEvent(event);
+
+    const fetchMock = mock(async (input: Parameters<typeof fetch>[0]) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const path = new URL(url, "http://localhost").pathname;
+      if (path === "/api/projects") return Response.json({ projects: [] });
+      if (path.endsWith("/sessions/root-session")) return Response.json(rootSession);
+      return new Response("Not found", { status: 404 });
+    });
+    Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderSessionRoute(reactRoot, queryClient);
+
+      await waitFor(() => {
+        const inbox = container.querySelector('[data-testid="hitl-inbox"]');
+        expect(inbox).not.toBeNull();
+        expect(inbox?.classList.contains("px-5")).toBe(true);
+        expect(inbox?.classList.contains("py-3")).toBe(true);
+        expect(inbox?.classList.contains("border-t")).toBe(true);
+        expect(container.textContent).toContain("Need input");
+      });
+    } finally {
+      await act(async () => reactRoot.unmount());
       queryClient.clear();
       dom.window.close();
     }
