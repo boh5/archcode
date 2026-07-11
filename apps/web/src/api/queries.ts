@@ -43,7 +43,6 @@ export const queryKeys = {
   ) => ["projects", slug, "hitl", scope, ownerId ?? "", includeChildren, status] as const,
   sessions: (slug: string) => ["projects", slug, "sessions"] as const,
   session: (slug: string, sessionId: string) => ["projects", slug, "sessions", sessionId] as const,
-  focusedSession: (slug: string, sessionId: string) => ["projects", slug, "sessions", sessionId, "focused"] as const,
   tree: (slug: string, rootSessionId: string) => ["projects", slug, "sessions", rootSessionId, "tree"] as const,
   diff: (slug: string, sessionId?: string) => ["projects", slug, "diff", sessionId ?? "project"] as const,
   directories: {
@@ -99,7 +98,7 @@ export function sessionQueryOptions(slug: string, sessionId: string) {
 
 export function focusedSessionQueryOptions(slug: string, focusSessionId: string | null) {
   return queryOptions({
-    queryKey: queryKeys.focusedSession(slug, focusSessionId ?? ""),
+    queryKey: queryKeys.session(slug, focusSessionId ?? ""),
     queryFn: async () => {
       return await apiFetch<Session>(
         `/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(focusSessionId!)}`,
@@ -285,8 +284,15 @@ export function useDashboardHitl() {
   };
 }
 
-export function useDiff(slug: string, sessionId?: string) {
-  return useQuery(diffQueryOptions(slug, sessionId));
+export function useDiff(
+  slug: string,
+  sessionId?: string,
+  options?: { enabled?: boolean; refetchInterval?: number | false; refetchOnMount?: boolean | "always" },
+) {
+  return useQuery({
+    ...diffQueryOptions(slug, sessionId),
+    ...options,
+  });
 }
 
 export function useDirectoryList(path: string, limit?: number) {

@@ -8,6 +8,7 @@ import type { GlobalSSEHitlRealtimeEvent } from "@archcode/protocol";
 import type { GoalState, GoalEvidenceRef, HitlProjection } from "../api/types";
 import { hitlStore } from "../store/hitl-store";
 import { GoalDetailRoute } from "./goal-detail";
+import { WorkbenchLayoutProvider } from "../context/workbench-layout";
 
 // ─── Test helpers ───
 
@@ -187,6 +188,7 @@ async function renderGoalDetailRoute(
 ): Promise<void> {
   await act(async () => {
     root.render(
+      <WorkbenchLayoutProvider>
       <QueryClientProvider client={queryClient}>
         <MemoryRouter initialEntries={[initialPath]}>
           <Routes>
@@ -194,7 +196,8 @@ async function renderGoalDetailRoute(
             <Route path="/projects/:slug/sessions/:sessionId" element={<div data-testid="session-mock" />} />
           </Routes>
         </MemoryRouter>
-      </QueryClientProvider>,
+      </QueryClientProvider>
+      </WorkbenchLayoutProvider>,
     );
   });
 }
@@ -250,7 +253,7 @@ describe("GoalDetailRoute", () => {
     }
   });
 
-  test("overview tab shows objective and acceptance criteria", async () => {
+  test("keeps objective and acceptance criteria out of the work canvas", async () => {
     const dom = installDom();
     const container = document.getElementById("root");
     if (!container) throw new Error("Missing test root");
@@ -277,14 +280,9 @@ describe("GoalDetailRoute", () => {
     try {
       await renderGoalDetailRoute(reactRoot, queryClient);
 
-      await waitFor(() => {
-        const overview = container.querySelector('[data-testid="goal-overview"]');
-        expect(overview).not.toBeNull();
-      });
-
-      const overviewText = container.querySelector('[data-testid="goal-overview"]')!.textContent ?? "";
-      expect(overviewText).toContain("Refactor the auth module to use JWT.");
-      expect(overviewText).toContain("All auth tests pass and Reviewer confirms DONE.");
+      await waitFor(() => expect(container.textContent).toContain("Execution status"));
+      expect(container.textContent).not.toContain("Refactor the auth module to use JWT.");
+      expect(container.textContent).not.toContain("All auth tests pass and Reviewer confirms DONE.");
     } finally {
       await act(async () => {
         reactRoot.unmount();
@@ -294,7 +292,7 @@ describe("GoalDetailRoute", () => {
     }
   });
 
-  test("overview tab shows review receipt with verdict, summary, and evidence refs", async () => {
+  test("keeps review evidence in the context inspector rather than the work canvas", async () => {
     const dom = installDom();
     const container = document.getElementById("root");
     if (!container) throw new Error("Missing test root");
@@ -331,23 +329,9 @@ describe("GoalDetailRoute", () => {
     try {
       await renderGoalDetailRoute(reactRoot, queryClient);
 
-      await waitFor(() => {
-        const receipt = container.querySelector('[data-testid="goal-review-receipt"]');
-        expect(receipt).not.toBeNull();
-      });
-
-      const receiptText = container.querySelector('[data-testid="goal-review-receipt"]')!.textContent ?? "";
-      expect(receiptText).toContain("DONE");
-      expect(receiptText).toContain("All acceptance criteria met");
-      expect(receiptText).toContain("bun test passed: 17 pass, 0 fail");
-      expect(receiptText).toContain("Clean diff with auth module changes");
-      expect(receiptText).toContain("review-session-1");
-
-      const evidenceRefs = container.querySelectorAll('[data-testid="goal-evidence-ref"]');
-      expect(evidenceRefs).toHaveLength(2);
-
-      const overviewText = container.querySelector('[data-testid="goal-overview"]')!.textContent ?? "";
-      expect(overviewText).toContain("Auth module successfully refactored to JWT.");
+      await waitFor(() => expect(container.textContent).toContain("Test Goal"));
+      expect(container.querySelector('[data-testid="goal-review-receipt"]')).toBeNull();
+      expect(container.textContent).not.toContain("bun test passed: 17 pass, 0 fail");
     } finally {
       await act(async () => {
         reactRoot.unmount();
@@ -357,7 +341,7 @@ describe("GoalDetailRoute", () => {
     }
   });
 
-  test("overview tab shows blocker and budget summary", async () => {
+  test("keeps blocker and budget summaries in the context inspector", async () => {
     const dom = installDom();
     const container = document.getElementById("root");
     if (!container) throw new Error("Missing test root");
@@ -396,18 +380,9 @@ describe("GoalDetailRoute", () => {
     try {
       await renderGoalDetailRoute(reactRoot, queryClient);
 
-      await waitFor(() => {
-        const overview = container.querySelector('[data-testid="goal-overview"]');
-        expect(overview).not.toBeNull();
-      });
-
-      const overviewText = container.querySelector('[data-testid="goal-overview"]')!.textContent ?? "";
-      expect(overviewText).toContain("Blocker");
-      expect(overviewText).toContain("approval");
-      expect(overviewText).toContain("Waiting for budget approval");
-      expect(overviewText).toContain("Budget");
-      expect(overviewText).toContain("warning");
-      expect(overviewText).toContain("80,000 / 100,000 tokens");
+      await waitFor(() => expect(container.textContent).toContain("Test Goal"));
+      expect(container.textContent).not.toContain("Waiting for budget approval");
+      expect(container.textContent).not.toContain("80,000 / 100,000 tokens");
     } finally {
       await act(async () => {
         reactRoot.unmount();
@@ -417,7 +392,7 @@ describe("GoalDetailRoute", () => {
     }
   });
 
-  test("sessions tab shows child sessions", async () => {
+  test("work canvas links to the main execution session", async () => {
     const dom = installDom();
     const container = document.getElementById("root");
     if (!container) throw new Error("Missing test root");
@@ -448,22 +423,11 @@ describe("GoalDetailRoute", () => {
         expect(container.textContent).toContain("Test Goal");
       });
 
-      await act(async () => {
-        findElementByText(container, "Sessions").dispatchEvent(
-          new dom.window.MouseEvent("click", { bubbles: true }),
-        );
-      });
-
       await waitFor(() => {
-        const sessionsTab = container.querySelector('[data-testid="goal-tab-sessions"]');
-        expect(sessionsTab).not.toBeNull();
+        expect(container.textContent).toContain("Open execution session");
       });
-
-      const sessionsText = container.querySelector('[data-testid="goal-tab-sessions"]')!.textContent ?? "";
-      expect(sessionsText).toContain("main-session-1");
-      expect(sessionsText).toContain("plan-session-1");
-      expect(sessionsText).toContain("build-session-1");
-      expect(sessionsText).toContain("review-session-1");
+      expect(container.querySelector('a[href="/projects/demo/sessions/main-session-1"]')).not.toBeNull();
+      expect(container.textContent).not.toContain("plan-session-1");
     } finally {
       await act(async () => {
         reactRoot.unmount();
@@ -473,7 +437,7 @@ describe("GoalDetailRoute", () => {
     }
   });
 
-  test("chat tab renders chat replay view", async () => {
+  test("does not retain the old placeholder chat tab", async () => {
     const dom = installDom();
     const container = document.getElementById("root");
     if (!container) throw new Error("Missing test root");
@@ -501,16 +465,8 @@ describe("GoalDetailRoute", () => {
         expect(container.textContent).toContain("Test Goal");
       });
 
-      await act(async () => {
-        findElementByText(container, "Chat").dispatchEvent(
-          new dom.window.MouseEvent("click", { bubbles: true }),
-        );
-      });
-
-      await waitFor(() => {
-        const chatTab = container.querySelector('[data-testid="goal-tab-chat"]');
-        expect(chatTab).not.toBeNull();
-      });
+      expect(container.querySelector('[data-testid="goal-tab-chat"]')).toBeNull();
+      expect(container.textContent).not.toContain("Chat replay is available");
     } finally {
       await act(async () => {
         reactRoot.unmount();
@@ -766,7 +722,7 @@ describe("GoalDetailRoute", () => {
       });
 
       const queue = container.querySelector('[data-testid="goal-approval-queue"]')!;
-      expect(queue.textContent).toContain("Approval Queue");
+      expect(queue.textContent).toContain("Goal approvals");
       expect(queue.textContent).toContain("Approve budget?");
       expect(queue.textContent).toContain("Confirm spend");
       expect(queue.querySelectorAll('[data-testid="hitl-card"]')).toHaveLength(1);

@@ -1,41 +1,301 @@
-import { Outlet } from "react-router-dom";
+import { useEffect, useRef, useState, type RefObject } from "react";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
+import { Focus, Menu, PanelLeftOpen, PanelRightOpen, X } from "lucide-react";
+import { Outlet, useLocation } from "react-router-dom";
 import { useAddProjectModal } from "../context/add-project-modal";
 import { useSettingsModal } from "../context/settings-modal";
+import { WorkbenchLayoutProvider, useCloseMobileSurfacesOnNavigation, useWorkbenchLayout, useWorkbenchPanelSizes } from "../context/workbench-layout";
 import { ProjectBar } from "../components/features/ProjectBar";
 import { Sidebar } from "../components/features/Sidebar";
-import { DetailPanel } from "../components/features/DetailPanel";
+import { ContextInspector } from "../components/features/ContextInspector";
+import { ResizeHandle } from "../components/features/ResizeHandle";
+import {
+  INSPECTOR_MAX_WIDTH,
+  INSPECTOR_MIN_WIDTH,
+  SIDEBAR_MAX_WIDTH,
+  SIDEBAR_MIN_WIDTH,
+  getInspectorKind,
+  resolveInspectorGeometry,
+} from "../lib/workbench-layout";
+import { focusElementAfterLayoutChange } from "../lib/focus-control";
 
-/**
- * RootLayout — always-visible 4-column grid shell.
- *
- * Grid: 52px | 260px | 1fr | 360px, rows: 48px | 1fr
- * Responsive: ≤1100px hides detail + shrinks sidebar, ≤800px hides projectbar + sidebar + detail
- */
 export function RootLayout() {
+  return (
+    <WorkbenchLayoutProvider>
+      <WorkbenchShell />
+    </WorkbenchLayoutProvider>
+  );
+}
+
+function WorkbenchShell() {
+  const location = useLocation();
   const { openAddProjectModal } = useAddProjectModal();
   const { openSettingsModal } = useSettingsModal();
+  const layout = useWorkbenchLayout();
+  const panelSizes = useWorkbenchPanelSizes();
+  const viewportWidth = useViewportWidth();
+  const inspectorKind = getInspectorKind(location.pathname);
+  const navigationTriggerRef = useRef<HTMLButtonElement>(null);
+  const inspectorTriggerRef = useRef<HTMLButtonElement>(null);
+  const hasProject = location.pathname.startsWith("/projects/");
+  const showNavigation = !layout.focusMode;
+  const showSidebar = showNavigation && hasProject && !layout.sidebarCollapsed;
+  const showInspector = inspectorKind !== null && !layout.inspectorCollapsed;
+  const desktopNavigationWidth = showNavigation ? 52 + (showSidebar ? panelSizes.sidebarWidth + 8 : 0) : 0;
+  const inspectorGeometry = resolveInspectorGeometry(
+    panelSizes.inspectorWidth,
+    viewportWidth < 1280 ? viewportWidth - desktopNavigationWidth : INSPECTOR_MAX_WIDTH,
+  );
+  const setRenderedInspectorWidth = (width: number) => {
+    panelSizes.setInspectorWidth(Math.min(inspectorGeometry.max, Math.max(inspectorGeometry.min, width)));
+  };
+  useCloseMobileSurfacesOnNavigation(`${location.pathname}${location.search}`);
+
+  const collapseSidebar = () => {
+    layout.toggleSidebar();
+    focusElementAfterLayoutChange('button[aria-label="Expand project sidebar"]');
+  };
+  const expandSidebar = () => {
+    layout.toggleSidebar();
+    focusElementAfterLayoutChange('button[aria-label="Collapse project sidebar"]');
+  };
+  const enterFocusMode = () => {
+    layout.toggleFocusMode();
+    focusElementAfterLayoutChange('button[aria-label="Exit focus mode"]');
+  };
+  const exitFocusMode = () => {
+    layout.toggleFocusMode();
+    focusElementAfterLayoutChange('button[aria-label="Enter focus mode"]');
+  };
+  const collapseInspector = () => {
+    layout.toggleInspector();
+    focusElementAfterLayoutChange('button[data-state="collapsed"][aria-controls~="context-inspector"]');
+  };
 
   return (
-    <div className="grid h-screen overflow-hidden grid-cols-[52px_260px_1fr_360px] grid-rows-[48px_1fr] max-[1100px]:grid-cols-[52px_220px_1fr_0px] max-[800px]:grid-cols-[0_0_1fr_0]">
-      <div className="col-start-2 col-end-5 row-start-1 row-end-2 flex items-center border-b border-border-default px-4">
-        <span className="text-sm font-medium text-text-secondary">ArchCode</span>
-      </div>
+    <div className="relative flex h-screen min-w-0 overflow-hidden bg-bg-base text-text-primary">
+      {showNavigation && !layout.isMobile && (
+        <div className="hidden h-full shrink-0 min-[800px]:flex">
+          <div className="relative z-40 w-[52px] shrink-0 border-r border-border-default bg-bg-surface">
+            <ProjectBar onAddProject={openAddProjectModal} onSettings={openSettingsModal} />
+          </div>
+          {showSidebar && (
+            <>
+              <div className="min-w-0 shrink-0 bg-bg-surface" style={{ width: panelSizes.sidebarWidth }}>
+                <Sidebar onCollapse={collapseSidebar} onEnterFocusMode={enterFocusMode} />
+              </div>
+              <ResizeHandle
+                label="Resize project sidebar"
+                controls="project-sidebar"
+                value={panelSizes.sidebarWidth}
+                min={SIDEBAR_MIN_WIDTH}
+                max={SIDEBAR_MAX_WIDTH}
+                direction={1}
+                onChange={panelSizes.setSidebarWidth}
+              />
+            </>
+          )}
+        </div>
+      )}
 
-      <div className="col-start-1 col-end-2 row-start-1 row-end-3 min-h-0 overflow-hidden max-[800px]:hidden border-r border-border-default bg-bg-surface">
-        <ProjectBar onAddProject={openAddProjectModal} onSettings={openSettingsModal} />
-      </div>
+      <main className="relative flex min-w-0 flex-1 flex-col" aria-label="Work canvas">
+        <CompactToolbar
+          inspectorAvailable={inspectorKind !== null}
+          navigationTriggerRef={navigationTriggerRef}
+          inspectorTriggerRef={inspectorTriggerRef}
+        />
+        {hasProject && !showSidebar && !layout.focusMode && (
+          <button
+            type="button"
+            aria-label="Expand project sidebar"
+            aria-controls="project-sidebar"
+            aria-expanded="false"
+            className="absolute left-0 top-12 z-20 hidden h-8 w-6 items-center justify-center rounded-r-sm border border-l-0 border-border-default bg-bg-surface text-text-muted hover:text-text-primary min-[800px]:flex"
+            onClick={expandSidebar}
+          >
+            <PanelLeftOpen size={14} />
+          </button>
+        )}
+        {layout.focusMode && (
+          <button
+            type="button"
+            aria-label="Exit focus mode"
+            className="absolute left-0 top-12 z-20 hidden h-8 w-6 items-center justify-center rounded-r-sm border border-l-0 border-border-default bg-bg-surface text-accent hover:text-accent-hover min-[800px]:flex"
+            onClick={exitFocusMode}
+          >
+            <Focus size={14} />
+          </button>
+        )}
+        <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+          <Outlet />
+        </div>
+      </main>
 
-      <div className="col-start-2 col-end-3 row-start-2 row-end-3 min-h-0 overflow-hidden max-[800px]:hidden border-r border-border-default bg-bg-surface">
-        <Sidebar />
-      </div>
+      {showInspector && inspectorKind && !layout.isMobile && (
+        <>
+          <div className="hidden min-[1280px]:block">
+            <ResizeHandle
+              label="Resize context inspector"
+              controls="context-inspector"
+              value={panelSizes.inspectorWidth}
+              min={INSPECTOR_MIN_WIDTH}
+              max={INSPECTOR_MAX_WIDTH}
+              direction={-1}
+              onChange={panelSizes.setInspectorWidth}
+            />
+          </div>
+          <div
+            className="z-30 hidden h-full shrink-0 bg-bg-surface min-[800px]:block max-[1279px]:absolute max-[1279px]:inset-y-0 max-[1279px]:right-0 max-[1279px]:shadow-lg"
+            style={{ width: inspectorGeometry.value }}
+          >
+            <div className="absolute inset-y-0 left-0 z-40 hidden min-[800px]:block min-[1280px]:hidden">
+              <ResizeHandle
+                label="Resize context inspector overlay"
+                controls="context-inspector"
+                value={inspectorGeometry.value}
+                min={inspectorGeometry.min}
+                max={inspectorGeometry.max}
+                direction={-1}
+                onChange={setRenderedInspectorWidth}
+              />
+            </div>
+            <ContextInspector key={inspectorKind} kind={inspectorKind} onCollapse={collapseInspector} />
+          </div>
+        </>
+      )}
 
-      <div className="col-start-3 col-end-4 row-start-2 row-end-3 min-h-0 overflow-hidden">
-        <Outlet />
-      </div>
+      {layout.isMobile && (
+        <>
+          <Drawer
+            open={layout.mobileNavigationOpen && !layout.focusMode}
+            label="Work navigation"
+            side="left"
+            returnFocusRef={navigationTriggerRef}
+            onClose={() => layout.setMobileNavigationOpen(false)}
+          >
+            <div className="flex h-full min-w-0">
+              <div className="w-[52px] shrink-0 border-r border-border-default bg-bg-surface">
+                <ProjectBar onAddProject={openAddProjectModal} onSettings={openSettingsModal} />
+              </div>
+              {hasProject && <div className="min-w-0 flex-1 bg-bg-surface"><Sidebar /></div>}
+            </div>
+          </Drawer>
 
-      <div className="col-start-4 col-end-5 row-start-2 row-end-3 min-h-0 max-[1100px]:hidden overflow-hidden">
-        <DetailPanel />
-      </div>
+          <Drawer
+            open={layout.mobileInspectorOpen && inspectorKind !== null}
+            label="Context inspector"
+            side="right"
+            returnFocusRef={layout.mobileInspectorReturnFocusRef}
+            onClose={() => layout.setMobileInspectorOpen(false)}
+          >
+            {inspectorKind && <ContextInspector key={inspectorKind} id="mobile-context-inspector" kind={inspectorKind} />}
+          </Drawer>
+        </>
+      )}
     </div>
   );
+}
+
+function CompactToolbar({
+  inspectorAvailable,
+  navigationTriggerRef,
+  inspectorTriggerRef,
+}: {
+  inspectorAvailable: boolean;
+  navigationTriggerRef: RefObject<HTMLButtonElement | null>;
+  inspectorTriggerRef: RefObject<HTMLButtonElement | null>;
+}) {
+  const layout = useWorkbenchLayout();
+  return (
+    <div className="hidden h-11 shrink-0 items-center justify-between border-b border-border-default bg-bg-surface px-2 max-[799px]:flex" aria-label="Compact workbench toolbar">
+      <button
+        ref={navigationTriggerRef}
+        type="button"
+        aria-label={layout.focusMode ? "Exit focus mode" : "Open work navigation"}
+        aria-expanded={layout.mobileNavigationOpen}
+        aria-controls="mobile-work-navigation"
+        className="flex h-8 w-8 items-center justify-center rounded-sm text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+        onClick={() => {
+          if (layout.focusMode) layout.toggleFocusMode();
+          else {
+            layout.setMobileInspectorOpen(false);
+            layout.setMobileNavigationOpen(true);
+          }
+        }}
+      >
+        {layout.focusMode ? <Focus size={17} /> : <Menu size={17} />}
+      </button>
+      <span className="text-xs font-semibold text-text-secondary">ArchCode</span>
+      <button
+        ref={inspectorTriggerRef}
+        type="button"
+        aria-label="Open context inspector"
+        aria-expanded={layout.mobileInspectorOpen}
+        aria-controls="mobile-context-inspector"
+        disabled={!inspectorAvailable}
+        className="flex h-8 w-8 items-center justify-center rounded-sm text-text-secondary hover:bg-bg-hover hover:text-text-primary disabled:invisible"
+        onClick={() => {
+          layout.setMobileNavigationOpen(false);
+          layout.setMobileInspectorOpen(true);
+        }}
+      >
+        <PanelRightOpen size={17} />
+      </button>
+    </div>
+  );
+}
+
+function Drawer({
+  open,
+  label,
+  side,
+  returnFocusRef,
+  onClose,
+  children,
+}: {
+  open: boolean;
+  label: string;
+  side: "left" | "right";
+  returnFocusRef?: RefObject<HTMLElement | null>;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <DialogPrimitive.Root open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/60 min-[800px]:hidden" />
+        <DialogPrimitive.Content
+          aria-describedby={undefined}
+          className={`fixed inset-y-0 z-50 w-[min(92vw,360px)] bg-bg-surface shadow-lg outline-none min-[800px]:hidden ${side === "left" ? "left-0" : "right-0"}`}
+          id={side === "left" ? "mobile-work-navigation" : undefined}
+          onCloseAutoFocus={returnFocusRef ? (event) => {
+            event.preventDefault();
+            returnFocusRef.current?.focus();
+          } : undefined}
+        >
+          <DialogPrimitive.Title className="sr-only">{label}</DialogPrimitive.Title>
+          <DialogPrimitive.Close asChild>
+            <button
+              type="button"
+              aria-label={`Close ${label}`}
+              className={`absolute top-2 z-50 flex h-8 w-8 items-center justify-center rounded-sm border border-border-default bg-bg-elevated text-text-secondary hover:text-text-primary ${side === "left" ? "right-2" : "left-2"}`}
+            >
+              <X size={16} />
+            </button>
+          </DialogPrimitive.Close>
+          {children}
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
+  );
+}
+
+function useViewportWidth(): number {
+  const [width, setWidth] = useState(() => typeof window === "undefined" ? 1280 : window.innerWidth);
+  useEffect(() => {
+    const update = () => setWidth(window.innerWidth);
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+  return width;
 }

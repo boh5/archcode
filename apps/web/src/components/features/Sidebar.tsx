@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { ChevronRight, Plus } from "lucide-react";
+import { ChevronRight, Focus, LayoutDashboard, PanelLeftClose, Plus } from "lucide-react";
 import { useCreateSession } from "../../api/mutations";
-import { useGoals, useLoops, useProjects, useSessions, useSessionTree } from "../../api/queries";
+import { useGoals, useLoops, useProjects, useSessions } from "../../api/queries";
 import type {
   GoalState,
   GoalStatus,
@@ -10,7 +10,6 @@ import type {
   LoopStatus,
   Project,
   SessionSummary,
-  SessionTreeNode,
 } from "../../api/types";
 import type { SessionFamilyActivity } from "@archcode/protocol";
 import { ProjectActionDropdown } from "./ProjectActionMenu";
@@ -18,10 +17,8 @@ import { EditProjectDialog } from "./EditProjectDialog";
 import { CloseProjectDialog } from "./CloseProjectDialog";
 import { CreateGoalDialog } from "./CreateGoalDialog";
 import { CreateLoopDialog } from "./CreateLoopDialog";
-import { AGENT_INITIALS, AGENT_ICON_COLORS, isValidAgentType } from "../../lib/agent-constants";
-import type { AgentType } from "../../lib/agent-constants";
 import { formatRelativeTime } from "../../lib/time-format";
-import { getWebSessionStore, useSessionStore } from "../../store/session-store";
+import { useWorkbenchLayout } from "../../context/workbench-layout";
 import {
   runtimeFamilyKey,
   useSessionRuntimeFamilies,
@@ -234,106 +231,10 @@ function LoopItem({
   );
 }
 
-function AgentNode({
-  name,
-  agentType,
-  depth,
-  isActive,
-  onClick,
-}: {
-  name: string;
-  agentType: AgentType;
-  depth: number;
-  isActive: boolean;
-  onClick?: () => void;
-}) {
-  const paddingLeft = depth === 0 ? "pl-3.5" : depth === 1 ? "pl-[38px]" : depth === 2 ? "pl-[48px]" : "pl-[58px]";
-
-  return (
-    <div
-      className={`flex items-center gap-1.5 py-[5px] ${paddingLeft} cursor-pointer transition-colors duration-150 text-xs relative ${
-        isActive ? "bg-accent-subtle" : "hover:bg-bg-hover"
-      }`}
-      onClick={onClick}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (onClick && (e.key === "Enter" || e.key === " ")) onClick();
-      }}
-    >
-      {isActive && (
-        <div className="absolute left-0 top-1 bottom-1 w-0.5 rounded-r-sm bg-accent" />
-      )}
-      <div className={`w-[18px] h-[18px] rounded flex items-center justify-center text-[10px] shrink-0 ${AGENT_ICON_COLORS[agentType]}`}>
-        {AGENT_INITIALS[agentType]}
-      </div>
-      <span className={`flex-1 text-xs whitespace-nowrap overflow-hidden text-ellipsis ${isActive ? "text-accent font-medium" : "text-text-secondary"}`}>
-        {name}
-      </span>
-    </div>
-  );
-}
-
 // Shared sub-components
 
 const SEARCH_INPUT_CLASS =
   "w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none transition-colors duration-150";
-
-/** Dashboard button used at the project level and inside each tab panel. */
-function DashboardLinkButton({
-  to,
-  label,
-  isActive,
-  placeholderLabel,
-}: {
-  to: string;
-  label: string;
-  isActive: boolean;
-  placeholderLabel?: string;
-}) {
-  return (
-    <Link
-      to={to}
-      className={`flex items-center gap-2 px-3.5 py-2 rounded-sm text-[12.5px] font-medium transition-colors duration-150 border ${
-        isActive
-          ? "bg-accent-subtle text-accent border-accent/40"
-          : "text-text-secondary border-border-default hover:bg-bg-hover hover:text-text-primary"
-      }`}
-    >
-      <span className="flex-1 truncate">{label}</span>
-      {placeholderLabel && (
-        <span className="rounded-sm border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-warning">
-          {placeholderLabel}
-        </span>
-      )}
-    </Link>
-  );
-}
-
-function PlaceholderDashboardButton({
-  label,
-  description,
-}: {
-  label: string;
-  description: string;
-}) {
-  return (
-    <div
-      className="rounded-sm border border-dashed border-warning/50 bg-warning/10 px-3.5 py-2"
-      aria-label={`${label} placeholder`}
-    >
-      <div className="flex items-center gap-2 text-[12.5px] font-medium text-warning">
-        <span className="flex-1 truncate">{label}</span>
-        <span className="rounded-sm border border-warning/40 bg-bg-base px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-warning">
-          Placeholder
-        </span>
-      </div>
-      <p className="mt-1 text-[11px] leading-4 text-text-muted">
-        {description}
-      </p>
-    </div>
-  );
-}
 
 function CreateButton({
   onClick,
@@ -378,9 +279,63 @@ function EmptyRow({ children }: { children: React.ReactNode }) {
   return <div className="px-3.5 py-2 text-[11px] text-text-muted">{children}</div>;
 }
 
+function DashboardLinkButton({
+  to,
+  label,
+  isActive,
+}: {
+  to: string;
+  label: string;
+  isActive: boolean;
+}) {
+  return (
+    <Link
+      to={to}
+      aria-current={isActive ? "page" : undefined}
+      className={`group flex h-8 items-center gap-2 rounded-sm border px-2.5 text-[12px] font-medium transition-colors ${isActive
+        ? "border-accent/40 bg-accent-subtle text-accent"
+        : "border-border-subtle bg-bg-base text-text-secondary hover:border-border-default hover:bg-bg-hover hover:text-text-primary"
+      }`}
+    >
+      <LayoutDashboard size={13} className="shrink-0" aria-hidden="true" />
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <ChevronRight size={12} className="shrink-0 text-text-muted transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
+    </Link>
+  );
+}
+
+function PlaceholderDashboardButton({
+  label,
+  description,
+}: {
+  label: string;
+  description: string;
+}) {
+  return (
+    <div
+      className="rounded-sm border border-dashed border-warning/50 bg-warning/10 px-3 py-2"
+      aria-label={`${label} placeholder`}
+    >
+      <div className="flex items-center gap-2 text-[12px] font-medium text-warning">
+        <span className="min-w-0 flex-1 truncate">{label}</span>
+        <span className="rounded-sm border border-warning/40 bg-bg-base px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-warning">
+          Placeholder
+        </span>
+      </div>
+      <p className="mt-1 text-[11px] leading-4 text-text-muted">{description}</p>
+    </div>
+  );
+}
+
 // Sidebar
 
-export function Sidebar() {
+export function Sidebar({
+  onCollapse,
+  onEnterFocusMode,
+}: {
+  onCollapse?: () => void;
+  onEnterFocusMode?: () => void;
+} = {}) {
   const navigate = useNavigate();
   const location = useLocation();
   const { slug = "", sessionId = "", goalId = "", loopId = "" } = useParams<{
@@ -390,12 +345,12 @@ export function Sidebar() {
     loopId: string;
   }>();
   const createSession = useCreateSession();
+  const { toggleSidebar, toggleFocusMode } = useWorkbenchLayout();
 
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [closingProject, setClosingProject] = useState<Project | null>(null);
   const [createGoalOpen, setCreateGoalOpen] = useState(false);
   const [createLoopOpen, setCreateLoopOpen] = useState(false);
-  const [agentTreeCollapsed, setAgentTreeCollapsed] = useState(false);
 
   const [sessionsSearch, setSessionsSearch] = useState("");
   const [goalsSearch, setGoalsSearch] = useState("");
@@ -410,29 +365,12 @@ export function Sidebar() {
   const runtimeInitialized = useSessionRuntimeInitialized(slug);
   const runtimeFamilies = useSessionRuntimeFamilies();
 
-  // Root Dashboard ("/") has no route :slug; fall back to first project so Loop
-  // create never POSTs to `/api/projects//loops` (404).
-  const loopCreateSlug = slug || projects?.[0]?.slug || "";
-
   const routeTab: SidebarTab = deriveTabFromPath(location.pathname);
   const activeTab = selectedTab;
-  const projectDashboardPath = `/projects/${slug}`;
-  const isProjectDashboardActive = location.pathname === projectDashboardPath;
 
   useEffect(() => {
     setSelectedTab(routeTab);
   }, [routeTab]);
-
-  const rootSessionId = useMemo(() => {
-    if (!sessionId) return "";
-    const currentSession = sessions?.find(s => s.sessionId === sessionId);
-    if (currentSession?.rootSessionId) return currentSession.rootSessionId;
-    if (currentSession && !currentSession.parentSessionId) return sessionId;
-    return sessionId;
-  }, [sessionId, sessions]);
-
-  const { data: sessionTree } = useSessionTree(slug, rootSessionId);
-  const focusSessionId = useSessionStore(rootSessionId, (s) => s.focusSessionId, slug);
 
   // Handlers
 
@@ -454,15 +392,6 @@ export function Sidebar() {
 
   const handleLoopClick = (clickedLoopId: string) => {
     navigate(`/projects/${slug}/loops/${clickedLoopId}`);
-  };
-
-  const handleAgentTreeClick = (clickedSessionId: string) => {
-    const store = getWebSessionStore(rootSessionId, slug);
-    if (clickedSessionId === rootSessionId) {
-      store.getState().setFocusSessionId(null);
-    } else {
-      store.getState().setFocusSessionId(clickedSessionId);
-    }
   };
 
   // Filtered lists
@@ -525,53 +454,15 @@ export function Sidebar() {
     });
   }, [loops, loopsSearch]);
 
-  const agentTree = useMemo(() => {
-    if (!sessionTree?.root) return null;
-
-    const agents: Array<{
-      name: string;
-      type: AgentType;
-      depth: number;
-      isActive: boolean;
-      sessionId: string;
-    }> = [];
-
-    function walkNode(node: SessionTreeNode, depth: number): void {
-      const s = node.session;
-      if (!isValidAgentType(s.agentName)) {
-        throw new Error(`Invalid Session agentName: ${s.agentName}`);
-      }
-      const agentType = s.agentName;
-      const isActive = focusSessionId === null
-        ? s.sessionId === rootSessionId
-        : s.sessionId === focusSessionId;
-
-      agents.push({
-        name: s.title || "Untitled",
-        type: agentType,
-        depth,
-        isActive,
-        sessionId: s.sessionId,
-      });
-
-      for (const child of node.children) {
-        walkNode(child, depth + 1);
-      }
-    }
-
-    walkNode(sessionTree.root, 0);
-    return agents;
-  }, [sessionTree, rootSessionId, focusSessionId]);
-
   // Render
 
   return (
-    <div className="h-full bg-bg-surface border-r border-border-subtle flex flex-col overflow-hidden">
-      <div className="px-3.5 pt-2.5 pb-2 border-b border-border-subtle shrink-0">
+    <div id="project-sidebar" className="h-full bg-bg-surface flex flex-col overflow-hidden">
+      <div className="shrink-0 border-b border-border-subtle px-3.5 pb-2 pt-2.5 max-[799px]:pr-12">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
             <div className="font-semibold text-[13px] text-text-primary truncate">
-              {activeProject?.name ?? slug}
+              {activeProject?.name ?? "Project unavailable"}
             </div>
             {activeProject && (
               <div className="font-mono text-[11px] text-text-muted truncate mt-px">
@@ -579,6 +470,7 @@ export function Sidebar() {
               </div>
             )}
           </div>
+          <div className="flex shrink-0 items-center gap-0.5">
           {activeProject && (
             <ProjectActionDropdown
               project={activeProject}
@@ -594,14 +486,31 @@ export function Sidebar() {
               }
             />
           )}
+            <button
+              type="button"
+              className="flex h-6 w-6 items-center justify-center rounded-sm text-text-muted hover:bg-bg-hover hover:text-text-primary focus-visible:outline-2 focus-visible:outline-accent max-[799px]:hidden"
+              aria-label="Collapse project sidebar"
+              aria-controls="project-sidebar"
+              aria-expanded="true"
+              onClick={onCollapse ?? toggleSidebar}
+            >
+              <PanelLeftClose size={13} />
+            </button>
+            <button
+              type="button"
+              className="flex h-6 w-6 items-center justify-center rounded-sm text-text-muted hover:bg-bg-hover hover:text-text-primary focus-visible:outline-2 focus-visible:outline-accent"
+              aria-label="Enter focus mode"
+              onClick={onEnterFocusMode ?? toggleFocusMode}
+            >
+              <Focus size={13} />
+            </button>
+          </div>
         </div>
-
         <div className="mt-2">
           <DashboardLinkButton
-            to={projectDashboardPath}
+            to={`/projects/${slug}`}
             label="Project Dashboard"
-            isActive={isProjectDashboardActive}
-            placeholderLabel="Placeholder"
+            isActive={location.pathname === `/projects/${slug}`}
           />
         </div>
       </div>
@@ -644,11 +553,12 @@ export function Sidebar() {
           <div className="px-3 py-2 space-y-2">
             <PlaceholderDashboardButton
               label="Sessions Dashboard"
-              description="Placeholder: a dedicated sessions dashboard is not available yet. Use the session list below to open or create a session."
+              description="Reserved for a future sessions overview. Use the list below to open or create a session for now."
             />
             <div className="flex items-center gap-2">
               <input
                 type="text"
+                aria-label="Search sessions"
                 placeholder="Search sessions..."
                 value={sessionsSearch}
                 onChange={(e) => setSessionsSearch(e.target.value)}
@@ -699,39 +609,6 @@ export function Sidebar() {
             </EmptyRow>
           )}
 
-          {/* Agent tree lives inside the Sessions tab so it stays visible while a session is active. */}
-          {agentTree && agentTree.length > 0 && (
-            <div className="pt-1 border-t border-border-subtle mt-1">
-              <div className="flex items-center justify-between px-3.5 py-1.5">
-                <div className="flex items-center gap-1 min-w-0">
-                  <button
-                    type="button"
-                    onClick={() => setAgentTreeCollapsed(!agentTreeCollapsed)}
-                    className="flex items-center justify-center w-4 h-4 text-text-muted hover:text-text-tertiary transition-colors duration-150 shrink-0"
-                    aria-label={agentTreeCollapsed ? "Expand Agent Tree" : "Collapse Agent Tree"}
-                  >
-                    <ChevronRight size={11} className={`transition-transform duration-150 ${agentTreeCollapsed ? "" : "rotate-90"}`} />
-                  </button>
-                  <span className="flex items-center gap-1.5 text-[11px] font-semibold text-text-muted uppercase tracking-wider cursor-pointer select-none hover:text-text-tertiary transition-colors duration-150">
-                    <span>Agent Tree</span>
-                    <span style={{ fontSize: 10, textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>
-                      {agentTree.length}
-                    </span>
-                  </span>
-                </div>
-              </div>
-              {!agentTreeCollapsed && agentTree.map((agent, i) => (
-                <AgentNode
-                  key={`${agent.type}-${agent.depth}-${i}`}
-                  name={agent.name}
-                  agentType={agent.type}
-                  depth={agent.depth}
-                  isActive={agent.isActive}
-                  onClick={() => handleAgentTreeClick(agent.sessionId)}
-                />
-              ))}
-            </div>
-          )}
         </section>
 
         <section
@@ -749,6 +626,7 @@ export function Sidebar() {
             <div className="flex items-center gap-2">
               <input
                 type="text"
+                aria-label="Search goals"
                 placeholder="Search goals..."
                 value={goalsSearch}
                 onChange={(e) => setGoalsSearch(e.target.value)}
@@ -793,6 +671,7 @@ export function Sidebar() {
             <div className="flex items-center gap-2">
               <input
                 type="text"
+                aria-label="Search loops"
                 placeholder="Search loops..."
                 value={loopsSearch}
                 onChange={(e) => setLoopsSearch(e.target.value)}
@@ -802,7 +681,7 @@ export function Sidebar() {
                 onClick={() => setCreateLoopOpen(true)}
                 title="New loop"
                 label="New loop"
-                disabled={!loopCreateSlug}
+                disabled={!slug}
               />
             </div>
           </div>
@@ -862,10 +741,10 @@ export function Sidebar() {
       <CreateLoopDialog
         open={createLoopOpen}
         onClose={() => setCreateLoopOpen(false)}
-        slug={loopCreateSlug}
+        slug={slug}
         onCreated={(newLoopId) => {
           setCreateLoopOpen(false);
-          navigate(`/projects/${loopCreateSlug}/loops/${newLoopId}`);
+          navigate(`/projects/${slug}/loops/${newLoopId}`);
         }}
       />
     </div>

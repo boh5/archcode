@@ -8,6 +8,7 @@ import type { GlobalSSEHitlRealtimeEvent } from "@archcode/protocol";
 import type { HitlProjection, LoopIntegrationStatusItem, LoopKillState, LoopRunReport, LoopState } from "../api/types";
 import { LoopDetailRoute } from "./loop-detail";
 import { hitlStore } from "../store/hitl-store";
+import { WorkbenchLayoutProvider } from "../context/workbench-layout";
 
 const DOM_GLOBAL_NAMES = [
   "window",
@@ -103,6 +104,7 @@ async function renderLoopDetailRoute(
 ): Promise<void> {
   await act(async () => {
     root.render(
+      <WorkbenchLayoutProvider>
       <QueryClientProvider client={queryClient}>
         <MemoryRouter initialEntries={[initialPath]}>
           <Routes>
@@ -112,7 +114,8 @@ async function renderLoopDetailRoute(
             <Route path="/projects/:slug/goals/:goalId" element={<div data-testid="goal-route" />} />
           </Routes>
         </MemoryRouter>
-      </QueryClientProvider>,
+      </QueryClientProvider>
+      </WorkbenchLayoutProvider>,
     );
   });
 }
@@ -458,7 +461,7 @@ describe("LoopDetailRoute", () => {
     mock.restore();
   });
 
-  test("primary view shows canonical status (badge + activity), next run, last result, attention, recent results, settings; hides diagnostics", async () => {
+  test("work canvas keeps operations and results while status and settings move to inspector", async () => {
     const dom = installDom();
     const container = document.getElementById("root");
     if (!container) throw new Error("Missing test root");
@@ -473,34 +476,11 @@ describe("LoopDetailRoute", () => {
 
       await waitFor(() => {
         expect(container.textContent).toContain("Daily Triage Loop");
-        expect(container.querySelector('[data-testid="loop-status-section"]')).not.toBeNull();
         expect(container.querySelector('[data-testid="loop-attention-section"]')).not.toBeNull();
         expect(container.querySelector('[data-testid="loop-recent-results-section"]')).not.toBeNull();
-        expect(container.querySelector('[data-testid="loop-settings-section"]')).not.toBeNull();
+        expect(container.querySelector('[data-testid="loop-status-section"]')).toBeNull();
+        expect(container.querySelector('[data-testid="loop-settings-section"]')).toBeNull();
       });
-
-      const statusSection = container.querySelector('[data-testid="loop-status-section"]')!;
-      expect(statusSection.textContent).toContain("Running");
-      expect(statusSection.textContent).toContain("Running manual run (session session-current)");
-      expect(statusSection.textContent).toContain("run count");
-      expect(statusSection.textContent).toContain("next run");
-      expect(statusSection.textContent).toContain("last result");
-
-      const settingsSection = container.querySelector('[data-testid="loop-settings-section"]')!;
-      expect(settingsSection.textContent).toContain("template");
-      expect(settingsSection.textContent).toContain("goal_runner");
-      expect(settingsSection.textContent).toContain("schedule");
-      expect(settingsSection.textContent).toContain("interval 60000ms");
-      expect(settingsSection.textContent).toContain("worktree");
-      expect(settingsSection.textContent).toContain("disabled");
-      expect(settingsSection.textContent).toContain("budget defaults");
-      expect(settingsSection.textContent).toContain("iterations 6");
-      expect(settingsSection.textContent).toContain("task prompt");
-      expect(settingsSection.textContent).toContain("Review failing tests and summarize concrete next steps.");
-      expect(settingsSection.textContent).toContain("goal template");
-      expect(settingsSection.textContent).toContain("objective: Investigate failing tests and propose fixes.");
-      expect(settingsSection.textContent).toContain("acceptance: Reviewer can decide DONE from logs and diff.");
-      expect(settingsSection.textContent).not.toContain("Triage Follow-up Goal");
 
       const recentSection = container.querySelector('[data-testid="loop-recent-results-section"]')!;
       expect(recentSection.textContent).toContain("Failed");
@@ -508,8 +488,6 @@ describe("LoopDetailRoute", () => {
       expect(recentSection.textContent).toContain("Loop is already running");
       expect(recentSection.querySelector('[data-testid="loop-recent-result-run-history-1"]')).not.toBeNull();
 
-      expect(container.querySelector('a[href="/projects/demo/sessions/session-current"]')).not.toBeNull();
-      expect(container.querySelector('a[href="/projects/demo/goals/goal-current"]')).not.toBeNull();
       expect(container.querySelector('a[href="/projects/demo/sessions/session-history"]')).not.toBeNull();
       expect(container.querySelector('a[href="/projects/demo/goals/goal-history"]')).not.toBeNull();
 
@@ -518,7 +496,7 @@ describe("LoopDetailRoute", () => {
       expect(container.querySelector('[data-testid="loop-global-kill-button"]')).not.toBeNull();
       expect(container.querySelector('[data-testid="loop-global-kill-banner"]')?.textContent).toContain("maintenance stop");
 
-      const triggerButton = findElementByText(container, "Trigger manual run") as HTMLButtonElement;
+      const triggerButton = container.querySelector('button[aria-label="Trigger manual run"]') as HTMLButtonElement;
       expect(triggerButton.disabled).toBe(true);
 
       await act(async () => {
@@ -529,12 +507,14 @@ describe("LoopDetailRoute", () => {
 
       await waitFor(() => {
         expect(paths).toContain("DELETE /api/projects/demo/loops/kill-all");
-        const nextTrigger = findElementByText(container, "Trigger manual run") as HTMLButtonElement;
+        const nextTrigger = container.querySelector(
+          'button[aria-label="Trigger manual run"]',
+        ) as HTMLButtonElement;
         expect(nextTrigger.disabled).toBe(false);
       });
 
       await act(async () => {
-        findElementByText(container, "Trigger manual run").dispatchEvent(
+        container.querySelector('button[aria-label="Trigger manual run"]')?.dispatchEvent(
           new dom.window.MouseEvent("click", { bubbles: true }),
         );
       });
@@ -908,13 +888,15 @@ describe("LoopDetailRoute", () => {
     try {
       await act(async () => {
         reactRoot.render(
+          <WorkbenchLayoutProvider>
           <QueryClientProvider client={queryClient}>
             <MemoryRouter initialEntries={["/loops/missing"]}>
               <Routes>
                 <Route path="/loops/:loopId" element={<LoopDetailRoute />} />
               </Routes>
             </MemoryRouter>
-          </QueryClientProvider>,
+          </QueryClientProvider>
+          </WorkbenchLayoutProvider>,
         );
       });
 

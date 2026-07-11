@@ -1,12 +1,17 @@
 import { useEffect } from "react";
+import { ArrowLeft } from "lucide-react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ChatMessages } from "../components/composite/ChatMessages";
 import { HitlInbox } from "../components/features/HitlCard";
 import { ChatHeader } from "../components/features/ChatHeader";
 import { ChatInput } from "../components/features/ChatInput";
+import { DiffTab } from "../components/features/DiffTab";
+import { TodoProgressButton } from "../components/features/TodoProgressButton";
+import { InspectorToggleButton } from "../components/features/InspectorToggleButton";
 import { useFocusedSession, useProjects, useSession } from "../api/queries";
 import { useRealtimeHitl } from "../store/hitl-store";
 import { getWebSessionStore, markSessionForeground } from "../store/session-store";
+import { useWorkbenchLayout } from "../context/workbench-layout";
 
 export function SessionRoute() {
   const { slug = "", sessionId = "" } = useParams<{
@@ -15,6 +20,10 @@ export function SessionRoute() {
   }>();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const layout = useWorkbenchLayout();
+  const { toggleInspectorSurface } = layout;
+  const canvasView = searchParams.get("view");
+  const selectedFile = searchParams.get("file") ?? undefined;
 
   const { data: session, isLoading: isSessionLoading, error: sessionError } = useSession(slug, sessionId);
   const { data: projects = [] } = useProjects();
@@ -177,7 +186,7 @@ export function SessionRoute() {
   }
 
   // Focused view: breadcrumb bar + child session messages (read-only)
-  if (focusSessionId) {
+  if (focusSessionId && canvasView !== "diff") {
     const rootTitle = session?.title ?? "Session";
     const childTitle = focusedError
       ? "Error"
@@ -192,7 +201,7 @@ export function SessionRoute() {
 
     return (
       <div className="flex h-full flex-col">
-        <div className="bg-bg-elevated border-b border-border-subtle px-3.5 py-2 flex items-center justify-between text-[13px]">
+        <div className="bg-bg-elevated border-b border-border-subtle px-3.5 py-2 flex items-center justify-between gap-3 text-[13px]">
           <button
             type="button"
             className="text-text-secondary hover:text-text-primary transition-colors cursor-pointer"
@@ -200,9 +209,16 @@ export function SessionRoute() {
           >
             ← Back to {rootTitle}
           </button>
-          <span className="text-text-primary font-medium truncate ml-4">
+          <span className="min-w-0 flex-1 truncate text-right font-medium text-text-primary">
             {childTitle}
           </span>
+          <TodoProgressButton slug={slug} sessionId={focusSessionId} />
+          <InspectorToggleButton
+            expanded={layout.inspectorExpanded}
+            onToggle={toggleInspectorSurface}
+            iconSize={14}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-border-default text-text-tertiary hover:bg-bg-hover hover:text-text-primary max-[799px]:hidden"
+          />
         </div>
         {focusedError ? (
           <div className="flex-1 flex flex-col items-center justify-center gap-3 text-text-secondary">
@@ -241,15 +257,45 @@ export function SessionRoute() {
         sessionId={rootSessionId}
         goalId={session?.goalId}
         projectRoot={projectRoot}
-        onToggleDetail={() => {}}
+        onToggleInspector={toggleInspectorSurface}
+        inspectorExpanded={layout.inspectorExpanded}
       />
-      <ChatMessages slug={slug} sessionId={rootSessionId} />
-      <HitlInbox
-        projections={sessionHitl}
-        hideWhenEmpty
-        className="gap-2 shrink-0 border-t border-border-subtle bg-bg-surface px-5 py-3"
-      />
-      <ChatInput slug={slug} sessionId={rootSessionId} />
+      {canvasView === "diff" ? (
+        <div className="flex min-h-0 flex-1 flex-col" data-testid="session-diff-canvas">
+          <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border-subtle bg-bg-surface px-4">
+            <button
+              type="button"
+              className="flex items-center gap-1 text-xs text-text-tertiary hover:text-text-primary"
+              onClick={() => {
+                const next = new URLSearchParams(searchParams);
+                next.delete("view");
+                next.delete("file");
+                navigate(`?${next.toString()}`);
+              }}
+            >
+              <ArrowLeft size={13} />
+              Execution
+            </button>
+            <span className="text-text-muted">/</span>
+            <span className="min-w-0 flex-1 truncate text-xs font-medium text-text-primary">
+              {selectedFile ?? "All changes"}
+            </span>
+          </div>
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <DiffTab slug={slug} sessionId={rootSessionId} selectedPath={selectedFile} />
+          </div>
+        </div>
+      ) : (
+        <>
+          <ChatMessages slug={slug} sessionId={rootSessionId} />
+          <HitlInbox
+            projections={sessionHitl}
+            hideWhenEmpty
+            className="gap-2 shrink-0 border-t border-border-subtle bg-bg-surface px-5 py-3"
+          />
+          <ChatInput slug={slug} sessionId={rootSessionId} />
+        </>
+      )}
     </div>
   );
 }

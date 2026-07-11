@@ -88,13 +88,15 @@ export function Dashboard() {
           )}
         </section>
 
-        <HitlInbox
-          projections={projections}
-          isLoading={hitlLoading}
-          hideWhenEmpty
-          testId="dashboard-approval-queue"
-          className="gap-2.5"
-        />
+        <div id="approval-queue">
+          <HitlInbox
+            projections={projections}
+            isLoading={hitlLoading}
+            hideWhenEmpty
+            testId="dashboard-approval-queue"
+            className="gap-2.5"
+          />
+        </div>
       </div>
     </div>
   );

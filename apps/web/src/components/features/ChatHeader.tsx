@@ -1,8 +1,8 @@
-import { CircleX, Menu } from "lucide-react";
-import { usePostCommand } from "../../api/mutations";
 import { useGoal } from "../../api/queries";
 import { useSessionStore } from "../../store/session-store";
 import type { GoalStatus } from "../../api/types";
+import { TodoProgressButton } from "./TodoProgressButton";
+import { InspectorToggleButton } from "./InspectorToggleButton";
 
 const STATUS_BADGE_CLASS: Record<GoalStatus, string> = {
   draft: "bg-bg-active text-text-muted",
@@ -20,19 +20,15 @@ interface ChatHeaderProps {
   sessionId: string;
   goalId?: string;
   projectRoot?: string;
-  onToggleDetail: () => void;
+  onToggleInspector: () => void;
+  inspectorExpanded: boolean;
 }
 
-export function ChatHeader({ slug, sessionId, goalId, projectRoot, onToggleDetail }: ChatHeaderProps) {
+export function ChatHeader({ slug, sessionId, goalId, projectRoot, onToggleInspector, inspectorExpanded }: ChatHeaderProps) {
   const title = useSessionStore(sessionId, (s) => s.title, slug);
   const stats = useSessionStore(sessionId, (s) => s.stats, slug);
   const cwd = useSessionStore(sessionId, (s) => s.cwd, slug);
-  const postCommand = usePostCommand();
   const { data: goal } = useGoal(slug, goalId ?? "");
-
-  const handleCompact = () => {
-    postCommand.mutate({ slug, sessionId, name: "compact" });
-  };
 
   const hasStats = stats && (stats.messages.total > 0 || stats.tools.calls > 0 || stats.usage.totalTokens > 0);
 
@@ -66,21 +62,13 @@ export function ChatHeader({ slug, sessionId, goalId, projectRoot, onToggleDetai
         )}
       </div>
       <div className="flex items-center gap-1.5">
-        <button
-          className="w-[30px] h-[30px] rounded-sm border border-border-default bg-transparent text-text-tertiary cursor-pointer flex items-center justify-center transition-all duration-150 hover:bg-bg-hover hover:text-text-primary hover:border-border-strong"
-          title="Compact context"
-          onClick={handleCompact}
-          disabled={postCommand.isPending}
-        >
-          <CircleX size={16} />
-        </button>
-        <button
-          className="w-[30px] h-[30px] rounded-sm border border-border-default bg-transparent text-text-tertiary cursor-pointer flex items-center justify-center transition-all duration-150 hover:bg-bg-hover hover:text-text-primary hover:border-border-strong"
-          title="Toggle detail panel"
-          onClick={onToggleDetail}
-        >
-          <Menu size={16} />
-        </button>
+        <TodoProgressButton slug={slug} sessionId={sessionId} />
+        <InspectorToggleButton
+          expanded={inspectorExpanded}
+          onToggle={onToggleInspector}
+          iconSize={16}
+          className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-sm border border-border-default bg-transparent text-text-tertiary transition-colors hover:border-border-strong hover:bg-bg-hover hover:text-text-primary max-[799px]:hidden"
+        />
       </div>
     </div>
   );

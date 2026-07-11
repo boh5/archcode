@@ -1,15 +1,12 @@
-import { useState } from "react";
-import { useParams } from "react-router-dom";
-import { ArrowLeft, Play, RotateCcw, XCircle } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { ArrowLeft, GitBranch, Play, RotateCcw, XCircle } from "lucide-react";
 import { useGoal } from "../api/queries";
 import { useRunGoal, useRetryGoal, useCancelGoal } from "../api/mutations";
 import type { GoalStatus } from "../api/types";
-import { GoalOverview } from "../components/features/GoalOverview";
-import { GoalSessions } from "../components/features/GoalSessions";
-import { GoalChat } from "../components/features/GoalChat";
-
-type Tab = "overview" | "chat" | "sessions";
+import { HitlInbox } from "../components/features/HitlCard";
+import { useRealtimeHitl } from "../store/hitl-store";
+import { useWorkbenchLayout } from "../context/workbench-layout";
+import { InspectorToggleButton } from "../components/features/InspectorToggleButton";
 
 const STATUS_BADGE_CLASS: Record<GoalStatus, string> = {
   draft: "bg-bg-active text-text-muted",
@@ -22,12 +19,6 @@ const STATUS_BADGE_CLASS: Record<GoalStatus, string> = {
   cancelled: "bg-bg-active text-text-muted",
 };
 
-const TABS: { id: Tab; label: string; testId: string }[] = [
-  { id: "overview", label: "Overview", testId: "goal-overview-tab" },
-  { id: "chat", label: "Chat", testId: "goal-chat-tab" },
-  { id: "sessions", label: "Sessions", testId: "goal-sessions-tab" },
-];
-
 export function GoalDetailRoute() {
   const { slug = "", goalId = "" } = useParams<{ slug: string; goalId: string }>();
   const navigate = useNavigate();
@@ -35,7 +26,14 @@ export function GoalDetailRoute() {
   const runGoal = useRunGoal();
   const retryGoal = useRetryGoal();
   const cancelGoal = useCancelGoal();
-  const [activeTab, setActiveTab] = useState<Tab>("overview");
+  const layout = useWorkbenchLayout();
+  const { toggleInspectorSurface } = layout;
+  const goalHitl = useRealtimeHitl({
+    slug,
+    scope: "goal",
+    ownerId: goalId,
+    includeChildren: true,
+  });
   const mutationError = runGoal.error ?? retryGoal.error ?? cancelGoal.error;
 
   const handleBack = () => {
@@ -97,10 +95,12 @@ export function GoalDetailRoute() {
               type="button"
               onClick={handleRun}
               disabled={runGoal.isPending}
+              aria-label="Run goal"
+              title="Run goal"
               className="inline-flex items-center gap-1.5 rounded-sm bg-accent px-3 py-1.5 text-[12.5px] font-medium text-bg-base transition-colors duration-150 hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Play size={13} />
-              {runGoal.isPending ? "Starting…" : "Run Goal"}
+              <span className="max-[900px]:hidden">{runGoal.isPending ? "Starting…" : "Run Goal"}</span>
             </button>
           )}
           {canRetry && (
@@ -108,10 +108,12 @@ export function GoalDetailRoute() {
               type="button"
               onClick={handleRetry}
               disabled={retryGoal.isPending}
+              aria-label="Retry goal"
+              title="Retry goal"
               className="inline-flex items-center gap-1.5 rounded-sm bg-bg-active px-3 py-1.5 text-[12.5px] font-medium text-text-secondary transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <RotateCcw size={13} />
-              {retryGoal.isPending ? "Retrying…" : "Retry Goal"}
+              <span className="max-[900px]:hidden">{retryGoal.isPending ? "Retrying…" : "Retry Goal"}</span>
             </button>
           )}
           {canCancel && (
@@ -119,15 +121,18 @@ export function GoalDetailRoute() {
               type="button"
               onClick={handleCancel}
               disabled={cancelGoal.isPending}
+              aria-label="Cancel goal"
+              title="Cancel goal"
               className="inline-flex items-center gap-1.5 rounded-sm bg-bg-active px-3 py-1.5 text-[12.5px] font-medium text-text-secondary transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <XCircle size={13} />
-              {cancelGoal.isPending ? "Cancelling…" : "Cancel Goal"}
+              <span className="max-[900px]:hidden">{cancelGoal.isPending ? "Cancelling…" : "Cancel Goal"}</span>
             </button>
           )}
           <span className={`text-[11px] px-2 py-0.5 rounded-sm font-medium ${STATUS_BADGE_CLASS[goal.status]}`}>
             {goal.status}
           </span>
+          <InspectorToggleButton expanded={layout.inspectorExpanded} onToggle={toggleInspectorSurface} />
         </div>
       </div>
 
@@ -137,34 +142,45 @@ export function GoalDetailRoute() {
         </div>
       )}
 
-      <div className="flex items-center gap-1 px-4 border-b border-border-subtle shrink-0 bg-bg-surface" role="tablist" aria-label="Goal detail sections">
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            id={`goal-tab-${tab.id}`}
-            data-testid={tab.testId}
-            type="button"
-            role="tab"
-            aria-selected={activeTab === tab.id}
-            aria-controls={`goal-panel-${tab.id}`}
-            className={`px-3 py-2 text-[12.5px] font-medium transition-colors duration-150 cursor-pointer border-b-2 ${
-              activeTab === tab.id
-                ? "text-text-primary border-accent"
-                : "text-text-tertiary border-transparent hover:text-text-secondary"
-            }`}
-            onClick={() => setActiveTab(tab.id)}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      <div className="flex-1 overflow-y-auto">
-        <section id={`goal-panel-${activeTab}`} role="tabpanel" aria-labelledby={`goal-tab-${activeTab}`}>
-          {activeTab === "overview" && <GoalOverview goal={goal} slug={slug} />}
-          {activeTab === "chat" && <GoalChat slug={slug} goal={goal} />}
-          {activeTab === "sessions" && <GoalSessions slug={slug} goal={goal} />}
-        </section>
+      <div className="min-h-0 flex-1 overflow-y-auto p-5">
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
+          <div data-testid="goal-approval-queue">
+            <HitlInbox
+              projections={goalHitl}
+              emptyMessage="No pending approvals for this goal"
+              title="Goal approvals"
+              className="gap-2"
+            />
+          </div>
+          {goal.mainSessionId ? (
+            <Link
+              to={`/projects/${slug}/sessions/${goal.mainSessionId}`}
+              className="flex items-center gap-3 rounded-md border border-border-default bg-bg-surface p-4 transition-colors hover:bg-bg-hover"
+            >
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent-subtle text-accent"><GitBranch size={17} /></span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-semibold text-text-primary">Open execution session</span>
+                <span className="block truncate font-mono text-[11px] text-text-muted">{goal.mainSessionId}</span>
+              </span>
+              <span className="text-xs text-text-tertiary">Open →</span>
+            </Link>
+          ) : (
+            <div className="rounded-md border border-border-subtle bg-bg-surface p-4">
+              <div className="text-sm font-medium text-text-primary">Execution status</div>
+              <div className="mt-1 text-xs capitalize text-text-tertiary">{goal.status} · attempt {goal.attempt}</div>
+            </div>
+          )}
+          {goal.lastFailureSummary && (
+            <div className="rounded-md border border-warning/30 bg-warning-muted p-4 text-xs leading-5 text-warning">
+              {goal.lastFailureSummary}
+            </div>
+          )}
+          {goal.lastError && (
+            <div className="rounded-md border border-error/30 bg-error-muted p-4 text-xs leading-5 text-error">
+              {goal.lastError.name}: {goal.lastError.message}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

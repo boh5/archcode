@@ -18,6 +18,7 @@ import {
 import { hitlStore } from "../store/hitl-store";
 import { focusedSessionQueryOptions } from "../api/queries";
 import { SessionRoute } from "./session";
+import { WorkbenchLayoutProvider } from "../context/workbench-layout";
 
 function createSession(input: {
   id: string;
@@ -139,13 +140,15 @@ function findElementByText(container: Element, text: string): Element {
 async function renderSessionRoute(root: Root, queryClient: QueryClient): Promise<void> {
   await act(async () => {
     root.render(
+      <WorkbenchLayoutProvider>
       <QueryClientProvider client={queryClient}>
         <MemoryRouter initialEntries={["/projects/demo/sessions/root-session"]}>
           <Routes>
             <Route path="/projects/:slug/sessions/:sessionId" element={<SessionRoute />} />
           </Routes>
         </MemoryRouter>
-      </QueryClientProvider>,
+      </QueryClientProvider>
+      </WorkbenchLayoutProvider>,
     );
   });
 }
@@ -299,6 +302,7 @@ describe("SessionRoute focused view store behavior", () => {
         },
       ],
     });
+    childSession.todos = [{ id: "child-todo", content: "Inspect child output", status: "in_progress" }];
 
     const fetchMock = mock(async (input: Parameters<typeof fetch>[0]) => {
       const path = typeof input === "string"
@@ -337,6 +341,8 @@ describe("SessionRoute focused view store behavior", () => {
         expect(getWebSessionStore("root-session", "demo").getState().focusSessionId).toBe("child-session");
         expect(container.textContent).toContain("← Back to Root Session");
         expect(container.textContent).toContain("Child Session");
+        expect(container.querySelector('button[aria-label^="Todo progress"]')).not.toBeNull();
+        expect(container.querySelector('button[aria-controls~="context-inspector"]')).not.toBeNull();
         expect(container.querySelector('[data-testid="hitl-inbox"]')).toBeNull();
       });
 
@@ -473,6 +479,7 @@ describe("SessionRoute focused view store behavior", () => {
     try {
       await act(async () => {
         reactRoot.render(
+          <WorkbenchLayoutProvider>
           <QueryClientProvider client={queryClient}>
             <MemoryRouter initialEntries={["/projects/demo/sessions/child-1"]}>
               <Routes>
@@ -487,7 +494,8 @@ describe("SessionRoute focused view store behavior", () => {
                 />
               </Routes>
             </MemoryRouter>
-          </QueryClientProvider>,
+          </QueryClientProvider>
+          </WorkbenchLayoutProvider>,
         );
       });
 
@@ -554,7 +562,7 @@ describe("SessionRoute focused view store behavior", () => {
   test("focusedSessionQueryOptions uses correct query key", () => {
     const options = focusedSessionQueryOptions("my-project", "child-abc");
     const key = options.queryKey as unknown as string[];
-    expect(key).toEqual(["projects", "my-project", "sessions", "child-abc", "focused"]);
+    expect(key).toEqual(["projects", "my-project", "sessions", "child-abc"]);
   });
 
   test("child session store can be initialized from focused session snapshot", () => {

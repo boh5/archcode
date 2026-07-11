@@ -152,6 +152,13 @@ mock.module("../../store/session-runtime-store", () => ({
   useSessionRuntimeFamilies: () => runtimeFamilies,
 }));
 
+mock.module("../../context/workbench-layout", () => ({
+  useWorkbenchLayout: () => ({
+    toggleSidebar: mock(() => {}),
+    toggleFocusMode: mock(() => {}),
+  }),
+}));
+
 mock.module("../../api/queries", () => ({
   queryKeys: {},
   projectsQueryOptions: () => ({}),
@@ -171,6 +178,9 @@ mock.module("../../api/queries", () => ({
 
 mock.module("lucide-react", () => ({
   ChevronRight: "ChevronRight",
+  Focus: "Focus",
+  LayoutDashboard: "LayoutDashboard",
+  PanelLeftClose: "PanelLeftClose",
   Plus: "Plus",
 }));
 
@@ -247,10 +257,11 @@ describe("Sidebar", () => {
     }
   });
 
-  test("missing active project shows slug fallback and hides project action menu", () => {
+  test("missing active project shows an unavailable state and hides project action menu", () => {
     const tree = render();
 
-    expect(textContent(tree)).toContain("missing-project");
+    expect(textContent(tree)).toContain("Project unavailable");
+    expect(textContent(tree)).not.toContain("missing-project");
     expect(textContent(tree)).not.toContain("/workspace/archcode");
     expect(findAll(tree, (element) => typeName(element) === "ProjectActionDropdown")).toHaveLength(0);
   });
@@ -266,46 +277,39 @@ describe("Sidebar", () => {
     expect(findAll(tree, (element) => typeName(element) === "ProjectActionDropdown")).toHaveLength(1);
   });
 
-  test("project dashboard button links to /projects/:slug and shows active on exact match", () => {
+  test("renders the real project dashboard entry without placeholder copy", () => {
     projects = [project];
     useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "", loopId: "" }));
     currentPathname = "/projects/archcode";
     const tree = render();
 
-    const dashboardButtons = findAll(tree, (element) => typeName(element) === "DashboardLinkButton");
-    const projectDashboard = dashboardButtons.find((l) => (l.props?.to as string) === "/projects/archcode");
-    expect(projectDashboard).toBeDefined();
-    expect(projectDashboard?.props?.isActive).toBe(true);
-    expect(projectDashboard?.props?.label).toBe("Project Dashboard");
-    expect(projectDashboard?.props?.placeholderLabel).toBe("Placeholder");
+    const dashboards = findAll(tree, (element) => typeName(element) === "DashboardLinkButton");
+    expect(dashboards).toHaveLength(3);
+    expect(dashboards[0]?.props?.to).toBe("/projects/archcode");
+    expect(dashboards[0]?.props?.label).toBe("Project Dashboard");
+    expect(textContent(tree)).not.toContain("Placeholder");
   });
 
-  test("sessions dashboard renders as its own obvious placeholder instead of project dashboard link", () => {
+  test("preserves the future sessions dashboard placeholder", () => {
     projects = [project];
     useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "", loopId: "" }));
     currentPathname = "/projects/archcode";
     const tree = render();
-
-    const projectDashboardLinks = findAll(tree, (element) =>
-      typeName(element) === "DashboardLinkButton" && (element.props?.to as string) === "/projects/archcode",
-    );
-    expect(projectDashboardLinks).toHaveLength(1);
 
     const placeholders = findAll(tree, (element) => typeName(element) === "PlaceholderDashboardButton");
-    const sessionsDashboard = placeholders.find((element) => element.props?.label === "Sessions Dashboard");
-    expect(sessionsDashboard).toBeDefined();
-    expect(sessionsDashboard?.props?.description).toContain("dedicated sessions dashboard is not available yet");
+    expect(placeholders).toHaveLength(1);
+    expect(placeholders[0]?.props?.label).toBe("Sessions Dashboard");
   });
 
-  test("project dashboard button is inactive when path is a sub-route", () => {
+  test("keeps the project dashboard reachable on session routes", () => {
     projects = [project];
     useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "s1", goalId: "", loopId: "" }));
     currentPathname = "/projects/archcode/sessions/s1";
     const tree = render();
 
-    const dashboardButtons = findAll(tree, (element) => typeName(element) === "DashboardLinkButton");
-    const projectDashboard = dashboardButtons.find((l) => (l.props?.to as string) === "/projects/archcode");
-    expect(projectDashboard?.props?.isActive).toBe(false);
+    const dashboards = findAll(tree, (element) => typeName(element) === "DashboardLinkButton");
+    expect(dashboards).toHaveLength(3);
+    expect(dashboards[0]?.props?.label).toBe("Project Dashboard");
   });
 
   test("tab selector renders Sessions, Goals, Loops tabs with accessible roles", () => {
@@ -398,7 +402,7 @@ describe("Sidebar", () => {
     expect(sessionCreateButton?.props?.disabled).toBe(true);
   });
 
-  test("filters sidebar list to roots and fetches active child's root tree", () => {
+  test("filters sidebar session list to root sessions without rendering agents", () => {
     projects = [project];
     sessions = [
       {
@@ -452,14 +456,10 @@ describe("Sidebar", () => {
     const sessionItems = findAll(tree, (element) => typeName(element) === "SessionItem");
     const agentNodes = findAll(tree, (element) => typeName(element) === "AgentNode");
 
-    expect(useSessionTree).toHaveBeenCalledWith("archcode", "root-session");
-    expect(textContent(tree)).toContain("Agent Tree");
     expect(sessionItems).toHaveLength(1);
     expect((sessionItems[0].props?.session as SessionSummary).sessionId).toBe("root-session");
-    expect(agentNodes).toHaveLength(2);
-    expect(agentNodes.map((node) => node.props?.name)).toEqual(["Root Session", "Child Session"]);
-    expect(agentNodes.map((node) => node.props?.agentType)).toEqual(["orchestrator", "build"]);
-    expect(agentNodes.every((node) => node.props?.status === undefined)).toBe(true);
+    expect(agentNodes).toHaveLength(0);
+    expect(textContent(tree)).not.toContain("Agent Tree");
   });
 
   test("root session activity comes only from the runtime projection, never updatedAt", () => {
@@ -533,7 +533,7 @@ describe("Sidebar", () => {
     expect(item?.props?.activity).toBeUndefined();
   });
 
-  test("agent tree click calls setFocusSessionId instead of navigate", () => {
+  test("does not keep Agent Tree interaction inside the sidebar", () => {
     projects = [project];
     sessions = [
       {
@@ -586,21 +586,12 @@ describe("Sidebar", () => {
     const tree = render();
     const agentNodes = findAll(tree, (element) => typeName(element) === "AgentNode");
 
-    const childNode = agentNodes[1];
-    (childNode?.props?.onClick as () => void)?.();
-    expect(setFocusSessionId).toHaveBeenCalledWith("child-session");
-    expect(navigate).not.toHaveBeenCalled();
-
-    setFocusSessionId.mockClear();
-    navigate.mockClear();
-
-    const rootNode = agentNodes[0];
-    (rootNode?.props?.onClick as () => void)?.();
-    expect(setFocusSessionId).toHaveBeenCalledWith(null);
+    expect(agentNodes).toHaveLength(0);
+    expect(setFocusSessionId).not.toHaveBeenCalled();
     expect(navigate).not.toHaveBeenCalled();
   });
 
-  test("agent tree isActive follows focusSessionId", () => {
+  test("does not render Agent Tree state in the sidebar", () => {
     projects = [project];
     sessions = [
       {
@@ -650,17 +641,9 @@ describe("Sidebar", () => {
     useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "root-session", goalId: "", loopId: "" }));
     currentPathname = "/projects/archcode/sessions/root-session";
 
-    focusSessionId = null;
-    let tree = render();
-    let agentNodes = findAll(tree, (element) => typeName(element) === "AgentNode");
-    expect(agentNodes[0]?.props?.isActive).toBe(true);
-    expect(agentNodes[1]?.props?.isActive).toBe(false);
-
     focusSessionId = "child-session";
-    tree = render();
-    agentNodes = findAll(tree, (element) => typeName(element) === "AgentNode");
-    expect(agentNodes[0]?.props?.isActive).toBe(false);
-    expect(agentNodes[1]?.props?.isActive).toBe(true);
+    const tree = render();
+    expect(findAll(tree, (element) => typeName(element) === "AgentNode")).toHaveLength(0);
   });
 
   test("goals panel renders goal items and highlights active goal", () => {
@@ -724,18 +707,17 @@ describe("Sidebar", () => {
     expect(findAll(tree, (element) => typeName(element) === "GoalItem")).toHaveLength(0);
   });
 
-  test("goals dashboard button links to /projects/:slug/goals", () => {
+  test("renders the real goals dashboard entry", () => {
     projects = [project];
     goals = [];
     useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "", loopId: "" }));
     currentPathname = "/projects/archcode/goals";
 
     const tree = render();
-    const dashboardButtons = findAll(tree, (element) => typeName(element) === "DashboardLinkButton");
-    const goalsDashboard = dashboardButtons.find((l) => (l.props?.to as string) === "/projects/archcode/goals");
-    expect(goalsDashboard).toBeDefined();
-    expect(goalsDashboard?.props?.label).toBe("Goals Dashboard");
-    expect(goalsDashboard?.props?.isActive).toBe(true);
+    const dashboards = findAll(tree, (element) => typeName(element) === "DashboardLinkButton");
+    expect(dashboards.map((item) => item.props?.label)).toEqual(["Project Dashboard", "Goals Dashboard", "Loops Dashboard"]);
+    expect(dashboards[1]?.props?.to).toBe("/projects/archcode/goals");
+    expect(dashboards[1]?.props?.isActive).toBe(true);
   });
 
   test("clicking a goal item navigates to goal detail route", () => {
@@ -848,18 +830,17 @@ describe("Sidebar", () => {
     expect(findAll(tree, (element) => typeName(element) === "LoopItem")).toHaveLength(0);
   });
 
-  test("loops dashboard button links to /projects/:slug/loops", () => {
+  test("renders the real loops dashboard entry", () => {
     projects = [project];
     loops = [];
     useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "", loopId: "" }));
     currentPathname = "/projects/archcode/loops";
 
     const tree = render();
-    const dashboardButtons = findAll(tree, (element) => typeName(element) === "DashboardLinkButton");
-    const loopsDashboard = dashboardButtons.find((l) => (l.props?.to as string) === "/projects/archcode/loops");
-    expect(loopsDashboard).toBeDefined();
-    expect(loopsDashboard?.props?.label).toBe("Loops Dashboard");
-    expect(loopsDashboard?.props?.isActive).toBe(true);
+    const dashboards = findAll(tree, (element) => typeName(element) === "DashboardLinkButton");
+    expect(dashboards.map((item) => item.props?.label)).toEqual(["Project Dashboard", "Goals Dashboard", "Loops Dashboard"]);
+    expect(dashboards[2]?.props?.to).toBe("/projects/archcode/loops");
+    expect(dashboards[2]?.props?.isActive).toBe(true);
   });
 
   test("clicking a loop item navigates to loop detail route", () => {
@@ -909,45 +890,6 @@ describe("Sidebar", () => {
     const dialogs = findAll(tree, (element) => typeName(element) === "CreateLoopDialog");
     expect(dialogs).toHaveLength(1);
     expect(dialogs[0]?.props?.slug).toBe("archcode");
-  });
-
-  test("root Dashboard with no route slug falls back to first project slug for Loop create", () => {
-    projects = [project];
-    loops = [];
-    // Root Dashboard ("/") has no :slug route param.
-    useParams.mockImplementation(() => ({ slug: "", sessionId: "", goalId: "", loopId: "" }));
-    currentPathname = "/";
-
-    const tree = render();
-    const createButtons = findAll(tree, (element) => typeName(element) === "CreateButton");
-    const loopCreateButton = createButtons.find((b) => b.props?.title === "New loop");
-    expect(loopCreateButton).toBeDefined();
-    // Button stays enabled because a fallback project slug is available.
-    expect(loopCreateButton?.props?.disabled).toBeFalsy();
-
-    const dialogs = findAll(tree, (element) => typeName(element) === "CreateLoopDialog");
-    expect(dialogs).toHaveLength(1);
-    // CreateLoopDialog must receive a non-empty fallback slug, never "".
-    expect(dialogs[0]?.props?.slug).toBe("archcode");
-  });
-
-  test("root Dashboard with no route slug and no projects disables New loop button", () => {
-    projects = [];
-    loops = [];
-    useParams.mockImplementation(() => ({ slug: "", sessionId: "", goalId: "", loopId: "" }));
-    currentPathname = "/";
-
-    const tree = render();
-    const createButtons = findAll(tree, (element) => typeName(element) === "CreateButton");
-    const loopCreateButton = createButtons.find((b) => b.props?.title === "New loop");
-    expect(loopCreateButton).toBeDefined();
-    // No fallback slug available -> button disabled so the broken dialog never opens.
-    expect(loopCreateButton?.props?.disabled).toBe(true);
-
-    const dialogs = findAll(tree, (element) => typeName(element) === "CreateLoopDialog");
-    expect(dialogs).toHaveLength(1);
-    // Dialog still renders but receives an empty slug; the disabled button prevents opening it.
-    expect(dialogs[0]?.props?.slug).toBe("");
   });
 
   test("loop item receives loop with empty title and uses placeholder inside component", () => {

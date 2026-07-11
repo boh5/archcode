@@ -1,5 +1,5 @@
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, ChevronDown, ChevronRight, Loader2, Pause, Play, RotateCcw } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronRight, Loader2, Pause, Play, RotateCcw, Settings2 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { ApiError } from "../api/client";
 import { useLoop, useLoopBudget, useLoopCollisions, useLoopIntegrations, useLoopKillState, useLoopRuns, useLoopState } from "../api/queries";
@@ -7,7 +7,9 @@ import { useActivateLoopGlobalKill, useCancelLoopCurrentRun, useClearLoopGlobalK
 import { EditLoopDialog } from "../components/features/CreateLoopDialog";
 import { HitlInbox } from "../components/features/HitlCard";
 import { useRealtimeHitl } from "../store/hitl-store";
-import { deriveLoopStatus, formatRunHistoryBadgeClass, formatRunHistoryLabel } from "../lib/loop-status";
+import { formatRunHistoryBadgeClass, formatRunHistoryLabel } from "../lib/loop-status";
+import { useWorkbenchLayout } from "../context/workbench-layout";
+import { InspectorToggleButton } from "../components/features/InspectorToggleButton";
 import type {
   LoopBudgetSnapshot,
   LoopCollisionSnapshot,
@@ -16,7 +18,6 @@ import type {
   LoopIntegrationStatusSnapshot,
   LoopKillState,
   LoopRunReport,
-  LoopScheduleSpec,
   LoopState,
   LoopTriggerHealth,
   LoopWorktreeArtifact,
@@ -24,6 +25,8 @@ import type {
 
 export function LoopDetailRoute() {
   const { slug = "", loopId = "" } = useParams<{ slug: string; loopId: string }>();
+  const layout = useWorkbenchLayout();
+  const { toggleInspectorSurface } = layout;
   const { data: loop, isLoading: loopLoading, error: loopError } = useLoop(slug, loopId);
   const { data: runs, isLoading: runsLoading, error: runsError } = useLoopRuns(slug, loopId);
   const { data: loopState, isLoading: stateLoading, error: stateError } = useLoopState(slug, loopId);
@@ -132,38 +135,47 @@ export function LoopDetailRoute() {
             type="button"
             data-testid="loop-edit-button"
             onClick={() => setEditOpen(true)}
+            aria-label="Edit loop"
+            title="Edit loop"
             className="inline-flex items-center gap-1.5 rounded-sm bg-bg-active px-3 py-1.5 text-[12.5px] font-medium text-text-secondary transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary"
           >
-            Edit Loop
+            <Settings2 size={13} />
+            <span className="max-[900px]:hidden">Edit Loop</span>
           </button>
           <button
             type="button"
             onClick={handleTrigger}
             disabled={triggerLoop.isPending || triggerBlockedReason !== null}
+            aria-label="Trigger manual run"
             title={triggerBlockedReason ?? undefined}
             className="inline-flex items-center gap-1.5 rounded-sm bg-accent px-3 py-1.5 text-[12.5px] font-medium text-bg-base transition-colors duration-150 hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Play size={13} />
-            {triggerLoop.isPending ? "Triggering…" : "Trigger manual run"}
+            <span className="max-[900px]:hidden">{triggerLoop.isPending ? "Triggering…" : "Trigger manual run"}</span>
           </button>
           <button
             type="button"
             onClick={handlePause}
             disabled={pauseLoop.isPending}
+            aria-label="Pause loop"
+            title="Pause loop"
             className="inline-flex items-center gap-1.5 rounded-sm bg-bg-active px-3 py-1.5 text-[12.5px] font-medium text-text-secondary transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Pause size={13} />
-            {pauseLoop.isPending ? "Pausing…" : "Pause"}
+            <span className="max-[900px]:hidden">{pauseLoop.isPending ? "Pausing…" : "Pause"}</span>
           </button>
           <button
             type="button"
             onClick={handleResume}
             disabled={resumeLoop.isPending}
+            aria-label="Resume loop"
+            title="Resume loop"
             className="inline-flex items-center gap-1.5 rounded-sm bg-bg-active px-3 py-1.5 text-[12.5px] font-medium text-text-secondary transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <RotateCcw size={13} />
-            {resumeLoop.isPending ? "Resuming…" : "Resume"}
+            <span className="max-[900px]:hidden">{resumeLoop.isPending ? "Resuming…" : "Resume"}</span>
           </button>
+          <InspectorToggleButton expanded={layout.inspectorExpanded} onToggle={toggleInspectorSurface} />
         </div>
       </div>
 
@@ -181,7 +193,6 @@ export function LoopDetailRoute() {
 
       <div className="flex-1 overflow-y-auto bg-bg-base">
         <div className="max-w-5xl mx-auto w-full px-4 py-4 flex flex-col gap-4">
-          <PrimarySummarySection slug={slug} loop={loop} />
           <AttentionSection
             killState={killState}
             loop={loop}
@@ -194,7 +205,6 @@ export function LoopDetailRoute() {
           />
           <LoopHitlSection projections={loopHitl} />
           <RecentResultsSection slug={slug} runs={runs} isLoading={runsLoading} error={runsError} />
-          <SettingsSummarySection loop={loop} />
           <AdvancedDebugSection
             open={debugOpen}
             onToggle={() => setDebugOpen((prev) => !prev)}
@@ -231,33 +241,6 @@ function BackBar({ slug }: { slug: string }) {
         Loops
       </Link>
     </div>
-  );
-}
-
-function PrimarySummarySection({ slug, loop }: { slug: string; loop: LoopState }) {
-  const status = deriveLoopStatus(loop);
-  const nextRun = formatNextRun(loop.nextRunAt);
-  const lastResult = formatLastResult(loop.lastRun);
-
-  return (
-    <DetailSection title="Current State" testId="loop-status-section">
-      <div className="grid gap-2 sm:grid-cols-2">
-        <div className="flex items-center gap-2">
-          <span
-            data-testid="loop-primary-state"
-            className={`text-[11px] px-2 py-0.5 rounded-sm font-medium ${status.badgeClass}`}
-          >
-            {status.label}
-          </span>
-          <span className="text-[12.5px] text-text-secondary">{status.activity}</span>
-        </div>
-        <FieldRow label="run count" value={String(loop.runCount)} />
-        <FieldRow label="next run" value={nextRun} />
-        <FieldRow label="last result" value={lastResult} wide />
-      </div>
-      <LinkedRunResources slug={slug} run={loop.currentRun} label="current resources" />
-      <LinkedRunResources slug={slug} run={loop.lastRun} label="last resources" />
-    </DetailSection>
   );
 }
 
@@ -392,22 +375,6 @@ function RecentResultsSection({
           ))}
         </div>
       )}
-    </DetailSection>
-  );
-}
-
-function SettingsSummarySection({ loop }: { loop: LoopState }) {
-  const { config } = loop;
-  return (
-    <DetailSection title="Settings" testId="loop-settings-section">
-      <div className="grid gap-2 sm:grid-cols-2">
-        <FieldRow label="template" value={config.templateId} />
-        <FieldRow label="schedule" value={formatSchedule(config.schedule)} />
-        <FieldRow label="worktree" value={config.useWorktree === true ? "enabled" : "disabled"} />
-        <FieldRow label="budget defaults" value={formatLimits(config)} wide />
-        <FieldRow label="task prompt" value={config.taskPrompt ?? "No task prompt configured"} wide />
-        <FieldRow label="goal template" value={formatGoalTemplate(config)} wide />
-      </div>
     </DetailSection>
   );
 }
@@ -819,24 +786,6 @@ function LinkedRunResources({
   );
 }
 
-function formatNextRun(value: number | undefined): string {
-  if (value === undefined || value === null) return "none";
-  return new Date(value).toLocaleString();
-}
-
-function formatLastResult(run: LoopRunReport | undefined): string {
-  if (!run) return "none";
-  const label = formatRunHistoryLabel(run.status);
-  const time = new Date(run.startedAt).toLocaleString();
-  return `${label} ${time}${run.summary ? ` — ${run.summary}` : ""}`;
-}
-
-function formatSchedule(schedule: LoopScheduleSpec): string {
-  if (schedule.kind === "manual") return "manual";
-  if (schedule.kind === "interval") return `interval ${schedule.everyMs}ms`;
-  return `cron UTC ${schedule.expression}`;
-}
-
 function formatTriggers(triggers: LoopConfig["triggers"]): string {
   if (!triggers || triggers.length === 0) return "none";
   return triggers.map((trigger) => {
@@ -891,23 +840,6 @@ function formatArtifacts(artifacts: LoopWorktreeArtifact[] | undefined): string 
     return acc;
   }, {});
   return Object.entries(counts).map(([status, count]) => `${status} ${count}`).join(", ");
-}
-
-function formatLimits(config: LoopConfig): string {
-  const budget = config.limits;
-  return [
-    `iterations ${budget.maxIterationsPerRun}`,
-    "maxTokensPerRun" in budget && budget.maxTokensPerRun !== undefined ? `tokens ${budget.maxTokensPerRun}` : undefined,
-    "maxWallClockMsPerRun" in budget && budget.maxWallClockMsPerRun !== undefined ? `time ${budget.maxWallClockMsPerRun}ms` : undefined,
-    "maxRunsPerDay" in budget && budget.maxRunsPerDay !== undefined ? `runs/day ${budget.maxRunsPerDay}` : undefined,
-  ].filter(Boolean).join("; ");
-}
-
-function formatGoalTemplate(config: LoopConfig): string {
-  const template = config.goalTemplate;
-  if (!template) return "none";
-
-  return `objective: ${template.objective}; acceptance: ${template.acceptanceCriteria}`;
 }
 
 function formatDateTime(value: number | undefined): string {

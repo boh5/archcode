@@ -1,13 +1,14 @@
-import { useDiff } from "../../api/queries";
+import { useLiveSessionDiff } from "../../hooks/use-live-session-diff";
 import { DiffView } from "../diff/DiffView";
 
 interface DiffTabProps {
   slug: string;
-  sessionId?: string;
+  sessionId: string;
+  selectedPath?: string;
 }
 
-export function DiffTab({ slug, sessionId }: DiffTabProps) {
-  const { data: files, isLoading, error } = useDiff(slug, sessionId);
+export function DiffTab({ slug, sessionId, selectedPath }: DiffTabProps) {
+  const { data: files, isLoading, error } = useLiveSessionDiff(slug, sessionId);
 
   if (isLoading) {
     return (
@@ -25,5 +26,9 @@ export function DiffTab({ slug, sessionId }: DiffTabProps) {
     );
   }
 
-  return <DiffView files={files ?? []} />;
+  const visibleFiles = selectedPath
+    ? (files ?? []).filter((file) => file.path === selectedPath)
+    : (files ?? []);
+
+  return <DiffView files={visibleFiles} defaultExpanded={Boolean(selectedPath)} />;
 }

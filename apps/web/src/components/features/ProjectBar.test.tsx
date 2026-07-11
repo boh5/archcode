@@ -184,42 +184,43 @@ describe("ProjectBar", () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
-  test("plain click and keyboard activation navigate to the project", () => {
+  test("project icon is a native button with active-page semantics", () => {
     const node = projectNode(render()) as {
       props: {
-        role: string;
-        tabIndex: number;
         onClick: (event: { ctrlKey?: boolean; metaKey?: boolean }) => void;
-        onKeyDown: (event: { key: string }) => void;
+        type: string;
+        "aria-current": string;
       };
     };
 
-    expect(node.props.role).toBe("button");
-    expect(node.props.tabIndex).toBe(0);
+    expect((node as ElementLike).type).toBe("button");
+    expect(node.props.type).toBe("button");
+    expect(node.props["aria-current"]).toBe("page");
     expect(textContent(node)).toContain("de");
 
     node.props.onClick({ ctrlKey: false, metaKey: false });
-    node.props.onKeyDown({ key: "Enter" });
-    node.props.onKeyDown({ key: " " });
-
-    expect(navigate.mock.calls).toEqual([
-      ["/projects/demo-project"],
-      ["/projects/demo-project"],
-      ["/projects/demo-project"],
-    ]);
+    expect(navigate).toHaveBeenCalledWith("/projects/demo-project");
   });
 
-  test("add project affordance is keyboard accessible", () => {
+  test("add project affordance is a native button", () => {
     const addNode = findAll(
       render(),
-      (element) => element.props?.role === "button" && textContent(element).includes("Open project"),
+      (element) => element.type === "button" && element.props?.["aria-label"] === "Open project",
     )[0];
 
-    expect(addNode?.props?.tabIndex).toBe(0);
-    (addNode?.props?.onKeyDown as (event: { key: string }) => void)({ key: "Enter" });
-    (addNode?.props?.onKeyDown as (event: { key: string }) => void)({ key: " " });
+    expect(addNode?.props?.type).toBe("button");
+    (addNode?.props?.onClick as () => void)();
 
-    expect(onAddProject).toHaveBeenCalledTimes(2);
+    expect(onAddProject).toHaveBeenCalledTimes(1);
+  });
+
+  test("does not add a separate approvals destination outside Dashboard", () => {
+    const approvalsNode = findAll(
+      render(),
+      (element) => element.props?.["aria-label"] === "Open approvals",
+    );
+
+    expect(approvalsNode).toHaveLength(0);
   });
 
   test("settings affordance opens the settings modal", () => {
@@ -229,15 +230,12 @@ describe("ProjectBar", () => {
     )[0] as {
       props: {
         onClick: () => void;
-        onKeyDown: (event: { key: string }) => void;
       };
     };
 
     settingsNode.props.onClick();
-    settingsNode.props.onKeyDown({ key: "Enter" });
-    settingsNode.props.onKeyDown({ key: " " });
 
-    expect(onSettings).toHaveBeenCalledTimes(3);
+    expect(onSettings).toHaveBeenCalledTimes(1);
     expect(navigate).not.toHaveBeenCalled();
   });
 });
