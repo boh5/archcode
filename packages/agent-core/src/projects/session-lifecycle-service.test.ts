@@ -30,7 +30,7 @@ afterAll(async () => {
 describe("SessionLifecycleService", () => {
   test("allows deletion of an ordinary Session subtree", async () => {
     const fixture = createFixture();
-    fixture.sessions.create(ORDINARY_SESSION_ID, TMP_ROOT);
+    fixture.sessions.create(ORDINARY_SESSION_ID, TMP_ROOT, { agentName: "engineer" });
     await fixture.sessions.flushSession(ORDINARY_SESSION_ID, TMP_ROOT);
 
     await expect(fixture.service.assertDeletable({
@@ -42,8 +42,8 @@ describe("SessionLifecycleService", () => {
 
   test("rejects Goal- and Loop-owned Sessions with stable owner details", async () => {
     const fixture = createFixture();
-    fixture.sessions.create(GOAL_SESSION_ID, TMP_ROOT, { goalId: GOAL_OWNER_ID });
-    fixture.sessions.create(LOOP_SESSION_ID, TMP_ROOT, { loopId: LOOP_OWNER_ID });
+    fixture.sessions.create(GOAL_SESSION_ID, TMP_ROOT, { goalId: GOAL_OWNER_ID, agentName: "goal_lead" });
+    fixture.sessions.create(LOOP_SESSION_ID, TMP_ROOT, { loopId: LOOP_OWNER_ID, agentName: "engineer" });
     await Promise.all([
       fixture.sessions.flushSession(GOAL_SESSION_ID, TMP_ROOT),
       fixture.sessions.flushSession(LOOP_SESSION_ID, TMP_ROOT),
@@ -66,7 +66,7 @@ describe("SessionLifecycleService", () => {
 
   test("rejects active Session HITL and durable checkpoints", async () => {
     const fixture = createFixture();
-    fixture.sessions.create(BLOCKED_SESSION_ID, TMP_ROOT);
+    fixture.sessions.create(BLOCKED_SESSION_ID, TMP_ROOT, { agentName: "engineer" });
     await fixture.sessions.flushSession(BLOCKED_SESSION_ID, TMP_ROOT);
     const context = await fixture.resolver.resolve(TMP_ROOT);
     await context.hitl.create({
@@ -101,7 +101,7 @@ describe("SessionLifecycleService", () => {
       displayInput: {},
       allowedTools: ["file_write"],
       agentSkills: [],
-      agentName: "orchestrator",
+      agentName: "engineer",
       toolCalls: [{ toolCallId: "write-1", toolName: "file_write", input: {} }],
       completedToolResults: [],
       pendingToolCalls: [{ toolCallId: "write-1", toolName: "file_write", input: {} }],

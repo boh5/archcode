@@ -1,12 +1,12 @@
-// Agent display constants — single source of truth for agent type metadata
-// used across ChatMessages, DelegationCard, and Sidebar.
-// Uses semantic Tailwind classes (bg-agent-X/text-agent-X) backed by
-// CSS custom properties defined in globals.css.
+import type { AgentDescriptor } from "@archcode/protocol";
 
-// ─── Agent type list ───
+// Stable presentation metadata for the built-in Agent identities. Human-readable
+// names intentionally come from GET /api/agents so the runtime remains the
+// source of truth for its Agent catalog.
 
 export const AGENT_TYPES = [
-  "orchestrator",
+  "engineer",
+  "goal_lead",
   "plan",
   "build",
   "reviewer",
@@ -16,32 +16,9 @@ export const AGENT_TYPES = [
 
 export type AgentType = (typeof AGENT_TYPES)[number];
 
-// ─── Initials ───
-
-export const AGENT_INITIALS: Record<AgentType, string> = {
-  orchestrator: "O",
-  plan: "P",
-  build: "B",
-  reviewer: "R",
-  explore: "E",
-  librarian: "L",
-};
-
-// ─── Display names ───
-
-export const AGENT_DISPLAY_NAMES: Record<AgentType, string> = {
-  orchestrator: "Orchestrator",
-  plan: "Plan",
-  build: "Build",
-  reviewer: "Reviewer",
-  explore: "Explore",
-  librarian: "Librarian",
-};
-
-// ─── Icon color classes (semantic Tailwind) ───
-
 export const AGENT_ICON_COLORS: Record<AgentType, string> = {
-  orchestrator: "bg-agent-orchestrator/20 text-agent-orchestrator",
+  engineer: "bg-agent-engineer/20 text-agent-engineer",
+  goal_lead: "bg-agent-goal-lead/20 text-agent-goal-lead",
   plan: "bg-agent-plan/20 text-agent-plan",
   build: "bg-agent-build/20 text-agent-build",
   reviewer: "bg-agent-reviewer/20 text-agent-reviewer",
@@ -49,13 +26,11 @@ export const AGENT_ICON_COLORS: Record<AgentType, string> = {
   librarian: "bg-agent-librarian/20 text-agent-librarian",
 };
 
-// ─── Badge colors (semantic tokens shared with AGENT_ICON_COLORS) ───
-// Same semantic tokens as AGENT_ICON_COLORS.
-
 export const AGENT_BADGE_COLORS: Record<AgentType, string> = AGENT_ICON_COLORS;
 
 export const AGENT_DOT_CLASS: Record<AgentType, string> = {
-  orchestrator: "bg-agent-orchestrator",
+  engineer: "bg-agent-engineer",
+  goal_lead: "bg-agent-goal-lead",
   plan: "bg-agent-plan",
   build: "bg-agent-build",
   reviewer: "bg-agent-reviewer",
@@ -64,7 +39,8 @@ export const AGENT_DOT_CLASS: Record<AgentType, string> = {
 };
 
 export const AGENT_NAME_CLASS: Record<AgentType, string> = {
-  orchestrator: "text-agent-orchestrator font-semibold",
+  engineer: "text-agent-engineer font-semibold",
+  goal_lead: "text-agent-goal-lead font-semibold",
   plan: "text-agent-plan font-semibold",
   build: "text-agent-build font-semibold",
   reviewer: "text-agent-reviewer font-semibold",
@@ -73,7 +49,8 @@ export const AGENT_NAME_CLASS: Record<AgentType, string> = {
 };
 
 export const AGENT_BORDER_CLASS: Record<AgentType, string> = {
-  orchestrator: "border-agent-orchestrator",
+  engineer: "border-agent-engineer",
+  goal_lead: "border-agent-goal-lead",
   plan: "border-agent-plan",
   build: "border-agent-build",
   reviewer: "border-agent-reviewer",
@@ -81,13 +58,56 @@ export const AGENT_BORDER_CLASS: Record<AgentType, string> = {
   librarian: "border-agent-librarian",
 };
 
-// ─── Type guard ───
-
 export function isValidAgentType(value: string): value is AgentType {
   return (AGENT_TYPES as readonly string[]).includes(value);
 }
 
-// ─── Badge status (from DelegationCard) ───
+export interface AgentAppearance {
+  initial: string;
+  iconClass: string;
+  dotClass: string;
+  nameClass: string;
+  borderClass: string;
+}
+
+const UNKNOWN_AGENT_APPEARANCE = {
+  iconClass: "bg-bg-active text-text-muted",
+  dotClass: "bg-text-muted",
+  nameClass: "text-text-secondary font-semibold",
+  borderClass: "border-border-default",
+} as const;
+
+export function resolveAgentInitial(displayName: string | null | undefined): string {
+  return displayName?.trim().slice(0, 1).toUpperCase() || "?";
+}
+
+export function resolveAgentAppearance(
+  agentName: string | null | undefined,
+  displayName: string | null | undefined = agentName,
+): AgentAppearance {
+  if (agentName !== null && agentName !== undefined && isValidAgentType(agentName)) {
+    return {
+      initial: resolveAgentInitial(displayName),
+      iconClass: AGENT_ICON_COLORS[agentName],
+      dotClass: AGENT_DOT_CLASS[agentName],
+      nameClass: AGENT_NAME_CLASS[agentName],
+      borderClass: AGENT_BORDER_CLASS[agentName],
+    };
+  }
+
+  return {
+    initial: resolveAgentInitial(displayName),
+    ...UNKNOWN_AGENT_APPEARANCE,
+  };
+}
+
+export function resolveAgentDisplayName(
+  agentName: string | null | undefined,
+  descriptors: readonly AgentDescriptor[],
+): string {
+  if (agentName === null || agentName === undefined) return "Loading agent…";
+  return descriptors.find((descriptor) => descriptor.name === agentName)?.displayName ?? agentName;
+}
 
 export type BadgeStatus = "running" | "completed" | "pending" | "error";
 

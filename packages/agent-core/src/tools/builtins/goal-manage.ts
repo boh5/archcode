@@ -22,7 +22,6 @@ import {
 } from "./goal-tools/helpers";
 
 const GoalTextSchema = z.string().trim().min(1);
-const GoalLongMarkdownSchema = GoalTextSchema.max(8_000);
 const GoalReceiptSummarySchema = GoalTextSchema.max(4_000);
 const GoalEvidenceSummarySchema = GoalTextSchema.max(1_000);
 
@@ -37,19 +36,6 @@ const GoalEvidenceRefSchema = z.strictObject({
   url: z.url().optional(),
   createdAt: GoalTextSchema.optional(),
 }) satisfies z.ZodType<GoalEvidenceRef>;
-
-const GoalManageCreateInputSchema = z.strictObject({
-  action: z.literal("create"),
-  objective: GoalLongMarkdownSchema.describe("Natural-language objective for the Goal."),
-  acceptanceCriteria: GoalLongMarkdownSchema.describe("Natural-language acceptance criteria for Reviewer judgment."),
-  useWorktree: z.boolean().optional()
-    .describe("Whether this Goal should execute in a dedicated managed Git worktree. Defaults to false."),
-});
-
-const GoalManageStartInputSchema = z.strictObject({
-  action: z.literal("start"),
-  goalId: GoalUuidSchema.describe("Goal UUID to start running."),
-});
 
 const GoalManageBlockInputSchema = z.strictObject({
   action: z.literal("block"),
@@ -94,8 +80,6 @@ const GoalManageCancelInputSchema = z.strictObject({
 });
 
 const GoalManageInputSchema = z.discriminatedUnion("action", [
-  GoalManageCreateInputSchema,
-  GoalManageStartInputSchema,
   GoalManageBlockInputSchema,
   GoalManageResumeInputSchema,
   GoalManageBeginReviewInputSchema,
@@ -116,13 +100,6 @@ type GoalManageInput = z.infer<typeof GoalManageInputSchema>;
 
 interface SimplifiedGoalStateManager {
   read(goalId: string): Promise<GoalState>;
-  create(input: {
-    projectId: string;
-    objective: string;
-    acceptanceCriteria: string;
-    useWorktree?: boolean;
-  }): Promise<GoalState>;
-  start(goalId: string, input: { readonly mainSessionId?: string }): Promise<GoalState>;
   block(goalId: string, blocker: {
     kind: GoalBlockerKind;
     summary: string;
@@ -150,7 +127,7 @@ interface SimplifiedGoalStateManager {
 
 export const goalManageTool: AnyToolDescriptor = defineTool({
   name: TOOL_GOAL_MANAGE,
-  description: "Manage the simplified Goal lifecycle: create, start, block, resume, begin_review, finalize_review, retry, or cancel.",
+  description: "Manage a running Goal lifecycle: block, resume, begin_review, finalize_review, retry, or cancel.",
   inputSchema: GoalManageInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   execute: async (input: GoalManageInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
@@ -158,26 +135,11 @@ export const goalManageTool: AnyToolDescriptor = defineTool({
       const authorization = assertGoalManageActionAuthorized(
         input.action,
         ctx,
-        "goalId" in input ? input.goalId : undefined,
+        input.goalId,
       );
       const manager = simplifiedGoalStateManager(ctx);
 
       switch (input.action) {
-        case "create": {
-          return formatGoalToolResult(await manager.create({
-            projectId: ctx.projectContext.project.slug,
-            objective: input.objective,
-            acceptanceCriteria: input.acceptanceCriteria,
-            ...(input.useWorktree === undefined ? {} : { useWorktree: input.useWorktree }),
-          }));
-        }
-        case "start": {
-          await assertGoalExecutionWorkspace(manager, input.goalId, ctx);
-          return formatGoalToolResult(await withGoalExecutionClaimLock(
-            input.goalId,
-            () => manager.start(input.goalId, { mainSessionId: authorization.sessionId }),
-          ));
-        }
         case "block": {
           return formatGoalToolResult(await withGoalExecutionClaimLock(input.goalId, () => (
             manager.block(input.goalId, {

@@ -17,7 +17,7 @@ export function createSessionsRoutes(runtime: AgentRuntime): Hono {
   app.post("/", async (c) => {
     await rejectRequestBody(c.req.text());
     const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
-    return c.json(await runtime.createSession(project.workspaceRoot), 201);
+    return c.json(await runtime.createSession(project.workspaceRoot, { agentName: "engineer" }), 201);
   });
 
   app.get("/:sessionId", async (c) => {

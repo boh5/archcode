@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, normalize, relative, resolve } from "node:path";
 
 import { agentDefinitions } from "../agents/definitions";
-import { TOOL_GOAL_MANAGE } from "../tools/names";
+import { TOOL_GOAL_CREATE, TOOL_GOAL_MANAGE } from "../tools/names";
 
 const srcRoot = resolve(import.meta.dir, "..");
 const packageRoot = resolve(srcRoot, "..");
@@ -73,6 +73,7 @@ const directLifecycleMutationPatterns = [
 ] as const;
 
 const activeGoalToolNames = [
+  TOOL_GOAL_CREATE,
   TOOL_GOAL_MANAGE,
 ] as const;
 
@@ -83,7 +84,6 @@ const removedGoalToolNames = [
 ] as const;
 
 const removedGoalExecutableToolNames = [
-  "goal_create",
   "goal_lock",
   "goal_run",
   "goal_retry",
@@ -466,7 +466,8 @@ describe("Goal migration boundaries", () => {
   });
 
   test("active Goal tool allowlists match the agent-driven lifecycle boundary", () => {
-    expect(goalToolsFor("orchestrator")).toEqual([TOOL_GOAL_MANAGE]);
+    expect(goalToolsFor("engineer")).toEqual([TOOL_GOAL_CREATE]);
+    expect(goalToolsFor("goal_lead")).toEqual([TOOL_GOAL_MANAGE]);
     expect(goalToolsFor("plan")).toEqual([]);
     expect(goalToolsFor("build")).toEqual([]);
     expect(goalToolsFor("reviewer")).toEqual([TOOL_GOAL_MANAGE]);
@@ -502,7 +503,7 @@ describe("Goal migration boundaries", () => {
       .filter((definition) => (definition.tools.tools as readonly string[]).includes(TOOL_GOAL_MANAGE))
       .map((definition) => definition.name);
 
-    expect(exposedTo).toEqual(["orchestrator", "reviewer"]);
+    expect(exposedTo).toEqual(["goal_lead", "reviewer"]);
   });
 
   test("Reviewer keeps finalization authority while non-review roles do not advertise it", () => {

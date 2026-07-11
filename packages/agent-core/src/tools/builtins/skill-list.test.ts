@@ -13,7 +13,7 @@ const tmpRoot = join(import.meta.dir, "__test_tmp__", "skill-list-tool");
 const projectRoot = join(tmpRoot, "project");
 const userSkillsRoot = join(tmpRoot, "user", ".archcode", "skills");
 
-const orchestratorSkills = ["git-master", "safe-refactor", "codemap", "review-work", "research-docs"] as const;
+const engineerSkills = ["git-master", "safe-refactor", "codemap", "review-work", "research-docs"] as const;
 const exploreSkills = ["codemap", "research-docs"] as const;
 
 function makeContext(agentSkills: readonly string[]): ToolExecutionContext {
@@ -41,8 +41,8 @@ describe("skill_list tool", () => {
     await rm(tmpRoot, { recursive: true, force: true });
   });
 
-  test("orchestrator allow-list returns all five builtin skill entries without bodies", async () => {
-    const result = await skillListTool.execute({}, makeContext(orchestratorSkills));
+  test("engineer allow-list returns all five builtin skill entries without bodies", async () => {
+    const result = await skillListTool.execute({}, makeContext(engineerSkills));
     const entries = JSON.parse(result as string) as SkillIndexEntry[];
 
     expect(entries.map((entry) => entry.name)).toEqual([
@@ -75,7 +75,7 @@ describe("skill_list tool", () => {
 
   test("input schema rejects unknown keys including agentName", () => {
     expect(SkillListInputSchema.safeParse({}).success).toBe(true);
-    expect(SkillListInputSchema.safeParse({ agentName: "orchestrator" }).success).toBe(false);
+    expect(SkillListInputSchema.safeParse({ agentName: "engineer" }).success).toBe(false);
     expect(SkillListInputSchema.safeParse({ source: "builtin" }).success).toBe(false);
   });
 

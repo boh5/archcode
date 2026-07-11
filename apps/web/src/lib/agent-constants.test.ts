@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import {
   AGENT_TYPES,
-  AGENT_INITIALS,
-  AGENT_DISPLAY_NAMES,
   AGENT_ICON_COLORS,
   AGENT_BADGE_COLORS,
   BADGE_CLASSES,
   BADGE_LABELS,
+  resolveAgentAppearance,
+  resolveAgentDisplayName,
+  resolveAgentInitial,
   isValidAgentType,
   type AgentType,
 } from "./agent-constants";
@@ -14,44 +15,20 @@ import {
 describe("AGENT_TYPES", () => {
   test("contains all expected agent types", () => {
     expect(AGENT_TYPES).toEqual([
-      "orchestrator", "plan", "build", "reviewer", "explore", "librarian",
+      "engineer", "goal_lead", "plan", "build", "reviewer", "explore", "librarian",
     ]);
   });
 
   test("is a readonly tuple", () => {
-    expect(AGENT_TYPES.length).toBe(6);
+    expect(AGENT_TYPES.length).toBe(7);
   });
 });
 
-describe("AGENT_INITIALS", () => {
-  test("has an initial for every agent type", () => {
-    for (const type of AGENT_TYPES) {
-      expect(AGENT_INITIALS[type]).toBeDefined();
-      expect(AGENT_INITIALS[type]).toHaveLength(1);
-    }
-  });
-
-  test("maps specific initials correctly", () => {
-    expect(AGENT_INITIALS.orchestrator).toBe("O");
-    expect(AGENT_INITIALS.plan).toBe("P");
-    expect(AGENT_INITIALS.build).toBe("B");
-    expect(AGENT_INITIALS.explore).toBe("E");
-  });
-});
-
-describe("AGENT_DISPLAY_NAMES", () => {
-  test("has a display name for every agent type", () => {
-    for (const type of AGENT_TYPES) {
-      expect(AGENT_DISPLAY_NAMES[type]).toBeDefined();
-      expect(AGENT_DISPLAY_NAMES[type].length).toBeGreaterThan(0);
-    }
-  });
-
-  test("capitalizes correctly", () => {
-    expect(AGENT_DISPLAY_NAMES.orchestrator).toBe("Orchestrator");
-    expect(AGENT_DISPLAY_NAMES.plan).toBe("Plan");
-    expect(AGENT_DISPLAY_NAMES.build).toBe("Build");
-    expect(AGENT_DISPLAY_NAMES.explore).toBe("Explore");
+describe("resolveAgentInitial", () => {
+  test("derives the initial from the runtime display name", () => {
+    expect(resolveAgentInitial("Engineer")).toBe("E");
+    expect(resolveAgentInitial("Goal Lead")).toBe("G");
+    expect(resolveAgentInitial("Quality Advocate")).toBe("Q");
   });
 });
 
@@ -89,7 +66,8 @@ describe("AGENT_BADGE_COLORS", () => {
 
 describe("isValidAgentType", () => {
   test("returns true for valid agent types", () => {
-    expect(isValidAgentType("orchestrator")).toBe(true);
+    expect(isValidAgentType("engineer")).toBe(true);
+    expect(isValidAgentType("goal_lead")).toBe(true);
     expect(isValidAgentType("plan")).toBe(true);
     expect(isValidAgentType("build")).toBe(true);
     expect(isValidAgentType("explore")).toBe(true);
@@ -100,15 +78,41 @@ describe("isValidAgentType", () => {
     expect(isValidAgentType("builder")).toBe(false);
     expect(isValidAgentType("explorer")).toBe(false);
     expect(isValidAgentType("")).toBe(false);
-    expect(isValidAgentType("ORCHESTRATOR")).toBe(false);
+    expect(isValidAgentType("coordinator")).toBe(false);
+    expect(isValidAgentType("ENGINEER")).toBe(false);
   });
 
   test("narrows the type", () => {
-    const value: string = "orchestrator";
+    const value: string = "goal_lead";
     if (isValidAgentType(value)) {
       const typed: AgentType = value;
-      expect(typed).toBe("orchestrator");
+      expect(typed).toBe("goal_lead");
     }
+  });
+});
+
+describe("agent catalog presentation", () => {
+  const descriptors = [
+    { name: "engineer", displayName: "Engineer" },
+    { name: "goal_lead", displayName: "Goal Lead" },
+  ];
+
+  test("resolves display names from the server catalog", () => {
+    expect(resolveAgentDisplayName("engineer", descriptors)).toBe("Engineer");
+    expect(resolveAgentDisplayName("goal_lead", descriptors)).toBe("Goal Lead");
+  });
+
+  test("preserves an unknown Agent name instead of substituting a known role", () => {
+    expect(resolveAgentDisplayName("custom_agent", descriptors)).toBe("custom_agent");
+    const appearance = resolveAgentAppearance("custom_agent", "Custom Agent");
+    expect(appearance.initial).toBe("C");
+    expect(appearance.iconClass).toContain("text-text-muted");
+    expect(appearance.iconClass).not.toContain("agent-explore");
+  });
+
+  test("uses an explicit loading presentation before Session identity hydrates", () => {
+    expect(resolveAgentDisplayName(null, descriptors)).toBe("Loading agent…");
+    expect(resolveAgentAppearance(null, null).initial).toBe("?");
   });
 });
 

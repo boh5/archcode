@@ -360,7 +360,7 @@ describe("handleSSEEvent", () => {
       createdAt: Date.now(),
       kind: "text-start",
       payload: { type: "text-start" },
-      agentName: "orchestrator",
+      agentName: "engineer",
     };
 
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
@@ -382,7 +382,7 @@ describe("handleSSEEvent", () => {
       createdAt: Date.now(),
       kind: "text-start",
       payload: { type: "text-start" },
-      agentName: "orchestrator",
+      agentName: "engineer",
     };
 
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
@@ -431,7 +431,7 @@ describe("handleSSEEvent", () => {
           createdAt: 123,
         },
       },
-      agentName: "orchestrator",
+      agentName: "engineer",
     };
 
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
@@ -463,7 +463,7 @@ describe("handleSSEEvent", () => {
         status: state.status,
         state,
       },
-      agentName: "orchestrator",
+      agentName: "engineer",
     };
 
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
@@ -495,7 +495,7 @@ describe("handleSSEEvent", () => {
         status: "resolved",
         response: { type: "permission_decision", decision: "approve_once", comment: "ok" },
       },
-      agentName: "orchestrator",
+      agentName: "engineer",
     };
 
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
@@ -578,7 +578,7 @@ describe("handleSSEEvent", () => {
         status: "active",
         state: loopState,
       },
-      agentName: "orchestrator",
+      agentName: "engineer",
     };
 
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
@@ -616,7 +616,7 @@ describe("handleSSEEvent", () => {
         loopId: "loop-1",
         report,
       },
-      agentName: "orchestrator",
+      agentName: "engineer",
     };
 
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
@@ -654,7 +654,7 @@ describe("handleSSEEvent", () => {
           updatedAt: "2026-07-05T00:00:00Z",
         },
       },
-      agentName: "orchestrator",
+      agentName: "engineer",
     };
 
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);

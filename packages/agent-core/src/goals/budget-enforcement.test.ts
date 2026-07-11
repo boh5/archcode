@@ -106,7 +106,7 @@ async function createRunningGoal(budgetSummary: GoalBudgetSummary): Promise<Goal
 
 function createGoalStore(goalId: string) {
   const store = createSessionStore("session-budget", workspaceRoot);
-  store.setState({ agentName: "orchestrator", goalId, sessionRole: "main" });
+  store.setState({ agentName: "engineer", goalId, sessionRole: "main" });
   return store;
 }
 

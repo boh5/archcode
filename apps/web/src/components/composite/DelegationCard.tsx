@@ -1,5 +1,5 @@
 import { getWebSessionStore } from "../../store/session-store";
-import { AGENT_INITIALS, AGENT_ICON_COLORS, isValidAgentType, type AgentType, BADGE_CLASSES, BADGE_LABELS, type BadgeStatus } from "../../lib/agent-constants";
+import { BADGE_CLASSES, BADGE_LABELS, resolveAgentAppearance, type BadgeStatus } from "../../lib/agent-constants";
 import { formatElapsed } from "../../lib/time-format";
 import { Check, X } from "lucide-react";
 import { getToolSummary, getToolIcon } from "../../lib/tool-format";
@@ -39,7 +39,8 @@ export interface DelegationCardProps {
   sessionId: string;
   focusStoreSessionId: string;
   agentType: string;
-  agentName: string;
+  agentDisplayName: string;
+  taskTitle?: string;
   status: BadgeStatus;
   depth: number;
   startedAt: number;
@@ -54,7 +55,8 @@ export function DelegationCard({
   sessionId,
   focusStoreSessionId,
   agentType,
-  agentName,
+  agentDisplayName,
+  taskTitle,
   status,
   depth,
   startedAt,
@@ -63,9 +65,7 @@ export function DelegationCard({
   projectSlug,
   canNavigate = true,
 }: DelegationCardProps) {
-  const resolvedType = isValidAgentType(agentType) ? agentType : "explore" as AgentType;
-  const colorClasses = AGENT_ICON_COLORS[resolvedType];
-  const initials = AGENT_INITIALS[resolvedType];
+  const appearance = resolveAgentAppearance(agentType, agentDisplayName);
 
   const handleViewConversation = () => {
     if (!canNavigate) return;
@@ -86,9 +86,9 @@ export function DelegationCard({
         }}
       >
         <div
-          className={`w-[22px] h-[22px] rounded flex items-center justify-center text-[10px] shrink-0 ${colorClasses}`}
+          className={`w-[22px] h-[22px] rounded flex items-center justify-center text-[10px] shrink-0 ${appearance.iconClass}`}
         >
-          {initials}
+          {appearance.initial}
         </div>
 
         <span
@@ -97,9 +97,16 @@ export function DelegationCard({
           {BADGE_LABELS[status]}
         </span>
 
-        <span className="font-semibold text-[13px] flex-1 min-w-0 truncate">
-          {agentName}
-        </span>
+        <div className="flex items-baseline gap-1.5 flex-1 min-w-0">
+          <span className="font-semibold text-[13px] shrink-0">
+            {agentDisplayName}
+          </span>
+          {taskTitle && (
+            <span className="text-[12px] text-text-secondary truncate" title={taskTitle}>
+              {taskTitle}
+            </span>
+          )}
+        </div>
 
         <span className="text-[11px] text-text-muted shrink-0">
           depth {depth}

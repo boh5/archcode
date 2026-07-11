@@ -29,7 +29,7 @@ function commandContext(store: CommandContext["store"]): CommandContext {
     modelInfo,
     logger: silentLogger,
     cwd: import.meta.dir,
-    agentName: "orchestrator",
+    agentName: "engineer",
     agentSkills: [],
     skillService,
   };
@@ -59,7 +59,7 @@ function compactableMessages(): StoredMessage[] {
 }
 
 function makeStore(sessionId = `compression-resilience-${crypto.randomUUID()}`) {
-  const store = storeManager.create(sessionId, TEST_WORKSPACE_ROOT);
+  const store = storeManager.create(sessionId, TEST_WORKSPACE_ROOT, { agentName: "engineer" });
   store.setState({ messages: compactableMessages() });
   return store;
 }
@@ -71,7 +71,7 @@ function sessionFileFixture(overrides: Record<string, unknown> = {}) {
     createdAt: 1,
     updatedAt: 1,
     cwd: TEST_WORKSPACE_ROOT,
-    agentName: "orchestrator",
+    agentName: "engineer",
     modelInfo: null,
     title: null,
     messages: [],

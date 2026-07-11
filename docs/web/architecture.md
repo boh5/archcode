@@ -15,11 +15,11 @@ Responsibilities:
 
 ## 2. Runtime Layer (`src/core/`, `src/agents/`, `src/tools/`, `src/store/`)
 
-The runtime layer owns agent orchestration, tool execution, and session state. `AgentRuntime` wires shared services, creates project-scoped orchestrator agents, and exposes the execution primitives used by the server routes.
+The runtime layer owns agent execution, delegation, tool execution, and session state. `AgentRuntime` wires shared services and reconstructs each Agent from the Session's persisted `agentName`.
 
 Responsibilities:
 
-- Create and cache project-scoped agents.
+- Create and cache Session-scoped agents with persisted identities.
 - Run the query loop and delegation workflow.
 - Execute tools through guards, hooks, partitioning, and audit/truncation/redaction after-hooks.
 - Persist and project session state through the store.
@@ -31,7 +31,7 @@ The server layer exposes Hono REST and SSE endpoints. It handles request logging
 
 Responsibilities:
 
-- Serve health, project, session, message, event, permission, question, command, workflow, and file routes.
+- Serve health, agent catalog, project, session, message, event, Goal, Loop, HITL, command, and file routes.
 - Scope API requests to registered projects.
 - Manage server startup and graceful shutdown.
 - Coordinate permission and question workflows across network boundaries.
@@ -43,11 +43,11 @@ The transport layer separates real-time streaming from CRUD-style operations. SS
 
 Responsibilities:
 
-- Stream session events through EventStream.
-- Replay recent stream events using `Last-Event-ID` via `EventRing`.
+- Stream multiplexed Session and resource events through the global SSE connection.
+- Recover authoritative state with REST snapshots after reconnect or lag notifications.
 - Keep connections alive with heartbeat events.
 - Use REST for durable commands and state-changing actions.
-- Use a Deferred request/response pattern for cross-network confirmations such as permissions and questions.
+- Use durable HITL records for cross-network permissions and questions.
 
 ## 5. Web Layer (`src/web/`)
 
@@ -72,15 +72,15 @@ Responsibilities:
 
 ### Single server, multi-project model
 
-ArchCode runs one server process that can manage multiple registered workspace roots. The project registry stores known projects, derives stable slugs, and routes API calls through project-scoped contexts. Each workspace gets its own runtime context and root orchestrator agent.
+ArchCode runs one server process that can manage multiple registered workspace roots. The project registry stores known projects, derives stable slugs, and routes API calls through project-scoped contexts. Each workspace gets its own runtime context. Ordinary root Sessions persist `engineer`; Goal execution creates a dedicated root Session that persists `goal_lead`.
 
-### SSE replay with `Last-Event-ID`
+### Global SSE plus authoritative snapshots
 
-Session streaming uses SSE for low-latency updates. `EventRing` stores recent events so reconnecting clients can replay missed updates with `Last-Event-ID` or an equivalent `lastEventId` query parameter instead of restarting the whole session view.
+One global SSE connection carries live Session, Goal, Loop, HITL, resource, and runtime changes. REST snapshots remain authoritative; reconnect and lag handling refresh affected queries instead of inventing client-side state.
 
-### Deferred confirmations for permissions and questions
+### Durable HITL for permissions and questions
 
-Permission and question prompts cross the server/browser boundary through a Deferred request/response pattern. The server publishes a request event to the session stream, waits on a Promise, and resolves it when the Web UI responds through the corresponding REST endpoint. Cleanup paths resolve pending confirmations safely during timeout, cancellation, or disconnect handling.
+Permission and question prompts cross the server/browser boundary as durable owner-scoped HITL records. The Web UI renders only redacted display payloads and submits responses through REST; continuation resumes from the persisted checkpoint.
 
 ### Isomorphic reducer shared by server and web
 

@@ -54,7 +54,7 @@ describe("createExecutionLogger", () => {
       toolName: "bash",
       toolCallId: "call-xyz",
       durationMs: 150,
-      agentName: "orchestrator",
+      agentName: "engineer",
       permissionOutcome: "allow",
     });
 
@@ -64,7 +64,7 @@ describe("createExecutionLogger", () => {
     const callArgs = mockLogger.debug.mock.calls[0] as [string, { context: Record<string, unknown>; meta: Record<string, unknown> }];
 
     expect(callArgs[0]).toBe("tool.execute.completed");
-    expect(callArgs[1]!.context).toEqual({ sessionId: "session-123", agentName: "orchestrator" });
+    expect(callArgs[1]!.context).toEqual({ sessionId: "session-123", agentName: "engineer" });
     const meta = callArgs[1]!.meta;
     expect(meta.toolName).toBe("bash");
     expect(meta.toolCallId).toBe("call-xyz");

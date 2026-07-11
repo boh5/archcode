@@ -39,7 +39,8 @@ function identity(record: Pick<HitlRecord, "owner" | "hitlId">) {
 }
 
 const testDefinition: AgentDefinition = {
-  name: "orchestrator",
+  name: "engineer",
+  displayName: "Engineer",
   promptProfileId: "default",
   tools: { tools: ["file_read"] },
   hooks: {
@@ -78,7 +79,7 @@ describe("durable Session worktree approval integration", () => {
     );
 
     const sessions = new SessionStoreManager({ logger: silentLogger });
-    const store = sessions.create(sessionId, projectRoot);
+    const store = sessions.create(sessionId, projectRoot, { agentName: "engineer" });
     const goalState = new GoalStateManager(projectRoot, silentLogger);
     const loopState = new LoopStateManager(projectRoot, silentLogger);
     const hitl = new HitlService({
@@ -127,8 +128,8 @@ describe("durable Session worktree approval integration", () => {
       projectContextResolver: resolver,
       config: {
         provider: {},
-        agents: { orchestrator: { model: providerRegistry.modelIds[0]! } },
-      } as ArchCodeConfig,
+        agents: { engineer: { model: providerRegistry.modelIds[0]! } },
+      } as unknown as ArchCodeConfig,
       logger: silentLogger,
     });
     const executionManager = new SessionExecutionManager({

@@ -50,7 +50,7 @@ describe("Loop templates", () => {
     expect(getLoopTemplate("watch_report").run).toEqual({ type: "session", agent: "plan" });
     expect(getLoopTemplate("maintain_fix").run).toEqual({ type: "session", agent: "build" });
     expect(getLoopTemplate("pr_babysitter").run).toEqual({ type: "session", agent: "plan" });
-    expect(getLoopTemplate("goal_runner").run).toEqual({ type: "goal", agent: "orchestrator" });
+    expect(getLoopTemplate("goal_runner").run).toEqual({ type: "goal", agent: "goal_lead" });
 
     for (const id of LOOP_TEMPLATE_IDS) {
       const template = getLoopTemplate(id);

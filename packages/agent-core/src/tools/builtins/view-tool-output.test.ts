@@ -24,7 +24,7 @@ afterAll(async () => {
 });
 
 function makeContext(): ToolExecutionContext {
-  const store = storeManager.create(`view-test-run-${randomUUID()}`, import.meta.dir);
+  const store = storeManager.create(`view-test-run-${randomUUID()}`, import.meta.dir, { agentName: "engineer" });
   return {
     store,
     storeManager,

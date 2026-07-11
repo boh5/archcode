@@ -12,6 +12,7 @@ import { ConcurrentSessionLimitError } from "./errors";
 import { createAgentFactory } from "./factory";
 import type { AgentFactory } from "./factory";
 import type { AgentDefinition } from "./factory-types";
+import type { AgentName } from "./names";
 import type { Agent } from "./types";
 import type { SlashCommandResult } from "../commands/types";
 import type { Logger } from "../logger";
@@ -81,7 +82,7 @@ export class SessionAgentManager {
     this.#acquireSessionCwdTransition = callback;
   }
 
-  async getOrCreate(workspaceRoot: string, sessionId: string, agentName?: string): Promise<Agent> {
+  async getOrCreate(workspaceRoot: string, sessionId: string): Promise<Agent> {
     const key = scopedKey(workspaceRoot, sessionId);
     if (this.#isTombstonedKey(key)) {
       throw new Error(`Session "${sessionId}" in workspace "${workspaceRoot}" has been deleted`);
@@ -98,14 +99,14 @@ export class SessionAgentManager {
     const pending = this.#pendingAgents.get(key);
     if (pending) return pending;
 
-    const promise = this.#createAndRegisterAgent(workspaceRoot, sessionId, key, agentName);
+    const promise = this.#createAndRegisterAgent(workspaceRoot, sessionId, key);
     this.#pendingAgents.set(key, promise);
     return promise;
   }
 
-  async #createAndRegisterAgent(workspaceRoot: string, sessionId: string, key: string, agentName?: string): Promise<Agent> {
+  async #createAndRegisterAgent(workspaceRoot: string, sessionId: string, key: string): Promise<Agent> {
     try {
-      const agent = await this.#createAgent(workspaceRoot, sessionId, agentName);
+      const agent = await this.#createAgent(workspaceRoot, sessionId);
       if (this.#isTombstonedKey(key)) {
         agent.dispose();
         throw new Error(`Session "${sessionId}" in workspace "${workspaceRoot}" has been deleted`);
@@ -118,10 +119,10 @@ export class SessionAgentManager {
     }
   }
 
-  async #createAgent(workspaceRoot: string, sessionId: string, requestedAgentName?: string): Promise<Agent> {
+  async #createAgent(workspaceRoot: string, sessionId: string): Promise<Agent> {
     const store = await this.#storeManager.getOrLoad(sessionId, workspaceRoot);
     const factory = this.getFactory(workspaceRoot);
-    const agentName = requestedAgentName ?? store.getState().agentName;
+    const agentName = store.getState().agentName;
     const cwd = await this.#validateSessionCwd(workspaceRoot, store.getState().cwd);
     return factory.createRootAgent(agentName, { store });
   }
@@ -129,7 +130,7 @@ export class SessionAgentManager {
   createChildAgent(input: {
     workspaceRoot: string;
     sessionId: string;
-    agentName: string;
+    agentName: AgentName;
     store: StoreApi<SessionStoreState>;
     depth: number;
     parentSessionId: string;

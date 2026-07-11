@@ -71,7 +71,7 @@ function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOption
     storeManager,
     projectContext: createTestProjectContext(workspaceRoot),
     cwd: workspaceRoot,
-    agentName: "orchestrator",
+    agentName: "engineer",
     ...overrides,
   };
 }

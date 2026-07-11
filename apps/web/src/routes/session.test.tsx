@@ -37,7 +37,7 @@ function createSession(input: {
     title: input.title,
     createdAt: 1,
     updatedAt: 1,
-    agentName: "orchestrator",
+    agentName: "engineer",
     modelInfo: null,
     messages: input.messages,
     steps: [],

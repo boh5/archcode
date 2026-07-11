@@ -15,7 +15,7 @@ import {
   createAgentFactory,
 } from "./factory";
 import { ConfiguredAgent } from "./configured-agent";
-import type { AgentDefinition } from "./factory-types";
+import type { AgentDefinition, AgentName } from "./factory-types";
 import type { ResolvedSkill } from "../skills/types";
 import { silentLogger } from "../logger";
 import { createTestProjectContextResolver } from "./test-project-context-resolver";
@@ -84,7 +84,8 @@ function makeProviderRegistry(): ProviderRegistry {
 }
 
 function definition(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
-  return { name: "orchestrator",
+  return { name: "engineer",
+  displayName: "Engineer",
   promptProfileId: "default",
   tools: { tools: ["unknown_tool", ...explorerTools], delegateTargets: ["explore"] },
   hooks: {
@@ -113,7 +114,7 @@ function makeFactory(
       Object.fromEntries(
         definitions.map((definitionItem) => [definitionItem.name, { model: providerRegistry.modelIds[1] ?? providerRegistry.modelIds[0] }]),
       ),
-  } as ArchCodeConfig;
+  } as unknown as ArchCodeConfig;
 
   return createAgentFactory({ definitions,
   providerRegistry,
@@ -141,7 +142,7 @@ describe("createAgentFactory", () => {
     } catch (error) {
       expect(error).toBeInstanceOf(DuplicateAgentDefinitionError);
       expect((error as DuplicateAgentDefinitionError).name).toBe("DuplicateAgentDefinitionError");
-      expect((error as DuplicateAgentDefinitionError).definitionName).toBe("orchestrator");
+      expect((error as DuplicateAgentDefinitionError).definitionName).toBe("engineer");
     }
   });
 
@@ -149,14 +150,14 @@ describe("createAgentFactory", () => {
     const factory = makeFactory();
 
     expect(() => factory.getDefinition("missing")).toThrow(UnknownAgentDefinitionError);
-    expect(() => factory.createAgent("missing")).toThrow(UnknownAgentDefinitionError);
+    expect(() => factory.createAgent("missing" as AgentName)).toThrow(UnknownAgentDefinitionError);
   });
 
   test("creates root agents through the factory API with a supplied store", () => {
     const factory = makeFactory();
-    const store = storeManager.create(`factory-root-${crypto.randomUUID()}`, import.meta.dir);
+    const store = storeManager.create(`factory-root-${crypto.randomUUID()}`, import.meta.dir, { agentName: "engineer" });
 
-    const agent = factory.createRootAgent("orchestrator", { store });
+    const agent = factory.createRootAgent("engineer", { store });
 
     expect(agent.store).toBe(store);
     expect(agent.store.getState().sessionId).toBe(store.getState().sessionId);
@@ -166,7 +167,7 @@ describe("createAgentFactory", () => {
   test("root agents default to no active skills", () => {
     const factory = makeFactory();
 
-    const agent = factory.createRootAgent("orchestrator");
+    const agent = factory.createRootAgent("engineer");
 
     expect(agent).toBeInstanceOf(ConfiguredAgent);
     expect((agent as ConfiguredAgent).activeSkills).toEqual([]);
@@ -196,11 +197,11 @@ describe("createAgentFactory", () => {
     config: {
       provider: {},
       agents: {
-        orchestrator: { model: providerRegistry.modelIds[1]! },
+        engineer: { model: providerRegistry.modelIds[1]! },
       },
-    } as ArchCodeConfig, logger: silentLogger });
+    } as unknown as ArchCodeConfig, logger: silentLogger });
 
-    const agent = factory.createAgent("orchestrator", { activeSkills });
+    const agent = factory.createAgent("engineer", { activeSkills });
 
     expect(agent).toBeInstanceOf(ConfiguredAgent);
     expect((agent as ConfiguredAgent).activeSkills).toBe(activeSkills);
@@ -223,17 +224,17 @@ describe("createAgentFactory", () => {
     config: {
       provider: {},
       agents: {
-        orchestrator: { model: providerRegistry.modelIds[1]! },
+        engineer: { model: providerRegistry.modelIds[1]! },
       },
-    } as ArchCodeConfig, logger: silentLogger });
+    } as unknown as ArchCodeConfig, logger: silentLogger });
 
-    factory.createRootAgent("orchestrator");
+    factory.createRootAgent("engineer");
 
     expect(providerRegistry.getModel).toHaveBeenCalledWith(providerRegistry.modelIds[1]);
     expect(providerRegistry.getModel).not.toHaveBeenCalledWith(providerRegistry.modelIds[0]);
   });
 
-  test("fails fast when orchestrator model config is missing", () => {
+  test("fails fast when engineer model config is missing", () => {
     const providerRegistry = makeProviderRegistry();
     const factory = createAgentFactory({ definitions: [definition()],
     providerRegistry,
@@ -249,16 +250,16 @@ describe("createAgentFactory", () => {
     config: {
       provider: {},
       agents: {},
-    } as ArchCodeConfig, logger: silentLogger });
+    } as unknown as ArchCodeConfig, logger: silentLogger });
 
-    expect(() => factory.createRootAgent("orchestrator")).toThrow(MissingAgentModelConfigError);
+    expect(() => factory.createRootAgent("engineer")).toThrow(MissingAgentModelConfigError);
 
     try {
-      factory.createRootAgent("orchestrator");
+      factory.createRootAgent("engineer");
     } catch (error) {
       expect(error).toBeInstanceOf(MissingAgentModelConfigError);
       expect((error as MissingAgentModelConfigError).name).toBe("MissingAgentModelConfigError");
-      expect((error as MissingAgentModelConfigError).agentName).toBe("orchestrator");
+      expect((error as MissingAgentModelConfigError).agentName).toBe("engineer");
       expect((error as MissingAgentModelConfigError).availableAgents).toEqual([]);
     }
   });
@@ -267,7 +268,7 @@ describe("createAgentFactory", () => {
     const providerRegistry = makeProviderRegistry();
     const factory = createAgentFactory({ definitions: [
       definition(),
-      definition({ name: "explore", promptProfileId: "explorer", tools: { tools: nonDelegatingExplorerTools } }),
+      definition({ name: "explore", displayName: "Explore", promptProfileId: "explorer", tools: { tools: nonDelegatingExplorerTools } }),
     ],
     providerRegistry,
     toolRegistry: createRegistry([
@@ -282,9 +283,9 @@ describe("createAgentFactory", () => {
     config: {
       provider: {},
       agents: {
-        orchestrator: { model: providerRegistry.modelIds[1]! },
+        engineer: { model: providerRegistry.modelIds[1]! },
       },
-    } as ArchCodeConfig, logger: silentLogger });
+    } as unknown as ArchCodeConfig, logger: silentLogger });
 
     expect(() => factory.createAgent("explore")).toThrow(MissingAgentModelConfigError);
 
@@ -294,7 +295,7 @@ describe("createAgentFactory", () => {
       expect(error).toBeInstanceOf(MissingAgentModelConfigError);
       expect((error as MissingAgentModelConfigError).name).toBe("MissingAgentModelConfigError");
       expect((error as MissingAgentModelConfigError).agentName).toBe("explore");
-      expect((error as MissingAgentModelConfigError).availableAgents).toEqual(["orchestrator"]);
+      expect((error as MissingAgentModelConfigError).availableAgents).toEqual(["engineer"]);
     }
   });
 
@@ -322,11 +323,11 @@ describe("createAgentFactory", () => {
     config: {
       provider: {},
       agents: {
-        orchestrator: { model: "missing:model" },
+        engineer: { model: "missing:model" },
       },
-    } as ArchCodeConfig, logger: silentLogger });
+    } as unknown as ArchCodeConfig, logger: silentLogger });
 
-    expect(() => factory.createRootAgent("orchestrator")).toThrow(NoModelsConfiguredError);
+    expect(() => factory.createRootAgent("engineer")).toThrow(NoModelsConfiguredError);
   });
 
   test("fails fast with named unknown model error from provider registry", () => {
@@ -345,12 +346,12 @@ describe("createAgentFactory", () => {
     config: {
       provider: {},
       agents: {
-        orchestrator: { model: "test:missing" },
+        engineer: { model: "test:missing" },
       },
-    } as ArchCodeConfig, logger: silentLogger });
+    } as unknown as ArchCodeConfig, logger: silentLogger });
 
     try {
-      factory.createRootAgent("orchestrator");
+      factory.createRootAgent("engineer");
       throw new Error("Expected createRootAgent to throw");
     } catch (error) {
       expect(error).toBeInstanceOf(UnknownQualifiedIdError);
@@ -367,7 +368,7 @@ describe("createAgentFactory", () => {
       definition({ name: "explore", promptProfileId: "explorer", tools: { tools: nonDelegatingExplorerTools } }),
     ]);
 
-    const root = factory.createRootAgent("orchestrator", { title: "Root Title" });
+    const root = factory.createRootAgent("engineer", { title: "Root Title" });
     const child = factory.createAgent("explore", { title: "Child Title" });
 
     expect(root.store.getState().title).toBe("Root Title");
@@ -381,7 +382,7 @@ describe("createAgentFactory", () => {
     ]);
 
     const parentSessionId = "parent-session";
-    const store = storeManager.create(crypto.randomUUID(), "/test", { parentSessionId });
+    const store = storeManager.create(crypto.randomUUID(), "/test", { parentSessionId, agentName: "engineer" });
     const child = factory.createAgent("explore", { store });
 
     expect(child.store.getState().parentSessionId).toBe(parentSessionId);
@@ -394,7 +395,7 @@ describe("createAgentFactory", () => {
     ]);
 
     const goalId = crypto.randomUUID();
-    const store = storeManager.create(crypto.randomUUID(), "/test", { goalId });
+    const store = storeManager.create(crypto.randomUUID(), "/test", { goalId, agentName: "explore" });
     const child = factory.createAgent("explore", { store });
 
     expect(child.store.getState().goalId).toBe(goalId);
@@ -404,7 +405,7 @@ describe("createAgentFactory", () => {
     const factory = makeFactory();
     const customDefinition = definition({ tools: { tools: ["grep", "missing", "delegate"] } });
     const delegatingDefinition = definition({
-      name: "orchestrator",
+      name: "engineer",
       tools: { tools: ["unknown_tool", ...explorerTools] },
     });
 
@@ -437,16 +438,16 @@ describe("createAgentFactory", () => {
     const factory = makeFactory();
     const depthFilteredDefinition = definition({
       name: "explore",
-      tools: { tools: explorerTools, delegateTargets: ["explore", "custom"] },
+      tools: { tools: explorerTools, delegateTargets: ["explore", "goal_lead"] },
     });
     const explicitWithoutDelegate = definition({
-      name: "custom",
+      name: "goal_lead",
       tools: { tools: ["grep"], delegateTargets: ["explore"] },
     });
 
-    expect(factory.getDelegateTargetsFor(depthFilteredDefinition, 1)).toEqual(["explore", "custom"]);
+    expect(factory.getDelegateTargetsFor(depthFilteredDefinition, 1)).toEqual(["explore", "goal_lead"]);
     // depth 2 (< MAX_SUB_AGENT_DEPTH=3): delegation still allowed, targets returned
-    expect(factory.getDelegateTargetsFor(depthFilteredDefinition, 2)).toEqual(["explore", "custom"]);
+    expect(factory.getDelegateTargetsFor(depthFilteredDefinition, 2)).toEqual(["explore", "goal_lead"]);
     // depth 3 (>= MAX_SUB_AGENT_DEPTH): delegation stripped, targets empty
     expect(factory.getDelegateTargetsFor(depthFilteredDefinition, 3)).toEqual([]);
     expect(factory.getDelegateTargetsFor(explicitWithoutDelegate, 0)).toEqual([]);
@@ -482,7 +483,7 @@ describe("factoryResolveAllowedTools with MCP tools", () => {
       config: {
         provider: {},
         agents: { [def.name]: { model: providerRegistry.modelIds[0]! } },
-      } as ArchCodeConfig,
+      } as unknown as ArchCodeConfig,
       logger: silentLogger,
     });
   }
@@ -540,7 +541,7 @@ describe("factoryResolveAllowedTools with MCP tools", () => {
       config: {
         provider: {},
         agents: { [def.name]: { model: providerRegistry.modelIds[0]! } },
-      } as ArchCodeConfig,
+      } as unknown as ArchCodeConfig,
       logger: silentLogger,
     });
 

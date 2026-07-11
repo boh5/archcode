@@ -6,6 +6,7 @@ import type {
   CompressionBlockStatus,
   CompressionStrategy,
   CompressionTrigger,
+  AgentDescriptor,
   ToolChildSessionLink,
   ToolChildSessionLinkStatus,
 } from "@archcode/protocol";
@@ -14,6 +15,7 @@ import { MarkdownContent } from "../primitives/MarkdownContent";
 import { DelegationCard } from "./DelegationCard";
 import type { DelegationCardProps } from "./DelegationCard";
 import { type BadgeStatus } from "../../lib/agent-constants";
+import { resolveAgentDisplayName } from "../../lib/agent-constants";
 import { fetchCompressionOriginalRange } from "../../api/compression";
 import type {
   CompressionOriginalRangeEntry,
@@ -56,9 +58,10 @@ export interface CompressionBlockProps {
   focusStoreSessionId: string;
   snapshot?: CompressionBlockSnapshot;
   childSessionLinks?: ToolChildSessionLink[];
+  agentDescriptors?: readonly AgentDescriptor[];
 }
 
-export function CompressionBlock({ part, projectSlug, sessionId, focusStoreSessionId, snapshot, childSessionLinks = [] }: CompressionBlockProps) {
+export function CompressionBlock({ part, projectSlug, sessionId, focusStoreSessionId, snapshot, childSessionLinks = [], agentDescriptors = [] }: CompressionBlockProps) {
   const [expanded, setExpanded] = useState(false);
   const [expansion, setExpansion] = useState<ExpansionState>({ status: "collapsed" });
 
@@ -171,6 +174,7 @@ export function CompressionBlock({ part, projectSlug, sessionId, focusStoreSessi
               projectSlug={projectSlug}
               focusStoreSessionId={focusStoreSessionId}
               childSessionLinks={childSessionLinks}
+              agentDescriptors={agentDescriptors}
             />
           )}
           {expansion.status === "collapsed" && null}
@@ -194,11 +198,13 @@ function OriginalRangeView({
   projectSlug,
   focusStoreSessionId,
   childSessionLinks,
+  agentDescriptors,
 }: {
   data: CompressionOriginalRangeSuccess;
   projectSlug: string;
   focusStoreSessionId: string;
   childSessionLinks: ToolChildSessionLink[];
+  agentDescriptors: readonly AgentDescriptor[];
 }) {
   return (
     <div className="px-3 py-2.5 flex flex-col gap-2">
@@ -217,6 +223,7 @@ function OriginalRangeView({
           projectSlug={projectSlug}
           focusStoreSessionId={focusStoreSessionId}
           childSessionLinks={childSessionLinks}
+          agentDescriptors={agentDescriptors}
         />
       ))}
     </div>
@@ -228,11 +235,13 @@ function OriginalRangeEntry({
   projectSlug,
   focusStoreSessionId,
   childSessionLinks,
+  agentDescriptors,
 }: {
   entry: CompressionOriginalRangeEntry;
   projectSlug: string;
   focusStoreSessionId: string;
   childSessionLinks: ToolChildSessionLink[];
+  agentDescriptors: readonly AgentDescriptor[];
 }) {
   const { ref, message } = entry;
   return (
@@ -249,6 +258,7 @@ function OriginalRangeEntry({
             projectSlug={projectSlug}
             focusStoreSessionId={focusStoreSessionId}
             childSessionLinks={childSessionLinks}
+            agentDescriptors={agentDescriptors}
           />
         ))}
       </div>
@@ -261,11 +271,13 @@ function OriginalRangePartView({
   projectSlug,
   focusStoreSessionId,
   childSessionLinks,
+  agentDescriptors,
 }: {
   part: OriginalRangePart;
   projectSlug: string;
   focusStoreSessionId: string;
   childSessionLinks: ToolChildSessionLink[];
+  agentDescriptors: readonly AgentDescriptor[];
 }) {
   switch (part.type) {
     case "text":
@@ -290,6 +302,7 @@ function OriginalRangePartView({
             projectSlug={projectSlug}
             focusStoreSessionId={focusStoreSessionId}
             childSessionLinks={childSessionLinks}
+            agentDescriptors={agentDescriptors}
           />
         );
       }
@@ -348,18 +361,21 @@ function DelegateRangeCard({
   projectSlug,
   focusStoreSessionId,
   childSessionLinks,
+  agentDescriptors,
 }: {
   part: OriginalRangePart & { type: "tool" };
   projectSlug: string;
   focusStoreSessionId: string;
   childSessionLinks: ToolChildSessionLink[];
+  agentDescriptors: readonly AgentDescriptor[];
 }) {
   const parsedInput = parseToolInput("input" in part ? part.input : undefined);
   const link = childSessionLinks.find((l) => l.parentToolCallId === part.toolCallId);
 
   const sessionId = link?.childSessionId ?? "";
-  const agentType = link?.childAgentName ?? (parsedInput?.agent_type as string) ?? "explore";
-  const agentName = link?.title ?? link?.description ?? (parsedInput?.description as string) ?? (parsedInput?.title as string) ?? "Sub-agent";
+  const agentType = link?.childAgentName ?? (parsedInput?.agent_type as string) ?? "unknown";
+  const agentDisplayName = resolveAgentDisplayName(agentType, agentDescriptors);
+  const taskTitle = link?.title ?? link?.description ?? (parsedInput?.title as string) ?? (parsedInput?.description as string);
   const summary = link?.summary ?? link?.description ?? (parsedInput?.description as string) ?? "";
   const status: BadgeStatus = link
     ? mapLinkStatusToBadge(link.status)
@@ -371,7 +387,8 @@ function DelegateRangeCard({
     sessionId,
     focusStoreSessionId,
     agentType,
-    agentName,
+    agentDisplayName,
+    taskTitle,
     status,
     depth,
     startedAt,

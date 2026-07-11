@@ -12,7 +12,7 @@ function makeExecution(sessionId: string, workspaceRoot: string): ActiveSessionE
     sessionId,
     rootSessionId: sessionId,
     workspaceRoot,
-    agentName: "orchestrator",
+    agentName: "engineer",
     origin: "user_message",
     abortController: new AbortController(),
     promise: new Promise(() => undefined),

@@ -36,7 +36,7 @@ function createMockCtx(overrides?: Partial<ToolExecutionContext>): ToolExecution
   input: {},
   step: 1,
   abort: new AbortController().signal,
-  agentName: "orchestrator-agent",
+  agentName: "engineer-agent",
   startedAt: Date.now(),
   allowedTools: new Set(["glob"]),
   agentSkills: [],

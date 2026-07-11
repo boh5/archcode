@@ -218,7 +218,7 @@ function persistedState(
     createdAt: 99,
     updatedAt: 99,
     cwd: TMP_DIR,
-    agentName: "orchestrator",
+    agentName: "engineer",
     modelInfo: null,
     title: null,
     messages,
@@ -333,7 +333,7 @@ describe("session transcript serialization", () => {
 
     expect(loaded.getState().sessionId).toBe(sessionId);
     expect(loaded.getState().createdAt).toBe(state.createdAt);
-    expect(loaded.getState().agentName).toBe("orchestrator");
+    expect(loaded.getState().agentName).toBe("engineer");
     expect(loaded.getState().messages).toEqual(state.messages);
     expect(loaded.getState().steps).toEqual(state.steps);
     expect(loaded.getState().stats).toEqual(state.stats);
@@ -361,7 +361,7 @@ describe("session transcript serialization", () => {
 
   test("save/load roundtrips agentName", async () => {
     const sessionId = uniqueSessionId("agent-name");
-    const state = { ...persistedState(sessionId), agentName: "explore" };
+    const state: PersistedSessionState = { ...persistedState(sessionId), agentName: "explore" };
 
     await sessionFileInternals.saveSessionTranscript(state, TMP_DIR);
     const raw = JSON.parse(await Bun.file(sessionFilePath(sessionId)).text()) as Record<string, unknown>;
@@ -376,6 +376,17 @@ describe("session transcript serialization", () => {
     const { agentName: _agentName, ...stateWithoutAgentName } = persistedState(sessionId);
 
     await writeSessionFile(sessionId, stateWithoutAgentName);
+
+    await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
+  });
+
+  test("load rejects the removed legacy agent identity", async () => {
+    const sessionId = uniqueSessionId("removed-legacy-agent");
+    const removedAgentName = ["orches", "trator"].join("");
+    await writeSessionFile(sessionId, {
+      ...persistedState(sessionId),
+      agentName: removedAgentName,
+    });
 
     await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
   });
@@ -439,7 +450,7 @@ describe("session transcript serialization", () => {
 
     expect(summaries.map((summary) => summary.sessionId)).toEqual([rootSessionId]);
     expect(summaries[0]?.rootSessionId).toBe(rootSessionId);
-    expect(summaries[0]?.agentName).toBe("orchestrator");
+    expect(summaries[0]?.agentName).toBe("engineer");
     expect(summaries[0]?.parentSessionId).toBeUndefined();
   });
 
@@ -990,7 +1001,7 @@ describe("session transcript serialization", () => {
     expect(parsed).not.toHaveProperty("pendingInteractions");
     expect(parsed.reminders).toEqual([]);
     expect(parsed.childSessionLinks).toEqual([]);
-    expect(parsed.agentName).toBe("orchestrator");
+    expect(parsed.agentName).toBe("engineer");
     expect(parsed.schemaVersion).toBe(1);
     expect(parsed.cwd).toBe(TMP_DIR);
     expect(parsed.rootSessionId).toBe(sessionId);

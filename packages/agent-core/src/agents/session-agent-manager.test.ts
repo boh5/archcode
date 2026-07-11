@@ -8,7 +8,7 @@ import { SessionStoreManager } from "../store/session-store-manager";
 import { createRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
 import { ConcurrentSessionLimitError } from "./errors";
-import { orchestratorAgentDefinition } from "./definitions";
+import { engineerAgentDefinition } from "./definitions";
 import { SessionAgentManager } from "./session-agent-manager";
 import { silentLogger } from "../logger";
 import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
@@ -53,7 +53,7 @@ function createManager(
 ): SessionAgentManager {
   const providerRegistry = makeProviderRegistry();
   return new SessionAgentManager({
-    definitions: [orchestratorAgentDefinition],
+    definitions: [engineerAgentDefinition],
     providerRegistry,
     toolRegistry: createRegistry([makeTool("unknown_tool")]),
     skillService: new SkillService({ builtinSkills: {} }),
@@ -61,8 +61,8 @@ function createManager(
     projectContextResolver: createTestProjectContextResolver(storeManager),
     config: {
       provider: {},
-      agents: { orchestrator: { model: providerRegistry.modelIds[0]! } },
-    } as ArchCodeConfig,
+      agents: { engineer: { model: providerRegistry.modelIds[0]! } },
+    } as unknown as ArchCodeConfig,
     logger: silentLogger,
     maxConcurrentSessions,
     ...(tombstoneTtlMs === undefined ? {} : { tombstoneTtlMs }),
@@ -124,7 +124,7 @@ describe("SessionAgentManager", () => {
     await git.exited;
     const storeManager = new SessionStoreManager({ logger: silentLogger });
     const sessionId = crypto.randomUUID();
-    storeManager.create(sessionId, projectRoot, { cwd: outside });
+    storeManager.create(sessionId, projectRoot, { cwd: outside, agentName: "engineer" });
     const manager = createManager(4, undefined, storeManager);
 
     await expect(manager.getOrCreate(projectRoot, sessionId)).rejects.toMatchObject({
@@ -148,7 +148,7 @@ describe("SessionAgentManager", () => {
     await symlink(realProjectRoot, projectRoot, "dir");
     const storeManager = new SessionStoreManager({ logger: silentLogger });
     const sessionId = crypto.randomUUID();
-    storeManager.create(sessionId, projectRoot, { cwd: realProjectRoot });
+    storeManager.create(sessionId, projectRoot, { cwd: realProjectRoot, agentName: "engineer" });
     const manager = createManager(4, undefined, storeManager);
 
     await expect(manager.getOrCreate(projectRoot, sessionId)).rejects.toMatchObject({
@@ -204,7 +204,7 @@ describe("SessionAgentManager", () => {
     const manager = createManager(4, undefined, storeManager);
     const workspaceRoot = "/tmp/archcode-workspace";
     const sessionId = crypto.randomUUID();
-    storeManager.create(sessionId, workspaceRoot);
+    storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" });
 
     const [first, second] = await Promise.all([
       manager.getOrCreate(workspaceRoot, sessionId),
@@ -220,7 +220,7 @@ describe("SessionAgentManager", () => {
     const manager = createManager(4, undefined, storeManager);
     const workspaceRoot = "/tmp/archcode-workspace";
     const sessionId = crypto.randomUUID();
-    storeManager.create(sessionId, workspaceRoot);
+    storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" });
 
     const pendingAgent = manager.getOrCreate(workspaceRoot, sessionId);
 
@@ -236,7 +236,7 @@ describe("SessionAgentManager", () => {
     const manager = createManager(4, 25, storeManager);
     const workspaceRoot = "/tmp/archcode-workspace";
     const sessionId = crypto.randomUUID();
-    storeManager.create(sessionId, workspaceRoot);
+    storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" });
     await storeManager.flushSession(sessionId, workspaceRoot);
 
     manager.dispose(workspaceRoot, sessionId);
@@ -253,7 +253,7 @@ describe("SessionAgentManager", () => {
     const manager = createManager(4, undefined, storeManager);
     const workspaceRoot = "/tmp/archcode-workspace";
     const sessionId = crypto.randomUUID();
-    storeManager.create(sessionId, workspaceRoot);
+    storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" });
     await storeManager.flushSession(sessionId, workspaceRoot);
 
     manager.dispose(workspaceRoot, sessionId);

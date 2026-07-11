@@ -1,6 +1,7 @@
 import { queryOptions, useQuery, useQueries } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 import type {
+  AgentDescriptor,
   LoopBudgetSnapshot,
   LoopCollisionSnapshot,
 } from "@archcode/protocol";
@@ -27,6 +28,7 @@ import type {
 } from "./types";
 
 export const queryKeys = {
+  agents: ["agents"] as const,
   projects: ["projects"] as const,
   goals: ["goals"] as const,
   activeGoals: ["goals", "active"] as const,
@@ -60,6 +62,16 @@ export const queryKeys = {
   loopKillState: (slug: string) => ["projects", slug, "loops", "kill-state"] as const,
   activeLoops: ["loops", "active"] as const,
 };
+
+export function agentsQueryOptions() {
+  return queryOptions({
+    queryKey: queryKeys.agents,
+    queryFn: async () => {
+      const response = await apiFetch<{ agents: AgentDescriptor[] }>("/api/agents");
+      return response.agents;
+    },
+  });
+}
 
 export function projectsQueryOptions() {
   return queryOptions({
@@ -212,6 +224,10 @@ export function diffQueryOptions(slug: string, sessionId?: string) {
 
 export function useProjects() {
   return useQuery(projectsQueryOptions());
+}
+
+export function useAgents() {
+  return useQuery(agentsQueryOptions());
 }
 
 export function useSessions(slug: string) {

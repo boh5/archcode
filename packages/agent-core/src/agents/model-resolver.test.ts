@@ -40,7 +40,8 @@ const baseConfig: ArchCodeConfig = {
     },
   },
   agents: {
-    orchestrator: { model: "test:main" },
+    engineer: { model: "test:main" },
+    goal_lead: { model: "test:main" },
     plan: { model: "test:main" },
     build: { model: "test:main" },
     reviewer: { model: "test:main" },
@@ -86,7 +87,7 @@ describe("resolveAgentModel", () => {
   test("returns correct ModelInfo for configured agent model", () => {
     const registry = makeRegistry(baseConfig);
 
-    const result = resolveAgentModel("orchestrator", baseConfig, registry);
+    const result = resolveAgentModel("engineer", baseConfig, registry);
 
     expect(result.modelInfo).toBe(registry.getModel("test:main"));
     expect(result.modelInfo.qualifiedId).toBe("test:main");
@@ -94,14 +95,14 @@ describe("resolveAgentModel", () => {
 
   test("merges model options, selected variant, and agent options in order", () => {
     const config = configWithAgents({
-      orchestrator: {
+      engineer: {
         model: "test:main",
         variant: "fast",
         options: { maxRetries: 2, temperature: 1.1 },
       },
     });
 
-    const result = resolveAgentModel("orchestrator", config, makeRegistry(config));
+    const result = resolveAgentModel("engineer", config, makeRegistry(config));
 
     expect(result.options).toEqual({
       maxOutputTokens: 100,
@@ -114,14 +115,14 @@ describe("resolveAgentModel", () => {
 
   test("shallow-replaces providerOptions at each layer", () => {
     const config = configWithAgents({
-      orchestrator: {
+      engineer: {
         model: "test:main",
         variant: "fast",
         options: { providerOptions: { test: { agent: true } } },
       },
     });
 
-    const result = resolveAgentModel("orchestrator", config, makeRegistry(config));
+    const result = resolveAgentModel("engineer", config, makeRegistry(config));
 
     expect(result.options?.providerOptions).toEqual({ test: { agent: true } });
   });
@@ -130,19 +131,19 @@ describe("resolveAgentModel", () => {
     const config = configWithAgents({ explorer: { model: "test:main" } });
 
     try {
-      resolveAgentModel("orchestrator", config, makeRegistry(config));
+      resolveAgentModel("engineer", config, makeRegistry(config));
       throw new Error("Expected resolveAgentModel to throw");
     } catch (error) {
       expect(error).toBeInstanceOf(MissingAgentModelConfigError);
       const typedError = error as MissingAgentModelConfigError;
       expect(typedError.name).toBe("MissingAgentModelConfigError");
-      expect(typedError.agentName).toBe("orchestrator");
+      expect(typedError.agentName).toBe("engineer");
       expect(typedError.availableAgents).toEqual(["explorer"]);
     }
   });
 
   test("throws MissingAgentModelConfigError for missing explore model config", () => {
-    const config = configWithAgents({ orchestrator: { model: "test:main" } });
+    const config = configWithAgents({ engineer: { model: "test:main" } });
 
     try {
       resolveAgentModel("explore", config, makeRegistry(config));
@@ -152,15 +153,15 @@ describe("resolveAgentModel", () => {
       const typedError = error as MissingAgentModelConfigError;
       expect(typedError.name).toBe("MissingAgentModelConfigError");
       expect(typedError.agentName).toBe("explore");
-      expect(typedError.availableAgents).toEqual(["orchestrator"]);
+      expect(typedError.availableAgents).toEqual(["engineer"]);
     }
   });
 
   test("preserves unknown model error name and public fields", () => {
-    const config = configWithAgents({ orchestrator: { model: "test:missing" } });
+    const config = configWithAgents({ engineer: { model: "test:missing" } });
 
     try {
-      resolveAgentModel("orchestrator", config, makeRegistry(config));
+      resolveAgentModel("engineer", config, makeRegistry(config));
       throw new Error("Expected resolveAgentModel to throw");
     } catch (error) {
       expect(error).toBeInstanceOf(UnknownQualifiedIdError);
@@ -173,17 +174,17 @@ describe("resolveAgentModel", () => {
 
   test("throws UnknownModelVariantError with agent, model, requested variant, and available variants", () => {
     const config = configWithAgents({
-      orchestrator: { model: "test:main", variant: "missing" },
+      engineer: { model: "test:main", variant: "missing" },
     });
 
     try {
-      resolveAgentModel("orchestrator", config, makeRegistry(config));
+      resolveAgentModel("engineer", config, makeRegistry(config));
       throw new Error("Expected resolveAgentModel to throw");
     } catch (error) {
       expect(error).toBeInstanceOf(UnknownModelVariantError);
       const typedError = error as UnknownModelVariantError;
       expect(typedError.name).toBe("UnknownModelVariantError");
-      expect(typedError.agentName).toBe("orchestrator");
+      expect(typedError.agentName).toBe("engineer");
       expect(typedError.modelId).toBe("test:main");
       expect(typedError.requestedVariant).toBe("missing");
       expect(typedError.availableVariants).toEqual(["fast", "careful"]);
@@ -192,17 +193,17 @@ describe("resolveAgentModel", () => {
 
   test("throws UnknownModelVariantError with empty available variants when model has none", () => {
     const config = configWithAgents({
-      orchestrator: { model: "test:bare", variant: "missing" },
+      engineer: { model: "test:bare", variant: "missing" },
     });
 
     try {
-      resolveAgentModel("orchestrator", config, makeRegistry(config));
+      resolveAgentModel("engineer", config, makeRegistry(config));
       throw new Error("Expected resolveAgentModel to throw");
     } catch (error) {
       expect(error).toBeInstanceOf(UnknownModelVariantError);
       const typedError = error as UnknownModelVariantError;
       expect(typedError.name).toBe("UnknownModelVariantError");
-      expect(typedError.agentName).toBe("orchestrator");
+      expect(typedError.agentName).toBe("engineer");
       expect(typedError.modelId).toBe("test:bare");
       expect(typedError.requestedVariant).toBe("missing");
       expect(typedError.availableVariants).toEqual([]);
@@ -211,10 +212,10 @@ describe("resolveAgentModel", () => {
 
   test("does not include variant in returned options", () => {
     const config = configWithAgents({
-      orchestrator: { model: "test:main", variant: "careful" },
+      engineer: { model: "test:main", variant: "careful" },
     });
 
-    const result = resolveAgentModel("orchestrator", config, makeRegistry(config));
+    const result = resolveAgentModel("engineer", config, makeRegistry(config));
 
     expect(result.options).toEqual({
       maxOutputTokens: 100,
@@ -226,9 +227,9 @@ describe("resolveAgentModel", () => {
   });
 
   test("returns options as undefined when no options configured", () => {
-    const config = configWithAgents({ orchestrator: { model: "test:bare" } });
+    const config = configWithAgents({ engineer: { model: "test:bare" } });
 
-    const result = resolveAgentModel("orchestrator", config, makeRegistry(config));
+    const result = resolveAgentModel("engineer", config, makeRegistry(config));
 
     expect(result.options).toBeUndefined();
   });
@@ -253,7 +254,7 @@ describe("workflow agent model resolution", () => {
   });
 
   test("each throws MissingAgentModelConfigError when no agents config entry exists", () => {
-    const config = configWithAgents({ orchestrator: { model: "test:main" } });
+    const config = configWithAgents({ engineer: { model: "test:main" } });
     const registry = makeRegistry(config);
 
     for (const name of workflowAgentNames) {
@@ -265,7 +266,7 @@ describe("workflow agent model resolution", () => {
         const typedError = error as MissingAgentModelConfigError;
         expect(typedError.name).toBe("MissingAgentModelConfigError");
         expect(typedError.agentName).toBe(name);
-        expect(typedError.availableAgents).toEqual(["orchestrator"]);
+        expect(typedError.availableAgents).toEqual(["engineer"]);
       }
     }
   });

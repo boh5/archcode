@@ -8,7 +8,7 @@ import { ChatInput } from "../components/features/ChatInput";
 import { DiffTab } from "../components/features/DiffTab";
 import { TodoProgressButton } from "../components/features/TodoProgressButton";
 import { InspectorToggleButton } from "../components/features/InspectorToggleButton";
-import { useFocusedSession, useProjects, useSession } from "../api/queries";
+import { useAgents, useFocusedSession, useProjects, useSession } from "../api/queries";
 import { useRealtimeHitl } from "../store/hitl-store";
 import { getWebSessionStore, markSessionForeground } from "../store/session-store";
 import { useWorkbenchLayout } from "../context/workbench-layout";
@@ -26,6 +26,7 @@ export function SessionRoute() {
   const selectedFile = searchParams.get("file") ?? undefined;
 
   const { data: session, isLoading: isSessionLoading, error: sessionError } = useSession(slug, sessionId);
+  const { data: agents = [] } = useAgents();
   const { data: projects = [] } = useProjects();
   const projectRoot = projects.find((project) => project.slug === slug)?.workspaceRoot;
   const rootSessionId = session?.rootSessionId ?? sessionId;
@@ -238,7 +239,7 @@ export function SessionRoute() {
           </div>
         ) : (
           <>
-            <ChatMessages slug={slug} sessionId={focusSessionId} />
+            <ChatMessages slug={slug} sessionId={focusSessionId} agents={agents} />
             <HitlInbox
               projections={focusedHitl}
               hideWhenEmpty
@@ -287,7 +288,7 @@ export function SessionRoute() {
         </div>
       ) : (
         <>
-          <ChatMessages slug={slug} sessionId={rootSessionId} />
+          <ChatMessages slug={slug} sessionId={rootSessionId} agents={agents} />
           <HitlInbox
             projections={sessionHitl}
             hideWhenEmpty

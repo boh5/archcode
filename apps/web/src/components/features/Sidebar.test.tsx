@@ -409,7 +409,7 @@ describe("Sidebar", () => {
         sessionId: "root-session",
         cwd: "/workspace",
         rootSessionId: "root-session",
-        agentName: "orchestrator",
+        agentName: "engineer",
         modelInfo: null,
         title: "Root Session",
         createdAt: 1,
@@ -429,7 +429,7 @@ describe("Sidebar", () => {
     ];
     sessionTree = {
       root: {
-        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", agentName: "orchestrator", modelInfo: null, title: "Root Session", createdAt: 1, updatedAt: 1 },
+        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", agentName: "engineer", modelInfo: null, title: "Root Session", createdAt: 1, updatedAt: 1 },
         children: [
           {
             session: {
@@ -469,7 +469,7 @@ describe("Sidebar", () => {
         sessionId: "root-running",
         cwd: "/workspace",
         rootSessionId: "root-running",
-        agentName: "orchestrator",
+        agentName: "engineer",
         modelInfo: null,
         title: "Old but running",
         createdAt: 1,
@@ -479,7 +479,7 @@ describe("Sidebar", () => {
         sessionId: "root-idle",
         cwd: "/workspace",
         rootSessionId: "root-idle",
-        agentName: "orchestrator",
+        agentName: "engineer",
         modelInfo: null,
         title: "Fresh but idle",
         createdAt: Date.now(),
@@ -517,7 +517,7 @@ describe("Sidebar", () => {
       sessionId: "root-1",
       cwd: "/workspace",
       rootSessionId: "root-1",
-      agentName: "orchestrator",
+      agentName: "engineer",
       modelInfo: null,
       title: "Session",
       createdAt: Date.now(),
@@ -540,7 +540,7 @@ describe("Sidebar", () => {
         sessionId: "root-session",
         cwd: "/workspace",
         rootSessionId: "root-session",
-        agentName: "orchestrator",
+        agentName: "engineer",
         modelInfo: null,
         title: "Root Session",
         createdAt: 1,
@@ -560,7 +560,7 @@ describe("Sidebar", () => {
     ];
     sessionTree = {
       root: {
-        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", agentName: "orchestrator", modelInfo: null, title: "Root Session", createdAt: 1, updatedAt: 1 },
+        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", agentName: "engineer", modelInfo: null, title: "Root Session", createdAt: 1, updatedAt: 1 },
         children: [
           {
             session: {
@@ -598,7 +598,7 @@ describe("Sidebar", () => {
         sessionId: "root-session",
         cwd: "/workspace",
         rootSessionId: "root-session",
-        agentName: "orchestrator",
+        agentName: "engineer",
         modelInfo: null,
         title: "Root Session",
         createdAt: 1,
@@ -618,7 +618,7 @@ describe("Sidebar", () => {
     ];
     sessionTree = {
       root: {
-        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", agentName: "orchestrator", modelInfo: null, title: "Root Session", createdAt: 1, updatedAt: 1 },
+        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", agentName: "engineer", modelInfo: null, title: "Root Session", createdAt: 1, updatedAt: 1 },
         children: [
           {
             session: {

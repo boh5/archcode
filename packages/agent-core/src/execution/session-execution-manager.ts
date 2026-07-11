@@ -36,6 +36,7 @@ import { scopedKey } from "../store/key";
 import type { Reminder, SessionRole, SessionStoreState } from "../store/types";
 import type { StoredMessage } from "../store/types";
 import type { ToolExecutionOrigin } from "../tools/types";
+import type { AgentName } from "../agents/names";
 import type { Logger } from "../logger";
 import {
   SessionExecutionScopeConflictError,
@@ -77,7 +78,7 @@ export interface ActiveSessionExecution {
   readonly sessionId: string;
   readonly rootSessionId: string;
   readonly workspaceRoot: string;
-  readonly agentName: string;
+  readonly agentName: AgentName;
   readonly origin: SessionExecutionOrigin;
   readonly abortController: AbortController;
   readonly promise: Promise<void>;
@@ -119,7 +120,6 @@ export interface StartSessionExecutionInput {
   readonly workspaceRoot: string;
   readonly sessionId: string;
   readonly userMessage: string;
-  readonly agentName?: string;
   readonly origin?: SessionExecutionOrigin | ToolExecutionOrigin;
   readonly maxSteps?: number;
   readonly extraTools?: readonly string[];
@@ -180,14 +180,14 @@ interface SessionExecutionManagerConfig {
   readonly createSessionStore: (
     sessionId: string,
     workspaceRoot: string,
-    options?: {
+    options: {
       readonly rootSessionId?: string;
       readonly parentSessionId?: string;
       readonly cwd?: string;
       readonly goalId?: string;
       readonly loopId?: string;
       readonly sessionRole?: SessionStoreState["sessionRole"];
-      readonly agentName?: string;
+      readonly agentName: AgentName;
       readonly title?: string;
     },
   ) => StoreApi<SessionStoreState>;
@@ -259,7 +259,7 @@ export class SessionExecutionManager {
       sessionId: input.sessionId,
       rootSessionId,
       workspaceRoot: input.workspaceRoot,
-      agentName: input.agentName ?? "orchestrator",
+      agentName: sessionState.agentName,
       origin: sessionExecutionOrigin(input.origin),
       abortController,
       executionToken,
@@ -714,7 +714,7 @@ export class SessionExecutionManager {
   async startChildExecution(workspaceRoot: string, request: ChildExecutionRequest): Promise<ChildExecutionHandle> {
     const factory = this.#config.sessionAgentManager.getFactory(workspaceRoot);
     const currentDepth = request.currentDepth ?? 0;
-    const parentAgentName = request.parentStore.getState().agentName ?? "orchestrator";
+    const parentAgentName = request.parentStore.getState().agentName;
     const parentDefinition = factory.getDefinition(parentAgentName);
     const allowedTools = factory.resolveAllowedTools(parentDefinition, currentDepth);
 
@@ -799,7 +799,6 @@ export class SessionExecutionManager {
         workspaceRoot,
         sessionId: childSessionId,
         userMessage: request.prompt,
-        agentName: targetDefinition.name,
         origin: request.origin ?? "tool_call",
       });
       this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, "running", childTitle, createdAt, background);
@@ -902,7 +901,7 @@ export class SessionExecutionManager {
       },
     });
     if (isTerminal && existing.background) {
-      const parentAgentName = parentStore.getState().agentName ?? "orchestrator";
+      const parentAgentName = parentStore.getState().agentName;
       const parentDefinition = this.#config.sessionAgentManager.getFactory(workspaceRoot).getDefinition(parentAgentName);
       if (parentDefinition.childPolicy?.terminalReminders) {
         appendTerminalReminder(parentStore, childSessionId, status);
@@ -948,7 +947,7 @@ export class SessionExecutionManager {
     }
 
     const background = request.background ?? false;
-    const parentAgentName = request.parentStore.getState().agentName ?? "orchestrator";
+    const parentAgentName = request.parentStore.getState().agentName;
     const parentDefinition = this.#config.sessionAgentManager.getFactory(workspaceRoot).getDefinition(parentAgentName);
     const existingLink = this.#findChildSessionLink(request.parentStore, request.sessionId);
     const resumeLinkCreatedAt = Date.now();
@@ -967,7 +966,6 @@ export class SessionExecutionManager {
         workspaceRoot,
         sessionId: request.sessionId,
         userMessage: request.prompt,
-        agentName: request.targetAgentName,
         origin: request.origin ?? "tool_call",
       });
       releaseChildLaunch();
@@ -1073,7 +1071,7 @@ export class SessionExecutionManager {
       const loopOrigin = isToolExecutionOrigin(input.origin) ? input.origin : undefined;
       let userMessage = input.userMessage;
       for (let transitionCount = 0; transitionCount <= MAX_CWD_TRANSITIONS_PER_EXECUTION; transitionCount += 1) {
-        const agent = await this.#config.sessionAgentManager.getOrCreate(input.workspaceRoot, input.sessionId, input.agentName);
+        const agent = await this.#config.sessionAgentManager.getOrCreate(input.workspaceRoot, input.sessionId);
         this.#assertSessionStartAllowed(input.workspaceRoot, input.sessionId, agent.store.getState());
         this.#eventBridge.attachSession(input.workspaceRoot, input.sessionId, agent.store);
         if (execution.abortController.signal.aborted) return;
@@ -1777,7 +1775,7 @@ function isToolExecutionOrigin(origin: SessionExecutionOrigin | ToolExecutionOri
   return typeof origin === "object" && origin !== null && origin.kind === "loop";
 }
 
-function sessionRoleForAgent(agentName: string): SessionRole | undefined {
+function sessionRoleForAgent(agentName: AgentName): SessionRole | undefined {
   if (agentName === "plan" || agentName === "build" || agentName === "explore" || agentName === "librarian") return agentName;
   if (agentName === "reviewer") return "review";
   return undefined;

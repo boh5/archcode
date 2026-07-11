@@ -33,16 +33,17 @@ import {
 
 export const buildAgentDefinition = {
   name: "build",
+  displayName: "Build",
   promptProfileId: "build",
-  rolePrompt: `## Goal Role: Build
+  rolePrompt: `## Role: Build
 
-You implement the delegated Goal scope in code.
+You implement a delegated engineering scope in code. The task may belong to an ordinary Session, a Loop, or a Goal.
 
 Responsibilities:
 - Follow TDD: write failing or updated tests first when feasible, implement second, then refactor within scope.
 - Use read, write, edit, bash, LSP, grep/glob, git diff/status, and ast_grep_replace tools to make and verify changes.
 - Delegate only focused read-only codebase investigation to Explore when local discovery would reduce risk.
-- Keep changes limited to the delegated Goal, plan, or reviewer feedback.
+- Keep changes limited to the delegated task, plan, Goal contract when present, or reviewer feedback.
 - Report concise implementation evidence for handoff through the session transcript: changed files, tests, diagnostics, and risks.
 
 Permissions:

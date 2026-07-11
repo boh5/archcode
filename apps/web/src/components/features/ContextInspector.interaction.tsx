@@ -97,7 +97,7 @@ describe("ContextInspector interactions", () => {
     const dom = installDom("/projects/demo/sessions/root");
     const session: Session = {
       schemaVersion: 1, sessionId: "root", rootSessionId: "root", cwd: "/workspace/demo", title: "Root execution",
-      createdAt: 1, updatedAt: 2, agentName: "orchestrator", modelInfo: null, messages: [], steps: [], todos: [], reminders: [], childSessionLinks: [], executions: [], stats: createEmptySessionStats(),
+      createdAt: 1, updatedAt: 2, agentName: "engineer", modelInfo: null, messages: [], steps: [], todos: [], reminders: [], childSessionLinks: [], executions: [], stats: createEmptySessionStats(),
     };
     const childSession: Session = {
       ...session,
@@ -111,12 +111,18 @@ describe("ContextInspector interactions", () => {
       stats: { ...createEmptySessionStats(), messages: { total: 4, user: 1, assistant: 3 }, tools: { calls: 2, completed: 2, failed: 0 } },
     };
     const tree: SessionTreeResponse = {
-      root: { session: { sessionId: "root", rootSessionId: "root", cwd: session.cwd, title: session.title, createdAt: 1, updatedAt: 2, agentName: "orchestrator", modelInfo: null }, children: [
-        { session: { sessionId: "child", rootSessionId: "root", parentSessionId: "root", cwd: session.cwd, title: "Build agent", createdAt: 1, updatedAt: 2, agentName: "build", modelInfo: null }, children: [] },
+      root: { session: { sessionId: "root", rootSessionId: "root", cwd: session.cwd, title: session.title, createdAt: 1, updatedAt: 2, agentName: "engineer", modelInfo: null }, children: [
+        { session: { sessionId: "child", rootSessionId: "root", parentSessionId: "root", cwd: session.cwd, title: "Build agent", createdAt: 1, updatedAt: 2, agentName: "build", modelInfo: null }, children: [
+          { session: { sessionId: "custom", rootSessionId: "root", parentSessionId: "child", cwd: session.cwd, title: "Custom agent", createdAt: 1, updatedAt: 2, agentName: "custom_agent", modelInfo: null }, children: [] },
+        ] },
       ] }, diagnostics: [],
     };
     Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url === "/api/agents") return Response.json({ agents: [
+        { name: "engineer", displayName: "Engineer" },
+        { name: "build", displayName: "Build" },
+      ] });
       if (url.endsWith("/tree")) return Response.json(tree);
       if (url.includes("/diff")) return Response.json({ files: [{ path: "src/app.ts", status: "modified", additions: 2, deletions: 1, hunks: [] }] });
       if (url.endsWith("/sessions/child")) return Response.json(childSession);
@@ -128,6 +134,9 @@ describe("ContextInspector interactions", () => {
     const client = await renderInspector(root, "/projects/demo/sessions/root", "session");
     try {
       await waitFor(() => expect(container.textContent).toContain("Build agent"));
+      expect(container.textContent).toContain("Engineer");
+      expect(container.textContent).toContain("Build");
+      expect(container.textContent).toContain("custom_agent");
       expect(container.querySelector('button[aria-label="Close context inspector"]')).toBeNull();
       const mediumCollapse = container.querySelector('button[aria-label="Collapse context inspector from overlay"]') as HTMLButtonElement;
       expect(mediumCollapse).not.toBeNull();

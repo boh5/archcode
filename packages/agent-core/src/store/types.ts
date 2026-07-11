@@ -13,6 +13,7 @@ import type {
   ToolChildSessionLink,
 } from "@archcode/protocol";
 import type { CompressionState } from "../compression";
+import type { AgentName } from "../agents/names";
 
 export type {
   StreamEvent,
@@ -85,7 +86,7 @@ export interface SessionStoreState {
   // Persistent layer
   /** Current execution directory. Session files remain owned by the canonical project root. */
   cwd: string;
-  agentName: string;
+  agentName: AgentName;
   modelInfo: SessionModelInfo | null;
   title: string | null;
   messages: SessionMessage[];

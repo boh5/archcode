@@ -33,7 +33,7 @@ afterAll(async () => {
 function makeContext(parentId = crypto.randomUUID()): ToolExecutionContext {
   const localManager = new SessionStoreManager({ logger: silentLogger });
   return {
-    store: localManager.create(parentId, workspaceRoot),
+    store: localManager.create(parentId, workspaceRoot, { agentName: "engineer" }),
     storeManager: localManager,
     toolName: "background_output",
     toolCallId: "background-output-call",
@@ -48,7 +48,7 @@ function makeContext(parentId = crypto.randomUUID()): ToolExecutionContext {
 }
 
 function linkChild(ctx: ToolExecutionContext, childId = `background-child-${crypto.randomUUID()}`) {
-  const childStore = ctx.storeManager.create(childId, workspaceRoot);
+  const childStore = ctx.storeManager.create(childId, workspaceRoot, { agentName: "engineer" });
   childStore.getState().setParentSessionId(ctx.store.getState().sessionId);
   childStore.setState({ rootSessionId: ctx.store.getState().rootSessionId });
   return childStore;
@@ -166,9 +166,9 @@ describe("background_output tool", () => {
 
   it("returns unrelated sessions and grandchildren by session ID", async () => {
     const ctx = makeContext();
-    const unrelated = ctx.storeManager.create(`unrelated-${crypto.randomUUID()}`, workspaceRoot);
+    const unrelated = ctx.storeManager.create(`unrelated-${crypto.randomUUID()}`, workspaceRoot, { agentName: "engineer" });
     const childStore = linkChild(ctx);
-    const grandchild = ctx.storeManager.create(`grandchild-${crypto.randomUUID()}`, workspaceRoot);
+    const grandchild = ctx.storeManager.create(`grandchild-${crypto.randomUUID()}`, workspaceRoot, { agentName: "engineer" });
     grandchild.getState().setParentSessionId(childStore.getState().sessionId);
     grandchild.setState({ rootSessionId: childStore.getState().rootSessionId });
 
@@ -190,7 +190,7 @@ describe("background_output tool", () => {
   it("keeps nested delegation stats isolated and reads by session ID", async () => {
     const ctx = makeContext();
     const childStore = linkChild(ctx);
-    const grandchild = ctx.storeManager.create(`grandchild-${crypto.randomUUID()}`, workspaceRoot);
+    const grandchild = ctx.storeManager.create(`grandchild-${crypto.randomUUID()}`, workspaceRoot, { agentName: "engineer" });
     grandchild.getState().setParentSessionId(childStore.getState().sessionId);
     grandchild.setState({ rootSessionId: childStore.getState().rootSessionId });
 

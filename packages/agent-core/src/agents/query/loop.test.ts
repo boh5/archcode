@@ -125,7 +125,7 @@ function createPermissionBranchRegistry(
 }
 
 function createStore(): StoreApi<SessionStoreState> {
-  return storeManager.create(crypto.randomUUID(), import.meta.dir);
+  return storeManager.create(crypto.randomUUID(), import.meta.dir, { agentName: "engineer" });
 }
 
 function captureEvents(store: StoreApi<SessionStoreState>): SessionEventPayload[] {
@@ -167,7 +167,7 @@ function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOption
   storeManager,
   projectContext: createTestProjectContext(workspaceRoot),
   cwd: workspaceRoot,
-  agentName: "orchestrator",
+  agentName: "engineer",
   ...overrides,  };
 }
 
@@ -1472,7 +1472,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       expect(result).toEqual({ text: "Still works", steps: 0 });
       expect(logger.warn).toHaveBeenCalledWith("query.loop.hook.failed", {
         error: expect.any(Error),
-        context: { sessionId: store.getState().sessionId, agentName: "orchestrator" },
+        context: { sessionId: store.getState().sessionId, agentName: "engineer" },
         meta: { phase: "beforeModelBuild" },
       });
       expect(store.getState().isRunning).toBe(false);
@@ -2920,7 +2920,7 @@ describe("runQueryLoop slash commands", () => {
     commandRegistry.register(createSkillCommand());
 
     const result = await maybeHandleCommand(
-      makeOptions({ store, commandRegistry, skillService, agentName: "orchestrator", agentSkills: ["git-master"] }),
+      makeOptions({ store, commandRegistry, skillService, agentName: "engineer", agentSkills: ["git-master"] }),
       "/skill use git-master do something",
       new AbortController().signal,
     );
@@ -2973,7 +2973,7 @@ describe("runQueryLoop slash commands", () => {
     commandRegistry.register(createSkillCommand());
 
     const result = await runQueryLoop(
-      makeOptions({ store, commandRegistry, skillService, agentName: "orchestrator", agentSkills: ["git-master"] }),
+      makeOptions({ store, commandRegistry, skillService, agentName: "engineer", agentSkills: ["git-master"] }),
       "/skill use git-master do something",
     );
 

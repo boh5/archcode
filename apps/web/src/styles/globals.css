@@ -35,7 +35,8 @@
   --info: #3b82f6;
   --info-muted: #3b82f620;
 
-  --agent-orchestrator: #8b5cf6;
+  --agent-engineer: #8b5cf6;
+  --agent-goal-lead: #f59e0b;
   --agent-plan: #3b82f6;
   --agent-build: #06b6d4;
   --agent-reviewer: #ec4899;
@@ -155,7 +156,8 @@
   --color-info-muted: var(--info-muted);
 
   /* Agent */
-  --color-agent-orchestrator: var(--agent-orchestrator);
+  --color-agent-engineer: var(--agent-engineer);
+  --color-agent-goal-lead: var(--agent-goal-lead);
   --color-agent-plan: var(--agent-plan);
   --color-agent-build: var(--agent-build);
   --color-agent-reviewer: var(--agent-reviewer);

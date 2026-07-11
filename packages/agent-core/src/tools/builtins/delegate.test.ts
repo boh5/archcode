@@ -17,7 +17,7 @@ const WORKSPACE_ROOT = import.meta.dir;
 
 class ToolStubExecutor {
   lastRequest: ChildExecutionRequest | undefined;
-  readonly store = storeManager.create(`delegate-child-${crypto.randomUUID()}`, WORKSPACE_ROOT);
+  readonly store = storeManager.create(`delegate-child-${crypto.randomUUID()}`, WORKSPACE_ROOT, { agentName: "engineer" });
 
   async start(request: ChildExecutionRequest) {
     this.lastRequest = request;
@@ -58,7 +58,7 @@ class FailingChildExecutor extends ToolStubExecutor {
 }
 
 function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
-  return { store: storeManager.create(`delegate-parent-${crypto.randomUUID()}`, WORKSPACE_ROOT),
+  return { store: storeManager.create(`delegate-parent-${crypto.randomUUID()}`, WORKSPACE_ROOT, { agentName: "engineer" }),
   toolName: "delegate",
   toolCallId: "delegate-call",
   input: {},
@@ -69,7 +69,7 @@ function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecuti
   cwd: import.meta.dir,
   storeManager,
     projectContext: createTestProjectContext(import.meta.dir),
-  agentName: "orchestrator", ...overrides,  };
+  agentName: "engineer", ...overrides,  };
 }
 
 const LOOP_ORIGIN: ToolExecutionOrigin = {
@@ -155,7 +155,7 @@ describe("delegate tool", () => {
 
   it("sync delegation waits and returns a plain formatted result", async () => {
     const executor = new ToolStubExecutor();
-    const parentStore = storeManager.create(`delegate-parent-${crypto.randomUUID()}`, WORKSPACE_ROOT);
+    const parentStore = storeManager.create(`delegate-parent-${crypto.randomUUID()}`, WORKSPACE_ROOT, { agentName: "engineer" });
     const result = await executeDelegate(
       { agent_type: "explore", task: "inspect", skills: [], description: "Scan", background: false },
       makeContext({ startChildExecution: (request) => executor.start(request), currentDepth: 1, store: parentStore }),
@@ -179,7 +179,7 @@ describe("delegate tool", () => {
 
   it("async delegation returns launch guidance without metadata", async () => {
     const executor = new ToolStubExecutor();
-    const parentStore = storeManager.create(`delegate-parent-${crypto.randomUUID()}`, WORKSPACE_ROOT);
+    const parentStore = storeManager.create(`delegate-parent-${crypto.randomUUID()}`, WORKSPACE_ROOT, { agentName: "engineer" });
     const result = await executeDelegate(
       { agent_type: "explore", task: "inspect", skills: ["codemap"], description: "Scan", background: true },
       makeContext({ startChildExecution: (request) => executor.start(request), store: parentStore }),
@@ -250,7 +250,7 @@ describe("delegate tool", () => {
 
   it("returns structured error when child execution rejects a disallowed target", async () => {
     const startChildExecution = async () => {
-      throw new DelegateTargetNotAllowedError("orchestrator", "writer", 0);
+      throw new DelegateTargetNotAllowedError("engineer", "writer", 0);
     };
 
     const result = await executeDelegate(
@@ -264,13 +264,13 @@ describe("delegate tool", () => {
     expect(JSON.parse(errorResult.output)).toMatchObject({
       name: "DelegateTargetNotAllowedError",
       code: "TOOL_DELEGATE_FAILED",
-      message: 'Agent "orchestrator" cannot delegate to "writer" at depth 0',
+      message: 'Agent "engineer" cannot delegate to "writer" at depth 0',
       details: {
         ok: false,
         session_id: "",
         error: {
           name: "DelegateTargetNotAllowedError",
-          message: 'Agent "orchestrator" cannot delegate to "writer" at depth 0',
+          message: 'Agent "engineer" cannot delegate to "writer" at depth 0',
         },
       },
     });
@@ -279,7 +279,7 @@ describe("delegate tool", () => {
   it("forwards title and description to child execution", async () => {
     const executor = new ToolStubExecutor();
     const parentAbort = new AbortController();
-    const parentStore = storeManager.create(`delegate-parent-${crypto.randomUUID()}`, WORKSPACE_ROOT);
+    const parentStore = storeManager.create(`delegate-parent-${crypto.randomUUID()}`, WORKSPACE_ROOT, { agentName: "engineer" });
 
     await executeDelegate(
       {
@@ -328,7 +328,7 @@ describe("delegate tool", () => {
       sessionId: string = RESUME_SESSION_ID,
       result: Promise<{ text: string; steps: number }> = Promise.resolve({ text: "resumed output", steps: 1 }),
     ) {
-      const store = storeManager.create(`delegate-resume-${crypto.randomUUID()}`, WORKSPACE_ROOT);
+      const store = storeManager.create(`delegate-resume-${crypto.randomUUID()}`, WORKSPACE_ROOT, { agentName: "engineer" });
       store.getState().setParentSessionId("parent-id");
       store.getState().append({ type: "execution-start", executionId: "resume-run" });
       store.getState().append({ type: "text-start" });
@@ -366,7 +366,7 @@ describe("delegate tool", () => {
       const resumeChildSession = mock(
         (_workspaceRoot: string, _request: ResumeChildRequest) => Promise.resolve(handle),
       );
-      const parentStore = storeManager.create(`delegate-parent-${crypto.randomUUID()}`, WORKSPACE_ROOT);
+      const parentStore = storeManager.create(`delegate-parent-${crypto.randomUUID()}`, WORKSPACE_ROOT, { agentName: "engineer" });
       const parentAbort = new AbortController();
 
       const result = await executeDelegate(

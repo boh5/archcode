@@ -2,6 +2,7 @@ import type { StoreApi } from "zustand";
 import { createStore } from "zustand/vanilla";
 import type { ModelMessage } from "ai";
 import { createEmptySessionStats } from "@archcode/protocol";
+import type { AgentName } from "../agents/names";
 import { createEmptyCompressionState, resolveCompressionOriginalRange, type CompressionOriginalRangeResult } from "../compression";
 import type {
   SessionModelInfo,
@@ -41,13 +42,13 @@ export interface SessionStoreManagerOptions {
 }
 
 export interface CreateSessionOptions {
+  readonly agentName: AgentName;
   readonly cwd?: string;
   readonly rootSessionId?: string;
   readonly parentSessionId?: string;
   readonly goalId?: string;
   readonly loopId?: string;
   readonly sessionRole?: SessionRole;
-  readonly agentName?: string;
   readonly modelInfo?: SessionModelInfo | null;
   readonly title?: string;
 }
@@ -99,7 +100,7 @@ export class SessionStoreManager {
     this.#rootIdIndex.delete(this.key(sessionId, workspaceRoot));
   }
 
-  create(sessionId: string, workspaceRoot: string, options: CreateSessionOptions = {}): StoreApi<SessionStoreState> {
+  create(sessionId: string, workspaceRoot: string, options: CreateSessionOptions): StoreApi<SessionStoreState> {
     const key = this.key(sessionId, workspaceRoot);
     const existing = this.#registry.get(key);
     if (existing) return existing;
@@ -147,7 +148,7 @@ export class SessionStoreManager {
       createdAt,
       updatedAt: createdAt,
       cwd,
-      agentName: options.agentName ?? "orchestrator",
+      agentName: options.agentName,
       modelInfo: options.modelInfo ?? null,
       title: options.title ?? null,
       messages: [],
@@ -323,7 +324,7 @@ export class SessionStoreManager {
     }
   }
 
-  async createSessionFile(workspaceRoot: string, options: CreateSessionOptions = {}): Promise<HydratedSessionFile> {
+  async createSessionFile(workspaceRoot: string, options: CreateSessionOptions): Promise<HydratedSessionFile> {
     const sessionId = crypto.randomUUID();
     const store = this.create(sessionId, workspaceRoot, options);
     const key = this.key(sessionId, workspaceRoot);

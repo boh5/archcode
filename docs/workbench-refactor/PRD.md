@@ -117,7 +117,7 @@
 - `after_plan` = plan→build 门;`before_complete` = review→completed 门;`on_destructive_op` = build phase 内破坏性操作的工具 guard(详见 §4.3)
 - **这不是 Workflow 的 8-stage FSM**——只有 3 个 phase,且 phase 是 Goal runner 内部进度,不是顶层状态机节点。Goal 顶层状态机仍是 draft→locked→running→verifying→reviewed→completed/failed/escalated
 
-**Session 层级**:Goal 下有一个主 session(orchestrator,架构师对话在这里),主 session 下有子 session(plan/build/review/explore/librarian,各自独立 store)。简单任务直接用顶层独立 Session,不需要 Goal。
+**Session 层级**:Goal 下有一个主 session(goal_lead,架构师对话在这里),主 session 下有子 session(plan/build/review/explore/librarian,各自独立 store)。简单任务直接用顶层独立 Session,不需要 Goal。
 
 **Loop 不是 Goal 超集**:Loop 是调度容器,可跑 Session(简单重复任务)或 Goal(复杂重复任务带 Done + Reviewer)。
 
@@ -129,16 +129,16 @@
 - `command succeeds` —— **万能逃生口**(任何条件都能用一条 shell 命令表达)
 - `user confirmation` —— HITL 审批(**唯一非机器 check**,走 HITL `approval` kind)
 
-**验收条件谁生成**:AI(orchestrator/plan)可生成所有 kind 包括 `command succeeds`,但**用户 `lock` 确认后才生效**。安全由三层保证:(1) 用户 lock 确认 (2) Reviewer 独立验证(Reviewer ≠ 生成 acceptanceCriteria 的 agent) (3) `command succeeds` 的 bash guard(限制破坏性命令)。`goal.json` 记录 `author`(生成者)和 `lockedBy`(锁定者)。竞品先例:Factory Missions 的 AI orchestrator 生成 Validation Contract,用户审批计划,独立 fresh validator 验证;Castor 的 AI orchestrator 生成 done_conditions,自动验证器执行。
+**验收条件谁生成**:AI(goal_lead/plan)可生成所有 kind 包括 `command succeeds`,但**用户 `lock` 确认后才生效**。安全由三层保证:(1) 用户 lock 确认 (2) Reviewer 独立验证(Reviewer ≠ 生成 acceptanceCriteria 的 agent) (3) `command succeeds` 的 bash guard(限制破坏性命令)。`goal.json` 记录 `author`(生成者)和 `lockedBy`(锁定者)。竞品先例:Factory Missions 的 AI goal_lead 生成 Validation Contract,用户审批计划,独立 fresh validator 验证;Castor 的 AI goal_lead 生成 done_conditions,自动验证器执行。
 
 **Layer 2:AI 判断(可选)** —— 1 种:
 - `spec compliance` —— Reviewer 读 spec + 代码 + 跑工具,判断实现是否匹配 spec。复杂 Goal 用,简单 Goal 不用。
 
 **为什么是混合**:纯 AI 自判不可靠(Steinberger/SonarSource 警告"slop machine";Claude Code `/goal` evaluator 官方承认"不调工具,只能读对话")。纯硬编码不够(需要 maker/checker split + AI 判断 spec 符合度)。Castor 的固定 enum 是有效先例。
 
-**Goal 状态机**:draft → locked → running → verifying → reviewed → completed(全 true)/ failed → retry(fresh session)/ escalated(重试耗尽)。**`reviewed` 是 `done` 的前置** —— orchestrator 不能跳过 Reviewer。Goal 内部有 3 个 phase(plan→build→review),`approvalPoints` 是 phase 转换门(不是独立状态机节点)。
+**Goal 状态机**:draft → locked → running → verifying → reviewed → completed(全 true)/ failed → retry(fresh session)/ escalated(重试耗尽)。**`reviewed` 是 `done` 的前置** —— goal_lead 不能跳过 Reviewer。Goal 内部有 3 个 phase(plan→build→review),`approvalPoints` 是 phase 转换门(不是独立状态机节点)。
 
-**Reviewer day-one 强制**:Goal 核心价值就是 locked 验收条件 + 独立 Reviewer 验证。没有 Reviewer 的 Goal 退化为 Session(用 Session 即可)。Phase 1 起 Reviewer **强制**,orchestrator 不能跳过。
+**Reviewer day-one 强制**:Goal 核心价值就是 locked 验收条件 + 独立 Reviewer 验证。没有 Reviewer 的 Goal 退化为 Session(用 Session 即可)。Phase 1 起 Reviewer **强制**,goal_lead 不能跳过。
 
 ### 4.3 HITL:横切关注点
 
@@ -188,21 +188,22 @@
 
 **HITL 是与 Goal 平级的服务**,不是 Goal 的子模块。Goal 的 Reviewer validation flow 依赖 HITL 回答 `user confirmation`。HITL 可在任意 session(主或子)弹出。HITL **不合并**现有 `PermissionService`/`AskUserService`——它们保持不变,HITL 是新增的独立 service。
 
-### 4.4 6-agent 架构(4 core + 2 ancillary)
+### 4.4 7-agent 架构(2 principal + 3 core + 2 ancillary)
 
 | 角色 | 类型 | 职责 | 关键约束 |
 |---|---|---|---|
-| **orchestrator** | core | 拥有 Goal,委派,决策,与架构师对话 | 全工具 + 委派 |
+| **engineer** | principal | 普通 Session 中直接完成工程工作,必要时委派 | 完整工程工具 + `goal_create` |
+| **goal_lead** | principal | 推进已有 Goal,委派,决策,与架构师对话 | 只读协调工具 + `goal_manage` + 委派,不直接写源码或运行 shell |
 | **plan** | core | 想清楚要做什么 | 只读 + lsp + web_fetch |
 | **build** | core | 实现代码 | 读写工具 |
 | **reviewer** | core | 默认拒绝,用证据判完成 | 只读 + lsp + 跑测试 + `Reviewer evidence flow` + `goal_manage.finalize_review` + `Goal session evidence read access`/`Goal session evidence write access`,**独立 session store** |
 | **explore** | ancillary | 代码库检索 | 只读 grep |
 | **librarian** | ancillary | 外部文档/库检索 | web_fetch + MCP |
 
-**工具集在 agent 定义里硬编码** —— orchestrator **不能**在委派时修改子 agent 工具集。这是安全边界,不是装饰。
+**工具集在 agent 定义里硬编码** —— principal Agent **不能**在委派时修改子 agent 工具集。这是安全边界,不是装饰。
 
 **Reviewer 的核心差异化**:
-- **强制**(orchestrator 不能跳过)
+- **强制**(goal_lead 不能跳过)
 - **独立 session store**(不共享 Build 的,避免被带偏)
 - **能跑工具**(lsp_diagnostics / tests / grep / git_diff / Reviewer evidence flow / goal_manage.finalize_review / Goal session evidence access)—— 核心差异化 vs Claude Code `/goal` evaluator(不调工具,只读对话)
 - **默认拒绝 + 5 点检查清单**(全部通过才 APPROVE):
@@ -268,13 +269,13 @@
 - 三层原语:Goal/Session(HITL 跟着 Goal 一起做,因为 approvalPoints + done `user confirmation` 依赖它;Loop 暂不做)
 - Acceptance Criteria 7 种 machine + 1 HITL kind(Layer 1)
 - HITL 3 种 kind(question/approval/review)+ 统一 Approval Queue(新增 HitlService,不合并现有 PermissionService/AskUserService)
-- 6-agent 定义(orchestrator/plan/build/reviewer/explore/librarian),工具集硬编码
-- **Reviewer day-one 强制**(orchestrator 不能跳过,`reviewed` 是 `done` 前置)
+- 7-agent 定义(engineer/goal_lead/plan/build/reviewer/explore/librarian),工具集硬编码
+- **Reviewer day-one 强制**(goal_lead 不能跳过,`reviewed` 是 `done` 前置)
 - Reviewer 默认拒绝 + 5 点检查清单
 - Goal 状态机:draft→locked→running→verifying→reviewed→completed/failed/escalated + 显式 phases(plan→build→review)
-- Goal 执行:lock → orchestrator 自主分解 → 委派 plan/build/reviewer → reviewer 用 `Reviewer evidence flow` 逐条 check_done → reviewer 用 `goal_manage.finalize_review` 给出 DONE/NOT_DONE → retry(fresh session)
+- Goal 执行:lock → goal_lead 自主分解 → 委派 plan/build/reviewer → reviewer 用 `Reviewer evidence flow` 逐条 check_done → reviewer 用 `goal_manage.finalize_review` 给出 DONE/NOT_DONE → retry(fresh session)
 - approvalPoints:`after_plan` / `before_complete`(Goal phase 转换门);`on_destructive_op` 是 tool guard(不是 approvalPoint)
-- `goal_manage` 生命周期动作工具(create/lock/start/advance lifecycle state/retry/finalize_review) + `Reviewer evidence flow` Reviewer 证据工具(action="check_done") + `Goal session evidence read access`/`Goal session evidence write access`
+- `goal_create` 创建 draft Goal；`goal_manage` 管理已绑定 Goal(block/resume/begin_review/retry/cancel/finalize_review)，启动由 Web/API 或 Loop Runner 完成
 - AI 可生成 验收条件(包括 `command succeeds`),用户 lock 确认后生效;`goal.json` 记录 author + lockedBy
 - Workflow 删除(code 一次性删,用户数据 `.archcode/workflows/` 保留只读)
 - Web UI:Goal 列表 + 详情(Overview/Plan/Build/Review/Chat/Sessions)、Approval Queue(集中+就地)、项目导航
@@ -292,7 +293,7 @@
 - Goal budget 基础:per-Goal token 上限 + warning/hard pause;只统计 token,不做价格/cost accounting。
 - Goal memory 接通 Plan/Build/Review prompt,且与 Project memory 隔离;不自动 promotion/transfer。
 - Phase 2 不新增 `.archcode.json` budget/retry schema 字段或默认值;budget/retry 是 Goal 创建输入和持久化 Goal state。
-- Legacy workflow runtime/tool/routes 已移除;Goal/HITL/artifact API 是当前实现路径。
+- Legacy workflow runtime/tool/routes 已移除;当前路径是 Goal/HITL、普通 Session 证据与 Reviewer summary，不存在 Goal-specific artifact API。
 
 ### 阶段 3:Loop MVP(可跑通)
 
@@ -513,7 +514,7 @@
 12. **Phase 5 边界确认** —— Phase 5 交付完整 5a:cron、`triggers[]`、跨 loop 协调、持久队列、同分支节流、`maxConcurrent`、worktree 隔离;再交付安全 cleanup 子集。readiness scoring/gates 和用户自定义 pattern 仍排除,只保留占位(决策更新 2026-07-06)
 13. **Phase 4 加第一批 external integrations** —— 只支持 GitHub.com(PR/issue)+ GitHub Actions 状态 connector,让 pr_babysitter / ci_sweeper / issue_triage 等预设可读取状态和评论。Phase 3 只本地预设可用(决策 2026-07,Phase 4 文档更新 2026-07)
 14. **不引入 Mission,但留占位** —— 保持 Session/Goal/Loop 三层。TDD 留"未来扩展点:Mission 原语"占位节,后续单个 Goal 不够大功能场景再评估(决策 2026-07)
-15. **Workflow 硬切迁移** —— Phase 1 同步删 code + 6-agent 立即 required。用户数据 `.archcode/workflows/` 保留只读。ProjectContext refactor 是高风险区,需扎实 acceptance test(决策 2026-07)
+15. **Workflow 硬切迁移** —— Phase 1 同步删 code + 7-agent 立即 required。用户数据 `.archcode/workflows/` 保留只读。ProjectContext refactor 是高风险区,需扎实 acceptance test(决策 2026-07)
 16. **Budget pricing 边界** —— provider model pricing 是可选 metadata;缺失 pricing 时 USD budget enforcement 不可用,不能当零成本。token/iteration 护栏仍可用(决策 2026-07,Phase 4 文档更新 2026-07)
 17. **AI 自治边界** —— AI 可 commit 到本地,人 push + 开 PR。AI 永不 merge/rebase/approve/force-push。bash guard 拦截 git push/merge/rebase/reset --hard。Phase 4 connector 只做 GitHub.com/GitHub Actions 的状态、评论和可选 fix Goal handoff(决策 2026-07,Phase 4 文档更新 2026-07)
 18. **self-hosted 不加 headless 模式** —— 用户自行部署到 always-on 主机,ArchCode 不做 headless/daemon 模式,文档指引即可(决策 2026-07)

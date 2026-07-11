@@ -1224,7 +1224,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
         makeToolCall(),
         makeContext({
           projectContext: makeProjectContext(workspaceRoot, manager),
-          agentName: "Orchestrator",
+          agentName: "Engineer",
           currentDepth: 0,
           confirmPermission: async () => "approve_always",
         }),
@@ -1236,7 +1236,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       expect(approvals[0].scope).toEqual(scope);
       expect(approvals[0].display).toBe("Run registry test");
       expect(approvals[0].reason).toBe("run test command");
-      expect(approvals[0].grantedBy).toEqual({ agentName: "Orchestrator", depth: 0 });
+      expect(approvals[0].grantedBy).toEqual({ agentName: "Engineer", depth: 0 });
     });
 
     test("permission ask approve runs before hooks and executor for safeTool", async () => {
@@ -1310,7 +1310,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       const sessionId = crypto.randomUUID();
       const ctx = makeContext({
         cwd: workspaceRoot,
-        agentName: "orchestrator",
+        agentName: "engineer",
         store: createSessionStore(sessionId, workspaceRoot),
         projectContext: await makeLoadedProjectContext(workspaceRoot),
       });
@@ -1452,7 +1452,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
         toolName: "sensitiveReadTool",
         allowedTools: new Set(["sensitiveReadTool"]),
         cwd: workspaceRoot,
-        agentName: "orchestrator",
+        agentName: "engineer",
         store: createSessionStore(sessionId, workspaceRoot),
         projectContext: await makeLoadedProjectContext(workspaceRoot),
       });
@@ -2147,7 +2147,7 @@ describe("Permission API contract — registry", () => {
 
       const ctx = makeContext({
         cwd: workspaceRoot,
-        agentName: "orchestrator",
+        agentName: "engineer",
         store: createSessionStore(sessionId, workspaceRoot),
         projectContext: await makeLoadedProjectContext(workspaceRoot),
       });

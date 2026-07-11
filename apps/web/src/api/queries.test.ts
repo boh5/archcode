@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import type { GoalState, HitlProjection, LoopRunReport, LoopState, SessionSummary, SessionTreeResponse } from "@archcode/protocol";
+import type { AgentDescriptor, GoalState, HitlProjection, LoopRunReport, LoopState, SessionSummary, SessionTreeResponse } from "@archcode/protocol";
 import type { DashboardGoal, DashboardLoop } from "./types";
-import { activeGoalsQueryOptions, activeLoopsQueryOptions, diffQueryOptions, focusedSessionQueryOptions, goalQueryOptions, goalsQueryOptions, loopBudgetQueryOptions, loopCollisionsQueryOptions, loopIntegrationsQueryOptions, loopKillStateQueryOptions, loopQueryOptions, loopRunsQueryOptions, loopStateQueryOptions, loopsQueryOptions, projectHitlQueryOptions, queryKeys, sessionTreeQueryOptions, sessionsQueryOptions } from "./queries";
+import { activeGoalsQueryOptions, activeLoopsQueryOptions, agentsQueryOptions, diffQueryOptions, focusedSessionQueryOptions, goalQueryOptions, goalsQueryOptions, loopBudgetQueryOptions, loopCollisionsQueryOptions, loopIntegrationsQueryOptions, loopKillStateQueryOptions, loopQueryOptions, loopRunsQueryOptions, loopStateQueryOptions, loopsQueryOptions, projectHitlQueryOptions, queryKeys, sessionTreeQueryOptions, sessionsQueryOptions } from "./queries";
 
 const originalFetch = globalThis.fetch;
 const originalDocument = globalThis.document;
@@ -22,6 +22,30 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
 }
 
 describe("web session query contracts", () => {
+  test("agentsQueryOptions fetches the global Agent descriptor catalog", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const agents: AgentDescriptor[] = [
+      { name: "engineer", displayName: "Engineer" },
+      { name: "goal_lead", displayName: "Goal Lead" },
+      { name: "plan", displayName: "Plan" },
+      { name: "build", displayName: "Build" },
+      { name: "reviewer", displayName: "Reviewer" },
+      { name: "explore", displayName: "Explore" },
+      { name: "librarian", displayName: "Librarian" },
+    ];
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe("/api/agents");
+      return jsonResponse({ agents });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const options = agentsQueryOptions();
+    const result = await (options as unknown as QueryOptionWithFn<AgentDescriptor[]>).queryFn();
+
+    expect([...options.queryKey]).toEqual(["agents"]);
+    expect(result).toEqual(agents);
+  });
+
   test("diffQueryOptions scopes the cache and request to the Session", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL) => {
@@ -70,7 +94,7 @@ describe("web session query contracts", () => {
       sessionId: "root-session",
       cwd: "/workspace",
       rootSessionId: "root-session",
-      agentName: "orchestrator",
+      agentName: "goal_lead",
       modelInfo: null,
       goalId: "goal-root",
       loopId: "loop-root",
@@ -103,7 +127,7 @@ describe("web session query contracts", () => {
         cwd: "/workspace",
         rootSessionId: "root-session",
         parentSessionId: undefined,
-        agentName: "orchestrator",
+        agentName: "goal_lead",
         modelInfo: null,
         goalId: "goal-root",
         loopId: "loop-root",
@@ -162,7 +186,7 @@ describe("web session query contracts", () => {
     globalThis.document = { cookie: "" } as Document;
     const tree: SessionTreeResponse = {
       root: {
-        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", agentName: "orchestrator", modelInfo: null, title: "Root", createdAt: 1_000, updatedAt: 1_000 },
+        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", agentName: "engineer", modelInfo: null, title: "Root", createdAt: 1_000, updatedAt: 1_000 },
         children: [
           {
             session: {

@@ -21,12 +21,14 @@ export type {
   AgentName,
   AgentToolPolicy,
 } from "./factory-types";
+export { AGENT_NAMES } from "./names";
 export {
   buildAgentDefinition,
   defaultAgentDefinitions,
   exploreAgentDefinition,
   librarianAgentDefinition,
-  orchestratorAgentDefinition,
+  engineerAgentDefinition,
+  goalLeadAgentDefinition,
   planAgentDefinition,
   reviewerAgentDefinition,
 } from "./definitions";

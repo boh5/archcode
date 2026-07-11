@@ -15,8 +15,6 @@ import type { ToolExecutionContext, ToolExecutionResult } from "../../types";
 import type { SessionRole } from "../../../store/types";
 
 export type GoalManageAction =
-  | "create"
-  | "start"
   | "block"
   | "resume"
   | "begin_review"
@@ -26,6 +24,7 @@ export type GoalManageAction =
 
 export type GoalToolAuthorizationCode =
   | "GOAL_CONTEXT_REQUIRED"
+  | "GOAL_CREATE_DENIED"
   | "GOAL_MANAGE_ACTION_DENIED"
   | "GOAL_REVIEWER_REQUIRED"
   | "GOAL_CANCELLATION_UNAVAILABLE"
@@ -35,9 +34,12 @@ export type GoalToolAuthorizationCode =
 
 export interface GoalToolAuthorizationContext {
   readonly sessionId: string;
+  readonly rootSessionId: string;
+  readonly parentSessionId?: string;
   readonly agentName?: string;
   readonly sessionRole?: SessionRole;
   readonly sessionGoalId?: string;
+  readonly sessionLoopId?: string;
 }
 
 export interface GoalToolErrorMappingOptions {
@@ -62,10 +64,30 @@ export function extractGoalToolAuthorization(ctx: ToolExecutionContext): GoalToo
   const state = ctx.store.getState();
   return {
     sessionId: state.sessionId,
+    rootSessionId: state.rootSessionId,
+    ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
     agentName: ctx.agentName ?? state.agentName,
     sessionRole: state.sessionRole,
     sessionGoalId: state.goalId,
+    ...(state.loopId === undefined ? {} : { sessionLoopId: state.loopId }),
   };
+}
+
+/** Goal drafts may only originate from an unbound interactive Engineer root Session. */
+export function assertGoalCreateAuthorized(ctx: ToolExecutionContext): GoalToolAuthorizationContext {
+  const authorization = extractGoalToolAuthorization(ctx);
+  const isOrdinaryRoot = authorization.sessionId === authorization.rootSessionId
+    && authorization.parentSessionId === undefined
+    && authorization.sessionRole === undefined
+    && authorization.sessionGoalId === undefined
+    && authorization.sessionLoopId === undefined;
+  if (authorization.agentName !== "engineer" || !isOrdinaryRoot) {
+    throw new GoalToolAuthorizationError(
+      "GOAL_CREATE_DENIED",
+      `goal_create requires an unbound engineer root session, got ${authorization.agentName ?? "unknown"}/${authorization.sessionRole ?? "none"}`,
+    );
+  }
+  return authorization;
 }
 
 export function assertGoalManageActionAuthorized(
@@ -79,13 +101,13 @@ export function assertGoalManageActionAuthorized(
     return authorization;
   }
 
-  if (authorization.agentName !== "orchestrator" || authorization.sessionRole !== "main") {
+  if (authorization.agentName !== "goal_lead" || authorization.sessionRole !== "main") {
     throw new GoalToolAuthorizationError(
       "GOAL_MANAGE_ACTION_DENIED",
-      `goal_manage.${action} requires an orchestrator main session, got ${authorization.agentName ?? "unknown"}/${authorization.sessionRole ?? "unknown"}`,
+      `goal_manage.${action} requires a goal_lead main session, got ${authorization.agentName ?? "unknown"}/${authorization.sessionRole ?? "unknown"}`,
     );
   }
-  if (action !== "create" && authorization.sessionGoalId !== goalId) {
+  if (authorization.sessionGoalId !== goalId) {
     throw new GoalToolAuthorizationError(
       "GOAL_CONTEXT_REQUIRED",
       `goal_manage.${action} requires matching session goal ${goalId ?? "unknown"}, got ${authorization.sessionGoalId ?? "unknown"}`,

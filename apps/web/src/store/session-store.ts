@@ -23,14 +23,14 @@ import type {
 const MAX_IDLE_SESSION_STORES = 20;
 const MAX_PENDING_REMOTE_EVENTS = 1000;
 
-export interface WebSessionStoreState extends Omit<SessionProjection, "cwd"> {
+export interface WebSessionStoreState extends Omit<SessionProjection, "cwd" | "agentName"> {
   [key: string]: unknown;
   hydrationStatus: "pending" | "hydrated";
   createdAt: number;
   cwd: string | null;
   rootSessionId: string;
   parentSessionId: string | undefined;
-  agentName: string;
+  agentName: string | null;
   focusSessionId: string | null;
   lastTodoWriteStepIndex: number | null;
   lastTodoReminderStepIndex: number | null;
@@ -56,7 +56,7 @@ export interface WebSessionStoreState extends Omit<SessionProjection, "cwd"> {
     cwd?: string;
     rootSessionId?: string;
     parentSessionId?: string;
-    agentName?: string;
+    agentName?: string | null;
     stats?: SessionStats;
     executions?: SessionExecutionRecord[];
     eventCursor?: number;
@@ -246,7 +246,7 @@ export function createWebSessionStore(
     cwd: null,
     title: null,
     modelInfo: null,
-    agentName: "orchestrator",
+    agentName: null,
     messages: [],
     steps: [],
     stats: createEmptySessionStats(),

@@ -116,7 +116,7 @@ describe("ProjectContextResolver", () => {
     const workspace = await makeWorkspace("dispose-hitl");
     const sessions = new SessionStoreManager({ logger: silentLogger });
     const sessionId = crypto.randomUUID();
-    sessions.create(sessionId, workspace);
+    sessions.create(sessionId, workspace, { agentName: "engineer" });
     await sessions.flushSession(sessionId, workspace);
     const events: string[] = [];
     const resolver = createResolver({
@@ -145,7 +145,7 @@ describe("ProjectContextResolver", () => {
     const workspace = await makeWorkspace("slug-migration");
     const sessions = new SessionStoreManager({ logger: silentLogger });
     const sessionId = crypto.randomUUID();
-    sessions.create(sessionId, workspace);
+    sessions.create(sessionId, workspace, { agentName: "engineer" });
     await sessions.flushSession(sessionId, workspace);
     let projectSlug = "old-project";
     const resolver = createResolver({
@@ -374,7 +374,7 @@ describe("ProjectContextResolver", () => {
     const workspace = await makeWorkspace("hitl-claimed-no-adapter");
     const sessions = new SessionStoreManager({ logger: silentLogger });
     const sessionId = crypto.randomUUID();
-    sessions.create(sessionId, workspace);
+    sessions.create(sessionId, workspace, { agentName: "engineer" });
     await waitForSession(workspace, sessionId);
     const resolver = createResolver({
       sessionStoreManager: sessions,
@@ -423,7 +423,7 @@ describe("ProjectContextResolver", () => {
     const workspace = await makeWorkspace("hitl-recovery-ready-gate");
     const sessions = new SessionStoreManager({ logger: silentLogger });
     const sessionId = crypto.randomUUID();
-    sessions.create(sessionId, workspace);
+    sessions.create(sessionId, workspace, { agentName: "engineer" });
     await sessions.flushSession(sessionId, workspace);
     const claimed = await seedClaimedSessionHitl(workspace, sessions, sessionId, "ordinary-recovery");
     sessions.get(sessionId, workspace)!.setState({ blockedByHitlIds: [claimed.hitlId] });
@@ -485,7 +485,7 @@ describe("ProjectContextResolver", () => {
     const loopState = new LoopStateManager(workspace, silentLogger);
     const loop = await loopState.create(basename(workspace), LOOP_CONFIG);
     const sessionId = crypto.randomUUID();
-    sessions.create(sessionId, workspace, { loopId: loop.loopId, sessionRole: "main" });
+    sessions.create(sessionId, workspace, { loopId: loop.loopId, sessionRole: "main", agentName: "engineer" });
     await sessions.flushSession(sessionId, workspace);
     const claimed = await seedClaimedSessionHitl(workspace, sessions, sessionId, "loop-recovery");
     const entered = deferred<void>();

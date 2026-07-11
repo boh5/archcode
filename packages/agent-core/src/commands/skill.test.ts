@@ -24,7 +24,7 @@ function createCommand(agentSkills: readonly string[] = ["git-master"]) {
   return {
     command: createSkillCommand(),
     context: {
-      store: storeManager.create(crypto.randomUUID(), import.meta.dir),
+      store: storeManager.create(crypto.randomUUID(), import.meta.dir, { agentName: "engineer" }),
       modelInfo: dummyModelInfo,
       cwd: import.meta.dir,
       agentName: "test-agent",

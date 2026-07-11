@@ -16,7 +16,7 @@ import { LoopWorktreeManagerError, type LoopWorktreeCreateResult, type LoopWorkt
 import { createProcessRunner } from "../process/runner";
 
 export interface LoopRunnerSessionRuntime {
-  createSession(projectRoot: string, options?: LoopRunnerCreateSessionOptions): Promise<SessionFile>;
+  createSession(projectRoot: string, options: LoopRunnerCreateSessionOptions): Promise<SessionFile>;
   getSessionFile(projectRoot: string, sessionId: string): Promise<SessionFile>;
   startSessionExecution(input: StartSessionExecutionInput): ActiveSessionExecution;
   releaseSessionAgent(projectRoot: string, sessionId: string): void;
@@ -40,11 +40,11 @@ export interface LoopRunnerGoalStartOptions {
 }
 
 export interface LoopRunnerCreateSessionOptions {
+  readonly agentName: AgentName;
   readonly cwd?: string;
   readonly goalId?: string;
   readonly loopId?: string;
   readonly sessionRole?: "main";
-  readonly agentName?: AgentName;
   readonly title?: string;
 }
 
@@ -422,7 +422,6 @@ export class LoopRunner {
         sessionId,
         userMessage: buildGoalLoopPrompt(input.loop, goal),
         maxSteps: input.loop.config.limits.maxIterationsPerRun,
-        agentName: loopRunOptions(input.loop).agentName,
         extraTools: loopRunOptions(input.loop).extraTools,
         origin: loopOrigin(input.loop, input.trigger, input.runId),
         executionId: sessionExecutionId,
@@ -509,7 +508,6 @@ export class LoopRunner {
         sessionId,
         userMessage: buildSessionLoopPrompt(input.loop),
         maxSteps: input.loop.config.limits.maxIterationsPerRun,
-        agentName: loopRunOptions(input.loop).agentName,
         extraTools: loopRunOptions(input.loop).extraTools,
         origin: loopOrigin(input.loop, input.trigger, input.runId),
         ...(sessionExecutionId === undefined ? {} : { executionId: sessionExecutionId }),

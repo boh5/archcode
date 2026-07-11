@@ -27,8 +27,10 @@ interface RuntimeFixture {
 }
 
 interface TestSessionBinding {
+  readonly agentName?: "engineer" | "goal_lead" | "plan" | "build" | "reviewer" | "explore" | "librarian";
   readonly goalId?: string;
   readonly rootSessionId?: string;
+  readonly parentSessionId?: string;
   readonly sessionRole?: "main" | "plan" | "build" | "review" | "explore" | "librarian" | "standalone";
   readonly cwd?: string;
 }
@@ -256,6 +258,7 @@ function createRuntime(
     subscribeSessionRuntimeChanges: mock(() => () => undefined),
     createSession: mock(async (_workspaceRoot: string, options?: TestSessionBinding) => {
       sessionBindings.set(createdMainSessionId, {
+        agentName: options?.agentName ?? "goal_lead",
         ...(options?.goalId === undefined ? {} : { goalId: options.goalId }),
         sessionRole: options?.sessionRole ?? "main",
         ...(options?.cwd === undefined ? {} : { cwd: options.cwd }),
@@ -263,6 +266,7 @@ function createRuntime(
       return {
         sessionId: createdMainSessionId,
         rootSessionId: createdMainSessionId,
+        agentName: options?.agentName ?? "goal_lead",
         title: null,
         createdAt: Date.now(),
         messages: [],
@@ -280,6 +284,8 @@ function createRuntime(
       return {
         sessionId,
         rootSessionId: binding.rootSessionId ?? sessionId,
+        agentName: binding.agentName ?? "goal_lead",
+        ...(binding.parentSessionId === undefined ? {} : { parentSessionId: binding.parentSessionId }),
         title: null,
         createdAt: Date.now(),
         messages: [],
@@ -294,7 +300,7 @@ function createRuntime(
     startSessionExecution: mock((input: { workspaceRoot: string; sessionId: string }) => ({
       sessionId: input.sessionId,
       workspaceRoot: input.workspaceRoot,
-      agentName: "orchestrator",
+      agentName: "goal_lead",
       origin: "user_message",
       abortController: new AbortController(),
       promise: Promise.resolve(),
@@ -412,6 +418,7 @@ function expectPromptUsesNaturalLanguageOnly(message: string): void {
 function expectPromptDoesNotRequestRedundantGoalClaim(message: string): void {
   expect(message).toContain("Runtime has already started and claimed");
   expect(message).not.toContain("Your first action must be calling goal_manage");
+  expect(message).not.toContain("goal_manage.start");
   expect(message).not.toContain("goal_manage with action:\"start\"");
   expect(message).not.toContain("goal_manage with action:\"retry\"");
 }
@@ -555,6 +562,7 @@ describe("goals routes", () => {
     expect(runRes.status).toBe(200);
     expect(running).toMatchObject({ status: "running", mainSessionId: createdMainSessionId });
     expect(runtime.createSession).toHaveBeenCalledWith(project.workspaceRoot, {
+      agentName: "goal_lead",
       goalId: created.id,
       sessionRole: "main",
       cwd: project.workspaceRoot,
@@ -570,6 +578,8 @@ describe("goals routes", () => {
     const childGoal = await postGoal(app, project.slug);
     (runtime.getSessionFile as ReturnType<typeof mock>).mockImplementation(async (_workspaceRoot: string, sessionId: string) => ({
       sessionId,
+      rootSessionId: sessionId,
+      agentName: sessionId === providedMainSessionId ? "goal_lead" as const : "build" as const,
       title: null,
       createdAt: Date.now(),
       cwd: foreignCwd,
@@ -624,6 +634,7 @@ describe("goals routes", () => {
     expect(runRes.status).toBe(200);
     expect(running).toMatchObject({ useWorktree: true, worktree: { branchName: expect.stringContaining("archcode/goal/") } });
     expect(runtime.createSession).toHaveBeenCalledWith(project.workspaceRoot, {
+      agentName: "goal_lead",
       goalId: created.id,
       sessionRole: "main",
       cwd: running.worktree?.path,
@@ -788,6 +799,7 @@ describe("goals routes", () => {
     expect(runRes.status).toBe(200);
     expect(running.worktree).toEqual(prepared.goal.worktree);
     expect(runtime.createSession).toHaveBeenCalledWith(project.workspaceRoot, {
+      agentName: "goal_lead",
       goalId: created.id,
       sessionRole: "main",
       cwd: prepared.cwd,
@@ -829,6 +841,8 @@ describe("goals routes", () => {
     });
     (runtime.getSessionFile as ReturnType<typeof mock>).mockImplementation(async (_workspaceRoot: string, sessionId: string) => ({
       sessionId,
+      rootSessionId: sessionId,
+      agentName: "goal_lead" as const,
       title: null,
       createdAt: Date.now(),
       cwd: sessionId === providedMainSessionId ? prepared.cwd : project.workspaceRoot,
@@ -844,6 +858,8 @@ describe("goals routes", () => {
       await releaseSessionCreation.promise;
       return {
         sessionId: createdMainSessionId,
+        rootSessionId: createdMainSessionId,
+        agentName: "goal_lead",
         title: null,
         createdAt: Date.now(),
         cwd: options?.cwd,
@@ -1203,6 +1219,46 @@ describe("goals routes", () => {
     expect(runtime.startSessionExecution).not.toHaveBeenCalled();
   });
 
+  test("POST run rejects a main-role Session that is not a Goal Lead root", async () => {
+    const { app, bindSession, manager, project, runtime } = await createFixture("main-session-agent-boundary");
+    const goal = await postGoal(app, project.slug);
+
+    bindSession(providedMainSessionId, {
+      agentName: "engineer",
+      goalId: goal.id,
+      sessionRole: "main",
+    });
+    const engineerRes = await app.request(`/api/projects/${project.slug}/goals/${goal.id}/run`, {
+      method: "POST",
+      body: JSON.stringify({ mainSessionId: providedMainSessionId }),
+      headers: { "content-type": "application/json" },
+    });
+
+    bindSession(providedMainSessionId, {
+      agentName: "goal_lead",
+      goalId: goal.id,
+      rootSessionId: activeFamilyRootSessionId,
+      parentSessionId: activeFamilyRootSessionId,
+      sessionRole: "main",
+    });
+    const childRes = await app.request(`/api/projects/${project.slug}/goals/${goal.id}/run`, {
+      method: "POST",
+      body: JSON.stringify({ mainSessionId: providedMainSessionId }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(engineerRes.status).toBe(409);
+    expect(await engineerRes.json()).toEqual({
+      error: { code: "BAD_REQUEST", message: `Session ${providedMainSessionId} is not a Goal Lead root session` },
+    });
+    expect(childRes.status).toBe(409);
+    expect(await childRes.json()).toEqual({
+      error: { code: "BAD_REQUEST", message: `Session ${providedMainSessionId} is not a Goal Lead root session` },
+    });
+    expect(await manager.read(goal.id)).toMatchObject({ status: "draft", childSessionIds: [] });
+    expect(runtime.startSessionExecution).not.toHaveBeenCalled();
+  });
+
   test("POST run and retry reject every active provided or reserved Session before Goal mutation", async () => {
     const { app, bindSession, manager, project, runtime } = await createFixture("active-session-transition-claim");
     const activeSessionIds = new Set<string>([
@@ -1303,6 +1359,8 @@ describe("goals routes", () => {
     const foreignCwd = resolve(project.workspaceRoot, "..", "retry-user-worktree");
     (runtime.getSessionFile as ReturnType<typeof mock>).mockImplementation(async (_workspaceRoot: string, sessionId: string) => ({
       sessionId,
+      rootSessionId: sessionId,
+      agentName: "goal_lead" as const,
       title: null,
       createdAt: Date.now(),
       cwd: foreignCwd,

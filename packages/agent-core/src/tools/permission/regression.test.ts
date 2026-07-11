@@ -86,7 +86,7 @@ function resetWorkspace(): void {
 }
 
 function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
-  return { store: storeManager.create(crypto.randomUUID(), WORKSPACE),
+  return { store: storeManager.create(crypto.randomUUID(), WORKSPACE, { agentName: "engineer" }),
   toolName: "regression_tool",
   toolCallId: "call-1",
   input: {},

@@ -10,7 +10,7 @@ import {
 import { createLoopBudgetToolPermission } from "../loops/budget-tool-guard";
 import { createMemoryReadTool } from "../tools/builtins/memory-read";
 import { createMemoryWriteTool } from "../tools/builtins/memory-write";
-import { goalManageTool } from "../tools/builtins/goal-tools";
+import { goalCreateTool, goalManageTool } from "../tools/builtins/goal-tools";
 import { createGitHubToolDescriptors } from "../tools/github";
 
 export function registerBuiltinTools(
@@ -23,6 +23,7 @@ export function registerBuiltinTools(
   registry.register(createMemoryReadTool());
   registry.register(createMemoryWriteTool());
 
+  registry.register(goalCreateTool);
   registry.register(goalManageTool);
 
   registry.registerAll(createGitHubToolDescriptors());

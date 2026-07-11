@@ -81,7 +81,7 @@ function sessionEvent(input: { slug: string; sessionId: string; eventId: number;
     createdAt: 123 + input.eventId,
     kind: "system-notice",
     payload: { type: "system-notice", message: input.message },
-    agentName: "orchestrator",
+    agentName: "engineer",
   };
 }
 
@@ -331,7 +331,7 @@ describe("global events route", () => {
       createdAt: 1700000000000,
       kind: "goal.state_change",
       payload: { type: "goal.state_change", goalId: goal.id, status: goal.status, state: goal },
-      agentName: "orchestrator",
+      agentName: "engineer",
     });
 
     const text = await readUntil(response, (chunk) => chunk.includes("goal.state_change"));
@@ -362,7 +362,7 @@ describe("global events route", () => {
       createdAt: 1700000000001,
       kind: "compression.block_committed",
       payload: compressionBlockCommittedEvent(),
-      agentName: "orchestrator",
+      agentName: "engineer",
     });
 
     const text = await readUntil(response, (chunk) => chunk.includes("compression.block_committed"));

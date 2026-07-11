@@ -83,7 +83,7 @@ function commandContext(
     store,
     modelInfo,
     cwd: import.meta.dir,
-    agentName: "orchestrator",
+    agentName: "engineer",
     agentSkills: [],
     skillService,
     ...overrides,
@@ -138,7 +138,7 @@ beforeEach(() => {
 
 describe("createCompactCommand", () => {
   test("returns compact descriptor", () => {
-    const store = storeManager.create(`compact-command-descriptor-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT);
+    const store = storeManager.create(`compact-command-descriptor-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, { agentName: "engineer" });
 
     const descriptor = createCompactCommand(store, modelInfo);
 
@@ -147,7 +147,7 @@ describe("createCompactCommand", () => {
   });
 
   test("manual compact emits compact event and compaction part without compression block", async () => {
-    const store = storeManager.create(`compact-command-success-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT);
+    const store = storeManager.create(`compact-command-success-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, { agentName: "engineer" });
     store.setState({ messages: compactableMessages() });
 
     const result = await createCompactCommand(store, modelInfo).handler(commandContext(store));
@@ -164,7 +164,7 @@ describe("createCompactCommand", () => {
   });
 
   test("manual compact clears existing dynamic compression state", async () => {
-    const store = storeManager.create(`compact-command-clear-dynamic-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT);
+    const store = storeManager.create(`compact-command-clear-dynamic-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, { agentName: "engineer" });
     store.setState({ messages: compactableMessages() });
     store.getState().append({ type: "compression.block_committed", block: compressionBlockSnapshot() });
 
@@ -195,7 +195,7 @@ describe("createCompactCommand", () => {
         };
       }) as unknown as typeof import("ai").streamText,
     });
-    const store = storeManager.create(`compact-command-options-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT);
+    const store = storeManager.create(`compact-command-options-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, { agentName: "engineer" });
     store.setState({ messages: compactableMessages() });
 
     const result = await createCompactCommand(store, modelInfo).handler(commandContext(store, {
@@ -217,7 +217,7 @@ describe("createCompactCommand", () => {
   });
 
   test("bypasses open circuit breaker and resets it on success", async () => {
-    const store = storeManager.create(`compact-command-breaker-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT);
+    const store = storeManager.create(`compact-command-breaker-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, { agentName: "engineer" });
     const circuitBreaker = createBreaker();
     store.setState({ messages: compactableMessages() });
 
@@ -230,7 +230,7 @@ describe("createCompactCommand", () => {
   });
 
   test("returns null-result message without resetting circuit breaker", async () => {
-    const store = storeManager.create(`compact-command-null-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT);
+    const store = storeManager.create(`compact-command-null-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, { agentName: "engineer" });
     const circuitBreaker = createBreaker();
     store.setState({ messages: [makeUserMessage("u1", "Only one")] });
 
@@ -256,7 +256,7 @@ describe("createCompactCommand", () => {
         toolResults: Promise.resolve([]),
       })) as unknown as typeof import("ai").streamText,
     });
-    const store = storeManager.create(`compact-command-busy-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT);
+    const store = storeManager.create(`compact-command-busy-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, { agentName: "engineer" });
     store.setState({ messages: compactableMessages() });
     const descriptor = createCompactCommand(store, modelInfo);
 
@@ -275,7 +275,7 @@ describe("createCompactCommand", () => {
         throw Object.assign(new Error("model down"), { status: 422 });
       }) as unknown as typeof import("ai").streamText,
     });
-    const store = storeManager.create(`compact-command-error-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT);
+    const store = storeManager.create(`compact-command-error-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, { agentName: "engineer" });
     store.setState({ messages: compactableMessages() });
     const descriptor = createCompactCommand(store, modelInfo);
 

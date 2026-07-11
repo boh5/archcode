@@ -17,6 +17,7 @@ import {
 
 export const exploreAgentDefinition = {
   name: "explore",
+  displayName: "Explore",
   promptProfileId: "explorer",
   rolePrompt: `## Goal Role: Explore
 

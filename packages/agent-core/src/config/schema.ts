@@ -45,7 +45,8 @@ export const archcodeConfigSchema = z
     mcp: mcpConfigSchema.optional(),
     integrations: integrationsConfigSchema.optional(),
     agents: z.strictObject({
-      orchestrator: agentConfigSchema,
+      engineer: agentConfigSchema,
+      goal_lead: agentConfigSchema,
       plan: agentConfigSchema,
       build: agentConfigSchema,
       reviewer: agentConfigSchema,

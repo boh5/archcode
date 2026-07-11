@@ -5,6 +5,7 @@ import { createServerApp, createServerEventRuntime } from "./app";
 import { globalEventBus } from "./events/global-event-bus";
 
 const mockRuntime = {
+  listAgentDescriptors: mock(() => []),
   subscribeHitlEvents: mock(() => () => undefined),
   subscribeSessionRuntimeChanges: mock(() => () => undefined),
   subscribeMcpStatusChanges: mock(() => () => undefined),
@@ -19,6 +20,19 @@ describe("createServerApp", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
+  });
+
+  test("mounts the runtime Agent catalog endpoint", async () => {
+    const runtime = {
+      ...mockRuntime,
+      listAgentDescriptors: mock(() => [{ name: "engineer", displayName: "Engineer" }]),
+    } as unknown as AgentRuntime;
+    const { app } = createServerApp(runtime, { dev: true });
+
+    const response = await app.request("/api/agents");
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ agents: [{ name: "engineer", displayName: "Engineer" }] });
   });
 
   test("adds wildcard CORS headers in dev mode", async () => {
@@ -334,7 +348,7 @@ function childLinkEvent(parentSessionId: string, childSessionId: string, status:
         createdAt: 1,
       },
     },
-    agentName: "orchestrator",
+    agentName: "engineer",
   };
 }
 

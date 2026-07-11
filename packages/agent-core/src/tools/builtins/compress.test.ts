@@ -11,7 +11,7 @@ import { compressTool } from "./compress";
 const workspaceRoot = "/tmp/archcode-compress-test";
 
 function makeStore(): StoreApi<SessionStoreState> {
-  const store = storeManager.create(`compress-test-${crypto.randomUUID()}`, workspaceRoot);
+  const store = storeManager.create(`compress-test-${crypto.randomUUID()}`, workspaceRoot, { agentName: "engineer" });
   store.setState({ messages: messages() });
   store.getState().toModelMessages();
   return store;

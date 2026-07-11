@@ -726,6 +726,7 @@ describe("CompressionBlock", () => {
       sessionId: "sess-1",
       focusStoreSessionId: "session-1",
       childSessionLinks: [childLink],
+      agentDescriptors: [{ name: "explore", displayName: "Code Explorer" }],
     });
 
     const ctaButtons = findAll(el1, (e) => {
@@ -740,10 +741,12 @@ describe("CompressionBlock", () => {
       sessionId: "sess-1",
       focusStoreSessionId: "session-1",
       childSessionLinks: [childLink],
+      agentDescriptors: [{ name: "explore", displayName: "Code Explorer" }],
     });
     const text = textContent(el2);
 
     expect(text).toContain("Explore codebase");
+    expect(text).toContain("Code Explorer");
     expect(text).toContain("Explored the codebase for patterns");
     expect(text).toContain("done");
   });

@@ -63,7 +63,7 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     abort: new AbortController().signal,
     startedAt: Date.now(),
     allowedTools: new Set(["ask_user"]),
-    agentName: "orchestrator",
+    agentName: "engineer",
     agentSkills: [],
     skillService: new SkillService({ builtinSkills: {} }),
     cwd: workspaceRoot,

@@ -35,7 +35,11 @@ function findTsFiles(dir: string): string[] {
       continue;
     }
 
-    if (stats.isFile() && /\.tsx?$/.test(entry) && !entry.endsWith(".test.ts") && !entry.endsWith(".test.tsx")) {
+    const isTestSource = entry.endsWith(".test.ts")
+      || entry.endsWith(".test.tsx")
+      || entry.endsWith(".interaction.ts")
+      || entry.endsWith(".interaction.tsx");
+    if (stats.isFile() && /\.tsx?$/.test(entry) && !isTestSource) {
       files.push(fullPath);
     }
   }

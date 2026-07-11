@@ -444,7 +444,7 @@ describe("GoalStateManager", () => {
       verdict: "DONE",
       summary: "All good.",
       evidenceRefs: [evidenceRef()],
-      authorization: { ...reviewerAuth(created.id), agentName: "orchestrator" },
+      authorization: { ...reviewerAuth(created.id), agentName: "engineer" },
     })).rejects.toBeInstanceOf(GoalReviewerAuthorizationError);
 
     const completed = await manager.finalizeReview(created.id, {

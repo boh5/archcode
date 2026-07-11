@@ -1,4 +1,5 @@
 export type {
+  AgentDescriptor,
   Project,
   DirectoryEntry,
   DirectoryListResponse,

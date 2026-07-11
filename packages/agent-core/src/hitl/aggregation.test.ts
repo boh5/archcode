@@ -44,11 +44,11 @@ describe("HITL aggregation", () => {
     const goal = await createGoalOwnedByLoop(goalState, loop.loopId);
     const rootSessionId = crypto.randomUUID();
     const childSessionId = crypto.randomUUID();
-    sessions.create(rootSessionId, workspaceRoot, { loopId: loop.loopId });
+    sessions.create(rootSessionId, workspaceRoot, { loopId: loop.loopId, agentName: "engineer" });
     sessions.create(childSessionId, workspaceRoot, {
       rootSessionId,
       parentSessionId: rootSessionId,
-      goalId: goal.id,
+      goalId: goal.id, agentName: "goal_lead"
     });
     await waitForSession(workspaceRoot, rootSessionId);
     await waitForSession(workspaceRoot, childSessionId);
@@ -115,8 +115,8 @@ describe("HITL aggregation", () => {
     const goal = await createGoalOwnedByLoop(goalState, loop.loopId);
     const directLoopSessionId = crypto.randomUUID();
     const goalSessionId = crypto.randomUUID();
-    sessions.create(directLoopSessionId, workspaceRoot, { loopId: loop.loopId });
-    sessions.create(goalSessionId, workspaceRoot, { goalId: goal.id });
+    sessions.create(directLoopSessionId, workspaceRoot, { loopId: loop.loopId, agentName: "engineer" });
+    sessions.create(goalSessionId, workspaceRoot, { goalId: goal.id, agentName: "goal_lead" });
     await waitForSession(workspaceRoot, directLoopSessionId);
     await waitForSession(workspaceRoot, goalSessionId);
 
@@ -144,7 +144,7 @@ describe("HITL aggregation", () => {
     const workspaceRoot = await mkdtemp(join(TMP_ROOT, "workspace-"));
     const sessions = new SessionStoreManager({ logger: silentLogger });
     const sessionId = crypto.randomUUID();
-    sessions.create(sessionId, workspaceRoot);
+    sessions.create(sessionId, workspaceRoot, { agentName: "engineer" });
     await sessions.flushSession(sessionId, workspaceRoot);
     sessions.buildSessionTree = mock(async () => {
       throw new Error("corrupt session tree");

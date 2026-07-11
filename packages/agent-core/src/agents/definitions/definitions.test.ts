@@ -7,9 +7,10 @@ import {
 import {
   agentDefinitions,
   buildAgentDefinition,
+  engineerAgentDefinition,
   exploreAgentDefinition,
+  goalLeadAgentDefinition,
   librarianAgentDefinition,
-  orchestratorAgentDefinition,
   planAgentDefinition,
   reviewerAgentDefinition,
 } from "./index";
@@ -24,7 +25,8 @@ import {
 } from "../../tools/names";
 
 const REQUIRED_AGENT_NAMES = [
-  "orchestrator",
+  "engineer",
+  "goal_lead",
   "plan",
   "build",
   "reviewer",
@@ -44,7 +46,6 @@ const WORKFLOW_TOOLS = [
 ] as const;
 
 const REMOVED_GOAL_EXECUTABLE_TOOL_NAMES = [
-  "goal_create",
   "goal_lock",
   "goal_run",
   "goal_retry",
@@ -74,8 +75,17 @@ function expectNoTools(tools: readonly string[], forbidden: readonly string[]) {
 }
 
 describe("agentDefinitions", () => {
-  test("exports exactly the six goal-era agent definitions", () => {
+  test("exports the closed seven-agent registry with stable display names", () => {
     expect(agentDefinitions.map((definition) => definition.name)).toEqual([...REQUIRED_AGENT_NAMES]);
+    expect(agentDefinitions.map(({ name, displayName }) => ({ name, displayName }))).toEqual([
+      { name: "engineer", displayName: "Engineer" },
+      { name: "goal_lead", displayName: "Goal Lead" },
+      { name: "plan", displayName: "Plan" },
+      { name: "build", displayName: "Build" },
+      { name: "reviewer", displayName: "Reviewer" },
+      { name: "explore", displayName: "Explore" },
+      { name: "librarian", displayName: "Librarian" },
+    ]);
     expect(new Set(agentDefinitions.map((definition) => definition.name)).size).toBe(agentDefinitions.length);
   });
 
@@ -110,35 +120,47 @@ describe("agentDefinitions", () => {
     }
   });
 
-  test("orchestrator owns Goal orchestration and delegates to all five child roles", () => {
-    const tools = orchestratorAgentDefinition.tools.tools;
+  test("Engineer owns ordinary engineering sessions and can create Goals", () => {
+    const tools = engineerAgentDefinition.tools.tools;
 
-    expect(tools).toContain(TOOL_GOAL_MANAGE);
-    expect(tools).toContain(TOOL_GOAL_MANAGE);
+    for (const tool of SOURCE_WRITE_TOOLS) expect(tools).toContain(tool);
+    expect(tools).toContain("goal_create");
+    expect(tools).not.toContain(TOOL_GOAL_MANAGE);
     expect(tools).toContain(TOOL_COMPRESS);
     expect(tools).toContain(TOOL_DELEGATE);
-    expect(orchestratorAgentDefinition.tools.delegateTargets).toEqual([
+    expect(engineerAgentDefinition.tools.delegateTargets).toEqual([
       "plan",
       "build",
       "reviewer",
       "explore",
       "librarian",
     ]);
-    expect(orchestratorAgentDefinition.mcpTools).toEqual(["context7", "exa"]);
-    expect(orchestratorAgentDefinition.rolePrompt).toContain("## Goal Role: Orchestrator");
-    expect(orchestratorAgentDefinition.rolePrompt).toContain("goal_manage");
-    expect(orchestratorAgentDefinition.rolePrompt).toContain("action=create");
-    expect(orchestratorAgentDefinition.rolePrompt).toContain("action=start");
-    expect(orchestratorAgentDefinition.rolePrompt).toContain("action=begin_review");
-    expect(orchestratorAgentDefinition.rolePrompt).toContain("action=retry");
-    expect(orchestratorAgentDefinition.rolePrompt).not.toContain("goal_create");
-    expect(orchestratorAgentDefinition.rolePrompt).not.toContain("goal_lock");
-    expect(orchestratorAgentDefinition.rolePrompt).not.toContain("goal_run");
-    expect(orchestratorAgentDefinition.rolePrompt).not.toContain("goal_retry");
-    expect(orchestratorAgentDefinition.rolePrompt).not.toContain("goal_check_done");
-    expect(orchestratorAgentDefinition.rolePrompt).not.toContain("goal_manage.finalize_review");
-    expect(orchestratorAgentDefinition.rolePrompt).not.toContain("finalize_review");
-    expect(orchestratorAgentDefinition.rolePrompt).not.toContain("workflow_create");
+    expect(engineerAgentDefinition.rolePrompt).toContain("## Role: Engineer");
+    expect(engineerAgentDefinition.rolePrompt).toContain("goal_create");
+  });
+
+  test("Goal Lead is Goal-only, delegates all specialist work, and cannot mutate source", () => {
+    const tools = goalLeadAgentDefinition.tools.tools;
+
+    expect(tools).toContain(TOOL_GOAL_MANAGE);
+    expect(tools).toContain(TOOL_COMPRESS);
+    expect(tools).toContain(TOOL_DELEGATE);
+    expectNoTools(tools, SOURCE_WRITE_TOOLS);
+    expect(goalLeadAgentDefinition.tools.delegateTargets).toEqual([
+      "plan",
+      "build",
+      "reviewer",
+      "explore",
+      "librarian",
+    ]);
+    expect(goalLeadAgentDefinition.mcpTools).toEqual(["context7", "exa"]);
+    expect(goalLeadAgentDefinition.rolePrompt).toContain("## Goal Role: Goal Lead");
+    expect(goalLeadAgentDefinition.rolePrompt).toContain("already-created Goal");
+    expect(goalLeadAgentDefinition.rolePrompt).toContain("goal_manage");
+    expect(goalLeadAgentDefinition.rolePrompt).toContain("action=begin_review");
+    expect(goalLeadAgentDefinition.rolePrompt).not.toContain("goal_create");
+    expect(goalLeadAgentDefinition.rolePrompt).not.toContain("goal_manage.finalize_review");
+    expect(goalLeadAgentDefinition.rolePrompt).not.toContain("finalize_review");
   });
 
   test("Plan has read-only planning tools, Context7 MCP, and research-only delegation", () => {
@@ -153,6 +175,7 @@ describe("agentDefinitions", () => {
     expectNoTools(tools, SOURCE_WRITE_TOOLS);
     expect(planAgentDefinition.mcpTools).toEqual(["context7"]);
     expect(planAgentDefinition.tools.delegateTargets).toEqual(["explore", "librarian"]);
+    expect(planAgentDefinition.rolePrompt).toContain("ordinary Session, a Loop, or a Goal");
   });
 
   test("Build is the only source-writing implementation role", () => {
@@ -163,6 +186,7 @@ describe("agentDefinitions", () => {
     expect(tools).toContain(TOOL_COMPRESS);
     expect("mcpTools" in buildAgentDefinition).toBe(false);
     expect(buildAgentDefinition.tools.delegateTargets).toEqual(["explore"]);
+    expect(buildAgentDefinition.rolePrompt).toContain("ordinary Session, a Loop, or a Goal");
   });
 
   test("Reviewer can verify goals but cannot mutate source", () => {
@@ -176,6 +200,7 @@ describe("agentDefinitions", () => {
     expect(tools).toContain(TOOL_COMPRESS);
     expectNoTools(tools, SOURCE_WRITE_TOOLS);
     expect(reviewerAgentDefinition.tools.delegateTargets).toEqual(["explore", "librarian"]);
+    expect(reviewerAgentDefinition.rolePrompt).toContain("Do not call goal_manage");
   });
 
   test("Goal lifecycle and evidence tools are limited to intended roles", () => {
@@ -183,13 +208,13 @@ describe("agentDefinitions", () => {
       .filter((definition) => (definition.tools.tools as readonly string[]).includes(TOOL_GOAL_MANAGE))
       .map((definition) => definition.name);
 
-    expect(goalManageAgents).toEqual(["orchestrator", "reviewer"]);
+    expect(goalManageAgents).toEqual(["goal_lead", "reviewer"]);
   });
 
   test("Reviewer prompt is default-deny and includes the required five-point checklist", () => {
     const prompt = reviewerAgentDefinition.rolePrompt;
 
-    expect(prompt).toContain("Default stance: NOT_DONE");
+    expect(prompt).toContain("Goal-bound review, default stance: NOT_DONE");
     for (const item of ["Scope", "Intent", "Tests", "No cheating", "Risk"] as const) {
       expect(prompt).toContain(item);
     }
@@ -218,14 +243,16 @@ describe("agentDefinitions", () => {
     expect(librarianAgentDefinition.mcpTools).toEqual(["context7", "grep.app", "exa"]);
   });
 
-  test("core delegation depth policies match orchestrator → core → ancillary", () => {
-    expect(orchestratorAgentDefinition.childPolicy).toEqual({
-      maxDepth: 3,
-      maxConcurrent: MAX_CONCURRENT_SUB_AGENTS,
-      timeoutMs: DEFAULT_SUB_AGENT_TIMEOUT_MS,
-      abortCascade: true,
-      terminalReminders: true,
-    });
+  test("principal delegation depth policies match principal → core → ancillary", () => {
+    for (const definition of [engineerAgentDefinition, goalLeadAgentDefinition]) {
+      expect(definition.childPolicy).toEqual({
+        maxDepth: 3,
+        maxConcurrent: MAX_CONCURRENT_SUB_AGENTS,
+        timeoutMs: DEFAULT_SUB_AGENT_TIMEOUT_MS,
+        abortCascade: true,
+        terminalReminders: true,
+      });
+    }
 
     for (const definition of [planAgentDefinition, buildAgentDefinition, reviewerAgentDefinition]) {
       expect(definition.childPolicy).toEqual({
@@ -272,10 +299,15 @@ describe("agentDefinitions", () => {
       }
     });
 
-    test("allocation matrix matches the six-agent architecture", () => {
-      expect(orchestratorAgentDefinition.skills).toEqual([
+    test("allocation matrix matches the seven-agent architecture", () => {
+      expect(engineerAgentDefinition.skills).toEqual([
         "git-master",
         "safe-refactor",
+        "codemap",
+        "review-work",
+        "research-docs",
+      ]);
+      expect(goalLeadAgentDefinition.skills).toEqual([
         "codemap",
         "review-work",
         "research-docs",

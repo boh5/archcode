@@ -20,6 +20,7 @@ import { createToolExecutionContext, type ToolDescriptor, type ToolExecutionCont
 import { createTestProjectContext } from "../tools/test-project-context";
 import { registerBuiltinTools } from "./register-tools";
 import {
+  TOOL_GOAL_CREATE,
   TOOL_GOAL_MANAGE,
   TOOL_ASK_USER,
   TOOL_BASH,
@@ -61,7 +62,7 @@ function makeContext(
   const input = overrides.input ?? {};
   const projectContext = overrides.projectContext ?? makeProjectContext(workspaceRoot);
   return createToolExecutionContext({
-    store: storeManager.create(`register-tools-${crypto.randomUUID()}`, workspaceRoot),
+    store: storeManager.create(`register-tools-${crypto.randomUUID()}`, workspaceRoot, { agentName: "engineer" }),
     storeManager,
     toolName,
     toolCallId: `${toolName}-call`,
@@ -199,9 +200,10 @@ describe("registerBuiltinTools", () => {
 
     registerBuiltinTools(registry, silentLogger);
 
+    expect(registry.get(TOOL_GOAL_CREATE)).toBeDefined();
     expect(registry.get(TOOL_GOAL_MANAGE)).toBeDefined();
 
-    for (const oldName of ["goal_create", "goal_lock", "goal_run", "goal_retry", "goal_check_done", "goal_evidence", "goal_artifact_read", "goal_artifact_write"]) {
+    for (const oldName of ["goal_lock", "goal_run", "goal_retry", "goal_check_done", "goal_evidence", "goal_artifact_read", "goal_artifact_write"]) {
       expect(registry.get(oldName)).toBeUndefined();
     }
   });
@@ -214,7 +216,7 @@ describe("registerBuiltinTools", () => {
       objective: "Verify Goal lifecycle does not govern unrelated tool execution.",
       acceptanceCriteria: "Agent/tool permissions decide ordinary tool availability.",
     });
-    const store = storeManager.create("goal-main-tools-session", workspaceRoot);
+    const store = storeManager.create("goal-main-tools-session", workspaceRoot, { agentName: "engineer" });
     store.getState().setGoalId(goal.id);
     store.getState().setSessionRole("main");
     const registry = new ToolRegistry();
@@ -245,7 +247,7 @@ describe("registerBuiltinTools", () => {
       objective: "Verify todo bookkeeping is independent from Goal lifecycle state.",
       acceptanceCriteria: "Todo updates continue to work while a Goal is reviewing and after it is done.",
     });
-    const store = storeManager.create("goal-todo-cleanup-session", workspaceRoot);
+    const store = storeManager.create("goal-todo-cleanup-session", workspaceRoot, { agentName: "engineer" });
     store.getState().setGoalId(goal.id);
     store.getState().setSessionRole("main");
     await projectContext.goalState.start(goal.id, { mainSessionId: store.getState().sessionId });
@@ -305,7 +307,7 @@ describe("registerBuiltinTools", () => {
     const registry = new ToolRegistry();
     registerBuiltinTools(registry, silentLogger);
 
-    for (const oldName of ["goal_create", "goal_lock", "goal_run", "goal_retry", "goal_check_done"]) {
+    for (const oldName of ["goal_lock", "goal_run", "goal_retry", "goal_check_done"]) {
       const result = await registry.execute(
         { toolName: oldName, toolCallId: `${oldName}-unknown`, input: {} },
         makeContext(oldName, [oldName], workspaceRoot, {

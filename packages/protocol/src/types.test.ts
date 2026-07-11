@@ -63,7 +63,7 @@ describe("global SSE wire protocol types", () => {
       createdAt: 1,
       kind: "text-delta",
       payload: { type: "text-delta", text: "hello" },
-      agentName: "orchestrator",
+      agentName: "engineer",
     };
 
     const parsed = serializeRoundTrip(event);
@@ -76,7 +76,7 @@ describe("global SSE wire protocol types", () => {
     expect(parsed.createdAt).toBe(1);
     expect(parsed.kind).toBe("text-delta");
     expect(parsed.payload).toEqual({ type: "text-delta", text: "hello" });
-    expect(parsed.agentName).toBe("orchestrator");
+    expect(parsed.agentName).toBe("engineer");
   });
 
   test("distinguishes matching event IDs by composite identity", () => {
@@ -88,7 +88,7 @@ describe("global SSE wire protocol types", () => {
       createdAt: 1,
       kind: "text-delta",
       payload: { type: "text-delta", text: "hello" },
-      agentName: "orchestrator",
+      agentName: "engineer",
     };
     const second: GlobalSessionEventEnvelope<TextDeltaEvent> = {
       ...first,
@@ -153,7 +153,7 @@ describe("global SSE wire protocol types", () => {
         createdAt: 1,
         kind: "text-delta",
         payload: { type: "text-delta", text: "hello" },
-        agentName: "orchestrator",
+        agentName: "engineer",
       },
       { type: "heartbeat", createdAt: 2 },
       { type: "reset", slug: "proj-a", sessionId: "s1", reason: "store_unavailable" },
@@ -1069,7 +1069,7 @@ describe("Loop types", () => {
       sessionId: "session-1",
       cwd: "/workspace",
       rootSessionId: "session-1",
-      agentName: "orchestrator",
+      agentName: "engineer",
       modelInfo: null,
       title: null,
       goalId: "goal-1",
@@ -1088,7 +1088,7 @@ describe("Loop types", () => {
       sessionId: "session-1",
       cwd: "/workspace",
       rootSessionId: "session-1",
-      agentName: "orchestrator",
+      agentName: "engineer",
       modelInfo: null,
       title: null,
       goalId: "goal-1",
@@ -1120,7 +1120,7 @@ describe("Loop types", () => {
       stats: createEmptySessionStats(),
       executions: [],
       modelInfo: null,
-      agentName: "orchestrator",
+      agentName: "engineer",
     };
 
     const parsed = serializeRoundTrip(session);
@@ -1146,7 +1146,7 @@ describe("Loop types", () => {
       stats: createEmptySessionStats(),
       executions: [],
       modelInfo: null,
-      agentName: "orchestrator",
+      agentName: "engineer",
     };
 
     const parsed = serializeRoundTrip(session);

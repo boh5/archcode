@@ -63,7 +63,8 @@ function makeConfig(mcp?: Record<string, unknown>): Record<string, unknown> {
   const config = {
     provider: makeProviderConfig(),
     agents: {
-      orchestrator: { model: "local:test-model" },
+      engineer: { model: "local:test-model" },
+      goal_lead: { model: "local:test-model" },
       plan: { model: "local:test-model" },
       build: { model: "local:test-model" },
       reviewer: { model: "local:test-model" },
@@ -127,7 +128,7 @@ function makeFakeMcpManager(
 function makeContext(toolName: string, input: unknown): ToolExecutionContext {
   const workspaceRoot = import.meta.dir;
   return {
-    store: storeManager.create(`main-test-${crypto.randomUUID()}`, workspaceRoot),
+    store: storeManager.create(`main-test-${crypto.randomUUID()}`, workspaceRoot, { agentName: "engineer" }),
     storeManager,
     toolName,
     toolCallId: `${toolName}-call`,
@@ -182,7 +183,7 @@ async function writeSessionPermissionCheckpoint(input: {
     displayInput: { command: "while true; do sleep 1; done" },
     allowedTools: ["bash"],
     agentSkills: [],
-    agentName: "orchestrator",
+    agentName: "engineer",
     toolCalls: [{ toolCallId: "bash-1", toolName: "bash", input: { command: "while true; do sleep 1; done" } }],
     completedToolResults: [],
     pendingToolCalls: [{ toolCallId: "bash-1", toolName: "bash", input: { command: "while true; do sleep 1; done" } }],
@@ -279,7 +280,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => manager,
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Runtime snapshot" });
-    const session = await runtime.createSession(workspaceRoot);
+    const session = await runtime.createSession(workspaceRoot, { agentName: "engineer" });
     const changes: GlobalSSESessionRuntimeChangedEvent[] = [];
     const unsubscribe = runtime.subscribeSessionRuntimeChanges((event) => changes.push(event));
 
@@ -324,7 +325,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => manager,
     });
     const originalProject = await runtime.projectRegistry.add({ workspaceRoot, name: "Original Project" });
-    const session = await runtime.createSession(workspaceRoot);
+    const session = await runtime.createSession(workspaceRoot, { agentName: "engineer" });
     const originalContext = await runtime.contextResolver.resolve(workspaceRoot);
     const record = await originalContext.hitl.create({
       owner: { projectSlug: originalProject.slug, ownerType: "session", ownerId: session.sessionId },
@@ -391,14 +392,14 @@ describe("createRuntime", () => {
     const rootSessionId = crypto.randomUUID();
     const childSessionId = crypto.randomUUID();
     const unrelatedSessionId = crypto.randomUUID();
-    const rootStore = persistedSessions.create(rootSessionId, workspaceRoot);
+    const rootStore = persistedSessions.create(rootSessionId, workspaceRoot, { agentName: "engineer" });
     const childStore = persistedSessions.create(childSessionId, workspaceRoot, {
       rootSessionId,
       parentSessionId: rootSessionId,
       agentName: "build",
       sessionRole: "build",
     });
-    persistedSessions.create(unrelatedSessionId, workspaceRoot);
+    persistedSessions.create(unrelatedSessionId, workspaceRoot, { agentName: "engineer" });
     await Promise.all([
       persistedSessions.flushSession(rootSessionId, workspaceRoot),
       persistedSessions.flushSession(childSessionId, workspaceRoot),

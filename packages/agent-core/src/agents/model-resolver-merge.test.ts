@@ -22,7 +22,7 @@ function makeConfig(
         models: { main: model },
       },
     },
-    agents: { orchestrator: agent } as unknown as ArchCodeConfig["agents"],
+    agents: { engineer: agent } as unknown as ArchCodeConfig["agents"],
   };
 }
 
@@ -56,7 +56,7 @@ function makeRegistry(config: ArchCodeConfig): ProviderRegistry {
 }
 
 function resolve(config: ArchCodeConfig) {
-  return resolveAgentModel("orchestrator", config, makeRegistry(config)).options;
+  return resolveAgentModel("engineer", config, makeRegistry(config)).options;
 }
 
 describe("resolveAgentModel merge order", () => {

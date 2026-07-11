@@ -63,6 +63,7 @@ export const TOOL_MEMORY_READ = "memory_read";
 export const TOOL_MEMORY_WRITE = "memory_write";
 
 // Goal lifecycle tools
+export const TOOL_GOAL_CREATE = "goal_create";
 export const TOOL_GOAL_MANAGE = "goal_manage";
 
 // Compression
@@ -106,6 +107,7 @@ export type BuiltinToolName =
   | typeof TOOL_SKILL_READ
   | typeof TOOL_MEMORY_READ
   | typeof TOOL_MEMORY_WRITE
+  | typeof TOOL_GOAL_CREATE
   | typeof TOOL_GOAL_MANAGE
   | typeof TOOL_COMPRESS;
 
@@ -164,6 +166,7 @@ export const TOOL_CATEGORY_MAP = {
   [TOOL_SKILL_READ]: "skill",
   [TOOL_MEMORY_READ]: "memory",
   [TOOL_MEMORY_WRITE]: "memory",
+  [TOOL_GOAL_CREATE]: "goal",
   [TOOL_GOAL_MANAGE]: "goal",
   [TOOL_COMPRESS]: "other",
 } as const satisfies Record<BuiltinToolName, ToolCategory>;

@@ -241,7 +241,7 @@ describe("getToolCategory()", () => {
     expect(getToolCategory("workflow_update_stage")).toBe("other");
     expect(getToolCategory("artifact_read")).toBe("other");
     expect(getToolCategory("artifact_write")).toBe("other");
-    expect(getToolCategory("goal_create")).toBe("other");
+    expect(getToolCategory("goal_create")).toBe("goal");
     expect(getToolCategory("goal_lock")).toBe("other");
     expect(getToolCategory("goal_run")).toBe("other");
     expect(getToolCategory("goal_retry")).toBe("other");
@@ -278,7 +278,7 @@ describe("isBuiltinToolName()", () => {
   });
 
   test("returns false for removed Goal executable names", () => {
-    expect(isBuiltinToolName("goal_create")).toBe(false);
+    expect(isBuiltinToolName("goal_create")).toBe(true);
     expect(isBuiltinToolName("goal_lock")).toBe(false);
     expect(isBuiltinToolName("goal_run")).toBe(false);
     expect(isBuiltinToolName("goal_retry")).toBe(false);

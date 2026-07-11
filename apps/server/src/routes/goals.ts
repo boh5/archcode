@@ -222,6 +222,7 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
         await assertNoActiveGoalSessions(runtime, project.workspaceRoot, goal, body);
 
         const mainSessionId = body.mainSessionId ?? (await runtime.createSession(project.workspaceRoot, {
+          agentName: "goal_lead",
           goalId,
           sessionRole: "main",
           cwd: prepared.cwd,
@@ -290,7 +291,7 @@ function buildGoalRunUserMessage(goal: GoalState): string {
     "Acceptance criteria:",
     goal.acceptanceCriteria,
     "Runtime has already started and claimed this Goal for the current main session.",
-    "Do not call goal_manage.start again; continue with the Goal work, delegate as needed, and hand off to Reviewer when ready.",
+    "The Goal is already running in this Goal Lead Session; continue the work, delegate as needed, and hand off to Reviewer when ready.",
   ].join("\n");
 }
 
@@ -439,6 +440,16 @@ async function assertSessionAssignable(
   if (role === "main" && session.sessionRole !== "main") {
     throw new ServerError("BAD_REQUEST", `Session ${sessionId} is not a main goal session`, 409);
   }
+  if (
+    role === "main"
+    && (
+      session.agentName !== "goal_lead"
+      || session.rootSessionId !== sessionId
+      || session.parentSessionId !== undefined
+    )
+  ) {
+    throw new ServerError("BAD_REQUEST", `Session ${sessionId} is not a Goal Lead root session`, 409);
+  }
   if (expectedCwd !== undefined && session.cwd !== expectedCwd) {
     throw new ServerError("BAD_REQUEST", `Session ${sessionId} does not use the Goal execution directory`, 409);
   }
@@ -457,6 +468,7 @@ async function reserveGoalSession(
   }
 
   const mainSessionId = goal.mainSessionId ?? body.mainSessionId ?? (await runtime.createSession(workspaceRoot, {
+    agentName: "goal_lead",
     goalId: goal.id,
     sessionRole: "main",
     cwd,

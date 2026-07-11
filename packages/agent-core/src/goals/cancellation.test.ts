@@ -119,7 +119,7 @@ async function createRunningGoal(
   fixture.sessions.create(mainSessionId, TMP_ROOT, {
     goalId: goal.id,
     sessionRole: "main",
-    agentName: "orchestrator",
+    agentName: "engineer",
   });
   await fixture.sessions.flushSession(mainSessionId, TMP_ROOT);
   return await fixture.goalState.start(goal.id, { mainSessionId });
@@ -234,7 +234,7 @@ describe("GoalCancellationService", () => {
       displayInput: {},
       allowedTools: ["ask_user"],
       agentSkills: [],
-      agentName: "orchestrator",
+      agentName: "engineer",
       toolCalls: [{ toolCallId: "ask-1", toolName: "ask_user", input: {} }],
       completedToolResults: [],
       pendingToolCalls: [{ toolCallId: "ask-1", toolName: "ask_user", input: {} }],
@@ -439,7 +439,7 @@ describe("GoalCancellationService", () => {
         displayInput: {},
         allowedTools: ["ask_user"],
         agentSkills: [],
-        agentName: "orchestrator",
+        agentName: "engineer",
         toolCalls: [{ toolCallId: "ask-1", toolName: "ask_user", input: {} }],
         completedToolResults: [],
         pendingToolCalls: [{ toolCallId: "ask-1", toolName: "ask_user", input: {} }],

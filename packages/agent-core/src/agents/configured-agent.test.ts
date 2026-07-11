@@ -17,7 +17,7 @@ import {
   IneligibleSessionWorktreeToolError,
   UnknownExtraToolError,
 } from "./configured-agent";
-import { exploreAgentDefinition, orchestratorAgentDefinition } from "./definitions";
+import { exploreAgentDefinition, engineerAgentDefinition } from "./definitions";
 import type { AgentDefinition } from "./factory-types";
 import { setLlmAdapterForTest } from "../llm/adapter";
 import type { MemoryExtractionConfig } from "../config";
@@ -213,7 +213,7 @@ function createAgent(options: {
     toolRegistry,
     skillService: options.skillService ?? createTestSkillService(),
     activeSkills: options.activeSkills,
-    store: options.store ?? storeManager.create(`configured-agent-${crypto.randomUUID()}`, projectRoot, { cwd }),
+    store: options.store ?? storeManager.create(`configured-agent-${crypto.randomUUID()}`, projectRoot, { cwd, agentName: "engineer" }),
     storeManager,
     projectContextResolver: createTestProjectContextResolver(storeManager),
     projectRoot,
@@ -254,10 +254,10 @@ describe("ConfiguredAgent", () => {
     await rm(worktreeRoot, { recursive: true, force: true });
   });
 
-  test("orchestrator definition produces all configured lifecycle hooks", async () => {
+  test("engineer definition produces all configured lifecycle hooks", async () => {
     const streamFn = setupMockStreamText("root ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(`configured-root-${crypto.randomUUID()}`, tmpRoot);
+    const store = storeManager.create(`configured-root-${crypto.randomUUID()}`, tmpRoot, { agentName: "engineer" });
     store.setState({
       messages: [
         {
@@ -281,7 +281,7 @@ describe("ConfiguredAgent", () => {
       todos: [{ id: "todo-1", content: "finish", status: "pending" }],
     });
 
-    const agent = createAgent({ definition: orchestratorAgentDefinition, store, btm });
+    const agent = createAgent({ definition: engineerAgentDefinition, store, btm });
     await agent.run("root run");
 
     const callArgs = streamFn.mock.calls[0]![0] as { messages: unknown[] };
@@ -293,7 +293,7 @@ describe("ConfiguredAgent", () => {
 
   test("dispose does not cancel a provided shared background task manager", () => {
     const btm = new RecordingBackgroundTaskManager();
-    const agent = createAgent({ definition: orchestratorAgentDefinition, btm });
+    const agent = createAgent({ definition: engineerAgentDefinition, btm });
 
     agent.dispose();
 
@@ -387,7 +387,7 @@ describe("ConfiguredAgent", () => {
 
   test("explorer definition produces auto-compact, auto-inject, and todo-continuation hooks", async () => {
     const streamFn = setupMockStreamText("explore ok");
-    const store = storeManager.create(`configured-explore-${crypto.randomUUID()}`, tmpRoot);
+    const store = storeManager.create(`configured-explore-${crypto.randomUUID()}`, tmpRoot, { agentName: "engineer" });
     store.setState({
       reminders: [
         {
@@ -410,10 +410,10 @@ describe("ConfiguredAgent", () => {
     expect(agent.store.getState().reminders.some((reminder) => reminder.source.type === "todo_loop_continuation")).toBe(true);
   });
 
-  test("orchestrator definition dispatches memory background hooks", async () => {
-    setupMockStreamText("orchestrator memory ok");
+  test("engineer definition dispatches memory background hooks", async () => {
+    setupMockStreamText("engineer memory ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(`configured-orchestrator-background-${crypto.randomUUID()}`, tmpRoot);
+    const store = storeManager.create(`configured-engineer-background-${crypto.randomUUID()}`, tmpRoot, { agentName: "engineer" });
     store.setState({
       messages: [
         {
@@ -441,7 +441,7 @@ describe("ConfiguredAgent", () => {
     });
     await writeFile(join(tmpRoot, ".archcode", "memory", "index.md"), `${Array.from({ length: 251 }, (_, index) => `topic-${index}`).join("\n")}\n`);
 
-    const agent = createAgent({ definition: orchestratorAgentDefinition, store, btm });
+    const agent = createAgent({ definition: engineerAgentDefinition, store, btm });
     await agent.run("root run");
 
     expect(btm.dispatched).toContain("memory-extraction");
@@ -451,7 +451,7 @@ describe("ConfiguredAgent", () => {
   test("memory config disabled skips memory background hooks", async () => {
     setupMockStreamText("memory disabled ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(`configured-memory-disabled-${crypto.randomUUID()}`, tmpRoot);
+    const store = storeManager.create(`configured-memory-disabled-${crypto.randomUUID()}`, tmpRoot, { agentName: "engineer" });
     store.setState({
       messages: [
         {
@@ -473,7 +473,7 @@ describe("ConfiguredAgent", () => {
     await writeFile(join(tmpRoot, ".archcode", "memory", "index.md"), `${Array.from({ length: 251 }, (_, index) => `topic-${index}`).join("\n")}\n`);
 
     const agent = createAgent({
-      definition: orchestratorAgentDefinition,
+      definition: engineerAgentDefinition,
       store,
       btm,
       memoryConfig: { enabled: false, minMessages: 1, minContentLength: 100, cooldownMs: 0 },
@@ -487,7 +487,7 @@ describe("ConfiguredAgent", () => {
   test("memory config custom thresholds are used by extraction hook", async () => {
     setupMockStreamText("memory custom ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(`configured-memory-custom-${crypto.randomUUID()}`, tmpRoot);
+    const store = storeManager.create(`configured-memory-custom-${crypto.randomUUID()}`, tmpRoot, { agentName: "engineer" });
     store.setState({
       messages: [
         {
@@ -501,7 +501,7 @@ describe("ConfiguredAgent", () => {
     });
 
     const agent = createAgent({
-      definition: orchestratorAgentDefinition,
+      definition: engineerAgentDefinition,
       store,
       btm,
       memoryConfig: { enabled: true, minMessages: 1, minContentLength: 100, cooldownMs: 0 },
@@ -514,7 +514,7 @@ describe("ConfiguredAgent", () => {
   test("memory config absent uses default extraction thresholds", async () => {
     setupMockStreamText("memory defaults ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(`configured-memory-defaults-${crypto.randomUUID()}`, tmpRoot);
+    const store = storeManager.create(`configured-memory-defaults-${crypto.randomUUID()}`, tmpRoot, { agentName: "engineer" });
     store.setState({
       messages: [
         {
@@ -527,7 +527,7 @@ describe("ConfiguredAgent", () => {
       ],
     });
 
-    const agent = createAgent({ definition: orchestratorAgentDefinition, store, btm });
+    const agent = createAgent({ definition: engineerAgentDefinition, store, btm });
     await agent.run("root run");
 
     expect(btm.dispatched).not.toContain("memory-extraction");
@@ -536,7 +536,7 @@ describe("ConfiguredAgent", () => {
   test('titleGeneration "unless-supplied" skips when store title already exists', async () => {
     setupMockStreamText("titled ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(`configured-titled-${crypto.randomUUID()}`, tmpRoot);
+    const store = storeManager.create(`configured-titled-${crypto.randomUUID()}`, tmpRoot, { agentName: "engineer" });
     store.setState({ title: "Supplied Title" });
 
     const agent = createAgent({ definition: exploreAgentDefinition, store, btm });
@@ -568,8 +568,8 @@ describe("ConfiguredAgent", () => {
 
   test("non-loop runs keep definition tools unchanged and do not expose profile-only GitHub tools", async () => {
     const streamFn = setupMockStreamText("default tools ok");
-    const toolRegistry = createRegistry(orchestratorAgentDefinition.tools.tools.map(makeTool));
-    const agent = createAgent({ definition: orchestratorAgentDefinition, toolRegistry });
+    const toolRegistry = createRegistry(engineerAgentDefinition.tools.tools.map(makeTool));
+    const agent = createAgent({ definition: engineerAgentDefinition, toolRegistry });
 
     await agent.run("default run");
 
@@ -583,14 +583,14 @@ describe("ConfiguredAgent", () => {
 
   test("exposes exactly one cwd transition to eligible interactive root Sessions", async () => {
     const toolRegistry = createRegistry([
-      ...orchestratorAgentDefinition.tools.tools.map(makeTool),
+      ...engineerAgentDefinition.tools.tools.map(makeTool),
       worktreeEnterTool,
       worktreeExitTool,
     ]);
 
     const rootStream = setupMockStreamText("root tools");
     await createAgent({
-      definition: orchestratorAgentDefinition,
+      definition: engineerAgentDefinition,
       toolRegistry,
       projectRoot: tmpRoot,
       cwd: tmpRoot,
@@ -601,7 +601,7 @@ describe("ConfiguredAgent", () => {
 
     const worktreeStream = setupMockStreamText("worktree tools");
     await createAgent({
-      definition: orchestratorAgentDefinition,
+      definition: engineerAgentDefinition,
       toolRegistry,
       projectRoot: tmpRoot,
       cwd: worktreeRoot,
@@ -614,15 +614,15 @@ describe("ConfiguredAgent", () => {
   test("does not expose cwd transitions to Goal-owned root Sessions", async () => {
     const streamFn = setupMockStreamText("goal tools");
     const toolRegistry = createRegistry([
-      ...orchestratorAgentDefinition.tools.tools.map(makeTool),
+      ...engineerAgentDefinition.tools.tools.map(makeTool),
       worktreeEnterTool,
       worktreeExitTool,
     ]);
     const store = storeManager.create(`configured-goal-worktree-${crypto.randomUUID()}`, tmpRoot, {
-      goalId: crypto.randomUUID(),
+      goalId: crypto.randomUUID(), agentName: "goal_lead"
     });
     await createAgent({
-      definition: orchestratorAgentDefinition,
+      definition: engineerAgentDefinition,
       toolRegistry,
       store,
       projectRoot: tmpRoot,
@@ -637,15 +637,15 @@ describe("ConfiguredAgent", () => {
   test("extraTools cannot grant cwd transitions to an ineligible Session", async () => {
     const streamFn = setupMockStreamText("should not run");
     const toolRegistry = createRegistry([
-      ...orchestratorAgentDefinition.tools.tools.map(makeTool),
+      ...engineerAgentDefinition.tools.tools.map(makeTool),
       worktreeEnterTool,
       worktreeExitTool,
     ]);
     const store = storeManager.create(`configured-goal-worktree-extra-${crypto.randomUUID()}`, tmpRoot, {
-      goalId: crypto.randomUUID(),
+      goalId: crypto.randomUUID(), agentName: "goal_lead"
     });
     const agent = createAgent({
-      definition: orchestratorAgentDefinition,
+      definition: engineerAgentDefinition,
       toolRegistry,
       store,
       projectRoot: tmpRoot,
@@ -661,11 +661,11 @@ describe("ConfiguredAgent", () => {
   test("extraTools add registered tools without narrowing baseline prompt tools", async () => {
     const streamFn = setupMockStreamText("extra tools ok");
     const toolRegistry = createRegistry([
-      ...orchestratorAgentDefinition.tools.tools.map(makeTool),
+      ...engineerAgentDefinition.tools.tools.map(makeTool),
       makeTool("github_get_pull_request"),
       makeTool("github_create_issue_comment"),
     ]);
-    const agent = createAgent({ definition: orchestratorAgentDefinition, toolRegistry });
+    const agent = createAgent({ definition: engineerAgentDefinition, toolRegistry });
 
     await agent.run("extra tools run", {
       origin: {
@@ -694,7 +694,7 @@ describe("ConfiguredAgent", () => {
     let capturedAllowedTools: string[] = [];
     let capturedOriginLoopId: string | undefined;
     const toolRegistry = createRegistry([
-      ...orchestratorAgentDefinition.tools.tools.map(makeTool),
+      ...engineerAgentDefinition.tools.tools.map(makeTool),
     ]);
     toolRegistry.register({
       name: "github_create_issue_comment",
@@ -707,11 +707,11 @@ describe("ConfiguredAgent", () => {
         return "commented";
       },
     });
-    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { loopId });
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { loopId, agentName: "engineer" });
     // ProjectContextResolver scans durable Session identities. Mirror the
     // production createSessionFile barrier instead of racing the queued write.
     await storeManager.flushSession(store.getState().sessionId, tmpRoot);
-    const agent = createAgent({ definition: orchestratorAgentDefinition, toolRegistry, store });
+    const agent = createAgent({ definition: engineerAgentDefinition, toolRegistry, store });
 
     await agent.run("comment on PR", {
       maxSteps: 1,
@@ -735,7 +735,7 @@ describe("ConfiguredAgent", () => {
 
   test("unknown extraTools fail before model execution", async () => {
     const streamFn = setupMockStreamText("should not run");
-    const agent = createAgent({ definition: orchestratorAgentDefinition });
+    const agent = createAgent({ definition: engineerAgentDefinition });
 
     await expect(agent.run("unknown extra", { extraTools: ["missing_extra_tool"] })).rejects.toThrow(UnknownExtraToolError);
     expect(streamFn).not.toHaveBeenCalled();
@@ -773,7 +773,7 @@ describe("ConfiguredAgent", () => {
     setupMockStreamText("quota ok");
     const quotaEnforcer = mock(async (_directory: string) => {});
 
-    await createAgent({ definition: orchestratorAgentDefinition, quotaEnforcer }).run("root run");
+    await createAgent({ definition: engineerAgentDefinition, quotaEnforcer }).run("root run");
     expect(quotaEnforcer).toHaveBeenCalledTimes(1);
 
     await createAgent({ definition: exploreAgentDefinition, quotaEnforcer }).run("explore run");
@@ -798,7 +798,7 @@ describe("ConfiguredAgent", () => {
   test("legacy active workflow context is omitted for agents", async () => {
     const streamFn = setupMockStreamText("no workflow tools ok");
     const goalId = crypto.randomUUID();
-    const store = storeManager.create(`configured-no-workflow-tools-${crypto.randomUUID()}`, tmpRoot, { goalId });
+    const store = storeManager.create(`configured-no-workflow-tools-${crypto.randomUUID()}`, tmpRoot, { goalId, agentName: "goal_lead" });
     const agent = createAgent({
       definition: definitionWith({ tools: { tools: ["unknown_tool"] } }),
       store,
@@ -820,16 +820,16 @@ describe("ConfiguredAgent", () => {
     });
     const store = storeManager.create(`configured-repair-context-${crypto.randomUUID()}`, tmpRoot, {
       goalId: goal.id,
-      sessionRole: "main",
+      sessionRole: "main", agentName: "goal_lead"
     });
 
-    await createAgent({ definition: orchestratorAgentDefinition, store }).run("retry goal");
+    await createAgent({ definition: engineerAgentDefinition, store }).run("retry goal");
 
     const callArgs = streamFn.mock.calls[0]![0] as { system: string };
     expect(callArgs.system).not.toContain("## Operator Repair Context");
   });
 
-  test("orchestrator tool execution context uses Orchestrator attribution at depth zero", async () => {
+  test("engineer tool execution context uses Engineer attribution at depth zero", async () => {
     setupToolCallStreamText("capture_context");
     let capturedAgentName: string | undefined;
     let capturedDepth: number | undefined;
@@ -847,11 +847,11 @@ describe("ConfiguredAgent", () => {
     });
 
     await createAgent({
-      definition: { ...orchestratorAgentDefinition, name: "Orchestrator", tools: { tools: ["capture_context"] } },
+      definition: { ...engineerAgentDefinition, tools: { tools: ["capture_context"] } },
       toolRegistry,
     }).run("root context");
 
-    expect(capturedAgentName).toBe("Orchestrator");
+    expect(capturedAgentName).toBe("engineer");
     expect(capturedDepth).toBe(0);
   });
 
@@ -873,12 +873,12 @@ describe("ConfiguredAgent", () => {
     });
 
     await createAgent({
-      definition: { ...exploreAgentDefinition, name: "Explorer", tools: { tools: ["capture_context"] } },
+      definition: { ...exploreAgentDefinition, tools: { tools: ["capture_context"] } },
       depth: 1,
       toolRegistry,
     }).run("explorer context");
 
-    expect(capturedAgentName).toBe("Explorer");
+    expect(capturedAgentName).toBe("explore");
     expect(capturedDepth).toBe(1);
   });
 });

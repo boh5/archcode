@@ -36,7 +36,7 @@ describe("SessionFamilyStopService", () => {
     const sessionId = crypto.randomUUID();
     const hitlId = crypto.randomUUID();
     const sessions = new FailingClearSessionStoreManager({ logger: silentLogger });
-    sessions.create(sessionId, workspaceRoot);
+    sessions.create(sessionId, workspaceRoot, { agentName: "engineer" });
     await sessions.setHitlBlocker(sessionId, workspaceRoot, blocker(sessionId, hitlId));
     await writeCheckpoint(workspaceRoot, sessionId, hitlId);
 
@@ -105,7 +105,7 @@ async function writeCheckpoint(workspaceRoot: string, sessionId: string, hitlId:
     displayInput: {},
     allowedTools: ["ask_user"],
     agentSkills: [],
-    agentName: "orchestrator",
+    agentName: "engineer",
     toolCalls: [{ toolCallId: "ask", toolName: "ask_user", input: {} }],
     completedToolResults: [],
     pendingToolCalls: [{ toolCallId: "ask", toolName: "ask_user", input: {} }],

@@ -92,8 +92,8 @@ const LOOP_TEMPLATES = {
   goal_runner: {
     id: "goal_runner",
     label: "Goal Runner",
-    description: "Create and run a recurring Goal with the Orchestrator agent.",
-    run: { type: "goal", agent: "orchestrator" },
+    description: "Create and run a recurring Goal with the Goal Lead agent.",
+    run: { type: "goal", agent: "goal_lead" },
     extraTools: [],
     defaults: {
       schedule: { kind: "manual" },

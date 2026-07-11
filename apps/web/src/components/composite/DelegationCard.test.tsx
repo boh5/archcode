@@ -157,7 +157,8 @@ describe("DelegationCard", () => {
     sessionId: "session-child-1",
     focusStoreSessionId: "session-root-1",
     agentType: "explore",
-    agentName: "Explorer Agent",
+    agentDisplayName: "Explore",
+    taskTitle: "Find relevant files",
     status: "running" as const,
     depth: 1,
     startedAt: Date.now() - 60000,
@@ -172,11 +173,12 @@ describe("DelegationCard", () => {
   test("renders agent name and summary", () => {
     const result = DelegationCard(baseProps);
     const text = textContent(result);
-    expect(text).toContain("Explorer Agent");
+    expect(text).toContain("Explore");
+    expect(text).toContain("Find relevant files");
     expect(text).toContain("Searching for relevant files");
   });
 
-  test("renders agent initials from shared constants", () => {
+  test("derives the agent initial from its display name", () => {
     const result = DelegationCard(baseProps);
     const text = textContent(result);
     expect(text).toContain("E");
@@ -207,10 +209,13 @@ describe("DelegationCard", () => {
     expect(text).toContain("depth 1");
   });
 
-  test("falls back to explore for unknown agent type", () => {
-    const result = DelegationCard({ ...baseProps, agentType: "unknown_type" });
+  test("uses neutral presentation for an unknown agent type", () => {
+    const result = DelegationCard({ ...baseProps, agentType: "unknown_type", agentDisplayName: "unknown_type" });
     const text = textContent(result);
-    expect(text).toContain("E");
+    expect(text).toContain("unknown_type");
+    expect(text).toContain("U");
+    expect(findAllWithClass(result, "text-text-muted")).not.toHaveLength(0);
+    expect(findAllWithClass(result, "text-agent-explore")).toHaveLength(0);
   });
 
   test("renders tool chips without input (fallback to name)", () => {

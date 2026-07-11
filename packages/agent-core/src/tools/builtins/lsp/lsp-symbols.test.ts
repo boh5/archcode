@@ -189,7 +189,7 @@ describe("lspSymbolsTool", () => {
     const input = { scope: "document", filePath: "../outside.ts" };
     const sessionId = crypto.randomUUID();
     const durable = await createDurableTestSessionContext(testDir, sessionId);
-    const ctx = makeCtx({ toolName: "lsp_symbols", toolCallId: "call-1", agentName: "orchestrator", agentSkills: [], input, ...durable });
+    const ctx = makeCtx({ toolName: "lsp_symbols", toolCallId: "call-1", agentName: "engineer", agentSkills: [], input, ...durable });
 
     try {
       await registry.execute(

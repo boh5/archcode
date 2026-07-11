@@ -23,7 +23,7 @@ function event(eventId: number, payload: SessionEventPayload): GlobalSessionEven
     createdAt: 1_700_000_000_000 + eventId,
     kind: payload.type,
     payload,
-    agentName: "orchestrator",
+    agentName: "engineer",
   };
 }
 
@@ -56,6 +56,7 @@ describe("web session store registry", () => {
     });
 
     expect(rootStore.getState().rootSessionId).toBe("root-session");
+    expect(rootStore.getState().agentName).toBeNull();
     expect(childStore.getState().rootSessionId).toBe("root-session");
     expect(childStore.getState().parentSessionId).toBe("root-session");
     expect(rootStore.getState()).not.toHaveProperty("childSessionIds");

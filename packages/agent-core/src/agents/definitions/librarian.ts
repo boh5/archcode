@@ -13,6 +13,7 @@ import {
 
 export const librarianAgentDefinition = {
   name: "librarian",
+  displayName: "Librarian",
   promptProfileId: "librarian",
   rolePrompt: `## Goal Role: Librarian
 

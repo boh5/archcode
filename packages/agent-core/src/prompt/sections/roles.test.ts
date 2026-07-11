@@ -5,7 +5,8 @@ import {
   buildAgentDefinition,
   exploreAgentDefinition,
   librarianAgentDefinition,
-  orchestratorAgentDefinition,
+  engineerAgentDefinition,
+  goalLeadAgentDefinition,
   planAgentDefinition,
   reviewerAgentDefinition,
 } from "../../agents/definitions";
@@ -27,7 +28,6 @@ function makeCtx(rolePrompt?: string): PromptContext {
 }
 
 const REMOVED_GOAL_EXECUTABLE_TOOL_NAMES = [
-  "goal_create",
   "goal_lock",
   "goal_run",
   "goal_retry",
@@ -36,10 +36,11 @@ const REMOVED_GOAL_EXECUTABLE_TOOL_NAMES = [
 
 describe("buildRoleSection", () => {
   test.each([
-    ["orchestrator", orchestratorAgentDefinition.rolePrompt, "## Goal Role: Orchestrator"],
-    ["plan", planAgentDefinition.rolePrompt, "## Goal Role: Plan"],
-    ["build", buildAgentDefinition.rolePrompt, "## Goal Role: Build"],
-    ["reviewer", reviewerAgentDefinition.rolePrompt, "## Goal Role: Reviewer"],
+    ["engineer", engineerAgentDefinition.rolePrompt, "## Role: Engineer"],
+    ["goal_lead", goalLeadAgentDefinition.rolePrompt, "## Goal Role: Goal Lead"],
+    ["plan", planAgentDefinition.rolePrompt, "## Role: Plan"],
+    ["build", buildAgentDefinition.rolePrompt, "## Role: Build"],
+    ["reviewer", reviewerAgentDefinition.rolePrompt, "## Role: Reviewer"],
     ["explore", exploreAgentDefinition.rolePrompt, "## Goal Role: Explore"],
     ["librarian", librarianAgentDefinition.rolePrompt, "## Goal Role: Librarian"],
   ])("resolves %s rolePrompt to non-empty goal-era role content", (_name, rolePrompt, heading) => {
@@ -56,7 +57,8 @@ describe("buildRoleSection", () => {
   });
 
   test.each([
-    ["orchestrator", orchestratorAgentDefinition.rolePrompt],
+    ["engineer", engineerAgentDefinition.rolePrompt],
+    ["goal_lead", goalLeadAgentDefinition.rolePrompt],
     ["plan", planAgentDefinition.rolePrompt],
     ["build", buildAgentDefinition.rolePrompt],
     ["reviewer", reviewerAgentDefinition.rolePrompt],
@@ -70,12 +72,12 @@ describe("buildRoleSection", () => {
     }
   });
 
-  test("orchestrator role prompt describes Goal lifecycle and delegation boundaries", () => {
-    const result = buildRoleSection(makeCtx(orchestratorAgentDefinition.rolePrompt));
+  test("Goal Lead role prompt describes Goal lifecycle and delegation boundaries", () => {
+    const result = buildRoleSection(makeCtx(goalLeadAgentDefinition.rolePrompt));
 
     expect(result).toContain("goal_manage");
-    expect(result).toContain("action=create");
-    expect(result).toContain("action=start");
+    expect(result).not.toContain("action=create");
+    expect(result).not.toContain("action=start");
     expect(result).toContain("action=begin_review");
     expect(result).toContain("action=retry");
     expect(result).not.toContain("goal_create");
@@ -85,10 +87,9 @@ describe("buildRoleSection", () => {
     expect(result).not.toContain("goal_check_done");
     expect(result).not.toContain("goal_manage.finalize_review");
     expect(result).not.toContain("finalize_review");
-    expect(result).toContain("Tool sets are hardcoded by child agent definitions");
-    expect(result).toContain("Plan handles requirements");
-    expect(result).toContain("Build writes code");
-    expect(result).toContain("Reviewer verifies");
+    expect(result).toContain("Tool sets are fixed by agent definitions");
+    expect(result).toContain("Delegate all source implementation to Build");
+    expect(result).toContain("Reviewer alone records DONE or NOT_DONE");
     expect(result).not.toContain("workflow_create");
   });
 
@@ -112,7 +113,9 @@ describe("buildRoleSection", () => {
   test("reviewer role prompt is default-deny with the five-point checklist", () => {
     const result = buildRoleSection(makeCtx(reviewerAgentDefinition.rolePrompt));
 
-    expect(result).toContain("Default stance: NOT_DONE");
+    expect(result).toContain("Goal-bound review, default stance: NOT_DONE");
+    expect(result).toContain("Ordinary or Loop review");
+    expect(result).toContain("Do not call goal_manage");
     for (const item of ["Scope", "Intent", "Tests", "No cheating", "Risk"] as const) {
       expect(result).toContain(item);
     }

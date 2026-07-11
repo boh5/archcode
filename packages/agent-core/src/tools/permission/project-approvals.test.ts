@@ -119,7 +119,7 @@ describe("ProjectApprovalManager", () => {
     const approval = await manager.addApproval(FILE_SCOPE, {
       display: "Write src/main.ts",
       reason: "User approved writing src/main.ts",
-      grantedBy: { agentName: "Orchestrator", depth: 0 },
+      grantedBy: { agentName: "Engineer", depth: 0 },
     });
 
     const raw = readFileSync(PERMISSIONS_PATH, "utf8");

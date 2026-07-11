@@ -1,6 +1,6 @@
 ## Project
 
-ArchCode — **Not just a coding agent. An always-on workbench for AI engineering.** ArchCode is a self-hosted workbench for long-running AI coding work: users deploy it on a local machine or remote server, add projects, start goals, and let agents plan, build, review, and wait for approval around the clock. It runs as a Hono server + React Web UI rather than a one-off CLI, with a six-agent delegation architecture (Orchestrator + Plan/Build/Reviewer core agents, with Explore/Librarian support), Goal/HITL/Loop primitives, structured tool execution, LSP integration, persistent memory, and context compaction.
+ArchCode — **Not just a coding agent. An always-on workbench for AI engineering.** ArchCode is a self-hosted workbench for long-running AI coding work: users deploy it on a local machine or remote server, add projects, start goals, and let agents plan, build, review, and wait for approval around the clock. It runs as a Hono server + React Web UI rather than a one-off CLI, with a seven-agent delegation architecture (Engineer for ordinary Sessions, Goal Lead for Goal coordination, plus Plan/Build/Reviewer/Explore/Librarian specialists), Goal/HITL/Loop primitives, structured tool execution, LSP integration, persistent memory, and context compaction.
 
 ## Monorepo Structure
 
@@ -80,10 +80,10 @@ packages/agent-core/src/
 ├── index.ts                    # Public API exports
 ├── config/                     # .archcode.json loading, Zod schema (.strict()), env expansion, MCP/GitHub config
 ├── provider/                   # Provider registry wrapping AI SDK instances, ModelInfo with token limits
-├── agents/definitions/         # AgentDefinition records for orchestrator, plan, build, reviewer, explore, librarian
+├── agents/definitions/         # AgentDefinition records for engineer, goal_lead, plan, build, reviewer, explore, librarian
 ├── agents/factory.ts           # Agent creation and delegation through ConfiguredAgent
 ├── agents/configured-agent.ts  # Filtered tool set + own store per delegated agent
-├── agents/session-agent-manager.ts  # Per-workspace agent lifecycle management
+├── agents/session-agent-manager.ts  # Per-Session Agent lifecycle management
 ├── agents/constants.ts         # AgentType union, depth/concurrency defaults, shared tool group exports
 ├── agents/errors.ts            # NoModelsConfiguredError, AgentRunningError, SubAgentError, ConcurrentLimitError, DepthLimitError, etc.
 ├── agents/model-resolver.ts    # Resolves provider:modelId + variant → AI SDK model instance
@@ -107,7 +107,7 @@ packages/agent-core/src/
 ├── compression/                # DCP-like dynamic range compression: model tool action, refs, block state, soft/strong nudges below hard threshold
 ├── compact/                    # Mandatory hard compact safety path at >=85% context pressure plus /compact command
 ├── memory/                     # MemoryFileManager (atomic writes, frontmatter, index), schemas, types, constants
-├── goals/                      # Goal state, artifacts, Reviewer checks, retry, token budgets, isolated Goal memory
+├── goals/                      # Goal state, Reviewer checks, retry, token budgets, isolated Goal memory
 ├── hitl/                       # Durable project-scoped approval/question queue and redacted display payloads
 ├── loops/                      # Loop scheduler/runner, budgets, collisions, triggers, worktrees, cross-run state
 ├── lsp/                        # LspClientPool (acquire/release, idle timeout, crash detection), StdioLspTransport, auto-installer, 18 language servers, 50+ ext mappings
@@ -146,7 +146,7 @@ packages/utils/src/
 **Data flow:**
 ```
 .archcode.json → config → providers → registerBuiltinTools → fire-and-forget MCP background load
-  → Hono server → project-scoped OrchestratorAgent / Goal / Loop / HITL routes
+  → Hono server → Session-scoped Engineer or Goal Lead / Goal / Loop / HITL routes
   → query loop → store → SSE → Web UI
 
 Delegation: delegate tool → AgentFactory → ConfiguredAgent child (filtered tools, own store) → reminder to parent
@@ -165,8 +165,8 @@ Delegation: delegate tool → AgentFactory → ConfiguredAgent child (filtered t
 
 **Multi-project model:**
 - `packages/agent-core/src/projects/registry.ts` persists registered workspaces under `~/.archcode/projects/index.json`, validates absolute existing directories, derives stable slugs, and tracks open times.
-- `packages/agent-core/src/projects/context-resolver.ts` creates per-workspace runtime context: Goal state/artifacts/memory, Loop state, HITL queue, project memory, and approvals.
-- `AgentRuntime.agentFor(workspaceRoot)` lazily creates one root Orchestrator agent per workspace and caches it.
+- `packages/agent-core/src/projects/context-resolver.ts` creates per-workspace runtime context: Goal state, Loop state, durable HITL, project memory, approvals, and resource notifications.
+- Ordinary Session routes create an `engineer`; Goal and Goal Runner paths create a dedicated `goal_lead` main Session.
 - Web UI Add Project flow should register an existing workspace directory, then use project-scoped API routes (`/api/projects/:slug/...`) for sessions, files, goals, loops, HITL, and events.
 
 **SSE + Deferred pattern:**
@@ -184,13 +184,13 @@ partitionToolCalls → global permissions (Loop collision, Loop budget)
   → global after (Loop collision release → redact → truncate → audit → logger)
 ```
 
-**Config** (`.archcode.json`): `provider.<id>.{npm, name, options, models}` + strict six-agent `agents.<agentName>.{model, variant, options}` + optional `memory`, `integrations.github`, and `mcp.servers.<id>.{url, headers, enabled}`. Strict Zod. Env expansion: `${VAR}`, `${VAR:-default}`.
+**Config** (`.archcode.json`): `provider.<id>.{npm, name, options, models}` + strict seven-agent `agents.<agentName>.{model, variant, options}` + optional `memory`, `integrations.github`, and `mcp.servers.<id>.{url, headers, enabled}`. Strict Zod. Env expansion: `${VAR}`, `${VAR:-default}`.
 
 **Model configuration** (`.archcode.json`):
 - Provider ids and model ids combine as `provider:modelId` (example: `"local:glm-5"`). Do **not** use `provider/model`.
 - `provider.<id>.models.<modelId>.options` defines base AI SDK model-call options for that model. Use AI SDK camelCase names such as `maxOutputTokens`, `temperature`, `topP`, `topK`, `presencePenalty`, `frequencyPenalty`, `stopSequences`, `seed`, `maxRetries`, `timeout`, and `providerOptions`.
 - `provider.<id>.models.<modelId>.variants.<variantName>` defines named option profiles for the same model. An agent's `variant` references one of these names and is consumed during resolution; it is never passed to the AI SDK call.
-- `agents.<agentName>.model` is required for all six agents: `orchestrator`, `plan`, `build`, `reviewer`, `explore`, and `librarian`. Missing any required agent fails fast with an actionable config error.
+- `agents.<agentName>.model` is required for all seven agents: `engineer`, `goal_lead`, `plan`, `build`, `reviewer`, `explore`, and `librarian`. Missing any required agent fails fast with an actionable config error.
 - `agents.<agentName>.options` overrides the selected model and variant options. Merge order is shallow: model `options` → selected `variants[variant]` → agent `options`.
 - `providerOptions` follows the same shallow merge rule as one top-level key: later layers replace the whole `providerOptions` object rather than deep-merging nested provider settings.
 - Unknown model ids, unknown variant names, and missing agent model config all fail fast with actionable errors.
@@ -238,7 +238,12 @@ Minimal example:
     }
   },
   "agents": {
-    "orchestrator": {
+    "engineer": {
+      "model": "local:glm-5",
+      "variant": "deep",
+      "options": { "temperature": 0.25, "maxRetries": 2 }
+    },
+    "goal_lead": {
       "model": "local:glm-5",
       "variant": "deep",
       "options": { "temperature": 0.25, "maxRetries": 2 }
@@ -276,18 +281,19 @@ Minimal example:
 
 | Role | Hooks | Notes |
 |------|-------|-------|
-| **Orchestrator** (`"orchestrator"`) | auto-compact, auto-inject-reminder, title-generation, todo-continuation, transcript-save, memory-extraction, memory-consolidation | Owns root store + SubAgentManager. Delegates to `plan`, `build`, `reviewer`, `explore`, `librarian`. Goal lifecycle tool: `goal_manage`. |
-| **Plan** (`"plan"`) | auto-compact, auto-inject-reminder, todo-continuation, transcript-save | Source read-only planning agent. Produces read-only planning guidance for the current Goal; delegates to `explore`/`librarian`. |
-| **Build** (`"build"`) | auto-compact, auto-inject-reminder, todo-continuation, transcript-save | Source write agent with file write/edit, bash, LSP, git diff/status, and `ast_grep_replace`. Implements the current Goal scope and records verification in session output; delegates to `explore`. |
-| **Reviewer** (`"reviewer"`) | auto-compact, auto-inject-reminder, todo-continuation, transcript-save | Source read-only verifier. Has Reviewer-only `goal_manage.finalize_review`, reviews ordinary session evidence and verification output, delegates to `explore`/`librarian`, defaults to NOT_DONE until evidence proves DONE. |
+| **Engineer** (`"engineer"`) | auto-compact, auto-inject-reminder, title-generation, todo-continuation, transcript-save, memory-extraction, memory-consolidation | Default ordinary Session agent. Works directly, delegates to all five specialists, and may create a draft Goal with `goal_create`. |
+| **Goal Lead** (`"goal_lead"`) | auto-compact, auto-inject-reminder, title-generation, todo-continuation, transcript-save, memory-extraction, memory-consolidation | Goal-only coordinator. Delegates implementation and verification, manages the bound Goal with `goal_manage`, and cannot directly mutate source or run shell commands. |
+| **Plan** (`"plan"`) | auto-compact, auto-inject-reminder, todo-continuation, transcript-save | Source read-only planning agent for ordinary, Loop, or Goal work; delegates to `explore`/`librarian`. |
+| **Build** (`"build"`) | auto-compact, auto-inject-reminder, todo-continuation, transcript-save | Source write agent with file write/edit, bash, LSP, git diff/status, and `ast_grep_replace`. Implements the delegated scope and records verification in session output; delegates to `explore`. |
+| **Reviewer** (`"reviewer"`) | auto-compact, auto-inject-reminder, todo-continuation, transcript-save | Source read-only verifier for ordinary, Loop, or Goal work. Only a matching Goal review Session uses `goal_manage.finalize_review`; ordinary reviews return findings without Goal finalization. |
 | **Explore** (`"explore"`) | auto-compact, auto-inject-reminder, todo-continuation, transcript-save | Read-only local code search/LSP/git diff/status/AST search agent. No delegation and no memory extraction. |
 | **Librarian** (`"librarian"`) | auto-compact, auto-inject-reminder, todo-continuation, transcript-save | Read-only documentation/reference agent with local read/search, web_fetch, memory_read, and MCP docs/search tools. No delegation and no memory extraction. |
 
-All six implement `Agent`: `store: StoreApi<SessionStoreState>`, `run(userMessage, ...) → AgentResult { text, steps }`.
+All seven implement `Agent`: `store: StoreApi<SessionStoreState>`, `run(userMessage, ...) → AgentResult { text, steps }`.
 
 **Delegation + tool filtering:**
 - Tool sets are hardcoded by `AgentDefinition`; persona changes prompt perspective only, never permissions.
-- `orchestrator.childPolicy.maxDepth = 3`; `plan`, `build`, and `reviewer` use `maxDepth = 2`.
+- `engineer` and `goal_lead` use `childPolicy.maxDepth = 3`; `plan`, `build`, and `reviewer` use `maxDepth = 2`.
 - `explore` and `librarian` have no `delegateTargets`; they are terminal read-only support agents.
 - `agents/tool-filter.ts` resolves definition-based allowed tools and enforces delegation-depth limits before each child run.
 
@@ -295,7 +301,8 @@ All six implement `Agent`: `store: StoreApi<SessionStoreState>`, `run(userMessag
 
 | Agent | MCP servers |
 |-------|-------------|
-| `orchestrator` | `context7`, `exa` |
+| `engineer` | `context7`, `exa` |
+| `goal_lead` | `context7`, `exa` |
 | `plan` | `context7` |
 | `build` | — |
 | `reviewer` | — |
@@ -314,7 +321,7 @@ beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-in
 
 ## Tool System
 
-**35+ builtin tools** (base tools via `createBuiltinToolDescriptors()`, 2 memory tools, the Goal lifecycle tool, and 8 GitHub connector tools — all registered in `core/register-tools.ts`):
+**35+ builtin tools** (base tools via `createBuiltinToolDescriptors()`, 2 memory tools, 2 Goal tools, and 8 GitHub connector tools — all registered in `core/register-tools.ts`):
 
 | Category | Tools | Notes |
 |----------|-------|-------|
@@ -327,7 +334,7 @@ beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-in
 | LSP | lsp_diagnostics✅, lsp_goto_definition✅, lsp_find_references✅, lsp_symbols✅ | Guard: workspace |
 | Delegation / Skills | delegate❌, background_output✅, wait_for_reminder✅, view_tool_output✅, cancel_session❌, skill_list✅, skill_read✅ | Delegation tools are available only to agents whose definitions include them; skills are read-only discovery/read helpers. |
 | Memory | memory_read✅, memory_write❌ | memory_write rejects secrets |
-| Goal | goal_manage❌ | Goal lifecycle and Reviewer finalization replace legacy workflow and removed Goal-specific artifact APIs. Reviewer finalization uses `goal_manage.finalize_review`. |
+| Goal | goal_create❌, goal_manage❌ | Engineer can create a draft with `goal_create`. Goal Lead manages an already-started Goal and Reviewer finalizes it through `goal_manage`; model-facing create/start actions are not part of `goal_manage`. |
 
 (✅ = readOnly, ❌ = not readOnly, ✅destructive = only destructive tool)
 
@@ -349,7 +356,7 @@ Project: `.archcode/memory/`, User: `~/.archcode/memory/`. Structure: `index.md`
 
 ## Goal System
 
-Goal is the primary execution primitive; legacy workflow runtime/tools/routes and removed Goal-specific artifact APIs are retired. `packages/agent-core/src/goals/` owns Goal state, Reviewer checks, retry state/backoff, token budgets, and isolated Goal memory. Goal evidence comes from ordinary session output, diffs, tool results, approvals, budget state, retry metadata, and Reviewer summaries rather than separate Goal artifact APIs. Reviewer finalization uses `goal_manage.finalize_review` to record external outcomes exactly as `DONE` or `NOT_DONE`; Orchestrator must not declare completion without Reviewer evidence.
+Goal is the primary execution primitive; legacy workflow runtime/tools/routes and removed Goal-specific artifact APIs are retired. `packages/agent-core/src/goals/` owns Goal state, Reviewer checks, retry state/backoff, token budgets, and isolated Goal memory. Goal evidence comes from ordinary session output, diffs, tool results, approvals, budget state, retry metadata, and Reviewer summaries rather than separate Goal artifact APIs. Engineer may create a draft with `goal_create`; the runtime starts it and assigns a dedicated Goal Lead. Reviewer finalization uses `goal_manage.finalize_review` to record external outcomes exactly as `DONE` or `NOT_DONE`; Goal Lead must not declare completion without Reviewer evidence.
 
 ## HITL
 

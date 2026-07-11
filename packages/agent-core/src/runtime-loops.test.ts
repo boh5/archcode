@@ -71,7 +71,7 @@ describe("AgentRuntime Loop wiring", () => {
     const fixture = await createRuntimeFixture();
     const project = await fixture.runtime.projectRegistry.getByWorkspace(fixture.workspaceRoot);
     if (project === undefined) throw new Error("Expected registered project");
-    const session = await fixture.runtime.createSession(fixture.workspaceRoot, { title: "Active family" });
+    const session = await fixture.runtime.createSession(fixture.workspaceRoot, { title: "Active family", agentName: "engineer" });
     const streamStarted = createDeferred<void>();
     const releaseStream = createDeferred<void>();
     setLlmAdapterForTest({
@@ -111,12 +111,13 @@ describe("AgentRuntime Loop wiring", () => {
     const loop = await fixture.runtime.createLoop(fixture.workspaceRoot, manualLoopConfig);
     const root = await fixture.runtime.createSession(fixture.workspaceRoot, {
       loopId: loop.loopId,
-      sessionRole: "main",
+      sessionRole: "main", agentName: "engineer"
     });
     // Seed an internal delegated-session identity; the public create options do
     // not advertise parent/root fields, but runtime composition must still
     // canonicalize persisted Loop report session ids from real delegates.
     const childIdentity = {
+      agentName: "explore" as const,
       rootSessionId: root.sessionId,
       parentSessionId: root.sessionId,
       loopId: loop.loopId,
@@ -151,7 +152,7 @@ describe("AgentRuntime Loop wiring", () => {
     const session = await fixture.runtime.createSession(fixture.workspaceRoot, {
       loopId,
       sessionRole: "main",
-      title: "Loop session",
+      title: "Loop session", agentName: "engineer"
     });
     const persisted = await readPersistedSession(join(fixture.sessionsDir, session.sessionId, "session.json"));
     const summaries = await fixture.runtime.listSessions(fixture.workspaceRoot);
@@ -189,6 +190,29 @@ describe("AgentRuntime Loop wiring", () => {
       resourceId: goal.id,
       reason: "title_generated",
     });
+  });
+
+  test("model-facing Goal creation publishes immediately and queues title generation", async () => {
+    installLlmMocks("Created Goal Title");
+    const fixture = await createRuntimeFixture();
+    const projectContext = await fixture.runtime.contextResolver.resolve(fixture.workspaceRoot);
+    const events: GlobalSSEResourceChangedEvent[] = [];
+    const unsubscribe = fixture.runtime.subscribeResourceChanges?.((event) => events.push(event));
+    const goal = await projectContext.goalState.create({
+      projectId: projectContext.project.slug,
+      objective: "Create this Goal from an Engineer session.",
+      acceptanceCriteria: "The Goal appears immediately and receives a title.",
+    });
+
+    try {
+      projectContext.onGoalCreated?.(goal);
+      await waitFor(async () => (await projectContext.goalState.read(goal.id)).title === "Created Goal Title");
+    } finally {
+      unsubscribe?.();
+    }
+
+    expect(events.map((event) => event.reason)).toEqual(["created", "title_generated"]);
+    expect(events.every((event) => event.resourceId === goal.id)).toBe(true);
   });
 
   test("queueGoalTitleGeneration skips existing title metadata without model call", async () => {
@@ -391,7 +415,7 @@ describe("AgentRuntime Loop wiring", () => {
             cwd: retrySession.cwd,
             loopId: loop.loopId,
             sessionRole: "main",
-            title: "Interrupted Loop attempt",
+            title: "Interrupted Loop attempt", agentName: "engineer"
           });
           oldSessionId = oldSession.sessionId;
           yield { type: "text-delta", text: "Loop retry complete." };
@@ -628,7 +652,8 @@ function makeConfig(): Record<string, unknown> {
       },
     },
     agents: {
-      orchestrator: { model: "local:test-model" },
+      engineer: { model: "local:test-model" },
+      goal_lead: { model: "local:test-model" },
       plan: { model: "local:test-model" },
       build: { model: "local:test-model" },
       reviewer: { model: "local:test-model" },

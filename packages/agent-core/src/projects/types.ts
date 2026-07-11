@@ -1,6 +1,7 @@
 import { isAbsolute } from "node:path";
 import { z } from "zod/v4";
 import type { GoalStateManager } from "../goals/state";
+import type { GoalState } from "@archcode/protocol";
 import type { GoalCancellationCapability } from "../goals/cancellation";
 import type { HitlService } from "../hitl/service";
 import type { ResumeCoordinator } from "../hitl/resume-coordinator";
@@ -31,6 +32,8 @@ export interface ProjectContext {
   hitlResumeCoordinator: ResumeCoordinator;
   memory: MemoryFileManager;
   approvals: ProjectApprovalManager;
+  /** Runtime notification used by model-facing Goal creation to refresh resource consumers. */
+  onGoalCreated?: (goal: GoalState) => void;
 }
 
 // ---------------------------------------------------------------------------

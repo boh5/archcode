@@ -18,6 +18,7 @@ import { migrateHitlOwnerFileProjectSlug } from "../hitl/owner-store";
 import { resolveHitlOwnerPath } from "../hitl/owner-paths";
 import { ProjectApprovalManager } from "../tools/permission/project-approvals";
 import type { ProjectContext, ProjectInfo } from "./types";
+import type { GoalState } from "@archcode/protocol";
 
 export interface ProjectContextResolverOptions {
   /** Registry-backed ProjectInfo lookup. Missing projects must fail resolution. */
@@ -43,6 +44,7 @@ export interface ProjectContextResolverOptions {
   memoryFactory?: (workspaceRoot: string) => MemoryFileManager;
   /** Factory primarily for testing ProjectApprovalManager load behavior. */
   approvalsFactory?: () => ProjectApprovalManager;
+  onGoalCreated?: (workspaceRoot: string, goal: GoalState) => void;
   logger?: Logger;
 }
 
@@ -58,6 +60,7 @@ export class ProjectContextResolver {
   readonly #resumeCoordinatorFactory: ProjectContextResolverOptions["resumeCoordinatorFactory"];
   readonly #memoryFactory: (workspaceRoot: string) => MemoryFileManager;
   readonly #approvalsFactory: () => ProjectApprovalManager;
+  readonly #onGoalCreated: ProjectContextResolverOptions["onGoalCreated"];
 
   constructor(options: ProjectContextResolverOptions) {
     this.#logger = (options.logger ?? silentLogger).child({ module: "projects.context" });
@@ -79,6 +82,7 @@ export class ProjectContextResolver {
       });
     });
     this.#approvalsFactory = options.approvalsFactory ?? (() => new ProjectApprovalManager(this.#logger.child({ module: "project.approvals" })));
+    this.#onGoalCreated = options.onGoalCreated;
   }
 
   async resolve(workspaceRoot: string): Promise<ProjectContext> {
@@ -143,6 +147,9 @@ export class ProjectContextResolver {
       hitlResumeCoordinator,
       memory: this.#memoryFactory(workspaceRoot),
       approvals,
+      ...(this.#onGoalCreated === undefined
+        ? {}
+        : { onGoalCreated: (goal: GoalState) => this.#onGoalCreated?.(workspaceRoot, goal) }),
     };
     // Journal repair and durable resume claims are fail-closed before this
     // scan. recover() schedules claimed continuations without awaiting their

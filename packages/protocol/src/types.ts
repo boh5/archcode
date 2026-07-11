@@ -534,7 +534,7 @@ export interface GlobalSSEResourceChangedEvent {
   projectSlug: string;
   resourceType: "goal" | "loop";
   resourceId: string;
-  reason: "title_generated";
+  reason: "created" | "title_generated";
   createdAt: number;
 }
 
@@ -774,6 +774,12 @@ export interface DirectoryListResponse {
 export interface DirectorySearchResponse {
   entries: DirectoryEntry[];
   truncated: boolean;
+}
+
+/** Public, presentation-safe metadata for a configured Agent role. */
+export interface AgentDescriptor {
+  name: string;
+  displayName: string;
 }
 
 export interface SessionSummary {

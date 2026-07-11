@@ -32,7 +32,7 @@ function ctx(overrides?: Partial<ToolExecutionContext>): ToolExecutionContext {
   input: {},
   step: 1,
   abort: new AbortController().signal,
-  agentName: "orchestrator-agent",
+  agentName: "engineer-agent",
   startedAt: Date.now(),
   allowedTools: new Set(["ast_grep_replace"]),
   agentSkills: [],

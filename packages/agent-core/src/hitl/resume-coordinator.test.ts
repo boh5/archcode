@@ -90,7 +90,7 @@ describe("ResumeCoordinator", () => {
   test("same hitlId under different owners uses independent locks and dispatches", async () => {
     const fixture = await createFixture();
     const secondSessionId = crypto.randomUUID();
-    fixture.sessions.create(secondSessionId, fixture.workspaceRoot);
+    fixture.sessions.create(secondSessionId, fixture.workspaceRoot, { agentName: "engineer" });
     await waitForSession(fixture.workspaceRoot, secondSessionId);
     const secondOwner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "session", ownerId: secondSessionId };
     const hitlId = "shared-owner-local-id";
@@ -420,7 +420,7 @@ function resultRecord(result: Awaited<ReturnType<ResumeCoordinator["respond"]>>)
 
 async function createFixture(workspaceRoot?: string, sessions = new SessionStoreManager({ logger: silentLogger }), sessionId = crypto.randomUUID()) {
   workspaceRoot ??= await mkdtemp(join(TMP_ROOT, "workspace-"));
-  sessions.create(sessionId, workspaceRoot);
+  sessions.create(sessionId, workspaceRoot, { agentName: "engineer" });
   await waitForSession(workspaceRoot, sessionId);
   const goalState = new GoalStateManager(workspaceRoot, silentLogger);
   const loopState = new LoopStateManager(workspaceRoot, silentLogger);

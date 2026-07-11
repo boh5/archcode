@@ -7,14 +7,12 @@ import { DelegationCard } from "./DelegationCard";
 import type { DelegationCardProps } from "./DelegationCard";
 import { CompressionBlock } from "./CompressionBlock";
 import {
-  AGENT_DISPLAY_NAMES,
-  AGENT_DOT_CLASS,
-  AGENT_NAME_CLASS,
-  AGENT_BORDER_CLASS,
-  isValidAgentType,
+  resolveAgentAppearance,
+  resolveAgentDisplayName,
   type BadgeStatus,
 } from "../../lib/agent-constants";
 import type {
+  AgentDescriptor,
   SessionMessage,
   SessionPart,
   SystemNoticePart,
@@ -29,7 +27,6 @@ import { TOOL_DELEGATE } from "@archcode/protocol";
 import { RecoveryNotice } from "./RecoveryNotice";
 import { GroupedToolCard } from "./GroupedToolCard";
 import { groupReadOnlyToolParts } from "../../lib/group-tools";
-import type { AgentType } from "../../lib/agent-constants";
 import { formatRelativeTime } from "../../lib/time-format";
 
 function ReasoningBlock({ part }: { part: ReasoningPart }) {
@@ -83,34 +80,36 @@ function MsgAgent({
   projectSlug,
   focusStoreSessionId,
   childSessionLinks,
+  agents,
 }: {
   message: SessionMessage;
-  agentName: string;
+  agentName: string | null;
   projectSlug: string;
   focusStoreSessionId: string;
   childSessionLinks: ToolChildSessionLink[];
+  agents: readonly AgentDescriptor[];
 }) {
-  const agentType = isValidAgentType(agentName) ? (agentName as AgentType) : "orchestrator" as AgentType;
-  const displayName = AGENT_DISPLAY_NAMES[agentType];
+  const displayName = resolveAgentDisplayName(agentName, agents);
+  const appearance = resolveAgentAppearance(agentName, displayName);
 
   return (
     <div className="group flex flex-col gap-1.5 max-w-full">
       <div className="flex items-center gap-2 mb-0.5">
-        <span className={`w-2 h-2 rounded-full ${AGENT_DOT_CLASS[agentType]}`} />
-        <span className={`text-[13px] ${AGENT_NAME_CLASS[agentType]}`}>{displayName}</span>
+        <span className={`w-2 h-2 rounded-full ${appearance.dotClass}`} />
+        <span className={`text-[13px] ${appearance.nameClass}`}>{displayName}</span>
         <span className="text-[11px] text-text-muted">{formatRelativeTime(message.createdAt)}</span>
         <button type="button" className="opacity-0 group-hover:opacity-100 transition-opacity text-text-muted hover:text-text-primary ml-auto p-1" aria-label="More actions">
           <Ellipsis size={14} />
         </button>
       </div>
-      <div className={`border-l-2 pl-3 bg-bg-surface/30 rounded-r-lg py-1.5 pr-3 ${AGENT_BORDER_CLASS[agentType]}`}>
+      <div className={`border-l-2 pl-3 bg-bg-surface/30 rounded-r-lg py-1.5 pr-3 ${appearance.borderClass}`}>
         <div className="msg-parts">
           {groupReadOnlyToolParts(message.parts).map((entry) => {
             if (entry.type === "grouped-tools") {
               return <GroupedToolCard key={entry.id} tools={entry.tools} />;
             }
             const part = entry as SessionPart;
-            return <PartRenderer key={part.id} part={part} projectSlug={projectSlug} focusStoreSessionId={focusStoreSessionId} childSessionLinks={childSessionLinks} />;
+            return <PartRenderer key={part.id} part={part} projectSlug={projectSlug} focusStoreSessionId={focusStoreSessionId} childSessionLinks={childSessionLinks} agentDescriptors={agents} />;
           })}
         </div>
       </div>
@@ -172,14 +171,27 @@ export function mapLinkStatusToBadge(status: ToolChildSessionLinkStatus): BadgeS
   }
 }
 
-function DelegateToolCard({ part, projectSlug, focusStoreSessionId, childSessionLinks }: { part: ToolPart; projectSlug: string; focusStoreSessionId: string; childSessionLinks: ToolChildSessionLink[] }) {
+function DelegateToolCard({
+  part,
+  projectSlug,
+  focusStoreSessionId,
+  childSessionLinks,
+  agentDescriptors,
+}: {
+  part: ToolPart;
+  projectSlug: string;
+  focusStoreSessionId: string;
+  childSessionLinks: ToolChildSessionLink[];
+  agentDescriptors: readonly AgentDescriptor[];
+}) {
   const parsedInput = parseToolInput("input" in part ? part.input : undefined);
 
   const link = childSessionLinks.find((l) => l.parentToolCallId === part.toolCallId);
 
   const sessionId = link?.childSessionId ?? "";
-  const agentType = link?.childAgentName ?? (parsedInput?.agent_type as string) ?? "explore";
-  const agentName = link?.title ?? link?.description ?? (parsedInput?.description as string) ?? (parsedInput?.title as string) ?? "Sub-agent";
+  const agentType = link?.childAgentName ?? (parsedInput?.agent_type as string) ?? "unknown";
+  const agentDisplayName = resolveAgentDisplayName(agentType, agentDescriptors);
+  const taskTitle = link?.title ?? link?.description ?? (parsedInput?.title as string) ?? (parsedInput?.description as string);
   const summary = link?.summary ?? link?.description ?? (parsedInput?.description as string) ?? "";
   const status: BadgeStatus = link
     ? mapLinkStatusToBadge(link.status)
@@ -191,7 +203,8 @@ function DelegateToolCard({ part, projectSlug, focusStoreSessionId, childSession
     sessionId,
     focusStoreSessionId,
     agentType,
-    agentName,
+    agentDisplayName,
+    taskTitle,
     status,
     depth,
     startedAt,
@@ -212,7 +225,7 @@ function InterruptedBadge() {
   );
 }
 
-export function PartRenderer({ part, projectSlug, focusStoreSessionId, childSessionLinks }: { part: SessionPart; projectSlug: string; focusStoreSessionId: string; childSessionLinks: ToolChildSessionLink[] }) {
+export function PartRenderer({ part, projectSlug, focusStoreSessionId, childSessionLinks, agentDescriptors = [] }: { part: SessionPart; projectSlug: string; focusStoreSessionId: string; childSessionLinks: ToolChildSessionLink[]; agentDescriptors?: readonly AgentDescriptor[] }) {
   switch (part.type) {
     case "text": {
       const meta = part.meta as Record<string, unknown> | undefined;
@@ -236,7 +249,7 @@ export function PartRenderer({ part, projectSlug, focusStoreSessionId, childSess
     }
     case "tool":
       if (part.toolName === TOOL_DELEGATE) {
-        return <DelegateToolCard part={part} projectSlug={projectSlug} focusStoreSessionId={focusStoreSessionId} childSessionLinks={childSessionLinks} />;
+        return <DelegateToolCard part={part} projectSlug={projectSlug} focusStoreSessionId={focusStoreSessionId} childSessionLinks={childSessionLinks} agentDescriptors={agentDescriptors} />;
       }
       return <ToolCard part={part} />;
     case "system-notice":
@@ -253,9 +266,10 @@ export function PartRenderer({ part, projectSlug, focusStoreSessionId, childSess
 interface ChatMessagesProps {
   slug: string;
   sessionId: string;
+  agents: readonly AgentDescriptor[];
 }
 
-export function ChatMessages({ slug, sessionId }: ChatMessagesProps) {
+export function ChatMessages({ slug, sessionId, agents }: ChatMessagesProps) {
   const messages = useSessionStore(sessionId, (s) => s.messages, slug);
   const focusStoreSessionId = useSessionStore(sessionId, (s) => s.rootSessionId, slug);
   const childSessionLinks = useSessionStore(sessionId, (s) => s.childSessionLinks, slug);
@@ -279,10 +293,6 @@ export function ChatMessages({ slug, sessionId }: ChatMessagesProps) {
       sentinelRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
     }
   }, [messages, compressionBlocks, isNearBottom]);
-
-  function getAgentName(): string {
-    return agentName;
-  }
 
   if (messages.length === 0 && compressionBlocks.length === 0) {
     return (
@@ -326,6 +336,7 @@ export function ChatMessages({ slug, sessionId }: ChatMessagesProps) {
               focusStoreSessionId={focusStoreSessionId}
               snapshot={compression?.blocksByRef[entry.block.blockRef]}
               childSessionLinks={childSessionLinks}
+              agentDescriptors={agents}
             />
           );
         }
@@ -333,7 +344,7 @@ export function ChatMessages({ slug, sessionId }: ChatMessagesProps) {
         if (msg.role === "user") {
           return <MsgUser key={msg.id} message={msg} />;
         }
-        return <MsgAgent key={msg.id} message={msg} agentName={getAgentName()} projectSlug={slug} focusStoreSessionId={focusStoreSessionId} childSessionLinks={childSessionLinks} />;
+        return <MsgAgent key={msg.id} message={msg} agentName={agentName} projectSlug={slug} focusStoreSessionId={focusStoreSessionId} childSessionLinks={childSessionLinks} agents={agents} />;
       })}
       <div ref={sentinelRef} />
     </div>

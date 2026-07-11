@@ -1,9 +1,10 @@
 export type { ChildExecutionHandle, ChildExecutionRequest } from "../delegation/types";
-
-export type AgentName = "orchestrator" | "plan" | "build" | "reviewer" | "explore" | "librarian" | (string & {});
+export type { AgentName } from "./names";
+import type { AgentName } from "./names";
 
 export interface AgentDefinition {
   readonly name: AgentName;
+  readonly displayName: string;
   readonly promptProfileId: string;
   readonly rolePrompt?: string;
   readonly tools: AgentToolPolicy;

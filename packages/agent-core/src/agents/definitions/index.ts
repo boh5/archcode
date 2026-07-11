@@ -1,11 +1,13 @@
-export { orchestratorAgentDefinition } from "./orchestrator";
+export { engineerAgentDefinition } from "./engineer";
+export { goalLeadAgentDefinition } from "./goal-lead";
 export { planAgentDefinition } from "./plan";
 export { buildAgentDefinition } from "./build";
 export { reviewerAgentDefinition } from "./reviewer";
 export { exploreAgentDefinition } from "./explore";
 export { librarianAgentDefinition } from "./librarian";
 
-import { orchestratorAgentDefinition } from "./orchestrator";
+import { engineerAgentDefinition } from "./engineer";
+import { goalLeadAgentDefinition } from "./goal-lead";
 import { planAgentDefinition } from "./plan";
 import { buildAgentDefinition } from "./build";
 import { reviewerAgentDefinition } from "./reviewer";
@@ -14,7 +16,8 @@ import { librarianAgentDefinition } from "./librarian";
 import type { AgentDefinition } from "../factory-types";
 
 export const agentDefinitions = [
-  orchestratorAgentDefinition,
+  engineerAgentDefinition,
+  goalLeadAgentDefinition,
   planAgentDefinition,
   buildAgentDefinition,
   reviewerAgentDefinition,

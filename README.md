@@ -27,7 +27,7 @@ bun install
 
 ### 2. Configure models
 
-Create `.archcode.json` in the repository root. This minimal example uses an OpenAI-compatible local provider and assigns the same model to all six built-in agent roles:
+Create `.archcode.json` in the repository root. This minimal example uses an OpenAI-compatible local provider and assigns the same model to all seven built-in agent roles:
 
 ```json
 {
@@ -49,7 +49,8 @@ Create `.archcode.json` in the repository root. This minimal example uses an Ope
     }
   },
   "agents": {
-    "orchestrator": { "model": "local:glm-5" },
+    "engineer": { "model": "local:glm-5" },
+    "goal_lead": { "model": "local:glm-5" },
     "plan": { "model": "local:glm-5" },
     "build": { "model": "local:glm-5" },
     "reviewer": { "model": "local:glm-5" },
@@ -116,11 +117,12 @@ access outside the worktree.
 
 ## Agent roles
 
-ArchCode ships with six specialized roles:
+ArchCode ships with seven specialized roles:
 
 | Agent | Role |
 |---|---|
-| Orchestrator | Coordinates work, manages sessions, delegates to other agents |
+| Engineer | Handles ordinary engineering sessions, including direct implementation and delegation |
+| Goal Lead | Coordinates an existing Goal, delegates execution, and drives it through review |
 | Plan | Analyzes requirements and creates execution plans |
 | Build | Edits files, runs tools, and implements changes |
 | Reviewer | Checks completed work and validates evidence |
@@ -161,7 +163,7 @@ Authentication is environment-variable based. Do not put raw tokens in `.archcod
 ## Configuration notes
 
 - `.archcode.json` uses strict validation; unknown fields are rejected.
-- The `agents` section must include `orchestrator`, `plan`, `build`, `reviewer`, `explore`, and `librarian`.
+- The `agents` section must include `engineer`, `goal_lead`, `plan`, `build`, `reviewer`, `explore`, and `librarian`.
 - Model options use AI SDK-style camelCase names, such as `maxOutputTokens`, `temperature`, `topP`, `topK`, `timeout`, and `providerOptions`.
 - Agent options are merged in this order: `model.options → variants[agent.variant] → agents[agent].options`.
 - `providerOptions` is shallow-replaced by later layers, not deep-merged.

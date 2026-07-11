@@ -34,7 +34,7 @@ describe("buildSystemPrompt", () => {
   test("does not inject legacy workflow prompt sections", async () => {
     const result = await buildSystemPrompt(makeCtx({
       allowedTools: ["ask_user", "file_read"],
-      rolePrompt: "## Goal Role: Orchestrator\nCoordinate goal execution.",
+      rolePrompt: "## Goal Role: Engineer\nCoordinate goal execution.",
     }));
 
     expect(result).not.toContain("## Workflow MVP Orchestration");

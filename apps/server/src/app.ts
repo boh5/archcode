@@ -6,6 +6,7 @@ import { errorHandler } from "./error-handler";
 import { UnauthorizedError } from "./errors";
 import { requestLogger } from "./logger";
 import { createCommandsRoutes } from "./routes/commands";
+import { createAgentsRoutes } from "./routes/agents";
 import { createCompressionRoutes } from "./routes/compression";
 import { createDirectoriesRoutes } from "./routes/directories";
 import { createDashboardRoutes } from "./routes/dashboard";
@@ -99,7 +100,7 @@ export function createServerApp(
   });
   const commands = createCommandsRoutes(serverRuntime);
   const compression = createCompressionRoutes(serverRuntime);
-  const agents = new Hono();
+  const agents = createAgentsRoutes(serverRuntime);
   const files = createFilesRoutes(serverRuntime);
   const directories = createDirectoriesRoutes();
   const mcp = createMcpRoutes(serverRuntime);

@@ -62,7 +62,7 @@ describe("createTitleGenerationHook", () => {
   });
 
   test("dispatches title-generation on first model call when no title set", async () => {
-    const store = storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT);
+    const store = storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT, { agentName: "engineer" });
 
     const ctx: BeforeModelCallContext = {
       store,
@@ -81,7 +81,7 @@ describe("createTitleGenerationHook", () => {
   });
 
   test("skips dispatch when title already set", async () => {
-    const store = storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT);
+    const store = storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT, { agentName: "engineer" });
     store.setState({ title: "Already titled" });
 
     const ctx: BeforeModelCallContext = {
@@ -97,7 +97,7 @@ describe("createTitleGenerationHook", () => {
   });
 
   test("only dispatches once (triggered guard)", async () => {
-    const store = storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT);
+    const store = storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT, { agentName: "engineer" });
 
     const ctx: BeforeModelCallContext = {
       store,
@@ -116,7 +116,7 @@ describe("createTitleGenerationHook", () => {
   });
 
   test("passes modelOptions to dispatched title generation task", async () => {
-    const store = storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT);
+    const store = storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT, { agentName: "engineer" });
     const modelOptions = { temperature: 0.1, maxOutputTokens: 128 };
     const now = Date.now();
     store.setState({
@@ -163,7 +163,7 @@ describe("createTitleGenerationHook", () => {
 
   test("dispatched title generation persists title metadata", async () => {
     const sessionId = crypto.randomUUID();
-    const store = storeManager.create(sessionId, WORKSPACE_ROOT);
+    const store = storeManager.create(sessionId, WORKSPACE_ROOT, { agentName: "engineer" });
     const now = Date.now();
     store.setState({
       messages: [

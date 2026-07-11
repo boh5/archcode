@@ -35,7 +35,7 @@ const confirmWorktreeTransition = async () => ({
 export const worktreeEnterTool = defineTool({
   name: TOOL_WORKTREE_ENTER,
   description: [
-    "Enter a worktree for this interactive root Orchestrator Session.",
+    "Enter a worktree for this interactive root Engineer Session.",
     "Omit path to create or re-enter this Session's own managed worktree from the current project HEAD.",
     "Use path only when the user explicitly identifies an existing worktree.",
     "Wait for or cancel running descendant sessions before entering a worktree.",
@@ -49,7 +49,7 @@ export const worktreeEnterTool = defineTool({
 
 export const worktreeExitTool = defineTool({
   name: TOOL_WORKTREE_EXIT,
-  description: "Return this interactive root Orchestrator Session to its canonical project checkout after descendant sessions have stopped. This changes Session cwd but never removes the worktree.",
+  description: "Return this interactive root Engineer Session to its canonical project checkout after descendant sessions have stopped. This changes Session cwd but never removes the worktree.",
   inputSchema: WorktreeExitInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   permissions: [confirmWorktreeTransition],
@@ -218,7 +218,7 @@ function acquireCwdTransition(
 function validateInteractiveRootSession(ctx: ToolExecutionContext): ToolExecutionResult | undefined {
   const state = ctx.store.getState();
   if (
-    ctx.agentName !== "orchestrator"
+    ctx.agentName !== "engineer"
     || state.parentSessionId !== undefined
     || state.goalId !== undefined
     || state.loopId !== undefined
@@ -227,7 +227,7 @@ function validateInteractiveRootSession(ctx: ToolExecutionContext): ToolExecutio
     return createToolErrorResult({
       kind: "permission-denied",
       code: "WORKTREE_SESSION_NOT_ELIGIBLE",
-      message: "Worktree transitions are available only to ordinary interactive root Orchestrator Sessions. Goal, Loop, child, and other Agent Sessions inherit their execution directory.",
+      message: "Worktree transitions are available only to ordinary interactive root Engineer Sessions. Goal, Loop, child, and other Agent Sessions inherit their execution directory.",
     });
   }
   return undefined;

@@ -798,7 +798,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
     startSessionExecution: mock((input: { workspaceRoot: string; sessionId: string }) => ({
       sessionId: input.sessionId,
       workspaceRoot: input.workspaceRoot,
-      agentName: "orchestrator",
+      agentName: "engineer",
       origin: "loop",
       abortController: new AbortController(),
       promise: Promise.resolve(),

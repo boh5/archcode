@@ -40,7 +40,7 @@ const activeGitMaster: ResolvedSkill[] = [
 ];
 
 describe("buildSkillsSection", () => {
-  test("orchestrator prompt includes all 5 skills in available-skills with when_to_use", async () => {
+  test("engineer prompt includes all 5 skills in available-skills with when_to_use", async () => {
     const ctx = makeCtx({ availableSkills: builtinSkills });
     const result = await buildSkillsSection(ctx);
 

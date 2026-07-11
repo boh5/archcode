@@ -432,7 +432,7 @@ export class ConfiguredAgent implements Agent {
     } else {
       hooks.afterStepEnd = [budgetEnforcement.afterStepEnd, loopBudgetEnforcement.afterStepEnd];
     }
-    // Memory hooks only run on the root orchestrator (depth 0).
+    // Memory hooks only run on a root principal Agent (depth 0).
     // Sub-agents at depth > 0 must not write to project/user memory independently.
     const isRootAgent = this.depth === 0;
     const memoryEnabled = this.memoryConfig?.enabled ?? true;
@@ -485,7 +485,7 @@ export class ConfiguredAgent implements Agent {
     const state = this.store.getState();
     if (
       this.depth !== 0
-      || this.definition.name !== "orchestrator"
+      || this.definition.name !== "engineer"
       || state.parentSessionId !== undefined
       || state.goalId !== undefined
       || state.loopId !== undefined

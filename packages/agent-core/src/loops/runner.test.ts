@@ -92,7 +92,6 @@ describe("session loop runner", () => {
       workspaceRoot: fixture.workspaceRoot,
       sessionId: "session-1",
       maxSteps: 7,
-      agentName: "build",
       extraTools: [],
     } satisfies Partial<StartSessionExecutionInput>));
     const executionInput = fixture.runtime.startSessionExecutionMock.mock.calls[0]?.[0];
@@ -141,7 +140,7 @@ describe("session loop runner", () => {
 
     const executionInput = fixture.runtime.startSessionExecutionMock.mock.calls[0]?.[0];
     expect(report.status).toBe("succeeded");
-    expect(executionInput?.agentName).toBe("plan");
+    expect(executionInput).not.toHaveProperty("agentName");
     expect(executionInput?.extraTools).toEqual([
       "github_get_pull_request",
       "github_list_pull_requests",
@@ -870,7 +869,6 @@ describe("goal loop runner", () => {
       workspaceRoot: fixture.workspaceRoot,
       sessionId: "goal-session-1",
       maxSteps: 4,
-      agentName: "orchestrator",
       extraTools: [],
     } satisfies Partial<StartSessionExecutionInput>));
     const executionInput = fixture.runtime.startSessionExecutionMock.mock.calls[0]?.[0];
@@ -1339,7 +1337,7 @@ class FakeLoopRuntime {
       sessionId: input.sessionId,
       rootSessionId: input.sessionId,
       workspaceRoot: input.workspaceRoot,
-      agentName: input.agentName ?? "orchestrator",
+      agentName: "engineer",
       origin: "user_message",
       abortController: new AbortController(),
       promise: this.executionPromise,
@@ -1361,7 +1359,7 @@ class FakeLoopRuntime {
       createdAt: now,
       updatedAt: now,
       cwd: options?.cwd ?? "/canonical-workspace",
-      agentName: "orchestrator",
+      agentName: "engineer",
       modelInfo: null,
       title: options?.title ?? null,
       messages: [],

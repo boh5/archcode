@@ -42,8 +42,8 @@ describe("HitlService owner-local storage", () => {
     const { service, sessions, workspaceRoot } = await createService();
     const firstSession = crypto.randomUUID();
     const secondSession = crypto.randomUUID();
-    sessions.create(firstSession, workspaceRoot);
-    sessions.create(secondSession, workspaceRoot);
+    sessions.create(firstSession, workspaceRoot, { agentName: "engineer" });
+    sessions.create(secondSession, workspaceRoot, { agentName: "engineer" });
     await waitForSession(workspaceRoot, firstSession);
     await waitForSession(workspaceRoot, secondSession);
 
@@ -85,7 +85,7 @@ describe("HitlService owner-local storage", () => {
   test("shutdown does not cancel durable pending HITL", async () => {
     const { service, sessions, workspaceRoot } = await createService();
     const sessionId = crypto.randomUUID();
-    sessions.create(sessionId, workspaceRoot);
+    sessions.create(sessionId, workspaceRoot, { agentName: "engineer" });
     await waitForSession(workspaceRoot, sessionId);
     const owner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "session", ownerId: sessionId };
     const created = await service.create(input(owner, "shutdown-block"));
@@ -100,7 +100,7 @@ describe("HitlService owner-local storage", () => {
   test("cancelOwner marks active owner records cancelled with owner_deleted", async () => {
     const { service, sessions, workspaceRoot } = await createService();
     const sessionId = crypto.randomUUID();
-    sessions.create(sessionId, workspaceRoot);
+    sessions.create(sessionId, workspaceRoot, { agentName: "engineer" });
     await waitForSession(workspaceRoot, sessionId);
     const owner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "session", ownerId: sessionId };
     const created = await service.create(input(owner, "owner-delete-block"));
@@ -127,7 +127,7 @@ describe("HitlService owner-local storage", () => {
     const { service, sessions, workspaceRoot } = await createService();
     const unsubscribe = service.subscribeRealtimeEvents((event) => events.push(event));
     const sessionId = crypto.randomUUID();
-    sessions.create(sessionId, workspaceRoot);
+    sessions.create(sessionId, workspaceRoot, { agentName: "engineer" });
     await waitForSession(workspaceRoot, sessionId);
     const owner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "session", ownerId: sessionId };
 
@@ -185,7 +185,7 @@ describe("HitlService owner-local storage", () => {
     service.subscribeRealtimeEvents(failingListener);
     service.subscribeRealtimeEvents((event) => healthyEvents.push(event));
     const sessionId = crypto.randomUUID();
-    sessions.create(sessionId, workspaceRoot);
+    sessions.create(sessionId, workspaceRoot, { agentName: "engineer" });
     await waitForSession(workspaceRoot, sessionId);
     const owner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "session", ownerId: sessionId };
 

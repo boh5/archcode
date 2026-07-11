@@ -16,8 +16,10 @@ import {
   PROTECTED_CONTENT_KINDS,
   createEmptyCompressionState,
 } from "../compression";
+import { AGENT_NAMES, type AgentName } from "../agents/names";
 
 const SessionRoleSchema = z.enum(["main", "plan", "build", "review", "explore", "librarian", "standalone"]);
+const AgentNameSchema = z.enum(AGENT_NAMES);
 
 const SessionModelInfoSchema = z.strictObject({
   displayName: z.string(),
@@ -413,7 +415,7 @@ export const SessionFileSchema = z.strictObject({
   createdAt: z.number(),
   updatedAt: z.number(),
   cwd: z.string(),
-  agentName: z.string(),
+  agentName: AgentNameSchema,
   modelInfo: SessionModelInfoSchema.nullable(),
   title: z.string().nullable(),
   messages: z.array(StoredMessageSchema),

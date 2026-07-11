@@ -80,7 +80,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry): Omit<TestFixture, 
     subscribeSessionRuntimeChanges: mock(() => () => undefined),
     subscribeMcpStatusChanges: mock(() => () => undefined),
     getMcpServerStatuses: mock(() => new Map()),
-    createSession: mock(async (workspaceRoot: string) => sessionStoreManager.createSessionFile(workspaceRoot)),
+    createSession: mock(async (workspaceRoot: string) => sessionStoreManager.createSessionFile(workspaceRoot, { agentName: "engineer" })),
     getSessionFile: mock(async (workspaceRoot: string, sessionId: string) => sessionStoreManager.getSessionFile(workspaceRoot, sessionId)),
     listSessions: mock(async (workspaceRoot: string) => sessionStoreManager.listSessionSummaries(workspaceRoot)),
     startSessionExecution: mock(() => {
@@ -163,22 +163,22 @@ describe("hitl routes", () => {
     const project = await addProject(fixture.runtime, "scoped-list", "Scoped Project");
     const context = await fixture.runtime.contextResolver.resolve(project.workspaceRoot);
 
-    const rootSessionId = await createSession(fixture, project, {});
-    const childSessionId = await createSession(fixture, project, { rootSessionId, parentSessionId: rootSessionId });
+    const rootSessionId = await createSession(fixture, project, { agentName: "engineer" });
+    const childSessionId = await createSession(fixture, project, { agentName: "explore", rootSessionId, parentSessionId: rootSessionId });
     const rootHitl = await createSessionHitl(context.hitl, project.slug, rootSessionId, "Root session question");
     const childHitl = await createSessionHitl(context.hitl, project.slug, childSessionId, "Child session question");
 
     const goal = await createGoal(context.goalState, project.slug, "Scoped Goal");
-    const goalSessionId = await createSession(fixture, project, { goalId: goal.id });
-    const goalChildSessionId = await createSession(fixture, project, { rootSessionId: goalSessionId, parentSessionId: goalSessionId, goalId: goal.id });
+    const goalSessionId = await createSession(fixture, project, { agentName: "goal_lead", goalId: goal.id });
+    const goalChildSessionId = await createSession(fixture, project, { agentName: "explore", rootSessionId: goalSessionId, parentSessionId: goalSessionId, goalId: goal.id });
     const goalHitl = await createGoalHitl(context.hitl, project.slug, goal.id, "Goal approval");
     const goalSessionHitl = await createSessionHitl(context.hitl, project.slug, goalSessionId, "Goal child session");
     const goalGrandchildHitl = await createSessionHitl(context.hitl, project.slug, goalChildSessionId, "Goal grandchild session");
 
     const loop = await context.loopState.create(project.slug, LOOP_CONFIG);
-    const loopSessionId = await createSession(fixture, project, { loopId: loop.loopId });
+    const loopSessionId = await createSession(fixture, project, { agentName: "plan", loopId: loop.loopId });
     const loopGoal = await createGoal(context.goalState, project.slug, "Loop Goal", loop.loopId);
-    const loopGoalSessionId = await createSession(fixture, project, { goalId: loopGoal.id });
+    const loopGoalSessionId = await createSession(fixture, project, { agentName: "goal_lead", goalId: loopGoal.id });
     const loopHitl = await createLoopHitl(context.hitl, project.slug, loop.loopId, "Loop approval");
     const loopSessionHitl = await createSessionHitl(context.hitl, project.slug, loopSessionId, "Loop child session");
     const loopGoalHitl = await createGoalHitl(context.hitl, project.slug, loopGoal.id, "Loop child goal");
@@ -258,7 +258,7 @@ describe("hitl routes", () => {
     const fixture = await createTestApp("duplicate-mutation");
     const project = await addProject(fixture.runtime, "duplicate-mutation", "Duplicate Project");
     const context = await fixture.runtime.contextResolver.resolve(project.workspaceRoot);
-    const sessionId = await createSession(fixture, project, {});
+    const sessionId = await createSession(fixture, project, { agentName: "engineer" });
     const permission = await createPermissionHitl(context.hitl, project.slug, sessionId, "call-approve");
 
     const first = await postJson<HitlMutationBody>(fixture.app, mutationUrl(permission, "respond"), {
@@ -331,8 +331,8 @@ describe("hitl routes", () => {
     const fixture = await createTestApp("owner-qualified-mutation");
     const project = await addProject(fixture.runtime, "owner-qualified-mutation", "Owner Qualified Project");
     const context = await fixture.runtime.contextResolver.resolve(project.workspaceRoot);
-    const firstSessionId = await createSession(fixture, project, {});
-    const secondSessionId = await createSession(fixture, project, {});
+    const firstSessionId = await createSession(fixture, project, { agentName: "engineer" });
+    const secondSessionId = await createSession(fixture, project, { agentName: "engineer" });
     const hitlId = "owner-local-shared-id";
     const first = await context.hitl.create({
       owner: { projectSlug: project.slug, ownerType: "session", ownerId: firstSessionId },
@@ -370,7 +370,7 @@ describe("hitl routes", () => {
     const fixture = await createTestApp("strict-hitl-mutations");
     const project = await addProject(fixture.runtime, "strict-hitl-mutations", "Strict HITL Project");
     const context = await fixture.runtime.contextResolver.resolve(project.workspaceRoot);
-    const sessionId = await createSession(fixture, project, {});
+    const sessionId = await createSession(fixture, project, { agentName: "engineer" });
     const missingType = await createPermissionHitl(context.hitl, project.slug, sessionId, "missing-type");
 
     const missingTypeResponse = await fixture.app.request(mutationUrl(missingType, "respond"), {
@@ -432,7 +432,7 @@ describe("hitl routes", () => {
     const fixture = await createTestApp("resume-failed-cancel");
     const project = await addProject(fixture.runtime, "resume-failed-cancel", "Resume Failed Project");
     const context = await fixture.runtime.contextResolver.resolve(project.workspaceRoot);
-    const sessionId = await createSession(fixture, project, {});
+    const sessionId = await createSession(fixture, project, { agentName: "engineer" });
     const hitl = await createSessionHitl(context.hitl, project.slug, sessionId, "Unknown continuation");
 
     await context.hitl.claim(identity(hitl), { type: "question_answer", answers: ["continue"] }, {
@@ -459,7 +459,7 @@ describe("hitl routes", () => {
 async function createSession(
   fixture: TestFixture,
   project: ProjectInfo,
-  options: { rootSessionId?: string; parentSessionId?: string; goalId?: string; loopId?: string },
+  options: { agentName: "engineer" | "goal_lead" | "plan" | "explore"; rootSessionId?: string; parentSessionId?: string; goalId?: string; loopId?: string },
 ): Promise<string> {
   const sessionId = crypto.randomUUID();
   fixture.sessionStoreManager.create(sessionId, project.workspaceRoot, options);
@@ -604,7 +604,7 @@ function hitlRequestEvent(): GlobalSSEEvent {
     eventId: 1,
     createdAt: 42,
     kind: "hitl.request",
-    agentName: "orchestrator",
+    agentName: "engineer",
     payload: {
       type: "hitl.request",
       request: {

@@ -1,6 +1,7 @@
 import { realpath } from "node:fs/promises";
 import { dirname } from "node:path";
 import { defaultAgentDefinitions } from "./agents";
+import type { AgentName } from "./agents";
 import { resolveAgentModel } from "./agents/model-resolver";
 import { SessionAgentManager } from "./agents/session-agent-manager";
 import { BackgroundTaskManager } from "./background/manager";
@@ -32,6 +33,7 @@ import type { SessionFile, SessionSummary } from "./store/helpers";
 import { NotRootSessionError } from "./store/errors";
 import type { CompressionOriginalRangeResult } from "./compression";
 import type {
+  AgentDescriptor,
   GlobalSSEEvent,
   GlobalSSEHitlRealtimeEvent,
   GlobalSSEHitlSnapshotEvent,
@@ -96,12 +98,12 @@ export interface AgentRuntimeOptions {
 }
 
 export interface CreateRuntimeSessionOptions {
+  readonly agentName: AgentName;
   /** Current execution directory; Session persistence remains under workspaceRoot. */
   readonly cwd?: string;
   readonly goalId?: string;
   readonly loopId?: string;
   readonly sessionRole?: SessionRole;
-  readonly agentName?: string;
   readonly title?: string;
 }
 
@@ -153,6 +155,7 @@ export interface AgentRuntime {
   readonly warnings: McpWarning[];
   readonly projectRegistry: ProjectRegistry;
   readonly contextResolver: ProjectContextResolver;
+  listAgentDescriptors(): readonly AgentDescriptor[];
   removeProject(projectSlug: string): Promise<ProjectRemovalResult | undefined>;
   recoverHitlResumes(workspaceRoot: string): Promise<ResumeRecoverySummary | undefined>;
   listPendingHitlEvents(): Promise<GlobalSSEEvent[]>;
@@ -166,7 +169,7 @@ export interface AgentRuntime {
   queueLoopTitleGeneration?(workspaceRoot: string, loopId: string): void;
   subscribeMcpStatusChanges(listener: (serverName: string, status: McpServerStatus) => void): () => void;
   getMcpServerStatuses(): Map<string, McpServerStatus>;
-  createSession(workspaceRoot: string, options?: CreateRuntimeSessionOptions): Promise<SessionFile>;
+  createSession(workspaceRoot: string, options: CreateRuntimeSessionOptions): Promise<SessionFile>;
   getSessionFile(workspaceRoot: string, sessionId: string): Promise<SessionFile>;
   resolveCompressionOriginalRange(workspaceRoot: string, sessionId: string, blockRef: string): Promise<CompressionOriginalRangeResult>;
   listSessions(workspaceRoot: string): Promise<SessionSummary[]>;
@@ -312,6 +315,17 @@ export async function createRuntime(
         },
       }),
       sessionStoreManager,
+      onGoalCreated: (workspaceRoot, goal) => {
+        publishResourceChanged({
+          type: "resource.changed",
+          projectSlug: goal.projectId,
+          resourceType: "goal",
+          resourceId: goal.id,
+          reason: "created",
+          createdAt: Date.now(),
+        });
+        queueGoalTitleGeneration(workspaceRoot, goal.id);
+      },
       resumeCoordinatorFactory: ({ workspaceRoot, hitl, goalState, loopState }) => new ResumeCoordinator({
         hitl,
         adapters: {
@@ -485,6 +499,7 @@ export async function createRuntime(
         workspaceRoot,
         createSession: async (createOptions) => (await sessionStoreManager.createSessionFile(workspaceRoot, {
           ...createOptions,
+          agentName: "goal_lead",
           ...(loopId !== undefined && createOptions?.loopId === undefined ? { loopId } : {}),
         })).sessionId,
         getSessionCwd: async (sessionId) => (await sessionStoreManager.getSessionFile(workspaceRoot, sessionId)).cwd,
@@ -564,7 +579,7 @@ export async function createRuntime(
     }
 
     async function generateResourceTitle(kind: "goal" | "loop", text: string): Promise<string | null> {
-      const { modelInfo, options: modelOptions } = resolveAgentModel("orchestrator", config, providerRegistry);
+      const { modelInfo, options: modelOptions } = resolveAgentModel("engineer", config, providerRegistry);
       return await generateTitle({ kind, text, modelInfo, modelOptions });
     }
 
@@ -920,6 +935,7 @@ export async function createRuntime(
       warnings,
       projectRegistry,
       contextResolver,
+      listAgentDescriptors: () => defaultAgentDefinitions.map(({ name, displayName }) => ({ name, displayName })),
       removeProject,
       recoverHitlResumes: async (workspaceRoot) => (await contextResolver.resolve(workspaceRoot)).hitlResumeCoordinator.recover(),
       listPendingHitlEvents: async () => {
@@ -985,6 +1001,7 @@ export async function createRuntime(
       getMcpServerStatuses: () => mcpManager.getStatus(),
       createSession: (workspaceRoot, createOptions) => {
         executionManager.assertWorkspaceOpen(workspaceRoot);
+        assertRuntimeSessionAgentScope(createOptions);
         return sessionStoreManager.createSessionFile(workspaceRoot, createOptions);
       },
       getSessionFile: (workspaceRoot, sessionId) => sessionStoreManager.getSessionFile(workspaceRoot, sessionId),
@@ -1118,6 +1135,18 @@ function loopTitleSource(loop: LoopState): string {
     goalTemplate === undefined ? undefined : `Goal objective:\n${goalTemplate.objective}`,
     goalTemplate === undefined ? undefined : `Goal acceptance criteria:\n${goalTemplate.acceptanceCriteria}`,
   ].filter((section): section is string => section !== undefined).join("\n\n");
+}
+
+function assertRuntimeSessionAgentScope(options: CreateRuntimeSessionOptions): void {
+  if (options.goalId !== undefined) {
+    if (options.agentName !== "goal_lead") {
+      throw new Error(`Goal Sessions require agentName "goal_lead", got "${options.agentName}"`);
+    }
+    return;
+  }
+  if (options.agentName === "goal_lead") {
+    throw new Error('Agent "goal_lead" requires a Goal-bound Session');
+  }
 }
 
 async function resolveWorkspaceRoot(options: AgentRuntimeOptions): Promise<string> {

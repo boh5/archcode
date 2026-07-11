@@ -293,7 +293,7 @@ async function createFixture() {
   const workspaceRoot = TMP_ROOT;
   const sessionId = crypto.randomUUID();
   const sessions = new SessionStoreManager({ logger: silentLogger });
-  sessions.create(sessionId, workspaceRoot);
+  sessions.create(sessionId, workspaceRoot, { agentName: "engineer" });
   await sessions.flushSession(sessionId, workspaceRoot);
   const goalState = new GoalStateManager(workspaceRoot, silentLogger);
   const loopState = new LoopStateManager(workspaceRoot, silentLogger);
@@ -336,7 +336,7 @@ function preparingCheckpoint(fixture: Awaited<ReturnType<typeof createFixture>>)
     displayInput: { path: "README.md", content: "[REDACTED]" },
     allowedTools: ["file_write"],
     agentSkills: [],
-    agentName: "orchestrator",
+    agentName: "engineer",
     toolCalls: [{ toolCallId: "journal-tool-call", toolName: "file_write", input: { path: "README.md", content: "changed" } }],
     completedToolResults: [],
     pendingToolCalls: [{ toolCallId: "journal-tool-call", toolName: "file_write", input: { path: "README.md", content: "changed" } }],

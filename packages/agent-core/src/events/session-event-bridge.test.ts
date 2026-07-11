@@ -15,7 +15,7 @@ function createTestStore(sessionId: string): StoreApi<SessionStoreState> {
     createdAt: Date.now(),
     updatedAt: Date.now(),
     cwd: workspaceRoot,
-    agentName: "orchestrator",
+    agentName: "engineer",
     modelInfo: null,
     title: null,
     messages: [],

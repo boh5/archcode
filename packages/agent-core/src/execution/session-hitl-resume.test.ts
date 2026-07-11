@@ -20,6 +20,7 @@ import { SessionFamilyStopService } from "./session-family-stop-service";
 import { MemoryFileManager } from "../memory/file-manager";
 import { ProjectContextResolver } from "../projects/context-resolver";
 import type { ProjectContext } from "../projects/types";
+import type { AgentName } from "../agents";
 import type { ModelInfo } from "../provider/model";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { getSessionHitlPath, getSessionPath } from "../store/sessions-dir";
@@ -585,7 +586,7 @@ describe("Session HITL resume", () => {
         return createTestResumeLease();
       },
     });
-    fixture.sessions.create(rootSessionId, fixture.workspaceRoot, { agentName: "orchestrator" });
+    fixture.sessions.create(rootSessionId, fixture.workspaceRoot, { agentName: "engineer" });
     const registry = createRegistry([askUserTool]);
     mockToolCallStream([{ toolCallId: "ask-child-cold-root", toolName: "ask_user", input: {
       questions: [{ header: "Child", question: "Continue child?", options: [], custom: true }],
@@ -619,7 +620,7 @@ describe("Session HITL resume", () => {
         executionManager.reserveSessionHitlResume(workspaceRoot, sessionId, durableRootSessionId, options)
       ),
     });
-    fixture.sessions.create(rootSessionId, fixture.workspaceRoot, { agentName: "orchestrator" });
+    fixture.sessions.create(rootSessionId, fixture.workspaceRoot, { agentName: "engineer" });
     await fixture.sessions.flushSession(rootSessionId, fixture.workspaceRoot);
     executionManager = createResumeExecutionManager(fixture.sessions);
     const registry = createRegistry([askUserTool]);
@@ -1239,7 +1240,7 @@ describe("Session HITL resume", () => {
             displayInput: { questions: [{ header: "Next", question: "Continue?", options: [], custom: true }] },
             allowedTools: ["ask_user"],
             agentSkills: [],
-            agentName: "orchestrator",
+            agentName: "engineer",
             toolCalls: [{ toolCallId: "ask-next", toolName: "ask_user", input: { questions: [{ header: "Next", question: "Continue?", options: [], custom: true }] } }],
             completedToolResults: [],
             pendingToolCalls: [{ toolCallId: "ask-next", toolName: "ask_user", input: { questions: [{ header: "Next", question: "Continue?", options: [], custom: true }] } }],
@@ -1427,13 +1428,13 @@ async function createFixture(options: {
   readonly sessionIdentity?: {
     readonly rootSessionId: string;
     readonly parentSessionId: string;
-    readonly agentName: string;
+    readonly agentName: AgentName;
   };
 } = {}) {
   const workspaceRoot = await mkdtemp(join(TMP_ROOT, "workspace-"));
   const sessionId = crypto.randomUUID();
   const sessions = options.sessionStoreManager ?? new SessionStoreManager({ logger: silentLogger });
-  const store = sessions.create(sessionId, workspaceRoot, options.sessionIdentity);
+  const store = sessions.create(sessionId, workspaceRoot, options.sessionIdentity ?? { agentName: "engineer" });
   const goalState = new GoalStateManager(workspaceRoot, silentLogger);
   const loopState = new LoopStateManager(workspaceRoot, silentLogger);
   const hitlOptions = { workspaceRoot, project: { slug: "archcode", name: "ArchCode" }, sessions, goalState, loopState };
@@ -1501,7 +1502,7 @@ async function createFixture(options: {
         logger: silentLogger,
         toolRegistry: registry,
         allowedTools,
-        agentName: "orchestrator",
+        agentName: "engineer",
         agentSkills: [],
         skillService: testSkillService,
         storeManager: sessions,

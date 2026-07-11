@@ -7,5 +7,7 @@ export { SessionStoreManager };
 export const storeManager = new SessionStoreManager({ logger: silentLogger });
 
 export function createSessionStore(sessionId: string, workspaceRoot: string) {
-  return new SessionStoreManager({ logger: silentLogger }).create(sessionId, workspaceRoot);
+  return new SessionStoreManager({ logger: silentLogger }).create(sessionId, workspaceRoot, {
+    agentName: "engineer",
+  });
 }
