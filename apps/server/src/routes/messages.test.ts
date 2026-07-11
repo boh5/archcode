@@ -103,6 +103,18 @@ describe("messages routes", () => {
     expect(body).toEqual({ ok: true });
   });
 
+  test("POST message rejects unknown body fields", async () => {
+    const { app, project } = await createTestApp("message-unknown-field");
+
+    const res = await app.request(`/api/projects/${project.slug}/sessions/session-valid/messages`, {
+      method: "POST",
+      body: JSON.stringify({ text: "Hello", unexpected: true }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(res.status).toBe(400);
+  });
+
   test("POST message wires runtime session events into global event bus", async () => {
     const { app, project, runtime } = await createTestApp("session-events");
     const received: unknown[] = [];

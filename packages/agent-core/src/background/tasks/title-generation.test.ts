@@ -88,7 +88,7 @@ describe("createTitleGenerationTask", () => {
 
   test("generates title and sets it in store on success", async () => {
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID(), TEST_TMP);
     store.setState({
       messages: [
         {
@@ -136,7 +136,7 @@ describe("createTitleGenerationTask", () => {
   test("generated title persists and survives store reload without external save or flush", async () => {
     const now = Date.now();
     const sessionId = crypto.randomUUID();
-    const store = createSessionStore(sessionId);
+    const store = createSessionStore(sessionId, import.meta.dir);
     store.setState({
       messages: [
         {
@@ -169,7 +169,7 @@ describe("createTitleGenerationTask", () => {
   test("passes all whitelisted model options and strips variant", async () => {
     const now = Date.now();
     const providerOptions = { title: { mode: "full" } };
-    const store = storeManager.create(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID(), TEST_TMP);
     store.setState({
       messages: [
         {
@@ -240,7 +240,7 @@ describe("createTitleGenerationTask", () => {
   });
 
   test("does nothing when no user message exists", async () => {
-    const store = storeManager.create(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID(), TEST_TMP);
     store.setState({ messages: [] });
 
     const task = createTitleGenerationTask(store);
@@ -256,7 +256,7 @@ describe("createTitleGenerationTask", () => {
     mockGenerateText.mockRejectedValue(new Error("API error"));
 
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID(), TEST_TMP);
     store.setState({
       messages: [
         {
@@ -301,7 +301,7 @@ describe("createTitleGenerationTask", () => {
     mockGenerateText.mockRejectedValue(new Error("provider timeout"));
 
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID(), TEST_TMP);
     store.setState({
       messages: [
         {
@@ -326,7 +326,7 @@ describe("createTitleGenerationTask", () => {
 
   test("does nothing when user message has no text parts", async () => {
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID(), TEST_TMP);
     store.setState({
       messages: [
         {

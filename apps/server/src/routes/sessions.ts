@@ -15,6 +15,7 @@ export function createSessionsRoutes(runtime: AgentRuntime): Hono {
   });
 
   app.post("/", async (c) => {
+    await rejectRequestBody(c.req.text());
     const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
     return c.json(await runtime.createSession(project.workspaceRoot), 201);
   });
@@ -95,6 +96,12 @@ function requiredParam(value: string | undefined, name: string): string {
   }
 
   return value;
+}
+
+async function rejectRequestBody(bodyPromise: Promise<string>): Promise<void> {
+  if ((await bodyPromise).trim().length > 0) {
+    throw new BadRequestError("Request body is not supported");
+  }
 }
 
 function isMissingFileError(error: unknown): boolean {

@@ -61,6 +61,13 @@ describe("ProjectRegistry", () => {
     await expect(registry.add({ workspaceRoot: "relative/project" })).rejects.toThrow(ProjectRegistryError);
   });
 
+  test("add rejects an empty project identity before persistence", async () => {
+    const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
+
+    await expect(registry.add({ workspaceRoot: tmpWorkspaceA, name: "   " }))
+      .rejects.toThrow(ProjectRegistryError);
+  });
+
   test("add rejects non-existent directory with ProjectRegistryError", async () => {
     const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
     const missingWorkspace = join(tmpHome, "missing");
@@ -198,17 +205,45 @@ describe("ProjectRegistry", () => {
     expect(await secondRegistry.list()).toEqual([project]);
   });
 
-  test("defensive load returns empty list and logs warning for malformed JSON", async () => {
-    const { logger, entries } = createInMemoryLogger();
+  test("load rejects malformed persisted JSON instead of replacing it with an empty registry", async () => {
+    const { logger } = createInMemoryLogger();
     const registryDir = join(tmpHome, ".archcode", "projects");
     await mkdir(registryDir, { recursive: true });
     await writeFile(join(registryDir, "index.json"), "{ malformed json");
 
     const registry = new ProjectRegistry({ homeDir: tmpHome, logger });
 
-    expect(await registry.list()).toEqual([]);
-    expect(entries).toHaveLength(1);
-    expect(entries[0]?.event).toBe("project.registry.load.failed");
+    await expect(registry.list()).rejects.toThrow(ProjectRegistryError);
+  });
+
+  test("load rejects an old registry schema version", async () => {
+    const registryDir = join(tmpHome, ".archcode", "projects");
+    await mkdir(registryDir, { recursive: true });
+    await writeFile(join(registryDir, "index.json"), JSON.stringify({ version: 0, projects: [] }));
+
+    const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
+
+    await expect(registry.list()).rejects.toThrow(ProjectRegistryError);
+  });
+
+  test("load rejects duplicate persisted project identities", async () => {
+    const registryDir = join(tmpHome, ".archcode", "projects");
+    await mkdir(registryDir, { recursive: true });
+    const addedAt = new Date().toISOString();
+    const projectA = { slug: "duplicate", name: "Project A", workspaceRoot: tmpWorkspaceA, addedAt };
+    const projectB = { slug: "duplicate", name: "Project B", workspaceRoot: tmpWorkspaceB, addedAt };
+    await writeFile(join(registryDir, "index.json"), JSON.stringify({ version: 1, projects: [projectA, projectB] }));
+
+    await expect(new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger }).list())
+      .rejects.toThrow(ProjectRegistryError);
+
+    const normalizedAlias = join(tmpWorkspaceA, "nested", "..");
+    await writeFile(join(registryDir, "index.json"), JSON.stringify({
+      version: 1,
+      projects: [projectA, { ...projectB, slug: "second", workspaceRoot: normalizedAlias }],
+    }));
+    await expect(new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger }).list())
+      .rejects.toThrow(ProjectRegistryError);
   });
 
   test("missing file returns empty list without error", async () => {

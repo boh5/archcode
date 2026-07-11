@@ -8,7 +8,7 @@ import { CommandRegistry, createCompactCommand, createSkillCommand } from "../co
 import type { SlashCommandResult } from "../commands/types";
 import type { MemoryExtractionConfig, ModelCallOptions } from "../config/index";
 import type { MemoryRoots } from "../memory";
-import { ProjectContextResolver } from "../projects/context-resolver";
+import type { ProjectContextResolver } from "../projects/context-resolver";
 import type { ProjectContext } from "../projects/types";
 import { createGoalBudgetEnforcementHooks } from "../goals/budget-enforcement";
 import { createLoopBudgetEnforcementHooks } from "../loops/budget-hooks";
@@ -25,7 +25,7 @@ import type { Logger } from "../logger";
 import type { AskUserCallback, ToolConfirmationCallback, ToolRegistry } from "../tools/index";
 import { TOOL_OUTPUT_DIR, enforceQuota } from "../tools/index";
 import { TOOL_WORKTREE_ENTER, TOOL_WORKTREE_EXIT } from "../tools/names";
-import { AgentRunningError, MissingProjectContextError } from "./errors";
+import { AgentRunningError } from "./errors";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
 import type { AgentDefinition } from "./factory-types";
 import {
@@ -67,12 +67,12 @@ export interface ConfiguredAgentOptions {
   readonly confirmPermission?: ToolConfirmationCallback;
   readonly askUser?: AskUserCallback;
   /** Canonical project root used for persistent project/session state. */
-  readonly projectRoot?: string;
+  readonly projectRoot: string;
   /** Current Session execution directory used by prompts and filesystem tools. */
-  readonly cwd?: string;
+  readonly cwd: string;
   readonly depth?: number;
   readonly backgroundTaskManager?: BackgroundTaskManager;
-  readonly projectContextResolver?: ProjectContextResolver;
+  readonly projectContextResolver: ProjectContextResolver;
   readonly resolveAllowedTools: (definition: AgentDefinition, depth: number) => readonly string[];
   readonly startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
   readonly cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
@@ -146,15 +146,9 @@ export class ConfiguredAgent implements Agent {
     this.askUserDefault = options.askUser;
     if (!options.store) throw new Error("ConfiguredAgent requires an explicit store");
     this.store = options.store;
-    if (options.projectRoot === undefined) {
-      throw new MissingProjectContextError("ConfiguredAgent requires options.projectRoot");
-    }
-    if (options.cwd === undefined) {
-      throw new MissingProjectContextError("ConfiguredAgent requires options.cwd");
-    }
     this.projectRoot = options.projectRoot;
     this.cwd = options.cwd;
-    this.projectContextResolver = options.projectContextResolver ?? new ProjectContextResolver();
+    this.projectContextResolver = options.projectContextResolver;
     this.depth = options.depth ?? 0;
     this.backgroundTaskManager = options.backgroundTaskManager ?? new DefaultBackgroundTaskManager({
       logger: this.logger.child({ module: "background.manager" }),
@@ -186,12 +180,7 @@ export class ConfiguredAgent implements Agent {
       ),
     );
     this.commandRegistry.register(
-      createSkillCommand(
-        this.skillService,
-        this.cwd,
-        this.definition.name,
-        this.definition.skills,
-      ),
+      createSkillCommand(),
     );
   }
 

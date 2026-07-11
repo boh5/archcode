@@ -22,7 +22,7 @@ import { getSessionHitlPath } from "../store/sessions-dir";
 import { createRegistry } from "../tools";
 import { fileReadTool, worktreeEnterTool } from "../tools/builtins";
 import { ProjectApprovalManager } from "../tools/permission";
-import { createTestProjectContext } from "../tools/test-project-context";
+import { createTestProjectContext, createTestProjectContextResolverOptions } from "../tools/test-project-context";
 import { WorktreeService } from "../worktrees";
 import { silentLogger } from "../logger";
 import { SessionHitlResumeAdapter } from "./session-hitl-resume-adapter";
@@ -32,6 +32,10 @@ import { SessionHitlBlockedError, SessionHitlResumeInProgressError } from "../ag
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "session-worktree-hitl-integration");
 const SKILL_NAME = "worktree-skill";
+
+function identity(record: Pick<HitlRecord, "owner" | "hitlId">) {
+  return { owner: record.owner, hitlId: record.hitlId };
+}
 
 const testDefinition: AgentDefinition = {
   name: "orchestrator",
@@ -83,22 +87,28 @@ describe("durable Session worktree approval integration", () => {
       goalState,
       loopState,
     });
-    await hitl.load(projectRoot);
     const approvals = new ProjectApprovalManager(silentLogger);
     await approvals.load(projectRoot);
     const projectContext: ProjectContext = {
       ...createTestProjectContext(projectRoot),
       project: { slug: "project", name: "Project", workspaceRoot: projectRoot, addedAt: new Date().toISOString() },
       goalState,
+      goalCancellation: { cancel: async (goalId, request) => await goalState.cancel(goalId, request.reason) },
       loopState,
       hitl,
+      hitlResumeCoordinator: new ResumeCoordinator({ hitl, adapters: {} }),
       memory: new MemoryFileManager({
         project: join(projectRoot, ".archcode", "memory"),
         user: join(projectRoot, ".archcode", "user-memory"),
       }),
       approvals,
     };
-    const resolver = new ProjectContextResolver({ sessionStoreManager: sessions });
+    const resolver = new ProjectContextResolver({
+      ...createTestProjectContextResolverOptions(sessions),
+      projectInfoFactory: () => projectContext.project,
+      goalCancellationFactory: () => projectContext.goalCancellation,
+      resumeCoordinatorFactory: () => projectContext.hitlResumeCoordinator,
+    });
     resolver.alias(projectRoot, projectContext);
     const executionScopeValidator = new SessionExecutionScopeValidator({
       projectContextResolver: resolver,
@@ -181,7 +191,7 @@ describe("durable Session worktree approval integration", () => {
       toolName: "worktree_enter",
     });
 
-    const response = await coordinator.respond(pending.hitlId, {
+    const response = await coordinator.respond(identity(pending), {
       type: "permission_decision",
       decision: "approve_once",
     });
@@ -199,7 +209,7 @@ describe("durable Session worktree approval integration", () => {
 
     finishContinuation();
     await waitFor(async () => {
-      const found = await hitl.lookup(pending.hitlId);
+      const found = await hitl.lookup(identity(pending));
       return found.status === "found" && found.record.status === "resolved";
     });
 

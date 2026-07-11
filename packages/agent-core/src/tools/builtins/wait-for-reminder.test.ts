@@ -10,7 +10,7 @@ import { createTestProjectContext } from "../test-project-context";
 const testDir = join(import.meta.dir, "__test_tmp__", "wait-for-reminder");
 
 function makeStore(): StoreApi<SessionStoreState> {
-  const store = storeManager.create(`wait-reminder-test-${crypto.randomUUID()}`);
+  const store = storeManager.create(`wait-reminder-test-${crypto.randomUUID()}`, testDir);
   store.setState({ rootSessionId: store.getState().sessionId });
   return store;
 }

@@ -24,6 +24,33 @@ function productionTypeScriptFiles(relativeDirectory: string): string[] {
 }
 
 describe("Session execution cwd architecture", () => {
+  test("Session and Agent runtime contracts require cwd after creation", () => {
+    const protocolTypes = readFileSync(resolve(srcRoot, "../../protocol/src/types.ts"), "utf8");
+    const agentTypes = source("agents/types.ts");
+    const factory = source("agents/factory.ts");
+    const configuredAgent = source("agents/configured-agent.ts");
+    const sessionAgentManager = source("agents/session-agent-manager.ts");
+
+    expect(protocolTypes).not.toMatch(/interface SessionProjection\s*\{[^}]*\bcwd\?:/s);
+    expect(protocolTypes).not.toMatch(/interface SessionSummary\s*\{[^}]*\bcwd\?:/s);
+    expect(protocolTypes).not.toMatch(/interface Session\s*\{[^}]*\bcwd\?:/s);
+    expect(agentTypes).not.toMatch(/interface Agent\s*\{[^}]*\bcwd\?:/s);
+    expect(factory).not.toMatch(/store\.getState\(\)\.cwd\s*\?\?/);
+    expect(configuredAgent).not.toMatch(/readonly cwd\?: string/);
+    expect(sessionAgentManager).not.toContain("existing.cwd === undefined");
+  });
+
+  test("Session registry identity is always scoped by the canonical project root", () => {
+    const manager = source("store/session-store-manager.ts");
+
+    expect(manager).toMatch(/private key\(sessionId: string, workspaceRoot: string\): string/);
+    expect(manager).toMatch(/get\(sessionId: string, workspaceRoot: string\)/);
+    expect(manager).toMatch(/delete\(sessionId: string, workspaceRoot: string,/);
+    expect(manager).toMatch(/has\(sessionId: string, workspaceRoot: string\)/);
+    expect(manager).not.toContain("findLoadedSession");
+    expect(manager).not.toMatch(/workspaceRoot === undefined\s*\?\s*sessionId/);
+  });
+
   test("execution contracts expose cwd instead of overloading workspaceRoot", () => {
     const contracts = [
       "tools/types.ts",

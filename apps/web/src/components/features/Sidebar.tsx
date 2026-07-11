@@ -9,7 +9,7 @@ import type {
   LoopState,
   LoopStatus,
   Project,
-  Session,
+  SessionSummary,
   SessionTreeNode,
 } from "../../api/types";
 import { ProjectActionDropdown } from "./ProjectActionMenu";
@@ -24,14 +24,13 @@ import { getWebSessionStore, useSessionStore } from "../../store/session-store";
 
 // Helpers
 
-function isSessionActive(session: Session): boolean {
-  return isTimestampActive(session.createdAt, session.updatedAt, session.lastUpdatedAt);
+function isSessionActive(session: SessionSummary): boolean {
+  return isTimestampActive(session.updatedAt);
 }
 
-function isTimestampActive(createdAt: number, updatedAt?: number, lastUpdatedAt?: number): boolean {
-  const updatedAtValue = updatedAt ?? lastUpdatedAt ?? createdAt;
+function isTimestampActive(updatedAt: number): boolean {
   const hourAgo = Date.now() - 60 * 60 * 1000;
-  return updatedAtValue > hourAgo;
+  return updatedAt > hourAgo;
 }
 
 /** Robust lowercase string conversion that never throws on nullish/unknown values. */
@@ -109,11 +108,11 @@ function SessionItem({
   isActive,
   onClick,
 }: {
-  session: Session;
+  session: SessionSummary;
   isActive: boolean;
   onClick: () => void;
 }) {
-  const updatedAt = session.updatedAt ?? session.lastUpdatedAt ?? session.createdAt;
+  const updatedAt = session.updatedAt;
   const isRunning = isSessionActive(session);
 
   return (
@@ -434,7 +433,7 @@ export function Sidebar() {
 
   const rootSessionId = useMemo(() => {
     if (!sessionId) return "";
-    const currentSession = sessions?.find(s => s.sessionId === sessionId || s.id === sessionId);
+    const currentSession = sessions?.find(s => s.sessionId === sessionId);
     if (currentSession?.rootSessionId) return currentSession.rootSessionId;
     if (currentSession && !currentSession.parentSessionId) return sessionId;
     return sessionId;
@@ -448,7 +447,7 @@ export function Sidebar() {
   const handleNewSession = () => {
     createSession.mutate({ slug }, {
       onSuccess: (session) => {
-        navigate(`/projects/${slug}/sessions/${session.sessionId ?? session.id}`);
+        navigate(`/projects/${slug}/sessions/${session.sessionId}`);
       },
     });
   };
@@ -483,14 +482,14 @@ export function Sidebar() {
     const q = sessionsSearch.toLowerCase();
     return rootSessions.filter((s) => {
       const title = toSearchable(s.title || "Untitled").toLowerCase();
-      const id = toSearchable(s.sessionId ?? s.id).toLowerCase();
+      const id = toSearchable(s.sessionId).toLowerCase();
       return title.includes(q) || id.includes(q);
     });
   }, [sessions, sessionsSearch]);
 
   const { activeSessions, completedSessions } = useMemo(() => {
-    const active: Session[] = [];
-    const completed: Session[] = [];
+    const active: SessionSummary[] = [];
+    const completed: SessionSummary[] = [];
     for (const session of filteredSessions) {
       if (isSessionActive(session)) {
         active.push(session);
@@ -540,8 +539,11 @@ export function Sidebar() {
 
     function walkNode(node: SessionTreeNode, depth: number): void {
       const s = node.session;
-      const agentType = isValidAgentType(s.agentName ?? "") ? (s.agentName as AgentType) : "orchestrator";
-      const isRunning = isTimestampActive(s.createdAt, undefined, s.lastUpdatedAt);
+      if (!isValidAgentType(s.agentName)) {
+        throw new Error(`Invalid Session agentName: ${s.agentName}`);
+      }
+      const agentType = s.agentName;
+      const isRunning = isTimestampActive(s.updatedAt);
       const isActive = focusSessionId === null
         ? s.sessionId === rootSessionId
         : s.sessionId === focusSessionId;
@@ -669,10 +671,10 @@ export function Sidebar() {
               <SubGroupHeader title="Active" count={activeSessions.length} />
               {activeSessions.map((session) => (
                 <SessionItem
-                  key={session.id}
+                  key={session.sessionId}
                   session={session}
-                  isActive={session.id === sessionId || session.sessionId === sessionId}
-                  onClick={() => handleSessionClick(session.sessionId ?? session.id)}
+                  isActive={session.sessionId === sessionId}
+                  onClick={() => handleSessionClick(session.sessionId)}
                 />
               ))}
             </div>
@@ -683,10 +685,10 @@ export function Sidebar() {
               <SubGroupHeader title="Completed" />
               {completedSessions.map((session) => (
                 <SessionItem
-                  key={session.id}
+                  key={session.sessionId}
                   session={session}
-                  isActive={session.id === sessionId || session.sessionId === sessionId}
-                  onClick={() => handleSessionClick(session.sessionId ?? session.id)}
+                  isActive={session.sessionId === sessionId}
+                  onClick={() => handleSessionClick(session.sessionId)}
                 />
               ))}
             </div>

@@ -134,7 +134,7 @@ function CompactionBlock({ part }: { part: { type: "compaction"; summary: string
     <div className="bg-bg-surface border border-border-subtle rounded-lg overflow-hidden my-2.5 shrink-0">
       <div className="flex items-center gap-2 px-3 py-1.5 bg-bg-elevated border-b border-border-subtle">
         <Info size={12} className="text-text-muted shrink-0" />
-        <span className="text-[11px] text-text-muted font-medium">Legacy context compaction</span>
+        <span className="text-[11px] text-text-muted font-medium">Hard context compaction</span>
         <span className="text-[11px] text-text-muted ml-auto">{formatRelativeTime(part.compactedAt)}</span>
       </div>
       <div className="px-3 py-2 text-[12px] text-text-secondary leading-relaxed whitespace-pre-wrap">

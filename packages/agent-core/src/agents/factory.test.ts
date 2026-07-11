@@ -18,6 +18,7 @@ import { ConfiguredAgent } from "./configured-agent";
 import type { AgentDefinition } from "./factory-types";
 import type { ResolvedSkill } from "../skills/types";
 import { silentLogger } from "../logger";
+import { createTestProjectContextResolver } from "./test-project-context-resolver";
 
 function makeTool(name: string): AnyToolDescriptor {
   return {
@@ -123,6 +124,7 @@ function makeFactory(
   ]),
   skillService: options.skillService ?? createTestSkillService(),
   storeManager,
+  projectContextResolver: createTestProjectContextResolver(storeManager),
   workspaceRoot: import.meta.dir,
   config, logger: silentLogger });
 }
@@ -152,7 +154,7 @@ describe("createAgentFactory", () => {
 
   test("creates root agents through the factory API with a supplied store", () => {
     const factory = makeFactory();
-    const store = storeManager.create(`factory-root-${crypto.randomUUID()}`);
+    const store = storeManager.create(`factory-root-${crypto.randomUUID()}`, import.meta.dir);
 
     const agent = factory.createRootAgent("orchestrator", { store });
 
@@ -189,6 +191,7 @@ describe("createAgentFactory", () => {
     ]),
     skillService,
     storeManager,
+    projectContextResolver: createTestProjectContextResolver(storeManager),
     workspaceRoot: import.meta.dir,
     config: {
       provider: {},
@@ -215,6 +218,7 @@ describe("createAgentFactory", () => {
     ]),
     skillService: createTestSkillService(),
     storeManager,
+    projectContextResolver: createTestProjectContextResolver(storeManager),
     workspaceRoot: import.meta.dir,
     config: {
       provider: {},
@@ -240,6 +244,7 @@ describe("createAgentFactory", () => {
     ]),
     skillService: createTestSkillService(),
     storeManager,
+    projectContextResolver: createTestProjectContextResolver(storeManager),
     workspaceRoot: import.meta.dir,
     config: {
       provider: {},
@@ -272,6 +277,7 @@ describe("createAgentFactory", () => {
     ]),
     skillService: createTestSkillService(),
     storeManager,
+    projectContextResolver: createTestProjectContextResolver(storeManager),
     workspaceRoot: import.meta.dir,
     config: {
       provider: {},
@@ -311,6 +317,7 @@ describe("createAgentFactory", () => {
     ]),
     skillService: createTestSkillService(),
     storeManager,
+    projectContextResolver: createTestProjectContextResolver(storeManager),
     workspaceRoot: import.meta.dir,
     config: {
       provider: {},
@@ -333,6 +340,7 @@ describe("createAgentFactory", () => {
     ]),
     skillService: createTestSkillService(),
     storeManager,
+    projectContextResolver: createTestProjectContextResolver(storeManager),
     workspaceRoot: import.meta.dir,
     config: {
       provider: {},
@@ -448,10 +456,10 @@ describe("createAgentFactory", () => {
     const target = definition({ name: "explore", promptProfileId: "explorer", tools: { tools: nonDelegatingExplorerTools }, skills: ["codemap", "git-master"] });
     const factory = makeFactory([definition(), target], { skillService: createSkillServiceWithBuiltins() });
 
-    const skills = await factory.resolveDelegatedSkills(target, ["codemap", "git-master", "codemap"]);
+    const skills = await factory.resolveDelegatedSkills(target, ["codemap", "git-master", "codemap"], import.meta.dir);
 
     expect(skills.map((skill) => skill.metadata.name)).toEqual(["codemap", "git-master"]);
-    await expect(factory.resolveDelegatedSkills(target, ["research-docs"])).rejects.toThrow("Skill \"research-docs\" is not allowed");
+    await expect(factory.resolveDelegatedSkills(target, ["research-docs"], import.meta.dir)).rejects.toThrow("Skill \"research-docs\" is not allowed");
   });
 });
 
@@ -469,6 +477,7 @@ describe("factoryResolveAllowedTools with MCP tools", () => {
       ]),
       skillService: createTestSkillService(),
       storeManager,
+      projectContextResolver: createTestProjectContextResolver(storeManager),
       workspaceRoot: import.meta.dir,
       config: {
         provider: {},
@@ -526,6 +535,7 @@ describe("factoryResolveAllowedTools with MCP tools", () => {
       toolRegistry: registry,
       skillService: createTestSkillService(),
       storeManager,
+      projectContextResolver: createTestProjectContextResolver(storeManager),
       workspaceRoot: import.meta.dir,
       config: {
         provider: {},

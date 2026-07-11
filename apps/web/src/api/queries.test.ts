@@ -53,26 +53,41 @@ describe("web session query contracts", () => {
     expect(result).toEqual([]);
   });
 
-  test("sessionsQueryOptions normalizes identity fields and preserves root-only server list", async () => {
+  test("diffQueryOptions rejects the removed bare-array response shape", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    globalThis.fetch = mock(async () => jsonResponse([])) as unknown as typeof fetch;
+
+    const options = diffQueryOptions(TEST_PROJECT_SLUG);
+
+    await expect((options as unknown as QueryOptionWithFn<unknown[]>).queryFn()).rejects.toThrow(
+      "Diff response must use canonical { files } shape",
+    );
+  });
+
+  test("sessionsQueryOptions returns the canonical Session summaries", async () => {
     globalThis.document = { cookie: "" } as Document;
     const rootSession: SessionSummary = {
       sessionId: "root-session",
       cwd: "/workspace",
       rootSessionId: "root-session",
+      agentName: "orchestrator",
+      modelInfo: null,
       goalId: "goal-root",
       loopId: "loop-root",
       title: "Root",
       createdAt: 1_000,
-      lastUpdatedAt: 2_000,
+      updatedAt: 2_000,
     };
     const childSession: SessionSummary = {
       sessionId: "child-session",
       cwd: "/workspace",
       rootSessionId: "root-session",
       parentSessionId: "root-session",
+      agentName: "explore",
+      modelInfo: null,
       title: "Child",
       createdAt: 1_500,
-      lastUpdatedAt: 1_700,
+      updatedAt: 1_700,
     };
     const fetchMock = mock(async (input: RequestInfo | URL) => {
       expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/sessions`);
@@ -84,33 +99,33 @@ describe("web session query contracts", () => {
 
     expect(result).toEqual([
       {
-        id: "root-session",
         sessionId: "root-session",
         cwd: "/workspace",
         rootSessionId: "root-session",
         parentSessionId: undefined,
+        agentName: "orchestrator",
+        modelInfo: null,
         goalId: "goal-root",
         loopId: "loop-root",
         title: "Root",
         createdAt: 1_000,
         updatedAt: 2_000,
-        lastUpdatedAt: 2_000,
       },
       {
-        id: "child-session",
         sessionId: "child-session",
         cwd: "/workspace",
         rootSessionId: "root-session",
         parentSessionId: "root-session",
+        agentName: "explore",
+        modelInfo: null,
         title: "Child",
         createdAt: 1_500,
         updatedAt: 1_700,
-        lastUpdatedAt: 1_700,
       },
     ]);
   });
 
-  test("focusedSessionQueryOptions fetches a single child session and normalizes identity", async () => {
+  test("focusedSessionQueryOptions returns the canonical Session response", async () => {
     globalThis.document = { cookie: "" } as Document;
     const serverResponse = {
       sessionId: "child-session",
@@ -118,7 +133,7 @@ describe("web session query contracts", () => {
       parentSessionId: "root-session",
       title: "Focused Child",
       createdAt: 1_000,
-      lastUpdatedAt: 2_000,
+      updatedAt: 2_000,
     };
     const fetchMock = mock(async (input: RequestInfo | URL) => {
       expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/sessions/child-session`);
@@ -129,13 +144,11 @@ describe("web session query contracts", () => {
     const result = await (focusedSessionQueryOptions(TEST_PROJECT_SLUG, "child-session") as unknown as QueryOptionWithFn<unknown>).queryFn();
 
     expect(result).toMatchObject({
-      id: "child-session",
       sessionId: "child-session",
       rootSessionId: "root-session",
       title: "Focused Child",
       createdAt: 1_000,
       updatedAt: 2_000,
-      lastUpdatedAt: 2_000,
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -149,7 +162,7 @@ describe("web session query contracts", () => {
     globalThis.document = { cookie: "" } as Document;
     const tree: SessionTreeResponse = {
       root: {
-        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", title: "Root", createdAt: 1_000 },
+        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", agentName: "orchestrator", modelInfo: null, title: "Root", createdAt: 1_000, updatedAt: 1_000 },
         children: [
           {
             session: {
@@ -157,8 +170,11 @@ describe("web session query contracts", () => {
               cwd: "/workspace",
               rootSessionId: "root-session",
               parentSessionId: "root-session",
+              agentName: "explore",
+              modelInfo: null,
               title: "Child",
               createdAt: 2_000,
+              updatedAt: 2_000,
             },
             children: [],
           },
@@ -186,15 +202,18 @@ describe("web session query contracts", () => {
     globalThis.document = { cookie: "" } as Document;
     const goals: GoalState[] = [
       {
+        version: 1,
         id: "goal-1",
         projectId: TEST_PROJECT_SLUG,
         title: "Test Goal",
         objective: "Simplify the Goal experience",
         acceptanceCriteria: "Reviewer can decide DONE from logs and diff.",
+        useWorktree: false,
         status: "draft",
         attempt: 1,
         pendingHitlIds: [],
         approvalRefs: [],
+        appliedHitlIds: [],
         childSessionIds: [],
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-01T00:00:00Z",
@@ -217,15 +236,18 @@ describe("web session query contracts", () => {
   test("goalQueryOptions fetches a single goal by goalId", async () => {
     globalThis.document = { cookie: "" } as Document;
     const goal: GoalState = {
+      version: 1,
       id: "goal-1",
       projectId: TEST_PROJECT_SLUG,
       title: "Single Goal",
       objective: "Simplify the Goal experience",
       acceptanceCriteria: "Reviewer can decide DONE from logs and diff.",
+      useWorktree: false,
       status: "running",
       attempt: 1,
       pendingHitlIds: [],
       approvalRefs: [],
+      appliedHitlIds: [],
       childSessionIds: [],
       createdAt: "2026-01-01T00:00:00Z",
       updatedAt: "2026-01-01T00:00:00Z",
@@ -260,7 +282,7 @@ describe("web session query contracts", () => {
         hitlId: "hitl-2",
         project: { slug: TEST_PROJECT_SLUG, name: TEST_PROJECT_NAME },
         owner: { projectSlug: TEST_PROJECT_SLUG, ownerType: "goal", ownerId: "goal-1" },
-        source: { type: "goal_review", goalId: "goal-1" },
+        source: { type: "goal_review", goalId: "goal-1" , resumeStatus: "reviewing"},
         status: "pending",
         displayPayload: { title: "Review artifacts", redacted: true },
         allowedActions: ["approve", "deny", "cancel"],
@@ -307,15 +329,18 @@ describe("web session query contracts", () => {
     globalThis.document = { cookie: "" } as Document;
     const goals: DashboardGoal[] = [
       {
+        version: 1,
         id: "goal-1",
         projectId: TEST_PROJECT_SLUG,
         title: "Active Goal",
         objective: "Simplify the Goal experience",
         acceptanceCriteria: "Reviewer can decide DONE from logs and diff.",
+        useWorktree: false,
         status: "running",
         attempt: 1,
         pendingHitlIds: [],
         approvalRefs: [],
+        appliedHitlIds: [],
         childSessionIds: [],
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-01T00:00:00Z",
@@ -354,7 +379,8 @@ describe("web loop query contracts", () => {
           title: "Test Loop",
           schedule: { kind: "manual" },
           approvalPolicy: "interactive",
-          limits: { maxIterationsPerRun: 10 },
+          limits: { maxIterationsPerRun: 10, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+          useWorktree: false,
         },
         status: "active",
         createdAt: 1_000,
@@ -387,7 +413,8 @@ describe("web loop query contracts", () => {
         title: "Single Loop",
         schedule: { kind: "manual" },
         approvalPolicy: "interactive",
-        limits: { maxIterationsPerRun: 10 },
+        limits: { maxIterationsPerRun: 10, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+        useWorktree: false,
       },
       status: "active",
       createdAt: 1_000,
@@ -445,7 +472,8 @@ describe("web loop query contracts", () => {
         title: "State Loop",
         schedule: { kind: "manual" },
         approvalPolicy: "interactive",
-        limits: { maxIterationsPerRun: 10 },
+        limits: { maxIterationsPerRun: 10, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+        useWorktree: false,
       },
       status: "active",
       createdAt: 1_000,

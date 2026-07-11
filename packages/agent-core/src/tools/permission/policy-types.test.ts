@@ -87,8 +87,8 @@ describe("permission policy types", () => {
   });
 });
 
-describe("PermissionDecision approval compatibility", () => {
-  test("keeps legacy combine priority deny > ask > allow", () => {
+describe("PermissionDecision approval policy", () => {
+  test("combines decisions with priority deny > ask > allow", () => {
     const allow: PermissionDecision = { outcome: "allow" };
     const ask: PermissionDecision = { outcome: "ask", reason: "confirm" };
     const deny: PermissionDecision = { outcome: "deny", reason: "blocked" };
@@ -98,16 +98,6 @@ describe("PermissionDecision approval compatibility", () => {
     expect(combinePermissionDecisions([allow, deny, ask])).toEqual(deny);
     expect(combinePermissionDecisions([ask, deny, allow])).toEqual(deny);
     expect(combinePermissionDecisions([allow])).toEqual({ outcome: "allow" });
-  });
-
-  test("new PermissionDecision fields are optional for legacy callers", () => {
-    const decisions: PermissionDecision[] = [
-      { outcome: "allow" },
-      { outcome: "ask" },
-      { outcome: "deny", reason: "legacy deny" },
-    ];
-
-    expect(decisions.map((decision) => decision.outcome)).toEqual(["allow", "ask", "deny"]);
   });
 
   test("preserves approval-aware ask metadata when ask wins", () => {

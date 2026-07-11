@@ -121,7 +121,7 @@ function makeFakeMcpManager(
 function makeContext(toolName: string, input: unknown): ToolExecutionContext {
   const workspaceRoot = import.meta.dir;
   return {
-    store: storeManager.create(`main-test-${crypto.randomUUID()}`),
+    store: storeManager.create(`main-test-${crypto.randomUUID()}`, workspaceRoot),
     storeManager,
     toolName,
     toolCallId: `${toolName}-call`,

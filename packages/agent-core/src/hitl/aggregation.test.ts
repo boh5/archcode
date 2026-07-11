@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { GoalState } from "@archcode/protocol";
@@ -33,14 +33,13 @@ describe("HITL aggregation", () => {
       goalState,
       loopState,
     });
-    await service.load(workspaceRoot);
-
     const loop = await loopState.create("archcode", {
       templateId: "goal_runner",
       title: "Watch CI",
       schedule: { kind: "manual" },
       approvalPolicy: "interactive",
-      limits: { maxIterationsPerRun: 1 },
+      limits: { maxIterationsPerRun: 1, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+      useWorktree: false,
     });
     const goal = await createGoalOwnedByLoop(goalState, loop.loopId);
     const rootSessionId = crypto.randomUUID();
@@ -63,7 +62,7 @@ describe("HITL aggregation", () => {
     const goalHitl = await service.create({
       owner: { projectSlug: "archcode", ownerType: "goal", ownerId: goal.id },
       blockingKey: `goal:${goal.id}:approval:after_plan`,
-      source: { type: "goal_approval", goalId: goal.id, approvalPoint: "after_plan" },
+      source: { type: "goal_approval", goalId: goal.id, approvalPoint: "after_plan", resumeStatus: "running" },
       displayPayload: { title: "Approve goal", redacted: true },
     });
     const sessionHitl = await service.create({
@@ -104,14 +103,13 @@ describe("HITL aggregation", () => {
       goalState,
       loopState,
     });
-    await service.load(workspaceRoot);
-
     const loop = await loopState.create("archcode", {
       templateId: "goal_runner",
       title: "Watch CI",
       schedule: { kind: "manual" },
       approvalPolicy: "interactive",
-      limits: { maxIterationsPerRun: 1 },
+      limits: { maxIterationsPerRun: 1, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+      useWorktree: false,
     });
     const goal = await createGoalOwnedByLoop(goalState, loop.loopId);
     const directLoopSessionId = crypto.randomUUID();
@@ -137,6 +135,25 @@ describe("HITL aggregation", () => {
     const projections = await service.list({ scope: "loop", ownerId: loop.loopId });
     expect(projections.map((projection) => projection.hitlId)).toContain(directLoopSessionHitl.hitlId);
     expect(projections.map((projection) => projection.hitlId)).not.toContain(goalSessionHitl.hitlId);
+  });
+
+  test("session tree read failures abort aggregation instead of dropping descendants", async () => {
+    const workspaceRoot = await mkdtemp(join(TMP_ROOT, "workspace-"));
+    const sessions = new SessionStoreManager({ logger: silentLogger });
+    const sessionId = crypto.randomUUID();
+    sessions.create(sessionId, workspaceRoot);
+    await sessions.flushSession(sessionId, workspaceRoot);
+    sessions.buildSessionTree = mock(async () => {
+      throw new Error("corrupt session tree");
+    });
+    const service = new HitlService({
+      workspaceRoot,
+      project: { slug: "archcode", name: "ArchCode" },
+      sessions,
+      goalState: new GoalStateManager(workspaceRoot, silentLogger),
+      loopState: new LoopStateManager(workspaceRoot, silentLogger),
+    });
+    await expect(service.list({ scope: "project" })).rejects.toThrow("corrupt session tree");
   });
 });
 

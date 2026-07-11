@@ -34,6 +34,11 @@ describe("LoopHitlResumeAdapter recovery", () => {
     const fixture = await createBlockedFixture();
     await fixture.jobQueue.update(fixture.job.jobId, {
       status: "running",
+      startedAt: 1_000,
+      endedAt: undefined,
+      leaseExpiresAt: 2_000,
+      leaseOwnerId: "unexpected-state-test",
+      leaseToken: "unexpected-state-lease",
       blockedByHitlIds: undefined,
       attentionStatus: "clear",
       resumeCheckpoint: undefined,
@@ -90,6 +95,11 @@ describe("LoopHitlResumeAdapter recovery", () => {
       updateIfCurrent: async (jobId: string) => {
         const divergent = await queue.update(jobId, {
           status: "running",
+          startedAt: 1_000,
+          endedAt: undefined,
+          leaseExpiresAt: 2_000,
+          leaseOwnerId: "divergent-state-test",
+          leaseToken: "divergent-state-lease",
           blockedByHitlIds: undefined,
           attentionStatus: "clear",
           resumeCheckpoint: undefined,
@@ -112,6 +122,11 @@ describe("LoopHitlResumeAdapter recovery", () => {
     const fixture = await createBlockedFixture();
     await fixture.jobQueue.update(fixture.job.jobId, {
       status: "running",
+      startedAt: 1_000,
+      endedAt: undefined,
+      leaseExpiresAt: 2_000,
+      leaseOwnerId: "terminal-validation-test",
+      leaseToken: "terminal-validation-lease",
       blockedByHitlIds: undefined,
       attentionStatus: "clear",
       resumeCheckpoint: undefined,
@@ -180,7 +195,8 @@ async function createBlockedFixture(options: { readonly recordStateBlocker?: boo
     title: null,
     schedule: { kind: "manual" },
     approvalPolicy: "explicit_per_run",
-    limits: { maxIterationsPerRun: 3 },
+    limits: { maxIterationsPerRun: 3, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+    useWorktree: false,
   });
   const jobQueue = new LoopJobQueue({ workspaceRoot, clock: { now: () => now } });
   const enqueued = await jobQueue.enqueue({
@@ -201,6 +217,7 @@ async function createBlockedFixture(options: { readonly recordStateBlocker?: boo
   };
   const job = await jobQueue.update(enqueued.job.jobId, {
     status: "needs_user",
+    endedAt: now,
     blockedReason: "needs_user",
     blockedByHitlIds: [hitlId],
     attentionStatus: "waiting_for_human",

@@ -39,7 +39,7 @@ export interface QueryLoopOptions {
   resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
   abortSessionExecutionAndWait?: (workspaceRoot: string, sessionId: string) => Promise<void>;
   acquireSessionCwdTransition?: (workspaceRoot: string, sessionId: string) => () => void;
-  agentName?: string;
+  agentName: string;
   currentDepth?: number;
   hooks?: QueryLoopHooks;
 }

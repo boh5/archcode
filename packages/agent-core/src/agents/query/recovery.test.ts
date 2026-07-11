@@ -51,7 +51,7 @@ const testSkillService = new SkillService({ builtinSkills: {} });
 const inputSchema = z.object({ message: z.string().optional() }).strict();
 
 function createStore() {
-  return createSessionStore(crypto.randomUUID());
+  return createSessionStore(crypto.randomUUID(), import.meta.dir);
 }
 
 function wrappedMessage(ref: string, text: string): string {
@@ -71,6 +71,7 @@ function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOption
     storeManager,
     projectContext: createTestProjectContext(workspaceRoot),
     cwd: workspaceRoot,
+    agentName: "orchestrator",
     ...overrides,
   };
 }

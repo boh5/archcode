@@ -1,16 +1,20 @@
 import { Hono } from "hono";
 import type { AgentRuntime } from "@archcode/agent-core";
 import { ProjectRegistryError } from "@archcode/agent-core";
+import { z } from "zod/v4";
 import { BadRequestError, ProjectNotFoundError } from "../errors";
 
-interface CreateProjectBody {
-  workspaceRoot?: unknown;
-  name?: unknown;
-}
+const CreateProjectBodySchema = z.strictObject({
+  workspaceRoot: z.string({ error: "workspaceRoot is required" }).min(1, "workspaceRoot is required"),
+  name: z.string({ error: "name must be a string" }).optional(),
+});
 
-interface UpdateProjectBody {
-  name?: unknown;
-}
+const UpdateProjectBodySchema = z.strictObject({
+  name: z.string({ error: "name is required" })
+    .trim()
+    .min(1, "name must not be empty")
+    .max(80, "name must be 80 characters or fewer"),
+});
 
 export function createProjectsRoutes(runtime: AgentRuntime): Hono {
   const app = new Hono();
@@ -21,15 +25,8 @@ export function createProjectsRoutes(runtime: AgentRuntime): Hono {
   });
 
   app.post("/", async (c) => {
-    const body = await readCreateProjectBody(c.req.json());
+    const body = await readJsonBody(c.req.json(), CreateProjectBodySchema);
     const { workspaceRoot, name } = body;
-
-    if (typeof workspaceRoot !== "string" || workspaceRoot.length === 0) {
-      throw new BadRequestError("workspaceRoot is required");
-    }
-    if (name !== undefined && typeof name !== "string") {
-      throw new BadRequestError("name must be a string");
-    }
 
     try {
       const project = await runtime.projectRegistry.add({ workspaceRoot, name });
@@ -49,19 +46,7 @@ export function createProjectsRoutes(runtime: AgentRuntime): Hono {
 
   app.patch("/:slug", async (c) => {
     const slug = c.req.param("slug");
-    const body = await readUpdateProjectBody(c.req.json());
-
-    if (typeof body.name !== "string") {
-      throw new BadRequestError("name is required");
-    }
-
-    const name = body.name.trim();
-    if (name.length === 0) {
-      throw new BadRequestError("name must not be empty");
-    }
-    if (name.length > 80) {
-      throw new BadRequestError("name must be 80 characters or fewer");
-    }
+    const { name } = await readJsonBody(c.req.json(), UpdateProjectBodySchema);
 
     try {
       const project = await runtime.projectRegistry.updateName(slug, name);
@@ -90,30 +75,20 @@ export function createProjectsRoutes(runtime: AgentRuntime): Hono {
   return app;
 }
 
-async function readCreateProjectBody(bodyPromise: Promise<unknown>): Promise<CreateProjectBody> {
+async function readJsonBody<Schema extends z.ZodType>(
+  bodyPromise: Promise<unknown>,
+  schema: Schema,
+): Promise<z.infer<Schema>> {
+  let body: unknown;
   try {
-    const body = await bodyPromise;
-    if (!body || typeof body !== "object" || Array.isArray(body)) {
-      throw new BadRequestError("Request body must be an object");
-    }
-
-    return body;
-  } catch (error) {
-    if (error instanceof BadRequestError) throw error;
+    body = await bodyPromise;
+  } catch {
     throw new BadRequestError("Request body must be valid JSON");
   }
-}
 
-async function readUpdateProjectBody(bodyPromise: Promise<unknown>): Promise<UpdateProjectBody> {
-  try {
-    const body = await bodyPromise;
-    if (!body || typeof body !== "object" || Array.isArray(body)) {
-      throw new BadRequestError("Request body must be an object");
-    }
-
-    return body;
-  } catch (error) {
-    if (error instanceof BadRequestError) throw error;
-    throw new BadRequestError("Request body must be valid JSON");
+  const result = schema.safeParse(body);
+  if (!result.success) {
+    throw new BadRequestError(result.error.issues[0]?.message ?? "Request body is invalid");
   }
+  return result.data;
 }

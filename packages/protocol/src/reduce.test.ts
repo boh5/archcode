@@ -21,6 +21,7 @@ import type {
 function createProjection(overrides: Partial<SessionProjection> = {}): SessionProjection {
   return {
     sessionId: "session-test",
+    cwd: "/workspace",
     rootSessionId: "session-test",
     title: null,
     messages: [],
@@ -1226,15 +1227,18 @@ describe("reduceStreamEvent", () => {
 describe("Goal stream event reducers", () => {
   function makeGoalState(overrides: Partial<GoalState> = {}): GoalState {
     return {
+      version: 1,
       id: "goal-1",
       projectId: "p",
       title: "Implement feature",
       objective: "Implement the requested feature.",
       acceptanceCriteria: "The feature behaves as requested and is reviewed.",
+      useWorktree: false,
       status: "draft",
       attempt: 1,
       pendingHitlIds: [],
       approvalRefs: [],
+      appliedHitlIds: [],
       childSessionIds: [],
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
@@ -1434,7 +1438,12 @@ describe("HITL stream event reducers", () => {
       hitlId: "hitl-1",
       status: "resume_claimed",
       response: { type: "question_answer", answers: ["Yes"] },
-      resume: { claimId: "claim-1", intent: "respond" },
+      resume: {
+        claimId: "claim-1",
+        claimedAt: "2026-06-01T00:01:00.000Z",
+        intent: "respond",
+        attempt: 1,
+      },
     });
 
     const result = reduceStreamEvent(state, {
@@ -1448,7 +1457,17 @@ describe("HITL stream event reducers", () => {
 
   test("hitl.updated appends unknown HITL records", () => {
     const state = createProjection();
-    const updated = makeHitlRequest({ hitlId: "hitl-new", status: "resume_claimed" });
+    const updated = makeHitlRequest({
+      hitlId: "hitl-new",
+      status: "resume_claimed",
+      response: { type: "question_answer", answers: ["Yes"] },
+      resume: {
+        claimId: "claim-new",
+        claimedAt: "2026-06-01T00:01:00.000Z",
+        intent: "respond",
+        attempt: 1,
+      },
+    });
 
     const result = reduceStreamEvent(state, {
       type: "hitl.updated",
@@ -1531,7 +1550,20 @@ describe("HITL stream event reducers", () => {
     const request = makeHitlRequest();
     const events: StreamEvent[] = [
       { type: "hitl.request", request },
-      { type: "hitl.updated", record: { ...request, status: "resume_claimed" } },
+      {
+        type: "hitl.updated",
+        record: {
+          ...request,
+          status: "resume_claimed",
+          response: { type: "question_answer", answers: ["Yes"] },
+          resume: {
+            claimId: "claim-1",
+            claimedAt: "2026-06-01T00:01:00.000Z",
+            intent: "respond",
+            attempt: 1,
+          },
+        },
+      },
       {
         type: "hitl.resolved",
         hitlId: "hitl-1",
@@ -1557,7 +1589,8 @@ describe("Loop stream event reducers", () => {
         title: "Test Loop",
         schedule: { kind: "manual" },
         approvalPolicy: "interactive",
-        limits: { maxIterationsPerRun: 10 },
+        limits: { maxIterationsPerRun: 10, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+        useWorktree: false,
       },
       status: "active",
       createdAt: 1000,

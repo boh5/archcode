@@ -14,7 +14,7 @@ import {
   Bell,
 } from "lucide-react";
 import { useRespondHitl, useCancelHitl } from "../../api/mutations";
-import { isVisiblePendingHitlStatus } from "../../store/hitl-store";
+import { hitlIdentityKey, isVisiblePendingHitlStatus } from "../../store/hitl-store";
 import type {
   HitlDisplayPayload,
   HitlOwnerKey,
@@ -146,6 +146,7 @@ export function HitlCard({ projection }: HitlCardProps) {
   const projectSlug = projection.project.slug;
   const projectName = projection.project.name ?? projectSlug;
   const owner = projection.owner;
+  const identity = useMemo(() => ({ owner, hitlId: projection.hitlId }), [owner, projection.hitlId]);
   const ancestry = projection.ancestry;
   const ancestryText = ancestryLabel(ancestry);
 
@@ -159,44 +160,44 @@ export function HitlCard({ projection }: HitlCardProps) {
   const handleApprove = useCallback(() => {
     if (respondPending) return;
     if (sourceType === "goal_review") {
-      respond.mutate({ projectSlug, hitlId: projection.hitlId, body: { outcome: "DONE", comment: comment || undefined } });
+      respond.mutate({ identity, body: { type: "review_outcome", outcome: "DONE", comment: comment || undefined } });
     } else if (sourceType === "tool_permission") {
-      respond.mutate({ projectSlug, hitlId: projection.hitlId, body: { decision: "approve_once", comment: comment || undefined } });
+      respond.mutate({ identity, body: { type: "permission_decision", decision: "approve_once", comment: comment || undefined } });
     } else {
-      respond.mutate({ projectSlug, hitlId: projection.hitlId, body: { decision: "approved", comment: comment || undefined } });
+      respond.mutate({ identity, body: { type: "approval_decision", decision: "approved", comment: comment || undefined } });
     }
-  }, [respond, respondPending, sourceType, projectSlug, projection.hitlId, comment]);
+  }, [respond, respondPending, sourceType, identity, comment]);
 
   const handleApproveAlways = useCallback(() => {
     if (respondPending) return;
-    respond.mutate({ projectSlug, hitlId: projection.hitlId, body: { decision: "approve_always", comment: comment || undefined } });
-  }, [respond, respondPending, projectSlug, projection.hitlId, comment]);
+    respond.mutate({ identity, body: { type: "permission_decision", decision: "approve_always", comment: comment || undefined } });
+  }, [respond, respondPending, identity, comment]);
 
   const handleDeny = useCallback(() => {
     if (respondPending) return;
     if (sourceType === "goal_review") {
-      respond.mutate({ projectSlug, hitlId: projection.hitlId, body: { outcome: "NOT_DONE", comment: comment || undefined } });
+      respond.mutate({ identity, body: { type: "review_outcome", outcome: "NOT_DONE", comment: comment || undefined } });
     } else if (sourceType === "tool_permission") {
-      respond.mutate({ projectSlug, hitlId: projection.hitlId, body: { decision: "deny", comment: comment || undefined } });
+      respond.mutate({ identity, body: { type: "permission_decision", decision: "deny", comment: comment || undefined } });
     } else {
-      respond.mutate({ projectSlug, hitlId: projection.hitlId, body: { decision: "denied", comment: comment || undefined } });
+      respond.mutate({ identity, body: { type: "approval_decision", decision: "denied", comment: comment || undefined } });
     }
-  }, [respond, respondPending, sourceType, projectSlug, projection.hitlId, comment]);
+  }, [respond, respondPending, sourceType, identity, comment]);
 
   const handleAnswer = useCallback(() => {
     if (respondPending || !allAnswered) return;
-    respond.mutate({ projectSlug, hitlId: projection.hitlId, body: { answers: resolvedAnswers, comment: comment || undefined } });
-  }, [respond, respondPending, allAnswered, resolvedAnswers, projectSlug, projection.hitlId, comment]);
+    respond.mutate({ identity, body: { type: "question_answer", answers: resolvedAnswers, comment: comment || undefined } });
+  }, [respond, respondPending, allAnswered, resolvedAnswers, identity, comment]);
 
   const handleRetryResume = useCallback(() => {
     if (respondPending) return;
-    respond.mutate({ projectSlug, hitlId: projection.hitlId, body: { decision: "approved", comment: comment || undefined } });
-  }, [respond, respondPending, projectSlug, projection.hitlId, comment]);
+    respond.mutate({ identity, body: { type: "approval_decision", decision: "approved", comment: comment || undefined } });
+  }, [respond, respondPending, identity, comment]);
 
   const handleCancel = useCallback(() => {
     if (cancelPending) return;
-    cancel.mutate({ projectSlug, hitlId: projection.hitlId });
-  }, [cancel, cancelPending, projectSlug, projection.hitlId]);
+    cancel.mutate({ identity });
+  }, [cancel, cancelPending, identity]);
 
   const toggleOption = useCallback((qIndex: number, label: string, multiple?: boolean) => {
     setAnswers((prev) => {
@@ -489,8 +490,9 @@ export function HitlInbox({
     const result: HitlProjection[] = [];
     for (const p of projections) {
       if (!isVisiblePendingHitlStatus(p.status)) continue;
-      if (!seen.has(p.hitlId)) {
-        seen.add(p.hitlId);
+      const key = hitlIdentityKey(p);
+      if (!seen.has(key)) {
+        seen.add(key);
         result.push(p);
       }
     }
@@ -523,7 +525,7 @@ export function HitlInbox({
       ) : (
         <div className="flex flex-col gap-2">
           {deduped.map((projection) => (
-            <HitlCard key={projection.hitlId} projection={projection} />
+            <HitlCard key={hitlIdentityKey(projection)} projection={projection} />
           ))}
         </div>
       )}

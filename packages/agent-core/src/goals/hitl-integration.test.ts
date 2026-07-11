@@ -10,7 +10,7 @@ import { silentLogger } from "../logger";
 import { LoopStateManager } from "../loops/state";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { GoalHitlResumeAdapter } from "./hitl-resume-adapter";
-import { GoalStateManager } from "./state";
+import { GoalStateError, GoalStateManager } from "./state";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-hitl-integration");
 
@@ -42,20 +42,19 @@ function createHitlService(): HitlService {
   });
 }
 
-function createCoordinator(hitlService: HitlService): ResumeCoordinator {
-  return new ResumeCoordinator({
-    hitl: hitlService,
-    adapters: {
-      goal: new GoalHitlResumeAdapter({
-        workspaceRoot,
-        goalStateManager: manager,
-        hitlService,
-        goalCancellation: {
-          cancel: (goalId, request) => manager.cancel(goalId, request.reason),
-        },
-      }),
+function createAdapter(hitlService: HitlService): GoalHitlResumeAdapter {
+  return new GoalHitlResumeAdapter({
+    workspaceRoot,
+    goalStateManager: manager,
+    hitlService,
+    goalCancellation: {
+      cancel: (goalId, request) => manager.cancel(goalId, request.reason, request.hitlId),
     },
   });
+}
+
+function createCoordinator(hitlService: HitlService): ResumeCoordinator {
+  return new ResumeCoordinator({ hitl: hitlService, adapters: { goal: createAdapter(hitlService) } });
 }
 
 async function createGoal(status: Extract<GoalState["status"], "running" | "reviewing"> = "running"): Promise<GoalState> {
@@ -74,22 +73,24 @@ async function blockGoal(hitlService: HitlService, goal: GoalState, resumeStatus
     owner: { projectSlug: goal.projectId, ownerType: "goal", ownerId: goal.id },
     blockingKey: `goal:${goal.id}:${resumeStatus}:${crypto.randomUUID()}`,
     source: sourceType === "goal_approval"
-      ? { type: "goal_approval", goalId: goal.id, approvalPoint: resumeStatus }
-      : { type: "goal_budget", goalId: goal.id, approvalPoint: "approval_budget_1" },
+      ? { type: "goal_approval", goalId: goal.id, approvalPoint: resumeStatus, resumeStatus }
+      : { type: "goal_budget", goalId: goal.id, approvalPoint: "approval_budget_1", resumeStatus },
     displayPayload: {
       title: "Approve Goal continuation",
       summary: "Goal is blocked for HITL.",
       redacted: true,
     },
   });
-  await manager.block(goal.id, {
-    kind: sourceType === "goal_budget" ? "budget" : "approval",
-    summary: "Goal is blocked for HITL.",
-    hitlId: record.hitlId,
-    source: record.source.type,
-    resumeStatus,
+  await manager.attachHitlBlocker(goal.id, {
+    blocker: {
+      kind: sourceType === "goal_budget" ? "budget" : "approval",
+      summary: "Goal is blocked for HITL.",
+      hitlId: record.hitlId,
+      source: record.source.type,
+      resumeStatus,
+    },
+    approvalRef: record.hitlId,
   });
-  await manager.recordHitlRef(goal.id, { hitlId: record.hitlId, approvalRef: record.hitlId });
   return record;
 }
 
@@ -109,13 +110,55 @@ describe("Goal HITL resume integration", () => {
     const goal = await createGoal("running");
     const record = await blockGoal(hitlService, goal, "running");
 
-    const result = await coordinator.respond(record.hitlId, { type: "approval_decision", decision: "approved", comment: "continue" });
+    const result = await coordinator.respond(
+      { owner: record.owner, hitlId: record.hitlId },
+      { type: "approval_decision", decision: "approved", comment: "continue" },
+    );
 
     expect(result.scheduled).toBe(true);
     const resumed = await waitForGoal(goal.id, (state) => state.status === "running" && state.pendingHitlIds.length === 0);
     expect(resumed.blocker).toBeUndefined();
     expect(resumed.approvalRefs).toEqual([record.hitlId]);
+    expect(resumed.appliedHitlIds).toEqual([record.hitlId]);
     expect(await Bun.file(join(workspaceRoot, ".archcode", "goals", goal.id, "approvals.md")).exists()).toBe(false);
+  });
+
+  test("recovers an owner-created-before-attach record from its persisted resume intent", async () => {
+    const hitlService = createHitlService();
+    const coordinator = createCoordinator(hitlService);
+    const goal = await createGoal("running");
+    const record = await hitlService.create({
+      owner: { projectSlug: goal.projectId, ownerType: "goal", ownerId: goal.id },
+      blockingKey: `goal:${goal.id}:approval:after_plan`,
+      source: {
+        type: "goal_approval",
+        goalId: goal.id,
+        approvalPoint: "after_plan",
+        resumeStatus: "reviewing",
+      },
+      displayPayload: {
+        title: "Approve Goal continuation",
+        summary: "Owner write committed before Goal attachment.",
+        redacted: true,
+      },
+    });
+
+    const result = await coordinator.respond({ owner: record.owner, hitlId: record.hitlId }, {
+      type: "approval_decision",
+      decision: "approved",
+      comment: "recover attachment",
+    });
+
+    expect(result.scheduled).toBe(true);
+    const recovered = await waitForGoal(goal.id, (state) => (
+      state.appliedHitlIds.includes(record.hitlId)
+    ));
+    expect(recovered).toMatchObject({
+      status: "reviewing",
+      pendingHitlIds: [],
+      approvalRefs: [record.hitlId],
+    });
+    expect(recovered.blocker).toBeUndefined();
   });
 
   test("approved HITL resumes to reviewing through blocker.resumeStatus", async () => {
@@ -124,10 +167,89 @@ describe("Goal HITL resume integration", () => {
     const goal = await createGoal("reviewing");
     const record = await blockGoal(hitlService, goal, "reviewing");
 
-    await coordinator.respond(record.hitlId, { type: "approval_decision", decision: "approved" });
+    await coordinator.respond(
+      { owner: record.owner, hitlId: record.hitlId },
+      { type: "approval_decision", decision: "approved" },
+    );
 
     const resumed = await waitForGoal(goal.id, (state) => state.status === "reviewing" && state.blocker === undefined);
     expect(resumed.pendingHitlIds).toEqual([]);
+  });
+
+  test("uses the applied marker as idempotent proof while owner terminalization is pending", async () => {
+    const hitlService = createHitlService();
+    const adapter = createAdapter(hitlService);
+    const goal = await createGoal("running");
+    const record = await blockGoal(hitlService, goal, "running");
+
+    await adapter.resume(record, { type: "approval_decision", decision: "approved" });
+    await adapter.resume(record, { type: "approval_decision", decision: "denied", comment: "must not reapply" });
+
+    const resumed = await manager.read(goal.id);
+    expect(resumed).toMatchObject({
+      status: "running",
+      pendingHitlIds: [],
+      approvalRefs: [record.hitlId],
+      appliedHitlIds: [record.hitlId],
+    });
+    expect(resumed.lastFailureSummary).toBeUndefined();
+  });
+
+  test("atomically finalizes a review and records its applied marker", async () => {
+    const hitlService = createHitlService();
+    const adapter = createAdapter(hitlService);
+    const goal = await createGoal("reviewing");
+    const record = await hitlService.create({
+      owner: { projectSlug: goal.projectId, ownerType: "goal", ownerId: goal.id },
+      blockingKey: `goal:${goal.id}:review`,
+      source: { type: "goal_review", goalId: goal.id, resumeStatus: "reviewing" },
+      displayPayload: { title: "Review Goal outcome", redacted: true },
+    });
+    await manager.attachHitlBlocker(goal.id, {
+      blocker: {
+        kind: "approval",
+        summary: "Review Goal outcome",
+        hitlId: record.hitlId,
+        source: "goal_review",
+        resumeStatus: "reviewing",
+      },
+      approvalRef: record.hitlId,
+    });
+
+    await adapter.resume(record, { type: "review_outcome", outcome: "DONE", comment: "criteria satisfied" });
+
+    const completed = await manager.read(goal.id);
+    expect(completed).toMatchObject({
+      status: "done",
+      pendingHitlIds: [],
+      appliedHitlIds: [record.hitlId],
+      review: { verdict: "DONE", summary: "criteria satisfied" },
+    });
+    expect(completed.blocker).toBeUndefined();
+  });
+
+  test("rejects an attached owner that is neither pending nor durably applied", async () => {
+    const hitlService = createHitlService();
+    const adapter = createAdapter(hitlService);
+    const goal = await createGoal("running");
+    const record = await hitlService.create({
+      owner: { projectSlug: goal.projectId, ownerType: "goal", ownerId: goal.id },
+      blockingKey: `goal:${goal.id}:approval:invalid-gap`,
+      source: { type: "goal_approval", goalId: goal.id, approvalPoint: "invalid-gap", resumeStatus: "running" },
+      displayPayload: { title: "Invalid attachment gap", redacted: true },
+    });
+    const goalPath = join(workspaceRoot, ".archcode", "goals", goal.id, "goal.json");
+    await Bun.write(goalPath, `${JSON.stringify({
+      ...goal,
+      approvalRefs: [record.hitlId],
+      updatedAt: new Date().toISOString(),
+    }, null, 2)}\n`);
+
+    await expect(adapter.resume(record, {
+      type: "approval_decision",
+      decision: "approved",
+    })).rejects.toBeInstanceOf(GoalStateError);
+    expect((await manager.read(goal.id)).appliedHitlIds).toEqual([]);
   });
 
   test("denied approval deterministically moves blocked Goal to failed", async () => {
@@ -136,10 +258,14 @@ describe("Goal HITL resume integration", () => {
     const goal = await createGoal("running");
     const record = await blockGoal(hitlService, goal, "running");
 
-    await coordinator.respond(record.hitlId, { type: "approval_decision", decision: "denied", comment: "missing release notes" });
+    await coordinator.respond(
+      { owner: record.owner, hitlId: record.hitlId },
+      { type: "approval_decision", decision: "denied", comment: "missing release notes" },
+    );
 
     const failed = await waitForGoal(goal.id, (state) => state.status === "failed");
     expect(failed.lastError?.message).toBe("missing release notes");
+    expect(failed.appliedHitlIds).toEqual([record.hitlId]);
   });
 
   test("cancelled approval deterministically moves blocked Goal to cancelled", async () => {
@@ -148,10 +274,11 @@ describe("Goal HITL resume integration", () => {
     const goal = await createGoal("running");
     const record = await blockGoal(hitlService, goal, "running", "goal_budget");
 
-    await coordinator.cancel(record.hitlId, "User cancelled approval");
+    await coordinator.cancel({ owner: record.owner, hitlId: record.hitlId }, "User cancelled approval");
 
     const cancelled = await waitForGoal(goal.id, (state) => state.status === "cancelled");
     expect(cancelled.cancelledAt).toBeDefined();
+    expect(cancelled.appliedHitlIds).toEqual([record.hitlId]);
     expect(await hitlService.list({ scope: "goal", ownerId: goal.id })).toEqual([]);
   });
 });

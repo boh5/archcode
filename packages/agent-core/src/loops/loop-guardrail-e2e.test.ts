@@ -25,7 +25,7 @@ import { LoopKillStateManager } from "./kill-state";
 import { LoopBudgetLedger } from "./budget-ledger";
 import { LoopScheduler } from "./scheduler";
 import { LoopBudgetConfigSchema, LoopStateManager, type LoopConfig } from "./state";
-import { FakeClock } from "./test-utils";
+import { createLoopSchedulerRequiredDependencies, FakeClock } from "./test-utils";
 import { expandLoopTemplate, PR_BABYSITTER_EXTRA_TOOLS } from "./templates";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "loop-guardrail-e2e");
@@ -56,11 +56,14 @@ describe("Loop end-to-end guardrail flows", () => {
     const executedReadTools: string[] = [];
     const confirmPermission = mock(async () => "approve_once" as const);
     const scheduler = new LoopScheduler({
+      ...createLoopSchedulerRequiredDependencies({ workspaceRoot: TMP_DIR, stateManager, clock }),
       stateManager,
       clock,
       jobQueue,
       coordinator: new LoopJobCoordinator({ queue: jobQueue, clock }),
       killStateManager: new LoopKillStateManager(TMP_DIR, { clock }),
+      cleanupJob: async () => undefined,
+      readSessionAttempt: async () => ({}),
       runner: async ({ loop, runId }) => {
         expect(loop.config.templateId).toBe("pr_babysitter");
         expect(allowedTools).toContain(TOOL_GITHUB_GET_PULL_REQUEST);
@@ -158,14 +161,17 @@ describe("Loop end-to-end guardrail flows", () => {
       priority: 10,
       createdAt: clock.now(),
     });
-    const runner = mock(async () => ({ summary: "should not run" }));
+    const runner = mock(async () => ({ status: "succeeded" as const, summary: "should not run" }));
     const scheduler = new LoopScheduler({
+      ...createLoopSchedulerRequiredDependencies({ workspaceRoot: TMP_DIR, stateManager, clock }),
       stateManager,
       clock,
       jobQueue,
       coordinator: new LoopJobCoordinator({ queue: jobQueue, clock }),
       collisionLedger,
       killStateManager: new LoopKillStateManager(TMP_DIR, { clock }),
+      cleanupJob: async () => undefined,
+      readSessionAttempt: async () => ({}),
       runner,
     });
 
@@ -190,14 +196,17 @@ describe("Loop end-to-end guardrail flows", () => {
     const jobQueue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock });
     const killStateManager = new LoopKillStateManager(TMP_DIR, { clock });
     const loop = await stateManager.create("project-a", prBabysitterConfig());
-    const runner = mock(async () => ({ summary: "manual run accepted after clear" }));
+    const runner = mock(async () => ({ status: "succeeded" as const, summary: "manual run accepted after clear" }));
     const scheduler = new LoopScheduler({
+      ...createLoopSchedulerRequiredDependencies({ workspaceRoot: TMP_DIR, stateManager, clock }),
       stateManager,
       clock,
       jobQueue,
       coordinator: new LoopJobCoordinator({ queue: jobQueue, clock }),
       killStateManager,
       budgetLedger: new LoopBudgetLedger({ stateManager, workspaceRoot: TMP_DIR, clock }),
+      cleanupJob: async () => undefined,
+      readSessionAttempt: async () => ({}),
       runner,
     });
 
@@ -222,7 +231,7 @@ function prBabysitterConfig(): LoopConfig {
     softThresholdRatio: 0.8,
     hardThresholdRatio: 1,
   });
-  return { ...preset, limits: budget, budget };
+  return { ...preset, limits: budget };
 }
 
 function toolContext(
@@ -233,7 +242,7 @@ function toolContext(
   overrides: Partial<ToolExecutionContext> = {},
 ): ToolExecutionContext {
   return createToolExecutionContext({
-    store: createSessionStore("loop-guardrail-session-1"),
+    store: createSessionStore("loop-guardrail-session-1", TMP_DIR),
     storeManager,
     toolName,
     toolCallId: `${toolName}-call`,

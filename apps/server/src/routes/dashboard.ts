@@ -195,8 +195,5 @@ function withProjectError(project: ProjectInfo, error: unknown): DashboardProjec
 }
 
 async function listProjects(runtime: AgentRuntime): Promise<ProjectInfo[]> {
-  const registry = runtime.projectRegistry as AgentRuntime["projectRegistry"] & {
-    listProjects?: () => Promise<ProjectInfo[]>;
-  };
-  return await (registry.listProjects?.() ?? registry.list());
+  return await runtime.projectRegistry.list();
 }

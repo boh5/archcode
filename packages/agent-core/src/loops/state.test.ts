@@ -14,10 +14,12 @@ import {
   LoopRunLogError,
   LoopRunReportSchema,
   LoopScheduleSpecSchema,
+  LoopStateError,
   LoopStateManager,
   LoopStateSchema,
   type LoopConfig,
   type LoopRunReport,
+  type LoopState,
 } from "./state";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "loop-state");
@@ -28,7 +30,8 @@ const manualConfig: LoopConfig = {
   title: null,
   schedule: { kind: "manual" },
   approvalPolicy: "interactive",
-  limits: { maxIterationsPerRun: 8 },
+  limits: { maxIterationsPerRun: 8, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+  useWorktree: false,
   taskPrompt: "Summarize open tasks",
 };
 
@@ -88,37 +91,85 @@ describe("Loop schemas", () => {
     expect(() => LoopConfigSchema.parse({ ...manualConfig, allowedTools: ["github_get_pull_request"] })).toThrow();
   });
 
+  test("requires complete worktree metadata on persisted run reports", () => {
+    const base = report(VALID_LOOP_ID, "worktree-run", 1_000);
+    expect(LoopRunReportSchema.safeParse({
+      ...base,
+      worktreePath: "/tmp/worktree",
+      baseSha: "a".repeat(40),
+      resolvedHeadSha: "b".repeat(40),
+    }).success).toBe(false);
+    expect(LoopRunReportSchema.safeParse({
+      ...base,
+      worktreePath: "/tmp/worktree",
+      worktreeBranchName: "archcode/loop/test/run",
+      baseSha: "a".repeat(40),
+      resolvedHeadSha: "b".repeat(40),
+    }).success).toBe(true);
+  });
+
+  test("enforces run-report status and pre-worktree checkpoint invariants", () => {
+    const running = {
+      ...report(VALID_LOOP_ID, "running-run", 1_000, "running"),
+      endedAt: undefined,
+    };
+    const checkpoint = {
+      version: 1 as const,
+      hitlId: "hitl-1",
+      loopId: VALID_LOOP_ID,
+      runId: "blocked-run",
+      trigger: "manual" as const,
+      intendedContinuation: "resume_run" as const,
+    };
+    const needsUser = {
+      ...report(VALID_LOOP_ID, "blocked-run", 2_000, "needs_user"),
+      blockedReason: "needs_user",
+      blockedByHitlIds: ["hitl-1"],
+      attentionStatus: "waiting_for_human" as const,
+      resumeCheckpoint: checkpoint,
+    };
+
+    expect(LoopRunReportSchema.safeParse(running).success).toBe(true);
+    expect(LoopRunReportSchema.safeParse({ ...running, endedAt: 1_100 }).success).toBe(false);
+    expect(LoopRunReportSchema.safeParse({ ...report(VALID_LOOP_ID, "finished-run", 1_000), endedAt: undefined }).success).toBe(false);
+    expect(LoopRunReportSchema.safeParse(needsUser).success).toBe(true);
+    expect(LoopRunReportSchema.safeParse({ ...needsUser, resumeCheckpoint: undefined }).success).toBe(false);
+    expect(LoopRunReportSchema.safeParse({ ...report(VALID_LOOP_ID, "pre-worktree", 3_000), baseSha: "a".repeat(40) }).success).toBe(true);
+    expect(LoopRunReportSchema.safeParse({ ...report(VALID_LOOP_ID, "legacy-head", 3_000), resolvedHeadSha: "b".repeat(40) }).success).toBe(false);
+    expect(LoopRunReportSchema.safeParse({ ...report(VALID_LOOP_ID, "legacy-trigger", 3_000), triggerKind: "manual" }).success).toBe(false);
+  });
+
   test("accepts 5-field cron schedules and rejects seconds-field cron expressions", () => {
     expect(LoopScheduleSpecSchema.parse({ kind: "cron", expression: "*/15 * * * *" })).toEqual({
       kind: "cron",
       expression: "*/15 * * * *",
     });
     expect(() => LoopScheduleSpecSchema.parse({ kind: "cron", expression: "*/15 * * * * *" })).toThrow();
+    expect(() => LoopScheduleSpecSchema.parse({ kind: "cron", expression: "0 0 31 2 *" })).toThrow();
   });
 
-  test("accepts event triggers with default cadence and rejects too-fast polling", () => {
+  test("requires persisted trigger cadence and rejects too-fast polling", () => {
     const parsed = LoopConfigSchema.parse({
       ...manualConfig,
       schedule: { kind: "manual" },
       triggers: [{ kind: "on_pr", cadenceMs: 60_000, baseBranch: "main" }],
     });
-    const defaultCadence = LoopConfigSchema.parse({
+    expect(parsed.triggers).toEqual([{ kind: "on_pr", cadenceMs: 60_000, baseBranch: "main" }]);
+    expect(() => LoopConfigSchema.parse({
       ...manualConfig,
       triggers: [{ kind: "on_commit", branch: "main" }],
-    });
-
-    expect(parsed.triggers).toEqual([{ kind: "on_pr", cadenceMs: 60_000, baseBranch: "main" }]);
-    expect(defaultCadence.triggers).toEqual([{ kind: "on_commit", branch: "main", cadenceMs: 60_000 }]);
+    })).toThrow();
     expect(() => LoopConfigSchema.parse({ ...manualConfig, triggers: [{ kind: "on_pr", cadenceMs: 29_000 }] })).toThrow();
   });
 
-  test("defaults coordinator max concurrency to two", () => {
-    expect(LoopCoordinatorConfigSchema.parse({})).toEqual({ maxConcurrent: 2 });
+  test("requires an explicit coordinator max concurrency", () => {
+    expect(() => LoopCoordinatorConfigSchema.parse({})).toThrow();
     expect(LoopCoordinatorConfigSchema.parse({ maxConcurrent: 4 })).toEqual({ maxConcurrent: 4 });
   });
 
-  test("normalizes legacy loop limits to budget threshold defaults", () => {
-    const parsedBudget = LoopBudgetConfigSchema.parse({ maxIterationsPerRun: 8 });
+  test("requires persisted budget thresholds instead of backfilling legacy limits", () => {
+    expect(() => LoopBudgetConfigSchema.parse({ maxIterationsPerRun: 8 })).toThrow();
+    const parsedBudget = LoopBudgetConfigSchema.parse(manualConfig.limits);
     const parsedConfig = LoopConfigSchema.parse(manualConfig);
 
     expect(parsedBudget).toEqual({
@@ -129,7 +180,7 @@ describe("Loop schemas", () => {
     expect(parsedConfig.limits).toEqual(parsedBudget);
   });
 
-  test("parses template-oriented loop state with minimal limits and no readiness score", () => {
+  test("parses template-oriented loop state with explicit limits and no readiness score", () => {
     const now = Date.now();
     const state = LoopStateSchema.parse({
       loopId: VALID_LOOP_ID,
@@ -203,8 +254,17 @@ describe("Loop schemas", () => {
       startedAt: 1_000,
       endedAt: 2_000,
       reason: "hard_budget_exceeded",
+      blockedReason: "needs_user",
       blockedByHitlIds: ["hitl-1"],
       attentionStatus: "waiting_for_human",
+      resumeCheckpoint: {
+        version: 1,
+        hitlId: "hitl-1",
+        loopId: VALID_LOOP_ID,
+        runId: "run-1",
+        trigger: "manual",
+        intendedContinuation: "resume_run",
+      },
       budgetUsage: {
         iterations: 8,
         inputTokens: 10,
@@ -236,7 +296,7 @@ describe("Loop schemas", () => {
     const state = LoopStateSchema.parse({
       loopId: VALID_LOOP_ID,
       projectId: "project-a",
-      config: { ...manualConfig, budget, collisionTargets: [collisionTarget] },
+      config: { ...manualConfig, limits: budget, collisionTargets: [collisionTarget] },
       status: "active",
       createdAt: 1_000,
       updatedAt: 2_000,
@@ -261,13 +321,14 @@ describe("Loop schemas", () => {
       loopId: VALID_LOOP_ID,
       status: "skipped",
       trigger: "on_pr",
-      triggerKind: "on_pr",
       startedAt: 1_000,
+      endedAt: 2_000,
       jobId: "job-1",
       subjectKey: "pr:arch/code#42",
       dedupeKey: "loop:on_pr:pr:arch/code#42",
       branchKey: "arch/code:feature",
       worktreePath: "/tmp/worktree",
+      worktreeBranchName: "archcode/loop/test/job-1",
       baseSha: "base-sha",
       resolvedHeadSha: "head-sha",
       missedCount: 1,
@@ -282,7 +343,7 @@ describe("Loop schemas", () => {
         ...manualConfig,
         schedule: { kind: "cron", expression: "*/15 * * * *" },
         triggers: [{ kind: "on_ci_fail", cadenceMs: 60_000, baseBranch: "main", workflowName: "ci" }],
-        cleanupPolicy: { deleteUnchangedWorktrees: true, preserveChangedArtifacts: true },
+        cleanupPolicy: { enabled: true, deleteUnchangedWorktrees: true, preserveChangedArtifacts: true },
       },
       status: "active",
       createdAt: 1_000,
@@ -355,7 +416,7 @@ describe("LoopStateManager", () => {
     const created = await manager.create("project-a", manualConfig);
 
     const updated = await manager.update(created.loopId, {
-      config: { ...manualConfig, title: "Updated", limits: { maxIterationsPerRun: 3 } },
+      config: { ...manualConfig, title: "Updated", limits: { maxIterationsPerRun: 3, softThresholdRatio: 0.8, hardThresholdRatio: 1 } },
       status: "disabled",
       generatedStateSummary: "Disabled for maintenance.",
     });
@@ -394,7 +455,8 @@ describe("LoopStateManager", () => {
 
     const runLogPath = join(TMP_DIR, ".archcode", "loops", created.loopId, "run-log.jsonl");
     const rawLines = (await Bun.file(runLogPath).text()).trim().split("\n");
-    expect(rawLines.map((line) => JSON.parse(line).runId)).toEqual(["run-1", "run-2", "run-3"]);
+    expect(rawLines.map((line) => JSON.parse(line).version)).toEqual([1, 1, 1]);
+    expect(rawLines.map((line) => JSON.parse(line).report.runId)).toEqual(["run-1", "run-2", "run-3"]);
     expect((await manager.readRunLog(created.loopId)).map((entry) => entry.runId)).toEqual(["run-3", "run-2", "run-1"]);
     expect((await manager.readRunLog(created.loopId, 2)).map((entry) => entry.runId)).toEqual(["run-3", "run-2"]);
   });
@@ -524,6 +586,15 @@ describe("LoopStateManager", () => {
       blockedReason: "needs_user",
       blockedByHitlIds: ["hitl-recovered-after-hitl"],
       attentionStatus: "waiting_for_human",
+      resumeCheckpoint: {
+        version: 1,
+        hitlId: "hitl-recovered-after-hitl",
+        loopId: created.loopId,
+        runId: "run-recovered-after-hitl",
+        jobId: "job-recovered-after-hitl",
+        trigger: "interval",
+        intendedContinuation: "resume_run",
+      },
     };
     await manager.recordRunBlocked(created.loopId, blocked);
 
@@ -534,6 +605,7 @@ describe("LoopStateManager", () => {
       blockedReason: undefined,
       blockedByHitlIds: undefined,
       attentionStatus: "clear",
+      resumeCheckpoint: undefined,
     });
 
     expect(recovered.currentRun).toBeUndefined();
@@ -608,7 +680,24 @@ describe("LoopStateManager", () => {
 
     const loopDir = join(TMP_DIR, ".archcode", "loops", created.loopId);
     const content = await Bun.file(join(loopDir, "state.json")).text();
-    expect(JSON.parse(content).loopId).toBe(created.loopId);
+    expect(JSON.parse(content)).toMatchObject({ version: 1, state: { loopId: created.loopId } });
     expect((await readdir(loopDir)).filter((entry) => entry.startsWith(".tmp-"))).toEqual([]);
+  });
+
+  test("hard-fails unversioned state and run-log persistence", async () => {
+    const manager = new LoopStateManager(TMP_DIR);
+    const created = await manager.create("project-a", manualConfig);
+    const loopDir = join(TMP_DIR, ".archcode", "loops", created.loopId);
+    const statePath = join(loopDir, "state.json");
+    const stateEnvelope = JSON.parse(await Bun.file(statePath).text()) as { state: LoopState };
+    await Bun.write(statePath, `${JSON.stringify(stateEnvelope.state)}\n`);
+    expect(await captureAsyncError(() => manager.read(created.loopId))).toBeInstanceOf(LoopStateError);
+    expect(await captureAsyncError(() => manager.list())).toBeInstanceOf(LoopStateError);
+
+    await Bun.write(statePath, `${JSON.stringify({ version: 1, state: stateEnvelope.state })}\n`);
+    const runReport = report(created.loopId, "unversioned-run", 1_000);
+    await manager.appendRunReport(created.loopId, runReport);
+    await Bun.write(join(loopDir, "run-log.jsonl"), `${JSON.stringify(runReport)}\n`);
+    expect(await captureAsyncError(() => manager.readRunLog(created.loopId))).toBeInstanceOf(LoopRunLogError);
   });
 });

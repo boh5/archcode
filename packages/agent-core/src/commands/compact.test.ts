@@ -6,7 +6,9 @@ import type { CompactionPart, StoredMessage } from "../store/types";
 import { setLlmAdapterForTest } from "../llm";
 import type { CircuitBreaker } from "../compact/circuit-breaker";
 import type { ModelCallOptions } from "../config";
+import { SkillService } from "../skills";
 import { createCompactCommand } from "./compact";
+import type { CommandContext } from "./types";
 
 function makeUserMessage(id: string, text: string): StoredMessage {
   return {
@@ -70,6 +72,23 @@ const modelInfo = {
   modelId: "mock",
   qualifiedId: "test:mock",
 } as unknown as ModelInfo;
+const skillService = new SkillService({ builtinSkills: {} });
+const TEST_WORKSPACE_ROOT = "/tmp/archcode-agent-core-compact-command";
+
+function commandContext(
+  store: CommandContext["store"],
+  overrides: Partial<CommandContext> = {},
+): CommandContext {
+  return {
+    store,
+    modelInfo,
+    cwd: import.meta.dir,
+    agentName: "orchestrator",
+    agentSkills: [],
+    skillService,
+    ...overrides,
+  };
+}
 
 function summary() {
   return {
@@ -119,7 +138,7 @@ beforeEach(() => {
 
 describe("createCompactCommand", () => {
   test("returns compact descriptor", () => {
-    const store = storeManager.create(`compact-command-descriptor-${crypto.randomUUID()}`);
+    const store = storeManager.create(`compact-command-descriptor-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT);
 
     const descriptor = createCompactCommand(store, modelInfo);
 
@@ -128,10 +147,10 @@ describe("createCompactCommand", () => {
   });
 
   test("manual compact emits compact event and compaction part without compression block", async () => {
-    const store = storeManager.create(`compact-command-success-${crypto.randomUUID()}`);
+    const store = storeManager.create(`compact-command-success-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT);
     store.setState({ messages: compactableMessages() });
 
-    const result = await createCompactCommand(store, modelInfo).handler({ store, modelInfo });
+    const result = await createCompactCommand(store, modelInfo).handler(commandContext(store));
 
     expect(result.success).toBe(true);
     expect(result.message).toBe("Context compacted. 6 messages summarized. 5 messages preserved in tail.");
@@ -145,13 +164,13 @@ describe("createCompactCommand", () => {
   });
 
   test("manual compact clears existing dynamic compression state", async () => {
-    const store = storeManager.create(`compact-command-clear-dynamic-${crypto.randomUUID()}`);
+    const store = storeManager.create(`compact-command-clear-dynamic-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT);
     store.setState({ messages: compactableMessages() });
     store.getState().append({ type: "compression.block_committed", block: compressionBlockSnapshot() });
 
     expect(store.getState().compression?.activeBlockRefs).toEqual(["b1"]);
 
-    const result = await createCompactCommand(store, modelInfo).handler({ store, modelInfo });
+    const result = await createCompactCommand(store, modelInfo).handler(commandContext(store));
 
     expect(result.success).toBe(true);
     expect(store.getState().compression?.activeBlockRefs).toEqual([]);
@@ -176,12 +195,10 @@ describe("createCompactCommand", () => {
         };
       }) as unknown as typeof import("ai").streamText,
     });
-    const store = storeManager.create(`compact-command-options-${crypto.randomUUID()}`);
+    const store = storeManager.create(`compact-command-options-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT);
     store.setState({ messages: compactableMessages() });
 
-    const result = await createCompactCommand(store, modelInfo).handler({
-      store,
-      modelInfo,
+    const result = await createCompactCommand(store, modelInfo).handler(commandContext(store, {
       modelOptions: {
         temperature: 0.4,
         topP: 0.6,
@@ -189,7 +206,7 @@ describe("createCompactCommand", () => {
         providerOptions,
         variant: "large-context",
       } as unknown as ModelCallOptions,
-    });
+    }));
 
     expect(result.success).toBe(true);
     expect(capturedOptions.temperature).toBe(0.4);
@@ -200,30 +217,26 @@ describe("createCompactCommand", () => {
   });
 
   test("bypasses open circuit breaker and resets it on success", async () => {
-    const store = storeManager.create(`compact-command-breaker-${crypto.randomUUID()}`);
+    const store = storeManager.create(`compact-command-breaker-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT);
     const circuitBreaker = createBreaker();
     store.setState({ messages: compactableMessages() });
 
-    const result = await createCompactCommand(store, modelInfo, circuitBreaker).handler({
-      store,
-      modelInfo,
+    const result = await createCompactCommand(store, modelInfo, circuitBreaker).handler(commandContext(store, {
       circuitBreaker,
-    });
+    }));
 
     expect(result.success).toBe(true);
     expect(circuitBreaker.reset).toHaveBeenCalledTimes(1);
   });
 
   test("returns null-result message without resetting circuit breaker", async () => {
-    const store = storeManager.create(`compact-command-null-${crypto.randomUUID()}`);
+    const store = storeManager.create(`compact-command-null-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT);
     const circuitBreaker = createBreaker();
     store.setState({ messages: [makeUserMessage("u1", "Only one")] });
 
-    const result = await createCompactCommand(store, modelInfo, circuitBreaker).handler({
-      store,
-      modelInfo,
+    const result = await createCompactCommand(store, modelInfo, circuitBreaker).handler(commandContext(store, {
       circuitBreaker,
-    });
+    }));
 
     expect(result).toEqual({ success: false, message: "No safe range to compact" });
     expect(circuitBreaker.reset).not.toHaveBeenCalled();
@@ -243,13 +256,13 @@ describe("createCompactCommand", () => {
         toolResults: Promise.resolve([]),
       })) as unknown as typeof import("ai").streamText,
     });
-    const store = storeManager.create(`compact-command-busy-${crypto.randomUUID()}`);
+    const store = storeManager.create(`compact-command-busy-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT);
     store.setState({ messages: compactableMessages() });
     const descriptor = createCompactCommand(store, modelInfo);
 
-    const first = descriptor.handler({ store, modelInfo });
+    const first = descriptor.handler(commandContext(store));
     await Promise.resolve();
-    const second = await descriptor.handler({ store, modelInfo });
+    const second = await descriptor.handler(commandContext(store));
     resolveSummary("done");
     await first;
 
@@ -262,12 +275,12 @@ describe("createCompactCommand", () => {
         throw Object.assign(new Error("model down"), { status: 422 });
       }) as unknown as typeof import("ai").streamText,
     });
-    const store = storeManager.create(`compact-command-error-${crypto.randomUUID()}`);
+    const store = storeManager.create(`compact-command-error-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT);
     store.setState({ messages: compactableMessages() });
     const descriptor = createCompactCommand(store, modelInfo);
 
-    const failed = await descriptor.handler({ store, modelInfo });
-    const retry = await descriptor.handler({ store, modelInfo });
+    const failed = await descriptor.handler(commandContext(store));
+    const retry = await descriptor.handler(commandContext(store));
 
     expect(failed.message).toContain("Compact failed:");
     expect(failed.message).toContain("model down");

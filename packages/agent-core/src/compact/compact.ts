@@ -34,6 +34,7 @@ export interface CompactInput {
   modelOptions?: ModelCallOptions;
   sessionId: string;
   logger: Logger;
+  toolOutputDir: string;
 }
 
 export interface CompactResult {
@@ -199,6 +200,7 @@ function adjustBoundaryForToolAtomicity(messages: StoredMessage[], splitIndex: n
 async function pruneToolOutputs(
   clonedPrefix: StoredMessage[],
   sessionId: string,
+  toolOutputDir: string,
   logger: Logger,
   abort?: AbortSignal,
 ): Promise<string[]> {
@@ -213,7 +215,7 @@ async function pruneToolOutputs(
           continue;
         }
 
-        const fullPath = await persistToolOutput(part, sessionId, { logger, previewLines: 5 });
+        const fullPath = await persistToolOutput(part, sessionId, { logger, previewLines: 5, outputDir: toolOutputDir });
         if (fullPath) {
           prunedPaths.push(fullPath);
         }
@@ -334,7 +336,7 @@ export async function compact(
   input: CompactInput,
   abort?: AbortSignal,
 ): Promise<CompactResult | null> {
-  const { messages, contextLimit, model, modelOptions, sessionId, logger } = input;
+  const { messages, contextLimit, model, modelOptions, sessionId, logger, toolOutputDir } = input;
 
   if (abort?.aborted) {
     throw new DOMException("Compaction aborted", "AbortError");
@@ -352,7 +354,7 @@ export async function compact(
   const { tailStartId, prefixMessages } = boundary;
   const clonedPrefix = deepCloneMessages(prefixMessages);
 
-  const prunedToolOutputs = await pruneToolOutputs(clonedPrefix, sessionId, logger, abort);
+  const prunedToolOutputs = await pruneToolOutputs(clonedPrefix, sessionId, toolOutputDir, logger, abort);
 
   if (abort?.aborted) {
     throw new DOMException("Compaction aborted", "AbortError");

@@ -63,6 +63,7 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     abort: new AbortController().signal,
     startedAt: Date.now(),
     allowedTools: new Set(["ask_user"]),
+    agentName: "orchestrator",
     agentSkills: [],
     skillService: new SkillService({ builtinSkills: {} }),
     cwd: workspaceRoot,
@@ -76,7 +77,6 @@ async function makeDurableCtx(overrides: Partial<ToolExecutionContext> = {}): Pr
   await mkdir(TMP_ROOT, { recursive: true });
   const workspaceRoot = await mkdtemp(join(TMP_ROOT, "workspace-"));
   const projectContext = createTestProjectContext(workspaceRoot);
-  await projectContext.hitl.load(workspaceRoot);
   return makeCtx({
     store: createSessionStore(crypto.randomUUID(), workspaceRoot),
     cwd: workspaceRoot,

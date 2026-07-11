@@ -124,7 +124,7 @@ function createPermissionBranchRegistry(
 }
 
 function createStore(): StoreApi<SessionStoreState> {
-  return storeManager.create(crypto.randomUUID());
+  return storeManager.create(crypto.randomUUID(), import.meta.dir);
 }
 
 function captureEvents(store: StoreApi<SessionStoreState>): SessionEventPayload[] {
@@ -165,7 +165,9 @@ function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOption
   skillService: testSkillService,
   storeManager,
   projectContext: createTestProjectContext(workspaceRoot),
-  cwd: workspaceRoot, ...overrides,  };
+  cwd: workspaceRoot,
+  agentName: "orchestrator",
+  ...overrides,  };
 }
 
 function createMockStreamText(rounds: MockRound[]) {
@@ -1469,7 +1471,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       expect(result).toEqual({ text: "Still works", steps: 0 });
       expect(logger.warn).toHaveBeenCalledWith("query.loop.hook.failed", {
         error: expect.any(Error),
-        context: { sessionId: store.getState().sessionId, agentName: undefined },
+        context: { sessionId: store.getState().sessionId, agentName: "orchestrator" },
         meta: { phase: "beforeModelBuild" },
       });
       expect(store.getState().isRunning).toBe(false);
@@ -2853,7 +2855,7 @@ describe("runQueryLoop slash commands", () => {
         "git-master": "---\nname: git-master\ndescription: Git operations expertise\nwhen_to_use: Use for git operations.\n---\n\nFull git body",
       },
     });
-    commandRegistry.register(createSkillCommand(skillService, import.meta.dir, "orchestrator", ["git-master"]));
+    commandRegistry.register(createSkillCommand());
 
     const result = await maybeHandleCommand(
       makeOptions({ store, commandRegistry, skillService, agentName: "orchestrator", agentSkills: ["git-master"] }),
@@ -2906,7 +2908,7 @@ describe("runQueryLoop slash commands", () => {
         "git-master": "---\nname: git-master\ndescription: Git operations expertise\nwhen_to_use: Use for git operations.\n---\n\nFull git body",
       },
     });
-    commandRegistry.register(createSkillCommand(skillService, import.meta.dir, "orchestrator", ["git-master"]));
+    commandRegistry.register(createSkillCommand());
 
     const result = await runQueryLoop(
       makeOptions({ store, commandRegistry, skillService, agentName: "orchestrator", agentSkills: ["git-master"] }),

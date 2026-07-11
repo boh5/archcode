@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import type { GoalEvidenceRef } from "@archcode/protocol";
 
-import { GoalRunner, GoalRunnerError, type GoalRunnerCreateSessionOptions } from "./runner";
+import { GoalRunner, GoalRunnerError, type GoalRunnerCreateSessionOptions, type GoalRunnerOptions } from "./runner";
 import { GoalReviewFinalizationError, GoalReviewerAuthorizationError, GoalStateManager, GoalTransitionError } from "./state";
 import { WorktreeService } from "../worktrees";
 
@@ -26,10 +26,20 @@ afterAll(async () => {
 
 function createRunner(sessionIds = ["main-session-1", "retry-session-2"]): GoalRunner {
   const remaining = [...sessionIds];
-  return new GoalRunner({
-    goalStateManager: manager,
+  return new GoalRunner(runnerOptions({
     createSession: mock(async () => remaining.shift() ?? `session-${crypto.randomUUID()}`),
-  });
+  }));
+}
+
+function runnerOptions(overrides: Partial<GoalRunnerOptions> = {}): GoalRunnerOptions {
+  return {
+    goalStateManager: manager,
+    workspaceRoot,
+    createSession: mock(async () => `session-${crypto.randomUUID()}`),
+    getSessionCwd: mock(async () => workspaceRoot),
+    isSessionActive: mock(async () => false),
+    ...overrides,
+  };
 }
 
 async function createDraft(runner: GoalRunner) {
@@ -82,13 +92,14 @@ describe("GoalRunner", () => {
 
   test("does not pass generated Goal title metadata to the main session", async () => {
     const createSession = mock(async () => "main-session-1");
-    const runner = new GoalRunner({ goalStateManager: manager, createSession });
+    const runner = new GoalRunner(runnerOptions({ createSession }));
     const draft = await createDraft(runner);
     await manager.setTitleIfEmpty(draft.id, "Generated goal title");
 
     await runner.start(draft.id);
 
     expect(createSession).toHaveBeenCalledWith({
+      cwd: workspaceRoot,
       goalId: draft.id,
       sessionRole: "main",
     });
@@ -96,7 +107,7 @@ describe("GoalRunner", () => {
 
   test("pins non-isolated Goal start and retry Sessions to the canonical root", async () => {
     const createSession = mock(async (_options?: GoalRunnerCreateSessionOptions) => `session-${createSession.mock.calls.length + 1}`);
-    const runner = new GoalRunner({ goalStateManager: manager, createSession, workspaceRoot });
+    const runner = new GoalRunner(runnerOptions({ createSession }));
     const draft = await createDraft(runner);
 
     await runner.start(draft.id);
@@ -117,12 +128,10 @@ describe("GoalRunner", () => {
   test("rejects a Loop scope that does not own the Goal and preassigned non-canonical cwd", async () => {
     const foreignCwd = join(workspaceRoot, "foreign-worktree");
     const createSession = mock(async () => "should-not-be-created");
-    const runner = new GoalRunner({
-      goalStateManager: manager,
+    const runner = new GoalRunner(runnerOptions({
       createSession,
-      workspaceRoot,
       getSessionCwd: mock(async () => foreignCwd),
-    });
+    }));
     const explicitDraft = await createDraft(runner);
 
     await expect(runner.start(explicitDraft.id, {
@@ -139,7 +148,7 @@ describe("GoalRunner", () => {
     await initializeGitRepo(workspaceRoot);
     const loopId = "11111111-1111-4111-8111-111111111111";
     const createSession = mock(async () => "loop-goal-session");
-    const runner = new GoalRunner({ goalStateManager: manager, createSession, workspaceRoot });
+    const runner = new GoalRunner(runnerOptions({ createSession }));
     const goal = await runner.create({
       projectId: "project-a",
       objective: "Execute inside the owning Loop scope.",
@@ -179,10 +188,8 @@ describe("GoalRunner", () => {
       throw new Error("must not prepare worktree");
     });
     const findManaged = mock(async () => undefined);
-    const runner = new GoalRunner({
-      goalStateManager: manager,
+    const runner = new GoalRunner(runnerOptions({
       createSession,
-      workspaceRoot,
       worktreeService: {
         create: createWorktree,
         findManaged,
@@ -191,7 +198,7 @@ describe("GoalRunner", () => {
         }),
         remove: mock(async () => false),
       } as never,
-    });
+    }));
     const goal = await manager.create({
       projectId: "project-a",
       objective: "Reject invalid execution before resource allocation.",
@@ -211,25 +218,21 @@ describe("GoalRunner", () => {
     const createSession = mock(async () => "orphan-retry-session");
     const goal = await createDraft(createRunner());
     const running = await manager.start(goal.id, { mainSessionId: "running-session" });
-    const inactiveRunner = new GoalRunner({
-      goalStateManager: manager,
+    const inactiveRunner = new GoalRunner(runnerOptions({
       createSession,
-      workspaceRoot,
       getSessionCwd: mock(async () => workspaceRoot),
       isSessionActive: mock(async () => false),
-    });
+    }));
 
     await expect(inactiveRunner.retry(goal.id)).rejects.toBeInstanceOf(GoalRunnerError);
     await expect(inactiveRunner.retry(goal.id, { mainSessionId: "different-session" })).rejects.toBeInstanceOf(GoalRunnerError);
     expect(createSession).not.toHaveBeenCalled();
 
-    const activeRunner = new GoalRunner({
-      goalStateManager: manager,
+    const activeRunner = new GoalRunner(runnerOptions({
       createSession,
-      workspaceRoot,
       getSessionCwd: mock(async () => workspaceRoot),
       isSessionActive: mock(async (sessionId) => sessionId === "running-session"),
-    });
+    }));
     await expect(activeRunner.retry(goal.id, { mainSessionId: "running-session" })).resolves.toEqual(running);
     expect(createSession).not.toHaveBeenCalled();
   });
@@ -237,11 +240,9 @@ describe("GoalRunner", () => {
   test("creates one isolated Goal worktree and reuses its cwd for retry sessions", async () => {
     await initializeGitRepo(workspaceRoot);
     const createSession = mock(async (_options?: GoalRunnerCreateSessionOptions) => `session-${createSession.mock.calls.length + 1}`);
-    const runner = new GoalRunner({
-      goalStateManager: manager,
+    const runner = new GoalRunner(runnerOptions({
       createSession,
-      workspaceRoot,
-    });
+    }));
     const draft = await runner.create({
       projectId: "project-a",
       objective: "Implement in a Goal worktree.",
@@ -265,12 +266,10 @@ describe("GoalRunner", () => {
 
   test("rejects a preassigned Session whose cwd does not match an isolated Goal", async () => {
     await initializeGitRepo(workspaceRoot);
-    const runner = new GoalRunner({
-      goalStateManager: manager,
-      workspaceRoot,
+    const runner = new GoalRunner(runnerOptions({
       createSession: mock(async () => "unused-session"),
       getSessionCwd: mock(async () => workspaceRoot),
-    });
+    }));
     const draft = await runner.create({
       projectId: "project-a",
       objective: "Validate an existing Session.",
@@ -291,12 +290,10 @@ describe("GoalRunner", () => {
       sessionCwd = options?.cwd;
       return "isolated-session";
     });
-    const runner = new GoalRunner({
-      goalStateManager: manager,
-      workspaceRoot,
+    const runner = new GoalRunner(runnerOptions({
       createSession,
       getSessionCwd: mock(async () => sessionCwd),
-    });
+    }));
     const draft = await runner.create({
       projectId: "project-a",
       objective: "Keep idempotent claims inside the Goal worktree.",
@@ -315,11 +312,9 @@ describe("GoalRunner", () => {
   test("does not let an explicit cwd bypass an isolated Goal worktree claim", async () => {
     await initializeGitRepo(workspaceRoot);
     const createSession = mock(async () => "should-not-be-created");
-    const runner = new GoalRunner({
-      goalStateManager: manager,
-      workspaceRoot,
+    const runner = new GoalRunner(runnerOptions({
       createSession,
-    });
+    }));
     const draft = await runner.create({
       projectId: "project-a",
       objective: "Reject an explicit canonical cwd for an isolated Goal.",
@@ -335,13 +330,6 @@ describe("GoalRunner", () => {
     expect((await manager.read(draft.id)).worktree).toBeUndefined();
   });
 
-  test("requires createSession when no main session is available", async () => {
-    const runner = new GoalRunner({ goalStateManager: manager });
-    const draft = await createDraft(runner);
-
-    await expect(runner.start(draft.id)).rejects.toBeInstanceOf(GoalRunnerError);
-  });
-
   test("blocks and clears back to requested resume status", async () => {
     const runner = createRunner();
     const draft = await createDraft(runner);
@@ -350,12 +338,11 @@ describe("GoalRunner", () => {
     const blocked = await runner.block(draft.id, {
       kind: "approval",
       summary: "Need approval",
-      hitlId: "hitl-1",
       resumeStatus: "reviewing",
     });
-    expect(blocked).toMatchObject({ status: "blocked", pendingHitlIds: ["hitl-1"] });
+    expect(blocked).toMatchObject({ status: "blocked", pendingHitlIds: [] });
 
-    const reviewing = await runner.clearBlocker(draft.id, "hitl-1");
+    const reviewing = await runner.clearBlocker(draft.id);
     expect(reviewing).toMatchObject({ status: "reviewing", pendingHitlIds: [] });
   });
 
@@ -429,13 +416,12 @@ describe("GoalRunner", () => {
     expect((await runner.cancel(cancelledDraft.id, "duplicate request")).status).toBe("cancelled");
   });
 
-  test("tracks child sessions, main session, budget, and HITL refs", async () => {
+  test("tracks child sessions, main session, and budget", async () => {
     const runner = createRunner();
     const draft = await createDraft(runner);
     await runner.start(draft.id);
     await runner.setMainSession(draft.id, "explicit-main");
     await runner.addChildSession(draft.id, "child-1");
-    await runner.recordHitlRef(draft.id, { hitlId: "hitl-1", approvalRef: "approval-1" });
     const budgeted = await runner.updateBudgetSummary(draft.id, {
       status: "ok",
       usedTokens: 10,
@@ -446,8 +432,9 @@ describe("GoalRunner", () => {
     expect(budgeted).toMatchObject({
       mainSessionId: "explicit-main",
       childSessionIds: ["child-1"],
-      pendingHitlIds: ["hitl-1"],
-      approvalRefs: ["approval-1"],
+      pendingHitlIds: [],
+      approvalRefs: [],
+      appliedHitlIds: [],
       budget: { status: "ok", usedTokens: 10, maxTokens: 100 },
     });
   });

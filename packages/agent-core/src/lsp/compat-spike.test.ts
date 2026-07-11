@@ -6,6 +6,7 @@ import {
   WriteableStreamMessageWriter,
   createMessageConnection,
 } from "vscode-jsonrpc";
+import { DEFAULT_FAKE_LSP_CONFIG } from "./fake-server";
 
 function adaptReader(stream: ReadableStream<Uint8Array>): RALReadable {
   const r = stream.getReader();
@@ -77,6 +78,7 @@ describe("vscode-jsonrpc compatibility spike", () => {
       stdin: "pipe",
       stdout: "pipe",
       stderr: "inherit",
+      env: { ...process.env, FAKE_LSP_CONFIG: JSON.stringify(DEFAULT_FAKE_LSP_CONFIG) },
     });
 
     const outStream = child.stdout as ReadableStream<Uint8Array>;

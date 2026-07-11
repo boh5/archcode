@@ -120,7 +120,7 @@ const EXECUTABLE_DCP_PARITY_COVERAGE = {
   hard_compact_safety_boundary: [
     {
       file: "packages/agent-core/src/agents/query/hooks/hybrid-compression.test.ts",
-      testName: "runs legacy hard compact at exactly 85% when a safe range exists",
+      testName: "runs forced hard compact at exactly 85% when a safe range exists",
       anchors: ["state.events.at(-1)?.kind).toBe(\"compact\")", "compression.block_committed"],
     },
   ],

@@ -69,18 +69,21 @@ describe("GoalStateSchema", () => {
   test("accepts the protocol state envelope and rejects unknown keys", () => {
     const now = new Date().toISOString();
     const state = GoalStateSchema.parse({
+      version: 1,
       id: VALID_UUID,
       projectId: "project-a",
       title: "Ship thin state",
       objective: "Keep only natural-language goal intent.",
       acceptanceCriteria: "Reviewer finalizes with evidence.",
+      useWorktree: false,
       status: "reviewing",
       attempt: 1,
       blocker: { kind: "approval", summary: "Waiting", hitlId: "hitl-1", resumeStatus: "reviewing", createdAt: now },
       lastFailureSummary: "Previous review found missing tests.",
       budget: { status: "warning", usedTokens: 100, maxTokens: 200, reason: "near limit", updatedAt: now },
       pendingHitlIds: ["hitl-1"],
-      approvalRefs: ["approval-1"],
+      approvalRefs: ["hitl-1", "approval-1"],
+      appliedHitlIds: [],
       mainSessionId: "main-session",
       childSessionIds: ["child-session"],
       loopId: VALID_LOOP_ID,
@@ -92,20 +95,29 @@ describe("GoalStateSchema", () => {
 
     expect(state.status).toBe("reviewing");
     expect(() => GoalStateSchema.parse({ ...state, workflowId: VALID_UUID })).toThrow();
+    const { version: _version, ...unversioned } = state;
+    const { useWorktree: _useWorktree, ...missingWorktreeMode } = state;
+    const { appliedHitlIds: _appliedHitlIds, ...missingAppliedHitlIds } = state;
+    expect(() => GoalStateSchema.parse(unversioned)).toThrow();
+    expect(() => GoalStateSchema.parse(missingWorktreeMode)).toThrow();
+    expect(() => GoalStateSchema.parse(missingAppliedHitlIds)).toThrow();
   });
 
   test("enforces field bounds for natural language and review evidence", () => {
     const now = new Date().toISOString();
     const base = {
+      version: 1 as const,
       id: VALID_UUID,
       projectId: "project-a",
       title: "A".repeat(160),
       objective: "O".repeat(8000),
       acceptanceCriteria: "C".repeat(8000),
+      useWorktree: false,
       status: "reviewing" as const,
       attempt: 1,
       pendingHitlIds: [],
       approvalRefs: [],
+      appliedHitlIds: [],
       childSessionIds: [],
       createdAt: now,
       updatedAt: now,
@@ -136,6 +148,109 @@ describe("GoalStateSchema", () => {
       },
     })).toThrow();
   });
+
+  test("rejects impossible persisted status and worktree combinations", () => {
+    const now = new Date().toISOString();
+    const base = {
+      version: 1 as const,
+      id: VALID_UUID,
+      projectId: "project-a",
+      title: "Persisted invariants",
+      objective: "Reject states no current mutation path can create.",
+      acceptanceCriteria: "Status and worktree claims remain relationally valid.",
+      useWorktree: false,
+      status: "running" as const,
+      attempt: 1,
+      pendingHitlIds: [],
+      approvalRefs: [],
+      appliedHitlIds: [],
+      childSessionIds: [],
+      createdAt: now,
+      updatedAt: now,
+      startedAt: now,
+    };
+    const worktree = {
+      path: join(TMP_DIR, "goal-worktree"),
+      branchName: "archcode/goal/123456789abc",
+      baseSha: "a".repeat(40),
+      createdAt: now,
+    };
+    const doneReview = {
+      verdict: "DONE" as const,
+      summary: "All evidence passed.",
+      evidenceRefs: [evidenceRef()],
+      reviewerSessionId: "review-session",
+      decidedAt: now,
+    };
+
+    expect(() => GoalStateSchema.parse({ ...base, worktree })).toThrow();
+    expect(() => GoalStateSchema.parse({ ...base, status: "blocked" })).toThrow();
+    expect(() => GoalStateSchema.parse({ ...base, status: "done" })).toThrow();
+    expect(() => GoalStateSchema.parse({
+      ...base,
+      status: "done",
+      review: { ...doneReview, verdict: "NOT_DONE" },
+      finalSummary: "Done",
+      completedAt: now,
+    })).toThrow();
+    expect(() => GoalStateSchema.parse({
+      ...base,
+      status: "done",
+      review: doneReview,
+      finalSummary: "Done",
+      completedAt: now,
+    })).not.toThrow();
+    expect(() => GoalStateSchema.parse({
+      ...base,
+      status: "not_done",
+      review: { ...doneReview, verdict: "NOT_DONE", evidenceRefs: [] },
+      completedAt: now,
+    })).toThrow();
+  });
+
+  test("enforces durable HITL attachment and application relations", () => {
+    const now = new Date().toISOString();
+    const base = {
+      version: 1 as const,
+      id: VALID_UUID,
+      projectId: "project-a",
+      title: "HITL invariants",
+      objective: "Persist crash-recoverable HITL state.",
+      acceptanceCriteria: "Pending and applied HITL ids retain durable attachment markers.",
+      useWorktree: false,
+      status: "running" as const,
+      attempt: 1,
+      pendingHitlIds: [],
+      approvalRefs: [],
+      appliedHitlIds: [],
+      childSessionIds: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    expect(() => GoalStateSchema.parse({ ...base, pendingHitlIds: ["hitl-1"] })).toThrow();
+    expect(() => GoalStateSchema.parse({
+      ...base,
+      approvalRefs: ["hitl-1"],
+      appliedHitlIds: ["hitl-1"],
+      pendingHitlIds: ["hitl-1"],
+    })).toThrow();
+    expect(() => GoalStateSchema.parse({ ...base, appliedHitlIds: ["hitl-1"] })).toThrow();
+    expect(() => GoalStateSchema.parse({ ...base, approvalRefs: ["hitl-1"], appliedHitlIds: ["hitl-1"] })).not.toThrow();
+    expect(() => GoalStateSchema.parse({ ...base, approvalRefs: ["hitl-1", "hitl-1"] })).toThrow();
+    expect(() => GoalStateSchema.parse({
+      ...base,
+      status: "blocked",
+      blocker: {
+        kind: "approval",
+        summary: "Awaiting approval",
+        hitlId: "hitl-1",
+        createdAt: now,
+      },
+      pendingHitlIds: ["hitl-1"],
+      approvalRefs: ["hitl-1"],
+    })).toThrow();
+  });
 });
 
 describe("GoalStateManager", () => {
@@ -151,11 +266,13 @@ describe("GoalStateManager", () => {
       attempt: 1,
       pendingHitlIds: [],
       approvalRefs: [],
+      appliedHitlIds: [],
       childSessionIds: [],
     });
     expect(existsSync(join(TMP_DIR, PROJECT_STATE_DIR_NAME, "goals", created.id, "goal.json"))).toBe(true);
     expect(Object.keys(created).sort()).toEqual([
       "acceptanceCriteria",
+      "appliedHitlIds",
       "approvalRefs",
       "attempt",
       "childSessionIds",
@@ -168,6 +285,7 @@ describe("GoalStateManager", () => {
       "title",
       "updatedAt",
       "useWorktree",
+      "version",
     ]);
   });
 
@@ -265,8 +383,8 @@ describe("GoalStateManager", () => {
 
     const blocked = await createGoal(manager);
     await manager.start(blocked.id);
-    expect((await manager.block(blocked.id, { kind: "question", summary: "Need answer", hitlId: "hitl-1", resumeStatus: "reviewing" })).status).toBe("blocked");
-    expect((await manager.clearBlocker(blocked.id, "hitl-1")).status).toBe("reviewing");
+    expect((await manager.block(blocked.id, { kind: "question", summary: "Need answer", resumeStatus: "reviewing" })).status).toBe("blocked");
+    expect((await manager.clearBlocker(blocked.id)).status).toBe("reviewing");
     expect((await manager.finalizeReview(blocked.id, {
       verdict: "NOT_DONE",
       summary: "Missing acceptance evidence.",
@@ -362,15 +480,13 @@ describe("GoalStateManager", () => {
     expect(reviewing.status).toBe("reviewing");
   });
 
-  test("records sessions, budget summaries, and HITL refs without duplicates", async () => {
+  test("records sessions and budget summaries without duplicates", async () => {
     const manager = new GoalStateManager(TMP_DIR);
     const created = await createGoal(manager);
     await manager.start(created.id, { mainSessionId: "main-session" });
 
     await manager.addChildSession(created.id, "child-1");
     await manager.addChildSession(created.id, "child-1");
-    await manager.recordHitlRef(created.id, { hitlId: "hitl-1", approvalRef: "approval-1" });
-    await manager.recordHitlRef(created.id, { hitlId: "hitl-1", approvalRef: "approval-1" });
     const budgeted = await manager.updateBudgetSummary(created.id, {
       status: "warning",
       usedTokens: 50,
@@ -380,8 +496,6 @@ describe("GoalStateManager", () => {
     });
 
     expect(budgeted.childSessionIds).toEqual(["child-1"]);
-    expect(budgeted.pendingHitlIds).toEqual(["hitl-1"]);
-    expect(budgeted.approvalRefs).toEqual(["approval-1"]);
     expect(budgeted.budget).toMatchObject({ status: "warning", usedTokens: 50, maxTokens: 100 });
   });
 

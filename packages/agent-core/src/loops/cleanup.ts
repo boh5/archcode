@@ -31,12 +31,12 @@ export interface LoopCleanupWorktreeManager {
 export interface LoopCleanupServiceOptions {
   readonly stateManager: LoopStateManager;
   readonly jobQueue: LoopJobQueue;
-  readonly collisionLedger?: CollisionLedger;
+  readonly collisionLedger: CollisionLedger;
   readonly worktreeManager?: LoopCleanupWorktreeManager;
-  readonly workspaceRoot?: string;
+  readonly workspaceRoot: string;
   readonly clock?: LoopCleanupClock;
   /** Session-owned capability; Loop cleanup never scans or selects Session ids. */
-  readonly migrateSessionCwdReferencesForRemoval?: <T extends SessionCwdRemovalResult>(
+  readonly migrateSessionCwdReferencesForRemoval: <T extends SessionCwdRemovalResult>(
     input: SessionCwdReferenceMigrationInput,
     operation: (lifecycle: SessionCwdRemovalLifecycle) => Promise<T>,
   ) => Promise<T>;
@@ -93,9 +93,8 @@ const OPEN_JOB_STATUSES = new Set<LoopJobStatus>(["pending", "queued", "running"
 
 export function normalizeLoopCleanupPolicy(policy: LoopCleanupPolicy | undefined): NormalizedLoopCleanupPolicy {
   const parsed = policy === undefined ? undefined : LoopCleanupPolicySchema.parse(policy);
-  const explicitlyConfigured = parsed !== undefined;
   return {
-    enabled: parsed?.enabled ?? (explicitlyConfigured && parsed?.deleteUnchangedWorktrees === true),
+    enabled: parsed?.enabled ?? false,
     action: parsed?.action ?? "mark",
     deleteUnchangedWorktrees: parsed?.deleteUnchangedWorktrees ?? false,
     preserveChangedArtifacts: true,
@@ -109,17 +108,23 @@ export function normalizeLoopCleanupPolicy(policy: LoopCleanupPolicy | undefined
 export class LoopCleanupService {
   readonly #stateManager: LoopStateManager;
   readonly #jobQueue: LoopJobQueue;
-  readonly #collisionLedger?: CollisionLedger;
-  readonly #worktreeManager?: LoopCleanupWorktreeManager;
-  readonly #workspaceRoot?: string;
-  readonly #migrateSessionCwdReferencesForRemoval?: LoopCleanupServiceOptions["migrateSessionCwdReferencesForRemoval"];
+  readonly #collisionLedger: CollisionLedger;
+  readonly #worktreeManager: LoopCleanupWorktreeManager;
+  readonly #workspaceRoot: string;
+  readonly #migrateSessionCwdReferencesForRemoval: LoopCleanupServiceOptions["migrateSessionCwdReferencesForRemoval"];
   readonly #clock: LoopCleanupClock;
 
   constructor(options: LoopCleanupServiceOptions) {
     this.#stateManager = options.stateManager;
     this.#jobQueue = options.jobQueue;
+    if (options.migrateSessionCwdReferencesForRemoval === undefined) {
+      throw new Error("LoopCleanupService requires Session cwd reference migration capability.");
+    }
+    if (options.collisionLedger === undefined) {
+      throw new Error("LoopCleanupService requires collision lease visibility.");
+    }
     this.#collisionLedger = options.collisionLedger;
-    this.#worktreeManager = options.worktreeManager ?? (options.workspaceRoot === undefined ? undefined : new LoopWorktreeManager({ canonicalRoot: options.workspaceRoot }));
+    this.#worktreeManager = options.worktreeManager ?? new LoopWorktreeManager({ canonicalRoot: options.workspaceRoot });
     this.#workspaceRoot = options.workspaceRoot;
     this.#migrateSessionCwdReferencesForRemoval = options.migrateSessionCwdReferencesForRemoval;
     this.#clock = options.clock ?? systemClock;
@@ -143,7 +148,7 @@ export class LoopCleanupService {
       }
       if (job.worktreePath === undefined || job.baseSha === undefined) continue;
 
-      const result = await this.#cleanupTerminalWorktree(job, reports, policy);
+      const result = await this.#cleanupTerminalWorktree(job, policy);
       worktrees.push(result);
       if (result.cleanupState === "cleanup_failed") {
         await this.#stateManager.update(loopId, { cleanupState: "cleanup_failed" });
@@ -198,11 +203,10 @@ export class LoopCleanupService {
       };
     }
     const loop = await this.#stateManager.read(job.loopId);
-    const reports = await this.#stateManager.readRunLog(job.loopId);
-    return await this.#cleanupTerminalWorktree(job, reports, normalizeLoopCleanupPolicy(loop.config.cleanupPolicy));
+    return await this.#cleanupTerminalWorktree(job, normalizeLoopCleanupPolicy(loop.config.cleanupPolicy));
   }
 
-  async #cleanupTerminalWorktree(job: LoopJobRecord, reports: readonly LoopRunReport[], policy: NormalizedLoopCleanupPolicy): Promise<LoopCleanupWorktreeResult> {
+  async #cleanupTerminalWorktree(job: LoopJobRecord, policy: NormalizedLoopCleanupPolicy): Promise<LoopCleanupWorktreeResult> {
     if (job.status === "blocked" || job.status === "needs_user") {
       const reason = job.blockedReason ?? job.status;
       const update = await this.#jobQueue.updateIfCurrent(job.jobId, job, {
@@ -232,15 +236,12 @@ export class LoopCleanupService {
     }
 
     const manager = this.#worktreeManager;
-    if (manager === undefined) return preservedWorktreeResult(job, "worktree manager unavailable");
-
-    const report = reportForJob(reports, job.jobId);
-    const branchName = job.worktreeBranchName
-      ?? report?.worktreeBranchName
-      ?? branchNameFromArtifacts(job.observedArtifacts ?? report?.observedArtifacts);
-    if (branchName === undefined) return preservedWorktreeResult(job, "missing loop branch metadata");
 
     try {
+      const branchName = job.worktreeBranchName;
+      if (branchName === undefined) {
+        throw new Error("Cleanup intent is missing durable worktree branch metadata.");
+      }
       if (!await pathExists(job.worktreePath!)) {
         return await this.#completeAlreadyDetached(job, branchName);
       }
@@ -266,27 +267,16 @@ export class LoopCleanupService {
           reason: "unchanged worktree deletion disabled",
         };
       }
-      const removalCandidate = !inspection.hasChanges
-        && job.status !== "failed";
       let cleanup: LoopWorktreeCleanupResult;
-      const migrate = this.#migrateSessionCwdReferencesForRemoval;
-      const projectRoot = this.#workspaceRoot;
-      if (migrate !== undefined && projectRoot !== undefined) {
-        cleanup = await migrate({
-          projectRoot,
-          fromCwd: inspection.worktreePath,
-          toCwd: projectRoot,
-        }, async (lifecycle) => await manager.cleanup({
-          inspection,
-          jobStatus: job.status,
-          ...lifecycle,
-        }));
-      } else {
-        if (removalCandidate) {
-          throw new Error(`Session cwd reference migration capability is required before removing Loop worktree ${inspection.worktreePath}.`);
-        }
-        cleanup = await manager.cleanup({ inspection, jobStatus: job.status });
-      }
+      cleanup = await this.#migrateSessionCwdReferencesForRemoval({
+        projectRoot: this.#workspaceRoot,
+        fromCwd: inspection.worktreePath,
+        toCwd: this.#workspaceRoot,
+      }, async (lifecycle) => await manager.cleanup({
+        inspection,
+        jobStatus: job.status,
+        ...lifecycle,
+      }));
       const cleanupState = cleanup.cleanupState;
       const warning = cleanup.warning?.message;
       const artifacts = mergeArtifacts(
@@ -338,15 +328,10 @@ export class LoopCleanupService {
   }
 
   async #completeAlreadyDetached(job: LoopJobRecord, branchName: string): Promise<LoopCleanupWorktreeResult> {
-    const migrate = this.#migrateSessionCwdReferencesForRemoval;
-    const projectRoot = this.#workspaceRoot;
-    if (migrate === undefined || projectRoot === undefined) {
-      throw new Error(`Session cwd reference migration capability is required to reconcile detached Loop worktree ${job.worktreePath}.`);
-    }
-    await migrate({
-      projectRoot,
+    await this.#migrateSessionCwdReferencesForRemoval({
+      projectRoot: this.#workspaceRoot,
       fromCwd: job.worktreePath!,
-      toCwd: projectRoot,
+      toCwd: this.#workspaceRoot,
     }, async (lifecycle) => {
       await lifecycle.beforeRemove();
       await lifecycle.onRemoveDetached();
@@ -387,7 +372,7 @@ export class LoopCleanupService {
     for (const error of loop.latestIntegrations?.errors ?? []) {
       if (integrationNeedsAttention(error)) blockers.push({ code: "integration_error", message: error.reason });
     }
-    for (const lease of await this.#collisionLedger?.readActiveLeases() ?? []) {
+    for (const lease of await this.#collisionLedger.readActiveLeases()) {
       if (lease.loopId === loop.loopId) blockers.push({ code: "active_collision_lease", message: `Active collision lease: ${lease.targetKey}` });
     }
     return blockers;
@@ -441,15 +426,6 @@ function successfulQuietReports(reports: readonly LoopRunReport[]): number {
 
 function hasChangedArtifact(artifacts: readonly LoopWorktreeArtifact[] | undefined): boolean {
   return (artifacts ?? []).some((artifact) => artifact.status === "created" || artifact.status === "modified" || artifact.status === "deleted");
-}
-
-function reportForJob(reports: readonly LoopRunReport[], jobId: string): LoopRunReport | undefined {
-  return reports.find((report) => report.jobId === jobId);
-}
-
-function branchNameFromArtifacts(artifacts: readonly LoopWorktreeArtifact[] | undefined): string | undefined {
-  const prefix = "git:branch:";
-  return artifacts?.find((artifact) => artifact.path.startsWith(prefix))?.path.slice(prefix.length);
 }
 
 function evidencePaths(artifacts: readonly LoopWorktreeArtifact[] | undefined): string[] {

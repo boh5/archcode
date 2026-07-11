@@ -152,7 +152,7 @@ export class LoopTriggerPoller {
       repoId: head.repoId,
       branch: head.branch,
       collisionTarget: { type: "branch", owner: event.owner, repo: event.repo, branch: head.branch },
-      resolvedHeadSha: head.sha,
+      baseSha: head.sha,
       queuedAt: now,
       eventSummary: { summary: `Observed commit ${shortSha(head.sha)} on ${head.branch}`, source: "loop-trigger:on_commit", payloadSha: head.sha },
     });
@@ -202,7 +202,7 @@ export class LoopTriggerPoller {
           branch: normalized.headRef,
           collisionTarget: { type: "pr", owner: repo.owner, repo: repo.repo, number: normalized.number },
           collisionKey: canonicalTargetKey({ type: "pr", owner: repo.owner, repo: repo.repo, number: normalized.number }),
-          resolvedHeadSha: normalized.headSha,
+          baseSha: normalized.headSha,
           queuedAt: now,
           eventSummary: { summary: `Observed PR #${normalized.number} at ${shortSha(normalized.headSha)}`, source: "loop-trigger:on_pr" },
         }));
@@ -304,7 +304,7 @@ export class LoopTriggerPoller {
       collisionTarget: failure.pullRequestNumber === undefined
         ? (failure.branch === undefined ? undefined : { type: "branch", owner: failure.owner, repo: failure.repo, branch: failure.branch })
         : { type: "pr", owner: failure.owner, repo: failure.repo, number: failure.pullRequestNumber },
-      resolvedHeadSha: failure.sha,
+      baseSha: failure.sha,
       queuedAt: now,
       eventSummary: { summary: `Observed CI failure ${failure.context} at ${shortSha(failure.sha)}`, source: "loop-trigger:on_ci_fail" },
     });

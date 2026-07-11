@@ -32,7 +32,7 @@ function uniqueSessionId(label: string): string {
 }
 
 function createFreshStore(label: string) {
-  return storeManager.create(uniqueSessionId(label));
+  return storeManager.create(uniqueSessionId(label), TMP_DIR);
 }
 
 function compressionBlockSnapshot(): CompressionBlockSnapshot {
@@ -130,7 +130,7 @@ function onlyStep(steps: StepInfo[]): StepInfo {
 describe("SessionStoreManager", () => {
   test("create returns initialized session state with empty events log", () => {
     const sessionId = uniqueSessionId("creation");
-    const store = storeManager.create(sessionId);
+    const store = storeManager.create(sessionId, TMP_DIR);
     const state = store.getState();
 
     expect(state.sessionId).toBe(sessionId);
@@ -154,7 +154,7 @@ describe("SessionStoreManager", () => {
     const sessionId = uniqueSessionId("with-goal");
     const goalId = crypto.randomUUID();
     const loopId = crypto.randomUUID();
-    const store = storeManager.create(sessionId, undefined, {
+    const store = storeManager.create(sessionId, TMP_DIR, {
       goalId,
       loopId,
       sessionRole: "explore",
@@ -169,7 +169,7 @@ describe("SessionStoreManager", () => {
   test("setGoalId and setSessionRole persist changes", async () => {
     __setSessionsDirForTest(() => TMP_DIR);
     const sessionId = uniqueSessionId("goal-persist");
-    const store = storeManager.create(sessionId, undefined, {
+    const store = storeManager.create(sessionId, TMP_DIR, {
       sessionRole: "main",
     });
     const goalId = crypto.randomUUID();
@@ -185,7 +185,7 @@ describe("SessionStoreManager", () => {
   test("setLoopId updates loopId", () => {
     const sessionId = uniqueSessionId("loop-update");
     const loopId = crypto.randomUUID();
-    const store = storeManager.create(sessionId);
+    const store = storeManager.create(sessionId, TMP_DIR);
     store.getState().setLoopId(loopId);
     expect(store.getState().loopId).toBe(loopId);
   });
@@ -193,7 +193,7 @@ describe("SessionStoreManager", () => {
   test("createSessionStore persists a new session file", async () => {
     __setSessionsDirForTest(() => TMP_DIR);
     const sessionId = uniqueSessionId("persist-create");
-    createSessionStore(sessionId);
+    createSessionStore(sessionId, TMP_DIR);
 
     const persisted = await readPersistedSession(sessionId);
     expect(persisted.sessionId).toBe(sessionId);
@@ -206,7 +206,7 @@ describe("SessionStoreManager", () => {
   test("assistant append events persist on execution-end", async () => {
     __setSessionsDirForTest(() => TMP_DIR);
     const sessionId = uniqueSessionId("persist-on-execution-end");
-    const store = createSessionStore(sessionId);
+    const store = createSessionStore(sessionId, TMP_DIR);
 
     const state = store.getState();
     state.append({ type: "execution-start", executionId: "run-1" });
@@ -226,7 +226,7 @@ describe("SessionStoreManager", () => {
   test("rootSessionId persists as sessionId for root sessions", async () => {
     __setSessionsDirForTest(() => TMP_DIR);
     const sessionId = uniqueSessionId("persist-root-id");
-    createSessionStore(sessionId);
+    createSessionStore(sessionId, TMP_DIR);
 
     const persisted = await waitForPersistedSession(sessionId, (session) => {
       return session.rootSessionId === sessionId;
@@ -238,7 +238,7 @@ describe("SessionStoreManager", () => {
   test("user-message append persists before execution-end", async () => {
     __setSessionsDirForTest(() => TMP_DIR);
     const sessionId = uniqueSessionId("persist-user-message");
-    const store = createSessionStore(sessionId);
+    const store = createSessionStore(sessionId, TMP_DIR);
     store.getState().append({ type: "user-message", content: "hello before execution-end" });
 
     const persisted = await waitForPersistedSession(sessionId, (session) => {
@@ -251,7 +251,7 @@ describe("SessionStoreManager", () => {
   test("execution-end persists final transcript", async () => {
     __setSessionsDirForTest(() => TMP_DIR);
     const sessionId = uniqueSessionId("persist-execution-end");
-    const store = createSessionStore(sessionId);
+    const store = createSessionStore(sessionId, TMP_DIR);
     const state = store.getState();
 
     state.append({ type: "execution-start", executionId: "run-1" });
@@ -272,7 +272,7 @@ describe("SessionStoreManager", () => {
   test("title metadata action persists and survives reload", async () => {
     __setSessionsDirForTest(() => TMP_DIR);
     const sessionId = uniqueSessionId("persist-title");
-    const store = createSessionStore(sessionId);
+    const store = createSessionStore(sessionId, TMP_DIR);
     store.getState().setTitle("Persisted Title");
 
     await waitForPersistedSession(sessionId, (session) => session.title === "Persisted Title");
@@ -285,7 +285,7 @@ describe("SessionStoreManager", () => {
   test("reload from disk preserves stats and executions exactly while deriving executionCount", async () => {
     __setSessionsDirForTest(() => TMP_DIR);
     const sessionId = uniqueSessionId("persist-stats-executions");
-    const store = createSessionStore(sessionId);
+    const store = createSessionStore(sessionId, TMP_DIR);
     const state = store.getState();
 
     state.append({ type: "execution-start", executionId: "run-one" });
@@ -318,10 +318,10 @@ describe("SessionStoreManager", () => {
 
   test("create returns the same store for the same session id", () => {
     const sessionId = uniqueSessionId("same-store");
-    expect(storeManager.create(sessionId)).toBe(storeManager.create(sessionId));
+    expect(storeManager.create(sessionId, TMP_DIR)).toBe(storeManager.create(sessionId, TMP_DIR));
   });
 
-  test("create scopes stores by workspace root when provided", () => {
+  test("create scopes stores by workspace root", () => {
     const sessionId = uniqueSessionId("scoped-store");
     const left = storeManager.create(sessionId, "/workspace/left");
     const right = storeManager.create(sessionId, "/workspace/right");
@@ -333,50 +333,54 @@ describe("SessionStoreManager", () => {
 
   test("get returns undefined for unknown sessions and existing stores after creation", () => {
     const sessionId = uniqueSessionId("registry");
-    expect(storeManager.get(sessionId)).toBeUndefined();
-    const store = storeManager.create(sessionId);
-    expect(storeManager.get(sessionId)).toBe(store);
+    expect(storeManager.get(sessionId, TMP_DIR)).toBeUndefined();
+    const store = storeManager.create(sessionId, TMP_DIR);
+    expect(storeManager.get(sessionId, TMP_DIR)).toBe(store);
   });
 
   test("has returns true for registered stores and false for unknown ones", () => {
     const sessionId = uniqueSessionId("has-check");
-    expect(storeManager.has(sessionId)).toBe(false);
-    storeManager.create(sessionId);
-    expect(storeManager.has(sessionId)).toBe(true);
+    expect(storeManager.has(sessionId, TMP_DIR)).toBe(false);
+    storeManager.create(sessionId, TMP_DIR);
+    expect(storeManager.has(sessionId, TMP_DIR)).toBe(true);
   });
 
   test("delete removes a store from the registry", () => {
     const sessionId = uniqueSessionId("delete-store");
-    storeManager.create(sessionId);
-    expect(storeManager.has(sessionId)).toBe(true);
+    storeManager.create(sessionId, TMP_DIR);
+    expect(storeManager.has(sessionId, TMP_DIR)).toBe(true);
 
-    const result = storeManager.delete(sessionId);
+    const result = storeManager.delete(sessionId, TMP_DIR);
     expect(result).toBe(true);
-    expect(storeManager.has(sessionId)).toBe(false);
-    expect(storeManager.get(sessionId)).toBeUndefined();
+    expect(storeManager.has(sessionId, TMP_DIR)).toBe(false);
+    expect(storeManager.get(sessionId, TMP_DIR)).toBeUndefined();
   });
 
   test("delete returns false for unknown sessions", () => {
-    expect(storeManager.delete("nonexistent")).toBe(false);
+    expect(storeManager.delete("nonexistent", TMP_DIR)).toBe(false);
   });
 
   test("clearAll removes all stores from the registry", () => {
-    storeManager.create(uniqueSessionId("clear-a"));
-    storeManager.create(uniqueSessionId("clear-b"));
-    storeManager.create(uniqueSessionId("clear-c"));
+    const sessionIds = [
+      uniqueSessionId("clear-a"),
+      uniqueSessionId("clear-b"),
+      uniqueSessionId("clear-c"),
+    ];
+    for (const sessionId of sessionIds) storeManager.create(sessionId, TMP_DIR);
 
     storeManager.clearAll();
 
-    expect(storeManager.get("clear-a")).toBeUndefined();
-    expect(storeManager.get("clear-b")).toBeUndefined();
-    expect(storeManager.get("clear-c")).toBeUndefined();
+    for (const sessionId of sessionIds) {
+      expect(storeManager.get(sessionId, TMP_DIR)).toBeUndefined();
+    }
   });
 
   test("clearAll on a fresh manager leaves no stores", () => {
     const fresh = new SessionStoreManager({ logger: silentLogger });
-    fresh.create(uniqueSessionId("fresh-store"));
+    const sessionId = uniqueSessionId("fresh-store");
+    fresh.create(sessionId, TMP_DIR);
     fresh.clearAll();
-    expect(fresh.has("fresh-store")).toBe(false);
+    expect(fresh.has(sessionId, TMP_DIR)).toBe(false);
   });
 });
 
@@ -1051,7 +1055,9 @@ describe("Zustand integration and immutability", () => {
 
     store.getState().append({ type: "user-message", content: "notify" });
     unsubscribe();
-    expect(calls).toBe(1);
+    // One notification carries the reduced event and one carries the
+    // canonical updatedAt advanced by the scheduled durable snapshot.
+    expect(calls).toBe(2);
   });
 
   test("messages array reference changes after append", () => {

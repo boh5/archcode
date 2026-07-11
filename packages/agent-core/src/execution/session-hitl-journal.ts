@@ -72,7 +72,7 @@ export async function prepareSessionHitlPause(input: {
   readonly hitl: HitlService;
   readonly checkpoint: SessionHitlCheckpointRecord;
 }): Promise<{ readonly record: HitlRecord; readonly checkpoint: SessionHitlCheckpointRecord }> {
-  if (sessionHitlJournalPhase(input.checkpoint) !== "preparing" || input.checkpoint.request === undefined) {
+  if (sessionHitlJournalPhase(input.checkpoint) !== "preparing") {
     throw new Error(`Session HITL ${input.checkpoint.hitlId} must start from a complete preparing journal entry`);
   }
   assertSessionRequestOwner(input.checkpoint.request.owner, input.sessionId);
@@ -114,7 +114,6 @@ export async function prepareSessionHitlPause(input: {
 
 export async function recoverSessionHitlJournals(input: {
   readonly workspaceRoot: string;
-  readonly projectSlug: string;
   readonly sessions: SessionStoreManager;
   readonly hitl: HitlService;
 }): Promise<SessionHitlJournalRecoverySummary> {
@@ -130,7 +129,7 @@ export async function recoverSessionHitlJournals(input: {
       let checkpoint = original;
       let phase = sessionHitlJournalPhase(checkpoint);
       const store = await input.sessions.getOrLoad(session.sessionId, input.workspaceRoot);
-      const owner = checkpoint.request?.owner ?? sessionOwner(input.projectSlug, session.sessionId);
+      const owner = checkpoint.request.owner;
       assertSessionRequestOwner(owner, session.sessionId);
       const ownerLookup = await (await input.hitl.ownerStore(owner)).lookup(checkpoint.hitlId);
 
@@ -183,7 +182,7 @@ export async function recoverSessionHitlJournals(input: {
         manualUnknown += 1;
       }
 
-      const current = await (await input.hitl.ownerStore(checkpoint.request?.owner ?? owner)).lookup(checkpoint.hitlId);
+      const current = await (await input.hitl.ownerStore(checkpoint.request.owner)).lookup(checkpoint.hitlId);
       if (current.status === "found") {
         store.getState().append({ type: "hitl.request", request: current.record });
         await input.sessions.flushSession(session.sessionId, input.workspaceRoot);
@@ -249,10 +248,7 @@ export function sessionHitlBlockerFromJournal(checkpoint: SessionHitlCheckpointR
     ...(checkpoint.assistantMessageId === undefined ? {} : { assistantMessageId: checkpoint.assistantMessageId }),
     displayInput: checkpoint.displayInput,
     blockedAt: checkpoint.createdAt,
-    reason: checkpoint.request?.displayPayload.title
-      ?? checkpoint.permission?.reason
-      ?? checkpoint.permission?.description
-      ?? "User input required",
+    reason: checkpoint.request.displayPayload.title,
   };
 }
 
@@ -272,9 +268,6 @@ async function repairMissingOwner(input: {
   readonly checkpoint: SessionHitlCheckpointRecord;
 }): Promise<SessionHitlCheckpointRecord> {
   const request = input.checkpoint.request;
-  if (request === undefined) {
-    throw new Error(`Session HITL ${input.checkpoint.hitlId} has no prepared request and its owner record is missing`);
-  }
   assertSessionRequestOwner(request.owner, input.sessionId);
   const result = await input.hitl.createWithResult({
     owner: request.owner,
@@ -301,8 +294,7 @@ async function convergePreparedRecord(input: {
   readonly record: HitlRecord;
 }): Promise<SessionHitlCheckpointRecord> {
   if (input.record.hitlId === input.checkpoint.hitlId) return input.checkpoint;
-  const request = input.checkpoint.request;
-  if (request === undefined || input.record.blockingKey !== input.checkpoint.blockingKey) {
+  if (input.record.blockingKey !== input.checkpoint.blockingKey) {
     throw new Error(`Session HITL ${input.checkpoint.hitlId} cannot converge onto unrelated owner record ${input.record.hitlId}`);
   }
   const replacement: SessionHitlCheckpointRecord = {
@@ -348,10 +340,6 @@ async function resolveTerminalJournal(input: {
   });
   await input.sessions.flushSession(input.sessionId, input.workspaceRoot);
   await deleteSessionHitlCheckpoint(input.workspaceRoot, input.sessionId, input.record.hitlId);
-}
-
-function sessionOwner(projectSlug: string, sessionId: string): HitlOwnerKey {
-  return { projectSlug, ownerType: "session", ownerId: sessionId };
 }
 
 function assertSessionRequestOwner(owner: HitlOwnerKey, sessionId: string): void {

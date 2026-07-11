@@ -12,7 +12,7 @@ import { LoopKillStateManager } from "./kill-state";
 import { LoopActiveConflictError, LoopWorktreeScopeCheckpointError } from "./runner";
 import { LoopSessionHitlContinuationCoordinator } from "./session-hitl-continuation";
 import { LoopStateManager, type LoopConfig } from "./state";
-import { FakeSessionExecutionManager } from "./test-utils";
+import { createLoopTestHitlService, FakeSessionExecutionManager } from "./test-utils";
 import { LoopTriggerPoller, type LoopLocalGitReader } from "./triggers";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "loop-scheduler");
@@ -22,7 +22,8 @@ const manualConfig: LoopConfig = {
   title: "Manual loop",
   schedule: { kind: "manual" },
   approvalPolicy: "interactive",
-  limits: { maxIterationsPerRun: 8 },
+  limits: { maxIterationsPerRun: 8, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+  useWorktree: false,
   taskPrompt: "Summarize the project",
 };
 
@@ -70,7 +71,7 @@ describe("LoopScheduler", () => {
     await fixture.manager.update(loop.loopId, { nextRunAt: 100 });
     fixture.runner = async () => {
       fixture.clock.set(150);
-      return { summary: "finished after work" };
+      return { status: "succeeded", summary: "finished after work" };
     };
 
     await fixture.scheduler.start("project-a");
@@ -82,7 +83,7 @@ describe("LoopScheduler", () => {
     expect(jobs).toHaveLength(1);
     expect(jobs[0]).toMatchObject({ status: "succeeded", triggerKind: "interval", subjectKey: `interval:${loop.loopId}` });
     expect(state.lastRun?.status).toBe("succeeded");
-    expect(state.lastRun).toMatchObject({ jobId: jobs[0]?.jobId, triggerKind: "interval", subjectKey: `interval:${loop.loopId}` });
+    expect(state.lastRun).toMatchObject({ jobId: jobs[0]?.jobId, trigger: "interval", subjectKey: `interval:${loop.loopId}` });
     expect(state.lastRun?.endedAt).toBe(150);
     expect(state.nextRunAt).toBe(250);
     expect(fixture.timer.nextDue()).toBe(250);
@@ -126,7 +127,7 @@ describe("LoopScheduler", () => {
     fixture.runner = async () => {
       runnerStarted.resolve();
       await deferred.promise;
-      return { summary: "eventually done" };
+      return { status: "succeeded", summary: "eventually done" };
     };
 
     await fixture.scheduler.start("project-a");
@@ -159,7 +160,7 @@ describe("LoopScheduler", () => {
     fixture.runner = async () => {
       runnerStarted.resolve();
       await deferred.promise;
-      return { sessionId: "session-1", summary: "eventually done" };
+      return { status: "succeeded", sessionId: "session-1", summary: "eventually done" };
     };
 
     const firstRun = fixture.scheduler.runManual(loop.loopId);
@@ -192,23 +193,24 @@ describe("LoopScheduler", () => {
     const loop = await fixture.manager.create("project-a", manualConfig);
     const checkpoint = {
       worktreePath: "/tmp/scheduler-checkpoint-worktree",
+      worktreeBranchName: "archcode/loop/test/scheduler-checkpoint",
       baseSha: "a".repeat(40),
       resolvedHeadSha: "b".repeat(40),
     };
     fixture.runner = async (input) => {
       expect(input.checkpointBaseSha).toBeFunction();
       expect(input.checkpointWorktree).toBeFunction();
-      await input.checkpointBaseSha!(checkpoint.baseSha);
-      expect(await fixture.jobQueue.read(input.job!.jobId)).toMatchObject({
+      await input.checkpointBaseSha(checkpoint.baseSha);
+      expect(await fixture.jobQueue.read(input.job.jobId)).toMatchObject({
         status: "running",
         baseSha: checkpoint.baseSha,
       });
-      await input.checkpointWorktree!(checkpoint);
-      expect(await fixture.jobQueue.read(input.job!.jobId)).toMatchObject({
+      await input.checkpointWorktree(checkpoint);
+      expect(await fixture.jobQueue.read(input.job.jobId)).toMatchObject({
         status: "running",
         ...checkpoint,
       });
-      return { summary: "checkpointed" };
+      return { status: "succeeded", summary: "checkpointed" };
     };
 
     await fixture.scheduler.runManual(loop.loopId);
@@ -299,6 +301,8 @@ describe("LoopScheduler", () => {
       status: "running",
       startedAt: 50,
       leaseExpiresAt: 10_000,
+      leaseOwnerId: "manual-blocker",
+      leaseToken: "manual-blocker-lease-1",
       attempts: 1,
     });
 
@@ -316,7 +320,6 @@ describe("LoopScheduler", () => {
       trigger: "manual",
       reason: "loop_paused",
       jobId: queued.jobId,
-      triggerKind: "manual",
       subjectKey: `manual:${loop.loopId}`,
       dedupeKey: queued.dedupeKey,
     });
@@ -351,6 +354,8 @@ describe("LoopScheduler", () => {
       status: "running",
       startedAt: 50,
       leaseExpiresAt: 10_000,
+      leaseOwnerId: "manual-blocker",
+      leaseToken: "manual-blocker-lease-2",
       attempts: 1,
     });
 
@@ -367,7 +372,6 @@ describe("LoopScheduler", () => {
       trigger: "manual",
       reason: "cancelled_by_user",
       jobId: queued.jobId,
-      triggerKind: "manual",
       subjectKey: `manual:${loop.loopId}`,
       dedupeKey: queued.dedupeKey,
     });
@@ -405,9 +409,9 @@ describe("LoopScheduler", () => {
 
     expect(report).toMatchObject({
       status: "cancelled",
+      trigger: "manual",
       reason: "cancelled_by_user",
       jobId: job.jobId,
-      triggerKind: "manual",
       subjectKey: `manual:${loop.loopId}`,
       dedupeKey: job.dedupeKey,
     });
@@ -444,9 +448,9 @@ describe("LoopScheduler", () => {
     const report = (await fixture.manager.readRunLog(loop.loopId, 1))[0];
     expect(report).toMatchObject({
       status: "skipped",
+      trigger: "interval",
       reason: "global_kill_active",
       jobId: job.jobId,
-      triggerKind: "interval",
       subjectKey: `interval:${loop.loopId}`,
       dedupeKey: job.dedupeKey,
     });
@@ -481,9 +485,9 @@ describe("LoopScheduler", () => {
     const report = (await fixture.manager.readRunLog(loop.loopId, 1))[0];
     expect(report).toMatchObject({
       status: "skipped",
+      trigger: "interval",
       reason: "loop_paused",
       jobId: job.jobId,
-      triggerKind: "interval",
       subjectKey: `interval:${loop.loopId}`,
       dedupeKey: job.dedupeKey,
     });
@@ -526,9 +530,9 @@ describe("LoopScheduler", () => {
     const report = (await fixture.manager.readRunLog(loop.loopId, 1))[0];
     expect(report).toMatchObject({
       status: "skipped",
+      trigger: "interval",
       reason: "scheduler_overlap",
       jobId: job.jobId,
-      triggerKind: "interval",
       subjectKey: `interval:${loop.loopId}`,
       dedupeKey: job.dedupeKey,
     });
@@ -545,7 +549,7 @@ describe("LoopScheduler", () => {
     fixture.runner = async () => {
       runnerStarted.resolve();
       await deferred.promise;
-      return { summary: "completed while paused" };
+      return { status: "succeeded", summary: "completed while paused" };
     };
 
     await fixture.scheduler.start("project-a");
@@ -737,7 +741,8 @@ describe("LoopScheduler", () => {
       jobQueue: fixture.jobQueue,
       jobCoordinator: fixture.coordinator,
       collisionLedger: fixture.collisionLedger,
-      now: fixture.clock.now,
+      now: () => fixture.clock.now(),
+      scheduleCleanup: () => undefined,
     });
     const continuationLease = await continuation.acquire({
       origin: {
@@ -768,7 +773,10 @@ describe("LoopScheduler", () => {
         await releaseStop.promise;
         await continuationLease.fail(new Error("Session family stopped"));
       },
-      runner: async () => ({ summary: "must not run" }),
+      hitl: createLoopTestHitlService(TMP_DIR, fixture.manager),
+      runner: async () => ({ status: "succeeded", summary: "must not run" }),
+      cleanupJob: async () => undefined,
+      readSessionAttempt: async () => ({}),
     });
 
     const cancellation = scheduler.cancelCurrentRun(loop.loopId);
@@ -963,7 +971,7 @@ describe("LoopScheduler", () => {
     fixture.runner = async () => {
       runnerStarted.resolve();
       await deferred.promise;
-      return { summary: "late" };
+      return { status: "succeeded", summary: "late" };
     };
 
     const activeRun = fixture.scheduler.runManual(userCancelled.loopId);
@@ -979,7 +987,7 @@ describe("LoopScheduler", () => {
     fixture.runner = async () => {
       globalRunStarted.resolve();
       await globalDeferred.promise;
-      return { summary: "late global" };
+      return { status: "succeeded", summary: "late global" };
     };
     const globalRun = fixture.scheduler.runManual(globalKilled.loopId);
     await globalRunStarted.promise;
@@ -1058,7 +1066,9 @@ describe("LoopScheduler", () => {
       triggerKind: "manual",
       subjectKey: "manual:saga-report-first",
       worktreePath: "/tmp/saga-report-first",
+      worktreeBranchName: "archcode/loop/test/saga-report-first",
       baseSha: "a".repeat(40),
+      resolvedHeadSha: "a".repeat(40),
     });
     const running = (await fixture.coordinator.dispatchReady())[0]!;
     const report = {
@@ -1070,7 +1080,9 @@ describe("LoopScheduler", () => {
       endedAt: 1_010,
       jobId: queued.job.jobId,
       worktreePath: running.worktreePath,
+      worktreeBranchName: running.worktreeBranchName,
       baseSha: running.baseSha,
+      resolvedHeadSha: running.resolvedHeadSha,
       cleanupState: "in_progress" as const,
     };
     await fixture.manager.recordRunStart(loop.loopId, { ...report, status: "running", endedAt: undefined });
@@ -1124,6 +1136,15 @@ describe("LoopScheduler", () => {
       blockedReason: "needs_user",
       blockedByHitlIds: [hitlId],
       attentionStatus: "waiting_for_human" as const,
+      resumeCheckpoint: {
+        version: 1 as const,
+        hitlId,
+        loopId: loop.loopId,
+        runId: "cancelled-needs-user-crash-run",
+        jobId: claimed.jobId,
+        trigger: "manual" as const,
+        intendedContinuation: "resume_run" as const,
+      },
     };
     await fixture.manager.recordRunBlocked(loop.loopId, blocked);
     await fixture.coordinator.finish(claimed.jobId, executionLease(claimed), {
@@ -1131,6 +1152,7 @@ describe("LoopScheduler", () => {
       blockedReason: "needs_user",
       blockedByHitlIds: [hitlId],
       attentionStatus: "waiting_for_human",
+      resumeCheckpoint: blocked.resumeCheckpoint,
     });
     // Simulate a crash after the cancellation report/state commit and before
     // the corresponding non-terminal queue record can be finalized.
@@ -1142,6 +1164,7 @@ describe("LoopScheduler", () => {
       blockedReason: "cancelled_by_user",
       blockedByHitlIds: undefined,
       attentionStatus: "clear",
+      resumeCheckpoint: undefined,
     });
     expect((await fixture.jobQueue.read(claimed.jobId)).status).toBe("needs_user");
 
@@ -1227,32 +1250,6 @@ describe("LoopScheduler", () => {
     expect((await fixture.manager.readRunLog(loop.loopId, 1))[0]).toMatchObject({ status: "succeeded" });
   });
 
-  test("startup reconciles a legacy report-first running job without lease tokens", async () => {
-    const fixture = await createFixture(1_700);
-    const loop = await fixture.manager.create("project-a", manualConfig);
-    const enqueued = await fixture.jobQueue.enqueue({ loopId: loop.loopId, triggerKind: "manual", subjectKey: "manual:legacy-lease" });
-    const legacy = await fixture.jobQueue.update(enqueued.job.jobId, { status: "running", startedAt: 1_700, attempts: 1 });
-    const report = {
-      runId: "legacy-lease-run",
-      loopId: loop.loopId,
-      status: "succeeded" as const,
-      trigger: "manual" as const,
-      startedAt: 1_700,
-      endedAt: 1_710,
-      jobId: legacy.jobId,
-    };
-    await fixture.manager.recordRunStart(loop.loopId, { ...report, status: "running", endedAt: undefined });
-    await fixture.manager.appendRunReport(loop.loopId, report);
-
-    await fixture.createScheduler().start("project-a");
-
-    expect(fixture.runs).toEqual([]);
-    const recoveredJob = await fixture.jobQueue.read(legacy.jobId);
-    expect(recoveredJob).toMatchObject({ status: "succeeded" });
-    expect(recoveredJob.leaseOwnerId).toBeUndefined();
-    expect(recoveredJob.leaseToken).toBeUndefined();
-  });
-
   test("startup resumes a terminal queue cleanup intent without rerunning execution", async () => {
     const fixture = await createFixture(2_000);
     const loop = await fixture.manager.create("project-a", manualConfig);
@@ -1261,7 +1258,9 @@ describe("LoopScheduler", () => {
       triggerKind: "manual",
       subjectKey: "manual:saga-intent",
       worktreePath: "/tmp/saga-intent",
+      worktreeBranchName: "archcode/loop/test/saga-intent",
       baseSha: "b".repeat(40),
+      resolvedHeadSha: "b".repeat(40),
     });
     const running = (await fixture.coordinator.dispatchReady())[0]!;
     const report = {
@@ -1273,7 +1272,9 @@ describe("LoopScheduler", () => {
       endedAt: 2_010,
       jobId: running.jobId,
       worktreePath: running.worktreePath,
+      worktreeBranchName: running.worktreeBranchName,
       baseSha: running.baseSha,
+      resolvedHeadSha: running.resolvedHeadSha,
       cleanupState: "in_progress" as const,
     };
     await fixture.manager.recordRunStart(loop.loopId, { ...report, status: "running", endedAt: undefined });
@@ -1311,7 +1312,9 @@ describe("LoopScheduler", () => {
       triggerKind: "manual",
       subjectKey: "manual:saga-completion",
       worktreePath: "/tmp/saga-completion",
+      worktreeBranchName: "archcode/loop/test/saga-completion",
       baseSha: "c".repeat(40),
+      resolvedHeadSha: "c".repeat(40),
     });
     const running = (await fixture.coordinator.dispatchReady())[0]!;
     const report = {
@@ -1323,7 +1326,9 @@ describe("LoopScheduler", () => {
       endedAt: 3_010,
       jobId: running.jobId,
       worktreePath: running.worktreePath,
+      worktreeBranchName: running.worktreeBranchName,
       baseSha: running.baseSha,
+      resolvedHeadSha: running.resolvedHeadSha,
       cleanupState: "in_progress" as const,
     };
     await fixture.manager.recordRunStart(loop.loopId, { ...report, status: "running", endedAt: undefined });
@@ -1356,7 +1361,9 @@ describe("LoopScheduler", () => {
       triggerKind: "manual",
       subjectKey: "manual:saga-state-projection",
       worktreePath: "/tmp/saga-state-projection",
+      worktreeBranchName: "archcode/loop/test/saga-state-projection",
       baseSha: "d".repeat(40),
+      resolvedHeadSha: "d".repeat(40),
     });
     const running = (await fixture.coordinator.dispatchReady())[0]!;
     const report = {
@@ -1368,7 +1375,9 @@ describe("LoopScheduler", () => {
       endedAt: 4_010,
       jobId: running.jobId,
       worktreePath: running.worktreePath,
+      worktreeBranchName: running.worktreeBranchName,
       baseSha: running.baseSha,
+      resolvedHeadSha: running.resolvedHeadSha,
       cleanupState: "cleaned" as const,
       observedArtifacts: [{ path: "cleanup:cleaned", status: "observed" as const }],
     };
@@ -1439,10 +1448,10 @@ describe("LoopScheduler", () => {
       status: "skipped",
       reason: "collision_conflict",
       jobId: job.jobId,
-      triggerKind: "on_commit",
+      trigger: "on_commit",
       subjectKey: job.subjectKey,
       dedupeKey: job.dedupeKey,
-      resolvedHeadSha: "abc123",
+      baseSha: "abc123",
       collisionTargets: [{ type: "branch", owner: "test-owner", repo: "test-repo", branch: "main" }],
     });
     expect(job).toMatchObject({ status: "skipped", blockedReason: "collision_conflict" });
@@ -1460,7 +1469,7 @@ describe("LoopScheduler", () => {
       repoId: "test-owner/test-repo",
       branch: "main",
       collisionTarget: { type: "branch", owner: "test-owner", repo: "test-repo", branch: "main" },
-      resolvedHeadSha: oldSha,
+      baseSha: oldSha,
       eventSummary: { summary: "Observed old commit", payloadSha: oldSha },
     });
     const firstRunnerStarted = createDeferred<void>();
@@ -1471,9 +1480,9 @@ describe("LoopScheduler", () => {
       if (runCount === 1) {
         firstRunnerStarted.resolve();
         await finishFirstRunner.promise;
-        return { summary: "finished original SHA" };
+        return { status: "succeeded", summary: "finished original SHA" };
       }
-      return { summary: "finished rerun SHA" };
+      return { status: "succeeded", summary: "finished rerun SHA" };
     };
 
     const schedulerStart = fixture.scheduler.start("project-a");
@@ -1485,13 +1494,13 @@ describe("LoopScheduler", () => {
       repoId: "test-owner/test-repo",
       branch: "main",
       collisionTarget: { type: "branch", owner: "test-owner", repo: "test-repo", branch: "main" },
-      resolvedHeadSha: newSha,
+      baseSha: newSha,
       eventSummary: { summary: "Observed new commit", payloadSha: newSha },
     });
     expect((await fixture.jobQueue.list(["running"]))[0]).toMatchObject({
       rerunAfterCurrent: true,
-      resolvedHeadSha: oldSha,
-      rerunInput: { resolvedHeadSha: newSha },
+      baseSha: oldSha,
+      rerunInput: { baseSha: newSha },
     });
 
     finishFirstRunner.resolve();
@@ -1499,9 +1508,9 @@ describe("LoopScheduler", () => {
 
     const jobs = await fixture.jobQueue.list();
     expect(jobs.map((job) => job.status)).toEqual(["succeeded", "succeeded"]);
-    expect(jobs[0]).toMatchObject({ resolvedHeadSha: oldSha });
-    expect(jobs[1]).toMatchObject({ triggerKind: "on_commit", resolvedHeadSha: newSha });
-    expect(fixture.runs[1]?.job).toMatchObject({ triggerKind: "on_commit", resolvedHeadSha: newSha });
+    expect(jobs[0]).toMatchObject({ baseSha: oldSha });
+    expect(jobs[1]).toMatchObject({ triggerKind: "on_commit", baseSha: newSha });
+    expect(fixture.runs[1]?.job).toMatchObject({ triggerKind: "on_commit", baseSha: newSha });
   });
 
   test("schedules cron loops through durable queue before running loop work", async () => {
@@ -1589,7 +1598,7 @@ describe("LoopScheduler", () => {
       const running = await fixture.jobQueue.list(["running"]);
       expect(running.some((job) => job.loopId === input.loop.loopId && job.triggerKind === input.trigger)).toBe(true);
       durableSeenBeforeRun.push(input.trigger);
-      return { summary: "done" };
+      return { status: "succeeded", summary: "done" };
     };
 
     await fixture.scheduler.runManual(manual.loopId);
@@ -1618,6 +1627,8 @@ describe("LoopScheduler", () => {
       status: "running",
       startedAt: fixture.clock.now() - 1_000,
       leaseExpiresAt: fixture.clock.now() - 1,
+      leaseOwnerId: "prior-incarnation",
+      leaseToken: "expired-lease",
       attempts: 1,
       updatedAt: fixture.clock.now() - 1_000,
     });
@@ -1633,21 +1644,14 @@ describe("LoopScheduler", () => {
     expect(fixture.runs).toHaveLength(1);
   });
 
-  test("invalid cron expression records disabled trigger health and does not register cron", async () => {
+  test("invalid cron expression is rejected before scheduler registration", async () => {
     const fixture = await createFixture(Date.UTC(2026, 0, 1, 0, 0, 0));
-    const loop = await fixture.manager.create("project-a", {
+    await expect(fixture.manager.create("project-a", {
       ...cronConfig,
       schedule: { kind: "cron", expression: "0 0 30 2 *" },
-    });
+    })).rejects.toThrow("valid future UTC occurrence");
 
-    await fixture.scheduler.start("project-a");
-
-    const state = await fixture.manager.read(loop.loopId);
     expect(fixture.cron.size()).toBe(0);
-    expect(state.triggerHealth?.find((entry) => entry.triggerKind === "cron")).toMatchObject({
-      status: "disabled",
-      lastError: expect.stringMatching(/no future UTC occurrence/i),
-    });
   });
 
   test("cron handler rejection is caught and recorded as scheduler health", async () => {
@@ -1679,7 +1683,7 @@ async function createFixture(now: number = 0, options: { maxJobs?: number; local
   collisionLedger: CollisionLedger;
   executionManager: FakeSessionExecutionManager;
   runs: LoopSchedulerRunInput[];
-  runner: (input: LoopSchedulerRunInput) => Promise<LoopSchedulerRunResult | void>;
+  runner: (input: LoopSchedulerRunInput) => Promise<LoopSchedulerRunResult>;
   createScheduler: (
     triggerPoller?: LoopTriggerPoller,
     coordinatorOverride?: LoopJobCoordinator,
@@ -1718,7 +1722,7 @@ async function createFixture(now: number = 0, options: { maxJobs?: number; local
     collisionLedger,
     executionManager,
     runs,
-    runner: async (_input: LoopSchedulerRunInput) => ({ summary: "done" }),
+    runner: async (_input: LoopSchedulerRunInput) => ({ status: "succeeded" as const, summary: "done" }),
     createScheduler: undefined as unknown as (
       triggerPoller?: LoopTriggerPoller,
       coordinatorOverride?: LoopJobCoordinator,
@@ -1726,7 +1730,12 @@ async function createFixture(now: number = 0, options: { maxJobs?: number; local
       readSessionAttempt?: NonNullable<ConstructorParameters<typeof LoopScheduler>[0]["readSessionAttempt"]>,
     ) => LoopScheduler,
   };
-  fixture.createScheduler = (nextTriggerPoller = triggerPoller, coordinatorOverride = coordinator, cleanupJob, readSessionAttempt) => new LoopScheduler({
+  fixture.createScheduler = (
+    nextTriggerPoller = triggerPoller,
+    coordinatorOverride = coordinator,
+    cleanupJob = async () => undefined,
+    readSessionAttempt = async () => ({}),
+  ) => new LoopScheduler({
     stateManager: manager,
     clock,
     timer,
@@ -1738,12 +1747,13 @@ async function createFixture(now: number = 0, options: { maxJobs?: number; local
     killStateManager,
     triggerPoller: nextTriggerPoller,
     abortSessionExecutionAndWait: (sessionId) => executionManager.abortAndWait(TMP_DIR, sessionId),
+    hitl: createLoopTestHitlService(TMP_DIR, manager),
     runner: async (input) => {
       runs.push(input);
       return await fixture.runner(input);
     },
-    ...(cleanupJob === undefined ? {} : { cleanupJob }),
-    ...(readSessionAttempt === undefined ? {} : { readSessionAttempt }),
+    cleanupJob,
+    readSessionAttempt,
   });
   fixture.scheduler = fixture.createScheduler();
   return fixture;

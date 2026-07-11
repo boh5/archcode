@@ -37,7 +37,7 @@ export interface LoopSessionHitlContinuationCoordinatorOptions {
   readonly collisionLedger: CollisionLedger;
   readonly now?: () => number;
   /** Schedules the existing durable cleanup saga after the Session lease unwinds. */
-  readonly scheduleCleanup?: (input: { readonly loopId: string; readonly runId: string; readonly jobId: string }) => void;
+  readonly scheduleCleanup: (input: { readonly loopId: string; readonly runId: string; readonly jobId: string }) => void;
 }
 
 /**
@@ -51,7 +51,7 @@ export class LoopSessionHitlContinuationCoordinator implements SessionContinuati
   readonly #jobCoordinator: LoopJobCoordinator;
   readonly #collisionLedger: CollisionLedger;
   readonly #now: () => number;
-  readonly #scheduleCleanup?: LoopSessionHitlContinuationCoordinatorOptions["scheduleCleanup"];
+  readonly #scheduleCleanup: LoopSessionHitlContinuationCoordinatorOptions["scheduleCleanup"];
 
   constructor(options: LoopSessionHitlContinuationCoordinatorOptions) {
     this.#stateManager = options.stateManager;
@@ -59,6 +59,9 @@ export class LoopSessionHitlContinuationCoordinator implements SessionContinuati
     this.#jobCoordinator = options.jobCoordinator;
     this.#collisionLedger = options.collisionLedger;
     this.#now = options.now ?? (() => Date.now());
+    if (options.scheduleCleanup === undefined) {
+      throw new Error("LoopSessionHitlContinuationCoordinator requires cleanup scheduling.");
+    }
     this.#scheduleCleanup = options.scheduleCleanup;
   }
 
@@ -225,7 +228,7 @@ export class LoopSessionHitlContinuationCoordinator implements SessionContinuati
       fail: async () => undefined,
       afterSessionRelease: () => {
         if (job.cleanupState !== "in_progress") return;
-        this.#scheduleCleanup?.({ loopId: run.loopId, runId: run.runId, jobId: job.jobId });
+        this.#scheduleCleanup({ loopId: run.loopId, runId: run.runId, jobId: job.jobId });
       },
     };
   }
@@ -299,6 +302,7 @@ export class LoopSessionHitlContinuationCoordinator implements SessionContinuati
         if (settled) return;
         const report: LoopRunReport = {
           ...input.blockedRun,
+          status: "needs_user",
           endedAt: this.#now(),
           summary: `Session HITL continuation failed: ${errorMessage(error)}`,
           blockedReason: "needs_user",
@@ -329,7 +333,7 @@ export class LoopSessionHitlContinuationCoordinator implements SessionContinuati
       afterSessionRelease: () => {
         if (!cleanupPending || cleanupScheduled) return;
         cleanupScheduled = true;
-        this.#scheduleCleanup?.({
+        this.#scheduleCleanup({
           loopId: input.runningReport.loopId,
           runId: input.runningReport.runId,
           jobId: input.job.jobId,
@@ -419,6 +423,7 @@ function checkpointFor(hitlId: string, run: LoopRunReport, job: LoopJobRecord): 
     trigger: run.trigger,
     ...(run.subjectKey === undefined ? {} : { subjectKey: run.subjectKey }),
     ...(run.worktreePath === undefined ? {} : { worktreePath: run.worktreePath }),
+    ...(run.worktreeBranchName === undefined ? {} : { worktreeBranchName: run.worktreeBranchName }),
     ...(run.baseSha === undefined ? {} : { baseSha: run.baseSha }),
     ...(run.resolvedHeadSha === undefined ? {} : { resolvedHeadSha: run.resolvedHeadSha }),
     intendedContinuation: "resume_run",

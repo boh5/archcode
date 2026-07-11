@@ -1,7 +1,9 @@
 import { createStore } from "zustand/vanilla";
 import { useStore } from "zustand/react";
 import { useMemo } from "react";
-import type { GlobalSSEHitlRealtimeEvent, HitlProjection } from "@archcode/protocol";
+import { hitlIdentityKey, type GlobalSSEHitlRealtimeEvent, type HitlProjection } from "@archcode/protocol";
+
+export { hitlIdentityKey };
 
 export type HitlScope = "project" | "session" | "goal" | "loop";
 
@@ -16,10 +18,11 @@ export const hitlStore = createStore<HitlStoreState>((set) => ({
   projections: {},
   applyRealtimeEvent: (event) => set((state) => {
     const next = { ...state.projections };
+    const key = hitlIdentityKey(event.projection);
     if (isVisiblePendingHitlStatus(event.projection.status)) {
-      next[event.hitlId] = event.projection;
+      next[key] = event.projection;
     } else {
-      delete next[event.hitlId];
+      delete next[key];
     }
     return { projections: next };
   }),
@@ -71,7 +74,7 @@ export function selectHitlProjections(
     if (input.includeChildren !== true) return false;
     return isDescendantProjection(projection, input.scope, ownerId);
   });
-  return selected.sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.hitlId.localeCompare(right.hitlId));
+  return selected.sort((left, right) => left.createdAt.localeCompare(right.createdAt) || hitlIdentityKey(left).localeCompare(hitlIdentityKey(right)));
 }
 
 export function isVisiblePendingHitlStatus(status: HitlProjection["status"]): boolean {

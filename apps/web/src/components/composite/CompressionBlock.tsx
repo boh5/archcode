@@ -305,7 +305,7 @@ function OriginalRangePartView({
       return (
         <div className="flex items-start gap-1.5 text-[11px] text-text-muted">
           <Layers size={11} className="shrink-0 mt-0.5" />
-          <span>Legacy compaction: {part.summary.slice(0, 80)}{part.summary.length > 80 ? "…" : ""}</span>
+          <span>Hard context compaction: {part.summary.slice(0, 80)}{part.summary.length > 80 ? "…" : ""}</span>
         </div>
       );
     case "recovery-notice":

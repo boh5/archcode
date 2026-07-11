@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { createEmptySessionStats, type SessionExecutionRecord } from "@archcode/protocol";
 
 import type { ActiveSessionExecution, SessionCwdReferenceMigrationInput, SessionCwdRemovalLifecycle, SessionCwdRemovalResult, StartSessionExecutionInput } from "../execution";
+import { createEmptyCompressionState } from "../compression";
 import type { GitHubCiPollingConnectorApi, GitHubPullRequest, GitHubReadCiFailuresForRefOptions, GitHubReadCiFailuresForRefResult, GitHubResponse } from "../integrations/github";
 import type { SessionFile } from "../store/helpers";
 import { CollisionLedger } from "./collision-ledger";
@@ -15,7 +16,7 @@ import { LoopRunner, type LoopRunnerWorktreeManager } from "./runner";
 import { LoopScheduler, type LoopSchedulerTimer, type LoopSchedulerTimerHandle } from "./scheduler";
 import { LoopPollStateManager } from "./poll-state";
 import { LoopStateManager, type LoopConfig } from "./state";
-import { FakeClock } from "./test-utils";
+import { createLoopSchedulerRequiredDependencies, FakeClock } from "./test-utils";
 import { LoopTriggerPoller } from "./triggers";
 import type { LoopWorktreeCreateResult, LoopWorktreeInspection } from "./worktree-manager";
 
@@ -28,7 +29,7 @@ const loopHardeningConfig: LoopConfig = {
   title: null,
   schedule: { kind: "manual" },
   approvalPolicy: "interactive",
-  limits: { maxIterationsPerRun: 4 },
+  limits: { maxIterationsPerRun: 4, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
   taskPrompt: "Review the observed PR and write a concise artifact summary.",
   triggers: [{ kind: "on_pr", cadenceMs: 60_000, baseBranch: "main" }],
   useWorktree: true,
@@ -84,15 +85,18 @@ describe("Loop hardening e2e", () => {
       ),
     });
     const scheduler = new LoopScheduler({
+      ...createLoopSchedulerRequiredDependencies({ workspaceRoot: TMP_DIR, stateManager, clock }),
       stateManager,
       runner: runner.createSchedulerRunner(),
       clock,
       timer: new NoopTimer(),
       jobQueue: queue,
       coordinator,
+      collisionLedger,
       killStateManager: new LoopKillStateManager(TMP_DIR, { clock }),
       triggerPoller: poller,
       cleanupJob: (jobId) => cleanupService.cleanupJob(jobId),
+      readSessionAttempt: async () => ({}),
     });
     const loop = await stateManager.create("project-a", loopHardeningConfig);
 
@@ -103,7 +107,7 @@ describe("Loop hardening e2e", () => {
       triggerKind: "on_pr",
       subjectKey: `pr:test-owner/test-repo#42:${HEAD_ONE}`,
       collisionKey: "github:test-owner/test-repo:pr:42",
-      resolvedHeadSha: HEAD_ONE,
+      baseSha: HEAD_ONE,
     });
 
     const schedulerStarted = scheduler.start("project-a");
@@ -328,6 +332,20 @@ class FakeWorktreeManager implements LoopRunnerWorktreeManager {
     return await this.createMock(input);
   }
 
+  async reuse(input: Parameters<LoopRunnerWorktreeManager["reuse"]>[0]): Promise<LoopWorktreeCreateResult> {
+    const index = input.worktreePath.endsWith("worktree-1") ? 1 : 2;
+    return {
+      canonicalRoot: this.root,
+      managedRoot: join(this.root, "worktrees"),
+      worktreePath: input.worktreePath,
+      worktreeName: `worktree-${index}`,
+      branchName: `archcode/loop/hardening/job-${index}`,
+      baseSha: input.baseSha,
+      resolvedHeadSha: input.baseSha,
+      canonicalStatus: { dirty: false, entries: [] },
+    };
+  }
+
   async inspect(input: Parameters<FakeWorktreeManager["inspectMock"]>[0]): Promise<LoopWorktreeInspection> {
     return await this.inspectMock(input);
   }
@@ -350,16 +368,21 @@ function makePullRequest(headSha: string): GitHubPullRequest {
 
 function makeSession(sessionId: string, options?: { cwd?: string; loopId?: string; sessionRole?: "main"; title?: string }): SessionFile {
   const executions: SessionExecutionRecord[] = [{ id: `${sessionId}-execution`, startedAt: 100, status: "completed", endedAt: 150, durationMs: 50 }];
+  const now = Date.now();
   return {
+    schemaVersion: 1,
     sessionId,
-    createdAt: Date.now(),
+    createdAt: now,
+    updatedAt: now,
     cwd: options?.cwd ?? TMP_DIR,
     agentName: "orchestrator",
+    modelInfo: null,
     title: options?.title ?? null,
     messages: [],
     steps: [],
     stats: createEmptySessionStats(),
     executions,
+    compression: createEmptyCompressionState(),
     todos: [],
     reminders: [],
     childSessionLinks: [],

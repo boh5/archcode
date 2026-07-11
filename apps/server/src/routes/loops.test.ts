@@ -12,6 +12,8 @@ import {
   type LoopRunReport,
 } from "@archcode/agent-core";
 import type { LoopBudgetSnapshot, LoopCollisionSnapshot, LoopIntegrationSnapshot, LoopState } from "@archcode/protocol";
+import { SessionStoreManager } from "../../../../packages/agent-core/src/store/session-store-manager";
+import { createTestProjectContextResolverOptions } from "../../../../packages/agent-core/src/tools/test-project-context";
 import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "loops-routes");
@@ -21,7 +23,8 @@ const manualSessionLoopConfig: LoopConfig = {
   title: null,
   schedule: { kind: "manual" },
   approvalPolicy: "interactive",
-  limits: { maxIterationsPerRun: 4 },
+  limits: { maxIterationsPerRun: 4, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+  useWorktree: false,
   taskPrompt: "Summarize local project health.",
 };
 
@@ -46,7 +49,8 @@ const goalLoopConfig: LoopConfig = {
   title: null,
   schedule: { kind: "manual" },
   approvalPolicy: "explicit_per_run",
-  limits: { maxIterationsPerRun: 3 },
+  limits: { maxIterationsPerRun: 3, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+  useWorktree: false,
   goalTemplate: {
     title: null,
     objective: "Execute this inline Goal template only.",
@@ -64,12 +68,42 @@ describe("loops routes", () => {
     await rm(tempRoot, { recursive: true, force: true });
   });
 
+  test("rejects create payloads that omit canonical Loop fields", async () => {
+    const { app, project } = await createTestApp("canonical-create-fields");
+    const canonical = createLoopBodyFromConfig(manualSessionLoopConfig);
+
+    for (const field of ["schedule", "approvalPolicy", "limits", "useWorktree"] as const) {
+      const body = { ...canonical };
+      delete body[field];
+      const res = await app.request(`/api/projects/${project.slug}/loops`, {
+        method: "POST",
+        body: JSON.stringify(body),
+        headers: { "content-type": "application/json" },
+      });
+      expect(res.status).toBe(400);
+    }
+
+    const missingRatios = await app.request(`/api/projects/${project.slug}/loops`, {
+      method: "POST",
+      body: JSON.stringify({ ...canonical, limits: { maxIterationsPerRun: 4 } }),
+      headers: { "content-type": "application/json" },
+    });
+    expect(missingRatios.status).toBe(400);
+
+    const missingCadence = await app.request(`/api/projects/${project.slug}/loops`, {
+      method: "POST",
+      body: JSON.stringify({ ...canonical, triggers: [{ kind: "on_pr", baseBranch: "main" }] }),
+      headers: { "content-type": "application/json" },
+    });
+    expect(missingCadence.status).toBe(400);
+  });
+
 test("creates and reads a manual session loop without readiness score", async () => {
     const { app, project, runtime } = await createTestApp("manual-session-loop");
 
     const createRes = await app.request(`/api/projects/${project.slug}/loops`, {
       method: "POST",
-      body: JSON.stringify({ templateId: "watch_report" }),
+      body: JSON.stringify(createLoopBodyFromConfig(manualSessionLoopConfig)),
       headers: { "content-type": "application/json" },
     });
     const createBody = await createRes.json() as { loop: LoopState };
@@ -78,7 +112,7 @@ test("creates and reads a manual session loop without readiness score", async ()
     expect(createBody.loop).toMatchObject({ projectId: project.slug, status: "active", config: { templateId: "watch_report", title: null, schedule: { kind: "manual" } } });
     expect(createBody.loop.nextRunAt).toBeUndefined();
   expect(createBody.loop).not.toHaveProperty("readinessScore");
-    expect(runtime.createLoop).toHaveBeenCalledWith(project.workspaceRoot, expandLoopTemplate("watch_report"));
+    expect(runtime.createLoop).toHaveBeenCalledWith(project.workspaceRoot, manualSessionLoopConfig);
 
     const listRes = await app.request(`/api/projects/${project.slug}/loops`);
     const listBody = await listRes.json() as { loops: LoopState[] };
@@ -90,18 +124,19 @@ test("creates and reads a manual session loop without readiness score", async ()
     expect(await readRes.json()).toEqual({ loop: createBody.loop });
   });
 
-  test("creates all supported templates through minimal template bodies", async () => {
+  test("creates all supported templates through explicit canonical bodies", async () => {
     const { app, project } = await createTestApp("supported-template-create", { now: 10_000 });
     for (const templateId of ["watch_report", "maintain_fix", "pr_babysitter", "goal_runner"] as const) {
       const res = await app.request(`/api/projects/${project.slug}/loops`, {
         method: "POST",
-        body: JSON.stringify(templateId === "goal_runner" ? {
-          templateId,
+        body: JSON.stringify(createLoopBodyFromConfig(templateId === "goal_runner" ? {
+          ...expandLoopTemplate(templateId),
           goalTemplate: {
+            title: null,
             objective: "Run the recurring Goal.",
             acceptanceCriteria: "Reviewer can decide DONE from loop evidence.",
           },
-        } : { templateId }),
+        } : expandLoopTemplate(templateId))),
         headers: { "content-type": "application/json" },
       });
       const body = await res.json() as { loop: LoopState };
@@ -109,14 +144,14 @@ test("creates and reads a manual session loop without readiness score", async ()
       expect(res.status).toBe(201);
       expect(body.loop.config.templateId).toBe(templateId);
       expect(body.loop.config.title).toBeNull();
-      expect(body.loop.config.useWorktree ?? false).toBe(false);
+      expect(body.loop.config.useWorktree).toBe(false);
       expect(body.loop.nextRunAt).toBeUndefined();
   expect(body.loop).not.toHaveProperty("readinessScore");
     }
 
     const prBabysitterRes = await app.request(`/api/projects/${project.slug}/loops`, {
       method: "POST",
-      body: JSON.stringify({ templateId: "pr_babysitter" }),
+      body: JSON.stringify(createLoopBodyFromConfig(expandLoopTemplate("pr_babysitter"))),
       headers: { "content-type": "application/json" },
     });
     const prBabysitterBody = await prBabysitterRes.json() as { loop: LoopState };
@@ -131,7 +166,10 @@ test("creates and reads a manual session loop without readiness score", async ()
 
     const createRes = await app.request(`/api/projects/${project.slug}/loops`, {
       method: "POST",
-      body: JSON.stringify({ templateId: "watch_report", schedule: { kind: "cron", expression: "*/15 * * * *" } }),
+      body: JSON.stringify(createLoopBodyFromConfig({
+        ...manualSessionLoopConfig,
+        schedule: { kind: "cron", expression: "*/15 * * * *" },
+      })),
       headers: { "content-type": "application/json" },
     });
     const createBody = await createRes.json() as { loop: LoopState };
@@ -141,7 +179,7 @@ test("creates and reads a manual session loop without readiness score", async ()
     expect(createBody.loop.config.title).toBeNull();
     expect(JSON.stringify(createBody.loop)).not.toContain("readinessScore");
     expect(runtime.createLoop).toHaveBeenCalledWith(project.workspaceRoot, expect.objectContaining({
-      ...expandLoopTemplate("watch_report"),
+      ...manualSessionLoopConfig,
       schedule: { kind: "cron", expression: "*/15 * * * *" },
     }));
 
@@ -156,7 +194,7 @@ test("creates and reads a manual session loop without readiness score", async ()
 
     const createRes = await app.request(`/api/projects/${project.slug}/loops`, {
       method: "POST",
-      body: JSON.stringify({ templateId: "pr_babysitter" }),
+      body: JSON.stringify(createLoopBodyFromConfig(expandLoopTemplate("pr_babysitter"))),
       headers: { "content-type": "application/json" },
     });
     const createBody = await createRes.json() as { loop: LoopState };
@@ -253,20 +291,14 @@ test("creates and reads a manual session loop without readiness score", async ()
 
     const missingTemplateRes = await app.request(`/api/projects/${project.slug}/loops`, {
       method: "POST",
-      body: JSON.stringify({ templateId: "goal_runner" }),
+      body: JSON.stringify(createLoopBodyFromConfig(expandLoopTemplate("goal_runner"))),
       headers: { "content-type": "application/json" },
     });
     expect(missingTemplateRes.status).toBe(400);
 
     const createRes = await app.request(`/api/projects/${project.slug}/loops`, {
       method: "POST",
-      body: JSON.stringify({
-        templateId: "goal_runner",
-        goalTemplate: {
-          objective: "Execute this inline Goal template only.",
-          acceptanceCriteria: "Reviewer can decide DONE from loop-created Goal evidence.",
-        },
-      }),
+      body: JSON.stringify(createLoopBodyFromConfig(goalLoopConfig)),
       headers: { "content-type": "application/json" },
     });
     const createBody = await createRes.json() as { loop: LoopState };
@@ -279,7 +311,7 @@ test("creates and reads a manual session loop without readiness score", async ()
 
     const invalidRes = await app.request(`/api/projects/${project.slug}/loops`, {
       method: "POST",
-      body: JSON.stringify({ templateId: "goal_runner", goalTemplateId: "existing-goal" }),
+      body: JSON.stringify({ ...createLoopBodyFromConfig(goalLoopConfig), goalTemplateId: "existing-goal" }),
       headers: { "content-type": "application/json" },
     });
     expect(invalidRes.status).toBe(400);
@@ -482,7 +514,6 @@ test("creates and reads a manual session loop without readiness score", async ()
     expect(safeRun).toMatchObject({
       jobId: "job-safe",
       trigger: "on_pr",
-      triggerKind: "on_pr",
       subjectKey: TEST_GITHUB_PR_SUBJECT_KEY,
       dedupeKey: `${loop.loopId}:on_pr:${TEST_GITHUB_PR_SUBJECT_KEY}`,
       branchKey: `github:${TEST_GITHUB_OWNER}/${TEST_GITHUB_REPO}:main`,
@@ -497,13 +528,16 @@ test("creates and reads a manual session loop without readiness score", async ()
     const unsafeRun = runsBody.runs.find((run) => run.runId === "run-unsafe-worktree");
     expect(unsafeRun).toMatchObject({
       jobId: "job-unsafe",
-      triggerKind: "on_commit",
+      trigger: "on_commit",
       subjectKey: "branch:feature/leaky",
       dedupeKey: `${loop.loopId}:on_commit:branch:feature/leaky`,
       branchKey: `github:${TEST_GITHUB_OWNER}/${TEST_GITHUB_REPO}:feature/leaky`,
       cleanupState: "cleanup_failed",
     });
     expect(unsafeRun?.worktreePath).toBeUndefined();
+    expect(unsafeRun?.worktreeBranchName).toBeUndefined();
+    expect(unsafeRun?.baseSha).toBeUndefined();
+    expect(unsafeRun?.resolvedHeadSha).toBeUndefined();
     expect(JSON.stringify(runsBody)).not.toContain(seeded.unsafeWorktreePath);
     expect(JSON.stringify(runsBody)).not.toContain("ghr_run_report_secret");
     expect(JSON.stringify(runsBody)).not.toContain("github_pat_run_report_secret");
@@ -612,6 +646,11 @@ test("creates and reads a manual session loop without readiness score", async ()
     const invalidIdRes = await app.request(`/api/projects/${project.slug}/loops/not-a-uuid`);
     expect(invalidIdRes.status).toBe(400);
     expect(await invalidIdRes.json()).toEqual({ error: { code: "BAD_REQUEST", message: "loopId must be a UUID" } });
+
+    const missingLoopId = crypto.randomUUID();
+    const missingLoopRes = await app.request(`/api/projects/${project.slug}/loops/${missingLoopId}`);
+    expect(missingLoopRes.status).toBe(404);
+    expect(await missingLoopRes.json()).toEqual({ error: { code: "LOOP_NOT_FOUND", message: `Loop not found: ${missingLoopId}` } });
   });
 });
 
@@ -639,7 +678,7 @@ function createLoopBodyFromConfig(config: LoopConfig): Record<string, unknown> {
       },
     }),
     ...(config.triggers === undefined ? {} : { triggers: config.triggers }),
-    ...(config.useWorktree === undefined ? {} : { useWorktree: config.useWorktree }),
+    useWorktree: config.useWorktree,
   };
 }
 
@@ -721,7 +760,16 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
   seedPrTriggerRunHistory(workspaceRoot: string, loopId: string): Promise<{ safeWorktreePath: string; unsafeWorktreePath: string }>;
   seedPrTriggerLoopState(workspaceRoot: string, loopId: string): Promise<{ unsafeWorktreePath: string }>;
 } {
-  const contextResolver = new ProjectContextResolver({ logger: silentLogger });
+  const sessionStoreManager = new SessionStoreManager({ logger: silentLogger });
+  const contextResolver = new ProjectContextResolver({
+    ...createTestProjectContextResolverOptions(sessionStoreManager),
+    projectInfoFactory: async (workspaceRoot) => {
+      const project = await projectRegistry.getByWorkspace(workspaceRoot);
+      if (project === undefined) throw new Error(`Project is not registered: ${workspaceRoot}`);
+      return project;
+    },
+    logger: silentLogger,
+  });
   let now = options.now ?? 1_000;
   let runSequence = 0;
   const activeRuns = new Map<string, { runId: string; sessionId?: string }>();
@@ -854,7 +902,6 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
       activeRuns.delete(loopId);
       return report;
     }),
-    cancelCurrentLoopRun: mock(async (workspaceRoot: string, loopId: string) => runtime.cancelLoopCurrentRun(workspaceRoot, loopId)),
     activateLoopGlobalKill: mock(async (_workspaceRoot: string, input?: { activatedAt?: number; activatedBy?: string; reason?: string }) => {
       killState = {
         globalKillActive: true,
@@ -936,7 +983,6 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
         loopId,
         status: "skipped",
         trigger: "on_pr",
-        triggerKind: "on_pr",
         startedAt: now,
         endedAt: now,
         reason: "execution_failed",
@@ -945,6 +991,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
         dedupeKey: `${loopId}:on_pr:${TEST_GITHUB_PR_SUBJECT_KEY}`,
         branchKey: `github:${TEST_GITHUB_OWNER}/${TEST_GITHUB_REPO}:main`,
         worktreePath: safeWorktreePath,
+        worktreeBranchName: "archcode/loop/route-safe/job-safe",
         baseSha: "a".repeat(40),
         resolvedHeadSha: "b".repeat(40),
         blockedReason: "needs_user ghr_run_report_secret github_pat_run_report_secret",
@@ -956,7 +1003,6 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
         loopId,
         status: "skipped",
         trigger: "on_commit",
-        triggerKind: "on_commit",
         startedAt: now + 1,
         endedAt: now + 1,
         reason: "execution_failed",
@@ -965,6 +1011,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
         dedupeKey: `${loopId}:on_commit:branch:feature/leaky`,
         branchKey: `github:${TEST_GITHUB_OWNER}/${TEST_GITHUB_REPO}:feature/leaky`,
         worktreePath: unsafeWorktreePath,
+        worktreeBranchName: "archcode/loop/route-unsafe/job-unsafe",
         baseSha: "c".repeat(40),
         resolvedHeadSha: "d".repeat(40),
         blockedReason: "failed_with_changes",

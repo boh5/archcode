@@ -157,12 +157,15 @@ function makeGoal(overrides: Partial<DashboardGoal> = {}): DashboardGoal {
     attempt: 1,
     pendingHitlIds: [],
     approvalRefs: [],
+    appliedHitlIds: [],
     childSessionIds: [],
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
     projectSlug: "demo",
     projectName: "Demo Project",
     ...overrides,
+    version: overrides.version ?? 1,
+    useWorktree: overrides.useWorktree ?? false,
   };
 }
 
@@ -171,7 +174,7 @@ function makeHitlItem(overrides: Partial<HitlProjection> = {}): HitlProjection {
     hitlId: "hitl-1",
     project: { slug: "demo", name: "Demo Project" },
     owner: { projectSlug: "demo", ownerType: "session", ownerId: "session-1" },
-    source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" },
+    source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
     status: "pending",
     displayPayload: { title: "Approve?", summary: "Please approve", redacted: true },
     allowedActions: ["approve", "deny", "cancel"],
@@ -371,7 +374,7 @@ describe("Dashboard", () => {
   });
 
   test("renders HITL cards in approval queue", async () => {
-    const hitl1 = makeHitlItem({ hitlId: "h1", source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" }, displayPayload: { title: "Deploy?", summary: "Confirm", redacted: true }, project: { slug: "demo", name: "Alpha Project" } });
+    const hitl1 = makeHitlItem({ hitlId: "h1", source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"}, displayPayload: { title: "Deploy?", summary: "Confirm", redacted: true }, project: { slug: "demo", name: "Alpha Project" } });
     const hitl2 = makeHitlItem({ hitlId: "h2", source: { type: "ask_user", sessionId: "session-1" }, displayPayload: { title: "Which option?", summary: "Pick one", redacted: true }, project: { slug: "demo", name: "Beta Project" }, allowedActions: ["answer", "cancel"] });
     const ctx = await setupDashboard(createDashboardHandler({ hitl: [hitl1, hitl2] }));
 
@@ -495,7 +498,7 @@ describe("Dashboard", () => {
   test("redacted HITL cards show [REDACTED] and never expose raw secrets", async () => {
     const redactedItem = makeHitlItem({
       hitlId: "h-redacted",
-      source: { type: "goal_approval", goalId: "goal-budget", approvalPoint: "after_plan" },
+      source: { type: "goal_approval", goalId: "goal-budget", approvalPoint: "after_plan" , resumeStatus: "running"},
       displayPayload: {
         title: "Approve budget [REDACTED]",
         summary: "Budget approval [REDACTED]",
@@ -528,7 +531,7 @@ describe("Dashboard", () => {
     const unsafeApiItem = {
       ...makeHitlItem({
         hitlId: "h-unsafe-payload",
-        source: { type: "goal_approval", goalId: "goal-budget", approvalPoint: "after_plan" },
+        source: { type: "goal_approval", goalId: "goal-budget", approvalPoint: "after_plan" , resumeStatus: "running"},
         displayPayload: {
           title: "Approve budget [REDACTED]",
           summary: "Budget warning [REDACTED]",

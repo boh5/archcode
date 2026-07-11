@@ -31,6 +31,11 @@ export const LoopKillStateSchema = z.strictObject({
   reason: KillStateTextSchema.optional(),
 }) satisfies z.ZodType<LoopKillState>;
 
+const LoopKillStateFileSchema = z.strictObject({
+  version: z.literal(1),
+  state: LoopKillStateSchema,
+});
+
 export class LoopKillStateError extends Error {
   constructor(public readonly cause: unknown) {
     super("Invalid Loop kill state");
@@ -79,7 +84,7 @@ export class LoopKillStateManager {
 
   private async write(state: LoopKillState): Promise<void> {
     const parsed = LoopKillStateSchema.parse(state);
-    await atomicWrite(await this.killStatePath(), `${JSON.stringify(parsed, null, 2)}\n`);
+    await atomicWrite(await this.killStatePath(), `${JSON.stringify({ version: 1, state: parsed }, null, 2)}\n`);
   }
 
   private parse(content: string): LoopKillState {
@@ -91,12 +96,12 @@ export class LoopKillStateManager {
       throw new LoopKillStateError(error);
     }
 
-    const result = LoopKillStateSchema.safeParse(parsed);
+    const result = LoopKillStateFileSchema.safeParse(parsed);
     if (!result.success) {
       this.#logger.warn("loops.kill-state.validation.failed", { error: result.error });
       throw new LoopKillStateError(result.error);
     }
-    return result.data;
+    return result.data.state;
   }
 
   private async killStatePath(): Promise<string> {

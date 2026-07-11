@@ -90,6 +90,19 @@ describe("projects routes", () => {
     expect(typeof body.addedAt).toBe("string");
   });
 
+  test("POST /api/projects rejects unknown body fields", async () => {
+    const app = await createTestApp("create-project-unknown-field");
+    const workspaceRoot = await makeWorkspace("unknown-field");
+
+    const res = await app.request("/api/projects", {
+      method: "POST",
+      body: JSON.stringify({ workspaceRoot, unexpected: true }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(res.status).toBe(400);
+  });
+
   test("POST /api/projects with missing workspaceRoot returns 400 BadRequestError", async () => {
     const app = await createTestApp("missing-workspace");
 
@@ -190,6 +203,18 @@ describe("projects routes", () => {
 
     expect(res.status).toBe(200);
     expect(body).toEqual({ ...project, name: "Renamed" });
+  });
+
+  test("PATCH /api/projects/:slug rejects unknown body fields", async () => {
+    const app = await createTestApp("patch-project-unknown-field");
+
+    const res = await app.request("/api/projects/missing", {
+      method: "PATCH",
+      body: JSON.stringify({ name: "Renamed", unexpected: true }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(res.status).toBe(400);
   });
 
   test("PATCH /api/projects/:slug trims the project display name", async () => {

@@ -1,5 +1,6 @@
 import { appendFile, mkdir, realpath } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { z } from "zod";
 
 import { normalizeUsage, PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
 
@@ -14,7 +15,7 @@ import type {
   LoopRunTrigger,
   LoopState,
 } from "./state";
-import { LoopBudgetConfigSchema, LoopBudgetSnapshotSchema, LoopConfigSchema, LoopStateManager } from "./state";
+import { LoopBudgetConfigSchema, LoopBudgetSnapshotSchema, LoopBudgetUsageSchema, LoopConfigSchema, LoopRunReasonSchema, LoopStateManager } from "./state";
 
 export interface LoopBudgetClock {
   now(): number;
@@ -42,6 +43,23 @@ export interface LoopBudgetEvent {
   readonly budget?: LoopBudgetConfig;
   readonly createdAt: number;
 }
+
+const LoopBudgetEventSchema = z.strictObject({
+  event: z.enum(["run_started", "model_usage", "soft_budget_blocked", "hard_budget_exceeded", "daily_run_blocked"]),
+  loopId: z.string().uuid(),
+  runId: z.string().trim().min(1).optional(),
+  sessionId: z.string().trim().min(1).optional(),
+  source: z.string().trim().min(1),
+  reason: LoopRunReasonSchema.optional(),
+  usage: LoopBudgetUsageSchema,
+  budget: LoopBudgetConfigSchema.optional(),
+  createdAt: z.number().int().nonnegative(),
+});
+
+const LoopBudgetEventEnvelopeSchema = z.strictObject({
+  version: z.literal(1),
+  event: LoopBudgetEventSchema,
+});
 
 export interface LoopBudgetStatus {
   readonly level: "ok" | "soft" | "hard";
@@ -213,16 +231,17 @@ export class LoopBudgetLedger {
   }
 
   async #recordEvent(event: Omit<LoopBudgetEvent, "createdAt">): Promise<void> {
-    const parsed: LoopBudgetEvent = { ...event, createdAt: this.#clock.now() };
+    const parsed = LoopBudgetEventSchema.parse({ ...event, createdAt: this.#clock.now() });
     const filePath = await resolveBudgetLedgerPath(this.#workspaceRoot, parsed.loopId);
     await mkdir(dirname(filePath), { recursive: true });
-    await appendFile(filePath, `${JSON.stringify(parsed)}\n`, "utf8");
+    const envelope = LoopBudgetEventEnvelopeSchema.parse({ version: 1, event: parsed });
+    await appendFile(filePath, `${JSON.stringify(envelope)}\n`, "utf8");
   }
 }
 
 export function effectiveBudget(loop: LoopState): LoopBudgetConfig {
   const config = LoopConfigSchema.parse(loop.config);
-  return LoopBudgetConfigSchema.parse(config.budget ?? config.limits);
+  return LoopBudgetConfigSchema.parse(config.limits);
 }
 
 export function evaluateBudget(budget: LoopBudgetConfig, usage: LoopBudgetUsage): LoopBudgetStatus {

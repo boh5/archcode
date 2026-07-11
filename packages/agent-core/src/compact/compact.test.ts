@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { rm } from "node:fs/promises";
+import { join } from "node:path";
 import type { LanguageModelV3 } from "@ai-sdk/provider";
 import { silentLogger } from "../logger";
 import type { StoredMessage } from "../store/types";
@@ -11,6 +13,13 @@ import {
   commitCompact,
   compact,
 } from "./compact";
+
+const TEST_WORKSPACE_ROOT = "/tmp/archcode-agent-core-compact";
+const TEST_TOOL_OUTPUT_DIR = join(import.meta.dir, "__test_tmp__", "compact-tool-output");
+
+afterAll(async () => {
+  await rm(TEST_TOOL_OUTPUT_DIR, { recursive: true, force: true });
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -177,7 +186,9 @@ function makeInput(messages: StoredMessage[], overrides?: Partial<CompactInput>)
   contextLimit: 100000,
   model: mockModel,
   sessionId: "test-session",
-  logger: silentLogger, ...overrides,  };
+  logger: silentLogger,
+  toolOutputDir: TEST_TOOL_OUTPUT_DIR,
+  ...overrides,  };
 }
 
 // ---------------------------------------------------------------------------
@@ -299,7 +310,7 @@ describe("compact", () => {
       makeUserMessage("u6", "Sixth message (incomplete)"),
     ];
 
-    const store = storeManager.create("test-session-txn");
+    const store = storeManager.create("test-session-txn", TEST_WORKSPACE_ROOT);
     const originalMessageCount = store.getState().messages.length;
 
     let error: CompactError | null = null;
@@ -550,7 +561,7 @@ describe("compact", () => {
   // -------------------------------------------------------------------------
 
   test("commitCompact dispatches compact event to store", () => {
-    const store = storeManager.create("test-commit-session");
+    const store = storeManager.create("test-commit-session", TEST_WORKSPACE_ROOT);
 
     // Add some messages first
     store.getState().append({ type: "user-message", content: "Hello" });

@@ -14,6 +14,7 @@ const config: LoopConfig = {
   title: "Budgeted loop",
   schedule: { kind: "manual" },
   approvalPolicy: "interactive",
+  useWorktree: false,
   limits: {
     maxIterationsPerRun: 4,
     maxTokensPerRun: 1_000,
@@ -65,7 +66,9 @@ describe("LoopBudgetLedger", () => {
     const persisted = await stateManager.read(loop.loopId);
     expect(persisted.latestBudget?.usage).toEqual(result.usage);
     const jsonl = await Bun.file(join(TMP_DIR, ".archcode", "loops", loop.loopId, "budget-ledger.jsonl")).text();
-    expect(jsonl).toContain("model_usage");
+    const envelopes = jsonl.trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(envelopes.every((envelope) => envelope.version === 1)).toBe(true);
+    expect(envelopes.some((envelope) => (envelope.event as { event?: string }).event === "model_usage")).toBe(true);
   });
 
   test("uses UTC date keys and resets daily run accounting at UTC midnight", async () => {

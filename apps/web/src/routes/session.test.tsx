@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { JSDOM } from "jsdom";
-import { TOOL_DELEGATE } from "@archcode/protocol";
+import { TOOL_DELEGATE, createEmptySessionStats } from "@archcode/protocol";
 import type { ToolChildSessionLink } from "@archcode/protocol";
 import type { Session } from "../api/types";
 import {
@@ -27,18 +27,23 @@ function createSession(input: {
   childSessionLinks?: ToolChildSessionLink[];
 }): Session {
   return {
-    id: input.id,
+    schemaVersion: 1,
     sessionId: input.id,
+    cwd: "/workspace",
     rootSessionId: input.rootSessionId,
     parentSessionId: input.parentSessionId,
     title: input.title,
     createdAt: 1,
     updatedAt: 1,
+    agentName: "orchestrator",
+    modelInfo: null,
     messages: input.messages,
     steps: [],
     todos: [],
     reminders: [],
     childSessionLinks: input.childSessionLinks ?? [],
+    stats: createEmptySessionStats(),
+    executions: [],
     eventCursor: 0,
   };
 }

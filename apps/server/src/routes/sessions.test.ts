@@ -14,7 +14,7 @@ interface SessionSummaryBody {
     parentSessionId?: string;
     title?: string | null;
     createdAt: number;
-    lastUpdatedAt?: number;
+    updatedAt: number;
   }>;
 }
 
@@ -23,6 +23,7 @@ interface SessionFileBody {
   rootSessionId: string;
   parentSessionId?: string;
   createdAt: number;
+  updatedAt: number;
   title?: string | null;
   messages: unknown[];
   steps?: unknown[];
@@ -52,6 +53,7 @@ function createStoredSession(input: {
   return {
     sessionId,
     createdAt: input.createdAt ?? Date.now(),
+    updatedAt: input.createdAt ?? Date.now(),
     title: input.title ?? null,
     messages: [],
     steps: [],
@@ -102,6 +104,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
           ...(session.parentSessionId === undefined ? {} : { parentSessionId: session.parentSessionId }),
           title: session.title,
           createdAt: session.createdAt,
+          updatedAt: session.updatedAt,
         }))
         .sort((a, b) => b.createdAt - a.createdAt);
     },
@@ -239,6 +242,19 @@ describe("sessions routes", () => {
     expect(body.messages).toEqual([]);
   });
 
+  test("POST /api/projects/:slug/sessions rejects any request body", async () => {
+    const { app, project, calls } = await createTestApp("create-session-with-body");
+
+    const res = await app.request(`/api/projects/${project.slug}/sessions`, {
+      method: "POST",
+      body: JSON.stringify({}),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(res.status).toBe(400);
+    expect(calls.createSession).toBe(0);
+  });
+
   test("GET /api/projects/:slug/sessions after create returns list with one session", async () => {
     const { app, project } = await createTestApp("list-after-create");
 
@@ -256,6 +272,7 @@ describe("sessions routes", () => {
         rootSessionId: session.sessionId,
         title: null,
         createdAt: session.createdAt,
+        updatedAt: session.updatedAt,
       },
     ]);
   });
@@ -368,6 +385,7 @@ describe("sessions routes", () => {
         rootSessionId: "root-session",
         title: "Root",
         createdAt: 1_000,
+        updatedAt: 1_000,
       },
     ]);
   });

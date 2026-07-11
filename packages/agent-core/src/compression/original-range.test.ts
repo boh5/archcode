@@ -69,10 +69,13 @@ function messagesWithTools(): StoredMessage[] {
 
 function sessionFile(messages: StoredMessage[], compression = createEmptyCompressionState()): SessionFile {
   return {
+    schemaVersion: 1,
     sessionId: "session-1",
     createdAt: 100,
+    updatedAt: 100,
     cwd: "/workspace",
     agentName: "orchestrator",
+    modelInfo: null,
     title: null,
     messages,
     steps: [],
@@ -91,8 +94,10 @@ function compressedSession(): SessionFile {
   const storeState: SessionStoreState = {
     sessionId: "session-1",
     createdAt: 100,
+    updatedAt: 100,
     cwd: "/workspace",
     agentName: "orchestrator",
+    modelInfo: null,
     title: null,
     messages,
     steps: [],
@@ -141,8 +146,10 @@ function nestedCompressedSession(): SessionFile {
   const storeState: SessionStoreState = {
     sessionId: "session-1",
     createdAt: 100,
+    updatedAt: 100,
     cwd: "/workspace",
     agentName: "orchestrator",
+    modelInfo: null,
     title: null,
     messages,
     steps: [],
@@ -243,12 +250,12 @@ describe("resolveCompressionOriginalRange", () => {
     expect(result).toMatchObject({ ok: false, code: "not_found", blockRef: "b9" });
   });
 
-  test("returns unsupported for legacy compact-only sessions instead of fabricating coverage", () => {
+  test("returns not_found for hard-compacted sessions without a dynamic compression block", () => {
     const result = resolveCompressionOriginalRange(sessionFile([
-      message("legacy-compact", "user", [{ type: "compaction", id: "compact-1", summary: "legacy", tailStartId: "tail", compactedAt: 100 }]),
+      message("hard-compact", "user", [{ type: "compaction", id: "compact-1", summary: "summary", tailStartId: "tail", compactedAt: 100 }]),
       message("tail", "user", [text("tail-text", "tail")]),
     ]), "b1");
 
-    expect(result).toMatchObject({ ok: false, code: "unsupported", reason: "legacy_compact_without_hybrid_coverage", blockRef: "b1" });
+    expect(result).toMatchObject({ ok: false, code: "not_found", reason: "compression_block_not_found", blockRef: "b1" });
   });
 });

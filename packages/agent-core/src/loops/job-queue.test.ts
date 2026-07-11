@@ -3,7 +3,7 @@ import { mkdir, readdir, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 
 import { canonicalTargetKey } from "./collision-ledger";
-import { __queueLockCountForTest, LoopJobQueue, LoopJobQueueFileSchema, LoopJobQueueLimitError, LoopJobQueueSecurityError } from "./job-queue";
+import { __queueLockCountForTest, LoopJobQueue, LoopJobQueueFileSchema, LoopJobQueueLimitError, LoopJobQueueParseError, LoopJobQueueSecurityError, LoopJobRecordSchema } from "./job-queue";
 import type { LoopJobStatus } from "./state";
 import { FakeClock } from "./test-utils";
 
@@ -37,7 +37,15 @@ describe("LoopJobQueue", () => {
         subjectKey: `cron:${index}`,
         eventSummary: { summary: `scheduled ${index}` },
       });
-      if (status !== "pending") await queue.update(job.jobId, { status, startedAt: 2_000 + index });
+      if (status !== "pending") await queue.update(job.jobId, {
+        status,
+        startedAt: 2_000 + index,
+        ...(status === "running" ? {
+          leaseExpiresAt: 10_000,
+          leaseOwnerId: "test-incarnation",
+          leaseToken: `lease-${index}`,
+        } : {}),
+      });
     }
 
     const restarted = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock: new FakeClock(9_000) });
@@ -49,7 +57,7 @@ describe("LoopJobQueue", () => {
     expect((await readdir(join(TMP_DIR, ".archcode", "loops"))).filter((entry) => entry.startsWith(".tmp-"))).toEqual([]);
   });
 
-  test("loads pre-revision queue records and advances their first CAS revision", async () => {
+  test("rejects queue records created before required CAS revisions", async () => {
     const clock = new FakeClock(9_500);
     const queue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock });
     const { job } = await queue.enqueue({
@@ -63,10 +71,67 @@ describe("LoopJobQueue", () => {
     await Bun.write(queuePath, `${JSON.stringify(persisted, null, 2)}\n`);
 
     const restarted = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock });
-    const legacy = await restarted.read(job.jobId);
-    expect(legacy.revision).toBe(0);
-    const updated = await restarted.updateIfCurrent(job.jobId, legacy, { blockedReason: "legacy record updated" });
-    expect(updated).toMatchObject({ outcome: "updated", updated: { revision: 1 } });
+    await expect(restarted.read(job.jobId)).rejects.toBeInstanceOf(LoopJobQueueParseError);
+  });
+
+  test("refines status leases and complete worktree checkpoints", async () => {
+    const queue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock: new FakeClock(9_600) });
+    const { job } = await queue.enqueue({
+      loopId: LOOP_ID,
+      triggerKind: "on_pr",
+      subjectKey: "pr:test-owner/test-repo#1",
+    });
+    const running = {
+      ...job,
+      status: "running" as const,
+      startedAt: 9_600,
+      leaseExpiresAt: 19_600,
+      leaseOwnerId: "incarnation-1",
+      leaseToken: "lease-1",
+    };
+
+    expect(LoopJobRecordSchema.safeParse(running).success).toBe(true);
+    expect(LoopJobRecordSchema.safeParse({ ...running, leaseToken: undefined }).success).toBe(false);
+    expect(LoopJobRecordSchema.safeParse({ ...running, startedAt: undefined }).success).toBe(false);
+    expect(LoopJobRecordSchema.safeParse({ ...running, endedAt: 9_700 }).success).toBe(false);
+    expect(LoopJobRecordSchema.safeParse({ ...job, leaseOwnerId: "unexpected-owner" }).success).toBe(false);
+    expect(LoopJobRecordSchema.safeParse({ ...job, status: "succeeded", endedAt: undefined }).success).toBe(false);
+    expect(LoopJobRecordSchema.safeParse({ ...job, baseSha: "a".repeat(40) }).success).toBe(true);
+    expect(LoopJobRecordSchema.safeParse({ ...job, resolvedHeadSha: "b".repeat(40) }).success).toBe(false);
+    expect(LoopJobRecordSchema.safeParse({
+      ...job,
+      worktreePath: "/tmp/worktree",
+      baseSha: "a".repeat(40),
+      observedArtifacts: [{ path: "git:branch:legacy-artifact", status: "observed" }],
+    }).success).toBe(false);
+    expect(LoopJobRecordSchema.safeParse({
+      ...job,
+      worktreePath: "/tmp/worktree",
+      worktreeBranchName: "archcode/loop/test/job",
+      baseSha: "a".repeat(40),
+      resolvedHeadSha: "b".repeat(40),
+    }).success).toBe(true);
+
+    const checkpoint = {
+      version: 1 as const,
+      hitlId: "hitl-1",
+      loopId: LOOP_ID,
+      runId: "run-1",
+      jobId: job.jobId,
+      trigger: "on_pr" as const,
+      intendedContinuation: "resume_run" as const,
+    };
+    const needsUser = {
+      ...job,
+      status: "needs_user" as const,
+      endedAt: 9_700,
+      blockedReason: "needs_user",
+      blockedByHitlIds: ["hitl-1"],
+      attentionStatus: "waiting_for_human" as const,
+      resumeCheckpoint: checkpoint,
+    };
+    expect(LoopJobRecordSchema.safeParse(needsUser).success).toBe(true);
+    expect(LoopJobRecordSchema.safeParse({ ...needsUser, resumeCheckpoint: undefined }).success).toBe(false);
   });
 
   test("coalesces pending duplicate dedupeKey and keeps merged event summaries", async () => {
@@ -112,15 +177,22 @@ describe("LoopJobQueue", () => {
       loopId: LOOP_ID,
       triggerKind: "on_pr",
       subjectKey: "pr:test-owner/test-repo#7",
-      resolvedHeadSha: originalSha,
+      baseSha: originalSha,
     });
-    await queue.update(job.jobId, { status: "running", startedAt: 20_000, leaseExpiresAt: 50_000, attempts: 1 });
+    await queue.update(job.jobId, {
+      status: "running",
+      startedAt: 20_000,
+      leaseExpiresAt: 50_000,
+      leaseOwnerId: "test-incarnation",
+      leaseToken: "test-lease",
+      attempts: 1,
+    });
 
     await queue.enqueue({
       loopId: LOOP_ID,
       triggerKind: "on_pr",
       subjectKey: "pr:test-owner/test-repo#7",
-      resolvedHeadSha: updatedSha,
+      baseSha: updatedSha,
       eventSummary: { summary: "PR updated" },
     });
     await queue.enqueue({ loopId: LOOP_ID, triggerKind: "on_pr", subjectKey: "pr:test-owner/test-repo#7", eventSummary: { summary: "PR updated again" } });
@@ -130,8 +202,8 @@ describe("LoopJobQueue", () => {
     expect(jobs[0]).toMatchObject({
       status: "running",
       rerunAfterCurrent: true,
-      resolvedHeadSha: originalSha,
-      rerunInput: { resolvedHeadSha: updatedSha },
+      baseSha: originalSha,
+      rerunInput: { baseSha: updatedSha },
     });
     expect(jobs[0]?.eventSummaries.map((entry) => entry.summary)).toEqual(["PR updated", "PR updated again"]);
   });
@@ -163,7 +235,7 @@ describe("LoopJobQueue", () => {
       loopId: LOOP_ID,
       triggerKind: "on_commit",
       subjectKey: "branch:recovered-before-worktree",
-      resolvedHeadSha: newHeadSha,
+      baseSha: newHeadSha,
       eventSummary: { summary: "new commit after recovery", payloadSha: newHeadSha },
     });
 
@@ -172,7 +244,7 @@ describe("LoopJobQueue", () => {
       attempts: 1,
       baseSha: oldBaseSha,
       rerunAfterCurrent: true,
-      rerunInput: { resolvedHeadSha: newHeadSha },
+      rerunInput: { baseSha: newHeadSha },
     });
   });
 
@@ -277,7 +349,7 @@ describe("LoopJobQueue", () => {
       loopId: LOOP_ID,
       triggerKind: "on_commit",
       subjectKey: "branch:atomic-finish",
-      resolvedHeadSha: oldHead,
+      baseSha: oldHead,
     });
     const running = await queue.claimNextReady({
       maxConcurrent: 1,
@@ -290,7 +362,7 @@ describe("LoopJobQueue", () => {
       loopId: LOOP_ID,
       triggerKind: "on_commit",
       subjectKey: "branch:atomic-finish",
-      resolvedHeadSha: newHead,
+      baseSha: newHead,
       eventSummary: { summary: "new commit while dispatch is running" },
     });
 
@@ -310,10 +382,10 @@ describe("LoopJobQueue", () => {
 
     expect(result.outcome).toBe("updated");
     if (result.outcome !== "updated") throw new Error("Expected owned finish");
-    expect(result.updated).toMatchObject({ status: "succeeded", resolvedHeadSha: oldHead });
+    expect(result.updated).toMatchObject({ status: "succeeded", baseSha: oldHead });
     expect(result.updated.rerunAfterCurrent).toBeUndefined();
     expect(result.updated.rerunInput).toBeUndefined();
-    expect(result.rerun).toMatchObject({ status: "pending", resolvedHeadSha: newHead, attempts: 0 });
+    expect(result.rerun).toMatchObject({ status: "pending", baseSha: newHead, attempts: 0 });
     expect(result.rerun?.worktreePath).toBeUndefined();
     expect((await queue.list()).map((entry) => entry.status)).toEqual(["succeeded", "pending"]);
   });
@@ -337,7 +409,7 @@ describe("LoopJobQueue", () => {
       loopId: LOOP_ID,
       triggerKind: "on_commit",
       subjectKey: "branch:stale-atomic-finish",
-      resolvedHeadSha: "c".repeat(40),
+      baseSha: "c".repeat(40),
     });
     await queue.updateClaimedRunning(job.jobId, {
       leaseOwnerId: first!.leaseOwnerId!,

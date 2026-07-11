@@ -4,6 +4,7 @@ import type { ModelCallOptions } from "../config/index";
 import { silentLogger, type Logger } from "../logger";
 import type { ModelInfo } from "../provider/model";
 import type { SessionStoreState } from "../store/types";
+import { TOOL_OUTPUT_DIR } from "../tools/persist-output";
 import type { CommandDescriptor } from "./types";
 
 export function createCompactCommand(
@@ -41,6 +42,7 @@ export function createCompactCommand(
           modelOptions: activeModelOptions,
           sessionId: state.sessionId,
           logger: activeLogger,
+          toolOutputDir: TOOL_OUTPUT_DIR,
         }, ctx.abort);
 
         if (result === null) {

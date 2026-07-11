@@ -17,7 +17,6 @@ import type { SlashCommandResult } from "../commands/types";
 import type { Logger } from "../logger";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
 import { assertValidSessionCwd } from "../store/session-cwd";
-import { SessionFileNotFoundError } from "../store/errors";
 
 export interface SessionAgentManagerConfig {
   readonly definitions: readonly AgentDefinition[];
@@ -25,7 +24,7 @@ export interface SessionAgentManagerConfig {
   readonly toolRegistry: ToolRegistry;
   readonly skillService: SkillService;
   readonly config?: ArchCodeConfig;
-  readonly projectContextResolver?: ProjectContextResolver;
+  readonly projectContextResolver: ProjectContextResolver;
   readonly maxConcurrentSessions?: number;
   readonly tombstoneTtlMs?: number;
   readonly storeManager: SessionStoreManager;
@@ -98,7 +97,7 @@ export class SessionAgentManager {
     const existing = this.#agents.get(key);
     if (existing) {
       const currentCwd = existing.store.getState().cwd;
-      if (existing.cwd === undefined || existing.cwd === currentCwd) return existing;
+      if (existing.cwd === currentCwd) return existing;
       existing.dispose();
       this.#agents.delete(key);
     }
@@ -127,17 +126,11 @@ export class SessionAgentManager {
   }
 
   async #createAgent(workspaceRoot: string, sessionId: string, requestedAgentName?: string): Promise<Agent> {
-    let store: StoreApi<SessionStoreState>;
-    try {
-      store = await this.#storeManager.getOrLoad(sessionId, workspaceRoot);
-    } catch (error) {
-      if (!(error instanceof SessionFileNotFoundError)) throw error;
-      store = this.#storeManager.create(sessionId, workspaceRoot);
-    }
+    const store = await this.#storeManager.getOrLoad(sessionId, workspaceRoot);
     const factory = this.getFactory(workspaceRoot);
-    const agentName = requestedAgentName ?? store.getState().agentName ?? "orchestrator";
+    const agentName = requestedAgentName ?? store.getState().agentName;
     const cwd = await this.#validateSessionCwd(workspaceRoot, store.getState().cwd);
-    return factory.createRootAgent(agentName, { store, cwd });
+    return factory.createRootAgent(agentName, { store });
   }
 
   createChildAgent(input: {
@@ -157,7 +150,6 @@ export class SessionAgentManager {
     const factory = this.getFactory(input.workspaceRoot);
     const agent = factory.createAgent(input.agentName, {
       store: input.store,
-      cwd: input.store.getState().cwd,
       depth: input.depth,
       parentSessionId: input.parentSessionId,
       ...(input.title === undefined ? {} : { title: input.title }),

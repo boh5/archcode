@@ -85,6 +85,8 @@ async function createRecordAndCheckpoint(input: {
     ownerId: sessionId,
   };
   const createdAt = new Date().toISOString();
+  if (ctx.agentName === undefined) throw new Error("Session HITL checkpoint requires agentName");
+  if (ctx.agentSkills === undefined) throw new Error("Session HITL checkpoint requires agentSkills");
   const checkpoint: SessionHitlCheckpointRecord = {
     version: 1,
     phase: "preparing",
@@ -99,8 +101,8 @@ async function createRecordAndCheckpoint(input: {
     rawToolInput: ctx.input,
     displayInput: ctx.redactedInput ?? redactValue(ctx.input),
     allowedTools: [...ctx.allowedTools],
-    agentSkills: [...(ctx.agentSkills ?? [])],
-    ...(ctx.agentName === undefined ? {} : { agentName: ctx.agentName }),
+    agentSkills: [...ctx.agentSkills],
+    agentName: ctx.agentName,
     ...(ctx.currentDepth === undefined ? {} : { currentDepth: ctx.currentDepth }),
     ...(ctx.origin === undefined ? {} : { origin: ctx.origin }),
     toolCalls: (ctx.hitlCheckpoint?.toolCalls ?? [{ toolCallId: ctx.toolCallId, toolName: ctx.toolName, input: ctx.input }]).map(cloneToolCall),

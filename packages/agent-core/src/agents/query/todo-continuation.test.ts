@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createEmptySessionStats } from "@archcode/protocol";
 import type { Reminder, SessionStoreState, StoredMessage, StoredPart } from "../../store/types";
+import { createEmptyCompressionState } from "../../compression";
 import {
   getStepsSinceLastTodoWrite,
   getStepsSinceLastReminder,
@@ -305,7 +306,12 @@ function stateWith(overrides: Partial<SessionStoreState>): SessionStoreState {
   setGoalId: () => {},
   setLoopId: () => {},
   setSessionRole: () => {},
-  toModelMessages: () => [], ...overrides,  };
+  toModelMessages: () => [],
+  ...overrides,
+  updatedAt: overrides.updatedAt ?? 1,
+  modelInfo: overrides.modelInfo ?? null,
+  compression: overrides.compression ?? createEmptyCompressionState(),
+  };
 }
 
 function todoReminder(createdAt: number): Reminder {

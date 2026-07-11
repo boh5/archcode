@@ -25,7 +25,7 @@ const productionHookAndCommandFiles = [
   "packages/agent-core/src/commands/compact.ts",
 ] as const;
 
-const compatibilityReferenceFiles = [
+const hardCompactContractFiles = [
   "packages/agent-core/src/compact/compact.ts",
   "packages/agent-core/src/compact/index.ts",
   "packages/agent-core/src/store/helpers.ts",
@@ -71,7 +71,7 @@ function expectNoViolations(violations: readonly Violation[]): void {
 }
 
 describe("compression architecture terminology", () => {
-  test("production hard-threshold hooks and commands use legacy compact runtime", () => {
+  test("production hard-threshold hooks and commands use the forced compact runtime", () => {
     const violations: Violation[] = [];
     const hardThresholdFiles = [
       "packages/agent-core/src/agents/query/hooks/hybrid-compression.ts",
@@ -102,15 +102,15 @@ describe("compression architecture terminology", () => {
     expectNoViolations(violations);
   });
 
-  test("bounded compatibility references remain categorized", () => {
-    const missingFiles = compatibilityReferenceFiles.filter((file) => !existsSync(join(projectRoot, file)));
+  test("forced compact representation remains internally consistent", () => {
+    const missingFiles = hardCompactContractFiles.filter((file) => !existsSync(join(projectRoot, file)));
     expect(missingFiles).toEqual([]);
 
-    const compatibilityText = compatibilityReferenceFiles.map(readProjectFile).join("\n");
-    expect(compatibilityText).toContain("CompactionPart");
-    expect(compatibilityText).toContain("compacted");
-    expect(compatibilityText).toContain("<compact-summary>");
-    expect(compatibilityText).toContain("tailStartId");
+    const contractText = hardCompactContractFiles.map(readProjectFile).join("\n");
+    expect(contractText).toContain("CompactionPart");
+    expect(contractText).toContain("compacted");
+    expect(contractText).toContain("<compact-summary>");
+    expect(contractText).toContain("tailStartId");
   });
 
   test("architecture prose avoids banned compression wording", () => {

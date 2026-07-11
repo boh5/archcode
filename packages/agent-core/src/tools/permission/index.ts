@@ -29,6 +29,8 @@ export { createMcpDestructivePermission } from "./mcp";
 export {
   PermissionApprovalFileSchema,
   PermissionApprovalScopeSchema,
+  ProjectApprovalLoadError,
   ProjectApprovalManager,
+  ProjectApprovalPersistError,
 } from "./project-approvals";
 export type { PermissionApprovalFile, ProjectApproval, ProjectApprovalMetadata } from "./project-approvals";

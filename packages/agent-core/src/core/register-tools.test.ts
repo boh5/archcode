@@ -5,10 +5,6 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
 import { EXPLORER_READ_ONLY_TOOLS, DELEGATION_EXECUTION_TOOLS } from "../tools/groups";
-import { GoalStateManager } from "../goals/state";
-import { HitlService } from "../hitl/service";
-import { LoopStateManager } from "../loops/state";
-import { MemoryFileManager } from "../memory/file-manager";
 import type { ProjectContext } from "../projects/types";
 import { SkillService } from "../skills";
 import { storeManager } from "../store/store";
@@ -21,7 +17,7 @@ import { REDACTION_MARKER } from "../tools/security";
 import { ToolRegistry } from "../tools/registry";
 import { silentLogger, type Logger } from "../logger";
 import { createToolExecutionContext, type ToolDescriptor, type ToolExecutionContext } from "../tools/types";
-import { ProjectApprovalManager } from "../tools/permission";
+import { createTestProjectContext } from "../tools/test-project-context";
 import { registerBuiltinTools } from "./register-tools";
 import {
   TOOL_GOAL_MANAGE,
@@ -65,7 +61,7 @@ function makeContext(
   const input = overrides.input ?? {};
   const projectContext = overrides.projectContext ?? makeProjectContext(workspaceRoot);
   return createToolExecutionContext({
-    store: storeManager.create(`register-tools-${crypto.randomUUID()}`),
+    store: storeManager.create(`register-tools-${crypto.randomUUID()}`, workspaceRoot),
     storeManager,
     toolName,
     toolCallId: `${toolName}-call`,
@@ -84,15 +80,8 @@ function makeContext(
 
 function makeProjectContext(workspaceRoot: string): ProjectContext {
   return {
+    ...createTestProjectContext(workspaceRoot),
     project: { slug: "register-tools", name: "Register Tools", workspaceRoot, addedAt: new Date().toISOString() },
-    goalState: new GoalStateManager(workspaceRoot),
-    loopState: new LoopStateManager(workspaceRoot),
-    hitl: new HitlService(),
-    memory: new MemoryFileManager({
-      project: join(workspaceRoot, ".archcode", "memory"),
-      user: join(workspaceRoot, ".archcode", "user-memory"),
-    }),
-    approvals: new ProjectApprovalManager(silentLogger),
   };
 }
 

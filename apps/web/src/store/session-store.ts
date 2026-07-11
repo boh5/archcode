@@ -23,10 +23,11 @@ import type {
 const MAX_IDLE_SESSION_STORES = 20;
 const MAX_PENDING_REMOTE_EVENTS = 1000;
 
-export interface WebSessionStoreState extends SessionProjection {
+export interface WebSessionStoreState extends Omit<SessionProjection, "cwd"> {
   [key: string]: unknown;
+  hydrationStatus: "pending" | "hydrated";
   createdAt: number;
-  cwd: string | undefined;
+  cwd: string | null;
   rootSessionId: string;
   parentSessionId: string | undefined;
   agentName: string;
@@ -112,7 +113,7 @@ function appendEnvelopeToState(
     return { events, eventOffset, nextEventId };
   }
 
-  const partial = reduceStreamEvent(state, envelope.payload, {
+  const partial = reduceStreamEvent(state as SessionProjection, envelope.payload, {
     timestamp: envelope.createdAt,
     generateId: () => crypto.randomUUID(),
   });
@@ -240,8 +241,9 @@ export function createWebSessionStore(
   let store: StoreApi<WebSessionStoreState>;
   store = createStore<WebSessionStoreState>((set) => ({
     sessionId,
+    hydrationStatus: "pending",
     createdAt: Date.now(),
-    cwd: undefined,
+    cwd: null,
     title: null,
     modelInfo: null,
     agentName: "orchestrator",
@@ -336,8 +338,9 @@ export function createWebSessionStore(
         if (data.createdAt !== undefined && data.createdAt > 0) {
           updates.createdAt = data.createdAt;
         }
-        if (data.cwd !== undefined && (!stale || state.cwd === undefined)) {
+        if (data.cwd !== undefined && (!stale || state.cwd === null)) {
           updates.cwd = data.cwd;
+          updates.hydrationStatus = "hydrated";
         }
         if (data.stats !== undefined && !stale) {
           updates.stats = data.stats;

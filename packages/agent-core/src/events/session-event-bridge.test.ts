@@ -4,6 +4,7 @@ import { createStore } from "zustand/vanilla";
 import { createEmptySessionStats, MAX_EVENTS } from "@archcode/protocol";
 import type { SessionStoreState } from "../store/types";
 import { SessionEventBridge } from "./session-event-bridge";
+import { createEmptyCompressionState } from "../compression";
 
 const workspaceRoot = "/workspace";
 
@@ -12,13 +13,16 @@ function createTestStore(sessionId: string): StoreApi<SessionStoreState> {
   store = createStore<SessionStoreState>((set, get) => ({
     sessionId,
     createdAt: Date.now(),
+    updatedAt: Date.now(),
     cwd: workspaceRoot,
     agentName: "orchestrator",
+    modelInfo: null,
     title: null,
     messages: [],
     steps: [],
     stats: createEmptySessionStats(),
     executions: [],
+    compression: createEmptyCompressionState(),
     todos: [],
     reminders: [],
     childSessionLinks: [],

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { GoalState, LoopState, Project, Session, SessionTreeResponse } from "../../api/types";
+import type { GoalState, LoopState, Project, SessionSummary, SessionTreeResponse } from "../../api/types";
 
 interface ElementLike {
   type?: unknown;
@@ -61,6 +61,7 @@ const project: Project = {
   slug: "archcode",
   name: "ArchCode",
   workspaceRoot: "/workspace/archcode",
+  addedAt: "2026-01-01T00:00:00.000Z",
 };
 
 const navigate = mock((_path: string) => {});
@@ -80,7 +81,7 @@ const useCreateSession = mock(() => ({
   isPending: false,
 }));
 let projects: Project[] = [];
-let sessions: Session[] = [];
+let sessions: SessionSummary[] = [];
 let goals: GoalState[] = [];
 let loops: LoopState[] = [];
 let sessionTree: SessionTreeResponse | null = null;
@@ -390,18 +391,22 @@ describe("Sidebar", () => {
     projects = [project];
     sessions = [
       {
-        id: "root-session",
         sessionId: "root-session",
+        cwd: "/workspace",
         rootSessionId: "root-session",
+        agentName: "orchestrator",
+        modelInfo: null,
         title: "Root Session",
         createdAt: 1,
         updatedAt: 1,
       },
       {
-        id: "child-session",
         sessionId: "child-session",
+        cwd: "/workspace",
         rootSessionId: "root-session",
         parentSessionId: "root-session",
+        agentName: "explore",
+        modelInfo: null,
         title: "Child Session",
         createdAt: 2,
         updatedAt: 2,
@@ -409,7 +414,7 @@ describe("Sidebar", () => {
     ];
     sessionTree = {
       root: {
-        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", agentName: "orchestrator", title: "Root Session", createdAt: 1 },
+        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", agentName: "orchestrator", modelInfo: null, title: "Root Session", createdAt: 1, updatedAt: 1 },
         children: [
           {
             session: {
@@ -418,8 +423,10 @@ describe("Sidebar", () => {
               rootSessionId: "root-session",
               parentSessionId: "root-session",
               agentName: "explore",
+              modelInfo: null,
               title: "Child Session",
               createdAt: 2,
+              updatedAt: 2,
             },
             children: [],
           },
@@ -437,7 +444,7 @@ describe("Sidebar", () => {
     expect(useSessionTree).toHaveBeenCalledWith("archcode", "root-session");
     expect(textContent(tree)).toContain("Agent Tree");
     expect(sessionItems).toHaveLength(1);
-    expect((sessionItems[0].props?.session as Session).sessionId).toBe("root-session");
+    expect((sessionItems[0].props?.session as SessionSummary).sessionId).toBe("root-session");
     expect(agentNodes).toHaveLength(2);
     expect(agentNodes.map((node) => node.props?.name)).toEqual(["Root Session", "Child Session"]);
     expect(agentNodes.map((node) => node.props?.agentType)).toEqual(["orchestrator", "explore"]);
@@ -447,18 +454,22 @@ describe("Sidebar", () => {
     projects = [project];
     sessions = [
       {
-        id: "root-session",
         sessionId: "root-session",
+        cwd: "/workspace",
         rootSessionId: "root-session",
+        agentName: "orchestrator",
+        modelInfo: null,
         title: "Root Session",
         createdAt: 1,
         updatedAt: 1,
       },
       {
-        id: "child-session",
         sessionId: "child-session",
+        cwd: "/workspace",
         rootSessionId: "root-session",
         parentSessionId: "root-session",
+        agentName: "explore",
+        modelInfo: null,
         title: "Child Session",
         createdAt: 2,
         updatedAt: 2,
@@ -466,7 +477,7 @@ describe("Sidebar", () => {
     ];
     sessionTree = {
       root: {
-        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", title: "Root Session", createdAt: 1 },
+        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", agentName: "orchestrator", modelInfo: null, title: "Root Session", createdAt: 1, updatedAt: 1 },
         children: [
           {
             session: {
@@ -474,8 +485,11 @@ describe("Sidebar", () => {
               cwd: "/workspace",
               rootSessionId: "root-session",
               parentSessionId: "root-session",
+              agentName: "explore",
+              modelInfo: null,
               title: "Child Session",
               createdAt: 2,
+              updatedAt: 2,
             },
             children: [],
           },
@@ -507,18 +521,22 @@ describe("Sidebar", () => {
     projects = [project];
     sessions = [
       {
-        id: "root-session",
         sessionId: "root-session",
+        cwd: "/workspace",
         rootSessionId: "root-session",
+        agentName: "orchestrator",
+        modelInfo: null,
         title: "Root Session",
         createdAt: 1,
         updatedAt: 1,
       },
       {
-        id: "child-session",
         sessionId: "child-session",
+        cwd: "/workspace",
         rootSessionId: "root-session",
         parentSessionId: "root-session",
+        agentName: "explore",
+        modelInfo: null,
         title: "Child Session",
         createdAt: 2,
         updatedAt: 2,
@@ -526,7 +544,7 @@ describe("Sidebar", () => {
     ];
     sessionTree = {
       root: {
-        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", title: "Root Session", createdAt: 1 },
+        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", agentName: "orchestrator", modelInfo: null, title: "Root Session", createdAt: 1, updatedAt: 1 },
         children: [
           {
             session: {
@@ -534,8 +552,11 @@ describe("Sidebar", () => {
               cwd: "/workspace",
               rootSessionId: "root-session",
               parentSessionId: "root-session",
+              agentName: "explore",
+              modelInfo: null,
               title: "Child Session",
               createdAt: 2,
+              updatedAt: 2,
             },
             children: [],
           },
@@ -563,29 +584,35 @@ describe("Sidebar", () => {
     projects = [project];
     goals = [
       {
+        version: 1,
         id: "goal-1",
         projectId: "archcode",
         title: "First Goal",
         objective: "Simplify the Goal experience",
         acceptanceCriteria: "Reviewer can decide DONE from logs and diff.",
+        useWorktree: false,
         status: "draft",
         attempt: 1,
         pendingHitlIds: [],
         approvalRefs: [],
+        appliedHitlIds: [],
         childSessionIds: [],
         createdAt: "1",
         updatedAt: "1",
       },
       {
+        version: 1,
         id: "goal-2",
         projectId: "archcode",
         title: "Second Goal",
         objective: "Simplify the Goal experience",
         acceptanceCriteria: "Reviewer can decide DONE from logs and diff.",
+        useWorktree: false,
         status: "running",
         attempt: 2,
         pendingHitlIds: [],
         approvalRefs: [],
+        appliedHitlIds: [],
         childSessionIds: [],
         createdAt: "2",
         updatedAt: "2",
@@ -632,15 +659,18 @@ describe("Sidebar", () => {
     projects = [project];
     goals = [
       {
+        version: 1,
         id: "goal-abc",
         projectId: "archcode",
         title: "Target Goal",
         objective: "Simplify the Goal experience",
         acceptanceCriteria: "Reviewer can decide DONE from logs and diff.",
+        useWorktree: false,
         status: "draft",
         attempt: 1,
         pendingHitlIds: [],
         approvalRefs: [],
+        appliedHitlIds: [],
         childSessionIds: [],
         createdAt: "1",
         updatedAt: "1",
@@ -685,7 +715,8 @@ describe("Sidebar", () => {
           title: "Nightly Watch",
           schedule: { kind: "interval", everyMs: 60000 },
           approvalPolicy: "interactive",
-          limits: { maxIterationsPerRun: 10 },
+          limits: { maxIterationsPerRun: 10, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+          useWorktree: false,
         },
         status: "active",
         createdAt: 1,
@@ -701,7 +732,8 @@ describe("Sidebar", () => {
           title: "PR Babysitter",
           schedule: { kind: "manual" },
           approvalPolicy: "explicit_per_run",
-          limits: { maxIterationsPerRun: 5 },
+          limits: { maxIterationsPerRun: 5, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+          useWorktree: false,
         },
         status: "paused",
         createdAt: 2,
@@ -758,7 +790,8 @@ describe("Sidebar", () => {
           title: "Watch Loop",
           schedule: { kind: "manual" },
           approvalPolicy: "interactive",
-          limits: { maxIterationsPerRun: 3 },
+          limits: { maxIterationsPerRun: 3, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+          useWorktree: false,
         },
         status: "active",
         createdAt: 1,
@@ -845,7 +878,8 @@ describe("Sidebar", () => {
           title: "",
           schedule: { kind: "manual" },
           approvalPolicy: "interactive",
-          limits: { maxIterationsPerRun: 3 },
+          limits: { maxIterationsPerRun: 3, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+          useWorktree: false,
         },
         status: "active",
         createdAt: 1,

@@ -7,6 +7,8 @@ import { SessionFileSchema } from "../store/helpers";
 import { storeManager } from "../store/store";
 import type { StoredMessage } from "../store/types";
 import { createCompactCommand } from "../commands/compact";
+import type { CommandContext } from "../commands/types";
+import { SkillService } from "../skills";
 import { createEmptyCompressionState } from "./index";
 
 const modelInfo = {
@@ -18,6 +20,20 @@ const modelInfo = {
   modelId: "mock",
   qualifiedId: "test:mock",
 } as ModelInfo;
+const skillService = new SkillService({ builtinSkills: {} });
+const TEST_WORKSPACE_ROOT = "/tmp/archcode-agent-core-compression-resilience";
+
+function commandContext(store: CommandContext["store"]): CommandContext {
+  return {
+    store,
+    modelInfo,
+    logger: silentLogger,
+    cwd: import.meta.dir,
+    agentName: "orchestrator",
+    agentSkills: [],
+    skillService,
+  };
+}
 
 beforeEach(() => {
   storeManager.clearAll();
@@ -43,16 +59,20 @@ function compactableMessages(): StoredMessage[] {
 }
 
 function makeStore(sessionId = `compression-resilience-${crypto.randomUUID()}`) {
-  const store = storeManager.create(sessionId);
+  const store = storeManager.create(sessionId, TEST_WORKSPACE_ROOT);
   store.setState({ messages: compactableMessages() });
   return store;
 }
 
 function sessionFileFixture(overrides: Record<string, unknown> = {}) {
   return {
+    schemaVersion: 1,
     sessionId: "session-1",
     createdAt: 1,
+    updatedAt: 1,
+    cwd: TEST_WORKSPACE_ROOT,
     agentName: "orchestrator",
+    modelInfo: null,
     title: null,
     messages: [],
     steps: [],
@@ -84,9 +104,9 @@ describe("compression resilience", () => {
     const store = makeStore();
     const command = createCompactCommand(store, modelInfo);
 
-    const first = command.handler({ store, modelInfo, logger: silentLogger });
+    const first = command.handler(commandContext(store));
     await waitUntil(() => releaseSummary !== undefined);
-    const second = await command.handler({ store, modelInfo, logger: silentLogger });
+    const second = await command.handler(commandContext(store));
 
     releaseSummary("## Current Objective\nContinue the current task");
     const firstResult = await first;

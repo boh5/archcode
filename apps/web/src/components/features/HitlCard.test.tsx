@@ -115,8 +115,11 @@ mock.module("react-router-dom", () => ({
   Link: ({ children, className, to, ...props }: MockLinkProps) => jsxDEV("a", { ...props, href: to, className, children }),
 }));
 
-const respondHitl = mock((_args: { projectSlug: string; hitlId: string; body: unknown }) => {});
-const cancelHitl = mock((_args: { projectSlug: string; hitlId: string; reason?: string }) => {});
+type RespondHitlArgs = { identity: { owner: HitlProjection["owner"]; hitlId: string }; body: { type?: string; decision?: string; outcome?: string; answers?: string[] } };
+type CancelHitlArgs = { identity: { owner: HitlProjection["owner"]; hitlId: string }; reason?: string };
+
+const respondHitl = mock((_args: RespondHitlArgs) => {});
+const cancelHitl = mock((_args: CancelHitlArgs) => {});
 
 let respondIsPending = false;
 let cancelIsPending = false;
@@ -143,7 +146,7 @@ function makeProjection(overrides: Partial<HitlProjection> = {}): HitlProjection
     hitlId: "hitl-1",
     project: { slug: "demo", name: "Demo Project" },
     owner: { projectSlug: "demo", ownerType: "session", ownerId: "session-1" },
-    source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" },
+    source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
     status: "pending",
     displayPayload: makeDisplayPayload({ title: "Approve?", summary: "Please approve" }),
     allowedActions: ["approve", "deny", "cancel"],
@@ -184,7 +187,7 @@ describe("HitlCard", () => {
   });
 
   test("renders source label for goal_approval", () => {
-    const projection = makeProjection({ source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" } });
+    const projection = makeProjection({ source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"} });
     const result = HitlCard({ projection });
     const text = textContent(result);
     expect(text.toLowerCase()).toContain("goal approval");
@@ -203,7 +206,7 @@ describe("HitlCard", () => {
 
   test("renders source label for goal_review", () => {
     const projection = makeProjection({
-      source: { type: "goal_review", goalId: "goal-1" },
+      source: { type: "goal_review", goalId: "goal-1" , resumeStatus: "reviewing"},
       allowedActions: ["approve", "deny", "cancel"],
       displayPayload: makeDisplayPayload({ title: "Review artifacts" }),
     });
@@ -302,7 +305,7 @@ describe("HitlCard", () => {
 
   test("renders approve and deny buttons for goal_approval", () => {
     const projection = makeProjection({
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" },
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
       allowedActions: ["approve", "deny", "cancel"],
     });
     const result = HitlCard({ projection });
@@ -319,7 +322,7 @@ describe("HitlCard", () => {
   test("approve button calls respondHitl with decision=approved", () => {
     const projection = makeProjection({
       hitlId: "hitl-approve-test",
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" },
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
       allowedActions: ["approve", "deny", "cancel"],
     });
     const result = HitlCard({ projection });
@@ -328,16 +331,17 @@ describe("HitlCard", () => {
     expect(typeof onClick).toBe("function");
     onClick!();
     expect(respondHitl).toHaveBeenCalledTimes(1);
-    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as { projectSlug: string; hitlId: string; body: { decision?: string } };
-    expect(callArg.projectSlug).toBe("demo");
-    expect(callArg.hitlId).toBe("hitl-approve-test");
+    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as RespondHitlArgs;
+    expect(callArg.identity.owner.projectSlug).toBe("demo");
+    expect(callArg.identity.hitlId).toBe("hitl-approve-test");
+    expect(callArg.body.type).toBe("approval_decision");
     expect(callArg.body.decision).toBe("approved");
   });
 
   test("deny button calls respondHitl with decision=denied", () => {
     const projection = makeProjection({
       hitlId: "hitl-deny-test",
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" },
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
       allowedActions: ["approve", "deny", "cancel"],
     });
     const result = HitlCard({ projection });
@@ -346,9 +350,10 @@ describe("HitlCard", () => {
     expect(typeof onClick).toBe("function");
     onClick!();
     expect(respondHitl).toHaveBeenCalledTimes(1);
-    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as { projectSlug: string; hitlId: string; body: { decision?: string } };
-    expect(callArg.projectSlug).toBe("demo");
-    expect(callArg.hitlId).toBe("hitl-deny-test");
+    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as RespondHitlArgs;
+    expect(callArg.identity.owner.projectSlug).toBe("demo");
+    expect(callArg.identity.hitlId).toBe("hitl-deny-test");
+    expect(callArg.body.type).toBe("approval_decision");
     expect(callArg.body.decision).toBe("denied");
   });
 
@@ -360,14 +365,14 @@ describe("HitlCard", () => {
     expect(typeof onClick).toBe("function");
     onClick!();
     expect(cancelHitl).toHaveBeenCalledTimes(1);
-    const callArg = cancelHitl.mock.calls[0]?.[0] as unknown as { projectSlug: string; hitlId: string };
-    expect(callArg.projectSlug).toBe("demo");
-    expect(callArg.hitlId).toBe("hitl-cancel-test");
+    const callArg = cancelHitl.mock.calls[0]?.[0] as unknown as CancelHitlArgs;
+    expect(callArg.identity.owner.projectSlug).toBe("demo");
+    expect(callArg.identity.hitlId).toBe("hitl-cancel-test");
   });
 
   test("goal_review renders DONE/NOT DONE action buttons", () => {
     const projection = makeProjection({
-      source: { type: "goal_review", goalId: "goal-1" },
+      source: { type: "goal_review", goalId: "goal-1" , resumeStatus: "reviewing"},
       allowedActions: ["approve", "deny", "cancel"],
       displayPayload: makeDisplayPayload({ title: "Review artifacts" }),
     });
@@ -382,7 +387,7 @@ describe("HitlCard", () => {
   test("goal_review DONE calls respondHitl with outcome=DONE", () => {
     const projection = makeProjection({
       hitlId: "review-1",
-      source: { type: "goal_review", goalId: "goal-1" },
+      source: { type: "goal_review", goalId: "goal-1" , resumeStatus: "reviewing"},
       allowedActions: ["approve", "deny", "cancel"],
       displayPayload: makeDisplayPayload({ title: "Review" }),
     });
@@ -391,16 +396,17 @@ describe("HitlCard", () => {
     const onClick = approveBtn?.props?.onClick as (() => void) | undefined;
     onClick!();
     expect(respondHitl).toHaveBeenCalledTimes(1);
-    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as { projectSlug: string; hitlId: string; body: { outcome?: string } };
-    expect(callArg.projectSlug).toBe("demo");
-    expect(callArg.hitlId).toBe("review-1");
+    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as RespondHitlArgs;
+    expect(callArg.identity.owner.projectSlug).toBe("demo");
+    expect(callArg.identity.hitlId).toBe("review-1");
+    expect(callArg.body.type).toBe("review_outcome");
     expect(callArg.body.outcome).toBe("DONE");
   });
 
   test("goal_review NOT DONE calls respondHitl with outcome=NOT_DONE", () => {
     const projection = makeProjection({
       hitlId: "review-2",
-      source: { type: "goal_review", goalId: "goal-1" },
+      source: { type: "goal_review", goalId: "goal-1" , resumeStatus: "reviewing"},
       allowedActions: ["approve", "deny", "cancel"],
       displayPayload: makeDisplayPayload({ title: "Review" }),
     });
@@ -409,9 +415,10 @@ describe("HitlCard", () => {
     const onClick = notDoneBtn?.props?.onClick as (() => void) | undefined;
     onClick!();
     expect(respondHitl).toHaveBeenCalledTimes(1);
-    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as { projectSlug: string; hitlId: string; body: { outcome?: string } };
-    expect(callArg.projectSlug).toBe("demo");
-    expect(callArg.hitlId).toBe("review-2");
+    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as RespondHitlArgs;
+    expect(callArg.identity.owner.projectSlug).toBe("demo");
+    expect(callArg.identity.hitlId).toBe("review-2");
+    expect(callArg.body.type).toBe("review_outcome");
     expect(callArg.body.outcome).toBe("NOT_DONE");
   });
 
@@ -438,7 +445,8 @@ describe("HitlCard", () => {
     const onClick = approveBtn?.props?.onClick as (() => void) | undefined;
     onClick!();
     expect(respondHitl).toHaveBeenCalledTimes(1);
-    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as { body: { decision?: string } };
+    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as RespondHitlArgs;
+    expect(callArg.body.type).toBe("permission_decision");
     expect(callArg.body.decision).toBe("approve_once");
   });
 
@@ -453,7 +461,8 @@ describe("HitlCard", () => {
     const onClick = approveAlwaysBtn?.props?.onClick as (() => void) | undefined;
     onClick!();
     expect(respondHitl).toHaveBeenCalledTimes(1);
-    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as { body: { decision?: string } };
+    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as RespondHitlArgs;
+    expect(callArg.body.type).toBe("permission_decision");
     expect(callArg.body.decision).toBe("approve_always");
   });
 
@@ -468,7 +477,8 @@ describe("HitlCard", () => {
     const onClick = denyBtn?.props?.onClick as (() => void) | undefined;
     onClick!();
     expect(respondHitl).toHaveBeenCalledTimes(1);
-    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as { body: { decision?: string } };
+    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as RespondHitlArgs;
+    expect(callArg.body.type).toBe("permission_decision");
     expect(callArg.body.decision).toBe("deny");
   });
 
@@ -493,7 +503,8 @@ describe("HitlCard", () => {
     const onClick = resumeBtn?.props?.onClick as (() => void) | undefined;
     onClick!();
     expect(respondHitl).toHaveBeenCalledTimes(1);
-    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as { body: { decision?: string } };
+    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as RespondHitlArgs;
+    expect(callArg.body.type).toBe("approval_decision");
     expect(callArg.body.decision).toBe("approved");
   });
 
@@ -543,7 +554,8 @@ describe("HitlCard", () => {
     const onClick = submit?.props?.onClick as (() => void) | undefined;
     onClick?.();
     expect(respondHitl).toHaveBeenCalledTimes(1);
-    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as { body: { answers?: string[] } };
+    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as RespondHitlArgs;
+    expect(callArg.body.type).toBe("question_answer");
     expect(callArg.body.answers).toEqual(["Proceed"]);
   });
 
@@ -578,13 +590,14 @@ describe("HitlCard", () => {
     const onClick = submit?.props?.onClick as (() => void) | undefined;
     onClick?.();
 
-    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as { body: { answers?: string[] } };
+    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as RespondHitlArgs;
+    expect(callArg.body.type).toBe("question_answer");
     expect(callArg.body.answers).toEqual(["A", "Because it is safe"]);
   });
 
   test("goal_question and loop_question render answer UI", () => {
     const goalQuestion = HitlCard({ projection: makeProjection({
-      source: { type: "goal_question", goalId: "goal-1", questionKey: "scope" },
+      source: { type: "goal_question", goalId: "goal-1", questionKey: "scope" , resumeStatus: "running"},
       allowedActions: ["answer", "cancel"],
       displayPayload: makeDisplayPayload({ questions: [{ header: "Scope", question: "Clarify scope?", options: [], custom: true }] }),
     }) });
@@ -620,7 +633,7 @@ describe("HitlCard", () => {
 
   test("renders display title for approval source", () => {
     const projection = makeProjection({
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" },
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
       displayPayload: makeDisplayPayload({ title: "deploy_to_production" }),
     });
     const result = HitlCard({ projection });
@@ -630,7 +643,7 @@ describe("HitlCard", () => {
 
   test("goal_approval card uses warning border accent", () => {
     const projection = makeProjection({
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" },
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
     });
     const result = HitlCard({ projection });
     const cards = findAllWithClass(result, "border-warning");
@@ -639,7 +652,7 @@ describe("HitlCard", () => {
 
   test("goal_review card uses accent border", () => {
     const projection = makeProjection({
-      source: { type: "goal_review", goalId: "goal-1" },
+      source: { type: "goal_review", goalId: "goal-1" , resumeStatus: "reviewing"},
       allowedActions: ["approve", "deny", "cancel"],
       displayPayload: makeDisplayPayload({ title: "Review" }),
     });
@@ -705,7 +718,7 @@ describe("HitlCard", () => {
   test("approve button is disabled when respond mutation is pending", () => {
     respondIsPending = true;
     const projection = makeProjection({
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" },
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
       allowedActions: ["approve", "deny", "cancel"],
     });
     const result = HitlCard({ projection });
@@ -716,7 +729,7 @@ describe("HitlCard", () => {
   test("deny button is disabled when respond mutation is pending", () => {
     respondIsPending = true;
     const projection = makeProjection({
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" },
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
       allowedActions: ["approve", "deny", "cancel"],
     });
     const result = HitlCard({ projection });
@@ -735,7 +748,7 @@ describe("HitlCard", () => {
   test("all buttons are disabled when any mutation is pending", () => {
     respondIsPending = true;
     const projection = makeProjection({
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" },
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
       allowedActions: ["approve", "deny", "cancel"],
     });
     const result = HitlCard({ projection });
@@ -748,7 +761,7 @@ describe("HitlCard", () => {
     respondIsPending = true;
     const projection = makeProjection({
       hitlId: "hitl-pending",
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" },
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
       allowedActions: ["approve", "deny", "cancel"],
     });
     const result = HitlCard({ projection });
@@ -770,7 +783,7 @@ describe("HitlCard", () => {
 
   test("buttons are not disabled when no mutation is pending", () => {
     const projection = makeProjection({
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" },
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
       allowedActions: ["approve", "deny", "cancel"],
     });
     const result = HitlCard({ projection });
@@ -789,8 +802,8 @@ describe("HitlCard", () => {
     const onClick = cancelBtn?.props?.onClick as (() => void) | undefined;
     onClick!();
     expect(cancelHitl).toHaveBeenCalledTimes(1);
-    const callArg = cancelHitl.mock.calls[0]?.[0] as unknown as { projectSlug: string; hitlId: string };
-    expect(callArg.projectSlug).toBe("demo");
-    expect(callArg.hitlId).toBe("hitl-1");
+    const callArg = cancelHitl.mock.calls[0]?.[0] as unknown as CancelHitlArgs;
+    expect(callArg.identity.owner.projectSlug).toBe("demo");
+    expect(callArg.identity.hitlId).toBe("hitl-1");
   });
 });

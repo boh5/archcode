@@ -80,18 +80,20 @@ describe("Loop templates", () => {
       const config = LoopConfigSchema.parse(expandLoopTemplate(id));
       expect(config.templateId).toBe(id);
       expect(config.schedule).toEqual({ kind: "manual" });
-      expect(config.useWorktree).toBeUndefined();
+      expect(config.useWorktree).toBe(false);
       expect(config.limits.maxIterationsPerRun).toBeGreaterThan(0);
-      expect(config.budget).toBeUndefined();
+      expect("budget" in config).toBe(false);
       expect(JSON.stringify(config)).not.toMatch(/runKind|mode|toolProfileId|sourcePreset|presetId|extraTools/);
     }
   });
 
-  test("keeps manual worktree opt-in absent unless explicitly configured", () => {
+  test("persists an explicit worktree decision", () => {
     const base = expandLoopTemplate("maintain_fix");
-    expect(LoopConfigSchema.parse(base).useWorktree).toBeUndefined();
+    expect(LoopConfigSchema.parse(base).useWorktree).toBe(false);
     expect(LoopConfigSchema.parse({ ...base, useWorktree: false }).useWorktree).toBe(false);
     expect(LoopConfigSchema.parse({ ...base, useWorktree: true }).useWorktree).toBe(true);
+    const { useWorktree: _removed, ...missingDecision } = base;
+    expect(() => LoopConfigSchema.parse(missingDecision)).toThrow();
   });
 
   test("rejects removed ids and does not provide fallback aliases", () => {

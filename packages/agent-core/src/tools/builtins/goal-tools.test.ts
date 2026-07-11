@@ -8,6 +8,7 @@ import { GoalStateManager } from "../../goals/state";
 import { GoalCancellationCleanupError } from "../../goals/cancellation";
 import { WorktreeService } from "../../worktrees";
 import { HitlService } from "../../hitl/service";
+import { ResumeCoordinator } from "../../hitl/resume-coordinator";
 import { LoopStateManager } from "../../loops/state";
 import { MemoryFileManager } from "../../memory/file-manager";
 import type { ProjectContext } from "../../projects/types";
@@ -63,16 +64,15 @@ class SimplifiedGoalStateManagerMock {
   async block(goalId: string, blocker: {
     kind: GoalBlockerKind;
     summary: string;
-    hitlId?: string;
     source?: string;
-    resumeStatus?: "running" | "reviewing";
+    resumeStatus: "running" | "reviewing";
   }): Promise<GoalState> {
     this.calls.push({ method: "block", payload: { goalId, blocker } });
     return makeGoalState({
       id: goalId,
       status: "blocked",
       blocker: { ...blocker, createdAt: "2026-07-08T00:00:00.000Z" },
-      pendingHitlIds: blocker.hitlId === undefined ? [] : [blocker.hitlId],
+      pendingHitlIds: [],
     });
   }
 
@@ -154,19 +154,32 @@ function makeProjectContext(
   goalState: SimplifiedGoalStateManagerMock | GoalStateManager = new SimplifiedGoalStateManagerMock(),
   workspaceRoot = TMP_DIR,
 ): ProjectContext {
+  const project = {
+    slug: "test-project",
+    name: "Test Project",
+    workspaceRoot,
+    addedAt: new Date().toISOString(),
+  };
+  const resolvedGoalState = goalState as unknown as GoalStateManager;
+  const loopState = new LoopStateManager(workspaceRoot);
+  const hitl = new HitlService({ workspaceRoot, project, sessions: storeManager, goalState: resolvedGoalState, loopState });
   return {
-    project: {
-      slug: "test-project",
-      name: "Test Project",
-      workspaceRoot,
-      addedAt: new Date().toISOString(),
-    },
-    goalState: goalState as unknown as GoalStateManager,
+    project,
+    goalState: resolvedGoalState,
     goalCancellation: {
       cancel: (goalId, request) => goalState.cancel(goalId, request.reason),
     },
-    loopState: new LoopStateManager(workspaceRoot),
-    hitl: new HitlService(),
+    loopState,
+    hitl,
+    hitlResumeCoordinator: new ResumeCoordinator({
+      hitl,
+      adapters: {
+        session: { resume: async () => undefined },
+        goal: { resume: async () => undefined },
+        loop: { resume: async () => undefined },
+      },
+      logger: silentLogger,
+    }),
     memory: new MemoryFileManager({
       project: join(workspaceRoot, ".archcode", "memory"),
       user: join(workspaceRoot, ".archcode", "user-memory"),
@@ -239,10 +252,13 @@ function makeGoalState(overrides: Partial<GoalState> = {}): GoalState {
     attempt: 1,
     pendingHitlIds: [],
     approvalRefs: [],
+    appliedHitlIds: [],
     childSessionIds: [],
     createdAt: "2026-07-08T00:00:00.000Z",
     updatedAt: "2026-07-08T00:00:00.000Z",
     ...overrides,
+    version: overrides.version ?? 1,
+    useWorktree: overrides.useWorktree ?? false,
   };
 }
 
@@ -291,7 +307,7 @@ describe("goal_manage builtin tool", () => {
     const validCases = [
       { action: "create", objective: "Do the thing", acceptanceCriteria: "It works", useWorktree: true },
       { action: "start", goalId },
-      { action: "block", goalId, kind: "approval", summary: "Waiting on approval", hitlId: "hitl-1", source: "test", resumeStatus: "running" },
+      { action: "block", goalId, kind: "approval", summary: "Waiting on approval", source: "test", resumeStatus: "running" },
       { action: "resume", goalId, hitlId: "hitl-1" },
       { action: "begin_review", goalId, reviewerSessionId: "review-session" },
       { action: "finalize_review", goalId, verdict: "DONE", summary: "Verified", evidenceRefs: [validEvidenceRef()], finalSummary: "Done" },
@@ -306,6 +322,14 @@ describe("goal_manage builtin tool", () => {
 
     expect(GoalManageInputSchema.safeParse({ action: "lock", goalId }).success).toBe(false);
     expect(GoalManageInputSchema.safeParse({ action: "advance_phase", goalId, nextPhase: "build" }).success).toBe(false);
+    expect(GoalManageInputSchema.safeParse({
+      action: "block",
+      goalId,
+      kind: "approval",
+      summary: "Waiting on approval",
+      hitlId: "hitl-1",
+      resumeStatus: "running",
+    }).success).toBe(false);
     expect(GoalManageInputSchema.safeParse({ action: "create", title: "Goal", objective: "Do the thing", acceptanceCriteria: "It works" }).success).toBe(false);
     expect(GoalManageInputSchema.safeParse({ action: "create", title: "Goal", doneConditions: [], retryPolicy: {}, approvalPoints: [] }).success).toBe(false);
     expect(GoalManageInputSchema.safeParse({ action: "finalize_review", goalId, outcome: "DONE", summary: "Verified", evidenceRefs: [validEvidenceRef()] }).success).toBe(false);
@@ -403,7 +427,7 @@ describe("goal_manage builtin tool", () => {
 
     const targetedInputs = [
       { action: "start", goalId: targetGoalId },
-      { action: "block", goalId: targetGoalId, kind: "approval", summary: "Wait" },
+      { action: "block", goalId: targetGoalId, kind: "approval", summary: "Wait", resumeStatus: "running" },
       { action: "resume", goalId: targetGoalId },
       { action: "begin_review", goalId: targetGoalId },
       { action: "retry", goalId: targetGoalId },

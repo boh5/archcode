@@ -2,8 +2,13 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import { CollisionLedger, canonicalTargetKey, normalizeWorkspaceRelativePath } from "./collision-ledger";
-import { LoopStateManager, type CollisionTarget, type LoopConfig } from "./state";
+import {
+  CollisionLedger,
+  CollisionLedgerParseError,
+  canonicalTargetKey,
+  normalizeWorkspaceRelativePath,
+} from "./collision-ledger";
+import { LoopNotFoundError, LoopStateManager, type CollisionTarget, type LoopConfig } from "./state";
 import { FakeClock } from "./test-utils";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "collision-ledger");
@@ -14,6 +19,7 @@ const config: LoopConfig = {
   schedule: { kind: "manual" },
   approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 4, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+  useWorktree: false,
 };
 
 beforeEach(async () => {
@@ -47,6 +53,65 @@ describe("CollisionLedger", () => {
     expect(skipped.conflict).toMatchObject({ targetKey: "github:test-owner/test-repo:pr:42" });
     expect(skipped.conflict?.conflictingLease).toMatchObject({ loopId: loopA.loopId, runId: "run-a", priority: 10 });
     expect(await fixture.ledger.readActiveLeases()).toHaveLength(1);
+  });
+
+  test("persists a strict versioned ledger envelope", async () => {
+    const fixture = await createFixture();
+    const loop = await fixture.stateManager.create("project-a", config);
+
+    await fixture.ledger.acquire({
+      target: { type: "issue", owner: "test-owner", repo: "test-repo", number: 7 },
+      loopId: loop.loopId,
+      runId: "run-versioned",
+      priority: 1,
+    });
+
+    const persisted = JSON.parse(await Bun.file(join(TMP_DIR, ".archcode", "loops", "collision-ledger.json")).text());
+    expect(persisted).toMatchObject({ version: 1, updatedAt: fixture.clock.now() });
+    expect(persisted.leases).toHaveLength(1);
+    expect(persisted.conflicts).toEqual([]);
+  });
+
+  test("rejects an unversioned collision ledger instead of backfilling it", async () => {
+    const ledgerPath = join(TMP_DIR, ".archcode", "loops", "collision-ledger.json");
+    await mkdir(join(TMP_DIR, ".archcode", "loops"), { recursive: true });
+    await Bun.write(ledgerPath, JSON.stringify({ leases: [], conflicts: [], updatedAt: 1 }));
+
+    const fixture = await createFixture();
+    await expect(fixture.ledger.readActiveLeases()).rejects.toBeInstanceOf(CollisionLedgerParseError);
+  });
+
+  test("ignores only LoopNotFoundError while persisting loop snapshots", async () => {
+    const clock = new FakeClock(Date.UTC(2026, 6, 4, 12, 0, 0));
+    const missingStateManager = {
+      updateCollisionSnapshot: async (loopId: string) => {
+        throw new LoopNotFoundError(loopId);
+      },
+    } as unknown as LoopStateManager;
+    const missingLedger = new CollisionLedger({ stateManager: missingStateManager, workspaceRoot: TMP_DIR, clock });
+
+    await expect(missingLedger.acquire({
+      target: { type: "issue", owner: "test-owner", repo: "test-repo", number: 8 },
+      loopId: crypto.randomUUID(),
+      runId: "run-deleted-loop",
+      priority: 1,
+    })).resolves.toMatchObject({ acquired: true });
+
+    await rm(join(TMP_DIR, ".archcode"), { recursive: true, force: true });
+    const snapshotFailure = new Error("snapshot persistence failed");
+    const brokenStateManager = {
+      updateCollisionSnapshot: async () => {
+        throw snapshotFailure;
+      },
+    } as unknown as LoopStateManager;
+    const brokenLedger = new CollisionLedger({ stateManager: brokenStateManager, workspaceRoot: TMP_DIR, clock });
+
+    await expect(brokenLedger.acquire({
+      target: { type: "issue", owner: "test-owner", repo: "test-repo", number: 9 },
+      loopId: crypto.randomUUID(),
+      runId: "run-broken-snapshot",
+      priority: 1,
+    })).rejects.toBe(snapshotFailure);
   });
 
   test("stale lease cleanup removes expired leases and allows a new action", async () => {

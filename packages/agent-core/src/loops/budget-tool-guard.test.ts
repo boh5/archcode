@@ -10,6 +10,7 @@ import { createRegistry } from "../tools/registry";
 import type { ToolExecutionContext } from "../tools/types";
 import { silentLogger } from "../logger";
 import { ProjectContextResolver } from "../projects/context-resolver";
+import { createTestProjectContextResolverOptions } from "../tools/test-project-context";
 import { createLoopBudgetToolPermission } from "./budget-tool-guard";
 import { LoopBudgetConfigSchema, LoopStateManager, type LoopBudgetConfig, type LoopConfig } from "./state";
 import { FakeClock, FakeSessionExecutionManager, makeEffectfulTestTools, makeReadOnlyTestTools } from "./test-utils";
@@ -23,6 +24,7 @@ const config: LoopConfig = {
   schedule: { kind: "manual" },
   approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 4, maxTokensPerRun: 1_000, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+  useWorktree: false,
 };
 
 beforeEach(async () => {
@@ -101,11 +103,14 @@ async function createFixture() {
   const clock = new FakeClock(Date.UTC(2026, 6, 4, 12, 0, 0));
   const stateManager = new LoopStateManager(TMP_DIR);
   const loop = await stateManager.create("project-a", config);
-  const resolver = new ProjectContextResolver({ projectInfoFactory: () => ({ slug: "project-a", name: "Project A", workspaceRoot: TMP_DIR, addedAt: "2026-07-04T00:00:00.000Z" }) });
+  const resolver = new ProjectContextResolver({
+    ...createTestProjectContextResolverOptions(storeManager),
+    projectInfoFactory: () => ({ slug: "project-a", name: "Project A", workspaceRoot: TMP_DIR, addedAt: "2026-07-04T00:00:00.000Z" }),
+  });
   const projectContext = await resolver.resolve(TMP_DIR);
   const registry = createRegistry([...makeReadOnlyTestTools(), ...makeEffectfulTestTools()]);
   registry.globalPermissions.push(createLoopBudgetToolPermission());
-  const store = createSessionStore("session-1");
+  const store = createSessionStore("session-1", TMP_DIR);
   store.setState({ loopId: loop.loopId });
   const executionManager = new FakeSessionExecutionManager();
 

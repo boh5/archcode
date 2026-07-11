@@ -17,6 +17,7 @@ import {
 } from "../execution/session-hitl-checkpoint";
 import { HitlService } from "../hitl/service";
 import { silentLogger } from "../logger";
+import { LoopStateManager } from "../loops/state";
 import { SessionStoreManager } from "../store/session-store-manager";
 import type { SessionStoreState } from "../store/types";
 import {
@@ -91,9 +92,9 @@ async function createFixture(): Promise<Fixture> {
     project: { slug: "project-a", name: "Project A" },
     sessions,
     goalState,
+    loopState: new LoopStateManager(TMP_ROOT, silentLogger),
     logger: silentLogger,
   });
-  await hitl.load(TMP_ROOT);
   const families = new FakeFamilyController();
   const service = new GoalCancellationService({
     workspaceRoot: TMP_ROOT,
@@ -131,7 +132,7 @@ function hitlInput(ownerId: string, ownerType: "session" | "goal", hitlId: strin
     blockingKey: `${ownerType}:${ownerId}:${hitlId}`,
     source: ownerType === "session"
       ? { type: "ask_user" as const, sessionId: ownerId, toolCallId: "ask-1" }
-      : { type: "goal_approval" as const, goalId: ownerId, approvalPoint: "cancel-test" },
+      : { type: "goal_approval" as const, goalId: ownerId, approvalPoint: "cancel-test", resumeStatus: "running" as const },
     displayPayload: {
       title: "Pending approval",
       summary: "Wait for a human decision.",
@@ -192,13 +193,16 @@ describe("GoalCancellationService", () => {
 
     const sessionHitlId = crypto.randomUUID();
     const goalHitlId = crypto.randomUUID();
-    await fixture.hitl.create(hitlInput(mainId, "session", sessionHitlId));
-    await fixture.hitl.create(hitlInput(goal.id, "goal", goalHitlId));
-    await fixture.goalState.block(goal.id, {
-      kind: "approval",
-      summary: "Goal approval pending",
-      hitlId: goalHitlId,
-      resumeStatus: "running",
+    const sessionRecord = await fixture.hitl.create(hitlInput(mainId, "session", sessionHitlId));
+    const goalRecord = await fixture.hitl.create(hitlInput(goal.id, "goal", goalHitlId));
+    await fixture.goalState.attachHitlBlocker(goal.id, {
+      blocker: {
+        kind: "approval",
+        summary: "Goal approval pending",
+        hitlId: goalHitlId,
+        resumeStatus: "running",
+      },
+      approvalRef: goalHitlId,
     });
     const mainStore = fixture.sessions.get(mainId, TMP_ROOT)!;
     mainStore.getState().append({
@@ -209,11 +213,19 @@ describe("GoalCancellationService", () => {
       blockedHitl: blockedHitl(sessionHitlId),
     });
     await fixture.sessions.flushSession(mainId, TMP_ROOT);
+    const checkpointCreatedAt = new Date().toISOString();
     await writeSessionHitlCheckpoint({
       version: 1,
+      phase: "paused",
+      phaseUpdatedAt: checkpointCreatedAt,
       hitlId: sessionHitlId,
       blockingKey: `session:${mainId}:ask-1`,
       source: { type: "ask_user", sessionId: mainId, toolCallId: "ask-1" },
+      request: {
+        owner: { projectSlug: "project-a", ownerType: "session", ownerId: mainId },
+        displayPayload: { title: "Pending approval", summary: "Wait for a human decision.", fields: [], redacted: true },
+        createdAt: checkpointCreatedAt,
+      },
       toolCallId: "ask-1",
       toolName: "ask_user",
       step: 1,
@@ -221,11 +233,12 @@ describe("GoalCancellationService", () => {
       displayInput: {},
       allowedTools: ["ask_user"],
       agentSkills: [],
+      agentName: "orchestrator",
       toolCalls: [{ toolCallId: "ask-1", toolName: "ask_user", input: {} }],
       completedToolResults: [],
       pendingToolCalls: [{ toolCallId: "ask-1", toolName: "ask_user", input: {} }],
       blockedToolIndex: 0,
-      createdAt: new Date().toISOString(),
+      createdAt: checkpointCreatedAt,
       kind: "ask_user",
     }, TMP_ROOT, mainId);
 
@@ -243,11 +256,11 @@ describe("GoalCancellationService", () => {
     const coldMain = await coldSessions.getOrLoad(mainId, TMP_ROOT);
     expect(coldMain.getState().blockedByHitlIds).toBeUndefined();
     expect(coldMain.getState().blockedHitl).toBeUndefined();
-    expect(await fixture.hitl.lookup(sessionHitlId)).toMatchObject({
+    expect(await fixture.hitl.lookup({ owner: sessionRecord.owner, hitlId: sessionRecord.hitlId })).toMatchObject({
       status: "found",
       record: { status: "cancelled", response: { type: "cancel", reason: "goal_cancelled" } },
     });
-    expect(await fixture.hitl.lookup(goalHitlId)).toMatchObject({
+    expect(await fixture.hitl.lookup({ owner: goalRecord.owner, hitlId: goalRecord.hitlId })).toMatchObject({
       status: "found",
       record: { status: "cancelled", response: { type: "cancel", reason: "goal_cancelled" } },
     });
@@ -347,7 +360,7 @@ describe("GoalCancellationService", () => {
     let goal = await createRunningGoal(fixture);
     goal = await fixture.goalState.beginReview(goal.id);
     const hitlId = crypto.randomUUID();
-    await fixture.hitl.create(hitlInput(goal.id, "goal", hitlId));
+    const hitlRecord = await fixture.hitl.create(hitlInput(goal.id, "goal", hitlId));
     const reviewEntered = deferred<void>();
     const releaseReview = deferred<void>();
     const finalize = withGoalExecutionClaimLock(goal.id, async () => {
@@ -372,7 +385,7 @@ describe("GoalCancellationService", () => {
     expect((await finalize).status).toBe("done");
     await expect(cancellation).rejects.toBeInstanceOf(GoalCancellationError);
     expect(fixture.families.acquired).toHaveLength(0);
-    expect(await fixture.hitl.lookup(hitlId)).toMatchObject({
+    expect(await fixture.hitl.lookup({ owner: hitlRecord.owner, hitlId: hitlRecord.hitlId })).toMatchObject({
       status: "found",
       record: { status: "pending" },
     });
@@ -385,13 +398,16 @@ describe("GoalCancellationService", () => {
       const mainId = goal.mainSessionId!;
       const sessionHitlId = crypto.randomUUID();
       const goalHitlId = crypto.randomUUID();
-      await fixture.hitl.create(hitlInput(mainId, "session", sessionHitlId));
+      const sessionRecord = await fixture.hitl.create(hitlInput(mainId, "session", sessionHitlId));
       const goalRecord = await fixture.hitl.create(hitlInput(goal.id, "goal", goalHitlId));
-      await fixture.goalState.block(goal.id, {
-        kind: "approval",
-        summary: "Goal approval pending",
-        hitlId: goalHitlId,
-        resumeStatus: "running",
+      await fixture.goalState.attachHitlBlocker(goal.id, {
+        blocker: {
+          kind: "approval",
+          summary: "Goal approval pending",
+          hitlId: goalHitlId,
+          resumeStatus: "running",
+        },
+        approvalRef: goalHitlId,
       });
       const mainStore = fixture.sessions.get(mainId, TMP_ROOT)!;
       mainStore.getState().append({
@@ -402,11 +418,19 @@ describe("GoalCancellationService", () => {
         blockedHitl: blockedHitl(sessionHitlId),
       });
       await fixture.sessions.flushSession(mainId, TMP_ROOT);
+      const checkpointCreatedAt = new Date().toISOString();
       await writeSessionHitlCheckpoint({
         version: 1,
+        phase: "paused",
+        phaseUpdatedAt: checkpointCreatedAt,
         hitlId: sessionHitlId,
         blockingKey: `session:${mainId}:ask-1`,
         source: { type: "ask_user", sessionId: mainId, toolCallId: "ask-1" },
+        request: {
+          owner: { projectSlug: "project-a", ownerType: "session", ownerId: mainId },
+          displayPayload: { title: "Pending approval", summary: "Wait for a human decision.", fields: [], redacted: true },
+          createdAt: checkpointCreatedAt,
+        },
         toolCallId: "ask-1",
         toolName: "ask_user",
         step: 1,
@@ -414,11 +438,12 @@ describe("GoalCancellationService", () => {
         displayInput: {},
         allowedTools: ["ask_user"],
         agentSkills: [],
+        agentName: "orchestrator",
         toolCalls: [{ toolCallId: "ask-1", toolName: "ask_user", input: {} }],
         completedToolResults: [],
         pendingToolCalls: [{ toolCallId: "ask-1", toolName: "ask_user", input: {} }],
         blockedToolIndex: 0,
-        createdAt: new Date().toISOString(),
+        createdAt: checkpointCreatedAt,
         kind: "ask_user",
       }, TMP_ROOT, mainId);
 
@@ -482,8 +507,14 @@ describe("GoalCancellationService", () => {
       expect(coldMain.getState().blockedByHitlIds).toBeUndefined();
       expect(coldMain.getState().blockedHitl).toBeUndefined();
       expect(await Bun.file(getSessionHitlCheckpointPath(TMP_ROOT, mainId)).exists()).toBe(false);
-      expect(await fixture.hitl.lookup(sessionHitlId)).toMatchObject({ status: "found", record: { status: "cancelled" } });
-      expect(await fixture.hitl.lookup(goalHitlId)).toMatchObject({ status: "found", record: { status: "cancelled" } });
+      expect(await fixture.hitl.lookup({ owner: sessionRecord.owner, hitlId: sessionRecord.hitlId })).toMatchObject({
+        status: "found",
+        record: { status: "cancelled" },
+      });
+      expect(await fixture.hitl.lookup({ owner: goalRecord.owner, hitlId: goalRecord.hitlId })).toMatchObject({
+        status: "found",
+        record: { status: "cancelled" },
+      });
     });
   }
 });

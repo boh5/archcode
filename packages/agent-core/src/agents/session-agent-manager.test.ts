@@ -14,6 +14,7 @@ import { silentLogger } from "../logger";
 import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getSessionPath } from "../store/sessions-dir";
+import { createTestProjectContextResolver } from "./test-project-context-resolver";
 
 function makeTool(name: string): AnyToolDescriptor {
   return {
@@ -57,6 +58,7 @@ function createManager(
     toolRegistry: createRegistry([makeTool("unknown_tool")]),
     skillService: new SkillService({ builtinSkills: {} }),
     storeManager,
+    projectContextResolver: createTestProjectContextResolver(storeManager),
     config: {
       provider: {},
       agents: { orchestrator: { model: providerRegistry.modelIds[0]! } },
@@ -68,6 +70,18 @@ function createManager(
 }
 
 describe("SessionAgentManager", () => {
+  test("cold missing Session fails closed instead of creating a new identity", async () => {
+    const workspaceRoot = join(import.meta.dir, "__test_tmp__", `missing-session-${crypto.randomUUID()}`);
+    const sessionId = crypto.randomUUID();
+    const storeManager = new SessionStoreManager({ logger: silentLogger });
+    const manager = createManager(4, undefined, storeManager);
+
+    await expect(manager.getOrCreate(workspaceRoot, sessionId)).rejects.toMatchObject({
+      name: "SessionFileNotFoundError",
+    });
+    expect(storeManager.get(sessionId, workspaceRoot)).toBeUndefined();
+  });
+
   test("cold malformed Session fails closed instead of recreating the same identity", async () => {
     const workspaceRoot = join(import.meta.dir, "__test_tmp__", `malformed-session-${crypto.randomUUID()}`);
     const sessionId = crypto.randomUUID();
@@ -186,9 +200,11 @@ describe("SessionAgentManager", () => {
   });
 
   test("concurrent getOrCreate returns the same agent instance", async () => {
-    const manager = createManager();
+    const storeManager = new SessionStoreManager({ logger: silentLogger });
+    const manager = createManager(4, undefined, storeManager);
     const workspaceRoot = "/tmp/archcode-workspace";
     const sessionId = crypto.randomUUID();
+    storeManager.create(sessionId, workspaceRoot);
 
     const [first, second] = await Promise.all([
       manager.getOrCreate(workspaceRoot, sessionId),
@@ -200,9 +216,11 @@ describe("SessionAgentManager", () => {
   });
 
   test("dispatchCommand waits for an already-pending Agent registration", async () => {
-    const manager = createManager();
+    const storeManager = new SessionStoreManager({ logger: silentLogger });
+    const manager = createManager(4, undefined, storeManager);
     const workspaceRoot = "/tmp/archcode-workspace";
     const sessionId = crypto.randomUUID();
+    storeManager.create(sessionId, workspaceRoot);
 
     const pendingAgent = manager.getOrCreate(workspaceRoot, sessionId);
 
@@ -214,9 +232,12 @@ describe("SessionAgentManager", () => {
   });
 
   test("tombstone expiry allows recreating a deleted session", async () => {
-    const manager = createManager(4, 25);
+    const storeManager = new SessionStoreManager({ logger: silentLogger });
+    const manager = createManager(4, 25, storeManager);
     const workspaceRoot = "/tmp/archcode-workspace";
     const sessionId = crypto.randomUUID();
+    storeManager.create(sessionId, workspaceRoot);
+    await storeManager.flushSession(sessionId, workspaceRoot);
 
     manager.dispose(workspaceRoot, sessionId);
     expect(manager.isTombstoned(workspaceRoot, sessionId)).toBe(true);
@@ -228,9 +249,12 @@ describe("SessionAgentManager", () => {
   });
 
   test("clearTombstone allows recreating a deleted session", async () => {
-    const manager = createManager();
+    const storeManager = new SessionStoreManager({ logger: silentLogger });
+    const manager = createManager(4, undefined, storeManager);
     const workspaceRoot = "/tmp/archcode-workspace";
     const sessionId = crypto.randomUUID();
+    storeManager.create(sessionId, workspaceRoot);
+    await storeManager.flushSession(sessionId, workspaceRoot);
 
     manager.dispose(workspaceRoot, sessionId);
     expect(manager.clearTombstone(workspaceRoot, sessionId)).toBe(true);

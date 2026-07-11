@@ -2,27 +2,17 @@ import {
   SkillNotFoundError,
   SkillPathError,
   SkillValidationError,
-  type SkillService,
 } from "../skills/service";
 import type { CommandDescriptor } from "./types";
 
 const SYNTAX = "Usage: /skill use <name> <request...>";
 const DEFAULT_REQUEST = "Apply this Skill to the current task.";
 
-export function createSkillCommand(
-  skillService: SkillService,
-  cwd: string,
-  agentName: string,
-  agentSkills: readonly string[],
-): CommandDescriptor {
+export function createSkillCommand(): CommandDescriptor {
   return {
     name: "skill",
     description: "Use an allowed Skill for the next request.",
     handler: async (ctx, args) => {
-      const activeSkillService = ctx.skillService ?? skillService;
-      const activeCwd = ctx.cwd ?? cwd;
-      const activeAgentName = ctx.agentName ?? agentName;
-      const activeAgentSkills = ctx.agentSkills ?? agentSkills;
       const tokens = parseArgs(args);
       const subcommand = tokens[0];
 
@@ -42,13 +32,13 @@ export function createSkillCommand(
       }
 
       try {
-        const skill = await activeSkillService.readForAgent(activeCwd, name, activeAgentSkills);
+        const skill = await ctx.skillService.readForAgent(ctx.cwd, name, ctx.agentSkills);
         if (skill === null) {
-          return unavailable(name, activeAgentName);
+          return unavailable(name, ctx.agentName);
         }
       } catch (error) {
         if (error instanceof SkillNotFoundError) {
-          return unavailable(name, activeAgentName);
+          return unavailable(name, ctx.agentName);
         }
 
         if (error instanceof SkillValidationError || error instanceof SkillPathError) {

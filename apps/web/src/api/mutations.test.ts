@@ -80,33 +80,34 @@ describe("web goal mutation API calls", () => {
 });
 
 describe("web HITL mutation API calls", () => {
-  test("respondHitl calls POST /api/projects/:slug/hitl/:id/respond", async () => {
+  test("respondHitl calls owner-qualified POST endpoint", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/hitl/hitl-1/respond`);
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/hitl/session/session-1/hitl-1/respond`);
       expect(init?.method).toBe("POST");
+      expect(JSON.parse(String(init?.body ?? "{}"))).toMatchObject({ type: "approval_decision", decision: "approved" });
       return jsonResponse({ ok: true, hitlId: "hitl-1" });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/hitl/hitl-1/respond`, {
+    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/hitl/session/session-1/hitl-1/respond`, {
       method: "POST",
-      body: { decision: "approved" },
+      body: { type: "approval_decision", decision: "approved" },
     });
     expect(result).toEqual({ ok: true, hitlId: "hitl-1" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  test("cancelHitl calls POST /api/projects/:slug/hitl/:id/cancel", async () => {
+  test("cancelHitl calls owner-qualified POST endpoint", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/hitl/hitl-1/cancel`);
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/hitl/session/session-1/hitl-1/cancel`);
       expect(init?.method).toBe("POST");
       return jsonResponse({ ok: true, hitlId: "hitl-1" });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/hitl/hitl-1/cancel`, { method: "POST" });
+    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/hitl/session/session-1/hitl-1/cancel`, { method: "POST" });
     expect(result).toEqual({ ok: true, hitlId: "hitl-1" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -114,17 +115,18 @@ describe("web HITL mutation API calls", () => {
   test("respondHitl with review outcome sends project-scoped endpoint", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe("/api/projects/demo/hitl/review-1/respond");
+      expect(String(input)).toBe("/api/projects/demo/hitl/goal/goal-1/review-1/respond");
       expect(init?.method).toBe("POST");
       const body = JSON.parse(String(init?.body ?? "{}"));
+      expect(body.type).toBe("review_outcome");
       expect(body.outcome).toBe("DONE");
       return jsonResponse({ ok: true, hitlId: "review-1" });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await apiFetch("/api/projects/demo/hitl/review-1/respond", {
+    const result = await apiFetch("/api/projects/demo/hitl/goal/goal-1/review-1/respond", {
       method: "POST",
-      body: { outcome: "DONE" },
+      body: { type: "review_outcome", outcome: "DONE" },
     });
     expect(result).toEqual({ ok: true, hitlId: "review-1" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -133,7 +135,7 @@ describe("web HITL mutation API calls", () => {
   test("cancelHitl with reason sends project-scoped endpoint", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe("/api/projects/demo/hitl/hitl-cancel/cancel");
+      expect(String(input)).toBe("/api/projects/demo/hitl/session/session-1/hitl-cancel/cancel");
       expect(init?.method).toBe("POST");
       const body = JSON.parse(String(init?.body ?? "{}"));
       expect(body.reason).toBe("No longer needed");
@@ -141,7 +143,7 @@ describe("web HITL mutation API calls", () => {
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await apiFetch("/api/projects/demo/hitl/hitl-cancel/cancel", {
+    const result = await apiFetch("/api/projects/demo/hitl/session/session-1/hitl-cancel/cancel", {
       method: "POST",
       body: { reason: "No longer needed" },
     });
@@ -155,14 +157,14 @@ describe("web HITL mutation API calls", () => {
       const url = String(input);
       expect(url).not.toBe("/api/hitl/hitl-1/respond");
       expect(url).not.toMatch(/^\/api\/hitl\/[^/]+\/respond$/);
-      expect(url).toBe("/api/projects/demo/hitl/hitl-1/respond");
+      expect(url).toBe("/api/projects/demo/hitl/session/session-1/hitl-1/respond");
       return jsonResponse({ ok: true, hitlId: "hitl-1" });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await apiFetch("/api/projects/demo/hitl/hitl-1/respond", {
+    const result = await apiFetch("/api/projects/demo/hitl/session/session-1/hitl-1/respond", {
       method: "POST",
-      body: { decision: "approved" },
+      body: { type: "approval_decision", decision: "approved" },
     });
     expect(result).toEqual({ ok: true, hitlId: "hitl-1" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -174,14 +176,14 @@ describe("web HITL mutation API calls", () => {
       const url = String(input);
       expect(url).not.toMatch(/^\/api\/questions\//);
       expect(url).not.toMatch(/^\/api\/questions\b/);
-      expect(url).toBe("/api/projects/demo/hitl/hitl-q1/respond");
+      expect(url).toBe("/api/projects/demo/hitl/session/session-1/hitl-q1/respond");
       return jsonResponse({ ok: true, hitlId: "hitl-q1" });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await apiFetch("/api/projects/demo/hitl/hitl-q1/respond", {
+    const result = await apiFetch("/api/projects/demo/hitl/session/session-1/hitl-q1/respond", {
       method: "POST",
-      body: { answers: ["yes"] },
+      body: { type: "question_answer", answers: ["yes"] },
     });
     expect(result).toEqual({ ok: true, hitlId: "hitl-q1" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -193,12 +195,12 @@ describe("web HITL mutation API calls", () => {
       const url = String(input);
       expect(url).not.toMatch(/^\/api\/permissions\//);
       expect(url).not.toMatch(/^\/api\/permissions\b/);
-      expect(url).toBe("/api/projects/demo/hitl/hitl-perm/cancel");
+      expect(url).toBe("/api/projects/demo/hitl/session/session-1/hitl-perm/cancel");
       return jsonResponse({ ok: true, hitlId: "hitl-perm" });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await apiFetch("/api/projects/demo/hitl/hitl-perm/cancel", { method: "POST" });
+    const result = await apiFetch("/api/projects/demo/hitl/session/session-1/hitl-perm/cancel", { method: "POST" });
     expect(result).toEqual({ ok: true, hitlId: "hitl-perm" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -352,7 +354,8 @@ describe("web loop mutation URL contracts", () => {
         templateId: "watch_report",
         schedule: { kind: "manual" },
         approvalPolicy: "interactive",
-        budget: limits,
+        limits,
+        useWorktree: false,
       }),
     });
 
@@ -367,7 +370,7 @@ describe("web loop mutation URL contracts", () => {
       templateId: "maintain_fix",
       schedule: { kind: "manual" },
       approvalPolicy: "explicit_per_run",
-      budget: {
+      limits: {
         maxIterationsPerRun: 12,
         maxTokensPerRun: 160000,
         maxWallClockMsPerRun: 1200000,

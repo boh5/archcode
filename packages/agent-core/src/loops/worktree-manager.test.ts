@@ -531,7 +531,7 @@ describe("LoopWorktreeManager", () => {
   test("locks git cwd and environment and uses exact SHA in worktree command", async () => {
     const calls: ProcessRunnerInput[] = [];
     const canonicalRoot = resolve(TMP_DIR, "fake-repo");
-    await mkdir(canonicalRoot, { recursive: true });
+    await mkdir(join(canonicalRoot, ".git"), { recursive: true });
     const fakeRunner: ProcessRunner = {
       run: mock(async (input: ProcessRunnerInput): Promise<ProcessRunnerResult> => {
         calls.push(input);

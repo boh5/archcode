@@ -35,8 +35,10 @@ function baseState(messages: StoredMessage[]): SessionStoreState {
   return {
     sessionId: "session-1",
     createdAt: 100,
+    updatedAt: 100,
     cwd: "/workspace",
     agentName: "orchestrator",
+    modelInfo: null,
     title: null,
     messages,
     steps: [],

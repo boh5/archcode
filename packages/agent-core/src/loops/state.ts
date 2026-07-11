@@ -47,10 +47,55 @@ const LoopTextSchema = z.string().trim().min(1).max(10_000);
 const LoopIdentifierSchema = z.string().trim().min(1).max(200);
 const TimestampMsSchema = z.number().int().nonnegative();
 const ShaSchema = z.string().trim().min(1).max(128);
-const TriggerCadenceMsSchema = z.number().int().min(30_000).default(60_000);
-const CronExpressionSchema = z.string().trim().refine((value) => value.split(/\s+/).length === 5, {
-  message: "Cron expressions must use exactly 5 UTC fields",
-});
+const TriggerCadenceMsSchema = z.number().int().min(30_000);
+const CronExpressionSchema = z.string().trim()
+  .refine((value) => value.split(/\s+/).length === 5, {
+    message: "Cron expressions must use exactly 5 UTC fields",
+  })
+  .refine((value) => {
+    try {
+      return Bun.cron.parse(value, new Date(0)) !== null;
+    } catch {
+      return false;
+    }
+  }, { message: "Cron expression must have a valid future UTC occurrence" });
+
+function refineWorktreeCheckpoint(
+  value: {
+    readonly worktreePath?: string;
+    readonly worktreeBranchName?: string;
+    readonly baseSha?: string;
+    readonly resolvedHeadSha?: string;
+  },
+  context: { addIssue(issue: { code: "custom"; path: string[]; message: string }): void },
+): void {
+  if (value.worktreePath === undefined) {
+    if (value.worktreeBranchName !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["worktreeBranchName"],
+        message: "worktreeBranchName requires worktreePath",
+      });
+    }
+    if (value.resolvedHeadSha !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["resolvedHeadSha"],
+        message: "resolvedHeadSha requires worktreePath",
+      });
+    }
+    return;
+  }
+  for (const field of ["worktreeBranchName", "baseSha", "resolvedHeadSha"] as const) {
+    if (value[field] === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: [field],
+        message: `${field} is required when worktreePath is present`,
+      });
+    }
+  }
+}
 
 export const LoopUuidSchema = z.uuid();
 
@@ -87,23 +132,13 @@ export const LoopTriggerSpecSchema = z.discriminatedUnion("kind", [
   }),
 ]) satisfies z.ZodType<ProtocolLoopTriggerSpec>;
 
-export const LoopCoordinatorConfigSchema = z.preprocess((value) => {
-  if (value === undefined) return { maxConcurrent: 2 };
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
-  const record = value as Record<string, unknown>;
-  return { ...record, maxConcurrent: record.maxConcurrent ?? 2 };
-}, z.strictObject({
-  maxConcurrent: z.number().int().positive().default(2),
-})) satisfies z.ZodType<ProtocolLoopCoordinatorConfig>;
+export const LoopCoordinatorConfigSchema = z.strictObject({
+  maxConcurrent: z.number().int().positive(),
+}) satisfies z.ZodType<ProtocolLoopCoordinatorConfig>;
 
-export const LoopProjectConfigSchema = z.preprocess((value) => {
-  if (value === undefined) return { coordinator: { maxConcurrent: 2 } };
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
-  const record = value as Record<string, unknown>;
-  return { ...record, coordinator: record.coordinator ?? { maxConcurrent: 2 } };
-}, z.strictObject({
+export const LoopProjectConfigSchema = z.strictObject({
   coordinator: LoopCoordinatorConfigSchema,
-})) satisfies z.ZodType<ProtocolLoopProjectConfig>;
+}) satisfies z.ZodType<ProtocolLoopProjectConfig>;
 
 export const LoopRunKindSchema = z.enum(["session", "goal"]);
 export const LoopTemplateIdSchema = z.enum(["watch_report", "maintain_fix", "pr_babysitter", "goal_runner"]);
@@ -111,15 +146,7 @@ export const LoopApprovalPolicySchema = z.enum(["interactive", "explicit_per_run
 
 const BudgetThresholdRatioSchema = z.number().min(0).max(1);
 
-export const LoopBudgetConfigSchema = z.preprocess((value) => {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
-  const record = value as Record<string, unknown>;
-  return {
-    ...record,
-    softThresholdRatio: record.softThresholdRatio ?? 0.8,
-    hardThresholdRatio: record.hardThresholdRatio ?? 1.0,
-  };
-}, z.strictObject({
+export const LoopBudgetConfigSchema = z.strictObject({
   maxIterationsPerRun: z.number().int().positive(),
   maxTokensPerRun: z.number().int().positive().optional(),
   maxEstimatedUsdPerRun: z.number().positive().optional(),
@@ -127,7 +154,7 @@ export const LoopBudgetConfigSchema = z.preprocess((value) => {
   maxRunsPerDay: z.number().int().positive().optional(),
   softThresholdRatio: BudgetThresholdRatioSchema,
   hardThresholdRatio: BudgetThresholdRatioSchema,
-})) satisfies z.ZodType<ProtocolLoopBudgetConfig>;
+}) satisfies z.ZodType<ProtocolLoopBudgetConfig>;
 
 export const LoopLimitsSchema = LoopBudgetConfigSchema satisfies z.ZodType<ProtocolLoopLimits>;
 
@@ -195,7 +222,7 @@ export const LoopIntegrationErrorSchema = z.strictObject({
 }) satisfies z.ZodType<ProtocolLoopIntegrationError>;
 
 export const LoopBudgetSnapshotSchema = z.strictObject({
-  budget: LoopBudgetConfigSchema.optional(),
+  budget: LoopBudgetConfigSchema,
   usage: LoopBudgetUsageSchema,
   updatedAt: TimestampMsSchema,
 }) satisfies z.ZodType<ProtocolLoopBudgetSnapshot>;
@@ -232,7 +259,7 @@ export const LoopCleanupStateSchema = z.enum([
 ]) satisfies z.ZodType<ProtocolLoopCleanupState>;
 
 export const LoopCleanupPolicySchema = z.strictObject({
-  enabled: z.boolean().optional(),
+  enabled: z.boolean(),
   action: z.enum(["mark", "pause"]).optional(),
   deleteUnchangedWorktrees: z.boolean().optional(),
   preserveChangedArtifacts: z.literal(true).optional(),
@@ -261,10 +288,11 @@ export const LoopHitlCheckpointSchema = z.strictObject({
   trigger: LoopRunTriggerSchema,
   subjectKey: LoopIdentifierSchema.optional(),
   worktreePath: LoopTextSchema.optional(),
+  worktreeBranchName: LoopIdentifierSchema.optional(),
   baseSha: ShaSchema.optional(),
   resolvedHeadSha: ShaSchema.optional(),
   intendedContinuation: z.enum(["rerun_job", "resume_run"]),
-});
+}).superRefine(refineWorktreeCheckpoint);
 
 export const LoopJobStatusSchema = z.enum([
   "pending",
@@ -296,16 +324,15 @@ export const LoopConfigSchema: z.ZodType<ProtocolLoopConfig> = z.strictObject({
   schedule: LoopScheduleSpecSchema,
   approvalPolicy: LoopApprovalPolicySchema,
   limits: LoopLimitsSchema,
-  budget: LoopBudgetConfigSchema.optional(),
   collisionTargets: z.array(CollisionTargetSchema).max(100).optional(),
   taskPrompt: LoopTextSchema.optional(),
   goalTemplate: LoopGoalTemplateSchema.optional(),
   triggers: z.array(LoopTriggerSpecSchema).max(50).optional(),
-  useWorktree: z.boolean().optional(),
+  useWorktree: z.boolean(),
   cleanupPolicy: LoopCleanupPolicySchema.optional(),
 });
 
-export const LoopRunReportSchema = z.strictObject({
+const LoopRunReportBaseSchema = z.strictObject({
   runId: LoopIdentifierSchema,
   loopId: LoopUuidSchema,
   status: LoopRunReportStatusSchema,
@@ -323,7 +350,6 @@ export const LoopRunReportSchema = z.strictObject({
   error: z.string().max(20_000).optional(),
   skippedReason: LoopTextSchema.optional(),
   jobId: LoopIdentifierSchema.optional(),
-  triggerKind: LoopRunTriggerSchema.optional(),
   subjectKey: LoopIdentifierSchema.optional(),
   dedupeKey: LoopIdentifierSchema.optional(),
   branchKey: LoopIdentifierSchema.optional(),
@@ -339,6 +365,32 @@ export const LoopRunReportSchema = z.strictObject({
   cleanupState: LoopCleanupStateSchema.optional(),
   cleanupWarning: LoopTextSchema.optional(),
   observedArtifacts: z.array(LoopWorktreeArtifactSchema).max(100).optional(),
+});
+
+export const LoopRunReportSchema = LoopRunReportBaseSchema.superRefine((report, context) => {
+  refineWorktreeCheckpoint(report, context);
+
+  if (report.status === "running") {
+    if (report.endedAt !== undefined) {
+      context.addIssue({ code: "custom", path: ["endedAt"], message: "endedAt is not valid for a running Loop report" });
+    }
+  } else if (report.endedAt === undefined) {
+    context.addIssue({ code: "custom", path: ["endedAt"], message: "endedAt is required for a finished Loop report" });
+  }
+
+  if (report.status !== "needs_user") return;
+  if (report.blockedReason === undefined) {
+    context.addIssue({ code: "custom", path: ["blockedReason"], message: "blockedReason is required for a needs_user Loop report" });
+  }
+  if (report.blockedByHitlIds === undefined || report.blockedByHitlIds.length === 0) {
+    context.addIssue({ code: "custom", path: ["blockedByHitlIds"], message: "blockedByHitlIds is required for a needs_user Loop report" });
+  }
+  if (report.attentionStatus !== "waiting_for_human") {
+    context.addIssue({ code: "custom", path: ["attentionStatus"], message: "attentionStatus must be waiting_for_human for a needs_user Loop report" });
+  }
+  if (report.resumeCheckpoint === undefined) {
+    context.addIssue({ code: "custom", path: ["resumeCheckpoint"], message: "resumeCheckpoint is required for a needs_user Loop report" });
+  }
 }) satisfies z.ZodType<ProtocolLoopRunReport>;
 
 export const LoopStateSchema = z.strictObject({
@@ -367,6 +419,16 @@ export const LoopStateSchema = z.strictObject({
   triggerHealth: z.array(LoopTriggerHealthSchema).max(50).optional(),
   cleanupState: LoopCleanupStateSchema.optional(),
 }) satisfies z.ZodType<ProtocolLoopState>;
+
+const LoopStateFileSchema = z.strictObject({
+  version: z.literal(1),
+  state: LoopStateSchema,
+});
+
+const LoopRunLogEntrySchema = z.strictObject({
+  version: z.literal(1),
+  report: LoopRunReportSchema,
+});
 
 export type LoopStatus = ProtocolLoopStatus;
 export type LoopScheduleSpec = ProtocolLoopScheduleSpec;
@@ -523,13 +585,6 @@ export class LoopStateManager {
       } catch (error) {
         if (error instanceof LoopNotFoundError && error.loopId === loopId) {
           this.#logger.debug("loops.list.missing.skipped", {
-            context: { path: join(loopsRoot, loopId, "state.json") },
-            error: logError(error),
-          });
-          continue;
-        }
-        if (error instanceof LoopStateError) {
-          this.#logger.debug("loops.list.parse.skipped", {
             context: { path: join(loopsRoot, loopId, "state.json") },
             error: logError(error),
           });
@@ -875,7 +930,7 @@ export class LoopStateManager {
     const parsed = this.parseRunReport(loopId, report);
     const filePath = await this.runLogPath(loopId);
     await mkdir(dirname(filePath), { recursive: true });
-    await appendFile(filePath, `${JSON.stringify(parsed)}\n`, "utf8");
+    await appendFile(filePath, `${JSON.stringify({ version: 1, report: parsed })}\n`, "utf8");
     return parsed;
   }
 
@@ -938,7 +993,7 @@ export class LoopStateManager {
   private async write(state: LoopState): Promise<void> {
     const parsed = LoopStateSchema.parse(state);
     const filePath = await this.loopStatePath(parsed.loopId);
-    await atomicWrite(filePath, `${JSON.stringify(parsed, null, 2)}\n`);
+    await atomicWrite(filePath, `${JSON.stringify({ version: 1, state: parsed }, null, 2)}\n`);
     await this.writeGeneratedStateMarkdown(parsed);
   }
 
@@ -976,9 +1031,12 @@ export class LoopStateManager {
       throw new LoopStateError(loopId, error);
     }
 
-    const result = LoopStateSchema.safeParse(parsed);
+    const result = LoopStateFileSchema.safeParse(parsed);
     if (!result.success) throw new LoopStateError(loopId, result.error);
-    return result.data;
+    if (result.data.state.loopId !== loopId) {
+      throw new LoopStateError(loopId, `Loop state belongs to ${result.data.state.loopId}`);
+    }
+    return result.data.state;
   }
 
   private parseRunReport(loopId: string, report: LoopRunReport): LoopRunReport {
@@ -997,7 +1055,9 @@ export class LoopStateManager {
     } catch (error) {
       throw new LoopRunLogError(loopId, { index, error });
     }
-    return this.parseRunReport(loopId, parsed as LoopRunReport);
+    const result = LoopRunLogEntrySchema.safeParse(parsed);
+    if (!result.success) throw new LoopRunLogError(loopId, { index, error: result.error });
+    return this.parseRunReport(loopId, result.data.report);
   }
 
   private assertLoopId(loopId: string): void {
@@ -1109,11 +1169,9 @@ function mergeLoopConfigForUpdate(current: LoopConfig, incoming: LoopConfig): Lo
 
 function nextRunAtFrom(schedule: LoopScheduleSpec, now: number): number | undefined {
   if (schedule.kind === "cron") {
-    try {
-      return Bun.cron.parse(schedule.expression, new Date(now))?.getTime();
-    } catch {
-      return undefined;
-    }
+    const next = Bun.cron.parse(schedule.expression, new Date(now));
+    if (next === null) throw new Error(`Cron expression has no future UTC occurrence: ${schedule.expression}`);
+    return next.getTime();
   }
   if (schedule.kind !== "interval") return undefined;
   return now + schedule.everyMs;

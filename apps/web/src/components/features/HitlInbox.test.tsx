@@ -84,8 +84,8 @@ mock.module("react-router-dom", () => ({
     jsxDEV("a", { ...props, href: to, className, children }),
 }));
 
-const respondHitl = mock((_args: { projectSlug: string; hitlId: string; body: unknown }) => {});
-const cancelHitl = mock((_args: { projectSlug: string; hitlId: string; reason?: string }) => {});
+const respondHitl = mock((_args: { identity: { owner: HitlProjection["owner"]; hitlId: string }; body: unknown }) => {});
+const cancelHitl = mock((_args: { identity: { owner: HitlProjection["owner"]; hitlId: string }; reason?: string }) => {});
 
 mock.module("../../api/mutations", () => ({
   useRespondHitl: () => ({ mutate: respondHitl, mutateAsync: respondHitl, isPending: false }),
@@ -99,7 +99,7 @@ function makeProjection(overrides: Partial<HitlProjection> = {}): HitlProjection
     hitlId: "hitl-1",
     project: { slug: "demo", name: "Demo Project" },
     owner: { projectSlug: "demo", ownerType: "session", ownerId: "session-1" },
-    source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" },
+    source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
     status: "pending",
     displayPayload: { title: "Approve?", summary: "Please approve", redacted: true },
     allowedActions: ["approve", "deny", "cancel"],
@@ -148,7 +148,7 @@ describe("HitlInbox", () => {
     expect(cards).toHaveLength(2);
   });
 
-  test("deduplicates projections by hitlId", () => {
+  test("deduplicates projections by owner-qualified identity", () => {
     const projections = [
       makeProjection({ hitlId: "hitl-dup", displayPayload: { title: "Dup A", redacted: true } }),
       makeProjection({ hitlId: "hitl-dup", displayPayload: { title: "Dup B", redacted: true } }),
@@ -156,6 +156,17 @@ describe("HitlInbox", () => {
     const result = HitlInbox({ projections });
     const cards = findAll(result, (el) => el.type === HitlCard);
     expect(cards).toHaveLength(1);
+  });
+
+  test("renders the same hitlId under different owners separately", () => {
+    const projections = [
+      makeProjection({ hitlId: "shared-id", owner: { projectSlug: "demo", ownerType: "session", ownerId: "session-a" } }),
+      makeProjection({ hitlId: "shared-id", owner: { projectSlug: "demo", ownerType: "session", ownerId: "session-b" } }),
+    ];
+
+    const result = HitlInbox({ projections });
+
+    expect(findAll(result, (el) => el.type === HitlCard)).toHaveLength(2);
   });
 
   test("filters resume_claimed projections after the user responds", () => {

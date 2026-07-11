@@ -15,7 +15,7 @@ export interface AgentRunOptions {
 export interface Agent {
   readonly store: StoreApi<SessionStoreState>;
   /** Immutable execution directory captured when this Agent runtime was built. */
-  readonly cwd?: string;
+  readonly cwd: string;
   run(
     userMessage: string,
     abort?: AbortSignal,

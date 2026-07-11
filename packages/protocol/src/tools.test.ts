@@ -139,7 +139,7 @@ describe("tool name constants", () => {
   });
 });
 
-describe("loop protocol compatibility", () => {
+describe("loop protocol contracts", () => {
   test("loop guardrail reason and budget status compile through protocol imports", () => {
     const reason: LoopRunReason = "hard_budget_exceeded";
     const status: LoopRunReportStatus = "budget_exceeded";
@@ -148,8 +148,8 @@ describe("loop protocol compatibility", () => {
       title: "PR watch",
       schedule: { kind: "manual" },
       approvalPolicy: "interactive",
-      limits: { maxIterationsPerRun: 8 },
-      budget: { maxIterationsPerRun: 8, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+      limits: { maxIterationsPerRun: 8, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+      useWorktree: false,
       collisionTargets: [{ type: "pr", owner: "arch", repo: "code", number: 42 }],
     };
     const lease: CollisionLease = {

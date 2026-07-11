@@ -175,7 +175,8 @@ export function buildCreatePayload(state: LoopFormState): CreateLoopPayload {
     templateId: state.templateId,
     schedule: buildSchedule(state),
     approvalPolicy: state.approvalPolicy,
-    budget: buildBudgetConfig(state),
+    limits: buildBudgetConfig(state),
+    useWorktree: state.useWorktree,
   };
 
   if (isNonEmpty(state.taskPrompt)) payload.taskPrompt = state.taskPrompt.trim();
@@ -183,29 +184,25 @@ export function buildCreatePayload(state: LoopFormState): CreateLoopPayload {
   const goalTemplate = buildGoalTemplate(state);
   if (goalTemplate) payload.goalTemplate = goalTemplate;
 
-  if (state.useWorktree === true) payload.useWorktree = true;
-
   return payload;
 }
 
 export function buildLoopConfig(state: LoopFormState): LoopConfig {
   const payload = buildCreatePayload(state);
-  const budget = payload.budget ?? buildBudgetConfig(state);
   return {
     templateId: payload.templateId,
     title: null,
     schedule: payload.schedule,
     approvalPolicy: payload.approvalPolicy,
-    limits: budget,
-    budget,
+    limits: payload.limits,
+    useWorktree: payload.useWorktree,
     ...(payload.taskPrompt ? { taskPrompt: payload.taskPrompt } : {}),
     ...(payload.goalTemplate ? { goalTemplate: { title: null, ...payload.goalTemplate } } : {}),
-    ...(payload.useWorktree === true ? { useWorktree: true } : {}),
   };
 }
 
 function loopConfigToFormState(config: LoopConfig): Partial<LoopFormState> {
-  const budget = config.budget ?? config.limits;
+  const budget = config.limits;
   const scheduleKind: ScheduleKind = config.schedule.kind;
   const wallClockMs = "maxWallClockMsPerRun" in budget ? budget.maxWallClockMsPerRun : undefined;
   const maxTokensPerRun = "maxTokensPerRun" in budget ? budget.maxTokensPerRun : undefined;
@@ -874,11 +871,11 @@ export function EditLoopForm({ slug, loop, onClose }: { slug: string; loop: Loop
           templateId: payload.templateId,
           schedule: payload.schedule,
           approvalPolicy: payload.approvalPolicy,
-          budget: payload.budget,
+          limits: payload.limits,
           ...(payload.taskPrompt ? { taskPrompt: payload.taskPrompt } : {}),
           ...(payload.goalTemplate ? { goalTemplate: payload.goalTemplate } : {}),
           ...(loop.config.triggers ? { triggers: loop.config.triggers } : {}),
-          useWorktree: payload.useWorktree === true,
+          useWorktree: payload.useWorktree,
         },
         { onSuccess: () => onClose?.() },
       );

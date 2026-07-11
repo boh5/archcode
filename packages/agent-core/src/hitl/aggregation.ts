@@ -1,4 +1,4 @@
-import type { HitlOwnerKey, HitlProjection, HitlRecord } from "@archcode/protocol";
+import { hitlIdentityKey, type HitlOwnerKey, type HitlProjection, type HitlRecord } from "@archcode/protocol";
 
 import type { GoalState, GoalStateManager } from "../goals/state";
 import type { LoopState, LoopStateManager } from "../loops/state";
@@ -111,8 +111,7 @@ async function collectAllSessions(manager: SessionStoreManager, workspaceRoot: s
   const byId = new Map<string, SessionSummary>();
   for (const root of roots) {
     byId.set(root.sessionId, root);
-    const tree = await manager.buildSessionTree(workspaceRoot, root.sessionId).catch(() => undefined);
-    if (tree === undefined) continue;
+    const tree = await manager.buildSessionTree(workspaceRoot, root.sessionId);
     flattenSessionTree(tree.root as SessionTreeLikeNode).forEach((summary) => byId.set(summary.sessionId, summary));
   }
   return [...byId.values()].sort((left, right) => left.sessionId.localeCompare(right.sessionId));
@@ -236,11 +235,15 @@ function toProjection(project: { readonly slug: string; readonly name?: string }
 }
 
 function dedupeProjections(projections: HitlProjection[]): HitlProjection[] {
-  const byHitlId = new Map<string, HitlProjection>();
+  const byIdentity = new Map<string, HitlProjection>();
   for (const projection of projections) {
-    if (!byHitlId.has(projection.hitlId)) byHitlId.set(projection.hitlId, projection);
+    const key = hitlIdentityKey(projection);
+    if (!byIdentity.has(key)) byIdentity.set(key, projection);
   }
-  return [...byHitlId.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.hitlId.localeCompare(right.hitlId));
+  return [...byIdentity.values()].sort((left, right) => (
+    left.createdAt.localeCompare(right.createdAt)
+    || hitlIdentityKey(left).localeCompare(hitlIdentityKey(right))
+  ));
 }
 
 function matchesStatus(record: HitlRecord, status: "active" | "terminal" | "all"): boolean {

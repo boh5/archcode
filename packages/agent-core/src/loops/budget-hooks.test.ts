@@ -5,6 +5,9 @@ import { join } from "node:path";
 import { ProjectContextResolver } from "../projects/context-resolver";
 import { ModelInfo } from "../provider/model";
 import { createSessionStore } from "../store/store";
+import { SessionStoreManager } from "../store/session-store-manager";
+import { silentLogger } from "../logger";
+import { createTestProjectContextResolverOptions } from "../tools/test-project-context";
 import { LoopBudgetHardStopError, LoopBudgetLedger } from "./budget-ledger";
 import { enforceLoopBudgetAfterStepEnd } from "./budget-hooks";
 import { LoopStateManager, type LoopConfig } from "./state";
@@ -18,6 +21,7 @@ const config: LoopConfig = {
   schedule: { kind: "manual" },
   approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 8, maxTokensPerRun: 100, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+  useWorktree: false,
 };
 
 beforeEach(async () => {
@@ -38,9 +42,13 @@ describe("Loop budget query hooks", () => {
     await stateManager.recordRunStart(loop.loopId, { runId: "run-1", loopId: loop.loopId, status: "running", trigger: "manual", startedAt: clock.now(), sessionId: "session-1" });
     await ledger.recordRunStart(loop.loopId, "run-1");
 
-    const resolver = new ProjectContextResolver({ projectInfoFactory: () => ({ slug: "project-a", name: "Project A", workspaceRoot: TMP_DIR, addedAt: "2026-07-04T00:00:00.000Z" }) });
+    const sessions = new SessionStoreManager({ logger: silentLogger });
+    const resolver = new ProjectContextResolver({
+      ...createTestProjectContextResolverOptions(sessions),
+      projectInfoFactory: () => ({ slug: "project-a", name: "Project A", workspaceRoot: TMP_DIR, addedAt: "2026-07-04T00:00:00.000Z" }),
+    });
     const projectContext = await resolver.resolve(TMP_DIR);
-    const store = createSessionStore("session-1");
+    const store = createSessionStore("session-1", TMP_DIR);
     store.setState({ loopId: loop.loopId });
     store.getState().append({ type: "step-start", step: 0 });
     store.getState().append({ type: "step-end", step: 0, finishReason: "stop", usage: { inputTokens: 100, outputTokens: 0, totalTokens: 100 } });

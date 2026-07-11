@@ -20,10 +20,10 @@ import {
 import { exploreAgentDefinition, orchestratorAgentDefinition } from "./definitions";
 import type { AgentDefinition } from "./factory-types";
 import { setLlmAdapterForTest } from "../llm/adapter";
-import { MissingProjectContextError } from "./errors";
 import type { MemoryExtractionConfig } from "../config";
 import { silentLogger } from "../logger";
 import { GoalStateManager } from "../goals/state";
+import { createTestProjectContextResolver } from "./test-project-context-resolver";
 
 const tmpRoot = join(import.meta.dir, "__test_tmp__", "configured-agent");
 const worktreeRoot = join(import.meta.dir, "__test_tmp__", "configured-agent-worktree");
@@ -203,6 +203,8 @@ function createAgent(options: {
 }) {
   const toolRegistry = options.toolRegistry ?? makeToolRegistry();
   const providerRegistry = options.providerRegistry ?? makeProviderRegistry();
+  const projectRoot = options.projectRoot ?? tmpRoot;
+  const cwd = options.cwd ?? projectRoot;
   return new ConfiguredAgent({
     definition: options.definition,
     providerRegistry,
@@ -211,10 +213,11 @@ function createAgent(options: {
     toolRegistry,
     skillService: options.skillService ?? createTestSkillService(),
     activeSkills: options.activeSkills,
-    store: options.store ?? storeManager.create(`configured-agent-${crypto.randomUUID()}`),
+    store: options.store ?? storeManager.create(`configured-agent-${crypto.randomUUID()}`, projectRoot, { cwd }),
     storeManager,
-    projectRoot: options.projectRoot ?? tmpRoot,
-    cwd: options.cwd ?? options.projectRoot ?? tmpRoot,
+    projectContextResolver: createTestProjectContextResolver(storeManager),
+    projectRoot,
+    cwd,
     depth: options.depth,
     backgroundTaskManager: options.btm as never,
     memoryConfig: options.memoryConfig,
@@ -254,7 +257,7 @@ describe("ConfiguredAgent", () => {
   test("orchestrator definition produces all configured lifecycle hooks", async () => {
     const streamFn = setupMockStreamText("root ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(`configured-root-${crypto.randomUUID()}`);
+    const store = storeManager.create(`configured-root-${crypto.randomUUID()}`, tmpRoot);
     store.setState({
       messages: [
         {
@@ -286,24 +289,6 @@ describe("ConfiguredAgent", () => {
     expect(agent.store.getState().reminders.some((reminder) => reminder.source.type === "todo_loop_continuation")).toBe(true);
     expect(btm.dispatched).toContain("title-generation");
     expect(btm.drainCalls).toBe(1);
-  });
-
-  test("throws MissingProjectContextError when projectRoot is not provided", () => {
-    const providerRegistry = makeProviderRegistry();
-
-    expect(() => new ConfiguredAgent({
-      definition: exploreAgentDefinition,
-      providerRegistry,
-      modelInfo: providerRegistry.getModel("test:configured"),
-      toolRegistry: makeToolRegistry(),
-      skillService: createTestSkillService(),
-      store: storeManager.create(`configured-missing-context-${crypto.randomUUID()}`),
-      storeManager,
-      logger: silentLogger,
-      resolveAllowedTools: () => [],
-    })).toThrow(MissingProjectContextError);
-
-    expect(new MissingProjectContextError("missing context").name).toBe("MissingProjectContextError");
   });
 
   test("dispose does not cancel a provided shared background task manager", () => {
@@ -402,7 +387,7 @@ describe("ConfiguredAgent", () => {
 
   test("explorer definition produces auto-compact, auto-inject, and todo-continuation hooks", async () => {
     const streamFn = setupMockStreamText("explore ok");
-    const store = storeManager.create(`configured-explore-${crypto.randomUUID()}`);
+    const store = storeManager.create(`configured-explore-${crypto.randomUUID()}`, tmpRoot);
     store.setState({
       reminders: [
         {
@@ -428,7 +413,7 @@ describe("ConfiguredAgent", () => {
   test("orchestrator definition dispatches memory background hooks", async () => {
     setupMockStreamText("orchestrator memory ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(`configured-orchestrator-background-${crypto.randomUUID()}`);
+    const store = storeManager.create(`configured-orchestrator-background-${crypto.randomUUID()}`, tmpRoot);
     store.setState({
       messages: [
         {
@@ -466,7 +451,7 @@ describe("ConfiguredAgent", () => {
   test("memory config disabled skips memory background hooks", async () => {
     setupMockStreamText("memory disabled ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(`configured-memory-disabled-${crypto.randomUUID()}`);
+    const store = storeManager.create(`configured-memory-disabled-${crypto.randomUUID()}`, tmpRoot);
     store.setState({
       messages: [
         {
@@ -502,7 +487,7 @@ describe("ConfiguredAgent", () => {
   test("memory config custom thresholds are used by extraction hook", async () => {
     setupMockStreamText("memory custom ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(`configured-memory-custom-${crypto.randomUUID()}`);
+    const store = storeManager.create(`configured-memory-custom-${crypto.randomUUID()}`, tmpRoot);
     store.setState({
       messages: [
         {
@@ -529,7 +514,7 @@ describe("ConfiguredAgent", () => {
   test("memory config absent uses default extraction thresholds", async () => {
     setupMockStreamText("memory defaults ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(`configured-memory-defaults-${crypto.randomUUID()}`);
+    const store = storeManager.create(`configured-memory-defaults-${crypto.randomUUID()}`, tmpRoot);
     store.setState({
       messages: [
         {
@@ -551,7 +536,7 @@ describe("ConfiguredAgent", () => {
   test('titleGeneration "unless-supplied" skips when store title already exists', async () => {
     setupMockStreamText("titled ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(`configured-titled-${crypto.randomUUID()}`);
+    const store = storeManager.create(`configured-titled-${crypto.randomUUID()}`, tmpRoot);
     store.setState({ title: "Supplied Title" });
 
     const agent = createAgent({ definition: exploreAgentDefinition, store, btm });
@@ -705,6 +690,7 @@ describe("ConfiguredAgent", () => {
 
   test("extraTools effective tools are enforced in tool execution context", async () => {
     setupToolCallStreamText("github_create_issue_comment");
+    const loopId = crypto.randomUUID();
     let capturedAllowedTools: string[] = [];
     let capturedOriginLoopId: string | undefined;
     const toolRegistry = createRegistry([
@@ -721,11 +707,12 @@ describe("ConfiguredAgent", () => {
         return "commented";
       },
     });
-    const agent = createAgent({ definition: orchestratorAgentDefinition, toolRegistry });
-    const loopId = crypto.randomUUID();
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { loopId });
+    const agent = createAgent({ definition: orchestratorAgentDefinition, toolRegistry, store });
 
     await agent.run("comment on PR", {
       maxSteps: 1,
+      confirmPermission: async () => "approve",
       origin: {
         kind: "loop",
         loopId,

@@ -263,10 +263,10 @@ describe("CreateLoopDialog worktree", () => {
       goalObjective: "",
       goalAcceptanceCriteria: "",
     });
-    expect("useWorktree" in payload).toBe(false);
+    expect(payload.useWorktree).toBe(false);
   });
 
-  test("buildCreatePayload omits useWorktree when false", () => {
+  test("buildCreatePayload sends useWorktree explicitly when false", () => {
     const payload = buildCreatePayload({
       templateId: "watch_report",
       scheduleKind: "manual",
@@ -283,7 +283,7 @@ describe("CreateLoopDialog worktree", () => {
       goalAcceptanceCriteria: "",
     });
 
-    expect("useWorktree" in payload).toBe(false);
+    expect(payload.useWorktree).toBe(false);
   });
 
   test("buildCreatePayload sends useWorktree: true only when explicitly true", () => {
@@ -448,6 +448,6 @@ describe("CreateLoopDialog Goal template", () => {
     expect(config.title).toBeNull();
     expect(config.schedule.kind).toBe("manual");
     expect(config.approvalPolicy).toBe("interactive");
-    expect("useWorktree" in config).toBe(false);
+    expect(config.useWorktree).toBe(false);
   });
 });

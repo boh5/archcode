@@ -13,10 +13,10 @@ export interface CommandContext {
   modelOptions?: ModelCallOptions;
   circuitBreaker?: CircuitBreaker;
   abort?: AbortSignal;
-  cwd?: string;
-  agentName?: string;
-  agentSkills?: readonly string[];
-  skillService?: SkillService;
+  cwd: string;
+  agentName: string;
+  agentSkills: readonly string[];
+  skillService: SkillService;
 }
 
 export interface SlashCommandResult {
@@ -24,9 +24,6 @@ export interface SlashCommandResult {
   message: string;
   continueAsMessage?: string;
 }
-
-/** @deprecated Use SlashCommandResult for agent slash-command execution results. */
-export type CommandResult = SlashCommandResult;
 
 export type CommandHandler = (ctx: CommandContext, args?: string) => Promise<SlashCommandResult>;
 

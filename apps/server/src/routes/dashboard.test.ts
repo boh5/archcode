@@ -23,15 +23,18 @@ class FakeGoalStateManager {
 
   add(projectId: string, title: string, status: GoalStatus): GoalState {
     const goal: GoalState = {
+      version: 1,
       id: crypto.randomUUID(),
       projectId,
       title,
       objective: `Objective for ${title}`,
       acceptanceCriteria: `Acceptance criteria for ${title}`,
+      useWorktree: false,
       status,
       attempt: 1,
       pendingHitlIds: [],
       approvalRefs: [],
+      appliedHitlIds: [],
       childSessionIds: [],
       createdAt: this.#now,
       updatedAt: this.#now,
@@ -66,7 +69,9 @@ async function createFixture(testName: string) {
 
   const runtime = {
     projectRegistry: {
-      listProjects: mock(async () => projects),
+      listProjects: mock(async () => {
+        throw new Error("legacy listProjects alias must not be called");
+      }),
       list: mock(async () => projects),
     },
     contextResolver: {
@@ -197,7 +202,8 @@ describe("dashboard routes", () => {
         title: "Daily loop",
         schedule: { kind: "manual" },
         approvalPolicy: "interactive",
-        limits: { maxIterationsPerRun: 1 },
+        limits: { maxIterationsPerRun: 1, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+        useWorktree: false,
       },
       status: "active",
       createdAt: Date.now(),
@@ -210,13 +216,25 @@ describe("dashboard routes", () => {
         status: "needs_user",
         trigger: "on_pr",
         startedAt: 1_000,
+        endedAt: 1_100,
         jobId: "job-current",
-        triggerKind: "on_pr",
         subjectKey: "pr:owner/repo#42",
         dedupeKey: "loop:on_pr:pr:owner/repo#42",
         branchKey: "github:owner/repo:main",
         cleanupState: "preserved",
         blockedReason: "waiting for approval",
+        blockedByHitlIds: ["hitl-current"],
+        attentionStatus: "waiting_for_human",
+        resumeCheckpoint: {
+          version: 1,
+          hitlId: "hitl-current",
+          loopId: "00000000-0000-4000-8000-000000000001",
+          runId: "run-current",
+          jobId: "job-current",
+          trigger: "on_pr",
+          subjectKey: "pr:owner/repo#42",
+          intendedContinuation: "resume_run",
+        },
       },
       lastRun: {
         runId: "run-last",
@@ -249,7 +267,7 @@ describe("dashboard routes", () => {
       projectSlug: projects[0].slug,
       projectName: projects[0].name,
     }));
-    expect(body.loops[0]?.currentRun).toEqual({ runId: "run-current", status: "needs_user", trigger: "on_pr", startedAt: 1_000 });
+    expect(body.loops[0]?.currentRun).toEqual({ runId: "run-current", status: "needs_user", trigger: "on_pr", startedAt: 1_000, endedAt: 1_100 });
     expect(body.loops[0]?.lastRun).toEqual({ runId: "run-last", status: "succeeded", trigger: "cron", startedAt: 500, endedAt: 750, summary: "Loop completed." });
     expect(body.loops[0]).not.toHaveProperty("config");
     expect(body.loops[0]).not.toHaveProperty("currentJob");
@@ -281,7 +299,8 @@ describe("dashboard routes", () => {
         title: "Secret loop",
         schedule: { kind: "manual" },
         approvalPolicy: "interactive",
-        limits: { maxIterationsPerRun: 1 },
+        limits: { maxIterationsPerRun: 1, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+        useWorktree: false,
       },
       status: "active",
       createdAt: Date.now(),

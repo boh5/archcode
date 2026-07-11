@@ -23,6 +23,29 @@ export class ProjectRegistryError extends Error {
 const RegistryFileSchema = z.strictObject({
   version: z.literal(1),
   projects: z.array(ProjectInfoSchema),
+}).superRefine((file, ctx) => {
+  const slugs = new Set<string>();
+  const workspaceRoots = new Set<string>();
+  file.projects.forEach((project, index) => {
+    if (slugs.has(project.slug)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["projects", index, "slug"],
+        message: `Duplicate project slug: ${project.slug}`,
+      });
+    }
+    slugs.add(project.slug);
+
+    const workspaceRoot = resolve(project.workspaceRoot);
+    if (workspaceRoots.has(workspaceRoot)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["projects", index, "workspaceRoot"],
+        message: `Duplicate project workspaceRoot: ${workspaceRoot}`,
+      });
+    }
+    workspaceRoots.add(workspaceRoot);
+  });
 });
 
 const MAX_PROJECT_NAME_LENGTH = 80;
@@ -70,7 +93,7 @@ function uniqueSlug(baseSlug: string, projects: ProjectInfo[]): string {
 }
 
 function serializeRegistry(projects: ProjectInfo[]): string {
-  return `${JSON.stringify({ version: 1, projects }, null, 2)}\n`;
+  return `${JSON.stringify(RegistryFileSchema.parse({ version: 1, projects }), null, 2)}\n`;
 }
 
 export class ProjectRegistry {
@@ -125,6 +148,12 @@ export class ProjectRegistry {
       }
 
       const name = input.name ?? basename(workspaceRoot);
+      if (name.trim().length === 0) {
+        throw new ProjectRegistryError("Project name must not be empty");
+      }
+      if (name.length > MAX_PROJECT_NAME_LENGTH) {
+        throw new ProjectRegistryError("Project name must be 80 characters or fewer");
+      }
       const project: ProjectInfo = {
         slug: uniqueSlug(slugify(name), current),
         name,
@@ -206,31 +235,23 @@ export class ProjectRegistry {
     }
 
     try {
-      const parsed = RegistryFileSchema.safeParse(await file.json());
-      if (!parsed.success) {
-        this.#logger.warn("project.registry.load.failed", {
-          error: parsed.error,
-          meta: { path: this.#indexFile },
-        });
-        this.#cache = [];
-        return this.#cache;
-      }
-
-      this.#cache = cloneProjects(parsed.data.projects);
+      const parsed = RegistryFileSchema.parse(await file.json());
+      this.#cache = cloneProjects(parsed.projects);
       return this.#cache;
     } catch (error) {
-      this.#logger.warn("project.registry.load.failed", {
-        error,
-        meta: { path: this.#indexFile },
-      });
-      this.#cache = [];
-      return this.#cache;
+      throw new ProjectRegistryError(`Invalid project registry at ${this.#indexFile}`, error);
     }
   }
 
   async #persist(projects: ProjectInfo[]): Promise<void> {
     const updated = cloneProjects(projects);
-    await atomicWrite(this.#indexFile, serializeRegistry(updated));
+    let serialized: string;
+    try {
+      serialized = serializeRegistry(updated);
+    } catch (error) {
+      throw new ProjectRegistryError("Invalid project registry update", error);
+    }
+    await atomicWrite(this.#indexFile, serialized);
     this.#cache = updated;
   }
 

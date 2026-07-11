@@ -91,9 +91,16 @@ export function createSkillReadTool(): AnyToolDescriptor {
       input: SkillReadInput,
       ctx: ToolExecutionContext,
     ): Promise<string | ToolExecutionResult> => {
+      if (ctx.skillService === undefined || ctx.agentSkills === undefined) {
+        return createToolErrorResult({
+          kind: "execution",
+          code: "TOOL_SKILL_CONTEXT_MISSING",
+          message: "Skill tools require an explicit SkillService and agent Skill allow-list",
+        });
+      }
       try {
-        const skill = await ctx.skillService?.readForAgent(ctx.cwd, input.name, ctx.agentSkills);
-        if (skill === undefined || skill === null) {
+        const skill = await ctx.skillService.readForAgent(ctx.cwd, input.name, ctx.agentSkills);
+        if (skill === null) {
           return createToolErrorResult({
             kind: "file-not-found",
             code: "TOOL_SKILL_NOT_FOUND",

@@ -2,9 +2,16 @@ import { realpathSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
+import { z } from "zod/v4";
 
 import type { CollisionConflict, CollisionLease, CollisionTarget, LoopCollisionSnapshot, LoopState } from "./state";
-import { CollisionConflictSchema, CollisionLeaseSchema, LoopCollisionSnapshotSchema, LoopStateManager } from "./state";
+import {
+  CollisionConflictSchema,
+  CollisionLeaseSchema,
+  LoopCollisionSnapshotSchema,
+  LoopNotFoundError,
+  LoopStateManager,
+} from "./state";
 import { atomicWrite, isContained } from "../utils/safe-file";
 
 export interface CollisionLedgerClock {
@@ -36,10 +43,18 @@ export interface CollisionAcquireResult {
 }
 
 interface CollisionLedgerFile {
+  readonly version: 1;
   readonly leases: CollisionLease[];
   readonly conflicts: CollisionConflict[];
   readonly updatedAt: number;
 }
+
+const CollisionLedgerFileSchema = z.strictObject({
+  version: z.literal(1),
+  leases: z.array(CollisionLeaseSchema),
+  conflicts: z.array(CollisionConflictSchema),
+  updatedAt: z.number().int().nonnegative(),
+}) satisfies z.ZodType<CollisionLedgerFile>;
 
 const DEFAULT_LEASE_TTL_MS = 30 * 60 * 1000;
 const MAX_SNAPSHOT_ITEMS = 100;
@@ -47,6 +62,16 @@ const MAX_SNAPSHOT_ITEMS = 100;
 const systemClock: CollisionLedgerClock = {
   now: () => Date.now(),
 };
+
+export class CollisionLedgerParseError extends Error {
+  constructor(
+    public readonly filePath: string,
+    public readonly cause: unknown,
+  ) {
+    super(`Invalid collision ledger file: ${filePath}`);
+    this.name = "CollisionLedgerParseError";
+  }
+}
 
 export class CollisionLedger {
   readonly #stateManager: LoopStateManager;
@@ -85,6 +110,7 @@ export class CollisionLedger {
     const existing = ledger.leases.find((lease) => lease.targetKey === targetKey);
     if (existing !== undefined && existing.loopId === incoming.loopId && existing.runId === incoming.runId) {
       const next = {
+        version: 1,
         leases: [...ledger.leases.filter((lease) => lease.targetKey !== targetKey), incoming],
         conflicts: ledger.conflicts,
         updatedAt: this.#clock.now(),
@@ -102,6 +128,7 @@ export class CollisionLedger {
         detectedAt: this.#clock.now(),
       });
       const next = {
+        version: 1,
         leases: ledger.leases,
         conflicts: trimNewest([...ledger.conflicts, conflict]),
         updatedAt: this.#clock.now(),
@@ -112,6 +139,7 @@ export class CollisionLedger {
     }
 
     const next = {
+      version: 1,
       leases: [...ledger.leases.filter((lease) => lease.targetKey !== targetKey), incoming],
       conflicts: ledger.conflicts,
       updatedAt: this.#clock.now(),
@@ -227,21 +255,24 @@ export class CollisionLedger {
   async #readLedger(): Promise<CollisionLedgerFile> {
     const filePath = await collisionLedgerPath(this.#workspaceRoot);
     if (!(await Bun.file(filePath).exists())) {
-      return { leases: [], conflicts: [], updatedAt: this.#clock.now() };
+      return { version: 1, leases: [], conflicts: [], updatedAt: this.#clock.now() };
     }
 
-    const parsed = JSON.parse(await Bun.file(filePath).text()) as Partial<CollisionLedgerFile>;
-    return {
-      leases: (parsed.leases ?? []).map((lease) => CollisionLeaseSchema.parse(lease)),
-      conflicts: (parsed.conflicts ?? []).map((conflict) => CollisionConflictSchema.parse(conflict)),
-      updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : this.#clock.now(),
-    };
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await Bun.file(filePath).text());
+    } catch (error) {
+      throw new CollisionLedgerParseError(filePath, error);
+    }
+    const result = CollisionLedgerFileSchema.safeParse(parsed);
+    if (!result.success) throw new CollisionLedgerParseError(filePath, result.error);
+    return result.data;
   }
 
   async #writeLedger(ledger: CollisionLedgerFile): Promise<void> {
     const filePath = await collisionLedgerPath(this.#workspaceRoot);
     await mkdir(dirname(filePath), { recursive: true });
-    await atomicWrite(filePath, `${JSON.stringify(ledger, null, 2)}\n`);
+    await atomicWrite(filePath, `${JSON.stringify(CollisionLedgerFileSchema.parse(ledger), null, 2)}\n`);
   }
 
   async #persistSnapshots(ledger: CollisionLedgerFile, loopIds: readonly string[]): Promise<void> {
@@ -249,8 +280,8 @@ export class CollisionLedger {
     await Promise.all(uniqueLoopIds.map(async (loopId) => {
       try {
         await this.#stateManager.updateCollisionSnapshot(loopId, this.#snapshotForLoop(ledger, loopId));
-      } catch {
-        // A lease can outlive a deleted loop. The ledger remains authoritative.
+      } catch (error) {
+        if (!(error instanceof LoopNotFoundError)) throw error;
       }
     }));
   }

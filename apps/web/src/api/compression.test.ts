@@ -123,7 +123,7 @@ describe("fetchCompressionOriginalRange", () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async () =>
       jsonResponse(
-        { ok: false, code: "unsupported", reason: "legacy_compact_without_hybrid_coverage", blockRef: "b1" },
+        { ok: false, code: "unsupported", reason: "missing_hybrid_coverage", blockRef: "b1" },
         { status: 422 },
       ),
     );

@@ -759,23 +759,26 @@ export class WorktreeService {
 
   async #lifecycleLockKey(canonicalRoot: string): Promise<string> {
     const dotGit = join(canonicalRoot, ".git");
-    try {
-      if ((await stat(dotGit)).isDirectory()) return await realpath(dotGit);
-      const pointer = (await Bun.file(dotGit).text()).trim();
-      const match = /^gitdir:\s*(.+)$/i.exec(pointer);
-      if (match?.[1] === undefined) throw new Error("invalid .git file");
-      const gitDir = await realpath(resolve(canonicalRoot, match[1]));
-      const commonDirFile = Bun.file(join(gitDir, "commondir"));
-      if (!(await commonDirFile.exists())) return gitDir;
-      const commonDir = (await commonDirFile.text()).trim();
-      if (commonDir.length === 0) throw new Error("empty commondir file");
-      return await realpath(resolve(gitDir, commonDir));
-    } catch {
-      // The canonical root was already verified through the ProcessRunner. A
-      // root-scoped fallback keeps injected/virtual Git runners serial while
-      // real repositories use their shared common-dir key above.
-      return canonicalRoot;
+    if ((await stat(dotGit)).isDirectory()) return await realpath(dotGit);
+    const pointer = (await Bun.file(dotGit).text()).trim();
+    const match = /^gitdir:\s*(.+)$/i.exec(pointer);
+    if (match?.[1] === undefined) {
+      throw new WorktreeServiceError("INVALID_CANONICAL_ROOT", "Canonical root has an invalid .git pointer", {
+        canonicalRoot,
+        dotGit,
+      });
     }
+    const gitDir = await realpath(resolve(canonicalRoot, match[1]));
+    const commonDirFile = Bun.file(join(gitDir, "commondir"));
+    if (!(await commonDirFile.exists())) return gitDir;
+    const commonDir = (await commonDirFile.text()).trim();
+    if (commonDir.length === 0) {
+      throw new WorktreeServiceError("INVALID_CANONICAL_ROOT", "Canonical root has an empty Git common-dir pointer", {
+        canonicalRoot,
+        gitDir,
+      });
+    }
+    return await realpath(resolve(gitDir, commonDir));
   }
 
   async #existingDirectory(pathInput: string): Promise<string> {

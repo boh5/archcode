@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 
-import { LoopKillStateManager } from "./kill-state";
+import { LoopKillStateError, LoopKillStateManager } from "./kill-state";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "loop-kill-state");
 
@@ -35,7 +35,16 @@ describe("LoopKillStateManager", () => {
       reason: "stop all loops",
     });
     expect(reloaded).toEqual(activated);
-    expect(await Bun.file(join(TMP_DIR, ".archcode", "loops", "kill-state.json")).exists()).toBe(true);
+    const persistedFile = Bun.file(join(TMP_DIR, ".archcode", "loops", "kill-state.json"));
+    expect(await persistedFile.json()).toEqual({ version: 1, state: activated });
+  });
+
+  test("hard-fails an unversioned persisted kill state", async () => {
+    const filePath = join(TMP_DIR, ".archcode", "loops", "kill-state.json");
+    await mkdir(join(TMP_DIR, ".archcode", "loops"), { recursive: true });
+    await Bun.write(filePath, JSON.stringify({ globalKillActive: false }));
+
+    await expect(new LoopKillStateManager(TMP_DIR).read()).rejects.toBeInstanceOf(LoopKillStateError);
   });
 
   test("clear only removes the global block metadata", async () => {

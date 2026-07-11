@@ -6,6 +6,8 @@ import type { Reminder } from "../../../store/types";
 import { silentLogger } from "../../../logger";
 import { createAutoInjectReminderHook } from "./auto-inject-reminder";
 
+const TEST_WORKSPACE_ROOT = "/tmp/archcode-agent-core-auto-inject-reminder";
+
 function createReminder(overrides: Partial<Reminder> = {}): Reminder {
   const id = overrides.id ?? crypto.randomUUID();
 
@@ -19,7 +21,7 @@ function createReminder(overrides: Partial<Reminder> = {}): Reminder {
 
 function createContext(messages: ModelMessage[] = []): BeforeModelCallContext {
   return {
-    store: storeManager.create(crypto.randomUUID()),
+    store: storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT),
     modelInfo: undefined as never,
     logger: silentLogger,
     messages,

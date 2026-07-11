@@ -40,13 +40,18 @@ export class GoalApprovalGate {
     projectSlug: string;
     approvalPoint: string;
     summary: string;
-    resumeStatus?: "running" | "reviewing";
+    resumeStatus: "running" | "reviewing";
   }): Promise<HitlRecord> {
     return await withGoalExecutionClaimLock(input.goalId, async () => {
       const record = await this.#hitlService.create({
         owner: { projectSlug: input.projectSlug, ownerType: "goal", ownerId: input.goalId },
         blockingKey: `goal:${input.goalId}:approval:${input.approvalPoint}`,
-        source: { type: "goal_approval", goalId: input.goalId, approvalPoint: input.approvalPoint },
+        source: {
+          type: "goal_approval",
+          goalId: input.goalId,
+          approvalPoint: input.approvalPoint,
+          resumeStatus: input.resumeStatus,
+        },
         displayPayload: {
           title: "Approve Goal continuation",
           summary: input.summary,
@@ -59,14 +64,16 @@ export class GoalApprovalGate {
         },
       });
 
-      await this.#goalStateManager.block(input.goalId, {
-        kind: "approval",
-        summary: input.summary,
-        hitlId: record.hitlId,
-        source: input.approvalPoint,
-        resumeStatus: input.resumeStatus ?? "running",
+      await this.#goalStateManager.attachHitlBlocker(input.goalId, {
+        blocker: {
+          kind: "approval",
+          summary: input.summary,
+          hitlId: record.hitlId,
+          source: input.approvalPoint,
+          resumeStatus: input.resumeStatus,
+        },
+        approvalRef: record.hitlId,
       });
-      await this.#goalStateManager.recordHitlRef(input.goalId, { hitlId: record.hitlId, approvalRef: record.hitlId });
       await this.#hitlService.publishRequest?.(record);
       return record;
     });
@@ -82,7 +89,7 @@ export class GoalApprovalGate {
       const record = await this.#hitlService.create({
         owner: { projectSlug: input.projectSlug, ownerType: "goal", ownerId: input.goalId },
         blockingKey: `goal:${input.goalId}:review`,
-        source: { type: "goal_review", goalId: input.goalId },
+        source: { type: "goal_review", goalId: input.goalId, resumeStatus: "reviewing" },
         displayPayload: {
           title: "Review Goal outcome",
           summary,
@@ -90,14 +97,16 @@ export class GoalApprovalGate {
           redacted: true,
         },
       });
-      await this.#goalStateManager.block(input.goalId, {
-        kind: "approval",
-        summary,
-        hitlId: record.hitlId,
-        source: "goal_review",
-        resumeStatus: "reviewing",
+      await this.#goalStateManager.attachHitlBlocker(input.goalId, {
+        blocker: {
+          kind: "approval",
+          summary,
+          hitlId: record.hitlId,
+          source: "goal_review",
+          resumeStatus: "reviewing",
+        },
+        approvalRef: record.hitlId,
       });
-      await this.#goalStateManager.recordHitlRef(input.goalId, { hitlId: record.hitlId, approvalRef: record.hitlId });
       await this.#hitlService.publishRequest?.(record);
       return record;
     });

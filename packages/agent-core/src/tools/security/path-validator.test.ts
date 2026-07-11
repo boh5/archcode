@@ -117,7 +117,7 @@ describe("PathValidator", () => {
     });
   });
 
-  test("legacy resolveAndValidatePath exposes canonical compatibility result", () => {
+  test("resolveAndValidatePath exposes the canonical path result", () => {
     expect(resolveAndValidatePath("src/../src/main.ts", workspaceDir)).toEqual({
       resolved: realpathSync.native(join(workspaceDir, "src", "main.ts")),
       isWithinWorkspace: true,

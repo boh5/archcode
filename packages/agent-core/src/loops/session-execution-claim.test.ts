@@ -118,6 +118,47 @@ describe("LoopSessionExecutionClaimResolver", () => {
     }))).resolves.toMatchObject({ outcome: "deny", code: "LOOP_WORKTREE_CWD_MISMATCH" });
   });
 
+  test("rejects one-sided resolved HEAD checkpoints", async () => {
+    const loopId = crypto.randomUUID();
+    const completeJob = jobRecord({ loopId });
+    const completeReport = report({
+      runId: "run-one-sided-head",
+      sessionId: "loop-main",
+      status: "needs_user",
+      jobId: completeJob.jobId,
+      worktreePath: completeJob.worktreePath,
+      baseSha: completeJob.baseSha,
+      resolvedHeadSha: completeJob.resolvedHeadSha,
+    });
+    const input = claimInput(loopState({
+      loopId,
+      useWorktree: true,
+      currentRun: completeReport,
+    }), {
+      runId: completeReport.runId,
+      sessionId: "loop-main",
+      cwd: completeJob.worktreePath,
+    });
+
+    const missingJobHead = { ...completeJob, resolvedHeadSha: undefined };
+    await expect(new LoopSessionExecutionClaimResolver({
+      jobQueueFactory: () => ({ read: async () => missingJobHead }),
+    }).resolve(input)).resolves.toMatchObject({
+      outcome: "deny",
+      code: "LOOP_JOB_WORKTREE_CHECKPOINT_MISMATCH",
+      details: { field: "resolvedHeadSha", jobValue: undefined },
+    });
+
+    const reportMissingHead = { ...input.loop.currentRun!, resolvedHeadSha: undefined };
+    await expect(new LoopSessionExecutionClaimResolver({
+      jobQueueFactory: () => ({ read: async () => completeJob }),
+    }).resolve({ ...input, loop: { ...input.loop, currentRun: reportMissingHead } })).resolves.toMatchObject({
+      outcome: "deny",
+      code: "LOOP_JOB_WORKTREE_CHECKPOINT_MISMATCH",
+      details: { field: "resolvedHeadSha", reportValue: undefined },
+    });
+  });
+
   test("rejects a terminal job and mismatched Goal association", async () => {
     const loopId = crypto.randomUUID();
     const terminalJob = jobRecord({ loopId, status: "succeeded" });
@@ -165,7 +206,7 @@ function loopState(input: {
       title: null,
       schedule: { kind: "manual" },
       approvalPolicy: "interactive",
-      limits: { maxIterationsPerRun: 8 },
+      limits: { maxIterationsPerRun: 8, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
       useWorktree: input.useWorktree ?? false,
     },
     status: "active",
@@ -251,6 +292,7 @@ function jobRecord(input: {
     revision: 1,
     attempts: 1,
     worktreePath: join(PROJECT_ROOT, "managed-loop-worktree"),
+    worktreeBranchName: "archcode/loop/test/job",
     baseSha: "a".repeat(40),
     resolvedHeadSha: "a".repeat(40),
     eventSummaries: [],

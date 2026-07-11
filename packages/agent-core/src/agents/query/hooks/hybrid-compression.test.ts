@@ -8,6 +8,8 @@ import { silentLogger } from "../../../logger";
 import type { BeforeModelBuildContext, BeforeModelCallContext } from "../loop-hooks";
 import { createHybridCompressionHook } from "./hybrid-compression";
 
+const TEST_WORKSPACE_ROOT = "/tmp/archcode-agent-core-hybrid-compression";
+
 const generateText = mock(async () => ({ text: "", toolCalls: [{ toolName: "compression_summary", input: summary() }] }));
 const streamText = mock(() => ({
   text: Promise.resolve("## Current Objective\nContinue the current task"),
@@ -53,7 +55,7 @@ function summary(childBlockRefs: string[] = []) {
 }
 
 function makeStore(messageCount = 6): StoreApi<SessionStoreState> {
-  const store = storeManager.create(`hybrid-compression-${crypto.randomUUID()}`);
+  const store = storeManager.create(`hybrid-compression-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT);
   store.setState({ messages: Array.from({ length: messageCount }, (_, index) => message(index + 1)) });
   return store;
 }
@@ -111,7 +113,7 @@ describe("hybrid compression hooks", () => {
     expect(JSON.stringify(strong.messages)).toContain("strong nudge");
   });
 
-  test("runs legacy hard compact at exactly 85% when a safe range exists", async () => {
+  test("runs forced hard compact at exactly 85% when a safe range exists", async () => {
     const store = makeStore();
     const hook = createHybridCompressionHook(silentLogger);
 
@@ -139,8 +141,8 @@ describe("hybrid compression hooks", () => {
     expect(call.messages).toHaveLength(0);
   });
 
-  test("legacy hard compact preserves latest two complete rounds and current incomplete round", async () => {
-    const store = storeManager.create(`hybrid-compression-rounds-${crypto.randomUUID()}`);
+  test("forced hard compact preserves latest two complete rounds and current incomplete round", async () => {
+    const store = storeManager.create(`hybrid-compression-rounds-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT);
     store.setState({ messages: [
       message(1), message(2), message(3), message(4), message(5), message(6),
       message(7), message(8), message(9), message(10),
@@ -156,7 +158,7 @@ describe("hybrid compression hooks", () => {
     expect(store.getState().messages.slice(0, 6).every((storedMessage) => storedMessage.compacted === true)).toBe(true);
   });
 
-  test("uses the same legacy hard compact path at exactly 92% when a safe range exists", async () => {
+  test("uses the same forced hard compact path at exactly 92% when a safe range exists", async () => {
     const store = makeStore();
     const hook = createHybridCompressionHook(silentLogger);
 
@@ -167,7 +169,7 @@ describe("hybrid compression hooks", () => {
     expect(store.getState().messages.some((storedMessage) => storedMessage.parts.some((part) => part.type === "compaction"))).toBe(true);
   });
 
-  test("does not duplicate nudge after 92% legacy hard compact in real hook order", async () => {
+  test("does not duplicate nudge after 92% forced hard compact in real hook order", async () => {
     const store = makeStore();
     const hook = createHybridCompressionHook(silentLogger);
 
@@ -180,7 +182,7 @@ describe("hybrid compression hooks", () => {
     expect(call.messages).toHaveLength(0);
   });
 
-  test("records no compact event and no compression failure when legacy compact has no safe range", async () => {
+  test("records no compact event and no compression failure when forced compact has no safe range", async () => {
     const store = makeStore(3);
     const hook = createHybridCompressionHook(silentLogger);
 
@@ -191,7 +193,7 @@ describe("hybrid compression hooks", () => {
     expect(streamText).not.toHaveBeenCalled();
   });
 
-  test("legacy hard compact clears existing dynamic compression state instead of treating overlap as a failure", async () => {
+  test("forced hard compact clears existing dynamic compression state instead of treating overlap as a failure", async () => {
     const store = makeStore(8);
     const child = prepareDynamicRangeCompression(store.getState(), { startId: "m0004", endId: "m0005", summary: summary() }, 1000);
     expect(child.ok).toBe(true);
@@ -227,7 +229,7 @@ describe("hybrid compression hooks", () => {
     expect(store.getState().events.filter((event) => event.kind === "compact")).toHaveLength(1);
   });
 
-  test("opens circuit breaker after three legacy hard compact skips", async () => {
+  test("opens circuit breaker after three forced hard compact skips", async () => {
     const store = makeStore(3);
     const hook = createHybridCompressionHook(silentLogger);
 

@@ -117,7 +117,12 @@ async function requestBudgetApproval(
   const record = await projectContext.hitl.create({
     owner: { projectSlug: projectContext.project.slug, ownerType: "goal", ownerId: goal.id },
     blockingKey: `goal:${goal.id}:budget:${BUDGET_APPROVAL_POINT}`,
-    source: { type: "goal_budget", goalId: goal.id, approvalPoint: BUDGET_APPROVAL_POINT },
+    source: {
+      type: "goal_budget",
+      goalId: goal.id,
+      approvalPoint: BUDGET_APPROVAL_POINT,
+      resumeStatus: "running",
+    },
     displayPayload: {
       title: "Approve Goal budget warning",
       summary: `Goal ${goal.id} is projected to cross its token budget warning before the next model call.`,
@@ -136,14 +141,16 @@ async function requestBudgetApproval(
     reason: "Budget warning approval is pending",
     updatedAt: new Date().toISOString(),
   });
-  await projectContext.goalState.block(goal.id, {
-    kind: "budget",
-    summary: "Budget warning approval is pending",
-    hitlId: record.hitlId,
-    source: BUDGET_APPROVAL_POINT,
-    resumeStatus: "running",
+  await projectContext.goalState.attachHitlBlocker(goal.id, {
+    blocker: {
+      kind: "budget",
+      summary: "Budget warning approval is pending",
+      hitlId: record.hitlId,
+      source: BUDGET_APPROVAL_POINT,
+      resumeStatus: "running",
+    },
+    approvalRef: record.hitlId,
   });
-  await projectContext.goalState.recordHitlRef(goal.id, { hitlId: record.hitlId, approvalRef: record.hitlId });
   await projectContext.hitl.publishRequest(record);
   throw new GoalBudgetEnforcementStopError(goal.id, "Goal blocked: budget warning approval is pending");
 }

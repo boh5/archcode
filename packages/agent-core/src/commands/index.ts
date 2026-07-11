@@ -5,7 +5,6 @@ export type {
   CommandContext,
   CommandDescriptor,
   CommandHandler,
-  CommandResult,
   SlashCommandResult,
   ParsedCommand,
 } from "./types";

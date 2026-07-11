@@ -60,7 +60,7 @@ export interface CompressionOriginalRangeSuccess {
  *
  * Calls `GET /api/projects/:slug/sessions/:sessionId/compression/:blockRef/original`
  * with URL-encoded parameters. Returns the success payload on HTTP 200; throws
- * `ApiError` on 404 (block not found), 422 (unsupported/legacy), or other errors.
+ * `ApiError` on 404 (block not found), 422 (missing coverage), or other errors.
  *
  * This is intentionally lazy — the caller (UI) should only invoke this when the
  * user explicitly requests the original range.

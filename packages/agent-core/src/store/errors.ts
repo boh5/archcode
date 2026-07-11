@@ -33,6 +33,29 @@ export class SessionInitialPersistenceError extends Error {
   }
 }
 
+export type SessionTreeIntegrityReason =
+  | "invalid_json"
+  | "invalid_schema"
+  | "session_id_mismatch"
+  | "root_mismatch"
+  | "missing_parent"
+  | "cycle"
+  | "duplicate_session"
+  | "not_root";
+
+export class SessionTreeIntegrityError extends Error {
+  constructor(
+    public readonly reason: SessionTreeIntegrityReason,
+    public readonly sessionId: string | undefined,
+    public readonly filePath: string | undefined,
+    message: string,
+    public readonly cause?: unknown,
+  ) {
+    super(message);
+    this.name = "SessionTreeIntegrityError";
+  }
+}
+
 export class InvalidSessionCwdError extends Error {
   constructor(
     public readonly cwd: string,

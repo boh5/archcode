@@ -1,10 +1,11 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
-import type { HitlOwnerKey, HitlRecord, HitlResponse } from "@archcode/protocol";
+import type { HitlIdentity, HitlOwnerKey, HitlRecord, HitlResponse } from "@archcode/protocol";
 
 import { GoalStateManager } from "../goals/state";
 import { createInMemoryLogger, silentLogger } from "../logger";
+import { LoopStateManager } from "../loops/state";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { HitlService } from "./service";
 import { ResumeCoordinator, type SessionHitlResumeAdapter } from "./resume-coordinator";
@@ -36,8 +37,8 @@ describe("ResumeCoordinator", () => {
     const response: HitlResponse = { type: "question_answer", answers: ["yes"] };
 
     const [first, second] = await Promise.all([
-      coordinator.respond(hitl.hitlId, response),
-      coordinator.respond(hitl.hitlId, response),
+      coordinator.respond(identity(hitl), response),
+      coordinator.respond(identity(hitl), response),
     ]);
     await waitFor(() => adapter.calls.length === 1);
 
@@ -57,8 +58,48 @@ describe("ResumeCoordinator", () => {
     expect(adapter.calls).toHaveLength(1);
 
     releaseAdapter();
-    await waitForLookup(fixture.service, hitl.hitlId, "resolved");
+    await waitForLookup(fixture.service, hitl, "resolved");
     expect(adapter.calls).toHaveLength(1);
+  });
+
+  test("same hitlId under different owners uses independent locks and dispatches", async () => {
+    const fixture = await createFixture();
+    const secondSessionId = crypto.randomUUID();
+    fixture.sessions.create(secondSessionId, fixture.workspaceRoot);
+    await waitForSession(fixture.workspaceRoot, secondSessionId);
+    const secondOwner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "session", ownerId: secondSessionId };
+    const hitlId = "shared-owner-local-id";
+    const first = await fixture.service.create({
+      owner: fixture.owner,
+      hitlId,
+      blockingKey: "first-owner-block",
+      source: { type: "ask_user", sessionId: fixture.owner.ownerId },
+      displayPayload: { title: "First owner", redacted: true },
+    });
+    const second = await fixture.service.create({
+      owner: secondOwner,
+      hitlId,
+      blockingKey: "second-owner-block",
+      source: { type: "ask_user", sessionId: secondOwner.ownerId },
+      displayPayload: { title: "Second owner", redacted: true },
+    });
+    const adapter = new RecordingSessionAdapter();
+    const coordinator = new ResumeCoordinator({ hitl: fixture.service, adapters: { session: adapter } });
+
+    const [firstResult, secondResult] = await Promise.all([
+      coordinator.respond(identity(first), { type: "question_answer", answers: ["first"] }),
+      coordinator.respond(identity(second), { type: "question_answer", answers: ["second"] }),
+    ]);
+
+    expect(firstResult).toMatchObject({ status: "claimed", scheduled: true });
+    expect(secondResult).toMatchObject({ status: "claimed", scheduled: true });
+    await waitFor(() => adapter.calls.length === 2);
+    expect(adapter.calls.map((record) => record.owner.ownerId).sort()).toEqual([
+      fixture.owner.ownerId,
+      secondOwner.ownerId,
+    ].sort());
+    await waitForLookup(fixture.service, first, "resolved");
+    await waitForLookup(fixture.service, second, "resolved");
   });
 
   test("cancel after respond does not mutate the original respond claim", async () => {
@@ -68,8 +109,8 @@ describe("ResumeCoordinator", () => {
     const adapter = new RecordingSessionAdapter({ waitForRelease: new Promise<void>((resolve) => { releaseAdapter = resolve; }) });
     const coordinator = new ResumeCoordinator({ hitl: fixture.service, adapters: { session: adapter } });
 
-    const claimed = await coordinator.respond(hitl.hitlId, { type: "question_answer", answers: ["go"] });
-    const cancelled = await coordinator.cancel(hitl.hitlId, "never mind");
+    const claimed = await coordinator.respond(identity(hitl), { type: "question_answer", answers: ["go"] });
+    const cancelled = await coordinator.cancel(identity(hitl), "never mind");
 
     expect(claimed.status).toBe("claimed");
     expect(cancelled.status).toBe("claimed");
@@ -77,7 +118,7 @@ describe("ResumeCoordinator", () => {
     expect(resultRecord(cancelled).resume).toMatchObject({ intent: "respond", attempt: 1, claimId: resultRecord(claimed).resume?.claimId });
 
     releaseAdapter();
-    const terminal = await waitForLookup(fixture.service, hitl.hitlId, "resolved");
+    const terminal = await waitForLookup(fixture.service, hitl, "resolved");
     expect(terminal.response).toEqual({ type: "question_answer", answers: ["go"] });
     expect(adapter.calls).toHaveLength(1);
   });
@@ -89,8 +130,8 @@ describe("ResumeCoordinator", () => {
     const adapter = new RecordingSessionAdapter({ waitForRelease: new Promise<void>((resolve) => { releaseAdapter = resolve; }) });
     const coordinator = new ResumeCoordinator({ hitl: fixture.service, adapters: { session: adapter } });
 
-    const cancelled = await coordinator.cancel(hitl.hitlId, "user cancelled", "tester");
-    const responded = await coordinator.respond(hitl.hitlId, { type: "question_answer", answers: ["late"] });
+    const cancelled = await coordinator.cancel(identity(hitl), "user cancelled", "tester");
+    const responded = await coordinator.respond(identity(hitl), { type: "question_answer", answers: ["late"] });
 
     expect(cancelled.status).toBe("claimed");
     expect(responded.status).toBe("claimed");
@@ -98,7 +139,7 @@ describe("ResumeCoordinator", () => {
     expect(resultRecord(responded).resume).toMatchObject({ intent: "cancel", attempt: 1, claimId: resultRecord(cancelled).resume?.claimId });
 
     releaseAdapter();
-    const terminal = await waitForLookup(fixture.service, hitl.hitlId, "cancelled");
+    const terminal = await waitForLookup(fixture.service, hitl, "cancelled");
     expect(terminal.response).toEqual({ type: "cancel", reason: "user cancelled", cancelledBy: "tester" });
     expect(adapter.calls).toHaveLength(1);
   });
@@ -111,7 +152,7 @@ describe("ResumeCoordinator", () => {
     const coordinator = new ResumeCoordinator({ hitl: reloaded.service, adapters: { session: adapter } });
 
     const summary = await coordinator.recover();
-    const lookup = await reloaded.service.lookup(hitl.hitlId);
+    const lookup = await reloaded.service.lookup(identity(hitl));
     const projections = await reloaded.service.list({ scope: "project" });
 
     expect(summary).toMatchObject({ scanned: 1, scheduled: 0, skippedPending: 1 });
@@ -139,7 +180,7 @@ describe("ResumeCoordinator", () => {
     const coordinator = new ResumeCoordinator({ hitl: reloaded.service, adapters: { session: adapter } });
 
     const [first, second] = await Promise.all([coordinator.recover(), coordinator.recover()]);
-    await waitForLookup(reloaded.service, hitl.hitlId, "resolved");
+    await waitForLookup(reloaded.service, hitl, "resolved");
 
     expect(first.scheduled + second.scheduled).toBe(1);
     expect(adapter.calls).toHaveLength(1);
@@ -173,7 +214,7 @@ describe("ResumeCoordinator", () => {
       recovery.then(() => true),
       Bun.sleep(1_000).then(() => false),
     ]);
-    const claimedDuringTail = await reloaded.service.lookup(hitl.hitlId);
+    const claimedDuringTail = await reloaded.service.lookup(identity(hitl));
     releaseAdapter();
     const summary = await recovery;
 
@@ -183,22 +224,22 @@ describe("ResumeCoordinator", () => {
       status: "found",
       record: { status: "resume_claimed", resume: { claimId: "persisted-background-claim" } },
     });
-    await waitForLookup(reloaded.service, hitl.hitlId, "resolved");
+    await waitForLookup(reloaded.service, hitl, "resolved");
   });
 
-  test("partial adapter recovery skips claimed owner types without a matching adapter", async () => {
+  test("partial adapter recovery durably fails claimed owner types without a matching adapter", async () => {
     const fixture = await createFixture();
     const sessionHitl = await fixture.createSessionHitl();
     const goal = await fixture.goalState.create({
       projectId: "archcode",
       objective: "Wait for a future Goal adapter.",
-      acceptanceCriteria: "Claimed Goal HITL remains queued when no adapter exists.",
+      acceptanceCriteria: "Claimed Goal HITL records a durable resume failure when no adapter exists.",
     });
     const goalOwner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "goal", ownerId: goal.id };
     const goalHitl = await fixture.service.create({
       owner: goalOwner,
       blockingKey: `goal:${goal.id}:approval:after_plan`,
-      source: { type: "goal_approval", goalId: goal.id, approvalPoint: "after_plan" },
+      source: { type: "goal_approval", goalId: goal.id, approvalPoint: "after_plan", resumeStatus: "running" },
       displayPayload: { title: "Approve goal", redacted: true },
     });
     const sessionResponse: HitlResponse = { type: "question_answer", answers: ["session resumes"] };
@@ -220,19 +261,21 @@ describe("ResumeCoordinator", () => {
     const coordinator = new ResumeCoordinator({ hitl: reloaded.service, adapters: { session: adapter } });
 
     const summary = await coordinator.recover();
-    const resolvedSession = await waitForLookup(reloaded.service, sessionHitl.hitlId, "resolved");
-    const goalLookup = await reloaded.service.lookup(goalHitl.hitlId);
+    const resolvedSession = await waitForLookup(reloaded.service, sessionHitl, "resolved");
+    const failedGoal = await waitForLookup(reloaded.service, goalHitl, "resume_failed");
 
-    expect(summary.scheduled).toBe(1);
+    expect(summary.scheduled).toBe(2);
     expect(adapter.calls).toHaveLength(1);
     expect(resolvedSession.response).toEqual(sessionResponse);
-    expect(goalLookup).toMatchObject({
-      status: "found",
-      record: {
-        hitlId: goalHitl.hitlId,
-        status: "resume_claimed",
-        response: goalResponse,
-        resume: { claimId: "goal-claim", intent: "respond", attempt: 1 },
+    expect(failedGoal).toMatchObject({
+      hitlId: goalHitl.hitlId,
+      status: "resume_failed",
+      response: goalResponse,
+      resume: {
+        claimId: "goal-claim",
+        intent: "respond",
+        attempt: 1,
+        lastError: "No HITL resume adapter registered for goal owner",
       },
     });
   });
@@ -243,8 +286,8 @@ describe("ResumeCoordinator", () => {
     const failing = new RecordingSessionAdapter({ failWith: new Error("adapter offline") });
     const coordinator = new ResumeCoordinator({ hitl: fixture.service, adapters: { session: failing } });
 
-    const claimed = await coordinator.respond(hitl.hitlId, { type: "question_answer", answers: ["retry later"] });
-    const failed = await waitForLookup(fixture.service, hitl.hitlId, "resume_failed");
+    const claimed = await coordinator.respond(identity(hitl), { type: "question_answer", answers: ["retry later"] });
+    const failed = await waitForLookup(fixture.service, hitl, "resume_failed");
 
     expect(claimed.status).toBe("claimed");
     expect(failing.calls).toHaveLength(1);
@@ -258,7 +301,7 @@ describe("ResumeCoordinator", () => {
     const recoveryCoordinator = new ResumeCoordinator({ hitl: reloaded.service, adapters: { session: recovering } });
 
     const summary = await recoveryCoordinator.recover();
-    const terminal = await waitForLookup(reloaded.service, hitl.hitlId, "resolved");
+    const terminal = await waitForLookup(reloaded.service, hitl, "resolved");
 
     expect(summary.scheduled).toBe(1);
     expect(recovering.calls).toHaveLength(1);
@@ -285,8 +328,8 @@ describe("ResumeCoordinator", () => {
       project: { slug: "archcode", name: "ArchCode" },
       sessions: fixture.sessions,
       goalState: fixture.goalState,
+      loopState: new LoopStateManager(fixture.workspaceRoot, silentLogger),
     });
-    await service.load(fixture.workspaceRoot);
     const { logger, entries } = createInMemoryLogger();
     const coordinator = new ResumeCoordinator({
       hitl: service,
@@ -338,13 +381,14 @@ async function createFixture(workspaceRoot?: string, sessions = new SessionStore
   sessions.create(sessionId, workspaceRoot);
   await waitForSession(workspaceRoot, sessionId);
   const goalState = new GoalStateManager(workspaceRoot, silentLogger);
+  const loopState = new LoopStateManager(workspaceRoot, silentLogger);
   const service = new HitlService({
     workspaceRoot,
     project: { slug: "archcode", name: "ArchCode" },
     sessions,
     goalState,
+    loopState,
   });
-  await service.load(workspaceRoot);
   const owner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "session", ownerId: sessionId };
   return {
     service,
@@ -362,14 +406,22 @@ async function createFixture(workspaceRoot?: string, sessions = new SessionStore
   };
 }
 
-async function waitForLookup(service: HitlService, hitlId: string, status: HitlRecord["status"]): Promise<HitlRecord> {
+async function waitForLookup(
+  service: HitlService,
+  record: Pick<HitlRecord, "owner" | "hitlId">,
+  status: HitlRecord["status"],
+): Promise<HitlRecord> {
   let latest: HitlRecord | undefined;
   await waitFor(async () => {
-    const lookup = await service.lookup(hitlId);
+    const lookup = await service.lookup(identity(record));
     latest = lookup.status === "found" ? lookup.record : undefined;
     return latest?.status === status;
-  }, () => `expected HITL ${hitlId} to become ${status}, last status was ${latest?.status ?? "missing"}`);
+  }, () => `expected HITL ${record.hitlId} to become ${status}, last status was ${latest?.status ?? "missing"}`);
   return latest!;
+}
+
+function identity(record: Pick<HitlRecord, "owner" | "hitlId">): HitlIdentity {
+  return { owner: record.owner, hitlId: record.hitlId };
 }
 
 async function waitFor(predicate: () => boolean | Promise<boolean>, message?: string | (() => string)): Promise<void> {

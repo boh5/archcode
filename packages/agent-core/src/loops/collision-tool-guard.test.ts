@@ -9,6 +9,7 @@ import { SessionStoreManager } from "../store/session-store-manager";
 import { createRegistry } from "../tools/registry";
 import { createToolExecutionContext, type AnyToolDescriptor, type ToolExecutionContext } from "../tools/types";
 import { ProjectContextResolver } from "../projects/context-resolver";
+import { createTestProjectContextResolverOptions } from "../tools/test-project-context";
 import { silentLogger } from "../logger";
 import { TOOL_BASH, TOOL_FILE_EDIT, TOOL_FILE_WRITE } from "../tools/names";
 import { CollisionLedger } from "./collision-ledger";
@@ -26,6 +27,7 @@ const config: LoopConfig = {
   schedule: { kind: "manual" },
   approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 4, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+  useWorktree: false,
 };
 
 beforeEach(async () => {
@@ -151,14 +153,17 @@ describe("createLoopCollisionToolPermission", () => {
 async function createFixture(options: { readonly failWriteExecution?: boolean; readonly denyWritePermission?: boolean } = {}) {
   const clock = new FakeClock(Date.UTC(2026, 6, 4, 12, 0, 0));
   const stateManager = new LoopStateManager(TMP_DIR);
-  const resolver = new ProjectContextResolver({ projectInfoFactory: () => ({ slug: "project-a", name: "Project A", workspaceRoot: TMP_DIR, addedAt: "2026-07-04T00:00:00.000Z" }) });
+  const resolver = new ProjectContextResolver({
+    ...createTestProjectContextResolverOptions(storeManager),
+    projectInfoFactory: () => ({ slug: "project-a", name: "Project A", workspaceRoot: TMP_DIR, addedAt: "2026-07-04T00:00:00.000Z" }),
+  });
   const projectContext = await resolver.resolve(TMP_DIR);
   const executedTools: string[] = [];
   const registry = createRegistry(makeToolDescriptors(executedTools, options));
   registry.globalPermissions.push(createLoopCollisionToolPermission({ leaseTtlMs: 60_000 }));
   registry.globalHooks.after.push(createLoopCollisionToolReleaseHook({ leaseTtlMs: 60_000 }));
   const ledger = new CollisionLedger({ stateManager, workspaceRoot: TMP_DIR, clock, leaseTtlMs: 60_000 });
-  const store = createSessionStore("session-1");
+  const store = createSessionStore("session-1", TMP_DIR);
 
   function context(toolName: string, loopId: string, runId: string): ToolExecutionContext {
     store.setState({ loopId });

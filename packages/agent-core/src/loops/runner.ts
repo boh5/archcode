@@ -19,7 +19,7 @@ export interface LoopRunnerSessionRuntime {
   createSession(projectRoot: string, options?: LoopRunnerCreateSessionOptions): Promise<SessionFile>;
   getSessionFile(projectRoot: string, sessionId: string): Promise<SessionFile>;
   startSessionExecution(input: StartSessionExecutionInput): ActiveSessionExecution;
-  releaseSessionAgent?(projectRoot: string, sessionId: string): void;
+  releaseSessionAgent(projectRoot: string, sessionId: string): void;
 }
 
 export interface LoopRunnerGoalStateManager {
@@ -57,7 +57,7 @@ export interface LoopRunnerOptions {
   readonly projectSlug?: string;
   readonly now?: () => number;
   readonly collisionLedger?: CollisionLedger;
-  readonly worktreeManager?: LoopRunnerWorktreeManager;
+  readonly worktreeManager: LoopRunnerWorktreeManager;
   readonly queueGoalTitleGeneration?: (goalId: string) => void;
 }
 
@@ -69,7 +69,7 @@ export interface LoopRunnerWorktreeManager {
     readonly baseSha: string;
     readonly jobClass?: "local" | "remote";
   }): Promise<LoopWorktreeCreateResult>;
-  reuse?(input: {
+  reuse(input: {
     readonly loopSlug: string;
     readonly subjectSlug: string;
     readonly jobId: string;
@@ -112,6 +112,17 @@ interface LoopWorktreeScope {
   readonly resolvedHeadSha: string;
 }
 
+interface DirectLoopRunnerInput {
+  readonly kind: "direct";
+  readonly loop: LoopState;
+  readonly trigger: LoopRunTrigger;
+  readonly runId: string;
+  readonly startedAt: number;
+}
+
+type ScheduledLoopRunnerInput = LoopSchedulerRunInput & { readonly kind: "scheduled" };
+type LoopRunnerExecutionInput = DirectLoopRunnerInput | ScheduledLoopRunnerInput;
+
 export class LoopActiveConflictError extends Error {
   readonly code = "LOOP_ACTIVE_CONFLICT";
 
@@ -129,7 +140,7 @@ export class LoopActiveConflictError extends Error {
 export class LoopWorktreeExecutionConfigurationError extends Error {
   constructor(
     public readonly loopId: string,
-    public readonly reason: "durable_job_required" | "manager_required" | "checkpoint_callbacks_required",
+    public readonly reason: "durable_job_required",
   ) {
     super(`Loop ${loopId} cannot execute with worktree isolation: ${reason}.`);
     this.name = "LoopWorktreeExecutionConfigurationError";
@@ -159,11 +170,17 @@ export class LoopRunner {
   readonly #now: () => number;
   readonly #budgetLedger: LoopBudgetLedger;
   readonly #collisionLedger: CollisionLedger;
-  readonly #worktreeManager?: LoopRunnerWorktreeManager;
+  readonly #worktreeManager: LoopRunnerWorktreeManager;
   readonly #queueGoalTitleGeneration?: (goalId: string) => void;
   readonly #activeLoops = new Map<string, { runId: string; sessionId?: string }>();
 
   constructor(options: LoopRunnerOptions) {
+    if (options.worktreeManager === undefined) {
+      throw new Error("LoopRunner requires a worktree manager with create, reuse, inspect, and cleanup capabilities.");
+    }
+    if (options.runtime.releaseSessionAgent === undefined) {
+      throw new Error("LoopRunner requires the Session agent release capability.");
+    }
     this.#stateManager = options.stateManager;
     this.#runtime = options.runtime;
     this.#goalStateManager = options.goalStateManager;
@@ -224,7 +241,7 @@ export class LoopRunner {
       this.#activeLoops.set(current.loopId, { runId, sessionId: session.sessionId });
       currentReport = { ...runningReport, sessionId: session.sessionId };
       startedState = await this.#stateManager.recordRunStart(current.loopId, currentReport);
-      const result = await this.#executeLoopSession({ loop: startedState, trigger, runId, startedAt }, session.sessionId);
+      const result = await this.#executeLoopSession({ kind: "direct", loop: startedState, trigger, runId, startedAt }, session.sessionId);
       return await this.#finishRun(startedState, currentReport, result);
     } catch (error) {
       const budgetExceeded = await this.#budgetExceededResult(startedState, runId, currentReport.sessionId);
@@ -281,7 +298,7 @@ export class LoopRunner {
     let startedState = await this.#stateManager.recordRunStart(current.loopId, runningReport);
     await this.#budgetLedger.recordRunStart(current.loopId, runId);
     try {
-      const result = await this.#runGoal({ loop: startedState, trigger, runId, startedAt });
+      const result = await this.#runGoal({ kind: "direct", loop: startedState, trigger, runId, startedAt });
       return await this.#finishRun(startedState, runningReport, result);
     } catch (error) {
       const budgetExceeded = await this.#budgetExceededResult(startedState, runId, runningReport.sessionId);
@@ -307,7 +324,7 @@ export class LoopRunner {
 
     this.#activeLoops.set(input.loop.loopId, { runId: input.runId });
     try {
-      return await this.#runSession(input);
+      return await this.#runSession({ ...input, kind: "scheduled" });
     } finally {
       this.#activeLoops.delete(input.loop.loopId);
     }
@@ -324,13 +341,13 @@ export class LoopRunner {
 
     this.#activeLoops.set(input.loop.loopId, { runId: input.runId });
     try {
-      return await this.#runGoal(input);
+      return await this.#runGoal({ ...input, kind: "scheduled" });
     } finally {
       this.#activeLoops.delete(input.loop.loopId);
     }
   }
 
-  async #runGoal(input: LoopSchedulerRunInput): Promise<LoopRunnerFinishedResult> {
+  async #runGoal(input: LoopRunnerExecutionInput): Promise<LoopRunnerFinishedResult> {
     const goalStateManager = this.#requireGoalStateManager(input.loop.loopId);
     const goalRunner = this.#requireGoalRunner(input.loop.loopId);
     const template = snapshotGoalTemplate(input.loop);
@@ -376,7 +393,7 @@ export class LoopRunner {
   }
 
   async #executeGoalSession(
-    input: LoopSchedulerRunInput,
+    input: LoopRunnerExecutionInput,
     goal: GoalState,
     scope: LoopExecutionScope,
   ): Promise<LoopRunnerFinishedResult> {
@@ -433,7 +450,7 @@ export class LoopRunner {
     }
   }
 
-  async #runSession(input: LoopSchedulerRunInput): Promise<LoopRunnerFinishedResult> {
+  async #runSession(input: ScheduledLoopRunnerInput): Promise<LoopRunnerFinishedResult> {
     const alreadyStopped = await this.#terminalResultIfRunStopped(input);
     if (alreadyStopped !== undefined) return alreadyStopped;
     const scopeResult = await this.#prepareExecutionScope(input);
@@ -474,7 +491,7 @@ export class LoopRunner {
   }
 
   async #executeLoopSession(
-    input: LoopSchedulerRunInput,
+    input: LoopRunnerExecutionInput,
     sessionId: string,
     scope: LoopExecutionScope = { cwd: this.#workspaceRoot },
     sessionExecutionId?: string,
@@ -512,9 +529,10 @@ export class LoopRunner {
     }
   }
 
-  async #checkpointSessionAttempt(input: LoopSchedulerRunInput, sessionId: string): Promise<string> {
+  async #checkpointSessionAttempt(input: LoopRunnerExecutionInput, sessionId: string): Promise<string | undefined> {
+    if (input.kind === "direct") return undefined;
     const sessionExecutionId = crypto.randomUUID();
-    await input.checkpointSessionAttempt?.({
+    await input.checkpointSessionAttempt({
       runId: input.runId,
       sessionId,
       sessionExecutionId,
@@ -589,16 +607,14 @@ export class LoopRunner {
     return report;
   }
 
-  async #prepareExecutionScope(input: LoopSchedulerRunInput): Promise<LoopExecutionScope | LoopRunnerFinishedResult> {
+  async #prepareExecutionScope(input: LoopRunnerExecutionInput): Promise<LoopExecutionScope | LoopRunnerFinishedResult> {
     const useWorktree = input.loop.config.useWorktree === true;
     if (!useWorktree) return { cwd: this.#workspaceRoot };
-    const job = input.job;
-    if (job === undefined) throw new LoopWorktreeExecutionConfigurationError(input.loop.loopId, "durable_job_required");
-    const worktreeManager = this.#worktreeManager;
-    if (worktreeManager === undefined) throw new LoopWorktreeExecutionConfigurationError(input.loop.loopId, "manager_required");
-    if (input.checkpointBaseSha === undefined || input.checkpointWorktree === undefined) {
-      throw new LoopWorktreeExecutionConfigurationError(input.loop.loopId, "checkpoint_callbacks_required");
+    if (input.kind === "direct") {
+      throw new LoopWorktreeExecutionConfigurationError(input.loop.loopId, "durable_job_required");
     }
+    const job = input.job;
+    const worktreeManager = this.#worktreeManager;
     const superseded = this.#skippedIfSuperseded(input);
     if (superseded !== undefined) return superseded;
 
@@ -612,7 +628,7 @@ export class LoopRunner {
         baseSha,
         jobClass: jobClassForTrigger(job.triggerKind),
       } as const;
-      const created = job.worktreePath !== undefined && worktreeManager.reuse !== undefined
+      const created = job.worktreePath !== undefined
         ? await worktreeManager.reuse({ ...worktreeInput, worktreePath: job.worktreePath })
         : await worktreeManager.create(worktreeInput);
       try {
@@ -651,9 +667,8 @@ export class LoopRunner {
     }
   }
 
-  async #baseShaForJob(job: NonNullable<LoopSchedulerRunInput["job"]>): Promise<string> {
+  async #baseShaForJob(job: LoopSchedulerRunInput["job"]): Promise<string> {
     if (job.baseSha !== undefined) return job.baseSha;
-    if (job.resolvedHeadSha !== undefined) return job.resolvedHeadSha;
     return await resolveCanonicalHeadSha(this.#workspaceRoot);
   }
 
@@ -676,7 +691,7 @@ export class LoopRunner {
 
   async #finalizeWorktreeResult(scope: LoopExecutionScope, result: LoopRunnerFinishedResult): Promise<LoopRunnerFinishedResult> {
     const worktree = scope.worktree;
-    if (worktree === undefined || this.#worktreeManager === undefined) return result;
+    if (worktree === undefined) return result;
     const inspection = await this.#worktreeManager.inspect({
       worktreePath: worktree.worktreePath,
       branchName: worktree.branchName,
@@ -701,11 +716,11 @@ export class LoopRunner {
 
   #releaseExecutionScope(scope: LoopExecutionScope, sessionId?: string): void {
     if (scope.worktree === undefined || sessionId === undefined) return;
-    this.#runtime.releaseSessionAgent?.(this.#workspaceRoot, sessionId);
+    this.#runtime.releaseSessionAgent(this.#workspaceRoot, sessionId);
   }
 
   #skippedIfSuperseded(input: LoopSchedulerRunInput): LoopRunnerFinishedResult | undefined {
-    if (input.job?.blockedReason !== "superseded") return undefined;
+    if (input.job.blockedReason !== "superseded") return undefined;
     return {
       status: "skipped",
       blockedReason: "superseded",
@@ -752,7 +767,7 @@ export class LoopRunner {
   }
 
   async #recordScheduledSessionLink(
-    input: LoopSchedulerRunInput,
+    input: LoopRunnerExecutionInput,
     sessionId: string,
     scope: LoopExecutionScope,
     goalId?: string,
@@ -773,7 +788,7 @@ export class LoopRunner {
   }
 
   async #terminalResultIfRunStopped(
-    input: LoopSchedulerRunInput,
+    input: LoopRunnerExecutionInput,
     sessionId?: string,
     goalId?: string,
   ): Promise<(Required<Pick<LoopSchedulerRunResult, "status">> & LoopSchedulerRunResult) | undefined> {

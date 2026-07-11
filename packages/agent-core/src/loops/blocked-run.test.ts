@@ -4,12 +4,14 @@ import { join } from "node:path";
 import { createEmptySessionStats, type SessionEventEnvelope, type SessionExecutionRecord } from "@archcode/protocol";
 
 import type { ActiveSessionExecution, SessionCwdReferenceMigrationInput, SessionCwdRemovalLifecycle, SessionCwdRemovalResult, StartSessionExecutionInput } from "../execution";
+import { createEmptyCompressionState } from "../compression";
 import type { SessionFile } from "../store/helpers";
 import { LoopJobCoordinator } from "./coordinator";
 import { LoopJobQueue } from "./job-queue";
 import { LoopRunner, type LoopRunnerWorktreeManager } from "./runner";
 import { LoopScheduler, type LoopSchedulerRunInput, type LoopSchedulerTimer } from "./scheduler";
 import { LoopStateManager, type LoopConfig, type LoopWorktreeArtifact } from "./state";
+import { createLoopSchedulerRequiredDependencies } from "./test-utils";
 import { LoopWorktreeManagerError, type LoopWorktreeInspection } from "./worktree-manager";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "loop-blocked-run");
@@ -20,7 +22,7 @@ const sessionLoopConfig: LoopConfig = {
   title: "Blocked loop",
   schedule: { kind: "manual" },
   approvalPolicy: "interactive",
-  limits: { maxIterationsPerRun: 3 },
+  limits: { maxIterationsPerRun: 3, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
   taskPrompt: "Run safely unless user input is needed.",
   useWorktree: true,
 };
@@ -40,6 +42,7 @@ describe("blocked queued loop runs", () => {
     const loop = await fixture.stateManager.create("project-a", { ...sessionLoopConfig, useWorktree: false });
 
     const result = await fixture.runner.createSchedulerRunner()({
+      ...checkpointCallbacks(),
       loop,
       trigger: "manual",
       runId: "hitl-run",
@@ -59,6 +62,7 @@ describe("blocked queued loop runs", () => {
     const result = await fixture.runner.createSchedulerRunner()({
       checkpointBaseSha: async () => {},
       checkpointWorktree: async () => {},
+      checkpointSessionAttempt: async () => {},
       loop,
       trigger: "manual",
       runId: "session-hitl-run",
@@ -84,6 +88,7 @@ describe("blocked queued loop runs", () => {
     const result = await fixture.runner.createSchedulerRunner()({
       checkpointBaseSha: async () => {},
       checkpointWorktree: async () => {},
+      checkpointSessionAttempt: async () => {},
       loop,
       trigger: "manual",
       runId: "dirty-run",
@@ -107,24 +112,45 @@ describe("blocked queued loop runs", () => {
     const jobQueue = new LoopJobQueue({ workspaceRoot, clock });
     const coordinator = new LoopJobCoordinator({ queue: jobQueue, clock, leaseTtlMs: 60_000 });
     const observedArtifacts: LoopWorktreeArtifact[] = [{ path: "evidence/report.md", status: "created" }];
-    const runnerMock = mock(async (_input: LoopSchedulerRunInput) => ({
+    const hitlId = "hitl-worktree-blocked";
+    const runnerMock = mock(async (input: LoopSchedulerRunInput) => ({
       status: "needs_user" as const,
       sessionId: "session-worktree",
       blockedReason: "needs_user",
+      blockedByHitlIds: [hitlId],
+      attentionStatus: "waiting_for_human" as const,
       worktreePath: "/tmp/archcode-loop-worktree",
+      worktreeBranchName: "archcode/loop/test/blocked",
       baseSha: "a".repeat(40),
       resolvedHeadSha: "b".repeat(40),
+      resumeCheckpoint: {
+        version: 1 as const,
+        hitlId,
+        loopId: input.loop.loopId,
+        runId: input.runId,
+        jobId: input.job.jobId,
+        trigger: input.trigger,
+        subjectKey: input.job.subjectKey,
+        worktreePath: "/tmp/archcode-loop-worktree",
+        worktreeBranchName: "archcode/loop/test/blocked",
+        baseSha: "a".repeat(40),
+        resolvedHeadSha: "b".repeat(40),
+        intendedContinuation: "resume_run" as const,
+      },
       cleanupState: "preserved" as const,
       observedArtifacts,
       summary: "waiting for user",
     }));
     const scheduler = new LoopScheduler({
+      ...createLoopSchedulerRequiredDependencies({ workspaceRoot, stateManager, clock }),
       stateManager,
       jobQueue,
       coordinator,
       clock,
       timer: new FakeTimer(),
       runner: runnerMock,
+      cleanupJob: async () => undefined,
+      readSessionAttempt: async () => ({}),
     });
 
     const report = await scheduler.runManual(loop.loopId);
@@ -177,7 +203,7 @@ async function createRunnerFixture(options: {
     workspaceRoot,
     projectSlug: "project-a",
     now: () => 1_000,
-    ...(options.worktreeManager === undefined ? {} : { worktreeManager: options.worktreeManager }),
+    worktreeManager: options.worktreeManager ?? new DirtyCanonicalWorktreeManager(),
   });
   return { stateManager, runtime, runner, workspaceRoot };
 }
@@ -224,6 +250,8 @@ class FakeLoopRuntime {
     return this.startSessionExecutionMock(input);
   }
 
+  releaseSessionAgent(): void {}
+
   async migrateSessionCwdReferencesForRemoval<T extends SessionCwdRemovalResult>(
     _input: SessionCwdReferenceMigrationInput,
     operation: (lifecycle: SessionCwdRemovalLifecycle) => Promise<T>,
@@ -245,6 +273,10 @@ class DirtyCanonicalWorktreeManager implements LoopRunnerWorktreeManager {
 
   async create(input: Parameters<LoopRunnerWorktreeManager["create"]>[0]): ReturnType<LoopRunnerWorktreeManager["create"]> {
     return await this.createMock(input);
+  }
+
+  async reuse(_input: Parameters<LoopRunnerWorktreeManager["reuse"]>[0]): ReturnType<LoopRunnerWorktreeManager["reuse"]> {
+    throw new Error("dirty canonical should block before reuse");
   }
 
   async inspect(_input: Parameters<LoopRunnerWorktreeManager["inspect"]>[0]): Promise<LoopWorktreeInspection> {
@@ -277,15 +309,21 @@ function makeSession(
   blockedByHitlIds: string[],
   options?: { loopId?: string; sessionRole?: "main"; title?: string },
 ): SessionFile {
+  const now = Date.now();
   return {
+    schemaVersion: 1,
     sessionId,
-    createdAt: Date.now(),
+    createdAt: now,
+    updatedAt: now,
+    cwd: TMP_DIR,
     agentName: "orchestrator",
+    modelInfo: null,
     title: options?.title ?? null,
     messages: [],
     steps: [],
     stats: createEmptySessionStats(),
     executions: [COMPLETED_EXECUTION],
+    compression: createEmptyCompressionState(),
     events,
     todos: [],
     reminders: [],
@@ -304,6 +342,14 @@ function testJob(loopId: string, overrides: Partial<NonNullable<LoopSchedulerRun
     subjectKey: `manual:${loopId}`,
     dedupeKey: `loop:${loopId}:manual`,
     ...overrides,
+  };
+}
+
+function checkpointCallbacks(): Pick<LoopSchedulerRunInput, "checkpointBaseSha" | "checkpointWorktree" | "checkpointSessionAttempt"> {
+  return {
+    checkpointBaseSha: async () => {},
+    checkpointWorktree: async () => {},
+    checkpointSessionAttempt: async () => {},
   };
 }
 

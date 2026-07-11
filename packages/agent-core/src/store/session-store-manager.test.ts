@@ -2,8 +2,9 @@ import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createEmptySessionStats, type CompressionBlockSnapshot, type GoalState, type HitlRecord, type LoopState, type SessionProjection } from "@archcode/protocol";
+import { createEmptyCompressionState } from "../compression";
 import { SessionStoreManager } from "./session-store-manager";
-import { NotRootSessionError, SessionInitialPersistenceError } from "./errors";
+import { NotRootSessionError, SessionInitialPersistenceError, SessionTreeIntegrityError } from "./errors";
 import { sessionFileInternals } from "./helpers";
 import { silentLogger } from "../logger";
 
@@ -36,6 +37,33 @@ describe("SessionStoreManager", () => {
       tokenEstimate: { originalTokens: 100, summaryTokens: 25, savedTokens: 75, estimatedAt: 1234 },
       createdAt: 1000,
       updatedAt: 1001,
+    };
+  }
+
+  type PersistedSessionState = Parameters<typeof sessionFileInternals.saveSessionTranscript>[0];
+
+  function persistedSession(
+    id: string,
+    overrides: Partial<PersistedSessionState> = {},
+  ): PersistedSessionState {
+    return {
+      sessionId: id,
+      createdAt: 1000,
+      updatedAt: 1000,
+      cwd: TMP_DIR,
+      agentName: "orchestrator",
+      modelInfo: null,
+      title: null,
+      messages: [],
+      steps: [],
+      stats: createEmptySessionStats(),
+      executions: [],
+      compression: createEmptyCompressionState(),
+      todos: [],
+      reminders: [],
+      childSessionLinks: [],
+      rootSessionId: id,
+      ...overrides,
     };
   }
 
@@ -94,6 +122,28 @@ describe("SessionStoreManager", () => {
     }
   });
 
+  test("a background persistence failure poisons the Session until it is reloaded", async () => {
+    const originalSave = sessionFileInternals.saveSessionTranscript;
+    const failure = new Error("simulated background persistence failure");
+    sessionFileInternals.saveSessionTranscript = async () => {
+      throw failure;
+    };
+
+    try {
+      const manager = new SessionStoreManager({ logger: silentLogger });
+      const id = sessionId();
+      const store = manager.create(id, TMP_DIR);
+
+      await expect(manager.flushSession(id, TMP_DIR)).rejects.toBe(failure);
+      sessionFileInternals.saveSessionTranscript = originalSave;
+      store.getState().setTitle("must not bypass the failed durable queue");
+      await expect(manager.flushSession(id, TMP_DIR)).rejects.toBe(failure);
+      expect(await Bun.file(canonicalSessionPath(id)).exists()).toBe(false);
+    } finally {
+      sessionFileInternals.saveSessionTranscript = originalSave;
+    }
+  });
+
   async function writeSessionFile(input: {
     sessionId: string;
     rootSessionId?: string;
@@ -102,20 +152,14 @@ describe("SessionStoreManager", () => {
     createdAt?: number;
   }): Promise<void> {
     await sessionFileInternals.saveSessionTranscript(
-      {
-        sessionId: input.sessionId,
+      persistedSession(input.sessionId, {
         createdAt: input.createdAt ?? 1000,
+        updatedAt: input.createdAt ?? 1000,
         agentName: input.parentSessionId === undefined ? "orchestrator" : "explore",
         title: input.title ?? null,
-        messages: [],
-        steps: [],
-        stats: createEmptySessionStats(),
-        executions: [],
-        todos: [],
-        childSessionLinks: [],
         rootSessionId: input.rootSessionId ?? input.sessionId,
         ...(input.parentSessionId === undefined ? {} : { parentSessionId: input.parentSessionId }),
-      },
+      }),
       TMP_DIR,
     );
   }
@@ -184,6 +228,22 @@ describe("SessionStoreManager", () => {
     const store = manager.create(sessionId(), TMP_DIR);
 
     expect(store.getState().cwd).toBe(TMP_DIR);
+  });
+
+  test("every durable snapshot advances the canonical updatedAt", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    const store = manager.create(id, TMP_DIR);
+    await manager.flushSession(id, TMP_DIR);
+    const first = await readSessionJson(canonicalSessionPath(id));
+    await Bun.sleep(2);
+
+    store.getState().setTitle("updated");
+    await manager.flushSession(id, TMP_DIR);
+    const second = await readSessionJson(canonicalSessionPath(id));
+
+    expect(second.updatedAt).toBeGreaterThan(first.updatedAt as number);
+    expect(store.getState().updatedAt).toBe(second.updatedAt as number);
   });
 
   test("persists an execution cwd independently from the canonical session directory", async () => {
@@ -334,15 +394,18 @@ describe("SessionStoreManager", () => {
     const id = sessionId();
     const store = manager.create(id, TMP_DIR);
     const goalState: GoalState = {
+      version: 1,
       id: "goal-1",
       projectId: "project-1",
       title: "Goal",
       objective: "Do the Goal.",
       acceptanceCriteria: "Reviewer can decide DONE from evidence.",
+      useWorktree: false,
       status: "running",
       attempt: 0,
       pendingHitlIds: [],
       approvalRefs: [],
+      appliedHitlIds: [],
       childSessionIds: [],
       createdAt: "2026-07-07T00:00:00.000Z",
       updatedAt: "2026-07-07T00:00:00.000Z",
@@ -365,7 +428,8 @@ describe("SessionStoreManager", () => {
         title: "Loop",
         schedule: { kind: "manual" },
         approvalPolicy: "interactive",
-        limits: { maxIterationsPerRun: 1 },
+        limits: { maxIterationsPerRun: 1, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+        useWorktree: false,
         goalTemplate: {
           title: "Goal",
           objective: "Do it.",
@@ -466,19 +530,11 @@ describe("SessionStoreManager", () => {
     const sessionId = crypto.randomUUID();
 
     await sessionFileInternals.saveSessionTranscript(
-      {
+      persistedSession(sessionId, {
         sessionId,
         createdAt: 1000,
-        agentName: "orchestrator",
         title: "disk-title",
-        messages: [],
-        steps: [],
-        stats: createEmptySessionStats(),
-        executions: [],
-        todos: [],
-        childSessionLinks: [],
-        rootSessionId: sessionId,
-      },
+      }),
       TMP_DIR,
     );
 
@@ -560,11 +616,7 @@ describe("SessionStoreManager", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
     await sessionFileInternals.saveSessionTranscript(
-      {
-        sessionId: id,
-        createdAt: 1000,
-        agentName: "orchestrator",
-        title: null,
+      persistedSession(id, {
         messages: [
           {
             id: "assistant-1",
@@ -581,13 +633,8 @@ describe("SessionStoreManager", () => {
             executionId: "run-1",
           },
         ],
-        steps: [],
-        stats: createEmptySessionStats(),
         executions: [{ id: "run-1", startedAt: 1000, status: "running" }],
-        todos: [],
-        childSessionLinks: [],
-        rootSessionId: id,
-      },
+      }),
       TMP_DIR,
     );
 
@@ -607,19 +654,9 @@ describe("SessionStoreManager", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
     await sessionFileInternals.saveSessionTranscript(
-      {
-        sessionId: id,
-        createdAt: 1000,
-        agentName: "orchestrator",
-        title: null,
-        messages: [],
-        steps: [],
-        stats: createEmptySessionStats(),
+      persistedSession(id, {
         executions: [{ id: "run-1", startedAt: 1000, status: "waiting_for_human", endedAt: 2000, durationMs: 1000 }],
-        todos: [],
-        childSessionLinks: [],
-        rootSessionId: id,
-      },
+      }),
       TMP_DIR,
     );
 
@@ -705,11 +742,7 @@ describe("SessionStoreManager", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
     await sessionFileInternals.saveSessionTranscript(
-      {
-        sessionId: id,
-        createdAt: 1000,
-        agentName: "orchestrator",
-        title: null,
+      persistedSession(id, {
         messages: [
           {
             id: "assistant-1",
@@ -731,13 +764,7 @@ describe("SessionStoreManager", () => {
             completedAt: 1002,
           },
         ],
-        steps: [],
-        stats: createEmptySessionStats(),
-        executions: [],
-        todos: [],
-        childSessionLinks: [],
-        rootSessionId: id,
-      },
+      }),
       TMP_DIR,
     );
 
@@ -756,20 +783,12 @@ describe("SessionStoreManager", () => {
     const childSessionId = sessionId();
 
     await sessionFileInternals.saveSessionTranscript(
-      {
-        sessionId: childSessionId,
-        createdAt: 1000,
+      persistedSession(childSessionId, {
         agentName: "explore",
         title: "child-title",
-        messages: [],
-        steps: [],
-        stats: createEmptySessionStats(),
-        executions: [],
-        todos: [],
-        childSessionLinks: [],
         rootSessionId,
         parentSessionId: rootSessionId,
-      },
+      }),
       TMP_DIR,
     );
 
@@ -815,19 +834,12 @@ describe("SessionStoreManager", () => {
     let scanCount = 0;
 
     await sessionFileInternals.saveSessionTranscript(
-      {
-        sessionId: childSessionId,
-        createdAt: 1000,
+      persistedSession(childSessionId, {
         agentName: "explore",
         title: "child-title",
-        messages: [],
-        steps: [],
-        stats: createEmptySessionStats(),
-        executions: [],
-        todos: [],
         rootSessionId,
         parentSessionId: rootSessionId,
-      },
+      }),
       TMP_DIR,
     );
 
@@ -856,18 +868,9 @@ describe("SessionStoreManager", () => {
 
     // Also save a file with different data
     await sessionFileInternals.saveSessionTranscript(
-      {
-        sessionId,
-        createdAt: 1000,
-        agentName: "orchestrator",
+      persistedSession(sessionId, {
         title: "disk-title",
-        messages: [],
-        steps: [],
-        stats: createEmptySessionStats(),
-        executions: [],
-        todos: [],
-        rootSessionId: sessionId,
-      },
+      }),
       TMP_DIR,
     );
 
@@ -894,18 +897,9 @@ describe("SessionStoreManager", () => {
     const sessionId = crypto.randomUUID();
 
     await sessionFileInternals.saveSessionTranscript(
-      {
-        sessionId,
-        createdAt: 1000,
-        agentName: "orchestrator",
+      persistedSession(sessionId, {
         title: "disk-title",
-        messages: [],
-        steps: [],
-        stats: createEmptySessionStats(),
-        executions: [],
-        todos: [],
-        rootSessionId: sessionId,
-      },
+      }),
       TMP_DIR,
     );
 
@@ -922,18 +916,9 @@ describe("SessionStoreManager", () => {
     const sessionId = crypto.randomUUID();
 
     await sessionFileInternals.saveSessionTranscript(
-      {
-        sessionId,
-        createdAt: 1000,
-        agentName: "orchestrator",
+      persistedSession(sessionId, {
         title: "disk-title",
-        messages: [],
-        steps: [],
-        stats: createEmptySessionStats(),
-        executions: [],
-        todos: [],
-        rootSessionId: sessionId,
-      },
+      }),
       TMP_DIR,
     );
 
@@ -994,7 +979,7 @@ describe("SessionStoreManager", () => {
     expect("subAgentDescriptions" in tree.root.children[0].session).toBe(false);
   });
 
-  test("buildSessionTree() diagnoses invalid descendants and excludes them", async () => {
+  test("buildSessionTree() fails instead of skipping invalid descendants", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const rootSessionId = sessionId();
     const validChildId = sessionId();
@@ -1009,105 +994,62 @@ describe("SessionStoreManager", () => {
     await writeSessionFile({ sessionId: validChildId, rootSessionId, parentSessionId: rootSessionId, title: "valid" });
     await writeSessionFile({ sessionId: missingParentId, rootSessionId, parentSessionId: absentParentId, title: "orphan" });
 
-    await writeRawSessionFile(rootMismatchId, JSON.stringify({
-      sessionId: rootMismatchId,
-      createdAt: 1000,
+    await writeRawSessionFile(rootMismatchId, JSON.stringify({ schemaVersion: 1, ...persistedSession(rootMismatchId, {
       agentName: "explore",
       title: "bad-root",
-      messages: [],
-      steps: [],
-      stats: createEmptySessionStats(),
-      executions: [],
-      todos: [],
-      reminders: [],
       rootSessionId: otherRootId,
       parentSessionId: rootSessionId,
-    }));
-    await writeRawSessionFile(mismatchFileId, JSON.stringify({
-      sessionId: mismatchJsonId,
-      createdAt: 1000,
+    }) }));
+    await writeRawSessionFile(mismatchFileId, JSON.stringify({ schemaVersion: 1, ...persistedSession(mismatchJsonId, {
       agentName: "explore",
       title: "mismatch",
-      messages: [],
-      steps: [],
-      stats: createEmptySessionStats(),
-      executions: [],
-      todos: [],
-      reminders: [],
       rootSessionId,
       parentSessionId: rootSessionId,
-    }));
+    }) }));
     await writeRawSessionFile(invalidJsonId, "not json");
 
-    const tree = await manager.buildSessionTree(TMP_DIR, rootSessionId);
-
-    expect(tree.root.children.map((child) => child.session.sessionId)).toEqual([validChildId]);
-    expect(tree.diagnostics.map((diagnostic) => diagnostic.type).sort()).toEqual([
-      "invalid_json",
-      "missing_parent",
-      "root_mismatch",
-      "session_id_mismatch",
-    ]);
+    await expect(manager.buildSessionTree(TMP_DIR, rootSessionId)).rejects.toBeInstanceOf(SessionTreeIntegrityError);
   });
 
-  test("buildSessionTree() validates malformed mismatch files and only uses raw JSON for diagnostics", async () => {
+  test("buildSessionTree() fails on an invalid descendant schema", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const rootSessionId = sessionId();
     const fileSessionId = sessionId();
     const jsonSessionId = sessionId();
     await writeSessionFile({ sessionId: rootSessionId, title: "root" });
-    await writeRawSessionFile(fileSessionId, JSON.stringify({
-      sessionId: jsonSessionId,
-      createdAt: 1000,
+    await writeRawSessionFile(fileSessionId, JSON.stringify({ schemaVersion: 1, ...persistedSession(jsonSessionId, {
       agentName: "explore",
       title: "invalid-node",
-      messages: [],
-      steps: [],
-      stats: createEmptySessionStats(),
-      executions: [],
       todos: [{ id: "a", content: "first", status: "in_progress" }, { id: "b", content: "second", status: "in_progress" }],
-      reminders: [],
       rootSessionId,
       parentSessionId: rootSessionId,
-    }));
+    }) }));
 
-    const tree = await manager.buildSessionTree(TMP_DIR, rootSessionId);
-
-    expect(tree.root.children).toEqual([]);
-    expect(tree.diagnostics).toHaveLength(1);
-    expect(tree.diagnostics[0]).toMatchObject({
-      type: "invalid_json",
-      sessionId: jsonSessionId,
+    await expect(manager.buildSessionTree(TMP_DIR, rootSessionId)).rejects.toMatchObject({
+      name: "SessionTreeIntegrityError",
+      reason: "invalid_schema",
     });
   });
 
-  test("buildSessionTree() diagnoses duplicate session IDs", async () => {
+  test("buildSessionTree() fails on duplicate session IDs", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const rootSessionId = sessionId();
     await writeSessionFile({ sessionId: rootSessionId, title: "root" });
     const duplicateDirSessionId = sessionId();
-    await writeRawSessionFile(duplicateDirSessionId, JSON.stringify({
-      sessionId: rootSessionId,
-      createdAt: 1000,
+    await writeRawSessionFile(duplicateDirSessionId, JSON.stringify({ schemaVersion: 1, ...persistedSession(rootSessionId, {
       agentName: "explore",
       title: "duplicate-root",
-      messages: [],
-      steps: [],
-      stats: createEmptySessionStats(),
-      executions: [],
-      todos: [],
-      reminders: [],
       rootSessionId,
       parentSessionId: rootSessionId,
-    }));
+    }) }));
 
-    const tree = await manager.buildSessionTree(TMP_DIR, rootSessionId);
-
-    expect(tree.root.children).toEqual([]);
-    expect(tree.diagnostics.map((diagnostic) => diagnostic.type)).toContain("duplicate_session");
+    await expect(manager.buildSessionTree(TMP_DIR, rootSessionId)).rejects.toMatchObject({
+      name: "SessionTreeIntegrityError",
+      reason: "duplicate_session",
+    });
   });
 
-  test("buildSessionTree() diagnoses cycles and excludes invalid cycle nodes", async () => {
+  test("buildSessionTree() fails on parent cycles", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const rootSessionId = sessionId();
     const firstId = sessionId();
@@ -1116,10 +1058,46 @@ describe("SessionStoreManager", () => {
     await writeSessionFile({ sessionId: firstId, rootSessionId, parentSessionId: secondId, title: "first" });
     await writeSessionFile({ sessionId: secondId, rootSessionId, parentSessionId: firstId, title: "second" });
 
+    await expect(manager.buildSessionTree(TMP_DIR, rootSessionId)).rejects.toMatchObject({
+      name: "SessionTreeIntegrityError",
+      reason: "cycle",
+    });
+  });
+
+  test("buildSessionTree() rejects a legacy descendant without schemaVersion", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const rootSessionId = sessionId();
+    const childSessionId = sessionId();
+    await writeSessionFile({ sessionId: rootSessionId, title: "root" });
+    await writeRawSessionFile(childSessionId, JSON.stringify(persistedSession(childSessionId, {
+      rootSessionId,
+      parentSessionId: rootSessionId,
+    })));
+
+    await expect(manager.buildSessionTree(TMP_DIR, rootSessionId)).rejects.toMatchObject({
+      name: "SessionTreeIntegrityError",
+      reason: "invalid_schema",
+    });
+  });
+
+  test("buildSessionTree() ignores a separate valid Session family", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const rootSessionId = sessionId();
+    const otherRootSessionId = sessionId();
+    const otherChildSessionId = sessionId();
+    await writeSessionFile({ sessionId: rootSessionId, title: "root" });
+    await writeSessionFile({ sessionId: otherRootSessionId, title: "other-root" });
+    await writeSessionFile({
+      sessionId: otherChildSessionId,
+      rootSessionId: otherRootSessionId,
+      parentSessionId: otherRootSessionId,
+      title: "other-child",
+    });
+
     const tree = await manager.buildSessionTree(TMP_DIR, rootSessionId);
 
     expect(tree.root.children).toEqual([]);
-    expect(tree.diagnostics.map((diagnostic) => diagnostic.type)).toContain("cycle");
+    expect(tree.diagnostics).toEqual([]);
   });
 
   test("buildSessionTree() throws NotRootSessionError when called on a child", async () => {

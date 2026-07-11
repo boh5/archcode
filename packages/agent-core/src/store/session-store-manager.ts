@@ -6,8 +6,6 @@ import { createEmptyCompressionState, resolveCompressionOriginalRange, type Comp
 import type {
   SessionModelInfo,
   SessionHitlCheckpoint,
-  SessionTreeDiagnostic,
-  SessionTreeDiagnosticType,
   SessionTreeNode,
   SessionTreeResponse,
 } from "@archcode/protocol";
@@ -21,11 +19,12 @@ import {
   SessionCwdReferenceScanError,
   SessionFileNotFoundError,
   SessionInitialPersistenceError,
+  SessionTreeIntegrityError,
 } from "./errors";
 import { SessionFileSchema, sessionFileInternals, type HydratedSessionFile, type SessionSummary } from "./helpers";
 import { projectModelMessagesFromStoredMessages } from "./projection";
 import { reduceStreamEvent } from "./reduce";
-import { __hasSessionsDirOverrideForTest, assertSafeSessionId, getSessionPath, getSessionsDir } from "./sessions-dir";
+import { assertSafeSessionId, getSessionPath, getSessionsDir } from "./sessions-dir";
 import {
   type ReasoningPart,
   type SessionEventEnvelope,
@@ -69,6 +68,7 @@ export class SessionStoreManager {
   #registry = new Map<string, StoreApi<SessionStoreState>>();
   #pendingLoads = new Map<string, Promise<StoreApi<SessionStoreState>>>();
   #pendingPersists = new Map<string, Promise<void>>();
+  #persistFailures = new Map<string, unknown>();
   #hydrating = new Set<string>();
   // Disposable acceleration for child lookups; source of truth stays on disk.
   #rootIdIndex = new Map<string, string>();
@@ -80,16 +80,12 @@ export class SessionStoreManager {
     this.#logger = options.logger;
   }
 
-  private key(sessionId: string, workspaceRoot?: string): string {
-    return workspaceRoot === undefined ? sessionId : `${workspaceRoot}\0${sessionId}`;
-  }
-
-  private indexKey(sessionId: string, workspaceRoot: string): string {
+  private key(sessionId: string, workspaceRoot: string): string {
     return `${workspaceRoot}\0${sessionId}`;
   }
 
   #registerRootSessionId(sessionId: string, workspaceRoot: string, rootSessionId: string): void {
-    this.#rootIdIndex.set(this.indexKey(sessionId, workspaceRoot), rootSessionId);
+    this.#rootIdIndex.set(this.key(sessionId, workspaceRoot), rootSessionId);
   }
 
   #forgetWorkspaceIndex(workspaceRoot: string): void {
@@ -100,20 +96,18 @@ export class SessionStoreManager {
   }
 
   #forgetSessionIndex(sessionId: string, workspaceRoot: string): void {
-    this.#rootIdIndex.delete(this.indexKey(sessionId, workspaceRoot));
+    this.#rootIdIndex.delete(this.key(sessionId, workspaceRoot));
   }
 
-  create(sessionId: string, workspaceRoot?: string, options: CreateSessionOptions = {}): StoreApi<SessionStoreState> {
+  create(sessionId: string, workspaceRoot: string, options: CreateSessionOptions = {}): StoreApi<SessionStoreState> {
     const key = this.key(sessionId, workspaceRoot);
     const existing = this.#registry.get(key);
     if (existing) return existing;
 
-    const shouldPersist = workspaceRoot !== undefined || __hasSessionsDirOverrideForTest();
-    const persistWorkspaceRoot = workspaceRoot ?? "__test__";
     const rootSessionId = options.rootSessionId ?? sessionId;
-    const cwd = options.cwd ?? workspaceRoot ?? "";
-    if (cwd !== "" && !isAbsolute(cwd)) throw new InvalidSessionCwdError(cwd, "must be an absolute path");
-    if (cwd !== "" && !this.#hydrating.has(key)) this.#assertCwdTargetAllowed(cwd);
+    const cwd = options.cwd ?? workspaceRoot;
+    if (!isAbsolute(cwd)) throw new InvalidSessionCwdError(cwd, "must be an absolute path");
+    if (!this.#hydrating.has(key)) this.#assertCwdTargetAllowed(cwd);
     const parentSessionId = options.parentSessionId;
     const goalId = options.goalId;
     const loopId = options.loopId;
@@ -121,9 +115,8 @@ export class SessionStoreManager {
     let store: StoreApi<SessionStoreState>;
 
     const persist = () => {
-      if (!shouldPersist) return;
       const state = store.getState();
-      void this.#enqueuePersist(key, sessionId, persistWorkspaceRoot, state).catch(() => undefined);
+      void this.#enqueuePersist(key, sessionId, workspaceRoot, state);
     };
 
     const persistForEvent = (event: SessionEventPayload) => {
@@ -148,9 +141,11 @@ export class SessionStoreManager {
       ) persist();
     };
 
+    const createdAt = Date.now();
     store = createStore<SessionStoreState>((set, get) => ({
       sessionId,
-      createdAt: Date.now(),
+      createdAt,
+      updatedAt: createdAt,
       cwd,
       agentName: options.agentName ?? "orchestrator",
       modelInfo: options.modelInfo ?? null,
@@ -240,7 +235,7 @@ export class SessionStoreManager {
       },
       toModelMessages: (): ModelMessage[] => {
         const state = get();
-        const compression = state.compression ?? createEmptyCompressionState();
+        const compression = state.compression;
         const projection = projectModelMessagesFromStoredMessages(state.messages, { compression });
         if (projection.refMap !== undefined && projection.refMap !== compression.refMap) {
           set({ compression: { ...compression, refMap: projection.refMap, updatedAt: Date.now() } });
@@ -251,12 +246,12 @@ export class SessionStoreManager {
     }));
 
     this.#registry.set(key, store);
-    if (shouldPersist) this.#registerRootSessionId(sessionId, persistWorkspaceRoot, rootSessionId);
+    this.#registerRootSessionId(sessionId, workspaceRoot, rootSessionId);
     if (!this.#hydrating.has(key)) persist();
     return store;
   }
 
-  get(sessionId: string, workspaceRoot?: string): StoreApi<SessionStoreState> | undefined {
+  get(sessionId: string, workspaceRoot: string): StoreApi<SessionStoreState> | undefined {
     return this.#registry.get(this.key(sessionId, workspaceRoot));
   }
 
@@ -265,7 +260,11 @@ export class SessionStoreManager {
     const key = this.key(sessionId, workspaceRoot);
     while (true) {
       const pending = this.#pendingPersists.get(key);
-      if (pending === undefined) return;
+      if (pending === undefined) {
+        const failure = this.#persistFailures.get(key);
+        if (failure !== undefined) throw failure;
+        return;
+      }
       await pending;
     }
   }
@@ -364,12 +363,8 @@ export class SessionStoreManager {
     return resolveCompressionOriginalRange(session, blockRef);
   }
 
-  async setGoalId(sessionId: string, goalId: string | undefined, workspaceRoot?: string): Promise<SessionStoreState> {
-    const store = workspaceRoot === undefined
-      ? this.findLoadedSession(sessionId)
-      : await this.getOrLoad(sessionId, workspaceRoot);
-
-    if (store === undefined) throw new SessionFileNotFoundError(sessionId);
+  async setGoalId(sessionId: string, goalId: string | undefined, workspaceRoot: string): Promise<SessionStoreState> {
+    const store = await this.getOrLoad(sessionId, workspaceRoot);
     store.getState().setGoalId(goalId);
     return store.getState();
   }
@@ -470,7 +465,7 @@ export class SessionStoreManager {
         assertSafeSessionId(name);
         const parsed = await sessionFileInternals.readSessionFile(name, workspaceRoot);
         assertSafeSessionId(parsed.rootSessionId);
-        const parsedCwd = parsed.cwd ?? workspaceRoot;
+        const parsedCwd = parsed.cwd;
         if (!isAbsolute(parsedCwd)) throw new InvalidSessionCwdError(parsedCwd);
         disk.set(parsed.sessionId, {
           sessionId: parsed.sessionId,
@@ -604,17 +599,21 @@ export class SessionStoreManager {
     workspaceRoot: string,
     state: SessionStoreState,
   ): Promise<void> {
-    const pending = this.#pendingPersists.get(key) ?? Promise.resolve();
-    const operation = pending
-      .catch(() => { /* the observed queue logs failures and remains usable */ })
-      .then(() => sessionFileInternals.saveSessionTranscript(state, workspaceRoot));
+    const updatedAt = Math.max(Date.now(), state.updatedAt + 1);
+    const persistState = { ...state, updatedAt };
+    this.#registry.get(key)?.setState({ updatedAt });
+    const previousFailure = this.#persistFailures.get(key);
+    const pending = this.#pendingPersists.get(key)
+      ?? (previousFailure === undefined ? Promise.resolve() : Promise.reject(previousFailure));
+    const operation = pending.then(() => sessionFileInternals.saveSessionTranscript(persistState, workspaceRoot));
     this.#pendingPersists.set(key, operation);
     void operation
       .catch((error) => {
+        this.#persistFailures.set(key, error);
         this.#logger.warn("session.persist.failed", {
           error,
           context: { sessionId },
-          meta: { workspaceRoot: workspaceRoot === "__test__" ? undefined : workspaceRoot },
+          meta: { workspaceRoot },
         });
       })
       .finally(() => {
@@ -623,30 +622,16 @@ export class SessionStoreManager {
     return operation;
   }
 
-  appendSessionEvent(sessionId: string, event: SessionEventPayload, workspaceRoot?: string): boolean {
-    const store = workspaceRoot === undefined
-      ? this.findLoadedSession(sessionId)
-      : this.get(sessionId, workspaceRoot);
+  appendSessionEvent(sessionId: string, event: SessionEventPayload, workspaceRoot: string): boolean {
+    const store = this.get(sessionId, workspaceRoot);
     if (store === undefined) return false;
 
     store.getState().append(event);
     return true;
   }
 
-  private findLoadedSession(sessionId: string): StoreApi<SessionStoreState> | undefined {
-    const direct = this.#registry.get(sessionId);
-    if (direct !== undefined) return direct;
-
-    const suffix = `\0${sessionId}`;
-    for (const [key, store] of this.#registry.entries()) {
-      if (key.endsWith(suffix)) return store;
-    }
-
-    return undefined;
-  }
-
   async resolveRootSessionId(sessionId: string, workspaceRoot: string): Promise<string> {
-    const cached = this.#rootIdIndex.get(this.indexKey(sessionId, workspaceRoot));
+    const cached = this.#rootIdIndex.get(this.key(sessionId, workspaceRoot));
     if (cached !== undefined) return cached;
 
     if (await this.#isRootSessionOnDisk(sessionId, workspaceRoot)) {
@@ -656,7 +641,7 @@ export class SessionStoreManager {
 
     await this.#scanWorkspaceDescendants(workspaceRoot);
 
-    const resolved = this.#rootIdIndex.get(this.indexKey(sessionId, workspaceRoot));
+    const resolved = this.#rootIdIndex.get(this.key(sessionId, workspaceRoot));
     if (resolved !== undefined) return resolved;
 
     throw new SessionFileNotFoundError(sessionId);
@@ -668,73 +653,111 @@ export class SessionStoreManager {
 
   async buildSessionTree(workspaceRoot: string, rootSessionId: string): Promise<SessionTreeResponse> {
     const rootFile = reconcileInterruptedSessionFile(await sessionFileInternals.readSessionFile(rootSessionId, workspaceRoot, rootSessionId));
+    const rootFilePath = getSessionPath(workspaceRoot, rootSessionId);
+    if (rootFile.sessionId !== rootSessionId) {
+      throw new SessionTreeIntegrityError(
+        "session_id_mismatch",
+        rootFile.sessionId,
+        rootFilePath,
+        `Session ID mismatch: expected "${rootSessionId}", found "${rootFile.sessionId}" in file`,
+      );
+    }
     if (rootFile.parentSessionId !== undefined) {
       throw new NotRootSessionError(rootSessionId, rootFile.parentSessionId);
     }
+    if (rootFile.rootSessionId !== rootSessionId) {
+      throw new SessionTreeIntegrityError(
+        "root_mismatch",
+        rootFile.sessionId,
+        rootFilePath,
+        `Root session ID mismatch: expected "${rootSessionId}", found "${rootFile.rootSessionId}" in file`,
+      );
+    }
 
-    const diagnostics: SessionTreeDiagnostic[] = [];
-    const rootNode: SessionTreeNode = { session: toSessionSummary(rootFile, workspaceRoot), children: [] };
+    const rootNode: SessionTreeNode = { session: toSessionSummary(rootFile), children: [] };
     const sessions = new Map<string, SessionSummary>([[rootSessionId, rootNode.session]]);
-    const childrenByParent = new Map<string, SessionSummary[]>();
-
-    await sessionFileInternals.scanDescendants(workspaceRoot, rootSessionId);
+    const parsedEntries: Array<{
+      entry: { sessionId: string; filePath: string };
+      summary: SessionSummary;
+    }> = [];
 
     for (const entry of await readDescendantSessionEntries(workspaceRoot, rootSessionId)) {
-      const parsed = await readSessionFileForTree(entry.sessionId, workspaceRoot, rootSessionId, entry.filePath, diagnostics);
-      if (parsed === undefined) continue;
-
-      if (parsed.rootSessionId !== rootSessionId) {
-        if (parsed.parentSessionId === undefined && parsed.rootSessionId === parsed.sessionId) continue;
-        pushDiagnostic(diagnostics, "root_mismatch", parsed.sessionId, entry.filePath,
-          `Root session ID mismatch: expected "${rootSessionId}", found "${parsed.rootSessionId}" in file`);
-        continue;
-      }
-      if (parsed.parentSessionId === undefined) {
-        pushDiagnostic(diagnostics, "not_root", parsed.sessionId, entry.filePath,
-          `Descendant session "${parsed.sessionId}" does not declare a parent session`);
-        continue;
-      }
+      const parsed = await readSessionFileForTree(entry.sessionId, entry.filePath);
       if (sessions.has(parsed.sessionId)) {
-        pushDiagnostic(diagnostics, "duplicate_session", parsed.sessionId, entry.filePath,
-          `Duplicate session ID "${parsed.sessionId}" found while building tree`);
-        continue;
+        throw new SessionTreeIntegrityError(
+          "duplicate_session",
+          parsed.sessionId,
+          entry.filePath,
+          `Duplicate session ID "${parsed.sessionId}" found while building tree`,
+        );
       }
       if (parsed.sessionId !== entry.sessionId) {
-        pushDiagnostic(diagnostics, "session_id_mismatch", parsed.sessionId, entry.filePath,
-          `Session ID mismatch: expected "${entry.sessionId}", found "${parsed.sessionId}" in file`);
+        throw new SessionTreeIntegrityError(
+          "session_id_mismatch",
+          parsed.sessionId,
+          entry.filePath,
+          `Session ID mismatch: expected "${entry.sessionId}", found "${parsed.sessionId}" in file`,
+        );
+      }
+
+      const summary = toSessionSummary(parsed);
+      sessions.set(summary.sessionId, summary);
+      parsedEntries.push({ entry, summary });
+    }
+
+    for (const { entry, summary } of parsedEntries) {
+      const parentSessionId = summary.parentSessionId;
+      if (parentSessionId === undefined) {
+        if (summary.rootSessionId !== summary.sessionId) {
+          throw new SessionTreeIntegrityError(
+            "not_root",
+            summary.sessionId,
+            entry.filePath,
+            `Session "${summary.sessionId}" has no parent but declares root "${summary.rootSessionId}"`,
+          );
+        }
         continue;
       }
 
-      const summary = toSessionSummary(parsed, workspaceRoot);
-      sessions.set(summary.sessionId, summary);
-      const parentSessionId = parsed.parentSessionId;
-      const siblings = childrenByParent.get(parentSessionId) ?? [];
-      siblings.push(summary);
-      childrenByParent.set(parentSessionId, siblings);
-    }
+      const parent = sessions.get(parentSessionId);
+      if (parent === undefined) {
+        throw new SessionTreeIntegrityError(
+          "missing_parent",
+          summary.sessionId,
+          entry.filePath,
+          `Parent session "${parentSessionId}" for "${summary.sessionId}" was not found`,
+        );
+      }
+      if (parent.rootSessionId !== summary.rootSessionId) {
+        throw new SessionTreeIntegrityError(
+          "root_mismatch",
+          summary.sessionId,
+          entry.filePath,
+          `Session "${summary.sessionId}" declares root "${summary.rootSessionId}" but parent "${parentSessionId}" belongs to "${parent.rootSessionId}"`,
+        );
+      }
 
-    const invalidIds = new Set<string>();
-    for (const summary of sessions.values()) {
-      if (summary.sessionId === rootSessionId) continue;
-      const parentSessionId = summary.parentSessionId;
-      if (parentSessionId === undefined || !sessions.has(parentSessionId)) {
-        invalidIds.add(summary.sessionId);
-        pushDiagnostic(diagnostics, "missing_parent", summary.sessionId, getSessionPath(workspaceRoot, summary.sessionId),
-          `Parent session "${parentSessionId ?? "<missing>"}" for "${summary.sessionId}" was not found`);
+      const cycle = findParentCycle(summary.sessionId, summary.rootSessionId, sessions);
+      if (cycle.length > 0) {
+        throw new SessionTreeIntegrityError(
+          "cycle",
+          summary.sessionId,
+          entry.filePath,
+          `Cycle detected in session tree: ${cycle.join(" -> ")}`,
+        );
       }
     }
 
-    for (const summary of sessions.values()) {
-      if (summary.sessionId === rootSessionId || invalidIds.has(summary.sessionId)) continue;
-      const cycle = findParentCycle(summary.sessionId, rootSessionId, sessions);
-      if (cycle.length === 0) continue;
-      for (const cycleSessionId of cycle) invalidIds.add(cycleSessionId);
-      pushDiagnostic(diagnostics, "cycle", summary.sessionId, getSessionPath(workspaceRoot, summary.sessionId),
-        `Cycle detected in session tree: ${cycle.join(" -> ")}`);
+    const childrenByParent = new Map<string, SessionSummary[]>();
+    for (const { summary } of parsedEntries) {
+      if (summary.rootSessionId !== rootSessionId || summary.parentSessionId === undefined) continue;
+      const siblings = childrenByParent.get(summary.parentSessionId) ?? [];
+      siblings.push(summary);
+      childrenByParent.set(summary.parentSessionId, siblings);
     }
 
-    attachChildren(rootNode, childrenByParent, invalidIds);
-    return { root: rootNode, diagnostics };
+    attachChildren(rootNode, childrenByParent);
+    return { root: rootNode, diagnostics: [] };
   }
 
   async #loadFromDisk(
@@ -754,30 +777,31 @@ export class SessionStoreManager {
     this.#hydrating.add(key);
     try {
       const store = this.create(sessionId, workspaceRoot, {
-        cwd: parsed.cwd ?? workspaceRoot,
+        cwd: parsed.cwd,
         rootSessionId: parsed.rootSessionId,
         parentSessionId: parsed.parentSessionId,
         goalId: parsed.goalId,
         loopId: parsed.loopId,
         sessionRole: parsed.sessionRole,
         agentName: parsed.agentName,
-        ...(parsed.modelInfo === undefined ? {} : { modelInfo: parsed.modelInfo }),
-        ...(parsed.title === undefined || parsed.title === null ? {} : { title: parsed.title }),
+        modelInfo: parsed.modelInfo,
+        ...(parsed.title === null ? {} : { title: parsed.title }),
       });
       store.setState({
         sessionId: parsed.sessionId,
         createdAt: parsed.createdAt,
-        cwd: parsed.cwd ?? workspaceRoot,
+        updatedAt: parsed.updatedAt,
+        cwd: parsed.cwd,
         agentName: parsed.agentName,
-        modelInfo: parsed.modelInfo ?? null,
-        title: parsed.title ?? null,
+        modelInfo: parsed.modelInfo,
+        title: parsed.title,
         messages: parsed.messages,
         steps: parsed.steps,
         stats: parsed.stats,
         executions: parsed.executions,
         compression: parsed.compression,
         executionCount: parsed.executions.length,
-        todos: parsed.todos ?? [],
+        todos: parsed.todos,
         reminders: parsed.reminders,
         childSessionLinks: parsed.childSessionLinks,
         rootSessionId: parsed.rootSessionId,
@@ -804,16 +828,17 @@ export class SessionStoreManager {
     }
   }
 
-  delete(sessionId: string, workspaceRoot?: string, options: { forgetWorkspaceIndex?: boolean } = {}): boolean {
+  delete(sessionId: string, workspaceRoot: string, options: { forgetWorkspaceIndex?: boolean } = {}): boolean {
     // Runtime deletion should unlink named workflow participants before removing
     // session stores/files. The workflow state manager is project-scoped, so that
     // cross-resource cleanup is wired by the runtime/execution layer rather than
     // this store-only registry.
-    const removed = this.#registry.delete(this.key(sessionId, workspaceRoot));
-    if (workspaceRoot !== undefined) {
-      if (options.forgetWorkspaceIndex === true) this.#forgetWorkspaceIndex(workspaceRoot);
-      else this.#forgetSessionIndex(sessionId, workspaceRoot);
-    }
+    const key = this.key(sessionId, workspaceRoot);
+    const removed = this.#registry.delete(key);
+    this.#pendingPersists.delete(key);
+    this.#persistFailures.delete(key);
+    if (options.forgetWorkspaceIndex === true) this.#forgetWorkspaceIndex(workspaceRoot);
+    else this.#forgetSessionIndex(sessionId, workspaceRoot);
     return removed;
   }
 
@@ -825,17 +850,26 @@ export class SessionStoreManager {
     for (const key of [...this.#pendingLoads.keys()]) {
       if (key.startsWith(prefix)) this.#pendingLoads.delete(key);
     }
+    for (const key of [...this.#pendingPersists.keys()]) {
+      if (key.startsWith(prefix)) this.#pendingPersists.delete(key);
+    }
+    for (const key of [...this.#persistFailures.keys()]) {
+      if (key.startsWith(prefix)) this.#persistFailures.delete(key);
+    }
     this.#forgetWorkspaceIndex(workspaceRoot);
     this.#scanPromiseByWorkspace.delete(workspaceRoot);
   }
 
   clearAll(): void {
     this.#registry.clear();
+    this.#pendingLoads.clear();
+    this.#pendingPersists.clear();
+    this.#persistFailures.clear();
     this.#rootIdIndex.clear();
     this.#scanPromiseByWorkspace.clear();
   }
 
-  has(sessionId: string, workspaceRoot?: string): boolean {
+  has(sessionId: string, workspaceRoot: string): boolean {
     return this.#registry.has(this.key(sessionId, workspaceRoot));
   }
 
@@ -955,34 +989,31 @@ async function readDescendantSessionEntries(
 
 async function readSessionFileForTree(
   sessionId: string,
-  _workspaceRoot: string,
-  _rootSessionId: string,
   filePath: string,
-  diagnostics: SessionTreeDiagnostic[],
-): Promise<HydratedSessionFile | undefined> {
-  return await readRawSessionFileForTree(sessionId, filePath, diagnostics);
-}
-
-async function readRawSessionFileForTree(
-  sessionId: string,
-  filePath: string,
-  diagnostics: SessionTreeDiagnostic[],
-): Promise<HydratedSessionFile | undefined> {
+): Promise<HydratedSessionFile> {
   let raw: unknown;
   try {
     raw = JSON.parse(await Bun.file(filePath).text());
   } catch (error) {
-    pushDiagnostic(diagnostics, "invalid_json", sessionId, filePath,
-      `Invalid session JSON in "${filePath}": ${error instanceof Error ? error.message : String(error)}`);
-    return undefined;
+    throw new SessionTreeIntegrityError(
+      "invalid_json",
+      sessionId,
+      filePath,
+      `Invalid session JSON in "${filePath}": ${error instanceof Error ? error.message : String(error)}`,
+      error,
+    );
   }
 
   const parsed = SessionFileSchema.safeParse(raw);
-    if (parsed.success) return reconcileInterruptedSessionFile(parsed.data);
+  if (parsed.success) return reconcileInterruptedSessionFile(parsed.data);
 
-  pushDiagnostic(diagnostics, "invalid_json", readDiagnosticSessionId(raw) ?? sessionId, filePath,
-    `Invalid session JSON in "${filePath}": ${parsed.error.message}`);
-  return undefined;
+  throw new SessionTreeIntegrityError(
+    "invalid_schema",
+    readDiagnosticSessionId(raw) ?? sessionId,
+    filePath,
+    `Invalid session schema in "${filePath}": ${parsed.error.message}`,
+    parsed.error,
+  );
 }
 
 function readDiagnosticSessionId(value: unknown): string | undefined {
@@ -991,29 +1022,21 @@ function readDiagnosticSessionId(value: unknown): string | undefined {
   return typeof sessionId === "string" ? sessionId : undefined;
 }
 
-function toSessionSummary(file: HydratedSessionFile, workspaceRoot: string): SessionSummary {
-  const lastUpdatedAt = readLastUpdatedAt(file);
+function toSessionSummary(file: HydratedSessionFile): SessionSummary {
   return {
     sessionId: file.sessionId,
-    cwd: file.cwd ?? workspaceRoot,
+    cwd: file.cwd,
     rootSessionId: file.rootSessionId,
     ...(file.parentSessionId === undefined ? {} : { parentSessionId: file.parentSessionId }),
     ...(file.goalId === undefined ? {} : { goalId: file.goalId }),
     ...(file.loopId === undefined ? {} : { loopId: file.loopId }),
     ...(file.sessionRole === undefined ? {} : { sessionRole: file.sessionRole }),
     agentName: file.agentName,
-    ...(file.modelInfo === undefined ? {} : { modelInfo: file.modelInfo }),
-    title: file.title ?? null,
+    modelInfo: file.modelInfo,
+    title: file.title,
     createdAt: file.createdAt,
-    ...(lastUpdatedAt === undefined ? {} : { lastUpdatedAt }),
+    updatedAt: file.updatedAt,
   };
-}
-
-function readLastUpdatedAt(file: HydratedSessionFile): number | undefined {
-  const record = file as HydratedSessionFile & { lastUpdatedAt?: unknown; updatedAt?: unknown };
-  if (typeof record.lastUpdatedAt === "number") return record.lastUpdatedAt;
-  if (typeof record.updatedAt === "number") return record.updatedAt;
-  return undefined;
 }
 
 const TERMINAL_EXECUTION_STATUSES = new Set<HydratedSessionFile["executions"][number]["status"]>([
@@ -1094,21 +1117,6 @@ function reconcileInterruptedSessionFile(file: HydratedSessionFile): HydratedSes
   return changed ? { ...file, executions, childSessionLinks, messages } : file;
 }
 
-function pushDiagnostic(
-  diagnostics: SessionTreeDiagnostic[],
-  type: SessionTreeDiagnosticType,
-  sessionId: string | undefined,
-  filePath: string | undefined,
-  message: string,
-): void {
-  diagnostics.push({
-    type,
-    ...(sessionId === undefined ? {} : { sessionId }),
-    ...(filePath === undefined ? {} : { filePath }),
-    message,
-  });
-}
-
 function findParentCycle(
   startSessionId: string,
   rootSessionId: string,
@@ -1132,12 +1140,10 @@ function findParentCycle(
 function attachChildren(
   node: SessionTreeNode,
   childrenByParent: Map<string, SessionSummary[]>,
-  invalidIds: Set<string>,
 ): void {
   const children = childrenByParent.get(node.session.sessionId) ?? [];
   node.children = children
-    .filter((child) => !invalidIds.has(child.sessionId))
     .sort((left, right) => left.createdAt - right.createdAt)
     .map((session) => ({ session, children: [] }));
-  for (const child of node.children) attachChildren(child, childrenByParent, invalidIds);
+  for (const child of node.children) attachChildren(child, childrenByParent);
 }

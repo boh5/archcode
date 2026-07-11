@@ -28,7 +28,10 @@ function createRunner(): GoalRunner {
   const sessionIds = ["main-session", "retry-session"];
   return new GoalRunner({
     goalStateManager: manager,
+    workspaceRoot,
     createSession: mock(async () => sessionIds.shift() ?? `session-${crypto.randomUUID()}`),
+    getSessionCwd: mock(async () => workspaceRoot),
+    isSessionActive: mock(async () => false),
   });
 }
 

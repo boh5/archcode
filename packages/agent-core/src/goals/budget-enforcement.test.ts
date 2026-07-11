@@ -32,7 +32,6 @@ beforeEach(async () => {
     goalState: projectContext.goalState,
     loopState: new LoopStateManager(workspaceRoot),
   });
-  await projectContext.hitl.load(workspaceRoot);
 });
 
 afterAll(async () => {
@@ -49,7 +48,12 @@ describe("Goal budget enforcement", () => {
     const pending = await waitForPendingBudgetApproval(goal.id);
     const blocked = await projectContext.goalState.read(goal.id);
     expect(result).toBeInstanceOf(GoalBudgetEnforcementStopError);
-    expect(pending.source).toEqual({ type: "goal_budget", goalId: goal.id, approvalPoint: BUDGET_APPROVAL_POINT });
+    expect(pending.source).toEqual({
+      type: "goal_budget",
+      goalId: goal.id,
+      approvalPoint: BUDGET_APPROVAL_POINT,
+      resumeStatus: "running",
+    });
     expect(blocked).toMatchObject({
       status: "blocked",
       pendingHitlIds: [pending.hitlId],

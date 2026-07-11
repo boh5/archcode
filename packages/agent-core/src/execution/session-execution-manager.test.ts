@@ -19,6 +19,7 @@ import type { SessionStoreState, ToolChildSessionLink } from "../store/types";
 import type { AgentFactory } from "../agents/factory";
 import type { AgentDefinition } from "../agents/factory-types";
 import type { ToolExecutionOrigin } from "../tools/types";
+import { createEmptyCompressionState } from "../compression";
 
 const workspaceRoot = join(import.meta.dir, "__test_tmp__", "session-execution-manager-workspace");
 const storeManager = new SessionStoreManager({ logger: silentLogger });
@@ -64,6 +65,7 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 
 class MockAgent implements Agent {
   readonly store;
+  readonly cwd: string;
   readonly runMock = mock(async (_message: string, options?: AgentRunOptions | AbortSignal): Promise<AgentResult> => {
     const signal = options instanceof AbortSignal ? options : options?.abort;
     const result = await withAbort(this.result, signal);
@@ -80,6 +82,7 @@ class MockAgent implements Agent {
     readonly workspaceRoot: string = "/workspace",
   ) {
     this.store = storeManager.create(sessionId, workspaceRoot);
+    this.cwd = this.store.getState().cwd;
   }
 
   run(userMessage: string, abort?: AbortSignal): Promise<AgentResult>;
@@ -239,15 +242,19 @@ async function writeSessionFile(input: {
 }): Promise<void> {
   const rootSessionId = input.rootSessionId ?? input.sessionId;
   const file: SessionFile = {
+    schemaVersion: 1,
     sessionId: input.sessionId,
     createdAt: Date.now(),
+    updatedAt: Date.now(),
     cwd: input.cwd ?? workspaceRoot,
     agentName: input.parentSessionId === undefined ? "orchestrator" : "explore",
+    modelInfo: null,
     title: input.title ?? null,
     messages: [],
     steps: [],
     stats: createEmptySessionStats(),
     executions: input.executions ?? [],
+    compression: createEmptyCompressionState(),
     todos: [],
     reminders: [],
     childSessionLinks: input.childSessionLinks ?? [],
@@ -684,6 +691,7 @@ describe("SessionExecutionManager", () => {
     const started = new Set<string>();
     const uncooperative = (sessionId: string): Agent => ({
       store: storeManager.get(sessionId, workspaceRoot)!,
+      cwd: workspaceRoot,
       run: mock(async () => {
         started.add(sessionId);
         return await never;
@@ -1430,6 +1438,7 @@ describe("SessionExecutionManager", () => {
     let ownerCreatedDuringAbort = false;
     const agent: Agent = {
       store,
+      cwd: store.getState().cwd,
       run: mock(async (_message: string, options?: AgentRunOptions | AbortSignal) => {
         runStarted = true;
         const signal = options instanceof AbortSignal ? options : options?.abort;
@@ -1608,7 +1617,11 @@ describe("SessionExecutionManager", () => {
     await writeSessionFile({ sessionId: rootId });
     await writeSessionFile({ sessionId: childId, rootSessionId: rootId, parentSessionId: rootId });
     const childAgent = {
-      store: storeManager.create(childId),
+      store: storeManager.create(childId, workspaceRoot, {
+        rootSessionId: rootId,
+        parentSessionId: rootId,
+      }),
+      cwd: workspaceRoot,
       run: mock(async (): Promise<AgentResult> => await new Promise(() => undefined)),
       dispose: mock(() => undefined),
     } as unknown as MockAgent;

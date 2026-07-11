@@ -8,10 +8,12 @@ export function createMockStore(
 ): StoreApi<SessionStoreState> {
   const state: SessionStoreState = {
     sessionId: "test",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
     cwd: "/workspace",
     agentName: "orchestrator",
+    modelInfo: null,
     title: null,
-    createdAt: Date.now(),
     messages: [],
     steps: [],
     stats: createEmptySessionStats(),

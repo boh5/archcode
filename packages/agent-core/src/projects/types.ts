@@ -1,3 +1,4 @@
+import { isAbsolute } from "node:path";
 import { z } from "zod/v4";
 import type { GoalStateManager } from "../goals/state";
 import type { GoalCancellationCapability } from "../goals/cancellation";
@@ -24,10 +25,10 @@ export interface ProjectInfo {
 export interface ProjectContext {
   project: ProjectInfo;
   goalState: GoalStateManager;
-  goalCancellation?: GoalCancellationCapability;
+  goalCancellation: GoalCancellationCapability;
   loopState: LoopStateManager;
   hitl: HitlService;
-  hitlResumeCoordinator?: ResumeCoordinator;
+  hitlResumeCoordinator: ResumeCoordinator;
   memory: MemoryFileManager;
   approvals: ProjectApprovalManager;
 }
@@ -38,9 +39,9 @@ export interface ProjectContext {
 
 /** Zod schema for ProjectInfo — validates persisted project entries */
 export const ProjectInfoSchema: z.ZodType<ProjectInfo> = z.strictObject({
-  slug: z.string(),
-  name: z.string(),
-  workspaceRoot: z.string(),
-  addedAt: z.string(),
-  lastOpenedAt: z.string().optional(),
+  slug: z.string().refine((value) => value.trim().length > 0, "Project slug must not be empty"),
+  name: z.string().refine((value) => value.trim().length > 0, "Project name must not be empty"),
+  workspaceRoot: z.string().refine(isAbsolute, "Project workspaceRoot must be absolute"),
+  addedAt: z.iso.datetime(),
+  lastOpenedAt: z.iso.datetime().optional(),
 });

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { GlobalSSEHitlRealtimeEvent, HitlProjection } from "@archcode/protocol";
-import { hitlStore, selectHitlProjections } from "./hitl-store";
+import { hitlIdentityKey, hitlStore, selectHitlProjections } from "./hitl-store";
 
 describe("hitlStore", () => {
   beforeEach(() => {
@@ -11,11 +11,11 @@ describe("hitlStore", () => {
     const request = hitlEvent({ hitlId: "hitl-1" });
     hitlStore.getState().applyRealtimeEvent(request);
 
-    expect(hitlStore.getState().projections["hitl-1"]).toEqual(request.projection);
+    expect(hitlStore.getState().projections[hitlIdentityKey(request.projection)]).toEqual(request.projection);
 
     hitlStore.getState().applyRealtimeEvent(hitlEvent({ hitlId: "hitl-1", status: "resolved", payloadType: "hitl.resolved" }));
 
-    expect(hitlStore.getState().projections["hitl-1"]).toBeUndefined();
+    expect(hitlStore.getState().projections[hitlIdentityKey(request.projection)]).toBeUndefined();
   });
 
   test("removes resume_claimed projections from the visible realtime queue", () => {
@@ -28,7 +28,21 @@ describe("hitlStore", () => {
       payloadType: "hitl.updated",
     }));
 
-    expect(hitlStore.getState().projections["hitl-claimed"]).toBeUndefined();
+    expect(hitlStore.getState().projections[hitlIdentityKey(request.projection)]).toBeUndefined();
+  });
+
+  test("keeps the same hitlId under different owners as separate projections", () => {
+    const first = hitlEvent({ hitlId: "shared-id", ownerId: "session-1" });
+    const second = hitlEvent({ hitlId: "shared-id", ownerId: "session-2" });
+
+    hitlStore.getState().applyRealtimeEvent(first);
+    hitlStore.getState().applyRealtimeEvent(second);
+
+    expect(Object.values(hitlStore.getState().projections)).toEqual(expect.arrayContaining([
+      first.projection,
+      second.projection,
+    ]));
+    expect(Object.values(hitlStore.getState().projections)).toHaveLength(2);
   });
 
   test("authoritative snapshot reset clears stale projections for listed projects", () => {
@@ -64,7 +78,7 @@ describe("hitlStore", () => {
     const goalHitl = projection({
       hitlId: "goal-hitl",
       owner: { projectSlug: "proj", ownerType: "goal", ownerId: "goal-1" },
-      source: { type: "goal_budget", goalId: "goal-1", approvalPoint: "budget" },
+      source: { type: "goal_budget", goalId: "goal-1", approvalPoint: "budget" , resumeStatus: "running"},
       ancestry: { goalId: "goal-1", loopId: "loop-1", projectionPath: ["loop", "loop-1", "goal", "goal-1"] },
     });
 
@@ -72,8 +86,14 @@ describe("hitlStore", () => {
   });
 });
 
-function hitlEvent(input: { hitlId: string; status?: HitlProjection["status"]; payloadType?: "hitl.request" | "hitl.updated" | "hitl.resolved" }): GlobalSSEHitlRealtimeEvent {
-  const eventProjection = projection({ hitlId: input.hitlId, status: input.status ?? "pending" });
+function hitlEvent(input: { hitlId: string; ownerId?: string; status?: HitlProjection["status"]; payloadType?: "hitl.request" | "hitl.updated" | "hitl.resolved" }): GlobalSSEHitlRealtimeEvent {
+  const eventProjection = projection({
+    hitlId: input.hitlId,
+    status: input.status ?? "pending",
+    ...(input.ownerId === undefined ? {} : {
+      owner: { projectSlug: "proj", ownerType: "session", ownerId: input.ownerId },
+    }),
+  });
   return {
     type: "hitl.event",
     projectSlug: eventProjection.project.slug,

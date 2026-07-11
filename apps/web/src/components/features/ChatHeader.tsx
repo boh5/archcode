@@ -50,7 +50,7 @@ export function ChatHeader({ slug, sessionId, goalId, projectRoot, onToggleDetai
             </span>
           </span>
         )}
-        {cwd !== undefined && projectRoot !== undefined && cwd !== projectRoot && (
+        {cwd !== null && projectRoot !== undefined && cwd !== projectRoot && (
           <span
             data-testid="session-worktree-badge"
             title={cwd}

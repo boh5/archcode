@@ -8,7 +8,7 @@ export type { ProcessRunner, ProcessRunnerInput, ProcessRunnerResult } from "./p
 export type { Agent, AgentResult, AgentRunOptions } from "./agents/types";
 export { AgentRunningError, ChildSessionCwdMismatchError, ConcurrentSessionLimitError, SessionCwdTransitionInProgressError, SessionHitlBlockedError, SessionHitlResumeInProgressError } from "./agents/errors";
 
-export type { CommandResult, SlashCommandResult } from "./commands/types";
+export type { SlashCommandResult } from "./commands/types";
 export {
   SessionCwdReferenceMigrationService,
   SessionDeleteInProgressError,
@@ -133,7 +133,9 @@ export {
   SessionDeleteConflictError,
   SessionFileNotFoundError,
   SessionInitialPersistenceError,
+  SessionTreeIntegrityError,
 } from "./store/errors";
+export type { SessionTreeIntegrityReason } from "./store/errors";
 export { reduceStreamEvent } from "./store/reduce";
 export { assertValidSessionCwd, resolveValidSessionCwd } from "./store/session-cwd";
 export type {

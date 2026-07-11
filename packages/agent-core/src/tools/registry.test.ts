@@ -71,9 +71,7 @@ function makeProjectContext(
 }
 
 async function makeLoadedProjectContext(workspaceRoot: string): Promise<ProjectContext> {
-  const projectContext = makeProjectContext(workspaceRoot);
-  await projectContext.hitl.load(workspaceRoot);
-  return projectContext;
+  return makeProjectContext(workspaceRoot);
 }
 
 // ─── ToolRegistry ───
@@ -1286,6 +1284,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       const sessionId = crypto.randomUUID();
       const ctx = makeContext({
         cwd: workspaceRoot,
+        agentName: "orchestrator",
         store: createSessionStore(sessionId, workspaceRoot),
         projectContext: await makeLoadedProjectContext(workspaceRoot),
       });
@@ -1427,6 +1426,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
         toolName: "sensitiveReadTool",
         allowedTools: new Set(["sensitiveReadTool"]),
         cwd: workspaceRoot,
+        agentName: "orchestrator",
         store: createSessionStore(sessionId, workspaceRoot),
         projectContext: await makeLoadedProjectContext(workspaceRoot),
       });
@@ -2121,6 +2121,7 @@ describe("Permission API contract — registry", () => {
 
       const ctx = makeContext({
         cwd: workspaceRoot,
+        agentName: "orchestrator",
         store: createSessionStore(sessionId, workspaceRoot),
         projectContext: await makeLoadedProjectContext(workspaceRoot),
       });

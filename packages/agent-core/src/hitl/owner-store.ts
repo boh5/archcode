@@ -41,10 +41,10 @@ const HitlDisplayPayloadSchema: z.ZodType<HitlDisplayPayload> = z.strictObject({
 const HitlSourceSchema: z.ZodType<HitlSource> = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("ask_user"), sessionId: z.string(), toolCallId: z.string().optional() }),
   z.strictObject({ type: z.literal("tool_permission"), sessionId: z.string(), toolCallId: z.string(), toolName: z.string() }),
-  z.strictObject({ type: z.literal("goal_approval"), goalId: z.string(), approvalPoint: z.string().optional() }),
-  z.strictObject({ type: z.literal("goal_review"), goalId: z.string() }),
-  z.strictObject({ type: z.literal("goal_budget"), goalId: z.string(), approvalPoint: z.string().optional() }),
-  z.strictObject({ type: z.literal("goal_question"), goalId: z.string(), questionKey: z.string() }),
+  z.strictObject({ type: z.literal("goal_approval"), goalId: z.string(), approvalPoint: z.string().optional(), resumeStatus: z.enum(["running", "reviewing"]) }),
+  z.strictObject({ type: z.literal("goal_review"), goalId: z.string(), resumeStatus: z.literal("reviewing") }),
+  z.strictObject({ type: z.literal("goal_budget"), goalId: z.string(), approvalPoint: z.string().optional(), resumeStatus: z.enum(["running", "reviewing"]) }),
+  z.strictObject({ type: z.literal("goal_question"), goalId: z.string(), questionKey: z.string(), resumeStatus: z.enum(["running", "reviewing"]) }),
   z.strictObject({ type: z.literal("loop_approval"), loopId: z.string(), approvalPoint: z.string() }),
   z.strictObject({ type: z.literal("loop_blocker"), loopId: z.string(), runId: z.string().optional(), reason: z.string() }),
   z.strictObject({ type: z.literal("loop_retry"), loopId: z.string(), runId: z.string(), attempt: z.number().int().nonnegative() }),
@@ -52,15 +52,14 @@ const HitlSourceSchema: z.ZodType<HitlSource> = z.discriminatedUnion("type", [
 ]);
 
 const HitlResumeMetadataSchema: z.ZodType<HitlResumeMetadata> = z.strictObject({
-  claimId: z.string().optional(),
-  claimedAt: z.string().optional(),
+  claimId: z.string().trim().min(1),
+  claimedAt: z.string().trim().min(1),
   claimedBy: z.string().optional(),
-  intent: z.enum(["respond", "cancel"]).optional(),
-  attempt: z.number().int().nonnegative().optional(),
+  intent: z.enum(["respond", "cancel"]),
+  attempt: z.number().int().positive(),
   lastError: z.string().optional(),
   failedAt: z.string().optional(),
   failureReason: z.string().optional(),
-  attempts: z.number().int().nonnegative().optional(),
 });
 
 const GoalEvidenceRefSchema = z.strictObject({
@@ -129,6 +128,14 @@ const HitlRecordSchema: z.ZodType<HitlRecord> = z.strictObject({
   createdAt: z.string(),
   updatedAt: z.string(),
   resolvedAt: z.string().optional(),
+}).superRefine((record, ctx) => {
+  if (record.status !== "resume_claimed" && record.status !== "resume_failed") return;
+  if (record.response === undefined) {
+    ctx.addIssue({ code: "custom", path: ["response"], message: `${record.status} requires a response` });
+  }
+  if (record.resume === undefined) {
+    ctx.addIssue({ code: "custom", path: ["resume"], message: `${record.status} requires complete resume metadata` });
+  }
 });
 
 const HitlFileSchema: z.ZodType<HitlFile> = z.strictObject({
@@ -186,8 +193,10 @@ export class HitlOwnerStore {
 
     const parsed = HitlFileSchema.parse(JSON.parse(await file.text()));
     assertSameOwner(this.owner, parsed.owner);
+    assertFileRecordIdentities(parsed);
     assertUniqueHitlIds(parsed);
-    return normalizeHitlFile(parsed, this.recentTerminalLimit);
+    assertHitlBuckets(parsed, this.recentTerminalLimit);
+    return cloneFile(parsed);
   }
 
   async write(file: HitlFile): Promise<void> {
@@ -197,16 +206,22 @@ export class HitlOwnerStore {
   async #writeUnlocked(file: HitlFile): Promise<void> {
     assertSameOwner(this.owner, file.owner);
     const parsed = HitlFileSchema.parse(file);
+    assertFileRecordIdentities(parsed);
     assertUniqueHitlIds(parsed);
-    const normalized = normalizeHitlFile(parsed, this.recentTerminalLimit);
-    assertUniqueHitlIds(normalized);
-    await atomicWrite(this.filePath, `${JSON.stringify(normalized, null, 2)}\n`);
+    assertHitlBuckets(parsed);
+    const retained = HitlFileSchema.parse({
+      ...parsed,
+      recentTerminal: parsed.recentTerminal.slice(-this.recentTerminalLimit),
+    });
+    assertUniqueHitlIds(retained);
+    await atomicWrite(this.filePath, `${JSON.stringify(retained, null, 2)}\n`);
   }
 
   async create(record: HitlRecord): Promise<HitlCreateResult> {
     return await withOwnerFileMutationLock(this.filePath, async () => {
       assertSameOwner(this.owner, record.owner);
       const parsed = HitlRecordSchema.parse(record);
+      assertRecordIdentity(this.owner, parsed);
       if (!ACTIVE_HITL_STATUSES.has(parsed.status)) {
         throw new HitlRecordStateError(parsed.hitlId, `Cannot create non-active HITL record with status ${parsed.status}`);
       }
@@ -241,7 +256,7 @@ export class HitlOwnerStore {
     return { status: "found", record: cloneRecord(record), file };
   }
 
-  async claim(hitlId: string, response: HitlResponse, resume: HitlResumeMetadata = {}): Promise<HitlRecord> {
+  async claim(hitlId: string, response: HitlResponse, resume: HitlResumeMetadata): Promise<HitlRecord> {
     return await withOwnerFileMutationLock(this.filePath, async () => {
       const file = await this.#readUnlocked();
       const index = file.pending.findIndex((entry) => entry.hitlId === hitlId);
@@ -253,7 +268,6 @@ export class HitlOwnerStore {
       }
 
       const now = new Date().toISOString();
-      const previousAttempt = current.resume?.attempt ?? current.resume?.attempts ?? 0;
       const next = HitlRecordSchema.parse({
         ...current,
         status: "resume_claimed",
@@ -261,8 +275,6 @@ export class HitlOwnerStore {
         resume: {
           ...current.resume,
           ...resume,
-          claimedAt: resume.claimedAt ?? now,
-          attempt: resume.attempt ?? (previousAttempt + 1),
         },
         updatedAt: now,
       });
@@ -280,6 +292,9 @@ export class HitlOwnerStore {
       if (index === -1) throw new HitlRecordStateError(hitlId, "Cannot fail missing or terminal HITL record");
 
       const current = file.pending[index]!;
+      if (current.status !== "resume_claimed") {
+        throw new HitlRecordStateError(hitlId, `Cannot fail HITL record with status ${current.status}`);
+      }
       const now = new Date().toISOString();
       const next = HitlRecordSchema.parse({
         ...current,
@@ -384,13 +399,23 @@ export function isTerminalHitlStatus(status: HitlStatus): boolean {
   return TERMINAL_HITL_STATUSES.has(status);
 }
 
-function normalizeHitlFile(file: HitlFile, recentTerminalLimit: number): HitlFile {
-  const pending = file.pending.filter((record) => ACTIVE_HITL_STATUSES.has(record.status)).map(cloneRecord);
-  const recentTerminal = file.recentTerminal
-    .filter((record) => TERMINAL_HITL_STATUSES.has(record.status))
-    .slice(-recentTerminalLimit)
-    .map(cloneRecord);
-  return HitlFileSchema.parse({ ...file, pending, recentTerminal });
+function assertHitlBuckets(file: HitlFile, recentTerminalLimit?: number): void {
+  for (const record of file.pending) {
+    if (!ACTIVE_HITL_STATUSES.has(record.status)) {
+      throw new HitlRecordStateError(record.hitlId, `Terminal HITL record ${record.hitlId} cannot be stored in pending`);
+    }
+  }
+  for (const record of file.recentTerminal) {
+    if (!TERMINAL_HITL_STATUSES.has(record.status)) {
+      throw new HitlRecordStateError(record.hitlId, `Active HITL record ${record.hitlId} cannot be stored in recentTerminal`);
+    }
+  }
+  if (recentTerminalLimit !== undefined && file.recentTerminal.length > recentTerminalLimit) {
+    throw new HitlRecordStateError(
+      file.recentTerminal[recentTerminalLimit]?.hitlId ?? "recentTerminal",
+      `recentTerminal exceeds retention limit ${recentTerminalLimit}`,
+    );
+  }
 }
 
 function assertUniqueHitlIds(file: HitlFile): void {
@@ -400,6 +425,30 @@ function assertUniqueHitlIds(file: HitlFile): void {
       throw new HitlRecordStateError(record.hitlId, `Duplicate HITL id ${record.hitlId} in owner-local file`);
     }
     seen.add(record.hitlId);
+  }
+}
+
+function assertFileRecordIdentities(file: HitlFile): void {
+  for (const record of [...file.pending, ...file.recentTerminal]) {
+    assertRecordIdentity(file.owner, record);
+  }
+}
+
+function assertRecordIdentity(owner: HitlOwnerKey, record: HitlRecord): void {
+  assertSameOwner(owner, record.owner);
+  const source = record.source;
+  const matches = owner.ownerType === "session"
+    ? (source.type === "ask_user" || source.type === "tool_permission") && source.sessionId === owner.ownerId
+    : owner.ownerType === "goal"
+      ? (source.type === "goal_approval" || source.type === "goal_review" || source.type === "goal_budget" || source.type === "goal_question")
+        && source.goalId === owner.ownerId
+      : (source.type === "loop_approval" || source.type === "loop_blocker" || source.type === "loop_retry" || source.type === "loop_question")
+        && source.loopId === owner.ownerId;
+  if (!matches) {
+    throw new HitlRecordStateError(
+      record.hitlId,
+      `HITL source ${source.type} does not match owner ${ownerKey(owner)}`,
+    );
   }
 }
 
@@ -413,4 +462,8 @@ function ownerKey(owner: HitlOwnerKey): string {
 
 function cloneRecord(record: HitlRecord): HitlRecord {
   return HitlRecordSchema.parse(structuredClone(record));
+}
+
+function cloneFile(file: HitlFile): HitlFile {
+  return HitlFileSchema.parse(structuredClone(file));
 }

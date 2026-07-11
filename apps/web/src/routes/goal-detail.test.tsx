@@ -118,10 +118,13 @@ function makeGoal(overrides: Partial<GoalState> = {}): GoalState {
     attempt: 1,
     pendingHitlIds: [],
     approvalRefs: [],
+    appliedHitlIds: [],
     childSessionIds: [],
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
+    version: overrides.version ?? 1,
+    useWorktree: overrides.useWorktree ?? false,
   };
 }
 
@@ -130,7 +133,7 @@ function makeHitlItem(overrides: Partial<HitlProjection> = {}): HitlProjection {
     hitlId: "hitl-1",
     project: { slug: "demo", name: "Demo Project" },
     owner: { projectSlug: "demo", ownerType: "session", ownerId: "session-1" },
-    source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" },
+    source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
     status: "pending",
     displayPayload: { title: "Approve?", summary: "Please approve", redacted: true },
     allowedActions: ["approve", "deny", "cancel"],
@@ -742,7 +745,7 @@ describe("GoalDetailRoute", () => {
     const goal = makeGoal({ id: "goal-1", status: "running" });
     const matchingItem = makeHitlItem({
       hitlId: "hitl-goal-1",
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" },
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
       displayPayload: { title: "Approve budget?", summary: "Confirm spend", redacted: true },
     });
 
@@ -785,7 +788,7 @@ describe("GoalDetailRoute", () => {
     const goal = makeGoal({ id: "goal-1", status: "running" });
     const ownItem = makeHitlItem({
       hitlId: "hitl-own",
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" },
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
       displayPayload: { title: "Own approval", redacted: true },
     });
 
@@ -794,7 +797,7 @@ describe("GoalDetailRoute", () => {
       ownItem,
       makeHitlItem({
         hitlId: "hitl-other-goal",
-        source: { type: "goal_approval", goalId: "goal-other", approvalPoint: "after_plan" },
+        source: { type: "goal_approval", goalId: "goal-other", approvalPoint: "after_plan" , resumeStatus: "running"},
         displayPayload: { title: "Other approval", redacted: true },
       }),
     );
@@ -866,7 +869,8 @@ describe("GoalDetailRoute", () => {
     const goal = makeGoal({ id: "goal-1", status: "running" });
     const matchingItem = makeHitlItem({
       hitlId: "hitl-cancel-target",
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" },
+      owner: { projectSlug: "demo", ownerType: "goal", ownerId: "goal-1" },
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
       displayPayload: { title: "Approve?", redacted: true },
     });
 
@@ -894,7 +898,7 @@ describe("GoalDetailRoute", () => {
 
       await waitFor(() => {
         expect(fetchMock).toHaveBeenCalledWith(
-          expect.stringContaining("/api/projects/demo/hitl/hitl-cancel-target/cancel"),
+          expect.stringContaining("/api/projects/demo/hitl/goal/goal-1/hitl-cancel-target/cancel"),
           expect.objectContaining({ method: "POST" }),
         );
       });

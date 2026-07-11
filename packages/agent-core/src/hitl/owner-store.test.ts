@@ -1,9 +1,9 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
-import type { HitlOwnerKey, HitlRecord } from "@archcode/protocol";
+import type { HitlOwnerKey, HitlRecord, HitlResumeMetadata } from "@archcode/protocol";
 
-import { HitlOwnerStore, HitlRecordStateError } from "./owner-store";
+import { HitlOwnerMismatchError, HitlOwnerStore, HitlRecordStateError } from "./owner-store";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "owner-store");
 
@@ -39,8 +39,9 @@ describe("HitlOwnerStore", () => {
 
     await store.create(record(owner, "active-pending", "active-pending"));
     const claimed = await store.create(record(owner, "active-claimed", "active-claimed"));
-    await store.claim(claimed.record.hitlId, { type: "approval_decision", decision: "approved" });
+    await store.claim(claimed.record.hitlId, { type: "approval_decision", decision: "approved" }, claimMetadata("active-claimed"));
     const failed = await store.create(record(owner, "active-failed", "active-failed"));
+    await store.claim(failed.record.hitlId, { type: "approval_decision", decision: "approved" }, claimMetadata("active-failed"));
     await store.markResumeFailed(failed.record.hitlId, "adapter failed");
 
     for (let index = 0; index < 25; index += 1) {
@@ -76,6 +77,89 @@ describe("HitlOwnerStore", () => {
     }, null, 2)}\n`);
 
     await expectRejects(store.read(), Error);
+  });
+
+  test("rejects unversioned owner files and the removed resume attempts field", async () => {
+    const workspace = await mkdtemp(join(TMP_ROOT, "workspace-"));
+    const owner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "session", ownerId: crypto.randomUUID() };
+    const filePath = join(workspace, ".archcode", "sessions", owner.ownerId, "hitl.json");
+    const store = new HitlOwnerStore(filePath, owner);
+    const updatedAt = new Date().toISOString();
+    const claimed = {
+      ...record(owner, "legacy-attempts", "legacy-attempts"),
+      status: "resume_claimed",
+      response: { type: "question_answer", answers: ["continue"] },
+      resume: { claimId: "legacy-claim", attempts: 2 },
+    };
+
+    await Bun.write(filePath, `${JSON.stringify({
+      owner,
+      pending: [],
+      recentTerminal: [],
+      updatedAt,
+    }, null, 2)}\n`);
+    await expectRejects(store.read(), Error);
+
+    await Bun.write(filePath, `${JSON.stringify({
+      version: 1,
+      owner,
+      pending: [claimed],
+      recentTerminal: [],
+      updatedAt,
+    }, null, 2)}\n`);
+    await expectRejects(store.read(), Error);
+  });
+
+  test("rejects claimed records without a complete resume identity", async () => {
+    const workspace = await mkdtemp(join(TMP_ROOT, "workspace-"));
+    const owner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "session", ownerId: crypto.randomUUID() };
+    const store = new HitlOwnerStore(join(workspace, ".archcode", "sessions", owner.ownerId, "hitl.json"), owner);
+    const created = await store.create(record(owner, "incomplete-claim", "incomplete-claim"));
+
+    await expectRejects(store.claim(
+      created.record.hitlId,
+      { type: "question_answer", answers: ["continue"] },
+      {} as HitlResumeMetadata,
+    ), Error);
+
+    const lookup = await store.lookup(created.record.hitlId);
+    expect(lookup).toMatchObject({ status: "found", record: { status: "pending" } });
+    if (lookup.status !== "found") throw new Error("Expected the original pending HITL record");
+    expect(lookup.record).not.toHaveProperty("response");
+    expect(lookup.record).not.toHaveProperty("resume");
+  });
+
+  test("rejects owner files whose records are stored in the wrong status bucket", async () => {
+    const workspace = await mkdtemp(join(TMP_ROOT, "workspace-"));
+    const owner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "goal", ownerId: crypto.randomUUID() };
+    const filePath = join(workspace, ".archcode", "goals", owner.ownerId, "hitl.json");
+    const store = new HitlOwnerStore(filePath, owner);
+    const now = new Date().toISOString();
+    const active = record(owner, "active-in-terminal", "active-in-terminal");
+    const terminal = {
+      ...record(owner, "terminal-in-pending", "terminal-in-pending"),
+      status: "resolved",
+      response: { type: "approval_decision", decision: "approved" },
+      resolvedAt: now,
+    };
+
+    await Bun.write(filePath, `${JSON.stringify({
+      version: 1,
+      owner,
+      pending: [terminal],
+      recentTerminal: [],
+      updatedAt: now,
+    }, null, 2)}\n`);
+    await expectRejects(store.read(), HitlRecordStateError);
+
+    await Bun.write(filePath, `${JSON.stringify({
+      version: 1,
+      owner,
+      pending: [],
+      recentTerminal: [active],
+      updatedAt: now,
+    }, null, 2)}\n`);
+    await expectRejects(store.read(), HitlRecordStateError);
   });
 
   test("rejects same-owner duplicate hitlIds for different active blocking keys", async () => {
@@ -120,6 +204,59 @@ describe("HitlOwnerStore", () => {
       recentTerminal: [terminal],
       updatedAt: new Date().toISOString(),
     }), HitlRecordStateError);
+  });
+
+  test("rejects records whose owner differs from the owner-local file", async () => {
+    const workspace = await mkdtemp(join(TMP_ROOT, "workspace-"));
+    const owner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "session", ownerId: crypto.randomUUID() };
+    const foreignOwner: HitlOwnerKey = { ...owner, ownerId: crypto.randomUUID() };
+    const filePath = join(workspace, ".archcode", "sessions", owner.ownerId, "hitl.json");
+    const store = new HitlOwnerStore(filePath, owner);
+    const foreignRecord = record(foreignOwner, "foreign-owner", "foreign-owner");
+    const file = {
+      version: 1 as const,
+      owner,
+      pending: [foreignRecord],
+      recentTerminal: [],
+      updatedAt: new Date().toISOString(),
+    };
+
+    await expectRejects(store.write(file), HitlOwnerMismatchError);
+    await Bun.write(filePath, `${JSON.stringify(file, null, 2)}\n`);
+    await expectRejects(store.read(), HitlOwnerMismatchError);
+  });
+
+  test("rejects records whose source type or id differs from their owner", async () => {
+    const workspace = await mkdtemp(join(TMP_ROOT, "workspace-"));
+    const owner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "session", ownerId: crypto.randomUUID() };
+    const filePath = join(workspace, ".archcode", "sessions", owner.ownerId, "hitl.json");
+    const store = new HitlOwnerStore(filePath, owner);
+    const wrongSourceId = {
+      ...record(owner, "wrong-source-id", "wrong-source-id"),
+      source: { type: "ask_user" as const, sessionId: crypto.randomUUID() },
+    };
+    const wrongSourceType = {
+      ...record(owner, "wrong-source-type", "wrong-source-type"),
+      source: { type: "goal_review" as const, goalId: owner.ownerId, resumeStatus: "reviewing" as const },
+    };
+
+    await expectRejects(store.create(wrongSourceId), HitlRecordStateError);
+    await expectRejects(store.write({
+      version: 1,
+      owner,
+      pending: [wrongSourceType],
+      recentTerminal: [],
+      updatedAt: new Date().toISOString(),
+    }), HitlRecordStateError);
+
+    await Bun.write(filePath, `${JSON.stringify({
+      version: 1,
+      owner,
+      pending: [wrongSourceId],
+      recentTerminal: [],
+      updatedAt: new Date().toISOString(),
+    }, null, 2)}\n`);
+    await expectRejects(store.read(), HitlRecordStateError);
   });
 
   test("rejects reads from an owner-local file that already contains duplicate hitlIds", async () => {
@@ -187,7 +324,11 @@ describe("HitlOwnerStore", () => {
 
     await Promise.all([
       new HitlOwnerStore(filePath, owner).create(record(owner, "hitl-created-concurrently", "block-created-concurrently")),
-      new HitlOwnerStore(filePath, owner).claim("hitl-create-a", { type: "question_answer", answers: ["approved"] }),
+      new HitlOwnerStore(filePath, owner).claim(
+        "hitl-create-a",
+        { type: "question_answer", answers: ["approved"] },
+        claimMetadata("hitl-create-a"),
+      ),
       new HitlOwnerStore(filePath, owner).complete("hitl-create-b", "resolved", { type: "question_answer", answers: ["done"] }),
     ]);
 
@@ -222,11 +363,20 @@ function record(owner: HitlOwnerKey, hitlId: string, blockingKey: string): HitlR
     source: owner.ownerType === "session"
       ? { type: "ask_user", sessionId: owner.ownerId }
       : owner.ownerType === "goal"
-        ? { type: "goal_budget", goalId: owner.ownerId, approvalPoint: "approval_budget_1" }
+        ? { type: "goal_budget", goalId: owner.ownerId, approvalPoint: "approval_budget_1", resumeStatus: "running" }
         : { type: "loop_blocker", loopId: owner.ownerId, reason: "needs_user" },
     status: "pending",
     displayPayload: { title: "Needs input", redacted: true },
     createdAt: now,
     updatedAt: now,
+  };
+}
+
+function claimMetadata(claimId: string): HitlResumeMetadata {
+  return {
+    claimId,
+    claimedAt: new Date().toISOString(),
+    intent: "respond",
+    attempt: 1,
   };
 }

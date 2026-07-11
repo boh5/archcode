@@ -77,6 +77,26 @@ const EMPTY_APPROVAL_FILE: PermissionApprovalFile = {
   approvals: [],
 };
 
+export class ProjectApprovalLoadError extends Error {
+  constructor(
+    public readonly path: string,
+    cause: unknown,
+  ) {
+    super(`Failed to load project approvals from "${path}"`, { cause });
+    this.name = "ProjectApprovalLoadError";
+  }
+}
+
+export class ProjectApprovalPersistError extends Error {
+  constructor(
+    public readonly path: string,
+    cause: unknown,
+  ) {
+    super(`Failed to persist project approvals to "${path}"`, { cause });
+    this.name = "ProjectApprovalPersistError";
+  }
+}
+
 function cloneApprovalFile(file: PermissionApprovalFile): PermissionApprovalFile {
   return PermissionApprovalFileSchema.parse(structuredClone(file));
 }
@@ -99,14 +119,14 @@ export class ProjectApprovalManager {
   #writeQueue: Promise<void> = Promise.resolve();
   #fileMtime: number | null = null;
 
-  constructor(private readonly logger: Logger) {}
+  constructor(_logger: Logger) {}
 
   async load(workspaceRoot: string): Promise<void> {
-    this.#workspaceRoot = workspaceRoot;
     const filePath = approvalsPath(workspaceRoot);
     const file = Bun.file(filePath);
 
     if (!(await file.exists())) {
+      this.#workspaceRoot = workspaceRoot;
       this.#approvalFile = cloneApprovalFile(EMPTY_APPROVAL_FILE);
       this.#fileMtime = null;
       return;
@@ -115,13 +135,10 @@ export class ProjectApprovalManager {
     const fileMtime = file.lastModified;
     try {
       const parsed = PermissionApprovalFileSchema.parse(JSON.parse(await file.text()));
+      this.#workspaceRoot = workspaceRoot;
       this.#approvalFile = parsed;
     } catch (error) {
-      this.logger.warn("project.approvals.load.failed", {
-        context: { path: filePath },
-        error,
-      });
-      this.#approvalFile = cloneApprovalFile(EMPTY_APPROVAL_FILE);
+      throw new ProjectApprovalLoadError(filePath, error);
     }
     this.#fileMtime = fileMtime;
   }
@@ -152,42 +169,47 @@ export class ProjectApprovalManager {
     );
     if (existing) return existing;
 
-    const approval: ProjectApproval = {
-      id: crypto.randomUUID(),
-      scope,
-      display: metadata.display,
-      reason: metadata.reason,
-      grantedAt: new Date().toISOString(),
-      ...(metadata.grantedBy ? { grantedBy: metadata.grantedBy } : {}),
-    };
+    const workspaceRoot = this.#workspaceRoot;
+    const operation = this.#writeQueue.then(async () => {
+      const queuedExisting = this.#approvalFile.approvals.find(
+        (approval) => scopeKey(approval.scope) === scopeKey(scope),
+      );
+      if (queuedExisting) return queuedExisting;
 
-    this.#approvalFile = {
-      version: 1,
-      approvals: [...this.#approvalFile.approvals, approval],
-    };
+      const approval: ProjectApproval = {
+        id: crypto.randomUUID(),
+        scope,
+        display: metadata.display,
+        reason: metadata.reason,
+        grantedAt: new Date().toISOString(),
+        ...(metadata.grantedBy ? { grantedBy: metadata.grantedBy } : {}),
+      };
+      const snapshot: PermissionApprovalFile = {
+        version: 1,
+        approvals: [...this.#approvalFile.approvals, approval],
+      };
+      const filePath = approvalsPath(workspaceRoot);
+      try {
+        await atomicWrite(filePath, serializeApprovalFile(snapshot));
+      } catch (error) {
+        throw new ProjectApprovalPersistError(filePath, error);
+      }
 
-    await this.#persist();
-    return approval;
+      this.#approvalFile = snapshot;
+      this.#fileMtime = Bun.file(filePath).lastModified;
+      return approval;
+    });
+
+    // Keep the serialization barrier usable after a failed write while the
+    // caller still observes the original rejected operation below.
+    this.#writeQueue = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return await operation;
   }
 
   listApprovals(): ProjectApproval[] {
     return cloneApprovalFile(this.#approvalFile).approvals;
-  }
-
-  async #persist(): Promise<void> {
-    const workspaceRoot = this.#workspaceRoot;
-    if (workspaceRoot === null) {
-      throw new Error("ProjectApprovalManager must be loaded before persisting approvals");
-    }
-
-    const snapshot = cloneApprovalFile(this.#approvalFile);
-    this.#writeQueue = this.#writeQueue
-      .then(() => atomicWrite(approvalsPath(workspaceRoot), serializeApprovalFile(snapshot)))
-      .catch((error: unknown) => {
-        this.logger.warn("project.approvals.persist.failed", {
-          error,
-        });
-      });
-    await this.#writeQueue;
   }
 }

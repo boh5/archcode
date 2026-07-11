@@ -106,15 +106,8 @@ function makeLoop(overrides: Partial<LoopState> = {}): LoopState {
       title: "Test Loop",
       schedule: { kind: "manual" },
       approvalPolicy: "interactive",
+      useWorktree: false,
       limits: {
-        maxIterationsPerRun: 8,
-        maxTokensPerRun: 120000,
-        maxWallClockMsPerRun: 900000,
-        maxRunsPerDay: 2,
-        softThresholdRatio: 0.8,
-        hardThresholdRatio: 1,
-      },
-      budget: {
         maxIterationsPerRun: 8,
         maxTokensPerRun: 120000,
         maxWallClockMsPerRun: 900000,
@@ -199,7 +192,8 @@ describe("LoopsRoute", () => {
           schedule: { kind: "cron", expression: "*/15 * * * *" },
           triggers: [{ kind: "on_pr", cadenceMs: 60000 }],
           approvalPolicy: "interactive",
-          limits: { maxIterationsPerRun: 8 },
+          limits: { maxIterationsPerRun: 8, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+          useWorktree: false,
         },
         status: "active",
         lastRun: {
@@ -223,7 +217,8 @@ describe("LoopsRoute", () => {
           title: "Manual Goal Loop",
           schedule: { kind: "manual" },
           approvalPolicy: "explicit_per_run",
-          limits: { maxIterationsPerRun: 4 },
+          limits: { maxIterationsPerRun: 4, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+          useWorktree: false,
         },
         status: "paused",
         currentRun: {

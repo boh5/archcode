@@ -17,7 +17,16 @@ import {
   type LoopRunReport,
 } from "@archcode/protocol";
 import { z } from "zod";
+import { GoalStateManager } from "../goals/state";
+import { HitlService } from "../hitl/service";
+import { silentLogger } from "../logger";
+import { SessionStoreManager } from "../store/session-store-manager";
 import type { AnyToolDescriptor, ToolTraits } from "../tools/types";
+import { LoopBudgetLedger } from "./budget-ledger";
+import { CollisionLedger } from "./collision-ledger";
+import { LoopKillStateManager } from "./kill-state";
+import type { LoopSchedulerOptions } from "./scheduler";
+import type { LoopStateManager } from "./state";
 
 // ────────────────────────────────────────────
 //  Fixture factories
@@ -290,6 +299,44 @@ export class FakeClock {
  */
 export function utcEpochMs(): number {
   return Date.UTC(2026, 0, 1, 0, 0, 0, 0);
+}
+
+// ────────────────────────────────────────────
+//  Required LoopScheduler dependencies
+// ────────────────────────────────────────────
+
+export function createLoopTestHitlService(
+  workspaceRoot: string,
+  stateManager: LoopStateManager,
+): HitlService {
+  return new HitlService({
+    workspaceRoot,
+    project: { slug: "test-project", name: "Test Project" },
+    sessions: new SessionStoreManager({ logger: silentLogger }),
+    goalState: new GoalStateManager(workspaceRoot),
+    loopState: stateManager,
+  });
+}
+
+export function createLoopSchedulerRequiredDependencies(options: {
+  readonly workspaceRoot: string;
+  readonly stateManager: LoopStateManager;
+  readonly clock?: { now(): number };
+}): Pick<
+  LoopSchedulerOptions,
+  | "budgetLedger"
+  | "collisionLedger"
+  | "killStateManager"
+  | "abortSessionExecutionAndWait"
+  | "hitl"
+> {
+  return {
+    budgetLedger: new LoopBudgetLedger(options),
+    collisionLedger: new CollisionLedger(options),
+    killStateManager: new LoopKillStateManager(options.workspaceRoot, { clock: options.clock }),
+    abortSessionExecutionAndWait: async () => {},
+    hitl: createLoopTestHitlService(options.workspaceRoot, options.stateManager),
+  };
 }
 
 // ────────────────────────────────────────────

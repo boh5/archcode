@@ -21,12 +21,22 @@ const builtinSkills = {
 
 function createCommand(agentSkills: readonly string[] = ["git-master"]) {
   const skillService = new SkillService({ builtinSkills });
-  return createSkillCommand(skillService, import.meta.dir, "test-agent", agentSkills);
+  return {
+    command: createSkillCommand(),
+    context: {
+      store: storeManager.create(crypto.randomUUID(), import.meta.dir),
+      modelInfo: dummyModelInfo,
+      cwd: import.meta.dir,
+      agentName: "test-agent",
+      agentSkills,
+      skillService,
+    },
+  };
 }
 
 async function run(args?: string, agentSkills?: readonly string[]) {
-  const command = createCommand(agentSkills);
-  return command.handler({ store: storeManager.create(crypto.randomUUID()), modelInfo: dummyModelInfo }, args);
+  const { command, context } = createCommand(agentSkills);
+  return command.handler(context, args);
 }
 
 describe("createSkillCommand", () => {

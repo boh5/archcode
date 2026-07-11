@@ -13,9 +13,11 @@ import { TOOL_ERROR_META_KEY } from "../errors";
 import { DelegateInputSchema, executeDelegate } from "./delegate";
 import { createTestProjectContext } from "../test-project-context";
 
+const WORKSPACE_ROOT = import.meta.dir;
+
 class ToolStubExecutor {
   lastRequest: ChildExecutionRequest | undefined;
-  readonly store = storeManager.create(`delegate-child-${crypto.randomUUID()}`);
+  readonly store = storeManager.create(`delegate-child-${crypto.randomUUID()}`, WORKSPACE_ROOT);
 
   async start(request: ChildExecutionRequest) {
     this.lastRequest = request;
@@ -56,7 +58,7 @@ class FailingChildExecutor extends ToolStubExecutor {
 }
 
 function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
-  return { store: storeManager.create(`delegate-parent-${crypto.randomUUID()}`),
+  return { store: storeManager.create(`delegate-parent-${crypto.randomUUID()}`, WORKSPACE_ROOT),
   toolName: "delegate",
   toolCallId: "delegate-call",
   input: {},
@@ -153,7 +155,7 @@ describe("delegate tool", () => {
 
   it("sync delegation waits and returns a plain formatted result", async () => {
     const executor = new ToolStubExecutor();
-    const parentStore = storeManager.create(`delegate-parent-${crypto.randomUUID()}`);
+    const parentStore = storeManager.create(`delegate-parent-${crypto.randomUUID()}`, WORKSPACE_ROOT);
     const result = await executeDelegate(
       { agent_type: "explore", task: "inspect", skills: [], description: "Scan", background: false },
       makeContext({ startChildExecution: (request) => executor.start(request), currentDepth: 1, store: parentStore }),
@@ -177,7 +179,7 @@ describe("delegate tool", () => {
 
   it("async delegation returns launch guidance without metadata", async () => {
     const executor = new ToolStubExecutor();
-    const parentStore = storeManager.create(`delegate-parent-${crypto.randomUUID()}`);
+    const parentStore = storeManager.create(`delegate-parent-${crypto.randomUUID()}`, WORKSPACE_ROOT);
     const result = await executeDelegate(
       { agent_type: "explore", task: "inspect", skills: ["codemap"], description: "Scan", background: true },
       makeContext({ startChildExecution: (request) => executor.start(request), store: parentStore }),
@@ -277,7 +279,7 @@ describe("delegate tool", () => {
   it("forwards title and description to child execution", async () => {
     const executor = new ToolStubExecutor();
     const parentAbort = new AbortController();
-    const parentStore = storeManager.create(`delegate-parent-${crypto.randomUUID()}`);
+    const parentStore = storeManager.create(`delegate-parent-${crypto.randomUUID()}`, WORKSPACE_ROOT);
 
     await executeDelegate(
       {
@@ -326,7 +328,7 @@ describe("delegate tool", () => {
       sessionId: string = RESUME_SESSION_ID,
       result: Promise<{ text: string; steps: number }> = Promise.resolve({ text: "resumed output", steps: 1 }),
     ) {
-      const store = storeManager.create(`delegate-resume-${crypto.randomUUID()}`);
+      const store = storeManager.create(`delegate-resume-${crypto.randomUUID()}`, WORKSPACE_ROOT);
       store.getState().setParentSessionId("parent-id");
       store.getState().append({ type: "execution-start", executionId: "resume-run" });
       store.getState().append({ type: "text-start" });
@@ -364,7 +366,7 @@ describe("delegate tool", () => {
       const resumeChildSession = mock(
         (_workspaceRoot: string, _request: ResumeChildRequest) => Promise.resolve(handle),
       );
-      const parentStore = storeManager.create(`delegate-parent-${crypto.randomUUID()}`);
+      const parentStore = storeManager.create(`delegate-parent-${crypto.randomUUID()}`, WORKSPACE_ROOT);
       const parentAbort = new AbortController();
 
       const result = await executeDelegate(

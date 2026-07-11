@@ -2,6 +2,8 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
 
+import type { HitlIdentity } from "@archcode/protocol";
+
 import { GoalStateManager } from "../goals/state";
 import { SessionHitlBlockedError } from "../agents/errors";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
@@ -14,7 +16,7 @@ import { SessionStoreManager } from "../store/session-store-manager";
 import type { PermissionApprovalScope } from "../tools/permission/policy-types";
 import { silentLogger } from "../logger";
 import { ProjectApprovalManager } from "../tools/permission/project-approvals";
-import { ProjectContextResolver } from "./context-resolver";
+import { ProjectContextResolver, type ProjectContextResolverOptions } from "./context-resolver";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "context-resolver");
 
@@ -29,8 +31,9 @@ const LOOP_CONFIG: LoopConfig = {
   title: "Project loop",
   schedule: { kind: "interval", everyMs: 60_000 },
   approvalPolicy: "interactive",
-  limits: { maxIterationsPerRun: 5 },
+  limits: { maxIterationsPerRun: 5, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
   taskPrompt: "Summarize local project state.",
+  useWorktree: false,
 };
 
 async function makeWorkspace(name: string): Promise<string> {
@@ -47,10 +50,33 @@ beforeEach(async () => {
   await mkdir(TMP_ROOT, { recursive: true });
 });
 
+function createResolver(overrides: Partial<ProjectContextResolverOptions> = {}): ProjectContextResolver {
+  return new ProjectContextResolver({
+    projectInfoFactory: (workspaceRoot) => {
+      const name = basename(workspaceRoot);
+      return { slug: name, name, workspaceRoot, addedAt: new Date().toISOString() };
+    },
+    goalCancellationFactory: ({ goalState }) => ({
+      cancel: async (goalId, request) => await goalState.cancel(goalId, request.reason),
+    }),
+    sessionStoreManager: new SessionStoreManager({ logger: silentLogger }),
+    resumeCoordinatorFactory: ({ hitl }) => new ResumeCoordinator({
+      hitl,
+      adapters: {
+        session: { resume: async () => undefined },
+        goal: { resume: async () => undefined },
+        loop: { resume: async () => undefined },
+      },
+      logger: silentLogger,
+    }),
+    ...overrides,
+  });
+}
+
 describe("ProjectContextResolver", () => {
   test("resolve returns the same context object for the same workspace", async () => {
     const workspace = await makeWorkspace("identity");
-    const resolver = new ProjectContextResolver();
+    const resolver = createResolver();
 
     const first = await resolver.resolve(workspace);
     const second = await resolver.resolve(workspace);
@@ -61,7 +87,7 @@ describe("ProjectContextResolver", () => {
   test("different workspaces produce different contexts and approval managers", async () => {
     const workspaceA = await makeWorkspace("workspace-a");
     const workspaceB = await makeWorkspace("workspace-b");
-    const resolver = new ProjectContextResolver();
+    const resolver = createResolver();
 
     const contextA = await resolver.resolve(workspaceA);
     const contextB = await resolver.resolve(workspaceB);
@@ -72,7 +98,7 @@ describe("ProjectContextResolver", () => {
 
   test("dispose removes the cached context so the next resolve creates a fresh context", async () => {
     const workspace = await makeWorkspace("dispose");
-    const resolver = new ProjectContextResolver();
+    const resolver = createResolver();
 
     const first = await resolver.resolve(workspace);
     resolver.dispose(workspace);
@@ -102,7 +128,7 @@ describe("ProjectContextResolver", () => {
       }
     }
 
-    const resolver = new ProjectContextResolver({
+    const resolver = createResolver({
       approvalsFactory: () => new CountingProjectApprovalManager(silentLogger),
     });
 
@@ -122,7 +148,7 @@ describe("ProjectContextResolver", () => {
   test("isolation scenario keeps approvals scoped to their workspace", async () => {
     const workspaceA = await makeWorkspace("isolation-a");
     const workspaceB = await makeWorkspace("isolation-b");
-    const resolver = new ProjectContextResolver();
+    const resolver = createResolver();
 
     const contextA = await resolver.resolve(workspaceA);
     const contextB = await resolver.resolve(workspaceB);
@@ -137,9 +163,9 @@ describe("ProjectContextResolver", () => {
     expect((await resolver.resolve(workspaceB)).approvals.hasApproval(TEST_SCOPE)).toBe(false);
   });
 
-  test("default factories create the expected manager roots and placeholder project info", async () => {
+  test("default manager factories use explicitly supplied project info", async () => {
     const workspace = await makeWorkspace("defaults");
-    const resolver = new ProjectContextResolver();
+    const resolver = createResolver();
 
     const context = await resolver.resolve(workspace);
 
@@ -156,7 +182,7 @@ describe("ProjectContextResolver", () => {
     expect(new Date(context.project.addedAt).toString()).not.toBe("Invalid Date");
   });
 
-  test("projectInfoFactory overrides placeholder slug for registry-backed contexts", async () => {
+  test("projectInfoFactory supplies registry-backed contexts", async () => {
     const workspace = await makeWorkspace("registry-info");
     const projectInfo = {
       slug: "registry-slug",
@@ -164,7 +190,7 @@ describe("ProjectContextResolver", () => {
       workspaceRoot: workspace,
       addedAt: new Date().toISOString(),
     };
-    const resolver = new ProjectContextResolver({
+    const resolver = createResolver({
       projectInfoFactory: mock((workspaceRoot: string) => {
         expect(workspaceRoot).toBe(workspace);
         return projectInfo;
@@ -178,7 +204,7 @@ describe("ProjectContextResolver", () => {
 
   test("project contexts expose Goal/HITL services and no active Workflow managers", async () => {
     const workspace = await makeWorkspace("goal-hitl-shape");
-    const resolver = new ProjectContextResolver();
+    const resolver = createResolver();
 
     const context = await resolver.resolve(workspace);
     const contextRecord = context as unknown as Record<string, unknown>;
@@ -195,7 +221,7 @@ describe("ProjectContextResolver", () => {
   test("loops are isolated under each workspace .archcode/loops directory", async () => {
     const workspaceA = await makeWorkspace("loops-a");
     const workspaceB = await makeWorkspace("loops-b");
-    const resolver = new ProjectContextResolver();
+    const resolver = createResolver();
 
     const contextA = await resolver.resolve(workspaceA);
     const contextB = await resolver.resolve(workspaceB);
@@ -219,7 +245,7 @@ describe("ProjectContextResolver", () => {
   test("goals are isolated under each workspace .archcode/goals directory", async () => {
     const workspaceA = await makeWorkspace("goals-a");
     const workspaceB = await makeWorkspace("goals-b");
-    const resolver = new ProjectContextResolver();
+    const resolver = createResolver();
 
     const contextA = await resolver.resolve(workspaceA);
     const contextB = await resolver.resolve(workspaceB);
@@ -237,36 +263,38 @@ describe("ProjectContextResolver", () => {
   test("owner-local HITL is loaded from the project workspace after context recreation", async () => {
     const workspace = await makeWorkspace("hitl-reload");
     const sessions = new SessionStoreManager({ logger: silentLogger });
-    const resolver = new ProjectContextResolver({ sessionStoreManager: sessions });
+    const resolver = createResolver({ sessionStoreManager: sessions });
     const first = await resolver.resolve(workspace);
     const goal = await first.goalState.create({ projectId: first.project.slug, objective: "Get approval", acceptanceCriteria: "HITL persists" });
 
     const created = await first.hitl.create({
       owner: { projectSlug: first.project.slug, ownerType: "goal", ownerId: goal.id },
       blockingKey: `goal:${goal.id}:approval:after_plan`,
-      source: { type: "goal_approval", goalId: goal.id, approvalPoint: "after_plan" },
+      source: { type: "goal_approval", goalId: goal.id, approvalPoint: "after_plan", resumeStatus: "running" },
       displayPayload: { title: "Continue?", redacted: true },
     });
     expect(created).toBeDefined();
-    await first.hitl.flush();
 
     resolver.dispose(workspace);
     const second = await resolver.resolve(workspace);
 
     expect(second.hitl).not.toBe(first.hitl);
-    expect(await second.hitl.lookup(created.hitlId)).toMatchObject({
+    expect(await second.hitl.lookup({ owner: created.owner, hitlId: created.hitlId })).toMatchObject({
       status: "found",
       record: { hitlId: created.hitlId, status: "pending" },
     });
   });
 
-  test("adapter-less context recreation does not auto-fail claimed HITL resumes", async () => {
+  test("missing adapter composition durably fails claimed HITL resumes", async () => {
     const workspace = await makeWorkspace("hitl-claimed-no-adapter");
     const sessions = new SessionStoreManager({ logger: silentLogger });
     const sessionId = crypto.randomUUID();
     sessions.create(sessionId, workspace);
     await waitForSession(workspace, sessionId);
-    const resolver = new ProjectContextResolver({ sessionStoreManager: sessions });
+    const resolver = createResolver({
+      sessionStoreManager: sessions,
+      resumeCoordinatorFactory: ({ hitl }) => new ResumeCoordinator({ hitl, adapters: {}, logger: silentLogger }),
+    });
     const first = await resolver.resolve(workspace);
     const owner = { projectSlug: first.project.slug, ownerType: "session" as const, ownerId: sessionId };
     const created = await first.hitl.create({
@@ -285,12 +313,16 @@ describe("ProjectContextResolver", () => {
 
     resolver.dispose(workspace);
     const second = await resolver.resolve(workspace);
+    await waitFor(async () => {
+      const lookup = await second.hitl.lookup({ owner: created.owner, hitlId: created.hitlId });
+      return lookup.status === "found" && lookup.record.status === "resume_failed";
+    });
 
-    expect(await second.hitl.lookup(created.hitlId)).toMatchObject({
+    expect(await second.hitl.lookup({ owner: created.owner, hitlId: created.hitlId })).toMatchObject({
       status: "found",
       record: {
         hitlId: created.hitlId,
-        status: "resume_claimed",
+        status: "resume_failed",
         response,
         resume: {
           claimId: claimed.resume?.claimId,
@@ -327,9 +359,8 @@ describe("ProjectContextResolver", () => {
         }
       },
     };
-    resolver = new ProjectContextResolver({
+    resolver = createResolver({
       sessionStoreManager: sessions,
-      resumeAdapters: { session: adapter },
       resumeCoordinatorFactory: ({ hitl }) => new ResumeCoordinator({
         hitl,
         adapters: { session: adapter },
@@ -360,7 +391,7 @@ describe("ProjectContextResolver", () => {
     expect(resolvedBeforeAgentTail).toBe(true);
     expect(publiclyResolved).toBe(true);
     expect(recoveredContext).toBe(context);
-    await waitFor(async () => await isHitlStatus(context.hitl, claimed.hitlId, "resolved"));
+    await waitFor(async () => await isHitlStatus(context.hitl, claimed, "resolved"));
   });
 
   test("lets Loop dependencies re-enter after claimed Session recovery is scheduled", async () => {
@@ -387,9 +418,8 @@ describe("ProjectContextResolver", () => {
         await release.promise;
       },
     };
-    resolver = new ProjectContextResolver({
+    resolver = createResolver({
       sessionStoreManager: sessions,
-      resumeAdapters: { session: adapter },
       resumeCoordinatorFactory: ({ hitl }) => new ResumeCoordinator({
         hitl,
         adapters: { session: adapter },
@@ -406,7 +436,7 @@ describe("ProjectContextResolver", () => {
     release.resolve(undefined);
     const context = await publicResolution;
     expect(resolvedBeforeAdapterTail).toBe(true);
-    await waitFor(async () => await isHitlStatus(context.hitl, claimed.hitlId, "resolved"));
+    await waitFor(async () => await isHitlStatus(context.hitl, claimed, "resolved"));
   });
 
   test("lets Loop-owner runtime callbacks re-enter after recovery is scheduled", async () => {
@@ -430,9 +460,8 @@ describe("ProjectContextResolver", () => {
         await release.promise;
       },
     };
-    resolver = new ProjectContextResolver({
+    resolver = createResolver({
       sessionStoreManager: sessions,
-      resumeAdapters: { loop: adapter },
       resumeCoordinatorFactory: ({ hitl }) => new ResumeCoordinator({
         hitl,
         adapters: { loop: adapter },
@@ -449,32 +478,41 @@ describe("ProjectContextResolver", () => {
     release.resolve(undefined);
     const context = await publicResolution;
     expect(resolvedBeforeAdapterTail).toBe(true);
-    await waitFor(async () => await isHitlStatus(context.hitl, claimed.hitlId, "resolved"));
+    await waitFor(async () => await isHitlStatus(context.hitl, claimed, "resolved"));
   });
 
   test("custom Goal/HITL factories are used per resolved context", async () => {
     const workspace = await makeWorkspace("custom-factories");
     const goalState = new GoalStateManager(workspace);
-    const hitl = new HitlService();
-    const resolver = new ProjectContextResolver({
+    const createdHitl: HitlService[] = [];
+    const resolver = createResolver({
       goalStateFactory: mock((workspaceRoot: string) => {
         expect(workspaceRoot).toBe(workspace);
         return goalState;
       }),
-      hitlFactory: mock(() => hitl),
+      hitlFactory: mock((input) => {
+        expect(input.workspaceRoot).toBe(workspace);
+        expect(input.project.slug).toBe(basename(workspace));
+        expect(input.sessions).toBeInstanceOf(SessionStoreManager);
+        expect(input.goalState).toBe(goalState);
+        expect(input.loopState).toBeInstanceOf(LoopStateManager);
+        const hitl = new HitlService(input);
+        createdHitl.push(hitl);
+        return hitl;
+      }),
     });
 
     const context = await resolver.resolve(workspace);
 
     expect(context.goalState).toBe(goalState);
-    expect(context.hitl).toBe(hitl);
+    expect(context.hitl).toBe(createdHitl[0]);
     expect(context.hitlResumeCoordinator).toBeInstanceOf(ResumeCoordinator);
   });
 
   test("custom Loop factory is used per resolved context", async () => {
     const workspace = await makeWorkspace("custom-loop-factory");
     const loopState = new LoopStateManager(workspace);
-    const resolver = new ProjectContextResolver({
+    const resolver = createResolver({
       loopStateFactory: mock((workspaceRoot: string) => {
         expect(workspaceRoot).toBe(workspace);
         return loopState;
@@ -504,8 +542,8 @@ function createExecutionManager(sessions: SessionStoreManager): SessionExecution
   });
 }
 
-async function isHitlStatus(hitl: HitlService, hitlId: string, status: "resolved" | "cancelled"): Promise<boolean> {
-  const lookup = await hitl.lookup(hitlId);
+async function isHitlStatus(hitl: HitlService, identity: HitlIdentity, status: "resolved" | "cancelled"): Promise<boolean> {
+  const lookup = await hitl.lookup(identity);
   return lookup.status === "found" && lookup.record.status === status;
 }
 
@@ -541,14 +579,13 @@ async function seedClaimedSessionHitl(
     goalState: new GoalStateManager(workspaceRoot, silentLogger),
     loopState: new LoopStateManager(workspaceRoot, silentLogger),
   });
-  await hitl.load(workspaceRoot);
   const created = await hitl.create({
     owner: { projectSlug: project.slug, ownerType: "session", ownerId: sessionId },
     blockingKey: `session:${sessionId}:ask:${suffix}`,
     source: { type: "ask_user", sessionId, toolCallId: suffix },
     displayPayload: { title: "Resume after restart", redacted: true },
   });
-  await hitl.claim(created.hitlId, { type: "question_answer", answers: ["continue"] }, {
+  await hitl.claim({ owner: created.owner, hitlId: created.hitlId }, { type: "question_answer", answers: ["continue"] }, {
     claimId: `claim-${suffix}`,
     claimedAt: new Date().toISOString(),
     intent: "respond",
@@ -570,14 +607,13 @@ async function seedClaimedLoopHitl(
     goalState: new GoalStateManager(workspaceRoot, silentLogger),
     loopState: new LoopStateManager(workspaceRoot, silentLogger),
   });
-  await hitl.load(workspaceRoot);
   const created = await hitl.create({
     owner: { projectSlug: project.slug, ownerType: "loop", ownerId: loopId },
     blockingKey: `loop:${loopId}:question:recovery`,
     source: { type: "loop_question", loopId, questionKey: "recovery" },
     displayPayload: { title: "Resume Loop after restart", redacted: true },
   });
-  await hitl.claim(created.hitlId, { type: "question_answer", answers: ["continue"] }, {
+  await hitl.claim({ owner: created.owner, hitlId: created.hitlId }, { type: "question_answer", answers: ["continue"] }, {
     claimId: "claim-loop-owner-recovery",
     claimedAt: new Date().toISOString(),
     intent: "respond",

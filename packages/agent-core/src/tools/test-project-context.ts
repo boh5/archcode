@@ -4,30 +4,57 @@ import type { StoreApi } from "zustand";
 
 import { GoalStateManager } from "../goals/state";
 import { HitlService } from "../hitl/service";
+import { ResumeCoordinator } from "../hitl/resume-coordinator";
 import { LoopStateManager } from "../loops/state";
 import { MemoryFileManager } from "../memory/file-manager";
 import { silentLogger } from "../logger";
+import type { ProjectContextResolverOptions } from "../projects/context-resolver";
 import type { ProjectContext } from "../projects/types";
 import { SessionStoreManager } from "../store/session-store-manager";
 import type { SessionStoreState } from "../store/types";
 import { ProjectApprovalManager } from "./permission";
 
-export function createTestProjectContext(workspaceRoot: string): ProjectContext {
+export function createTestProjectContext(
+  workspaceRoot: string,
+  sessions = new SessionStoreManager({ logger: silentLogger }),
+): ProjectContext {
+  const project = {
+    slug: "test-project",
+    name: "Test Project",
+    workspaceRoot,
+    addedAt: new Date().toISOString(),
+  };
+  const goalState = new GoalStateManager(workspaceRoot);
+  const loopState = new LoopStateManager(workspaceRoot);
+  const hitl = new HitlService({ workspaceRoot, project, sessions, goalState, loopState });
   return {
-    project: {
-      slug: "test-project",
-      name: "Test Project",
-      workspaceRoot,
-      addedAt: new Date().toISOString(),
-    },
-    goalState: new GoalStateManager(workspaceRoot),
-    loopState: new LoopStateManager(workspaceRoot),
-    hitl: new HitlService(),
+    project,
+    goalState,
+    goalCancellation: createTestGoalCancellation(goalState),
+    loopState,
+    hitl,
+    hitlResumeCoordinator: createTestResumeCoordinator(hitl),
     memory: new MemoryFileManager({
       project: join(workspaceRoot, PROJECT_STATE_DIR_NAME, "memory"),
       user: join(workspaceRoot, PROJECT_STATE_DIR_NAME, "user-memory"),
     }),
     approvals: new ProjectApprovalManager(silentLogger),
+  };
+}
+
+export function createTestProjectContextResolverOptions(
+  sessionStoreManager: SessionStoreManager,
+): ProjectContextResolverOptions {
+  return {
+    projectInfoFactory: (workspaceRoot) => ({
+      slug: "test-project",
+      name: "Test Project",
+      workspaceRoot,
+      addedAt: new Date().toISOString(),
+    }),
+    goalCancellationFactory: ({ goalState }) => createTestGoalCancellation(goalState),
+    sessionStoreManager,
+    resumeCoordinatorFactory: ({ hitl }) => createTestResumeCoordinator(hitl),
   };
 }
 
@@ -47,8 +74,25 @@ export async function createDurableTestSessionContext(
   const store = storeManager.create(sessionId, workspaceRoot, { cwd });
   await storeManager.flushSession(sessionId, workspaceRoot);
 
-  const projectContext = createTestProjectContext(workspaceRoot);
-  await projectContext.hitl.load(workspaceRoot);
+  const projectContext = createTestProjectContext(workspaceRoot, storeManager);
 
   return { projectContext, store, storeManager };
+}
+
+function createTestGoalCancellation(goalState: GoalStateManager): ProjectContext["goalCancellation"] {
+  return {
+    cancel: async (goalId, request) => await goalState.cancel(goalId, request.reason),
+  };
+}
+
+function createTestResumeCoordinator(hitl: HitlService): ResumeCoordinator {
+  return new ResumeCoordinator({
+    hitl,
+    adapters: {
+      session: { resume: async () => undefined },
+      goal: { resume: async () => undefined },
+      loop: { resume: async () => undefined },
+    },
+    logger: silentLogger,
+  });
 }

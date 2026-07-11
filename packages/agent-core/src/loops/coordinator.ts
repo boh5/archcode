@@ -11,7 +11,7 @@ export interface LoopJobCoordinatorOptions {
 
 export interface LoopWorktreeCheckpointInput {
   readonly worktreePath: string;
-  readonly worktreeBranchName?: string;
+  readonly worktreeBranchName: string;
   readonly baseSha: string;
   readonly resolvedHeadSha: string;
 }
@@ -60,7 +60,7 @@ export class LoopJobCoordinator {
 
   constructor(options: LoopJobCoordinatorOptions) {
     this.#queue = options.queue;
-    this.#config = LoopCoordinatorConfigSchema.parse(options.config);
+    this.#config = LoopCoordinatorConfigSchema.parse(options.config ?? { maxConcurrent: 2 });
     this.#clock = options.clock ?? options.queue.clock;
     this.#leaseTtlMs = options.leaseTtlMs ?? DEFAULT_LEASE_TTL_MS;
     this.#incarnationId = options.incarnationId ?? crypto.randomUUID();
@@ -145,7 +145,7 @@ export class LoopJobCoordinator {
     return result.updated;
   }
 
-  /** Reconciles a report-first crash without requiring a lease absent from legacy queue records. */
+  /** Reconciles a report-first crash against the exact durable queue revision and lease. */
   async reconcileReportedFinish(job: LoopJobRecord, input: LoopJobFinishInput): Promise<LoopJobRecord> {
     const now = this.#clock.now();
     const result = await this.#queue.finishNonTerminalIfCurrent(job.jobId, job, {

@@ -504,10 +504,10 @@ function DebugBudgetCard({ budget, budgetLoading }: { budget: LoopBudgetSnapshot
         <LoadingTiny label="Loading budget…" />
       ) : budget ? (
         <div className="grid gap-2 sm:grid-cols-2">
-          <FieldRow label="soft / hard ratio" value={`${formatRatio(budget.budget?.softThresholdRatio)} / ${formatRatio(budget.budget?.hardThresholdRatio)}`} />
-          <FieldRow label="token availability" value={formatAvailability(budget.usage.totalTokens, budget.budget?.maxTokensPerRun, "tokens")} />
-          <FieldRow label="time availability" value={formatAvailability(budget.usage.wallClockMs, budget.budget?.maxWallClockMsPerRun, "ms")} />
-          <FieldRow label="daily-run availability" value={formatAvailability(budget.usage.runsToday, budget.budget?.maxRunsPerDay, "runs")} />
+          <FieldRow label="soft / hard ratio" value={`${formatRatio(budget.budget.softThresholdRatio)} / ${formatRatio(budget.budget.hardThresholdRatio)}`} />
+          <FieldRow label="token availability" value={formatAvailability(budget.usage.totalTokens, budget.budget.maxTokensPerRun, "tokens")} />
+          <FieldRow label="time availability" value={formatAvailability(budget.usage.wallClockMs, budget.budget.maxWallClockMsPerRun, "ms")} />
+          <FieldRow label="daily-run availability" value={formatAvailability(budget.usage.runsToday, budget.budget.maxRunsPerDay, "runs")} />
           <FieldRow label="USD availability" value={formatUsdAvailability(budget)} />
           <FieldRow label="current usage" value={formatBudgetUsage(budget)} wide />
         </div>
@@ -850,7 +850,7 @@ function formatTriggers(triggers: LoopConfig["triggers"]): string {
 function formatCleanupPolicy(policy: LoopConfig["cleanupPolicy"]): string {
   if (!policy) return "none";
   return [
-    `enabled ${policy.enabled ?? false}`,
+    `enabled ${policy.enabled}`,
     policy.action ? `action ${policy.action}` : undefined,
     policy.deleteUnchangedWorktrees ? "delete unchanged worktrees" : undefined,
     policy.preserveChangedArtifacts ? "preserve changed artifacts" : undefined,
@@ -894,7 +894,7 @@ function formatArtifacts(artifacts: LoopWorktreeArtifact[] | undefined): string 
 }
 
 function formatLimits(config: LoopConfig): string {
-  const budget = config.budget ?? config.limits;
+  const budget = config.limits;
   return [
     `iterations ${budget.maxIterationsPerRun}`,
     "maxTokensPerRun" in budget && budget.maxTokensPerRun !== undefined ? `tokens ${budget.maxTokensPerRun}` : undefined,
@@ -926,8 +926,8 @@ function formatMutationError(...errors: unknown[]): string | null {
   return error instanceof Error ? error.message : "Loop action failed";
 }
 
-function formatRatio(value: number | undefined): string {
-  return value === undefined ? "unknown" : `${Math.round(value * 100)}%`;
+function formatRatio(value: number): string {
+  return `${Math.round(value * 100)}%`;
 }
 
 function formatAvailability(used: number, max: number | undefined, unit: string): string {
@@ -938,7 +938,7 @@ function formatAvailability(used: number, max: number | undefined, unit: string)
 
 function formatUsdAvailability(snapshot: LoopBudgetSnapshot): string {
   const used = snapshot.usage.estimatedUsd;
-  const max = snapshot.budget?.maxEstimatedUsdPerRun;
+  const max = snapshot.budget.maxEstimatedUsdPerRun;
   if (snapshot.usage.pricingUnavailable || used === undefined || max === undefined) {
     return "unavailable (pricing metadata missing or USD limit unset)";
   }
@@ -993,7 +993,7 @@ function integrationSnapshotFromLoop(loop: LoopState): LoopIntegrationStatusSnap
 
 function isHardBudgetBlocked(snapshot: LoopBudgetSnapshot | null | undefined, loop: LoopState): boolean {
   if (loop.status !== "paused" || loop.lastRun?.reason !== "hard_budget_exceeded") return false;
-  if (!snapshot?.budget) return true;
+  if (!snapshot) return true;
   const hardRatio = snapshot.budget.hardThresholdRatio;
   const maxTokens = snapshot.budget.maxTokensPerRun;
   if (maxTokens !== undefined && snapshot.usage.totalTokens >= maxTokens * hardRatio) return true;

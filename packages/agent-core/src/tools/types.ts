@@ -8,7 +8,7 @@ import type { ZodTypeAny } from "zod";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
 import type { PermissionApprovalRequest } from "./permission/policy-types";
 import type { ProjectContext } from "../projects/types";
-import { SkillService } from "../skills";
+import type { SkillService } from "../skills";
 
 export interface ToolHitlCheckpointContext {
   readonly toolCalls: readonly ToolCallLike[];
@@ -103,16 +103,7 @@ type ToolExecutionContextInput = ToolExecutionContext;
 export function createToolExecutionContext(
   base: ToolExecutionContextInput,
 ): ToolExecutionContext {
-  const ctx = {
-    ...base,
-    agentSkills: base.agentSkills ?? [],
-    skillService: base.skillService ?? createMissingSkillService(),
-  } as ToolExecutionContext;
-  return ctx;
-}
-
-function createMissingSkillService(): SkillService {
-  return new SkillService({ builtinSkills: {} });
+  return base;
 }
 
 export type BeforeHook = (

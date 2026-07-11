@@ -11,7 +11,7 @@ const mockBtm = { dispatch: mockDispatch };
 const tmpDir = resolve(import.meta.dir, "__test_tmp__");
 
 function makeStore() {
-  return storeManager.create(crypto.randomUUID());
+  return storeManager.create(crypto.randomUUID(), tmpDir);
 }
 
 describe("createMemoryConsolidationHook", () => {

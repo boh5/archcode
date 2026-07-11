@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { HITL_RECENT_TERMINAL_LIMIT } from "./types";
+import { HITL_RECENT_TERMINAL_LIMIT, hitlIdentityKey } from "./types";
+import { createEmptySessionStats } from "./usage";
 import type {
   CompressionBlockCommittedEvent,
   CompressionBlockPart,
@@ -287,11 +288,13 @@ describe("Goal types", () => {
 
   test("GoalState serializes the natural-language contract with review evidence", () => {
     const state: GoalState = {
+      version: 1,
       id: "goal-1",
       projectId: "my-project",
       title: "Implement auth",
       objective: "Build the requested authentication flow.",
       acceptanceCriteria: "Users can sign in and invalid credentials are rejected.",
+      useWorktree: false,
       status: "done",
       attempt: 2,
       budget: {
@@ -302,6 +305,7 @@ describe("Goal types", () => {
       },
       pendingHitlIds: [],
       approvalRefs: ["hitl-approval-1"],
+      appliedHitlIds: ["hitl-approval-1"],
       mainSessionId: "session-main",
       childSessionIds: ["session-build", "session-review"],
       review: {
@@ -344,11 +348,13 @@ describe("Goal types", () => {
 
   test("Goal blockers and NOT_DONE receipts round-trip", () => {
     const state: GoalState = {
+      version: 1,
       id: "goal-2",
       projectId: "my-project",
       title: "Fix bug",
       objective: "Resolve the reported bug.",
       acceptanceCriteria: "The bug no longer reproduces.",
+      useWorktree: false,
       status: "blocked",
       blocker: {
         kind: "question",
@@ -359,7 +365,8 @@ describe("Goal types", () => {
       },
       attempt: 1,
       pendingHitlIds: ["hitl-1"],
-      approvalRefs: [],
+      approvalRefs: ["hitl-1"],
+      appliedHitlIds: [],
       childSessionIds: [],
       review: {
         verdict: "NOT_DONE",
@@ -391,6 +398,19 @@ describe("Goal types", () => {
 describe("HITL types", () => {
   test("uses a bounded recent-terminal retention limit", () => {
     expect(HITL_RECENT_TERMINAL_LIMIT).toBe(20);
+  });
+
+  test("keys HITL identity by owner and owner-local id", () => {
+    const first = hitlIdentityKey({
+      owner: { projectSlug: "project", ownerType: "session", ownerId: "session-a" },
+      hitlId: "shared-id",
+    });
+    const second = hitlIdentityKey({
+      owner: { projectSlug: "project", ownerType: "session", ownerId: "session-b" },
+      hitlId: "shared-id",
+    });
+
+    expect(first).not.toBe(second);
   });
 
   test("serializes HitlResponse question variant", () => {
@@ -433,7 +453,12 @@ describe("HITL types", () => {
       hitlId: "hitl-1",
       owner: { projectSlug: "my-project", ownerType: "goal", ownerId: "goal-1" },
       blockingKey: "goal-1:before-complete",
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "before_complete" },
+      source: {
+        type: "goal_approval",
+        goalId: "goal-1",
+        approvalPoint: "before_complete",
+        resumeStatus: "running",
+      },
       status: "pending",
       displayPayload: {
         title: "Approve completion",
@@ -525,15 +550,18 @@ describe("HITL types", () => {
 describe("Goal/HITL stream events", () => {
   function makeGoalState(overrides: Partial<GoalState> = {}): GoalState {
     return {
+      version: 1,
       id: "goal-1",
       projectId: "p",
       title: "Implement feature",
       objective: "Implement the requested feature.",
       acceptanceCriteria: "Feature behavior satisfies the request.",
+      useWorktree: false,
       status: "running",
       attempt: 1,
       pendingHitlIds: [],
       approvalRefs: [],
+      appliedHitlIds: [],
       childSessionIds: [],
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
@@ -618,7 +646,17 @@ describe("Goal/HITL stream events", () => {
 
     const hitlUpdatedEvent: HitlStreamEvent = {
       type: "hitl.updated",
-      record: { ...hitlRequestEvent.request, status: "resume_claimed" },
+      record: {
+        ...hitlRequestEvent.request,
+        status: "resume_claimed",
+        response: { type: "question_answer", answers: ["continue"] },
+        resume: {
+          claimId: "claim-1",
+          claimedAt: "2026-06-01T00:01:00.000Z",
+          intent: "respond",
+          attempt: 1,
+        },
+      },
     };
 
     expect(serializeRoundTrip(hitlRequestEvent)).toEqual(hitlRequestEvent);
@@ -696,6 +734,7 @@ describe("Loop types", () => {
 
   test("Loop cleanup and trigger metadata types serialize", () => {
     const cleanupPolicy: LoopCleanupPolicy = {
+      enabled: true,
       deleteUnchangedWorktrees: true,
       preserveChangedArtifacts: true,
       maxPreservedWorktrees: 5,
@@ -730,7 +769,6 @@ describe("Loop types", () => {
       sessionId: "session-1",
       summary: "Completed successfully",
       jobId: "job-1",
-      triggerKind: "cron",
       subjectKey: "cron:1000",
       dedupeKey: "loop-1:cron:cron:1000",
       branchKey: "test-owner/test-repo:main",
@@ -793,7 +831,8 @@ describe("Loop types", () => {
       title: null,
       schedule: { kind: "manual" },
       approvalPolicy: "interactive",
-      limits: { maxIterationsPerRun: 10 },
+      limits: { maxIterationsPerRun: 10, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+      useWorktree: false,
       taskPrompt: "Inspect git status and report findings",
     };
 
@@ -811,7 +850,8 @@ describe("Loop types", () => {
       title: null,
       schedule: { kind: "interval", everyMs: 3600000 },
       approvalPolicy: "interactive",
-      limits: { maxIterationsPerRun: 5 },
+      limits: { maxIterationsPerRun: 5, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+      useWorktree: false,
       goalTemplate: {
         title: null,
         objective: "Draft a changelog from recent project changes.",
@@ -833,9 +873,10 @@ describe("Loop types", () => {
       title: "PR watcher",
       schedule: { kind: "cron", expression: "*/15 * * * *" },
       approvalPolicy: "interactive",
-      limits: { maxIterationsPerRun: 1 },
+      limits: { maxIterationsPerRun: 1, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+      useWorktree: false,
       triggers: [{ kind: "on_pr", cadenceMs: 60000, baseBranch: "main" }],
-      cleanupPolicy: { deleteUnchangedWorktrees: true, preserveChangedArtifacts: true },
+      cleanupPolicy: { enabled: true, deleteUnchangedWorktrees: true, preserveChangedArtifacts: true },
     };
 
     expect(serializeRoundTrip(config)).toEqual(config);
@@ -844,7 +885,7 @@ describe("Loop types", () => {
 
   test("LoopConfig rejects goalTemplateId at type level", () => {
     // @ts-expect-error - goalTemplateId is not a valid LoopConfig field
-    const invalid: LoopConfig = { templateId: "goal_runner", title: "t", schedule: { kind: "manual" }, approvalPolicy: "interactive", limits: { maxIterationsPerRun: 1 }, goalTemplateId: "goal-123" };
+    const invalid: LoopConfig = { templateId: "goal_runner", title: "t", schedule: { kind: "manual" }, approvalPolicy: "interactive", limits: { maxIterationsPerRun: 1, softThresholdRatio: 0.8, hardThresholdRatio: 1 }, useWorktree: false, goalTemplateId: "goal-123" };
     expect(invalid).toBeDefined();
   });
 
@@ -857,7 +898,8 @@ describe("Loop types", () => {
         title: "Daily Triage",
         schedule: { kind: "manual" },
         approvalPolicy: "interactive",
-        limits: { maxIterationsPerRun: 10 },
+        limits: { maxIterationsPerRun: 10, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+        useWorktree: false,
       },
       status: "active",
       createdAt: 1000,
@@ -883,7 +925,8 @@ describe("Loop types", () => {
         title: "Changelog",
         schedule: { kind: "interval", everyMs: 60000 },
         approvalPolicy: "interactive",
-        limits: { maxIterationsPerRun: 5 },
+        limits: { maxIterationsPerRun: 5, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+        useWorktree: false,
       },
       status: "active",
       createdAt: 1000,
@@ -935,7 +978,8 @@ describe("Loop types", () => {
           title: "t",
           schedule: { kind: "manual" },
           approvalPolicy: "interactive",
-          limits: { maxIterationsPerRun: 10 },
+          limits: { maxIterationsPerRun: 10, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+          useWorktree: false,
         },
         status: "active",
         createdAt: 1000,
@@ -988,9 +1032,13 @@ describe("Loop types", () => {
       sessionId: "session-1",
       cwd: "/workspace",
       rootSessionId: "session-1",
+      agentName: "orchestrator",
+      modelInfo: null,
+      title: null,
       goalId: "goal-1",
       loopId: "loop-1",
       createdAt: 1000,
+      updatedAt: 1000,
     };
 
     const parsed = serializeRoundTrip(summary);
@@ -1003,8 +1051,12 @@ describe("Loop types", () => {
       sessionId: "session-1",
       cwd: "/workspace",
       rootSessionId: "session-1",
+      agentName: "orchestrator",
+      modelInfo: null,
+      title: null,
       goalId: "goal-1",
       createdAt: 1000,
+      updatedAt: 1000,
     };
 
     const parsed = serializeRoundTrip(summary);
@@ -1014,11 +1066,24 @@ describe("Loop types", () => {
 
   test("Session can carry loopId alongside goalId", () => {
     const session: Session = {
-      id: "session-1",
+      schemaVersion: 1,
+      sessionId: "session-1",
+      cwd: "/workspace",
       rootSessionId: "session-1",
+      title: null,
       goalId: "goal-1",
       loopId: "loop-1",
       createdAt: 1000,
+      updatedAt: 1000,
+      messages: [],
+      steps: [],
+      todos: [],
+      reminders: [],
+      childSessionLinks: [],
+      stats: createEmptySessionStats(),
+      executions: [],
+      modelInfo: null,
+      agentName: "orchestrator",
     };
 
     const parsed = serializeRoundTrip(session);
@@ -1028,10 +1093,23 @@ describe("Loop types", () => {
 
   test("Session without loopId still works", () => {
     const session: Session = {
-      id: "session-1",
+      schemaVersion: 1,
+      sessionId: "session-1",
+      cwd: "/workspace",
       rootSessionId: "session-1",
+      title: null,
       goalId: "goal-1",
       createdAt: 1000,
+      updatedAt: 1000,
+      messages: [],
+      steps: [],
+      todos: [],
+      reminders: [],
+      childSessionLinks: [],
+      stats: createEmptySessionStats(),
+      executions: [],
+      modelInfo: null,
+      agentName: "orchestrator",
     };
 
     const parsed = serializeRoundTrip(session);
@@ -1048,7 +1126,8 @@ describe("Loop types", () => {
         title: "t",
         schedule: { kind: "manual" },
         approvalPolicy: "interactive",
-        limits: { maxIterationsPerRun: 10 },
+        limits: { maxIterationsPerRun: 10, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+        useWorktree: false,
       },
       status: "active",
       createdAt: 1000,

@@ -1,4 +1,4 @@
-import type { HitlOwnerKey, HitlRecord, HitlResponse } from "@archcode/protocol";
+import { hitlIdentityKey, type HitlIdentity, type HitlOwnerKey, type HitlRecord, type HitlResponse } from "@archcode/protocol";
 
 import type { Logger } from "../logger";
 import { silentLogger } from "../logger";
@@ -34,7 +34,6 @@ export type ResumeIntent = "respond" | "cancel";
 
 export type ResumeCoordinatorResult =
   | { status: "missing"; scheduled: false }
-  | { status: "ambiguous"; scheduled: false; hitlId: string; owners: HitlOwnerKey[] }
   | { status: "claimed" | "terminal" | "active"; scheduled: boolean; record: HitlRecord };
 
 export interface ResumeRecoverySummary {
@@ -51,7 +50,7 @@ export class ResumeCoordinator {
   readonly #adapters: ResumeCoordinatorAdapters;
   readonly #logger: Logger;
   readonly #locks = new Map<string, Promise<void>>();
-  readonly #dispatchedClaimIds = new Set<string>();
+  readonly #dispatchedClaims = new Set<string>();
 
   constructor(options: ResumeCoordinatorOptions) {
     this.#hitl = options.hitl;
@@ -59,12 +58,12 @@ export class ResumeCoordinator {
     this.#logger = (options.logger ?? silentLogger).child({ module: "hitl.resume" });
   }
 
-  async respond(hitlId: string, response: HitlResponse): Promise<ResumeCoordinatorResult> {
-    return await this.#claimAndSchedule(hitlId, response, "respond");
+  async respond(identity: HitlIdentity, response: HitlResponse): Promise<ResumeCoordinatorResult> {
+    return await this.#claimAndSchedule(identity, response, "respond");
   }
 
-  async cancel(hitlId: string, reason = "Cancelled", cancelledBy?: string): Promise<ResumeCoordinatorResult> {
-    return await this.#claimAndSchedule(hitlId, { type: "cancel", reason, cancelledBy }, "cancel");
+  async cancel(identity: HitlIdentity, reason = "Cancelled", cancelledBy?: string): Promise<ResumeCoordinatorResult> {
+    return await this.#claimAndSchedule(identity, { type: "cancel", reason, cancelledBy }, "cancel");
   }
 
   async recover(): Promise<ResumeRecoverySummary> {
@@ -87,18 +86,19 @@ export class ResumeCoordinator {
           continue;
         }
 
-        const result = await this.#withHitlLock(record.hitlId, async () => {
-          const current = await this.#lookupFound(record.hitlId);
+        const identity = identityFromRecord(record);
+        const result = await this.#withHitlLock(identity, async () => {
+          const current = await this.#lookupFound(identity);
           if (current === undefined) return false;
           if (current.record.status === "resume_claimed") {
             return this.#scheduleDispatch(current.record);
           }
           if (current.record.status === "resume_failed" && current.record.response !== undefined) {
-            const claimed = await this.#hitl.claim(current.record.hitlId, current.record.response, {
+            const claimed = await this.#hitl.claim(identity, current.record.response, {
               claimId: crypto.randomUUID(),
               claimedAt: new Date().toISOString(),
               intent: current.record.resume?.intent ?? (current.record.response.type === "cancel" ? "cancel" : "respond"),
-              attempt: (current.record.resume?.attempt ?? current.record.resume?.attempts ?? 0) + 1,
+              attempt: (current.record.resume?.attempt ?? 0) + 1,
             });
             if (claimed === undefined) return false;
             return this.#scheduleDispatch(claimed);
@@ -116,11 +116,10 @@ export class ResumeCoordinator {
     return { scanned, scheduled, skippedPending, missingResponse };
   }
 
-  async #claimAndSchedule(hitlId: string, response: HitlResponse, intent: ResumeIntent): Promise<ResumeCoordinatorResult> {
-    return await this.#withHitlLock(hitlId, async () => {
-      const found = await this.#hitl.lookup(hitlId);
+  async #claimAndSchedule(identity: HitlIdentity, response: HitlResponse, intent: ResumeIntent): Promise<ResumeCoordinatorResult> {
+    return await this.#withHitlLock(identity, async () => {
+      const found = await this.#hitl.lookup(identity);
       if (found.status === "missing") return { status: "missing", scheduled: false };
-      if (found.status === "ambiguous") return { status: "ambiguous", scheduled: false, hitlId: found.hitlId, owners: found.owners };
 
       const current = found.record;
       if (current.status === "resolved" || current.status === "cancelled") {
@@ -130,11 +129,11 @@ export class ResumeCoordinator {
         return { status: "claimed", scheduled: false, record: current };
       }
       if (current.status === "resume_failed" && intent === "cancel") {
-        const claimed = await this.#hitl.claim(hitlId, response, {
+        const claimed = await this.#hitl.claim(identity, response, {
           claimId: crypto.randomUUID(),
           claimedAt: new Date().toISOString(),
           intent,
-          attempt: (current.resume?.attempt ?? current.resume?.attempts ?? 0) + 1,
+          attempt: (current.resume?.attempt ?? 0) + 1,
         });
         if (claimed === undefined) return { status: "missing", scheduled: false };
         return { status: "claimed", scheduled: this.#scheduleDispatch(claimed), record: claimed };
@@ -143,11 +142,11 @@ export class ResumeCoordinator {
         return { status: "active", scheduled: false, record: current };
       }
 
-      const claimed = await this.#hitl.claim(hitlId, response, {
+      const claimed = await this.#hitl.claim(identity, response, {
         claimId: crypto.randomUUID(),
         claimedAt: new Date().toISOString(),
         intent,
-        attempt: (current.resume?.attempt ?? current.resume?.attempts ?? 0) + 1,
+        attempt: (current.resume?.attempt ?? 0) + 1,
       });
       if (claimed === undefined) return { status: "missing", scheduled: false };
       const scheduled = this.#scheduleDispatch(claimed);
@@ -175,9 +174,9 @@ export class ResumeCoordinator {
   #beginDispatch(record: HitlRecord): Promise<void> | undefined {
     const claimId = record.resume?.claimId;
     if (claimId === undefined || record.response === undefined) return undefined;
-    if (!this.#hasAdapterFor(record.owner)) return undefined;
-    if (this.#dispatchedClaimIds.has(claimId)) return undefined;
-    this.#dispatchedClaimIds.add(claimId);
+    const dispatchKey = `${hitlIdentityKey(identityFromRecord(record))}:${claimId}`;
+    if (this.#dispatchedClaims.has(dispatchKey)) return undefined;
+    this.#dispatchedClaims.add(dispatchKey);
     return this.#dispatch(record);
   }
 
@@ -187,12 +186,13 @@ export class ResumeCoordinator {
       if (response === undefined) throw new Error(`Cannot resume HITL ${record.hitlId} without a response`);
       const adapter = this.#adapterFor(record.owner);
       await adapter.resume(record, response);
-      const terminal = await this.#withHitlLock(record.hitlId, async () => {
-        const current = await this.#lookupFound(record.hitlId);
+      const identity = identityFromRecord(record);
+      const terminal = await this.#withHitlLock(identity, async () => {
+        const current = await this.#lookupFound(identity);
         if (current?.record.status !== "resume_claimed") return undefined;
         if (current.record.resume?.claimId !== record.resume?.claimId) return undefined;
         return await this.#hitl.finishResume(
-          record.hitlId,
+          identity,
           current.record.resume?.intent === "cancel" ? "cancelled" : "resolved",
           current.record.response,
         );
@@ -206,11 +206,12 @@ export class ResumeCoordinator {
         error,
         context: { hitlId: record.hitlId, ownerType: record.owner.ownerType, ownerId: record.owner.ownerId },
       });
-      await this.#withHitlLock(record.hitlId, async () => {
-        const current = await this.#lookupFound(record.hitlId);
+      const identity = identityFromRecord(record);
+      await this.#withHitlLock(identity, async () => {
+        const current = await this.#lookupFound(identity);
         if (current?.record.status !== "resume_claimed") return;
         if (current.record.resume?.claimId !== record.resume?.claimId) return;
-        await this.#hitl.markResumeFailed(record.hitlId, message);
+        await this.#hitl.markResumeFailed(identity, message);
       });
     }
   }
@@ -221,29 +222,30 @@ export class ResumeCoordinator {
     return adapter;
   }
 
-  #hasAdapterFor(owner: HitlOwnerKey): boolean {
-    return this.#adapters[owner.ownerType] !== undefined;
-  }
-
-  async #lookupFound(hitlId: string): Promise<Extract<HitlLookupResult, { status: "found" }> | undefined> {
-    const found = await this.#hitl.lookup(hitlId);
+  async #lookupFound(identity: HitlIdentity): Promise<Extract<HitlLookupResult, { status: "found" }> | undefined> {
+    const found = await this.#hitl.lookup(identity);
     return found.status === "found" ? found : undefined;
   }
 
-  async #withHitlLock<T>(hitlId: string, operation: () => Promise<T>): Promise<T> {
-    const previous = this.#locks.get(hitlId) ?? Promise.resolve();
+  async #withHitlLock<T>(identity: HitlIdentity, operation: () => Promise<T>): Promise<T> {
+    const key = hitlIdentityKey(identity);
+    const previous = this.#locks.get(key) ?? Promise.resolve();
     let release!: () => void;
     const current = new Promise<void>((resolve) => {
       release = resolve;
     });
     const chained = previous.then(() => current, () => current);
-    this.#locks.set(hitlId, chained);
+    this.#locks.set(key, chained);
     await previous.catch(() => undefined);
     try {
       return await operation();
     } finally {
       release();
-      if (this.#locks.get(hitlId) === chained) this.#locks.delete(hitlId);
+      if (this.#locks.get(key) === chained) this.#locks.delete(key);
     }
   }
+}
+
+function identityFromRecord(record: HitlRecord): HitlIdentity {
+  return { owner: record.owner, hitlId: record.hitlId };
 }

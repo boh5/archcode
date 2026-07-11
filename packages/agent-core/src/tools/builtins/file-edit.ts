@@ -82,19 +82,7 @@ interface NormalizedMapping {
   originalOffsets: number[];
 }
 
-// ─── Input Compatibility ───
-
 function prepareEditInput(raw: unknown, _ctx: ToolExecutionContext): unknown {
-  if (
-    typeof raw === "object" &&
-    raw !== null &&
-    !("edits" in raw) &&
-    "oldString" in raw
-  ) {
-    const { path: inputPath, oldString, newString } = raw as Record<string, unknown>;
-    return normalizeEditInput({ path: inputPath, edits: [{ oldString, newString }] });
-  }
-
   return normalizeEditInput(raw);
 }
 

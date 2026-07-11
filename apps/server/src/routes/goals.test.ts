@@ -89,6 +89,7 @@ class FakeGoalStateManager {
 
   async create(input: { readonly projectId: string; readonly title?: string | null; readonly objective: string; readonly acceptanceCriteria: string; readonly useWorktree?: boolean; readonly loopId?: string }): Promise<GoalState> {
     const goal: GoalState = {
+      version: 1,
       id: crypto.randomUUID(),
       projectId: input.projectId,
       title: input.title ?? null,
@@ -100,6 +101,7 @@ class FakeGoalStateManager {
       attempt: 1,
       pendingHitlIds: [],
       approvalRefs: [],
+      appliedHitlIds: [],
       childSessionIds: [],
       createdAt: this.#now,
       updatedAt: this.#now,
@@ -265,7 +267,7 @@ function createRuntime(
         reminders: [],
         ...(options?.goalId === undefined ? {} : { goalId: options.goalId }),
         sessionRole: options?.sessionRole ?? "main",
-        ...(options?.cwd === undefined ? {} : { cwd: options.cwd }),
+        cwd: options?.cwd ?? project.workspaceRoot,
       };
     }),
     getSessionFile: mock(async (_workspaceRoot: string, sessionId: string) => {
@@ -281,7 +283,7 @@ function createRuntime(
         reminders: [],
         ...(binding.goalId === undefined ? {} : { goalId: binding.goalId }),
         ...(binding.sessionRole === undefined ? {} : { sessionRole: binding.sessionRole }),
-        ...(binding.cwd === undefined ? {} : { cwd: binding.cwd }),
+        cwd: binding.cwd ?? project.workspaceRoot,
       };
     }),
     startSessionExecution: mock((input: { workspaceRoot: string; sessionId: string }) => ({
@@ -433,6 +435,7 @@ describe("goals routes", () => {
       attempt: 1,
       pendingHitlIds: [],
       approvalRefs: [],
+      appliedHitlIds: [],
       childSessionIds: [],
     });
     expectSimplifiedGoalShape(goal as unknown as Record<string, unknown>);
@@ -817,6 +820,7 @@ describe("goals routes", () => {
         return providedMainSessionId;
       },
       getSessionCwd: async (sessionId) => sessionId === providedMainSessionId ? prepared.cwd : undefined,
+      isSessionActive: async () => false,
     });
     (runtime.getSessionFile as ReturnType<typeof mock>).mockImplementation(async (_workspaceRoot: string, sessionId: string) => ({
       sessionId,

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { AgentRunningError, ChildSessionCwdMismatchError, ConcurrentSessionLimitError, SessionCwdTransitionInProgressError, SessionDeleteInProgressError, SessionExecutionScopeConflictError, SessionFamilyStopInProgressError, SessionHitlBlockedError, SessionHitlJournalBlockedError, SessionHitlResumeInProgressError } from "@archcode/agent-core";
 import type { AgentRuntime } from "@archcode/agent-core";
+import { z } from "zod/v4";
 import {
   BadRequestError,
   ConcurrentSessionLimitHttpError,
@@ -8,9 +9,10 @@ import {
 } from "../errors";
 import { resolveProject } from "../resolve";
 
-interface MessageBody {
-  text?: unknown;
-}
+const MessageBodySchema = z.strictObject({
+  text: z.string({ error: "text is required" })
+    .refine((value) => value.trim().length > 0, { message: "text is required" }),
+});
 
 class AgentAlreadyRunningError extends ServerError {
   constructor() {
@@ -32,8 +34,7 @@ export function createMessagesRoutes(runtime: AgentRuntime): Hono {
   app.post("/messages", async (c) => {
     const slug = requiredParam(c.req.param("slug"), "slug");
     const sessionId = requiredParam(c.req.param("sessionId"), "sessionId");
-    const body = await readMessageBody(c.req.json());
-    const text = readMessageText(body);
+    const { text } = await readMessageBody(c.req.json());
     const project = await resolveProject(runtime, slug);
 
     try {
@@ -105,27 +106,17 @@ function requiredParam(value: string | undefined, name: string): string {
   return value;
 }
 
-async function readMessageBody(bodyPromise: Promise<unknown>): Promise<MessageBody> {
+async function readMessageBody(bodyPromise: Promise<unknown>): Promise<z.infer<typeof MessageBodySchema>> {
+  let body: unknown;
   try {
-    const body = await bodyPromise;
-    if (!body || typeof body !== "object") {
-      throw new BadRequestError("text is required");
-    }
-
-    return body;
-  } catch (error) {
-    if (error instanceof BadRequestError) {
-      throw error;
-    }
-
+    body = await bodyPromise;
+  } catch {
     throw new BadRequestError("Invalid JSON body");
   }
-}
 
-function readMessageText(body: MessageBody): string {
-  if (typeof body.text !== "string" || body.text.trim() === "") {
-    throw new BadRequestError("text is required");
+  const result = MessageBodySchema.safeParse(body);
+  if (!result.success) {
+    throw new BadRequestError(result.error.issues[0]?.message ?? "Request body is invalid");
   }
-
-  return body.text;
+  return result.data;
 }

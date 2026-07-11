@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
-import type { GlobalSSEEvent, HitlDisplayPayload, HitlProjection, HitlRecord } from "@archcode/protocol";
+import type { GlobalSSEEvent, HitlDisplayPayload, HitlIdentity, HitlProjection, HitlRecord } from "@archcode/protocol";
 import { ProjectContextResolver, ProjectRegistry, silentLogger } from "@archcode/agent-core";
 import type { AgentRuntime, ProjectContext, ProjectInfo } from "@archcode/agent-core";
 import { GoalStateManager } from "../../../../packages/agent-core/src/goals/state";
@@ -35,6 +35,7 @@ const LOOP_CONFIG: LoopConfig = {
     softThresholdRatio: 0.8,
     hardThresholdRatio: 1,
   },
+  useWorktree: false,
 };
 
 function createTestRuntime(projectRegistry: ProjectRegistry): Omit<TestFixture, "app"> {
@@ -46,7 +47,14 @@ function createTestRuntime(projectRegistry: ProjectRegistry): Omit<TestFixture, 
     },
   };
   const contextResolver = new ProjectContextResolver({
-    projectInfoFactory: (workspaceRoot) => projectRegistry.getByWorkspace(workspaceRoot),
+    projectInfoFactory: async (workspaceRoot) => {
+      const project = await projectRegistry.getByWorkspace(workspaceRoot);
+      if (project === undefined) throw new Error(`Project is not registered: ${workspaceRoot}`);
+      return project;
+    },
+    goalCancellationFactory: ({ goalState }) => ({
+      cancel: async (goalId, request) => await goalState.cancel(goalId, request.reason),
+    }),
     logger: silentLogger,
     sessionStoreManager,
     resumeCoordinatorFactory: (input) => new ResumeCoordinator({
@@ -106,7 +114,6 @@ function createTestRuntime(projectRegistry: ProjectRegistry): Omit<TestFixture, 
     triggerLoopRun: mock(async () => undefined),
     readLoopKillState: mock(async () => ({ active: false, updatedAt: Date.now() })),
     cancelLoopCurrentRun: mock(async () => undefined),
-    cancelCurrentLoopRun: mock(async () => undefined),
     activateLoopGlobalKill: mock(async () => ({ active: true, updatedAt: Date.now() })),
     clearLoopGlobalKill: mock(async () => ({ active: false, updatedAt: Date.now() })),
     readLoopBudget: mock(async () => null),
@@ -200,7 +207,7 @@ describe("hitl routes", () => {
     const loopList = await getHitl(fixture.app, `/api/projects/${project.slug}/hitl?scope=loop&ownerId=${loop.loopId}&includeChildren=true&status=pending`);
     expect(loopList.hitl.map((item) => item.hitlId)).toEqual([loopGoalHitl.hitlId, loopGoalSessionHitl.hitlId, loopHitl.hitlId, loopSessionHitl.hitlId].sort());
 
-    await context.hitl.cancelRecord(loopHitl.hitlId, "recent route coverage");
+    await context.hitl.cancelRecord(identity(loopHitl), "recent route coverage");
     const recentList = await getHitl(fixture.app, `/api/projects/${project.slug}/hitl?scope=loop&ownerId=${loop.loopId}&includeChildren=true&status=recent`);
     expect(recentList.hitl).toContainEqual(expect.objectContaining({ hitlId: loopHitl.hitlId, status: "cancelled", resumeStatus: "terminal" }));
     const allList = await getHitl(fixture.app, `/api/projects/${project.slug}/hitl?scope=loop&ownerId=${loop.loopId}&includeChildren=true&status=all`);
@@ -215,10 +222,12 @@ describe("hitl routes", () => {
 
     const legacyGlobalList = await fixture.app.request("/api/hitl?status=pending");
     const legacyGlobalRespond = await fixture.app.request(`/api/hitl/${rootHitl.hitlId}/respond`, { method: "POST" });
+    const legacyProjectRespond = await fixture.app.request(`/api/projects/${project.slug}/hitl/${rootHitl.hitlId}/respond`, { method: "POST" });
     const legacyQuestion = await fixture.app.request("/api/questions/legacy-id", { method: "POST" });
     const legacyPermission = await fixture.app.request("/api/permissions/legacy-id", { method: "POST" });
     expect(legacyGlobalList.status).toBe(404);
     expect(legacyGlobalRespond.status).toBe(404);
+    expect(legacyProjectRespond.status).toBe(404);
     expect(legacyQuestion.status).toBe(404);
     expect(legacyPermission.status).toBe(404);
   });
@@ -250,7 +259,8 @@ describe("hitl routes", () => {
     const sessionId = await createSession(fixture, project, {});
     const permission = await createPermissionHitl(context.hitl, project.slug, sessionId, "call-approve");
 
-    const first = await postJson<HitlMutationBody>(fixture.app, `/api/projects/${project.slug}/hitl/${permission.hitlId}/respond`, {
+    const first = await postJson<HitlMutationBody>(fixture.app, mutationUrl(permission, "respond"), {
+      type: "permission_decision",
       decision: "approve_once",
       comment: "approved once",
     });
@@ -259,7 +269,8 @@ describe("hitl routes", () => {
     expect(["resume_claimed", "resolved"]).toContain(first.body.status);
     expect(["claimed", "terminal"]).toContain(first.body.resumeStatus);
 
-    const duplicate = await postJson<HitlMutationBody>(fixture.app, `/api/projects/${project.slug}/hitl/${permission.hitlId}/respond`, {
+    const duplicate = await postJson<HitlMutationBody>(fixture.app, mutationUrl(permission, "respond"), {
+      type: "permission_decision",
       decision: "approve_once",
       comment: "approved once",
     });
@@ -267,7 +278,8 @@ describe("hitl routes", () => {
     expect(duplicate.body.hitlId).toBe(permission.hitlId);
     expect(fixture.sessionResumeCalls()).toBe(1);
 
-    const conflicting = await postJson<HitlMutationBody>(fixture.app, `/api/projects/${project.slug}/hitl/${permission.hitlId}/respond`, {
+    const conflicting = await postJson<HitlMutationBody>(fixture.app, mutationUrl(permission, "respond"), {
+      type: "permission_decision",
       decision: "deny",
       comment: "changed my mind",
     });
@@ -276,20 +288,20 @@ describe("hitl routes", () => {
     expect(fixture.sessionResumeCalls()).toBe(1);
 
     const invalid = await createPermissionHitl(context.hitl, project.slug, sessionId, "call-invalid");
-    const invalidBefore = await context.hitl.lookup(invalid.hitlId);
+    const invalidBefore = await context.hitl.lookup(identity(invalid));
     expect(invalidBefore.status).toBe("found");
-    const invalidRes = await fixture.app.request(`/api/projects/${project.slug}/hitl/${invalid.hitlId}/respond`, {
+    const invalidRes = await fixture.app.request(mutationUrl(invalid, "respond"), {
       method: "POST",
-      body: JSON.stringify({ decision: "approved" }),
+      body: JSON.stringify({ type: "permission_decision", decision: "approved" }),
       headers: { "content-type": "application/json" },
     });
     expect(invalidRes.status).toBe(400);
-    expect((await context.hitl.lookup(invalid.hitlId)).status).toBe("found");
-    const invalidLookup = await context.hitl.lookup(invalid.hitlId);
+    expect((await context.hitl.lookup(identity(invalid))).status).toBe("found");
+    const invalidLookup = await context.hitl.lookup(identity(invalid));
     expect(invalidLookup.status === "found" ? invalidLookup.record.status : undefined).toBe("pending");
 
     const cancellable = await createSessionHitl(context.hitl, project.slug, sessionId, "Cancel duplicate");
-    const cancelFirst = await postJson<HitlMutationBody>(fixture.app, `/api/projects/${project.slug}/hitl/${cancellable.hitlId}/cancel`, {
+    const cancelFirst = await postJson<HitlMutationBody>(fixture.app, mutationUrl(cancellable, "cancel"), {
       reason: "No longer needed",
     });
     expect(cancelFirst.status).toBe(200);
@@ -297,19 +309,119 @@ describe("hitl routes", () => {
     expect(["resume_claimed", "cancelled"]).toContain(cancelFirst.body.status);
     expect(["claimed", "terminal"]).toContain(cancelFirst.body.resumeStatus);
 
-    const cancelDuplicate = await postJson<HitlMutationBody>(fixture.app, `/api/projects/${project.slug}/hitl/${cancellable.hitlId}/cancel`, {
+    const cancelDuplicate = await postJson<HitlMutationBody>(fixture.app, mutationUrl(cancellable, "cancel"), {
       reason: "No longer needed",
     });
     expect(cancelDuplicate.status).toBe(200);
     expect(cancelDuplicate.body.hitlId).toBe(cancellable.hitlId);
     expect(fixture.sessionResumeCalls()).toBe(2);
 
-    await waitForHitlStatus(context.hitl, cancellable.hitlId, "cancelled");
-    const respondAfterCancel = await postJson<HitlMutationBody>(fixture.app, `/api/projects/${project.slug}/hitl/${cancellable.hitlId}/respond`, {
+    await waitForHitlStatus(context.hitl, cancellable, "cancelled");
+    const respondAfterCancel = await postJson<HitlMutationBody>(fixture.app, mutationUrl(cancellable, "respond"), {
+      type: "question_answer",
       answers: ["late answer"],
     });
     expect(respondAfterCancel.status).toBe(409);
     expect(respondAfterCancel.body.hitlId).toBe(cancellable.hitlId);
+  });
+
+  test("owner-qualified route keeps duplicate ids visible and mutates only its owner", async () => {
+    const fixture = await createTestApp("owner-qualified-mutation");
+    const project = await addProject(fixture.runtime, "owner-qualified-mutation", "Owner Qualified Project");
+    const context = await fixture.runtime.contextResolver.resolve(project.workspaceRoot);
+    const firstSessionId = await createSession(fixture, project, {});
+    const secondSessionId = await createSession(fixture, project, {});
+    const hitlId = "owner-local-shared-id";
+    const first = await context.hitl.create({
+      owner: { projectSlug: project.slug, ownerType: "session", ownerId: firstSessionId },
+      hitlId,
+      blockingKey: "first-owner-shared-id",
+      source: { type: "ask_user", sessionId: firstSessionId },
+      displayPayload: redactedPayload("First owner"),
+    });
+    const second = await context.hitl.create({
+      owner: { projectSlug: project.slug, ownerType: "session", ownerId: secondSessionId },
+      hitlId,
+      blockingKey: "second-owner-shared-id",
+      source: { type: "ask_user", sessionId: secondSessionId },
+      displayPayload: redactedPayload("Second owner"),
+    });
+
+    const list = await getHitl(fixture.app, `/api/projects/${project.slug}/hitl?scope=project&status=pending`);
+    expect(list.hitl.filter((projection) => projection.hitlId === hitlId)).toHaveLength(2);
+
+    const response = await postJson<HitlMutationBody>(fixture.app, mutationUrl(first, "respond"), {
+      type: "question_answer",
+      answers: ["first only"],
+    });
+    expect(response.status).toBe(200);
+    await waitForHitlStatus(context.hitl, first, "resolved");
+    expect(await context.hitl.lookup(identity(second))).toMatchObject({
+      status: "found",
+      record: { status: "pending", owner: second.owner },
+    });
+  });
+
+  test("respond requires an explicit protocol discriminant and cancel rejects malformed JSON", async () => {
+    const fixture = await createTestApp("strict-hitl-mutations");
+    const project = await addProject(fixture.runtime, "strict-hitl-mutations", "Strict HITL Project");
+    const context = await fixture.runtime.contextResolver.resolve(project.workspaceRoot);
+    const sessionId = await createSession(fixture, project, {});
+    const missingType = await createPermissionHitl(context.hitl, project.slug, sessionId, "missing-type");
+
+    const missingTypeResponse = await fixture.app.request(mutationUrl(missingType, "respond"), {
+      method: "POST",
+      body: JSON.stringify({ decision: "approve_once" }),
+      headers: { "content-type": "application/json" },
+    });
+    expect(missingTypeResponse.status).toBe(400);
+
+    const valid = await createPermissionHitl(context.hitl, project.slug, sessionId, "explicit-type");
+    const validResponse = await postJson<HitlMutationBody>(fixture.app, mutationUrl(valid, "respond"), {
+      type: "permission_decision",
+      decision: "approve_once",
+    });
+    expect(validResponse.status).toBe(200);
+
+    const wrongVariant = await createPermissionHitl(context.hitl, project.slug, sessionId, "wrong-variant");
+    const wrongVariantResponse = await fixture.app.request(mutationUrl(wrongVariant, "respond"), {
+      method: "POST",
+      body: JSON.stringify({ type: "approval_decision", decision: "approved" }),
+      headers: { "content-type": "application/json" },
+    });
+    expect(wrongVariantResponse.status).toBe(400);
+    expect(await context.hitl.lookup(identity(wrongVariant))).toMatchObject({
+      status: "found",
+      record: { status: "pending" },
+    });
+
+    const unknownField = await createPermissionHitl(context.hitl, project.slug, sessionId, "unknown-field");
+    const unknownFieldResponse = await fixture.app.request(mutationUrl(unknownField, "respond"), {
+      method: "POST",
+      body: JSON.stringify({ type: "permission_decision", decision: "approve_once", legacyPayload: true }),
+      headers: { "content-type": "application/json" },
+    });
+    expect(unknownFieldResponse.status).toBe(400);
+    expect(await context.hitl.lookup(identity(unknownField))).toMatchObject({
+      status: "found",
+      record: { status: "pending" },
+    });
+
+    const malformedCancel = await createSessionHitl(context.hitl, project.slug, sessionId, "Malformed cancel");
+    const malformedResponse = await fixture.app.request(mutationUrl(malformedCancel, "cancel"), {
+      method: "POST",
+      body: "{",
+      headers: { "content-type": "application/json" },
+    });
+    expect(malformedResponse.status).toBe(400);
+    expect(await context.hitl.lookup(identity(malformedCancel))).toMatchObject({
+      status: "found",
+      record: { status: "pending" },
+    });
+
+    const emptyCancel = await createSessionHitl(context.hitl, project.slug, sessionId, "Empty cancel");
+    const emptyResponse = await fixture.app.request(mutationUrl(emptyCancel, "cancel"), { method: "POST" });
+    expect(emptyResponse.status).toBe(200);
   });
 
   test("explicit cancel retries a resume_failed session HITL so its blocker can unwind", async () => {
@@ -319,15 +431,15 @@ describe("hitl routes", () => {
     const sessionId = await createSession(fixture, project, {});
     const hitl = await createSessionHitl(context.hitl, project.slug, sessionId, "Unknown continuation");
 
-    await context.hitl.claim(hitl.hitlId, { type: "question_answer", answers: ["continue"] }, {
+    await context.hitl.claim(identity(hitl), { type: "question_answer", answers: ["continue"] }, {
       claimId: crypto.randomUUID(),
       claimedAt: new Date().toISOString(),
       intent: "respond",
       attempt: 1,
     });
-    await context.hitl.markResumeFailed(hitl.hitlId, "LLM continuation outcome is unknown");
+    await context.hitl.markResumeFailed(identity(hitl), "LLM continuation outcome is unknown");
 
-    const cancelled = await postJson<HitlMutationBody>(fixture.app, `/api/projects/${project.slug}/hitl/${hitl.hitlId}/cancel`, {
+    const cancelled = await postJson<HitlMutationBody>(fixture.app, mutationUrl(hitl, "cancel"), {
       reason: "I inspected the external state; unlock without replaying",
     });
 
@@ -336,7 +448,7 @@ describe("hitl routes", () => {
     expect(cancelled.body.status).toBe("resume_claimed");
     expect(fixture.sessionResumeCalls()).toBe(1);
 
-    await waitForHitlStatus(context.hitl, hitl.hitlId, "cancelled");
+    await waitForHitlStatus(context.hitl, hitl, "cancelled");
   });
 });
 
@@ -369,16 +481,29 @@ async function waitForSessionFile(runtime: AgentRuntime, workspaceRoot: string, 
   throw lastError instanceof Error ? lastError : new Error(`Timed out waiting for session ${sessionId}`);
 }
 
-async function waitForHitlStatus(hitl: TestHitlService, hitlId: string, status: HitlRecord["status"]): Promise<void> {
+async function waitForHitlStatus(
+  hitl: TestHitlService,
+  record: Pick<HitlRecord, "owner" | "hitlId">,
+  status: HitlRecord["status"],
+): Promise<void> {
   const deadline = Date.now() + 2_000;
   let latest = "missing";
   while (Date.now() < deadline) {
-    const lookup = await hitl.lookup(hitlId);
+    const lookup = await hitl.lookup(identity(record));
     latest = lookup.status === "found" ? lookup.record.status : lookup.status;
     if (latest === status) return;
     await Bun.sleep(10);
   }
-  throw new Error(`Timed out waiting for HITL ${hitlId} to become ${status}; latest status was ${latest}`);
+  throw new Error(`Timed out waiting for HITL ${record.hitlId} to become ${status}; latest status was ${latest}`);
+}
+
+function identity(record: Pick<HitlRecord, "owner" | "hitlId">): HitlIdentity {
+  return { owner: record.owner, hitlId: record.hitlId };
+}
+
+function mutationUrl(record: Pick<HitlRecord, "owner" | "hitlId">, action: "respond" | "cancel"): string {
+  const { owner, hitlId } = record;
+  return `/api/projects/${encodeURIComponent(owner.projectSlug)}/hitl/${owner.ownerType}/${encodeURIComponent(owner.ownerId)}/${encodeURIComponent(hitlId)}/${action}`;
 }
 
 async function createGoal(manager: GoalStateManager, projectSlug: string, title: string, loopId?: string) {
@@ -412,7 +537,7 @@ async function createGoalHitl(hitl: TestHitlService, projectSlug: string, goalId
   return await hitl.create({
     owner: { projectSlug, ownerType: "goal", ownerId: goalId },
     blockingKey: `goal:${goalId}:approval:after_plan:${crypto.randomUUID()}`,
-    source: { type: "goal_approval", goalId, approvalPoint: "after_plan" },
+    source: { type: "goal_approval", goalId, approvalPoint: "after_plan", resumeStatus: "running" },
     displayPayload: redactedPayload(title),
   });
 }

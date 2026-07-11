@@ -170,6 +170,8 @@ describe("lspDiagnosticsTool", () => {
     const ctx = makeCtx({
       toolName: "lsp_diagnostics",
       toolCallId: "call-1",
+      agentName: "orchestrator",
+      agentSkills: [],
       input: { filePath: "../outside.ts" },
       ...durable,
     });

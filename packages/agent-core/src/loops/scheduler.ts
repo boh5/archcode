@@ -9,10 +9,10 @@ import { canonicalTargetKey, CollisionLedger } from "./collision-ledger";
 import { LoopJobCoordinator, LoopJobExecutionLeaseError } from "./coordinator";
 import type { LoopSessionAttemptCheckpointInput, LoopWorktreeCheckpointInput } from "./coordinator";
 import { BunCronAdapter, type CronAdapter, type CronAdapterHandle } from "./cron-adapter";
-import { LoopJobQueue, type EnqueueLoopJobInput, type EnqueueLoopJobResult, type LoopJobExecutionLease, type LoopJobRecord } from "./job-queue";
+import { LoopJobNotFoundError, LoopJobQueue, type EnqueueLoopJobInput, type EnqueueLoopJobResult, type LoopJobExecutionLease, type LoopJobRecord } from "./job-queue";
 import { LoopKillStateManager, type LoopKillActivateInput, type LoopKillState } from "./kill-state";
 import { LoopActiveConflictError, LoopWorktreeScopeCheckpointError } from "./runner";
-import type { CollisionConflict, CollisionTarget, LoopBudgetUsage, LoopCleanupState, LoopCoordinatorConfig, LoopIntegrationError, LoopJobStatus, LoopRunReason, LoopRunReport, LoopRunReportStatus, LoopRunTrigger, LoopState, LoopTriggerHealth, LoopWorktreeArtifact } from "./state";
+import type { CollisionConflict, CollisionTarget, LoopBudgetUsage, LoopCleanupState, LoopIntegrationError, LoopJobStatus, LoopRunReason, LoopRunReport, LoopRunReportStatus, LoopRunTrigger, LoopState, LoopTriggerHealth, LoopWorktreeArtifact } from "./state";
 import { LoopStateManager } from "./state";
 import { LoopTriggerPoller } from "./triggers";
 
@@ -34,13 +34,13 @@ export interface LoopSchedulerRunInput {
   readonly trigger: LoopRunTrigger;
   readonly runId: string;
   readonly startedAt: number;
-  readonly job?: LoopSchedulerRunJob;
+  readonly job: LoopSchedulerRunJob;
   /** Write-ahead immutable Git base before any worktree lifecycle mutation. */
-  readonly checkpointBaseSha?: (baseSha: string) => Promise<void>;
+  readonly checkpointBaseSha: (baseSha: string) => Promise<void>;
   /** Persist the prepared execution scope before any Session or Agent work starts. */
-  readonly checkpointWorktree?: (checkpoint: LoopWorktreeCheckpointInput) => Promise<void>;
+  readonly checkpointWorktree: (checkpoint: LoopWorktreeCheckpointInput) => Promise<void>;
   /** Persist exact Session execution identity before the Agent can start. */
-  readonly checkpointSessionAttempt?: (checkpoint: LoopSessionAttemptCheckpointInput) => Promise<void>;
+  readonly checkpointSessionAttempt: (checkpoint: LoopSessionAttemptCheckpointInput) => Promise<void>;
 }
 
 export interface LoopSchedulerRunJob {
@@ -66,7 +66,7 @@ export interface LoopSchedulerRunJob {
 }
 
 export interface LoopSchedulerRunResult {
-  readonly status?: Exclude<LoopRunReportStatus, "running">;
+  readonly status: Exclude<LoopRunReportStatus, "running">;
   readonly sessionId?: string;
   readonly goalId?: string;
   readonly summary?: string;
@@ -90,7 +90,7 @@ export interface LoopSchedulerRunResult {
   readonly resumeCheckpoint?: LoopRunReport["resumeCheckpoint"];
 }
 
-export type LoopSchedulerRunner = (input: LoopSchedulerRunInput) => Promise<LoopSchedulerRunResult | void>;
+export type LoopSchedulerRunner = (input: LoopSchedulerRunInput) => Promise<LoopSchedulerRunResult>;
 
 interface ActiveSchedulerRun {
   readonly runId: string;
@@ -107,21 +107,20 @@ export interface LoopSchedulerOptions {
   readonly runner: LoopSchedulerRunner;
   readonly clock?: LoopSchedulerClock;
   readonly timer?: LoopSchedulerTimer;
-  readonly budgetLedger?: LoopBudgetLedger;
-  readonly collisionLedger?: CollisionLedger;
-  readonly jobQueue?: LoopJobQueue;
-  readonly coordinator?: LoopJobCoordinator;
-  readonly coordinatorConfig?: Partial<LoopCoordinatorConfig>;
-  readonly killStateManager?: LoopKillStateManager;
-  readonly abortSessionExecutionAndWait?: (sessionId: string) => Promise<void>;
+  readonly budgetLedger: LoopBudgetLedger;
+  readonly collisionLedger: CollisionLedger;
+  readonly jobQueue: LoopJobQueue;
+  readonly coordinator: LoopJobCoordinator;
+  readonly killStateManager: LoopKillStateManager;
+  readonly abortSessionExecutionAndWait: (sessionId: string) => Promise<void>;
   readonly logger?: Logger;
   readonly cronAdapter?: CronAdapter;
   readonly triggerPoller?: LoopTriggerPoller;
-  readonly hitl?: HitlService;
+  readonly hitl: HitlService;
   /** Idempotent executor for one durable terminal-job cleanup intent. */
-  readonly cleanupJob?: (jobId: string) => Promise<LoopCleanupWorktreeResult | undefined>;
+  readonly cleanupJob: (jobId: string) => Promise<LoopCleanupWorktreeResult | undefined>;
   /** Reads the exact durably checkpointed Session attempt during startup recovery. */
-  readonly readSessionAttempt?: (sessionId: string, executionId: string) => Promise<{
+  readonly readSessionAttempt: (sessionId: string, executionId: string) => Promise<{
     readonly execution?: SessionExecutionRecord;
     readonly blockedByHitlIds?: readonly string[];
   }>;
@@ -162,12 +161,12 @@ export class LoopScheduler {
   readonly #clock: LoopSchedulerClock;
   readonly #timer: LoopSchedulerTimer;
   readonly #cronAdapter: CronAdapter;
-  readonly #budgetLedger?: LoopBudgetLedger;
-  readonly #collisionLedger?: CollisionLedger;
-  readonly #jobQueue?: LoopJobQueue;
-  readonly #coordinator?: LoopJobCoordinator;
-  readonly #killStateManager?: LoopKillStateManager;
-  readonly #abortSessionExecutionAndWait?: (sessionId: string) => Promise<void>;
+  readonly #budgetLedger: LoopBudgetLedger;
+  readonly #collisionLedger: CollisionLedger;
+  readonly #jobQueue: LoopJobQueue;
+  readonly #coordinator: LoopJobCoordinator;
+  readonly #killStateManager: LoopKillStateManager;
+  readonly #abortSessionExecutionAndWait: (sessionId: string) => Promise<void>;
   readonly #logger: Logger;
   readonly #timers = new Map<string, LoopSchedulerTimerHandle>();
   readonly #triggerTimers = new Map<string, LoopSchedulerTimerHandle>();
@@ -176,15 +175,20 @@ export class LoopScheduler {
   readonly #activeRuns = new Map<string, ActiveSchedulerRun>();
   readonly #manualWaiters = new Map<string, ManualJobWaiter[]>();
   readonly #triggerPoller?: LoopTriggerPoller;
-  readonly #hitl?: HitlService;
-  readonly #cleanupJob?: LoopSchedulerOptions["cleanupJob"];
-  readonly #readSessionAttempt?: LoopSchedulerOptions["readSessionAttempt"];
+  readonly #hitl: HitlService;
+  readonly #cleanupJob: LoopSchedulerOptions["cleanupJob"];
+  readonly #readSessionAttempt: LoopSchedulerOptions["readSessionAttempt"];
   #disposed = false;
   #started = false;
   #dispatching = false;
   #dispatchAgain = false;
 
   constructor(options: LoopSchedulerOptions) {
+    if (options.budgetLedger === undefined) throw new Error("LoopScheduler requires budget enforcement.");
+    if (options.collisionLedger === undefined) throw new Error("LoopScheduler requires collision enforcement.");
+    if (options.killStateManager === undefined) throw new Error("LoopScheduler requires global kill-state enforcement.");
+    if (options.abortSessionExecutionAndWait === undefined) throw new Error("LoopScheduler requires Session cancellation ownership.");
+    if (options.hitl === undefined) throw new Error("LoopScheduler requires durable HITL.");
     this.#stateManager = options.stateManager;
     this.#runner = options.runner;
     this.#clock = options.clock ?? systemClock;
@@ -193,9 +197,7 @@ export class LoopScheduler {
     this.#budgetLedger = options.budgetLedger;
     this.#collisionLedger = options.collisionLedger;
     this.#jobQueue = options.jobQueue;
-    this.#coordinator = options.coordinator ?? (options.jobQueue === undefined
-      ? undefined
-      : new LoopJobCoordinator({ queue: options.jobQueue, clock: this.#clock, config: options.coordinatorConfig }));
+    this.#coordinator = options.coordinator;
     this.#killStateManager = options.killStateManager;
     this.#abortSessionExecutionAndWait = options.abortSessionExecutionAndWait;
     this.#logger = (options.logger ?? silentLogger).child({ module: "loops.scheduler" });
@@ -209,10 +211,10 @@ export class LoopScheduler {
     if (this.#disposed || this.#started) return;
     this.#started = true;
 
-    await this.#collisionLedger?.cleanupStale();
+    await this.#collisionLedger.cleanupStale();
     await this.reconcileDurableSessionAttempts();
     await this.reconcileReportedNonTerminalJobs();
-    await this.#coordinator?.start();
+    await this.#coordinator.start();
     await this.recoverCleanupSagas();
     await this.reconcileStaleCurrentRuns(projectId);
     const loops = await this.#stateManager.list(projectId);
@@ -377,7 +379,7 @@ export class LoopScheduler {
   private async scheduleTriggerPolling(loop: LoopState): Promise<void> {
     if (this.#triggerPoller === undefined || (loop.config.triggers ?? []).length === 0) return;
 
-    const cadenceMs = Math.min(...(loop.config.triggers ?? []).map((trigger) => trigger.cadenceMs ?? 60_000));
+    const cadenceMs = Math.min(...(loop.config.triggers ?? []).map((trigger) => trigger.cadenceMs));
     const handle = this.#timer.schedule(cadenceMs, async () => {
       this.#triggerTimers.delete(loop.loopId);
       await this.runTriggerPollTick(loop.loopId);
@@ -512,10 +514,6 @@ export class LoopScheduler {
   }
 
   private async enqueueLoopJob(loop: LoopState, input: Omit<EnqueueLoopJobInput, "loopId">): Promise<EnqueueLoopJobResult | undefined> {
-    if (this.#jobQueue === undefined) {
-      throw new Error("LoopScheduler requires LoopJobQueue to enqueue loop jobs.");
-    }
-
     const globalKillReport = await this.globalKillBlockedReport(loop, input.triggerKind);
     if (globalKillReport !== undefined) return undefined;
     if (loop.status !== "active") {
@@ -536,8 +534,8 @@ export class LoopScheduler {
     });
     await this.dispatchReadyJobs();
     if (!this.#manualWaiters.has(jobId)) return await pending;
-    const latest = await this.#jobQueue?.read(jobId);
-    if (latest !== undefined && isTerminalJobStatus(latest.status)) {
+    const latest = await this.#jobQueue.read(jobId);
+    if (isTerminalJobStatus(latest.status)) {
       const report = await this.reportForJob(latest) ?? await this.ensureTerminalReportForJob(latest);
       this.resolveManualWaiter(jobId, report);
       return await pending;
@@ -546,7 +544,7 @@ export class LoopScheduler {
   }
 
   private async dispatchReadyJobs(): Promise<void> {
-    if (this.#disposed || this.#coordinator === undefined || this.#jobQueue === undefined) return;
+    if (this.#disposed) return;
     if (await this.isGlobalKillActive()) return;
     if (this.#dispatching) {
       this.#dispatchAgain = true;
@@ -566,7 +564,7 @@ export class LoopScheduler {
   }
 
   private requestDispatch(): void {
-    if (this.#disposed || this.#coordinator === undefined || this.#jobQueue === undefined) return;
+    if (this.#disposed) return;
     if (this.#dispatching) {
       this.#dispatchAgain = true;
       return;
@@ -603,12 +601,10 @@ export class LoopScheduler {
         return;
       }
       this.rejectManualWaiter(job.jobId, error);
-      if (this.#coordinator !== undefined) {
-        try {
-          await this.#coordinator.finish(job.jobId, executionLeaseFor(job), { status: "failed", summary: errorToMessage(error) });
-        } catch (finishError) {
-          if (!(finishError instanceof LoopJobExecutionLeaseError)) throw finishError;
-        }
+      try {
+        await this.#coordinator.finish(job.jobId, executionLeaseFor(job), { status: "failed", summary: errorToMessage(error) });
+      } catch (finishError) {
+        if (!(finishError instanceof LoopJobExecutionLeaseError)) throw finishError;
       }
       this.#logger.warn("loops.scheduler.queue_job.failed", { error, meta: { loopId: job.loopId, jobId: job.jobId } });
     } finally {
@@ -617,7 +613,7 @@ export class LoopScheduler {
   }
 
   private async finishQueuedJob(job: LoopJobRecord, report: LoopRunReport | undefined): Promise<LoopJobRecord | undefined> {
-    if (report === undefined || this.#coordinator === undefined) return undefined;
+    if (report === undefined) return undefined;
     return await this.#coordinator.finish(job.jobId, executionLeaseFor(job), {
       status: jobStatusFromRunReport(report),
       summary: report.summary ?? report.skippedReason ?? report.error,
@@ -636,7 +632,7 @@ export class LoopScheduler {
   }
 
   private async completeCleanupSaga(job: LoopJobRecord, report: LoopRunReport): Promise<LoopRunReport> {
-    if (job.cleanupState !== "in_progress" || this.#cleanupJob === undefined || this.#jobQueue === undefined) return report;
+    if (job.cleanupState !== "in_progress") return report;
     await this.#cleanupJob(job.jobId);
     const completed = await this.#jobQueue.read(job.jobId);
     return await this.syncCleanupReport(completed, report);
@@ -648,7 +644,6 @@ export class LoopScheduler {
    * being blindly recovered as pending work.
    */
   private async reconcileReportedNonTerminalJobs(): Promise<void> {
-    if (this.#jobQueue === undefined || this.#coordinator === undefined) return;
     for (const job of await this.#jobQueue.list(["running", "needs_user", "blocked"])) {
       const report = await this.reportForJob(job);
       if (report === undefined || report.status === "running") continue;
@@ -680,7 +675,6 @@ export class LoopScheduler {
    * failed closed rather than automatically repeating external side effects.
    */
   private async reconcileDurableSessionAttempts(): Promise<void> {
-    if (this.#jobQueue === undefined || this.#readSessionAttempt === undefined) return;
     for (const job of await this.#jobQueue.list(["running"])) {
       if (job.runId === undefined || job.sessionId === undefined || job.sessionExecutionId === undefined) continue;
       if (await this.reportForJob(job) !== undefined) continue;
@@ -726,11 +720,10 @@ export class LoopScheduler {
   }
 
   private async recoverCleanupSagas(): Promise<void> {
-    if (this.#jobQueue === undefined) return;
     const jobs = await this.#jobQueue.list();
     for (const job of jobs) {
       if (job.status === "running") continue;
-      if (job.cleanupState === "in_progress" && this.#cleanupJob !== undefined) {
+      if (job.cleanupState === "in_progress") {
         await this.#cleanupJob(job.jobId);
       }
       const current = await this.#jobQueue.read(job.jobId);
@@ -818,7 +811,7 @@ export class LoopScheduler {
 
     const runId = crypto.randomUUID();
     const startedAt = this.#clock.now();
-    const preRunBlocked = await this.#budgetLedger?.assertCanStartRun(loop, runId, trigger, { recordReport: trigger !== "interval" });
+    const preRunBlocked = await this.#budgetLedger.assertCanStartRun(loop, runId, trigger, { recordReport: trigger !== "interval" });
     if (preRunBlocked !== undefined) {
       if (trigger === "interval") {
         return await this.appendSkippedReport(
@@ -848,7 +841,7 @@ export class LoopScheduler {
     let startedState = loop;
     try {
       startedState = await this.#stateManager.recordRunStart(loop.loopId, runningReport);
-      await this.#budgetLedger?.recordRunStart(loop.loopId, runId);
+      await this.#budgetLedger.recordRunStart(loop.loopId, runId);
       const approvalBlocked = await this.createExplicitRunApproval(startedState, runningReport, job);
       if (approvalBlocked !== undefined) return approvalBlocked;
       const executionLease = executionLeaseFor(job);
@@ -859,47 +852,17 @@ export class LoopScheduler {
         startedAt,
         job,
         checkpointBaseSha: async (baseSha) => {
-          if (this.#coordinator === undefined) {
-            throw new Error("LoopScheduler cannot checkpoint a queued Git base without a coordinator.");
-          }
           await this.#coordinator.checkpointBaseSha(job.jobId, executionLease, baseSha);
         },
         checkpointWorktree: async (checkpoint) => {
-          if (this.#coordinator === undefined) {
-            throw new Error("LoopScheduler cannot checkpoint a queued worktree without a coordinator.");
-          }
           await this.#coordinator.checkpointWorktree(job.jobId, executionLease, checkpoint);
         },
         checkpointSessionAttempt: async (checkpoint) => {
-          if (this.#coordinator === undefined) {
-            throw new Error("LoopScheduler cannot checkpoint a Session attempt without a coordinator.");
-          }
           await this.#coordinator.checkpointSessionAttempt(job.jobId, executionLease, checkpoint);
         },
       });
       const report = await this.finishRun(startedState, runningReport, {
-        status: result?.status ?? "succeeded",
-        sessionId: result?.sessionId,
-        goalId: result?.goalId,
-        summary: result?.summary,
-        error: result?.error,
-        reason: result?.reason,
-        skippedReason: result?.skippedReason,
-        budgetUsage: result?.budgetUsage,
-        collisionTargets: result?.collisionTargets,
-        collisionConflicts: result?.collisionConflicts,
-        integrationErrors: result?.integrationErrors,
-        blockedReason: result?.blockedReason,
-        worktreePath: result?.worktreePath,
-        worktreeBranchName: result?.worktreeBranchName,
-        baseSha: result?.baseSha,
-        resolvedHeadSha: result?.resolvedHeadSha,
-        cleanupState: result?.cleanupState,
-        cleanupWarning: result?.cleanupWarning,
-        observedArtifacts: result?.observedArtifacts,
-        blockedByHitlIds: result?.blockedByHitlIds,
-        attentionStatus: result?.attentionStatus,
-        resumeCheckpoint: result?.resumeCheckpoint,
+        ...result,
       });
       this.rememberActiveSession(loop.loopId, report);
       return report;
@@ -911,7 +874,6 @@ export class LoopScheduler {
           status: "failed",
           error: error.message,
         });
-        if (this.#coordinator === undefined) throw error;
         await this.#coordinator.requeueWorktreePreparationFailure(job.jobId, executionLeaseFor(job));
         this.rememberActiveSession(loop.loopId, failedReport);
         throw new LoopJobRetryScheduledError(job.jobId, error);
@@ -945,8 +907,8 @@ export class LoopScheduler {
   ): Promise<LoopRunReport> {
     const latest = await this.#stateManager.read(loop.loopId);
     if (latest.lastRun?.runId === runningReport.runId && latest.lastRun.status !== "running") {
-      await this.#collisionLedger?.releaseRun(loop.loopId, runningReport.runId);
-      await this.#collisionLedger?.cleanupStale();
+      await this.#collisionLedger.releaseRun(loop.loopId, runningReport.runId);
+      await this.#collisionLedger.cleanupStale();
       return { ...runningReport, ...latest.lastRun };
     }
 
@@ -985,9 +947,9 @@ export class LoopScheduler {
     const finishedState = finishedReport.status === "needs_user"
       ? await this.#stateManager.recordRunBlocked(loop.loopId, finishedReport)
       : await this.#stateManager.recordRunFinish(loop.loopId, finishedReport);
-    if (loopOwnedHitl !== undefined) await this.#hitl?.publishRequest(loopOwnedHitl);
-    await this.#collisionLedger?.releaseRun(loop.loopId, runningReport.runId);
-    await this.#collisionLedger?.cleanupStale();
+    if (loopOwnedHitl !== undefined) await this.#hitl.publishRequest(loopOwnedHitl);
+    await this.#collisionLedger.releaseRun(loop.loopId, runningReport.runId);
+    await this.#collisionLedger.cleanupStale();
 
     if (!this.#disposed) {
       await this.scheduleLoopState(finishedState, { restart: false });
@@ -1014,7 +976,7 @@ export class LoopScheduler {
   }
 
   private async createExplicitRunApproval(loop: LoopState, runningReport: LoopRunReport, job: LoopJobRecord): Promise<LoopRunReport | undefined> {
-    if (this.#hitl === undefined || loop.config.approvalPolicy !== "explicit_per_run") return undefined;
+    if (loop.config.approvalPolicy !== "explicit_per_run") return undefined;
     if (job.attempts > 1) return undefined;
     const record = await this.#hitl.create({
       owner: { projectSlug: loop.projectId, ownerType: "loop", ownerId: loop.loopId },
@@ -1045,7 +1007,6 @@ export class LoopScheduler {
   }
 
   private async createLoopBlockerHitl(loop: LoopState, runningReport: LoopRunReport, result: LoopSchedulerFinishedRunResult): Promise<HitlRecord | undefined> {
-    if (this.#hitl === undefined) return undefined;
     return await this.#hitl.create({
       owner: { projectSlug: loop.projectId, ownerType: "loop", ownerId: loop.loopId },
       blockingKey: `loop:${loop.loopId}:run:${runningReport.runId}:blocker:${result.blockedReason ?? "needs_user"}`,
@@ -1064,7 +1025,7 @@ export class LoopScheduler {
   }
 
   private async acquireCollisionTargets(loop: LoopState, job: LoopJobRecord, runId: string, trigger: LoopRunTrigger, targets: readonly CollisionTarget[]): Promise<LoopRunReport | undefined> {
-    if (this.#collisionLedger === undefined || targets.length === 0) return undefined;
+    if (targets.length === 0) return undefined;
 
     const results = await this.#collisionLedger.acquireAll(targets.map((target) => ({
       target,
@@ -1120,7 +1081,7 @@ export class LoopScheduler {
     // owner to finish before committing the terminal Loop state/job so the
     // continuation cannot move a cancelled run backwards afterward.
     if (active.sessionId !== undefined) {
-      await (this.#abortSessionExecutionAndWait?.(active.sessionId) ?? Promise.resolve());
+      await this.#abortSessionExecutionAndWait(active.sessionId);
     }
 
     loop = await this.#stateManager.read(loopId);
@@ -1154,9 +1115,9 @@ export class LoopScheduler {
     for (const hitlId of blockerIds) {
       finishedState = await this.#stateManager.clearHitlBlocker(loopId, hitlId);
     }
-    await this.#collisionLedger?.releaseRun(loopId, active.runId);
-    await this.#collisionLedger?.cleanupStale();
-    if (active.jobId !== undefined && this.#coordinator !== undefined && this.#jobQueue !== undefined) {
+    await this.#collisionLedger.releaseRun(loopId, active.runId);
+    await this.#collisionLedger.cleanupStale();
+    if (active.jobId !== undefined) {
       let job = await this.#jobQueue.read(active.jobId);
       for (let attempt = 0; attempt < 2 && !isTerminalJobStatus(job.status); attempt += 1) {
         job = await this.#coordinator.reconcileReportedFinish(job, {
@@ -1187,18 +1148,16 @@ export class LoopScheduler {
   }
 
   private async isGlobalKillActive(): Promise<boolean> {
-    if (this.#killStateManager === undefined) return false;
     return (await this.#killStateManager.read()).globalKillActive;
   }
 
   private async cancelOpenJobs(loopId: string | undefined, reason: LoopRunReason): Promise<LoopRunReport[]> {
-    if (this.#jobQueue === undefined) return [];
     const jobs = await this.#jobQueue.list(["pending", "queued", "running", "blocked", "needs_user"]);
     const reports = await Promise.all(jobs
       .filter((job) => loopId === undefined || job.loopId === loopId)
       .map(async (job) => {
         if (job.status === "running") return undefined;
-        const update = await this.#jobQueue!.updateIfCurrent(job.jobId, job, {
+        const update = await this.#jobQueue.updateIfCurrent(job.jobId, job, {
           status: "cancelled",
           blockedReason: reason,
           blockedByHitlIds: undefined,
@@ -1223,7 +1182,7 @@ export class LoopScheduler {
 
   private async reconcileStaleCurrentRuns(projectId: string | undefined): Promise<void> {
     const loops = await this.#stateManager.list(projectId);
-    const runningJobs = new Set((await this.#jobQueue?.list(["running"]) ?? []).map((job) => job.jobId));
+    const runningJobs = new Set((await this.#jobQueue.list(["running"])).map((job) => job.jobId));
     await Promise.all(loops.map(async (loop) => {
       const current = loop.currentRun;
       if (current?.status !== "running") return;
@@ -1236,16 +1195,21 @@ export class LoopScheduler {
         summary: "Recovered stale running loop state on scheduler startup.",
       };
       await this.#stateManager.recordRunFinish(loop.loopId, report);
-      await this.#collisionLedger?.releaseRun(loop.loopId, current.runId);
+      await this.#collisionLedger.releaseRun(loop.loopId, current.runId);
     }));
-    await this.#collisionLedger?.cleanupStale();
+    await this.#collisionLedger.cleanupStale();
   }
 
   private async settleManualWaitersOnStop(): Promise<void> {
     if (this.#manualWaiters.size === 0) return;
     const jobIds = [...this.#manualWaiters.keys()];
     await Promise.all(jobIds.map(async (jobId) => {
-      const job = await this.#jobQueue?.read(jobId).catch(() => undefined);
+      let job: LoopJobRecord | undefined;
+      try {
+        job = await this.#jobQueue.read(jobId);
+      } catch (error) {
+        if (!(error instanceof LoopJobNotFoundError)) throw error;
+      }
       if (job === undefined) {
         this.resolveManualWaiter(jobId, undefined);
         return;
@@ -1259,7 +1223,7 @@ export class LoopScheduler {
         this.resolveManualWaiter(jobId, undefined);
         return;
       }
-      const update = await this.#jobQueue?.updateIfCurrent(jobId, job, {
+      const update = await this.#jobQueue.updateIfCurrent(jobId, job, {
         status: "cancelled",
         blockedReason: "cancelled_by_user",
         endedAt: this.#clock.now(),
@@ -1268,18 +1232,16 @@ export class LoopScheduler {
         leaseToken: undefined,
         updatedAt: this.#clock.now(),
       });
-      const cancelled = update?.outcome === "updated" ? update.updated : undefined;
+      const cancelled = update.outcome === "updated" ? update.updated : undefined;
       this.resolveManualWaiter(jobId, cancelled === undefined ? undefined : await this.ensureCancelledJobReport(cancelled, "cancelled_by_user"));
     }));
   }
 
   private async cancelClaimedJobBeforeStart(job: LoopJobRecord, reason: LoopRunReason): Promise<LoopRunReport> {
-    const cancelled = this.#coordinator === undefined
-      ? job
-      : await this.#coordinator.finish(job.jobId, executionLeaseFor(job), {
-        status: "cancelled",
-        blockedReason: reason,
-      });
+    const cancelled = await this.#coordinator.finish(job.jobId, executionLeaseFor(job), {
+      status: "cancelled",
+      blockedReason: reason,
+    });
     return await this.ensureCancelledJobReport(cancelled, reason);
   }
 
@@ -1342,12 +1304,11 @@ export class LoopScheduler {
   }
 
   private async requeueClaimedJobsWithoutCurrentRun(): Promise<void> {
-    if (this.#jobQueue === undefined) return;
     const runningJobs = await this.#jobQueue.list(["running"]);
     await Promise.all(runningJobs.map(async (job) => {
       const loop = await this.#stateManager.read(job.loopId);
       if (loop.currentRun?.jobId === job.jobId && loop.currentRun.status === "running") return;
-      await this.#jobQueue?.updateIfCurrent(job.jobId, job, {
+      await this.#jobQueue.updateIfCurrent(job.jobId, job, {
         status: "pending",
         startedAt: undefined,
         leaseExpiresAt: undefined,
@@ -1359,9 +1320,6 @@ export class LoopScheduler {
   }
 
   private killStateManager(): LoopKillStateManager {
-    if (this.#killStateManager === undefined) {
-      throw new Error("LoopScheduler requires a LoopKillStateManager for kill-state operations.");
-    }
     return this.#killStateManager;
   }
 
@@ -1408,10 +1366,9 @@ function collisionTargetsForRun(loop: LoopState, job: LoopJobRecord): CollisionT
   return targets;
 }
 
-function jobReportFields(job: LoopJobRecord): Pick<LoopRunReport, "jobId" | "triggerKind" | "subjectKey" | "dedupeKey" | "branchKey" | "worktreePath" | "worktreeBranchName" | "baseSha" | "resolvedHeadSha" | "missedCount" | "blockedReason" | "blockedByHitlIds" | "attentionStatus" | "resumeCheckpoint" | "cleanupState" | "cleanupWarning" | "observedArtifacts"> {
+function jobReportFields(job: LoopJobRecord): Pick<LoopRunReport, "jobId" | "subjectKey" | "dedupeKey" | "branchKey" | "worktreePath" | "worktreeBranchName" | "baseSha" | "resolvedHeadSha" | "missedCount" | "blockedReason" | "blockedByHitlIds" | "attentionStatus" | "resumeCheckpoint" | "cleanupState" | "cleanupWarning" | "observedArtifacts"> {
   return {
     jobId: job.jobId,
-    triggerKind: job.triggerKind,
     subjectKey: job.subjectKey,
     dedupeKey: job.dedupeKey,
     branchKey: job.branchKey,
@@ -1441,7 +1398,7 @@ function hitlIdsFromRecord(record: HitlRecord | undefined): string[] | undefined
 function checkpointFromRecord(
   record: HitlRecord | undefined,
   runningReport: LoopRunReport,
-  result: Pick<LoopSchedulerRunResult, "worktreePath" | "baseSha" | "resolvedHeadSha">,
+  result: Pick<LoopSchedulerRunResult, "worktreePath" | "worktreeBranchName" | "baseSha" | "resolvedHeadSha">,
   intendedContinuation: "rerun_job" | "resume_run",
 ): LoopRunReport["resumeCheckpoint"] {
   if (record === undefined) return undefined;
@@ -1454,6 +1411,7 @@ function checkpointFromRecord(
     trigger: runningReport.trigger,
     ...(runningReport.subjectKey === undefined ? {} : { subjectKey: runningReport.subjectKey }),
     ...(result.worktreePath === undefined ? {} : { worktreePath: result.worktreePath }),
+    ...(result.worktreeBranchName === undefined ? {} : { worktreeBranchName: result.worktreeBranchName }),
     ...(result.baseSha === undefined ? {} : { baseSha: result.baseSha }),
     ...(result.resolvedHeadSha === undefined ? {} : { resolvedHeadSha: result.resolvedHeadSha }),
     intendedContinuation,
@@ -1470,6 +1428,7 @@ function recoveredSessionCheckpoint(report: LoopRunReport, hitlId: string): NonN
     trigger: report.trigger,
     ...(report.subjectKey === undefined ? {} : { subjectKey: report.subjectKey }),
     ...(report.worktreePath === undefined ? {} : { worktreePath: report.worktreePath }),
+    ...(report.worktreeBranchName === undefined ? {} : { worktreeBranchName: report.worktreeBranchName }),
     ...(report.baseSha === undefined ? {} : { baseSha: report.baseSha }),
     ...(report.resolvedHeadSha === undefined ? {} : { resolvedHeadSha: report.resolvedHeadSha }),
     intendedContinuation: "resume_run",

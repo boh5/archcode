@@ -120,7 +120,6 @@ export interface AgentRuntime {
   readonly warnings: McpWarning[];
   readonly projectRegistry: ProjectRegistry;
   readonly contextResolver: ProjectContextResolver;
-  readonly hitl: HitlService;
   recoverHitlResumes(workspaceRoot: string): Promise<ResumeRecoverySummary | undefined>;
   listPendingHitlEvents(): Promise<GlobalSSEEvent[]>;
   subscribeHitlEvents(listener: (event: GlobalSSEHitlRealtimeEvent) => void): () => void;
@@ -158,7 +157,6 @@ export interface AgentRuntime {
   triggerLoopRun(workspaceRoot: string, loopId: string): Promise<LoopRunReport | undefined>;
   readLoopKillState(workspaceRoot: string): Promise<LoopKillState>;
   cancelLoopCurrentRun(workspaceRoot: string, loopId: string): Promise<LoopRunReport | undefined>;
-  cancelCurrentLoopRun(workspaceRoot: string, loopId: string): Promise<LoopRunReport | undefined>;
   activateLoopGlobalKill(workspaceRoot: string, input?: LoopKillActivateInput): Promise<LoopKillState>;
   clearLoopGlobalKill(workspaceRoot: string): Promise<LoopKillState>;
   readLoopBudget(workspaceRoot: string, loopId: string): Promise<LoopBudgetSnapshot | null>;
@@ -244,17 +242,18 @@ export async function createRuntime(
     const publishResourceChanged = (event: GlobalSSEResourceChangedEvent): void => {
       for (const listener of resourceChangeListeners) listener(event);
     };
-    const hitl = new HitlService({
-      sessions: sessionStoreManager,
-      realtimePublisher: publishHitlEvent,
-      logger: runtimeLogger.child({ module: "hitl" }),
-    });
     let contextResolver!: ProjectContextResolver;
     let executionScopeValidator!: SessionExecutionScopeValidator;
     contextResolver = new ProjectContextResolver({
-      projectInfoFactory: (workspaceRoot) => projectRegistry.getByWorkspace(workspaceRoot),
-      hitlFactory: (workspaceRoot) => new HitlService({
-        workspaceRoot,
+      projectInfoFactory: async (workspaceRoot) => {
+        const project = await projectRegistry.getByWorkspace(workspaceRoot);
+        if (project === undefined) {
+          throw new Error(`Project is not registered: ${workspaceRoot}`);
+        }
+        return project;
+      },
+      hitlFactory: (hitlOptions) => new HitlService({
+        ...hitlOptions,
         realtimePublisher: publishHitlEvent,
         logger: runtimeLogger.child({ module: "hitl" }),
       }),
@@ -318,11 +317,6 @@ export async function createRuntime(
         },
         logger: runtimeLogger.child({ module: "projects" }),
       }),
-      resumeAdapters: {
-        session: { resume: async () => { throw new Error("Session HITL adapter factory was not used"); } },
-        goal: { resume: async () => { throw new Error("Goal HITL adapter factory was not used"); } },
-        loop: { resume: async () => { throw new Error("Loop HITL adapter factory was not used"); } },
-      },
       logger: runtimeLogger.child({ module: "projects" }),
     });
     executionScopeValidator = new SessionExecutionScopeValidator({
@@ -404,13 +398,12 @@ export async function createRuntime(
     const createGoalRunnerForLoop = (workspaceRoot: string, loopId?: string): Promise<GoalRunner> => {
       return contextResolver.resolve(workspaceRoot).then((projectContext) => new GoalRunner({
         goalStateManager: projectContext.goalState,
-        hitlService: projectContext.hitl,
         workspaceRoot,
         createSession: async (createOptions) => (await sessionStoreManager.createSessionFile(workspaceRoot, {
           ...createOptions,
           ...(loopId !== undefined && createOptions?.loopId === undefined ? { loopId } : {}),
         })).sessionId,
-        getSessionCwd: async (sessionId) => (await sessionStoreManager.getSessionFile(workspaceRoot, sessionId)).cwd ?? workspaceRoot,
+        getSessionCwd: async (sessionId) => (await sessionStoreManager.getSessionFile(workspaceRoot, sessionId)).cwd,
         isSessionActive: async (sessionId) => executionManager.isRunning(workspaceRoot, sessionId),
       }));
     };
@@ -659,12 +652,8 @@ export async function createRuntime(
       return await (await getLoopScheduler(workspaceRoot)).readKillState();
     }
 
-    async function cancelCurrentLoopRun(workspaceRoot: string, loopId: string): Promise<LoopRunReport | undefined> {
-      return await (await getLoopScheduler(workspaceRoot)).cancelCurrentRun(loopId);
-    }
-
     async function cancelLoopCurrentRun(workspaceRoot: string, loopId: string): Promise<LoopRunReport | undefined> {
-      return await cancelCurrentLoopRun(workspaceRoot, loopId);
+      return await (await getLoopScheduler(workspaceRoot)).cancelCurrentRun(loopId);
     }
 
     async function activateLoopGlobalKill(workspaceRoot: string, input?: LoopKillActivateInput): Promise<LoopKillState> {
@@ -748,8 +737,7 @@ export async function createRuntime(
       warnings,
       projectRegistry,
       contextResolver,
-      hitl,
-      recoverHitlResumes: async (workspaceRoot) => (await contextResolver.resolve(workspaceRoot)).hitlResumeCoordinator?.recover(),
+      recoverHitlResumes: async (workspaceRoot) => (await contextResolver.resolve(workspaceRoot)).hitlResumeCoordinator.recover(),
       listPendingHitlEvents: async () => {
         const projects = await projectRegistry.list();
         const events: GlobalSSEEvent[] = [{
@@ -821,7 +809,6 @@ export async function createRuntime(
       triggerLoopRun,
       readLoopKillState,
       cancelLoopCurrentRun,
-      cancelCurrentLoopRun,
       activateLoopGlobalKill,
       clearLoopGlobalKill,
       readLoopBudget,

@@ -64,10 +64,10 @@ const SessionExecutionRecordSchema = z.strictObject({
 const HitlSourceSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("ask_user"), sessionId: z.string(), toolCallId: z.string().optional() }),
   z.strictObject({ type: z.literal("tool_permission"), sessionId: z.string(), toolCallId: z.string(), toolName: z.string() }),
-  z.strictObject({ type: z.literal("goal_approval"), goalId: z.string(), approvalPoint: z.string().optional() }),
-  z.strictObject({ type: z.literal("goal_review"), goalId: z.string() }),
-  z.strictObject({ type: z.literal("goal_budget"), goalId: z.string(), approvalPoint: z.string().optional() }),
-  z.strictObject({ type: z.literal("goal_question"), goalId: z.string(), questionKey: z.string() }),
+  z.strictObject({ type: z.literal("goal_approval"), goalId: z.string(), approvalPoint: z.string().optional(), resumeStatus: z.enum(["running", "reviewing"]) }),
+  z.strictObject({ type: z.literal("goal_review"), goalId: z.string(), resumeStatus: z.literal("reviewing") }),
+  z.strictObject({ type: z.literal("goal_budget"), goalId: z.string(), approvalPoint: z.string().optional(), resumeStatus: z.enum(["running", "reviewing"]) }),
+  z.strictObject({ type: z.literal("goal_question"), goalId: z.string(), questionKey: z.string(), resumeStatus: z.enum(["running", "reviewing"]) }),
   z.strictObject({ type: z.literal("loop_approval"), loopId: z.string(), approvalPoint: z.string() }),
   z.strictObject({ type: z.literal("loop_blocker"), loopId: z.string(), runId: z.string().optional(), reason: z.string() }),
   z.strictObject({ type: z.literal("loop_retry"), loopId: z.string(), runId: z.string(), attempt: z.number().int().nonnegative() }),
@@ -407,28 +407,27 @@ const SessionEventEnvelopeSchema = z.strictObject({
 }).transform((value) => value as SessionEventEnvelope);
 
 export const SessionFileSchema = z.strictObject({
+  schemaVersion: z.literal(1),
   sessionId: z.string(),
   createdAt: z.number(),
-  // Optional only for backward compatibility. SessionStoreManager hydrates
-  // legacy files to their canonical project root and all new files persist it.
-  cwd: z.string().optional(),
+  updatedAt: z.number(),
+  cwd: z.string(),
   agentName: z.string(),
-  modelInfo: SessionModelInfoSchema.nullable().optional(),
-  title: z.string().nullable().optional(),
+  modelInfo: SessionModelInfoSchema.nullable(),
+  title: z.string().nullable(),
   messages: z.array(StoredMessageSchema),
   steps: z.array(StepInfoSchema),
   stats: SessionStatsSchema,
   executions: z.array(SessionExecutionRecordSchema),
-  compression: CompressionStateSchema.default(() => createEmptyCompressionState()),
+  compression: CompressionStateSchema,
   events: z.array(SessionEventEnvelopeSchema).optional(),
   todos: z.array(StoredTodoSchema)
     .refine(
       (todos) => todos.filter((todo) => todo.status === "in_progress").length <= 1,
       "Only one todo can be in_progress",
-    )
-    .optional(),
-  reminders: z.array(ReminderSchema).default([]),
-  childSessionLinks: z.array(ToolChildSessionLinkSchema).default([]),
+    ),
+  reminders: z.array(ReminderSchema),
+  childSessionLinks: z.array(ToolChildSessionLinkSchema),
   // Tree edges are read from each child file; parent files intentionally keep no child cache.
   rootSessionId: z.string(),
   parentSessionId: z.string().optional(),
@@ -441,31 +440,29 @@ export const SessionFileSchema = z.strictObject({
 });
 
 export type HydratedSessionFile = z.output<typeof SessionFileSchema>;
-export type SessionFile = Omit<HydratedSessionFile, "compression"> & {
-  readonly compression?: HydratedSessionFile["compression"];
-};
+export type SessionFile = HydratedSessionFile;
 
 export interface SessionSummary {
   sessionId: string;
-  cwd?: string;
+  cwd: string;
   rootSessionId: string;
   parentSessionId?: string;
   goalId?: string;
   loopId?: string;
   sessionRole?: SessionRole;
-  agentName?: string | null;
-  modelInfo?: SessionModelInfo | null;
-  title?: string | null;
+  agentName: string;
+  modelInfo: SessionModelInfo | null;
+  title: string | null;
   createdAt: number;
-  lastUpdatedAt?: number;
+  updatedAt: number;
 }
 
 type PersistableSessionState = Pick<
   SessionStoreState,
-  "sessionId" | "createdAt" | "agentName" | "modelInfo" | "title" | "messages" | "steps" | "stats" | "executions" | "todos" | "rootSessionId"
+  "sessionId" | "createdAt" | "updatedAt" | "cwd" | "agentName" | "modelInfo" | "title" | "messages" | "steps" | "stats" | "executions" | "compression" | "todos" | "reminders" | "childSessionLinks" | "rootSessionId"
 > & Partial<Pick<
   SessionStoreState,
-  "cwd" | "compression" | "reminders" | "childSessionLinks" | "parentSessionId" | "goalId" | "loopId" | "sessionRole" | "blockedHitl" | "blockedByHitlIds" | "events"
+  "parentSessionId" | "goalId" | "loopId" | "sessionRole" | "blockedHitl" | "blockedByHitlIds" | "events"
 >>;
 
 export function getAssistantText(messages: StoredMessage[]): string {
@@ -499,19 +496,22 @@ async function saveSessionTranscript(
   }
 
   const data: HydratedSessionFile = {
+    schemaVersion: 1,
     sessionId: state.sessionId,
     createdAt: state.createdAt,
-    ...(state.cwd === undefined ? {} : { cwd: state.cwd }),
+    updatedAt: state.updatedAt,
+    cwd: state.cwd,
     agentName: state.agentName,
-    title: state.title ?? null,
+    modelInfo: state.modelInfo,
+    title: state.title,
     messages: state.messages,
     steps: state.steps,
     stats: state.stats,
     executions: state.executions,
-    compression: state.compression ?? createEmptyCompressionState(),
+    compression: state.compression,
     todos: state.todos,
-    reminders: state.reminders ?? [],
-    childSessionLinks: state.childSessionLinks ?? [],
+    reminders: state.reminders,
+    childSessionLinks: state.childSessionLinks,
     rootSessionId: state.rootSessionId,
     ...((state.events?.length ?? 0) === 0 ? {} : { events: state.events }),
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
@@ -520,7 +520,6 @@ async function saveSessionTranscript(
     ...(state.sessionRole === undefined ? {} : { sessionRole: state.sessionRole }),
     ...(state.blockedHitl === undefined ? {} : { blockedHitl: state.blockedHitl }),
     ...(state.blockedByHitlIds === undefined ? {} : { blockedByHitlIds: state.blockedByHitlIds }),
-    ...(state.modelInfo === undefined ? {} : { modelInfo: state.modelInfo }),
   };
 
   const json = JSON.stringify(data, null, 2);
@@ -558,19 +557,22 @@ async function readSessionFile(
 
 function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, "nextEventId">): HydratedSessionFile {
   return {
+    schemaVersion: 1,
     sessionId: state.sessionId,
     createdAt: state.createdAt,
-    ...(state.cwd === undefined ? {} : { cwd: state.cwd }),
+    updatedAt: state.updatedAt,
+    cwd: state.cwd,
     agentName: state.agentName,
-    title: state.title ?? null,
+    modelInfo: state.modelInfo,
+    title: state.title,
     messages: state.messages,
     steps: state.steps,
     stats: state.stats,
     executions: state.executions,
-    compression: state.compression ?? createEmptyCompressionState(),
+    compression: state.compression,
     todos: state.todos,
-    reminders: state.reminders ?? [],
-    childSessionLinks: state.childSessionLinks ?? [],
+    reminders: state.reminders,
+    childSessionLinks: state.childSessionLinks,
     rootSessionId: state.rootSessionId,
     eventCursor: state.nextEventId > 0 ? state.nextEventId - 1 : -1,
     ...((state.events?.length ?? 0) === 0 ? {} : { events: state.events }),
@@ -580,7 +582,6 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
     ...(state.sessionRole === undefined ? {} : { sessionRole: state.sessionRole }),
     ...(state.blockedHitl === undefined ? {} : { blockedHitl: state.blockedHitl }),
     ...(state.blockedByHitlIds === undefined ? {} : { blockedByHitlIds: state.blockedByHitlIds }),
-    ...(state.modelInfo === undefined ? {} : { modelInfo: state.modelInfo }),
   };
 }
 
@@ -590,32 +591,25 @@ async function listSessionSummaries(workspaceRoot: string): Promise<SessionSumma
   const sessions: Array<{ summary: SessionSummary; sortKey: number }> = [];
 
   for (const name of names) {
-    try {
-      const parsed = await readSessionFile(name, workspaceRoot);
-      if (parsed.parentSessionId !== undefined || parsed.rootSessionId !== parsed.sessionId) continue;
-      const timestamps = readSessionTimestamps(parsed);
-      sessions.push({
-        summary: {
-          sessionId: parsed.sessionId,
-          cwd: parsed.cwd ?? workspaceRoot,
-          rootSessionId: parsed.rootSessionId,
-          ...(parsed.parentSessionId === undefined ? {} : { parentSessionId: parsed.parentSessionId }),
-          ...(parsed.goalId === undefined ? {} : { goalId: parsed.goalId }),
-          ...(parsed.loopId === undefined ? {} : { loopId: parsed.loopId }),
-          ...(parsed.sessionRole === undefined ? {} : { sessionRole: parsed.sessionRole }),
-          agentName: parsed.agentName,
-          ...(parsed.modelInfo === undefined ? {} : { modelInfo: parsed.modelInfo }),
-          title: parsed.title ?? null,
-          createdAt: parsed.createdAt,
-          ...(timestamps.lastUpdatedAt === undefined ? {} : { lastUpdatedAt: timestamps.lastUpdatedAt }),
-        },
-        sortKey: timestamps.lastUpdatedAt ?? timestamps.updatedAt ?? parsed.createdAt,
-      });
-    } catch (err) {
-      console.warn(
-        `Skipping invalid session file "${name}": ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+    const parsed = await readSessionFile(name, workspaceRoot);
+    if (parsed.parentSessionId !== undefined || parsed.rootSessionId !== parsed.sessionId) continue;
+    sessions.push({
+      summary: {
+        sessionId: parsed.sessionId,
+        cwd: parsed.cwd,
+        rootSessionId: parsed.rootSessionId,
+        ...(parsed.parentSessionId === undefined ? {} : { parentSessionId: parsed.parentSessionId }),
+        ...(parsed.goalId === undefined ? {} : { goalId: parsed.goalId }),
+        ...(parsed.loopId === undefined ? {} : { loopId: parsed.loopId }),
+        ...(parsed.sessionRole === undefined ? {} : { sessionRole: parsed.sessionRole }),
+        agentName: parsed.agentName,
+        modelInfo: parsed.modelInfo,
+        title: parsed.title,
+        createdAt: parsed.createdAt,
+        updatedAt: parsed.updatedAt,
+      },
+      sortKey: parsed.updatedAt,
+    });
   }
 
   return sessions
@@ -630,23 +624,17 @@ async function scanDescendants(workspaceRoot: string, rootSessionId: string): Pr
 
   for (const name of names) {
     const filePath = getSessionPath(workspaceRoot, name);
-    try {
-      const parsed = await readValidatedSessionFile(filePath);
-      if (parsed.sessionId === rootSessionId) continue;
-      if (parsed.rootSessionId !== rootSessionId) {
-        continue;
-      }
-      if (parsed.parentSessionId === undefined) {
-        throw new Error(
-          `Descendant session "${parsed.sessionId}" is missing parentSessionId`,
-        );
-      }
-      descendants.set(parsed.sessionId, parsed.rootSessionId);
-    } catch (err) {
-      console.warn(
-        `Skipping invalid descendant session file "${filePath}": ${err instanceof Error ? err.message : String(err)}`,
+    const parsed = await readValidatedSessionFile(filePath);
+    if (parsed.sessionId === rootSessionId) continue;
+    if (parsed.rootSessionId !== rootSessionId) {
+      continue;
+    }
+    if (parsed.parentSessionId === undefined) {
+      throw new Error(
+        `Descendant session "${parsed.sessionId}" is missing parentSessionId`,
       );
     }
+    descendants.set(parsed.sessionId, parsed.rootSessionId);
   }
 
   return descendants;
@@ -658,28 +646,21 @@ async function scanAllSessionSummaries(workspaceRoot: string): Promise<SessionSu
   const sessions: SessionSummary[] = [];
 
   for (const name of names) {
-    try {
-      const parsed = await readSessionFile(name, workspaceRoot);
-      const timestamps = readSessionTimestamps(parsed);
-      sessions.push({
-        sessionId: parsed.sessionId,
-        cwd: parsed.cwd ?? workspaceRoot,
-        rootSessionId: parsed.rootSessionId,
-        ...(parsed.parentSessionId === undefined ? {} : { parentSessionId: parsed.parentSessionId }),
-        ...(parsed.goalId === undefined ? {} : { goalId: parsed.goalId }),
-        ...(parsed.loopId === undefined ? {} : { loopId: parsed.loopId }),
-        ...(parsed.sessionRole === undefined ? {} : { sessionRole: parsed.sessionRole }),
-        agentName: parsed.agentName,
-        ...(parsed.modelInfo === undefined ? {} : { modelInfo: parsed.modelInfo }),
-        title: parsed.title ?? null,
-        createdAt: parsed.createdAt,
-        ...((timestamps.lastUpdatedAt ?? timestamps.updatedAt) === undefined ? {} : { lastUpdatedAt: timestamps.lastUpdatedAt ?? timestamps.updatedAt }),
-      });
-    } catch (err) {
-      console.warn(
-        `Skipping invalid session file "${name}": ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+    const parsed = await readSessionFile(name, workspaceRoot);
+    sessions.push({
+      sessionId: parsed.sessionId,
+      cwd: parsed.cwd,
+      rootSessionId: parsed.rootSessionId,
+      ...(parsed.parentSessionId === undefined ? {} : { parentSessionId: parsed.parentSessionId }),
+      ...(parsed.goalId === undefined ? {} : { goalId: parsed.goalId }),
+      ...(parsed.loopId === undefined ? {} : { loopId: parsed.loopId }),
+      ...(parsed.sessionRole === undefined ? {} : { sessionRole: parsed.sessionRole }),
+      agentName: parsed.agentName,
+      modelInfo: parsed.modelInfo,
+      title: parsed.title,
+      createdAt: parsed.createdAt,
+      updatedAt: parsed.updatedAt,
+    });
   }
 
   return sessions;
@@ -699,15 +680,6 @@ async function readTopLevelSessionDirNames(dir: string): Promise<string[]> {
 async function readValidatedSessionFile(filePath: string): Promise<HydratedSessionFile> {
   const raw = await Bun.file(filePath).text();
   return SessionFileSchema.parse(JSON.parse(raw));
-}
-
-function readSessionTimestamps(value: unknown): { lastUpdatedAt?: number; updatedAt?: number } {
-  if (!value || typeof value !== "object") return {};
-  const record = value as Record<string, unknown>;
-  return {
-    ...(typeof record.lastUpdatedAt === "number" ? { lastUpdatedAt: record.lastUpdatedAt } : {}),
-    ...(typeof record.updatedAt === "number" ? { updatedAt: record.updatedAt } : {}),
-  };
 }
 
 function isMissingFileError(error: unknown): boolean {

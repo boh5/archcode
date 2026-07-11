@@ -94,7 +94,7 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
         projectId: project.slug,
         objective: body.objective,
         acceptanceCriteria: body.acceptanceCriteria,
-        useWorktree: body.useWorktree ?? false,
+        ...(body.useWorktree === undefined ? {} : { useWorktree: body.useWorktree }),
       });
       runtime.queueGoalTitleGeneration?.(project.workspaceRoot, goal.id);
       return c.json(toPublicGoal(goal), 201);
@@ -337,7 +337,7 @@ function requireRunningMainSession(goal: GoalState, requestedMainSessionId: stri
 }
 
 function goalExecutionCwdFromState(goal: GoalState, workspaceRoot: string): string {
-  if (goal.useWorktree !== true) return workspaceRoot;
+  if (!goal.useWorktree) return workspaceRoot;
   if (goal.worktree === undefined) {
     throw new ServerError("BAD_REQUEST", `Running Goal ${goal.id} has no managed worktree claim`, 409);
   }
@@ -372,7 +372,7 @@ async function validateGoalSessionIdentities(
     await assertSessionAssignable(runtime, workspaceRoot, goal, mainSessionId, "main");
   }
 
-  const childSessionIds = new Set([...(goal.childSessionIds ?? []), ...(body.childSessionIds ?? [])]);
+  const childSessionIds = new Set([...goal.childSessionIds, ...(body.childSessionIds ?? [])]);
   for (const childSessionId of childSessionIds) {
     if (mainSessionIds.has(childSessionId)) continue;
     await assertSessionAssignable(runtime, workspaceRoot, goal, childSessionId, "child");
@@ -426,7 +426,7 @@ async function assertSessionAssignable(
   if (role === "main" && session.sessionRole !== "main") {
     throw new ServerError("BAD_REQUEST", `Session ${sessionId} is not a main goal session`, 409);
   }
-  if (expectedCwd !== undefined && (session.cwd ?? workspaceRoot) !== expectedCwd) {
+  if (expectedCwd !== undefined && session.cwd !== expectedCwd) {
     throw new ServerError("BAD_REQUEST", `Session ${sessionId} does not use the Goal execution directory`, 409);
   }
 }
@@ -534,33 +534,7 @@ async function readOptionalSessionIdsBody(bodyPromise: Promise<string>): Promise
 }
 
 function toPublicGoal(goal: GoalState): GoalState {
-  return {
-    id: goal.id,
-    projectId: goal.projectId,
-    title: goal.title,
-    objective: goal.objective,
-    acceptanceCriteria: goal.acceptanceCriteria,
-    useWorktree: goal.useWorktree ?? false,
-    ...(goal.worktree === undefined ? {} : { worktree: goal.worktree }),
-    status: goal.status,
-    ...(goal.blocker === undefined ? {} : { blocker: goal.blocker }),
-    attempt: goal.attempt,
-    ...(goal.lastFailureSummary === undefined ? {} : { lastFailureSummary: goal.lastFailureSummary }),
-    ...(goal.budget === undefined ? {} : { budget: goal.budget }),
-    pendingHitlIds: goal.pendingHitlIds,
-    approvalRefs: goal.approvalRefs,
-    ...(goal.mainSessionId === undefined ? {} : { mainSessionId: goal.mainSessionId }),
-    childSessionIds: goal.childSessionIds,
-    ...(goal.loopId === undefined ? {} : { loopId: goal.loopId }),
-    ...(goal.review === undefined ? {} : { review: goal.review }),
-    ...(goal.finalSummary === undefined ? {} : { finalSummary: goal.finalSummary }),
-    createdAt: goal.createdAt,
-    updatedAt: goal.updatedAt,
-    ...(goal.startedAt === undefined ? {} : { startedAt: goal.startedAt }),
-    ...(goal.completedAt === undefined ? {} : { completedAt: goal.completedAt }),
-    ...(goal.cancelledAt === undefined ? {} : { cancelledAt: goal.cancelledAt }),
-    ...(goal.lastError === undefined ? {} : { lastError: goal.lastError }),
-  };
+  return { ...goal };
 }
 
 function mapExecutionOrGoalError(error: unknown): Error {

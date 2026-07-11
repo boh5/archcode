@@ -100,12 +100,8 @@ export class LoopSessionExecutionClaimResolver implements SessionLoopExecutionCl
     if ("outcome" in worktreePath) return worktreePath;
     const baseSha = exactSharedField("baseSha", report.baseSha, job.baseSha);
     if ("outcome" in baseSha) return baseSha;
-    const resolvedHeadSha = compatibleOptionalField(
-      "resolvedHeadSha",
-      report.resolvedHeadSha,
-      job.resolvedHeadSha,
-    );
-    if (resolvedHeadSha !== undefined) return resolvedHeadSha;
+    const resolvedHeadSha = exactSharedField("resolvedHeadSha", report.resolvedHeadSha, job.resolvedHeadSha);
+    if ("outcome" in resolvedHeadSha) return resolvedHeadSha;
     if (resolve(input.subject.cwd) !== resolve(worktreePath.value)) {
       return deny(
         "LOOP_WORKTREE_CWD_MISMATCH",
@@ -216,7 +212,7 @@ function executableReport(
 }
 
 function exactSharedField(
-  field: "worktreePath" | "baseSha",
+  field: "worktreePath" | "baseSha" | "resolvedHeadSha",
   reportValue: string | undefined,
   jobValue: string | undefined,
 ): { readonly value: string } | SessionLoopExecutionClaimDecision {
@@ -228,19 +224,6 @@ function exactSharedField(
     );
   }
   return { value: reportValue };
-}
-
-function compatibleOptionalField(
-  field: "resolvedHeadSha",
-  reportValue: string | undefined,
-  jobValue: string | undefined,
-): SessionLoopExecutionClaimDecision | undefined {
-  if (reportValue === undefined || jobValue === undefined || reportValue === jobValue) return undefined;
-  return deny(
-    "LOOP_JOB_WORKTREE_CHECKPOINT_MISMATCH",
-    `Loop run and job ${field} checkpoints do not match`,
-    { field, reportValue, jobValue },
-  );
 }
 
 function deny(

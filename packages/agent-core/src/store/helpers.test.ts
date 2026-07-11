@@ -8,7 +8,7 @@ import { createEmptySessionStats, type SessionExecutionRecord, type SessionStats
 import type { CompactionPart, Reminder, SessionRole, SessionStoreState, StepInfo, StoredMessage, StoredPart, StoredTodo, SystemNoticePart } from "./types";
 import { createEmptyCompressionState, type CompressionState } from "../compression";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__");
+const TMP_DIR = join(import.meta.dir, "__test_tmp__", "helpers");
 
 afterAll(async () => {
   __setSessionsDirForTest(undefined);
@@ -40,7 +40,7 @@ async function writeSessionFile(sessionId: string, data: unknown): Promise<void>
   await Bun.write(
     sessionFilePath(sessionId),
     JSON.stringify(
-      data,
+      { schemaVersion: 1, ...(data as Record<string, unknown>) },
       (_key, value: unknown) => {
         if (value instanceof Set) return Array.from(value);
         if (value instanceof Map) return Array.from(value.entries());
@@ -177,7 +177,10 @@ type PersistedSessionState = Pick<
   SessionStoreState,
   | "sessionId"
   | "createdAt"
+  | "updatedAt"
+  | "cwd"
   | "agentName"
+  | "modelInfo"
   | "title"
   | "messages"
   | "steps"
@@ -213,7 +216,10 @@ function persistedState(
   return {
     sessionId,
     createdAt: 99,
+    updatedAt: 99,
+    cwd: TMP_DIR,
     agentName: "orchestrator",
+    modelInfo: null,
     title: null,
     messages,
     steps,
@@ -374,6 +380,25 @@ describe("session transcript serialization", () => {
     await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
   });
 
+  test("load rejects files without cwd", async () => {
+    const sessionId = uniqueSessionId("missing-cwd");
+    const { cwd: _cwd, ...stateWithoutCwd } = persistedState(sessionId);
+
+    await writeSessionFile(sessionId, stateWithoutCwd);
+
+    await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
+  });
+
+  test("load rejects files without schemaVersion", async () => {
+    const sessionId = uniqueSessionId("missing-schema-version");
+    await sessionFileInternals.saveSessionTranscript(persistedState(sessionId), TMP_DIR);
+    const raw = JSON.parse(await Bun.file(sessionFilePath(sessionId)).text()) as Record<string, unknown>;
+    delete raw.schemaVersion;
+    await writeRawSessionFile(sessionId, JSON.stringify(raw));
+
+    await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
+  });
+
   test("root save writes only owner-local session.json", async () => {
     const sessionId = uniqueSessionId("root-layout");
 
@@ -485,6 +510,20 @@ describe("session transcript serialization", () => {
     }
   });
 
+  test("scanDescendants fails closed on invalid Session files", async () => {
+    const rootSessionId = uniqueSessionId("root-scan-strict");
+    const childId = uniqueSessionId("child-scan-strict");
+    const invalidId = uniqueSessionId("invalid-scan-strict");
+    await sessionFileInternals.saveSessionTranscript(persistedState(rootSessionId), TMP_DIR);
+    await sessionFileInternals.saveSessionTranscript(
+      persistedState(childId, [], [], [], createEmptySessionStats(), [], [], rootSessionId, rootSessionId),
+      TMP_DIR,
+    );
+    await writeRawSessionFile(invalidId, "{ invalid json");
+
+    await expect(sessionFileInternals.scanDescendants(TMP_DIR, rootSessionId)).rejects.toThrow();
+  });
+
   test("roundtrips completed text, incomplete text, reasoning, and all tool part variants", async () => {
     const sessionId = uniqueSessionId("part-variants");
     const messages = [allPartVariantsMessage()];
@@ -547,17 +586,15 @@ describe("session transcript serialization", () => {
     expect(loaded.getState().reminders).toEqual(reminders);
   });
 
-  test("load defaults optional fields (reminders, parentSessionId)", async () => {
-    const sessionId = uniqueSessionId("optional-fields");
-    const state = persistedState(sessionId);
-    const { reminders: _reminders, parentSessionId: _parentSessionId, ...noRemindersState } = state;
-    await writeSessionFile(sessionId, noRemindersState);
+  test("load rejects missing required snapshot collections", async () => {
+    for (const field of ["compression", "todos", "reminders", "childSessionLinks"] as const) {
+      const sessionId = uniqueSessionId(`missing-${field}`);
+      const state = { ...persistedState(sessionId) } as Record<string, unknown>;
+      delete state[field];
+      await writeSessionFile(sessionId, state);
 
-    const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
-    const loadedState = loaded.getState();
-
-    expect(loadedState.reminders).toEqual([]);
-    expect(loadedState.parentSessionId).toBeUndefined();
+      await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
+    }
   });
 
   test("load rejects file without rootSessionId", async () => {
@@ -569,15 +606,14 @@ describe("session transcript serialization", () => {
     await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
   });
 
-  test("listSessionSummaries skips files without rootSessionId gracefully", async () => {
-    const sessionId = uniqueSessionId("skip-invalid");
+  test("Session summary scans reject invalid Session files", async () => {
+    const sessionId = uniqueSessionId("reject-invalid");
     const state = persistedState(sessionId);
     const { rootSessionId: _rootSessionId, ...noRootState } = state;
     await writeSessionFile(sessionId, noRootState);
 
-    // Should not crash, should simply skip the invalid file
-    const summaries = await sessionFileInternals.listSessionSummaries(TMP_DIR);
-    expect(summaries).toEqual([]);
+    await expect(sessionFileInternals.listSessionSummaries(TMP_DIR)).rejects.toThrow();
+    await expect(sessionFileInternals.scanAllSessionSummaries(TMP_DIR)).rejects.toThrow();
   });
 
   test("save/load serializes rootSessionId and parentSessionId", async () => {
@@ -932,15 +968,19 @@ describe("session transcript serialization", () => {
       "childSessionLinks",
       "compression",
       "createdAt",
+      "cwd",
       "executions",
       "messages",
+      "modelInfo",
       "reminders",
       "rootSessionId",
+      "schemaVersion",
       "sessionId",
       "stats",
       "steps",
       "title",
       "todos",
+      "updatedAt",
     ]);
     expect("events" in parsed).toBe(false);
     expect("executionCount" in parsed).toBe(false);
@@ -951,6 +991,8 @@ describe("session transcript serialization", () => {
     expect(parsed.reminders).toEqual([]);
     expect(parsed.childSessionLinks).toEqual([]);
     expect(parsed.agentName).toBe("orchestrator");
+    expect(parsed.schemaVersion).toBe(1);
+    expect(parsed.cwd).toBe(TMP_DIR);
     expect(parsed.rootSessionId).toBe(sessionId);
   });
 
@@ -1215,7 +1257,7 @@ describe("compaction and meta transcript round-trip", () => {
     expect(loadedCompression.protectedRefs[0]?.kind).toBe("latest_tail");
   });
 
-  test("old session files without compression hydrate an empty compression state", async () => {
+  test("session files without compression are rejected", async () => {
     const sessionId = uniqueSessionId("legacy-no-compression");
     const state = persistedState(sessionId);
     const { compression: _compression, ...legacyState } = state;
@@ -1225,9 +1267,7 @@ describe("compaction and meta transcript round-trip", () => {
 
     expect("compression" in raw).toBe(false);
 
-    const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
-
-    expect(loaded.getState().compression).toEqual(createEmptyCompressionState());
+    await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
   });
 
   test("roundtrips compacted messages with compacted flag", async () => {

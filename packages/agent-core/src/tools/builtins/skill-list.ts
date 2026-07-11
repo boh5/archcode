@@ -18,9 +18,16 @@ export function createSkillListTool(): AnyToolDescriptor {
       _input: SkillListInput,
       ctx: ToolExecutionContext,
     ): Promise<string | ToolExecutionResult> => {
+      if (ctx.skillService === undefined || ctx.agentSkills === undefined) {
+        return createToolErrorResult({
+          kind: "execution",
+          code: "TOOL_SKILL_CONTEXT_MISSING",
+          message: "Skill tools require an explicit SkillService and agent Skill allow-list",
+        });
+      }
       try {
-        const entries = await ctx.skillService?.listForAgent(ctx.cwd, ctx.agentSkills);
-        return JSON.stringify(entries ?? []);
+        const entries = await ctx.skillService.listForAgent(ctx.cwd, ctx.agentSkills);
+        return JSON.stringify(entries);
       } catch (error) {
         return createToolErrorResult({
           kind: "execution",

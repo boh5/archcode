@@ -259,7 +259,7 @@ describe("PartRenderer", () => {
   });
 });
 
-// ─── CompressionBlock + legacy CompactionPart ───
+// ─── CompressionBlock + hard CompactionPart ───
 
 function makeCompressionBlockPart(overrides: Partial<CompressionBlockPart> = {}): CompressionBlockPart {
   return {
@@ -745,10 +745,10 @@ describe("CompressionBlock", () => {
   });
 });
 
-describe("PartRenderer legacy compaction", () => {
+describe("PartRenderer hard compaction", () => {
   const defaultProps = { projectSlug: "demo", focusStoreSessionId: "session-1", childSessionLinks: [] as never[] };
 
-  test("renders legacy CompactionPart summary visibly", () => {
+  test("renders CompactionPart summary visibly", () => {
     resetStateSlots();
     const part: CompactionPart = {
       type: "compaction",
@@ -760,7 +760,7 @@ describe("PartRenderer legacy compaction", () => {
     const el = PartRenderer({ part, ...defaultProps });
     const text = textContent(el);
 
-    expect(text).toContain("Legacy context compaction");
+    expect(text).toContain("Hard context compaction");
     expect(text).toContain("Previous context was compacted");
     expect(text).toContain("use Bun");
   });

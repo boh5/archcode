@@ -19,6 +19,7 @@ export interface GoalCancellationRequest {
   readonly reason?: string;
   readonly source: GoalCancellationSource;
   readonly selfSessionId?: string;
+  readonly hitlId?: string;
 }
 
 export interface GoalCancellationCapability {
@@ -126,7 +127,7 @@ export class GoalCancellationService implements GoalCancellationCapability {
       committedGoal = intent.value.goal.status === "cancelled"
         ? intent.value.goal
         : await commitGoalCancellationIntent(intent, () => (
-          this.#goalStateManager.cancel(goalId, request.reason)
+          this.#goalStateManager.cancel(goalId, request.reason, request.hitlId)
         ));
 
       await this.#cleanupDurableOwners(committedGoal, sessionIds);

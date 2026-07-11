@@ -1,5 +1,6 @@
 import { COMPACT_MIN_NEW_MESSAGES, compact, commitCompact, createCircuitBreaker, type CircuitBreaker } from "../../../compact";
 import type { Logger } from "../../../logger";
+import { TOOL_OUTPUT_DIR } from "../../../tools/persist-output";
 import {
   HARD_COMPACT_RATIO,
   SOFT_NUDGE_RATIO,
@@ -39,6 +40,7 @@ export function createHybridCompressionHook(logger: Logger): HybridCompressionHo
         modelOptions: ctx.modelOptions,
         sessionId: state.sessionId,
         logger,
+        toolOutputDir: TOOL_OUTPUT_DIR,
       }, ctx.abort);
 
       if (result === null) {

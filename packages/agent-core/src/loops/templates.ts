@@ -53,6 +53,7 @@ const LOOP_TEMPLATES = {
     defaults: {
       schedule: { kind: "manual" },
       approvalPolicy: "interactive",
+      useWorktree: false,
       limits: templateBudget(8, 120_000, 15, 2),
       taskPrompt:
         "Inspect the project state and prepare a concise report. Summarize notable git, code health, and follow-up findings without making repository changes.",
@@ -67,6 +68,7 @@ const LOOP_TEMPLATES = {
     defaults: {
       schedule: { kind: "manual" },
       approvalPolicy: "explicit_per_run",
+      useWorktree: false,
       limits: templateBudget(16, 200_000, 30, 2),
       taskPrompt:
         "Run a scoped maintenance pass. Identify one narrowly bounded issue, make the minimal fix, and record verification output in the session.",
@@ -81,6 +83,7 @@ const LOOP_TEMPLATES = {
     defaults: {
       schedule: { kind: "manual" },
       approvalPolicy: "interactive",
+      useWorktree: false,
       limits: templateBudget(12, 160_000, 20, 4),
       taskPrompt:
         "Watch pull requests and prepare a concise status report. Collect checks, comments, and blockers; draft a short issue comment only when a clear status update is useful and normal permissions allow it.",
@@ -95,6 +98,7 @@ const LOOP_TEMPLATES = {
     defaults: {
       schedule: { kind: "manual" },
       approvalPolicy: "explicit_per_run",
+      useWorktree: false,
       limits: templateBudget(20, 240_000, 45, 2),
     },
   },
@@ -118,6 +122,7 @@ export function expandLoopTemplate(templateId: string): ExpandedLoopTemplate {
     title: null,
     schedule: structuredClone(template.defaults.schedule),
     approvalPolicy: template.defaults.approvalPolicy,
+    useWorktree: template.defaults.useWorktree,
     limits: structuredClone(template.defaults.limits),
     ...(template.defaults.taskPrompt === undefined ? {} : { taskPrompt: template.defaults.taskPrompt }),
     ...(template.defaults.goalTemplate === undefined ? {} : { goalTemplate: structuredClone(template.defaults.goalTemplate) }),

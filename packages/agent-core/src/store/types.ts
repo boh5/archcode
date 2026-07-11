@@ -80,18 +80,19 @@ export type SessionRole = "main" | "plan" | "build" | "review" | "explore" | "li
 export interface SessionStoreState {
   sessionId: string;
   createdAt: number;
+  updatedAt: number;
 
   // Persistent layer
   /** Current execution directory. Session files remain owned by the canonical project root. */
   cwd: string;
   agentName: string;
-  modelInfo?: SessionModelInfo | null;
+  modelInfo: SessionModelInfo | null;
   title: string | null;
   messages: SessionMessage[];
   steps: SessionStep[];
   stats: SessionStats;
   executions: SessionExecutionRecord[];
-  compression?: CompressionState;
+  compression: CompressionState;
 
   // Session-only state
   todos: SessionTodo[];

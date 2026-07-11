@@ -19,7 +19,7 @@ import type {
 } from "../types";
 import { createBashPermission } from "./bash";
 import { createProtectedPathPermission } from "./protected-path";
-import { ProjectApprovalManager } from "./project-approvals";
+import { ProjectApprovalLoadError, ProjectApprovalManager } from "./project-approvals";
 import type { PermissionApprovalScope } from "./policy-types";
 import { createTestProjectContext } from "../test-project-context";
 
@@ -81,12 +81,12 @@ function resetWorkspace(): void {
   mkdirSync(join(WORKSPACE, ".archcode", "memory"), { recursive: true });
   mkdirSync(OUTSIDE, { recursive: true });
   writeFileSync(join(WORKSPACE, "src", "main.ts"), "export const value = 1;\n");
-  writeFileSync(join(WORKSPACE, ".archcode", "permissions.json"), "{}\n");
+  writeFileSync(join(WORKSPACE, ".archcode", "permissions.json"), '{"version":1,"approvals":[]}\n');
   writeFileSync(join(OUTSIDE, "outside.txt"), "outside\n");
 }
 
 function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
-  return { store: storeManager.create(crypto.randomUUID()),
+  return { store: storeManager.create(crypto.randomUUID(), WORKSPACE),
   toolName: "regression_tool",
   toolCallId: "call-1",
   input: {},
@@ -260,22 +260,14 @@ describe("permission integration regressions", () => {
       expect(resolveIneligibleApprovalShortcut("a")).toBe("deny");
   });
 
-  test("malformed approvals file is safe and does not satisfy eligible Ask", async () => {
+  test("malformed approvals file aborts permission context loading with a typed error", async () => {
     writeFileSync(join(WORKSPACE, ".archcode", "permissions.json"), "{ malformed json");
     const warn = mock();
     const manager = new ProjectApprovalManager(makeLogger({ warn }));
-    const confirmPermission = mock(async () => "approve_once" as ToolConfirmationResult);
-    await manager.load(WORKSPACE);
-    const registry = createRegistry([decisionTool(async () => ELIGIBLE_ASK)]);
 
-    const result = await registry.execute(makeCall(), makeContext({
-      confirmPermission,
-      projectContext: { ...createTestProjectContext(WORKSPACE), approvals: manager },
-    }));
+    await expect(manager.load(WORKSPACE)).rejects.toBeInstanceOf(ProjectApprovalLoadError);
 
-    expect(result.isError).toBe(false);
-    expect(confirmPermission).toHaveBeenCalledTimes(1);
-    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
     expect(manager.listApprovals()).toEqual([]);
   });
 

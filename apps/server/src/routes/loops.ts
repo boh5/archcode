@@ -30,7 +30,7 @@ import { resolveProject } from "../resolve";
 
 const LoopTextSchema = z.string().trim().min(1).max(10_000);
 const LoopIdentifierSchema = z.string().trim().min(1).max(200);
-const TriggerCadenceMsSchema = z.number().int().min(30_000).default(60_000);
+const TriggerCadenceMsSchema = z.number().int().min(30_000);
 const CronExpressionSchema = z.string().trim().refine((value) => value.split(/\s+/).length === 5, {
   message: "Cron expressions must use exactly 5 UTC fields",
 });
@@ -44,15 +44,7 @@ const LoopScheduleSpecSchema = z.discriminatedUnion("kind", [
 ]) satisfies z.ZodType<LoopScheduleSpec>;
 
 const BudgetThresholdRatioSchema = z.number().min(0).max(1);
-const LoopLimitsSchema = z.preprocess((value) => {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
-  const record = value as Record<string, unknown>;
-  return {
-    ...record,
-    softThresholdRatio: record.softThresholdRatio ?? 0.8,
-    hardThresholdRatio: record.hardThresholdRatio ?? 1.0,
-  };
-}, z.strictObject({
+const LoopLimitsSchema = z.strictObject({
   maxIterationsPerRun: z.number().int().positive(),
   maxTokensPerRun: z.number().int().positive().optional(),
   maxEstimatedUsdPerRun: z.number().positive().optional(),
@@ -60,7 +52,7 @@ const LoopLimitsSchema = z.preprocess((value) => {
   maxRunsPerDay: z.number().int().positive().optional(),
   softThresholdRatio: BudgetThresholdRatioSchema,
   hardThresholdRatio: BudgetThresholdRatioSchema,
-})) satisfies z.ZodType<LoopLimits>;
+}) satisfies z.ZodType<LoopLimits>;
 
 const LoopPullRequestScopeSchema = z.enum(["open", "authored", "assigned", "review_requested"]);
 const LoopTriggerSpecSchema = z.discriminatedUnion("kind", [
@@ -93,13 +85,13 @@ const LoopGoalTemplateBodySchema = z.strictObject({
 
 const CreateLoopBodySchema = z.strictObject({
   templateId: LoopTemplateIdSchema,
-  schedule: LoopScheduleSpecSchema.optional(),
-  approvalPolicy: LoopApprovalPolicySchema.optional(),
-  limits: LoopLimitsSchema.optional(),
+  schedule: LoopScheduleSpecSchema,
+  approvalPolicy: LoopApprovalPolicySchema,
+  limits: LoopLimitsSchema,
   taskPrompt: LoopTextSchema.optional(),
   goalTemplate: LoopGoalTemplateBodySchema.optional(),
   triggers: z.array(LoopTriggerSpecSchema).max(50).optional(),
-  useWorktree: z.boolean().optional(),
+  useWorktree: z.boolean(),
 });
 
 const PatchLoopBodySchema = z.strictObject({
@@ -439,7 +431,14 @@ function sanitizeRunReport(report: LoopRunReport, workspaceRoot: string): LoopRu
   const worktreePath = safeWorktreePath(report.worktreePath, workspaceRoot);
   return {
     ...report,
-    ...(worktreePath === undefined ? { worktreePath: undefined } : { worktreePath }),
+    ...(worktreePath === undefined
+      ? {
+          worktreePath: undefined,
+          worktreeBranchName: undefined,
+          baseSha: undefined,
+          resolvedHeadSha: undefined,
+        }
+      : { worktreePath }),
     ...(report.integrationErrors === undefined ? {} : {
       integrationErrors: report.integrationErrors.map((error) => ({
         ...error,
@@ -590,7 +589,7 @@ function stableValidationMessages(error: z.ZodError): string[] {
 
 function mapLoopError(error: unknown): Error {
   if (error instanceof LoopNotFoundError) {
-    return new ServerError("SESSION_NOT_FOUND", error.message, 404);
+    return new ServerError("LOOP_NOT_FOUND", error.message, 404);
   }
   if (error instanceof LoopActiveConflictError || isLoopActiveConflict(error)) {
     return new ServerError("LOOP_ACTIVE_CONFLICT", error.message, 409, {

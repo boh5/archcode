@@ -180,22 +180,18 @@ describe("fileEditTool", () => {
     );
   });
 
-  test("prepareInput compat converts flat edit input", async () => {
-    await writeWorkspaceFile("compat.txt", "before\n");
-    const ctx = await makeReadCtx("compat.txt");
+  test("rejects the removed flat edit input", async () => {
+    await writeWorkspaceFile("flat-input.txt", "before\n");
+    const ctx = await makeReadCtx("flat-input.txt");
 
     const result = await executeThroughRegistry(
-      { path: "compat.txt", oldString: "before", newString: "after" },
+      { path: "flat-input.txt", oldString: "before", newString: "after" },
       ctx,
     );
 
-    expect(result.isError).toBe(false);
-    expect(result.output).toBe("Successfully applied 1 edit(s) to compat.txt");
-    expect(result.meta?.diffs).toMatchObject({
-      version: 1,
-      files: [{ path: "compat.txt", status: "modified" }],
-    });
-    expect(await Bun.file(join(testDir, "compat.txt")).text()).toBe("after\n");
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("Invalid input");
+    expect(await Bun.file(join(testDir, "flat-input.txt")).text()).toBe("before\n");
   });
 
   test("prepareInput normalizes smart punctuation in oldString", async () => {

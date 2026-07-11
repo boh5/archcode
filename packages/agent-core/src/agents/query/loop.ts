@@ -37,7 +37,7 @@ interface ModelAttemptOptions {
   abort: AbortSignal;
   logger: Logger;
   sessionId: string;
-  agentName: string | undefined;
+  agentName: string;
   projectContext: QueryLoopOptions["projectContext"];
   beforeModelBuild: HookList<BeforeModelBuildContext>;
   beforeModelCall: HookList<BeforeModelCallContext>;
@@ -923,7 +923,7 @@ async function executeToolCalls(
   resumeChildSession: NonNullable<QueryLoopOptions["resumeChildSession"]> | undefined,
   abortSessionExecutionAndWait: NonNullable<QueryLoopOptions["abortSessionExecutionAndWait"]> | undefined,
   acquireSessionCwdTransition: NonNullable<QueryLoopOptions["acquireSessionCwdTransition"]> | undefined,
-  agentName: string | undefined,
+  agentName: string,
   agentSkills: QueryLoopOptions["agentSkills"],
   skillService: QueryLoopOptions["skillService"],
   storeManager: QueryLoopOptions["storeManager"],
@@ -1015,7 +1015,7 @@ async function executeToolCalls(
             ...(resumeChildSession ? { resumeChildSession } : {}),
             ...(abortSessionExecutionAndWait ? { abortSessionExecutionAndWait } : {}),
             ...(acquireSessionCwdTransition ? { acquireSessionCwdTransition } : {}),
-            ...(agentName ? { agentName } : {}),
+            agentName,
             ...(currentDepth !== undefined ? { currentDepth } : {}),
             ...(executionOrigin === undefined ? {} : { origin: executionOrigin }),
             hitlCheckpoint: {
@@ -1087,7 +1087,7 @@ async function executeToolCalls(
         ...(resumeChildSession ? { resumeChildSession } : {}),
         ...(abortSessionExecutionAndWait ? { abortSessionExecutionAndWait } : {}),
         ...(acquireSessionCwdTransition ? { acquireSessionCwdTransition } : {}),
-        ...(agentName ? { agentName } : {}),
+        agentName,
         ...(currentDepth !== undefined ? { currentDepth } : {}),
         ...(executionOrigin === undefined ? {} : { origin: executionOrigin }),
         hitlCheckpoint: {
@@ -1155,7 +1155,7 @@ async function executeToolCallsSequentially(input: {
   resumeChildSession: NonNullable<QueryLoopOptions["resumeChildSession"]> | undefined;
   abortSessionExecutionAndWait: NonNullable<QueryLoopOptions["abortSessionExecutionAndWait"]> | undefined;
   acquireSessionCwdTransition: NonNullable<QueryLoopOptions["acquireSessionCwdTransition"]> | undefined;
-  agentName: string | undefined;
+  agentName: string;
   agentSkills: QueryLoopOptions["agentSkills"];
   skillService: QueryLoopOptions["skillService"];
   storeManager: QueryLoopOptions["storeManager"];
@@ -1192,7 +1192,7 @@ async function executeToolCallsSequentially(input: {
       ...(input.resumeChildSession ? { resumeChildSession: input.resumeChildSession } : {}),
       ...(input.abortSessionExecutionAndWait ? { abortSessionExecutionAndWait: input.abortSessionExecutionAndWait } : {}),
       ...(input.acquireSessionCwdTransition ? { acquireSessionCwdTransition: input.acquireSessionCwdTransition } : {}),
-      ...(input.agentName ? { agentName: input.agentName } : {}),
+      agentName: input.agentName,
       ...(input.currentDepth !== undefined ? { currentDepth: input.currentDepth } : {}),
       ...(input.executionOrigin === undefined ? {} : { origin: input.executionOrigin }),
       hitlCheckpoint: {

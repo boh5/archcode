@@ -46,6 +46,10 @@ import { WorktreeService } from "../worktrees";
 type StreamTextFn = typeof import("ai").streamText;
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "session-hitl-resume");
+
+function identity(record: Pick<HitlRecord, "owner" | "hitlId">) {
+  return { owner: record.owner, hitlId: record.hitlId };
+}
 const testSkillService = new SkillService({ builtinSkills: {} });
 const allowLoopExecutionClaims = { resolve: async () => ({ outcome: "allow" as const }) };
 const dummyModelInfo = {
@@ -86,8 +90,8 @@ describe("Session HITL resume", () => {
     const checkpointFile = await readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId);
     expect(JSON.stringify(checkpointFile)).toContain("Choose a color");
 
-    await fixture.coordinator.respond(pending.hitlId, { type: "question_answer", answers: ["blue"] });
-    await waitFor(async () => (await fixture.hitl.lookup(pending.hitlId)).status === "found" && ((await fixture.hitl.lookup(pending.hitlId)) as { record: HitlRecord }).record.status === "resolved");
+    await fixture.coordinator.respond(identity(pending), { type: "question_answer", answers: ["blue"] });
+    await waitFor(async () => (await fixture.hitl.lookup(identity(pending))).status === "found" && ((await fixture.hitl.lookup(identity(pending))) as { record: HitlRecord }).record.status === "resolved");
 
     const tool = latestToolPart(fixture.store.getState().messages, "ask-1");
     expect(tool).toMatchObject({ state: "completed", output: "blue" });
@@ -163,8 +167,9 @@ describe("Session HITL resume", () => {
       title: null,
       schedule: { kind: "manual" },
       approvalPolicy: "interactive",
-      limits: { maxIterationsPerRun: 3 },
+      limits: { maxIterationsPerRun: 3, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
       collisionTargets: [{ type: "file", path: "." }],
+      useWorktree: false,
     });
     fixture.store.setState({ loopId: loop.loopId });
     const jobQueue = new LoopJobQueue({ workspaceRoot: fixture.workspaceRoot, clock: { now: () => 1_000 } });
@@ -230,6 +235,16 @@ describe("Session HITL resume", () => {
       blockedReason: "needs_user",
       blockedByHitlIds: [pending.hitlId],
       attentionStatus: "waiting_for_human" as const,
+      resumeCheckpoint: {
+        version: 1 as const,
+        hitlId: pending.hitlId,
+        loopId: loop.loopId,
+        runId,
+        jobId: claimed.jobId,
+        trigger: "manual" as const,
+        subjectKey: claimed.subjectKey,
+        intendedContinuation: "resume_run" as const,
+      },
       summary: "Session is waiting for user input.",
     };
     await fixture.loopState.recordRunBlocked(loop.loopId, blockedReport);
@@ -241,6 +256,7 @@ describe("Session HITL resume", () => {
       blockedReason: "needs_user",
       blockedByHitlIds: [pending.hitlId],
       attentionStatus: "waiting_for_human",
+      resumeCheckpoint: blockedReport.resumeCheckpoint,
     });
     await collisionLedger.releaseRun(loop.loopId, runId);
     unrelatedJobId = (await jobQueue.enqueue({
@@ -255,11 +271,12 @@ describe("Session HITL resume", () => {
       jobCoordinator,
       collisionLedger,
       now: () => 1_000,
+      scheduleCleanup: () => undefined,
     });
 
-    await fixture.coordinator.respond(pending.hitlId, { type: "permission_decision", decision: "approve_once" });
+    await fixture.coordinator.respond(identity(pending), { type: "permission_decision", decision: "approve_once" });
     await waitFor(async () => {
-      const found = await fixture.hitl.lookup(pending.hitlId);
+      const found = await fixture.hitl.lookup(identity(pending));
       return found.status === "found" && found.record.status === "resolved";
     });
 
@@ -306,7 +323,7 @@ describe("Session HITL resume", () => {
     expect(await Bun.file(join(worktreeCwd, ".archcode", "sessions", fixture.sessionId, "hitl-checkpoints.json")).exists()).toBe(false);
     expect((await readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId)).checkpoints).toHaveLength(1);
 
-    await fixture.coordinator.respond(pending.hitlId, { type: "permission_decision", decision: "approve_once" });
+    await fixture.coordinator.respond(identity(pending), { type: "permission_decision", decision: "approve_once" });
     await waitFor(() => resumedCwd !== undefined);
 
     expect(resumedCwd).toBe(worktreeCwd);
@@ -325,9 +342,9 @@ describe("Session HITL resume", () => {
     await mkdir(outside, { recursive: true });
     await fixture.sessions.updateCwd(fixture.sessionId, fixture.workspaceRoot, outside, fixture.workspaceRoot);
 
-    await fixture.coordinator.respond(pending.hitlId, { type: "permission_decision", decision: "approve_once" });
+    await fixture.coordinator.respond(identity(pending), { type: "permission_decision", decision: "approve_once" });
     await waitFor(async () => {
-      const found = await fixture.hitl.lookup(pending.hitlId);
+      const found = await fixture.hitl.lookup(identity(pending));
       return found.status === "found" && found.record.status === "resume_failed";
     });
 
@@ -366,7 +383,7 @@ describe("Session HITL resume", () => {
 
     await runQueryLoop(fixture.options(registry, ["approved_cwd_transition", "stale_after_transition"]), "switch cwd");
     const pending = await singlePendingHitl(fixture);
-    await fixture.coordinator.respond(pending.hitlId, { type: "permission_decision", decision: "approve_once" });
+    await fixture.coordinator.respond(identity(pending), { type: "permission_decision", decision: "approve_once" });
     await waitFor(() => fixture.store.getState().cwd === nextCwd);
 
     expect(staleExecute).not.toHaveBeenCalled();
@@ -387,8 +404,8 @@ describe("Session HITL resume", () => {
     await runQueryLoop(fixture.options(registry, ["ask_user"]), "ask");
     const pending = await singlePendingHitl(fixture);
 
-    await fixture.coordinator.respond(pending.hitlId, { type: "question_answer", answers: ["yes"] });
-    await waitFor(async () => (await fixture.hitl.lookup(pending.hitlId)).status === "found" && ((await fixture.hitl.lookup(pending.hitlId)) as { record: HitlRecord }).record.status === "resolved");
+    await fixture.coordinator.respond(identity(pending), { type: "question_answer", answers: ["yes"] });
+    await waitFor(async () => (await fixture.hitl.lookup(identity(pending))).status === "found" && ((await fixture.hitl.lookup(identity(pending))) as { record: HitlRecord }).record.status === "resolved");
 
     expect(attachSessionEvents).toHaveBeenCalledTimes(1);
     expect(attachSessionEvents).toHaveBeenCalledWith(fixture.workspaceRoot, fixture.sessionId, fixture.store);
@@ -404,6 +421,7 @@ describe("Session HITL resume", () => {
       detachSessionEvents,
       getAgent: ({ store }) => ({
         store,
+        cwd: store.getState().cwd,
         run: mock(async () => {
           throw new Error("resume failed after attach");
         }),
@@ -418,8 +436,8 @@ describe("Session HITL resume", () => {
     await runQueryLoop(fixture.options(registry, ["ask_user"]), "ask");
     const pending = await singlePendingHitl(fixture);
 
-    await fixture.coordinator.respond(pending.hitlId, { type: "question_answer", answers: ["yes"] });
-    await waitFor(async () => (await fixture.hitl.lookup(pending.hitlId)).status === "found" && ((await fixture.hitl.lookup(pending.hitlId)) as { record: HitlRecord }).record.status === "resume_failed");
+    await fixture.coordinator.respond(identity(pending), { type: "question_answer", answers: ["yes"] });
+    await waitFor(async () => (await fixture.hitl.lookup(identity(pending))).status === "found" && ((await fixture.hitl.lookup(identity(pending))) as { record: HitlRecord }).record.status === "resume_failed");
 
     expect(attachSessionEvents).toHaveBeenCalledTimes(1);
     expect(detachSessionEvents).toHaveBeenCalledTimes(1);
@@ -440,6 +458,7 @@ describe("Session HITL resume", () => {
       }),
       getAgent: ({ store }) => ({
         store,
+        cwd: store.getState().cwd,
         run: mock(async (_message: string, options?: AgentRunOptions | AbortSignal) => {
           observedSignal = options instanceof AbortSignal ? options : options?.abort;
           continuationStarted();
@@ -458,12 +477,12 @@ describe("Session HITL resume", () => {
     await runQueryLoop(fixture.options(registry, ["ask_user"]), "ask");
     const pending = await singlePendingHitl(fixture);
 
-    await fixture.coordinator.respond(pending.hitlId, { type: "question_answer", answers: ["yes"] });
+    await fixture.coordinator.respond(identity(pending), { type: "question_answer", answers: ["yes"] });
     await started;
     expect(observedSignal).toBe(abortController.signal);
     abortController.abort(new Error("Session cancelled"));
     await waitFor(async () => {
-      const found = await fixture.hitl.lookup(pending.hitlId);
+      const found = await fixture.hitl.lookup(identity(pending));
       return found.status === "found" && found.record.status === "resume_failed";
     });
 
@@ -502,7 +521,7 @@ describe("Session HITL resume", () => {
     expect(fixture.sessions.get(rootSessionId, fixture.workspaceRoot)).toBeUndefined();
     expect(fixture.sessions.get(fixture.sessionId, fixture.workspaceRoot)).toBeUndefined();
 
-    await fixture.coordinator.respond(pending.hitlId, { type: "question_answer", answers: ["yes"] });
+    await fixture.coordinator.respond(identity(pending), { type: "question_answer", answers: ["yes"] });
     await waitFor(() => acquisitionObserved);
     expect(fixture.sessions.get(rootSessionId, fixture.workspaceRoot)).toBeDefined();
     expect(fixture.sessions.get(fixture.sessionId, fixture.workspaceRoot)).toBeDefined();
@@ -518,7 +537,7 @@ describe("Session HITL resume", () => {
         parentSessionId: rootSessionId,
         agentName: "explore",
       },
-      getAgent: ({ store }) => ({ store, run: continueAgent, dispose: mock(() => undefined) } as Agent),
+      getAgent: ({ store }) => ({ store, cwd: store.getState().cwd, run: continueAgent, dispose: mock(() => undefined) } as Agent),
       acquireSessionHitlResume: (workspaceRoot, sessionId, options) => (
         executionManager.acquireSessionHitlResume(workspaceRoot, sessionId, options)
       ),
@@ -536,9 +555,9 @@ describe("Session HITL resume", () => {
     await mkdir(nextRootCwd, { recursive: true });
     await fixture.sessions.updateCwd(rootSessionId, fixture.workspaceRoot, nextRootCwd, fixture.workspaceRoot);
 
-    await fixture.coordinator.cancel(pending.hitlId, "Root moved; discard the dormant child request");
+    await fixture.coordinator.cancel(identity(pending), "Root moved; discard the dormant child request");
     await waitFor(async () => {
-      const found = await fixture.hitl.lookup(pending.hitlId);
+      const found = await fixture.hitl.lookup(identity(pending));
       return found.status === "found" && found.record.status === "cancelled";
     });
 
@@ -571,7 +590,7 @@ describe("Session HITL resume", () => {
     await runQueryLoop(fixture.options(registry, ["ask_user"]), "pause");
     const pending = await singlePendingHitl(fixture);
 
-    await fixture.coordinator.respond(pending.hitlId, { type: "question_answer", answers: ["yes"] });
+    await fixture.coordinator.respond(identity(pending), { type: "question_answer", answers: ["yes"] });
     await readStarted;
 
     expect(executionManager.isRunning(fixture.workspaceRoot, fixture.sessionId)).toBe(true);
@@ -584,7 +603,7 @@ describe("Session HITL resume", () => {
 
     allowRead();
     await waitFor(async () => {
-      const found = await fixture.hitl.lookup(pending.hitlId);
+      const found = await fixture.hitl.lookup(identity(pending));
       return found.status === "found" && found.record.status === "resolved";
     });
     expect(executionManager.isRunning(fixture.workspaceRoot, fixture.sessionId)).toBe(false);
@@ -601,8 +620,9 @@ describe("Session HITL resume", () => {
       title: null,
       schedule: { kind: "manual" },
       approvalPolicy: "interactive",
-      limits: { maxIterationsPerRun: 8 },
+      limits: { maxIterationsPerRun: 8, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
       taskPrompt: "Resume the guarded tool",
+      useWorktree: false,
     });
     fixture.store.setState({ loopId: loop.loopId });
     const loopOrigin = {
@@ -620,10 +640,10 @@ describe("Session HITL resume", () => {
     const restarted = await recreateResumeRuntime(fixture, registry, {
       acquire: async () => ({ complete: async () => undefined, fail: async () => undefined }),
     });
-    const claimed = await restarted.coordinator.respond(pending.hitlId, { type: "permission_decision", decision: "approve_once" });
+    const claimed = await restarted.coordinator.respond(identity(pending), { type: "permission_decision", decision: "approve_once" });
     expect(claimed).toMatchObject({ status: "claimed", scheduled: true, record: { status: "resume_claimed" } });
     await waitFor(async () => execute.mock.calls.length === 1);
-    await waitFor(async () => (await restarted.hitl.lookup(pending.hitlId)).status === "found" && ((await restarted.hitl.lookup(pending.hitlId)) as { record: HitlRecord }).record.status === "resolved");
+    await waitFor(async () => (await restarted.hitl.lookup(identity(pending))).status === "found" && ((await restarted.hitl.lookup(identity(pending))) as { record: HitlRecord }).record.status === "resolved");
 
     expect(execute).toHaveBeenCalledTimes(1);
     const resumedStore = await restarted.sessions.getOrLoad(fixture.sessionId, fixture.workspaceRoot);
@@ -650,9 +670,9 @@ describe("Session HITL resume", () => {
     await execute(); // The external effect happened, then the process died before recording its result.
 
     const restarted = await recreateResumeRuntime(fixture, registry);
-    await restarted.coordinator.respond(pending.hitlId, { type: "permission_decision", decision: "approve_once" });
+    await restarted.coordinator.respond(identity(pending), { type: "permission_decision", decision: "approve_once" });
     await waitFor(async () => {
-      const found = await restarted.hitl.lookup(pending.hitlId);
+      const found = await restarted.hitl.lookup(identity(pending));
       return found.status === "found" && found.record.status === "resolved";
     });
 
@@ -705,9 +725,9 @@ describe("Session HITL resume", () => {
     await fixture.sessions.flushSession(fixture.sessionId, fixture.workspaceRoot);
 
     const restarted = await recreateResumeRuntime(fixture, registry);
-    await restarted.coordinator.respond(pending.hitlId, { type: "permission_decision", decision: "approve_once" });
+    await restarted.coordinator.respond(identity(pending), { type: "permission_decision", decision: "approve_once" });
     await waitFor(async () => {
-      const found = await restarted.hitl.lookup(pending.hitlId);
+      const found = await restarted.hitl.lookup(identity(pending));
       return found.status === "found" && found.record.status === "resolved";
     });
 
@@ -724,6 +744,7 @@ describe("Session HITL resume", () => {
     const fixture = await createFixture({
       getAgent: ({ store }) => ({
         store,
+        cwd: store.getState().cwd,
         run: mock(async () => {
           continuationRuns += 1;
           throw new Error("simulated crash after continuation side effect");
@@ -738,16 +759,16 @@ describe("Session HITL resume", () => {
     await runQueryLoop(fixture.options(registry, ["ask_user"]), "pause before continuation");
     const pending = await singlePendingHitl(fixture);
 
-    await fixture.coordinator.respond(pending.hitlId, { type: "question_answer", answers: ["yes"] });
+    await fixture.coordinator.respond(identity(pending), { type: "question_answer", answers: ["yes"] });
     await waitFor(async () => {
-      const found = await fixture.hitl.lookup(pending.hitlId);
+      const found = await fixture.hitl.lookup(identity(pending));
       return found.status === "found" && found.record.status === "resume_failed";
     });
     expect(continuationRuns).toBe(1);
 
     await fixture.coordinator.recover();
     await waitFor(async () => {
-      const found = await fixture.hitl.lookup(pending.hitlId);
+      const found = await fixture.hitl.lookup(identity(pending));
       return found.status === "found"
         && found.record.status === "resume_failed"
         && (found.record.resume?.attempt ?? 0) >= 2;
@@ -757,9 +778,9 @@ describe("Session HITL resume", () => {
     const checkpoint = await readSessionHitlCheckpoint(fixture.workspaceRoot, fixture.sessionId, pending.hitlId);
     expect(checkpoint === undefined ? undefined : sessionHitlJournalPhase(checkpoint)).toBe("manual_unknown");
 
-    await fixture.coordinator.cancel(pending.hitlId, "Inspected external state; acknowledge unknown continuation");
+    await fixture.coordinator.cancel(identity(pending), "Inspected external state; acknowledge unknown continuation");
     await waitFor(async () => {
-      const found = await fixture.hitl.lookup(pending.hitlId);
+      const found = await fixture.hitl.lookup(identity(pending));
       return found.status === "found" && found.record.status === "cancelled";
     });
     expect(continuationRuns).toBe(1);
@@ -785,7 +806,8 @@ describe("Session HITL resume", () => {
       title: null,
       schedule: { kind: "manual" },
       approvalPolicy: "interactive",
-      limits: { maxIterationsPerRun: 3 },
+      limits: { maxIterationsPerRun: 3, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+      useWorktree: false,
     });
     fixture.store.setState({ loopId: loop.loopId });
     const jobQueue = new LoopJobQueue({ workspaceRoot: fixture.workspaceRoot, clock: { now: () => 1_000 } });
@@ -833,6 +855,16 @@ describe("Session HITL resume", () => {
       blockedReason: "needs_user",
       blockedByHitlIds: [pending.hitlId],
       attentionStatus: "waiting_for_human" as const,
+      resumeCheckpoint: {
+        version: 1 as const,
+        hitlId: pending.hitlId,
+        loopId: loop.loopId,
+        runId,
+        jobId: claimed.jobId,
+        trigger: "manual" as const,
+        subjectKey: claimed.subjectKey,
+        intendedContinuation: "resume_run" as const,
+      },
       summary: "Session is waiting for user input.",
     };
     await fixture.loopState.recordRunBlocked(loop.loopId, blockedReport);
@@ -844,6 +876,7 @@ describe("Session HITL resume", () => {
       blockedReason: "needs_user",
       blockedByHitlIds: [pending.hitlId],
       attentionStatus: "waiting_for_human",
+      resumeCheckpoint: blockedReport.resumeCheckpoint,
     });
     await transitionSessionHitlJournalPhase(fixture.workspaceRoot, fixture.sessionId, pending.hitlId, "replaying");
     await transitionSessionHitlJournalPhase(fixture.workspaceRoot, fixture.sessionId, pending.hitlId, "continuing");
@@ -866,9 +899,9 @@ describe("Session HITL resume", () => {
       resumeCheckpoint: undefined,
     });
 
-    await fixture.coordinator.cancel(pending.hitlId, "Acknowledge unknown Session continuation outcome");
+    await fixture.coordinator.cancel(identity(pending), "Acknowledge unknown Session continuation outcome");
     await waitFor(async () => {
-      const found = await fixture.hitl.lookup(pending.hitlId);
+      const found = await fixture.hitl.lookup(identity(pending));
       return found.status === "found" && found.record.status === "cancelled";
     });
 
@@ -892,6 +925,7 @@ describe("Session HITL resume", () => {
     const fixture = await createFixture({
       getAgent: ({ store }) => ({
         store,
+        cwd: store.getState().cwd,
         run: continueAgent,
         dispose: mock(() => undefined),
       } as Agent),
@@ -907,9 +941,9 @@ describe("Session HITL resume", () => {
     const pending = await singlePendingHitl(fixture);
     await rm(removedWorktree, { recursive: true, force: true });
 
-    await fixture.coordinator.cancel(pending.hitlId, "Worktree no longer exists");
+    await fixture.coordinator.cancel(identity(pending), "Worktree no longer exists");
     await waitFor(async () => {
-      const found = await fixture.hitl.lookup(pending.hitlId);
+      const found = await fixture.hitl.lookup(identity(pending));
       return found.status === "found" && found.record.status === "cancelled";
     });
 
@@ -926,6 +960,7 @@ describe("Session HITL resume", () => {
     const fixture = await createFixture({
       getAgent: ({ store }) => ({
         store,
+        cwd: store.getState().cwd,
         run: mock(async () => {
           continuationRuns += 1;
           return { text: "must not run", steps: 0 };
@@ -943,9 +978,9 @@ describe("Session HITL resume", () => {
     await transitionSessionHitlJournalPhase(fixture.workspaceRoot, fixture.sessionId, pending.hitlId, "continuing");
     await transitionSessionHitlJournalPhase(fixture.workspaceRoot, fixture.sessionId, pending.hitlId, "continued");
 
-    await fixture.coordinator.respond(pending.hitlId, { type: "question_answer", answers: ["yes"] });
+    await fixture.coordinator.respond(identity(pending), { type: "question_answer", answers: ["yes"] });
     await waitFor(async () => {
-      const found = await fixture.hitl.lookup(pending.hitlId);
+      const found = await fixture.hitl.lookup(identity(pending));
       return found.status === "found" && found.record.status === "resolved";
     });
 
@@ -960,8 +995,9 @@ describe("Session HITL resume", () => {
       title: null,
       schedule: { kind: "manual" },
       approvalPolicy: "interactive",
-      limits: { maxIterationsPerRun: 8 },
+      limits: { maxIterationsPerRun: 8, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
       taskPrompt: "Resume only inside this Loop",
+      useWorktree: false,
     });
     fixture.store.setState({ loopId: loop.loopId });
     const execute = mock(async () => "must not run");
@@ -986,6 +1022,7 @@ describe("Session HITL resume", () => {
     const fixture = await createFixture({
       getAgent: ({ store, hitl, workspaceRoot, sessionId }) => ({
         store,
+        cwd: store.getState().cwd,
         run: mock(async () => {
           const next = await hitl.create({
             owner: { projectSlug: "archcode", ownerType: "session", ownerId: sessionId },
@@ -993,11 +1030,19 @@ describe("Session HITL resume", () => {
             source: { type: "ask_user", sessionId, toolCallId: "ask-next" },
             displayPayload: { title: "Next question", summary: "Continue?", redacted: true },
           });
+          const checkpointCreatedAt = new Date().toISOString();
           await writeSessionHitlCheckpoint({
             version: 1,
+            phase: "paused",
+            phaseUpdatedAt: checkpointCreatedAt,
             hitlId: next.hitlId,
             blockingKey: next.blockingKey,
             source: next.source,
+            request: {
+              owner: next.owner,
+              displayPayload: next.displayPayload,
+              createdAt: next.createdAt,
+            },
             toolCallId: "ask-next",
             toolName: "ask_user",
             step: 1,
@@ -1005,11 +1050,12 @@ describe("Session HITL resume", () => {
             displayInput: { questions: [{ header: "Next", question: "Continue?", options: [], custom: true }] },
             allowedTools: ["ask_user"],
             agentSkills: [],
+            agentName: "orchestrator",
             toolCalls: [{ toolCallId: "ask-next", toolName: "ask_user", input: { questions: [{ header: "Next", question: "Continue?", options: [], custom: true }] } }],
             completedToolResults: [],
             pendingToolCalls: [{ toolCallId: "ask-next", toolName: "ask_user", input: { questions: [{ header: "Next", question: "Continue?", options: [], custom: true }] } }],
             blockedToolIndex: 0,
-            createdAt: new Date().toISOString(),
+            createdAt: checkpointCreatedAt,
             kind: "ask_user",
           }, workspaceRoot, sessionId);
           store.getState().append({ type: "hitl.request", request: next });
@@ -1042,8 +1088,8 @@ describe("Session HITL resume", () => {
 
     await runQueryLoop(fixture.options(registry, ["mutate"]), "chain");
     const oldPending = await singlePendingHitl(fixture);
-    await fixture.coordinator.respond(oldPending.hitlId, { type: "permission_decision", decision: "approve_once" });
-    await waitFor(async () => (await fixture.hitl.lookup(oldPending.hitlId)).status === "found" && ((await fixture.hitl.lookup(oldPending.hitlId)) as { record: HitlRecord }).record.status === "resolved");
+    await fixture.coordinator.respond(identity(oldPending), { type: "permission_decision", decision: "approve_once" });
+    await waitFor(async () => (await fixture.hitl.lookup(identity(oldPending))).status === "found" && ((await fixture.hitl.lookup(identity(oldPending))) as { record: HitlRecord }).record.status === "resolved");
 
     const state = fixture.store.getState();
     const nextHitlId = state.blockedHitl?.hitlId;
@@ -1063,8 +1109,8 @@ describe("Session HITL resume", () => {
     await runQueryLoop(denied.options(deniedRegistry, ["mutate"]), "deny");
 
     const deniedPending = await singlePendingHitl(denied);
-    await denied.coordinator.respond(deniedPending.hitlId, { type: "permission_decision", decision: "deny" });
-    await waitFor(async () => (await denied.hitl.lookup(deniedPending.hitlId)).status === "found" && ((await denied.hitl.lookup(deniedPending.hitlId)) as { record: HitlRecord }).record.status === "resolved");
+    await denied.coordinator.respond(identity(deniedPending), { type: "permission_decision", decision: "deny" });
+    await waitFor(async () => (await denied.hitl.lookup(identity(deniedPending))).status === "found" && ((await denied.hitl.lookup(identity(deniedPending))) as { record: HitlRecord }).record.status === "resolved");
 
     const deniedTool = latestToolPart(denied.store.getState().messages, "perm-deny");
     expect(deniedExecute).not.toHaveBeenCalled();
@@ -1078,8 +1124,8 @@ describe("Session HITL resume", () => {
     await runQueryLoop(cancelled.options(cancelRegistry, ["mutate"]), "cancel");
 
     const cancelPending = await singlePendingHitl(cancelled);
-    await cancelled.coordinator.cancel(cancelPending.hitlId, "User cancelled");
-    await waitFor(async () => (await cancelled.hitl.lookup(cancelPending.hitlId)).status === "found" && ((await cancelled.hitl.lookup(cancelPending.hitlId)) as { record: HitlRecord }).record.status === "cancelled");
+    await cancelled.coordinator.cancel(identity(cancelPending), "User cancelled");
+    await waitFor(async () => (await cancelled.hitl.lookup(identity(cancelPending))).status === "found" && ((await cancelled.hitl.lookup(identity(cancelPending))) as { record: HitlRecord }).record.status === "cancelled");
 
     const cancelledTool = latestToolPart(cancelled.store.getState().messages, "perm-cancel");
     expect(cancelExecute).not.toHaveBeenCalled();
@@ -1104,8 +1150,8 @@ describe("Session HITL resume", () => {
     const checkpoint = (await readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId)).checkpoints[0]!;
     await writeSessionHitlCheckpoint({ ...checkpoint, pendingToolCalls: checkpoint.pendingToolCalls.slice(1) }, fixture.workspaceRoot, fixture.sessionId);
 
-    await fixture.coordinator.respond(pending.hitlId, { type: "permission_decision", decision: "approve_once" });
-    await waitFor(async () => (await fixture.hitl.lookup(pending.hitlId)).status === "found" && ((await fixture.hitl.lookup(pending.hitlId)) as { record: HitlRecord }).record.status === "resolved");
+    await fixture.coordinator.respond(identity(pending), { type: "permission_decision", decision: "approve_once" });
+    await waitFor(async () => (await fixture.hitl.lookup(identity(pending))).status === "found" && ((await fixture.hitl.lookup(identity(pending))) as { record: HitlRecord }).record.status === "resolved");
 
     expect(execute).not.toHaveBeenCalled();
     const failedTool = latestToolPart(fixture.store.getState().messages, "perm-missing");
@@ -1156,7 +1202,7 @@ describe("Session HITL resume", () => {
     expect(checkpoint.completedToolResults.map((result) => result.toolCallId)).toEqual(["tc-first"]);
     expect(checkpoint.pendingToolCalls.map((call) => call.toolCallId)).toEqual(["tc-blocked", "tc-later"]);
 
-    await fixture.coordinator.respond(pending.hitlId, { type: "permission_decision", decision: "approve_once" });
+    await fixture.coordinator.respond(identity(pending), { type: "permission_decision", decision: "approve_once" });
     await waitFor(() => events.includes("execute:later"));
 
     expect(events).toEqual(["execute:first", "execute:blocked", "execute:later"]);
@@ -1194,20 +1240,20 @@ async function createFixture(options: {
   const goalState = new GoalStateManager(workspaceRoot, silentLogger);
   const loopState = new LoopStateManager(workspaceRoot, silentLogger);
   const hitl = new HitlService({ workspaceRoot, project: { slug: "archcode", name: "ArchCode" }, sessions, goalState, loopState });
-  await hitl.load(workspaceRoot);
   const approvals = new ProjectApprovalManager(silentLogger);
   await approvals.load(workspaceRoot);
   const projectContext: ProjectContext = {
     ...createTestProjectContext(workspaceRoot),
     project: { slug: "archcode", name: "ArchCode", workspaceRoot, addedAt: new Date().toISOString() },
     goalState,
+    goalCancellation: { cancel: async (goalId, request) => await goalState.cancel(goalId, request.reason) },
     loopState,
     hitl,
+    hitlResumeCoordinator: new ResumeCoordinator({ hitl, adapters: {} }),
     memory: new MemoryFileManager({ project: join(workspaceRoot, ".archcode", "memory"), user: join(workspaceRoot, ".archcode", "user-memory") }),
     approvals,
   };
-  const resolver = new ProjectContextResolver({ sessionStoreManager: sessions });
-  resolver.alias(workspaceRoot, projectContext);
+  const resolver = createAliasedResolver(workspaceRoot, sessions, projectContext);
   const executionScopeValidator = options.executionScopeValidator ?? new SessionExecutionScopeValidator({
     projectContextResolver: resolver,
     loopExecutionClaimResolver: allowLoopExecutionClaims,
@@ -1218,10 +1264,11 @@ async function createFixture(options: {
     toolRegistry: registry,
     projectContextResolver: resolver,
     executionScopeValidator,
+    skillService: testSkillService,
     acquireSessionHitlResume: options.acquireSessionHitlResume ?? (() => createTestResumeLease()),
     ...(options.loopContinuation === undefined ? {} : { loopContinuation: options.loopContinuation }),
     ...(options.readCheckpoint === undefined ? {} : { readCheckpoint: options.readCheckpoint }),
-    ...(options.getAgent === undefined ? {} : { getAgent: async () => options.getAgent!({ workspaceRoot, sessionId, store, hitl }) }),
+    getAgent: async () => options.getAgent?.({ workspaceRoot, sessionId, store, hitl }) ?? noOpAgent(store),
     ...(options.attachSessionEvents === undefined ? {} : { attachSessionEvents: options.attachSessionEvents }),
     ...(options.detachSessionEvents === undefined ? {} : { detachSessionEvents: options.detachSessionEvents }),
   });
@@ -1253,6 +1300,7 @@ async function createFixture(options: {
         logger: silentLogger,
         toolRegistry: registry,
         allowedTools,
+        agentName: "orchestrator",
         agentSkills: [],
         skillService: testSkillService,
         storeManager: sessions,
@@ -1273,20 +1321,20 @@ async function recreateResumeRuntime(
   const goalState = new GoalStateManager(fixture.workspaceRoot, silentLogger);
   const loopState = new LoopStateManager(fixture.workspaceRoot, silentLogger);
   const hitl = new HitlService({ workspaceRoot: fixture.workspaceRoot, project: { slug: "archcode", name: "ArchCode" }, sessions, goalState, loopState });
-  await hitl.load(fixture.workspaceRoot);
   const approvals = new ProjectApprovalManager(silentLogger);
   await approvals.load(fixture.workspaceRoot);
   const projectContext: ProjectContext = {
     ...createTestProjectContext(fixture.workspaceRoot),
     project: { slug: "archcode", name: "ArchCode", workspaceRoot: fixture.workspaceRoot, addedAt: new Date().toISOString() },
     goalState,
+    goalCancellation: { cancel: async (goalId, request) => await goalState.cancel(goalId, request.reason) },
     loopState,
     hitl,
+    hitlResumeCoordinator: new ResumeCoordinator({ hitl, adapters: {} }),
     memory: new MemoryFileManager({ project: join(fixture.workspaceRoot, ".archcode", "memory"), user: join(fixture.workspaceRoot, ".archcode", "user-memory") }),
     approvals,
   };
-  const resolver = new ProjectContextResolver({ sessionStoreManager: sessions });
-  resolver.alias(fixture.workspaceRoot, projectContext);
+  const resolver = createAliasedResolver(fixture.workspaceRoot, sessions, projectContext);
   const executionScopeValidator = new SessionExecutionScopeValidator({
     projectContextResolver: resolver,
     loopExecutionClaimResolver: allowLoopExecutionClaims,
@@ -1298,6 +1346,7 @@ async function recreateResumeRuntime(
     projectContextResolver: resolver,
     executionScopeValidator,
     skillService: testSkillService,
+    getAgent: async (_workspaceRoot, sessionId) => noOpAgent(await sessions.getOrLoad(sessionId, fixture.workspaceRoot)),
     acquireSessionHitlResume: () => createTestResumeLease(),
     ...(loopContinuation === undefined ? {} : { loopContinuation }),
   });
@@ -1314,6 +1363,30 @@ function createTestResumeLease(): SessionHitlResumeLease {
     acquireSessionCwdTransition: () => () => undefined,
     release: () => undefined,
   };
+}
+
+function noOpAgent(store: ReturnType<SessionStoreManager["create"]>): Agent {
+  return {
+    store,
+    cwd: store.getState().cwd,
+    run: async () => ({ text: "", steps: 0 }),
+    dispose: () => undefined,
+  } as Agent;
+}
+
+function createAliasedResolver(
+  workspaceRoot: string,
+  sessions: SessionStoreManager,
+  context: ProjectContext,
+): ProjectContextResolver {
+  const resolver = new ProjectContextResolver({
+    projectInfoFactory: () => context.project,
+    goalCancellationFactory: () => context.goalCancellation,
+    sessionStoreManager: sessions,
+    resumeCoordinatorFactory: () => context.hitlResumeCoordinator,
+  });
+  resolver.alias(workspaceRoot, context);
+  return resolver;
 }
 
 function createResumeExecutionManager(sessions: SessionStoreManager): SessionExecutionManager {

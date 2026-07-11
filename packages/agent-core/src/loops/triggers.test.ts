@@ -24,7 +24,8 @@ const baseConfig: LoopConfig = {
   title: null,
   schedule: { kind: "manual" },
   approvalPolicy: "interactive",
-  limits: { maxIterationsPerRun: 8 },
+  limits: { maxIterationsPerRun: 8, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+  useWorktree: false,
   taskPrompt: "Investigate trigger event",
 };
 
@@ -40,7 +41,7 @@ afterAll(async () => {
 describe("LoopTriggerPoller", () => {
   test("dedupes repeated branch SHAs with poll-state cursors", async () => {
     const { poller, queue, stateManager } = makeHarness({ localHead: { repoId: "test-owner/test-repo", branch: "main", sha: "abc123" } });
-    const loop = await stateManager.create("project-a", { ...baseConfig, triggers: [{ kind: "on_commit", branch: "main" }] });
+    const loop = await stateManager.create("project-a", { ...baseConfig, triggers: [{ kind: "on_commit", branch: "main", cadenceMs: 60_000 }] });
 
     const first = await poller.pollLoop(loop.loopId);
     const second = await poller.pollLoop(loop.loopId);
@@ -63,12 +64,12 @@ describe("LoopTriggerPoller", () => {
       },
     };
     const { poller, queue, stateManager } = makeHarness({ processRunner: git });
-    const loop = await stateManager.create("project-a", { ...baseConfig, triggers: [{ kind: "on_commit" }] });
+    const loop = await stateManager.create("project-a", { ...baseConfig, triggers: [{ kind: "on_commit", cadenceMs: 60_000 }] });
 
     const result = await poller.pollLoop(loop.loopId);
 
     expect(result.enqueued).toHaveLength(1);
-    expect((await queue.list())[0]?.resolvedHeadSha).toBe("abc123");
+    expect((await queue.list())[0]?.baseSha).toBe("abc123");
     expect(calls.map((call) => call.argv)).toEqual([
       ["git", "branch", "--show-current"],
       ["git", "rev-parse", "--verify", "HEAD"],
@@ -84,11 +85,18 @@ describe("LoopTriggerPoller", () => {
       readBranchHead: async (branch) => ({ repoId: "test-owner/test-repo", branch: branch ?? "main", sha: currentSha }),
     };
     const { poller, queue, stateManager, clock } = makeHarness({ localGit });
-    const loop = await stateManager.create("project-a", { ...baseConfig, triggers: [{ kind: "on_commit", branch: "main" }] });
+    const loop = await stateManager.create("project-a", { ...baseConfig, triggers: [{ kind: "on_commit", branch: "main", cadenceMs: 60_000 }] });
 
     await poller.pollLoop(loop.loopId);
     const [runningCandidate] = await queue.list();
-    await queue.update(runningCandidate!.jobId, { status: "running", startedAt: 1_500, leaseExpiresAt: 9_000, attempts: 1 });
+    await queue.update(runningCandidate!.jobId, {
+      status: "running",
+      startedAt: 1_500,
+      leaseExpiresAt: 9_000,
+      leaseOwnerId: "trigger-test",
+      leaseToken: "on-commit-lease",
+      attempts: 1,
+    });
 
     currentSha = newSha;
     clock.set(2_000);
@@ -102,8 +110,8 @@ describe("LoopTriggerPoller", () => {
       rerunAfterCurrent: true,
       subjectKey: "commit:test-owner/test-repo:main",
       dedupeKey: `${loop.loopId}:on_commit:commit:test-owner/test-repo:main`,
-      resolvedHeadSha: oldSha,
-      rerunInput: { resolvedHeadSha: newSha },
+      baseSha: oldSha,
+      rerunInput: { baseSha: newSha },
     });
     expect(jobs[0]?.eventSummaries.map((entry) => entry.payloadSha)).toEqual([oldSha, newSha]);
     expect(jobs[0]?.eventSummaries.map((entry) => entry.summary)).toEqual([
@@ -118,11 +126,18 @@ describe("LoopTriggerPoller", () => {
     github.ciResults.push({ failures: [failure], health: { triggerKind: "on_ci_fail", status: "healthy", lastPollAt: 1_000, lastSuccessAt: 1_000 }, shouldEnqueue: true });
     github.ciResults.push({ failures: [failure], health: { triggerKind: "on_ci_fail", status: "healthy", lastPollAt: 2_000, lastSuccessAt: 2_000 }, shouldEnqueue: true });
     const { poller, queue, stateManager, clock } = makeHarness({ github });
-    const loop = await stateManager.create("project-a", { ...baseConfig, triggers: [{ kind: "on_ci_fail", branch: "main" }] });
+    const loop = await stateManager.create("project-a", { ...baseConfig, triggers: [{ kind: "on_ci_fail", branch: "main", cadenceMs: 60_000 }] });
 
     await poller.pollLoop(loop.loopId);
     const [job] = await queue.list();
-    await queue.update(job!.jobId, { status: "running", startedAt: 1_500, leaseExpiresAt: 9_000, attempts: 1 });
+    await queue.update(job!.jobId, {
+      status: "running",
+      startedAt: 1_500,
+      leaseExpiresAt: 9_000,
+      leaseOwnerId: "trigger-test",
+      leaseToken: "ci-failure-lease",
+      attempts: 1,
+    });
     clock.set(2_000);
     const duplicate = await poller.pollLoop(loop.loopId);
 
@@ -139,7 +154,7 @@ describe("LoopTriggerPoller", () => {
     ]);
     github.prPages.push([makePr({ number: 2, baseRef: "main", headSha: "bbb222" })]);
     const { poller, queue, stateManager } = makeHarness({ github });
-    const loop = await stateManager.create("project-a", { ...baseConfig, triggers: [{ kind: "on_pr", baseBranch: "main" }] });
+    const loop = await stateManager.create("project-a", { ...baseConfig, triggers: [{ kind: "on_pr", baseBranch: "main", cadenceMs: 60_000 }] });
 
     await poller.pollLoop(loop.loopId);
 
@@ -156,7 +171,7 @@ describe("LoopTriggerPoller", () => {
     ]);
     github.prPages.push([makePr({ number: 2, baseRef: "main", headSha: "bbb222", assignees: [{ login: "maintainer" }] })]);
     const { poller, queue, stateManager } = makeHarness({ github });
-    const loop = await stateManager.create("project-a", { ...baseConfig, triggers: [{ kind: "on_pr", baseBranch: "main", prScope: "assigned" }] });
+    const loop = await stateManager.create("project-a", { ...baseConfig, triggers: [{ kind: "on_pr", baseBranch: "main", prScope: "assigned", cadenceMs: 60_000 }] });
 
     const result = await poller.pollLoop(loop.loopId);
 
@@ -168,7 +183,7 @@ describe("LoopTriggerPoller", () => {
     const github = new FakeGitHub();
     github.prPages.push([makePr({ number: 3, baseRef: "main", headSha: "ccc333", authorLogin: "someone" })]);
     const { poller, queue, stateManager } = makeHarness({ github });
-    const loop = await stateManager.create("project-a", { ...baseConfig, triggers: [{ kind: "on_pr", baseBranch: "main", prScope: "authored" }] });
+    const loop = await stateManager.create("project-a", { ...baseConfig, triggers: [{ kind: "on_pr", baseBranch: "main", prScope: "authored", cadenceMs: 60_000 }] });
 
     const result = await poller.pollLoop(loop.loopId);
 
@@ -185,7 +200,7 @@ describe("LoopTriggerPoller", () => {
     ]);
     github.prPages.push([makePr({ number: 2, baseRef: "main", headSha: "bbb222", requestedReviewers: [{ login: "reviewer" }] })]);
     const { poller, queue, stateManager } = makeHarness({ github });
-    const loop = await stateManager.create("project-a", { ...baseConfig, triggers: [{ kind: "on_pr", baseBranch: "main", prScope: "review_requested" }] });
+    const loop = await stateManager.create("project-a", { ...baseConfig, triggers: [{ kind: "on_pr", baseBranch: "main", prScope: "review_requested", cadenceMs: 60_000 }] });
 
     const result = await poller.pollLoop(loop.loopId);
 
@@ -198,7 +213,7 @@ describe("LoopTriggerPoller", () => {
     github.prPages.push([makePr({ number: 7, baseRef: "main", headSha: "oldsha" })]);
     github.prPages.push([makePr({ number: 7, baseRef: "main", headSha: "newsha" })]);
     const { poller, queue, stateManager, pollState } = makeHarness({ github });
-    const loop = await stateManager.create("project-a", { ...baseConfig, triggers: [{ kind: "on_pr", baseBranch: "main" }] });
+    const loop = await stateManager.create("project-a", { ...baseConfig, triggers: [{ kind: "on_pr", baseBranch: "main", cadenceMs: 60_000 }] });
 
     const result = await poller.pollLoop(loop.loopId);
     const persisted = await pollState.read(loop.loopId);
@@ -217,7 +232,7 @@ describe("LoopTriggerPoller", () => {
       shouldEnqueue: true,
     });
     const { poller, queue, stateManager } = makeHarness({ github, now: 5_000 });
-    const loop = await stateManager.create("project-a", { ...baseConfig, triggers: [{ kind: "on_ci_fail", branch: "main", checkName: "ci/build" }] });
+    const loop = await stateManager.create("project-a", { ...baseConfig, triggers: [{ kind: "on_ci_fail", branch: "main", checkName: "ci/build", cadenceMs: 60_000 }] });
 
     const result = await poller.pollLoop(loop.loopId);
 
@@ -228,7 +243,7 @@ describe("LoopTriggerPoller", () => {
       triggerKind: "on_ci_fail",
       subjectKey: "ci:test-owner/test-repo:ci/build:abc123",
       dedupeKey: `${loop.loopId}:on_ci_fail:ci:test-owner/test-repo:ci/build:abc123`,
-      resolvedHeadSha: "abc123",
+      baseSha: "abc123",
     });
   });
 
@@ -246,7 +261,7 @@ describe("LoopTriggerPoller", () => {
       shouldEnqueue: false,
     });
     const { poller, queue, stateManager, clock } = makeHarness({ github, now: 10_000 });
-    const loop = await stateManager.create("project-a", { ...baseConfig, triggers: [{ kind: "on_ci_fail", branch: "main" }] });
+    const loop = await stateManager.create("project-a", { ...baseConfig, triggers: [{ kind: "on_ci_fail", branch: "main", cadenceMs: 60_000 }] });
 
     const first = await poller.pollLoop(loop.loopId);
     clock.set(20_000);

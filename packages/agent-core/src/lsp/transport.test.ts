@@ -9,12 +9,17 @@ import {
   setLspTransportForTest,
   type LspTransport,
 } from "./transport";
+import { DEFAULT_FAKE_LSP_CONFIG } from "./fake-server";
 
 const transports: StdioLspTransport[] = [];
 
 function createFakeServerTransport(): StdioLspTransport {
   const serverPath = path.join(import.meta.dir, "fake-server.ts");
-  const transport = new StdioLspTransport({ command: "bun", args: ["run", serverPath] });
+  const transport = new StdioLspTransport({
+    command: "bun",
+    args: ["run", serverPath],
+    env: { ...process.env, FAKE_LSP_CONFIG: JSON.stringify(DEFAULT_FAKE_LSP_CONFIG) },
+  });
   transports.push(transport);
   return transport;
 }

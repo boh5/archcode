@@ -11,7 +11,7 @@ import { setLlmAdapterForTest } from "./llm";
 import { createRuntime, type AgentRuntime } from "./runtime";
 import { LoopActiveConflictError } from "./loops/runner";
 import type { LoopSchedulerTimer } from "./loops/scheduler";
-import type { LoopConfig } from "./loops/state";
+import { LoopStateManager, type LoopConfig } from "./loops/state";
 import { __setSessionsDirForTest } from "./store/sessions-dir";
 
 const tmpRoots: string[] = [];
@@ -21,7 +21,8 @@ const intervalLoopConfig: LoopConfig = {
   title: null,
   schedule: { kind: "interval", everyMs: 100 },
   approvalPolicy: "interactive",
-  limits: { maxIterationsPerRun: 4 },
+  limits: { maxIterationsPerRun: 4, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+  useWorktree: false,
   taskPrompt: "Summarize the project.",
 };
 
@@ -35,7 +36,8 @@ const goalLoopConfig: LoopConfig = {
   title: null,
   schedule: { kind: "manual" },
   approvalPolicy: "interactive",
-  limits: { maxIterationsPerRun: 3 },
+  limits: { maxIterationsPerRun: 3, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+  useWorktree: false,
   goalTemplate: {
     title: null,
     objective: "Use runtime execution plumbing.",
@@ -58,6 +60,13 @@ afterAll(() => {
 });
 
 describe("AgentRuntime Loop wiring", () => {
+  test("exposes only the canonical Loop cancellation method", async () => {
+    const fixture = await createRuntimeFixture();
+
+    expect("cancelLoopCurrentRun" in fixture.runtime).toBe(true);
+    expect("cancelCurrentLoopRun" in fixture.runtime).toBe(false);
+  });
+
   test("createSession persists loopId and listSessions summaries expose loopId", async () => {
     const fixture = await createRuntimeFixture();
     const loopId = crypto.randomUUID();
@@ -161,8 +170,8 @@ describe("AgentRuntime Loop wiring", () => {
     const pausedLoop = await fixture.runtime.createLoop(fixture.workspaceRoot, intervalLoopConfig);
     await fixture.runtime.pauseLoop(fixture.workspaceRoot, pausedLoop.loopId);
 
-    const unregisteredRuntimeView = await fixture.runtime.contextResolver.resolve(unregisteredWorkspace);
-    const unregisteredLoop = await unregisteredRuntimeView.loopState.create("unregistered", {
+    const unregisteredLoopState = new LoopStateManager(unregisteredWorkspace);
+    const unregisteredLoop = await unregisteredLoopState.create("unregistered", {
       ...intervalLoopConfig,
       title: "Unregistered loop",
     });
@@ -174,7 +183,7 @@ describe("AgentRuntime Loop wiring", () => {
     expect((await fixture.runtime.readLoop(fixture.workspaceRoot, activeLoop.loopId)).status).toBe("active");
     expect((await fixture.runtime.readLoop(fixture.workspaceRoot, manualLoop.loopId)).nextRunAt).toBeUndefined();
     expect((await fixture.runtime.readLoop(fixture.workspaceRoot, pausedLoop.loopId)).status).toBe("paused");
-    expect(await unregisteredRuntimeView.loopState.read(unregisteredLoop.loopId)).toEqual(expect.objectContaining({ loopId: unregisteredLoop.loopId }));
+    expect(await unregisteredLoopState.read(unregisteredLoop.loopId)).toEqual(expect.objectContaining({ loopId: unregisteredLoop.loopId }));
   });
 
   test("single-flights concurrent cold Loop scheduler construction", async () => {
@@ -272,7 +281,7 @@ describe("AgentRuntime Loop wiring", () => {
     const loop = await fixture.runtime.createLoop(fixture.workspaceRoot, {
       ...manualLoopConfig,
       useWorktree: true,
-      cleanupPolicy: { deleteUnchangedWorktrees: true },
+      cleanupPolicy: { enabled: true, deleteUnchangedWorktrees: true },
     });
 
     const report = await fixture.runtime.triggerLoopRun(fixture.workspaceRoot, loop.loopId);
@@ -291,7 +300,7 @@ describe("AgentRuntime Loop wiring", () => {
     const loop = await fixture.runtime.createLoop(fixture.workspaceRoot, {
       ...manualLoopConfig,
       useWorktree: true,
-      cleanupPolicy: { deleteUnchangedWorktrees: true },
+      cleanupPolicy: { enabled: true, deleteUnchangedWorktrees: true },
     });
     let oldSessionId: string | undefined;
     setLlmAdapterForTest({
@@ -443,6 +452,7 @@ async function createRuntimeFixture(options: { now?: number } = {}): Promise<{
     loopSchedulerClock: clock,
     loopSchedulerTimer: timer,
   });
+  await runtime.projectRegistry.add({ workspaceRoot, name: "Runtime Loop Test" });
 
   return { runtime, workspaceRoot, sessionsDir, timer, startedExecutions: [] };
 }

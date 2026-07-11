@@ -71,7 +71,6 @@ export interface LoopJobRerunInput {
   readonly collisionKey?: string;
   readonly collisionTarget?: CollisionTarget;
   readonly baseSha?: string;
-  readonly resolvedHeadSha?: string;
   readonly missedCount?: number;
 }
 
@@ -220,11 +219,10 @@ export const LoopJobRerunInputSchema = z.strictObject({
   collisionKey: LoopIdentifierSchema.optional(),
   collisionTarget: CollisionTargetSchema.optional(),
   baseSha: z.string().trim().min(1).max(128).optional(),
-  resolvedHeadSha: z.string().trim().min(1).max(128).optional(),
   missedCount: z.number().int().nonnegative().optional(),
 }) satisfies z.ZodType<LoopJobRerunInput>;
 
-export const LoopJobRecordSchema = z.strictObject({
+const LoopJobRecordBaseSchema = z.strictObject({
   jobId: LoopIdentifierSchema,
   loopId: LoopIdentifierSchema,
   status: LoopJobStatusSchema,
@@ -237,7 +235,7 @@ export const LoopJobRecordSchema = z.strictObject({
   priority: z.number().int(),
   queuedAt: TimestampMsSchema,
   updatedAt: TimestampMsSchema,
-  revision: z.number().int().nonnegative().default(0),
+  revision: z.number().int().nonnegative(),
   startedAt: TimestampMsSchema.optional(),
   endedAt: TimestampMsSchema.optional(),
   attempts: z.number().int().nonnegative(),
@@ -262,6 +260,98 @@ export const LoopJobRecordSchema = z.strictObject({
   leaseExpiresAt: TimestampMsSchema.optional(),
   leaseOwnerId: LoopIdentifierSchema.optional(),
   leaseToken: LoopIdentifierSchema.optional(),
+});
+
+export const LoopJobRecordSchema = LoopJobRecordBaseSchema.superRefine((job, context) => {
+  const leaseFields = ["leaseExpiresAt", "leaseOwnerId", "leaseToken"] as const;
+  if (job.status === "running") {
+    if (job.startedAt === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["startedAt"],
+        message: "startedAt is required for a running Loop job",
+      });
+    }
+    if (job.endedAt !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["endedAt"],
+        message: "endedAt is not valid for a running Loop job",
+      });
+    }
+    for (const field of leaseFields) {
+      if (job[field] === undefined) {
+        context.addIssue({
+          code: "custom",
+          path: [field],
+          message: `${field} is required for a running Loop job`,
+        });
+      }
+    }
+  } else {
+    for (const field of leaseFields) {
+      if (job[field] !== undefined) {
+        context.addIssue({
+          code: "custom",
+          path: [field],
+          message: `${field} is only valid for a running Loop job`,
+        });
+      }
+    }
+  }
+
+  if (isTerminalStatus(job.status) && job.endedAt === undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["endedAt"],
+      message: "endedAt is required for a terminal Loop job",
+    });
+  }
+
+  if (job.status === "needs_user") {
+    if (job.endedAt === undefined) {
+      context.addIssue({ code: "custom", path: ["endedAt"], message: "endedAt is required for a needs_user Loop job" });
+    }
+    if (job.blockedReason === undefined) {
+      context.addIssue({ code: "custom", path: ["blockedReason"], message: "blockedReason is required for a needs_user Loop job" });
+    }
+    if (job.blockedByHitlIds === undefined || job.blockedByHitlIds.length === 0) {
+      context.addIssue({ code: "custom", path: ["blockedByHitlIds"], message: "blockedByHitlIds is required for a needs_user Loop job" });
+    }
+    if (job.attentionStatus !== "waiting_for_human") {
+      context.addIssue({ code: "custom", path: ["attentionStatus"], message: "attentionStatus must be waiting_for_human for a needs_user Loop job" });
+    }
+    if (job.resumeCheckpoint === undefined) {
+      context.addIssue({ code: "custom", path: ["resumeCheckpoint"], message: "resumeCheckpoint is required for a needs_user Loop job" });
+    }
+  }
+
+  if (job.worktreePath === undefined) {
+    if (job.worktreeBranchName !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["worktreeBranchName"],
+        message: "worktreeBranchName requires worktreePath",
+      });
+    }
+    if (job.resolvedHeadSha !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["resolvedHeadSha"],
+        message: "resolvedHeadSha requires worktreePath",
+      });
+    }
+    return;
+  }
+  for (const field of ["worktreeBranchName", "baseSha", "resolvedHeadSha"] as const) {
+    if (job[field] === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: [field],
+        message: `${field} is required when worktreePath is present`,
+      });
+    }
+  }
 }) satisfies z.ZodType<LoopJobRecord>;
 
 export const LoopJobQueueFileSchema = z.strictObject({
@@ -399,6 +489,7 @@ export class LoopJobQueue {
         priority: input.priority ?? 0,
         queuedAt: now,
         updatedAt: now,
+        revision: 0,
         attempts: 0,
         worktreePath: input.worktreePath,
         worktreeBranchName: input.worktreeBranchName,
@@ -437,7 +528,11 @@ export class LoopJobQueue {
 
       this.assertSafeUpdates(updates);
       const status = updates.status ?? existing.status;
-      const endedAt = updates.endedAt ?? (isTerminalStatus(status) && existing.endedAt === undefined ? this.#clock.now() : existing.endedAt);
+      const endedAt = Object.hasOwn(updates, "endedAt")
+        ? updates.endedAt
+        : isTerminalStatus(status) && existing.endedAt === undefined
+          ? this.#clock.now()
+          : existing.endedAt;
       const updated = LoopJobRecordSchema.parse({
         ...existing,
         ...updates,
@@ -473,7 +568,11 @@ export class LoopJobQueue {
 
       this.assertSafeUpdates(updates);
       const status = updates.status ?? existing.status;
-      const endedAt = updates.endedAt ?? (isTerminalStatus(status) && existing.endedAt === undefined ? this.#clock.now() : existing.endedAt);
+      const endedAt = Object.hasOwn(updates, "endedAt")
+        ? updates.endedAt
+        : isTerminalStatus(status) && existing.endedAt === undefined
+          ? this.#clock.now()
+          : existing.endedAt;
       const updated = LoopJobRecordSchema.parse({
         ...existing,
         ...updates,
@@ -577,7 +676,7 @@ export class LoopJobQueue {
     });
   }
 
-  /** Report-first reconciliation for an exact non-terminal record, including legacy jobs without lease tokens. */
+  /** Report-first reconciliation for an exact non-terminal durable record. */
   async finishNonTerminalIfCurrent(
     jobId: string,
     expected: LoopJobUpdateExpectation,
@@ -730,6 +829,7 @@ export class LoopJobQueue {
           ...job,
           status: resumeRunWaiting ? "needs_user" : "pending",
           startedAt: undefined,
+          endedAt: resumeRunWaiting ? now : undefined,
           leaseExpiresAt: undefined,
           leaseOwnerId: undefined,
           leaseToken: undefined,
@@ -761,6 +861,7 @@ export class LoopJobQueue {
           ...job,
           status: resumeRunWaiting ? "needs_user" : "pending",
           startedAt: undefined,
+          endedAt: resumeRunWaiting ? now : undefined,
           leaseExpiresAt: undefined,
           leaseOwnerId: undefined,
           leaseToken: undefined,
@@ -905,7 +1006,6 @@ function mergeRerunInput(job: LoopJobRecord, input: EnqueueLoopJobInput): LoopJo
     collisionKey: collisionKeyFor(input) ?? previous?.collisionKey ?? job.collisionKey,
     collisionTarget: input.collisionTarget ?? previous?.collisionTarget ?? job.collisionTarget,
     baseSha: input.baseSha ?? previous?.baseSha ?? job.baseSha,
-    resolvedHeadSha: input.resolvedHeadSha ?? previous?.resolvedHeadSha ?? job.resolvedHeadSha,
     missedCount: input.missedCount ?? previous?.missedCount ?? job.missedCount,
   };
 }
@@ -952,9 +1052,9 @@ function createPendingRerun(
     priority: input?.priority ?? previousExecution.priority,
     queuedAt,
     updatedAt: queuedAt,
+    revision: 0,
     attempts: 0,
     baseSha: input?.baseSha ?? previousExecution.baseSha,
-    resolvedHeadSha: input?.resolvedHeadSha ?? previousExecution.resolvedHeadSha,
     missedCount: input?.missedCount ?? previousExecution.missedCount,
     eventSummaries: appendEventSummary([], eventSummary),
   });

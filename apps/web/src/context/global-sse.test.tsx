@@ -14,7 +14,7 @@ import type {
   McpServerStatus,
 } from "@archcode/protocol";
 import type { WebSessionStoreState } from "../store/session-store";
-import { hitlStore } from "../store/hitl-store";
+import { hitlIdentityKey, hitlStore } from "../store/hitl-store";
 import { useMcpStatusStore } from "../store/mcp-status-store";
 import { parseSSEEvent, handleSSEEvent } from "./global-sse";
 import type { SSEEventHandlerDeps } from "./global-sse";
@@ -351,7 +351,7 @@ describe("handleSSEEvent", () => {
 
     handleSSEEvent({ event: "hitl.event", data: JSON.stringify(event) }, deps);
 
-    expect(hitlStore.getState().projections["hitl-1"]).toEqual(event.projection);
+    expect(hitlStore.getState().projections[hitlIdentityKey(event.projection)]).toEqual(event.projection);
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "sessions", "session-1"] });
     expect(mockInvalidateQueries).toHaveBeenCalledTimes(1);
   });
@@ -365,13 +365,13 @@ describe("handleSSEEvent", () => {
       data: JSON.stringify({ type: "hitl.snapshot", projectSlugs: ["proj"], createdAt: 1700000000001 }),
     }, deps);
 
-    expect(hitlStore.getState().projections["stale"]).toBeUndefined();
+    expect(hitlStore.getState().projections[hitlIdentityKey(stale.projection)]).toBeUndefined();
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj"], exact: false });
 
     const fresh = hitlRealtimeEvent({ projectSlug: "proj", hitlId: "fresh" });
     handleSSEEvent({ event: "hitl.event", data: JSON.stringify(fresh) }, deps);
 
-    expect(hitlStore.getState().projections["fresh"]).toEqual(fresh.projection);
+    expect(hitlStore.getState().projections[hitlIdentityKey(fresh.projection)]).toEqual(fresh.projection);
   });
 
   test("removes terminal hitl.event projection and invalidates related goal/loop queries", () => {
@@ -384,11 +384,11 @@ describe("handleSSEEvent", () => {
       status: "resolved",
       payloadType: "hitl.resolved",
     });
-    hitlStore.setState({ projections: { "hitl-1": { ...event.projection, status: "pending" } } });
+    hitlStore.setState({ projections: { [hitlIdentityKey(event.projection)]: { ...event.projection, status: "pending" } } });
 
     handleSSEEvent({ event: "hitl.event", data: JSON.stringify(event) }, deps);
 
-    expect(hitlStore.getState().projections["hitl-1"]).toBeUndefined();
+    expect(hitlStore.getState().projections[hitlIdentityKey(event.projection)]).toBeUndefined();
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "goals", "goal-1"] });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "loops", "loop-1"] });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "loops", "loop-1", "runs"] });
@@ -636,15 +636,18 @@ describe("handleSSEEvent", () => {
 
 function createGoalState(goalId: string, projectId: string, status: GoalState["status"]): GoalState {
   return {
+    version: 1,
     id: goalId,
     projectId,
     title: "Ship Goal",
     objective: "Simplify the Goal experience",
     acceptanceCriteria: "Reviewer can decide DONE from logs and diff.",
+    useWorktree: false,
     status,
     attempt: 1,
     pendingHitlIds: [],
     approvalRefs: [],
+    appliedHitlIds: [],
     mainSessionId: "session-1",
     childSessionIds: [],
     createdAt: "2026-07-01T00:00:00.000Z",
@@ -661,7 +664,8 @@ function createLoopState(loopId: string, status: LoopState["status"]): LoopState
       title: "Test Loop",
       schedule: { kind: "manual" as const },
       approvalPolicy: "interactive" as const,
-      limits: { maxIterationsPerRun: 10 },
+      limits: { maxIterationsPerRun: 10, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+      useWorktree: false,
     },
     status,
     createdAt: 1_000,

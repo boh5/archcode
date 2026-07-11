@@ -694,7 +694,7 @@ export interface SessionModelInfo {
 export interface SessionProjection {
   sessionId: string;
   /** Current execution directory when the projection is used for a Session surface. */
-  cwd?: string;
+  cwd: string;
   rootSessionId: string;
   parentSessionId?: string;
   title: string | null;
@@ -729,7 +729,8 @@ export interface Project {
   slug: string;
   name: string;
   workspaceRoot: string;
-  lastOpened?: string;
+  addedAt: string;
+  lastOpenedAt?: string;
 }
 
 export interface DirectoryEntry {
@@ -750,20 +751,20 @@ export interface DirectorySearchResponse {
 
 export interface SessionSummary {
   sessionId: string;
-  /** Current execution directory. Servers emit it; optional preserves source compatibility for older consumers. */
-  cwd?: string;
+  /** Current execution directory. */
+  cwd: string;
   // Tree relationships derive from child session files, not childSessionIds/subAgentDescriptions caches.
   rootSessionId: string;
   parentSessionId?: string;
-  agentName?: string | null;
-  modelInfo?: SessionModelInfo | null;
-  title?: string | null;
+  agentName: string;
+  modelInfo: SessionModelInfo | null;
+  title: string | null;
   /** Goal this session belongs to. */
   goalId?: string;
   /** Loop this session belongs to. */
   loopId?: string;
   createdAt: number;
-  lastUpdatedAt?: number;
+  updatedAt: number;
 }
 
 export interface SessionTreeNode {
@@ -793,30 +794,29 @@ export interface SessionTreeResponse {
 }
 
 export interface Session {
-  id: string;
-  sessionId?: string;
-  cwd?: string;
+  schemaVersion: 1;
+  sessionId: string;
+  cwd: string;
   rootSessionId: string;
-  title?: string | null;
+  title: string | null;
   /** Goal this session belongs to. */
   goalId?: string;
   /** Loop this session belongs to. */
   loopId?: string;
   createdAt: number;
-  updatedAt?: number;
-  lastUpdatedAt?: number;
-  messages?: SessionMessage[];
-  steps?: SessionStep[];
-  todos?: SessionTodo[];
-  reminders?: unknown[];
-  childSessionLinks?: ToolChildSessionLink[];
-  stats?: SessionStats;
-  executions?: SessionExecutionRecord[];
+  updatedAt: number;
+  messages: SessionMessage[];
+  steps: SessionStep[];
+  todos: SessionTodo[];
+  reminders: Reminder[];
+  childSessionLinks: ToolChildSessionLink[];
+  stats: SessionStats;
+  executions: SessionExecutionRecord[];
   events?: SessionEventEnvelope[];
   parentSessionId?: string;
   eventCursor?: number;
-  modelInfo?: SessionModelInfo | null;
-  agentName?: string;
+  modelInfo: SessionModelInfo | null;
+  agentName: string;
   blockedHitl?: SessionHitlCheckpoint;
   blockedByHitlIds?: string[];
 }
@@ -914,7 +914,7 @@ export interface GoalBlocker {
   summary: string;
   hitlId?: string;
   source?: string;
-  resumeStatus?: "running" | "reviewing";
+  resumeStatus: "running" | "reviewing";
   createdAt: string;
 }
 
@@ -934,12 +934,13 @@ export interface GoalWorktree {
 }
 
 export interface GoalState {
+  version: 1;
   id: string;
   projectId: string;
   title: string | null;
   objective: string;
   acceptanceCriteria: string;
-  useWorktree?: boolean;
+  useWorktree: boolean;
   worktree?: GoalWorktree;
   status: GoalStatus;
   blocker?: GoalBlocker;
@@ -947,7 +948,10 @@ export interface GoalState {
   lastFailureSummary?: string;
   budget?: GoalBudgetSummary;
   pendingHitlIds: string[];
+  /** Durable attachment refs. Every attached HITL contributes its hitlId; an external approval ref may also be present. */
   approvalRefs: string[];
+  /** HITL ids whose Goal-side effect committed, even if owner-record terminalization is still pending. */
+  appliedHitlIds: string[];
   mainSessionId?: string;
   childSessionIds: string[];
   loopId?: string;
@@ -984,15 +988,29 @@ export interface HitlOwnerKey {
   workspaceRoot?: never;
 }
 
+export interface HitlIdentity {
+  owner: HitlOwnerKey;
+  hitlId: string;
+}
+
+export function hitlIdentityKey(identity: HitlIdentity): string {
+  return JSON.stringify([
+    identity.owner.projectSlug,
+    identity.owner.ownerType,
+    identity.owner.ownerId,
+    identity.hitlId,
+  ]);
+}
+
 export type HitlStatus = "pending" | "resume_claimed" | "resolved" | "cancelled" | "resume_failed";
 
 export type HitlSource =
   | { type: "ask_user"; sessionId: string; toolCallId?: string }
   | { type: "tool_permission"; sessionId: string; toolCallId: string; toolName: string }
-  | { type: "goal_approval"; goalId: string; approvalPoint?: string }
-  | { type: "goal_review"; goalId: string }
-  | { type: "goal_budget"; goalId: string; approvalPoint?: string }
-  | { type: "goal_question"; goalId: string; questionKey: string }
+  | { type: "goal_approval"; goalId: string; approvalPoint?: string; resumeStatus: "running" | "reviewing" }
+  | { type: "goal_review"; goalId: string; resumeStatus: "reviewing" }
+  | { type: "goal_budget"; goalId: string; approvalPoint?: string; resumeStatus: "running" | "reviewing" }
+  | { type: "goal_question"; goalId: string; questionKey: string; resumeStatus: "running" | "reviewing" }
   | { type: "loop_approval"; loopId: string; approvalPoint: string }
   | { type: "loop_blocker"; loopId: string; runId?: string; reason: string }
   | { type: "loop_retry"; loopId: string; runId: string; attempt: number }
@@ -1020,15 +1038,14 @@ export interface HitlDisplayPayload {
 }
 
 export interface HitlResumeMetadata {
-  claimId?: string;
-  claimedAt?: string;
+  claimId: string;
+  claimedAt: string;
   claimedBy?: string;
-  intent?: "respond" | "cancel";
-  attempt?: number;
+  intent: "respond" | "cancel";
+  attempt: number;
   lastError?: string;
   failedAt?: string;
   failureReason?: string;
-  attempts?: number;
 }
 
 export type HitlResponse =
@@ -1106,9 +1123,9 @@ export type LoopScheduleSpec =
 export type LoopPullRequestScope = "open" | "authored" | "assigned" | "review_requested";
 
 export type LoopTriggerSpec =
-  | { kind: "on_commit"; branch?: string; cadenceMs?: number }
-  | { kind: "on_pr"; branch?: string; baseBranch?: string; prScope?: LoopPullRequestScope; cadenceMs?: number }
-  | { kind: "on_ci_fail"; branch?: string; baseBranch?: string; checkName?: string; workflowName?: string; cadenceMs?: number };
+  | { kind: "on_commit"; branch?: string; cadenceMs: number }
+  | { kind: "on_pr"; branch?: string; baseBranch?: string; prScope?: LoopPullRequestScope; cadenceMs: number }
+  | { kind: "on_ci_fail"; branch?: string; baseBranch?: string; checkName?: string; workflowName?: string; cadenceMs: number };
 
 export interface LoopCoordinatorConfig {
   maxConcurrent: number;
@@ -1134,7 +1151,7 @@ export interface LoopBudgetConfig {
   hardThresholdRatio: number;
 }
 
-export type LoopLimits = LoopBudgetConfig | { maxIterationsPerRun: number };
+export type LoopLimits = LoopBudgetConfig;
 
 export interface LoopBudgetUsage {
   iterations: number;
@@ -1200,7 +1217,7 @@ export interface LoopIntegrationError {
 }
 
 export interface LoopBudgetSnapshot {
-  budget?: LoopBudgetConfig;
+  budget: LoopBudgetConfig;
   usage: LoopBudgetUsage;
   updatedAt: number;
 }
@@ -1229,12 +1246,11 @@ export interface LoopConfig {
   schedule: LoopScheduleSpec;
   approvalPolicy: LoopApprovalPolicy;
   limits: LoopLimits;
-  budget?: LoopBudgetConfig;
   collisionTargets?: CollisionTarget[];
   taskPrompt?: string;
   goalTemplate?: LoopGoalTemplate;
   triggers?: LoopTriggerSpec[];
-  useWorktree?: boolean;
+  useWorktree: boolean;
   cleanupPolicy?: LoopCleanupPolicy;
 }
 
@@ -1249,6 +1265,7 @@ export interface LoopHitlCheckpoint {
   trigger: LoopRunTrigger;
   subjectKey?: string;
   worktreePath?: string;
+  worktreeBranchName?: string;
   baseSha?: string;
   resolvedHeadSha?: string;
   intendedContinuation: "rerun_job" | "resume_run";
@@ -1281,7 +1298,7 @@ export type LoopCleanupState =
   | "expired_needs_review";
 
 export interface LoopCleanupPolicy {
-  enabled?: boolean;
+  enabled: boolean;
   action?: "mark" | "pause";
   deleteUnchangedWorktrees?: boolean;
   preserveChangedArtifacts?: true;
@@ -1327,7 +1344,6 @@ export interface LoopRunReport {
   error?: string;
   skippedReason?: string;
   jobId?: string;
-  triggerKind?: LoopRunTrigger;
   subjectKey?: string;
   dedupeKey?: string;
   branchKey?: string;
@@ -1383,6 +1399,3 @@ export interface ApiCommandResult {
   success: boolean;
   message: string;
 }
-
-/** @deprecated Use ApiCommandResult for API command responses. */
-export type CommandResult = ApiCommandResult;

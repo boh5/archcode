@@ -37,7 +37,7 @@ function createUnsupported(blockRef: string): Extract<CompressionOriginalRangeRe
   return {
     ok: false,
     code: "unsupported",
-    reason: "legacy_compact_without_hybrid_coverage",
+    reason: "missing_hybrid_coverage",
     blockRef,
   };
 }
@@ -87,7 +87,6 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
     triggerLoopRun: async () => undefined,
     readLoopKillState: async () => { throw new Error("not implemented"); },
     cancelLoopCurrentRun: async () => undefined,
-    cancelCurrentLoopRun: async () => undefined,
     activateLoopGlobalKill: async () => { throw new Error("not implemented"); },
     clearLoopGlobalKill: async () => { throw new Error("not implemented"); },
     readLoopBudget: async () => null,
@@ -164,8 +163,8 @@ describe("compression routes", () => {
     });
   });
 
-  test("legacy compact-only records return explicit unsupported response", async () => {
-    const { app, project, setResult } = await createTestApp("legacy");
+  test("missing dynamic compression coverage returns explicit unsupported response", async () => {
+    const { app, project, setResult } = await createTestApp("missing-coverage");
     setResult(createUnsupported("b1"));
 
     const res = await app.request(`/api/projects/${project.slug}/sessions/session-1/compression/b1/original`);

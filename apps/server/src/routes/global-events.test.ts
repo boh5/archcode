@@ -374,15 +374,18 @@ function compressionBlockCommittedEvent(): CompressionBlockCommittedEvent {
 
 function createGoalState(goalId: string, projectId: string, status: GoalState["status"]): GoalState {
   return {
+    version: 1,
     id: goalId,
     projectId,
     title: "Ship Goal",
     objective: "Ship the Goal.",
     acceptanceCriteria: "Reviewer can decide DONE from evidence.",
+    useWorktree: false,
     status,
     attempt: 0,
     pendingHitlIds: [],
     approvalRefs: [],
+    appliedHitlIds: [],
     mainSessionId: "session-1",
     childSessionIds: [],
     createdAt: "2026-07-01T00:00:00.000Z",

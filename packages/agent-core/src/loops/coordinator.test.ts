@@ -203,6 +203,7 @@ describe("LoopJobCoordinator", () => {
     const [running] = await coordinator.dispatchReady();
     const checkpoint = {
       worktreePath: "/tmp/loop-checkpoint-worktree",
+      worktreeBranchName: "archcode/loop/test/checkpoint",
       baseSha: "a".repeat(40),
       resolvedHeadSha: "b".repeat(40),
     };
@@ -244,6 +245,7 @@ describe("LoopJobCoordinator", () => {
 
     await expect(coordinator.checkpointWorktree(firstExecution!.jobId, firstLease, {
       worktreePath: "/tmp/stale-execution-worktree",
+      worktreeBranchName: "archcode/loop/test/stale",
       baseSha: "a".repeat(40),
       resolvedHeadSha: "a".repeat(40),
     })).rejects.toMatchObject({ name: "LoopJobExecutionLeaseError", expectedLease: firstLease });
@@ -279,7 +281,7 @@ describe("LoopJobCoordinator", () => {
       loopId: LOOP_ID,
       triggerKind: "on_commit",
       subjectKey: "branch:restart-rerun",
-      resolvedHeadSha: newSha,
+      baseSha: newSha,
       eventSummary: { summary: "new commit before restart", payloadSha: newSha },
     });
 
@@ -293,9 +295,9 @@ describe("LoopJobCoordinator", () => {
     const [recovered] = await restartedCoordinator.start();
     expect(recovered).toMatchObject({
       status: "pending",
-      resolvedHeadSha: oldSha,
+      baseSha: oldSha,
       rerunAfterCurrent: true,
-      rerunInput: { resolvedHeadSha: newSha },
+      rerunInput: { baseSha: newSha },
     });
 
     const [resumed] = await restartedCoordinator.dispatchReady();
@@ -303,8 +305,8 @@ describe("LoopJobCoordinator", () => {
 
     const jobs = await queue.list();
     expect(jobs.map((job) => job.status)).toEqual(["succeeded", "pending"]);
-    expect(jobs[0]?.resolvedHeadSha).toBe(oldSha);
-    expect(jobs[1]?.resolvedHeadSha).toBe(newSha);
+    expect(jobs[0]?.baseSha).toBe(oldSha);
+    expect(jobs[1]?.baseSha).toBe(newSha);
   });
 
   test("finishes a running duplicate by creating one pending rerun", async () => {
@@ -319,7 +321,7 @@ describe("LoopJobCoordinator", () => {
       loopId: LOOP_ID,
       triggerKind: "on_commit",
       subjectKey: "branch:rerun",
-      resolvedHeadSha: newSha,
+      baseSha: newSha,
       eventSummary: { summary: "new commit while running", payloadSha: newSha },
     });
 
@@ -328,8 +330,8 @@ describe("LoopJobCoordinator", () => {
     const jobs = await queue.list();
     expect(jobs.map((job) => job.status)).toEqual(["succeeded", "pending"]);
     expect(jobs[1]?.dedupeKey).toBe(jobs[0]?.dedupeKey);
-    expect(jobs[0]?.resolvedHeadSha).toBe(oldSha);
-    expect(jobs[1]?.resolvedHeadSha).toBe(newSha);
+    expect(jobs[0]?.baseSha).toBe(oldSha);
+    expect(jobs[1]?.baseSha).toBe(newSha);
     expect(jobs[1]?.eventSummaries.at(-1)?.summary).toBe("Queued rerun requested while previous job was running");
   });
 
@@ -339,7 +341,6 @@ describe("LoopJobCoordinator", () => {
     const oldBaseSha = "0".repeat(40);
     const oldSha = "1".repeat(40);
     const newBaseSha = "2".repeat(40);
-    const newSha = "3".repeat(40);
     const executionSha = "4".repeat(40);
     await queue.enqueue({
       loopId: LOOP_ID,
@@ -348,6 +349,7 @@ describe("LoopJobCoordinator", () => {
       branchKey: "test-owner/test-repo:feature/rerun-exec",
       collisionTarget: { type: "branch", owner: "test-owner", repo: "test-repo", branch: "feature/rerun-exec" },
       worktreePath: "/tmp/old-trigger-worktree",
+      worktreeBranchName: "archcode/loop/test/old-trigger",
       baseSha: oldBaseSha,
       resolvedHeadSha: oldSha,
       eventSummary: { summary: "old commit", payloadSha: oldSha },
@@ -360,14 +362,13 @@ describe("LoopJobCoordinator", () => {
       subjectKey: "branch:rerun-exec",
       branchKey: "test-owner/test-repo:feature/rerun-exec",
       collisionTarget: { type: "branch", owner: "test-owner", repo: "test-repo", branch: "feature/rerun-exec" },
-      worktreePath: "/tmp/coalesced-trigger-worktree",
       baseSha: newBaseSha,
-      resolvedHeadSha: newSha,
-      eventSummary: { summary: "new commit while running", payloadSha: newSha },
+      eventSummary: { summary: "new commit while running", payloadSha: newBaseSha },
     });
 
     await coordinator.checkpointWorktree(running!.jobId, executionLeaseFor(running!), {
       worktreePath: "/tmp/current-run-output-worktree",
+      worktreeBranchName: "archcode/loop/test/current-output",
       baseSha: oldBaseSha,
       resolvedHeadSha: oldSha,
     });
@@ -375,6 +376,7 @@ describe("LoopJobCoordinator", () => {
     await coordinator.finish(running!.jobId, executionLeaseFor(running!), {
       status: "succeeded",
       worktreePath: "/tmp/current-run-output-worktree",
+      worktreeBranchName: "archcode/loop/test/current-output",
       baseSha: oldBaseSha,
       resolvedHeadSha: executionSha,
       summary: "current run finished with execution metadata",
@@ -389,8 +391,8 @@ describe("LoopJobCoordinator", () => {
     });
     expect(jobs[1]).toMatchObject({
       baseSha: newBaseSha,
-      resolvedHeadSha: newSha,
     });
+    expect(jobs[1]?.resolvedHeadSha).toBeUndefined();
     expect(jobs[1]?.worktreePath).toBeUndefined();
     expect(jobs[1]?.jobId).not.toBe(jobs[0]?.jobId);
   });
@@ -404,6 +406,7 @@ describe("LoopJobCoordinator", () => {
       triggerKind: "on_commit",
       subjectKey: "branch:worktree-rerun",
       worktreePath: "/tmp/worktree-owned-by-first-job",
+      worktreeBranchName: "archcode/loop/test/first-job",
       baseSha,
       resolvedHeadSha: baseSha,
       eventSummary: { summary: "first worktree run" },
@@ -414,7 +417,7 @@ describe("LoopJobCoordinator", () => {
       loopId: LOOP_ID,
       triggerKind: "on_commit",
       subjectKey: "branch:worktree-rerun",
-      resolvedHeadSha: "6".repeat(40),
+      baseSha: "6".repeat(40),
       eventSummary: { summary: "new commit while worktree run is active" },
     });
 
@@ -423,13 +426,13 @@ describe("LoopJobCoordinator", () => {
     const jobs = await queue.list();
     expect(jobs).toHaveLength(2);
     expect(jobs[0]).toMatchObject({ status: "succeeded", worktreePath: "/tmp/worktree-owned-by-first-job" });
-    expect(jobs[1]).toMatchObject({ status: "pending", resolvedHeadSha: "6".repeat(40) });
+    expect(jobs[1]).toMatchObject({ status: "pending", baseSha: "6".repeat(40) });
     expect(jobs[1]?.jobId).not.toBe(jobs[0]?.jobId);
     expect(jobs[1]?.worktreePath).toBeUndefined();
   });
 });
 
-async function enqueueBranch(queue: LoopJobQueue, name: string, index: number, branchKey?: string, priority = 0, resolvedHeadSha?: string): Promise<void> {
+async function enqueueBranch(queue: LoopJobQueue, name: string, index: number, branchKey?: string, priority = 0, baseSha?: string): Promise<void> {
   await queue.enqueue({
     loopId: LOOP_ID,
     triggerKind: "on_commit",
@@ -437,7 +440,7 @@ async function enqueueBranch(queue: LoopJobQueue, name: string, index: number, b
     branchKey: branchKey ?? `test-owner/test-repo:feature/${name}`,
     collisionTarget: { type: "branch", owner: "test-owner", repo: "test-repo", branch: `feature/${name}` },
     priority,
-    resolvedHeadSha,
+    baseSha,
     eventSummary: { summary: `commit ${index}` },
   });
 }

@@ -10,6 +10,7 @@ import { silentLogger } from "../logger";
 import { LoopStateManager } from "../loops/state";
 import { SessionStoreManager } from "../store/session-store-manager";
 import {
+  getSessionHitlCheckpointPath,
   readSessionHitlCheckpoint,
   readSessionHitlCheckpointFile,
   sessionHitlJournalPhase,
@@ -46,7 +47,6 @@ describe("Session HITL journal", () => {
 
     const summary = await recoverSessionHitlJournals({
       workspaceRoot: fixture.workspaceRoot,
-      projectSlug: "archcode",
       sessions: fixture.sessions,
       hitl: fixture.hitl,
     });
@@ -62,6 +62,84 @@ describe("Session HITL journal", () => {
     const coldStore = await coldSessions.getOrLoad(fixture.sessionId, fixture.workspaceRoot);
     expect(coldStore.getState().blockedByHitlIds).toEqual([checkpoint.hitlId]);
     expect(coldStore.getState().blockedHitl).toMatchObject({ hitlId: checkpoint.hitlId });
+  });
+
+  test("rejects unversioned files and incomplete checkpoint records", async () => {
+    const fixture = await createFixture();
+    const checkpoint = preparingCheckpoint(fixture);
+    const { phase: _phase, ...missingPhase } = checkpoint;
+    const { phaseUpdatedAt: _phaseUpdatedAt, ...missingPhaseUpdatedAt } = checkpoint;
+    const { request: _request, ...missingRequest } = checkpoint;
+    const { agentName: _agentName, ...missingAgentName } = checkpoint;
+
+    await expect(writeSessionHitlCheckpoint(
+      missingPhase as unknown as SessionHitlCheckpointRecord,
+      fixture.workspaceRoot,
+      fixture.sessionId,
+    )).rejects.toThrow();
+    await expect(writeSessionHitlCheckpoint(
+      missingPhaseUpdatedAt as unknown as SessionHitlCheckpointRecord,
+      fixture.workspaceRoot,
+      fixture.sessionId,
+    )).rejects.toThrow();
+    await expect(writeSessionHitlCheckpoint(
+      missingRequest as unknown as SessionHitlCheckpointRecord,
+      fixture.workspaceRoot,
+      fixture.sessionId,
+    )).rejects.toThrow();
+    await expect(writeSessionHitlCheckpoint(
+      missingAgentName as unknown as SessionHitlCheckpointRecord,
+      fixture.workspaceRoot,
+      fixture.sessionId,
+    )).rejects.toThrow();
+
+    await Bun.write(getSessionHitlCheckpointPath(fixture.workspaceRoot, fixture.sessionId), `${JSON.stringify({
+      checkpoints: [],
+      updatedAt: new Date().toISOString(),
+    }, null, 2)}\n`);
+    await expect(readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId)).rejects.toThrow();
+  });
+
+  test("rejects duplicate checkpoint identities in one durable file", async () => {
+    const fixture = await createFixture();
+    const first = preparingCheckpoint(fixture);
+    const second = indexedCheckpoint(fixture, 2);
+
+    await writeRawCheckpointFile(fixture, [first, { ...second, hitlId: first.hitlId }]);
+    await expect(readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId)).rejects.toThrow();
+
+    await writeRawCheckpointFile(fixture, [first, { ...second, blockingKey: first.blockingKey }]);
+    await expect(readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId)).rejects.toThrow();
+  });
+
+  test("rejects checkpoint owner source kind and permission mismatches", async () => {
+    const fixture = await createFixture();
+    const checkpoint = preparingCheckpoint(fixture);
+
+    await writeRawCheckpointFile(fixture, [{
+      ...checkpoint,
+      request: { ...checkpoint.request, owner: { ...fixture.owner, ownerId: crypto.randomUUID() } },
+    }]);
+    await expect(readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId)).rejects.toThrow();
+
+    await writeRawCheckpointFile(fixture, [{
+      ...checkpoint,
+      source: { ...checkpoint.source, sessionId: crypto.randomUUID() },
+    }]);
+    await expect(readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId)).rejects.toThrow();
+
+    const { permission: _permission, ...withoutPermission } = checkpoint;
+    await writeRawCheckpointFile(fixture, [withoutPermission]);
+    await expect(readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId)).rejects.toThrow();
+
+    await writeRawCheckpointFile(fixture, [{ ...checkpoint, kind: "ask_user" }]);
+    await expect(readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId)).rejects.toThrow();
+
+    await expect(writeSessionHitlCheckpoint(
+      { ...checkpoint, request: { ...checkpoint.request, owner: { ...fixture.owner, ownerId: crypto.randomUUID() } } },
+      fixture.workspaceRoot,
+      fixture.sessionId,
+    )).rejects.toThrow();
   });
 
   test("cold user-message entry fails closed on a prepared journal even before the Session blocker snapshot", async () => {
@@ -113,7 +191,6 @@ describe("Session HITL journal", () => {
 
     await recoverSessionHitlJournals({
       workspaceRoot: fixture.workspaceRoot,
-      projectSlug: "archcode",
       sessions: fixture.sessions,
       hitl: fixture.hitl,
     });
@@ -139,7 +216,6 @@ describe("Session HITL journal", () => {
 
     await recoverSessionHitlJournals({
       workspaceRoot: fixture.workspaceRoot,
-      projectSlug: "archcode",
       sessions: fixture.sessions,
       hitl: fixture.hitl,
     });
@@ -196,7 +272,6 @@ async function createFixture() {
     goalState,
     loopState,
   });
-  await hitl.load(workspaceRoot);
   const owner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "session", ownerId: sessionId };
   return { workspaceRoot, sessionId, sessions, hitl, owner };
 }
@@ -229,6 +304,7 @@ function preparingCheckpoint(fixture: Awaited<ReturnType<typeof createFixture>>)
     displayInput: { path: "README.md", content: "[REDACTED]" },
     allowedTools: ["file_write"],
     agentSkills: [],
+    agentName: "orchestrator",
     toolCalls: [{ toolCallId: "journal-tool-call", toolName: "file_write", input: { path: "README.md", content: "changed" } }],
     completedToolResults: [],
     pendingToolCalls: [{ toolCallId: "journal-tool-call", toolName: "file_write", input: { path: "README.md", content: "changed" } }],
@@ -254,4 +330,15 @@ function indexedCheckpoint(
     toolCalls: [{ toolCallId, toolName: "file_write", input: checkpoint.rawToolInput }],
     pendingToolCalls: [{ toolCallId, toolName: "file_write", input: checkpoint.rawToolInput }],
   };
+}
+
+async function writeRawCheckpointFile(
+  fixture: Awaited<ReturnType<typeof createFixture>>,
+  checkpoints: readonly unknown[],
+): Promise<void> {
+  await Bun.write(getSessionHitlCheckpointPath(fixture.workspaceRoot, fixture.sessionId), `${JSON.stringify({
+    version: 1,
+    checkpoints,
+    updatedAt: new Date().toISOString(),
+  }, null, 2)}\n`);
 }

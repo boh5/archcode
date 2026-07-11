@@ -45,4 +45,12 @@ describe("ProjectInfoSchema", () => {
       }),
     ).toThrow();
   });
+
+  it("rejects unstable persisted project identities", () => {
+    expect(() => ProjectInfoSchema.parse({ ...validSample, workspaceRoot: "relative/project" })).toThrow();
+    expect(() => ProjectInfoSchema.parse({ ...validSample, slug: "   " })).toThrow();
+    expect(() => ProjectInfoSchema.parse({ ...validSample, name: "\t" })).toThrow();
+    expect(() => ProjectInfoSchema.parse({ ...validSample, addedAt: "not-a-timestamp" })).toThrow();
+    expect(() => ProjectInfoSchema.parse({ ...validSample, lastOpenedAt: "yesterday" })).toThrow();
+  });
 });

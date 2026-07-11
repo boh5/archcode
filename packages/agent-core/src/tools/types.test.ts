@@ -15,26 +15,17 @@ import type {
   ToolPermission,
 } from "./types";
 import { createToolExecutionContext, DuplicateToolError } from "./types";
-import { GoalStateManager } from "../goals/state";
-import { HitlService } from "../hitl/service";
-import { LoopStateManager } from "../loops/state";
-import { MemoryFileManager } from "../memory/file-manager";
 import type { ProjectContext } from "../projects/types";
-import { silentLogger } from "../logger";
 import { storeManager } from "../store/store";
-import { ProjectApprovalManager } from "./permission";
 import { SkillService } from "../skills";
+import { createTestProjectContext } from "./test-project-context";
 
 const testSkillService = new SkillService({ builtinSkills: {} });
 
 function makeProjectContext(workspaceRoot: string): ProjectContext {
   return {
+    ...createTestProjectContext(workspaceRoot),
     project: { slug: "types-test", name: "Types Test", workspaceRoot, addedAt: new Date().toISOString() },
-    goalState: new GoalStateManager(workspaceRoot),
-    loopState: new LoopStateManager(workspaceRoot),
-    hitl: new HitlService(),
-    memory: new MemoryFileManager({ project: `${workspaceRoot}/memory`, user: `${workspaceRoot}/user-memory` }),
-    approvals: new ProjectApprovalManager(silentLogger),
   };
 }
 

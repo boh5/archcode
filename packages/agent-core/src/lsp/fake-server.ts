@@ -1,6 +1,5 @@
 import { Buffer } from "node:buffer";
 import path from "node:path";
-import { mkdir } from "node:fs/promises";
 import { StdioLspTransport, type LspTransport } from "./transport";
 
 // ─── Types & Defaults ───
@@ -34,7 +33,7 @@ export const DEFAULT_INITIALIZE_RESULT: Record<string, unknown> = {
   serverInfo: { name: "fake-lsp-server", version: "0.0.1" },
 };
 
-const DEFAULT_CONFIG: FakeLspServerConfig = {
+export const DEFAULT_FAKE_LSP_CONFIG: FakeLspServerConfig = {
   crashExitCode: 1,
 };
 
@@ -184,11 +183,10 @@ function defaultFakeClientCapabilities(): Record<string, unknown> {
 export class FakeLspServer {
   private readonly config: FakeLspServerConfig;
   private transport: StdioLspTransport | null = null;
-  private tempConfigPath: string | null = null;
   private _initializeResult: unknown | null = null;
 
   constructor(config?: Partial<FakeLspServerConfig>) {
-    this.config = { ...DEFAULT_CONFIG, ...config };
+    this.config = { ...DEFAULT_FAKE_LSP_CONFIG, ...config };
   }
 
   /** The subprocess exited promise (resolves with exit code). Undefined before start(). */
@@ -210,19 +208,11 @@ export class FakeLspServer {
       throw new Error("FakeLspServer is already running");
     }
 
-    const tmpDir = path.join(import.meta.dir, "__test_tmp__");
-    await mkdir(tmpDir, { recursive: true });
-
-    const configId = crypto.randomUUID();
-    const configPath = path.join(tmpDir, `fake-lsp-config-${configId}.json`);
-    await Bun.write(configPath, JSON.stringify(this.config));
-    this.tempConfigPath = configPath;
-
     const serverPath = path.join(import.meta.dir, "fake-server.ts");
     this.transport = new StdioLspTransport({
       command: "bun",
       args: ["run", serverPath],
-      env: { ...process.env, FAKE_LSP_CONFIG: configPath },
+      env: { ...process.env, FAKE_LSP_CONFIG: JSON.stringify(this.config) },
     });
 
     this._initializeResult = await this.transport.connect({
@@ -254,7 +244,7 @@ export class FakeLspServer {
     });
   }
 
-  /** Stop the server: graceful shutdown + cleanup config file. */
+  /** Stop the server gracefully. */
   async stop(): Promise<void> {
     if (this.transport) {
       try {
@@ -263,26 +253,14 @@ export class FakeLspServer {
         }
       this.transport = null;
     }
-    if (this.tempConfigPath) {
-      try {
-        await Bun.file(this.tempConfigPath).delete();
-      } catch {
-      }
-      this.tempConfigPath = null;
-    }
   }
 }
 
 // ─── Entry Point (runs when file is spawned as subprocess) ───
 
 if (import.meta.main) {
-  if (process.env.FAKE_LSP_CONFIG) {
-    // Configurable mode: read config from temp file
-    const text = await Bun.file(process.env.FAKE_LSP_CONFIG).text();
-    const config = JSON.parse(text) as FakeLspServerConfig;
-    main(config).catch(() => process.exit(1));
-  } else {
-    // Default backward-compatible mode (no config file provided)
-    main(DEFAULT_CONFIG).catch(() => process.exit(1));
-  }
+  const rawConfig = process.env.FAKE_LSP_CONFIG;
+  if (rawConfig === undefined) throw new Error("FAKE_LSP_CONFIG is required");
+  const config = JSON.parse(rawConfig) as FakeLspServerConfig;
+  main(config).catch(() => process.exit(1));
 }

@@ -45,6 +45,7 @@ const LOOP_CONFIG: LoopConfig = {
   schedule: { kind: "manual" },
   approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 4, maxTokensPerRun: 1_000, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+  useWorktree: false,
 };
 
 beforeEach(async () => {
@@ -263,7 +264,7 @@ function context(
   overrides: Partial<ToolExecutionContext> = {},
 ): ToolExecutionContext {
   return createToolExecutionContext({
-    store: createSessionStore(`github-tools-${crypto.randomUUID()}`),
+    store: createSessionStore(`github-tools-${crypto.randomUUID()}`, TMP_DIR),
     storeManager,
     toolName,
     toolCallId: `${toolName}-call`,

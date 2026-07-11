@@ -20,6 +20,16 @@ describe("LoopSessionHitlContinuationCoordinator", () => {
     await rm(TMP_ROOT, { recursive: true, force: true });
   });
 
+  test("requires cleanup scheduling at construction", async () => {
+    const fixture = await createBlockedFixture();
+    expect(() => new LoopSessionHitlContinuationCoordinator({
+      stateManager: fixture.stateManager,
+      jobQueue: fixture.jobQueue,
+      jobCoordinator: fixture.jobCoordinator,
+      collisionLedger: fixture.collisionLedger,
+    } as ConstructorParameters<typeof LoopSessionHitlContinuationCoordinator>[0])).toThrow("requires cleanup scheduling");
+  });
+
   test("collision failure rolls the exact job back to needs_user and preserves the Loop blocker", async () => {
     const fixture = await createBlockedFixture();
     const competingLoop = await createLoop(fixture.stateManager, "competing");
@@ -103,6 +113,7 @@ describe("LoopSessionHitlContinuationCoordinator", () => {
       jobCoordinator: restartedJobCoordinator,
       collisionLedger: fixture.collisionLedger,
       now: () => 2_000,
+      scheduleCleanup: () => undefined,
     });
     const lease = await restarted.acquire({
       origin: fixture.origin,
@@ -122,14 +133,18 @@ describe("LoopSessionHitlContinuationCoordinator", () => {
     const worktreePath = join(fixture.workspaceRoot, ".archcode", "worktrees", "job");
     await fixture.jobQueue.update(fixture.job.jobId, {
       worktreePath,
+      worktreeBranchName: "archcode/loop/test/continuation",
       baseSha: "a".repeat(40),
+      resolvedHeadSha: "a".repeat(40),
       cleanupState: "preserved",
     });
     const blocked = (await fixture.stateManager.read(fixture.loop.loopId)).currentRun!;
     await fixture.stateManager.recordRunBlocked(fixture.loop.loopId, {
       ...blocked,
       worktreePath,
+      worktreeBranchName: "archcode/loop/test/continuation",
       baseSha: "a".repeat(40),
+      resolvedHeadSha: "a".repeat(40),
       cleanupState: "preserved",
     });
     const scheduleCleanup = mock((_input: { loopId: string; runId: string; jobId: string }) => undefined);
@@ -316,6 +331,16 @@ async function createBlockedFixture(options: { readonly maxConcurrent?: number }
   };
   await stateManager.recordRunStart(loop.loopId, run);
   await collisionLedger.acquireStaticTargets({ loop, runId: run.runId, priority: claimed.priority });
+  const resumeCheckpoint = {
+    version: 1 as const,
+    hitlId,
+    loopId: loop.loopId,
+    runId: run.runId,
+    jobId: claimed.jobId,
+    trigger: "manual" as const,
+    subjectKey: claimed.subjectKey,
+    intendedContinuation: "resume_run" as const,
+  };
   const blocked: LoopRunReport = {
     ...run,
     status: "needs_user",
@@ -323,6 +348,7 @@ async function createBlockedFixture(options: { readonly maxConcurrent?: number }
     blockedReason: "needs_user",
     blockedByHitlIds: [hitlId],
     attentionStatus: "waiting_for_human",
+    resumeCheckpoint,
     summary: "Session needs user input.",
   };
   await stateManager.recordRunBlocked(loop.loopId, blocked);
@@ -331,6 +357,7 @@ async function createBlockedFixture(options: { readonly maxConcurrent?: number }
     blockedReason: "needs_user",
     blockedByHitlIds: [hitlId],
     attentionStatus: "waiting_for_human",
+    resumeCheckpoint,
   });
   await collisionLedger.releaseRun(loop.loopId, run.runId);
   const continuation = new LoopSessionHitlContinuationCoordinator({
@@ -339,6 +366,7 @@ async function createBlockedFixture(options: { readonly maxConcurrent?: number }
     jobCoordinator,
     collisionLedger,
     now: () => 1_000,
+    scheduleCleanup: () => undefined,
   });
   return {
     workspaceRoot,
@@ -367,7 +395,8 @@ async function createLoop(stateManager: LoopStateManager, suffix: string): Promi
     title: null,
     schedule: { kind: "manual" },
     approvalPolicy: "interactive",
-    limits: { maxIterationsPerRun: 3 },
+    limits: { maxIterationsPerRun: 3, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+    useWorktree: false,
     collisionTargets: [{ type: "file", path: "." }],
   });
 }

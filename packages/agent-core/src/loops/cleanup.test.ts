@@ -21,7 +21,8 @@ const baseConfig: LoopConfig = {
   title: "Cleanup loop",
   schedule: { kind: "manual" },
   approvalPolicy: "interactive",
-  limits: { maxIterationsPerRun: 1 },
+  limits: { maxIterationsPerRun: 1, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+  useWorktree: false,
 };
 
 beforeEach(async () => {
@@ -42,11 +43,7 @@ describe("LoopCleanupService", () => {
       preserveChangedArtifacts: true,
       requiresNoPendingQueue: true,
     });
-    expect(normalizeLoopCleanupPolicy({ deleteUnchangedWorktrees: true })).toMatchObject({
-      enabled: true,
-      action: "mark",
-      deleteUnchangedWorktrees: true,
-    });
+    expect(() => normalizeLoopCleanupPolicy({ deleteUnchangedWorktrees: true } as never)).toThrow();
     expect(normalizeLoopCleanupPolicy({ enabled: false, deleteUnchangedWorktrees: true })).toMatchObject({
       enabled: false,
       deleteUnchangedWorktrees: true,
@@ -67,6 +64,7 @@ describe("LoopCleanupService", () => {
       reportStatus: "succeeded",
       subjectKey: "manual:no-change",
       worktreePath: created.worktreePath,
+      worktreeBranchName: created.branchName,
       baseSha,
       resolvedHeadSha: created.resolvedHeadSha,
       observedArtifacts: [{ path: `git:branch:${created.branchName}`, status: "observed" }],
@@ -123,6 +121,7 @@ describe("LoopCleanupService", () => {
       subjectKey: "manual:session-cwd",
       sessionId: "session-loop-cleanup",
       worktreePath: created.worktreePath,
+      worktreeBranchName: created.branchName,
       baseSha,
       resolvedHeadSha: created.resolvedHeadSha,
       observedArtifacts: [{ path: `git:branch:${created.branchName}`, status: "observed" }],
@@ -141,38 +140,29 @@ describe("LoopCleanupService", () => {
     expect(await pathExists(created.worktreePath)).toBe(false);
   });
 
-  test("fails closed when the Session cwd reference migration capability is unavailable", async () => {
-    const repo = await createGitRepo("session-cwd-callback-missing");
-    const worktreeManager = new LoopWorktreeManager({ canonicalRoot: repo });
-    const baseSha = await git(repo, ["rev-parse", "HEAD"]);
-    const created = await worktreeManager.create({ loopSlug: "cleanup", subjectSlug: "missing-callback", jobId: "missing-callback-job-123456", baseSha });
-    const fixture = await createFixture(repo, {
-      cleanupPolicy: { enabled: true, action: "mark", deleteUnchangedWorktrees: true, noFindingRuns: 10 },
-      worktreeManager,
-      migrateSessionCwdReferencesForRemoval: null,
-    });
-    const { job } = await appendJobAndReport(fixture, {
-      status: "succeeded",
-      reportStatus: "succeeded",
-      subjectKey: "manual:missing-callback",
-      sessionId: "session-missing-callback",
-      worktreePath: created.worktreePath,
-      baseSha,
-      resolvedHeadSha: created.resolvedHeadSha,
-      observedArtifacts: [{ path: `git:branch:${created.branchName}`, status: "observed" }],
-    });
+  test("rejects construction without the Session cwd reference migration capability", async () => {
+    const workspaceRoot = await createWorkspace("session-cwd-callback-missing");
+    const stateManager = new LoopStateManager(workspaceRoot);
+    const jobQueue = new LoopJobQueue({ workspaceRoot });
 
-    const result = await fixture.service.scanLoop(fixture.loop.loopId);
+    expect(() => new LoopCleanupService({
+      stateManager,
+      jobQueue,
+      workspaceRoot,
+    } as LoopCleanupServiceOptions)).toThrow("requires Session cwd reference migration capability");
+  });
 
-    expect(result.decision).toBe("cleanup_failed");
-    expect(result.worktrees).toContainEqual(expect.objectContaining({
-      jobId: job.jobId,
-      cleanupState: "cleanup_failed",
-      removed: false,
-      reason: expect.stringContaining("Session cwd reference migration capability"),
-    }));
-    expect(await pathExists(created.worktreePath)).toBe(true);
-    expect(await git(repo, ["rev-parse", `refs/heads/${created.branchName}`])).toBe(baseSha);
+  test("rejects construction without collision lease visibility", async () => {
+    const workspaceRoot = await createWorkspace("collision-ledger-missing");
+    const stateManager = new LoopStateManager(workspaceRoot);
+    const jobQueue = new LoopJobQueue({ workspaceRoot });
+
+    expect(() => new LoopCleanupService({
+      stateManager,
+      jobQueue,
+      workspaceRoot,
+      migrateSessionCwdReferencesForRemoval: runWithoutSessionCwdReferences,
+    } as LoopCleanupServiceOptions)).toThrow("requires collision lease visibility");
   });
 
   test("preserves the worktree when Session cwd reference migration fails", async () => {
@@ -205,6 +195,7 @@ describe("LoopCleanupService", () => {
       subjectKey: "manual:transition-failure",
       sessionId: "session-transition-failure",
       worktreePath: created.worktreePath,
+      worktreeBranchName: created.branchName,
       baseSha,
       resolvedHeadSha: created.resolvedHeadSha,
       observedArtifacts: [{ path: `git:branch:${created.branchName}`, status: "observed" }],
@@ -238,6 +229,7 @@ describe("LoopCleanupService", () => {
       reportStatus: "succeeded",
       subjectKey: "manual:no-change-preserved",
       worktreePath: created.worktreePath,
+      worktreeBranchName: created.branchName,
       baseSha,
       resolvedHeadSha: created.resolvedHeadSha,
       observedArtifacts: [{ path: `git:branch:${created.branchName}`, status: "observed" }],
@@ -269,6 +261,7 @@ describe("LoopCleanupService", () => {
       reportStatus: "succeeded",
       subjectKey: "manual:changed",
       worktreePath: created.worktreePath,
+      worktreeBranchName: created.branchName,
       baseSha,
       resolvedHeadSha: created.resolvedHeadSha,
       observedArtifacts: [{ path: `git:branch:${created.branchName}`, status: "observed" }],
@@ -300,6 +293,7 @@ describe("LoopCleanupService", () => {
       reportStatus: "failed",
       subjectKey: "manual:failed",
       worktreePath: created.worktreePath,
+      worktreeBranchName: created.branchName,
       baseSha,
       resolvedHeadSha: created.resolvedHeadSha,
       observedArtifacts: [{ path: `git:branch:${created.branchName}`, status: "observed" }],
@@ -328,6 +322,7 @@ describe("LoopCleanupService", () => {
       subjectKey: "manual:blocked",
       blockedReason: "needs_user",
       worktreePath,
+      worktreeBranchName: "archcode/loop/cleanup/blocked",
       baseSha: "a".repeat(40),
       resolvedHeadSha: "a".repeat(40),
       observedArtifacts: [{ path: "git:branch:archcode/loop/cleanup/blocked", status: "observed" }],
@@ -371,7 +366,13 @@ describe("LoopCleanupService", () => {
     });
     await fixture.jobQueue.enqueue({ loopId: fixture.loop.loopId, triggerKind: "manual", subjectKey: "manual:queued" });
     const running = (await fixture.jobQueue.enqueue({ loopId: fixture.loop.loopId, triggerKind: "manual", subjectKey: "manual:running" })).job;
-    await fixture.jobQueue.update(running.jobId, { status: "running", startedAt: START, leaseExpiresAt: START + 60_000 });
+    await fixture.jobQueue.update(running.jobId, {
+      status: "running",
+      startedAt: START,
+      leaseExpiresAt: START + 60_000,
+      leaseOwnerId: "cleanup-test",
+      leaseToken: "cleanup-test-lease",
+    });
     const blocked = (await fixture.jobQueue.enqueue({ loopId: fixture.loop.loopId, triggerKind: "manual", subjectKey: "manual:blocked" })).job;
     await fixture.jobQueue.update(blocked.jobId, { status: "blocked", blockedReason: "needs_user" });
     const review = (await fixture.jobQueue.enqueue({ loopId: fixture.loop.loopId, triggerKind: "manual", subjectKey: "manual:review" })).job;
@@ -379,7 +380,6 @@ describe("LoopCleanupService", () => {
       status: "succeeded",
       cleanupState: "preserved",
       blockedReason: "review_required",
-      worktreePath: join(workspaceRoot, "review-worktree"),
       observedArtifacts: [{ path: "cleanup:preserved", status: "observed" }],
     });
     await fixture.stateManager.updateIntegrationSnapshot(fixture.loop.loopId, {
@@ -423,6 +423,7 @@ describe("LoopCleanupService", () => {
       reportStatus: "skipped",
       subjectKey: "manual:expired",
       worktreePath: created.worktreePath,
+      worktreeBranchName: created.branchName,
       baseSha,
       resolvedHeadSha: created.resolvedHeadSha,
       observedArtifacts: [{ path: `git:branch:${created.branchName}`, status: "observed" }],
@@ -449,6 +450,7 @@ describe("LoopCleanupService", () => {
       reportStatus: "succeeded",
       subjectKey: "manual:failing-cleanup",
       worktreePath,
+      worktreeBranchName: "archcode/loop/cleanup/failing",
       baseSha: "a".repeat(40),
       resolvedHeadSha: "a".repeat(40),
       observedArtifacts: [{ path: "git:branch:archcode/loop/cleanup/failing", status: "observed" }],
@@ -488,6 +490,7 @@ describe("LoopCleanupService", () => {
       reportStatus: "succeeded",
       subjectKey: "manual:stale-cleanup-revision",
       worktreePath,
+      worktreeBranchName: "archcode/loop/cleanup/stale-revision",
       baseSha: "a".repeat(40),
       resolvedHeadSha: "a".repeat(40),
       observedArtifacts: [{ path: "git:branch:archcode/loop/cleanup/stale-revision", status: "observed" }],
@@ -535,6 +538,7 @@ describe("LoopCleanupService", () => {
       reportStatus: "succeeded",
       subjectKey: "manual:missing-path",
       worktreePath: created.worktreePath,
+      worktreeBranchName: created.branchName,
       baseSha,
       resolvedHeadSha: created.resolvedHeadSha,
       observedArtifacts: [{ path: `git:branch:${created.branchName}`, status: "observed" }],
@@ -631,6 +635,7 @@ describe("LoopCleanupService", () => {
       reportStatus: "succeeded",
       subjectKey: "manual:branch-warning",
       worktreePath,
+      worktreeBranchName: branchName,
       baseSha,
       resolvedHeadSha: baseSha,
       observedArtifacts: [{ path: `git:branch:${branchName}`, status: "observed" }],
@@ -661,7 +666,7 @@ interface Fixture {
 async function createFixture(workspaceRoot: string, options: {
   readonly cleanupPolicy?: Record<string, unknown>;
   readonly worktreeManager?: LoopCleanupWorktreeManager;
-  readonly migrateSessionCwdReferencesForRemoval?: LoopCleanupServiceOptions["migrateSessionCwdReferencesForRemoval"] | null;
+  readonly migrateSessionCwdReferencesForRemoval?: LoopCleanupServiceOptions["migrateSessionCwdReferencesForRemoval"];
 } = {}): Promise<Fixture> {
   const stateManager = new LoopStateManager(workspaceRoot);
   const jobQueue = new LoopJobQueue({ workspaceRoot, clock: { now: () => START } });
@@ -673,12 +678,8 @@ async function createFixture(workspaceRoot: string, options: {
     workspaceRoot,
     clock: { now: () => START },
     ...(options.worktreeManager === undefined ? {} : { worktreeManager: options.worktreeManager }),
-    ...(options.migrateSessionCwdReferencesForRemoval === null
-      ? {}
-      : {
-        migrateSessionCwdReferencesForRemoval: options.migrateSessionCwdReferencesForRemoval
-          ?? runWithoutSessionCwdReferences,
-      }),
+    migrateSessionCwdReferencesForRemoval: options.migrateSessionCwdReferencesForRemoval
+      ?? runWithoutSessionCwdReferences,
   });
   const config = { ...baseConfig, ...(options.cleanupPolicy === undefined ? {} : { cleanupPolicy: options.cleanupPolicy }) };
   const loop = await stateManager.create("project-a", config as LoopConfig);
@@ -735,7 +736,6 @@ async function appendJobAndReport(fixture: Fixture, input: {
     endedAt: START + 100,
     sessionId: input.sessionId,
     jobId: job.jobId,
-    triggerKind: job.triggerKind,
     subjectKey: job.subjectKey,
     dedupeKey: job.dedupeKey,
     blockedReason: input.blockedReason,

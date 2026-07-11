@@ -10,6 +10,7 @@ import type {
   SessionCwdRemovalResult,
   StartSessionExecutionInput,
 } from "../execution";
+import { createEmptyCompressionState } from "../compression";
 import type { GoalState } from "../goals/state";
 import { GoalStateManager } from "../goals/state";
 import { HitlService } from "../hitl/service";
@@ -24,6 +25,7 @@ import { LoopJobQueue } from "./job-queue";
 import { LoopActiveConflictError, LoopRunner, type LoopRunnerGoalStartOptions, type LoopRunnerWorktreeManager } from "./runner";
 import { LoopScheduler, type LoopSchedulerRunInput } from "./scheduler";
 import { LoopConfigSchema, LoopStateManager, type CollisionTarget, type LoopConfig, type LoopGoalTemplate, type LoopState } from "./state";
+import { createLoopSchedulerRequiredDependencies } from "./test-utils";
 import type { LoopWorktreeInspection } from "./worktree-manager";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "loop-runner");
@@ -35,7 +37,8 @@ const sessionLoopConfig: LoopConfig = {
   title: null,
   schedule: { kind: "manual" },
   approvalPolicy: "interactive",
-  limits: { maxIterationsPerRun: 7 },
+  limits: { maxIterationsPerRun: 7, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+  useWorktree: false,
   taskPrompt: "Inspect status and summarize risks.",
 };
 
@@ -50,7 +53,8 @@ const goalLoopConfig: LoopConfig = {
   title: null,
   schedule: { kind: "manual" },
   approvalPolicy: "explicit_per_run",
-  limits: { maxIterationsPerRun: 4 },
+  limits: { maxIterationsPerRun: 4, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+  useWorktree: false,
   goalTemplate,
 };
 
@@ -258,10 +262,12 @@ describe("session loop runner", () => {
     const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
 
     const result = await fixture.runner.createSchedulerRunner()({
+      ...worktreeCheckpointCallbacks(),
       loop,
       trigger: "interval",
       runId: "run-from-scheduler",
       startedAt: 2_000,
+      job: testJob(loop.loopId),
     });
 
     expect(result).toMatchObject({ status: "succeeded", sessionId: "session-1" });
@@ -273,30 +279,13 @@ describe("session loop runner", () => {
     });
   });
 
-  test("fails closed when worktree isolation has no manager or durable checkpoint callbacks", async () => {
-    const missingManager = await createFixture();
-    const managerLoop = await missingManager.stateManager.create("project-a", { ...sessionLoopConfig, useWorktree: true });
-    await expect(missingManager.runner.createSchedulerRunner()({
-      ...worktreeCheckpointCallbacks(),
-      loop: managerLoop,
-      trigger: "manual",
-      runId: "missing-manager",
-      startedAt: 3_900,
-      job: testJob(managerLoop.loopId, { baseSha: "a".repeat(40) }),
-    })).rejects.toMatchObject({ name: "LoopWorktreeExecutionConfigurationError", reason: "manager_required" });
-    expect(missingManager.runtime.createSessionMock).not.toHaveBeenCalled();
-
-    const missingCallbacks = await createFixture({ worktreePath: "/tmp/missing-checkpoint-callbacks" });
-    const callbacksLoop = await missingCallbacks.stateManager.create("project-a", { ...sessionLoopConfig, useWorktree: true });
-    await expect(missingCallbacks.runner.createSchedulerRunner()({
-      loop: callbacksLoop,
-      trigger: "manual",
-      runId: "missing-callbacks",
-      startedAt: 3_901,
-      job: testJob(callbacksLoop.loopId, { baseSha: "a".repeat(40) }),
-    })).rejects.toMatchObject({ name: "LoopWorktreeExecutionConfigurationError", reason: "checkpoint_callbacks_required" });
-    expect(missingCallbacks.worktreeManager?.createMock).not.toHaveBeenCalled();
-    expect(missingCallbacks.runtime.createSessionMock).not.toHaveBeenCalled();
+  test("rejects construction without the production worktree manager capability", async () => {
+    const fixture = await createFixture();
+    expect(() => new LoopRunner({
+      stateManager: fixture.stateManager,
+      runtime: fixture.runtime,
+      workspaceRoot: fixture.workspaceRoot,
+    } as unknown as ConstructorParameters<typeof LoopRunner>[0])).toThrow("requires a worktree manager");
   });
 
   test("fails closed when a direct run requests worktree isolation without a durable job", async () => {
@@ -450,7 +439,7 @@ describe("session loop runner", () => {
       trigger: "manual",
       runId: "resolved-base-checkpoint-run",
       startedAt: 4_001,
-      job: testJob(loop.loopId),
+      job: testJob(loop.loopId, { resolvedHeadSha: "f".repeat(40) }),
       checkpointBaseSha,
     });
 
@@ -560,7 +549,7 @@ describe("session loop runner", () => {
     const loop = await fixture.stateManager.create("project-a", {
       ...sessionLoopConfig,
       useWorktree: true,
-      cleanupPolicy: { deleteUnchangedWorktrees: true },
+      cleanupPolicy: { enabled: true, deleteUnchangedWorktrees: true },
     });
 
     const result = await fixture.runner.createSchedulerRunner()({
@@ -590,7 +579,7 @@ describe("session loop runner", () => {
     const loop = await fixture.stateManager.create("project-a", {
       ...sessionLoopConfig,
       useWorktree: true,
-      cleanupPolicy: { deleteUnchangedWorktrees: true },
+      cleanupPolicy: { enabled: true, deleteUnchangedWorktrees: true },
     });
     fixture.runtime.migrateSessionCwdReferencesForRemovalMock
       .mockImplementationOnce(async (_input, operation) => await operation({
@@ -620,7 +609,7 @@ describe("session loop runner", () => {
     const loop = await fixture.stateManager.create("project-a", {
       ...sessionLoopConfig,
       useWorktree: true,
-      cleanupPolicy: { deleteUnchangedWorktrees: true },
+      cleanupPolicy: { enabled: true, deleteUnchangedWorktrees: true },
     });
 
     const result = await fixture.runner.createSchedulerRunner()({
@@ -727,10 +716,12 @@ describe("session loop runner", () => {
     });
 
     const result = await fixture.runner.createSchedulerRunner()({
+      ...worktreeCheckpointCallbacks(),
       loop: started,
       trigger: "interval",
       runId: "cancel-before-session",
       startedAt: 2_000,
+      job: testJob(loop.loopId),
     });
 
     expect(result).toMatchObject({ status: "cancelled", reason: "global_kill_active" });
@@ -767,10 +758,12 @@ describe("session loop runner", () => {
     });
 
     const result = await fixture.runner.createSchedulerRunner()({
+      ...worktreeCheckpointCallbacks(),
       loop: started,
       trigger: "interval",
       runId: "cancel-after-session",
       startedAt: 2_000,
+      job: testJob(loop.loopId),
     });
 
     expect(result).toMatchObject({ status: "cancelled", reason: "cancelled_by_user", sessionId: "session-1" });
@@ -953,6 +946,7 @@ describe("goal loop runner", () => {
       trigger: "interval",
       runId: "scheduled-goal-run",
       startedAt: 3_000,
+      job: testJob(loop.loopId),
     });
 
     expect(result).toMatchObject({ status: "succeeded", goalId: "goal-1", sessionId: "goal-session-1" });
@@ -1028,7 +1022,7 @@ describe("goal loop runner", () => {
     const loop = await fixture.stateManager.create("project-a", {
       ...goalLoopConfig,
       useWorktree: true,
-      cleanupPolicy: { deleteUnchangedWorktrees: true },
+      cleanupPolicy: { enabled: true, deleteUnchangedWorktrees: true },
     });
     fixture.runtime.migrateSessionCwdReferencesForRemovalMock
       .mockImplementationOnce(async (_input, operation) => await operation({
@@ -1085,10 +1079,12 @@ describe("goal loop runner", () => {
     });
 
     const result = await fixture.runner.createSchedulerRunner()({
+      ...worktreeCheckpointCallbacks(),
       loop: started,
       trigger: "interval",
       runId: "cancel-goal-after-start",
       startedAt: 3_000,
+      job: testJob(loop.loopId),
     });
 
     expect(result).toMatchObject({ status: "cancelled", reason: "global_kill_active", goalId: "goal-1", sessionId: "goal-session-1" });
@@ -1106,8 +1102,9 @@ describe("loop-owned-hitl resume", () => {
     const blocked = await fixture.scheduler.runManual(loop.loopId);
     const hitlId = blocked?.blockedByHitlIds?.[0];
     if (hitlId === undefined) throw new Error("Expected Loop HITL id");
+    const identity = { owner: { projectSlug: "project-a", ownerType: "loop" as const, ownerId: loop.loopId }, hitlId };
 
-    await fixture.coordinator.respond(hitlId, { type: "approval_decision", decision: "approved" });
+    await fixture.coordinator.respond(identity, { type: "approval_decision", decision: "approved" });
     await waitFor(async () => (await fixture.jobQueue.list())[0]?.status === "succeeded");
 
     expect(fixture.runnerMock).toHaveBeenCalledTimes(1);
@@ -1134,6 +1131,7 @@ describe("loop-owned-hitl resume", () => {
     expect(fixture.runnerMock).not.toHaveBeenCalled();
     const hitlId = report?.blockedByHitlIds?.[0];
     if (hitlId === undefined) throw new Error("Expected Loop HITL id");
+    const identity = { owner: { projectSlug: "project-a", ownerType: "loop" as const, ownerId: loop.loopId }, hitlId };
     expect(report).toMatchObject({
       status: "needs_user",
       blockedReason: "needs_user",
@@ -1151,11 +1149,11 @@ describe("loop-owned-hitl resume", () => {
     const ownerStore = await fixture.hitl.ownerStore({ projectSlug: "project-a", ownerType: "loop", ownerId: loop.loopId });
     expect((await ownerStore.list()).map((record) => record.hitlId)).toContain(hitlId);
     expect(await ownerStore.lookup(hitlId)).toMatchObject({ status: "found" });
-    expect(await fixture.hitl.lookup(hitlId)).toMatchObject({ status: "found" });
+    expect(await fixture.hitl.lookup(identity)).toMatchObject({ status: "found" });
     expect(await Bun.file(await fixture.stateManager.loopHitlPath(loop.loopId)).exists()).toBe(true);
 
-    const first = await fixture.coordinator.respond(hitlId, { type: "approval_decision", decision: "approved" });
-    const second = await fixture.coordinator.respond(hitlId, { type: "approval_decision", decision: "approved" });
+    const first = await fixture.coordinator.respond(identity, { type: "approval_decision", decision: "approved" });
+    const second = await fixture.coordinator.respond(identity, { type: "approval_decision", decision: "approved" });
     expect(first.status).not.toBe("missing");
     expect(second.scheduled).toBe(false);
     await waitFor(async () => (
@@ -1184,8 +1182,9 @@ describe("loop-owned-hitl resume", () => {
     const report = await fixture.scheduler.runManual(loop.loopId);
     const hitlId = report?.blockedByHitlIds?.[0];
     if (hitlId === undefined) throw new Error("Expected Loop HITL id");
+    const identity = { owner: { projectSlug: "project-a", ownerType: "loop" as const, ownerId: loop.loopId }, hitlId };
 
-    const result = await fixture.coordinator.respond(hitlId, { type: "approval_decision", decision: "denied", comment: "not now" });
+    const result = await fixture.coordinator.respond(identity, { type: "approval_decision", decision: "denied", comment: "not now" });
     expect(result.scheduled).toBe(true);
     await waitFor(async () => (await fixture.jobQueue.list(["skipped"])).length === 1 && (await fixture.stateManager.read(loop.loopId)).currentRun === undefined);
 
@@ -1213,7 +1212,7 @@ async function createFixture(options: {
   goalRunner: FakeGoalRunner;
   runner: LoopRunner;
   collisionLedger: CollisionLedger;
-  worktreeManager?: FakeWorktreeManager;
+  worktreeManager: FakeWorktreeManager;
   workspaceRoot: string;
 }> {
   const workspaceRoot = join(RUN_DIR, `workspace-${nextWorkspaceId++}-${crypto.randomUUID()}`);
@@ -1223,7 +1222,10 @@ async function createFixture(options: {
   const goalStateManager = new FakeGoalStateManager();
   const goalRunner = new FakeGoalRunner(goalStateManager, options.goalStartError, options.afterGoalStart, options.goalStartWithoutMainSession ?? false);
   const collisionLedger = new CollisionLedger({ stateManager, workspaceRoot, clock: { now: () => 1_000 } });
-  const worktreeManager = options.worktreePath === undefined ? undefined : new FakeWorktreeManager(options.worktreePath, options.worktreeHasChanges ?? true);
+  const worktreeManager = new FakeWorktreeManager(
+    options.worktreePath ?? join(workspaceRoot, ".unused-loop-worktree"),
+    options.worktreeHasChanges ?? true,
+  );
   const runner = new LoopRunner({
     stateManager,
     runtime,
@@ -1233,7 +1235,7 @@ async function createFixture(options: {
     projectSlug: "project-a",
     now: () => 1_000,
     collisionLedger,
-    ...(worktreeManager === undefined ? {} : { worktreeManager }),
+    worktreeManager,
   });
   return { stateManager, runtime, goalStateManager, goalRunner, runner, collisionLedger, worktreeManager, workspaceRoot };
 }
@@ -1260,7 +1262,6 @@ async function createLoopHitlFixture(options: { readonly dispatchContinuation?: 
     goalState: new GoalStateManager(workspaceRoot),
     loopState: stateManager,
   });
-  await hitl.load(workspaceRoot);
   let scheduler!: LoopScheduler;
   const stateSeenBeforeDispatchMock = mock((_state: LoopState) => undefined);
   const continuationQueuedMock = mock(async (checkpoint: { readonly loopId: string }) => {
@@ -1282,6 +1283,11 @@ async function createLoopHitlFixture(options: { readonly dispatchContinuation?: 
   });
   const runnerMock = mock(async (_input: LoopSchedulerRunInput) => ({ status: "succeeded" as const }));
   scheduler = new LoopScheduler({
+    ...createLoopSchedulerRequiredDependencies({
+      workspaceRoot,
+      stateManager,
+      clock: { now: () => 1_000 },
+    }),
     stateManager,
     runner: runnerMock,
     jobQueue,
@@ -1289,6 +1295,8 @@ async function createLoopHitlFixture(options: { readonly dispatchContinuation?: 
     clock: { now: () => 1_000 },
     timer: { schedule: () => ({ id: undefined }), cancel: () => undefined },
     hitl,
+    cleanupJob: async () => undefined,
+    readSessionAttempt: async () => ({}),
   });
   return { workspaceRoot, stateManager, jobQueue, hitl, coordinator, scheduler, runnerMock, continuationQueuedMock, stateSeenBeforeDispatchMock };
 }
@@ -1345,16 +1353,21 @@ class FakeLoopRuntime {
   });
 
   #makeSession(sessionId: string, options?: { cwd?: string; goalId?: string; loopId?: string; sessionRole?: "main"; title?: string }): SessionFile {
+    const now = Date.now();
     return {
+      schemaVersion: 1,
       sessionId,
-      createdAt: Date.now(),
+      createdAt: now,
+      updatedAt: now,
       cwd: options?.cwd ?? "/canonical-workspace",
       agentName: "orchestrator",
+      modelInfo: null,
       title: options?.title ?? null,
       messages: [],
       steps: [],
       stats: createEmptySessionStats(),
       executions: this.sessionExecutions,
+      compression: createEmptyCompressionState(),
       todos: [],
       reminders: [],
       childSessionLinks: [],
@@ -1477,15 +1490,18 @@ class FakeGoalStateManager {
     const id = `goal-${this.#nextGoal++}`;
     const now = new Date(0).toISOString();
     const goal: GoalState = {
+      version: 1,
       id,
       projectId: input.projectId,
       title: input.title ?? null,
       objective: input.objective,
       acceptanceCriteria: input.acceptanceCriteria,
+      useWorktree: false,
       status: "draft",
       attempt: 1,
       pendingHitlIds: [],
       approvalRefs: [],
+      appliedHitlIds: [],
       childSessionIds: [],
       ...(input.loopId === undefined ? {} : { loopId: input.loopId }),
       createdAt: now,
@@ -1553,10 +1569,11 @@ function testJob(loopId: string, overrides: Partial<NonNullable<LoopSchedulerRun
   };
 }
 
-function worktreeCheckpointCallbacks(): Pick<LoopSchedulerRunInput, "checkpointBaseSha" | "checkpointWorktree"> {
+function worktreeCheckpointCallbacks(): Pick<LoopSchedulerRunInput, "checkpointBaseSha" | "checkpointWorktree" | "checkpointSessionAttempt"> {
   return {
     checkpointBaseSha: async () => {},
     checkpointWorktree: async () => {},
+    checkpointSessionAttempt: async () => {},
   };
 }
 

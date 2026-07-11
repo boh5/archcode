@@ -31,6 +31,7 @@ export type {
   HitlProjectionContext,
   HitlAllowedAction,
   HitlOwnerKey,
+  HitlIdentity,
   HitlOwnerType,
   HitlStatus,
   DiffLineType,
@@ -130,18 +131,17 @@ export interface DashboardLoop {
  * Minimal template-oriented create payload for `POST /api/projects/:slug/loops`.
  * The server maps `templateId` to the internal Loop template. This payload never
  * sends `mode`, `toolProfileId`, `extraTools`, `collisionTargets`, or
- * `cleanupPolicy`. The mutation layer maps UI `budget` to the server `limits`
- * field. `useWorktree` is the only manual worktree opt-in.
+ * `cleanupPolicy`. `limits` and `useWorktree` are explicit canonical fields.
  */
 export interface CreateLoopPayload {
   templateId: LoopTemplateId;
   schedule: LoopScheduleSpec;
   approvalPolicy: LoopApprovalPolicy;
-  budget?: LoopBudgetConfig;
+  limits: LoopBudgetConfig;
   taskPrompt?: string;
   goalTemplate?: Omit<LoopGoalTemplate, "title">;
   triggers?: LoopTriggerSpec[];
-  useWorktree?: boolean;
+  useWorktree: boolean;
 }
 
 /** Template-oriented update payload for `PATCH /api/projects/:slug/loops/:loopId`. */
@@ -150,7 +150,7 @@ export interface UpdateLoopPayload {
   templateId?: LoopTemplateId;
   schedule?: LoopScheduleSpec;
   approvalPolicy?: LoopApprovalPolicy;
-  budget?: LoopBudgetConfig;
+  limits?: LoopBudgetConfig;
   taskPrompt?: string;
   goalTemplate?: Omit<LoopGoalTemplate, "title">;
   triggers?: LoopTriggerSpec[];

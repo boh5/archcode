@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type {
   HitlAllowedAction,
+  HitlIdentity,
   HitlOwnerType,
   HitlProjection,
   HitlRecord,
@@ -19,8 +20,6 @@ type HitlRouteScope = "project" | "session" | "goal" | "loop";
 type HitlRouteStatus = "pending" | "recent" | "all";
 type ResumeStatus = "idle" | "claimed" | "failed" | "terminal";
 
-type HitlMutationBody = z.infer<typeof HitlMutationBodySchema>;
-
 interface HitlApiProjection extends HitlProjection {
   resumeStatus: ResumeStatus;
 }
@@ -34,17 +33,61 @@ interface HitlMutationResponse {
 
 const HitlListStatusSchema = z.enum(["pending", "recent", "all"]);
 const HitlScopeSchema = z.enum(["project", "session", "goal", "loop"]);
+const HitlOwnerTypeSchema = z.enum(["session", "goal", "loop"]);
 
-const HitlMutationBodySchema = z.strictObject({
-  type: z.enum(["question_answer", "permission_decision", "approval_decision", "review_outcome"]).optional(),
-  answers: z.array(z.string()).optional(),
-  decision: z.enum(["approve_once", "approve_always", "deny", "approved", "denied"]).optional(),
-  outcome: z.enum(["DONE", "NOT_DONE"]).optional(),
-  comment: z.string().optional(),
-  answeredBy: z.string().optional(),
-  decidedBy: z.string().optional(),
-  reviewedBy: z.string().optional(),
+const GoalEvidenceRefSchema = z.strictObject({
+  kind: z.enum(["session", "message", "tool_call", "diff", "test_output", "file", "url", "hitl"]),
+  ref: z.string(),
+  summary: z.string(),
+  sessionId: z.string().optional(),
+  messageId: z.string().optional(),
+  toolCallId: z.string().optional(),
+  path: z.string().optional(),
+  url: z.string().optional(),
+  createdAt: z.string().optional(),
 });
+
+const GoalReviewReceiptSchema = z.strictObject({
+  verdict: z.enum(["DONE", "NOT_DONE"]),
+  summary: z.string(),
+  evidenceRefs: z.array(GoalEvidenceRefSchema),
+  unresolvedItems: z.array(z.string()).optional(),
+  reviewerSessionId: z.string(),
+  decidedAt: z.string(),
+});
+
+const HitlResponseSchema: z.ZodType<HitlResponse> = z.discriminatedUnion("type", [
+  z.strictObject({
+    type: z.literal("question_answer"),
+    answers: z.array(z.string()),
+    comment: z.string().optional(),
+    answeredBy: z.string().optional(),
+  }),
+  z.strictObject({
+    type: z.literal("permission_decision"),
+    decision: z.enum(["approve_once", "approve_always", "deny"]),
+    comment: z.string().optional(),
+    decidedBy: z.string().optional(),
+  }),
+  z.strictObject({
+    type: z.literal("approval_decision"),
+    decision: z.enum(["approved", "denied"]),
+    comment: z.string().optional(),
+    decidedBy: z.string().optional(),
+  }),
+  z.strictObject({
+    type: z.literal("review_outcome"),
+    outcome: z.enum(["DONE", "NOT_DONE"]),
+    comment: z.string().optional(),
+    receipt: GoalReviewReceiptSchema.optional(),
+    reviewedBy: z.string().optional(),
+  }),
+  z.strictObject({
+    type: z.literal("cancel"),
+    reason: z.string(),
+    cancelledBy: z.string().optional(),
+  }),
+]);
 
 const HitlCancelBodySchema = z.strictObject({
   reason: z.string().trim().min(1).optional(),
@@ -72,25 +115,29 @@ export function createHitlRoutes(runtime: AgentRuntime): Hono {
     return c.json({ hitl });
   });
 
-  app.post("/:slug/hitl/:hitlId/respond", async (c) => {
+  app.post("/:slug/hitl/:ownerType/:ownerId/:hitlId/respond", async (c) => {
     const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
-    const hitlId = requiredParam(c.req.param("hitlId"), "hitlId");
-    const body = await readJsonBody(c.req.json(), HitlMutationBodySchema);
+    const identity = hitlIdentityFromParams(
+      project.slug,
+      c.req.param("ownerType"),
+      c.req.param("ownerId"),
+      c.req.param("hitlId"),
+    );
+    const { hitlId } = identity;
+    const response = await readJsonBody(c.req.json(), HitlResponseSchema);
     const context = await runtime.contextResolver.resolve(project.workspaceRoot);
-    const lookup = await context.hitl.lookup(hitlId);
+    const lookup = await context.hitl.lookup(identity);
     if (lookup.status === "missing") throw hitlNotFound(hitlId);
-    if (lookup.status === "ambiguous") throw ambiguousHitl(hitlId);
-    if (lookup.owner.projectSlug !== project.slug) throw hitlNotFound(hitlId);
 
-    const response = responseForSource(lookup.record.source, body);
+    validateResponseForSource(lookup.record.source, response);
     const preflight = nonPendingPreflight(lookup.record, response);
     if (preflight !== undefined) return c.json(toMutationResponse(project, preflight.record), preflight.statusCode);
 
-    const releaseSessionForwarder = await forwardSessionResumeEvents(runtime, project.workspaceRoot, project.slug, lookup.owner, hitlId);
+    const releaseSessionForwarder = await forwardSessionResumeEvents(runtime, project.workspaceRoot, project.slug, identity.owner, hitlId);
     const coordinator = requiredResumeCoordinator(context.hitlResumeCoordinator);
     let result: ResumeCoordinatorResult;
     try {
-      result = await coordinator.respond(hitlId, response);
+      result = await coordinator.respond(identity, response);
     } catch (error) {
       releaseSessionForwarder();
       throw error;
@@ -101,15 +148,19 @@ export function createHitlRoutes(runtime: AgentRuntime): Hono {
     return c.json(toMutationResponse(project, record), statusCode);
   });
 
-  app.post("/:slug/hitl/:hitlId/cancel", async (c) => {
+  app.post("/:slug/hitl/:ownerType/:ownerId/:hitlId/cancel", async (c) => {
     const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
-    const hitlId = requiredParam(c.req.param("hitlId"), "hitlId");
-    const body = await readOptionalJsonBody(c.req.json(), HitlCancelBodySchema);
+    const identity = hitlIdentityFromParams(
+      project.slug,
+      c.req.param("ownerType"),
+      c.req.param("ownerId"),
+      c.req.param("hitlId"),
+    );
+    const { hitlId } = identity;
+    const body = await readOptionalJsonBody(c.req.text(), HitlCancelBodySchema);
     const context = await runtime.contextResolver.resolve(project.workspaceRoot);
-    const lookup = await context.hitl.lookup(hitlId);
+    const lookup = await context.hitl.lookup(identity);
     if (lookup.status === "missing") throw hitlNotFound(hitlId);
-    if (lookup.status === "ambiguous") throw ambiguousHitl(hitlId);
-    if (lookup.owner.projectSlug !== project.slug) throw hitlNotFound(hitlId);
 
     const response: HitlResponse = {
       type: "cancel",
@@ -120,11 +171,11 @@ export function createHitlRoutes(runtime: AgentRuntime): Hono {
     if (preflight !== undefined) return c.json(toMutationResponse(project, preflight.record), preflight.statusCode);
     validateCancelAction(lookup.record);
 
-    const releaseSessionForwarder = await forwardSessionResumeEvents(runtime, project.workspaceRoot, project.slug, lookup.owner, hitlId);
+    const releaseSessionForwarder = await forwardSessionResumeEvents(runtime, project.workspaceRoot, project.slug, identity.owner, hitlId);
     const coordinator = requiredResumeCoordinator(context.hitlResumeCoordinator);
     let result: ResumeCoordinatorResult;
     try {
-      result = await coordinator.cancel(hitlId, response.reason, response.cancelledBy);
+      result = await coordinator.cancel(identity, response.reason, response.cancelledBy);
     } catch (error) {
       releaseSessionForwarder();
       throw error;
@@ -267,75 +318,33 @@ async function assertOwnerExists(
   }
 }
 
-function responseForSource(source: HitlSource, body: HitlMutationBody): HitlResponse {
+function validateResponseForSource(source: HitlSource, response: HitlResponse): void {
+  const expectedType = responseTypeForSource(source);
+  if (response.type !== expectedType) throw invalidResponsePayload(expectedType);
+  if ((source.type === "loop_blocker" || source.type === "loop_retry")
+    && response.type === "approval_decision"
+    && response.decision === "denied") {
+    throw new BadRequestError("deny is not an allowed action for this HITL source");
+  }
+}
+
+function responseTypeForSource(source: HitlSource): Exclude<HitlResponse["type"], "cancel"> {
   switch (source.type) {
     case "ask_user":
     case "goal_question":
     case "loop_question":
-      return questionResponse(body);
+      return "question_answer";
     case "tool_permission":
-      return permissionResponse(body);
+      return "permission_decision";
     case "goal_approval":
     case "goal_budget":
     case "loop_approval":
-      return approvalResponse(body, { allowDenied: true });
     case "loop_blocker":
     case "loop_retry":
-      return approvalResponse(body, { allowDenied: false });
+      return "approval_decision";
     case "goal_review":
-      return reviewResponse(body);
+      return "review_outcome";
   }
-}
-
-function questionResponse(body: HitlMutationBody): HitlResponse {
-  if (body.type !== undefined && body.type !== "question_answer") throw invalidResponsePayload("question_answer");
-  if (body.answers === undefined || body.answers.length === 0) throw new BadRequestError("answers are required for question HITL responses");
-  return {
-    type: "question_answer",
-    answers: body.answers,
-    ...(body.comment === undefined ? {} : { comment: body.comment }),
-    ...(body.answeredBy === undefined ? {} : { answeredBy: body.answeredBy }),
-  };
-}
-
-function permissionResponse(body: HitlMutationBody): HitlResponse {
-  if (body.type !== undefined && body.type !== "permission_decision") throw invalidResponsePayload("permission_decision");
-  if (body.decision !== "approve_once" && body.decision !== "approve_always" && body.decision !== "deny") {
-    throw new BadRequestError("decision must be approve_once, approve_always, or deny for permission HITL responses");
-  }
-  return {
-    type: "permission_decision",
-    decision: body.decision,
-    ...(body.comment === undefined ? {} : { comment: body.comment }),
-    ...(body.decidedBy === undefined ? {} : { decidedBy: body.decidedBy }),
-  };
-}
-
-function approvalResponse(body: HitlMutationBody, options: { allowDenied: boolean }): HitlResponse {
-  if (body.type !== undefined && body.type !== "approval_decision") throw invalidResponsePayload("approval_decision");
-  if (body.decision !== "approved" && body.decision !== "denied") {
-    throw new BadRequestError("decision must be approved or denied for approval HITL responses");
-  }
-  if (!options.allowDenied && body.decision === "denied") throw new BadRequestError("deny is not an allowed action for this HITL source");
-  return {
-    type: "approval_decision",
-    decision: body.decision,
-    ...(body.comment === undefined ? {} : { comment: body.comment }),
-    ...(body.decidedBy === undefined ? {} : { decidedBy: body.decidedBy }),
-  };
-}
-
-function reviewResponse(body: HitlMutationBody): HitlResponse {
-  if (body.type !== undefined && body.type !== "review_outcome") throw invalidResponsePayload("review_outcome");
-  if (body.outcome !== "DONE" && body.outcome !== "NOT_DONE") {
-    throw new BadRequestError("outcome must be DONE or NOT_DONE for review HITL responses");
-  }
-  return {
-    type: "review_outcome",
-    outcome: body.outcome,
-    ...(body.comment === undefined ? {} : { comment: body.comment }),
-    ...(body.reviewedBy === undefined ? {} : { reviewedBy: body.reviewedBy }),
-  };
 }
 
 function validateCancelAction(record: HitlRecord): void {
@@ -359,7 +368,6 @@ function recordFromCoordinatorResult(
   hitlId: string,
 ): HitlRecord {
   if (result.status === "missing") throw hitlNotFound(hitlId);
-  if (result.status === "ambiguous") throw ambiguousHitl(hitlId);
   return result.record;
 }
 
@@ -449,6 +457,24 @@ function requiredParam(value: string | undefined, name: string): string {
   return value;
 }
 
+function hitlIdentityFromParams(
+  projectSlug: string,
+  ownerTypeValue: string | undefined,
+  ownerIdValue: string | undefined,
+  hitlIdValue: string | undefined,
+): HitlIdentity {
+  const ownerType = parseOptionalEnum(ownerTypeValue, HitlOwnerTypeSchema, "ownerType");
+  if (ownerType === undefined) throw new BadRequestError("ownerType is required");
+  return {
+    owner: {
+      projectSlug,
+      ownerType,
+      ownerId: requiredParam(ownerIdValue, "ownerId"),
+    },
+    hitlId: requiredParam(hitlIdValue, "hitlId"),
+  };
+}
+
 async function readJsonBody<Schema extends z.ZodType>(bodyPromise: Promise<unknown>, schema: Schema): Promise<z.infer<Schema>> {
   let body: unknown;
   try {
@@ -462,13 +488,24 @@ async function readJsonBody<Schema extends z.ZodType>(bodyPromise: Promise<unkno
   return result.data;
 }
 
-async function readOptionalJsonBody<Schema extends z.ZodType>(bodyPromise: Promise<unknown>, schema: Schema): Promise<z.infer<Schema>> {
+async function readOptionalJsonBody<Schema extends z.ZodType>(bodyPromise: Promise<string>, schema: Schema): Promise<z.infer<Schema>> {
+  let rawBody: string;
   try {
-    return await readJsonBody(bodyPromise, schema);
-  } catch (error) {
-    if (error instanceof BadRequestError && error.message === "Request body must be valid JSON") return schema.parse({});
-    throw error;
+    rawBody = await bodyPromise;
+  } catch {
+    throw new BadRequestError("Request body must be valid JSON");
   }
+  if (rawBody.trim() === "") return schema.parse({});
+
+  let body: unknown;
+  try {
+    body = JSON.parse(rawBody);
+  } catch {
+    throw new BadRequestError("Request body must be valid JSON");
+  }
+  const result = schema.safeParse(body);
+  if (!result.success) throw new BadRequestError("Request body is invalid", z.treeifyError(result.error));
+  return result.data;
 }
 
 function invalidResponsePayload(expectedType: HitlResponse["type"]): BadRequestError {
@@ -481,10 +518,6 @@ function ownerNotFound(scope: HitlOwnerType, ownerId: string): ServerError {
 
 function hitlNotFound(hitlId: string): ServerError {
   return new ServerError("QUESTION_NOT_FOUND", `HITL request not found: ${hitlId}`, 404);
-}
-
-function ambiguousHitl(hitlId: string): ServerError {
-  return new ServerError("INTERNAL_ERROR", `Ambiguous HITL request id: ${hitlId}`, 500);
 }
 
 function stableJson(value: unknown): string {

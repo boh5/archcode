@@ -42,9 +42,8 @@ export interface SessionHitlPreparedRequest {
 
 export interface SessionHitlCheckpointRecord {
   readonly version: 1;
-  /** Legacy checkpoint records without a phase are interpreted as paused. */
-  readonly phase?: SessionHitlJournalPhase;
-  readonly phaseUpdatedAt?: string;
+  readonly phase: SessionHitlJournalPhase;
+  readonly phaseUpdatedAt: string;
   readonly hitlId: string;
   readonly blockingKey: string;
   readonly source: HitlSource;
@@ -56,7 +55,7 @@ export interface SessionHitlCheckpointRecord {
   readonly displayInput: unknown;
   readonly allowedTools: string[];
   readonly agentSkills: string[];
-  readonly agentName?: string;
+  readonly agentName: string;
   readonly currentDepth?: number;
   readonly origin?: ToolExecutionOrigin;
   readonly toolCalls: SessionHitlToolCallCheckpoint[];
@@ -65,8 +64,8 @@ export interface SessionHitlCheckpointRecord {
   readonly blockedToolIndex: number;
   readonly createdAt: string;
   readonly kind: "ask_user" | "permission";
-  /** Present on journal-first records so a cold repair can create the owner record. */
-  readonly request?: SessionHitlPreparedRequest;
+  /** Durable request data lets cold repair recreate the owner record. */
+  readonly request: SessionHitlPreparedRequest;
   readonly permission?: {
     readonly description: string;
     readonly reason?: string;
@@ -133,10 +132,10 @@ const PreparedRequestSchema: z.ZodType<SessionHitlPreparedRequest> = z.strictObj
 const HitlSourceSchema: z.ZodType<HitlSource> = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("ask_user"), sessionId: z.string(), toolCallId: z.string().optional() }),
   z.strictObject({ type: z.literal("tool_permission"), sessionId: z.string(), toolCallId: z.string(), toolName: z.string() }),
-  z.strictObject({ type: z.literal("goal_approval"), goalId: z.string(), approvalPoint: z.string().optional() }),
-  z.strictObject({ type: z.literal("goal_review"), goalId: z.string() }),
-  z.strictObject({ type: z.literal("goal_budget"), goalId: z.string(), approvalPoint: z.string().optional() }),
-  z.strictObject({ type: z.literal("goal_question"), goalId: z.string(), questionKey: z.string() }),
+  z.strictObject({ type: z.literal("goal_approval"), goalId: z.string(), approvalPoint: z.string().optional(), resumeStatus: z.enum(["running", "reviewing"]) }),
+  z.strictObject({ type: z.literal("goal_review"), goalId: z.string(), resumeStatus: z.literal("reviewing") }),
+  z.strictObject({ type: z.literal("goal_budget"), goalId: z.string(), approvalPoint: z.string().optional(), resumeStatus: z.enum(["running", "reviewing"]) }),
+  z.strictObject({ type: z.literal("goal_question"), goalId: z.string(), questionKey: z.string(), resumeStatus: z.enum(["running", "reviewing"]) }),
   z.strictObject({ type: z.literal("loop_approval"), loopId: z.string(), approvalPoint: z.string() }),
   z.strictObject({ type: z.literal("loop_blocker"), loopId: z.string(), runId: z.string().optional(), reason: z.string() }),
   z.strictObject({ type: z.literal("loop_retry"), loopId: z.string(), runId: z.string(), attempt: z.number().int().nonnegative() }),
@@ -159,8 +158,8 @@ const CompletedToolResultSchema: z.ZodType<SessionHitlCompletedToolResult> = z.s
 
 const CheckpointRecordSchema: z.ZodType<SessionHitlCheckpointRecord> = z.strictObject({
   version: z.literal(1),
-  phase: SessionHitlJournalPhaseSchema.optional(),
-  phaseUpdatedAt: z.string().optional(),
+  phase: SessionHitlJournalPhaseSchema,
+  phaseUpdatedAt: z.string(),
   hitlId: z.string().trim().min(1),
   blockingKey: z.string().trim().min(1),
   source: HitlSourceSchema,
@@ -172,7 +171,7 @@ const CheckpointRecordSchema: z.ZodType<SessionHitlCheckpointRecord> = z.strictO
   displayInput: z.unknown(),
   allowedTools: z.array(z.string()),
   agentSkills: z.array(z.string()),
-  agentName: z.string().optional(),
+  agentName: z.string().trim().min(1),
   currentDepth: z.number().optional(),
   origin: ToolExecutionOriginSchema.optional(),
   toolCalls: z.array(ToolCallCheckpointSchema),
@@ -181,7 +180,7 @@ const CheckpointRecordSchema: z.ZodType<SessionHitlCheckpointRecord> = z.strictO
   blockedToolIndex: z.number().int().nonnegative(),
   createdAt: z.string(),
   kind: z.enum(["ask_user", "permission"]),
-  request: PreparedRequestSchema.optional(),
+  request: PreparedRequestSchema,
   permission: z.strictObject({
     description: z.string(),
     reason: z.string().optional(),
@@ -189,12 +188,64 @@ const CheckpointRecordSchema: z.ZodType<SessionHitlCheckpointRecord> = z.strictO
     decisionDisplay: z.string().optional(),
     ruleId: z.string().optional(),
   }).optional(),
+}).superRefine((record, ctx) => {
+  const owner = record.request.owner;
+  if (owner.ownerType !== "session") {
+    ctx.addIssue({ code: "custom", path: ["request", "owner", "ownerType"], message: "Session HITL owner must be a Session" });
+  }
+
+  if (record.kind === "ask_user") {
+    if (record.source.type !== "ask_user") {
+      ctx.addIssue({ code: "custom", path: ["source", "type"], message: "ask_user checkpoints require an ask_user source" });
+    } else {
+      if (record.source.sessionId !== owner.ownerId) {
+        ctx.addIssue({ code: "custom", path: ["source", "sessionId"], message: "Checkpoint source must match its Session owner" });
+      }
+      if (record.source.toolCallId !== undefined && record.source.toolCallId !== record.toolCallId) {
+        ctx.addIssue({ code: "custom", path: ["source", "toolCallId"], message: "Checkpoint source tool call must match the blocked tool call" });
+      }
+    }
+    if (record.permission !== undefined) {
+      ctx.addIssue({ code: "custom", path: ["permission"], message: "ask_user checkpoints cannot contain permission metadata" });
+    }
+    return;
+  }
+
+  if (record.source.type !== "tool_permission") {
+    ctx.addIssue({ code: "custom", path: ["source", "type"], message: "permission checkpoints require a tool_permission source" });
+  } else {
+    if (record.source.sessionId !== owner.ownerId) {
+      ctx.addIssue({ code: "custom", path: ["source", "sessionId"], message: "Checkpoint source must match its Session owner" });
+    }
+    if (record.source.toolCallId !== record.toolCallId) {
+      ctx.addIssue({ code: "custom", path: ["source", "toolCallId"], message: "Checkpoint source tool call must match the blocked tool call" });
+    }
+    if (record.source.toolName !== record.toolName) {
+      ctx.addIssue({ code: "custom", path: ["source", "toolName"], message: "Checkpoint source tool name must match the blocked tool" });
+    }
+  }
+  if (record.permission === undefined) {
+    ctx.addIssue({ code: "custom", path: ["permission"], message: "permission checkpoints require permission metadata" });
+  }
 });
 
 const CheckpointFileSchema: z.ZodType<SessionHitlCheckpointFile> = z.strictObject({
   version: z.literal(1),
   checkpoints: z.array(CheckpointRecordSchema),
   updatedAt: z.string(),
+}).superRefine((file, ctx) => {
+  const hitlIds = new Set<string>();
+  const blockingKeys = new Set<string>();
+  file.checkpoints.forEach((checkpoint, index) => {
+    if (hitlIds.has(checkpoint.hitlId)) {
+      ctx.addIssue({ code: "custom", path: ["checkpoints", index, "hitlId"], message: `Duplicate Session HITL id: ${checkpoint.hitlId}` });
+    }
+    hitlIds.add(checkpoint.hitlId);
+    if (blockingKeys.has(checkpoint.blockingKey)) {
+      ctx.addIssue({ code: "custom", path: ["checkpoints", index, "blockingKey"], message: `Duplicate Session HITL blocking key: ${checkpoint.blockingKey}` });
+    }
+    blockingKeys.add(checkpoint.blockingKey);
+  });
 });
 
 export function getSessionHitlCheckpointPath(workspaceRoot: string, sessionId: string): string {
@@ -212,7 +263,7 @@ async function readSessionHitlCheckpointFileUnlocked(workspaceRoot: string, sess
   const path = getSessionHitlCheckpointPath(workspaceRoot, sessionId);
   const file = Bun.file(path);
   if (!(await file.exists())) return emptyCheckpointFile();
-  return CheckpointFileSchema.parse(JSON.parse(await file.text()));
+  return parseCheckpointFile(JSON.parse(await file.text()), sessionId);
 }
 
 export async function writeSessionHitlCheckpoint(record: SessionHitlCheckpointRecord, workspaceRoot: string, sessionId: string): Promise<void> {
@@ -248,7 +299,7 @@ export async function deleteSessionHitlCheckpoint(workspaceRoot: string, session
 }
 
 export function sessionHitlJournalPhase(record: SessionHitlCheckpointRecord): SessionHitlJournalPhase {
-  return record.phase ?? "paused";
+  return record.phase;
 }
 
 export class SessionHitlJournalPhaseError extends Error {
@@ -285,7 +336,7 @@ export async function transitionSessionHitlJournalPhase(
     });
     const checkpoints = [...current.checkpoints];
     checkpoints[index] = updated;
-    await writeCheckpointFile({ version: 1, checkpoints, updatedAt: updated.phaseUpdatedAt! }, workspaceRoot, sessionId);
+    await writeCheckpointFile({ version: 1, checkpoints, updatedAt: updated.phaseUpdatedAt }, workspaceRoot, sessionId);
     return updated;
   });
 }
@@ -322,8 +373,18 @@ async function writeCheckpointFile(file: SessionHitlCheckpointFile, workspaceRoo
   await mkdir(dir, { recursive: true });
   const finalPath = getSessionHitlCheckpointPath(workspaceRoot, sessionId);
   const tmpPath = join(dir, `hitl-checkpoints.${crypto.randomUUID()}.json.tmp`);
-  await Bun.write(tmpPath, `${JSON.stringify(CheckpointFileSchema.parse(file), null, 2)}\n`);
+  await Bun.write(tmpPath, `${JSON.stringify(parseCheckpointFile(file, sessionId), null, 2)}\n`);
   await rename(tmpPath, finalPath);
+}
+
+function parseCheckpointFile(file: unknown, sessionId: string): SessionHitlCheckpointFile {
+  const parsed = CheckpointFileSchema.parse(file);
+  parsed.checkpoints.forEach((checkpoint, index) => {
+    if (checkpoint.request.owner.ownerId !== sessionId) {
+      throw new Error(`Session HITL checkpoint ${index} owner does not match Session ${sessionId}`);
+    }
+  });
+  return parsed;
 }
 
 function emptyCheckpointFile(): SessionHitlCheckpointFile {

@@ -47,7 +47,7 @@ function makeModelInfo(): ModelInfo {
 }
 
 function makeTaskContext(overrides: Partial<BackgroundTaskContext> = {}): BackgroundTaskContext {
-  return { store: storeManager.create(crypto.randomUUID()),
+  return { store: storeManager.create(crypto.randomUUID(), tmpDir),
   modelInfo: makeModelInfo(),
   logger: silentLogger,
   workspaceRoot: "/tmp", ...overrides,  };

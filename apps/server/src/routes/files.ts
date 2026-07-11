@@ -92,11 +92,15 @@ async function resolveDiffCwd(
     throw error;
   }
 
-  const persistedCwd = session.cwd ?? projectRoot;
+  const persistedCwd = session.cwd;
   if (resolve(persistedCwd) === resolve(projectRoot)) return projectRoot;
 
   try {
-    return (await resolveValidSessionCwd(projectRoot, persistedCwd))?.path ?? projectRoot;
+    const worktree = await resolveValidSessionCwd(projectRoot, persistedCwd);
+    if (worktree === undefined) {
+      throw new InvalidSessionCwdError(persistedCwd, "must resolve to a linked worktree");
+    }
+    return worktree.path;
   } catch (error) {
     if (error instanceof InvalidSessionCwdError) {
       throw new ServerError(

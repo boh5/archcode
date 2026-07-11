@@ -1,5 +1,4 @@
 import type {
-  GoalBlocker,
   GoalBudgetSummary,
   GoalEvidenceRef,
   GoalReviewVerdict,
@@ -11,6 +10,7 @@ import type {
   GoalCreateInput,
   GoalDraftPatch,
   GoalFinalizeReviewInput,
+  GoalManualBlockerInput,
   GoalReviewerAuthorization,
   GoalStateManager,
 } from "./state";
@@ -48,11 +48,10 @@ export interface GoalRunnerRetryInput {
 
 export interface GoalRunnerOptions {
   readonly goalStateManager: GoalStateManager;
-  readonly createSession?: (options?: GoalRunnerCreateSessionOptions) => Promise<string>;
-  readonly getSessionCwd?: (sessionId: string) => Promise<string | undefined>;
-  readonly isSessionActive?: (sessionId: string) => Promise<boolean>;
-  readonly workspaceRoot?: string;
-  readonly hitlService?: unknown;
+  readonly createSession: (options?: GoalRunnerCreateSessionOptions) => Promise<string>;
+  readonly getSessionCwd: (sessionId: string) => Promise<string | undefined>;
+  readonly isSessionActive: (sessionId: string) => Promise<boolean>;
+  readonly workspaceRoot: string;
   readonly worktreeService?: Pick<WorktreeService, "create" | "findManaged" | "validateManagedClaim" | "remove">;
 }
 
@@ -77,25 +76,23 @@ export class GoalRunnerError extends Error {
 
 export class GoalRunner {
   readonly #goalStateManager: GoalStateManager;
-  readonly #createSession?: (options?: GoalRunnerCreateSessionOptions) => Promise<string>;
-  readonly #getSessionCwd?: (sessionId: string) => Promise<string | undefined>;
-  readonly #isSessionActive?: (sessionId: string) => Promise<boolean>;
-  readonly #workspaceRoot?: string;
-  readonly #workspaceService?: GoalWorkspaceService;
+  readonly #createSession: (options?: GoalRunnerCreateSessionOptions) => Promise<string>;
+  readonly #getSessionCwd: (sessionId: string) => Promise<string | undefined>;
+  readonly #isSessionActive: (sessionId: string) => Promise<boolean>;
+  readonly #workspaceRoot: string;
+  readonly #workspaceService: GoalWorkspaceService;
 
   constructor(options: GoalRunnerOptions) {
     this.#goalStateManager = options.goalStateManager;
     this.#createSession = options.createSession;
     this.#getSessionCwd = options.getSessionCwd;
     this.#isSessionActive = options.isSessionActive;
-    if (options.workspaceRoot !== undefined) {
-      this.#workspaceRoot = resolve(options.workspaceRoot);
-      this.#workspaceService = new GoalWorkspaceService({
-        canonicalRoot: this.#workspaceRoot,
-        goalStateManager: options.goalStateManager,
-        ...(options.worktreeService === undefined ? {} : { worktreeService: options.worktreeService }),
-      });
-    }
+    this.#workspaceRoot = resolve(options.workspaceRoot);
+    this.#workspaceService = new GoalWorkspaceService({
+      canonicalRoot: this.#workspaceRoot,
+      goalStateManager: options.goalStateManager,
+      ...(options.worktreeService === undefined ? {} : { worktreeService: options.worktreeService }),
+    });
   }
 
   async create(input: GoalCreateInput): Promise<GoalState> {
@@ -131,7 +128,7 @@ export class GoalRunner {
     });
   }
 
-  async block(goalId: string, blocker: Omit<GoalBlocker, "createdAt"> & { readonly createdAt?: string }): Promise<GoalState> {
+  async block(goalId: string, blocker: GoalManualBlockerInput): Promise<GoalState> {
     return withGoalExecutionClaimLock(goalId, () => this.#goalStateManager.block(goalId, blocker));
   }
 
@@ -161,7 +158,6 @@ export class GoalRunner {
         if (
           runningSessionId === undefined
           || (input.mainSessionId !== undefined && input.mainSessionId !== runningSessionId)
-          || this.#isSessionActive === undefined
           || !(await this.#isSessionActive(runningSessionId))
         ) {
           throw new GoalRunnerError(goalId, `Running Goal ${goalId} can retry only through its active main Session`);
@@ -197,10 +193,6 @@ export class GoalRunner {
     return withGoalExecutionClaimLock(goalId, () => this.#goalStateManager.updateBudgetSummary(goalId, budget));
   }
 
-  async recordHitlRef(goalId: string, input: { readonly hitlId: string; readonly approvalRef?: string }): Promise<GoalState> {
-    return withGoalExecutionClaimLock(goalId, () => this.#goalStateManager.recordHitlRef(goalId, input));
-  }
-
   private async createMainSession(
     goalId: string,
     input: {
@@ -209,7 +201,6 @@ export class GoalRunner {
       readonly executionScope?: GoalRunnerLoopExecutionScope;
     },
   ): Promise<string> {
-    if (this.#createSession === undefined) throw new GoalRunnerError(goalId, "Goal runner cannot create a main session");
     return this.#createSession({
       goalId,
       ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
@@ -222,7 +213,7 @@ export class GoalRunner {
   private async resolveExecutionCwd(
     goal: GoalState,
     executionScope?: GoalRunnerLoopExecutionScope,
-  ): Promise<string | undefined> {
+  ): Promise<string> {
     if (executionScope !== undefined) {
       if (goal.useWorktree === true) {
         throw new GoalRunnerError(goal.id, `Goal ${goal.id} cannot combine Goal and Loop worktree ownership`);
@@ -233,22 +224,19 @@ export class GoalRunner {
       if (!isAbsolute(executionScope.cwd)) {
         throw new GoalRunnerError(goal.id, "Loop execution scope cwd must be an absolute path");
       }
-      if (this.#workspaceRoot !== undefined) {
-        try {
-          await assertValidSessionCwd(this.#workspaceRoot, executionScope.cwd);
-        } catch (error) {
-          throw new GoalRunnerError(
-            goal.id,
-            `Loop execution scope cwd is invalid: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
+      try {
+        await assertValidSessionCwd(this.#workspaceRoot, executionScope.cwd);
+      } catch (error) {
+        throw new GoalRunnerError(
+          goal.id,
+          `Loop execution scope cwd is invalid: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
       return resolve(executionScope.cwd);
     }
     if (goal.loopId !== undefined) {
       throw new GoalRunnerError(goal.id, `Loop-owned Goal ${goal.id} requires an explicit Loop execution scope`);
     }
-    if (this.#workspaceService === undefined) return undefined;
     const prepared = await this.#workspaceService.prepare(goal.id);
     return prepared.cwd;
   }
@@ -256,12 +244,8 @@ export class GoalRunner {
   private async assertSessionCwd(
     goalId: string,
     sessionId: string,
-    expectedCwd: string | undefined,
+    expectedCwd: string,
   ): Promise<void> {
-    if (expectedCwd === undefined) return;
-    if (this.#getSessionCwd === undefined) {
-      throw new GoalRunnerError(goalId, `Cannot verify Session ${sessionId} cwd for this Goal`);
-    }
     const actualCwd = await this.#getSessionCwd(sessionId);
     if (actualCwd !== expectedCwd) {
       throw new GoalRunnerError(goalId, `Session ${sessionId} cwd ${actualCwd ?? "unknown"} does not match Goal cwd ${expectedCwd}`);

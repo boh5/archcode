@@ -4,8 +4,10 @@ import { join } from "node:path";
 import type { LoopConfig } from "@archcode/protocol";
 
 import { ProjectContextResolver } from "../projects/context-resolver";
+import { silentLogger } from "../logger";
+import { SessionStoreManager } from "../store/session-store-manager";
 import type { SessionRole } from "../store/types";
-import { createTestProjectContext } from "../tools/test-project-context";
+import { createTestProjectContext, createTestProjectContextResolverOptions } from "../tools/test-project-context";
 import { WorktreeService } from "../worktrees";
 import { LoopSessionExecutionClaimResolver } from "../loops/session-execution-claim";
 import {
@@ -20,7 +22,8 @@ const LOOP_CONFIG: LoopConfig = {
   title: null,
   schedule: { kind: "manual" },
   approvalPolicy: "interactive",
-  limits: { maxIterationsPerRun: 8 },
+  limits: { maxIterationsPerRun: 8, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+  useWorktree: false,
   taskPrompt: "Inspect the project",
 };
 const ALLOW_LOOP_CLAIMS = { resolve: async () => ({ outcome: "allow" as const }) };
@@ -36,7 +39,9 @@ afterAll(async () => {
 
 describe("SessionExecutionScopeValidator", () => {
   test("leaves an ordinary Session unaffected without resolving project state", async () => {
+    const sessions = new SessionStoreManager({ logger: silentLogger });
     const resolver = new ProjectContextResolver({
+      ...createTestProjectContextResolverOptions(sessions),
       projectInfoFactory: () => {
         throw new Error("ordinary Session must not resolve project execution owners");
       },
@@ -495,10 +500,14 @@ describe("SessionExecutionScopeValidator", () => {
   test("allows blocked Goal HITL replay but not a generic message", async () => {
     const fixture = await createFixture("goal-blocked-hitl");
     const goal = await createRunningGoal(fixture, { mainSessionId: "goal-main" });
-    await fixture.context.goalState.block(goal.id, {
-      kind: "question",
-      summary: "Need an answer",
-      hitlId: "hitl-1",
+    await fixture.context.goalState.attachHitlBlocker(goal.id, {
+      blocker: {
+        kind: "question",
+        summary: "Need an answer",
+        hitlId: "hitl-1",
+        resumeStatus: "running",
+      },
+      approvalRef: "hitl-1",
     });
     const subject = sessionSubject({
       sessionId: "goal-main",
@@ -527,7 +536,9 @@ async function createFixture(name: string) {
   const projectRoot = join(TMP_ROOT, name, "project");
   await mkdir(projectRoot, { recursive: true });
   const context = createTestProjectContext(projectRoot);
-  const resolver = new ProjectContextResolver();
+  const resolver = new ProjectContextResolver(
+    createTestProjectContextResolverOptions(new SessionStoreManager({ logger: silentLogger })),
+  );
   resolver.alias(projectRoot, context);
   return {
     projectRoot,

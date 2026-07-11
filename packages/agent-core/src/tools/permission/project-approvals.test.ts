@@ -5,7 +5,9 @@ import { silentLogger, type Logger } from "../../logger";
 import type { PermissionApprovalScope } from "./policy-types";
 import {
   PermissionApprovalFileSchema,
+  ProjectApprovalLoadError,
   ProjectApprovalManager,
+  ProjectApprovalPersistError,
 } from "./project-approvals";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "project-approvals");
@@ -54,7 +56,7 @@ describe("ProjectApprovalManager", () => {
     expect(existsSync(PERMISSIONS_PATH)).toBe(false);
   });
 
-  test("malformed permissions file loads empty approvals and logs a warning", async () => {
+  test("malformed permissions file fails closed with a typed load error", async () => {
     mkdirSync(join(WORKSPACE, ".archcode"), { recursive: true });
     writeFileSync(PERMISSIONS_PATH, "{ malformed json");
     const logger: Logger = {
@@ -66,11 +68,48 @@ describe("ProjectApprovalManager", () => {
     };
     const manager = makeManager(logger);
 
-    await manager.load(WORKSPACE);
+    await expect(manager.load(WORKSPACE)).rejects.toBeInstanceOf(ProjectApprovalLoadError);
 
     expect(manager.listApprovals()).toEqual([]);
     expect(manager.hasApproval(FILE_SCOPE)).toBe(false);
-    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  test("legacy permissions file version fails closed instead of resetting authority", async () => {
+    mkdirSync(join(WORKSPACE, ".archcode"), { recursive: true });
+    writeFileSync(PERMISSIONS_PATH, JSON.stringify({ version: 0, approvals: [] }));
+    const manager = makeManager();
+
+    await expect(manager.load(WORKSPACE)).rejects.toMatchObject({
+      name: "ProjectApprovalLoadError",
+      path: PERMISSIONS_PATH,
+    });
+
+    expect(manager.listApprovals()).toEqual([]);
+    expect(manager.hasApproval(FILE_SCOPE)).toBe(false);
+  });
+
+  test("persist failure propagates, does not grant in memory, and the write queue recovers", async () => {
+    const manager = makeManager();
+    await manager.load(WORKSPACE);
+    writeFileSync(join(WORKSPACE, ".archcode"), "not a directory");
+
+    await expect(manager.addApproval(FILE_SCOPE, {
+      display: "Write src/main.ts",
+      reason: "First write must fail",
+    })).rejects.toBeInstanceOf(ProjectApprovalPersistError);
+
+    expect(manager.hasApproval(FILE_SCOPE)).toBe(false);
+    expect(manager.listApprovals()).toEqual([]);
+
+    rmSync(join(WORKSPACE, ".archcode"), { force: true });
+    const approval = await manager.addApproval(FILE_SCOPE, {
+      display: "Write src/main.ts",
+      reason: "Retry after storage recovery",
+    });
+
+    expect(manager.hasApproval(FILE_SCOPE)).toBe(true);
+    expect(PermissionApprovalFileSchema.parse(readPermissionFile()).approvals).toEqual([approval]);
   });
 
   test("writes deterministic strict JSON and reloads matching behavior", async () => {

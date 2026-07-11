@@ -56,9 +56,8 @@ const GoalManageBlockInputSchema = z.strictObject({
   goalId: GoalUuidSchema.describe("Goal UUID to block."),
   kind: z.enum(["approval", "question", "budget", "permission", "tool_error"]) satisfies z.ZodType<GoalBlockerKind>,
   summary: GoalReceiptSummarySchema.describe("Short blocker summary."),
-  hitlId: GoalTextSchema.optional(),
   source: GoalTextSchema.optional(),
-  resumeStatus: z.enum(["running", "reviewing"]).optional(),
+  resumeStatus: z.enum(["running", "reviewing"]),
 });
 
 const GoalManageResumeInputSchema = z.strictObject({
@@ -127,9 +126,8 @@ interface SimplifiedGoalStateManager {
   block(goalId: string, blocker: {
     kind: GoalBlockerKind;
     summary: string;
-    hitlId?: string;
     source?: string;
-    resumeStatus?: "running" | "reviewing";
+    resumeStatus: "running" | "reviewing";
   }): Promise<GoalState>;
   clearBlocker(goalId: string, hitlId?: string): Promise<GoalState>;
   beginReview(goalId: string): Promise<GoalState>;
@@ -185,9 +183,8 @@ export const goalManageTool: AnyToolDescriptor = defineTool({
             manager.block(input.goalId, {
               kind: input.kind,
               summary: input.summary,
-              ...(input.hitlId === undefined ? {} : { hitlId: input.hitlId }),
               ...(input.source === undefined ? {} : { source: input.source }),
-              ...(input.resumeStatus === undefined ? {} : { resumeStatus: input.resumeStatus }),
+              resumeStatus: input.resumeStatus,
             })
           )));
         }

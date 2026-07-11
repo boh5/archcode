@@ -6,6 +6,8 @@ import type {
   ApiCommandResult,
   CreateLoopPayload,
   GoalState,
+  HitlIdentity,
+  HitlResponse,
   LoopKillState,
   LoopRunReport,
   LoopState,
@@ -212,20 +214,12 @@ export function useRespondHitl() {
 
   return useMutation({
     mutationFn: async ({
-      projectSlug,
-      hitlId,
+      identity,
       body,
     }: {
-      projectSlug: string;
-      hitlId: string;
-      body: {
-        decision?: string;
-        answers?: unknown;
-        outcome?: "DONE" | "NOT_DONE";
-        comment?: string;
-        data?: Record<string, unknown>;
-      };
-    }) => apiFetch<{ ok: boolean; hitlId: string }>(`/api/projects/${encodeURIComponent(projectSlug)}/hitl/${encodeURIComponent(hitlId)}/respond`, {
+      identity: HitlIdentity;
+      body: Exclude<HitlResponse, { type: "cancel" }>;
+    }) => apiFetch<{ ok: boolean; hitlId: string }>(hitlMutationUrl(identity, "respond"), {
       method: "POST",
       body,
     }),
@@ -240,8 +234,8 @@ export function useCancelHitl() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ projectSlug, hitlId, reason }: { projectSlug: string; hitlId: string; reason?: string }) =>
-      apiFetch<{ ok: boolean; hitlId: string }>(`/api/projects/${encodeURIComponent(projectSlug)}/hitl/${encodeURIComponent(hitlId)}/cancel`, {
+    mutationFn: async ({ identity, reason }: { identity: HitlIdentity; reason?: string }) =>
+      apiFetch<{ ok: boolean; hitlId: string }>(hitlMutationUrl(identity, "cancel"), {
         method: "POST",
         body: reason ? { reason } : {},
       }),
@@ -250,6 +244,11 @@ export function useCancelHitl() {
       await queryClient.invalidateQueries({ queryKey: ["projects"], exact: false });
     },
   });
+}
+
+function hitlMutationUrl(identity: HitlIdentity, action: "respond" | "cancel"): string {
+  const { owner, hitlId } = identity;
+  return `/api/projects/${encodeURIComponent(owner.projectSlug)}/hitl/${owner.ownerType}/${encodeURIComponent(owner.ownerId)}/${encodeURIComponent(hitlId)}/${action}`;
 }
 
 /** Invalidate all HITL query keys for a project slug (project + all owner scopes). */
@@ -346,14 +345,16 @@ export function useCreateLoop() {
 }
 
 export function buildCreateLoopRequestBody(payload: CreateLoopPayload): Record<string, unknown> {
-  const body: Record<string, unknown> = { templateId: payload.templateId };
-  if (payload.schedule) body.schedule = payload.schedule;
-  if (payload.approvalPolicy) body.approvalPolicy = payload.approvalPolicy;
-  if (payload.budget) body.limits = payload.budget;
+  const body: Record<string, unknown> = {
+    templateId: payload.templateId,
+    schedule: payload.schedule,
+    approvalPolicy: payload.approvalPolicy,
+    limits: payload.limits,
+    useWorktree: payload.useWorktree,
+  };
   if (payload.taskPrompt) body.taskPrompt = payload.taskPrompt;
   if (payload.goalTemplate) body.goalTemplate = payload.goalTemplate;
   if (payload.triggers && payload.triggers.length > 0) body.triggers = payload.triggers;
-  if (payload.useWorktree === true) body.useWorktree = true;
   return body;
 }
 
@@ -387,7 +388,7 @@ export function buildUpdateLoopRequestBody(payload: UpdateLoopPayload): Record<s
   if (payload.templateId !== undefined) body.templateId = payload.templateId;
   if (payload.schedule !== undefined) body.schedule = payload.schedule;
   if (payload.approvalPolicy !== undefined) body.approvalPolicy = payload.approvalPolicy;
-  if (payload.budget !== undefined) body.limits = payload.budget;
+  if (payload.limits !== undefined) body.limits = payload.limits;
   if (payload.taskPrompt !== undefined) body.taskPrompt = payload.taskPrompt;
   if (payload.goalTemplate !== undefined) body.goalTemplate = payload.goalTemplate;
   if (payload.triggers !== undefined) body.triggers = payload.triggers;

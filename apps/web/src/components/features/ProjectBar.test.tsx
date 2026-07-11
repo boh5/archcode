@@ -61,6 +61,7 @@ const project: Project = {
   slug: "demo-project",
   name: "Demo Project",
   workspaceRoot: "/workspace/demo-project",
+  addedAt: "2026-01-01T00:00:00.000Z",
 };
 
 const navigate = mock((_path: string) => {});

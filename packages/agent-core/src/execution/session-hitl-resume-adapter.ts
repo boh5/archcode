@@ -54,8 +54,8 @@ export interface SessionHitlResumeAdapterOptions {
   readonly toolRegistry: ToolRegistry;
   readonly projectContextResolver: ProjectContextResolver;
   readonly executionScopeValidator: Pick<SessionExecutionScopeValidator, "validate">;
-  readonly skillService?: SkillService;
-  readonly getAgent?: (workspaceRoot: string, sessionId: string) => Promise<Agent>;
+  readonly skillService: SkillService;
+  readonly getAgent: (workspaceRoot: string, sessionId: string) => Promise<Agent>;
   readonly startChildExecution?: (workspaceRoot: string, request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
   readonly cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
   readonly resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
@@ -320,13 +320,11 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
     sessionId: string,
     resumeLease: SessionHitlResumeLease,
   ): Promise<void> {
-    if (this.options.getAgent !== undefined) {
-      const agent = await this.options.getAgent(this.options.workspaceRoot, sessionId);
-      await agent.run("", {
-        abort: resumeLease.abortSignal,
-        ...(checkpoint.origin === undefined ? {} : { origin: checkpoint.origin }),
-      });
-    }
+    const agent = await this.options.getAgent(this.options.workspaceRoot, sessionId);
+    await agent.run("", {
+      abort: resumeLease.abortSignal,
+      ...(checkpoint.origin === undefined ? {} : { origin: checkpoint.origin }),
+    });
   }
 
   private async resumeBlockedTool(
@@ -381,11 +379,11 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
       startedAt: Date.now(),
       allowedTools: new Set(checkpoint.allowedTools),
       agentSkills: checkpoint.agentSkills,
-      ...(this.options.skillService === undefined ? {} : { skillService: this.options.skillService }),
+      skillService: this.options.skillService,
       projectContext,
       cwd: store.getState().cwd,
       storeManager: this.options.storeManager,
-      ...(checkpoint.agentName === undefined ? {} : { agentName: checkpoint.agentName }),
+      agentName: checkpoint.agentName,
       ...(checkpoint.currentDepth === undefined ? {} : { currentDepth: checkpoint.currentDepth }),
       ...(checkpoint.origin === undefined ? {} : { origin: checkpoint.origin }),
       ...(response === undefined ? {} : { confirmPermission: async () => permissionDecisionFromResponse(response) }),

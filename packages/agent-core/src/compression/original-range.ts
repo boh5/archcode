@@ -1,7 +1,6 @@
 import type { CompressionBlockRef } from "@archcode/protocol";
 import type { SessionFile } from "../store/helpers";
 import type { StoredMessage, StoredPart, ToolPart } from "../store/types";
-import { createEmptyCompressionState } from "./state";
 import type { BlockRef, CompressionBlock, CompressionRange, CompressionStrategy, CompressionTrigger, MessageRef } from "./types";
 
 const LARGE_TOOL_OUTPUT_THRESHOLD = 8_000;
@@ -54,7 +53,7 @@ export interface CompressionOriginalRangeNotFound {
 export interface CompressionOriginalRangeUnsupported {
   readonly ok: false;
   readonly code: "unsupported";
-  readonly reason: "legacy_compact_without_hybrid_coverage" | "missing_hybrid_coverage";
+  readonly reason: "missing_hybrid_coverage";
   readonly blockRef: string;
 }
 
@@ -67,13 +66,10 @@ export function resolveCompressionOriginalRange(
   session: SessionFile,
   blockRef: string,
 ): CompressionOriginalRangeResult {
-  const compression = session.compression ?? createEmptyCompressionState();
+  const compression = session.compression;
   const block = isBlockRef(blockRef) ? compression.blocksByRef[blockRef] : undefined;
 
   if (block === undefined) {
-    if (hasLegacyCompaction(session.messages)) {
-      return { ok: false, code: "unsupported", reason: "legacy_compact_without_hybrid_coverage", blockRef };
-    }
     return { ok: false, code: "not_found", reason: "compression_block_not_found", blockRef };
   }
 
@@ -165,10 +161,6 @@ function persistedOutputRef(sessionId: string, toolName: string, toolCallId: str
 
 function sanitizeRefSegment(value: string): string {
   return value.replace(/[^a-zA-Z0-9_-]/g, "_");
-}
-
-function hasLegacyCompaction(messages: readonly StoredMessage[]): boolean {
-  return messages.some((message) => message.parts.some((part) => part.type === "compaction"));
 }
 
 function isBlockRef(value: string): value is CompressionBlockRef & BlockRef {

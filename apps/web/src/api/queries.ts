@@ -67,7 +67,7 @@ export function projectsQueryOptions() {
     queryKey: queryKeys.projects,
     queryFn: async () => {
       const response = await apiFetch<{ projects: Project[] }>("/api/projects");
-      return response.projects.map(normalizeProject);
+      return response.projects;
     },
   });
 }
@@ -79,7 +79,7 @@ export function sessionsQueryOptions(slug: string) {
       const response = await apiFetch<{ sessions: SessionSummary[] }>(
         `/api/projects/${encodeURIComponent(slug)}/sessions`,
       );
-      return response.sessions.map(normalizeSessionSummary);
+      return response.sessions;
     },
     enabled: slug.length > 0,
   });
@@ -89,10 +89,9 @@ export function sessionQueryOptions(slug: string, sessionId: string) {
   return queryOptions({
     queryKey: queryKeys.session(slug, sessionId),
     queryFn: async () => {
-      const response = await apiFetch<SessionResponse>(
+      return await apiFetch<Session>(
         `/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(sessionId)}`,
       );
-      return normalizeSession(response);
     },
     enabled: slug.length > 0 && sessionId.length > 0,
   });
@@ -102,10 +101,9 @@ export function focusedSessionQueryOptions(slug: string, focusSessionId: string 
   return queryOptions({
     queryKey: queryKeys.focusedSession(slug, focusSessionId ?? ""),
     queryFn: async () => {
-      const response = await apiFetch<SessionResponse>(
+      return await apiFetch<Session>(
         `/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(focusSessionId!)}`,
       );
-      return normalizeSession(response);
     },
     enabled: slug.length > 0 && focusSessionId !== null && focusSessionId.length > 0,
   });
@@ -201,10 +199,13 @@ export function diffQueryOptions(slug: string, sessionId?: string) {
     queryKey: queryKeys.diff(slug, scopedSessionId),
     queryFn: async () => {
       const query = scopedSessionId === undefined ? "" : `?sessionId=${encodeURIComponent(scopedSessionId)}`;
-      const response = await apiFetch<{ files: DiffFile[] } | DiffFile[]>(
+      const response = await apiFetch<{ files: DiffFile[] }>(
         `/api/projects/${encodeURIComponent(slug)}/diff${query}`,
       );
-      return Array.isArray(response) ? response : response.files;
+      if (response === null || typeof response !== "object" || !Array.isArray(response.files)) {
+        throw new Error("Diff response must use canonical { files } shape");
+      }
+      return response.files;
     },
     enabled: slug.length > 0,
   });
@@ -466,46 +467,4 @@ export function useLoopIntegrations(slug: string, loopId: string) {
 
 export function useLoopKillState(slug: string) {
   return useQuery(loopKillStateQueryOptions(slug));
-}
-
-interface SessionResponse extends Omit<Session, "id"> {
-  id?: string;
-  sessionId?: string;
-}
-
-function normalizeProject(project: Project & { lastOpenedAt?: string }): Project {
-  return {
-    slug: project.slug,
-    name: project.name,
-    workspaceRoot: project.workspaceRoot,
-    lastOpened: project.lastOpened ?? project.lastOpenedAt,
-  };
-}
-
-function normalizeSessionSummary(session: SessionSummary): Session {
-  return {
-    id: session.sessionId,
-    sessionId: session.sessionId,
-    cwd: session.cwd,
-    rootSessionId: session.rootSessionId,
-    parentSessionId: session.parentSessionId,
-    title: session.title,
-    ...(session.goalId === undefined ? {} : { goalId: session.goalId }),
-    ...(session.loopId === undefined ? {} : { loopId: session.loopId }),
-    createdAt: session.createdAt,
-    updatedAt: session.lastUpdatedAt,
-    lastUpdatedAt: session.lastUpdatedAt,
-    ...(session.modelInfo === undefined ? {} : { modelInfo: session.modelInfo }),
-  };
-}
-
-function normalizeSession(session: SessionResponse): Session {
-  const id = session.id ?? session.sessionId ?? "";
-
-  return {
-    ...session,
-    id,
-    sessionId: session.sessionId ?? id,
-    updatedAt: session.updatedAt ?? session.lastUpdatedAt,
-  };
 }

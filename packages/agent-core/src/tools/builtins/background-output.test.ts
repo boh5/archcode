@@ -9,6 +9,7 @@ import { __setSessionsDirForTest, getSessionsDir } from "../../store/sessions-di
 import type { ToolExecutionContext } from "../types";
 import { BackgroundOutputInputSchema, executeBackgroundOutput } from "./background-output";
 import { createTestProjectContext } from "../test-project-context";
+import { createEmptyCompressionState } from "../../compression";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "background-output");
 const workspaceRoot = join(TMP_DIR, "workspace");
@@ -366,7 +367,10 @@ describe("background_output tool", () => {
       rootSessionId: ctx.store.getState().rootSessionId,
       parentSessionId: ctx.store.getState().sessionId,
       createdAt: Date.now(),
+      updatedAt: Date.now(),
+      cwd: workspaceRoot,
       agentName: "explore",
+      modelInfo: null,
       title: null,
       messages: [
         {
@@ -383,8 +387,10 @@ describe("background_output tool", () => {
         tools: { calls: 1, completed: 1, failed: 0 },
       },
       executions: [{ id: "run-1", startedAt: Date.now(), status: "completed", endedAt: Date.now() }],
+      compression: createEmptyCompressionState(),
       todos: [],
       reminders: [],
+      childSessionLinks: [],
     }, workspaceRoot);
 
     expect(ctx.storeManager.get(childId, workspaceRoot)).toBeUndefined();

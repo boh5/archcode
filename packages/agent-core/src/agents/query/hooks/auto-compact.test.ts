@@ -6,6 +6,8 @@ import type { StoredMessage } from "../../../store/types";
 import type { BeforeModelBuildContext } from "../loop-hooks";
 import { createAutoCompactHook } from "./auto-compact";
 
+const TEST_WORKSPACE_ROOT = "/tmp/archcode-agent-core-auto-compact";
+
 const generateText = mock(async () => ({ text: "", toolCalls: [{ toolName: "compression_summary", input: summary() }] }));
 const streamText = mock(() => ({
   text: Promise.resolve("## Current Objective\nContinue the current task"),
@@ -61,7 +63,7 @@ function message(index: number): StoredMessage {
 }
 
 function createStore(messageCount = 6) {
-  const store = storeManager.create(`auto-compact-wrapper-${crypto.randomUUID()}`);
+  const store = storeManager.create(`auto-compact-wrapper-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT);
   store.setState({ messages: Array.from({ length: messageCount }, (_, index) => message(index + 1)) });
   return store;
 }
@@ -84,7 +86,7 @@ function buildCtx(store: ReturnType<typeof createStore>, inputTokens: number): B
 }
 
 describe("createAutoCompactHook", () => {
-  test("returns compatibility hook function and circuitBreaker", () => {
+  test("returns the hook function and circuit breaker", () => {
     const result = createAutoCompactHook(silentLogger);
 
     expect(typeof result.hook).toBe("function");
@@ -95,7 +97,7 @@ describe("createAutoCompactHook", () => {
     expect(typeof result.circuitBreaker.reset).toBe("function");
   });
 
-  test("delegates automatic high-threshold compaction to legacy hard compact", async () => {
+  test("delegates automatic high-threshold compaction to forced hard compact", async () => {
     const store = createStore();
     const result = createAutoCompactHook(silentLogger);
 
