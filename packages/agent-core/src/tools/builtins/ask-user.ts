@@ -3,7 +3,7 @@ import { defineTool } from "../define-tool";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { createToolErrorResult } from "../errors";
 import { pauseForAskUser } from "../../execution/session-hitl-pause";
-import { formatAskUserAnswers } from "./ask-user-format";
+import { createAskUserSuccessResult } from "./ask-user-format";
 
 // ─── Input Schema ───
 
@@ -82,8 +82,7 @@ export async function executeAskUser(
         message: `ask_user received empty answer for question ${emptyIndex + 1}`,
       });
     }
-    const output = formatAskUserAnswers(result.answers, input.questions);
-    return { output, isError: false };
+    return createAskUserSuccessResult(result.answers, input.questions);
   }
 
   return createToolErrorResult({ kind: "cancelled", message: result.reason });

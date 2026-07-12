@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import type { ToolPart, DiffFile } from "@archcode/protocol";
+import { TOOL_ASK_USER } from "@archcode/protocol";
 import {
   Clock,
   LoaderCircle,
@@ -49,6 +50,64 @@ export interface ToolCardProps {
   part: ToolPart;
 }
 
+interface AskUserExchange {
+  header: string;
+  question: string;
+  answer: string;
+}
+
+function getAskUserExchanges(part: ToolPart, outputText: string | null): AskUserExchange[] | undefined {
+  if (part.toolName !== TOOL_ASK_USER || part.state !== "completed" || !("input" in part)) return undefined;
+  if (!part.input || typeof part.input !== "object" || Array.isArray(part.input)) return undefined;
+  const questions = (part.input as Record<string, unknown>).questions;
+  if (!Array.isArray(questions) || questions.length === 0) return undefined;
+
+  const metadata = part.meta?.askUser;
+  const structuredAnswers = metadata !== null && typeof metadata === "object"
+    && (metadata as Record<string, unknown>).version === 1
+    && Array.isArray((metadata as Record<string, unknown>).answers)
+    ? (metadata as { answers: unknown[] }).answers
+    : undefined;
+
+  return questions.flatMap((value, index) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+    const question = value as Record<string, unknown>;
+    if (typeof question.question !== "string") return [];
+    const answerValue = structuredAnswers?.[index];
+    const answer = Array.isArray(answerValue) && answerValue.every((item) => typeof item === "string")
+      ? answerValue.join(", ")
+      : questions.length === 1 && outputText !== null ? outputText : "";
+    if (answer.length === 0) return [];
+    return [{
+      header: typeof question.header === "string" ? question.header : `Q${index + 1}`,
+      question: question.question,
+      answer,
+    }];
+  });
+}
+
+function AskUserResult({ exchanges }: { exchanges: AskUserExchange[] }) {
+  return (
+    <div className="border-t border-border-subtle px-2.5 py-2" data-testid="ask-user-result">
+      <div className="flex flex-col gap-2">
+        {exchanges.map((exchange, index) => (
+          <div key={`${exchange.header}-${index}`} className="rounded-sm border border-border-subtle bg-bg-elevated px-2.5 py-2">
+            <div className="text-[10.5px] font-medium uppercase tracking-wide text-text-muted mb-1">
+              {exchange.header}
+            </div>
+            <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-1 text-[12px] leading-relaxed">
+              <span className="text-text-muted">Question</span>
+              <span className="text-text-primary break-words">{exchange.question}</span>
+              <span className="text-text-muted">Answer</span>
+              <span className="text-success break-words">{exchange.answer}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function ToolCard({ part }: ToolCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [isLong, setIsLong] = useState(false);
@@ -67,6 +126,7 @@ export function ToolCard({ part }: ToolCardProps) {
       : part.state === "error"
         ? (part as { errorMessage: string }).errorMessage
         : null;
+  const askUserExchanges = getAskUserExchanges(part, outputText);
 
   const diffMeta =
     part.state === "completed" || part.state === "error"
@@ -160,7 +220,7 @@ export function ToolCard({ part }: ToolCardProps) {
         )}
       </button>
 
-      {inputDetails && (
+      {inputDetails && askUserExchanges === undefined && (
         <div className="border-t border-border-subtle px-2.5 py-1.5">
           <div className="flex flex-col gap-0.5">
             {Object.entries(inputDetails).map(([key, value]) => (
@@ -194,7 +254,11 @@ export function ToolCard({ part }: ToolCardProps) {
         </div>
       )}
 
-      {outputText && (
+      {askUserExchanges !== undefined && askUserExchanges.length > 0 && (
+        <AskUserResult exchanges={askUserExchanges} />
+      )}
+
+      {outputText && askUserExchanges === undefined && (
         <div className="border-t border-border-subtle px-2.5 py-2">
           <pre
             ref={contentRef}

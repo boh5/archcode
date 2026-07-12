@@ -95,7 +95,12 @@ describe("Session HITL resume", () => {
     await waitFor(async () => (await fixture.hitl.lookup(identity(pending))).status === "found" && ((await fixture.hitl.lookup(identity(pending))) as { record: HitlRecord }).record.status === "resolved");
 
     const tool = latestToolPart(fixture.store.getState().messages, "ask-1");
-    expect(tool).toMatchObject({ state: "completed", output: "blue" });
+    expect(tool).toMatchObject({
+      state: "completed",
+      meta: { askUser: { version: 1, answers: [["blue"]] } },
+    });
+    expect(tool?.state === "completed" ? tool.output : "").toContain('Question 1 (Pick): "Choose a color"');
+    expect(tool?.state === "completed" ? tool.output : "").toContain('Answer 1: ["blue"]');
     const coldSessions = new SessionStoreManager({ logger: silentLogger });
     const coldStore = await coldSessions.getOrLoad(fixture.sessionId, fixture.workspaceRoot);
     expect(coldStore.getState().blockedHitl).toBeUndefined();
@@ -150,10 +155,12 @@ describe("Session HITL resume", () => {
       return found.status === "found" && found.record.status === "resolved";
     });
 
-    expect(latestToolPart(fixture.store.getState().messages, `ask-${agentName}-child`)).toMatchObject({
+    const resumedTool = latestToolPart(fixture.store.getState().messages, `ask-${agentName}-child`);
+    expect(resumedTool).toMatchObject({
       state: "completed",
-      output: "continue",
+      meta: { askUser: { version: 1, answers: [["continue"]] } },
     });
+    expect(resumedTool?.state === "completed" ? resumedTool.output : "").toContain('Answer 1: ["continue"]');
     expect(fixture.store.getState().blockedByHitlIds).toBeUndefined();
     expect(await fixture.sessions.listSessionFamilyBlockedHitlIds(fixture.workspaceRoot, rootSessionId)).toEqual([]);
   });

@@ -170,6 +170,14 @@ describe("getToolSummary", () => {
     const result = getToolSummary("ask_user", { question: longText });
     expect(result.primary.length).toBeLessThanOrEqual(INLINE_VALUE_MAX_CHARS + 1);
   });
+
+  test("ask_user uses the first structured question as its summary", () => {
+    const result = getToolSummary("ask_user", {
+      questions: [{ header: "Goal", question: "What do you want to build?", options: [], custom: true }],
+    });
+
+    expect(result.primary).toBe("What do you want to build?");
+  });
 });
 
 describe("formatToolInputDetails", () => {

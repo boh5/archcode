@@ -203,6 +203,67 @@ describe("ToolCard", () => {
     expect(text).toContain("done");
   });
 
+  test("completed ask_user renders the question and legacy bare answer as a pair", () => {
+    const part = makeCompleted({
+      toolName: "ask_user",
+      input: {
+        questions: [{ header: "Recent goal", question: "What do you want to learn or finish?", options: [], custom: true }],
+      },
+      output: "agent",
+    });
+
+    const el = ToolCard({ part });
+    const text = textContent(el);
+
+    expect(text).toContain("Question");
+    expect(text).toContain("What do you want to learn or finish?");
+    expect(text).toContain("Answer");
+    expect(text).toContain("agent");
+  });
+
+  test("completed ask_user renders every structured answer from metadata", () => {
+    const part = makeCompleted({
+      toolName: "ask_user",
+      input: {
+        questions: [
+          { header: "File", question: "Which file?", options: [], custom: true },
+          { header: "Style", question: "Which styles?", options: [], multiple: true, custom: true },
+        ],
+      },
+      output: "model-facing formatted result",
+      meta: {
+        askUser: {
+          version: 1,
+          answers: [["src/main.ts"], ["Dark mode", "Compact"]],
+        },
+      },
+    });
+
+    const el = ToolCard({ part });
+    const text = textContent(el);
+
+    expect(text).toContain("Which file?");
+    expect(text).toContain("src/main.ts");
+    expect(text).toContain("Which styles?");
+    expect(text).toContain("Dark mode, Compact");
+    expect(text).not.toContain("model-facing formatted result");
+  });
+
+  test("failed ask_user keeps the error message instead of presenting it as an answer", () => {
+    const part = makeError({
+      toolName: "ask_user",
+      input: {
+        questions: [{ header: "Goal", question: "What do you want to build?", options: [], custom: true }],
+      },
+      errorMessage: "Question was cancelled",
+    });
+
+    const text = textContent(ToolCard({ part }));
+
+    expect(text).toContain("Question was cancelled");
+    expect(text).not.toContain("AnswerQuestion was cancelled");
+  });
+
   test("error state renders X icon and error label", () => {
     const part = makeError({
       toolName: "bash",

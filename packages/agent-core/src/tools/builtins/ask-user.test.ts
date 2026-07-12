@@ -236,7 +236,16 @@ describe("executeAskUser", () => {
     const ctx = makeCtx({ askUser });
     const result = await executeAskUser({ questions: [SINGLE_QUESTION] }, ctx);
 
-    expect(result).toEqual({ output: "my answer", isError: false });
+    expect(result.isError).toBe(false);
+    expect(result.output).toContain('Question 1 (Name): "What is your name?"');
+    expect(result.output).toContain('Answer 1: ["my answer"]');
+    expect(result.output).toContain("You can now continue with the user's answers in mind");
+    expect(result.meta).toEqual({
+      askUser: {
+        version: 1,
+        answers: [["my answer"]],
+      },
+    });
   });
 
   test("returns structured answers for multiple questions", async () => {
@@ -247,8 +256,16 @@ describe("executeAskUser", () => {
     const result = await executeAskUser({ questions: MULTI_QUESTIONS }, ctx);
 
     expect(result.isError).toBe(false);
-    expect(result.output).toContain("File: src/main.ts");
-    expect(result.output).toContain("Style: Dark mode, Compact");
+    expect(result.output).toContain('Question 1 (File): "Which file should I edit?"');
+    expect(result.output).toContain('Answer 1: ["src/main.ts"]');
+    expect(result.output).toContain('Question 2 (Style): "What style do you prefer?"');
+    expect(result.output).toContain('Answer 2: ["Dark mode","Compact"]');
+    expect(result.meta).toEqual({
+      askUser: {
+        version: 1,
+        answers: [["src/main.ts"], ["Dark mode", "Compact"]],
+      },
+    });
   });
 
   test("returns isError when callback answers length mismatches questions", async () => {

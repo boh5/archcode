@@ -236,7 +236,13 @@ export function getToolSummary(toolName: string, input: unknown): ToolSummary {
     return { icon, primary: "—" };
   }
   if (toolName === TOOL_ASK_USER) {
-    const question = typeof obj.question === "string" ? obj.question : undefined;
+    const firstQuestion = Array.isArray(obj.questions) ? obj.questions[0] : undefined;
+    const structuredQuestion = firstQuestion !== null && typeof firstQuestion === "object"
+      ? (firstQuestion as Record<string, unknown>).question
+      : undefined;
+    const question = typeof structuredQuestion === "string"
+      ? structuredQuestion
+      : typeof obj.question === "string" ? obj.question : undefined;
     return { icon, primary: question ? truncate(question, INLINE_VALUE_MAX_CHARS) : "—" };
   }
 

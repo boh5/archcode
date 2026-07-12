@@ -1,7 +1,7 @@
 import type { HitlDisplayPayload, HitlOwnerKey, HitlRecord, HitlResponse, HitlSource, SessionHitlCheckpoint } from "@archcode/protocol";
 
 import type { AskUserInput } from "../tools/builtins/ask-user";
-import { formatAskUserAnswers } from "../tools/builtins/ask-user-format";
+import { createAskUserSuccessResult } from "../tools/builtins/ask-user-format";
 import { createToolErrorResult } from "../tools/errors";
 import type { ToolExecutionContext, ToolConfirmationRequest } from "../tools/types";
 import { redactString, redactValue } from "../tools/security/redaction";
@@ -66,7 +66,7 @@ export function askUserResponseToToolResult(input: AskUserInput, response: HitlR
   if (emptyIndex !== -1) {
     return createToolErrorResult({ kind: "cancelled", message: `ask_user received empty answer for question ${emptyIndex + 1}` });
   }
-  return { output: formatAskUserAnswers(answers, input.questions), isError: false };
+  return createAskUserSuccessResult(answers, input.questions);
 }
 
 async function createRecordAndCheckpoint(input: {
