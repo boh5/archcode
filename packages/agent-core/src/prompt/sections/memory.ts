@@ -10,11 +10,21 @@ import {
   PREFERENCES_MARKER_START,
 } from "../../memory/constants";
 
-const MEMORY_TOOLS_DESCRIPTION = `You have access to project and user memory via these tools:
-- memory_read: Read memory (no name = combined context with user preferences + project index; name "preferences" = user preferences; name "index" = project index; otherwise name = knowledge topic)
-- memory_write: Write memory (name "preferences" with scope="user" to save user preferences; any other name to write a project knowledge topic; index is auto-managed)
+function buildMemoryToolsDescription(ctx: PromptContext): string {
+  const canRead = ctx.allowedTools.includes("memory_read");
+  const canWrite = ctx.allowedTools.includes("memory_write");
+  const lines = ["Memory context is automatically injected when available."];
 
-Memory is automatically injected into your context. When you learn something durable about the user's preferences or working style, use memory_write with name="preferences". For project knowledge and conventions, use any other topic name. Do not save secrets, API keys, or passwords.`;
+  if (canRead) {
+    lines.push('- memory_read: Read combined context, preferences, the project index, or a named knowledge topic.');
+  }
+  if (canWrite) {
+    lines.push('- memory_write: Save durable user preferences or project knowledge. Never save secrets, API keys, or passwords.');
+    lines.push('When durable learning is worth preserving, use name="preferences" with scope="user" for user preferences and another topic name for project knowledge.');
+  }
+
+  return lines.join("\n");
+}
 
 function truncateIndex(content: string, maxLines: number): string {
   const lines = content.split("\n");
@@ -58,5 +68,5 @@ export async function buildMemorySection(ctx: PromptContext): Promise<string | n
 
   if (parts.length === 0) return null;
 
-  return `## Memory\n\n${parts.join("\n\n")}\n\n${MEMORY_TOOLS_DESCRIPTION}`;
+  return `## Memory\n\n${parts.join("\n\n")}\n\n${buildMemoryToolsDescription(ctx)}`;
 }

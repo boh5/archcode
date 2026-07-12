@@ -140,10 +140,23 @@ describe("buildSystemPrompt — Memory section", () => {
     await writeMemoryFile(roots, "project", "index.md", "Some index");
 
     const result = await buildSystemPrompt(
-      makeCtx({ memoryRoots: roots }),
+      makeCtx({ memoryRoots: roots, allowedTools: ["memory_read", "memory_write"] }),
     );
     expect(result).toContain("memory_read");
     expect(result).toContain("memory_write");
+  });
+
+  test("does not instruct read-only memory users to call memory_write", async () => {
+    const roots = await createMemoryDirs();
+    await writeMemoryFile(roots, "project", "index.md", "Some index");
+
+    const result = await buildSystemPrompt(
+      makeCtx({ memoryRoots: roots, allowedTools: ["memory_read"] }),
+    );
+
+    expect(result).toContain("memory_read");
+    expect(result).not.toContain("memory_write");
+    expect(result).not.toContain("When you learn something durable");
   });
 
   test("truncates index at DEFAULT_MAX_INDEX_LINES", async () => {

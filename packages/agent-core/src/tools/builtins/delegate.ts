@@ -11,20 +11,20 @@ const SKILL_NAME_MESSAGE = "Skill name must match pattern ^[a-z0-9][a-z0-9-]*$";
 
 export const DelegateInputSchema = z
   .object({
-    agent_type: z.string().min(1).describe("Target agent type to delegate to (e.g. \"plan\", \"build\", \"reviewer\", \"explore\", \"librarian\")"),
-    persona: z.string().trim().min(1).optional().describe("Optional persona to shape the child agent perspective; does not change the child tool set"),
-    task: z.string().min(1).describe("Specific delegated task for the child agent"),
-    context: z.string().optional().describe("Relevant context, constraints, and expected output for the delegated task"),
-    skills: z.array(z.string().regex(SKILL_NAME_REGEX, SKILL_NAME_MESSAGE)).describe("Skill names to activate on the child agent. Pass [] for none."),
+    agent_type: z.string().min(1).describe("Allowed target agent type (for example plan, build, reviewer, explore, or librarian)"),
+    persona: z.string().trim().min(1).optional().describe("Optional perspective only; it cannot expand the child tool set, permissions, targets, or depth"),
+    task: z.string().min(1).describe("Atomic Task plus its concrete Expected outcome and child-level success criteria"),
+    context: z.string().optional().describe("Structured Context and evidence; Scope ownership and non-goals; Must do / must not do; Verification and output requirements"),
+    skills: z.array(z.string().regex(SKILL_NAME_REGEX, SKILL_NAME_MESSAGE)).describe("Allowed skill names to activate on a new child. Pass [] for none. Skills cannot expand hardcoded child authority."),
     description: z.string().optional().describe("Short 3-5 word label for the delegated task"),
     title: z.string().optional().describe("Optional session title for the child session"),
-    background: z.boolean().default(false).describe("true = run async; use background_output to read results later. false = block until child completes. Default false."),
+    background: z.boolean().default(false).describe("true starts the child asynchronously; wait for a terminal notification or use blocking background_output before treating its result as final. false waits for completion."),
     session_id: z
       .string()
       .trim()
       .optional()
       .describe(
-        "Optional id of an existing child session to resume. Omit this field entirely, or pass an empty value, to start a new child session.",
+        "Returned id of the same stopped child to resume with the same agent_type. Omit or pass an empty value to start a new child; never invent or reuse an unrelated id.",
       ),
   })
   .strict();
@@ -274,7 +274,7 @@ function buildChildPrompt(input: DelegateInput): string {
 export const delegateTool = defineTool({
   name: "delegate",
   description:
-    `Delegate a task to another agent (e.g. "plan", "build", "reviewer", "explore", "librarian"). Persona can shape the child perspective but never changes the child tool set. Returns a plain text summary with the child session id and status. To start a new sub-agent session, omit session_id entirely or pass an empty value. Only provide a non-empty session_id to resume an existing sub-agent session returned by an earlier delegate call. background=true runs asynchronously; use background_output with the returned session_id to read the result.`,
+    `Delegate one atomic task to an allowed child agent. The prompt envelope must contain: Task; Expected outcome; Context and evidence; Scope ownership and non-goals; Must do / must not do; Verification and output. Encode the first two in task and the remaining fields in context. background=true starts work asynchronously. wait_for_reminder may wait for terminal state, but the reminder is only a terminal notification; use blocking background_output afterward to collect the terminal result and actual deliverable before relying on it. Resume the same stopped child with its returned session_id and the same agent_type for repairs, follow-ups, or verification feedback. Omit session_id to start a new child. Persona, skills, context, title, description, and other metadata cannot expand hardcoded tools, permissions, targets, or depth.`,
   inputSchema: DelegateInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   execute: async (input, ctx) => executeDelegate(input, ctx),

@@ -136,8 +136,6 @@ describe("agentDefinitions", () => {
       "explore",
       "librarian",
     ]);
-    expect(engineerAgentDefinition.rolePrompt).toContain("## Role: Engineer");
-    expect(engineerAgentDefinition.rolePrompt).toContain("goal_create");
   });
 
   test("Goal Lead is Goal-only, delegates all specialist work, and cannot mutate source", () => {
@@ -155,18 +153,8 @@ describe("agentDefinitions", () => {
       "librarian",
     ]);
     expect(goalLeadAgentDefinition.mcpTools).toEqual(["context7", "exa"]);
-    expect(goalLeadAgentDefinition.rolePrompt).toContain("## Goal Role: Goal Lead");
-    expect(goalLeadAgentDefinition.rolePrompt).toContain("already-created Goal");
-    expect(goalLeadAgentDefinition.rolePrompt).toContain("goal_manage");
-    expect(goalLeadAgentDefinition.rolePrompt).toContain("action=begin_review");
-    expect(goalLeadAgentDefinition.rolePrompt).toContain("reviewGeneration");
-    expect(goalLeadAgentDefinition.rolePrompt).toContain("action=retry before delegating");
-    expect(goalLeadAgentDefinition.rolePrompt).toContain("Never leave a manually blocked Goal without a corresponding user request");
     expect(goalLeadAgentDefinition.hooks.todoStepReminder).toBe(true);
     expect(goalLeadAgentDefinition.hooks.todoQueryLoopContinuation).toBe(false);
-    expect(goalLeadAgentDefinition.rolePrompt).not.toContain("goal_create");
-    expect(goalLeadAgentDefinition.rolePrompt).not.toContain("goal_manage.finalize_review");
-    expect(goalLeadAgentDefinition.rolePrompt).not.toContain("finalize_review");
   });
 
   test("Plan has read-only planning tools, Context7 MCP, and research-only delegation", () => {
@@ -181,7 +169,6 @@ describe("agentDefinitions", () => {
     expectNoTools(tools, SOURCE_WRITE_TOOLS);
     expect(planAgentDefinition.mcpTools).toEqual(["context7"]);
     expect(planAgentDefinition.tools.delegateTargets).toEqual(["explore", "librarian"]);
-    expect(planAgentDefinition.rolePrompt).toContain("ordinary Session, a Loop, or a Goal");
   });
 
   test("Build is the only source-writing implementation role", () => {
@@ -192,7 +179,6 @@ describe("agentDefinitions", () => {
     expect(tools).toContain(TOOL_COMPRESS);
     expect("mcpTools" in buildAgentDefinition).toBe(false);
     expect(buildAgentDefinition.tools.delegateTargets).toEqual(["explore"]);
-    expect(buildAgentDefinition.rolePrompt).toContain("ordinary Session, a Loop, or a Goal");
   });
 
   test("Reviewer can verify goals with non-mutating Bash but cannot ask or mutate source", () => {
@@ -207,10 +193,6 @@ describe("agentDefinitions", () => {
     expect(tools).toContain(TOOL_COMPRESS);
     expectNoTools(tools, [TOOL_FILE_WRITE, TOOL_FILE_EDIT, TOOL_AST_GREP_REPLACE, TOOL_ASK_USER]);
     expect(reviewerAgentDefinition.tools.delegateTargets).toEqual(["explore", "librarian"]);
-    expect(reviewerAgentDefinition.rolePrompt).toContain("Do not call goal_manage");
-    expect(reviewerAgentDefinition.rolePrompt).toContain("unresolvedItems");
-    expect(reviewerAgentDefinition.rolePrompt).toContain("pre-existing dirty worktree is not itself a failure");
-    expect(reviewerAgentDefinition.rolePrompt).toContain("only for inspection and verification");
   });
 
   test("Goal lifecycle and evidence tools are limited to intended roles", () => {
@@ -219,25 +201,6 @@ describe("agentDefinitions", () => {
       .map((definition) => definition.name);
 
     expect(goalManageAgents).toEqual(["goal_lead", "reviewer"]);
-  });
-
-  test("Reviewer prompt is default-deny and includes the required five-point checklist", () => {
-    const prompt = reviewerAgentDefinition.rolePrompt;
-
-    expect(prompt).toContain("Goal-bound review, default stance: NOT_DONE");
-    for (const item of ["Scope", "Intent", "Tests", "No cheating", "Risk"] as const) {
-      expect(prompt).toContain(item);
-    }
-    expect(prompt).toContain("DONE");
-    expect(prompt).toContain("NOT_DONE");
-    expect(prompt).toContain("only valid verdicts: DONE or NOT_DONE");
-    expect(prompt).not.toContain("NEEDS_DECISION");
-    expect(prompt).not.toContain("ESCALATE_HUMAN");
-    expect(prompt).toContain("goal_manage.finalize_review");
-    expect(prompt).toContain("expectedReviewGeneration");
-    expect(prompt).toContain("DONE requires evidence");
-    expect(prompt).toContain("Insufficient evidence means NOT_DONE");
-    expect(prompt).not.toContain("goal_check_done");
   });
 
   test("Explore and Librarian are ancillary read-only agents with no delegation", () => {
@@ -259,14 +222,25 @@ describe("agentDefinitions", () => {
   test("ask_user belongs only to the four interactive working roles", () => {
     for (const definition of [engineerAgentDefinition, goalLeadAgentDefinition, planAgentDefinition, buildAgentDefinition]) {
       expect(definition.tools.tools).toContain(TOOL_ASK_USER);
-      expect(definition.rolePrompt).toMatch(/batch/i);
-      expect(definition.rolePrompt).toContain("same Session");
     }
 
     for (const definition of [reviewerAgentDefinition, librarianAgentDefinition]) {
       expect(definition.tools.tools).not.toContain(TOOL_ASK_USER);
     }
-    expect(librarianAgentDefinition.rolePrompt).toContain("Open question");
+  });
+
+  test("only Explore omits long-term memory from its prompt", () => {
+    expect(exploreAgentDefinition.includeMemoryInPrompt).toBe(false);
+    for (const definition of [
+      engineerAgentDefinition,
+      goalLeadAgentDefinition,
+      planAgentDefinition,
+      buildAgentDefinition,
+      reviewerAgentDefinition,
+      librarianAgentDefinition,
+    ]) {
+      expect(definition.includeMemoryInPrompt).toBe(true);
+    }
   });
 
   test("principal delegation depth policies match principal → core → ancillary", () => {

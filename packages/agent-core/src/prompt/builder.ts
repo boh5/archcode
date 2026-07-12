@@ -8,11 +8,12 @@ import { buildRoleSection } from "./sections/roles";
 import { buildSkillsSection } from "./sections/skills";
 import { buildToolSection } from "./sections/tools";
 import { buildCompressionSection } from "./sections/compression";
+import { buildDelegationSection } from "./sections/delegation";
 
 /**
  * Assemble the full system prompt from context.
  *
- * Section order: Identity → Role → Guidelines → Skills → Tools → Environment → Memory → Project Context
+ * Section order: Identity → Role → Execution → Delegation → Skills → Tools → Compression → Environment → Memory → Project
  */
 export async function buildSystemPrompt(ctx: PromptContext): Promise<string> {
   const sections: string[] = [buildIdentitySection(ctx)];
@@ -23,6 +24,11 @@ export async function buildSystemPrompt(ctx: PromptContext): Promise<string> {
   }
 
   sections.push(buildGuidelinesSection());
+
+  const delegationSection = buildDelegationSection(ctx);
+  if (delegationSection !== null) {
+    sections.push(delegationSection);
+  }
 
   const skillsSection = await buildSkillsSection(ctx);
   if (skillsSection !== null) {

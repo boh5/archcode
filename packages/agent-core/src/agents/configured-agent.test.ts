@@ -796,12 +796,12 @@ describe("ConfiguredAgent", () => {
 
   test("includeMemoryInPrompt controls memory roots in prompt context", async () => {
     const withMemoryStreamFn = setupMockStreamText("memory ok");
-    await createAgent({ definition: exploreAgentDefinition }).run("with memory");
+    await createAgent({ definition: engineerAgentDefinition }).run("with memory");
     const withMemory = withMemoryStreamFn.mock.calls[0]![0] as { system: string };
     expect(withMemory.system).toContain("<archcode-memory-context>");
 
     const withoutMemoryStreamFn = setupMockStreamText("memory off ok");
-    await createAgent({ definition: definitionWith({ includeMemoryInPrompt: false }) }).run("without memory");
+    await createAgent({ definition: exploreAgentDefinition }).run("without memory");
     const withoutMemory = withoutMemoryStreamFn.mock.calls[0]![0] as { system: string };
     expect(withoutMemory.system).not.toContain("<archcode-memory-context>");
   });

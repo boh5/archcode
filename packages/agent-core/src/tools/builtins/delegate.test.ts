@@ -10,7 +10,7 @@ import type { ChildExecutionRequest, ResumeChildRequest } from "../../delegation
 import { storeManager } from "../../store/store";
 import type { ToolExecutionContext, ToolExecutionOrigin, ToolExecutionResult } from "../types";
 import { TOOL_ERROR_META_KEY } from "../errors";
-import { DelegateInputSchema, executeDelegate } from "./delegate";
+import { DelegateInputSchema, delegateTool, executeDelegate } from "./delegate";
 import { createTestProjectContext } from "../test-project-context";
 
 const WORKSPACE_ROOT = import.meta.dir;
@@ -81,6 +81,26 @@ const LOOP_ORIGIN: ToolExecutionOrigin = {
 };
 
 describe("delegate tool", () => {
+  it("publishes the complete prompt envelope, background collection, resume, and authority contract", () => {
+    for (const field of [
+      "Task",
+      "Expected outcome",
+      "Context and evidence",
+      "Scope ownership and non-goals",
+      "Must do / must not do",
+      "Verification and output",
+    ]) {
+      expect(delegateTool.description).toContain(field);
+    }
+    expect(delegateTool.description).toContain("background=true");
+    expect(delegateTool.description).toContain("terminal result");
+    expect(delegateTool.description).toContain("reminder is only a terminal notification");
+    expect(delegateTool.description).toContain("blocking background_output");
+    expect(delegateTool.description).toContain("same agent_type");
+    expect(delegateTool.description).toContain("stopped child");
+    expect(delegateTool.description).toContain("cannot expand");
+  });
+
   it("accepts any non-empty agent_type plus task/context fields in the input schema", () => {
     expect(DelegateInputSchema.safeParse({ agent_type: "custom", task: "inspect", context: "repo", skills: [] }).success).toBe(true);
     expect(DelegateInputSchema.safeParse({ agent_type: "", task: "inspect", skills: [] }).success).toBe(false);

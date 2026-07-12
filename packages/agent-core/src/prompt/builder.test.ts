@@ -23,7 +23,7 @@ describe("buildSystemPrompt", () => {
     const result = await buildSystemPrompt(makeCtx());
 
     expect(result).toContain("ArchCode");
-    expect(result).toContain("## Guidelines");
+    expect(result).toContain("## Execution Contract");
     expect(result).toContain("## Tools");
     expect(result).toContain("file_read");
     expect(result).toContain("file_write");
@@ -53,20 +53,30 @@ describe("buildSystemPrompt", () => {
     expect(result).toContain("My Project");
   });
 
-  test("sections appear in correct order with skills between guidelines and tools", async () => {
+  test("sections appear in correct order with delegation between execution and skills", async () => {
     const result = await buildSystemPrompt(makeCtx({
       promptProfileId: "build",
-      rolePrompt: "## Goal Role: Build\nTest content.",
+      allowedTools: ["delegate", "file_read"],
+      rolePrompt: "## Role: Build\nTest content.",
       agentsMd: "AGENTSCONTENT",
       availableSkills: [{ name: "git-master", description: "Git expertise", when_to_use: "Use for git ops.", source: "builtin" }],
     }));
 
-    expect(result.indexOf("ArchCode")).toBeLessThan(result.indexOf("## Goal Role: Build"));
-    expect(result.indexOf("## Goal Role: Build")).toBeLessThan(result.indexOf("## Guidelines"));
-    expect(result.indexOf("## Guidelines")).toBeLessThan(result.indexOf("## Skills"));
+    expect(result.indexOf("ArchCode")).toBeLessThan(result.indexOf("## Role: Build"));
+    expect(result.indexOf("## Role: Build")).toBeLessThan(result.indexOf("## Execution Contract"));
+    expect(result.indexOf("## Execution Contract")).toBeLessThan(result.indexOf("## Delegation Protocol"));
+    expect(result.indexOf("## Delegation Protocol")).toBeLessThan(result.indexOf("## Skills"));
     expect(result.indexOf("## Skills")).toBeLessThan(result.indexOf("## Tools"));
     expect(result.indexOf("## Tools")).toBeLessThan(result.indexOf("## Environment"));
     expect(result.indexOf("## Environment")).toBeLessThan(result.indexOf("## Project Context"));
+  });
+
+  test("injects delegation protocol only when delegate is allowed", async () => {
+    const withoutDelegate = await buildSystemPrompt(makeCtx({ allowedTools: ["file_read"] }));
+    const withDelegate = await buildSystemPrompt(makeCtx({ allowedTools: ["file_read", "delegate"] }));
+
+    expect(withoutDelegate).not.toContain("## Delegation Protocol");
+    expect(withDelegate).toContain("## Delegation Protocol");
   });
 
   test("includes compression protocol instructions when compress is allowed", async () => {
