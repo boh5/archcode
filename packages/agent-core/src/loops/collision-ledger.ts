@@ -57,6 +57,7 @@ const CollisionLedgerFileSchema = z.strictObject({
 }) satisfies z.ZodType<CollisionLedgerFile>;
 
 const DEFAULT_LEASE_TTL_MS = 30 * 60 * 1000;
+const RUN_BUDGET_LEASE_MARGIN_MS = 5 * 60 * 1000;
 const MAX_SNAPSHOT_ITEMS = 100;
 
 const systemClock: CollisionLedgerClock = {
@@ -174,6 +175,7 @@ export class CollisionLedger {
     readonly runId: string;
     readonly priority: number;
     readonly actionId?: string;
+    readonly expiresAt?: number;
   }): Promise<CollisionAcquireResult[]> {
     return await this.acquireAll((input.loop.config.collisionTargets ?? []).map((target) => ({
       target,
@@ -181,6 +183,7 @@ export class CollisionLedger {
       runId: input.runId,
       actionId: input.actionId,
       priority: input.priority,
+      ...(input.expiresAt === undefined ? {} : { expiresAt: input.expiresAt }),
     })));
   }
 
@@ -302,6 +305,14 @@ export class CollisionLedger {
     const now = this.#clock.now();
     return leases.filter((lease) => lease.expiresAt > now);
   }
+}
+
+/** Keeps a run-owned target leased through its remaining wall-clock budget plus a small handoff margin. */
+export function collisionLeaseExpiresAtForRun(loop: LoopState, runStartedAt: number, now: number): number | undefined {
+  const maxWallClockMs = loop.config.limits.maxWallClockMsPerRun;
+  if (maxWallClockMs === undefined) return undefined;
+  const remainingMs = Math.max(0, maxWallClockMs - Math.max(0, now - runStartedAt));
+  return now + remainingMs + RUN_BUDGET_LEASE_MARGIN_MS;
 }
 
 export function canonicalTargetKey(target: CollisionTarget): string {

@@ -761,6 +761,24 @@ export class SessionStoreManager {
     return { root: rootNode, diagnostics: [] };
   }
 
+  async listSessionFamilyBlockedHitlIds(workspaceRoot: string, rootSessionId: string): Promise<string[]> {
+    const tree = await this.buildSessionTree(workspaceRoot, rootSessionId);
+    const sessionIds: string[] = [];
+    const visit = (node: SessionTreeNode): void => {
+      sessionIds.push(node.session.sessionId);
+      for (const child of node.children) visit(child);
+    };
+    visit(tree.root);
+    const blocked = new Set<string>();
+    for (const sessionId of sessionIds) {
+      const session = await this.getSessionFile(workspaceRoot, sessionId);
+      for (const hitlId of session.blockedByHitlIds ?? (session.blockedHitl === undefined ? [] : [session.blockedHitl.hitlId])) {
+        blocked.add(hitlId);
+      }
+    }
+    return [...blocked].sort();
+  }
+
   async #loadFromDisk(
     sessionId: string,
     workspaceRoot: string,

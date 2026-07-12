@@ -104,6 +104,7 @@ function makeGoal(overrides: Partial<GoalState> = {}): GoalState {
     acceptanceCriteria: "Reviewer can decide DONE from logs and diff.",
     status: "running",
     attempt: 1,
+    reviewGeneration: 0,
     pendingHitlIds: [],
     approvalRefs: [],
     appliedHitlIds: [],
@@ -111,7 +112,7 @@ function makeGoal(overrides: Partial<GoalState> = {}): GoalState {
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
-    version: overrides.version ?? 1,
+    version: overrides.version ?? 2,
     useWorktree: overrides.useWorktree ?? false,
   };
 }

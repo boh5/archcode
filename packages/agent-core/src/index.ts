@@ -78,7 +78,6 @@ export type {
   GoalRunnerCreateSessionOptions,
   GoalRunnerLoopExecutionScope,
   GoalRunnerOptions,
-  GoalRunnerRetryInput,
   GoalRunnerStartInput,
 } from "./goals/runner";
 export { GoalCancellationInProgressError, withGoalExecutionClaimLock } from "./goals/execution-claim";

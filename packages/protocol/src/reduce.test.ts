@@ -1227,7 +1227,7 @@ describe("reduceStreamEvent", () => {
 describe("Goal stream event reducers", () => {
   function makeGoalState(overrides: Partial<GoalState> = {}): GoalState {
     return {
-      version: 1,
+      version: 2,
       id: "goal-1",
       projectId: "p",
       title: "Implement feature",
@@ -1236,6 +1236,7 @@ describe("Goal stream event reducers", () => {
       useWorktree: false,
       status: "draft",
       attempt: 1,
+      reviewGeneration: 0,
       pendingHitlIds: [],
       approvalRefs: [],
       appliedHitlIds: [],
@@ -1297,7 +1298,10 @@ describe("Goal stream event reducers", () => {
   test("goal.state_change stores review receipts and evidence refs", () => {
     const reviewed = makeGoalState({
       status: "done",
+      reviewGeneration: 1,
+      mainSessionId: "session-main",
       review: {
+        reviewGeneration: 1,
         verdict: "DONE",
         summary: "Reviewer verified the natural-language acceptance criteria.",
         evidenceRefs: [

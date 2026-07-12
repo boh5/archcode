@@ -9,6 +9,9 @@ import type { GlobalSSEResourceChangedEvent } from "@archcode/protocol";
 import type { McpManager } from "./mcp";
 import { setLlmAdapterForTest } from "./llm";
 import { createRuntime, type AgentRuntime } from "./runtime";
+import type { GoalLeadContinuationCoordinator } from "./goals/goal-lead-continuation";
+import { ProjectRegistry } from "./projects/registry";
+import { silentLogger } from "./logger";
 import { LoopActiveConflictError } from "./loops/runner";
 import type { LoopSchedulerTimer } from "./loops/scheduler";
 import { LoopStateManager, type LoopConfig } from "./loops/state";
@@ -60,6 +63,151 @@ afterAll(() => {
 });
 
 describe("AgentRuntime Loop wiring", () => {
+  test("wires Goal continuation at startup, family idle, and completed Goal HITL resume", async () => {
+    const continuation = {
+      reconcileWorkspace: mock(async (_workspaceRoot: string) => undefined),
+      onFamilyIdle: mock(async (_workspaceRoot: string, _rootSessionId: string) => undefined),
+      kick: mock(async (_workspaceRoot: string, _goalId: string) => "started" as const),
+      releaseWorkspace: mock(() => undefined),
+      shutdown: mock(() => undefined),
+    } satisfies GoalLeadContinuationCoordinator;
+    const fixture = await createRuntimeFixture({ continuation, preRegister: true });
+    expect(continuation.reconcileWorkspace).toHaveBeenCalledWith(fixture.workspaceRoot);
+
+    const project = await fixture.runtime.projectRegistry.getByWorkspace(fixture.workspaceRoot);
+    if (project === undefined) throw new Error("Expected registered project");
+    const session = await fixture.runtime.createSession(fixture.workspaceRoot, { agentName: "engineer" });
+    await fixture.runtime.startSessionExecution({
+      slug: project.slug,
+      workspaceRoot: fixture.workspaceRoot,
+      sessionId: session.sessionId,
+      userMessage: "finish this turn",
+    }).promise;
+    await waitFor(() => continuation.onFamilyIdle.mock.calls.some((call) => call[1] === session.sessionId));
+
+    const context = await fixture.runtime.contextResolver.resolve(fixture.workspaceRoot);
+    const draft = await context.goalState.create({
+      projectId: project.slug,
+      objective: "Resume after approval",
+      acceptanceCriteria: "Continuation is kicked",
+      mainSessionId: crypto.randomUUID(),
+    });
+    const goal = await context.goalState.start(draft.id, { mainSessionId: draft.mainSessionId! });
+    const record = await context.hitl.create({
+      owner: { projectSlug: project.slug, ownerType: "goal", ownerId: goal.id },
+      blockingKey: `goal:${goal.id}:approval`,
+      source: { type: "goal_approval", goalId: goal.id, approvalPoint: "continue", resumeStatus: "running" },
+      displayPayload: { title: "Continue", redacted: true },
+    });
+    await context.goalState.attachHitlBlocker(goal.id, {
+      blocker: { kind: "approval", summary: "Continue", hitlId: record.hitlId, resumeStatus: "running" },
+      approvalRef: record.hitlId,
+    });
+    await context.hitlResumeCoordinator.respond(
+      { owner: record.owner, hitlId: record.hitlId },
+      { type: "approval_decision", decision: "approved" },
+    );
+    await waitFor(() => continuation.kick.mock.calls.some((call) => call[1] === goal.id));
+  });
+
+  test("retries Goal state projection in-process after a transient continuation failure", async () => {
+    let kickAttempts = 0;
+    const continuation = {
+      reconcileWorkspace: mock(async () => undefined),
+      onFamilyIdle: mock(async () => undefined),
+      kick: mock(async () => {
+        kickAttempts += 1;
+        if (kickAttempts === 1) throw new Error("transient projection failure");
+        return "started" as const;
+      }),
+      releaseWorkspace: mock(() => undefined),
+      shutdown: mock(() => undefined),
+    } satisfies GoalLeadContinuationCoordinator;
+    const fixture = await createRuntimeFixture({ continuation, preRegister: true });
+    const project = await fixture.runtime.projectRegistry.getByWorkspace(fixture.workspaceRoot);
+    if (project === undefined) throw new Error("Expected registered project");
+    const context = await fixture.runtime.contextResolver.resolve(fixture.workspaceRoot);
+    const draft = await context.goalState.create({
+      projectId: project.slug,
+      objective: "Retry Goal projection",
+      acceptanceCriteria: "A transient callback failure recovers without restart",
+      mainSessionId: crypto.randomUUID(),
+    });
+    const goal = await context.goalState.start(draft.id, { mainSessionId: draft.mainSessionId! });
+    const record = await context.hitl.create({
+      owner: { projectSlug: project.slug, ownerType: "goal", ownerId: goal.id },
+      blockingKey: `goal:${goal.id}:retry-projection`,
+      source: { type: "goal_approval", goalId: goal.id, approvalPoint: "continue", resumeStatus: "running" },
+      displayPayload: { title: "Continue", redacted: true },
+    });
+    await context.goalState.attachHitlBlocker(goal.id, {
+      blocker: { kind: "approval", summary: "Continue", hitlId: record.hitlId, resumeStatus: "running" },
+      approvalRef: record.hitlId,
+    });
+
+    await context.hitlResumeCoordinator.respond(
+      { owner: record.owner, hitlId: record.hitlId },
+      { type: "approval_decision", decision: "approved" },
+    );
+
+    await waitFor(() => kickAttempts === 2, 80);
+    expect((await context.goalState.read(goal.id)).status).toBe("running");
+  });
+
+  test("reconciles Goals and starts Loop scheduling when a project is registered after boot", async () => {
+    let reconcileAttempts = 0;
+    const continuation = {
+      reconcileWorkspace: mock(async () => {
+        reconcileAttempts += 1;
+        if (reconcileAttempts === 1) throw new Error("transient project activation failure");
+      }),
+      onFamilyIdle: mock(async () => undefined),
+      kick: mock(async () => "ineligible" as const),
+      releaseWorkspace: mock(() => undefined),
+      shutdown: mock(() => undefined),
+    } satisfies GoalLeadContinuationCoordinator;
+    const fixture = await createRuntimeFixture({ continuation });
+    await fixture.runtime.startLoopSchedulers();
+    const project = await fixture.runtime.projectRegistry.getByWorkspace(fixture.workspaceRoot);
+    if (project === undefined) throw new Error("Expected late-registered project");
+
+    await fixture.runtime.reconcileRegisteredProject(project.workspaceRoot, project.slug);
+
+    await waitFor(() => reconcileAttempts === 2, 80);
+    expect(await fixture.runtime.projectRegistry.get(project.slug)).toEqual(project);
+    await fixture.runtime.stopLoopSchedulers();
+  });
+
+  test("does not retry project reconciliation after the project is removed", async () => {
+    const reconcileStarted = createDeferred<void>();
+    const releaseReconcile = createDeferred<void>();
+    let reconcileAttempts = 0;
+    const continuation = {
+      reconcileWorkspace: mock(async () => {
+        reconcileAttempts += 1;
+        reconcileStarted.resolve();
+        await releaseReconcile.promise;
+        throw new Error("late project activation failure");
+      }),
+      onFamilyIdle: mock(async () => undefined),
+      kick: mock(async () => "ineligible" as const),
+      releaseWorkspace: mock(() => undefined),
+      shutdown: mock(() => undefined),
+    } satisfies GoalLeadContinuationCoordinator;
+    const fixture = await createRuntimeFixture({ continuation });
+    const project = await fixture.runtime.projectRegistry.getByWorkspace(fixture.workspaceRoot);
+    if (project === undefined) throw new Error("Expected late-registered project");
+
+    const reconciliation = fixture.runtime.reconcileRegisteredProject(project.workspaceRoot, project.slug);
+    await reconcileStarted.promise;
+    expect(await fixture.runtime.removeProject(project.slug)).toBeDefined();
+    releaseReconcile.resolve();
+    await reconciliation;
+    await Bun.sleep(120);
+
+    expect(reconcileAttempts).toBe(1);
+  });
+
   test("exposes only the canonical Loop cancellation method", async () => {
     const fixture = await createRuntimeFixture();
 
@@ -353,13 +501,13 @@ describe("AgentRuntime Loop wiring", () => {
     expect(reports).toEqual([]);
   });
 
-  test("triggerLoopRun executes Goal loop main session through runtime execution manager", async () => {
+  test("triggerLoopRun keeps one Goal/main Session until a non-finalizing agent reaches the Loop budget", async () => {
     const fixture = await createRuntimeFixture();
     const loop = await fixture.runtime.createLoop(fixture.workspaceRoot, goalLoopConfig);
 
     const report = await fixture.runtime.triggerLoopRun(fixture.workspaceRoot, loop.loopId);
 
-    expect(report?.status).toBe("succeeded");
+    expect(report?.status).toBe("budget_exceeded");
     expect(typeof report?.goalId).toBe("string");
     expect(typeof report?.sessionId).toBe("string");
     const sessionId = report?.sessionId;
@@ -373,7 +521,10 @@ describe("AgentRuntime Loop wiring", () => {
     });
     expect(persisted.title).not.toBe(`Loop Goal: ${loop.config.title}`);
     expect(persisted.title).not.toBe(`Goal: ${loop.config.goalTemplate?.title}`);
-    expect(persisted.executions).toEqual([expect.objectContaining({ status: "completed" })]);
+    const executions = persisted.executions as Array<{ status: string }>;
+    expect(executions.length).toBeGreaterThan(1);
+    expect(executions.some((execution) => execution.status === "completed")).toBe(true);
+    expect(executions.at(-1)?.status).not.toBe("running");
   });
 
   test("worktree cleanup migrates the canonical Session cwd before deleting its checkout", async () => {
@@ -527,7 +678,11 @@ function installLlmMocks(generatedTitle = "Runtime goal loop"): { generateText: 
   return { generateText };
 }
 
-async function createRuntimeFixture(options: { now?: number } = {}): Promise<{
+async function createRuntimeFixture(options: {
+  now?: number;
+  continuation?: GoalLeadContinuationCoordinator;
+  preRegister?: boolean;
+} = {}): Promise<{
   runtime: AgentRuntime;
   workspaceRoot: string;
   sessionsDir: string;
@@ -543,6 +698,9 @@ async function createRuntimeFixture(options: { now?: number } = {}): Promise<{
 
   const configPath = join(root, ".archcode.json");
   await writeFile(configPath, JSON.stringify(makeConfig()));
+  if (options.preRegister === true) {
+    await new ProjectRegistry({ homeDir: root, logger: silentLogger }).add({ workspaceRoot, name: "Runtime Loop Test" });
+  }
   const clock = new FakeClock(options.now ?? 0);
   const timer = new FakeTimer(clock);
   const runtime = await createRuntime({
@@ -552,8 +710,13 @@ async function createRuntimeFixture(options: { now?: number } = {}): Promise<{
     mcpManagerFactory: () => makeMcpManager(),
     loopSchedulerClock: clock,
     loopSchedulerTimer: timer,
+    ...(options.continuation === undefined
+      ? {}
+      : { goalLeadContinuationFactory: () => options.continuation! }),
   });
-  await runtime.projectRegistry.add({ workspaceRoot, name: "Runtime Loop Test" });
+  if (options.preRegister !== true) {
+    await runtime.projectRegistry.add({ workspaceRoot, name: "Runtime Loop Test" });
+  }
 
   return { runtime, workspaceRoot, sessionsDir, timer, startedExecutions: [] };
 }

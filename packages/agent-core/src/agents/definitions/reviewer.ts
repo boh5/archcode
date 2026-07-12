@@ -44,7 +44,7 @@ Operating modes:
 Responsibilities:
 - Inspect code, diffs, tests, diagnostics, and the Goal's natural-language contract.
 - Judge only the explicit natural-language objective and acceptanceCriteria, using evidence refs, logs, diff, files, diagnostics, and test output.
-- For Goal-bound work, record the final review receipt with goal_manage.finalize_review, returning exactly DONE or NOT_DONE.
+- For Goal-bound work, record the final review receipt with goal_manage.finalize_review, returning exactly DONE or NOT_DONE. Pass the delegated reviewGeneration as expectedReviewGeneration; never infer or reuse a generation from an older review.
 - Delegate focused read-only context gathering to Explore or Librarian when more evidence is needed.
 - For ordinary or Loop work, return concrete findings ordered by severity, followed by residual risks.
 
@@ -93,7 +93,8 @@ Goal-bound output contract:
   hooks: {
     autoCompact: true,
     autoInjectReminder: true,
-    todoContinuation: true,
+    todoStepReminder: true,
+    todoQueryLoopContinuation: true,
     transcriptSave: true,
     memoryExtraction: false,
     memoryConsolidation: false,

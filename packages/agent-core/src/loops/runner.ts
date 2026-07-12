@@ -5,13 +5,15 @@ import type {
   StartSessionExecutionInput,
 } from "../execution";
 import type { GoalState } from "../goals/state";
+import { buildGoalContinuationPrompt } from "../goals/goal-lead-continuation";
 import type { ToolExecutionOrigin } from "../tools/types";
 import type { LoopSchedulerRunInput, LoopSchedulerRunResult, LoopSchedulerRunner } from "./scheduler";
+import type { LoopJobExecutionLease, LoopJobRecord } from "./job-queue";
 import type { LoopCleanupState, LoopGoalTemplate, LoopJobStatus, LoopRunReport, LoopRunReportStatus, LoopRunTrigger, LoopState, LoopWorktreeArtifact } from "./state";
 import { LoopConfigSchema, LoopGoalTemplateSchema, LoopStateManager } from "./state";
 import { getLoopTemplate } from "./templates";
 import { LoopBudgetLedger } from "./budget-ledger";
-import { CollisionLedger } from "./collision-ledger";
+import { collisionLeaseExpiresAtForRun, CollisionLedger } from "./collision-ledger";
 import { LoopWorktreeManagerError, type LoopWorktreeCreateResult, type LoopWorktreeInspection } from "./worktree-manager";
 import { createProcessRunner } from "../process/runner";
 
@@ -19,11 +21,16 @@ export interface LoopRunnerSessionRuntime {
   createSession(projectRoot: string, options: LoopRunnerCreateSessionOptions): Promise<SessionFile>;
   getSessionFile(projectRoot: string, sessionId: string): Promise<SessionFile>;
   startSessionExecution(input: StartSessionExecutionInput): ActiveSessionExecution;
+  startCheckedSessionExecution(input: StartSessionExecutionInput): Promise<ActiveSessionExecution>;
   releaseSessionAgent(projectRoot: string, sessionId: string): void;
+  waitForSessionFamilyIdle(projectRoot: string, rootSessionId: string): Promise<{
+    readonly blockedByHitlIds: readonly string[];
+  }>;
 }
 
 export interface LoopRunnerGoalStateManager {
   create(input: { projectId: string; title?: string | null; objective: string; acceptanceCriteria: string; loopId?: string }): Promise<GoalState>;
+  read(goalId: string): Promise<GoalState>;
 }
 
 export interface LoopRunnerGoalRuntime {
@@ -59,6 +66,30 @@ export interface LoopRunnerOptions {
   readonly collisionLedger?: CollisionLedger;
   readonly worktreeManager: LoopRunnerWorktreeManager;
   readonly queueGoalTitleGeneration?: (goalId: string) => void;
+}
+
+export interface ContinueLoopGoalRunInput {
+  readonly loop: LoopState;
+  readonly run: LoopRunReport;
+  readonly job: LoopJobRecord;
+  readonly lease: LoopJobExecutionLease;
+  readonly checkpointSessionAttempt: (checkpoint: {
+    readonly runId: string;
+    readonly sessionId: string;
+    readonly sessionExecutionId: string;
+  }) => Promise<void>;
+}
+
+export class LoopGoalTurnContinuationPendingError extends Error {
+  constructor(
+    public readonly goalId: string,
+    public readonly sessionId: string,
+    public readonly runId: string,
+    public readonly retryDelayMs = 0,
+  ) {
+    super(`Loop-owned Goal ${goalId} requires another turn in run ${runId}.`);
+    this.name = "LoopGoalTurnContinuationPendingError";
+  }
 }
 
 export interface LoopRunnerWorktreeManager {
@@ -221,7 +252,7 @@ export class LoopRunner {
     const runId = crypto.randomUUID();
     const preRunBlocked = await this.#budgetLedger.assertCanStartRun(current, runId, trigger);
     if (preRunBlocked !== undefined) return preRunBlocked;
-    const collisionBlocked = await this.#acquireStaticCollisionTargets(current, runId, trigger);
+    const collisionBlocked = await this.#acquireStaticCollisionTargets(current, runId, trigger, startedAt);
     if (collisionBlocked !== undefined) return collisionBlocked;
     const runningReport: LoopRunReport = {
       runId,
@@ -263,54 +294,44 @@ export class LoopRunner {
       : this.runScheduledSessionLoop(input);
   }
 
-  async runGoalLoop(loopState: LoopState, trigger: LoopRunTrigger): Promise<LoopRunReport> {
-    this.#assertGoalLoop(loopState);
-    if (loopState.config.useWorktree === true) {
-      throw new LoopWorktreeExecutionConfigurationError(loopState.loopId, "durable_job_required");
+  /**
+   * Continues the exact Goal/main Session owned by an already reclaimed Loop
+   * job lease. It deliberately cannot create a Goal or prepare a new worktree.
+   */
+  async continueScheduledGoalRun(input: ContinueLoopGoalRunInput): Promise<LoopSchedulerRunResult> {
+    this.#assertGoalLoop(input.loop);
+    const goalId = input.run.goalId;
+    const sessionId = input.run.sessionId;
+    if (goalId === undefined || sessionId === undefined) {
+      throw new Error(`Loop run ${input.run.runId} is missing its Goal/main Session continuation identity.`);
     }
-    const existing = this.#activeLoops.get(loopState.loopId);
-    if (existing !== undefined) {
-      throw new LoopActiveConflictError(loopState.loopId, trigger, existing.runId, existing.sessionId);
+    if (input.run.jobId !== input.job.jobId || input.run.runId !== input.job.runId) {
+      throw new Error(`Loop Goal continuation does not own run ${input.run.runId}/job ${input.job.jobId}.`);
     }
-
-    const current = await this.#stateManager.read(loopState.loopId);
-    this.#assertGoalLoop(current);
-    if (current.currentRun?.status === "running") {
-      throw new LoopActiveConflictError(current.loopId, trigger, current.currentRun.runId, current.currentRun.sessionId);
+    const goal = await this.#requireGoalStateManager(input.loop.loopId).read(goalId);
+    if (goal.loopId !== input.loop.loopId || goal.mainSessionId !== sessionId) {
+      throw new Error(`Loop Goal ${goalId} is not bound to run ${input.run.runId} main Session ${sessionId}.`);
     }
-
-    const startedAt = this.#now();
-    const runId = crypto.randomUUID();
-    const preRunBlocked = await this.#budgetLedger.assertCanStartRun(current, runId, trigger);
-    if (preRunBlocked !== undefined) return preRunBlocked;
-    const collisionBlocked = await this.#acquireStaticCollisionTargets(current, runId, trigger);
-    if (collisionBlocked !== undefined) return collisionBlocked;
-    const runningReport: LoopRunReport = {
-      runId,
-      loopId: current.loopId,
-      status: "running",
-      trigger,
-      startedAt,
-      ...(current.config.collisionTargets === undefined ? {} : { collisionTargets: current.config.collisionTargets }),
-    };
-
-    this.#activeLoops.set(current.loopId, { runId });
-    let startedState = await this.#stateManager.recordRunStart(current.loopId, runningReport);
-    await this.#budgetLedger.recordRunStart(current.loopId, runId);
-    try {
-      const result = await this.#runGoal({ kind: "direct", loop: startedState, trigger, runId, startedAt });
-      return await this.#finishRun(startedState, runningReport, result);
-    } catch (error) {
-      const budgetExceeded = await this.#budgetExceededResult(startedState, runId, runningReport.sessionId);
-      if (budgetExceeded !== undefined) return await this.#finishRun(startedState, runningReport, budgetExceeded);
-      return await this.#finishRun(startedState, runningReport, {
-        status: "failed",
-        error: errorToMessage(error),
-      });
-    } finally {
-      await this.#releaseCollisionLeases(current.loopId, runId);
-      this.#activeLoops.delete(current.loopId);
-    }
+    const alreadySettled = loopResultFromGoalState(goal, sessionId, input.loop.loopId);
+    if (alreadySettled !== undefined) return alreadySettled;
+    const session = await this.#runtime.getSessionFile(this.#workspaceRoot, sessionId);
+    const scope = executionScopeFromRun(input.run, session.cwd);
+    const result = await this.#executeGoalSession({
+      kind: "scheduled",
+      loop: input.loop,
+      trigger: input.run.trigger,
+      runId: input.run.runId,
+      startedAt: input.run.startedAt,
+      job: input.job,
+      checkpointBaseSha: async () => {
+        throw new Error("A continued Loop Goal cannot replace its persisted Git base.");
+      },
+      checkpointWorktree: async () => {
+        throw new Error("A continued Loop Goal cannot replace its persisted worktree.");
+      },
+      checkpointSessionAttempt: input.checkpointSessionAttempt,
+    }, goal, scope, true);
+    return await this.#finalizeWorktreeResult(scope, result);
   }
 
   async runScheduledSessionLoop(input: LoopSchedulerRunInput): Promise<LoopSchedulerRunResult> {
@@ -380,6 +401,7 @@ export class LoopRunner {
       executionStarted = true;
       result = await this.#executeGoalSession(input, started, scope);
     } catch (error) {
+      if (error instanceof LoopGoalTurnContinuationPendingError) throw error;
       const budgetExceeded = await this.#budgetExceededResult(input.loop, input.runId, sessionId);
       result = budgetExceeded ?? {
         status: "failed",
@@ -396,6 +418,7 @@ export class LoopRunner {
     input: LoopRunnerExecutionInput,
     goal: GoalState,
     scope: LoopExecutionScope,
+    continuationOnly = false,
   ): Promise<LoopRunnerFinishedResult> {
     const sessionId = goal.mainSessionId;
     if (sessionId === undefined) {
@@ -408,7 +431,6 @@ export class LoopRunner {
     }
 
     await this.#recordScheduledSessionLink(input, sessionId, scope, goal.id);
-    const sessionExecutionId = await this.#checkpointSessionAttempt(input, sessionId);
     const stopped = await this.#terminalResultIfRunStopped(input, sessionId, goal.id);
     if (stopped !== undefined) {
       this.#releaseExecutionScope(scope, sessionId);
@@ -416,28 +438,72 @@ export class LoopRunner {
     }
 
     try {
-      const execution = this.#runtime.startSessionExecution({
+      const preflightFamily = await this.#runtime.waitForSessionFamilyIdle(this.#workspaceRoot, sessionId);
+      if (preflightFamily.blockedByHitlIds.length > 0) {
+        return {
+          status: "needs_user",
+          goalId: goal.id,
+          sessionId,
+          blockedReason: "needs_user",
+          blockedByHitlIds: [...preflightFamily.blockedByHitlIds],
+          attentionStatus: "waiting_for_human",
+          summary: `Goal ${goal.id} Session family is waiting for user input.`,
+        };
+      }
+      const sessionExecutionId = await this.#checkpointSessionAttempt(input, sessionId);
+      const execution = await this.#runtime.startCheckedSessionExecution({
         slug: this.#projectSlug,
         workspaceRoot: this.#workspaceRoot,
         sessionId,
-        userMessage: buildGoalLoopPrompt(input.loop, goal),
+        userMessage: continuationOnly
+          ? buildGoalContinuationPrompt(goal, { loopId: input.loop.loopId })
+          : buildGoalLoopPrompt(input.loop, goal),
         maxSteps: input.loop.config.limits.maxIterationsPerRun,
         extraTools: loopRunOptions(input.loop).extraTools,
         origin: loopOrigin(input.loop, input.trigger, input.runId),
-        executionId: sessionExecutionId,
+        ...(sessionExecutionId === undefined ? {} : { executionId: sessionExecutionId }),
       });
       await execution.promise;
-      const result = await this.#sessionResultFromFinalState(input.loop, sessionId);
-      return {
-        ...result,
-        goalId: goal.id,
-        summary: result.status === "succeeded"
-          ? `Goal ${goal.id} session ${sessionId} completed for loop ${input.loop.loopId}.`
-          : result.summary,
-      };
+      const family = await this.#runtime.waitForSessionFamilyIdle(this.#workspaceRoot, sessionId);
+      if (family.blockedByHitlIds.length > 0) {
+        return {
+          status: "needs_user",
+          goalId: goal.id,
+          sessionId,
+          blockedReason: "needs_user",
+          blockedByHitlIds: [...family.blockedByHitlIds],
+          attentionStatus: "waiting_for_human",
+          summary: `Goal ${goal.id} Session family is waiting for user input.`,
+        };
+      }
+      const currentGoal = await this.#requireGoalStateManager(input.loop.loopId).read(goal.id);
+      const goalResult = loopResultFromGoalState(currentGoal, sessionId, input.loop.loopId);
+      if (goalResult !== undefined) return goalResult;
+      const sessionResult = await this.#sessionResultFromFinalState(input.loop, sessionId);
+      if (sessionResult.status !== "succeeded") return { ...sessionResult, goalId: goal.id };
+      throw new LoopGoalTurnContinuationPendingError(goal.id, sessionId, input.runId);
     } catch (error) {
+      if (error instanceof LoopGoalTurnContinuationPendingError) throw error;
+      if (error instanceof Error && error.name === "SessionHitlBlockedError" && "hitlIds" in error) {
+        const hitlIds = (error as Error & { readonly hitlIds: readonly string[] }).hitlIds;
+        return {
+          status: "needs_user",
+          goalId: goal.id,
+          sessionId,
+          blockedReason: "needs_user",
+          blockedByHitlIds: [...hitlIds],
+          attentionStatus: "waiting_for_human",
+          summary: `Goal ${goal.id} Session family is waiting for user input.`,
+        };
+      }
+      if (error instanceof Error && error.name === "SessionFamilyActiveError") {
+        throw new LoopGoalTurnContinuationPendingError(goal.id, sessionId, input.runId, 100);
+      }
+      if (error instanceof Error && error.name === "ConcurrentSessionLimitError") {
+        throw new LoopGoalTurnContinuationPendingError(goal.id, sessionId, input.runId, 1_000);
+      }
       const budgetExceeded = await this.#budgetExceededResult(input.loop, input.runId, sessionId);
-      if (budgetExceeded !== undefined) return budgetExceeded;
+      if (budgetExceeded !== undefined) return { ...budgetExceeded, goalId: goal.id, sessionId };
       return {
         status: "failed",
         goalId: goal.id,
@@ -727,14 +793,16 @@ export class LoopRunner {
     };
   }
 
-  async #acquireStaticCollisionTargets(loop: LoopState, runId: string, trigger: LoopRunTrigger): Promise<LoopRunReport | undefined> {
+  async #acquireStaticCollisionTargets(loop: LoopState, runId: string, trigger: LoopRunTrigger, runStartedAt: number): Promise<LoopRunReport | undefined> {
     if ((loop.config.collisionTargets ?? []).length === 0) return undefined;
 
+    const expiresAt = collisionLeaseExpiresAtForRun(loop, runStartedAt, this.#now());
     const results = await this.#collisionLedger.acquireStaticTargets({
       loop,
       runId,
       priority: 0,
       actionId: `loop:${trigger}`,
+      ...(expiresAt === undefined ? {} : { expiresAt }),
     });
     const conflicts = results
       .map((result) => result.conflict)
@@ -859,10 +927,6 @@ export async function runSessionLoop(options: LoopRunnerOptions, loopState: Loop
   return await new LoopRunner(options).runSessionLoop(loopState, trigger);
 }
 
-export async function runGoalLoop(options: LoopRunnerOptions, loopState: LoopState, trigger: LoopRunTrigger): Promise<LoopRunReport> {
-  return await new LoopRunner(options).runGoalLoop(loopState, trigger);
-}
-
 function snapshotGoalTemplate(loop: LoopState): LoopGoalTemplate {
   return LoopGoalTemplateSchema.parse(structuredClone(loop.config.goalTemplate));
 }
@@ -889,6 +953,61 @@ function buildGoalLoopPrompt(loop: LoopState, goal: GoalState): string {
     "Runtime has already started and claimed this Goal for the current main session.",
     "Work against the natural-language objective and acceptance criteria, use available tools and delegation as needed, and have Reviewer finalize the review receipt through goal_manage.finalize_review.",
   ].join("\n");
+}
+
+function loopResultFromGoalState(goal: GoalState, sessionId: string, loopId: string): LoopRunnerFinishedResult | undefined {
+  switch (goal.status) {
+    case "done":
+      return {
+        status: "succeeded",
+        goalId: goal.id,
+        sessionId,
+        summary: goal.finalSummary ?? `Goal ${goal.id} session ${sessionId} completed for loop ${loopId}.`,
+      };
+    case "failed":
+      return {
+        status: "failed",
+        goalId: goal.id,
+        sessionId,
+        error: goal.lastError?.message ?? `Goal ${goal.id} failed.`,
+      };
+    case "cancelled":
+      return {
+        status: "cancelled",
+        goalId: goal.id,
+        sessionId,
+        summary: `Goal ${goal.id} was cancelled.`,
+      };
+    case "blocked":
+      if (goal.pendingHitlIds.length === 0) {
+        return {
+          status: "failed",
+          goalId: goal.id,
+          sessionId,
+          error: goal.blocker?.summary ?? `Goal ${goal.id} is blocked without durable HITL.`,
+        };
+      }
+      return {
+        status: "needs_user",
+        goalId: goal.id,
+        sessionId,
+        blockedReason: "needs_user",
+        blockedByHitlIds: [...goal.pendingHitlIds],
+        attentionStatus: "waiting_for_human",
+        summary: goal.blocker?.summary ?? `Goal ${goal.id} is waiting for user input.`,
+      };
+    case "running":
+    case "reviewing":
+    case "not_done":
+      return undefined;
+    case "draft":
+      return {
+        status: "failed",
+        goalId: goal.id,
+        sessionId,
+        error: `Loop-owned Goal ${goal.id} returned to draft after execution started.`,
+      };
+  }
 }
 
 function loopOrigin(loop: LoopState, trigger: LoopRunTrigger, runId: string): ToolExecutionOrigin {
@@ -966,6 +1085,26 @@ function observedArtifactsFromInspection(inspection: LoopWorktreeInspection, cle
   artifacts.set(`git:branch:${inspection.branchName}`, { path: `git:branch:${inspection.branchName}`, status: "observed" });
   artifacts.set(`cleanup:${cleanupState}`, { path: `cleanup:${cleanupState}`, status: "observed" });
   return [...artifacts.values()].slice(0, 100);
+}
+
+function executionScopeFromRun(run: LoopRunReport, sessionCwd: string): LoopExecutionScope {
+  if (run.worktreePath === undefined) return { cwd: sessionCwd };
+  if (
+    run.worktreeBranchName === undefined
+    || run.baseSha === undefined
+    || run.resolvedHeadSha === undefined
+  ) {
+    throw new Error(`Loop run ${run.runId} has an incomplete persisted worktree scope.`);
+  }
+  return {
+    cwd: run.worktreePath,
+    worktree: {
+      worktreePath: run.worktreePath,
+      branchName: run.worktreeBranchName,
+      baseSha: run.baseSha,
+      resolvedHeadSha: run.resolvedHeadSha,
+    },
+  };
 }
 
 function pendingUserInteractionFromSession(session: SessionFile): { blockedByHitlIds?: string[] } | undefined {

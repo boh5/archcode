@@ -37,13 +37,14 @@ export interface SessionLoopHitlContinuationLease {
   readonly alreadyCompleted?: boolean;
   complete(input: { readonly blockedByHitlIds?: readonly string[] }): Promise<void>;
   fail(error: unknown): Promise<void>;
-  afterSessionRelease?(): void;
+  afterSessionRelease?(): void | Promise<void>;
 }
 
 export interface SessionLoopHitlContinuationCoordinator {
   acquire(input: {
     readonly origin: ToolExecutionOrigin;
     readonly sessionId: string;
+    readonly rootSessionId: string;
     readonly hitlId: string;
   }): Promise<SessionLoopHitlContinuationLease>;
 }
@@ -132,7 +133,7 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
         if (released) return;
         released = true;
         resumeLease.release();
-        afterSessionRelease?.();
+        void afterSessionRelease?.();
       },
     };
   }
@@ -237,6 +238,7 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
         loopContinuation = await this.options.loopContinuation.acquire({
           origin: checkpoint.origin,
           sessionId,
+          rootSessionId: store.getState().rootSessionId,
           hitlId: record.hitlId,
         });
       }
@@ -287,7 +289,13 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
 
       if (phase === "continued") {
         if (loopContinuation?.alreadyCompleted !== true) {
-          await loopContinuation?.complete({ blockedByHitlIds: remainingSessionBlockers(store, record.hitlId) });
+          const familyBlockedIds = await this.options.storeManager.listSessionFamilyBlockedHitlIds(
+            this.options.workspaceRoot,
+            store.getState().rootSessionId,
+          );
+          await loopContinuation?.complete({
+            blockedByHitlIds: familyBlockedIds.filter((hitlId) => hitlId !== record.hitlId),
+          });
         }
         checkpoint = await transitionSessionHitlJournalPhase(
           this.options.workspaceRoot,

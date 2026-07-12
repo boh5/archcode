@@ -41,11 +41,6 @@ export interface GoalRunnerStartInput {
   readonly executionScope?: GoalRunnerLoopExecutionScope;
 }
 
-export interface GoalRunnerRetryInput {
-  readonly mainSessionId?: string;
-  readonly sessionTitle?: string;
-}
-
 export interface GoalRunnerOptions {
   readonly goalStateManager: GoalStateManager;
   readonly createSession: (options?: GoalRunnerCreateSessionOptions) => Promise<string>;
@@ -56,6 +51,7 @@ export interface GoalRunnerOptions {
 }
 
 export interface GoalRunnerFinalizeInput {
+  readonly expectedReviewGeneration: number;
   readonly verdict: GoalReviewVerdict;
   readonly summary: string;
   readonly evidenceRefs?: readonly GoalEvidenceRef[];
@@ -146,7 +142,7 @@ export class GoalRunner {
     ));
   }
 
-  async retry(goalId: string, input: GoalRunnerRetryInput = {}): Promise<GoalState> {
+  async retry(goalId: string): Promise<GoalState> {
     return withGoalExecutionClaimLock(goalId, async () => {
       const current = await this.#goalStateManager.read(goalId);
       const eligibility = goalExecutionStatusEligibility("retry", current.status);
@@ -157,7 +153,6 @@ export class GoalRunner {
         const runningSessionId = current.mainSessionId;
         if (
           runningSessionId === undefined
-          || (input.mainSessionId !== undefined && input.mainSessionId !== runningSessionId)
           || !(await this.#isSessionActive(runningSessionId))
         ) {
           throw new GoalRunnerError(goalId, `Running Goal ${goalId} can retry only through its active main Session`);
@@ -166,10 +161,13 @@ export class GoalRunner {
         await this.assertSessionCwd(goalId, runningSessionId, cwd);
         return current;
       }
+      const mainSessionId = current.mainSessionId;
+      if (mainSessionId === undefined) {
+        throw new GoalRunnerError(goalId, `Goal ${goalId} cannot retry without its original main Session`);
+      }
       const cwd = await this.resolveExecutionCwd(current);
-      const mainSessionId = input.mainSessionId ?? await this.createMainSession(goalId, { ...input, cwd });
-      if (input.mainSessionId !== undefined) await this.assertSessionCwd(goalId, input.mainSessionId, cwd);
-      return this.#goalStateManager.retry(goalId, { mainSessionId });
+      await this.assertSessionCwd(goalId, mainSessionId, cwd);
+      return this.#goalStateManager.retry(goalId);
     });
   }
 

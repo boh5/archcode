@@ -51,6 +51,7 @@ export const GoalEvidenceRefSchema = z.strictObject({
 }) satisfies z.ZodType<ProtocolGoalEvidenceRef>;
 
 export const GoalReviewReceiptSchema = z.strictObject({
+  reviewGeneration: z.number().int().nonnegative(),
   verdict: z.enum(["DONE", "NOT_DONE"]),
   summary: GoalReviewSummarySchema,
   evidenceRefs: z.array(GoalEvidenceRefSchema).max(20),
@@ -92,7 +93,7 @@ export const GoalWorktreeSchema = z.strictObject({
 }) satisfies z.ZodType<ProtocolGoalWorktree>;
 
 export const GoalStateSchema = z.strictObject({
-  version: z.literal(1),
+  version: z.literal(2),
   id: GoalUuidSchema,
   projectId: z.string().trim().min(1),
   title: GoalNullableTitleSchema,
@@ -103,6 +104,7 @@ export const GoalStateSchema = z.strictObject({
   status: GoalStatusSchema,
   blocker: GoalBlockerSchema.optional(),
   attempt: z.number().int().nonnegative(),
+  reviewGeneration: z.number().int().nonnegative(),
   lastFailureSummary: GoalReviewSummarySchema.optional(),
   budget: GoalBudgetSummarySchema.optional(),
   pendingHitlIds: z.array(z.string().trim().min(1)).max(100),
@@ -171,6 +173,24 @@ export const GoalStateSchema = z.strictObject({
     ctx.addIssue({ code: "custom", path: ["blocker"], message: "A blocked Goal requires blocker metadata" });
   }
 
+  const requiresMainSession = state.status === "running"
+    || state.status === "blocked"
+    || state.status === "reviewing"
+    || state.status === "not_done"
+    || state.status === "done"
+    || state.status === "failed"
+    || (state.status === "cancelled" && state.startedAt !== undefined);
+  if (requiresMainSession && state.mainSessionId === undefined) {
+    ctx.addIssue({ code: "custom", path: ["mainSessionId"], message: `A ${state.status} Goal requires its stable main Session` });
+  }
+  if (state.review !== undefined && state.review.reviewGeneration !== state.reviewGeneration) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["review", "reviewGeneration"],
+      message: "Goal review receipt generation must match the current review generation",
+    });
+  }
+
   if (state.status === "done") {
     if (state.review?.verdict !== "DONE" || state.review.evidenceRefs.length === 0) {
       ctx.addIssue({ code: "custom", path: ["review"], message: "A done Goal requires a DONE review with evidence" });
@@ -223,6 +243,7 @@ export interface GoalReviewerAuthorization {
 }
 
 export interface GoalFinalizeReviewInput {
+  readonly expectedReviewGeneration: number;
   readonly verdict: GoalReviewVerdict;
   readonly summary: string;
   readonly evidenceRefs?: readonly GoalEvidenceRef[];
@@ -328,7 +349,7 @@ export class GoalStateManager {
   async create(input: GoalCreateInput): Promise<GoalState> {
     const now = new Date().toISOString();
     const state = GoalStateSchema.parse({
-      version: 1,
+      version: 2,
       id: crypto.randomUUID(),
       projectId: input.projectId,
       title: null,
@@ -337,6 +358,7 @@ export class GoalStateManager {
       useWorktree: input.useWorktree ?? false,
       status: "draft",
       attempt: 1,
+      reviewGeneration: 0,
       pendingHitlIds: [],
       approvalRefs: [],
       appliedHitlIds: [],
@@ -417,6 +439,13 @@ export class GoalStateManager {
       if (goalExecutionStatusEligibility("start", state.status) !== "proceed") {
         throw new GoalTransitionError(state.id, state.status, "running");
       }
+      const mainSessionId = state.mainSessionId ?? input.mainSessionId;
+      if (mainSessionId === undefined) {
+        throw new GoalStateError(goalId, `Goal ${goalId} requires a main Session before start`);
+      }
+      if (state.mainSessionId !== undefined && input.mainSessionId !== undefined && state.mainSessionId !== input.mainSessionId) {
+        throw new GoalStateError(goalId, `Goal ${goalId} main Session is already reserved by ${state.mainSessionId}`);
+      }
       return this.update(state, {
         status: "running",
         blocker: undefined,
@@ -425,7 +454,7 @@ export class GoalStateManager {
         completedAt: undefined,
         cancelledAt: undefined,
         startedAt: state.startedAt ?? new Date().toISOString(),
-        ...(input.mainSessionId === undefined ? {} : { mainSessionId: input.mainSessionId }),
+        mainSessionId,
         ...(input.loopId === undefined ? {} : { loopId: input.loopId }),
       });
     });
@@ -503,7 +532,11 @@ export class GoalStateManager {
     return await this.withGoalMutation(goalId, async () => {
       const state = await this.read(goalId);
       this.assertTransition(state, "reviewing");
-      return this.update(state, { status: "reviewing", blocker: undefined });
+      return this.update(state, {
+        status: "reviewing",
+        blocker: undefined,
+        reviewGeneration: state.reviewGeneration + 1,
+      });
     });
   }
 
@@ -525,11 +558,14 @@ export class GoalStateManager {
     });
   }
 
-  async retry(goalId: string, input: { readonly mainSessionId?: string } = {}): Promise<GoalState> {
+  async retry(goalId: string): Promise<GoalState> {
     return await this.withGoalMutation(goalId, async () => {
       const state = await this.read(goalId);
       if (goalExecutionStatusEligibility("retry", state.status) !== "proceed") {
         throw new GoalTransitionError(state.id, state.status, "running");
+      }
+      if (state.mainSessionId === undefined) {
+        throw new GoalStateError(goalId, `Goal ${goalId} cannot retry without its original main Session`);
       }
       const now = new Date().toISOString();
       return this.update(state, {
@@ -541,7 +577,6 @@ export class GoalStateManager {
         completedAt: undefined,
         cancelledAt: undefined,
         startedAt: now,
-        ...(input.mainSessionId === undefined ? {} : { mainSessionId: input.mainSessionId }),
       });
     });
   }
@@ -607,7 +642,11 @@ export class GoalStateManager {
   async setMainSession(goalId: string, sessionId: string): Promise<GoalState> {
     return await this.withGoalMutation(goalId, async () => {
       const state = await this.read(goalId);
-      this.assertNotTerminal(state);
+      this.assertMutableDraft(state);
+      if (state.mainSessionId !== undefined && state.mainSessionId !== sessionId) {
+        throw new GoalStateError(goalId, `Goal ${goalId} main Session is already reserved by ${state.mainSessionId}`);
+      }
+      if (state.mainSessionId === sessionId) return state;
       return this.update(state, { mainSessionId: sessionId });
     });
   }
@@ -752,6 +791,12 @@ export class GoalStateManager {
     hitlId?: string,
   ): Promise<GoalState> {
     this.assertReviewerAuthorized(state, input.authorization);
+    if (input.expectedReviewGeneration !== state.reviewGeneration) {
+      throw new GoalReviewFinalizationError(
+        state.id,
+        `Stale review generation ${input.expectedReviewGeneration}; current generation is ${state.reviewGeneration}`,
+      );
+    }
     if (hitlId === undefined) {
       if (state.status !== "reviewing") {
         throw new GoalReviewFinalizationError(state.id, `Goal must be reviewing, got ${state.status}`);
@@ -771,6 +816,7 @@ export class GoalStateManager {
 
     const now = new Date().toISOString();
     const review = GoalReviewReceiptSchema.parse({
+      reviewGeneration: state.reviewGeneration,
       verdict: input.verdict,
       summary: input.summary,
       evidenceRefs,

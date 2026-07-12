@@ -251,7 +251,7 @@ describe("registerBuiltinTools", () => {
     store.getState().setGoalId(goal.id);
     store.getState().setSessionRole("main");
     await projectContext.goalState.start(goal.id, { mainSessionId: store.getState().sessionId });
-    await projectContext.goalState.beginReview(goal.id);
+    const reviewing = await projectContext.goalState.beginReview(goal.id);
     const registry = new ToolRegistry();
     registerBuiltinTools(registry, silentLogger);
     const reviewingTodoInput = {
@@ -268,6 +268,7 @@ describe("registerBuiltinTools", () => {
       }),
     );
     await projectContext.goalState.finalizeReview(goal.id, {
+      expectedReviewGeneration: reviewing.reviewGeneration,
       verdict: "DONE",
       summary: "Verified todo cleanup after review.",
       evidenceRefs: [{ kind: "test_output", ref: "register-tools.test.ts", summary: "Todo cleanup regression passed." }],

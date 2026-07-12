@@ -226,7 +226,7 @@ describe("web session query contracts", () => {
     globalThis.document = { cookie: "" } as Document;
     const goals: GoalState[] = [
       {
-        version: 1,
+        version: 2,
         id: "goal-1",
         projectId: TEST_PROJECT_SLUG,
         title: "Test Goal",
@@ -235,6 +235,7 @@ describe("web session query contracts", () => {
         useWorktree: false,
         status: "draft",
         attempt: 1,
+        reviewGeneration: 0,
         pendingHitlIds: [],
         approvalRefs: [],
         appliedHitlIds: [],
@@ -260,7 +261,7 @@ describe("web session query contracts", () => {
   test("goalQueryOptions fetches a single goal by goalId", async () => {
     globalThis.document = { cookie: "" } as Document;
     const goal: GoalState = {
-      version: 1,
+      version: 2,
       id: "goal-1",
       projectId: TEST_PROJECT_SLUG,
       title: "Single Goal",
@@ -269,6 +270,7 @@ describe("web session query contracts", () => {
       useWorktree: false,
       status: "running",
       attempt: 1,
+      reviewGeneration: 0,
       pendingHitlIds: [],
       approvalRefs: [],
       appliedHitlIds: [],
@@ -353,7 +355,7 @@ describe("web session query contracts", () => {
     globalThis.document = { cookie: "" } as Document;
     const goals: DashboardGoal[] = [
       {
-        version: 1,
+        version: 2,
         id: "goal-1",
         projectId: TEST_PROJECT_SLUG,
         title: "Active Goal",
@@ -362,6 +364,7 @@ describe("web session query contracts", () => {
         useWorktree: false,
         status: "running",
         attempt: 1,
+        reviewGeneration: 0,
         pendingHitlIds: [],
         approvalRefs: [],
         appliedHitlIds: [],

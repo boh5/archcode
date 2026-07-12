@@ -62,7 +62,8 @@ Concise evidence output:
   hooks: {
     autoCompact: true,
     autoInjectReminder: true,
-    todoContinuation: true,
+    todoStepReminder: true,
+    todoQueryLoopContinuation: true,
     transcriptSave: true,
     memoryExtraction: false,
     memoryConsolidation: false,

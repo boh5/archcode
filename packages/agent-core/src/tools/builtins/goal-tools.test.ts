@@ -83,10 +83,11 @@ class SimplifiedGoalStateManagerMock {
 
   async beginReview(goalId: string): Promise<GoalState> {
     this.calls.push({ method: "beginReview", payload: { goalId } });
-    return makeGoalState({ id: goalId, status: "reviewing" });
+    return makeGoalState({ id: goalId, status: "reviewing", reviewGeneration: this.readableGoal.reviewGeneration + 1 });
   }
 
   async finalizeReview(goalId: string, input: {
+    readonly expectedReviewGeneration: number;
     readonly verdict: "DONE" | "NOT_DONE";
     readonly summary: string;
     readonly evidenceRefs?: readonly GoalReviewReceipt["evidenceRefs"][number][];
@@ -95,6 +96,7 @@ class SimplifiedGoalStateManagerMock {
     readonly authorization: { readonly reviewerSessionId?: string };
   }): Promise<GoalState> {
     const review: GoalReviewReceipt = {
+      reviewGeneration: input.expectedReviewGeneration,
       verdict: input.verdict,
       summary: input.summary,
       evidenceRefs: [...(input.evidenceRefs ?? [])],
@@ -114,9 +116,9 @@ class SimplifiedGoalStateManagerMock {
     });
   }
 
-  async retry(goalId: string, input: { readonly mainSessionId?: string }): Promise<GoalState> {
-    const mainSessionId = input.mainSessionId ?? "main-session";
-    this.calls.push({ method: "retry", payload: { goalId, mainSessionId } });
+  async retry(goalId: string): Promise<GoalState> {
+    const mainSessionId = this.readableGoal.mainSessionId ?? "main-session";
+    this.calls.push({ method: "retry", payload: { goalId } });
     return makeGoalState({ id: goalId, status: "running", attempt: 2, mainSessionId });
   }
 
@@ -291,6 +293,8 @@ function makeGoalState(overrides: Partial<GoalState> = {}): GoalState {
     acceptanceCriteria: "The simplified lifecycle is enforced.",
     status: "draft",
     attempt: 1,
+    reviewGeneration: 0,
+    mainSessionId: "main-session",
     pendingHitlIds: [],
     approvalRefs: [],
     appliedHitlIds: [],
@@ -298,7 +302,7 @@ function makeGoalState(overrides: Partial<GoalState> = {}): GoalState {
     createdAt: "2026-07-08T00:00:00.000Z",
     updatedAt: "2026-07-08T00:00:00.000Z",
     ...overrides,
-    version: overrides.version ?? 1,
+    version: overrides.version ?? 2,
     useWorktree: overrides.useWorktree ?? false,
   };
 }
@@ -350,8 +354,8 @@ describe("goal_manage builtin tool", () => {
     const validCases = [
       { action: "block", goalId, kind: "approval", summary: "Waiting on approval", source: "test", resumeStatus: "running" },
       { action: "resume", goalId, hitlId: "hitl-1" },
-      { action: "begin_review", goalId, reviewerSessionId: "review-session" },
-      { action: "finalize_review", goalId, verdict: "DONE", summary: "Verified", evidenceRefs: [validEvidenceRef()], finalSummary: "Done" },
+      { action: "begin_review", goalId },
+      { action: "finalize_review", goalId, expectedReviewGeneration: 1, verdict: "DONE", summary: "Verified", evidenceRefs: [validEvidenceRef()], finalSummary: "Done" },
       { action: "retry", goalId },
       { action: "cancel", goalId, reason: "No longer needed" },
     ];
@@ -368,6 +372,7 @@ describe("goal_manage builtin tool", () => {
     expect(GoalManageInputSchema.safeParse({ action: "start", goalId }).success).toBe(false);
     expect(GoalManageInputSchema.safeParse({ action: "lock", goalId }).success).toBe(false);
     expect(GoalManageInputSchema.safeParse({ action: "advance_phase", goalId, nextPhase: "build" }).success).toBe(false);
+    expect(GoalManageInputSchema.safeParse({ action: "begin_review", goalId, reviewerSessionId: "unused" }).success).toBe(false);
     expect(GoalManageInputSchema.safeParse({
       action: "block",
       goalId,
@@ -386,7 +391,7 @@ describe("goal_manage builtin tool", () => {
     const inputs = [
       { action: "block", goalId, kind: "permission", summary: "Need permission", source: "tool", resumeStatus: "reviewing" },
       { action: "resume", goalId, hitlId: "hitl-1" },
-      { action: "begin_review", goalId, reviewerSessionId: "review-session" },
+      { action: "begin_review", goalId },
       { action: "retry", goalId },
       { action: "cancel", goalId, reason: "Stopped" },
     ];
@@ -412,6 +417,135 @@ describe("goal_manage builtin tool", () => {
         resumeStatus: "reviewing",
       },
     });
+  });
+
+  it("rejects begin_review while a Build child is still active", async () => {
+    const goalState = new SimplifiedGoalStateManagerMock(makeGoalState({ status: "running", mainSessionId: "main-session" }));
+    const store = mainStore({
+      childSessionLinks: [{
+        parentSessionId: "main-session",
+        parentToolCallId: "delegate-build",
+        toolName: "delegate",
+        childSessionId: "build-session",
+        childAgentName: "build",
+        depth: 1,
+        background: true,
+        status: "waiting_for_human",
+        createdAt: Date.now(),
+      }],
+    });
+
+    const { result } = await execute({ action: "begin_review", goalId: DEFAULT_GOAL_ID }, { goalState, store });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("GOAL_BUILD_ACTIVE");
+    expect(goalState.calls).toEqual([]);
+  });
+
+  it("rejects begin_review while a nested Plan-to-Build child is still active", async () => {
+    const planSessionId = crypto.randomUUID();
+    const buildSessionId = crypto.randomUUID();
+    const planStore = storeManager.create(planSessionId, TMP_DIR, {
+      rootSessionId: "main-session",
+      parentSessionId: "main-session",
+      agentName: "plan",
+      goalId: DEFAULT_GOAL_ID,
+    });
+    planStore.getState().append({
+      type: "tool-child-session-link",
+      link: {
+        parentSessionId: planSessionId,
+        parentToolCallId: "delegate-build",
+        toolName: "delegate",
+        childSessionId: buildSessionId,
+        childAgentName: "build",
+        depth: 2,
+        background: true,
+        status: "running",
+        createdAt: Date.now(),
+      },
+    });
+    await storeManager.flushSession(planSessionId, TMP_DIR);
+    const store = mainStore({
+      childSessionLinks: [{
+        parentSessionId: "main-session",
+        parentToolCallId: "delegate-plan",
+        toolName: "delegate",
+        childSessionId: planSessionId,
+        childAgentName: "plan",
+        depth: 1,
+        background: false,
+        status: "completed",
+        createdAt: Date.now(),
+      }],
+    });
+    const goalState = new SimplifiedGoalStateManagerMock(makeGoalState({ status: "running", mainSessionId: "main-session" }));
+
+    const { result } = await execute({ action: "begin_review", goalId: DEFAULT_GOAL_ID }, { goalState, store });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("GOAL_BUILD_ACTIVE");
+    expect(goalState.calls).toEqual([]);
+  });
+
+  it("rejects lifecycle actions from a previous Goal Lead main Session", async () => {
+    const goalState = new SimplifiedGoalStateManagerMock(makeGoalState({
+      status: "not_done",
+      mainSessionId: "current-main-session",
+    }));
+
+    const { result } = await execute(
+      { action: "retry", goalId: DEFAULT_GOAL_ID },
+      { goalState, store: mainStore({ sessionId: "previous-main-session" }) },
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("GOAL_CONTEXT_REQUIRED");
+    expect(goalState.calls).toEqual([]);
+  });
+
+  it("allows a not_done Goal Lead to retry or cancel but rejects other lifecycle actions", async () => {
+    const workspaceRoot = join(TMP_DIR, `not-done-${crypto.randomUUID()}`);
+    const manager = new GoalStateManager(workspaceRoot);
+    const createNotDone = async () => {
+      const draft = await manager.create({
+        projectId: "test-project",
+        objective: "Exercise not_done phase capabilities.",
+        acceptanceCriteria: "Only retry and cancel remain executable.",
+        mainSessionId: "main-session",
+      });
+      await manager.start(draft.id);
+      const reviewing = await manager.beginReview(draft.id);
+      return await manager.finalizeReview(draft.id, {
+        expectedReviewGeneration: reviewing.reviewGeneration,
+        verdict: "NOT_DONE",
+        summary: "More work remains.",
+        authorization: {
+          agentName: "reviewer",
+          sessionRole: "review",
+          sessionGoalId: draft.id,
+          reviewerSessionId: "review-session",
+        },
+      });
+    };
+    const executeManaged = async (input: unknown, goalId: string) => {
+      const parsed = goalManageTool.inputSchema.parse(input);
+      const context = makeProjectContext(manager, workspaceRoot);
+      return normalizeOutput(await goalManageTool.execute(parsed, makeCtx(parsed, mainStore({ goalId }), context, workspaceRoot)));
+    };
+
+    const notDone = await createNotDone();
+    for (const input of [
+      { action: "block", goalId: notDone.id, kind: "question", summary: "invalid", resumeStatus: "running" },
+      { action: "resume", goalId: notDone.id },
+      { action: "begin_review", goalId: notDone.id },
+    ]) {
+      expect((await executeManaged(input, notDone.id)).isError).toBe(true);
+    }
+    expect((await executeManaged({ action: "retry", goalId: notDone.id }, notDone.id)).isError).toBe(false);
+
+    const cancellable = await createNotDone();
+    expect((await executeManaged({ action: "cancel", goalId: cancellable.id }, cancellable.id)).isError).toBe(false);
   });
 
   it("creates a draft Goal only from an unbound Engineer root Session", async () => {
@@ -539,6 +673,7 @@ describe("goal_manage builtin tool", () => {
     const finalizeInput = {
       action: "finalize_review",
       goalId,
+      expectedReviewGeneration: 1,
       verdict: "DONE",
       summary: "Validated descendant work.",
       evidenceRefs: [validEvidenceRef()],
@@ -592,6 +727,7 @@ describe("goal_manage builtin tool", () => {
     const { result, goalState } = await execute({
       action: "finalize_review",
       goalId,
+      expectedReviewGeneration: 1,
       verdict: "NOT_DONE",
       summary: "Missing test evidence.",
       evidenceRefs: [],
@@ -610,6 +746,7 @@ describe("goal_manage builtin tool", () => {
       {
         action: "finalize_review",
         goalId,
+        expectedReviewGeneration: 1,
         verdict: "DONE",
         summary: "All acceptance criteria are verified.",
         evidenceRefs: [validEvidenceRef()],
@@ -637,6 +774,7 @@ describe("goal_manage builtin tool", () => {
     const input = {
       action: "finalize_review",
       goalId,
+      expectedReviewGeneration: 1,
       verdict: "NOT_DONE",
       summary: "More work required.",
       evidenceRefs: [],

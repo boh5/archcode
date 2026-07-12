@@ -58,6 +58,7 @@ import {
   SessionWorkspaceClosingError,
   type SessionWorkspaceCloseLease,
 } from "./session-workspace-control";
+import type { SessionGoalDelegationAdmission } from "./session-goal-delegation-admission";
 
 const ABORT_AND_WAIT_TIMEOUT_MS = 10000;
 const MAX_CWD_TRANSITIONS_PER_EXECUTION = 4;
@@ -202,10 +203,12 @@ interface SessionExecutionManagerConfig {
   ) => boolean;
   readonly resolveRootSessionId: (sessionId: string, workspaceRoot: string) => Promise<string>;
   readonly buildSessionTree: (workspaceRoot: string, rootSessionId: string) => Promise<SessionTreeResponse>;
+  readonly listSessionFamilyBlockedHitlIds: (workspaceRoot: string, rootSessionId: string) => Promise<readonly string[]>;
   readonly trackSession: (workspaceRoot: string, sessionId: string) => void;
   readonly untrackSession: (workspaceRoot: string, sessionId: string) => void;
   readonly executionScopeValidator: Pick<SessionExecutionScopeValidator, "validate">;
   readonly executionClaimCoordinator?: SessionExecutionClaimCoordinator;
+  readonly goalDelegationAdmission?: SessionGoalDelegationAdmission;
   readonly sessionHitlExecutionGate?: {
     assertAllowed(workspaceRoot: string, sessionId: string): Promise<void>;
   };
@@ -297,6 +300,18 @@ export class SessionExecutionManager {
    * abandoned by its root Session.
    */
   async startCheckedExecution(input: StartSessionExecutionInput): Promise<ActiveSessionExecution> {
+    return await this.#startCheckedExecution(input, true);
+  }
+
+  /** Checked Goal start for callers already holding the Goal execution claim lock. */
+  async startCheckedExecutionWithinGoalClaim(input: StartSessionExecutionInput): Promise<ActiveSessionExecution> {
+    return await this.#startCheckedExecution(input, false);
+  }
+
+  async #startCheckedExecution(
+    input: StartSessionExecutionInput,
+    acquireGoalClaim: boolean,
+  ): Promise<ActiveSessionExecution> {
     this.#assertWorkspaceOpen(input.workspaceRoot);
     const pendingToken = Symbol(`checked-session-start:${input.sessionId}`);
     this.#pendingCheckedStarts.set(pendingToken, {
@@ -322,9 +337,12 @@ export class SessionExecutionManager {
         ? flattenSessionTree((await this.#config.buildSessionTree(input.workspaceRoot, validationState.rootSessionId)).root)
           .includes(validationState.sessionId)
         : undefined;
+      const parentAgentName = validationState.parentSessionId === undefined
+        ? undefined
+        : (await this.#config.loadSessionStore(validationState.parentSessionId, input.workspaceRoot)).getState().agentName;
       await this.#config.executionScopeValidator.validate({
         projectRoot: input.workspaceRoot,
-        subject: executionScopeSubject(validationState, isDescendantOfRoot),
+        subject: executionScopeSubject(validationState, isDescendantOfRoot, parentAgentName),
         entry: {
           kind: "user_message",
           ...(isToolExecutionOrigin(input.origin) ? { origin: input.origin } : {}),
@@ -345,6 +363,24 @@ export class SessionExecutionManager {
       if (activity !== "idle") {
         throw new SessionFamilyActiveError(input.sessionId, currentState.rootSessionId, activity);
       }
+      if (currentState.goalId !== undefined) {
+        const blockedByHitlIds = await this.#config.listSessionFamilyBlockedHitlIds(input.workspaceRoot, currentState.rootSessionId);
+        if (blockedByHitlIds.length > 0) {
+          throw new SessionHitlBlockedError(input.sessionId, [...blockedByHitlIds]);
+        }
+        const activityAfterBlockerRead = this.getSessionFamilyActivity(input.workspaceRoot, currentState.rootSessionId);
+        if (activityAfterBlockerRead !== "idle") {
+          throw new SessionFamilyActiveError(input.sessionId, currentState.rootSessionId, activityAfterBlockerRead);
+        }
+        const postBlockerState = store.getState();
+        const postBlockerScope = executionScopeSnapshot(postBlockerState);
+        if (!sameExecutionScopeSnapshot(currentScope, postBlockerScope)) {
+          throw executionScopeChanged(postBlockerState.sessionId, currentScope, postBlockerScope);
+        }
+        if (this.#config.getSessionStore(postBlockerState.sessionId, input.workspaceRoot) !== store) {
+          throw executionScopeChanged(postBlockerState.sessionId, currentScope, postBlockerScope, ["sessionRegistration"]);
+        }
+      }
 
       // Deliberately no await between the final identity check and this claim.
       // startExecution re-checks cwd/HITL leases synchronously before publishing
@@ -352,7 +388,7 @@ export class SessionExecutionManager {
       return this.startExecution(input);
       };
 
-      return claimGoalId === undefined || this.#config.executionClaimCoordinator === undefined
+      return !acquireGoalClaim || claimGoalId === undefined || this.#config.executionClaimCoordinator === undefined
         ? await validateAndStart()
         : await this.#config.executionClaimCoordinator.run(claimGoalId, validateAndStart);
     } finally {
@@ -712,6 +748,26 @@ export class SessionExecutionManager {
   }
 
   async startChildExecution(workspaceRoot: string, request: ChildExecutionRequest): Promise<ChildExecutionHandle> {
+    const parentState = request.parentStore.getState();
+    const admission = this.#config.goalDelegationAdmission;
+    const start = async (): Promise<ChildExecutionHandle> => {
+      await this.#assertGoalFamilyNotBlockedByHitl(workspaceRoot, parentState);
+      return await this.#startChildExecution(workspaceRoot, request);
+    };
+    if (admission !== undefined && parentState.goalId !== undefined) {
+      return await admission.run({
+        workspaceRoot,
+        parent: parentState,
+        isParentDescendantOfRoot: parentState.parentSessionId === undefined
+          ? undefined
+          : this.#isDescendantOf(workspaceRoot, parentState.sessionId, parentState.rootSessionId),
+        targetAgentName: request.targetAgentName as AgentName,
+      }, start);
+    }
+    return await start();
+  }
+
+  async #startChildExecution(workspaceRoot: string, request: ChildExecutionRequest): Promise<ChildExecutionHandle> {
     const factory = this.#config.sessionAgentManager.getFactory(workspaceRoot);
     const currentDepth = request.currentDepth ?? 0;
     const parentAgentName = request.parentStore.getState().agentName;
@@ -757,6 +813,7 @@ export class SessionExecutionManager {
     const childTitle = request.title ?? request.description;
     const createdAt = Date.now();
     let childStore: StoreApi<SessionStoreState> | undefined;
+    let childLinked = false;
     let execution: ActiveSessionExecution;
 
     try {
@@ -778,7 +835,9 @@ export class SessionExecutionManager {
       // A parent must never durably reference a child whose identity snapshot can
       // still disappear in the same-process crash window.
       await this.#config.flushSessionStore(childSessionId, workspaceRoot);
+      await this.#validateChildExecutionScope(workspaceRoot, childStore, request.origin, true);
       this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, "linked", childTitle, createdAt, background);
+      childLinked = true;
       this.#eventBridge.attachSession(workspaceRoot, childSessionId, childStore);
 
       this.#config.sessionAgentManager.createChildAgent({
@@ -792,6 +851,7 @@ export class SessionExecutionManager {
         activeSkills,
       });
 
+      await this.#assertGoalFamilyNotBlockedByHitl(workspaceRoot, parentState);
       this.#config.sessionAgentManager.releaseSlot(workspaceRoot, request.parentSessionId);
       parentSlotReserved = false;
       execution = this.startExecution({
@@ -810,7 +870,13 @@ export class SessionExecutionManager {
       if (childSlotReserved) this.#releaseChildSlot(workspaceRoot, request.parentSessionId);
       if (childStore !== undefined) {
         this.#eventBridge.detachSession(workspaceRoot, childSessionId);
-        this.#config.deleteSessionStore(childSessionId, workspaceRoot);
+        if (childLinked) {
+          this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, "failed", childTitle, createdAt, background);
+          await this.#config.flushSessionStore(request.parentSessionId, workspaceRoot);
+        } else {
+          this.#config.deleteSessionStore(childSessionId, workspaceRoot);
+          await rm(getSessionDir(workspaceRoot, childSessionId), { recursive: true, force: true });
+        }
       }
       throw error;
     }
@@ -918,6 +984,32 @@ export class SessionExecutionManager {
   }
 
   async resumeChildExecution(workspaceRoot: string, request: ResumeChildRequest): Promise<ChildExecutionHandle> {
+    const parentState = request.parentStore.getState();
+    const admission = this.#config.goalDelegationAdmission;
+    const resume = async (): Promise<ChildExecutionHandle> => {
+      await this.#assertGoalFamilyNotBlockedByHitl(workspaceRoot, parentState);
+      return await this.#resumeChildExecution(workspaceRoot, request);
+    };
+    if (admission !== undefined && parentState.goalId !== undefined) {
+      return await admission.run({
+        workspaceRoot,
+        parent: parentState,
+        isParentDescendantOfRoot: parentState.parentSessionId === undefined
+          ? undefined
+          : this.#isDescendantOf(workspaceRoot, parentState.sessionId, parentState.rootSessionId),
+        targetAgentName: request.targetAgentName as AgentName,
+      }, resume);
+    }
+    return await resume();
+  }
+
+  async #assertGoalFamilyNotBlockedByHitl(workspaceRoot: string, state: SessionStoreState): Promise<void> {
+    if (state.goalId === undefined) return;
+    const blockedByHitlIds = await this.#config.listSessionFamilyBlockedHitlIds(workspaceRoot, state.rootSessionId);
+    if (blockedByHitlIds.length > 0) throw new SessionHitlBlockedError(state.sessionId, blockedByHitlIds);
+  }
+
+  async #resumeChildExecution(workspaceRoot: string, request: ResumeChildRequest): Promise<ChildExecutionHandle> {
     const key = scopedKey(workspaceRoot, request.sessionId);
     if (this.#active.has(key)) throw new AgentRunningError();
 
@@ -945,6 +1037,7 @@ export class SessionExecutionManager {
     if (childState.cwd !== parentCwd) {
       throw new ChildSessionCwdMismatchError(request.sessionId, request.parentSessionId, parentCwd, childState.cwd);
     }
+    await this.#validateChildExecutionScope(workspaceRoot, childStore, request.origin, false);
 
     const background = request.background ?? false;
     const parentAgentName = request.parentStore.getState().agentName;
@@ -959,8 +1052,9 @@ export class SessionExecutionManager {
     let childLaunchReserved = true;
     let execution: ActiveSessionExecution;
     try {
-      this.#appendResumeChildLinkStatus(workspaceRoot, request, existingLink, "running", resumeLinkCreatedAt);
       await this.#config.sessionAgentManager.getOrCreate(workspaceRoot, request.sessionId);
+      await this.#assertGoalFamilyNotBlockedByHitl(workspaceRoot, parentState);
+      this.#appendResumeChildLinkStatus(workspaceRoot, request, existingLink, "running", resumeLinkCreatedAt);
       execution = this.startExecution({
         slug: "",
         workspaceRoot,
@@ -1079,8 +1173,13 @@ export class SessionExecutionManager {
         const current = this.#active.get(scopedKey(input.workspaceRoot, input.sessionId));
         if (current?.executionToken !== execution.executionToken) return;
 
+        let appendedExecutionStart = false;
         if (!agent.store.getState().isRunning) {
           agent.store.getState().append({ type: "execution-start", executionId: execution.executionId });
+          appendedExecutionStart = true;
+        }
+        if (appendedExecutionStart && input.executionId !== undefined) {
+          await this.#config.flushSessionStore(input.sessionId, input.workspaceRoot);
         }
         if (execution.abortController.signal.aborted) return;
 
@@ -1632,21 +1731,59 @@ export class SessionExecutionManager {
     return undefined;
   }
 
+  async #validateChildExecutionScope(
+    workspaceRoot: string,
+    store: StoreApi<SessionStoreState>,
+    origin: ChildExecutionRequest["origin"] | ResumeChildRequest["origin"],
+    freshlyCreated: boolean,
+  ): Promise<void> {
+    const claimedState = store.getState();
+    if (claimedState.goalId === undefined) return;
+    const claimedScope = executionScopeSnapshot(claimedState);
+    const isDescendantOfRoot = freshlyCreated
+      ? true
+      : flattenSessionTree(
+        (await this.#config.buildSessionTree(workspaceRoot, claimedState.rootSessionId)).root,
+      ).includes(claimedState.sessionId);
+    const parentAgentName = claimedState.parentSessionId === undefined
+      ? undefined
+      : (await this.#config.loadSessionStore(claimedState.parentSessionId, workspaceRoot)).getState().agentName;
+    await this.#config.executionScopeValidator.validate({
+      projectRoot: workspaceRoot,
+      subject: executionScopeSubject(claimedState, isDescendantOfRoot, parentAgentName),
+      entry: {
+        kind: "user_message",
+        ...(isToolExecutionOrigin(origin) ? { origin } : {}),
+      },
+    });
+    const currentState = store.getState();
+    const currentScope = executionScopeSnapshot(currentState);
+    if (!sameExecutionScopeSnapshot(claimedScope, currentScope)) {
+      throw executionScopeChanged(currentState.sessionId, claimedScope, currentScope);
+    }
+    if (this.#config.getSessionStore(currentState.sessionId, workspaceRoot) !== store) {
+      throw executionScopeChanged(currentState.sessionId, claimedScope, currentScope, ["sessionRegistration"]);
+    }
+  }
+
 }
 
 function executionScopeSubject(
   state: SessionStoreState,
   isDescendantOfRoot?: boolean,
+  parentAgentName?: AgentName,
 ) {
   return {
     sessionId: state.sessionId,
     rootSessionId: state.rootSessionId,
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
+    ...(parentAgentName === undefined ? {} : { parentAgentName }),
     ...(isDescendantOfRoot === undefined ? {} : { isDescendantOfRoot }),
     cwd: state.cwd,
     ...(state.goalId === undefined ? {} : { goalId: state.goalId }),
     ...(state.loopId === undefined ? {} : { loopId: state.loopId }),
     ...(state.sessionRole === undefined ? {} : { sessionRole: state.sessionRole }),
+    agentName: state.agentName,
   };
 }
 

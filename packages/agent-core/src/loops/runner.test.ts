@@ -21,8 +21,8 @@ import { SessionStoreManager } from "../store/session-store-manager";
 import { CollisionLedger } from "./collision-ledger";
 import { LoopJobCoordinator } from "./coordinator";
 import { LoopHitlResumeAdapter } from "./hitl-resume-adapter";
-import { LoopJobQueue } from "./job-queue";
-import { LoopActiveConflictError, LoopRunner, type LoopRunnerGoalStartOptions, type LoopRunnerWorktreeManager } from "./runner";
+import { LoopJobQueue, type LoopJobRecord } from "./job-queue";
+import { LoopActiveConflictError, LoopGoalTurnContinuationPendingError, LoopRunner, type LoopRunnerGoalStartOptions, type LoopRunnerWorktreeManager } from "./runner";
 import { LoopScheduler, type LoopSchedulerRunInput } from "./scheduler";
 import { LoopConfigSchema, LoopStateManager, type CollisionTarget, type LoopConfig, type LoopGoalTemplate, type LoopState } from "./state";
 import { createLoopSchedulerRequiredDependencies } from "./test-utils";
@@ -772,6 +772,40 @@ describe("session loop runner", () => {
 });
 
 describe("goal loop runner", () => {
+  test("preflight aggregates family HITL blockers before starting the Goal model", async () => {
+    const siblingHitlId = crypto.randomUUID();
+    const fixture = await createFixture({ familyBlockers: [[siblingHitlId]] });
+    const loop = await fixture.stateManager.create("project-a", goalLoopConfig);
+
+    const result = await runScheduledGoal(fixture.runner, loop);
+
+    expect(result).toMatchObject({
+      status: "needs_user",
+      blockedReason: "needs_user",
+      blockedByHitlIds: [siblingHitlId],
+      goalId: "goal-1",
+      sessionId: "goal-session-1",
+    });
+    expect(fixture.runtime.startSessionExecutionMock).not.toHaveBeenCalled();
+  });
+
+  test("checked-start capacity is retryable and preserves the Goal turn identity", async () => {
+    const capacity = new Error("capacity");
+    capacity.name = "ConcurrentSessionLimitError";
+    const fixture = await createFixture({ checkedStartError: capacity });
+    const loop = await fixture.stateManager.create("project-a", goalLoopConfig);
+
+    const error = await captureAsyncError(() => runScheduledGoal(fixture.runner, loop));
+
+    expect(error).toMatchObject({
+      name: "LoopGoalTurnContinuationPendingError",
+      goalId: "goal-1",
+      sessionId: "goal-session-1",
+      retryDelayMs: 1_000,
+    });
+    expect(fixture.runtime.startSessionExecutionMock).not.toHaveBeenCalled();
+  });
+
   test("goal loop creates fresh goal from copied inline template on every run", async () => {
     const fixture = await createFixture();
     const loop = await fixture.stateManager.create("project-a", goalLoopConfig);
@@ -779,7 +813,7 @@ describe("goal loop runner", () => {
     if (parsedLoopTemplate === undefined) throw new Error("Expected inline goal template");
     const originalLoopTemplate = structuredClone(parsedLoopTemplate);
 
-    const first = await fixture.runner.runGoalLoop(loop, "manual");
+    const first = await runScheduledGoal(fixture.runner, loop);
     expect(first.status).toBe("succeeded");
     expect(first.goalId).toBe("goal-1");
     expect(first.sessionId).toBe("goal-session-1");
@@ -789,7 +823,7 @@ describe("goal loop runner", () => {
     firstGoal.objective = "mutated objective";
     firstGoal.acceptanceCriteria = "mutated criteria";
 
-    const second = await fixture.runner.runGoalLoop(loop, "manual");
+    const second = await runScheduledGoal(fixture.runner, loop);
 
     expect(second.status).toBe("succeeded");
     expect(second.goalId).toBe("goal-2");
@@ -805,9 +839,7 @@ describe("goal loop runner", () => {
       loopId: loop.loopId,
     });
 
-    const state = await fixture.stateManager.read(loop.loopId);
-    expect(state.lastRun).toMatchObject({ status: "succeeded", goalId: "goal-2", sessionId: "goal-session-2" });
-    expect(state.runCount).toBe(2);
+    expect((await fixture.stateManager.read(loop.loopId)).lastRun).toBeUndefined();
   });
 
   test("goal loop rejects goalTemplateId before runner execution and creates no goal", async () => {
@@ -820,7 +852,7 @@ describe("goal loop runner", () => {
     const malformedLoop = { ...loop, config: badConfig } as unknown as LoopState;
 
     expect(() => LoopConfigSchema.parse(badConfig)).toThrow();
-    const rejection = await captureAsyncError(() => fixture.runner.runGoalLoop(malformedLoop, "manual"));
+    const rejection = await captureAsyncError(() => runScheduledGoal(fixture.runner, malformedLoop));
     expect(rejection).toBeInstanceOf(Error);
     expect(fixture.goalStateManager.createMock).not.toHaveBeenCalled();
     expect(fixture.goalRunner.startMock).not.toHaveBeenCalled();
@@ -832,7 +864,7 @@ describe("goal loop runner", () => {
     const expectedTemplate = loop.config.goalTemplate;
     if (expectedTemplate === undefined) throw new Error("Expected inline goal template");
 
-    const report = await fixture.runner.runGoalLoop(loop, "manual");
+    const report = await runScheduledGoal(fixture.runner, loop);
 
     expect(report).toMatchObject({ status: "succeeded", goalId: "goal-1", sessionId: "goal-session-1" });
     expect(fixture.goalStateManager.createMock).toHaveBeenCalledWith({
@@ -855,7 +887,7 @@ describe("goal loop runner", () => {
     const fixture = await createFixture();
     const loop = await fixture.stateManager.create("project-a", goalLoopConfig);
 
-    const report = await fixture.runner.runGoalLoop(loop, "manual");
+    const report = await runScheduledGoal(fixture.runner, loop);
 
     expect(report).toMatchObject({
       status: "succeeded",
@@ -889,36 +921,174 @@ describe("goal loop runner", () => {
     expect(executionInput?.userMessage).not.toContain("Do not edit files, delegate");
     expect(executionInput?.userMessage).toContain("goal_manage.finalize_review");
 
-    const state = await fixture.stateManager.read(loop.loopId);
-    expect(state.lastRun).toMatchObject({ status: "succeeded", goalId: "goal-1", sessionId: "goal-session-1" });
+    expect((await fixture.stateManager.read(loop.loopId)).lastRun).toBeUndefined();
   });
 
-  test("goal loop records failed report when Goal main session execution finishes failed", async () => {
+  test("continues a non-terminal Goal in the same main session and Loop run", async () => {
+    const fixture = await createFixture({ goalStatusesAfterTurns: ["running", "running", "done"] });
+    const loop = await fixture.stateManager.create("project-a", goalLoopConfig);
+    const job = testJob(loop.loopId, {
+      runId: "same-loop-run",
+      sessionId: "goal-session-1",
+      leaseOwnerId: "lease-owner",
+      leaseToken: "lease-token",
+    });
+    const firstTurn = fixture.runner.createSchedulerRunner()({
+      ...worktreeCheckpointCallbacks(),
+      loop,
+      trigger: "interval",
+      runId: "same-loop-run",
+      startedAt: 3_000,
+      job,
+    });
+    await expect(firstTurn).rejects.toBeInstanceOf(LoopGoalTurnContinuationPendingError);
+
+    const result = await fixture.runner.continueScheduledGoalRun({
+      loop,
+      run: {
+        runId: "same-loop-run",
+        loopId: loop.loopId,
+        status: "running",
+        trigger: "interval",
+        startedAt: 3_000,
+        jobId: job.jobId,
+        goalId: "goal-1",
+        sessionId: "goal-session-1",
+      },
+      job: job as LoopJobRecord,
+      lease: { leaseOwnerId: "lease-owner", leaseToken: "lease-token" },
+      checkpointSessionAttempt: async () => {},
+    });
+
+    expect(result).toMatchObject({ status: "succeeded", goalId: "goal-1", sessionId: "goal-session-1" });
+    expect(fixture.goalStateManager.createMock).toHaveBeenCalledTimes(1);
+    expect(fixture.goalRunner.startMock).toHaveBeenCalledTimes(1);
+    expect(fixture.runtime.startSessionExecutionMock).toHaveBeenCalledTimes(2);
+    const starts = fixture.runtime.startSessionExecutionMock.mock.calls.map((call) => call[0]);
+    const persistedGoal = fixture.goalStateManager.goals.get("goal-1");
+    if (persistedGoal === undefined) throw new Error("Expected goal-1 to exist");
+    expect(starts.map((start) => start?.sessionId)).toEqual(["goal-session-1", "goal-session-1"]);
+    expect(starts.map(loopRunId)).toEqual(["same-loop-run", "same-loop-run"]);
+    expect(starts[1]?.userMessage).toContain("This is the same Loop-owned Goal");
+    expect(starts[1]?.userMessage).toContain(persistedGoal.objective);
+    expect(starts[1]?.userMessage).toContain(persistedGoal.acceptanceCriteria);
+    expect(starts[1]?.userMessage).toContain('"status": "running"');
+  });
+
+  test("treats a budget-blocked Goal as authoritative over its failed Session and resumes the same run identity after approval", async () => {
+    const budgetHitlId = "goal-budget-hitl";
+    const fixture = await createFixture({
+      goalStatusesAfterTurns: ["blocked", "running", "done"],
+      sessionExecutions: [{
+        id: "budget-stop-execution",
+        startedAt: 100,
+        status: "failed",
+        endedAt: 150,
+        durationMs: 50,
+        error: "GoalBudgetEnforcementStopError: approval pending",
+      }],
+      afterGoalStart: async (goal) => {
+        Object.assign(goal, {
+          pendingHitlIds: [budgetHitlId],
+          approvalRefs: [budgetHitlId],
+          blocker: {
+            kind: "budget",
+            summary: "Budget warning approval is pending",
+            hitlId: budgetHitlId,
+            source: "approval_budget_1",
+            resumeStatus: "running",
+            createdAt: new Date(0).toISOString(),
+          },
+        });
+      },
+    });
+    const loop = await fixture.stateManager.create("project-a", goalLoopConfig);
+    const job = testJob(loop.loopId, {
+      runId: "budget-loop-run",
+      sessionId: "goal-session-1",
+      leaseOwnerId: "budget-lease-owner",
+      leaseToken: "budget-lease-token",
+    });
+
+    const blocked = await fixture.runner.createSchedulerRunner()({
+      ...worktreeCheckpointCallbacks(),
+      loop,
+      trigger: "manual",
+      runId: "budget-loop-run",
+      startedAt: 3_000,
+      job,
+    });
+
+    expect(blocked).toMatchObject({
+      status: "needs_user",
+      goalId: "goal-1",
+      sessionId: "goal-session-1",
+      blockedByHitlIds: [budgetHitlId],
+    });
+    const goal = fixture.goalStateManager.goals.get("goal-1");
+    if (goal === undefined) throw new Error("Expected budget-blocked Goal");
+    Object.assign(goal, {
+      status: "running",
+      blocker: undefined,
+      pendingHitlIds: [],
+      appliedHitlIds: [budgetHitlId],
+    });
+    fixture.runtime.setSessionExecutions("goal-session-1", [{
+      id: "budget-approved-execution",
+      startedAt: 200,
+      status: "completed",
+      endedAt: 250,
+      durationMs: 50,
+    }]);
+
+    const completed = await fixture.runner.continueScheduledGoalRun({
+      loop,
+      run: {
+        runId: "budget-loop-run",
+        loopId: loop.loopId,
+        status: "running",
+        trigger: "manual",
+        startedAt: 3_000,
+        jobId: job.jobId,
+        goalId: "goal-1",
+        sessionId: "goal-session-1",
+      },
+      job: job as LoopJobRecord,
+      lease: { leaseOwnerId: "budget-lease-owner", leaseToken: "budget-lease-token" },
+      checkpointSessionAttempt: async () => {},
+    });
+
+    expect(completed).toMatchObject({ status: "succeeded", goalId: "goal-1", sessionId: "goal-session-1" });
+    expect(fixture.goalStateManager.createMock).toHaveBeenCalledTimes(1);
+    expect(fixture.runtime.startSessionExecutionMock).toHaveBeenCalledTimes(2);
+    const starts = fixture.runtime.startSessionExecutionMock.mock.calls.map((call) => call[0]);
+    expect(starts.map((start) => start?.sessionId)).toEqual(["goal-session-1", "goal-session-1"]);
+    expect(starts.map(loopRunId)).toEqual(["budget-loop-run", "budget-loop-run"]);
+    expect(job).toMatchObject({ runId: "budget-loop-run", sessionId: "goal-session-1" });
+  });
+
+  test("goal loop returns failure when Goal main session execution finishes failed", async () => {
     const fixture = await createFixture({
       sessionExecutions: [{ id: "run-1", startedAt: 100, status: "failed", endedAt: 150, durationMs: 50, error: "goal agent failed" }],
+      goalStatusesAfterTurns: ["running"],
     });
     const loop = await fixture.stateManager.create("project-a", goalLoopConfig);
 
-    const report = await fixture.runner.runGoalLoop(loop, "manual");
+    const report = await runScheduledGoal(fixture.runner, loop);
 
     expect(report).toMatchObject({ status: "failed", goalId: "goal-1", sessionId: "goal-session-1", error: "goal agent failed" });
-    expect((await fixture.stateManager.read(loop.loopId)).lastRun).toMatchObject({
-      status: "failed",
-      goalId: "goal-1",
-      sessionId: "goal-session-1",
-      error: "goal agent failed",
-    });
+    expect((await fixture.stateManager.read(loop.loopId)).lastRun).toBeUndefined();
   });
 
-  test("goal loop records failed report with goal id and error when GoalRunner fails", async () => {
+  test("goal loop returns goal id and error when GoalRunner fails", async () => {
     const fixture = await createFixture({ goalStartError: new Error("goal start failed") });
     const loop = await fixture.stateManager.create("project-a", goalLoopConfig);
 
-    const report = await fixture.runner.runGoalLoop(loop, "manual");
+    const report = await runScheduledGoal(fixture.runner, loop);
 
     expect(report).toMatchObject({ status: "failed", goalId: "goal-1", error: "goal start failed" });
     expect(report.sessionId).toBeUndefined();
-    expect((await fixture.stateManager.read(loop.loopId)).lastRun).toMatchObject({ status: "failed", goalId: "goal-1", error: "goal start failed" });
+    expect((await fixture.stateManager.read(loop.loopId)).lastRun).toBeUndefined();
   });
 
   test("releases static collision leases when goal start throws", async () => {
@@ -928,7 +1098,7 @@ describe("goal loop runner", () => {
       collisionTargets: [staticFileTarget],
     });
 
-    const report = await fixture.runner.runGoalLoop(loop, "manual");
+    const report = await runScheduledGoal(fixture.runner, loop);
 
     expect(report).toMatchObject({ status: "failed", error: "goal start failed" });
     expect(await fixture.collisionLedger.readActiveLeases()).toEqual([]);
@@ -1097,6 +1267,7 @@ describe("loop-owned-hitl resume", () => {
       ...sessionLoopConfig,
       approvalPolicy: "explicit_per_run",
     });
+    await fixture.scheduler.start("project-a");
     const blocked = await fixture.scheduler.runManual(loop.loopId);
     const hitlId = blocked?.blockedByHitlIds?.[0];
     if (hitlId === undefined) throw new Error("Expected Loop HITL id");
@@ -1201,6 +1372,9 @@ async function createFixture(options: {
   goalStartWithoutMainSession?: boolean;
   afterCreateSession?: (sessionId: string) => Promise<void>;
   afterGoalStart?: (goal: GoalState) => Promise<void>;
+  goalStatusesAfterTurns?: GoalState["status"][];
+  familyBlockers?: readonly (readonly string[])[];
+  checkedStartError?: Error;
   worktreePath?: string;
   worktreeHasChanges?: boolean;
 } = {}): Promise<{
@@ -1216,8 +1390,15 @@ async function createFixture(options: {
   const workspaceRoot = join(RUN_DIR, `workspace-${nextWorkspaceId++}-${crypto.randomUUID()}`);
   await mkdir(workspaceRoot, { recursive: true });
   const stateManager = new LoopStateManager(workspaceRoot);
-  const runtime = new FakeLoopRuntime(options.executionPromise ?? Promise.resolve(), options.sessionExecutions, options.afterCreateSession, options.createSessionError);
-  const goalStateManager = new FakeGoalStateManager();
+  const runtime = new FakeLoopRuntime(
+    options.executionPromise ?? Promise.resolve(),
+    options.sessionExecutions,
+    options.afterCreateSession,
+    options.createSessionError,
+    options.familyBlockers,
+    options.checkedStartError,
+  );
+  const goalStateManager = new FakeGoalStateManager(options.goalStatusesAfterTurns);
   const goalRunner = new FakeGoalRunner(goalStateManager, options.goalStartError, options.afterGoalStart, options.goalStartWithoutMainSession ?? false);
   const collisionLedger = new CollisionLedger({ stateManager, workspaceRoot, clock: { now: () => 1_000 } });
   const worktreeManager = new FakeWorktreeManager(
@@ -1382,6 +1563,8 @@ class FakeLoopRuntime {
     private readonly sessionExecutions: SessionExecutionRecord[] = [{ id: "run-1", startedAt: 100, status: "completed", endedAt: 150, durationMs: 50 }],
     private readonly afterCreateSession?: (sessionId: string) => Promise<void>,
     private readonly createSessionError?: Error,
+    private readonly familyBlockers: readonly (readonly string[])[] = [],
+    private readonly checkedStartError?: Error,
   ) {}
 
   async createSession(projectRoot: string, options?: { cwd?: string; goalId?: string; loopId?: string; sessionRole?: "main"; title?: string }): Promise<SessionFile> {
@@ -1392,8 +1575,26 @@ class FakeLoopRuntime {
     return await this.getSessionFileMock(_workspaceRoot, sessionId);
   }
 
+  setSessionExecutions(sessionId: string, executions: SessionExecutionRecord[]): void {
+    const session = this.#sessions.get(sessionId);
+    if (session === undefined) throw new Error(`Missing fake session ${sessionId}`);
+    this.#sessions.set(sessionId, { ...session, executions });
+  }
+
   startSessionExecution(input: StartSessionExecutionInput): ActiveSessionExecution {
     return this.startSessionExecutionMock(input);
+  }
+
+  async startCheckedSessionExecution(input: StartSessionExecutionInput): Promise<ActiveSessionExecution> {
+    if (this.checkedStartError !== undefined) throw this.checkedStartError;
+    return this.startSessionExecution(input);
+  }
+
+  #familyInspection = 0;
+  async waitForSessionFamilyIdle(): Promise<{ blockedByHitlIds: readonly string[] }> {
+    const blockedByHitlIds = this.familyBlockers[Math.min(this.#familyInspection, this.familyBlockers.length - 1)] ?? [];
+    this.#familyInspection += 1;
+    return { blockedByHitlIds };
   }
 
   releaseSessionAgent(projectRoot: string, sessionId: string): void {
@@ -1478,7 +1679,13 @@ class FakeWorktreeManager {
 
 class FakeGoalStateManager {
   #nextGoal = 1;
+  readonly #statusesAfterTurns: GoalState["status"][];
+  #readIndex = 0;
   readonly goals = new Map<string, GoalState>();
+
+  constructor(statusesAfterTurns: GoalState["status"][] = ["done"]) {
+    this.#statusesAfterTurns = statusesAfterTurns;
+  }
   readonly createMock = mock(async (input: {
     projectId: string;
     title?: string | null;
@@ -1489,7 +1696,7 @@ class FakeGoalStateManager {
     const id = `goal-${this.#nextGoal++}`;
     const now = new Date(0).toISOString();
     const goal: GoalState = {
-      version: 1,
+      version: 2,
       id,
       projectId: input.projectId,
       title: input.title ?? null,
@@ -1498,6 +1705,7 @@ class FakeGoalStateManager {
       useWorktree: false,
       status: "draft",
       attempt: 1,
+      reviewGeneration: 0,
       pendingHitlIds: [],
       approvalRefs: [],
       appliedHitlIds: [],
@@ -1512,6 +1720,16 @@ class FakeGoalStateManager {
 
   async create(input: Parameters<FakeGoalStateManager["createMock"]>[0]): Promise<GoalState> {
     return await this.createMock(input);
+  }
+
+  async read(goalId: string): Promise<GoalState> {
+    const goal = this.goals.get(goalId);
+    if (goal === undefined) throw new Error(`Missing fake goal ${goalId}`);
+    const status = this.#statusesAfterTurns[Math.min(this.#readIndex, this.#statusesAfterTurns.length - 1)] ?? "done";
+    this.#readIndex += 1;
+    const updated = { ...goal, status } as GoalState;
+    this.goals.set(goalId, updated);
+    return updated;
   }
 }
 
@@ -1574,6 +1792,17 @@ function worktreeCheckpointCallbacks(): Pick<LoopSchedulerRunInput, "checkpointB
     checkpointWorktree: async () => {},
     checkpointSessionAttempt: async () => {},
   };
+}
+
+async function runScheduledGoal(runner: LoopRunner, loop: LoopState) {
+  return await runner.createSchedulerRunner()({
+    ...worktreeCheckpointCallbacks(),
+    loop,
+    trigger: "manual",
+    runId: crypto.randomUUID(),
+    startedAt: 1_000,
+    job: testJob(loop.loopId),
+  });
 }
 
 function captureAsyncError(action: () => Promise<unknown>): Promise<unknown> {

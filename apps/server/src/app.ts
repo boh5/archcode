@@ -77,6 +77,7 @@ export function createServerApp(
   const projects = createProjectsRoutes(serverRuntime, {
     onProjectRegistered: async (project) => {
       await publishProjectControlPlaneSnapshot(serverRuntime, globalEventBus, project);
+      await serverRuntime.reconcileRegisteredProject(project.workspaceRoot, project.slug);
     },
     onProjectRemoved: async (snapshot) => {
       globalEventBus.emit(snapshot.sessionRuntime);

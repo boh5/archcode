@@ -52,12 +52,18 @@ import {
   SessionExecutionManager,
   SessionExecutionScopeValidator,
   SessionFamilyStopService,
+  RoleDrivenSessionGoalDelegationAdmission,
   SessionHitlResumeAdapter,
   assertSessionHitlJournalAllowsExecution,
 } from "./execution";
 import type { ActiveSessionExecution, StartSessionExecutionInput, SubscribeSessionEventsInput } from "./execution";
 import { GoalHitlResumeAdapter } from "./goals/hitl-resume-adapter";
 import { GoalRunner } from "./goals/runner";
+import {
+  GoalLeadContinuationService,
+  type GoalLeadContinuationCoordinator,
+  type GoalLeadContinuationOptions,
+} from "./goals/goal-lead-continuation";
 import { withGoalExecutionClaimLock } from "./goals/execution-claim";
 import { GoalCancellationService, type GoalCancellationRequest } from "./goals/cancellation";
 import { HitlService } from "./hitl/service";
@@ -95,6 +101,7 @@ export interface AgentRuntimeOptions {
   loopSchedulerTimer?: LoopSchedulerTimer;
   loopSchedulerClock?: { now(): number };
   logger?: Logger;
+  goalLeadContinuationFactory?: (options: GoalLeadContinuationOptions) => GoalLeadContinuationCoordinator;
 }
 
 export interface CreateRuntimeSessionOptions {
@@ -204,6 +211,7 @@ export interface AgentRuntime {
   readLoopRunLog(workspaceRoot: string, loopId: string, limit?: number): Promise<LoopRunReport[]>;
   readLoopStateMarkdown(workspaceRoot: string, loopId: string): Promise<string>;
   startLoopSchedulers(): Promise<void>;
+  reconcileRegisteredProject(workspaceRoot: string, projectSlug: string): Promise<void>;
   stopLoopSchedulers(): Promise<void>;
   notifyRuntimeShutdown(reason: string): void;
 }
@@ -283,6 +291,13 @@ export async function createRuntime(
     const sessionRuntimeListeners = new Set<(event: GlobalSSESessionRuntimeChangedEvent) => void>();
     const resourceChangeListeners = new Set<(event: GlobalSSEResourceChangedEvent) => void>();
     const resourceTitleTasks = new BackgroundTaskManager({ logger: runtimeLogger.child({ module: "title-generation.resources" }) });
+    const goalStateReconcileRetries = new Map<string, { attempt: number; timer?: ReturnType<typeof setTimeout> }>();
+    const goalStateReconcileInFlight = new Set<string>();
+    const projectReconcileRetries = new Map<string, { attempt: number; timer?: ReturnType<typeof setTimeout> }>();
+    const projectReconcileInFlight = new Set<string>();
+    const cancelledReconcileWorkspaces = new Set<string>();
+    let goalStateReconciliationShuttingDown = false;
+    let goalLeadContinuation: GoalLeadContinuationCoordinator | undefined;
     const publishHitlEvent = (event: GlobalSSEHitlRealtimeEvent): void => {
       for (const listener of hitlListeners) listener(event);
     };
@@ -374,6 +389,7 @@ export async function createRuntime(
                 acquireStop: (input) => executionManager.acquireSessionFamilyStop(input),
               },
             }),
+            onGoalStateChanged: (goalId) => notifyGoalStateChanged(workspaceRoot, goalId),
           }),
         },
         logger: runtimeLogger.child({ module: "projects" }),
@@ -405,6 +421,8 @@ export async function createRuntime(
     }
 
     function notifyRuntimeShutdown(reason: string): void {
+      goalLeadContinuation?.shutdown();
+      shutdownGoalStateReconciliation();
       runtimeLogger.info("runtime.shutdown", { message: reason, meta: { activeSessions: activeSessionKeys.size } });
     }
 
@@ -425,12 +443,16 @@ export async function createRuntime(
       deleteSessionStore: (sessionId, workspaceRoot, deleteOptions) => sessionStoreManager.delete(sessionId, workspaceRoot, deleteOptions),
       resolveRootSessionId: (sessionId, workspaceRoot) => sessionStoreManager.resolveRootSessionId(sessionId, workspaceRoot),
       buildSessionTree: (workspaceRoot, rootSessionId) => sessionStoreManager.buildSessionTree(workspaceRoot, rootSessionId),
+      listSessionFamilyBlockedHitlIds: (workspaceRoot, rootSessionId) => (
+        sessionStoreManager.listSessionFamilyBlockedHitlIds(workspaceRoot, rootSessionId)
+      ),
       trackSession,
       untrackSession,
       executionScopeValidator,
       executionClaimCoordinator: {
         run: (ownerId, action) => withGoalExecutionClaimLock(ownerId, action),
       },
+      goalDelegationAdmission: new RoleDrivenSessionGoalDelegationAdmission(contextResolver),
       sessionHitlExecutionGate: {
         assertAllowed: (workspaceRoot, sessionId) => (
           assertSessionHitlJournalAllowsExecution(workspaceRoot, sessionId)
@@ -442,6 +464,21 @@ export async function createRuntime(
       }),
       logger,
     });
+    const continuationOptions: GoalLeadContinuationOptions = {
+      projectContextResolver: contextResolver,
+      sessionRuntime: {
+        getSessionFile: (workspaceRoot, sessionId) => sessionStoreManager.getSessionFile(workspaceRoot, sessionId),
+        getSessionFamilyActivity: (workspaceRoot, rootSessionId) => executionManager.getSessionFamilyActivity(workspaceRoot, rootSessionId),
+        listSessionFamilyBlockedHitlIds: (workspaceRoot, rootSessionId) => (
+          sessionStoreManager.listSessionFamilyBlockedHitlIds(workspaceRoot, rootSessionId)
+        ),
+        startCheckedExecutionWithinGoalClaim: (input) => executionManager.startCheckedExecutionWithinGoalClaim(input),
+      },
+      logger: runtimeLogger.child({ module: "goals.continuation" }),
+    };
+    const continuationService = options.goalLeadContinuationFactory?.(continuationOptions)
+      ?? new GoalLeadContinuationService(continuationOptions);
+    goalLeadContinuation = continuationService;
     const sessionFamilyStopService = new SessionFamilyStopService({
       sessionFamilyController: {
         acquireStop: (input) => executionManager.acquireSessionFamilyStop(input),
@@ -476,6 +513,26 @@ export async function createRuntime(
             error,
             context: { projectSlug, rootSessionId: change.rootSessionId, activity: change.activity },
           });
+        }
+      }
+      if (change.activity === "idle") {
+        void continuationService.onFamilyIdle(change.workspaceRoot, change.rootSessionId).catch((error) => {
+          runtimeLogger.warn("goal.continuation.idle.failed", {
+            error,
+            context: { rootSessionId: change.rootSessionId },
+            meta: { workspaceRoot: change.workspaceRoot },
+          });
+        });
+        if (loopSchedulersStarted) {
+          void getLoopScheduler(change.workspaceRoot)
+            .then((scheduler) => scheduler.dispatchPendingJobs())
+            .catch((error) => {
+              runtimeLogger.warn("loops.goal_continuation.idle_dispatch.failed", {
+                error,
+                context: { rootSessionId: change.rootSessionId },
+                meta: { workspaceRoot: change.workspaceRoot },
+              });
+            });
         }
       }
     });
@@ -522,7 +579,31 @@ export async function createRuntime(
           createSession: (projectRoot, createOptions) => sessionStoreManager.createSessionFile(projectRoot, createOptions),
           getSessionFile: (projectRoot, sessionId) => sessionStoreManager.getSessionFile(projectRoot, sessionId),
           startSessionExecution: (input) => executionManager.startExecution(input),
+          startCheckedSessionExecution: (input) => executionManager.startCheckedExecution(input),
           releaseSessionAgent: (projectRoot, sessionId) => sessionAgentManager.releaseAgent(projectRoot, sessionId),
+          waitForSessionFamilyIdle: async (projectRoot, rootSessionId) => {
+            if (executionManager.getSessionFamilyActivity(projectRoot, rootSessionId) !== "idle") {
+              await new Promise<void>((resolve) => {
+                const unsubscribe = executionManager.subscribeSessionRuntimeChanges((change) => {
+                  if (
+                    change.workspaceRoot === projectRoot
+                    && change.rootSessionId === rootSessionId
+                    && change.activity === "idle"
+                  ) {
+                    unsubscribe();
+                    resolve();
+                  }
+                });
+                if (executionManager.getSessionFamilyActivity(projectRoot, rootSessionId) === "idle") {
+                  unsubscribe();
+                  resolve();
+                }
+              });
+            }
+            return {
+              blockedByHitlIds: await sessionStoreManager.listSessionFamilyBlockedHitlIds(projectRoot, rootSessionId),
+            };
+          },
         },
         goalStateManager: projectContext.goalState,
         goalRunner: {
@@ -625,9 +706,12 @@ export async function createRuntime(
           sessionCwdReferenceMigration.migrateForRemoval(migrationInput, operation)
         ),
       });
+      let sessionHitlContinuation!: LoopSessionHitlContinuationCoordinator;
       const scheduler = new LoopScheduler({
         stateManager: projectContext.loopState,
         runner: runner.createSchedulerRunner(),
+        continueGoalRun: (input) => runner.continueScheduledGoalRun(input),
+        reconcileGoalState: (goalId) => sessionHitlContinuation.reconcileGoalState(goalId),
         clock: schedulerClock,
         ...(options.loopSchedulerTimer === undefined ? {} : { timer: options.loopSchedulerTimer }),
         budgetLedger,
@@ -655,12 +739,19 @@ export async function createRuntime(
         },
         logger: runtimeLogger.child({ module: "loops.scheduler" }),
       });
-      const sessionHitlContinuation = new LoopSessionHitlContinuationCoordinator({
+      sessionHitlContinuation = new LoopSessionHitlContinuationCoordinator({
         stateManager: projectContext.loopState,
         jobQueue,
         jobCoordinator,
         collisionLedger,
         now: schedulerClock.now,
+        readGoal: (goalId) => projectContext.goalState.read(goalId),
+        onGoalContinuationQueued: () => {
+          void scheduler.dispatchPendingJobs().catch((error) => {
+            runtimeLogger.warn("loops.goal_continuation.dispatch.failed", { error, meta: { workspaceRoot } });
+          });
+        },
+        logger: runtimeLogger.child({ module: "loops.goal-continuation" }),
         scheduleCleanup: ({ loopId, runId, jobId }) => {
           const timer = setTimeout(() => {
             void (async () => {
@@ -705,6 +796,72 @@ export async function createRuntime(
 
     async function getLoopSessionHitlContinuation(workspaceRoot: string): Promise<LoopSessionHitlContinuationCoordinator> {
       return (await getLoopRuntimeServices(workspaceRoot)).sessionHitlContinuation;
+    }
+
+    async function notifyGoalStateChanged(workspaceRoot: string, goalId: string): Promise<void> {
+      const key = `${workspaceRoot}\0${goalId}`;
+      if (goalStateReconciliationShuttingDown || cancelledReconcileWorkspaces.has(workspaceRoot) || goalStateReconcileInFlight.has(key) || goalStateReconcileRetries.get(key)?.timer !== undefined) return;
+      goalStateReconcileInFlight.add(key);
+      try {
+        const context = await contextResolver.resolve(workspaceRoot);
+        const goal = await context.goalState.read(goalId);
+        if (goal.loopId !== undefined) {
+          await (await getLoopSessionHitlContinuation(workspaceRoot)).reconcileGoalState(goalId);
+        } else {
+          await goalLeadContinuation?.kick(workspaceRoot, goalId);
+        }
+        goalStateReconcileRetries.delete(key);
+      } catch (error) {
+        if (goalStateReconciliationShuttingDown || cancelledReconcileWorkspaces.has(workspaceRoot)) return;
+        const attempt = (goalStateReconcileRetries.get(key)?.attempt ?? 0) + 1;
+        const delay = Math.min(100 * 2 ** (attempt - 1), 30_000);
+        const retry: { attempt: number; timer?: ReturnType<typeof setTimeout> } = { attempt };
+        retry.timer = setTimeout(() => {
+          retry.timer = undefined;
+          if (goalStateReconciliationShuttingDown || cancelledReconcileWorkspaces.has(workspaceRoot)) {
+            goalStateReconcileRetries.delete(key);
+            return;
+          }
+          void notifyGoalStateChanged(workspaceRoot, goalId);
+        }, delay);
+        retry.timer.unref?.();
+        goalStateReconcileRetries.set(key, retry);
+        runtimeLogger.warn("goal.state_changed.reconcile_failed", {
+          error,
+          context: { goalId },
+          meta: { workspaceRoot, attempt, retryDelayMs: delay },
+        });
+      } finally {
+        goalStateReconcileInFlight.delete(key);
+      }
+    }
+
+    function shutdownGoalStateReconciliation(): void {
+      goalStateReconciliationShuttingDown = true;
+      for (const retry of goalStateReconcileRetries.values()) {
+        if (retry.timer !== undefined) clearTimeout(retry.timer);
+      }
+      goalStateReconcileRetries.clear();
+      for (const retry of projectReconcileRetries.values()) {
+        if (retry.timer !== undefined) clearTimeout(retry.timer);
+      }
+      projectReconcileRetries.clear();
+    }
+
+    function cancelWorkspaceReconciliation(workspaceRoot: string): void {
+      cancelledReconcileWorkspaces.add(workspaceRoot);
+      const prefix = `${workspaceRoot}\0`;
+      for (const [key, retry] of goalStateReconcileRetries) {
+        if (!key.startsWith(prefix)) continue;
+        if (retry.timer !== undefined) clearTimeout(retry.timer);
+        goalStateReconcileRetries.delete(key);
+      }
+      for (const [key, retry] of projectReconcileRetries) {
+        if (!key.startsWith(prefix)) continue;
+        if (retry.timer !== undefined) clearTimeout(retry.timer);
+        projectReconcileRetries.delete(key);
+      }
+      goalLeadContinuation?.releaseWorkspace(workspaceRoot);
     }
 
     async function scheduleLoopIfStarted(workspaceRoot: string, loopId: string): Promise<void> {
@@ -817,7 +974,53 @@ export async function createRuntime(
       loopSchedulersStarted = true;
       const projects = await projectRegistry.list();
       for (const project of projects) {
-        await (await getLoopScheduler(project.workspaceRoot)).start(project.slug);
+        const services = await getLoopRuntimeServices(project.workspaceRoot);
+        await services.scheduler.start(project.slug);
+      }
+    }
+
+    async function reconcileRegisteredProject(workspaceRoot: string, projectSlug: string): Promise<void> {
+      const key = `${workspaceRoot}\0${projectSlug}`;
+      const registered = await projectRegistry.get(projectSlug);
+      if (registered?.workspaceRoot !== workspaceRoot) {
+        projectReconcileRetries.delete(key);
+        return;
+      }
+      cancelledReconcileWorkspaces.delete(workspaceRoot);
+      if (goalStateReconciliationShuttingDown || projectReconcileInFlight.has(key) || projectReconcileRetries.get(key)?.timer !== undefined) return;
+      projectReconcileInFlight.add(key);
+      try {
+        projectSlugsByWorkspace.set(workspaceRoot, projectSlug);
+        await continuationService.reconcileWorkspace(workspaceRoot);
+        if (loopSchedulersStarted) {
+          await (await getLoopRuntimeServices(workspaceRoot)).scheduler.start(projectSlug);
+        }
+        projectReconcileRetries.delete(key);
+      } catch (error) {
+        if (goalStateReconciliationShuttingDown || cancelledReconcileWorkspaces.has(workspaceRoot)) {
+          projectReconcileRetries.delete(key);
+          return;
+        }
+        const attempt = (projectReconcileRetries.get(key)?.attempt ?? 0) + 1;
+        const delay = Math.min(100 * 2 ** (attempt - 1), 30_000);
+        const retry: { attempt: number; timer?: ReturnType<typeof setTimeout> } = { attempt };
+        retry.timer = setTimeout(() => {
+          retry.timer = undefined;
+          if (goalStateReconciliationShuttingDown || cancelledReconcileWorkspaces.has(workspaceRoot)) {
+            projectReconcileRetries.delete(key);
+            return;
+          }
+          void reconcileRegisteredProject(workspaceRoot, projectSlug);
+        }, delay);
+        retry.timer.unref?.();
+        projectReconcileRetries.set(key, retry);
+        runtimeLogger.warn("project.runtime.reconcile_failed", {
+          error,
+          context: { projectSlug },
+          meta: { workspaceRoot, attempt, retryDelayMs: delay },
+        });
+      } finally {
+        projectReconcileInFlight.delete(key);
       }
     }
 
@@ -895,6 +1098,11 @@ export async function createRuntime(
 
         const removed = await projectRegistry.remove(project.slug);
         if (removed === undefined) return undefined;
+        cancelWorkspaceReconciliation(project.workspaceRoot);
+        const projectRetryKey = `${project.workspaceRoot}\0${project.slug}`;
+        const projectRetry = projectReconcileRetries.get(projectRetryKey);
+        if (projectRetry?.timer !== undefined) clearTimeout(projectRetry.timer);
+        projectReconcileRetries.delete(projectRetryKey);
         projectSlugsByWorkspace.delete(project.workspaceRoot);
         loopRuntimeServices.delete(project.workspaceRoot);
         await contextResolver.dispose(project.workspaceRoot);
@@ -926,6 +1134,17 @@ export async function createRuntime(
         closeLease.release();
       }
     }
+
+    const startupProjects = await projectRegistry.list();
+    const startupContinuationResults = await Promise.allSettled(
+      startupProjects.map((project) => continuationService.reconcileWorkspace(project.workspaceRoot)),
+    );
+    startupContinuationResults.forEach((result, index) => {
+      if (result.status === "rejected") runtimeLogger.warn("goal.continuation.startup.failed", {
+        error: result.reason,
+        context: { projectSlug: startupProjects[index]?.slug },
+      });
+    });
 
     return {
       mcpManager,
@@ -994,7 +1213,9 @@ export async function createRuntime(
       cancelGoal: async (workspaceRoot, goalId, request) => {
         const service = (await contextResolver.resolve(workspaceRoot)).goalCancellation;
         if (service === undefined) throw new Error("Goal cancellation service is unavailable");
-        return await service.cancel(goalId, request);
+        const goal = await service.cancel(goalId, request);
+        await notifyGoalStateChanged(workspaceRoot, goalId);
+        return goal;
       },
       queueLoopTitleGeneration,
       subscribeMcpStatusChanges: (listener) => mcpManager.onStatusChange(listener),
@@ -1025,7 +1246,11 @@ export async function createRuntime(
         }
         await sessionFamilyStopService.stop(workspaceRoot, rootSessionId);
       },
-      abortAllSessionExecutions: () => executionManager.abortAll(),
+      abortAllSessionExecutions: () => {
+        continuationService.shutdown();
+        shutdownGoalStateReconciliation();
+        return executionManager.abortAll();
+      },
       getSessionExecution: (workspaceRoot, sessionId) => executionManager.getExecution(workspaceRoot, sessionId),
       subscribeSessionEvents: (input) => executionManager.subscribe(input),
       deleteSession: (workspaceRoot, sessionId) => executionManager.deleteSession(workspaceRoot, sessionId),
@@ -1051,6 +1276,7 @@ export async function createRuntime(
       readLoopRunLog,
       readLoopStateMarkdown,
       startLoopSchedulers,
+      reconcileRegisteredProject,
       stopLoopSchedulers,
       notifyRuntimeShutdown,
     };

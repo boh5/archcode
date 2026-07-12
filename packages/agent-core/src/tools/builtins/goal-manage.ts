@@ -55,12 +55,12 @@ const GoalManageResumeInputSchema = z.strictObject({
 const GoalManageBeginReviewInputSchema = z.strictObject({
   action: z.literal("begin_review"),
   goalId: GoalUuidSchema.describe("Goal UUID whose execution should move into review."),
-  reviewerSessionId: GoalTextSchema.optional().describe("Optional existing Reviewer session id."),
 });
 
 const GoalManageFinalizeReviewInputSchema = z.strictObject({
   action: z.literal("finalize_review"),
   goalId: GoalUuidSchema.describe("Goal UUID whose Reviewer receipt should be recorded."),
+  expectedReviewGeneration: z.number().int().nonnegative().describe("Review generation observed by this Reviewer session."),
   verdict: z.enum(["DONE", "NOT_DONE"]) satisfies z.ZodType<GoalReviewVerdict>,
   summary: GoalReceiptSummarySchema.describe("Reviewer result summary."),
   evidenceRefs: z.array(GoalEvidenceRefSchema).max(20).describe("Evidence references supporting the verdict."),
@@ -109,6 +109,7 @@ interface SimplifiedGoalStateManager {
   clearBlocker(goalId: string, hitlId?: string): Promise<GoalState>;
   beginReview(goalId: string): Promise<GoalState>;
   finalizeReview(goalId: string, input: {
+    readonly expectedReviewGeneration: number;
     readonly verdict: GoalReviewVerdict;
     readonly summary: string;
     readonly evidenceRefs?: readonly GoalEvidenceRef[];
@@ -121,7 +122,7 @@ interface SimplifiedGoalStateManager {
       readonly reviewerSessionId?: string;
     };
   }): Promise<GoalState>;
-  retry(goalId: string, input: { readonly mainSessionId?: string }): Promise<GoalState>;
+  retry(goalId: string): Promise<GoalState>;
   cancel(goalId: string, reason?: string): Promise<GoalState>;
 }
 
@@ -138,6 +139,9 @@ export const goalManageTool: AnyToolDescriptor = defineTool({
         input.goalId,
       );
       const manager = simplifiedGoalStateManager(ctx);
+      if (input.action !== "finalize_review") {
+        await assertCurrentGoalLeadMain(manager, input.goalId, authorization.sessionId, input.action);
+      }
 
       switch (input.action) {
         case "block": {
@@ -161,13 +165,17 @@ export const goalManageTool: AnyToolDescriptor = defineTool({
           await assertGoalExecutionWorkspace(manager, input.goalId, ctx);
           return formatGoalToolResult(await withGoalExecutionClaimLock(
             input.goalId,
-            () => manager.beginReview(input.goalId),
+            async () => {
+              await assertNoActiveBuildChild(ctx);
+              return await manager.beginReview(input.goalId);
+            },
           ));
         }
         case "finalize_review": {
           await assertGoalExecutionWorkspace(manager, input.goalId, ctx);
           return formatGoalToolResult(await withGoalExecutionClaimLock(input.goalId, () => (
             manager.finalizeReview(input.goalId, {
+              expectedReviewGeneration: input.expectedReviewGeneration,
               verdict: input.verdict,
               summary: input.summary,
               evidenceRefs: input.evidenceRefs,
@@ -186,7 +194,7 @@ export const goalManageTool: AnyToolDescriptor = defineTool({
           await assertGoalExecutionWorkspace(manager, input.goalId, ctx);
           return formatGoalToolResult(await withGoalExecutionClaimLock(
             input.goalId,
-            () => manager.retry(input.goalId, { mainSessionId: authorization.sessionId }),
+            () => manager.retry(input.goalId),
           ));
         }
         case "cancel": {
@@ -242,6 +250,30 @@ function simplifiedGoalStateManager(ctx: ToolExecutionContext): SimplifiedGoalSt
   return ctx.projectContext.goalState as unknown as SimplifiedGoalStateManager;
 }
 
+async function assertNoActiveBuildChild(ctx: ToolExecutionContext): Promise<void> {
+  const workspaceRoot = ctx.projectContext.project.workspaceRoot;
+  const stores = [ctx.store];
+  const visited = new Set<string>();
+  while (stores.length > 0) {
+    const store = stores.shift()!;
+    const state = store.getState();
+    if (visited.has(state.sessionId)) continue;
+    visited.add(state.sessionId);
+    for (const link of state.childSessionLinks) {
+      if (
+        link.childAgentName === "build"
+        && (link.status === "linked" || link.status === "running" || link.status === "waiting_for_human")
+      ) {
+        throw new GoalToolAuthorizationError(
+          "GOAL_BUILD_ACTIVE",
+          `goal_manage.begin_review requires all Build children to finish; ${link.childSessionId} is ${link.status}`,
+        );
+      }
+      stores.push(await ctx.storeManager.getOrLoad(link.childSessionId, workspaceRoot));
+    }
+  }
+}
+
 async function assertGoalExecutionWorkspace(
   manager: SimplifiedGoalStateManager,
   goalId: string,
@@ -276,6 +308,20 @@ async function assertGoalExecutionWorkspace(
       `Goal ${goalId} managed worktree claim is no longer valid: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+}
+
+async function assertCurrentGoalLeadMain(
+  manager: SimplifiedGoalStateManager,
+  goalId: string,
+  sessionId: string,
+  action: Exclude<GoalManageInput["action"], "finalize_review">,
+): Promise<void> {
+  const goal = await manager.read(goalId);
+  if (goal.mainSessionId === sessionId) return;
+  throw new GoalToolAuthorizationError(
+    "GOAL_CONTEXT_REQUIRED",
+    `goal_manage.${action} requires current main Session ${goal.mainSessionId ?? "unassigned"}, got ${sessionId}`,
+  );
 }
 
 export { GoalManageInputSchema };

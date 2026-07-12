@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import type { GoalState } from "../goals/state";
 
 import { CollisionLedger } from "./collision-ledger";
 import { LoopJobCoordinator } from "./coordinator";
@@ -43,6 +44,7 @@ describe("LoopSessionHitlContinuationCoordinator", () => {
     await expect(fixture.continuation.acquire({
       origin: fixture.origin,
       sessionId: fixture.sessionId,
+      rootSessionId: fixture.sessionId,
       hitlId: fixture.hitlId,
     })).rejects.toMatchObject({
       name: "LoopSessionHitlContinuationConflictError",
@@ -76,6 +78,7 @@ describe("LoopSessionHitlContinuationCoordinator", () => {
     await expect(fixture.continuation.acquire({
       origin: fixture.origin,
       sessionId: fixture.sessionId,
+      rootSessionId: fixture.sessionId,
       hitlId: fixture.hitlId,
     })).rejects.toMatchObject({
       name: "LoopSessionHitlContinuationConflictError",
@@ -86,11 +89,314 @@ describe("LoopSessionHitlContinuationCoordinator", () => {
     expect((await fixture.stateManager.read(fixture.loop.loopId)).attentionStatus).toBe("waiting_for_human");
   });
 
+  test("attributes a child Session HITL to the Loop-owned root Session", async () => {
+    const fixture = await createBlockedFixture();
+
+    const lease = await fixture.continuation.acquire({
+      origin: fixture.origin,
+      sessionId: "child-session",
+      rootSessionId: fixture.sessionId,
+      hitlId: fixture.hitlId,
+    });
+    await lease.complete({});
+
+    expect((await fixture.jobQueue.read(fixture.job.jobId)).status).toBe("succeeded");
+    expect((await fixture.stateManager.read(fixture.loop.loopId)).lastRun).toMatchObject({
+      sessionId: fixture.sessionId,
+      status: "succeeded",
+    });
+  });
+
+  test("never restores a resolved HITL when remaining blockers are durable before job finish fails", async () => {
+    const fixture = await createBlockedFixture();
+    const remainingHitlId = crypto.randomUUID();
+    const lease = await fixture.continuation.acquire({
+      origin: fixture.origin,
+      sessionId: fixture.sessionId,
+      rootSessionId: fixture.sessionId,
+      hitlId: fixture.hitlId,
+    });
+    const originalReconcile = fixture.jobCoordinator.reconcileReportedFinish.bind(fixture.jobCoordinator);
+    let reconcileAttempts = 0;
+    Object.defineProperty(fixture.jobCoordinator, "finish", {
+      value: mock(async (..._args: Parameters<LoopJobCoordinator["finish"]>): Promise<LoopJobRecord> => {
+        throw new Error("injected job finish failure");
+      }),
+    });
+    Object.defineProperty(fixture.jobCoordinator, "reconcileReportedFinish", {
+      value: mock(async (...args: Parameters<LoopJobCoordinator["reconcileReportedFinish"]>): Promise<LoopJobRecord> => {
+        reconcileAttempts += 1;
+        if (reconcileAttempts === 1) throw new Error("injected first convergence failure");
+        return await originalReconcile(...args);
+      }),
+    });
+
+    await expect(lease.complete({ blockedByHitlIds: [remainingHitlId] })).rejects.toThrow("injected first convergence failure");
+    await lease.fail(new Error("adapter observed completion failure"));
+
+    const state = await fixture.stateManager.read(fixture.loop.loopId);
+    expect(state.currentRun).toMatchObject({
+      status: "needs_user",
+      blockedByHitlIds: [remainingHitlId],
+      resumeCheckpoint: { hitlId: remainingHitlId },
+    });
+    expect(state.currentRun?.blockedByHitlIds).not.toContain(fixture.hitlId);
+    expect(await fixture.jobQueue.read(fixture.job.jobId)).toMatchObject({
+      status: "needs_user",
+      blockedByHitlIds: [remainingHitlId],
+      resumeCheckpoint: { hitlId: remainingHitlId },
+    });
+    expect(await fixture.collisionLedger.readActiveLeases()).toEqual([]);
+  });
+
+  test("starts Goal continuation only after the Session HITL family lease releases", async () => {
+    const onGoalContinuationQueued = mock(() => undefined);
+    const fixture = await createBlockedFixture({ goalId: "goal-owned", onGoalContinuationQueued });
+    const lease = await fixture.continuation.acquire({
+      origin: fixture.origin,
+      sessionId: "child-session",
+      rootSessionId: fixture.sessionId,
+      hitlId: fixture.hitlId,
+    });
+
+    await lease.complete({});
+    expect(onGoalContinuationQueued).not.toHaveBeenCalled();
+    expect((await fixture.jobQueue.read(fixture.job.jobId)).status).toBe("pending");
+
+    await lease.afterSessionRelease?.();
+    expect((await fixture.jobQueue.read(fixture.job.jobId)).status).toBe("pending");
+    expect(onGoalContinuationQueued).toHaveBeenCalledTimes(1);
+  });
+
+  test("Goal state reconciliation requires an applied exact run/job checkpoint HITL id", async () => {
+    const onGoalContinuationQueued = mock(() => undefined);
+    let goal!: GoalState;
+    const fixture = await createBlockedFixture({
+      goalId: "goal-exact-hitl",
+      onGoalContinuationQueued,
+      readGoal: async () => goal,
+    });
+    goal = {
+      id: "goal-exact-hitl",
+      loopId: fixture.loop.loopId,
+      mainSessionId: fixture.sessionId,
+      pendingHitlIds: [],
+      appliedHitlIds: [crypto.randomUUID()],
+    } as unknown as GoalState;
+
+    await fixture.continuation.reconcileGoalState(goal.id);
+    expect(onGoalContinuationQueued).not.toHaveBeenCalled();
+    expect((await fixture.jobQueue.read(fixture.job.jobId)).status).toBe("needs_user");
+
+    goal = { ...goal, appliedHitlIds: [fixture.hitlId] };
+    await fixture.continuation.reconcileGoalState(goal.id);
+    expect((await fixture.jobQueue.read(fixture.job.jobId)).status).toBe("pending");
+    expect(onGoalContinuationQueued).toHaveBeenCalledTimes(1);
+  });
+
+  test("approved Goal HITL requeues exact identity even while scheduler capacity is full", async () => {
+    const onGoalContinuationQueued = mock(() => undefined);
+    let goal!: GoalState;
+    const fixture = await createBlockedFixture({
+      maxConcurrent: 1,
+      goalId: "goal-capacity",
+      readGoal: async () => goal,
+      onGoalContinuationQueued,
+    });
+    goal = {
+      id: "goal-capacity",
+      loopId: fixture.loop.loopId,
+      mainSessionId: fixture.sessionId,
+      pendingHitlIds: [],
+      appliedHitlIds: [fixture.hitlId],
+    } as unknown as GoalState;
+    const otherLoop = await createLoop(fixture.stateManager, "goal-capacity-other");
+    const other = await fixture.jobQueue.enqueue({
+      loopId: otherLoop.loopId,
+      triggerKind: "manual",
+      subjectKey: `manual:${otherLoop.loopId}`,
+    });
+    const otherRunning = (await fixture.jobCoordinator.dispatchReady())[0]!;
+    expect(otherRunning.jobId).toBe(other.job.jobId);
+
+    await fixture.continuation.reconcileGoalState(goal.id);
+
+    expect(await fixture.jobQueue.read(fixture.job.jobId)).toMatchObject({
+      status: "pending",
+      runId: fixture.origin.runId,
+      sessionId: fixture.sessionId,
+    });
+    expect(onGoalContinuationQueued).toHaveBeenCalledTimes(1);
+    expect(await fixture.jobCoordinator.dispatchReady()).toEqual([]);
+
+    await fixture.jobCoordinator.finish(otherRunning.jobId, executionLease(otherRunning), { status: "succeeded" });
+    expect(await fixture.jobCoordinator.dispatchReady()).toContainEqual(expect.objectContaining({
+      jobId: fixture.job.jobId,
+      status: "running",
+      runId: fixture.origin.runId,
+      sessionId: fixture.sessionId,
+    }));
+  });
+
+  test("startup reconciliation completes a crash after Goal job requeue but before run projection", async () => {
+    const onGoalContinuationQueued = mock(() => undefined);
+    let goal!: GoalState;
+    const fixture = await createBlockedFixture({
+      goalId: "goal-requeue-crash",
+      readGoal: async () => goal,
+      onGoalContinuationQueued,
+    });
+    goal = {
+      id: "goal-requeue-crash",
+      status: "running",
+      loopId: fixture.loop.loopId,
+      mainSessionId: fixture.sessionId,
+      pendingHitlIds: [],
+      appliedHitlIds: [fixture.hitlId],
+    } as unknown as GoalState;
+    await fixture.jobCoordinator.requeueResolvedGoalHitl(fixture.job, fixture.hitlId);
+
+    await fixture.continuation.reconcileGoalState(goal.id);
+
+    expect(await fixture.jobQueue.read(fixture.job.jobId)).toMatchObject({
+      status: "pending",
+      runId: fixture.origin.runId,
+      sessionId: fixture.sessionId,
+    });
+    expect((await fixture.stateManager.read(fixture.loop.loopId)).currentRun).toMatchObject({
+      status: "running",
+      runId: fixture.origin.runId,
+      goalId: goal.id,
+    });
+    expect(onGoalContinuationQueued).toHaveBeenCalledTimes(1);
+  });
+
+  test("reconciles a committed terminal Goal into the exact Loop run/job and releases collisions", async () => {
+    let goal!: GoalState;
+    const fixture = await createBlockedFixture({
+      goalId: "goal-cancelled",
+      readGoal: async () => goal,
+    });
+    goal = {
+      id: "goal-cancelled",
+      status: "cancelled",
+      loopId: fixture.loop.loopId,
+      mainSessionId: fixture.sessionId,
+      pendingHitlIds: [],
+      appliedHitlIds: [fixture.hitlId],
+    } as unknown as GoalState;
+
+    await fixture.continuation.reconcileGoalState(goal.id);
+
+    const state = await fixture.stateManager.read(fixture.loop.loopId);
+    expect(state.currentRun).toBeUndefined();
+    expect(state).toMatchObject({
+      lastRun: {
+        runId: fixture.origin.runId,
+        goalId: goal.id,
+        status: "cancelled",
+        reason: "cancelled_by_user",
+      },
+    });
+    expect(await fixture.jobQueue.read(fixture.job.jobId)).toMatchObject({ status: "cancelled" });
+    expect(await fixture.collisionLedger.readActiveLeases()).toEqual([]);
+  });
+
+  test("retries terminal Goal job convergence from the exact report without incrementing runCount twice", async () => {
+    let goal!: GoalState;
+    const fixture = await createBlockedFixture({
+      goalId: "goal-terminal-retry",
+      readGoal: async () => goal,
+    });
+    goal = {
+      id: "goal-terminal-retry",
+      status: "cancelled",
+      loopId: fixture.loop.loopId,
+      mainSessionId: fixture.sessionId,
+      pendingHitlIds: [],
+      appliedHitlIds: [fixture.hitlId],
+    } as unknown as GoalState;
+    const originalReconcile = fixture.jobCoordinator.reconcileReportedFinish.bind(fixture.jobCoordinator);
+    let attempts = 0;
+    Object.defineProperty(fixture.jobCoordinator, "reconcileReportedFinish", {
+      value: mock(async (...args: Parameters<LoopJobCoordinator["reconcileReportedFinish"]>): Promise<LoopJobRecord> => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("injected terminal job convergence failure");
+        return await originalReconcile(...args);
+      }),
+    });
+
+    await expect(fixture.continuation.reconcileGoalState(goal.id)).rejects.toThrow("injected terminal job convergence failure");
+    const reportFirst = await fixture.stateManager.read(fixture.loop.loopId);
+    expect(reportFirst.currentRun).toBeUndefined();
+    expect(reportFirst.lastRun).toMatchObject({
+      runId: fixture.origin.runId,
+      goalId: goal.id,
+      status: "cancelled",
+    });
+    expect(reportFirst.runCount).toBe(1);
+    expect((await fixture.jobQueue.read(fixture.job.jobId)).status).toBe("needs_user");
+
+    await fixture.continuation.reconcileGoalState(goal.id);
+
+    const converged = await fixture.stateManager.read(fixture.loop.loopId);
+    expect(converged.runCount).toBe(1);
+    expect(converged.currentRun).toBeUndefined();
+    expect((await fixture.jobQueue.read(fixture.job.jobId)).status).toBe("cancelled");
+    expect(attempts).toBe(2);
+    expect(await fixture.collisionLedger.readActiveLeases()).toEqual([]);
+  });
+
+  test("advances multiple Goal HITL checkpoints in reverse resolution order", async () => {
+    const secondHitlId = crypto.randomUUID();
+    const onGoalContinuationQueued = mock(() => undefined);
+    let goal!: GoalState;
+    const fixture = await createBlockedFixture({
+      goalId: "goal-multi-hitl",
+      readGoal: async () => goal,
+      onGoalContinuationQueued,
+    });
+    const blocked = (await fixture.stateManager.read(fixture.loop.loopId)).currentRun!;
+    await fixture.stateManager.recordRunBlocked(fixture.loop.loopId, {
+      ...blocked,
+      blockedByHitlIds: [fixture.hitlId, secondHitlId],
+    });
+    await fixture.jobQueue.update(fixture.job.jobId, {
+      blockedByHitlIds: [fixture.hitlId, secondHitlId],
+    });
+    goal = {
+      id: "goal-multi-hitl",
+      loopId: fixture.loop.loopId,
+      mainSessionId: fixture.sessionId,
+      pendingHitlIds: [fixture.hitlId],
+      appliedHitlIds: [secondHitlId],
+    } as unknown as GoalState;
+
+    await fixture.continuation.reconcileGoalState(goal.id);
+
+    expect((await fixture.stateManager.read(fixture.loop.loopId)).currentRun).toMatchObject({
+      blockedByHitlIds: [fixture.hitlId],
+      resumeCheckpoint: { hitlId: fixture.hitlId },
+    });
+    expect(await fixture.jobQueue.read(fixture.job.jobId)).toMatchObject({
+      blockedByHitlIds: [fixture.hitlId],
+      resumeCheckpoint: { hitlId: fixture.hitlId },
+    });
+    expect(onGoalContinuationQueued).not.toHaveBeenCalled();
+
+    goal = { ...goal, pendingHitlIds: [], appliedHitlIds: [secondHitlId, fixture.hitlId] };
+    await fixture.continuation.reconcileGoalState(goal.id);
+
+    expect((await fixture.jobQueue.read(fixture.job.jobId)).status).toBe("pending");
+    expect(onGoalContinuationQueued).toHaveBeenCalledTimes(1);
+  });
+
   test("a new process incarnation recovers and reclaims an interrupted resume_run lease", async () => {
     const fixture = await createBlockedFixture();
     await fixture.continuation.acquire({
       origin: fixture.origin,
       sessionId: fixture.sessionId,
+      rootSessionId: fixture.sessionId,
       hitlId: fixture.hitlId,
     });
     expect((await fixture.jobQueue.read(fixture.job.jobId)).status).toBe("running");
@@ -118,6 +424,7 @@ describe("LoopSessionHitlContinuationCoordinator", () => {
     const lease = await restarted.acquire({
       origin: fixture.origin,
       sessionId: fixture.sessionId,
+      rootSessionId: fixture.sessionId,
       hitlId: fixture.hitlId,
     });
     await lease.complete({});
@@ -160,6 +467,7 @@ describe("LoopSessionHitlContinuationCoordinator", () => {
     const lease = await continuation.acquire({
       origin: fixture.origin,
       sessionId: fixture.sessionId,
+      rootSessionId: fixture.sessionId,
       hitlId: fixture.hitlId,
     });
     await lease.complete({});
@@ -180,6 +488,7 @@ describe("LoopSessionHitlContinuationCoordinator", () => {
     await fixture.continuation.acquire({
       origin: fixture.origin,
       sessionId: fixture.sessionId,
+      rootSessionId: fixture.sessionId,
       hitlId: fixture.hitlId,
     });
     const running = (await fixture.stateManager.read(fixture.loop.loopId)).currentRun!;
@@ -194,6 +503,7 @@ describe("LoopSessionHitlContinuationCoordinator", () => {
     const repaired = await fixture.continuation.acquire({
       origin: fixture.origin,
       sessionId: fixture.sessionId,
+      rootSessionId: fixture.sessionId,
       hitlId: fixture.hitlId,
     });
 
@@ -209,6 +519,7 @@ describe("LoopSessionHitlContinuationCoordinator", () => {
     await fixture.continuation.acquire({
       origin: fixture.origin,
       sessionId: fixture.sessionId,
+      rootSessionId: fixture.sessionId,
       hitlId: fixture.hitlId,
     });
     const running = (await fixture.stateManager.read(fixture.loop.loopId)).currentRun!;
@@ -236,6 +547,7 @@ describe("LoopSessionHitlContinuationCoordinator", () => {
     const repaired = await fixture.continuation.acquire({
       origin: fixture.origin,
       sessionId: fixture.sessionId,
+      rootSessionId: fixture.sessionId,
       hitlId: fixture.hitlId,
     });
 
@@ -252,6 +564,7 @@ describe("LoopSessionHitlContinuationCoordinator", () => {
     const lease = await fixture.continuation.acquire({
       origin: fixture.origin,
       sessionId: fixture.sessionId,
+      rootSessionId: fixture.sessionId,
       hitlId: fixture.hitlId,
     });
     const running = (await fixture.stateManager.read(fixture.loop.loopId)).currentRun!;
@@ -297,7 +610,12 @@ describe("LoopSessionHitlContinuationCoordinator", () => {
   });
 });
 
-async function createBlockedFixture(options: { readonly maxConcurrent?: number } = {}) {
+async function createBlockedFixture(options: {
+  readonly maxConcurrent?: number;
+  readonly goalId?: string;
+  readonly readGoal?: (goalId: string) => Promise<GoalState>;
+  readonly onGoalContinuationQueued?: ConstructorParameters<typeof LoopSessionHitlContinuationCoordinator>[0]["onGoalContinuationQueued"];
+} = {}) {
   const workspaceRoot = join(TMP_ROOT, crypto.randomUUID());
   await mkdir(workspaceRoot, { recursive: true });
   const stateManager = new LoopStateManager(workspaceRoot);
@@ -327,8 +645,14 @@ async function createBlockedFixture(options: { readonly maxConcurrent?: number }
     jobId: claimed.jobId,
     subjectKey: claimed.subjectKey,
     sessionId,
+    ...(options.goalId === undefined ? {} : { goalId: options.goalId }),
     collisionTargets: loop.config.collisionTargets,
   };
+  await jobCoordinator.checkpointSessionAttempt(claimed.jobId, executionLease(claimed), {
+    runId: run.runId,
+    sessionId,
+    sessionExecutionId: "execution-session-hitl",
+  });
   await stateManager.recordRunStart(loop.loopId, run);
   await collisionLedger.acquireStaticTargets({ loop, runId: run.runId, priority: claimed.priority });
   const resumeCheckpoint = {
@@ -367,6 +691,8 @@ async function createBlockedFixture(options: { readonly maxConcurrent?: number }
     collisionLedger,
     now: () => 1_000,
     scheduleCleanup: () => undefined,
+    ...(options.readGoal === undefined ? {} : { readGoal: options.readGoal }),
+    ...(options.onGoalContinuationQueued === undefined ? {} : { onGoalContinuationQueued: options.onGoalContinuationQueued }),
   });
   return {
     workspaceRoot,

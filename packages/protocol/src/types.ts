@@ -934,6 +934,7 @@ export interface GoalEvidenceRef {
 }
 
 export interface GoalReviewReceipt {
+  reviewGeneration: number;
   verdict: GoalReviewVerdict;
   summary: string;
   evidenceRefs: GoalEvidenceRef[];
@@ -967,7 +968,7 @@ export interface GoalWorktree {
 }
 
 export interface GoalState {
-  version: 1;
+  version: 2;
   id: string;
   projectId: string;
   title: string | null;
@@ -978,6 +979,7 @@ export interface GoalState {
   status: GoalStatus;
   blocker?: GoalBlocker;
   attempt: number;
+  reviewGeneration: number;
   lastFailureSummary?: string;
   budget?: GoalBudgetSummary;
   pendingHitlIds: string[];

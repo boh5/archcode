@@ -650,7 +650,7 @@ describe("Sidebar", () => {
     projects = [project];
     goals = [
       {
-        version: 1,
+        version: 2,
         id: "goal-1",
         projectId: "archcode",
         title: "First Goal",
@@ -659,6 +659,7 @@ describe("Sidebar", () => {
         useWorktree: false,
         status: "draft",
         attempt: 1,
+        reviewGeneration: 0,
         pendingHitlIds: [],
         approvalRefs: [],
         appliedHitlIds: [],
@@ -667,7 +668,7 @@ describe("Sidebar", () => {
         updatedAt: "1",
       },
       {
-        version: 1,
+        version: 2,
         id: "goal-2",
         projectId: "archcode",
         title: "Second Goal",
@@ -676,6 +677,7 @@ describe("Sidebar", () => {
         useWorktree: false,
         status: "running",
         attempt: 2,
+        reviewGeneration: 0,
         pendingHitlIds: [],
         approvalRefs: [],
         appliedHitlIds: [],
@@ -724,7 +726,7 @@ describe("Sidebar", () => {
     projects = [project];
     goals = [
       {
-        version: 1,
+        version: 2,
         id: "goal-abc",
         projectId: "archcode",
         title: "Target Goal",
@@ -733,6 +735,7 @@ describe("Sidebar", () => {
         useWorktree: false,
         status: "draft",
         attempt: 1,
+        reviewGeneration: 0,
         pendingHitlIds: [],
         approvalRefs: [],
         appliedHitlIds: [],

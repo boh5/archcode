@@ -255,6 +255,15 @@ class FakeLoopRuntime {
     return this.startSessionExecutionMock(input);
   }
 
+
+  async startCheckedSessionExecution(input: StartSessionExecutionInput): Promise<ActiveSessionExecution> {
+    return this.startSessionExecution(input);
+  }
+
+  async waitForSessionFamilyIdle(): Promise<{ blockedByHitlIds: readonly string[] }> {
+    return { blockedByHitlIds: [] };
+  }
+
   releaseSessionAgent(projectRoot: string, sessionId: string): void {
     this.releaseSessionAgentMock(projectRoot, sessionId);
   }

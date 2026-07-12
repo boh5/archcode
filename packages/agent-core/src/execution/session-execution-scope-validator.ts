@@ -5,7 +5,9 @@ import type { GoalState, LoopState } from "@archcode/protocol";
 import type { ProjectContextResolver } from "../projects/context-resolver";
 import { resolveValidSessionCwd } from "../store/session-cwd";
 import type { SessionRole } from "../store/types";
+import type { AgentName } from "../agents";
 import type { ToolExecutionOrigin } from "../tools/types";
+import { decideGoalSessionExecution } from "./goal-session-phase-policy";
 import {
   isArchCodeManagedBranch,
   isManagedWorktreeFor,
@@ -48,12 +50,14 @@ export interface SessionExecutionScopeSubject {
   readonly sessionId: string;
   readonly rootSessionId: string;
   readonly parentSessionId?: string;
+  readonly parentAgentName?: AgentName;
   /** Proven by the caller from the persisted Session tree, not self-declared identity alone. */
   readonly isDescendantOfRoot?: boolean;
   readonly cwd: string;
   readonly goalId?: string;
   readonly loopId?: string;
   readonly sessionRole?: SessionRole;
+  readonly agentName?: AgentName;
 }
 
 export type SessionExecutionScopeEntry =
@@ -313,9 +317,9 @@ export class SessionExecutionScopeValidator {
     goal: GoalState,
     entry: SessionExecutionScopeEntry,
   ): void {
-    if (goal.status === "running") return;
-    if (goal.status === "reviewing") {
-      if (subject.sessionRole === "review") return;
+    const decision = decideGoalSessionExecution({ goal, subject, entryKind: entry.kind });
+    if (decision.allowed) return;
+    if (decision.reason === "reviewer_required") {
       throw conflict(
         "SESSION_GOAL_REVIEWER_REQUIRED",
         subject,
@@ -323,7 +327,6 @@ export class SessionExecutionScopeValidator {
         { goalId: goal.id, status: goal.status, entryKind: entry.kind },
       );
     }
-    if (entry.kind === "hitl_replay" && goal.status === "blocked") return;
     throw conflict(
       "SESSION_GOAL_NOT_EXECUTABLE",
       subject,

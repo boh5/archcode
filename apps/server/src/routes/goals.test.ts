@@ -93,7 +93,7 @@ class FakeGoalStateManager {
 
   async create(input: { readonly projectId: string; readonly title?: string | null; readonly objective: string; readonly acceptanceCriteria: string; readonly useWorktree?: boolean; readonly loopId?: string }): Promise<GoalState> {
     const goal: GoalState = {
-      version: 1,
+      version: 2,
       id: crypto.randomUUID(),
       projectId: input.projectId,
       title: input.title ?? null,
@@ -103,6 +103,7 @@ class FakeGoalStateManager {
       ...(input.loopId === undefined ? {} : { loopId: input.loopId }),
       status: "draft",
       attempt: 1,
+      reviewGeneration: 0,
       pendingHitlIds: [],
       approvalRefs: [],
       appliedHitlIds: [],
@@ -146,7 +147,7 @@ class FakeGoalStateManager {
     });
   }
 
-  async retry(goalId: string, input: { readonly mainSessionId?: string } = {}): Promise<GoalState> {
+  async retry(goalId: string): Promise<GoalState> {
     const goal = await this.read(goalId);
     if (goal.status !== "not_done" && goal.status !== "failed" && goal.status !== "running") {
       throw new FakeGoalTransitionError(goalId, goal.status, "running");
@@ -156,7 +157,6 @@ class FakeGoalStateManager {
       attempt: goal.status === "running" ? goal.attempt : goal.attempt + 1,
       review: undefined,
       lastError: undefined,
-      ...(input.mainSessionId === undefined ? {} : { mainSessionId: input.mainSessionId }),
       startedAt: goal.startedAt ?? this.#now,
       updatedAt: this.#now,
     });
@@ -202,10 +202,13 @@ class FakeGoalStateManager {
   }
 
   async setReview(goalId: string): Promise<GoalState> {
+    const goal = await this.read(goalId);
     return this.#update(goalId, {
       status: "not_done",
+      reviewGeneration: goal.reviewGeneration + 1,
       lastFailureSummary: "Reviewer found missing evidence.",
       review: {
+        reviewGeneration: goal.reviewGeneration + 1,
         verdict: "NOT_DONE",
         summary: "More work is required.",
         evidenceRefs: [],
@@ -392,6 +395,8 @@ function expectSimplifiedGoalShape(goal: Record<string, unknown>): void {
   expect(goal.title === null || typeof goal.title === "string").toBe(true);
   expect(goal.objective).toBeString();
   expect(goal.acceptanceCriteria).toBeString();
+  expect(goal.version).toBe(2);
+  expect(goal.reviewGeneration).toBeNumber();
   expect(goal).not.toHaveProperty("doneConditions");
   expect(goal).not.toHaveProperty("retryPolicy");
   expect(goal).not.toHaveProperty("approvalPoints");
@@ -914,9 +919,8 @@ describe("goals routes", () => {
     expect(retryRes.status).toBe(200);
     expect(retried.worktree).toEqual(first.worktree);
     const createCalls = (runtime.createSession as ReturnType<typeof mock>).mock.calls;
-    expect(createCalls).toHaveLength(2);
+    expect(createCalls).toHaveLength(1);
     expect(createCalls[0]?.[1]).toMatchObject({ cwd: first.worktree?.path });
-    expect(createCalls[1]?.[1]).toMatchObject({ cwd: first.worktree?.path });
 
     const cancelRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/cancel`, { method: "POST" });
     expect(cancelRes.status).toBe(200);
@@ -924,14 +928,14 @@ describe("goals routes", () => {
     expect(await runGit(project.workspaceRoot, ["branch", "--list", first.worktree!.branchName])).toContain(first.worktree!.branchName);
   });
 
-  test("PATCH waits behind retry reservation and leaves retry Session cwd consistent", async () => {
+  test("POST retry reuses its original Goal Lead root without creating or replacing it", async () => {
     const { app, manager, project, runtime } = await createFixture("patch-retry-worktree-order");
     await initializeGitRepo(project.workspaceRoot);
     const createRes = await app.request(`/api/projects/${project.slug}/goals`, {
       method: "POST",
       body: JSON.stringify({
-        objective: "Serialize retry with draft patch attempts.",
-        acceptanceCriteria: "Retry keeps the persisted Goal worktree and Session cwd.",
+        objective: "Keep the original Goal Lead root on retry.",
+        acceptanceCriteria: "Retry does not create or replace its main session.",
         useWorktree: true,
       }),
       headers: { "content-type": "application/json" },
@@ -942,47 +946,37 @@ describe("goals routes", () => {
     const first = await firstRes.json() as GoalState;
     await manager.setReview(created.id);
 
-    const createEntered = createDeferred();
-    const releaseCreate = createDeferred();
     const createSession = runtime.createSession as ReturnType<typeof mock>;
-    createSession.mockImplementation(async () => {
-      createEntered.resolve();
-      await releaseCreate.promise;
-      return {
-        sessionId: retrySessionId,
-        title: null,
-        createdAt: Date.now(),
-        messages: [],
-        steps: [],
-        todos: [],
-        reminders: [],
-        sessionRole: "main",
-      };
+    const retryRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/retry`, { method: "POST" });
+    expect(retryRes.status).toBe(200);
+    expect(await manager.read(created.id)).toMatchObject({ status: "running", mainSessionId: first.mainSessionId, useWorktree: true, worktree: first.worktree });
+    expect(createSession).toHaveBeenCalledTimes(1);
+  });
+
+  test("POST retry fails closed when its bound Goal Lead root is absent or invalid", async () => {
+    const { app, manager, project, runtime } = await createFixture("retry-root-required");
+    const missingClaim = await postGoal(app, project.slug);
+    await manager.setReview(missingClaim.id);
+
+    const missingClaimRes = await app.request(`/api/projects/${project.slug}/goals/${missingClaim.id}/retry`, { method: "POST" });
+    expect(missingClaimRes.status).toBe(409);
+    expect(await missingClaimRes.json()).toEqual({
+      error: { code: "BAD_REQUEST", message: `Goal ${missingClaim.id} has no main Goal Lead session` },
     });
 
-    const retryPromise = app.request(`/api/projects/${project.slug}/goals/${created.id}/retry`, { method: "POST" });
-    await createEntered.promise;
-    const resolveMock = runtime.contextResolver.resolve as ReturnType<typeof mock>;
-    const callsBeforePatch = resolveMock.mock.calls.length;
-    let patchSettled = false;
-    const patchPromise = Promise.resolve(app.request(`/api/projects/${project.slug}/goals/${created.id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ useWorktree: false }),
-      headers: { "content-type": "application/json" },
-    })).then((response) => {
-      patchSettled = true;
-      return response;
+    const invalidClaim = await postGoal(app, project.slug);
+    await manager.setReview(invalidClaim.id);
+    await manager.setMainSession(invalidClaim.id, missingSessionId);
+
+    const invalidClaimRes = await app.request(`/api/projects/${project.slug}/goals/${invalidClaim.id}/retry`, { method: "POST" });
+    expect(invalidClaimRes.status).toBe(400);
+    expect(await invalidClaimRes.json()).toEqual({
+      error: { code: "BAD_REQUEST", message: "mainSessionId must reference an existing session in this project" },
     });
-    await waitUntil(() => resolveMock.mock.calls.length > callsBeforePatch);
-    await Bun.sleep(5);
-    const patchSettledBeforeRetryReleased = patchSettled;
-    releaseCreate.resolve();
-    const [retryRes, patchRes] = await Promise.all([retryPromise, patchPromise]);
-    expect(patchSettledBeforeRetryReleased).toBe(false);
-    expect(retryRes.status).toBe(200);
-    expect(patchRes.status).toBe(409);
-    expect(await manager.read(created.id)).toMatchObject({ status: "running", useWorktree: true, worktree: first.worktree });
-    expect(createSession.mock.calls[1]?.[1]).toMatchObject({ cwd: first.worktree?.path });
+    expect(await manager.read(missingClaim.id)).toMatchObject({ status: "not_done", attempt: 1 });
+    expect(await manager.read(invalidClaim.id)).toMatchObject({ status: "not_done", attempt: 1, mainSessionId: missingSessionId });
+    expect(runtime.createSession).not.toHaveBeenCalled();
+    expect(runtime.startSessionExecution).not.toHaveBeenCalled();
   });
 
   test("POST retry rejects an active reserved Session before isolated workspace revalidation", async () => {
@@ -1067,11 +1061,7 @@ describe("goals routes", () => {
       (_workspaceRoot: string, sessionId: string) => sessionId === activeRetrySessionId ? "running" : "idle",
     );
 
-    const activeRes = await app.request(`/api/projects/${project.slug}/goals/${activeGoal.id}/retry`, {
-      method: "POST",
-      body: JSON.stringify({ mainSessionId: activeRetrySessionId }),
-      headers: { "content-type": "application/json" },
-    });
+    const activeRes = await app.request(`/api/projects/${project.slug}/goals/${activeGoal.id}/retry`, { method: "POST" });
     expect(activeRes.status).toBe(200);
     expect(await activeRes.json()).toMatchObject({ id: activeGoal.id, status: "running", mainSessionId: activeRetrySessionId });
     expect(runtime.createSession).not.toHaveBeenCalled();
@@ -1145,10 +1135,9 @@ describe("goals routes", () => {
       headers: { "content-type": "application/json" },
     });
     await manager.setReview(created.id);
+    await manager.setMainSession(created.id, nonMainSessionId);
     const nonMainRetryRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/retry`, {
       method: "POST",
-      body: JSON.stringify({ mainSessionId: nonMainSessionId }),
-      headers: { "content-type": "application/json" },
     });
 
     expect(invalidUuidRes.status).toBe(400);
@@ -1291,11 +1280,8 @@ describe("goals routes", () => {
     const notDone = await postGoal(app, project.slug);
     await manager.setReview(notDone.id);
     bindSession(retrySessionId, { goalId: notDone.id, sessionRole: "main" });
-    const notDoneRes = await app.request(`/api/projects/${project.slug}/goals/${notDone.id}/retry`, {
-      method: "POST",
-      body: JSON.stringify({ mainSessionId: retrySessionId }),
-      headers: { "content-type": "application/json" },
-    });
+    await manager.setMainSession(notDone.id, retrySessionId);
+    const notDoneRes = await app.request(`/api/projects/${project.slug}/goals/${notDone.id}/retry`, { method: "POST" });
 
     const failed = await postGoal(app, project.slug);
     await manager.setStatus(failed.id, "failed");
@@ -1322,7 +1308,7 @@ describe("goals routes", () => {
     expect((await manager.read(draftMain.id)).mainSessionId).toBeUndefined();
     expect(await manager.read(draftChild.id)).toMatchObject({ status: "draft", childSessionIds: [] });
     expect(await manager.read(notDone.id)).toMatchObject({ status: "not_done", attempt: 1 });
-    expect((await manager.read(notDone.id)).mainSessionId).toBeUndefined();
+    expect((await manager.read(notDone.id)).mainSessionId).toBe(retrySessionId);
     expect(await manager.read(failed.id)).toMatchObject({ status: "failed", attempt: 1, mainSessionId: activeRetrySessionId });
     expect(runtime.createSession).not.toHaveBeenCalled();
     expect(runtime.startSessionExecution).not.toHaveBeenCalled();
@@ -1333,12 +1319,9 @@ describe("goals routes", () => {
     const created = await postGoal(app, project.slug);
     await manager.setReview(created.id);
     bindSession(retrySessionId, { goalId: created.id, sessionRole: "main" });
+    await manager.setMainSession(created.id, retrySessionId);
 
-    const retryRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/retry`, {
-      method: "POST",
-      body: JSON.stringify({ mainSessionId: retrySessionId }),
-      headers: { "content-type": "application/json" },
-    });
+    const retryRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/retry`, { method: "POST" });
     const retried = await retryRes.json() as GoalState;
 
     expect(retryRes.status).toBe(200);
@@ -1352,10 +1335,11 @@ describe("goals routes", () => {
     expectPromptDoesNotRequestRedundantGoalClaim(lastStartedUserMessage(runtime));
   });
 
-  test("POST retry rejects a user-provided worktree Session for a non-isolated Goal", async () => {
+  test("POST retry rejects a bound Goal Lead root with the wrong execution directory", async () => {
     const { app, manager, project, runtime } = await createFixture("retry-canonical-existing-cwd");
     const created = await postGoal(app, project.slug);
     await manager.setReview(created.id);
+    await manager.setMainSession(created.id, retrySessionId);
     const foreignCwd = resolve(project.workspaceRoot, "..", "retry-user-worktree");
     (runtime.getSessionFile as ReturnType<typeof mock>).mockImplementation(async (_workspaceRoot: string, sessionId: string) => ({
       sessionId,
@@ -1372,11 +1356,7 @@ describe("goals routes", () => {
       sessionRole: "main" as const,
     }));
 
-    const retryRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/retry`, {
-      method: "POST",
-      body: JSON.stringify({ mainSessionId: retrySessionId }),
-      headers: { "content-type": "application/json" },
-    });
+    const retryRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/retry`, { method: "POST" });
 
     expect(retryRes.status).toBe(409);
     expect(await retryRes.json()).toEqual({
@@ -1386,7 +1366,7 @@ describe("goals routes", () => {
     expect(runtime.startSessionExecution).not.toHaveBeenCalled();
   });
 
-  test("POST retry rejects active reserved session mismatch", async () => {
+  test("POST retry rejects request bodies instead of accepting replacement sessions", async () => {
     const { app, bindSession, manager, project, runtime } = await createFixture("retry-session-mismatch");
     const created = await postGoal(app, project.slug);
     await manager.setReview(created.id);
@@ -1403,9 +1383,9 @@ describe("goals routes", () => {
       headers: { "content-type": "application/json" },
     });
 
-    expect(retryRes.status).toBe(409);
+    expect(retryRes.status).toBe(400);
     expect(await retryRes.json()).toEqual({
-      error: { code: "BAD_REQUEST", message: `Goal ${created.id} cannot transition while Session ${activeRetrySessionId} is active` },
+      error: { code: "BAD_REQUEST", message: "Retry requests must not include a request body" },
     });
     expect(runtime.startSessionExecution).not.toHaveBeenCalled();
   });

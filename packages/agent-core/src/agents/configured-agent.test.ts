@@ -17,7 +17,7 @@ import {
   IneligibleSessionWorktreeToolError,
   UnknownExtraToolError,
 } from "./configured-agent";
-import { exploreAgentDefinition, engineerAgentDefinition } from "./definitions";
+import { exploreAgentDefinition, engineerAgentDefinition, goalLeadAgentDefinition } from "./definitions";
 import type { AgentDefinition } from "./factory-types";
 import { setLlmAdapterForTest } from "../llm/adapter";
 import type { MemoryExtractionConfig } from "../config";
@@ -289,6 +289,17 @@ describe("ConfiguredAgent", () => {
     expect(agent.store.getState().reminders.some((reminder) => reminder.source.type === "todo_loop_continuation")).toBe(true);
     expect(btm.dispatched).toContain("title-generation");
     expect(btm.drainCalls).toBe(1);
+  });
+
+  test("Goal Lead leaves next-Run continuation exclusively to the Goal driver", async () => {
+    setupMockStreamText("goal turn complete");
+    const store = storeManager.create(`configured-goal-lead-${crypto.randomUUID()}`, tmpRoot, { agentName: "goal_lead" });
+    store.setState({ todos: [{ id: "todo-1", content: "finish goal", status: "pending" }] });
+
+    const agent = createAgent({ definition: goalLeadAgentDefinition, store });
+    await agent.run("continue goal");
+
+    expect(agent.store.getState().reminders.some((reminder) => reminder.source.type === "todo_loop_continuation")).toBe(false);
   });
 
   test("dispose does not cancel a provided shared background task manager", () => {

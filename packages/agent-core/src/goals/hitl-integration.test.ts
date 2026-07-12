@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -10,6 +10,7 @@ import { silentLogger } from "../logger";
 import { LoopStateManager } from "../loops/state";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { GoalHitlResumeAdapter } from "./hitl-resume-adapter";
+import { withGoalExecutionClaimLock } from "./execution-claim";
 import { GoalStateError, GoalStateManager } from "./state";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-hitl-integration");
@@ -42,7 +43,7 @@ function createHitlService(): HitlService {
   });
 }
 
-function createAdapter(hitlService: HitlService): GoalHitlResumeAdapter {
+function createAdapter(hitlService: HitlService, onGoalStateChanged?: (goalId: string) => void | Promise<void>): GoalHitlResumeAdapter {
   return new GoalHitlResumeAdapter({
     workspaceRoot,
     goalStateManager: manager,
@@ -50,6 +51,7 @@ function createAdapter(hitlService: HitlService): GoalHitlResumeAdapter {
     goalCancellation: {
       cancel: (goalId, request) => manager.cancel(goalId, request.reason, request.hitlId),
     },
+    onGoalStateChanged,
   });
 }
 
@@ -113,6 +115,54 @@ async function waitForGoal(goalId: string, predicate: (goal: GoalState) => boole
 }
 
 describe("Goal HITL resume integration", () => {
+  test("notifies continuation after an approved Goal blocker is durably applied", async () => {
+    const hitlService = createHitlService();
+    const onGoalStateChanged = mock(() => undefined);
+    const adapter = createAdapter(hitlService, onGoalStateChanged);
+    const goal = await createGoal("running");
+    const record = await blockGoal(hitlService, goal, "running");
+
+    await runAdapter(adapter, record, { type: "approval_decision", decision: "approved" });
+
+    expect(onGoalStateChanged).toHaveBeenCalledTimes(1);
+    expect(onGoalStateChanged).toHaveBeenCalledWith(goal.id);
+    expect((await manager.read(goal.id)).status).toBe("running");
+  });
+
+  test("notifies continuation outside the non-reentrant Goal claim lock", async () => {
+    const hitlService = createHitlService();
+    let callbackEntered = false;
+    const adapter = createAdapter(hitlService, async (goalId) => {
+      await withGoalExecutionClaimLock(goalId, async () => {
+        callbackEntered = true;
+      });
+    });
+    const goal = await createGoal("running");
+    const record = await blockGoal(hitlService, goal, "running");
+
+    await runAdapter(adapter, record, { type: "approval_decision", decision: "approved" });
+
+    expect(callbackEntered).toBe(true);
+  });
+
+  test("notifies Loop projection after denied and cancelled Goal HITL outcomes", async () => {
+    const hitlService = createHitlService();
+    const onGoalStateChanged = mock(() => undefined);
+    const adapter = createAdapter(hitlService, onGoalStateChanged);
+    const deniedGoal = await createGoal("running");
+    const denied = await blockGoal(hitlService, deniedGoal, "running");
+    const cancelledGoal = await createGoal("running");
+    const cancelled = await blockGoal(hitlService, cancelledGoal, "running");
+
+    await runAdapter(adapter, denied, { type: "approval_decision", decision: "denied", comment: "stop" });
+    await runAdapter(adapter, cancelled, { type: "cancel", reason: "stop" });
+
+    expect((await manager.read(deniedGoal.id)).status).toBe("failed");
+    expect((await manager.read(cancelledGoal.id)).status).toBe("cancelled");
+    expect(onGoalStateChanged).toHaveBeenCalledWith(deniedGoal.id);
+    expect(onGoalStateChanged).toHaveBeenCalledWith(cancelledGoal.id);
+  });
+
   test("approved HITL clears pending id and resumes a running blocker", async () => {
     const hitlService = createHitlService();
     const coordinator = createCoordinator(hitlService);
@@ -232,9 +282,47 @@ describe("Goal HITL resume integration", () => {
       status: "done",
       pendingHitlIds: [],
       appliedHitlIds: [record.hitlId],
-      review: { verdict: "DONE", summary: "criteria satisfied" },
+      reviewGeneration: 1,
+      review: { reviewGeneration: 1, verdict: "DONE", summary: "criteria satisfied" },
     });
     expect(completed.blocker).toBeUndefined();
+  });
+
+  test("rejects a stale persisted HITL review receipt", async () => {
+    const hitlService = createHitlService();
+    const adapter = createAdapter(hitlService);
+    const goal = await createGoal("reviewing");
+    const record = await hitlService.create({
+      owner: { projectSlug: goal.projectId, ownerType: "goal", ownerId: goal.id },
+      blockingKey: `goal:${goal.id}:stale-review`,
+      source: { type: "goal_review", goalId: goal.id, resumeStatus: "reviewing" },
+      displayPayload: { title: "Review Goal outcome", redacted: true },
+    });
+    await manager.attachHitlBlocker(goal.id, {
+      blocker: {
+        kind: "approval",
+        summary: "Review Goal outcome",
+        hitlId: record.hitlId,
+        source: "goal_review",
+        resumeStatus: "reviewing",
+      },
+      approvalRef: record.hitlId,
+    });
+
+    await expect(runAdapter(adapter, record, {
+      type: "review_outcome",
+      outcome: "DONE",
+      receipt: {
+        reviewGeneration: 0,
+        verdict: "DONE",
+        summary: "stale review",
+        evidenceRefs: [{ kind: "hitl", ref: record.hitlId, summary: "stale evidence" }],
+        reviewerSessionId: "stale-reviewer",
+        decidedAt: new Date().toISOString(),
+      },
+    })).rejects.toBeInstanceOf(Error);
+
+    expect((await manager.read(goal.id)).status).toBe("blocked");
   });
 
   test("rejects an attached owner that is neither pending nor durably applied", async () => {

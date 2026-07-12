@@ -339,6 +339,7 @@ describe("GoalCancellationService", () => {
     await waitFor(() => fixture.families.stopped.length === 1);
 
     await expect(withGoalExecutionClaimLock(goal.id, () => fixture.goalState.finalizeReview(goal.id, {
+      expectedReviewGeneration: goal.reviewGeneration,
       verdict: "DONE",
       summary: "Reviewer attempted to finish during cancellation",
       evidenceRefs: [{ kind: "test_output", ref: "tests", summary: "Tests passed" }],
@@ -368,6 +369,7 @@ describe("GoalCancellationService", () => {
       reviewEntered.resolve(undefined);
       await releaseReview.promise;
       return await fixture.goalState.finalizeReview(goal.id, {
+        expectedReviewGeneration: goal.reviewGeneration,
         verdict: "DONE",
         summary: "Reviewer finished first",
         evidenceRefs: [{ kind: "test_output", ref: "tests", summary: "Tests passed" }],
@@ -485,7 +487,7 @@ describe("GoalCancellationService", () => {
       expect(committed).toMatchObject({ status: "cancelled", pendingHitlIds: [] });
       expect(committed.blocker).toBeUndefined();
       await expect(fixture.goalState.start(goal.id, { mainSessionId: mainId })).rejects.toThrow();
-      await expect(fixture.goalState.retry(goal.id, { mainSessionId: mainId })).rejects.toThrow();
+      await expect(fixture.goalState.retry(goal.id)).rejects.toThrow();
       const goalResumeAdapter = new GoalHitlResumeAdapter({
         workspaceRoot: TMP_ROOT,
         goalStateManager: fixture.goalState,

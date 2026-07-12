@@ -123,8 +123,10 @@ interface FakeManagerOptions {
   getAgent?: (sessionId: string) => Agent;
   onReleaseAgent?: (sessionId: string) => void;
   executionScopeValidator?: ConstructorParameters<typeof SessionExecutionManager>[0]["executionScopeValidator"];
+  goalDelegationAdmission?: ConstructorParameters<typeof SessionExecutionManager>[0]["goalDelegationAdmission"];
   deletionPreflight?: ConstructorParameters<typeof SessionExecutionManager>[0]["deletionPreflight"];
   flushSessionStore?: ConstructorParameters<typeof SessionExecutionManager>[0]["flushSessionStore"];
+  listSessionFamilyBlockedHitlIds?: ConstructorParameters<typeof SessionExecutionManager>[0]["listSessionFamilyBlockedHitlIds"];
   sessionFamilyStopTimeoutMs?: number;
 }
 
@@ -134,7 +136,7 @@ type SessionExecutionManagerConfigForTest = ConstructorParameters<typeof Session
 
 function storeCallbacks(manager: SessionStoreManager): Pick<
   SessionExecutionManagerConfigForTest,
-  "createSessionStore" | "flushSessionStore" | "getSessionStore" | "loadSessionStore" | "deleteSessionStore" | "resolveRootSessionId" | "buildSessionTree"
+  "createSessionStore" | "flushSessionStore" | "getSessionStore" | "loadSessionStore" | "deleteSessionStore" | "resolveRootSessionId" | "buildSessionTree" | "listSessionFamilyBlockedHitlIds"
 > {
   return {
     createSessionStore: (sessionId, root, createOptions) => manager.create(sessionId, root, createOptions),
@@ -144,6 +146,7 @@ function storeCallbacks(manager: SessionStoreManager): Pick<
     deleteSessionStore: (sessionId, root, deleteOptions) => manager.delete(sessionId, root, deleteOptions),
     resolveRootSessionId: (sessionId, root) => manager.resolveRootSessionId(sessionId, root),
     buildSessionTree: (root, rootSessionId) => manager.buildSessionTree(root, rootSessionId),
+    listSessionFamilyBlockedHitlIds: (root, rootSessionId) => manager.listSessionFamilyBlockedHitlIds(root, rootSessionId),
   };
 }
 
@@ -203,7 +206,7 @@ function makeFactory(overrides: Partial<AgentFactory> = {}): AgentFactory {
     displayName: "Engineer",
     promptProfileId: "default",
     tools: { tools: ["delegate"], delegateTargets: ["explore"] },
-    hooks: { autoCompact: false, autoInjectReminder: false, todoContinuation: false, transcriptSave: false, memoryExtraction: false, memoryConsolidation: false, titleGeneration: "disabled" },
+    hooks: { autoCompact: false, autoInjectReminder: false, todoStepReminder: false, todoQueryLoopContinuation: false, transcriptSave: false, memoryExtraction: false, memoryConsolidation: false, titleGeneration: "disabled" },
     childPolicy: { maxDepth: 2, maxConcurrent: 1, timeoutMs: 0, abortCascade: true, terminalReminders: true },
     includeMemoryInPrompt: false,
     skills: [],
@@ -234,9 +237,13 @@ function createManager(agents: Record<string, MockAgent>, options: FakeManagerOp
     sessionAgentManager,
     ...storeCallbacks(executionStoreManager),
     ...(options.flushSessionStore === undefined ? {} : { flushSessionStore: options.flushSessionStore }),
+    ...(options.listSessionFamilyBlockedHitlIds === undefined ? {} : {
+      listSessionFamilyBlockedHitlIds: options.listSessionFamilyBlockedHitlIds,
+    }),
     trackSession,
     untrackSession,
     executionScopeValidator: options.executionScopeValidator ?? allowExecutionScope,
+    ...(options.goalDelegationAdmission === undefined ? {} : { goalDelegationAdmission: options.goalDelegationAdmission }),
     ...(options.deletionPreflight === undefined ? {} : { deletionPreflight: options.deletionPreflight }),
     ...(options.sessionFamilyStopTimeoutMs === undefined ? {} : { sessionFamilyStopTimeoutMs: options.sessionFamilyStopTimeoutMs }),
     logger: silentLogger,
@@ -253,6 +260,7 @@ async function writeSessionFile(input: {
   executions?: SessionFile["executions"];
   childSessionLinks?: SessionFile["childSessionLinks"];
   blockedByHitlIds?: SessionFile["blockedByHitlIds"];
+  goalId?: string;
 }): Promise<void> {
   const rootSessionId = input.rootSessionId ?? input.sessionId;
   const file: SessionFile = {
@@ -273,6 +281,7 @@ async function writeSessionFile(input: {
     reminders: [],
     childSessionLinks: input.childSessionLinks ?? [],
     rootSessionId,
+    ...(input.goalId === undefined ? {} : { goalId: input.goalId }),
     ...(input.blockedByHitlIds === undefined ? {} : { blockedByHitlIds: input.blockedByHitlIds }),
     ...(input.parentSessionId === undefined ? {} : { parentSessionId: input.parentSessionId }),
   };
@@ -526,6 +535,66 @@ describe("SessionExecutionManager", () => {
     run.resolve({ text: "done", steps: 1 });
     await execution.promise;
     expect(manager.getSessionFamilyActivity(workspaceRoot, "session-start")).toBe("idle");
+  });
+
+  test("durably flushes a caller-owned execution start before running the agent", async () => {
+    const sessionId = "durable-execution-start";
+    const flush = deferred<void>();
+    const agent = new MockAgent(sessionId, Promise.resolve({ text: "done", steps: 1 }));
+    const flushedSessionIds: string[] = [];
+    const { manager } = createManager({ [sessionId]: agent }, {
+      flushSessionStore: async (flushedSessionId) => {
+        flushedSessionIds.push(flushedSessionId);
+        await flush.promise;
+      },
+    });
+
+    const execution = manager.startExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId,
+      userMessage: "continue durable Loop turn",
+      executionId: "loop-attempt-1",
+    });
+    await waitFor(() => flushedSessionIds.length > 0);
+
+    expect(flushedSessionIds).toEqual([sessionId]);
+    expect(agent.store.getState().events.some((event) => (
+      event.kind === "execution-start"
+      && (event.payload as { executionId?: string }).executionId === "loop-attempt-1"
+    ))).toBe(true);
+    expect(agent.runMock).not.toHaveBeenCalled();
+
+    flush.resolve(undefined);
+    await execution.promise;
+
+    expect(agent.runMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("does not run the agent when a caller-owned execution start cannot be flushed", async () => {
+    const sessionId = "failed-durable-execution-start";
+    const agent = new MockAgent(sessionId, Promise.resolve({ text: "must not run", steps: 1 }));
+    const { manager } = createManager({ [sessionId]: agent }, {
+      flushSessionStore: async () => {
+        throw new Error("durable execution-start flush failed");
+      },
+    });
+
+    const execution = manager.startExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId,
+      userMessage: "continue durable Loop turn",
+      executionId: "loop-attempt-2",
+    });
+    await execution.promise;
+
+    expect(agent.runMock).not.toHaveBeenCalled();
+    expect(agent.store.getState().isRunning).toBe(false);
+    expect(agent.store.getState().events.at(-1)).toMatchObject({
+      kind: "execution-end",
+      payload: { status: "failed", error: "durable execution-start flush failed" },
+    });
   });
 
   test("rebuilds the Agent and continues the same Session after cwd changes", async () => {
@@ -1097,7 +1166,10 @@ describe("SessionExecutionManager", () => {
     const worktreeCwd = `${workspaceRoot}.worktrees/child-inheritance`;
     const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer", goalId, cwd: worktreeCwd });
     const factory = makeFactory();
-    const { manager, sessionAgentManager } = createManager({}, { factory });
+    const { manager, sessionAgentManager } = createManager({}, {
+      factory,
+      listSessionFamilyBlockedHitlIds: async () => [],
+    });
 
     const handle = await manager.startChildExecution(workspaceRoot, {
       parentStore,
@@ -1134,6 +1206,87 @@ describe("SessionExecutionManager", () => {
       background: false,
       status: "completed",
     });
+  });
+
+  test("blocks new Goal child execution while any sibling has durable HITL", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, {
+      agentName: "engineer",
+      goalId: crypto.randomUUID(),
+    });
+    const { manager, sessionAgentManager } = createManager({}, {
+      factory: makeFactory(),
+      listSessionFamilyBlockedHitlIds: async () => ["sibling-hitl"],
+    });
+
+    await expect(manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "blocked-delegate",
+      toolName: "delegate",
+      targetAgentName: "explore",
+      prompt: "must not start",
+      skills: [],
+      background: false,
+      currentDepth: 0,
+      parentAbort: undefined,
+    })).rejects.toMatchObject({ name: "SessionHitlBlockedError", hitlIds: ["sibling-hitl"] });
+    expect(sessionAgentManager.createChildAgent).not.toHaveBeenCalled();
+  });
+
+  test("rechecks Goal family HITL immediately before a new child starts", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, {
+      agentName: "engineer",
+      goalId: crypto.randomUUID(),
+    });
+    let checks = 0;
+    const { manager } = createManager({}, {
+      factory: makeFactory(),
+      listSessionFamilyBlockedHitlIds: async () => (++checks === 1 ? [] : ["raced-hitl"]),
+    });
+
+    await expect(manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "raced-delegate",
+      toolName: "delegate",
+      targetAgentName: "explore",
+      prompt: "must not start",
+      skills: [],
+      background: false,
+      currentDepth: 0,
+      parentAbort: undefined,
+    })).rejects.toMatchObject({ name: "SessionHitlBlockedError", hitlIds: ["raced-hitl"] });
+    expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({ status: "failed" });
+  });
+
+  test("applies Goal phase admission to both new delegation and stale child resume", async () => {
+    const goalId = crypto.randomUUID();
+    const parentSessionId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentSessionId, workspaceRoot, {
+      agentName: "engineer",
+      goalId,
+      sessionRole: "main",
+    });
+    const denied = new Error("phase denied");
+    const run = mock(async () => { throw denied; });
+    const { manager } = createManager({}, {
+      factory: makeFactory(),
+      goalDelegationAdmission: { run },
+    });
+    const base = {
+      parentStore,
+      parentSessionId,
+      parentToolCallId: "call-1",
+      toolName: "delegate",
+      targetAgentName: "explore",
+      prompt: "inspect",
+    } as const;
+
+    await expect(manager.startChildExecution(workspaceRoot, { ...base, skills: [] })).rejects.toBe(denied);
+    await expect(manager.resumeChildExecution(workspaceRoot, { ...base, sessionId: crypto.randomUUID() })).rejects.toBe(denied);
+    expect(run).toHaveBeenCalledTimes(2);
   });
 
   test("startChildExecution preserves Loop origin so child tool guards execute in the same run scope", async () => {
@@ -1226,6 +1379,7 @@ describe("SessionExecutionManager", () => {
     });
     const { manager } = createManager({}, {
       factory,
+      listSessionFamilyBlockedHitlIds: async () => [],
       childRunMessage: (message) => {
         childPrompt = message;
       },
@@ -1257,6 +1411,7 @@ describe("SessionExecutionManager", () => {
     let childPrompt = "";
     const { manager } = createManager({}, {
       factory: makeFactory(),
+      listSessionFamilyBlockedHitlIds: async () => [],
       childRunMessage: (message) => {
         childPrompt = message;
       },
@@ -1298,7 +1453,7 @@ describe("SessionExecutionManager", () => {
       displayName: "Explore",
       promptProfileId: "explore",
       tools: { tools: ["delegate", "file_read"], delegateTargets: ["explore"] },
-      hooks: { autoCompact: false, autoInjectReminder: false, todoContinuation: false, transcriptSave: false, memoryExtraction: false, memoryConsolidation: false, titleGeneration: "disabled" },
+      hooks: { autoCompact: false, autoInjectReminder: false, todoStepReminder: false, todoQueryLoopContinuation: false, transcriptSave: false, memoryExtraction: false, memoryConsolidation: false, titleGeneration: "disabled" },
       childPolicy: { maxDepth: 2, maxConcurrent: 1, timeoutMs: 0, abortCascade: true, terminalReminders: true },
       includeMemoryInPrompt: false,
       skills: [],
@@ -1321,6 +1476,7 @@ describe("SessionExecutionManager", () => {
     });
     const { manager } = createManager({}, {
       factory,
+      listSessionFamilyBlockedHitlIds: async () => [],
       childRunMessage: (message) => {
         childPrompt = message;
       },
@@ -2806,6 +2962,33 @@ describe("SessionExecutionManager", () => {
     expect(manager.getSessionFamilyActivity(workspaceRoot, sessionId)).toBe("idle");
   });
 
+  test("checked Goal start rejects a durable sibling HITL at the final family barrier", async () => {
+    const rootId = crypto.randomUUID();
+    const childId = crypto.randomUUID();
+    const siblingHitlId = crypto.randomUUID();
+    await writeSessionFile({ sessionId: rootId, goalId: crypto.randomUUID() });
+    await writeSessionFile({
+      sessionId: childId,
+      rootSessionId: rootId,
+      parentSessionId: rootId,
+      blockedByHitlIds: [siblingHitlId],
+    });
+    const coldStores = new SessionStoreManager({ logger: silentLogger });
+    const { manager } = createManager({}, { storeManager: coldStores });
+
+    await expect(manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: rootId,
+      userMessage: "must not bypass child HITL",
+    })).rejects.toMatchObject({
+      name: "SessionHitlBlockedError",
+      sessionId: rootId,
+      hitlIds: [siblingHitlId],
+    });
+    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("idle");
+  });
+
   test("validates persisted execution scope before claiming a user-message execution", async () => {
     const sessionId = crypto.randomUUID();
     const loopId = crypto.randomUUID();
@@ -2843,6 +3026,7 @@ describe("SessionExecutionManager", () => {
         cwd: workspaceRoot,
         loopId,
         sessionRole: "main",
+        agentName: "engineer",
       },
       entry: { kind: "user_message", origin },
     });
@@ -3109,6 +3293,57 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "resume-tool-call",
       status: "completed",
     });
+  });
+
+  test("rechecks Goal family HITL immediately before a child resume starts", async () => {
+    const parentId = crypto.randomUUID();
+    const childSessionId = crypto.randomUUID();
+    const goalId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer", goalId });
+    const childStore = storeManager.create(childSessionId, workspaceRoot, {
+      rootSessionId: parentId,
+      parentSessionId: parentId,
+      agentName: "explore",
+      goalId,
+    });
+    parentStore.getState().append({
+      type: "tool-child-session-link",
+      link: {
+        parentSessionId: parentId,
+        parentToolCallId: "initial-call",
+        toolName: "delegate",
+        childSessionId,
+        childAgentName: "explore",
+        depth: 1,
+        background: false,
+        status: "completed",
+        createdAt: 1,
+      },
+    });
+    await storeManager.flushSession(parentId, workspaceRoot);
+    await storeManager.flushSession(childSessionId, workspaceRoot);
+    const childAgent = new MockAgent(childSessionId, Promise.resolve({ text: "must not run", steps: 1 }), workspaceRoot);
+    childAgent.store.setState(childStore.getState());
+    let checks = 0;
+    const { manager } = createManager({ [childSessionId]: childAgent }, {
+      factory: makeFactory(),
+      executionScopeValidator: allowExecutionScope,
+      listSessionFamilyBlockedHitlIds: async () => (++checks === 1 ? [] : ["raced-resume-hitl"]),
+    });
+
+    await expect(manager.resumeChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "resume-call",
+      toolName: "delegate",
+      sessionId: childSessionId,
+      targetAgentName: "explore",
+      prompt: "must not resume",
+      currentDepth: 0,
+      parentAbort: undefined,
+    })).rejects.toMatchObject({ name: "SessionHitlBlockedError", hitlIds: ["raced-resume-hitl"] });
+    expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({ status: "completed" });
+    expect(childAgent.runMock).not.toHaveBeenCalled();
   });
 
   test("resumeChildExecution preserves matching Loop origin for the continued child", async () => {

@@ -56,11 +56,12 @@ describe("web goal mutation API calls", () => {
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/goals/goal-1/retry`);
       expect(init?.method).toBe("POST");
+      expect(init?.body).toBeUndefined();
       return jsonResponse({ id: "goal-1", status: "running" });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/goals/goal-1/retry`, { method: "POST", body: {} });
+    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/goals/goal-1/retry`, { method: "POST" });
     expect(result).toMatchObject({ id: "goal-1" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });

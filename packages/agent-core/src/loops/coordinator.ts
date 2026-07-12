@@ -197,6 +197,43 @@ export class LoopJobCoordinator {
     })).updated;
   }
 
+  async requeueGoalContinuation(jobId: string, lease: LoopJobExecutionLease): Promise<LoopJobRecord> {
+    return (await this.#updateClaimedRunning(jobId, lease, {
+      status: "pending",
+      startedAt: undefined,
+      endedAt: undefined,
+      blockedReason: undefined,
+      blockedByHitlIds: undefined,
+      attentionStatus: "clear",
+      resumeCheckpoint: undefined,
+      leaseExpiresAt: undefined,
+      leaseOwnerId: undefined,
+      leaseToken: undefined,
+    })).updated;
+  }
+
+  async requeueResolvedGoalHitl(job: LoopJobRecord, hitlId: string): Promise<LoopJobRecord> {
+    if (job.status !== "needs_user" || job.blockedByHitlIds?.includes(hitlId) !== true) {
+      throw new Error(`Loop job ${job.jobId} does not own resolved Goal HITL ${hitlId}.`);
+    }
+    const result = await this.#queue.updateIfCurrent(job.jobId, job, {
+      status: "pending",
+      startedAt: undefined,
+      endedAt: undefined,
+      blockedReason: undefined,
+      blockedByHitlIds: undefined,
+      attentionStatus: "clear",
+      resumeCheckpoint: undefined,
+      leaseExpiresAt: undefined,
+      leaseOwnerId: undefined,
+      leaseToken: undefined,
+    });
+    if (result.outcome !== "updated") {
+      throw new Error(`Loop job ${job.jobId} changed while resolving Goal HITL ${hitlId}.`);
+    }
+    return result.updated;
+  }
+
   async #updateClaimedRunning(jobId: string, lease: LoopJobExecutionLease, updates: LoopJobUpdateInput): Promise<{
     readonly previous: LoopJobRecord;
     readonly updated: LoopJobRecord;

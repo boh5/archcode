@@ -158,6 +158,11 @@ describe("agentDefinitions", () => {
     expect(goalLeadAgentDefinition.rolePrompt).toContain("already-created Goal");
     expect(goalLeadAgentDefinition.rolePrompt).toContain("goal_manage");
     expect(goalLeadAgentDefinition.rolePrompt).toContain("action=begin_review");
+    expect(goalLeadAgentDefinition.rolePrompt).toContain("reviewGeneration");
+    expect(goalLeadAgentDefinition.rolePrompt).toContain("action=retry before delegating");
+    expect(goalLeadAgentDefinition.rolePrompt).toContain("Never leave a manually blocked Goal without a corresponding user request");
+    expect(goalLeadAgentDefinition.hooks.todoStepReminder).toBe(true);
+    expect(goalLeadAgentDefinition.hooks.todoQueryLoopContinuation).toBe(false);
     expect(goalLeadAgentDefinition.rolePrompt).not.toContain("goal_create");
     expect(goalLeadAgentDefinition.rolePrompt).not.toContain("goal_manage.finalize_review");
     expect(goalLeadAgentDefinition.rolePrompt).not.toContain("finalize_review");
@@ -222,6 +227,7 @@ describe("agentDefinitions", () => {
     expect(prompt).toContain("NOT_DONE");
     expect(prompt).not.toContain("ESCALATE_HUMAN");
     expect(prompt).toContain("goal_manage.finalize_review");
+    expect(prompt).toContain("expectedReviewGeneration");
     expect(prompt).toContain("DONE requires evidence");
     expect(prompt).toContain("Insufficient evidence means NOT_DONE");
     expect(prompt).not.toContain("goal_check_done");

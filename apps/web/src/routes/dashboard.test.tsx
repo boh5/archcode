@@ -155,6 +155,7 @@ function makeGoal(overrides: Partial<DashboardGoal> = {}): DashboardGoal {
     acceptanceCriteria: "Reviewer can decide DONE from logs and diff.",
     status: "running",
     attempt: 1,
+    reviewGeneration: 0,
     pendingHitlIds: [],
     approvalRefs: [],
     appliedHitlIds: [],
@@ -164,7 +165,7 @@ function makeGoal(overrides: Partial<DashboardGoal> = {}): DashboardGoal {
     projectSlug: "demo",
     projectName: "Demo Project",
     ...overrides,
-    version: overrides.version ?? 1,
+    version: overrides.version ?? 2,
     useWorktree: overrides.useWorktree ?? false,
   };
 }

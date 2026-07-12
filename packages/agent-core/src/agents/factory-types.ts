@@ -24,7 +24,8 @@ export interface AgentToolPolicy {
 export interface AgentHookPolicy {
   readonly autoCompact: boolean;
   readonly autoInjectReminder: boolean;
-  readonly todoContinuation: boolean;
+  readonly todoStepReminder: boolean;
+  readonly todoQueryLoopContinuation: boolean;
   readonly transcriptSave: boolean;
   readonly memoryExtraction: boolean;
   readonly memoryConsolidation: boolean;

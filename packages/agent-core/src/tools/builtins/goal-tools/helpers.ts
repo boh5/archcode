@@ -30,7 +30,8 @@ export type GoalToolAuthorizationCode =
   | "GOAL_CANCELLATION_UNAVAILABLE"
   | "GOAL_WORKTREE_REQUIRED"
   | "GOAL_WORKTREE_MISMATCH"
-  | "GOAL_WORKTREE_CHANGED";
+  | "GOAL_WORKTREE_CHANGED"
+  | "GOAL_BUILD_ACTIVE";
 
 export interface GoalToolAuthorizationContext {
   readonly sessionId: string;

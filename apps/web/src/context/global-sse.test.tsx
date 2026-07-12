@@ -880,7 +880,7 @@ describe("handleSSEEvent", () => {
 
 function createGoalState(goalId: string, projectId: string, status: GoalState["status"]): GoalState {
   return {
-    version: 1,
+    version: 2,
     id: goalId,
     projectId,
     title: "Ship Goal",
@@ -889,6 +889,7 @@ function createGoalState(goalId: string, projectId: string, status: GoalState["s
     useWorktree: false,
     status,
     attempt: 1,
+    reviewGeneration: 0,
     pendingHitlIds: [],
     approvalRefs: [],
     appliedHitlIds: [],

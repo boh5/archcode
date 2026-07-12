@@ -59,7 +59,7 @@ interface GoalStateManagerForRoute {
   read(goalId: string): Promise<GoalState>;
   patchDraft(goalId: string, updates: GoalPatchBody): Promise<GoalState>;
   start(goalId: string, input?: { readonly mainSessionId?: string }): Promise<GoalState>;
-  retry(goalId: string, input?: { readonly mainSessionId?: string }): Promise<GoalState>;
+  retry(goalId: string): Promise<GoalState>;
   cancel(goalId: string, reason?: string): Promise<GoalState>;
   setMainSession(goalId: string, mainSessionId: string): Promise<GoalState>;
   addChildSession(goalId: string, childSessionId: string): Promise<GoalState>;
@@ -192,7 +192,7 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
   app.post("/:slug/goals/:goalId/retry", async (c) => {
     const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
     const goalId = requiredGoalId(c.req.param("goalId"));
-    const body = await readOptionalSessionIdsBody(c.req.text());
+    await requireEmptyRequestBody(c.req.text());
     const manager = await goalStateFor(runtime, project.workspaceRoot);
 
     try {
@@ -200,10 +200,10 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
         let goal = await manager.read(goalId);
         assertHttpGoalOwnership(goal);
         assertGoalCanRetry(goal);
-        await validateGoalSessionIdentities(runtime, project.workspaceRoot, goal, body);
+        const mainSessionId = requireGoalLeadMainSession(goal);
+        await assertSessionAssignable(runtime, project.workspaceRoot, goal, mainSessionId, "main");
         if (goal.status === "running") {
-          const runningSessionId = requireRunningMainSession(goal, body.mainSessionId);
-          if (!await isSessionFamilyActive(runtime, project.workspaceRoot, runningSessionId)) {
+          if (!await isSessionFamilyActive(runtime, project.workspaceRoot, mainSessionId)) {
             throw new ServerError(
               "BAD_REQUEST",
               `Running Goal ${goal.id} can retry only through its active main Session`,
@@ -211,40 +211,37 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
             );
           }
           const expectedCwd = goalExecutionCwdFromState(goal, project.workspaceRoot);
-          await validateProvidedSessions(runtime, project.workspaceRoot, goal, body, expectedCwd);
-          await assertSessionAssignable(runtime, project.workspaceRoot, goal, runningSessionId, "main", expectedCwd);
+          await assertSessionAssignable(runtime, project.workspaceRoot, goal, mainSessionId, "main", expectedCwd);
           return goal;
         }
-        await assertNoActiveGoalSessions(runtime, project.workspaceRoot, goal, body);
+        await assertNoActiveGoalSessions(runtime, project.workspaceRoot, goal);
         const prepared = await prepareGoalWorkspace(manager, project.workspaceRoot, goal);
         goal = prepared.goal;
-        await validateProvidedSessions(runtime, project.workspaceRoot, goal, body, prepared.cwd);
-        await assertNoActiveGoalSessions(runtime, project.workspaceRoot, goal, body);
+        if (goal.mainSessionId !== mainSessionId) {
+          throw new ServerError("BAD_REQUEST", `Goal ${goal.id} changed its main Session claim during retry`, 409);
+        }
+        await assertSessionAssignable(runtime, project.workspaceRoot, goal, mainSessionId, "main", prepared.cwd);
+        await assertNoActiveGoalSessions(runtime, project.workspaceRoot, goal);
 
-        const mainSessionId = body.mainSessionId ?? (await runtime.createSession(project.workspaceRoot, {
-          agentName: "goal_lead",
-          goalId,
-          sessionRole: "main",
-          cwd: prepared.cwd,
-        })).sessionId;
-
-        const retried = goal.status === "running" ? goal : await manager.retry(goalId, { mainSessionId });
-        const withSessions = await ensureReservedSessions(manager, retried, mainSessionId, body.childSessionIds);
-        if (await isSessionFamilyActive(runtime, project.workspaceRoot, mainSessionId)) return withSessions;
+        const retried = await manager.retry(goalId);
+        if (retried.mainSessionId !== mainSessionId) {
+          throw new ServerError("BAD_REQUEST", `Goal ${goal.id} retry did not preserve its main Session claim`, 409);
+        }
+        if (await isSessionFamilyActive(runtime, project.workspaceRoot, mainSessionId)) return retried;
 
         try {
           runtime.startSessionExecution({
             slug: project.slug,
             workspaceRoot: project.workspaceRoot,
             sessionId: mainSessionId,
-            userMessage: buildGoalRetryUserMessage(withSessions),
+            userMessage: buildGoalRetryUserMessage(retried),
           });
         } catch (error) {
-          if (hasErrorName(error, "AgentRunningError")) return withSessions;
+          if (hasErrorName(error, "AgentRunningError")) return retried;
           await markGoalRunStartFailure(manager, goalId, error);
           throw error;
         }
-        return withSessions;
+        return retried;
       });
       return c.json(toPublicGoal(reserved));
     } catch (error) {
@@ -337,6 +334,13 @@ function requireRunningMainSession(goal: GoalState, requestedMainSessionId: stri
   return goal.mainSessionId;
 }
 
+function requireGoalLeadMainSession(goal: GoalState): string {
+  if (goal.mainSessionId === undefined) {
+    throw new ServerError("BAD_REQUEST", `Goal ${goal.id} has no main Goal Lead session`, 409);
+  }
+  return goal.mainSessionId;
+}
+
 function goalExecutionCwdFromState(goal: GoalState, workspaceRoot: string): string {
   if (!goal.useWorktree) return workspaceRoot;
   if (goal.worktree === undefined) {
@@ -384,7 +388,7 @@ async function assertNoActiveGoalSessions(
   runtime: AgentRuntime,
   workspaceRoot: string,
   goal: GoalState,
-  body: SessionIdsBody,
+  body: SessionIdsBody = {},
 ): Promise<void> {
   const sessionIds = new Set([
     goal.mainSessionId,
@@ -556,6 +560,12 @@ async function readOptionalSessionIdsBody(bodyPromise: Promise<string>): Promise
   const result = SessionIdsBodySchema.safeParse(body);
   if (!result.success) throw new BadRequestError("Request body is invalid", z.treeifyError(result.error));
   return result.data;
+}
+
+async function requireEmptyRequestBody(bodyPromise: Promise<string>): Promise<void> {
+  if ((await bodyPromise).trim().length !== 0) {
+    throw new BadRequestError("Retry requests must not include a request body");
+  }
 }
 
 function toPublicGoal(goal: GoalState): GoalState {

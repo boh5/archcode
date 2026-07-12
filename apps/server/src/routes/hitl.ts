@@ -48,6 +48,7 @@ const GoalEvidenceRefSchema = z.strictObject({
 });
 
 const GoalReviewReceiptSchema = z.strictObject({
+  reviewGeneration: z.number().int().nonnegative(),
   verdict: z.enum(["DONE", "NOT_DONE"]),
   summary: z.string(),
   evidenceRefs: z.array(GoalEvidenceRefSchema),

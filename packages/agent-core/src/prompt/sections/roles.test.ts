@@ -80,6 +80,9 @@ describe("buildRoleSection", () => {
     expect(result).not.toContain("action=start");
     expect(result).toContain("action=begin_review");
     expect(result).toContain("action=retry");
+    expect(result).toContain("reviewGeneration");
+    expect(result).toContain("action=retry before delegating");
+    expect(result).toContain("Never leave a manually blocked Goal without a corresponding user request");
     expect(result).not.toContain("goal_create");
     expect(result).not.toContain("goal_lock");
     expect(result).not.toContain("goal_run");
@@ -123,6 +126,7 @@ describe("buildRoleSection", () => {
     expect(result).toContain("NOT_DONE");
     expect(result).not.toContain("ESCALATE_HUMAN");
     expect(result).toContain("goal_manage.finalize_review");
+    expect(result).toContain("expectedReviewGeneration");
     expect(result).toContain("DONE requires evidence");
     expect(result).toContain("Insufficient evidence means NOT_DONE");
     expect(result).not.toContain("goal_check_done");

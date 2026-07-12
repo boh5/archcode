@@ -150,6 +150,7 @@ describe("SessionStoreManager", () => {
     parentSessionId?: string;
     title?: string | null;
     createdAt?: number;
+    blockedByHitlIds?: string[];
   }): Promise<void> {
     await sessionFileInternals.saveSessionTranscript(
       persistedSession(input.sessionId, {
@@ -158,6 +159,7 @@ describe("SessionStoreManager", () => {
         agentName: input.parentSessionId === undefined ? "engineer" : "explore",
         title: input.title ?? null,
         rootSessionId: input.rootSessionId ?? input.sessionId,
+        ...(input.blockedByHitlIds === undefined ? {} : { blockedByHitlIds: input.blockedByHitlIds }),
         ...(input.parentSessionId === undefined ? {} : { parentSessionId: input.parentSessionId }),
       }),
       TMP_DIR,
@@ -394,7 +396,7 @@ describe("SessionStoreManager", () => {
     const id = sessionId();
     const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
     const goalState: GoalState = {
-      version: 1,
+      version: 2,
       id: "goal-1",
       projectId: "project-1",
       title: "Goal",
@@ -403,6 +405,8 @@ describe("SessionStoreManager", () => {
       useWorktree: false,
       status: "running",
       attempt: 0,
+      reviewGeneration: 0,
+      mainSessionId: "goal-main",
       pendingHitlIds: [],
       approvalRefs: [],
       appliedHitlIds: [],
@@ -954,6 +958,31 @@ describe("SessionStoreManager", () => {
     expect(tree.root.session.title).toBe("root");
     expect(tree.root.session.agentName).toBe("engineer");
     expect(tree.root.children).toEqual([]);
+  });
+
+  test("listSessionFamilyBlockedHitlIds reads and deduplicates durable sibling blockers", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const rootSessionId = sessionId();
+    const firstChildId = sessionId();
+    const secondChildId = sessionId();
+    const firstHitlId = crypto.randomUUID();
+    const secondHitlId = crypto.randomUUID();
+    await writeSessionFile({ sessionId: rootSessionId, title: "root", blockedByHitlIds: [secondHitlId] });
+    await writeSessionFile({
+      sessionId: firstChildId,
+      rootSessionId,
+      parentSessionId: rootSessionId,
+      blockedByHitlIds: [firstHitlId, secondHitlId],
+    });
+    await writeSessionFile({
+      sessionId: secondChildId,
+      rootSessionId,
+      parentSessionId: rootSessionId,
+      blockedByHitlIds: [firstHitlId],
+    });
+
+    expect(await manager.listSessionFamilyBlockedHitlIds(TMP_DIR, rootSessionId))
+      .toEqual([firstHitlId, secondHitlId].sort());
   });
 
   test("buildSessionTree() nests root, child, and grandchild", async () => {

@@ -186,7 +186,6 @@ export function useRetryGoal() {
     mutationFn: async ({ slug, goalId }: { slug: string; goalId: string }) =>
       apiFetch<GoalState>(`/api/projects/${encodeURIComponent(slug)}/goals/${encodeURIComponent(goalId)}/retry`, {
         method: "POST",
-        body: {},
       }),
     onSuccess: async (_data, variables) => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.goal(variables.slug, variables.goalId) });

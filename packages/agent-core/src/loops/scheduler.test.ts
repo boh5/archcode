@@ -9,7 +9,7 @@ import { LoopScheduler, type LoopSchedulerRunInput, type LoopSchedulerRunResult,
 import { LoopBudgetLedger } from "./budget-ledger";
 import { CollisionLedger } from "./collision-ledger";
 import { LoopKillStateManager } from "./kill-state";
-import { LoopActiveConflictError, LoopWorktreeScopeCheckpointError } from "./runner";
+import { LoopActiveConflictError, LoopGoalTurnContinuationPendingError, LoopWorktreeScopeCheckpointError, type ContinueLoopGoalRunInput } from "./runner";
 import { LoopSessionHitlContinuationCoordinator } from "./session-hitl-continuation";
 import { LoopStateManager, type LoopConfig } from "./state";
 import { createLoopTestHitlService, FakeSessionFamilyStopper } from "./test-utils";
@@ -65,6 +65,24 @@ describe("LoopScheduler", () => {
     expect(fixture.runs).toEqual([]);
   });
 
+  test("does not dispatch durable jobs before scheduler startup commits", async () => {
+    const fixture = await createFixture();
+    const loop = await fixture.manager.create("project-a", manualConfig);
+    const { job } = await fixture.jobQueue.enqueue({
+      loopId: loop.loopId,
+      triggerKind: "manual",
+      subjectKey: `manual:${loop.loopId}`,
+    });
+
+    await fixture.scheduler.dispatchPendingJobs();
+    expect(fixture.runs).toHaveLength(0);
+    expect(await fixture.jobQueue.read(job.jobId)).toMatchObject({ status: "pending" });
+
+    await fixture.scheduler.start("project-a");
+    expect(fixture.runs).toHaveLength(1);
+    expect(await fixture.jobQueue.read(job.jobId)).toMatchObject({ status: "succeeded" });
+  });
+
   test("schedules interval loops through durable queue with fixed delay after completion", async () => {
     const fixture = await createFixture();
     const loop = await fixture.manager.create("project-a", intervalConfig);
@@ -116,6 +134,47 @@ describe("LoopScheduler", () => {
 
     expect((await fixture.manager.read(loop.loopId)).nextRunAt).toBe(1_500);
     expect(fixture.timer.nextDue()).toBe(1_500);
+  });
+
+  test("shares startup work, rolls back partial timers on failure, and permits one clean retry", async () => {
+    const fixture = await createFixture(1_000);
+    const firstLoop = await fixture.manager.create("project-a", intervalConfig);
+    const secondLoop = await fixture.manager.create("project-a", { ...intervalConfig, title: "Second interval loop" });
+    await fixture.manager.update(firstLoop.loopId, { nextRunAt: 2_000 });
+    await fixture.manager.update(secondLoop.loopId, { nextRunAt: 2_000 });
+    const originalSchedule = fixture.timer.schedule.bind(fixture.timer);
+    let scheduleCalls = 0;
+    let failSecondRegistration = true;
+    Object.defineProperty(fixture.timer, "schedule", {
+      value: (delayMs: number, callback: () => void | Promise<void>) => {
+        scheduleCalls += 1;
+        if (failSecondRegistration && scheduleCalls === 2) {
+          failSecondRegistration = false;
+          throw new Error("injected startup timer registration failure");
+        }
+        return originalSchedule(delayMs, callback);
+      },
+    });
+
+    const firstStart = fixture.scheduler.start("project-a");
+    const concurrentStart = fixture.scheduler.start("project-a");
+    const firstAttempts = await Promise.allSettled([firstStart, concurrentStart]);
+
+    expect(firstAttempts.map((attempt) => attempt.status)).toEqual(["rejected", "rejected"]);
+    expect(scheduleCalls).toBe(2);
+    expect(fixture.timer.size()).toBe(0);
+    expect(fixture.cron.size()).toBe(0);
+
+    await fixture.scheduler.start("project-a");
+
+    expect(scheduleCalls).toBe(4);
+    expect(fixture.timer.size()).toBe(2);
+    expect(fixture.cron.size()).toBe(0);
+    expect(await fixture.jobQueue.list()).toEqual([]);
+
+    await fixture.scheduler.start("project-a");
+    expect(scheduleCalls).toBe(4);
+    expect(fixture.timer.size()).toBe(2);
   });
 
   test("coalesces same-loop active interval tick without directly starting another runner", async () => {
@@ -753,6 +812,7 @@ describe("LoopScheduler", () => {
         approvalPolicy: "interactive",
       },
       sessionId,
+      rootSessionId: sessionId,
       hitlId,
     });
     const stopEntered = createDeferred<void>();
@@ -1185,6 +1245,59 @@ describe("LoopScheduler", () => {
     });
   });
 
+  test("startup converges same-status Goal HITL job fields from authoritative run report", async () => {
+    const fixture = await createFixture(1_450);
+    const loop = await fixture.manager.create("project-a", manualConfig);
+    await fixture.jobQueue.enqueue({ loopId: loop.loopId, triggerKind: "manual", subjectKey: "manual:hitl-convergence" });
+    const running = (await fixture.coordinator.dispatchReady())[0]!;
+    const oldHitlId = crypto.randomUUID();
+    const nextHitlId = crypto.randomUUID();
+    const runId = "goal-hitl-convergence-run";
+    const sessionId = "goal-hitl-main";
+    const base = {
+      runId,
+      loopId: loop.loopId,
+      status: "running" as const,
+      trigger: "manual" as const,
+      startedAt: 1_450,
+      jobId: running.jobId,
+      goalId: "goal-hitl-convergence",
+      sessionId,
+    };
+    await fixture.manager.recordRunStart(loop.loopId, base);
+    await fixture.coordinator.checkpointSessionAttempt(running.jobId, executionLease(running), {
+      runId,
+      sessionId,
+      sessionExecutionId: "goal-hitl-execution",
+    });
+    const oldCheckpoint = recoveredCheckpoint(base, running.jobId, oldHitlId);
+    await fixture.coordinator.finish(running.jobId, executionLease(running), {
+      status: "needs_user",
+      blockedReason: "needs_user",
+      blockedByHitlIds: [oldHitlId, nextHitlId],
+      attentionStatus: "waiting_for_human",
+      resumeCheckpoint: oldCheckpoint,
+    });
+    const nextCheckpoint = recoveredCheckpoint(base, running.jobId, nextHitlId);
+    await fixture.manager.recordRunBlocked(loop.loopId, {
+      ...base,
+      status: "needs_user",
+      endedAt: 1_451,
+      blockedReason: "needs_user",
+      blockedByHitlIds: [nextHitlId],
+      attentionStatus: "waiting_for_human",
+      resumeCheckpoint: nextCheckpoint,
+    });
+
+    await fixture.createScheduler().start("project-a");
+
+    expect(await fixture.jobQueue.read(running.jobId)).toMatchObject({
+      status: "needs_user",
+      blockedByHitlIds: [nextHitlId],
+      resumeCheckpoint: { hitlId: nextHitlId },
+    });
+  });
+
   test("startup promotes a durable completed Session attempt before terminal JSONL without replay", async () => {
     const fixture = await createFixture(1_500);
     const loop = await fixture.manager.create("project-a", manualConfig);
@@ -1221,6 +1334,193 @@ describe("LoopScheduler", () => {
       lastRun: { runId, status: "succeeded", sessionId },
     });
     expect(recoveredState.currentRun).toBeUndefined();
+  });
+
+  test("startup preserves a completed non-terminal Goal turn for same-run continuation", async () => {
+    const fixture = await createFixture(1_550);
+    const loop = await fixture.manager.create("project-a", manualConfig);
+    await fixture.jobQueue.enqueue({ loopId: loop.loopId, triggerKind: "manual", subjectKey: "manual:goal-attempt" });
+    const running = (await fixture.coordinator.dispatchReady())[0]!;
+    const runId = "durable-goal-attempt-run";
+    const sessionId = "durable-goal-main";
+    const executionId = "durable-goal-execution";
+    await fixture.manager.recordRunStart(loop.loopId, {
+      runId,
+      loopId: loop.loopId,
+      status: "running",
+      trigger: "manual",
+      startedAt: 1_550,
+      jobId: running.jobId,
+      sessionId,
+      goalId: "durable-goal",
+    });
+    await fixture.coordinator.checkpointSessionAttempt(running.jobId, executionLease(running), {
+      runId,
+      sessionId,
+      sessionExecutionId: executionId,
+    });
+
+    const restartedCoordinator = new LoopJobCoordinator({
+      queue: fixture.jobQueue,
+      clock: fixture.clock,
+      leaseTtlMs: 60_000,
+      incarnationId: "restarted-goal-continuation",
+    });
+    let continuationAttempts = 0;
+    const continueGoalRun = mock(async (_input: ContinueLoopGoalRunInput) => {
+      continuationAttempts += 1;
+      if (continuationAttempts === 1) {
+        throw new LoopGoalTurnContinuationPendingError("durable-goal", sessionId, runId, 1_000);
+      }
+      return {
+        status: "succeeded" as const,
+        goalId: "durable-goal",
+        sessionId,
+        summary: "Recovered Goal completed",
+      };
+    });
+    const scheduler = fixture.createScheduler(undefined, restartedCoordinator, undefined, async () => ({
+      execution: { id: executionId, startedAt: 1_550, endedAt: 1_560, status: "completed" },
+    }), continueGoalRun);
+    await scheduler.start("project-a");
+
+    expect(fixture.runs).toEqual([]);
+    expect(await fixture.jobQueue.read(running.jobId)).toMatchObject({ status: "pending", runId, sessionId });
+    expect(continueGoalRun).toHaveBeenCalledTimes(1);
+
+    await fixture.timer.advanceTo(2_550);
+
+    expect(await fixture.jobQueue.read(running.jobId)).toMatchObject({
+      status: "succeeded",
+      runId,
+      sessionId,
+    });
+    expect(continueGoalRun).toHaveBeenCalledTimes(2);
+    expect(continueGoalRun.mock.calls[1]?.[0]).toMatchObject({
+      run: { runId, goalId: "durable-goal", sessionId },
+      job: { jobId: running.jobId, runId, sessionId },
+    });
+    const recoveredState = await fixture.manager.read(loop.loopId);
+    expect(recoveredState.currentRun).toBeUndefined();
+    expect(recoveredState.lastRun).toMatchObject({ runId, status: "succeeded", goalId: "durable-goal" });
+  });
+
+  test("startup reconciles committed Goal state before dispatching Goal continuations", async () => {
+    const fixture = await createFixture(1_600);
+    const loop = await fixture.manager.create("project-a", manualConfig);
+    await fixture.manager.recordRunStart(loop.loopId, {
+      runId: "goal-state-recovery-run",
+      loopId: loop.loopId,
+      status: "running",
+      trigger: "manual",
+      startedAt: 1_500,
+      goalId: "goal-state-recovery",
+      sessionId: "goal-state-recovery-session",
+    });
+    const reconcileGoalState = mock(async () => undefined);
+
+    await fixture.createScheduler(undefined, undefined, undefined, undefined, undefined, reconcileGoalState).start("project-a");
+
+    expect(reconcileGoalState).toHaveBeenCalledWith("goal-state-recovery");
+  });
+
+  test("renews Goal continuation collisions through the remaining run budget and releases them on HITL", async () => {
+    const MINUTE_MS = 60_000;
+    const fixture = await createFixture(0);
+    const collisionTarget = { type: "file" as const, path: "src/goal-continuation.ts" };
+    const loop = await fixture.manager.create("project-a", {
+      ...manualConfig,
+      limits: {
+        ...manualConfig.limits,
+        maxWallClockMsPerRun: 45 * MINUTE_MS,
+      },
+      collisionTargets: [collisionTarget],
+    });
+    const competingLoop = await fixture.manager.create("project-a", {
+      ...manualConfig,
+      title: "Competing loop",
+      collisionTargets: [collisionTarget],
+    });
+    await fixture.jobQueue.enqueue({ loopId: loop.loopId, triggerKind: "manual", subjectKey: "manual:long-goal" });
+    const running = (await fixture.coordinator.dispatchReady())[0]!;
+    const runId = "long-goal-run";
+    const sessionId = "long-goal-main";
+    const executionId = "long-goal-execution";
+    await fixture.manager.recordRunStart(loop.loopId, {
+      runId,
+      loopId: loop.loopId,
+      status: "running",
+      trigger: "manual",
+      startedAt: 0,
+      jobId: running.jobId,
+      sessionId,
+      goalId: "long-goal",
+      collisionTargets: [collisionTarget],
+    });
+    await fixture.coordinator.checkpointSessionAttempt(running.jobId, executionLease(running), {
+      runId,
+      sessionId,
+      sessionExecutionId: executionId,
+    });
+    await fixture.collisionLedger.acquire({
+      target: collisionTarget,
+      loopId: loop.loopId,
+      runId,
+      priority: running.priority,
+    });
+    fixture.clock.set(31 * MINUTE_MS);
+
+    const restartedCoordinator = new LoopJobCoordinator({
+      queue: fixture.jobQueue,
+      clock: fixture.clock,
+      leaseTtlMs: 60_000,
+      incarnationId: "long-goal-restart",
+    });
+    const continueGoalRun = mock(async () => {
+      const renewed = (await fixture.collisionLedger.readActiveLeases()).find((lease) => (
+        lease.loopId === loop.loopId && lease.runId === runId
+      ));
+      expect(renewed?.expiresAt).toBe(50 * MINUTE_MS);
+      const conflict = await fixture.collisionLedger.acquire({
+        target: collisionTarget,
+        loopId: competingLoop.loopId,
+        runId: "competing-run",
+        priority: 0,
+      });
+      expect(conflict.acquired).toBe(false);
+      return {
+        status: "succeeded" as const,
+        blockedReason: "needs_user" as const,
+        blockedByHitlIds: ["goal-hitl-1"],
+        resumeCheckpoint: {
+          version: 1 as const,
+          hitlId: "goal-hitl-1",
+          loopId: loop.loopId,
+          runId,
+          jobId: running.jobId,
+          trigger: "manual" as const,
+          intendedContinuation: "resume_run" as const,
+        },
+        goalId: "long-goal",
+        sessionId,
+      };
+    });
+    const scheduler = fixture.createScheduler(undefined, restartedCoordinator, undefined, async () => ({
+      execution: { id: executionId, startedAt: 0, endedAt: 1, status: "completed" },
+    }), continueGoalRun);
+
+    await scheduler.start("project-a");
+
+    expect(continueGoalRun).toHaveBeenCalledTimes(1);
+    expect((await fixture.manager.read(loop.loopId)).currentRun).toMatchObject({ status: "needs_user", runId });
+    expect(await fixture.collisionLedger.readActiveLeases()).toEqual([]);
+    const acquiredAfterHitl = await fixture.collisionLedger.acquire({
+      target: collisionTarget,
+      loopId: competingLoop.loopId,
+      runId: "competing-run-after-hitl",
+      priority: 0,
+    });
+    expect(acquiredAfterHitl.acquired).toBe(true);
   });
 
   test("startup projects a non-worktree terminal JSONL before cancelling stale currentRun", async () => {
@@ -1689,6 +1989,8 @@ async function createFixture(now: number = 0, options: { maxJobs?: number; local
     coordinatorOverride?: LoopJobCoordinator,
     cleanupJob?: (jobId: string) => Promise<import("./cleanup").LoopCleanupWorktreeResult | undefined>,
     readSessionAttempt?: NonNullable<ConstructorParameters<typeof LoopScheduler>[0]["readSessionAttempt"]>,
+    continueGoalRun?: ConstructorParameters<typeof LoopScheduler>[0]["continueGoalRun"],
+    reconcileGoalState?: ConstructorParameters<typeof LoopScheduler>[0]["reconcileGoalState"],
   ) => LoopScheduler;
 }> {
   const manager = new LoopStateManager(TMP_DIR);
@@ -1727,7 +2029,9 @@ async function createFixture(now: number = 0, options: { maxJobs?: number; local
       triggerPoller?: LoopTriggerPoller,
       coordinatorOverride?: LoopJobCoordinator,
       cleanupJob?: (jobId: string) => Promise<import("./cleanup").LoopCleanupWorktreeResult | undefined>,
-      readSessionAttempt?: NonNullable<ConstructorParameters<typeof LoopScheduler>[0]["readSessionAttempt"]>,
+    readSessionAttempt?: NonNullable<ConstructorParameters<typeof LoopScheduler>[0]["readSessionAttempt"]>,
+    continueGoalRun?: ConstructorParameters<typeof LoopScheduler>[0]["continueGoalRun"],
+    reconcileGoalState?: ConstructorParameters<typeof LoopScheduler>[0]["reconcileGoalState"],
     ) => LoopScheduler,
   };
   fixture.createScheduler = (
@@ -1735,6 +2039,8 @@ async function createFixture(now: number = 0, options: { maxJobs?: number; local
     coordinatorOverride = coordinator,
     cleanupJob = async () => undefined,
     readSessionAttempt = async () => ({}),
+    continueGoalRun,
+    reconcileGoalState,
   ) => new LoopScheduler({
     stateManager: manager,
     clock,
@@ -1752,6 +2058,8 @@ async function createFixture(now: number = 0, options: { maxJobs?: number; local
       runs.push(input);
       return await fixture.runner(input);
     },
+    ...(continueGoalRun === undefined ? {} : { continueGoalRun }),
+    ...(reconcileGoalState === undefined ? {} : { reconcileGoalState }),
     cleanupJob,
     readSessionAttempt,
   });
@@ -1858,6 +2166,22 @@ async function captureAsyncError(action: () => Promise<unknown>): Promise<unknow
 function executionLease(job: LoopJobRecord): { leaseOwnerId: string; leaseToken: string } {
   if (job.leaseOwnerId === undefined || job.leaseToken === undefined) throw new Error("Expected claimed Loop job lease");
   return { leaseOwnerId: job.leaseOwnerId, leaseToken: job.leaseToken };
+}
+
+function recoveredCheckpoint(
+  run: { runId: string; loopId: string; trigger: "manual" },
+  jobId: string,
+  hitlId: string,
+) {
+  return {
+    version: 1 as const,
+    hitlId,
+    loopId: run.loopId,
+    runId: run.runId,
+    jobId,
+    trigger: run.trigger,
+    intendedContinuation: "resume_run" as const,
+  };
 }
 
 async function waitFor(predicate: () => Promise<boolean>, attempts: number = 20): Promise<void> {

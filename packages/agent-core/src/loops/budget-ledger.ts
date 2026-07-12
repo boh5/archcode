@@ -218,8 +218,10 @@ export class LoopBudgetLedger {
     summary: string,
     sessionId?: string,
   ): LoopRunReport {
-    const startedAt = loop.currentRun?.runId === runId ? loop.currentRun.startedAt : this.#clock.now();
+    const ownedRun = loop.currentRun?.runId === runId ? loop.currentRun : undefined;
+    const startedAt = ownedRun?.startedAt ?? this.#clock.now();
     return {
+      ...(ownedRun ?? {}),
       runId,
       loopId: loop.loopId,
       status: "budget_exceeded",

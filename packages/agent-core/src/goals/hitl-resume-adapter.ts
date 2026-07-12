@@ -12,6 +12,7 @@ export interface GoalHitlResumeAdapterOptions {
   readonly goalStateManager: GoalStateManager;
   readonly hitlService: HitlService;
   readonly goalCancellation: GoalCancellationCapability;
+  readonly onGoalStateChanged?: (goalId: string) => void | Promise<void>;
 }
 
 export class GoalHitlResumeAdapter implements ResumeAdapterContract {
@@ -41,30 +42,31 @@ export class GoalHitlResumeAdapter implements ResumeAdapterContract {
         reason: response.reason,
         hitlId: record.hitlId,
       });
+      await this.options.onGoalStateChanged?.(goalId);
       return;
     }
 
-    await withGoalExecutionClaimLock(goalId, async () => {
+    const stateChanged = await withGoalExecutionClaimLock(goalId, async () => {
       const goal = await this.options.goalStateManager.read(goalId);
       if (goal.status === "cancelled") {
         throw new GoalCancellationError(goalId, `Goal ${goalId} is cancelled and cannot resume HITL ${record.hitlId}`);
       }
-      if (goal.appliedHitlIds.includes(record.hitlId)) return;
+      if (goal.appliedHitlIds.includes(record.hitlId)) return true;
       await this.#ensureAttached(goal, record);
 
       switch (record.source.type) {
         case "goal_approval":
         case "goal_budget":
         case "goal_question":
-          await this.#resumeApprovalLike(record, response);
-          return;
+          return await this.#resumeApprovalLike(record, response);
         case "goal_review":
-          await this.#resumeReview(record, response);
-          return;
+          return await this.#resumeReview(record, response);
         default:
           await this.#failUnrecoverable(record, `Unsupported Goal HITL source: ${record.source.type}`);
+          return true;
       }
     });
+    if (stateChanged) await this.options.onGoalStateChanged?.(goalId);
   }
 
   async #ensureAttached(goal: GoalState, record: HitlRecord): Promise<void> {
@@ -90,7 +92,7 @@ export class GoalHitlResumeAdapter implements ResumeAdapterContract {
     });
   }
 
-  async #resumeApprovalLike(record: HitlRecord, response: HitlResponse): Promise<void> {
+  async #resumeApprovalLike(record: HitlRecord, response: HitlResponse): Promise<boolean> {
     const goalId = record.owner.ownerId;
     if (record.source.type === "goal_approval") {
       await this.#approvalGate.recordApprovalResponse(goalId, record.source.approvalPoint ?? "approval", response);
@@ -99,20 +101,23 @@ export class GoalHitlResumeAdapter implements ResumeAdapterContract {
     const outcome = approvalOutcomeFromResponse(response);
     if (!outcome.approved) {
       await this.options.goalStateManager.failHitl(goalId, record.hitlId, outcome.comment ?? "Goal HITL denied");
-      return;
+      return true;
     }
 
     await this.options.goalStateManager.clearBlocker(goalId, record.hitlId);
+    return true;
   }
 
-  async #resumeReview(record: HitlRecord, response: HitlResponse): Promise<void> {
+  async #resumeReview(record: HitlRecord, response: HitlResponse): Promise<boolean> {
     const goalId = record.owner.ownerId;
     const outcome = reviewOutcomeFromResponse(response);
+    const goal = await this.options.goalStateManager.read(goalId);
     await this.options.goalStateManager.finalizeHitlReview(
       goalId,
       record.hitlId,
-      reviewInputFromResponse(goalId, response, outcome.outcome, outcome.comment),
+      reviewInputFromResponse(goalId, goal.reviewGeneration, response, outcome.outcome, outcome.comment),
     );
+    return true;
   }
 
   async #failUnrecoverable(record: HitlRecord, fallback: string): Promise<void> {
@@ -163,12 +168,14 @@ function blockerFromOwnerRecord(record: HitlRecord): Omit<GoalBlocker, "createdA
 
 function reviewInputFromResponse(
   goalId: string,
+  currentReviewGeneration: number,
   response: HitlResponse,
   verdict: GoalReviewVerdict,
   comment: string | undefined,
 ): GoalFinalizeReviewInput {
-  const receipt = reviewReceiptFromResponse(response, verdict, comment);
+  const receipt = reviewReceiptFromResponse(response, currentReviewGeneration, verdict, comment);
   return {
+    expectedReviewGeneration: receipt.reviewGeneration,
     verdict: receipt.verdict,
     summary: receipt.summary,
     evidenceRefs: receipt.evidenceRefs,
@@ -182,10 +189,16 @@ function reviewInputFromResponse(
   };
 }
 
-function reviewReceiptFromResponse(response: HitlResponse, verdict: GoalReviewVerdict, comment: string | undefined): GoalReviewReceipt {
+function reviewReceiptFromResponse(
+  response: HitlResponse,
+  currentReviewGeneration: number,
+  verdict: GoalReviewVerdict,
+  comment: string | undefined,
+): GoalReviewReceipt {
   if (response.type === "review_outcome" && response.receipt !== undefined) return response.receipt;
   const summary = comment ?? `Review outcome: ${verdict}`;
   return {
+    reviewGeneration: currentReviewGeneration,
     verdict,
     summary,
     evidenceRefs: verdict === "DONE" ? [{ kind: "hitl", ref: "review_outcome", summary }] : [],

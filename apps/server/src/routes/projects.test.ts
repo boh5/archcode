@@ -22,6 +22,7 @@ function createTestRuntime(
     providerRegistry: undefined,
     warnings: [],
     contextResolver: undefined,
+    reconcileRegisteredProject: async () => undefined,
     removeProject: async (projectSlug: string) => {
       const project = await projectRegistry.remove(projectSlug);
       if (project === undefined) return undefined;

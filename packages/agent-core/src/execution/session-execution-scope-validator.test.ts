@@ -7,6 +7,7 @@ import { ProjectContextResolver } from "../projects/context-resolver";
 import { silentLogger } from "../logger";
 import { SessionStoreManager } from "../store/session-store-manager";
 import type { SessionRole } from "../store/types";
+import type { AgentName } from "../agents";
 import { createTestProjectContext, createTestProjectContextResolverOptions } from "../tools/test-project-context";
 import { WorktreeService } from "../worktrees";
 import { LoopSessionExecutionClaimResolver } from "../loops/session-execution-claim";
@@ -337,10 +338,16 @@ describe("SessionExecutionScopeValidator", () => {
 
     await fixture.context.goalState.start(draft.id, { mainSessionId: "goal-main" });
     await fixture.context.goalState.beginReview(draft.id);
-    await expectConflict(
-      fixture.validator.validate({ projectRoot: fixture.projectRoot, subject: main, entry: { kind: "user_message" } }),
-      "SESSION_GOAL_REVIEWER_REQUIRED",
-    );
+    await expect(fixture.validator.validate({
+      projectRoot: fixture.projectRoot,
+      subject: main,
+      entry: { kind: "user_message" },
+    })).resolves.toBeUndefined();
+    await expectConflict(fixture.validator.validate({
+      projectRoot: fixture.projectRoot,
+      subject: { ...main, agentName: "engineer" },
+      entry: { kind: "user_message" },
+    }), "SESSION_GOAL_REVIEWER_REQUIRED");
     await fixture.context.goalState.addChildSession(draft.id, "review-child");
     await expect(fixture.validator.validate({
       projectRoot: fixture.projectRoot,
@@ -392,11 +399,52 @@ describe("SessionExecutionScopeValidator", () => {
     })).resolves.toBeUndefined();
   });
 
-  test("rejects a previous-attempt main Session after retry changes the claim", async () => {
+  test("allows not_done continuation only on the current Goal Lead main Session", async () => {
+    const fixture = await createFixture("goal-not-done");
+    const goal = await createRunningGoal(fixture, { mainSessionId: "goal-main" });
+    await fixture.context.goalState.beginReview(goal.id);
+    await fixture.context.goalState.finalizeReview(goal.id, {
+      expectedReviewGeneration: 1,
+      verdict: "NOT_DONE",
+      summary: "More work remains",
+      evidenceRefs: [],
+      unresolvedItems: ["fix it"],
+      authorization: {
+        agentName: "reviewer",
+        sessionRole: "review",
+        sessionGoalId: goal.id,
+        reviewerSessionId: "reviewer",
+      },
+    });
+    const main = sessionSubject({
+      sessionId: "goal-main",
+      cwd: fixture.projectRoot,
+      goalId: goal.id,
+      sessionRole: "main",
+    });
+    await expect(fixture.validator.validate({
+      projectRoot: fixture.projectRoot,
+      subject: main,
+      entry: { kind: "user_message" },
+    })).resolves.toBeUndefined();
+    await expectConflict(fixture.validator.validate({
+      projectRoot: fixture.projectRoot,
+      subject: sessionSubject({
+        sessionId: "review-child",
+        rootSessionId: "goal-main",
+        parentSessionId: "goal-main",
+        isDescendantOfRoot: true,
+        cwd: fixture.projectRoot,
+        goalId: goal.id,
+        sessionRole: "review",
+      }),
+      entry: { kind: "user_message" },
+    }), "SESSION_GOAL_NOT_EXECUTABLE");
+  });
+
+  test("rejects a Session outside the current main Session claim", async () => {
     const fixture = await createFixture("goal-old-attempt");
-    const goal = await createRunningGoal(fixture, { mainSessionId: "old-main" });
-    await fixture.context.goalState.fail(goal.id, "retry this Goal");
-    await fixture.context.goalState.retry(goal.id, { mainSessionId: "current-main" });
+    const goal = await createRunningGoal(fixture, { mainSessionId: "current-main" });
 
     await expectConflict(
       fixture.validator.validate({
@@ -584,6 +632,7 @@ function sessionSubject(input: {
   readonly goalId?: string;
   readonly loopId?: string;
   readonly sessionRole?: SessionRole;
+  readonly agentName?: AgentName;
 }): SessionExecutionScopeSubject {
   return {
     sessionId: input.sessionId,
@@ -594,7 +643,18 @@ function sessionSubject(input: {
     ...(input.goalId === undefined ? {} : { goalId: input.goalId }),
     ...(input.loopId === undefined ? {} : { loopId: input.loopId }),
     ...(input.sessionRole === undefined ? {} : { sessionRole: input.sessionRole }),
+    agentName: input.agentName ?? agentNameForRole(input.sessionRole),
   };
+}
+
+function agentNameForRole(role: SessionRole | undefined): AgentName {
+  if (role === "main") return "goal_lead";
+  if (role === "plan") return "plan";
+  if (role === "build") return "build";
+  if (role === "review") return "reviewer";
+  if (role === "explore") return "explore";
+  if (role === "librarian") return "librarian";
+  return "engineer";
 }
 
 function loopOrigin(loopId: string, runId: string = crypto.randomUUID()) {

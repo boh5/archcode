@@ -325,7 +325,7 @@ describe("Goal types", () => {
 
   test("GoalState serializes the natural-language contract with review evidence", () => {
     const state: GoalState = {
-      version: 1,
+      version: 2,
       id: "goal-1",
       projectId: "my-project",
       title: "Implement auth",
@@ -334,6 +334,7 @@ describe("Goal types", () => {
       useWorktree: false,
       status: "done",
       attempt: 2,
+      reviewGeneration: 1,
       budget: {
         status: "ok",
         usedTokens: 1200,
@@ -346,6 +347,7 @@ describe("Goal types", () => {
       mainSessionId: "session-main",
       childSessionIds: ["session-build", "session-review"],
       review: {
+        reviewGeneration: 1,
         verdict: "DONE",
         summary: "Reviewer confirmed the acceptance criteria are satisfied.",
         evidenceRefs: [
@@ -385,7 +387,7 @@ describe("Goal types", () => {
 
   test("Goal blockers and NOT_DONE receipts round-trip", () => {
     const state: GoalState = {
-      version: 1,
+      version: 2,
       id: "goal-2",
       projectId: "my-project",
       title: "Fix bug",
@@ -401,11 +403,14 @@ describe("Goal types", () => {
         createdAt: "2026-06-01T00:00:00.000Z",
       },
       attempt: 1,
+      reviewGeneration: 1,
       pendingHitlIds: ["hitl-1"],
       approvalRefs: ["hitl-1"],
       appliedHitlIds: [],
+      mainSessionId: "session-main",
       childSessionIds: [],
       review: {
+        reviewGeneration: 1,
         verdict: "NOT_DONE",
         summary: "Cannot complete without the requested clarification.",
         evidenceRefs: [],
@@ -587,7 +592,7 @@ describe("HITL types", () => {
 describe("Goal/HITL stream events", () => {
   function makeGoalState(overrides: Partial<GoalState> = {}): GoalState {
     return {
-      version: 1,
+      version: 2,
       id: "goal-1",
       projectId: "p",
       title: "Implement feature",
@@ -596,6 +601,8 @@ describe("Goal/HITL stream events", () => {
       useWorktree: false,
       status: "running",
       attempt: 1,
+      reviewGeneration: 0,
+      mainSessionId: "session-main",
       pendingHitlIds: [],
       approvalRefs: [],
       appliedHitlIds: [],

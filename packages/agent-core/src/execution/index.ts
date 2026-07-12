@@ -16,6 +16,10 @@ export type {
 } from "./session-hitl-resume-adapter";
 export { SessionCwdReferenceMigrationService } from "./session-cwd-reference-migration";
 export { SessionFamilyStopService } from "./session-family-stop-service";
+export {
+  RoleDrivenSessionGoalDelegationAdmission,
+  SessionGoalDelegationDeniedError,
+} from "./session-goal-delegation-admission";
 export { SessionWorkspaceClosingError } from "./session-workspace-control";
 export type { SessionWorkspaceCloseLease } from "./session-workspace-control";
 export {
@@ -55,6 +59,10 @@ export type {
   SessionCwdRemovalResult,
 } from "./session-cwd-reference-migration";
 export type { SubscribeSessionEventsInput } from "../events/session-event-bridge";
+export type {
+  SessionGoalDelegationAdmission,
+  SessionGoalDelegationAdmissionInput,
+} from "./session-goal-delegation-admission";
 export type {
   SessionDeletionOwnerDetail,
   SessionDeletionOwnerType,

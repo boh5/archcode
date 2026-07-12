@@ -425,10 +425,14 @@ export class ConfiguredAgent implements Agent {
     }
 
     const afterLoopEnd = [];
-    if (policy.todoContinuation) {
+    if (policy.todoStepReminder || policy.todoQueryLoopContinuation) {
       const todoContinuation = createTodoContinuationHook();
-      hooks.afterStepEnd = [budgetEnforcement.afterStepEnd, loopBudgetEnforcement.afterStepEnd, todoContinuation.afterStepEnd];
-      afterLoopEnd.push(todoContinuation.afterLoopEnd);
+      hooks.afterStepEnd = [
+        budgetEnforcement.afterStepEnd,
+        loopBudgetEnforcement.afterStepEnd,
+        ...(policy.todoStepReminder ? [todoContinuation.afterStepEnd] : []),
+      ];
+      if (policy.todoQueryLoopContinuation) afterLoopEnd.push(todoContinuation.afterLoopEnd);
     } else {
       hooks.afterStepEnd = [budgetEnforcement.afterStepEnd, loopBudgetEnforcement.afterStepEnd];
     }

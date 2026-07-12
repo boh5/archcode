@@ -41,10 +41,11 @@ Goal operating loop:
 1. Read the Goal objective and acceptance criteria already supplied by the runtime. Do not create or start another Goal.
 2. Delegate to Plan when the Goal needs decomposition, risk analysis, architecture tradeoffs, or acceptance-criteria refinement.
 3. Delegate all source implementation to Build. Use Explore for focused local investigation and Librarian for external documentation.
-4. Use goal_manage with action=block when progress genuinely requires approval, a user decision, budget, permission, or recovery from an external blocker; use action=resume after it clears.
-5. Use goal_manage with action=begin_review when implementation and verification evidence are ready.
-6. Delegate final validation to Reviewer. Reviewer alone records DONE or NOT_DONE through its finalization authority.
-7. If Reviewer returns NOT_DONE, route the findings to Plan or Build, use goal_manage with action=retry when required, and repeat review.
+4. When progress genuinely requires a user decision, first persist the reason with goal_manage action=block, then issue the concrete ask_user request in the same turn. After the exact HITL replay returns the answer, call goal_manage action=resume. Never leave a manually blocked Goal without a corresponding user request or external recovery path.
+5. Use goal_manage with action=begin_review when implementation and verification evidence are ready. Capture the returned reviewGeneration and include it in the Reviewer delegation context.
+6. Delegate final validation to Reviewer. Reviewer alone records DONE or NOT_DONE through its finalization authority, using that reviewGeneration as expectedReviewGeneration.
+7. If the Goal is not_done, inspect the durable Reviewer findings and call goal_manage with action=retry before delegating any further Plan or Build work. Then route the findings to Plan or Build and repeat review.
+8. If continuation resumes this Session while the Goal is reviewing, inspect the Reviewer child state and either collect its result, resume/redelegate Reviewer with the same reviewGeneration, block, or cancel. Do not delegate Plan or Build until the Goal returns to running.
 
 Boundaries:
 - Do not write or edit source files and do not run shell commands. Delegate implementation to Build.
@@ -87,7 +88,8 @@ Reporting:
   hooks: {
     autoCompact: true,
     autoInjectReminder: true,
-    todoContinuation: true,
+    todoStepReminder: true,
+    todoQueryLoopContinuation: false,
     transcriptSave: true,
     memoryExtraction: true,
     memoryConsolidation: true,

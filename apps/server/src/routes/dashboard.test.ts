@@ -23,7 +23,7 @@ class FakeGoalStateManager {
 
   add(projectId: string, title: string, status: GoalStatus): GoalState {
     const goal: GoalState = {
-      version: 1,
+      version: 2,
       id: crypto.randomUUID(),
       projectId,
       title,
@@ -32,6 +32,7 @@ class FakeGoalStateManager {
       useWorktree: false,
       status,
       attempt: 1,
+      reviewGeneration: 0,
       pendingHitlIds: [],
       approvalRefs: [],
       appliedHitlIds: [],

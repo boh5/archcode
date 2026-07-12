@@ -61,6 +61,7 @@ describe("Goal core integration", () => {
     await runner.addChildSession(draft.id, "build-child-session");
     const reviewing = await runner.beginReview(draft.id);
     const done = await runner.finalizeReview(reviewing.id, {
+      expectedReviewGeneration: reviewing.reviewGeneration,
       verdict: "DONE",
       summary: "Reviewer verified the durable state and tests.",
       evidenceRefs: [
@@ -90,6 +91,7 @@ describe("Goal core integration", () => {
     await runner.start(draft.id);
     await runner.beginReview(draft.id);
     const firstReview = await runner.finalizeReview(draft.id, {
+      expectedReviewGeneration: 1,
       verdict: "NOT_DONE",
       summary: "Acceptance criteria are missing a regression test.",
       unresolvedItems: ["Add regression test evidence"],
@@ -99,10 +101,11 @@ describe("Goal core integration", () => {
     expect(firstReview.review?.verdict).toBe("NOT_DONE");
 
     const retry = await runner.retry(draft.id);
-    expect(retry).toMatchObject({ status: "running", attempt: 2, mainSessionId: "retry-session" });
+    expect(retry).toMatchObject({ status: "running", attempt: 2, mainSessionId: "main-session" });
     expect(retry.review).toBeUndefined();
     await runner.beginReview(draft.id);
     const completed = await runner.finalizeReview(draft.id, {
+      expectedReviewGeneration: 2,
       verdict: "DONE",
       summary: "Regression test evidence is now present.",
       evidenceRefs: [{ kind: "test_output", ref: "retry-tests", summary: "Regression test passed." }],

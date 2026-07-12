@@ -185,6 +185,7 @@ describe("Session HITL journal", () => {
       deleteSessionStore: (sessionId, workspaceRoot, options) => fixture.sessions.delete(sessionId, workspaceRoot, options),
       resolveRootSessionId: (sessionId, workspaceRoot) => fixture.sessions.resolveRootSessionId(sessionId, workspaceRoot),
       buildSessionTree: (workspaceRoot, rootSessionId) => fixture.sessions.buildSessionTree(workspaceRoot, rootSessionId),
+      listSessionFamilyBlockedHitlIds: (workspaceRoot, rootSessionId) => fixture.sessions.listSessionFamilyBlockedHitlIds(workspaceRoot, rootSessionId),
       trackSession: () => undefined,
       untrackSession: () => undefined,
       executionScopeValidator: { validate: async () => undefined },

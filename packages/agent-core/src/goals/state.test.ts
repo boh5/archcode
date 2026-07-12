@@ -62,6 +62,7 @@ async function createGoal(manager = new GoalStateManager(TMP_DIR)) {
     projectId: "project-a",
     objective: "Replace workflow state with a natural language goal envelope.",
     acceptanceCriteria: "State transitions and reviewer finalization obey the simplified protocol.",
+    mainSessionId: "main-session",
   });
 }
 
@@ -69,7 +70,7 @@ describe("GoalStateSchema", () => {
   test("accepts the protocol state envelope and rejects unknown keys", () => {
     const now = new Date().toISOString();
     const state = GoalStateSchema.parse({
-      version: 1,
+      version: 2,
       id: VALID_UUID,
       projectId: "project-a",
       title: "Ship thin state",
@@ -78,6 +79,7 @@ describe("GoalStateSchema", () => {
       useWorktree: false,
       status: "reviewing",
       attempt: 1,
+      reviewGeneration: 1,
       blocker: { kind: "approval", summary: "Waiting", hitlId: "hitl-1", resumeStatus: "reviewing", createdAt: now },
       lastFailureSummary: "Previous review found missing tests.",
       budget: { status: "warning", usedTokens: 100, maxTokens: 200, reason: "near limit", updatedAt: now },
@@ -99,6 +101,7 @@ describe("GoalStateSchema", () => {
     const { useWorktree: _useWorktree, ...missingWorktreeMode } = state;
     const { appliedHitlIds: _appliedHitlIds, ...missingAppliedHitlIds } = state;
     expect(() => GoalStateSchema.parse(unversioned)).toThrow();
+    expect(() => GoalStateSchema.parse({ ...state, version: 1 })).toThrow();
     expect(() => GoalStateSchema.parse(missingWorktreeMode)).toThrow();
     expect(() => GoalStateSchema.parse(missingAppliedHitlIds)).toThrow();
   });
@@ -106,7 +109,7 @@ describe("GoalStateSchema", () => {
   test("enforces field bounds for natural language and review evidence", () => {
     const now = new Date().toISOString();
     const base = {
-      version: 1 as const,
+      version: 2 as const,
       id: VALID_UUID,
       projectId: "project-a",
       title: "A".repeat(160),
@@ -115,6 +118,8 @@ describe("GoalStateSchema", () => {
       useWorktree: false,
       status: "reviewing" as const,
       attempt: 1,
+      reviewGeneration: 0,
+      mainSessionId: "main-session",
       pendingHitlIds: [],
       approvalRefs: [],
       appliedHitlIds: [],
@@ -130,6 +135,7 @@ describe("GoalStateSchema", () => {
     expect(() => GoalStateSchema.parse({
       ...base,
       review: {
+        reviewGeneration: 0,
         verdict: "DONE",
         summary: "R".repeat(4001),
         evidenceRefs: [],
@@ -140,6 +146,7 @@ describe("GoalStateSchema", () => {
     expect(() => GoalStateSchema.parse({
       ...base,
       review: {
+        reviewGeneration: 0,
         verdict: "DONE",
         summary: "ok",
         evidenceRefs: Array.from({ length: 21 }, (_, index) => evidenceRef(`evidence ${index}`)),
@@ -152,7 +159,7 @@ describe("GoalStateSchema", () => {
   test("rejects impossible persisted status and worktree combinations", () => {
     const now = new Date().toISOString();
     const base = {
-      version: 1 as const,
+      version: 2 as const,
       id: VALID_UUID,
       projectId: "project-a",
       title: "Persisted invariants",
@@ -161,6 +168,8 @@ describe("GoalStateSchema", () => {
       useWorktree: false,
       status: "running" as const,
       attempt: 1,
+      reviewGeneration: 0,
+      mainSessionId: "main-session",
       pendingHitlIds: [],
       approvalRefs: [],
       appliedHitlIds: [],
@@ -176,6 +185,7 @@ describe("GoalStateSchema", () => {
       createdAt: now,
     };
     const doneReview = {
+      reviewGeneration: 0,
       verdict: "DONE" as const,
       summary: "All evidence passed.",
       evidenceRefs: [evidenceRef()],
@@ -202,6 +212,14 @@ describe("GoalStateSchema", () => {
     })).not.toThrow();
     expect(() => GoalStateSchema.parse({
       ...base,
+      status: "done",
+      reviewGeneration: 1,
+      review: doneReview,
+      finalSummary: "Done",
+      completedAt: now,
+    })).toThrow();
+    expect(() => GoalStateSchema.parse({
+      ...base,
       status: "not_done",
       review: { ...doneReview, verdict: "NOT_DONE", evidenceRefs: [] },
       completedAt: now,
@@ -211,7 +229,7 @@ describe("GoalStateSchema", () => {
   test("enforces durable HITL attachment and application relations", () => {
     const now = new Date().toISOString();
     const base = {
-      version: 1 as const,
+      version: 2 as const,
       id: VALID_UUID,
       projectId: "project-a",
       title: "HITL invariants",
@@ -220,6 +238,8 @@ describe("GoalStateSchema", () => {
       useWorktree: false,
       status: "running" as const,
       attempt: 1,
+      reviewGeneration: 0,
+      mainSessionId: "main-session",
       pendingHitlIds: [],
       approvalRefs: [],
       appliedHitlIds: [],
@@ -278,9 +298,11 @@ describe("GoalStateManager", () => {
       "childSessionIds",
       "createdAt",
       "id",
+      "mainSessionId",
       "objective",
       "pendingHitlIds",
       "projectId",
+      "reviewGeneration",
       "status",
       "title",
       "updatedAt",
@@ -373,6 +395,7 @@ describe("GoalStateManager", () => {
     await manager.start(done.id);
     await manager.beginReview(done.id);
     const finalized = await manager.finalizeReview(done.id, {
+      expectedReviewGeneration: 1,
       verdict: "DONE",
       summary: "All evidence passed.",
       evidenceRefs: [evidenceRef()],
@@ -386,11 +409,12 @@ describe("GoalStateManager", () => {
     expect((await manager.block(blocked.id, { kind: "question", summary: "Need answer", resumeStatus: "reviewing" })).status).toBe("blocked");
     expect((await manager.clearBlocker(blocked.id)).status).toBe("reviewing");
     expect((await manager.finalizeReview(blocked.id, {
+      expectedReviewGeneration: 0,
       verdict: "NOT_DONE",
       summary: "Missing acceptance evidence.",
       authorization: reviewerAuth(blocked.id),
     })).status).toBe("not_done");
-    expect((await manager.retry(blocked.id, { mainSessionId: "retry-session" })).status).toBe("running");
+    expect((await manager.retry(blocked.id)).status).toBe("running");
 
     const failed = await createGoal(manager);
     await manager.start(failed.id);
@@ -430,17 +454,20 @@ describe("GoalStateManager", () => {
     await manager.beginReview(created.id);
 
     await expect(manager.finalizeReview(created.id, {
+      expectedReviewGeneration: 1,
       verdict: "DONE",
       summary: "No evidence.",
       evidenceRefs: [],
       authorization: reviewerAuth(created.id),
     })).rejects.toBeInstanceOf(GoalReviewFinalizationError);
     await expect(manager.finalizeReview(created.id, {
+      expectedReviewGeneration: 1,
       verdict: "NOT_DONE",
       summary: "",
       authorization: reviewerAuth(created.id),
     })).rejects.toBeInstanceOf(GoalReviewFinalizationError);
     await expect(manager.finalizeReview(created.id, {
+      expectedReviewGeneration: 1,
       verdict: "DONE",
       summary: "All good.",
       evidenceRefs: [evidenceRef()],
@@ -448,6 +475,7 @@ describe("GoalStateManager", () => {
     })).rejects.toBeInstanceOf(GoalReviewerAuthorizationError);
 
     const completed = await manager.finalizeReview(created.id, {
+      expectedReviewGeneration: 1,
       verdict: "DONE",
       summary: "All evidence passed.",
       evidenceRefs: [evidenceRef()],
@@ -455,6 +483,7 @@ describe("GoalStateManager", () => {
     });
     expect(completed.status).toBe("done");
     expect(completed.finalSummary).toBe("All evidence passed.");
+    expect(completed.review).toMatchObject({ reviewGeneration: 1 });
   });
 
   test("retry increments attempt and clears current review", async () => {
@@ -463,21 +492,39 @@ describe("GoalStateManager", () => {
     await manager.start(created.id);
     await manager.beginReview(created.id);
     await manager.finalizeReview(created.id, {
+      expectedReviewGeneration: 1,
       verdict: "NOT_DONE",
       summary: "Tests missing.",
       authorization: reviewerAuth(created.id),
     });
     expect(await captureAsyncError(() => manager.finalizeReview(created.id, {
+      expectedReviewGeneration: 1,
       verdict: "NOT_DONE",
       summary: "duplicate",
       authorization: reviewerAuth(created.id),
     }))).toBeInstanceOf(GoalReviewFinalizationError);
 
-    const retry = await manager.retry(created.id, { mainSessionId: "retry-session" });
-    expect(retry).toMatchObject({ status: "running", attempt: 2, mainSessionId: "retry-session" });
+    const retry = await manager.retry(created.id);
+    expect(retry).toMatchObject({ status: "running", attempt: 2, mainSessionId: "main-session" });
     expect(retry.review).toBeUndefined();
     const reviewing = await manager.beginReview(created.id);
-    expect(reviewing.status).toBe("reviewing");
+    expect(reviewing).toMatchObject({ status: "reviewing", reviewGeneration: 2 });
+    await expect(manager.finalizeReview(created.id, {
+      expectedReviewGeneration: 1,
+      verdict: "DONE",
+      summary: "Stale reviewer result.",
+      evidenceRefs: [evidenceRef()],
+      authorization: reviewerAuth(created.id),
+    })).rejects.toBeInstanceOf(GoalReviewFinalizationError);
+
+    const completed = await manager.finalizeReview(created.id, {
+      expectedReviewGeneration: 2,
+      verdict: "DONE",
+      summary: "Current reviewer result.",
+      evidenceRefs: [evidenceRef()],
+      authorization: reviewerAuth(created.id),
+    });
+    expect(completed.review).toMatchObject({ reviewGeneration: 2 });
   });
 
   test("records sessions and budget summaries without duplicates", async () => {

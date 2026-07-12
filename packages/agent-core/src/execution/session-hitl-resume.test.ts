@@ -684,6 +684,7 @@ describe("Session HITL resume", () => {
       const found = await fixture.hitl.lookup(identity(pending));
       return found.status === "found" && found.record.status === "resolved";
     });
+    await waitFor(() => executionManager.getSessionFamilyActivity(fixture.workspaceRoot, fixture.sessionId) === "idle");
     expect(executionManager.getSessionFamilyActivity(fixture.workspaceRoot, fixture.sessionId)).toBe("idle");
   });
 
@@ -1602,6 +1603,7 @@ function createResumeExecutionManager(sessions: SessionStoreManager): SessionExe
     deleteSessionStore: (sessionId, workspaceRoot, options) => sessions.delete(sessionId, workspaceRoot, options),
     resolveRootSessionId: (sessionId, workspaceRoot) => sessions.resolveRootSessionId(sessionId, workspaceRoot),
     buildSessionTree: (workspaceRoot, rootSessionId) => sessions.buildSessionTree(workspaceRoot, rootSessionId),
+    listSessionFamilyBlockedHitlIds: (workspaceRoot, rootSessionId) => sessions.listSessionFamilyBlockedHitlIds(workspaceRoot, rootSessionId),
     trackSession: () => undefined,
     untrackSession: () => undefined,
     executionScopeValidator: { validate: async () => undefined },

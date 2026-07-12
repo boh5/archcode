@@ -91,7 +91,8 @@ Reporting:
   hooks: {
     autoCompact: true,
     autoInjectReminder: true,
-    todoContinuation: true,
+    todoStepReminder: true,
+    todoQueryLoopContinuation: true,
     transcriptSave: true,
     memoryExtraction: true,
     memoryConsolidation: true,

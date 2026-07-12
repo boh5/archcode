@@ -113,6 +113,7 @@ describe("GoalRunner", () => {
     await runner.start(draft.id);
     await runner.beginReview(draft.id);
     await runner.finalizeReview(draft.id, {
+      expectedReviewGeneration: 1,
       verdict: "NOT_DONE",
       summary: "Retry in the canonical checkout.",
       authorization: reviewerAuth(draft.id),
@@ -120,7 +121,6 @@ describe("GoalRunner", () => {
     await runner.retry(draft.id);
 
     expect(createSession.mock.calls.map((call) => call[0])).toEqual([
-      expect.objectContaining({ cwd: workspaceRoot }),
       expect.objectContaining({ cwd: workspaceRoot }),
     ]);
   });
@@ -225,7 +225,7 @@ describe("GoalRunner", () => {
     }));
 
     await expect(inactiveRunner.retry(goal.id)).rejects.toBeInstanceOf(GoalRunnerError);
-    await expect(inactiveRunner.retry(goal.id, { mainSessionId: "different-session" })).rejects.toBeInstanceOf(GoalRunnerError);
+    await expect(inactiveRunner.retry(goal.id)).rejects.toBeInstanceOf(GoalRunnerError);
     expect(createSession).not.toHaveBeenCalled();
 
     const activeRunner = new GoalRunner(runnerOptions({
@@ -233,15 +233,21 @@ describe("GoalRunner", () => {
       getSessionCwd: mock(async () => workspaceRoot),
       isSessionActive: mock(async (sessionId) => sessionId === "running-session"),
     }));
-    await expect(activeRunner.retry(goal.id, { mainSessionId: "running-session" })).resolves.toEqual(running);
+    await expect(activeRunner.retry(goal.id)).resolves.toEqual(running);
     expect(createSession).not.toHaveBeenCalled();
   });
 
   test("creates one isolated Goal worktree and reuses its cwd for retry sessions", async () => {
     await initializeGitRepo(workspaceRoot);
-    const createSession = mock(async (_options?: GoalRunnerCreateSessionOptions) => `session-${createSession.mock.calls.length + 1}`);
+    const sessionCwds = new Map<string, string>();
+    const createSession = mock(async (options?: GoalRunnerCreateSessionOptions) => {
+      const sessionId = `session-${createSession.mock.calls.length + 1}`;
+      if (options?.cwd !== undefined) sessionCwds.set(sessionId, options.cwd);
+      return sessionId;
+    });
     const runner = new GoalRunner(runnerOptions({
       createSession,
+      getSessionCwd: mock(async (sessionId) => sessionCwds.get(sessionId)),
     }));
     const draft = await runner.create({
       projectId: "project-a",
@@ -255,13 +261,15 @@ describe("GoalRunner", () => {
     expect(firstCwd).toBe(running.worktree?.path);
     await runner.beginReview(draft.id);
     await runner.finalizeReview(draft.id, {
+      expectedReviewGeneration: 1,
       verdict: "NOT_DONE",
       summary: "More work is required.",
       authorization: reviewerAuth(draft.id),
     });
 
     await runner.retry(draft.id);
-    expect((createSession.mock.calls[1]?.[0] as { cwd?: string } | undefined)?.cwd).toBe(firstCwd);
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect((createSession.mock.calls[0]?.[0] as { cwd?: string } | undefined)?.cwd).toBe(firstCwd);
   });
 
   test("rejects a preassigned Session whose cwd does not match an isolated Goal", async () => {
@@ -353,12 +361,14 @@ describe("GoalRunner", () => {
     await runner.beginReview(draft.id);
 
     await expect(runner.finalizeReview(draft.id, {
+      expectedReviewGeneration: 1,
       verdict: "DONE",
       summary: "Missing evidence.",
       evidenceRefs: [],
       authorization: reviewerAuth(draft.id),
     })).rejects.toBeInstanceOf(GoalReviewFinalizationError);
     await expect(runner.finalizeReview(draft.id, {
+      expectedReviewGeneration: 1,
       verdict: "DONE",
       summary: "Wrong agent.",
       evidenceRefs: [evidenceRef()],
@@ -366,6 +376,7 @@ describe("GoalRunner", () => {
     })).rejects.toBeInstanceOf(GoalReviewerAuthorizationError);
 
     const done = await runner.finalizeReview(draft.id, {
+      expectedReviewGeneration: 1,
       verdict: "DONE",
       summary: "Reviewer verified all criteria.",
       evidenceRefs: [evidenceRef()],
@@ -384,6 +395,7 @@ describe("GoalRunner", () => {
     await runner.beginReview(draft.id);
 
     const notDone = await runner.finalizeReview(draft.id, {
+      expectedReviewGeneration: 1,
       verdict: "NOT_DONE",
       summary: "Acceptance criteria need repair.",
       unresolvedItems: ["Add targeted tests"],
@@ -392,13 +404,14 @@ describe("GoalRunner", () => {
     expect(notDone).toMatchObject({ status: "not_done", lastFailureSummary: "Acceptance criteria need repair." });
 
     await expect(runner.finalizeReview(draft.id, {
+      expectedReviewGeneration: 1,
       verdict: "NOT_DONE",
       summary: "duplicate",
       authorization: reviewerAuth(draft.id),
     })).rejects.toBeInstanceOf(GoalReviewFinalizationError);
 
     const retry = await runner.retry(draft.id);
-    expect(retry).toMatchObject({ status: "running", attempt: 2, mainSessionId: "retry-session-2" });
+    expect(retry).toMatchObject({ status: "running", attempt: 2, mainSessionId: "main-session-1" });
     expect(retry.review).toBeUndefined();
     expect((await runner.beginReview(draft.id)).status).toBe("reviewing");
   });
@@ -419,8 +432,8 @@ describe("GoalRunner", () => {
   test("tracks child sessions, main session, and budget", async () => {
     const runner = createRunner();
     const draft = await createDraft(runner);
-    await runner.start(draft.id);
     await runner.setMainSession(draft.id, "explicit-main");
+    await runner.start(draft.id);
     await runner.addChildSession(draft.id, "child-1");
     const budgeted = await runner.updateBudgetSummary(draft.id, {
       status: "ok",
