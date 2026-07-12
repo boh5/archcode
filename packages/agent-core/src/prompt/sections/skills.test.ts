@@ -28,7 +28,6 @@ const builtinSkills: SkillIndexEntry[] = [
 
 const exploreSkills: SkillIndexEntry[] = [
   { name: "codemap", description: "Codebase navigation", when_to_use: "Use before implementation.", source: "builtin" },
-  { name: "research-docs", description: "Documentation research", when_to_use: "Use when uncertain about libraries.", source: "builtin" },
 ];
 
 const activeGitMaster: ResolvedSkill[] = [
@@ -83,12 +82,12 @@ describe("buildSkillsSection", () => {
     expect(result).not.toContain(fullSkillBody);
   });
 
-  test("explore prompt includes only codemap and research-docs", async () => {
+  test("explore prompt includes only codemap", async () => {
     const ctx = makeCtx({ availableSkills: exploreSkills });
     const result = await buildSkillsSection(ctx);
 
     expect(result).toContain("codemap");
-    expect(result).toContain("research-docs");
+    expect(result).not.toContain("research-docs");
     expect(result).not.toContain("git-master");
     expect(result).not.toContain("safe-refactor");
     expect(result).not.toContain("review-work");

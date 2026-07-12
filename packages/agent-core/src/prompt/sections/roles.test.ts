@@ -41,7 +41,7 @@ describe("buildRoleSection", () => {
     ["plan", planAgentDefinition.rolePrompt, "## Role: Plan"],
     ["build", buildAgentDefinition.rolePrompt, "## Role: Build"],
     ["reviewer", reviewerAgentDefinition.rolePrompt, "## Role: Reviewer"],
-    ["explore", exploreAgentDefinition.rolePrompt, "## Goal Role: Explore"],
+    ["explore", exploreAgentDefinition.rolePrompt, "## Role: Explore"],
     ["librarian", librarianAgentDefinition.rolePrompt, "## Goal Role: Librarian"],
   ])("resolves %s rolePrompt to non-empty goal-era role content", (_name, rolePrompt, heading) => {
     const result = buildRoleSection(makeCtx(rolePrompt));
@@ -130,7 +130,10 @@ describe("buildRoleSection", () => {
     expect(result).toContain("DONE requires evidence");
     expect(result).toContain("Insufficient evidence means NOT_DONE");
     expect(result).not.toContain("goal_check_done");
-    expect(result).toContain("no file_write, file_edit, bash, or ast_grep_replace");
+    expect(result).toContain("no file_write, file_edit, or ast_grep_replace");
+    expect(result).toContain("only for inspection and verification");
+    expect(result).toContain("unresolvedItems");
+    expect(result).toContain("pre-existing dirty worktree is not itself a failure");
   });
 
   test.each([
@@ -145,6 +148,23 @@ describe("buildRoleSection", () => {
     expect(result).toContain("Concise evidence output");
     expect(result).toContain("Facts found");
     expect(result).toContain("Citations");
-    expect(result).toContain("Unknowns");
+    expect(result).toMatch(/Unknowns|Open questions/);
+  });
+
+  test("interactive roles investigate before batched questions and resume their Session", () => {
+    for (const definition of [engineerAgentDefinition, goalLeadAgentDefinition, planAgentDefinition, buildAgentDefinition]) {
+      const result = buildRoleSection(makeCtx(definition.rolePrompt));
+
+      expect(result).toContain("Investigate");
+      expect(result).toMatch(/batch/i);
+      expect(result).toContain("same Session");
+    }
+  });
+
+  test("Librarian reports open questions instead of asking the user", () => {
+    const result = buildRoleSection(makeCtx(librarianAgentDefinition.rolePrompt));
+
+    expect(result).toContain("cannot ask the user directly");
+    expect(result).toContain("Open question");
   });
 });

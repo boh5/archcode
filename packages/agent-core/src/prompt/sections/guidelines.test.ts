@@ -17,4 +17,11 @@ describe("buildGuidelinesSection", () => {
     const b = buildGuidelinesSection();
     expect(a).toBe(b);
   });
+
+  test("does not instruct read-only roles to call an unavailable interaction tool", () => {
+    const result = buildGuidelinesSection();
+
+    expect(result).toContain("use ask_user if that tool is available");
+    expect(result).toContain("report the ambiguity");
+  });
 });

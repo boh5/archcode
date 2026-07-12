@@ -59,6 +59,10 @@ import {
   type SessionWorkspaceCloseLease,
 } from "./session-workspace-control";
 import type { SessionGoalDelegationAdmission } from "./session-goal-delegation-admission";
+import {
+  prependSessionGoalDelegationContext,
+  type SessionGoalDelegationContext,
+} from "./session-goal-delegation-context";
 
 const ABORT_AND_WAIT_TIMEOUT_MS = 10000;
 const MAX_CWD_TRANSITIONS_PER_EXECUTION = 4;
@@ -750,9 +754,9 @@ export class SessionExecutionManager {
   async startChildExecution(workspaceRoot: string, request: ChildExecutionRequest): Promise<ChildExecutionHandle> {
     const parentState = request.parentStore.getState();
     const admission = this.#config.goalDelegationAdmission;
-    const start = async (): Promise<ChildExecutionHandle> => {
+    const start = async (goalContext?: SessionGoalDelegationContext): Promise<ChildExecutionHandle> => {
       await this.#assertGoalFamilyNotBlockedByHitl(workspaceRoot, parentState);
-      return await this.#startChildExecution(workspaceRoot, request);
+      return await this.#startChildExecution(workspaceRoot, request, goalContext);
     };
     if (admission !== undefined && parentState.goalId !== undefined) {
       return await admission.run({
@@ -767,7 +771,11 @@ export class SessionExecutionManager {
     return await start();
   }
 
-  async #startChildExecution(workspaceRoot: string, request: ChildExecutionRequest): Promise<ChildExecutionHandle> {
+  async #startChildExecution(
+    workspaceRoot: string,
+    request: ChildExecutionRequest,
+    goalContext?: SessionGoalDelegationContext,
+  ): Promise<ChildExecutionHandle> {
     const factory = this.#config.sessionAgentManager.getFactory(workspaceRoot);
     const currentDepth = request.currentDepth ?? 0;
     const parentAgentName = request.parentStore.getState().agentName;
@@ -854,11 +862,12 @@ export class SessionExecutionManager {
       await this.#assertGoalFamilyNotBlockedByHitl(workspaceRoot, parentState);
       this.#config.sessionAgentManager.releaseSlot(workspaceRoot, request.parentSessionId);
       parentSlotReserved = false;
+      assertGoalDelegationContext(parentState, goalContext);
       execution = this.startExecution({
         slug: "",
         workspaceRoot,
         sessionId: childSessionId,
-        userMessage: request.prompt,
+        userMessage: prependSessionGoalDelegationContext(request.prompt, goalContext),
         origin: request.origin ?? "tool_call",
       });
       this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, "running", childTitle, createdAt, background);
@@ -986,9 +995,9 @@ export class SessionExecutionManager {
   async resumeChildExecution(workspaceRoot: string, request: ResumeChildRequest): Promise<ChildExecutionHandle> {
     const parentState = request.parentStore.getState();
     const admission = this.#config.goalDelegationAdmission;
-    const resume = async (): Promise<ChildExecutionHandle> => {
+    const resume = async (goalContext?: SessionGoalDelegationContext): Promise<ChildExecutionHandle> => {
       await this.#assertGoalFamilyNotBlockedByHitl(workspaceRoot, parentState);
-      return await this.#resumeChildExecution(workspaceRoot, request);
+      return await this.#resumeChildExecution(workspaceRoot, request, goalContext);
     };
     if (admission !== undefined && parentState.goalId !== undefined) {
       return await admission.run({
@@ -1009,7 +1018,11 @@ export class SessionExecutionManager {
     if (blockedByHitlIds.length > 0) throw new SessionHitlBlockedError(state.sessionId, blockedByHitlIds);
   }
 
-  async #resumeChildExecution(workspaceRoot: string, request: ResumeChildRequest): Promise<ChildExecutionHandle> {
+  async #resumeChildExecution(
+    workspaceRoot: string,
+    request: ResumeChildRequest,
+    goalContext?: SessionGoalDelegationContext,
+  ): Promise<ChildExecutionHandle> {
     const key = scopedKey(workspaceRoot, request.sessionId);
     if (this.#active.has(key)) throw new AgentRunningError();
 
@@ -1054,12 +1067,13 @@ export class SessionExecutionManager {
     try {
       await this.#config.sessionAgentManager.getOrCreate(workspaceRoot, request.sessionId);
       await this.#assertGoalFamilyNotBlockedByHitl(workspaceRoot, parentState);
+      assertGoalDelegationContext(parentState, goalContext);
       this.#appendResumeChildLinkStatus(workspaceRoot, request, existingLink, "running", resumeLinkCreatedAt);
       execution = this.startExecution({
         slug: "",
         workspaceRoot,
         sessionId: request.sessionId,
-        userMessage: request.prompt,
+        userMessage: prependSessionGoalDelegationContext(request.prompt, goalContext),
         origin: request.origin ?? "tool_call",
       });
       releaseChildLaunch();
@@ -1999,4 +2013,13 @@ function collectSubtreeSessionIds(node: SessionTreeNode, targetSessionId: string
     if (found.length > 0) return found;
   }
   return [];
+}
+
+function assertGoalDelegationContext(
+  parentState: SessionStoreState,
+  context: SessionGoalDelegationContext | undefined,
+): void {
+  if (parentState.goalId === undefined) return;
+  if (context?.goalId === parentState.goalId) return;
+  throw new Error(`Goal ${parentState.goalId} delegation requires its latest admitted snapshot`);
 }

@@ -43,7 +43,7 @@ Responsibilities:
 
 Permissions:
 - You are source read-only. Do not write, edit, run destructive shell commands, or update source files.
-- You may ask clarifying questions only for requirements that cannot be safely inferred.
+- Investigate requirements and local evidence before asking. Use ask_user only for a material decision that cannot be safely inferred; batch related questions into one request, then continue the delegated work in this same Session when the answer returns.
 - Persona may shift your perspective, but it never changes your tool permissions.
 
 Output contract:

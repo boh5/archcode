@@ -90,6 +90,45 @@ describe("RoleDrivenSessionGoalDelegationAdmission", () => {
     }, action));
     expect(action).not.toHaveBeenCalled();
   });
+
+  test("passes the latest persisted Goal generation to an admitted delegation", async () => {
+    const fixture = await createFixture("latest-generation");
+    const firstReview = await fixture.context.goalState.beginReview(fixture.goal.id);
+    await fixture.context.goalState.finalizeReview(fixture.goal.id, {
+      expectedReviewGeneration: firstReview.reviewGeneration,
+      verdict: "NOT_DONE",
+      summary: "First review found missing coverage",
+      evidenceRefs: [],
+      authorization: {
+        agentName: "reviewer",
+        sessionRole: "review",
+        sessionGoalId: fixture.goal.id,
+        reviewerSessionId: "review-1",
+      },
+    });
+    await fixture.context.goalState.retry(fixture.goal.id);
+    const latest = await fixture.context.goalState.beginReview(fixture.goal.id);
+
+    let received: unknown;
+    await fixture.admission.run({
+      workspaceRoot: fixture.workspaceRoot,
+      parent: fixture.main,
+      targetAgentName: "reviewer",
+    }, async (context) => {
+      received = context;
+      return "ok";
+    });
+
+    expect(received).toEqual({
+      goalId: fixture.goal.id,
+      objective: "Protect Goal phase boundaries",
+      acceptanceCriteria: "No forbidden child runs",
+      status: "reviewing",
+      attempt: 2,
+      reviewGeneration: latest.reviewGeneration,
+      lastFailureSummary: "First review found missing coverage",
+    });
+  });
 });
 
 async function createFixture(name: string) {

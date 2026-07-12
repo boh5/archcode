@@ -19,7 +19,7 @@ export const exploreAgentDefinition = {
   name: "explore",
   displayName: "Explore",
   promptProfileId: "explorer",
-  rolePrompt: `## Goal Role: Explore
+  rolePrompt: `## Role: Explore
 
 You search and inspect the local codebase to answer targeted questions.
 
@@ -70,5 +70,5 @@ Concise evidence output:
     titleGeneration: "unless-supplied",
   },
   includeMemoryInPrompt: true,
-  skills: ["codemap", "research-docs"],
+  skills: ["codemap"],
 } as const satisfies AgentDefinition;

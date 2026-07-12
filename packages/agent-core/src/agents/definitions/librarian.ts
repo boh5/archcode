@@ -1,7 +1,6 @@
 import type { AgentDefinition } from "../factory-types";
 import { SKILL_TOOLS } from "../constants";
 import {
-  TOOL_ASK_USER,
   TOOL_COMPRESS,
   TOOL_FILE_READ,
   TOOL_GLOB,
@@ -29,6 +28,7 @@ Permissions:
 - You are read-only and cannot delegate.
 - You can read local files when needed for context, use web_fetch, memory_read, and MCP tools.
 - You cannot write or edit files, run shell commands, update Goals, or change tool permissions.
+- You cannot ask the user directly. If research leaves a material question unresolved, report it as an Open question for the delegating agent rather than inventing an answer.
 
 Research mandate:
 - When to research: investigate libraries, APIs, docs, compatibility, examples, external behavior, or prior knowledge needed by a parent agent.
@@ -37,7 +37,7 @@ Research mandate:
 Concise evidence output:
 - Facts found: short bullets answering the exact question.
 - Citations: documentation URLs, file paths, memory topics, or MCP result identifiers.
-- Unknowns: version uncertainty, stale docs, or unresolved contradictions.
+- Open questions: version uncertainty, stale docs, unresolved contradictions, or decisions the delegating agent may need to ask the user.
 - Recommendation: optional next action when evidence clearly points one way.`,
   tools: {
     tools: [
@@ -46,7 +46,6 @@ Concise evidence output:
       TOOL_GLOB,
       TOOL_WEB_FETCH,
       TOOL_MEMORY_READ,
-      TOOL_ASK_USER,
       TOOL_TODO_WRITE,
       TOOL_COMPRESS,
       ...SKILL_TOOLS,

@@ -21,6 +21,7 @@ import type { AgentFactory } from "../agents/factory";
 import type { AgentDefinition } from "../agents/factory-types";
 import type { ToolExecutionOrigin } from "../tools/types";
 import { createEmptyCompressionState } from "../compression";
+import type { SessionGoalDelegationContext } from "./session-goal-delegation-context";
 
 const workspaceRoot = join(import.meta.dir, "__test_tmp__", "session-execution-manager-workspace");
 const defaultAgentWorkspaceRoot = workspaceRoot;
@@ -249,6 +250,26 @@ function createManager(agents: Record<string, MockAgent>, options: FakeManagerOp
     logger: silentLogger,
   });
   return { manager, sessionAgentManager, trackSession, untrackSession };
+}
+
+function goalDelegationContext(
+  goalId: string,
+  overrides: Partial<SessionGoalDelegationContext> = {},
+): SessionGoalDelegationContext {
+  return {
+    goalId,
+    objective: "Ship Goal-scoped work",
+    acceptanceCriteria: "Delegated work uses the current Goal state",
+    status: "running",
+    attempt: 1,
+    reviewGeneration: 0,
+    lastFailureSummary: null,
+    ...overrides,
+  };
+}
+
+function admitGoal(context: SessionGoalDelegationContext): NonNullable<FakeManagerOptions["goalDelegationAdmission"]> {
+  return { run: async (_input, action) => await action(context) };
 }
 
 async function writeSessionFile(input: {
@@ -1169,6 +1190,7 @@ describe("SessionExecutionManager", () => {
     const { manager, sessionAgentManager } = createManager({}, {
       factory,
       listSessionFamilyBlockedHitlIds: async () => [],
+      goalDelegationAdmission: admitGoal(goalDelegationContext(goalId)),
     });
 
     const handle = await manager.startChildExecution(workspaceRoot, {
@@ -1206,6 +1228,85 @@ describe("SessionExecutionManager", () => {
       background: false,
       status: "completed",
     });
+  });
+
+  test("startChildExecution prepends the admitted Goal snapshot to the delegated prompt", async () => {
+    const parentId = crypto.randomUUID();
+    const goalId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer", goalId });
+    const context = goalDelegationContext(goalId, { reviewGeneration: 3 });
+    let message = "";
+    const { manager } = createManager({}, {
+      factory: makeFactory(),
+      goalDelegationAdmission: admitGoal(context),
+      listSessionFamilyBlockedHitlIds: async () => [],
+      childRunMessage: (value) => { message = value; },
+    });
+
+    const child = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "goal-delegate",
+      toolName: "delegate",
+      targetAgentName: "explore",
+      prompt: "Inspect the implementation",
+      skills: [],
+    });
+    await child.result;
+
+    expect(message).toStartWith("<goal-delegation-context>\n");
+    expect(message).toContain(`"goalId": "${goalId}"`);
+    expect(message).toContain('"reviewGeneration": 3');
+    expect(message).toEndWith("</goal-delegation-context>\n\nInspect the implementation");
+  });
+
+  test("startChildExecution leaves ordinary non-Goal delegation prompts unchanged", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
+    const admissionRun = mock(async () => { throw new Error("ordinary delegation must bypass Goal admission"); });
+    let message = "";
+    const { manager } = createManager({}, {
+      factory: makeFactory(),
+      goalDelegationAdmission: { run: admissionRun },
+      childRunMessage: (value) => { message = value; },
+    });
+
+    const child = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "ordinary-delegate",
+      toolName: "delegate",
+      targetAgentName: "explore",
+      prompt: "Keep this prompt byte-for-byte",
+      skills: [],
+    });
+    await child.result;
+
+    expect(admissionRun).not.toHaveBeenCalled();
+    expect(message).toBe("Keep this prompt byte-for-byte");
+  });
+
+  test("Goal delegation fails closed when runtime admission provides no snapshot", async () => {
+    const parentId = crypto.randomUUID();
+    const goalId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer", goalId });
+    let childRunStarted = false;
+    const { manager } = createManager({}, {
+      factory: makeFactory(),
+      listSessionFamilyBlockedHitlIds: async () => [],
+      childRunStarted: () => { childRunStarted = true; },
+    });
+
+    await expect(manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "missing-goal-admission",
+      toolName: "delegate",
+      targetAgentName: "explore",
+      prompt: "Must not run without Goal context",
+      skills: [],
+    })).rejects.toThrow(`Goal ${goalId} delegation requires its latest admitted snapshot`);
+    expect(childRunStarted).toBe(false);
   });
 
   test("blocks new Goal child execution while any sibling has durable HITL", async () => {
@@ -1379,6 +1480,7 @@ describe("SessionExecutionManager", () => {
     });
     const { manager } = createManager({}, {
       factory,
+      goalDelegationAdmission: admitGoal(goalDelegationContext(goalId)),
       listSessionFamilyBlockedHitlIds: async () => [],
       childRunMessage: (message) => {
         childPrompt = message;
@@ -1399,7 +1501,7 @@ describe("SessionExecutionManager", () => {
     });
     await handle.result;
 
-    expect(childPrompt).toBe("inspect files");
+    expect(childPrompt).toEndWith("</goal-delegation-context>\n\ninspect files");
     expect(handle.store.getState().goalId).toBe(goalId);
     expect(childPrompt).not.toContain("## Active Workflow");
   });
@@ -1411,6 +1513,7 @@ describe("SessionExecutionManager", () => {
     let childPrompt = "";
     const { manager } = createManager({}, {
       factory: makeFactory(),
+      goalDelegationAdmission: admitGoal(goalDelegationContext(goalId)),
       listSessionFamilyBlockedHitlIds: async () => [],
       childRunMessage: (message) => {
         childPrompt = message;
@@ -1431,7 +1534,7 @@ describe("SessionExecutionManager", () => {
     });
     await handle.result;
 
-    expect(childPrompt).toBe("inspect without workflow tools");
+    expect(childPrompt).toEndWith("</goal-delegation-context>\n\ninspect without workflow tools");
     expect(handle.store.getState().goalId).toBe(goalId);
     expect(childPrompt).not.toContain("## Active Workflow");
     expect(childPrompt).not.toContain("Omitted Workflow");
@@ -1476,6 +1579,7 @@ describe("SessionExecutionManager", () => {
     });
     const { manager } = createManager({}, {
       factory,
+      goalDelegationAdmission: admitGoal(goalDelegationContext(goalId)),
       listSessionFamilyBlockedHitlIds: async () => [],
       childRunMessage: (message) => {
         childPrompt = message;
@@ -1497,7 +1601,7 @@ describe("SessionExecutionManager", () => {
     await handle.result;
 
     expect(handle.store.getState().goalId).toBe(goalId);
-    expect(childPrompt).toBe("grandchild inspect");
+    expect(childPrompt).toEndWith("</goal-delegation-context>\n\ngrandchild inspect");
     expect(childPrompt).not.toContain("## Active Workflow");
   });
 
@@ -2387,6 +2491,55 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "resume-tool-call",
       status: "completed",
     });
+  });
+
+  test("resumeChildExecution prepends the newly admitted Goal snapshot", async () => {
+    const parentId = crypto.randomUUID();
+    const goalId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer", goalId });
+    let context = goalDelegationContext(goalId, { reviewGeneration: 1 });
+    const messages: string[] = [];
+    const { manager } = createManager({}, {
+      factory: makeFactory(),
+      goalDelegationAdmission: {
+        run: async (_input, action) => await action(context),
+      },
+      listSessionFamilyBlockedHitlIds: async () => [],
+      childRunMessage: (value) => { messages.push(value); },
+    });
+
+    const first = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "initial-goal-delegate",
+      toolName: "delegate",
+      targetAgentName: "explore",
+      prompt: "Initial work",
+      skills: [],
+    });
+    await first.result;
+
+    context = goalDelegationContext(goalId, {
+      attempt: 2,
+      reviewGeneration: 2,
+      lastFailureSummary: "Reviewer requested another assertion",
+    });
+    const resumed = await manager.resumeChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "resume-goal-delegate",
+      toolName: "delegate",
+      sessionId: first.sessionId,
+      targetAgentName: "explore",
+      prompt: "Address the review",
+    });
+    await resumed.result;
+
+    expect(messages).toHaveLength(2);
+    expect(messages[1]).toContain('"attempt": 2');
+    expect(messages[1]).toContain('"reviewGeneration": 2');
+    expect(messages[1]).toContain('"lastFailureSummary": "Reviewer requested another assertion"');
+    expect(messages[1]).toEndWith("</goal-delegation-context>\n\nAddress the review");
   });
 
   test("blocks cwd transitions for active descendants and never resumes an old child across checkouts", async () => {

@@ -16,6 +16,7 @@ import {
 } from "./index";
 import {
   TOOL_AST_GREP_REPLACE,
+  TOOL_ASK_USER,
   TOOL_BASH,
   TOOL_COMPRESS,
   TOOL_DELEGATE,
@@ -194,7 +195,7 @@ describe("agentDefinitions", () => {
     expect(buildAgentDefinition.rolePrompt).toContain("ordinary Session, a Loop, or a Goal");
   });
 
-  test("Reviewer can verify goals but cannot mutate source", () => {
+  test("Reviewer can verify goals with non-mutating Bash but cannot ask or mutate source", () => {
     const tools = reviewerAgentDefinition.tools.tools;
 
     expect(tools).toContain(TOOL_GOAL_MANAGE);
@@ -202,10 +203,14 @@ describe("agentDefinitions", () => {
     expect(tools).toContain("grep");
     expect(tools).toContain("glob");
     expect(tools).toContain("lsp_diagnostics");
+    expect(tools).toContain(TOOL_BASH);
     expect(tools).toContain(TOOL_COMPRESS);
-    expectNoTools(tools, SOURCE_WRITE_TOOLS);
+    expectNoTools(tools, [TOOL_FILE_WRITE, TOOL_FILE_EDIT, TOOL_AST_GREP_REPLACE, TOOL_ASK_USER]);
     expect(reviewerAgentDefinition.tools.delegateTargets).toEqual(["explore", "librarian"]);
     expect(reviewerAgentDefinition.rolePrompt).toContain("Do not call goal_manage");
+    expect(reviewerAgentDefinition.rolePrompt).toContain("unresolvedItems");
+    expect(reviewerAgentDefinition.rolePrompt).toContain("pre-existing dirty worktree is not itself a failure");
+    expect(reviewerAgentDefinition.rolePrompt).toContain("only for inspection and verification");
   });
 
   test("Goal lifecycle and evidence tools are limited to intended roles", () => {
@@ -225,6 +230,8 @@ describe("agentDefinitions", () => {
     }
     expect(prompt).toContain("DONE");
     expect(prompt).toContain("NOT_DONE");
+    expect(prompt).toContain("only valid verdicts: DONE or NOT_DONE");
+    expect(prompt).not.toContain("NEEDS_DECISION");
     expect(prompt).not.toContain("ESCALATE_HUMAN");
     expect(prompt).toContain("goal_manage.finalize_review");
     expect(prompt).toContain("expectedReviewGeneration");
@@ -247,6 +254,19 @@ describe("agentDefinitions", () => {
 
     expect("mcpTools" in exploreAgentDefinition).toBe(false);
     expect(librarianAgentDefinition.mcpTools).toEqual(["context7", "grep.app", "exa"]);
+  });
+
+  test("ask_user belongs only to the four interactive working roles", () => {
+    for (const definition of [engineerAgentDefinition, goalLeadAgentDefinition, planAgentDefinition, buildAgentDefinition]) {
+      expect(definition.tools.tools).toContain(TOOL_ASK_USER);
+      expect(definition.rolePrompt).toMatch(/batch/i);
+      expect(definition.rolePrompt).toContain("same Session");
+    }
+
+    for (const definition of [reviewerAgentDefinition, librarianAgentDefinition]) {
+      expect(definition.tools.tools).not.toContain(TOOL_ASK_USER);
+    }
+    expect(librarianAgentDefinition.rolePrompt).toContain("Open question");
   });
 
   test("principal delegation depth policies match principal → core → ancillary", () => {
@@ -332,7 +352,7 @@ describe("agentDefinitions", () => {
         "review-work",
         "research-docs",
       ]);
-      expect(exploreAgentDefinition.skills).toEqual(["codemap", "research-docs"]);
+      expect(exploreAgentDefinition.skills).toEqual(["codemap"]);
       expect(librarianAgentDefinition.skills).toEqual(["codemap", "research-docs"]);
     });
   });

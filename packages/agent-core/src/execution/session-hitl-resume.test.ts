@@ -20,9 +20,8 @@ import { SessionFamilyStopService } from "./session-family-stop-service";
 import { MemoryFileManager } from "../memory/file-manager";
 import { ProjectContextResolver } from "../projects/context-resolver";
 import type { ProjectContext } from "../projects/types";
-import type { AgentName } from "../agents";
 import type { ModelInfo } from "../provider/model";
-import { SessionStoreManager } from "../store/session-store-manager";
+import { SessionStoreManager, type CreateSessionOptions } from "../store/session-store-manager";
 import { getSessionHitlPath, getSessionPath } from "../store/sessions-dir";
 import { createRegistry, defineTool } from "../tools";
 import { askUserTool } from "../tools/builtins";
@@ -102,6 +101,61 @@ describe("Session HITL resume", () => {
     expect(coldStore.getState().blockedHitl).toBeUndefined();
     expect(coldStore.getState().blockedByHitlIds).toBeUndefined();
     expect(await readSessionHitlCheckpoint(fixture.workspaceRoot, fixture.sessionId, pending.hitlId)).toBeUndefined();
+  });
+
+  test.each([
+    { agentName: "plan" as const, sessionRole: "plan" as const },
+    { agentName: "build" as const, sessionRole: "build" as const },
+  ])("Goal $agentName child ask_user pauses the family and resumes its exact child Session", async ({ agentName, sessionRole }) => {
+    const rootSessionId = crypto.randomUUID();
+    const goalId = crypto.randomUUID();
+    const fixture = await createFixture({
+      rootSession: {
+        sessionId: rootSessionId,
+        options: { agentName: "goal_lead", goalId, sessionRole: "main" },
+      },
+      sessionIdentity: {
+        rootSessionId,
+        parentSessionId: rootSessionId,
+        goalId,
+        agentName,
+        sessionRole,
+      },
+      // This regression covers the family/HITL lifecycle. Goal execution
+      // admission is exercised by its dedicated validator tests.
+      executionScopeValidator: { validate: async () => undefined },
+    });
+    const registry = createRegistry([askUserTool]);
+    mockToolCallStream([{ toolCallId: `ask-${agentName}-child`, toolName: "ask_user", input: {
+      questions: [{ header: "Continue", question: "Continue this child task?", options: [], custom: true }],
+    } }]);
+
+    await runQueryLoop(fixture.options(registry, ["ask_user"]), "pause Goal child");
+
+    const pending = await singlePendingHitl(fixture);
+    expect(fixture.store.getState()).toMatchObject({
+      agentName,
+      sessionRole,
+      rootSessionId,
+      parentSessionId: rootSessionId,
+      goalId,
+      blockedByHitlIds: [pending.hitlId],
+    });
+    expect(fixture.store.getState().executions.at(-1)).toMatchObject({ status: "waiting_for_human" });
+    expect(await fixture.sessions.listSessionFamilyBlockedHitlIds(fixture.workspaceRoot, rootSessionId)).toEqual([pending.hitlId]);
+
+    await fixture.coordinator.respond(identity(pending), { type: "question_answer", answers: ["continue"] });
+    await waitFor(async () => {
+      const found = await fixture.hitl.lookup(identity(pending));
+      return found.status === "found" && found.record.status === "resolved";
+    });
+
+    expect(latestToolPart(fixture.store.getState().messages, `ask-${agentName}-child`)).toMatchObject({
+      state: "completed",
+      output: "continue",
+    });
+    expect(fixture.store.getState().blockedByHitlIds).toBeUndefined();
+    expect(await fixture.sessions.listSessionFamilyBlockedHitlIds(fixture.workspaceRoot, rootSessionId)).toEqual([]);
   });
 
   test("projects Session HITL continuation success onto its child link lifecycle", async () => {
@@ -1426,15 +1480,16 @@ async function createFixture(options: {
   readonly executionScopeValidator?: Pick<SessionExecutionScopeValidator, "validate">;
   readonly hitlFactory?: (options: ConstructorParameters<typeof HitlService>[0]) => HitlService;
   readonly sessionStoreManager?: SessionStoreManager;
-  readonly sessionIdentity?: {
-    readonly rootSessionId: string;
-    readonly parentSessionId: string;
-    readonly agentName: AgentName;
-  };
+  readonly rootSession?: { readonly sessionId: string; readonly options: CreateSessionOptions };
+  readonly sessionIdentity?: CreateSessionOptions;
 } = {}) {
   const workspaceRoot = await mkdtemp(join(TMP_ROOT, "workspace-"));
   const sessionId = crypto.randomUUID();
   const sessions = options.sessionStoreManager ?? new SessionStoreManager({ logger: silentLogger });
+  if (options.rootSession !== undefined) {
+    sessions.create(options.rootSession.sessionId, workspaceRoot, options.rootSession.options);
+    await sessions.flushSession(options.rootSession.sessionId, workspaceRoot);
+  }
   const store = sessions.create(sessionId, workspaceRoot, options.sessionIdentity ?? { agentName: "engineer" });
   const goalState = new GoalStateManager(workspaceRoot, silentLogger);
   const loopState = new LoopStateManager(workspaceRoot, silentLogger);
