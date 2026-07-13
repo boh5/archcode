@@ -2,6 +2,14 @@ export { closeMcpManagerBestEffort, createRuntime, ProjectRuntimeActiveError } f
 export type { AgentRuntime, AgentRuntimeOptions, CreateRuntimeSessionOptions, ProjectControlPlaneSnapshot, ProjectRemovalResult } from "./runtime";
 export * from "./automations";
 export type { CompressionOriginalRangeResult } from "./compression";
+export {
+  BuiltinMcpConfigNameError,
+  ConfigRevisionConflictError,
+  ConfigSemanticValidationError,
+  ServerConfigService,
+  resolveServerConfigPath,
+} from "./config";
+export type { ServerConfigServiceOptions } from "./config";
 
 export { createProcessRunner } from "./process/runner";
 export type { ProcessRunner, ProcessRunnerInput, ProcessRunnerResult } from "./process/types";

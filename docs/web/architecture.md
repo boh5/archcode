@@ -8,7 +8,7 @@ The CLI layer is the headless entry point. It creates the `AgentRuntime`, loads 
 
 Responsibilities:
 
-- Load and validate `.archcode.json`.
+- Load and validate the single server-wide `~/.archcode/config.json` through the config domain service.
 - Initialize provider and model configuration.
 - Register builtin tools, memory tools, LSP tools, and MCP tools.
 - Create project services and call `bootServer()`.
@@ -65,7 +65,7 @@ Responsibilities:
 ## Data Flow
 
 ```text
-.archcode.json → config → providers → tools → MCP → bootServer() → Hono → project-scoped Agent → query loop → store → SSE → Web UI
+~/.archcode/config.json → config → providers → tools → MCP → bootServer() → Hono → project-scoped Agent → query loop → store → SSE → Web UI
 ```
 
 ## Key Design Decisions

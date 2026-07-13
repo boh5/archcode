@@ -14,6 +14,8 @@
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^2.0.45",
+    "@ai-sdk/provider": "^3.0.10",
+    "@ai-sdk/provider-utils": "^4.0.26",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@mozilla/readability": "^0.6.0",
     "@archcode/protocol": "workspace:*",

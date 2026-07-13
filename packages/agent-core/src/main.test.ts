@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, mock, test } from "bun:test";
 import { rmSync } from "node:fs";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
@@ -18,6 +18,7 @@ import type { AnyToolDescriptor } from "./tools/types";
 import { createRuntime } from "./runtime";
 import { createTestProjectContext } from "./tools/test-project-context";
 import { createInMemoryLogger } from "./logger";
+import { ServerConfigService, resolveServerConfigPath } from "./config";
 const tmpRoots: string[] = [];
 
 afterAll(() => {
@@ -46,11 +47,12 @@ function makeProviderConfig() {
   };
 }
 
-async function writeConfig(config: Record<string, unknown>): Promise<string> {
+async function writeConfig(config: Record<string, unknown>): Promise<ServerConfigService> {
   const root = await makeTempRoot();
-  const configPath = join(root, ".archcode.json");
+  const configPath = resolveServerConfigPath(root);
+  await mkdir(join(root, ".archcode"), { recursive: true });
   await Bun.write(configPath, JSON.stringify(config));
-  return configPath;
+  return new ServerConfigService({ homeDir: root });
 }
 
 async function makeTempRoot(): Promise<string> {
@@ -196,10 +198,10 @@ async function writeSessionPermissionCheckpoint(input: {
 
 describe("createRuntime", () => {
   test("constructs runtime without booting server concerns", async () => {
-    const configPath = await writeConfig(makeConfig({ servers: {} }));
+    const configService = await writeConfig(makeConfig({ servers: {} }));
     const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
     const runtime = await createRuntime({
-      configPath,
+      configService,
       mcpManagerFactory: () => manager,
     });
 
@@ -208,12 +210,32 @@ describe("createRuntime", () => {
     expect(runtime.subscribeSessionEvents).toBeDefined();
   });
 
+  test("keeps runtime providers on the startup snapshot after Settings saves", async () => {
+    const configService = await writeConfig(makeConfig({ servers: {} }));
+    const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
+    const runtime = await createRuntime({ configService, mcpManagerFactory: () => manager });
+    const snapshot = await runtime.configService.getSnapshot();
+    const update = structuredClone(snapshot.config) as any;
+    update.provider.local.options.apiKey = { action: "preserve" };
+    update.provider.local.models["new-model"] = {
+      name: "New model",
+      limit: { context: 128000, output: 8192 },
+      modalities: { input: ["text"], output: ["text"] },
+    };
+
+    const saved = await runtime.configService.save({ expectedRevision: snapshot.revision, config: update });
+
+    expect(saved.restartRequired).toBe(true);
+    expect(runtime.providerRegistry.modelIds).toEqual(["local:test-model"]);
+    expect(runtime.getMcpServerStatuses()).toEqual(new Map());
+  });
+
   test("registers MCP descriptors before the agent run snapshot without calling run", async () => {
-    const configPath = await writeConfig(makeConfig({ servers: {} }));
+    const configService = await writeConfig(makeConfig({ servers: {} }));
     const mcpDescriptor = makeMcpDescriptor();
     const manager = makeFakeMcpManager({ descriptors: [mcpDescriptor], warnings: [] });
     const runtime = await createRuntime({
-      configPath,
+      configService,
       mcpManagerFactory: () => manager,
     });
 
@@ -224,12 +246,12 @@ describe("createRuntime", () => {
   });
 
   test("starts with no mcp config", async () => {
-    const configPath = await writeConfig(makeConfig());
+    const configService = await writeConfig(makeConfig());
     let resolvedConfig: ResolvedMcpConfig | undefined;
     const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
 
     const runtime = await createRuntime({
-      configPath,
+      configService,
       mcpManagerFactory: (config) => {
         resolvedConfig = config;
         return manager;
@@ -241,11 +263,11 @@ describe("createRuntime", () => {
   });
 
   test("runtime exposes project registry and shared context resolver", async () => {
-    const configPath = await writeConfig(makeConfig());
+    const configService = await writeConfig(makeConfig());
     const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
 
     const runtime = await createRuntime({
-      configPath,
+      configService,
       mcpManagerFactory: () => manager,
     });
 
@@ -254,11 +276,11 @@ describe("createRuntime", () => {
   });
 
   test("runtime exposes core-owned agent job lifecycle APIs", async () => {
-    const configPath = await writeConfig(makeConfig());
+    const configService = await writeConfig(makeConfig());
     const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
 
     const runtime = await createRuntime({
-      configPath,
+      configService,
       mcpManagerFactory: () => manager,
     });
 
@@ -270,12 +292,12 @@ describe("createRuntime", () => {
   });
 
   test("runtime emits an authoritative snapshot that omits idle Session families", async () => {
-    const configPath = await writeConfig(makeConfig());
+    const configService = await writeConfig(makeConfig());
     const projectRegistryHomeDir = await makeTempRoot();
     const workspaceRoot = await makeTempRoot();
     const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
     const runtime = await createRuntime({
-      configPath,
+      configService,
       projectRegistryHomeDir,
       mcpManagerFactory: () => manager,
     });
@@ -315,12 +337,12 @@ describe("createRuntime", () => {
   });
 
   test("project removal disposes old runtime state, emits empty snapshots, and re-adds the workspace with a fresh slug context", async () => {
-    const configPath = await writeConfig(makeConfig());
+    const configService = await writeConfig(makeConfig());
     const projectRegistryHomeDir = await makeTempRoot();
     const workspaceRoot = await makeTempRoot();
     const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
     const runtime = await createRuntime({
-      configPath,
+      configService,
       projectRegistryHomeDir,
       mcpManagerFactory: () => manager,
     });
@@ -377,12 +399,12 @@ describe("createRuntime", () => {
   });
 
   test("public family Stop cancels active Session HITL and clears every durable family blocker before becoming idle", async () => {
-    const configPath = await writeConfig(makeConfig());
+    const configService = await writeConfig(makeConfig());
     const projectRegistryHomeDir = await makeTempRoot();
     const workspaceRoot = await makeTempRoot();
     const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
     const runtime = await createRuntime({
-      configPath,
+      configService,
       projectRegistryHomeDir,
       mcpManagerFactory: () => manager,
     });
@@ -490,12 +512,12 @@ describe("createRuntime", () => {
   });
 
   test("starts with mcp.servers as an empty object", async () => {
-    const configPath = await writeConfig(makeConfig({ servers: {} }));
+    const configService = await writeConfig(makeConfig({ servers: {} }));
     let resolvedConfig: ResolvedMcpConfig | undefined;
     const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
 
     const runtime = await createRuntime({
-      configPath,
+      configService,
       mcpManagerFactory: (config) => {
         resolvedConfig = config;
         return manager;
@@ -508,10 +530,10 @@ describe("createRuntime", () => {
 
   test("records a redacted discovery failure warning and still constructs the agent", async () => {
     const secret = "sk_test_main_secret";
-    const configPath = await writeConfig(
+    const configService = await writeConfig(
       makeConfig({
         servers: {
-          context7: {
+          private_docs: {
             transport: "http",
             url: "https://mcp.example.test",
             headers: { Authorization: secret },
@@ -523,7 +545,7 @@ describe("createRuntime", () => {
     const manager = makeFakeMcpManager(new Error(`boom ${secret}`), [secret]);
 
     const runtime = await createRuntime({
-      configPath,
+      configService,
       mcpManagerFactory: () => manager,
       logger,
     });
@@ -536,7 +558,7 @@ describe("createRuntime", () => {
 
   test("public server URL without auth headers is not redacted in warnings", async () => {
     const publicUrl = "https://public.example.test/mcp";
-    const configPath = await writeConfig(
+    const configService = await writeConfig(
       makeConfig({
         servers: {
           public: { transport: "http", url: publicUrl },
@@ -546,7 +568,7 @@ describe("createRuntime", () => {
     const manager = makeFakeMcpManager(new Error(`connection refused: ${publicUrl}`));
 
     const runtime = await createRuntime({
-      configPath,
+      configService,
       mcpManagerFactory: () => manager,
     });
 
@@ -556,7 +578,7 @@ describe("createRuntime", () => {
   });
 
   test("records a duplicate MCP descriptor warning and still constructs the agent", async () => {
-    const configPath = await writeConfig(makeConfig({ servers: {} }));
+    const configService = await writeConfig(makeConfig({ servers: {} }));
     const duplicateBuiltin = makeMcpDescriptor("file_read");
     const manager = makeFakeMcpManager({
       descriptors: [duplicateBuiltin],
@@ -564,7 +586,7 @@ describe("createRuntime", () => {
     });
 
     const runtime = await createRuntime({
-      configPath,
+      configService,
       mcpManagerFactory: () => manager,
     });
 
@@ -578,12 +600,12 @@ describe("createRuntime", () => {
   });
 
   test("keeps builtin tools registered alongside MCP tools", async () => {
-    const configPath = await writeConfig(makeConfig({ servers: {} }));
+    const configService = await writeConfig(makeConfig({ servers: {} }));
     const mcpDescriptor = makeMcpDescriptor();
     const manager = makeFakeMcpManager({ descriptors: [mcpDescriptor], warnings: [] });
 
     const runtime = await createRuntime({
-      configPath,
+      configService,
       mcpManagerFactory: () => manager,
     });
 
@@ -594,12 +616,12 @@ describe("createRuntime", () => {
   });
 
   test("runs MCP tools through registry global after-hooks", async () => {
-    const configPath = await writeConfig(makeConfig({ servers: {} }));
+    const configService = await writeConfig(makeConfig({ servers: {} }));
     const mcpDescriptor = makeMcpDescriptor();
     const manager = makeFakeMcpManager({ descriptors: [mcpDescriptor], warnings: [] });
 
     const runtime = await createRuntime({
-      configPath,
+      configService,
       mcpManagerFactory: () => manager,
     });
     const result = await runtime.toolRegistry.execute(

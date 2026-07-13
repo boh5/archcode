@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { McpManager } from "./mcp";
 import { setLlmAdapterForTest } from "./llm";
 import { silentLogger } from "./logger";
+import { ServerConfigService, resolveServerConfigPath } from "./config";
 import { ProjectRegistry } from "./projects/registry";
 import { createRuntime, type AgentRuntime } from "./runtime";
 import { RuntimeSessionDispatchGateway } from "./automations/runtime-session-gateway";
@@ -244,7 +245,8 @@ async function runtimeFixture(options: { git: boolean; secondProject?: boolean }
   await mkdir(workspaceRoot, { recursive: true });
   if (secondWorkspaceRoot !== undefined) await mkdir(secondWorkspaceRoot, { recursive: true });
   if (options.git) await initializeGitRepo(workspaceRoot);
-  const configPath = join(root, ".archcode.json");
+  const configPath = resolveServerConfigPath(root);
+  await mkdir(join(root, ".archcode"), { recursive: true });
   await writeFile(configPath, JSON.stringify(config()));
   const registry = new ProjectRegistry({ homeDir: root, logger: silentLogger });
   await registry.add({ workspaceRoot, name: "Automation One" });
@@ -252,8 +254,7 @@ async function runtimeFixture(options: { git: boolean; secondProject?: boolean }
   const clock = new FakeClock(START);
   const timer = new FakeTimer(clock);
   const runtime = await createRuntime({
-    configPath,
-    workspaceRoot,
+    configService: new ServerConfigService({ homeDir: root }),
     projectRegistryHomeDir: root,
     mcpManagerFactory: () => mcpManager(),
     automationSchedulerClock: clock,

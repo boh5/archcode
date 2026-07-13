@@ -13,7 +13,9 @@ export type ServerErrorCode =
   | "INTERNAL_ERROR"
   | "DELETE_CONFLICT"
   | "SESSION_STOP_CONFLICT"
-  | "PROJECT_REMOVE_CONFLICT";
+  | "PROJECT_REMOVE_CONFLICT"
+  | "CONFIG_REVISION_CONFLICT"
+  | "CONFIG_VALIDATION_ERROR";
 
 export class ServerError extends Error {
   constructor(
@@ -114,5 +116,24 @@ export class ProjectRemoveConflictHttpError extends ServerError {
       { projectSlug, activeFamilies },
     );
     this.name = "ProjectRemoveConflictHttpError";
+  }
+}
+
+export class ConfigRevisionConflictHttpError extends ServerError {
+  constructor(expectedRevision: string, currentRevision: string) {
+    super(
+      "CONFIG_REVISION_CONFLICT",
+      "The configuration changed on disk. Reload it before saving.",
+      409,
+      { expectedRevision, currentRevision },
+    );
+    this.name = "ConfigRevisionConflictHttpError";
+  }
+}
+
+export class ConfigValidationHttpError extends ServerError {
+  constructor(issues: readonly { path: string; message: string }[]) {
+    super("CONFIG_VALIDATION_ERROR", "Configuration validation failed", 422, { issues });
+    this.name = "ConfigValidationHttpError";
   }
 }

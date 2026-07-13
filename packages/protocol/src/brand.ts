@@ -5,7 +5,6 @@ export const PRODUCT_DISPLAY_NAME = "ArchCode";
 export const PRODUCT_SLUG = "archcode";
 
 export const CLI_BINARY_NAME = "archcode";
-export const CONFIG_FILE_NAME = ".archcode.json";
 export const PROJECT_STATE_DIR_NAME = ".archcode";
 export const USER_DATA_DIR_NAME = ".archcode";
 export const CACHE_NAMESPACE = "archcode";
@@ -15,7 +14,6 @@ export const ENV_PREFIX = "ARCHCODE";
 export const ENV_PORT = "ARCHCODE_PORT";
 export const ENV_SERVER_PASSWORD = "ARCHCODE_SERVER_PASSWORD";
 export const ENV_OPEN_BROWSER = "ARCHCODE_OPEN_BROWSER";
-export const ENV_WORKSPACE_ROOT = "ARCHCODE_WORKSPACE_ROOT";
 export const ENV_CLI = "ARCHCODE_CLI";
 
 export const COOKIE_SERVER_PASSWORD = ENV_SERVER_PASSWORD;

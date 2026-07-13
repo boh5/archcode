@@ -1,204 +1,116 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { McpServerStatus } from "@archcode/protocol";
-import {
-  DialogContent,
-  DialogDescription,
-  DialogRoot,
-  DialogTitle,
-} from "../ui/Dialog";
+import { ApiError } from "../../api/client";
+import { getServerConfig, saveServerConfig, type ServerConfigSnapshot } from "../../api/config";
 import { useMcpStatusStore } from "../../store/mcp-status-store";
+import { DialogContent, DialogDescription, DialogRoot, DialogTitle } from "../ui/Dialog";
+import { cloneConfig, hasConfigChanges, toFieldErrors, type SettingsSection } from "./settings-helpers";
+import { SettingsAgentsPanel, SettingsGithubPanel, SettingsMcpPanel, SettingsMemoryPanel, SettingsModelsPanel, SettingsNavigation } from "./settings-panels";
 
-interface SettingsDialogProps {
-  open: boolean;
-  onClose: () => void;
+export { SettingsMcpPanel, SettingsModelsPanel, SettingsNavigation } from "./settings-panels";
+
+export function SettingsRestartBanner({ restartRequired }: { restartRequired: boolean }) {
+  return restartRequired ? <div role="status" className="border-b border-warning/30 bg-warning-muted px-5 py-2 text-sm text-warning">Restart required for saved server configuration to take effect.</div> : null;
 }
 
-interface SettingsDialogContentProps {
-  servers: Record<string, McpServerStatus>;
-  onClose: () => void;
+export function SettingsCloseButton({ onClose }: { onClose: () => void }) {
+  return <button type="button" aria-label="Close settings" onClick={onClose} className="absolute right-3 top-3 z-10 flex h-7 w-7 items-center justify-center rounded-sm text-[12px] text-text-muted transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary focus-visible:outline-2 focus-visible:outline-accent">✕</button>;
 }
 
-const SETTINGS_ITEMS = [
-  { id: "general", label: "General", description: "Workspace preferences", enabled: false },
-  { id: "mcp", label: "MCP Status", description: "Server discovery status", enabled: true },
-  { id: "providers", label: "Providers", description: "AI providers", enabled: false },
-  { id: "models", label: "Models", description: "Available model profiles", enabled: false },
-] as const;
+export function SettingsBody({ snapshot, servers, onReload, reloading = false, reloadError }: { snapshot: ServerConfigSnapshot; servers: Record<string, McpServerStatus>; onReload: () => Promise<void>; reloading?: boolean; reloadError?: string }) {
+  const [section, setSection] = useState<SettingsSection>("models");
+  const [draft, setDraft] = useState(() => cloneConfig(snapshot.config));
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [jsonErrors, setJsonErrors] = useState<Record<string, string>>({});
+  const [saveError, setSaveError] = useState<string>();
+  const [saving, setSaving] = useState(false);
+  const [restartRequired, setRestartRequired] = useState(snapshot.restartRequired);
+  const [jsonResetVersion, setJsonResetVersion] = useState(0);
 
-const STATUS_META: Record<McpServerStatus["state"], { label: string; dotClass: string; badgeClass: string }> = {
-  pending: {
-    label: "Pending",
-    dotClass: "bg-warning",
-    badgeClass: "bg-warning-muted text-warning border-warning/30",
-  },
-  ready: {
-    label: "Ready",
-    dotClass: "bg-success",
-    badgeClass: "bg-success-muted text-success border-success/30",
-  },
-  failed: {
-    label: "Failed",
-    dotClass: "bg-error",
-    badgeClass: "bg-error-muted text-error border-error/30",
-  },
-  disabled: {
-    label: "Disabled",
-    dotClass: "bg-text-muted",
-    badgeClass: "bg-bg-elevated text-text-tertiary border-border-default",
-  },
-};
+  useEffect(() => {
+    setDraft(cloneConfig(snapshot.config));
+    setErrors({});
+    setJsonErrors({});
+    setSaveError(undefined);
+    setRestartRequired(snapshot.restartRequired);
+    setJsonResetVersion((current) => current + 1);
+  }, [snapshot]);
 
-function describeStatus(status: McpServerStatus): string {
-  switch (status.state) {
-    case "ready":
-      return `${status.toolCount} ${status.toolCount === 1 ? "tool" : "tools"} available`;
-    case "failed":
-      return status.error;
-    case "pending":
-      return "Discovery is still running";
-    case "disabled":
-      return "Server is disabled in configuration";
-  }
-}
-
-function StatusBadge({ status }: { status: McpServerStatus }) {
-  const meta = STATUS_META[status.state];
-
-  return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium ${meta.badgeClass}`}>
-      <span className={`h-1.5 w-1.5 rounded-full ${meta.dotClass}`} />
-      {meta.label}
-    </span>
-  );
-}
-
-export function SettingsMcpStatusPanel({ servers }: { servers: Record<string, McpServerStatus> }) {
-  const entries = Object.entries(servers).sort(([left], [right]) => left.localeCompare(right));
-  const readyCount = entries.filter(([, status]) => status.state === "ready").length;
-  const failedCount = entries.filter(([, status]) => status.state === "failed").length;
-
-  return (
-    <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-bg-base">
-      <div className="flex w-full flex-col gap-6 px-6 py-6">
-        <header className="flex flex-col gap-2 border-b border-border-default pb-5">
-          <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-text-muted">Servers</p>
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <h1 className="text-2xl font-semibold tracking-tight text-text-primary">MCP Status</h1>
-              <p className="mt-1 text-sm text-text-secondary">
-                Monitor configured MCP servers and their discovered tools.
-              </p>
-            </div>
-            <div className="flex gap-2 text-[11px] text-text-tertiary">
-              <span className="rounded-full border border-border-default bg-bg-surface px-2.5 py-1">{entries.length} servers</span>
-              <span className="rounded-full border border-border-default bg-bg-surface px-2.5 py-1">{readyCount} ready</span>
-              {failedCount > 0 && <span className="rounded-full border border-error/30 bg-error-muted px-2.5 py-1 text-error">{failedCount} failed</span>}
-            </div>
-          </div>
-        </header>
-
-        {entries.length === 0 ? (
-          <section className="rounded-lg border border-dashed border-border-default bg-bg-surface px-5 py-10 text-center shadow-sm">
-            <h2 className="text-base font-medium text-text-primary">No MCP servers reported yet</h2>
-            <p className="mx-auto mt-2 max-w-md text-sm text-text-tertiary">
-              Statuses appear here after the global SSE connection receives the initial MCP snapshot.
-            </p>
-          </section>
-        ) : (
-          <section className="overflow-hidden rounded-lg border border-border-default bg-bg-surface shadow-sm">
-            <div className="grid grid-cols-[minmax(0,1fr)_auto] border-b border-border-subtle px-4 py-2 text-[11px] font-medium uppercase tracking-[0.14em] text-text-muted">
-              <span>Server</span>
-              <span>Status</span>
-            </div>
-            <div className="divide-y divide-border-subtle">
-              {entries.map(([name, status]) => (
-                <article key={name} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3 transition-colors hover:bg-bg-hover">
-                  <div className="min-w-0">
-                    <h2 className="truncate font-mono text-sm font-medium text-text-primary">{name}</h2>
-                    <p className={`mt-1 text-xs ${status.state === "failed" ? "text-error" : "text-text-tertiary"}`}>
-                      {describeStatus(status)}
-                    </p>
-                  </div>
-                  <StatusBadge status={status} />
-                </article>
-              ))}
-            </div>
-          </section>
-        )}
-      </div>
-    </div>
-  );
-}
-
-export function SettingsDialogContent({ servers, onClose }: SettingsDialogContentProps) {
-  return (
-    <>
-      <DialogDescription className="sr-only">
-        Configure ArchCode settings and view MCP server status.
-      </DialogDescription>
-
-      <div className="flex h-full min-h-0 flex-col sm:flex-row">
-        <aside className="flex shrink-0 flex-col border-b border-border-default bg-bg-surface sm:w-60 sm:border-b-0 sm:border-r">
-          <div className="flex items-start justify-between gap-3 border-b border-border-subtle px-4 py-4">
-            <div>
-              <DialogTitle className="text-base font-semibold text-text-primary">Settings</DialogTitle>
-              <p className="mt-1 text-xs text-text-tertiary">ArchCode preferences</p>
-            </div>
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex h-7 w-7 items-center justify-center rounded-sm text-text-muted transition-colors duration-150 hover:bg-bg-hover hover:text-text-secondary"
-              aria-label="Close settings"
-            >
-              ✕
-            </button>
-          </div>
-
-          <nav aria-label="Settings sections" className="flex gap-1 overflow-x-auto px-3 py-3 sm:flex-col sm:overflow-visible">
-            <p className="hidden px-2 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.16em] text-text-muted sm:block">
-              Workspace
-            </p>
-            {SETTINGS_ITEMS.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className={`flex min-w-[150px] flex-col rounded-md px-3 py-2 text-left transition-colors duration-150 sm:min-w-0 ${
-                  item.enabled
-                    ? "bg-accent-muted text-accent"
-                    : "cursor-not-allowed text-text-muted opacity-55"
-                }`}
-                disabled={!item.enabled}
-                aria-current={item.enabled ? "page" : undefined}
-              >
-                <span className="text-[13px] font-medium">{item.label}</span>
-                <span className="mt-0.5 text-[11px] text-text-tertiary">{item.enabled ? item.description : "Coming soon"}</span>
-              </button>
-            ))}
-          </nav>
-
-          <div className="mt-auto hidden border-t border-border-subtle px-4 py-3 text-[11px] text-text-muted sm:block">
-            ArchCode
-          </div>
-        </aside>
-
-        <div className="min-h-0 flex-1">
-          <SettingsMcpStatusPanel servers={servers} />
-        </div>
-      </div>
-    </>
-  );
-}
-
-export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
-  const servers = useMcpStatusStore((state) => state.servers);
-  const handleOpenChange = (nextOpen: boolean) => {
-    if (!nextOpen) onClose();
+  const dirty = useMemo(() => hasConfigChanges(draft, snapshot.config), [draft, snapshot.config]);
+  const onJsonValidationChange = useCallback((path: string, error?: string) => {
+    setJsonErrors((current) => {
+      if (error === undefined) {
+        if (!(path in current)) return current;
+        const next = { ...current };
+        delete next[path];
+        return next;
+      }
+      return current[path] === error ? current : { ...current, [path]: error };
+    });
+  }, []);
+  const hasJsonErrors = Object.keys(jsonErrors).length > 0;
+  const fieldErrors = { ...errors, ...jsonErrors };
+  const save = async () => {
+    if (hasJsonErrors) return;
+    setSaving(true);
+    setErrors({});
+    setSaveError(undefined);
+    try {
+      const next = await saveServerConfig({ expectedRevision: snapshot.revision, config: draft });
+      setDraft(cloneConfig(next.config));
+      setRestartRequired(next.restartRequired);
+      await onReload();
+    } catch (error) {
+      setErrors(toFieldErrors(error));
+      setSaveError(error instanceof ApiError && error.code === "CONFIG_REVISION_CONFLICT"
+        ? "This configuration was changed elsewhere. Reload the latest version before saving."
+        : error instanceof Error ? error.message : "Unable to save settings");
+    } finally {
+      setSaving(false);
+    }
   };
 
-  return (
-    <DialogRoot open={open} onOpenChange={handleOpenChange}>
-      <DialogContent size="x-large" className="overflow-hidden p-0">
-        <SettingsDialogContent servers={servers} onClose={onClose} />
-      </DialogContent>
-    </DialogRoot>
-  );
+  return <><SettingsRestartBanner restartRequired={restartRequired} /><div className="flex h-full min-h-0 flex-col sm:flex-row">
+    <fieldset data-settings-controls disabled={saving || reloading} className="contents">
+    <aside className="flex shrink-0 flex-col border-b border-border-subtle bg-bg-surface sm:w-52 sm:border-b-0 sm:border-r"><div className="border-b border-border-subtle px-4 py-4"><h2 className="text-[15px] font-semibold tracking-tight text-text-primary">Settings</h2><p className="mt-0.5 text-[11.5px] text-text-muted">Server configuration</p></div><SettingsNavigation activeSection={section} onSelect={setSection} /></aside>
+    <div className="flex min-h-0 flex-1 flex-col"><main className="min-h-0 flex-1 overflow-y-auto bg-bg-base px-5 py-5 sm:px-6">
+      <div hidden={section !== "models"}><SettingsModelsPanel config={draft} onChange={setDraft} errors={fieldErrors} onJsonValidationChange={onJsonValidationChange} jsonResetVersion={jsonResetVersion} /></div>
+      <div hidden={section !== "agents"}><SettingsAgentsPanel config={draft} onChange={setDraft} errors={fieldErrors} onJsonValidationChange={onJsonValidationChange} jsonResetVersion={jsonResetVersion} /></div>
+      <div hidden={section !== "mcp"}><SettingsMcpPanel config={draft} servers={servers} onChange={setDraft} errors={errors} /></div>
+      <div hidden={section !== "memory"}><SettingsMemoryPanel config={draft} onChange={setDraft} errors={errors} /></div>
+      <div hidden={section !== "github"}><SettingsGithubPanel config={draft} onChange={setDraft} errors={errors} /></div>
+    </main><footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border-subtle bg-bg-surface px-5 py-3">{saveError || reloadError ? <div role="alert" className="text-xs text-error">{saveError ?? reloadError}</div> : <span className={`text-[11.5px] ${hasJsonErrors ? "text-error" : dirty ? "text-warning" : "text-text-muted"}`}>{hasJsonErrors ? "Fix invalid JSON before saving" : dirty ? "Unsaved changes" : "All changes saved"}</span>}<div className="flex gap-2"><button type="button" onClick={() => { void onReload(); }} className="rounded-sm bg-bg-active px-4 py-2 text-[12.5px] font-medium text-text-secondary transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary">{reloading ? "Reloading…" : "Reload"}</button><button type="button" disabled={!dirty || saving || reloading || hasJsonErrors} onClick={() => { void save(); }} className="rounded-sm bg-accent px-4 py-2 text-[12.5px] font-medium text-bg-base transition-colors duration-150 hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-40">{saving ? "Saving…" : "Save changes"}</button></div></footer></div>
+    </fieldset>
+  </div></>;
+}
+
+export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const servers = useMcpStatusStore((state) => state.servers);
+  const [snapshot, setSnapshot] = useState<ServerConfigSnapshot>();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string>();
+  const reloadRequest = useRef(0);
+  const reload = async () => {
+    const request = ++reloadRequest.current;
+    setLoading(true);
+    setError(undefined);
+    try {
+      const next = await getServerConfig();
+      if (request === reloadRequest.current) setSnapshot(next);
+    } catch (cause) {
+      if (request === reloadRequest.current) setError(cause instanceof Error ? cause.message : "Unable to load server settings");
+    } finally {
+      if (request === reloadRequest.current) setLoading(false);
+    }
+  };
+  useEffect(() => {
+    if (open) void reload();
+    else {
+      reloadRequest.current += 1;
+      setSnapshot(undefined);
+      setError(undefined);
+      setLoading(false);
+    }
+  }, [open]);
+  return <DialogRoot open={open} onOpenChange={(next) => { if (!next) onClose(); }}><DialogContent size="x-large" className="overflow-hidden p-0"><DialogTitle className="sr-only">Settings</DialogTitle><DialogDescription className="sr-only">Configure ArchCode server settings.</DialogDescription><SettingsCloseButton onClose={onClose} />{loading && !snapshot ? <div className="p-6 text-sm">Loading settings…</div> : error && !snapshot ? <div className="p-6"><p role="alert" className="text-sm text-error">{error}</p><button type="button" onClick={() => { void reload(); }}>Retry</button></div> : snapshot ? <SettingsBody snapshot={snapshot} servers={servers} onReload={reload} reloading={loading} reloadError={error} /> : null}</DialogContent></DialogRoot>;
 }

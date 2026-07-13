@@ -127,7 +127,6 @@ describe("resolveAgentModel merge order", () => {
       {
         model: "test:main",
         options: {
-          maxRetries: 2,
           timeout: 5000,
           providerOptions: { agent: { layer: "override" } },
         },
@@ -137,12 +136,10 @@ describe("resolveAgentModel merge order", () => {
     const options = resolve(config);
 
     expect(options).toEqual({
-      maxRetries: 2,
       timeout: 5000,
       providerOptions: { agent: { layer: "override" } },
     });
     expect(Object.keys(options ?? {}).sort()).toEqual([
-      "maxRetries",
       "providerOptions",
       "timeout",
     ]);
@@ -174,7 +171,6 @@ describe("resolveAgentModel merge order", () => {
         variant: "fast",
         options: {
           temperature: 1.1,
-          maxRetries: 3,
           seed: 3,
           providerOptions: { agent: { c: 3 } },
         },
@@ -189,12 +185,10 @@ describe("resolveAgentModel merge order", () => {
       topP: 0.8,
       topK: 40,
       seed: 3,
-      maxRetries: 3,
       providerOptions: { agent: { c: 3 } },
     });
     expect(Object.keys(options ?? {}).sort()).toEqual([
       "maxOutputTokens",
-      "maxRetries",
       "providerOptions",
       "seed",
       "temperature",

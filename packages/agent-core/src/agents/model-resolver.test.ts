@@ -98,7 +98,7 @@ describe("resolveAgentModel", () => {
       engineer: {
         model: "test:main",
         variant: "fast",
-        options: { maxRetries: 2, temperature: 1.1 },
+        options: { temperature: 1.1 },
       },
     });
 
@@ -108,7 +108,6 @@ describe("resolveAgentModel", () => {
       maxOutputTokens: 100,
       temperature: 1.1,
       topP: 0.9,
-      maxRetries: 2,
       providerOptions: { test: { variant: true } },
     });
   });
@@ -289,7 +288,7 @@ describe("workflow agent model resolution", () => {
       critic: {
         model: "test:main",
         variant: "fast",
-        options: { maxRetries: 2, temperature: 1.1 },
+        options: { temperature: 1.1 },
       },
     });
 
@@ -299,7 +298,6 @@ describe("workflow agent model resolution", () => {
       maxOutputTokens: 100,
       temperature: 1.1,
       topP: 0.9,
-      maxRetries: 2,
       providerOptions: { test: { variant: true } },
     });
   });

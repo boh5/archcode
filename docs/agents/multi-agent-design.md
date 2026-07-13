@@ -59,4 +59,4 @@ Specialist prompts are context-neutral by default: ordinary Sessions and Loops d
 
 ## Configuration
 
-`.archcode.json` requires exactly the seven current Agent keys under `agents`. Missing, unknown, or legacy keys fail validation. Display names are not configurable there; they belong to the definitions and catalog.
+The server-wide `~/.archcode/config.json` requires exactly the seven current Agent keys under `agents`. Missing, unknown, or legacy keys fail validation. Display names are not configurable there; they belong to the definitions and catalog.

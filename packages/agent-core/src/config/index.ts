@@ -20,12 +20,17 @@ export {
   type ExpandEnvVarsOptions,
 } from "./env";
 export {
-  ConfigLoadError,
-  ConfigParseError,
   ConfigValidationError,
-  loadConfig,
   parseConfig,
 } from "./load";
+export {
+  BuiltinMcpConfigNameError,
+  ConfigRevisionConflictError,
+  ConfigSemanticValidationError,
+  ServerConfigService,
+  resolveServerConfigPath,
+  type ServerConfigServiceOptions,
+} from "./server-config-service";
 export {
   OPENAI_COMPATIBLE_PROVIDER_PACKAGE,
   type ModelCallOptions,
@@ -33,7 +38,6 @@ export {
   type ModelLimit,
   type ModelModalities,
   type ModelModality,
-  type ModelPricing,
   type ProviderConfig,
   type ProviderOptions,
   type ProvidersConfig,
@@ -49,7 +53,6 @@ export {
   modelLimitSchema,
   modelModalitiesSchema,
   modelModalitySchema,
-  modelPricingSchema,
   providerConfigSchema,
   providerOptionsSchema,
   providersConfigSchema,

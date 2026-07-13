@@ -1,11 +1,6 @@
-import { afterAll, describe, expect, test } from "bun:test";
-import { mkdir, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { describe, expect, test } from "bun:test";
 import {
   parseConfig,
-  loadConfig,
-  ConfigLoadError,
-  ConfigParseError,
   ConfigValidationError,
   getProviderConfig,
   getModelConfig,
@@ -75,6 +70,15 @@ describe("parseConfig", () => {
     const { $schema: _, ...noSchema } = VALID_CONFIG_WITH_AGENTS;
     const config = parseConfig(noSchema);
     expect(config.provider).toBeDefined();
+  });
+
+  test("keeps provider credential expressions literal", () => {
+    const value = structuredClone(VALID_CONFIG_WITH_AGENTS);
+    value.provider.xxx.options.apiKey = "${PROVIDER_API_KEY:-literal}";
+
+    const config = parseConfig(value);
+
+    expect(config.provider.xxx.options.apiKey).toBe("${PROVIDER_API_KEY:-literal}");
   });
 
   test("rejects missing provider key", () => {
@@ -202,7 +206,6 @@ describe("parseConfig", () => {
                 frequencyPenalty: 0.5,
                 stopSequences: ["</stop>"],
                 seed: 123,
-                maxRetries: 3,
                 timeout: 30_000,
                 providerOptions: { custom: { flag: true } },
               },
@@ -224,7 +227,6 @@ describe("parseConfig", () => {
       frequencyPenalty: 0.5,
       stopSequences: ["</stop>"],
       seed: 123,
-      maxRetries: 3,
       timeout: 30_000,
       providerOptions: { custom: { flag: true } },
     });
@@ -256,7 +258,7 @@ describe("parseConfig", () => {
     expect(model.variants!["precise"].topP).toBe(0.1);
   });
 
-  test("parses config with optional model pricing metadata", () => {
+  test("rejects removed pricing metadata", () => {
     const config = {
       ...VALID_CONFIG_WITH_AGENTS,
       provider: {
@@ -271,45 +273,6 @@ describe("parseConfig", () => {
                 reasoningUsdPerMillionTokens: 5,
                 cachedInputUsdPerMillionTokens: 0.125,
               },
-              options: {
-                maxOutputTokens: 8192,
-                providerOptions: { custom: { flag: true } },
-              },
-              variants: {
-                fast: { temperature: 0.1, topP: 0.9 },
-              },
-            },
-          },
-        },
-      },
-    };
-
-    const parsed = parseConfig(config);
-    const model = parsed.provider.xxx.models["gpt-5.2"];
-
-    expect(model.pricing).toEqual({
-      inputUsdPerMillionTokens: 1.25,
-      outputUsdPerMillionTokens: 10,
-      reasoningUsdPerMillionTokens: 5,
-      cachedInputUsdPerMillionTokens: 0.125,
-    });
-    expect(model.options).toEqual({
-      maxOutputTokens: 8192,
-      providerOptions: { custom: { flag: true } },
-    });
-    expect(model.variants).toEqual({ fast: { temperature: 0.1, topP: 0.9 } });
-  });
-
-  test("rejects unknown model pricing fields", () => {
-    const config = {
-      ...VALID_CONFIG_WITH_AGENTS,
-      provider: {
-        xxx: {
-          ...VALID_CONFIG_WITH_AGENTS.provider.xxx,
-          models: {
-            "gpt-5.2": {
-              ...VALID_CONFIG_WITH_AGENTS.provider.xxx.models["gpt-5.2"],
-              pricing: { inputUsdPerThousandTokens: 1 },
             },
           },
         },
@@ -319,6 +282,20 @@ describe("parseConfig", () => {
     expect(() => parseConfig(config)).toThrow(ConfigValidationError);
   });
 
+  test("rejects configurable maxRetries in model, variant, and agent options", () => {
+    const model = structuredClone(VALID_CONFIG_WITH_AGENTS) as any;
+    model.provider.xxx.models["gpt-5.2"].options = { maxRetries: 2 };
+    expect(() => parseConfig(model)).toThrow(ConfigValidationError);
+
+    const variant = structuredClone(VALID_CONFIG_WITH_AGENTS) as any;
+    variant.provider.xxx.models["gpt-5.2"].variants = { fast: { maxRetries: 2 } };
+    expect(() => parseConfig(variant)).toThrow(ConfigValidationError);
+
+    const agent = structuredClone(VALID_CONFIG_WITH_AGENTS) as any;
+    agent.agents.engineer.options = { maxRetries: 2 };
+    expect(() => parseConfig(agent)).toThrow(ConfigValidationError);
+  });
+
   test("parses config with all 7 agents and per-agent options", () => {
     const config = {
       ...VALID_CONFIG_WITH_AGENTS,
@@ -326,7 +303,7 @@ describe("parseConfig", () => {
         engineer: {
           model: "xxx:gpt-5.2",
           variant: "creative",
-          options: { maxRetries: 3 },
+          options: { temperature: 0.3 },
         },
         goal_lead: { model: "xxx:gpt-5.2" },
         plan: { model: "xxx:gpt-5.2" },
@@ -343,7 +320,7 @@ describe("parseConfig", () => {
     expect(parsed.agents).toBeDefined();
     expect(parsed.agents.engineer.model).toBe("xxx:gpt-5.2");
     expect(parsed.agents.engineer.variant).toBe("creative");
-    expect(parsed.agents.engineer.options!.maxRetries).toBe(3);
+    expect(parsed.agents.engineer.options!.temperature).toBe(0.3);
     expect(parsed.agents.goal_lead.model).toBe("xxx:gpt-5.2");
     expect(parsed.agents.explore.model).toBe("xxx:gpt-5.2");
     expect(parsed.agents.explore.options!.temperature).toBe(0.5);
@@ -702,69 +679,6 @@ describe("resolveGithubIntegrationConfig", () => {
     expect(() => resolveGithubIntegrationConfig(parsed.integrations?.github, {})).toThrow(
       GithubIntegrationTokenError,
     );
-  });
-});
-
-describe("loadConfig", () => {
-  const tmpDir = join(import.meta.dir, "__test_tmp__");
-
-  afterAll(async () => {
-    await rm(tmpDir, { recursive: true, force: true });
-  });
-
-  test("loads a valid config from file", async () => {
-    await mkdir(tmpDir, { recursive: true });
-    const filePath = join(tmpDir, "valid.json");
-    await Bun.write(filePath, JSON.stringify(VALID_CONFIG_WITH_AGENTS));
-
-    const config = await loadConfig(filePath);
-    expect(config.provider["xxx"].name).toBe("xxx");
-  });
-
-  test("throws ConfigLoadError for missing file", async () => {
-    const filePath = join(tmpDir, "nonexistent.json");
-
-    try {
-      await loadConfig(filePath);
-      throw new Error("Expected loadConfig to throw");
-    } catch (error) {
-      expect(error).toBeInstanceOf(ConfigLoadError);
-      const typedError = error as ConfigLoadError;
-      expect(typedError.name).toBe("ConfigLoadError");
-      expect(typedError.filePath).toBe(filePath);
-    }
-  });
-
-  test("throws ConfigParseError for invalid JSON", async () => {
-    await mkdir(tmpDir, { recursive: true });
-    const filePath = join(tmpDir, "bad.json");
-    await Bun.write(filePath, "{ not valid json");
-
-    try {
-      await loadConfig(filePath);
-      throw new Error("Expected loadConfig to throw");
-    } catch (error) {
-      expect(error).toBeInstanceOf(ConfigParseError);
-      const typedError = error as ConfigParseError;
-      expect(typedError.name).toBe("ConfigParseError");
-      expect(typedError.filePath).toBe(filePath);
-    }
-  });
-
-  test("throws ConfigValidationError for invalid schema", async () => {
-    await mkdir(tmpDir, { recursive: true });
-    const filePath = join(tmpDir, "invalid.json");
-    await Bun.write(filePath, JSON.stringify({ provider: {} }));
-
-    try {
-      await loadConfig(filePath);
-      throw new Error("Expected loadConfig to throw");
-    } catch (error) {
-      expect(error).toBeInstanceOf(ConfigValidationError);
-      const typedError = error as ConfigValidationError;
-      expect(typedError.name).toBe("ConfigValidationError");
-      expect(typedError.filePath).toBe(filePath);
-    }
   });
 });
 

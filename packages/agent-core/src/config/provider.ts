@@ -20,15 +20,6 @@ export const modelModalitiesSchema = z
   })
   .strict();
 
-export const modelPricingSchema = z
-  .object({
-    inputUsdPerMillionTokens: z.number().nonnegative().optional(),
-    outputUsdPerMillionTokens: z.number().nonnegative().optional(),
-    reasoningUsdPerMillionTokens: z.number().nonnegative().optional(),
-    cachedInputUsdPerMillionTokens: z.number().nonnegative().optional(),
-  })
-  .strict();
-
 export const modelCallOptionsSchema = z
   .object({
     maxOutputTokens: z.number().int().positive().optional(),
@@ -39,7 +30,6 @@ export const modelCallOptionsSchema = z
     frequencyPenalty: z.number().min(-2).max(2).optional(),
     stopSequences: z.array(z.string()).optional(),
     seed: z.number().int().optional(),
-    maxRetries: z.number().int().nonnegative().optional(),
     timeout: z.number().int().nonnegative().optional(),
     providerOptions: z.record(z.string(), z.unknown()).optional(),
   })
@@ -50,7 +40,6 @@ export const modelConfigSchema = z
     name: z.string().min(1),
     limit: modelLimitSchema,
     modalities: modelModalitiesSchema,
-    pricing: modelPricingSchema.optional(),
     options: modelCallOptionsSchema.optional(),
     variants: z.record(z.string(), modelCallOptionsSchema).optional(),
   })
@@ -89,7 +78,6 @@ export const providersConfigSchema = z
 export type ModelModality = z.infer<typeof modelModalitySchema>;
 export type ModelLimit = z.infer<typeof modelLimitSchema>;
 export type ModelModalities = z.infer<typeof modelModalitiesSchema>;
-export type ModelPricing = z.infer<typeof modelPricingSchema>;
 export type ModelConfig = z.infer<typeof modelConfigSchema>;
 export type ProviderOptions = z.infer<typeof providerOptionsSchema>;
 export type ProviderConfig = z.infer<typeof providerConfigSchema>;

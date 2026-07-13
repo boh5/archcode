@@ -29,6 +29,13 @@ interface ConnectedMcpClient {
 
 export type McpStatusListener = (serverName: string, status: McpServerStatus) => void;
 
+export class BuiltinMcpServerCollisionError extends Error {
+  constructor(public readonly serverName: string) {
+    super(`User MCP server "${serverName}" conflicts with a reserved built-in server`);
+    this.name = "BuiltinMcpServerCollisionError";
+  }
+}
+
 type DescriptorSink = (descriptors: AnyToolDescriptor[]) => void;
 type WarningSink = (warning: McpWarning) => void;
 
@@ -50,6 +57,10 @@ export class McpManager {
     clientFactories: McpClientFactories = createDefaultMcpClientFactories(),
     logger: Logger = silentLogger,
   ) {
+    const collision = Object.keys(userServers).find((name) => builtinServers[name] !== undefined);
+    if (collision !== undefined) {
+      throw new BuiltinMcpServerCollisionError(collision);
+    }
     this.#logger = logger.child({ module: "mcp.manager" });
     this.clientFactories = clientFactories;
     this.secrets = collectSecrets(builtinServers, userServers);

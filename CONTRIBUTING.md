@@ -80,7 +80,7 @@ bun run build
 - Custom errors should extend `Error`, set `this.name`, and expose meaningful typed fields.
 - Zod schemas should use `.strict()`.
 - Keep package boundaries intact; architecture tests enforce important dependency rules.
-- Do not commit secrets. Use environment variables for tokens and provider credentials.
+- Do not commit secrets. GitHub tokens are resolved from environment variables; Provider credentials are literal values in the private server config file.
 
 ## Testing conventions
 
@@ -95,7 +95,7 @@ bun run build
 
 ## Configuration changes
 
-If you change `.archcode.json` schema, defaults, validation behavior, model option semantics, or user-facing configuration, update [README.md](./README.md) in the same PR.
+If you change the `~/.archcode/config.json` schema, defaults, validation behavior, model option semantics, or user-facing configuration, update [README.md](./README.md) in the same PR.
 
 Configuration is strict on purpose: unknown fields should fail fast so users catch typos early.
 
@@ -104,7 +104,7 @@ Configuration is strict on purpose: unknown fields should fail fast so users cat
 High-level runtime flow:
 
 ```text
-.archcode.json
+~/.archcode/config.json
   → config loading and validation
   → provider and model resolution
   → builtin tools and MCP discovery

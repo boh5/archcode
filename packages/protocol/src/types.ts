@@ -470,6 +470,124 @@ export interface GlobalSSEShutdownEvent {
   reason?: string;
 }
 
+/** A secret exists on disk but is never returned through the Settings API. */
+export interface ConfiguredSecretView {
+  configured: true;
+}
+
+export const BUILTIN_MCP_SERVER_NAMES = ["context7", "grep.app", "exa"] as const;
+export type BuiltinMcpServerName = typeof BUILTIN_MCP_SERVER_NAMES[number];
+
+/** Explicit secret mutation accepted by PUT /api/config. */
+export type ConfigSecretMutation =
+  | { action: "preserve" }
+  | { action: "replace"; value: string }
+  | { action: "delete" };
+
+export interface ConfigModelCallOptions {
+  maxOutputTokens?: number;
+  temperature?: number;
+  topP?: number;
+  topK?: number;
+  presencePenalty?: number;
+  frequencyPenalty?: number;
+  stopSequences?: string[];
+  seed?: number;
+  timeout?: number;
+  providerOptions?: Record<string, unknown>;
+}
+
+export interface ConfigModelSettings {
+  name: string;
+  limit: { context: number; output: number };
+  modalities: { input: Array<"text" | "image" | "audio" | "video">; output: Array<"text" | "image" | "audio" | "video"> };
+  options?: ConfigModelCallOptions;
+  variants?: Record<string, ConfigModelCallOptions>;
+}
+
+export interface ConfigProviderSettings<Secret> {
+  npm: string;
+  name: string;
+  options: {
+    baseURL: string;
+    apiKey?: Secret;
+    headers?: Record<string, Secret>;
+    queryParams?: Record<string, Secret>;
+  };
+  models: Record<string, ConfigModelSettings>;
+}
+
+export interface ConfigAgentSettings {
+  model: string;
+  variant?: string;
+  options?: ConfigModelCallOptions;
+}
+
+export interface ConfigMcpServerSettings<Secret> {
+  transport: "http";
+  url: string;
+  headers?: Record<string, Secret>;
+  timeout?: number;
+}
+
+export interface ConfigMemorySettings {
+  enabled?: boolean;
+  minMessages?: number;
+  minContentLength?: number;
+  cooldownMs?: number;
+}
+
+export interface ConfigGithubIntegrationSettings {
+  enabled?: boolean;
+  tokenEnv?: string;
+  apiBaseUrl?: "https://api.github.com";
+  defaultOwner?: string;
+  defaultRepo?: string;
+}
+
+/** The complete safe-to-edit representation of ~/.archcode/config.json. */
+export interface ServerConfigDocument<Secret> {
+  $schema?: string;
+  provider: Record<string, ConfigProviderSettings<Secret>>;
+  agents: {
+    engineer: ConfigAgentSettings;
+    goal_lead: ConfigAgentSettings;
+    plan: ConfigAgentSettings;
+    build: ConfigAgentSettings;
+    reviewer: ConfigAgentSettings;
+    explore: ConfigAgentSettings;
+    librarian: ConfigAgentSettings;
+  };
+  mcp?: { servers: Record<string, ConfigMcpServerSettings<Secret>> };
+  integrations?: { github?: ConfigGithubIntegrationSettings };
+  memory?: ConfigMemorySettings;
+}
+
+/** Safe configuration returned by GET /api/config. */
+export type ServerConfigEditableView = ServerConfigDocument<ConfiguredSecretView>;
+
+/** Complete configuration mutation accepted by PUT /api/config. */
+export type ServerConfigUpdate = ServerConfigDocument<ConfigSecretMutation>;
+
+export interface ServerConfigSnapshot {
+  config: ServerConfigEditableView;
+  revision: string;
+  configPath: string;
+  restartRequired: boolean;
+}
+
+export interface UpdateServerConfigRequest {
+  expectedRevision: string;
+  config: ServerConfigUpdate;
+}
+
+export type UpdateServerConfigResponse = ServerConfigSnapshot;
+
+export interface ServerConfigValidationIssue {
+  path: string;
+  message: string;
+}
+
 export type McpServerStatus =
   | { state: "pending" }
   | { state: "ready"; toolCount: number }

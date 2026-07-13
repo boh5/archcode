@@ -30,7 +30,7 @@ afterEach(() => {
 describe("runLlmText", () => {
   test("calls generateText with maxRetries 0 and returns exact text contract", async () => {
     mockGenerateText.mockResolvedValueOnce({ text: "hello", toolCalls: [] });
-    const result = await runLlmText({ model: dummyModel, prompt: "Say hi", modelOptions: { maxRetries: 7 } });
+    const result = await runLlmText({ model: dummyModel, prompt: "Say hi" });
 
     expect(result).toEqual({ text: "hello" });
     expect(generateTextCalls()[0]![0]).toMatchObject({ prompt: "Say hi", maxRetries: 0 });

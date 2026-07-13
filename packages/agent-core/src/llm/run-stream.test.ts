@@ -29,7 +29,7 @@ describe("runLlmStream", () => {
       model: dummyModel,
       messages: [{ role: "user", content: "hello" }],
       system: "system",
-      modelOptions: { maxRetries: 5, temperature: 0.2 },
+      modelOptions: { temperature: 0.2 },
     });
 
     expect(result).toBe(streamResult as never);

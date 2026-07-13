@@ -67,11 +67,11 @@ export class ProviderRegistry {
  *
  * @example
  * ```ts
- * import { loadConfig } from "../config/index";
+ * import { ServerConfigService } from "../config/index";
  * import { createRegistry } from "./provider/index";
  * import { generateText } from "ai";
  *
- * const config = await loadConfig(".archcode.json");
+ * const config = await new ServerConfigService().loadForStartup();
  * const registry = createRegistry(config.provider);
  *
  * const model = registry.getModel("xxx:gpt-5.2");

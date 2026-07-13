@@ -92,7 +92,7 @@ function expandHeaders(
 // ─── Resolver ───────────────────────────────────────────────────────────────
 
 /**
- * Resolve an MCP config from the parsed `.archcode.json` object.
+ * Resolve an MCP config from the parsed global server configuration.
  *
  * - Applies env expansion to `url` and header values.
  * - Validates URL scheme (only http: / https:).

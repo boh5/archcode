@@ -2,7 +2,7 @@ import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import type { ModelCallOptions } from "../config/provider";
 import { AI_SDK_MANAGED_MAX_RETRIES } from "./constants";
 
-export type SafeModelCallOptions = Omit<ModelCallOptions, "providerOptions" | "maxRetries"> & {
+export type SafeModelCallOptions = Omit<ModelCallOptions, "providerOptions"> & {
   providerOptions?: ProviderOptions;
   maxRetries: 0;
 };

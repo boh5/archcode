@@ -78,7 +78,7 @@ apps/server/src/
 packages/agent-core/src/
 ├── runtime.ts                  # createRuntime(): config → providers → tools → MCP → session manager
 ├── index.ts                    # Public API exports
-├── config/                     # .archcode.json loading, Zod schema (.strict()), env expansion, MCP/GitHub config
+├── config/                     # Global config service, Zod schema (.strict()), MCP/GitHub env resolution
 ├── provider/                   # Provider registry wrapping AI SDK instances, ModelInfo with token limits
 ├── agents/definitions/         # AgentDefinition records for engineer, goal_lead, plan, build, reviewer, explore, librarian
 ├── agents/factory.ts           # Agent creation and delegation through ConfiguredAgent
@@ -145,7 +145,7 @@ packages/utils/src/
 
 **Data flow:**
 ```
-.archcode.json → config → providers → registerBuiltinTools → fire-and-forget MCP background load
+~/.archcode/config.json → config → providers → registerBuiltinTools → fire-and-forget MCP background load
   → Hono server → Session-scoped Engineer or Goal Lead / Goal / Automation / HITL routes
   → query loop → store → SSE → Web UI
 
@@ -184,19 +184,19 @@ partitionToolCalls → global permissions
   → global after (redact → truncate → audit → logger)
 ```
 
-**Config** (`.archcode.json`): `provider.<id>.{npm, name, options, models}` + strict seven-agent `agents.<agentName>.{model, variant, options}` + optional `memory`, `integrations.github`, and `mcp.servers.<id>.{url, headers, enabled}`. Strict Zod. Env expansion: `${VAR}`, `${VAR:-default}`.
+**Config** (`~/.archcode/config.json`): server-wide `provider.<id>.{npm, name, options, models}` + strict seven-agent `agents.<agentName>.{model, variant, options}` + optional `memory`, `integrations.github`, and `mcp.servers.<id>.{transport, url, headers, timeout}`. Strict Zod. Provider values are literal; MCP URL/headers and GitHub token resolution retain their environment-variable behavior. Project directories are never searched for configuration.
 
-**Model configuration** (`.archcode.json`):
+**Model configuration** (`~/.archcode/config.json`):
 - Provider ids and model ids combine as `provider:modelId` (example: `"local:glm-5"`). Do **not** use `provider/model`.
-- `provider.<id>.models.<modelId>.options` defines base AI SDK model-call options for that model. Use AI SDK camelCase names such as `maxOutputTokens`, `temperature`, `topP`, `topK`, `presencePenalty`, `frequencyPenalty`, `stopSequences`, `seed`, `maxRetries`, `timeout`, and `providerOptions`.
+- `provider.<id>.models.<modelId>.options` defines base AI SDK model-call options for that model. Use AI SDK camelCase names such as `maxOutputTokens`, `temperature`, `topP`, `topK`, `presencePenalty`, `frequencyPenalty`, `stopSequences`, `seed`, `timeout`, and `providerOptions`.
 - `provider.<id>.models.<modelId>.variants.<variantName>` defines named option profiles for the same model. An agent's `variant` references one of these names and is consumed during resolution; it is never passed to the AI SDK call.
 - `agents.<agentName>.model` is required for all seven agents: `engineer`, `goal_lead`, `plan`, `build`, `reviewer`, `explore`, and `librarian`. Missing any required agent fails fast with an actionable config error.
 - `agents.<agentName>.options` overrides the selected model and variant options. Merge order is shallow: model `options` → selected `variants[variant]` → agent `options`.
 - `providerOptions` follows the same shallow merge rule as one top-level key: later layers replace the whole `providerOptions` object rather than deep-merging nested provider settings.
 - Unknown model ids, unknown variant names, and missing agent model config all fail fast with actionable errors.
 - LLM execution is centralized in `packages/agent-core/src/llm/`. Non-LLM runtime code must not import `streamText` or `generateText` directly from `"ai"`; use `runLlmStream`, `runLlmText`, or `runLlmObject` instead.
-- `.archcode.json` `maxRetries` is an AI SDK option, not ArchCode-managed recovery configuration. Managed calls force AI SDK `maxRetries: 0` so ArchCode owns retry/recovery, including HTTP 200 stream-body EOF/truncated-SSE failures that AI SDK retries cannot recover.
-- Retry constants are internal v1 implementation details. There is no `.archcode.json` recovery retry config yet. Existing auto-compact behavior is preserved; emergency context-overflow compact automation is follow-up/out-of-scope.
+- `maxRetries` is not a configuration field. Managed calls force AI SDK `maxRetries: 0` so ArchCode owns retry/recovery, including HTTP 200 stream-body EOF/truncated-SSE failures that AI SDK retries cannot recover.
+- Retry constants are internal v1 implementation details. There is no global recovery retry config yet. Existing auto-compact behavior is preserved; emergency context-overflow compact automation is follow-up/out-of-scope.
 
 Minimal example:
 ```json
@@ -207,7 +207,7 @@ Minimal example:
       "name": "local",
       "options": {
         "baseURL": "http://localhost:8090/v1",
-        "apiKey": "${LOCAL_API_KEY:-local-dev-key}"
+        "apiKey": "local-dev-key"
       },
       "models": {
         "glm-5": {
@@ -241,12 +241,12 @@ Minimal example:
     "engineer": {
       "model": "local:glm-5",
       "variant": "deep",
-      "options": { "temperature": 0.25, "maxRetries": 2 }
+      "options": { "temperature": 0.25 }
     },
     "goal_lead": {
       "model": "local:glm-5",
       "variant": "deep",
-      "options": { "temperature": 0.25, "maxRetries": 2 }
+      "options": { "temperature": 0.25 }
     },
     "plan": {
       "model": "local:glm-5",
@@ -372,7 +372,7 @@ HITL is a durable project-scoped approval/question queue backed by `.archcode/hi
 
 ## MCP
 
-HTTP Streamable only. Built-in: context7, grep.app, exa (hardcoded in `BUILTIN_MCP_SERVERS`). User servers in `.archcode.json → mcp.servers`. Tool names: `mcp__{server}__{tool}`. Failed discovery = warning, not crash.
+HTTP Streamable only. Built-in: context7, grep.app, exa (hardcoded in `BUILTIN_MCP_SERVERS` and non-overridable). User servers are read from `~/.archcode/config.json → mcp.servers`. Tool names: `mcp__{server}__{tool}`. Failed discovery = warning, not crash.
 
 **Background loading** (non-blocking): `McpManager.startBackgroundDiscovery()` fires-and-forgets at `createRuntime()` — server boots immediately while MCP servers connect in background. Per-server status: `pending → ready | failed`. Status accessible via `AgentRuntime.getMcpServerStatuses()` and `AgentRuntime.subscribeMcpStatusChanges(listener)`.
 
@@ -406,7 +406,7 @@ HTTP Streamable only. Built-in: context7, grep.app, exa (hardcoded in `BUILTIN_M
 - Talk in chinese, code in english (include comments).
 - If you have any questions or choices, feel free to ask user.
 - Use TDD development.
-- **When modifying `.archcode.json` config schema or defaults, must also update README.md config docs.**
+- **When modifying the global config schema or defaults, must also update README.md config docs.**
 - **Prefer Bun-native APIs** over `node:*` imports. Use `crypto.randomUUID()`, `Bun.file()`, `Bun.write()`, `Bun.SystemError`, `import.meta.dir`. Only use `node:*` when Bun has no native alternative (e.g. `node:path` join/resolve, `node:os` tmpdir/homedir, `node:fs/promises` mkdir/rename/readdir/rm, `node:fs` sync methods).
 - Custom error classes: extend `Error`, typed constructor params, explicit `this.name = "ClassName"`, meaningful public fields.
 - Barrel exports via `index.ts`. All Zod schemas use `.strict()`.

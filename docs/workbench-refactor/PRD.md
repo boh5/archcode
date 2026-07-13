@@ -292,7 +292,7 @@
 - Approval Queue 完整:durable、project-scoped、全局 Dashboard + 就地列表同步;Web/Dashboard 使用 redacted `displayPayload`,不展示 raw payload。
 - Goal budget 基础:per-Goal token 上限 + warning/hard pause;只统计 token,不做价格/cost accounting。
 - Goal memory 接通 Plan/Build/Review prompt,且与 Project memory 隔离;不自动 promotion/transfer。
-- Phase 2 不新增 `.archcode.json` budget/retry schema 字段或默认值;budget/retry 是 Goal 创建输入和持久化 Goal state。
+- Phase 2 不新增 `~/.archcode/config.json` budget/retry schema 字段或默认值;budget/retry 是 Goal 创建输入和持久化 Goal state。
 - Legacy workflow runtime/tool/routes 已移除;当前路径是 Goal/HITL、普通 Session 证据与 Reviewer summary，不存在 Goal-specific artifact API。
 
 ### 阶段 3:Loop MVP(可跑通)
@@ -415,7 +415,7 @@
 - ❌ Phase 1-4 不做 cron/trigger 调度;Phase 5 已确认支持 cron 和 `triggers[]`
 - ❌ Phase 5 不做用户自定义 pattern registry/profile/script/hooks/DSL。预设库已足够起步
 - ❌ 不做独立 worker 进程(单进程足够)
-- ❌ 不把缺失 model pricing 当零成本。provider model pricing 是可选 metadata;缺失时 USD budget enforcement 不可用。
+- ❌ 当前不维护 model pricing metadata，也不提供 USD budget enforcement；预算只使用 token/iteration 护栏。
 - ❌ Phase 2 不做 checkpoint/rollback/rerun 功能
 - ❌ Phase 2 不做 artifact versions/revisions/latest 指针
 - ❌ Phase 2 不做 Safe/Balanced/Brave approval modes
@@ -515,6 +515,6 @@
 13. **Phase 4 加第一批 external integrations** —— 只支持 GitHub.com(PR/issue)+ GitHub Actions 状态 connector,让 pr_babysitter / ci_sweeper / issue_triage 等预设可读取状态和评论。Phase 3 只本地预设可用(决策 2026-07,Phase 4 文档更新 2026-07)
 14. **不引入 Mission,但留占位** —— 保持 Session/Goal/Loop 三层。TDD 留"未来扩展点:Mission 原语"占位节,后续单个 Goal 不够大功能场景再评估(决策 2026-07)
 15. **Workflow 硬切迁移** —— Phase 1 同步删 code + 7-agent 立即 required。用户数据 `.archcode/workflows/` 保留只读。ProjectContext refactor 是高风险区,需扎实 acceptance test(决策 2026-07)
-16. **Budget pricing 边界** —— provider model pricing 是可选 metadata;缺失 pricing 时 USD budget enforcement 不可用,不能当零成本。token/iteration 护栏仍可用(决策 2026-07,Phase 4 文档更新 2026-07)
+16. **Budget pricing 边界** —— 当前不维护 provider model pricing，也不做 USD budget enforcement；token/iteration 护栏仍可用（决策 2026-07）。
 17. **AI 自治边界** —— AI 可 commit 到本地,人 push + 开 PR。AI 永不 merge/rebase/approve/force-push。bash guard 拦截 git push/merge/rebase/reset --hard。Phase 4 connector 只做 GitHub.com/GitHub Actions 的状态、评论和可选 fix Goal handoff(决策 2026-07,Phase 4 文档更新 2026-07)
 18. **self-hosted 不加 headless 模式** —— 用户自行部署到 always-on 主机,ArchCode 不做 headless/daemon 模式,文档指引即可(决策 2026-07)

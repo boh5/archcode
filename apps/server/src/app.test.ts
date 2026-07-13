@@ -5,6 +5,10 @@ import { createServerApp } from "./app";
 import { globalEventBus } from "./events/global-event-bus";
 
 const mockRuntime = {
+  configService: {
+    getSnapshot: mock(async () => ({ config: { provider: {}, agents: {} }, revision: "test", configPath: "/test", restartRequired: false })),
+    save: mock(async () => ({ config: { provider: {}, agents: {} }, revision: "test", configPath: "/test", restartRequired: false })),
+  },
   listAgentDescriptors: mock(() => []),
   subscribeHitlEvents: mock(() => () => undefined),
   subscribeSessionRuntimeChanges: mock(() => () => undefined),
@@ -75,6 +79,25 @@ describe("createServerApp", () => {
 
     expect(permission.status).toBe(404);
     expect(question.status).toBe(404);
+  });
+
+  test("does not expose a project-scoped configuration endpoint", async () => {
+    const { app } = createServerApp(mockRuntime, { dev: true });
+
+    const response = await app.request("/api/projects/example/config");
+
+    expect(response.status).toBe(404);
+  });
+
+  test("mounts only the global configuration endpoint", async () => {
+    const { app } = createServerApp(mockRuntime, { dev: true });
+
+    const global = await app.request("/api/config");
+    const project = await app.request("/api/projects/example/config");
+
+    expect(global.status).toBe(200);
+    expect(await global.json()).toMatchObject({ revision: "test", restartRequired: false });
+    expect(project.status).toBe(404);
   });
 
   test("includes Session Family runtime state in the initial global snapshot", async () => {

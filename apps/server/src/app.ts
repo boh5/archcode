@@ -6,6 +6,7 @@ import { errorHandler } from "./error-handler";
 import { UnauthorizedError } from "./errors";
 import { requestLogger } from "./logger";
 import { createCommandsRoutes } from "./routes/commands";
+import { createConfigRoutes } from "./routes/config";
 import { createAgentsRoutes } from "./routes/agents";
 import { createCompressionRoutes } from "./routes/compression";
 import { createDirectoriesRoutes } from "./routes/directories";
@@ -106,6 +107,7 @@ export function createServerApp(
   const files = createFilesRoutes(serverRuntime);
   const directories = createDirectoriesRoutes();
   const mcp = createMcpRoutes(serverRuntime);
+  const config = createConfigRoutes(serverRuntime.configService);
 
   app.route("/api", dashboard);
   app.route("/api/projects", projects);
@@ -119,6 +121,7 @@ export function createServerApp(
   app.route("/api/projects/:slug/sessions/:sessionId/commands", commands);
   app.route("/api/projects", files);
   app.route("/api/mcp", mcp);
+  app.route("/api/config", config);
   app.route("/api/sessions", new Hono());
   app.route("/api/commands", new Hono());
   app.route("/api/agents", agents);

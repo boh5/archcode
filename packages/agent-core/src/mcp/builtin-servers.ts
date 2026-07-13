@@ -1,4 +1,5 @@
 import type { ResolvedMcpServerConfig } from "../config/mcp";
+import type { BuiltinMcpServerName } from "@archcode/protocol";
 
 /**
  * Built-in MCP server definitions.
@@ -11,10 +12,9 @@ import type { ResolvedMcpServerConfig } from "../config/mcp";
  * - grep.app: no documented rate limit; fully free code search
  * - exa: ~150 requests/day unauthenticated; 3 QPS; paid plans for higher limits
  *
- * User-configured servers in `.archcode.json` can override these defaults
- * (e.g., adding API key headers for higher rate limits).
+ * User configuration cannot override these reserved server names.
  */
-export const BUILTIN_MCP_SERVERS: Record<string, ResolvedMcpServerConfig> = {
+export const BUILTIN_MCP_SERVERS: Record<BuiltinMcpServerName, ResolvedMcpServerConfig> = {
   context7: {
     transport: "http",
     url: "https://mcp.context7.com/mcp",

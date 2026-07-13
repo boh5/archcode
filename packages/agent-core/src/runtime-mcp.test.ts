@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, mock, test } from "bun:test";
 import { rmSync } from "node:fs";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
@@ -14,6 +14,7 @@ import type {
 import type { AnyToolDescriptor } from "./tools/types";
 import { defineTool } from "./tools/index";
 import { createRuntime } from "./runtime";
+import { ServerConfigService, resolveServerConfigPath } from "./config";
 
 const tmpRoots: string[] = [];
 
@@ -29,11 +30,12 @@ async function makeTempRoot(): Promise<string> {
   return root;
 }
 
-async function writeConfig(config: Record<string, unknown>): Promise<string> {
+async function writeConfig(config: Record<string, unknown>): Promise<ServerConfigService> {
   const root = await makeTempRoot();
-  const configPath = join(root, ".archcode.json");
+  const configPath = resolveServerConfigPath(root);
+  await mkdir(join(root, ".archcode"), { recursive: true });
   await writeFile(configPath, JSON.stringify(config));
-  return configPath;
+  return new ServerConfigService({ homeDir: root });
 }
 
 function makeProviderConfig() {
@@ -169,13 +171,13 @@ function makeMockMcpManager(options: MockMcpManagerOptions = {}): {
 
 describe("createRuntime MCP background loading", () => {
   test("createRuntime returns with all MCP servers in pending state", async () => {
-    const configPath = await writeConfig(makeConfig({ servers: {} }));
+    const configService = await writeConfig(makeConfig({ servers: {} }));
     const { manager } = makeMockMcpManager({
       servers: { docs: { state: "pending" } },
     });
 
     const runtime = await createRuntime({
-      configPath,
+      configService,
       mcpManagerFactory: () => manager,
     });
 
@@ -184,11 +186,11 @@ describe("createRuntime MCP background loading", () => {
   });
 
   test("createRuntime calls startBackgroundDiscovery (not discover)", async () => {
-    const configPath = await writeConfig(makeConfig({ servers: {} }));
+    const configService = await writeConfig(makeConfig({ servers: {} }));
     const { manager } = makeMockMcpManager();
 
     const runtime = await createRuntime({
-      configPath,
+      configService,
       mcpManagerFactory: () => manager,
     });
 
@@ -199,7 +201,7 @@ describe("createRuntime MCP background loading", () => {
   });
 
   test("discovered descriptors get registered into toolRegistry after background load", async () => {
-    const configPath = await writeConfig(makeConfig({ servers: {} }));
+    const configService = await writeConfig(makeConfig({ servers: {} }));
     const descriptor = makeMcpDescriptor("mcp__docs__lookup");
     let releaseConnect!: () => void;
     const connectGate = new Promise<void>((resolve) => {
@@ -211,7 +213,7 @@ describe("createRuntime MCP background loading", () => {
     });
 
     const runtime = await createRuntime({
-      configPath,
+      configService,
       mcpManagerFactory: () => manager,
     });
 
@@ -227,14 +229,14 @@ describe("createRuntime MCP background loading", () => {
   });
 
   test("duplicate tool descriptors are skipped with warning (not thrown)", async () => {
-    const configPath = await writeConfig(makeConfig({ servers: {} }));
+    const configService = await writeConfig(makeConfig({ servers: {} }));
     const duplicate = makeMcpDescriptor("file_read"); // collides with builtin
     const { manager, callbacks } = makeMockMcpManager({
       descriptors: [duplicate],
     });
 
     const runtime = await createRuntime({
-      configPath,
+      configService,
       mcpManagerFactory: () => manager,
     });
 
@@ -249,7 +251,7 @@ describe("createRuntime MCP background loading", () => {
   });
 
   test("onWarning callback routes into runtime.warnings", async () => {
-    const configPath = await writeConfig(makeConfig({ servers: {} }));
+    const configService = await writeConfig(makeConfig({ servers: {} }));
     const warning: McpWarning = {
       serverName: "docs",
       message: "MCP server \"docs\" returned no tools",
@@ -259,7 +261,7 @@ describe("createRuntime MCP background loading", () => {
     });
 
     const runtime = await createRuntime({
-      configPath,
+      configService,
       mcpManagerFactory: () => manager,
     });
 
@@ -270,11 +272,11 @@ describe("createRuntime MCP background loading", () => {
   });
 
   test("subscribeMcpStatusChanges returns an unsubscribe function", async () => {
-    const configPath = await writeConfig(makeConfig({ servers: {} }));
+    const configService = await writeConfig(makeConfig({ servers: {} }));
     const { manager } = makeMockMcpManager();
 
     const runtime = await createRuntime({
-      configPath,
+      configService,
       mcpManagerFactory: () => manager,
     });
 
@@ -291,13 +293,13 @@ describe("createRuntime MCP background loading", () => {
   });
 
   test("subscribeMcpStatusChanges listener receives status updates", async () => {
-    const configPath = await writeConfig(makeConfig({ servers: {} }));
+    const configService = await writeConfig(makeConfig({ servers: {} }));
     const { manager, setStatus } = makeMockMcpManager({
       servers: { docs: { state: "pending" } },
     });
 
     const runtime = await createRuntime({
-      configPath,
+      configService,
       mcpManagerFactory: () => manager,
     });
 
@@ -315,13 +317,13 @@ describe("createRuntime MCP background loading", () => {
   });
 
   test("getMcpServerStatuses returns a snapshot Map (mutations do not affect internal state)", async () => {
-    const configPath = await writeConfig(makeConfig({ servers: {} }));
+    const configService = await writeConfig(makeConfig({ servers: {} }));
     const { manager } = makeMockMcpManager({
       servers: { docs: { state: "pending" } },
     });
 
     const runtime = await createRuntime({
-      configPath,
+      configService,
       mcpManagerFactory: () => manager,
     });
 
@@ -335,7 +337,7 @@ describe("createRuntime MCP background loading", () => {
   });
 
   test("createRuntime does NOT await MCP — slow-connecting mock server does not delay runtime return", async () => {
-    const configPath = await writeConfig(makeConfig({ servers: {} }));
+    const configService = await writeConfig(makeConfig({ servers: {} }));
     let releaseConnect!: () => void;
     const connectGate = new Promise<void>((resolve) => {
       releaseConnect = resolve;
@@ -347,7 +349,7 @@ describe("createRuntime MCP background loading", () => {
 
     let runtimeReturned = false;
     const runtimePromise = createRuntime({
-      configPath,
+      configService,
       mcpManagerFactory: () => manager,
     });
     // Resolve one microtask — if createRuntime awaited MCP, runtimeReturned would still be false.

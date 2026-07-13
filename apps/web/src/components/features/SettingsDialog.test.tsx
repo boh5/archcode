@@ -1,6 +1,12 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import type { McpServerStatus } from "@archcode/protocol";
-import { SettingsDialogContent, SettingsMcpStatusPanel } from "./SettingsDialog";
+import type { ServerConfig } from "../../api/config";
+import {
+  SettingsModelsPanel,
+  SettingsMcpPanel,
+  SettingsNavigation,
+  SettingsRestartBanner,
+} from "./SettingsDialog";
 
 interface ElementLike {
   type?: unknown;
@@ -25,98 +31,94 @@ function textContent(value: unknown): string {
   return textContent(value.props?.children);
 }
 
-function findAll(
-  value: unknown,
-  predicate: (element: ElementLike) => boolean,
-): ElementLike[] {
+function findAll(value: unknown, predicate: (element: ElementLike) => boolean): ElementLike[] {
   const matches: ElementLike[] = [];
   const visit = (node: unknown): void => {
-    if (Array.isArray(node)) {
-      for (const child of node) visit(child);
-      return;
-    }
+    if (Array.isArray(node)) return void node.forEach(visit);
     if (!isElement(node)) return;
     if (predicate(node)) matches.push(node);
-    for (const child of childrenOf(node)) visit(child);
+    childrenOf(node).forEach(visit);
   };
   visit(value);
   return matches;
 }
 
-const onClose = mock(() => {});
-
-function renderShell(servers: Record<string, McpServerStatus> = {}): unknown {
-  return SettingsDialogContent({ servers, onClose });
-}
-
-function renderMcpPanel(servers: Record<string, McpServerStatus> = {}): unknown {
-  return SettingsMcpStatusPanel({ servers });
-}
+const config: ServerConfig = {
+  provider: {
+    local: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Local",
+      options: { baseURL: "http://localhost:3000/v1", apiKey: { action: "preserve" } },
+      models: {
+        "demo-model": {
+          name: "Demo model",
+          limit: { context: 1000, output: 500 },
+          modalities: { input: ["text"], output: ["text"] },
+          variants: { fast: { temperature: 0.1 } },
+        },
+      },
+    },
+  },
+  agents: {
+    engineer: { model: "local:demo-model" }, goal_lead: { model: "local:demo-model" },
+    plan: { model: "local:demo-model" }, build: { model: "local:demo-model" },
+    reviewer: { model: "local:demo-model" }, explore: { model: "local:demo-model" },
+    librarian: { model: "local:demo-model" },
+  },
+  memory: { enabled: true, minMessages: 5, minContentLength: 1000, cooldownMs: 300000 },
+};
 
 describe("SettingsDialog", () => {
-  beforeEach(() => {
-    onClose.mockClear();
+  test("uses the exact Server navigation and no placeholder settings", () => {
+    const tree = SettingsNavigation({ activeSection: "models", onSelect: () => {} });
+    const labels = findAll(tree, (element) => element.type === "button").map(textContent);
+
+    expect(textContent(tree)).toContain("Server");
+    expect(labels).toEqual(["Models", "Agents", "MCP", "Memory", "GitHub"]);
+    expect(textContent(tree)).not.toContain("General");
+    expect(textContent(tree)).not.toContain("MCP Status");
+    expect(textContent(tree)).not.toContain("Providers");
   });
 
-  test("renders an opencode-style settings shell with only MCP Status enabled", () => {
-    const tree = renderShell();
-    const sectionButtons = findAll(tree, (element) => element.type === "button" && element.props?.type === "button");
-
-    expect(textContent(tree)).toContain("Settings");
-    expect(textContent(tree)).toContain("General");
-    expect(textContent(tree)).toContain("MCP Status");
-    expect(textContent(tree)).toContain("Providers");
-    expect(textContent(tree)).toContain("Models");
-    expect(textContent(tree)).toContain("Coming soon");
-
-    const mcpButton = sectionButtons.find((button) => textContent(button).includes("MCP Status"));
-    const disabledButtons = sectionButtons.filter((button) => button.props?.disabled === true);
-
-    expect(mcpButton?.props?.["aria-current"]).toBe("page");
-    expect(disabledButtons).toHaveLength(3);
+  test("keeps providers and models in one continuous Models surface", () => {
+    const tree = SettingsModelsPanel({ config, onChange: () => {} });
+    const header = findAll(tree, (element) => element.props?.title === "Models")[0];
+    expect(header?.props?.description).toBe("Providers and their model profiles are configured together.");
+    expect(textContent(tree)).toContain("local");
+    const editor = findAll(tree, (element) => element.props?.providerId === "local" && element.props?.modelId === "demo-model");
+    expect(editor).toHaveLength(1);
   });
 
-  test("closes from the settings header", () => {
-    const tree = renderShell();
-    const closeButton = findAll(tree, (element) => element.props?.["aria-label"] === "Close settings")[0];
+  test("keeps future model capability metadata but removes pricing and fine-grained call controls", () => {
+    const tree = SettingsModelsPanel({ config, onChange: () => {} });
+    const content = textContent(tree);
 
-    (closeButton?.props?.onClick as () => void)();
-
-    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(content).not.toContain("Pricing");
+    expect(content).not.toContain("maxRetries");
   });
 
-  test("shows an empty MCP status state before servers are reported", () => {
-    const tree = renderMcpPanel();
-
-    expect(textContent(tree)).toContain("MCP Status");
-    expect(textContent(tree)).toContain("0 servers");
-    expect(textContent(tree)).toContain("No MCP servers reported yet");
-  });
-
-  test("renders ready, pending, failed, and disabled MCP servers", () => {
-    const tree = renderMcpPanel({
-      exa: { state: "failed", error: "connection refused" },
+  test("locks the three built-in MCP servers while showing live status", () => {
+    const servers: Record<string, McpServerStatus> = {
       context7: { state: "ready", toolCount: 4 },
-      disabled: { state: "disabled" },
-      grep: { state: "pending" },
-    });
+      "grep.app": { state: "pending" },
+      exa: { state: "failed", error: "unreachable" },
+    };
+    const tree = SettingsMcpPanel({ config, servers, onChange: () => {} });
+    const buttons = findAll(tree, (element) => element.type === "button").map(textContent);
 
-    expect(textContent(tree)).toContain("4 servers");
-    expect(textContent(tree)).toContain("1 ready");
-    expect(textContent(tree)).toContain("1 failed");
-    expect(textContent(tree)).toContain("context7");
+    expect(textContent(tree)).toContain("Built-in");
+    expect(textContent(tree)).toContain("Ready");
+    expect(textContent(tree)).toContain("Pending");
+    expect(textContent(tree)).toContain("Failed");
     expect(textContent(tree)).toContain("4 tools available");
-    expect(textContent(tree)).toContain("exa");
-    expect(textContent(tree)).toContain("connection refused");
-    expect(textContent(tree)).toContain("Discovery is still running");
-    expect(textContent(tree)).toContain("Server is disabled in configuration");
+    expect(textContent(tree)).toContain("unreachable");
+    expect(buttons).not.toContain("Delete context7");
+    expect(buttons).not.toContain("Delete grep.app");
+    expect(buttons).not.toContain("Delete exa");
   });
 
-  test("uses singular copy for one ready tool", () => {
-    const tree = renderMcpPanel({
-      context7: { state: "ready", toolCount: 1 },
-    });
-
-    expect(textContent(tree)).toContain("1 tool available");
+  test("shows the restart notice only after a persisted config change", () => {
+    expect(textContent(SettingsRestartBanner({ restartRequired: false }))).toBe("");
+    expect(textContent(SettingsRestartBanner({ restartRequired: true }))).toContain("Restart required");
   });
 });

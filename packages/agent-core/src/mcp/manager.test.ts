@@ -9,7 +9,7 @@ import type {
   McpTransportLike,
 } from "./client";
 import { BUILTIN_MCP_SERVERS } from "./builtin-servers";
-import { McpManager } from "./manager";
+import { BuiltinMcpServerCollisionError, McpManager } from "./manager";
 
 // ─── Builtin Servers ──────────────────────────────────────────────────────────
 
@@ -181,20 +181,22 @@ describe("McpManager discovery", () => {
     expect(fake.sdkClient.listTools).toHaveBeenCalledTimes(1);
   });
 
-  test("user server overrides builtin server with same name (no collision error)", async () => {
+  test("rejects a user server that collides with a built-in server name", () => {
     const builtinUrl = "https://builtin.example.test/rpc";
     const userUrl = "https://user.example.test/rpc";
     const fake = makeFakeServer([tool("lookup")]);
-    const manager = new McpManager(
+    expect(() => new McpManager(
       { docs: makeConfig({ url: builtinUrl }) },
       { docs: makeConfig({ url: userUrl }) },
       fake.factories,
-    );
-
-    // No throw — user overrides builtin via mergedServers() spread.
-    const names = await collectDescriptors(manager, (n) => n.length >= 1);
-    expect(names).toEqual(["mcp__docs__lookup"]);
-    expect(fake.sdkClient.connect).toHaveBeenCalledTimes(1);
+    )).toThrow(BuiltinMcpServerCollisionError);
+    try {
+      new McpManager({ docs: makeConfig({ url: builtinUrl }) }, { docs: makeConfig({ url: userUrl }) }, fake.factories);
+      throw new Error("Expected collision");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BuiltinMcpServerCollisionError);
+      expect((error as BuiltinMcpServerCollisionError).serverName).toBe("docs");
+    }
   });
 
   test("discovers multiple servers without serially waiting for earlier servers", async () => {

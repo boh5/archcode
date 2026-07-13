@@ -1,12 +1,10 @@
-import { realpath } from "node:fs/promises";
-import { dirname } from "node:path";
 import { defaultAgentDefinitions } from "./agents";
 import type { AgentName } from "./agents";
 import { resolveAgentModel } from "./agents/model-resolver";
 import { SessionAgentManager } from "./agents/session-agent-manager";
 import { BackgroundTaskManager } from "./background/manager";
 import type { SlashCommandResult } from "./commands/types";
-import { loadConfig } from "./config/load";
+import { ServerConfigService } from "./config/server-config-service";
 import { configureDefaultLspClientPoolLogger } from "./lsp/client-pool";
 import { configureDefaultBinaryManagerLogger } from "./binary/manager";
 import { configureDefaultProcessRunnerLogger } from "./process/runner";
@@ -46,7 +44,6 @@ import type {
   SessionFamilyActivity,
   SessionTreeResponse,
 } from "@archcode/protocol";
-import { CONFIG_FILE_NAME, ENV_WORKSPACE_ROOT } from "@archcode/protocol";
 import { createRegistry as createToolRegistry, DuplicateToolError, type ToolRegistry } from "./tools/index";
 import {
   SessionExecutionManager,
@@ -86,11 +83,9 @@ import { generateTitle } from "./title-generation";
 import type { GoalState } from "./goals/state";
 import { WorktreeService } from "./worktrees";
 
-const DEFAULT_CONFIG_PATH = CONFIG_FILE_NAME;
-
 export interface AgentRuntimeOptions {
-  configPath?: string;
-  workspaceRoot?: string;
+  /** Explicit dependency-injection seam for isolated tests. */
+  configService?: ServerConfigService;
   mcpManagerFactory?: (config: ResolvedMcpConfig) => McpManager;
   projectRegistryHomeDir?: string;
   automationSchedulerTimer?: AutomationSchedulerTimer;
@@ -139,6 +134,7 @@ export interface AgentRuntime {
   readonly providerRegistry: ProviderRegistry;
   readonly skillService: SkillService;
   readonly warnings: McpWarning[];
+  readonly configService: ServerConfigService;
   readonly projectRegistry: ProjectRegistry;
   readonly contextResolver: ProjectContextResolver;
   listAgentDescriptors(): readonly AgentDescriptor[];
@@ -198,7 +194,8 @@ export async function createRuntime(
   const logger = options.logger ?? createConsoleLogger({ level: "info" });
   const runtimeLogger = logger.child({ module: "runtime" });
   const warnings: McpWarning[] = [];
-  const config = await loadConfig(options.configPath ?? DEFAULT_CONFIG_PATH, { logger: runtimeLogger });
+  const configService = options.configService ?? new ServerConfigService();
+  const config = await configService.loadForStartup();
   const providerRegistry = createProviderRegistry(config.provider);
   const toolRegistry = createToolRegistry();
   registerBuiltinTools(toolRegistry, logger.child({ module: "tools" }), {
@@ -255,7 +252,6 @@ export async function createRuntime(
       (warning) => recordWarning(warning),
     );
 
-    await resolveWorkspaceRoot(options);
     const projectRegistry = new ProjectRegistry({ homeDir: options.projectRegistryHomeDir, logger: logger.child({ module: "projects.registry" }) });
     const projectSlugsByWorkspace = new Map(
       (await projectRegistry.list()).map((project) => [project.workspaceRoot, project.slug]),
@@ -880,6 +876,7 @@ export async function createRuntime(
       providerRegistry,
       skillService,
       warnings,
+      configService,
       projectRegistry,
       contextResolver,
       listAgentDescriptors: () => defaultAgentDefinitions.map(({ name, displayName }) => ({ name, displayName })),
@@ -1044,13 +1041,6 @@ function assertRuntimeSessionAgentScope(options: CreateRuntimeSessionOptions): v
   if (options.agentName === "goal_lead") {
     throw new Error('Agent "goal_lead" requires a Goal-bound Session');
   }
-}
-
-async function resolveWorkspaceRoot(options: AgentRuntimeOptions): Promise<string> {
-  if (options.workspaceRoot) return options.workspaceRoot;
-  if (Bun.env[ENV_WORKSPACE_ROOT]) return Bun.env[ENV_WORKSPACE_ROOT];
-
-  return realpath(dirname(options.configPath ?? DEFAULT_CONFIG_PATH));
 }
 
 export async function closeMcpManagerBestEffort(

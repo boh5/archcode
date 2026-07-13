@@ -27,7 +27,7 @@ bun install
 
 ### 2. Configure models
 
-Create `.archcode.json` in the repository root. This minimal example uses an OpenAI-compatible local provider and assigns the same model to all seven built-in agent roles:
+Create `~/.archcode/config.json`. ArchCode reads this single server-wide file for every registered project; project directories are never searched for configuration. This minimal example uses an OpenAI-compatible local provider and assigns the same model to all seven built-in agent roles:
 
 ```json
 {
@@ -37,7 +37,7 @@ Create `.archcode.json` in the repository root. This minimal example uses an Ope
       "name": "local",
       "options": {
         "baseURL": "http://localhost:8090/v1",
-        "apiKey": "${LOCAL_API_KEY:-local-dev-key}"
+        "apiKey": "local-dev-key"
       },
       "models": {
         "glm-5": {
@@ -60,7 +60,18 @@ Create `.archcode.json` in the repository root. This minimal example uses an Ope
 }
 ```
 
-Provider IDs and model IDs combine as `provider:modelId`, such as `local:glm-5`. Environment variable expansion supports `${VAR}` and `${VAR:-default}`.
+Provider IDs and model IDs combine as `provider:modelId`, such as `local:glm-5`. Provider options are literal values and are not expanded from environment-variable expressions.
+
+Existing development checkouts can copy the former repository-local file once:
+
+```sh
+mkdir -p ~/.archcode
+install -m 600 .archcode.json ~/.archcode/config.json
+```
+
+ArchCode does not read, migrate, or fall back to the old file.
+
+The Web UI edits the same global file from **Settings → Server**. Saving validates and writes the file atomically, but the running process keeps its startup configuration; restart ArchCode when Settings shows **Restart required**.
 
 ### 3. Start ArchCode
 
@@ -128,7 +139,7 @@ ArchCode ships with seven specialized roles:
 | Explore | Searches and reads the local codebase |
 | Librarian | Looks up documentation and external references |
 
-You configure the model for each role in `.archcode.json`.
+You configure the model for each role in `~/.archcode/config.json`.
 
 ## Server settings
 
@@ -144,7 +155,7 @@ You configure the model for each role in `.archcode.json`.
 
 ## GitHub integration
 
-GitHub support is optional and configured through `.archcode.json`:
+GitHub support is optional and configured through `~/.archcode/config.json`:
 
 ```json
 {
@@ -157,15 +168,18 @@ GitHub support is optional and configured through `.archcode.json`:
 }
 ```
 
-Authentication is environment-variable based. Do not put raw tokens in `.archcode.json`.
+GitHub authentication is environment-variable based. Do not put raw GitHub tokens in `~/.archcode/config.json`.
 
 ## Configuration notes
 
-- `.archcode.json` uses strict validation; unknown fields are rejected.
+- `~/.archcode/config.json` uses strict validation; unknown fields are rejected.
 - The `agents` section must include `engineer`, `goal_lead`, `plan`, `build`, `reviewer`, `explore`, and `librarian`.
 - Model options use AI SDK-style camelCase names, such as `maxOutputTokens`, `temperature`, `topP`, `topK`, `timeout`, and `providerOptions`.
+- Settings edits model options, complete variant maps, and per-Agent overrides as validated JSON objects; provider-specific call settings belong under `providerOptions`.
+- `maxRetries` is not configurable. ArchCode owns LLM recovery and always disables AI SDK retries internally.
 - Agent options are merged in this order: `model.options → variants[agent.variant] → agents[agent].options`.
 - `providerOptions` is shallow-replaced by later layers, not deep-merged.
+- MCP URLs and headers retain their existing `${VAR}` / `${VAR:-default}` expansion; Provider options do not use this expansion.
 
 ## Self-hosting notes
 
@@ -173,7 +187,7 @@ ArchCode can run on a remote server so it stays available while agents work. For
 
 - Set `ARCHCODE_SERVER_PASSWORD`.
 - Put ArchCode behind HTTPS or a trusted reverse proxy.
-- Keep `.archcode.json` and environment variables private.
+- Keep `~/.archcode/config.json` and environment variables private. The configuration file should be readable and writable only by the server user (`0600`).
 - Register only project directories you intend ArchCode to access.
 - Use a single ArchCode server process as the writer for a registered project.
   Repository lifecycle and durable queue locks are process-local in this version.

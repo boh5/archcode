@@ -1,6 +1,6 @@
 export class NoModelsConfiguredError extends Error {
   constructor() {
-    super("No models configured in .archcode.json");
+    super("No models configured in ~/.archcode/config.json");
     this.name = "NoModelsConfiguredError";
   }
 }
