@@ -40,6 +40,7 @@ import {
   SessionExecutionScopeConflictError,
   type SessionExecutionScopeValidator,
 } from "./session-execution-scope-validator";
+import { resolveSessionExecutionIdentity } from "./session-execution-identity";
 import {
   SessionDeleteInProgressError,
   type SessionDeletionPreflight,
@@ -334,16 +335,16 @@ export class SessionExecutionManager {
       if (!sameExecutionScopeSnapshot(claimedScope, validationScope)) {
         throw executionScopeChanged(validationState.sessionId, claimedScope, validationScope);
       }
-      const isDescendantOfRoot = validationState.goalId !== undefined && validationState.parentSessionId !== undefined
-        ? flattenSessionTree((await this.#config.buildSessionTree(input.workspaceRoot, validationState.rootSessionId)).root)
-          .includes(validationState.sessionId)
-        : undefined;
-      const parentAgentName = validationState.parentSessionId === undefined
-        ? undefined
-        : (await this.#config.loadSessionStore(validationState.parentSessionId, input.workspaceRoot)).getState().agentName;
       await this.#config.executionScopeValidator.validate({
         projectRoot: input.workspaceRoot,
-        subject: executionScopeSubject(validationState, isDescendantOfRoot, parentAgentName),
+        subject: await resolveSessionExecutionIdentity({
+          workspaceRoot: input.workspaceRoot,
+          sessionId: validationState.sessionId,
+          sessions: {
+            getOrLoad: this.#config.loadSessionStore,
+            buildSessionTree: this.#config.buildSessionTree,
+          },
+        }),
         entry: { kind: "user_message" },
       });
 
@@ -499,7 +500,9 @@ export class SessionExecutionManager {
     const key = scopedKey(workspaceRoot, rootSessionId);
     if (this.#familyStops.has(key)) return "stopping";
     if ((this.#pendingChildLaunches.get(key)?.launches.size ?? 0) > 0) return "running";
-    if (this.#hitlResumes.has(key)) return "running";
+    for (const resume of this.#hitlResumes.values()) {
+      if (resume.workspaceRoot === workspaceRoot && resume.rootSessionId === rootSessionId) return "running";
+    }
     for (const execution of this.#active.values()) {
       if (execution.workspaceRoot === workspaceRoot && execution.rootSessionId === rootSessionId) return "running";
     }
@@ -595,9 +598,9 @@ export class SessionExecutionManager {
   }
 
   /**
-   * Claims exclusive ownership of a Session family for durable HITL replay and
-   * continuation. The returned capability permits exactly this generation to
-   * nest the worktree transition required by an approved worktree tool.
+   * Claims exclusive ownership of one Session for durable HITL replay and
+   * continuation. Related Sessions may keep running; a root-scoped cwd
+   * transition is acquired separately only when the resumed tool needs it.
    */
   reserveSessionHitlResume(
     workspaceRoot: string,
@@ -611,37 +614,37 @@ export class SessionExecutionManager {
     if (loadedState !== undefined && loadedState.rootSessionId !== rootSessionId) {
       throw new SessionHitlResumeIdentityMismatchError(sessionId, rootSessionId, loadedState.rootSessionId);
     }
-    const key = scopedKey(workspaceRoot, rootSessionId);
-    if (this.#familyStops.has(key)) {
+    const familyKey = scopedKey(workspaceRoot, rootSessionId);
+    const resumeKey = scopedKey(workspaceRoot, sessionId);
+    if (this.#familyStops.has(familyKey)) {
       throw new SessionFamilyStopInProgressError(sessionId, rootSessionId);
     }
-    if (this.#deletions.has(key)) {
+    if (this.#deletions.has(familyKey)) {
       throw new SessionDeleteInProgressError(sessionId, rootSessionId);
     }
-    if (this.#hitlResumes.has(key)) {
+    if (this.#hitlResumes.has(resumeKey)) {
       throw new SessionHitlResumeInProgressError(sessionId, rootSessionId);
     }
-    if (this.#cwdTransitions.has(key)) {
+    if (this.#cwdTransitions.has(familyKey)) {
       throw new SessionCwdTransitionInProgressError(sessionId, rootSessionId);
     }
 
-    const conflictingSessionIds = new Set(this.#pendingChildLaunches.get(key)?.launches.values() ?? []);
-    for (const execution of this.#active.values()) {
-      if (execution.workspaceRoot !== workspaceRoot) continue;
-      if (execution.rootSessionId === rootSessionId) {
-        conflictingSessionIds.add(execution.sessionId);
-      }
+    const conflictingSessionIds = new Set<string>();
+    if (this.#active.has(resumeKey)) conflictingSessionIds.add(sessionId);
+    for (const pendingSessionId of this.#pendingChildLaunches.get(familyKey)?.launches.values() ?? []) {
+      if (pendingSessionId === sessionId) conflictingSessionIds.add(sessionId);
     }
     if (conflictingSessionIds.size > 0) {
       throw new SessionHitlResumeConflictError(sessionId, [...conflictingSessionIds].sort());
     }
 
-    const token = Symbol(`session-hitl-resume:${key}`);
+    this.#config.sessionAgentManager.acquireSlot(workspaceRoot, sessionId);
+    const token = Symbol(`session-hitl-resume:${resumeKey}`);
     const abortController = new AbortController();
     let complete!: () => void;
     const completed = new Promise<void>((resolve) => { complete = resolve; });
     const previousFamilyActivity = this.getSessionFamilyActivity(workspaceRoot, rootSessionId);
-    this.#hitlResumes.set(key, {
+    this.#hitlResumes.set(resumeKey, {
       token,
       workspaceRoot,
       sessionId,
@@ -658,7 +661,7 @@ export class SessionExecutionManager {
       generation: token,
       abortSignal: abortController.signal,
       activate: () => {
-        const current = this.#hitlResumes.get(key);
+        const current = this.#hitlResumes.get(resumeKey);
         if (released || current?.token !== token) {
           throw new SessionHitlResumeLeaseExpiredError(sessionId, rootSessionId);
         }
@@ -671,10 +674,10 @@ export class SessionExecutionManager {
         current.activated = true;
       },
       acquireSessionCwdTransition: (nestedWorkspaceRoot, nestedSessionId) => {
-        if (released || this.#hitlResumes.get(key)?.token !== token) {
+        if (released || this.#hitlResumes.get(resumeKey)?.token !== token) {
           throw new SessionHitlResumeLeaseExpiredError(sessionId, rootSessionId);
         }
-        if (this.#hitlResumes.get(key)?.activated !== true) {
+        if (this.#hitlResumes.get(resumeKey)?.activated !== true) {
           throw new SessionHitlResumeLeaseNotActivatedError(sessionId, rootSessionId);
         }
         if (mode === "cancel_only") {
@@ -688,9 +691,10 @@ export class SessionExecutionManager {
       release: () => {
         if (released) return;
         released = true;
-        if (this.#hitlResumes.get(key)?.token === token) {
+        if (this.#hitlResumes.get(resumeKey)?.token === token) {
           const activityBeforeRelease = this.getSessionFamilyActivity(workspaceRoot, rootSessionId);
-          this.#hitlResumes.delete(key);
+          this.#hitlResumes.delete(resumeKey);
+          this.#config.sessionAgentManager.releaseSlot(workspaceRoot, sessionId);
           this.#publishSessionRuntimeChange(workspaceRoot, rootSessionId, activityBeforeRelease);
         }
         complete();
@@ -711,9 +715,13 @@ export class SessionExecutionManager {
     if (this.#deletions.has(key)) {
       throw new SessionDeleteInProgressError(sessionId, sessionId);
     }
-    const hitlResume = this.#hitlResumes.get(key);
-    if (hitlResume !== undefined && hitlResume.token !== hitlResumeToken) {
-      throw new SessionHitlResumeInProgressError(sessionId, hitlResume.rootSessionId);
+    const conflictingHitlResume = [...this.#hitlResumes.values()].find((resume) => (
+      resume.workspaceRoot === workspaceRoot
+      && resume.rootSessionId === sessionId
+      && resume.token !== hitlResumeToken
+    ));
+    if (conflictingHitlResume !== undefined) {
+      throw new SessionHitlResumeInProgressError(sessionId, conflictingHitlResume.rootSessionId);
     }
     if (this.#cwdTransitions.has(key)) {
       throw new SessionCwdTransitionInProgressError(sessionId, sessionId);
@@ -1460,7 +1468,7 @@ export class SessionExecutionManager {
     if (this.#deletions.has(scopedKey(workspaceRoot, rootSessionId))) {
       throw new SessionDeleteInProgressError(sessionId, rootSessionId);
     }
-    const hitlResume = this.#hitlResumes.get(scopedKey(workspaceRoot, rootSessionId));
+    const hitlResume = this.#hitlResumes.get(scopedKey(workspaceRoot, sessionId));
     if (hitlResume !== undefined) {
       throw new SessionHitlResumeInProgressError(sessionId, rootSessionId);
     }
@@ -1516,9 +1524,6 @@ export class SessionExecutionManager {
     }
     if (this.#deletions.has(key)) {
       throw new SessionDeleteInProgressError(childSessionId, rootSessionId);
-    }
-    if (this.#hitlResumes.has(key)) {
-      throw new SessionHitlResumeInProgressError(childSessionId, rootSessionId);
     }
     if (this.#cwdTransitions.has(key)) {
       throw new SessionCwdTransitionInProgressError(childSessionId, rootSessionId);
@@ -1731,17 +1736,17 @@ export class SessionExecutionManager {
     const claimedState = store.getState();
     if (claimedState.goalId === undefined) return;
     const claimedScope = executionScopeSnapshot(claimedState);
-    const isDescendantOfRoot = freshlyCreated
-      ? true
-      : flattenSessionTree(
-        (await this.#config.buildSessionTree(workspaceRoot, claimedState.rootSessionId)).root,
-      ).includes(claimedState.sessionId);
-    const parentAgentName = claimedState.parentSessionId === undefined
-      ? undefined
-      : (await this.#config.loadSessionStore(claimedState.parentSessionId, workspaceRoot)).getState().agentName;
     await this.#config.executionScopeValidator.validate({
       projectRoot: workspaceRoot,
-      subject: executionScopeSubject(claimedState, isDescendantOfRoot, parentAgentName),
+      subject: await resolveSessionExecutionIdentity({
+        workspaceRoot,
+        sessionId: claimedState.sessionId,
+        sessions: {
+          getOrLoad: this.#config.loadSessionStore,
+          buildSessionTree: this.#config.buildSessionTree,
+        },
+        newChild: freshlyCreated,
+      }),
       entry: { kind: "user_message" },
     });
     const currentState = store.getState();
@@ -1754,24 +1759,6 @@ export class SessionExecutionManager {
     }
   }
 
-}
-
-function executionScopeSubject(
-  state: SessionStoreState,
-  isDescendantOfRoot?: boolean,
-  parentAgentName?: AgentName,
-) {
-  return {
-    sessionId: state.sessionId,
-    rootSessionId: state.rootSessionId,
-    ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
-    ...(parentAgentName === undefined ? {} : { parentAgentName }),
-    ...(isDescendantOfRoot === undefined ? {} : { isDescendantOfRoot }),
-    cwd: state.cwd,
-    ...(state.goalId === undefined ? {} : { goalId: state.goalId }),
-    ...(state.sessionRole === undefined ? {} : { sessionRole: state.sessionRole }),
-    agentName: state.agentName,
-  };
 }
 
 interface ExecutionScopeSnapshot {

@@ -41,19 +41,19 @@ describe("ResumeCoordinator", () => {
     ]);
     await waitFor(() => adapter.calls.length === 1);
 
-    expect(first.status).toBe("claimed");
+    expect(first.status).toBe("answered");
     expect(first.scheduled).toBe(true);
-    expect(second.status).toBe("claimed");
+    expect(second.status).toBe("answered");
     expect(second.scheduled).toBe(false);
     const firstRecord = resultRecord(first);
     const secondRecord = resultRecord(second);
     expect(secondRecord).toMatchObject({
       hitlId: hitl.hitlId,
-      status: "resume_claimed",
+      status: "answered",
       response,
-      resume: { intent: "respond", attempt: 1 },
+      delivery: { intent: "respond", attempt: 1 },
     });
-    expect(secondRecord.resume?.claimId).toBe(firstRecord.resume?.claimId);
+    expect(secondRecord.delivery?.claimId).toBe(firstRecord.delivery?.claimId);
     expect(adapter.calls).toHaveLength(1);
 
     releaseAdapter();
@@ -61,7 +61,7 @@ describe("ResumeCoordinator", () => {
     expect(adapter.calls).toHaveLength(1);
   });
 
-  test("acquires Session runtime ownership before publishing the durable resume claim", async () => {
+  test("persists the answer before acquiring Session runtime ownership", async () => {
     const fixture = await createFixture();
     const hitl = await fixture.createSessionHitl();
     let finishAcquire!: () => void;
@@ -73,14 +73,14 @@ describe("ResumeCoordinator", () => {
     const coordinator = new ResumeCoordinator({ hitl: fixture.service, adapters: { session: adapter } });
 
     const responding = coordinator.respond(identity(hitl), { type: "question_answer", answers: ["continue"] });
+    await expect(responding).resolves.toMatchObject({ status: "answered", scheduled: true });
     await waitFor(() => adapter.acquisitions.length === 1);
     expect((await fixture.service.lookup(identity(hitl)))).toMatchObject({
       status: "found",
-      record: { status: "pending" },
+      record: { status: "answered" },
     });
 
     finishAcquire();
-    await expect(responding).resolves.toMatchObject({ status: "claimed", scheduled: true });
     await waitForLookup(fixture.service, hitl, "resolved");
     expect(adapter.calls).toHaveLength(1);
     expect(adapter.releaseCount).toBe(1);
@@ -117,8 +117,8 @@ describe("ResumeCoordinator", () => {
       coordinator.respond(identity(second), { type: "question_answer", answers: ["second"] }),
     ]);
 
-    expect(firstResult).toMatchObject({ status: "claimed", scheduled: true });
-    expect(secondResult).toMatchObject({ status: "claimed", scheduled: true });
+    expect(firstResult).toMatchObject({ status: "answered", scheduled: true });
+    expect(secondResult).toMatchObject({ status: "answered", scheduled: true });
     await waitFor(() => adapter.calls.length === 2);
     expect(adapter.calls.map((record) => record.owner.ownerId).sort()).toEqual([
       fixture.owner.ownerId,
@@ -138,10 +138,10 @@ describe("ResumeCoordinator", () => {
     const claimed = await coordinator.respond(identity(hitl), { type: "question_answer", answers: ["go"] });
     const cancelled = await coordinator.cancel(identity(hitl), "never mind");
 
-    expect(claimed.status).toBe("claimed");
-    expect(cancelled.status).toBe("claimed");
+    expect(claimed.status).toBe("answered");
+    expect(cancelled.status).toBe("answered");
     expect(resultRecord(cancelled).response).toEqual({ type: "question_answer", answers: ["go"] });
-    expect(resultRecord(cancelled).resume).toMatchObject({ intent: "respond", attempt: 1, claimId: resultRecord(claimed).resume?.claimId });
+    expect(resultRecord(cancelled).delivery).toMatchObject({ intent: "respond", attempt: 1, claimId: resultRecord(claimed).delivery?.claimId });
 
     releaseAdapter();
     const terminal = await waitForLookup(fixture.service, hitl, "resolved");
@@ -159,10 +159,10 @@ describe("ResumeCoordinator", () => {
     const cancelled = await coordinator.cancel(identity(hitl), "user cancelled", "tester");
     const responded = await coordinator.respond(identity(hitl), { type: "question_answer", answers: ["late"] });
 
-    expect(cancelled.status).toBe("claimed");
-    expect(responded.status).toBe("claimed");
+    expect(cancelled.status).toBe("answered");
+    expect(responded.status).toBe("answered");
     expect(resultRecord(responded).response).toEqual({ type: "cancel", reason: "user cancelled", cancelledBy: "tester" });
-    expect(resultRecord(responded).resume).toMatchObject({ intent: "cancel", attempt: 1, claimId: resultRecord(cancelled).resume?.claimId });
+    expect(resultRecord(responded).delivery).toMatchObject({ intent: "cancel", attempt: 1, claimId: resultRecord(cancelled).delivery?.claimId });
 
     releaseAdapter();
     const terminal = await waitForLookup(fixture.service, hitl, "cancelled");
@@ -191,7 +191,7 @@ describe("ResumeCoordinator", () => {
     expect(adapter.calls).toHaveLength(0);
   });
 
-  test("restart recovery invokes the correct adapter once for resume_claimed HITL", async () => {
+  test("restart recovery invokes the correct adapter once for answered HITL", async () => {
     const fixture = await createFixture();
     const hitl = await fixture.createSessionHitl();
     const response: HitlResponse = { type: "question_answer", answers: ["after restart"] };
@@ -212,13 +212,13 @@ describe("ResumeCoordinator", () => {
     expect(adapter.calls).toHaveLength(1);
     expect(adapter.calls[0]).toMatchObject({
       hitlId: claimed.hitlId,
-      status: "resume_claimed",
-      resume: { claimId: "persisted-claim", attempt: 1, intent: "respond" },
+      status: "answered",
+      delivery: { claimId: "persisted-claim", attempt: 1, intent: "respond" },
       response,
     });
   });
 
-  test("restart recovery schedules a claimed resume without waiting for its adapter tail", async () => {
+  test("restart recovery schedules an answered delivery without waiting for its adapter tail", async () => {
     const fixture = await createFixture();
     const hitl = await fixture.createSessionHitl();
     const response: HitlResponse = { type: "question_answer", answers: ["continue in background"] };
@@ -248,12 +248,12 @@ describe("ResumeCoordinator", () => {
     expect(summary.scheduled).toBe(1);
     expect(claimedDuringTail).toMatchObject({
       status: "found",
-      record: { status: "resume_claimed", resume: { claimId: "persisted-background-claim" } },
+      record: { status: "answered", delivery: { claimId: "persisted-background-claim" } },
     });
     await waitForLookup(reloaded.service, hitl, "resolved");
   });
 
-  test("partial adapter recovery durably fails claimed owner types without a matching adapter", async () => {
+  test("partial adapter recovery records delivery failure for owner types without an adapter", async () => {
     const fixture = await createFixture();
     const sessionHitl = await fixture.createSessionHitl();
     const goal = await fixture.goalState.commit({
@@ -268,7 +268,7 @@ describe("ResumeCoordinator", () => {
     const goalHitl = await fixture.service.create({
       owner: goalOwner,
       blockingKey: `goal:${goal.id}:approval:after_plan`,
-      source: { type: "goal_approval", goalId: goal.id, approvalPoint: "after_plan", resumeStatus: "running" },
+      source: { type: "goal_approval", goalId: goal.id, approvalPoint: "after_plan" },
       displayPayload: { title: "Approve goal", redacted: true },
     });
     const sessionResponse: HitlResponse = { type: "question_answer", answers: ["session resumes"] };
@@ -291,16 +291,20 @@ describe("ResumeCoordinator", () => {
 
     const summary = await coordinator.recover();
     const resolvedSession = await waitForLookup(reloaded.service, sessionHitl, "resolved");
-    const failedGoal = await waitForLookup(reloaded.service, goalHitl, "resume_failed");
+    const failedGoal = await waitForRecord(
+      reloaded.service,
+      goalHitl,
+      (record) => record.delivery?.lastError === "No HITL resume adapter registered for goal owner",
+    );
 
     expect(summary.scheduled).toBe(2);
     expect(adapter.calls).toHaveLength(1);
     expect(resolvedSession.response).toEqual(sessionResponse);
     expect(failedGoal).toMatchObject({
       hitlId: goalHitl.hitlId,
-      status: "resume_failed",
+      status: "answered",
       response: goalResponse,
-      resume: {
+      delivery: {
         claimId: "goal-claim",
         intent: "respond",
         attempt: 1,
@@ -309,20 +313,20 @@ describe("ResumeCoordinator", () => {
     });
   });
 
-  test("adapter failure leaves resume_failed active and recovery can retry it", async () => {
+  test("adapter failure leaves answered active and recovery can retry it", async () => {
     const fixture = await createFixture();
     const hitl = await fixture.createSessionHitl();
     const failing = new RecordingSessionAdapter({ failWith: new Error("adapter offline") });
     const coordinator = new ResumeCoordinator({ hitl: fixture.service, adapters: { session: failing } });
 
     const claimed = await coordinator.respond(identity(hitl), { type: "question_answer", answers: ["retry later"] });
-    const failed = await waitForLookup(fixture.service, hitl, "resume_failed");
+    const failed = await waitForRecord(fixture.service, hitl, (record) => record.delivery?.lastError === "adapter offline");
 
-    expect(claimed.status).toBe("claimed");
+    expect(claimed.status).toBe("answered");
     expect(failing.calls).toHaveLength(1);
     expect(failed).toMatchObject({
-      status: "resume_failed",
-      resume: { claimId: resultRecord(claimed).resume?.claimId, intent: "respond", attempt: 1, lastError: "adapter offline" },
+      status: "answered",
+      delivery: { claimId: resultRecord(claimed).delivery?.claimId, intent: "respond", attempt: 1, lastError: "adapter offline" },
     });
 
     const recovering = new RecordingSessionAdapter();
@@ -334,12 +338,12 @@ describe("ResumeCoordinator", () => {
 
     expect(summary.scheduled).toBe(1);
     expect(recovering.calls).toHaveLength(1);
-    expect(recovering.calls[0]?.resume).toMatchObject({ intent: "respond", attempt: 2 });
-    expect(recovering.calls[0]?.resume?.claimId).not.toBe(resultRecord(claimed).resume?.claimId);
+    expect(recovering.calls[0]?.delivery).toMatchObject({ intent: "respond", attempt: 2 });
+    expect(recovering.calls[0]?.delivery?.claimId).not.toBe(resultRecord(claimed).delivery?.claimId);
     expect(terminal.status).toBe("resolved");
   });
 
-  test("background recovery observes a secondary resume-failure persistence rejection", async () => {
+  test("background recovery observes a secondary delivery-failure persistence rejection", async () => {
     const fixture = await createFixture();
     const hitl = await fixture.createSessionHitl();
     await (await fixture.service.ownerStore(hitl.owner)).claim(
@@ -366,18 +370,18 @@ describe("ResumeCoordinator", () => {
     });
 
     expect((await coordinator.recover()).scheduled).toBe(1);
-    await waitFor(() => entries.some((entry) => entry.event === "hitl.resume.dispatch.failed"));
+    await waitFor(() => entries.some((entry) => entry.event === "hitl.delivery.dispatch.failed"));
 
     expect(entries).toContainEqual(expect.objectContaining({
       level: "error",
-      event: "hitl.resume.dispatch.failed",
+      event: "hitl.delivery.dispatch.failed",
       context: expect.objectContaining({ hitlId: hitl.hitlId, claimId: "persist-failure-claim" }),
     }));
   });
 });
 
 class ResumeFailurePersistenceHitlService extends HitlService {
-  override async markResumeFailed(): Promise<undefined> {
+  override async markDeliveryFailed(): Promise<undefined> {
     throw new Error("resume failure persistence unavailable");
   }
 }
@@ -459,6 +463,20 @@ async function waitForLookup(
     latest = lookup.status === "found" ? lookup.record : undefined;
     return latest?.status === status;
   }, () => `expected HITL ${record.hitlId} to become ${status}, last status was ${latest?.status ?? "missing"}`);
+  return latest!;
+}
+
+async function waitForRecord(
+  service: HitlService,
+  record: Pick<HitlRecord, "owner" | "hitlId">,
+  predicate: (record: HitlRecord) => boolean,
+): Promise<HitlRecord> {
+  let latest: HitlRecord | undefined;
+  await waitFor(async () => {
+    const lookup = await service.lookup(identity(record));
+    latest = lookup.status === "found" ? lookup.record : undefined;
+    return latest !== undefined && predicate(latest);
+  });
   return latest!;
 }
 

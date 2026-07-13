@@ -670,7 +670,6 @@ export function reduceStreamEvent(
         }
         hitlRequests[existingIndex] = { ...hitlRequests[existingIndex]!, ...update };
       }
-      if (event.status === "resume_failed") return { hitlRequests };
       const blockedByHitlIds = state.blockedByHitlIds?.filter((hitlId) => hitlId !== event.hitlId);
       return {
         hitlRequests,

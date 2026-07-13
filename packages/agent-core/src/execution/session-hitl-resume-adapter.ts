@@ -17,6 +17,7 @@ import type { SessionHitlResumeAdapter as ResumeAdapterContract } from "../hitl/
 import { askUserResponseToToolResult } from "./session-hitl-pause";
 import type { ReserveSessionHitlResumeOptions, SessionHitlResumeLease } from "./session-execution-manager";
 import type { SessionExecutionScopeValidator } from "./session-execution-scope-validator";
+import { resolveSessionExecutionIdentity } from "./session-execution-identity";
 import {
   isResponseForSessionCheckpoint,
   readSessionHitlCheckpoint,
@@ -130,8 +131,9 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
     if (record.owner.ownerType !== "session") throw new Error(`Session adapter cannot resume ${record.owner.ownerType} HITL`);
     const sessionId = record.owner.ownerId;
     let eventsAttached = false;
+    let checkpoint: SessionHitlCheckpointRecord | undefined;
     try {
-      let checkpoint = await (this.options.readCheckpoint ?? readSessionHitlCheckpoint)(
+      checkpoint = await (this.options.readCheckpoint ?? readSessionHitlCheckpoint)(
         this.options.workspaceRoot,
         sessionId,
         record.hitlId,
@@ -186,24 +188,13 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
         });
       }
 
-      const currentState = store.getState();
-      const isDescendantOfRoot = currentState.goalId !== undefined && currentState.parentSessionId !== undefined
-        ? sessionTreeContains(
-          (await this.options.storeManager.buildSessionTree(this.options.workspaceRoot, currentState.rootSessionId)).root,
-          currentState.sessionId,
-        )
-        : undefined;
       await this.options.executionScopeValidator.validate({
         projectRoot: this.options.workspaceRoot,
-        subject: {
-          sessionId: currentState.sessionId,
-          rootSessionId: currentState.rootSessionId,
-          ...(currentState.parentSessionId === undefined ? {} : { parentSessionId: currentState.parentSessionId }),
-          ...(isDescendantOfRoot === undefined ? {} : { isDescendantOfRoot }),
-          cwd: currentState.cwd,
-          ...(currentState.goalId === undefined ? {} : { goalId: currentState.goalId }),
-          ...(currentState.sessionRole === undefined ? {} : { sessionRole: currentState.sessionRole }),
-        },
+        subject: await resolveSessionExecutionIdentity({
+          workspaceRoot: this.options.workspaceRoot,
+          sessionId,
+          sessions: this.options.storeManager,
+        }),
         entry: { kind: "hitl_replay" },
       });
       await assertValidSessionCwd(this.options.workspaceRoot, store.getState().cwd);
@@ -254,6 +245,13 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
       if (phase !== "resolving") throw new Error(`Unsupported Session HITL journal phase ${phase}`);
       await resolveSessionBlockerDurably(this.options.storeManager, this.options.workspaceRoot, store, record, response);
     } catch (error) {
+      if (checkpoint !== undefined && sessionHitlJournalPhase(checkpoint) === "continuing") {
+        await moveContinuingJournalToManualUnknown({
+          workspaceRoot: this.options.workspaceRoot,
+          sessionId,
+          checkpoint,
+        });
+      }
       throw error;
     } finally {
       if (eventsAttached) this.options.detachSessionEvents?.(this.options.workspaceRoot, sessionId);
@@ -444,14 +442,6 @@ function resumedChildLinkStatus(
 function remainingSessionBlockers(store: StoreApi<SessionStoreState>, resolvedHitlId: string): string[] | undefined {
   const remaining = store.getState().blockedByHitlIds?.filter((hitlId) => hitlId !== resolvedHitlId) ?? [];
   return remaining.length === 0 ? undefined : remaining;
-}
-
-function sessionTreeContains(
-  node: Awaited<ReturnType<SessionStoreManager["buildSessionTree"]>>["root"],
-  sessionId: string,
-): boolean {
-  return node.session.sessionId === sessionId
-    || node.children.some((child) => sessionTreeContains(child, sessionId));
 }
 
 function cwdTransitionSkippedResult(): ToolExecutionResult {

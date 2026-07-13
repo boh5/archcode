@@ -40,7 +40,6 @@ export class GoalApprovalGate {
     projectSlug: string;
     approvalPoint: string;
     summary: string;
-    resumeStatus: "running" | "reviewing";
   }): Promise<HitlRecord> {
     return await withGoalExecutionClaimLock(input.goalId, async () => {
       const record = await this.#hitlService.create({
@@ -50,7 +49,6 @@ export class GoalApprovalGate {
           type: "goal_approval",
           goalId: input.goalId,
           approvalPoint: input.approvalPoint,
-          resumeStatus: input.resumeStatus,
         },
         displayPayload: {
           title: "Approve Goal continuation",
@@ -70,7 +68,6 @@ export class GoalApprovalGate {
           summary: input.summary,
           hitlId: record.hitlId,
           source: input.approvalPoint,
-          resumeStatus: input.resumeStatus,
         },
         approvalRef: record.hitlId,
       });
@@ -89,7 +86,7 @@ export class GoalApprovalGate {
       const record = await this.#hitlService.create({
         owner: { projectSlug: input.projectSlug, ownerType: "goal", ownerId: input.goalId },
         blockingKey: `goal:${input.goalId}:review`,
-        source: { type: "goal_review", goalId: input.goalId, resumeStatus: "reviewing" },
+        source: { type: "goal_review", goalId: input.goalId },
         displayPayload: {
           title: "Review Goal outcome",
           summary,
@@ -103,7 +100,6 @@ export class GoalApprovalGate {
           summary,
           hitlId: record.hitlId,
           source: "goal_review",
-          resumeStatus: "reviewing",
         },
         approvalRef: record.hitlId,
       });

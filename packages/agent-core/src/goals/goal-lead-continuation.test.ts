@@ -40,7 +40,7 @@ describe("GoalLeadContinuationService", () => {
   test("stops for pending HITL, blocked budget, terminal status, and wrong root identity", async () => {
     const pending = await createFixture("stop-pending");
     await pending.context.goalState.attachHitlBlocker(pending.goal.id, {
-      blocker: { kind: "question", summary: "answer", hitlId: "hitl-1", resumeStatus: "running" },
+      blocker: { kind: "question", summary: "answer", hitlId: "hitl-1" },
       approvalRef: "hitl-1",
     });
     const budget = await createFixture("stop-budget");

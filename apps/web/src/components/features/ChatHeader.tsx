@@ -6,7 +6,6 @@ import { InspectorToggleButton } from "./InspectorToggleButton";
 
 const STATUS_BADGE_CLASS: Partial<Record<GoalStatus, string>> = {
   running: "bg-success-muted text-success",
-  blocked: "bg-warning-muted text-warning",
   reviewing: "bg-info-muted text-info",
   done: "bg-accent-muted text-accent",
   not_done: "bg-error-muted text-error",

@@ -40,7 +40,6 @@ export function GoalInspector({ activeTab }: { activeTab: GoalInspectorTab }) {
           <InspectorSection title="Blocker">
             <InspectorRows rows={[
               ["Kind", goal.blocker.kind],
-              ["Resume status", goal.blocker.resumeStatus],
             ]} />
             <InspectorNotice tone="warning">{goal.blocker.summary}</InspectorNotice>
           </InspectorSection>

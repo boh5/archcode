@@ -194,7 +194,7 @@ export class SessionHitlResumeInProgressError extends Error {
     public readonly rootSessionId: string,
   ) {
     super(
-      `Session "${sessionId}" cannot start or resume while session "${rootSessionId}" is exclusively continuing a durable human-in-the-loop response. Retry after the continuation finishes.`,
+      `Session "${sessionId}" cannot start or resume while its durable human-in-the-loop continuation is already running in root family "${rootSessionId}".`,
     );
     this.name = "SessionHitlResumeInProgressError";
   }
@@ -218,7 +218,7 @@ export class SessionHitlResumeConflictError extends Error {
     public readonly conflictingSessionIds: readonly string[],
   ) {
     super(
-      `Session "${sessionId}" cannot continue a durable human-in-the-loop response while related sessions are starting or running: ${conflictingSessionIds.join(", ")}.`,
+      `Session "${sessionId}" cannot continue a durable human-in-the-loop response while the same Session is starting or running.`,
     );
     this.name = "SessionHitlResumeConflictError";
   }

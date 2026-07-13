@@ -79,6 +79,7 @@ export { SessionLifecycleService } from "./projects/session-lifecycle-service";
 export type { SessionLifecycleServiceOptions } from "./projects/session-lifecycle-service";
 export type { ProjectContext, ProjectInfo } from "./projects/types";
 export type { ResumeCoordinatorResult } from "./hitl/resume-coordinator";
+export { hitlRequiresInspection } from "./hitl/aggregation";
 export { GoalRunner, GoalRunnerError } from "./goals/runner";
 export type {
   GoalActivationOutcome,

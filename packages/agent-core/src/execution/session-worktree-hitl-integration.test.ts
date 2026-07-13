@@ -194,7 +194,7 @@ describe("durable Session worktree approval integration", () => {
       type: "permission_decision",
       decision: "approve_once",
     });
-    expect(response).toMatchObject({ status: "claimed", scheduled: true });
+    expect(response).toMatchObject({ status: "answered", scheduled: true });
     await continuationStarted;
 
     await expect(executionManager.startCheckedExecution({

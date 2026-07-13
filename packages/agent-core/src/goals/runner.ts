@@ -10,7 +10,6 @@ import { withGoalExecutionClaimLock } from "./execution-claim";
 import { buildGoalContinuationPrompt } from "./goal-lead-continuation";
 import type {
   GoalFinalizeReviewInput,
-  GoalManualBlockerInput,
   GoalReviewerAuthorization,
   GoalStateManager,
 } from "./state";
@@ -151,14 +150,6 @@ export class GoalRunner {
     for (const goal of goals) {
       if (goal.status === "running") await this.activate(goal.id);
     }
-  }
-
-  async block(goalId: string, blocker: GoalManualBlockerInput): Promise<GoalState> {
-    return withGoalExecutionClaimLock(goalId, () => this.#goalStateManager.block(goalId, blocker));
-  }
-
-  async clearBlocker(goalId: string, hitlId?: string): Promise<GoalState> {
-    return withGoalExecutionClaimLock(goalId, () => this.#goalStateManager.clearBlocker(goalId, hitlId));
   }
 
   async beginReview(goalId: string): Promise<GoalState> {

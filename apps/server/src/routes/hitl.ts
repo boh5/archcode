@@ -10,7 +10,7 @@ import type {
   HitlStatus,
   GlobalSSEEvent,
 } from "@archcode/protocol";
-import type { AgentRuntime, ProjectContext, ResumeCoordinatorResult } from "@archcode/agent-core";
+import { hitlRequiresInspection, type AgentRuntime, type ProjectContext, type ResumeCoordinatorResult } from "@archcode/agent-core";
 import { z } from "zod/v4";
 import { BadRequestError, ServerError } from "../errors";
 import { resolveProject } from "../resolve";
@@ -18,17 +18,11 @@ import { globalEventBus } from "../events/global-event-bus";
 
 type HitlRouteScope = "project" | "session" | "goal";
 type HitlRouteStatus = "pending" | "recent" | "all";
-type ResumeStatus = "idle" | "claimed" | "failed" | "terminal";
-
-interface HitlApiProjection extends HitlProjection {
-  resumeStatus: ResumeStatus;
-}
 
 interface HitlMutationResponse {
   hitlId: string;
   status: HitlStatus;
-  resumeStatus: ResumeStatus;
-  hitl: HitlApiProjection;
+  hitl: HitlProjection;
 }
 
 const HitlListStatusSchema = z.enum(["pending", "recent", "all"]);
@@ -111,7 +105,7 @@ export function createHitlRoutes(runtime: AgentRuntime): Hono {
       ...(query.ownerId === undefined ? {} : { ownerId: query.ownerId }),
       includeChildren: query.includeChildren,
       status: statusForService(query.status),
-    })).map(withResumeStatus);
+    }));
 
     return c.json({ hitl });
   });
@@ -344,11 +338,6 @@ function validateCancelAction(record: HitlRecord): void {
 
 function nonPendingPreflight(record: HitlRecord, response: HitlResponse): { statusCode: 200 | 409; record: HitlRecord } | undefined {
   if (record.status === "pending") return undefined;
-  // A failed resume may represent a durable manual_unknown continuation. An
-  // explicit cancel is the user's acknowledgement that the external state was
-  // inspected; it must reach the adapter so the Session blocker can unwind
-  // without ever re-running the model.
-  if (record.status === "resume_failed" && response.type === "cancel") return undefined;
   if (record.response !== undefined) return { statusCode: responsesEquivalent(record.response, response) ? 200 : 409, record };
   if (TERMINAL_STATUSES.has(record.status)) return { statusCode: 409, record };
   throw new BadRequestError(`Cannot mutate HITL with status ${record.status}`);
@@ -372,12 +361,10 @@ function responsesEquivalent(left: HitlResponse | undefined, right: HitlResponse
 }
 
 function toMutationResponse(project: { slug: string; name?: string }, record: HitlRecord): HitlMutationResponse {
-  const hitl = withResumeStatus(toProjection(project, record));
   return {
     hitlId: record.hitlId,
     status: record.status,
-    resumeStatus: hitl.resumeStatus,
-    hitl,
+    hitl: toProjection(project, record),
   };
 }
 
@@ -390,32 +377,14 @@ function toProjection(project: { slug: string; name?: string }, record: HitlReco
     status: record.status,
     displayPayload: record.displayPayload,
     allowedActions: allowedActionsFor(record),
+    ...(hitlRequiresInspection(record) ? { requiresInspection: true as const } : {}),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     ...(record.resolvedAt === undefined ? {} : { resolvedAt: record.resolvedAt }),
   };
 }
 
-function withResumeStatus(projection: HitlProjection): HitlApiProjection {
-  return { ...projection, resumeStatus: resumeStatusFor(projection.status) };
-}
-
-function resumeStatusFor(status: HitlStatus): ResumeStatus {
-  switch (status) {
-    case "pending":
-      return "idle";
-    case "resume_claimed":
-      return "claimed";
-    case "resume_failed":
-      return "failed";
-    case "resolved":
-    case "cancelled":
-      return "terminal";
-  }
-}
-
 function allowedActionsFor(record: HitlRecord): HitlAllowedAction[] {
-  if (record.status === "resume_failed") return ["retry_resume", "cancel"];
   if (record.status !== "pending") return [];
   switch (record.source.type) {
     case "ask_user":

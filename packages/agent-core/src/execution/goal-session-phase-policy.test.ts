@@ -28,7 +28,7 @@ const reviewerExplore = {
 
 describe("Goal Session phase policy", () => {
   test("keeps execution and delegation on one role matrix", () => {
-    const reviewing = { status: "reviewing" as const, mainSessionId: "main" };
+    const reviewing = { status: "reviewing" as const, mainSessionId: "main", pendingHitlIds: [] };
     expect(decideGoalSessionExecution({ goal: reviewing, subject: main, entryKind: "user_message" })).toEqual({ allowed: true });
     expect(decideGoalSessionExecution({ goal: reviewing, subject: reviewer, entryKind: "user_message" })).toEqual({ allowed: true });
     expect(decideGoalSessionExecution({ goal: reviewing, subject: reviewerExplore, entryKind: "user_message" })).toEqual({ allowed: true });
@@ -39,16 +39,23 @@ describe("Goal Session phase policy", () => {
   });
 
   test("requires proven ancestry and keeps not_done on the Goal Lead", () => {
-    const running = { status: "running" as const, mainSessionId: "main" };
+    const running = { status: "running" as const, mainSessionId: "main", pendingHitlIds: [] };
     const forged = { ...reviewer, isDescendantOfRoot: false };
     expect(decideGoalSessionExecution({ goal: running, subject: forged, entryKind: "user_message" })).toEqual({ allowed: false, reason: "not_executable" });
     expect(isGoalDelegationAllowed({ goal: running, parent: forged, targetAgentName: "explore" })).toBe(false);
     expect(decideGoalSessionExecution({ goal: running, subject: reviewer, entryKind: "user_message" })).toEqual({ allowed: false, reason: "not_executable" });
     expect(isGoalDelegationAllowed({ goal: running, parent: main, targetAgentName: "reviewer" })).toBe(false);
 
-    const notDone = { status: "not_done" as const, mainSessionId: "main" };
+    const notDone = { status: "not_done" as const, mainSessionId: "main", pendingHitlIds: [] };
     expect(decideGoalSessionExecution({ goal: notDone, subject: main, entryKind: "user_message" })).toEqual({ allowed: true });
     expect(decideGoalSessionExecution({ goal: notDone, subject: reviewer, entryKind: "user_message" })).toEqual({ allowed: false, reason: "not_executable" });
     expect(isGoalDelegationAllowed({ goal: notDone, parent: main, targetAgentName: "build" })).toBe(false);
+  });
+
+  test("denies execution and delegation while a Goal-owned HITL gate is pending", () => {
+    const gated = { status: "running" as const, mainSessionId: "main", pendingHitlIds: ["hitl-1"] };
+    expect(decideGoalSessionExecution({ goal: gated, subject: main, entryKind: "user_message" }))
+      .toEqual({ allowed: false, reason: "not_executable" });
+    expect(isGoalDelegationAllowed({ goal: gated, parent: main, targetAgentName: "build" })).toBe(false);
   });
 });

@@ -1226,7 +1226,7 @@ describe("reduceStreamEvent", () => {
 describe("Goal stream event reducers", () => {
   function makeGoalState(overrides: Partial<GoalState> = {}): GoalState {
     return {
-      version: 3,
+      version: 4,
       id: "goal-1",
       projectId: "p",
       createdFromSessionId: "session-source",
@@ -1442,9 +1442,9 @@ describe("HITL stream event reducers", () => {
     const state = createProjection({ hitlRequests: [existing] });
     const updated = makeHitlRequest({
       hitlId: "hitl-1",
-      status: "resume_claimed",
+      status: "answered",
       response: { type: "question_answer", answers: ["Yes"] },
-      resume: {
+      delivery: {
         claimId: "claim-1",
         claimedAt: "2026-06-01T00:01:00.000Z",
         intent: "respond",
@@ -1465,9 +1465,9 @@ describe("HITL stream event reducers", () => {
     const state = createProjection();
     const updated = makeHitlRequest({
       hitlId: "hitl-new",
-      status: "resume_claimed",
+      status: "answered",
       response: { type: "question_answer", answers: ["Yes"] },
-      resume: {
+      delivery: {
         claimId: "claim-new",
         claimedAt: "2026-06-01T00:01:00.000Z",
         intent: "respond",
@@ -1526,19 +1526,6 @@ describe("HITL stream event reducers", () => {
     expect(result.hitlRequests![0]!.status).toBe("cancelled");
   });
 
-  test("hitl.resolved with resume_failed status records terminal failure", () => {
-    const request = makeHitlRequest();
-    const state = createProjection({ hitlRequests: [request] });
-
-    const result = reduceStreamEvent(state, {
-      type: "hitl.resolved",
-      hitlId: "hitl-1",
-      status: "resume_failed",
-    }, createDeterministicContext());
-
-    expect(result.hitlRequests![0]!.status).toBe("resume_failed");
-  });
-
   test("hitl.resolved is noop for unknown hitlId", () => {
     const request = makeHitlRequest();
     const state = createProjection({ hitlRequests: [request] });
@@ -1560,9 +1547,9 @@ describe("HITL stream event reducers", () => {
         type: "hitl.updated",
         record: {
           ...request,
-          status: "resume_claimed",
+          status: "answered",
           response: { type: "question_answer", answers: ["Yes"] },
-          resume: {
+          delivery: {
             claimId: "claim-1",
             claimedAt: "2026-06-01T00:01:00.000Z",
             intent: "respond",

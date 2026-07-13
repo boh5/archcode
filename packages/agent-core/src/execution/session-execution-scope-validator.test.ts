@@ -389,7 +389,7 @@ describe("SessionExecutionScopeValidator", () => {
     );
   });
 
-  test("allows blocked Goal HITL replay but not a generic message", async () => {
+  test("keeps Goal lifecycle running while its HITL gate denies Session execution", async () => {
     const fixture = await createFixture("goal-blocked-hitl");
     const goal = await createRunningGoal(fixture, { mainSessionId: "goal-main" });
     await fixture.context.goalState.attachHitlBlocker(goal.id, {
@@ -397,7 +397,6 @@ describe("SessionExecutionScopeValidator", () => {
         kind: "question",
         summary: "Need an answer",
         hitlId: "hitl-1",
-        resumeStatus: "running",
       },
       approvalRef: "hitl-1",
     });
@@ -408,11 +407,15 @@ describe("SessionExecutionScopeValidator", () => {
       sessionRole: "main",
     });
 
-    await expect(fixture.validator.validate({
-      projectRoot: fixture.projectRoot,
-      subject,
-      entry: { kind: "hitl_replay" },
-    })).resolves.toBeUndefined();
+    expect((await fixture.context.goalState.read(goal.id)).status).toBe("running");
+    await expectConflict(
+      fixture.validator.validate({
+        projectRoot: fixture.projectRoot,
+        subject,
+        entry: { kind: "hitl_replay" },
+      }),
+      "SESSION_GOAL_NOT_EXECUTABLE",
+    );
     await expectConflict(
       fixture.validator.validate({
         projectRoot: fixture.projectRoot,

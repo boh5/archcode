@@ -609,7 +609,7 @@ describe("Sidebar", () => {
     projects = [project];
     goals = [
       {
-        version: 3,
+        version: 4,
         id: "goal-1",
         projectId: "archcode",
         createdFromSessionId: "origin",
@@ -630,7 +630,7 @@ describe("Sidebar", () => {
         updatedAt: "1",
       },
       {
-        version: 3,
+        version: 4,
         id: "goal-2",
         projectId: "archcode",
         createdFromSessionId: "origin",
@@ -690,7 +690,7 @@ describe("Sidebar", () => {
     projects = [project];
     goals = [
       {
-        version: 3,
+        version: 4,
         id: "goal-abc",
         projectId: "archcode",
         createdFromSessionId: "origin",

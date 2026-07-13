@@ -77,10 +77,17 @@ export function toHitlProjection(
     status: record.status,
     displayPayload: record.displayPayload,
     allowedActions: allowedActionsFor(record),
+    ...(hitlRequiresInspection(record) ? { requiresInspection: true as const } : {}),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     ...(record.resolvedAt === undefined ? {} : { resolvedAt: record.resolvedAt }),
   };
+}
+
+export function hitlRequiresInspection(record: Pick<HitlRecord, "status" | "delivery">): boolean {
+  return record.status === "answered"
+    && record.delivery?.lastError !== undefined
+    && record.delivery.nextAttemptAt === undefined;
 }
 
 async function collectOwners(context: HitlAggregationContext, query: HitlAggregationQuery): Promise<OwnerDescriptor[]> {
@@ -203,12 +210,11 @@ function dedupeProjections(projections: HitlProjection[]): HitlProjection[] {
 
 function matchesStatus(record: HitlRecord, status: "active" | "terminal" | "all"): boolean {
   if (status === "all") return true;
-  if (status === "active") return record.status === "pending" || record.status === "resume_claimed" || record.status === "resume_failed";
+  if (status === "active") return record.status === "pending" || record.status === "answered";
   return record.status === "resolved" || record.status === "cancelled";
 }
 
 function allowedActionsFor(record: HitlRecord): HitlProjection["allowedActions"] {
-  if (record.status === "resume_failed") return ["retry_resume", "cancel"];
   if (record.status !== "pending") return [];
   switch (record.source.type) {
     case "ask_user":

@@ -435,7 +435,7 @@ function compressionBlockCommittedEvent(): CompressionBlockCommittedEvent {
 
 function createGoalState(goalId: string, projectId: string, status: GoalState["status"]): GoalState {
   return {
-    version: 3,
+    version: 4,
     id: goalId,
     projectId,
     createdFromSessionId: "session-source",

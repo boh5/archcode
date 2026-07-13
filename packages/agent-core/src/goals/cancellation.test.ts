@@ -133,7 +133,7 @@ function hitlInput(ownerId: string, ownerType: "session" | "goal", hitlId: strin
     blockingKey: `${ownerType}:${ownerId}:${hitlId}`,
     source: ownerType === "session"
       ? { type: "ask_user" as const, sessionId: ownerId, toolCallId: "ask-1" }
-      : { type: "goal_approval" as const, goalId: ownerId, approvalPoint: "cancel-test", resumeStatus: "running" as const },
+      : { type: "goal_approval" as const, goalId: ownerId, approvalPoint: "cancel-test" as const },
     displayPayload: {
       title: "Pending approval",
       summary: "Wait for a human decision.",
@@ -201,7 +201,6 @@ describe("GoalCancellationService", () => {
         kind: "approval",
         summary: "Goal approval pending",
         hitlId: goalHitlId,
-        resumeStatus: "running",
       },
       approvalRef: goalHitlId,
     });
@@ -408,7 +407,6 @@ describe("GoalCancellationService", () => {
           kind: "approval",
           summary: "Goal approval pending",
           hitlId: goalHitlId,
-          resumeStatus: "running",
         },
         approvalRef: goalHitlId,
       });

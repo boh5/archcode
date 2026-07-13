@@ -7,15 +7,14 @@ import {
   FileSearch,
   Lock,
   TriangleAlert,
-  RotateCcw,
   X,
   Check,
   Loader2,
   Bell,
   ChevronRight,
 } from "lucide-react";
-import { useRespondHitl, useCancelHitl } from "../../api/mutations";
-import { hitlIdentityKey, isVisiblePendingHitlStatus } from "../../store/hitl-store";
+import { useRespondHitl, useCancelHitl, useStopSessionFamily } from "../../api/mutations";
+import { hitlIdentityKey, isVisibleHitlProjection } from "../../store/hitl-store";
 import type {
   HitlDisplayPayload,
   HitlOwnerKey,
@@ -114,6 +113,7 @@ export interface HitlCardProps {
 export function HitlCard({ projection }: HitlCardProps) {
   const respond = useRespondHitl();
   const cancel = useCancelHitl();
+  const stopSession = useStopSessionFamily();
   const [comment, setComment] = useState("");
   const [answers, setAnswers] = useState<string[][]>([]);
   const [customTexts, setCustomTexts] = useState<string[]>([]);
@@ -129,7 +129,7 @@ export function HitlCard({ projection }: HitlCardProps) {
 
   const respondPending = respond.isPending;
   const cancelPending = cancel.isPending;
-  const anyPending = respondPending || cancelPending;
+  const anyPending = respondPending || cancelPending || stopSession.isPending;
 
   const projectSlug = projection.project.slug;
   const projectName = projection.project.name ?? projectSlug;
@@ -137,6 +137,10 @@ export function HitlCard({ projection }: HitlCardProps) {
   const identity = useMemo(() => ({ owner, hitlId: projection.hitlId }), [owner, projection.hitlId]);
   const ancestry = projection.ancestry;
   const ancestryText = ancestryLabel(ancestry);
+  const requiresInspection = projection.requiresInspection === true;
+  const inspectionRootSessionId = owner.ownerType === "session"
+    ? ancestry?.rootSessionId ?? owner.ownerId
+    : undefined;
 
   const isQuestion = isQuestionSource(sourceType);
   const questions = useMemo(() => (isQuestion ? extractQuestions(display) : []), [isQuestion, display]);
@@ -183,11 +187,6 @@ export function HitlCard({ projection }: HitlCardProps) {
     if (respondPending || !allAnswered) return;
     respond.mutate({ identity, body: { type: "question_answer", answers: resolvedAnswers, comment: comment || undefined } });
   }, [respond, respondPending, allAnswered, resolvedAnswers, identity, comment]);
-
-  const handleRetryResume = useCallback(() => {
-    if (respondPending) return;
-    respond.mutate({ identity, body: { type: "approval_decision", decision: "approved", comment: comment || undefined } });
-  }, [respond, respondPending, identity, comment]);
 
   const handleCancel = useCallback(() => {
     if (cancelPending) return;
@@ -247,7 +246,6 @@ export function HitlCard({ projection }: HitlCardProps) {
   const canDeny = allowed.includes("deny");
   const canAnswer = allowed.includes("answer");
   const canCancel = allowed.includes("cancel");
-  const canRetryResume = allowed.includes("retry_resume");
 
   const renderQuestion = (question: QuestionData, qIndex: number) => (
     <div
@@ -353,7 +351,16 @@ export function HitlCard({ projection }: HitlCardProps) {
         </div>
       )}
 
-      {isQuestion && isMultiQuestion && (
+      {requiresInspection && (
+        <div
+          className="mb-2 rounded-sm border border-warning bg-warning-muted px-2.5 py-2 text-[12px] leading-[1.5] text-warning"
+          data-testid="hitl-inspection-required"
+        >
+          The continuation stopped after your answer was accepted, so its outcome is unknown. Inspect the Session before stopping its family to clear this blocker.
+        </div>
+      )}
+
+      {!requiresInspection && isQuestion && isMultiQuestion && (
         <div
           className="flex items-center gap-1 mb-2 overflow-x-auto border-b border-border-subtle"
           role="tablist"
@@ -414,7 +421,7 @@ export function HitlCard({ projection }: HitlCardProps) {
         </div>
       )}
 
-      {isQuestion && questions.length > 0 && (
+      {!requiresInspection && isQuestion && questions.length > 0 && (
         <div className="mb-2" data-testid="hitl-question-pane">
           {isConfirmStep ? (
             <div
@@ -454,7 +461,7 @@ export function HitlCard({ projection }: HitlCardProps) {
         </div>
       )}
 
-      {(!isMultiQuestion || isConfirmStep) && (
+      {!requiresInspection && (!isMultiQuestion || isConfirmStep) && (
         <input
           type="text"
           value={comment}
@@ -466,6 +473,16 @@ export function HitlCard({ projection }: HitlCardProps) {
       )}
 
       <div className="flex flex-wrap gap-1.5">
+        {requiresInspection && inspectionRootSessionId !== undefined && (
+          <button
+            data-testid="hitl-stop-session-button"
+            className="px-3.5 py-[5px] rounded-sm text-[12px] font-medium bg-error-muted text-error cursor-pointer transition-colors duration-150 hover:opacity-90 flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={() => stopSession.mutate({ slug: projectSlug, rootSessionId: inspectionRootSessionId })}
+            disabled={anyPending}
+          >
+            {stopSession.isPending ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />} Stop Session
+          </button>
+        )}
         {canAnswer && isQuestion && !isMultiQuestion && (
           <button
             data-testid="hitl-approve-button"
@@ -566,17 +583,6 @@ export function HitlCard({ projection }: HitlCardProps) {
           </button>
         )}
 
-        {canRetryResume && (
-          <button
-            data-testid="hitl-retry-resume-button"
-            className="px-3.5 py-[5px] rounded-sm text-[12px] font-medium bg-warning-muted text-warning cursor-pointer transition-colors duration-150 hover:opacity-90 flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
-            onClick={handleRetryResume}
-            disabled={anyPending}
-          >
-            {respondPending ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />} Resume
-          </button>
-        )}
-
         {canCancel && (
           <button
             data-testid="hitl-cancel-button"
@@ -615,7 +621,7 @@ export function HitlInbox({
     const seen = new Set<string>();
     const result: HitlProjection[] = [];
     for (const p of projections) {
-      if (!isVisiblePendingHitlStatus(p.status)) continue;
+      if (!isVisibleHitlProjection(p)) continue;
       const key = hitlIdentityKey(p);
       if (!seen.has(key)) {
         seen.add(key);

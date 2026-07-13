@@ -111,7 +111,7 @@ describe("ContextInspector interactions", () => {
       stats: { ...createEmptySessionStats(), messages: { total: 4, user: 1, assistant: 3 }, tools: { calls: 2, completed: 2, failed: 0 } },
     };
     const relatedGoal: GoalState = {
-      version: 3,
+      version: 4,
       id: "created-goal",
       projectId: "demo",
       createdFromSessionId: "child",
@@ -236,9 +236,8 @@ describe("ContextInspector interactions", () => {
   test("organizes Goal criteria, evidence, and sessions", async () => {
     const dom = installDom("/projects/demo/goals/g1");
     const goal: GoalState = {
-      version: 3, id: "g1", projectId: "demo", createdFromSessionId: "origin", title: "Goal", objective: "Ship it", acceptanceCriteria: "Tests pass", useWorktree: true,
+      version: 4, id: "g1", projectId: "demo", createdFromSessionId: "origin", title: "Goal", objective: "Ship it", acceptanceCriteria: "Tests pass", useWorktree: true,
       status: "done", attempt: 1, reviewGeneration: 1, pendingHitlIds: [], approvalRefs: [], appliedHitlIds: [], mainSessionId: "main", childSessionIds: ["child"],
-      blocker: { kind: "approval", summary: "Waiting for approval", resumeStatus: "reviewing", createdAt: "2026-01-01" },
       budget: { status: "warning", usedTokens: 1200, maxTokens: 2000, reason: "Near limit", updatedAt: "2026-01-01" },
       worktree: { path: "/workspace/goal", branchName: "codex/goal", baseSha: "abc123", createdAt: "2026-01-01" },
       review: { reviewGeneration: 1, verdict: "DONE", summary: "Verified", evidenceRefs: [{ kind: "test_output", ref: "test-1", summary: "All tests passed", sessionId: "main", path: "logs/test.txt", toolCallId: "tool-1", messageId: "message-1", url: "https://example.com/evidence", createdAt: "2026-01-01" }], reviewerSessionId: "reviewer", decidedAt: "2026-01-01" },
@@ -252,8 +251,7 @@ describe("ContextInspector interactions", () => {
       await waitFor(() => expect(container.textContent).toContain("Tests pass"));
       expect(container.textContent).toContain("1,200");
       expect(container.textContent).toContain("codex/goal");
-      expect(container.textContent).toContain("approval");
-      expect(container.textContent).toContain("reviewing");
+      expect(container.textContent).toContain("done");
       const criteriaTab = Array.from(container.querySelectorAll('[role="tab"]')).find((button) => button.textContent === "Criteria") as HTMLButtonElement;
       expect(criteriaTab.getAttribute("aria-controls")).toBe("context-inspector-panel");
       await act(async () => { criteriaTab.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })); });

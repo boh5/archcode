@@ -60,7 +60,7 @@ function reviewerAuth(goalId: string) {
   };
 }
 
-describe("GoalStateSchema v3", () => {
+describe("GoalStateSchema v4", () => {
   test("requires committed provenance and execution ownership with no draft fallback", async () => {
     const goal = await commitGoal();
     expect(GoalStateSchema.parse(goal)).toEqual(goal);
@@ -104,7 +104,7 @@ describe("GoalStateManager", () => {
     const goal = await commitGoal(manager);
 
     expect(goal).toMatchObject({
-      version: 3,
+      version: 4,
       id: GOAL_ID,
       projectId: "project-a",
       createdFromSessionId: SOURCE_SESSION_ID,
@@ -155,27 +155,26 @@ describe("GoalStateManager", () => {
   test("preserves the running lifecycle, reviewer evidence, retry, and terminal rules", async () => {
     const manager = new GoalStateManager(TMP_DIR);
     const goal = await commitGoal(manager);
-    expect((await manager.block(goal.id, { kind: "question", summary: "Need answer", resumeStatus: "reviewing" })).status).toBe("blocked");
-    expect((await manager.clearBlocker(goal.id)).status).toBe("reviewing");
+    expect((await manager.beginReview(goal.id)).status).toBe("reviewing");
     const notDone = await manager.finalizeReview(goal.id, {
-      expectedReviewGeneration: 0,
+      expectedReviewGeneration: 1,
       verdict: "NOT_DONE",
       summary: "Missing evidence.",
       authorization: reviewerAuth(goal.id),
     });
     expect(notDone.status).toBe("not_done");
     expect(await manager.retry(goal.id)).toMatchObject({ status: "running", attempt: 2 });
-    expect((await manager.beginReview(goal.id)).reviewGeneration).toBe(1);
+    expect((await manager.beginReview(goal.id)).reviewGeneration).toBe(2);
 
     await expect(manager.finalizeReview(goal.id, {
-      expectedReviewGeneration: 1,
+      expectedReviewGeneration: 2,
       verdict: "DONE",
       summary: "Wrong reviewer.",
       evidenceRefs: [evidenceRef()],
       authorization: { ...reviewerAuth(goal.id), agentName: "build" },
     })).rejects.toBeInstanceOf(GoalReviewerAuthorizationError);
     await expect(manager.finalizeReview(goal.id, {
-      expectedReviewGeneration: 1,
+      expectedReviewGeneration: 2,
       verdict: "DONE",
       summary: "No evidence.",
       evidenceRefs: [],
@@ -183,7 +182,7 @@ describe("GoalStateManager", () => {
     })).rejects.toBeInstanceOf(GoalReviewFinalizationError);
 
     const done = await manager.finalizeReview(goal.id, {
-      expectedReviewGeneration: 1,
+      expectedReviewGeneration: 2,
       verdict: "DONE",
       summary: "All criteria verified.",
       evidenceRefs: [evidenceRef()],

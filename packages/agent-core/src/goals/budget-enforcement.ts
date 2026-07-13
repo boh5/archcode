@@ -121,7 +121,6 @@ async function requestBudgetApproval(
       type: "goal_budget",
       goalId: goal.id,
       approvalPoint: BUDGET_APPROVAL_POINT,
-      resumeStatus: "running",
     },
     displayPayload: {
       title: "Approve Goal budget warning",
@@ -147,7 +146,6 @@ async function requestBudgetApproval(
       summary: "Budget warning approval is pending",
       hitlId: record.hitlId,
       source: BUDGET_APPROVAL_POINT,
-      resumeStatus: "running",
     },
     approvalRef: record.hitlId,
   });
@@ -167,13 +165,5 @@ async function blockForHardStop(
     reason,
     updatedAt: new Date().toISOString(),
   });
-  if (goal.status !== "blocked") {
-    await projectContext.goalState.block(goal.id, {
-      kind: "budget",
-      summary: reason,
-      source: "hard_limit",
-      resumeStatus: "running",
-    });
-  }
   throw new GoalBudgetEnforcementStopError(goal.id, `Goal blocked: ${reason.toLowerCase()}`);
 }

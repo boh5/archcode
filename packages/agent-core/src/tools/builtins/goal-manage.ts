@@ -2,7 +2,6 @@ import { z } from "zod/v4";
 import { resolve } from "node:path";
 import {
   TOOL_GOAL_MANAGE,
-  type GoalBlockerKind,
   type GoalEvidenceRef,
   type GoalReviewVerdict,
   type GoalState,
@@ -37,21 +36,6 @@ const GoalEvidenceRefSchema = z.strictObject({
   createdAt: GoalTextSchema.optional(),
 }) satisfies z.ZodType<GoalEvidenceRef>;
 
-const GoalManageBlockInputSchema = z.strictObject({
-  action: z.literal("block"),
-  goalId: GoalUuidSchema.describe("Goal UUID to block."),
-  kind: z.enum(["approval", "question", "budget", "permission", "tool_error"]) satisfies z.ZodType<GoalBlockerKind>,
-  summary: GoalReceiptSummarySchema.describe("Short blocker summary."),
-  source: GoalTextSchema.optional(),
-  resumeStatus: z.enum(["running", "reviewing"]),
-});
-
-const GoalManageResumeInputSchema = z.strictObject({
-  action: z.literal("resume"),
-  goalId: GoalUuidSchema.describe("Goal UUID to resume."),
-  hitlId: GoalTextSchema.optional().describe("Optional HITL id to clear before resuming."),
-});
-
 const GoalManageBeginReviewInputSchema = z.strictObject({
   action: z.literal("begin_review"),
   goalId: GoalUuidSchema.describe("Goal UUID whose execution should move into review."),
@@ -80,8 +64,6 @@ const GoalManageCancelInputSchema = z.strictObject({
 });
 
 const GoalManageInputSchema = z.discriminatedUnion("action", [
-  GoalManageBlockInputSchema,
-  GoalManageResumeInputSchema,
   GoalManageBeginReviewInputSchema,
   GoalManageFinalizeReviewInputSchema,
   GoalManageRetryInputSchema,
@@ -100,13 +82,6 @@ type GoalManageInput = z.infer<typeof GoalManageInputSchema>;
 
 interface SimplifiedGoalStateManager {
   read(goalId: string): Promise<GoalState>;
-  block(goalId: string, blocker: {
-    kind: GoalBlockerKind;
-    summary: string;
-    source?: string;
-    resumeStatus: "running" | "reviewing";
-  }): Promise<GoalState>;
-  clearBlocker(goalId: string, hitlId?: string): Promise<GoalState>;
   beginReview(goalId: string): Promise<GoalState>;
   finalizeReview(goalId: string, input: {
     readonly expectedReviewGeneration: number;
@@ -128,7 +103,7 @@ interface SimplifiedGoalStateManager {
 
 export const goalManageTool: AnyToolDescriptor = defineTool({
   name: TOOL_GOAL_MANAGE,
-  description: "Manage a running Goal lifecycle: block, resume, begin_review, finalize_review, retry, or cancel.",
+  description: "Manage a Goal lifecycle: begin_review, finalize_review, retry, or cancel.",
   inputSchema: GoalManageInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   execute: async (input: GoalManageInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
@@ -144,23 +119,6 @@ export const goalManageTool: AnyToolDescriptor = defineTool({
       }
 
       switch (input.action) {
-        case "block": {
-          return formatGoalToolResult(await withGoalExecutionClaimLock(input.goalId, () => (
-            manager.block(input.goalId, {
-              kind: input.kind,
-              summary: input.summary,
-              ...(input.source === undefined ? {} : { source: input.source }),
-              resumeStatus: input.resumeStatus,
-            })
-          )));
-        }
-        case "resume": {
-          await assertGoalExecutionWorkspace(manager, input.goalId, ctx);
-          return formatGoalToolResult(await withGoalExecutionClaimLock(
-            input.goalId,
-            () => manager.clearBlocker(input.goalId, input.hitlId),
-          ));
-        }
         case "begin_review": {
           await assertGoalExecutionWorkspace(manager, input.goalId, ctx);
           return formatGoalToolResult(await withGoalExecutionClaimLock(

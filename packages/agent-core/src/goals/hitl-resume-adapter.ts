@@ -77,7 +77,7 @@ export class GoalHitlResumeAdapter implements ResumeAdapterContract {
       if (!attached) {
         throw new GoalStateError(goal.id, `Goal ${goal.id} HITL ${hitlId} is pending without a durable attachment marker`);
       }
-      if (goal.status !== "blocked" || goal.blocker?.hitlId !== hitlId) {
+      if (goal.blocker?.hitlId !== hitlId) {
         throw new GoalStateError(goal.id, `Goal ${goal.id} HITL ${hitlId} is pending but is not the active blocker`);
       }
       return;
@@ -135,7 +135,6 @@ function blockerFromOwnerRecord(record: HitlRecord): Omit<GoalBlocker, "createdA
         summary,
         hitlId: record.hitlId,
         source: record.source.approvalPoint ?? record.source.type,
-        resumeStatus: record.source.resumeStatus,
       };
     case "goal_budget":
       return {
@@ -143,7 +142,6 @@ function blockerFromOwnerRecord(record: HitlRecord): Omit<GoalBlocker, "createdA
         summary,
         hitlId: record.hitlId,
         source: record.source.approvalPoint ?? record.source.type,
-        resumeStatus: record.source.resumeStatus,
       };
     case "goal_question":
       return {
@@ -151,7 +149,6 @@ function blockerFromOwnerRecord(record: HitlRecord): Omit<GoalBlocker, "createdA
         summary,
         hitlId: record.hitlId,
         source: record.source.questionKey,
-        resumeStatus: record.source.resumeStatus,
       };
     case "goal_review":
       return {
@@ -159,7 +156,6 @@ function blockerFromOwnerRecord(record: HitlRecord): Omit<GoalBlocker, "createdA
         summary,
         hitlId: record.hitlId,
         source: "goal_review",
-        resumeStatus: record.source.resumeStatus,
       };
     default:
       throw new GoalStateError(record.owner.ownerId, `Unsupported Goal HITL source: ${record.source.type}`);

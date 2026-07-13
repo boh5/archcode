@@ -18,17 +18,30 @@ describe("hitlStore", () => {
     expect(hitlStore.getState().projections[hitlIdentityKey(request.projection)]).toBeUndefined();
   });
 
-  test("removes resume_claimed projections from the visible realtime queue", () => {
+  test("removes answered projections from the visible realtime queue", () => {
     const request = hitlEvent({ hitlId: "hitl-claimed" });
     hitlStore.getState().applyRealtimeEvent(request);
 
     hitlStore.getState().applyRealtimeEvent(hitlEvent({
       hitlId: "hitl-claimed",
-      status: "resume_claimed",
+      status: "answered",
       payloadType: "hitl.updated",
     }));
 
     expect(hitlStore.getState().projections[hitlIdentityKey(request.projection)]).toBeUndefined();
+  });
+
+  test("keeps answered projections visible when manual inspection is required", () => {
+    const event = hitlEvent({
+      hitlId: "hitl-unknown",
+      status: "answered",
+      payloadType: "hitl.updated",
+      requiresInspection: true,
+    });
+
+    hitlStore.getState().applyRealtimeEvent(event);
+
+    expect(hitlStore.getState().projections[hitlIdentityKey(event.projection)]).toEqual(event.projection);
   });
 
   test("keeps the same hitlId under different owners as separate projections", () => {
@@ -113,13 +126,14 @@ describe("hitlStore", () => {
 
 });
 
-function hitlEvent(input: { hitlId: string; ownerId?: string; status?: HitlProjection["status"]; payloadType?: "hitl.request" | "hitl.updated" | "hitl.resolved" }): GlobalSSEHitlRealtimeEvent {
+function hitlEvent(input: { hitlId: string; ownerId?: string; status?: HitlProjection["status"]; payloadType?: "hitl.request" | "hitl.updated" | "hitl.resolved"; requiresInspection?: true }): GlobalSSEHitlRealtimeEvent {
   const eventProjection = projection({
     hitlId: input.hitlId,
     status: input.status ?? "pending",
     ...(input.ownerId === undefined ? {} : {
       owner: { projectSlug: "proj", ownerType: "session", ownerId: input.ownerId },
     }),
+    ...(input.requiresInspection === undefined ? {} : { requiresInspection: input.requiresInspection }),
   });
   return {
     type: "hitl.event",
@@ -153,5 +167,6 @@ function projection(input: Partial<HitlProjection> & { hitlId: string }): HitlPr
     createdAt: input.createdAt ?? "2026-07-08T00:00:00.000Z",
     updatedAt: input.updatedAt ?? "2026-07-08T00:00:00.000Z",
     ...(input.ancestry === undefined ? {} : { ancestry: input.ancestry }),
+    ...(input.requiresInspection === undefined ? {} : { requiresInspection: input.requiresInspection }),
   };
 }

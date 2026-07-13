@@ -9,7 +9,6 @@ import { resolveProject } from "../resolve";
 const GoalUuidSchema = z.uuid();
 const GoalStatusSchema = z.enum([
   "running",
-  "blocked",
   "reviewing",
   "done",
   "not_done",

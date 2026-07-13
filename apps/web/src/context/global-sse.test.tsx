@@ -750,7 +750,7 @@ describe("handleSSEEvent", () => {
 
 function createGoalState(goalId: string, projectId: string, status: GoalState["status"]): GoalState {
   return {
-    version: 3,
+    version: 4,
     id: goalId,
     projectId,
     createdFromSessionId: "origin",

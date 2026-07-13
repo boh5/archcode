@@ -49,7 +49,7 @@ export type ResumeIntent = "respond" | "cancel";
 
 export type ResumeCoordinatorResult =
   | { status: "missing"; scheduled: false }
-  | { status: "claimed" | "terminal" | "active"; scheduled: boolean; record: HitlRecord };
+  | { status: "answered" | "terminal" | "active"; scheduled: boolean; record: HitlRecord };
 
 export interface ResumeRecoverySummary {
   scanned: number;
@@ -66,6 +66,8 @@ export class ResumeCoordinator {
   readonly #logger: Logger;
   readonly #locks = new Map<string, Promise<void>>();
   readonly #dispatchedClaims = new Set<string>();
+  readonly #retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  #disposed = false;
 
   constructor(options: ResumeCoordinatorOptions) {
     this.#hitl = options.hitl;
@@ -79,6 +81,12 @@ export class ResumeCoordinator {
 
   async cancel(identity: HitlIdentity, reason = "Cancelled", cancelledBy?: string): Promise<ResumeCoordinatorResult> {
     return await this.#claimAndSchedule(identity, { type: "cancel", reason, cancelledBy }, "cancel");
+  }
+
+  dispose(): void {
+    this.#disposed = true;
+    for (const timer of this.#retryTimers.values()) clearTimeout(timer);
+    this.#retryTimers.clear();
   }
 
   async recover(): Promise<ResumeRecoverySummary> {
@@ -95,7 +103,7 @@ export class ResumeCoordinator {
           skippedPending += 1;
           continue;
         }
-        if (record.status !== "resume_claimed" && record.status !== "resume_failed") continue;
+        if (record.status !== "answered") continue;
         if (record.response === undefined) {
           missingResponse += 1;
           continue;
@@ -105,17 +113,7 @@ export class ResumeCoordinator {
         const result = await this.#withHitlLock(identity, async () => {
           const current = await this.#lookupFound(identity);
           if (current === undefined) return false;
-          if (current.record.status === "resume_claimed") {
-            return await this.#prepareRecoveredDispatch(current.record);
-          }
-          if (current.record.status === "resume_failed" && current.record.response !== undefined) {
-            return await this.#prepareClaimAndSchedule(
-              identity,
-              current.record,
-              current.record.response,
-              current.record.resume?.intent ?? (current.record.response.type === "cancel" ? "cancel" : "respond"),
-            ) !== undefined;
-          }
+          if (current.record.status === "answered") return await this.#scheduleAnsweredRecovery(current.record);
           return false;
         });
         if (result) scheduled += 1;
@@ -138,13 +136,8 @@ export class ResumeCoordinator {
       if (current.status === "resolved" || current.status === "cancelled") {
         return { status: "terminal", scheduled: false, record: current };
       }
-      if (current.status === "resume_claimed") {
-        return { status: "claimed", scheduled: false, record: current };
-      }
-      if (current.status === "resume_failed" && intent === "cancel") {
-        const prepared = await this.#prepareClaimAndSchedule(identity, current, response, intent);
-        if (prepared === undefined) return { status: "missing", scheduled: false };
-        return { status: "claimed", scheduled: prepared.scheduled, record: prepared.record };
+      if (current.status === "answered") {
+        return { status: "answered", scheduled: this.#scheduleDispatch(current), record: current };
       }
       if (current.status !== "pending") {
         return { status: "active", scheduled: false, record: current };
@@ -152,7 +145,7 @@ export class ResumeCoordinator {
 
       const prepared = await this.#prepareClaimAndSchedule(identity, current, response, intent);
       if (prepared === undefined) return { status: "missing", scheduled: false };
-      return { status: "claimed", scheduled: prepared.scheduled, record: prepared.record };
+      return { status: "answered", scheduled: prepared.scheduled, record: prepared.record };
     });
   }
 
@@ -162,79 +155,67 @@ export class ResumeCoordinator {
     response: HitlResponse,
     intent: ResumeIntent,
   ): Promise<{ readonly record: HitlRecord; readonly scheduled: boolean } | undefined> {
-    const prepared = await this.#adapterFor(current.owner).prepare(current, response);
-    try {
-      const claimed = await this.#hitl.claim(identity, response, {
+    const claimed = await this.#hitl.claim(identity, response, {
         claimId: crypto.randomUUID(),
         claimedAt: new Date().toISOString(),
         intent,
-        attempt: (current.resume?.attempt ?? 0) + 1,
+        attempt: (current.delivery?.attempt ?? 0) + 1,
       });
-      if (claimed === undefined) {
-        prepared.release();
-        return undefined;
-      }
-      const scheduled = this.#scheduleDispatch(claimed, prepared);
-      return { record: claimed, scheduled };
-    } catch (error) {
-      prepared.release();
-      throw error;
-    }
+    if (claimed === undefined) return undefined;
+    const scheduled = this.#scheduleDispatch(claimed);
+    return { record: claimed, scheduled };
   }
 
-  async #prepareRecoveredDispatch(record: HitlRecord): Promise<boolean> {
-    if (this.#isDispatched(record)) return false;
-    try {
-      const response = record.response;
-      if (response === undefined) return false;
-      const prepared = await this.#adapterFor(record.owner).prepare(record, response);
-      return this.#scheduleDispatch(record, prepared);
-    } catch (error) {
-      void this.#recordDispatchFailure(record, error).catch((failure: unknown) => {
-        this.#logDispatchFailure(record, failure);
-      });
+  async #scheduleAnsweredRecovery(record: HitlRecord): Promise<boolean> {
+    const nextAttemptAt = record.delivery?.nextAttemptAt;
+    if (record.delivery?.lastError !== undefined && nextAttemptAt === undefined) return false;
+    if (nextAttemptAt !== undefined && Date.parse(nextAttemptAt) > Date.now()) {
+      this.#scheduleRetry(record, Date.parse(nextAttemptAt) - Date.now());
       return true;
     }
+    if (record.delivery?.lastError === undefined) {
+      return this.#scheduleDispatch(record);
+    }
+    const response = record.response;
+    if (response === undefined) return false;
+    const claimed = await this.#prepareClaimAndSchedule(
+      identityFromRecord(record),
+      record,
+      response,
+      record.delivery?.intent ?? (response.type === "cancel" ? "cancel" : "respond"),
+    );
+    return claimed !== undefined;
   }
 
-  #scheduleDispatch(record: HitlRecord, prepared: PreparedHitlResume): boolean {
-    const completion = this.#beginDispatch(record, prepared);
-    if (completion === undefined) return false;
-    void completion.catch((error: unknown) => {
-      this.#logDispatchFailure(record, error);
-    });
+  #scheduleDispatch(record: HitlRecord): boolean {
+    if (this.#disposed) return false;
+    const claimId = record.delivery?.claimId;
+    if (claimId === undefined || record.response === undefined) {
+      return false;
+    }
+    const dispatchKey = `${hitlIdentityKey(identityFromRecord(record))}:${claimId}`;
+    if (this.#dispatchedClaims.has(dispatchKey)) return false;
+    this.#dispatchedClaims.add(dispatchKey);
+    void this.#dispatch(record).catch((error: unknown) => this.#logDispatchFailure(record, error));
     return true;
   }
 
-  #beginDispatch(record: HitlRecord, prepared: PreparedHitlResume): Promise<void> | undefined {
-    const claimId = record.resume?.claimId;
-    if (claimId === undefined || record.response === undefined) {
-      prepared.release();
-      return undefined;
-    }
-    const dispatchKey = `${hitlIdentityKey(identityFromRecord(record))}:${claimId}`;
-    if (this.#dispatchedClaims.has(dispatchKey)) {
-      prepared.release();
-      return undefined;
-    }
-    this.#dispatchedClaims.add(dispatchKey);
-    return this.#dispatch(record, prepared);
-  }
-
-  async #dispatch(record: HitlRecord, prepared: PreparedHitlResume): Promise<void> {
+  async #dispatch(record: HitlRecord): Promise<void> {
+    let prepared: PreparedHitlResume | undefined;
     try {
       const response = record.response;
       if (response === undefined) throw new Error(`Cannot resume HITL ${record.hitlId} without a response`);
       const adapter = this.#adapterFor(record.owner);
+      prepared = await adapter.prepare(record, response);
       await prepared.run(record, response);
       const identity = identityFromRecord(record);
       const terminal = await this.#withHitlLock(identity, async () => {
         const current = await this.#lookupFound(identity);
-        if (current?.record.status !== "resume_claimed") return undefined;
-        if (current.record.resume?.claimId !== record.resume?.claimId) return undefined;
+        if (current?.record.status !== "answered") return undefined;
+        if (current.record.delivery?.claimId !== record.delivery?.claimId) return undefined;
         return await this.#hitl.finishResume(
           identity,
-          current.record.resume?.intent === "cancel" ? "cancelled" : "resolved",
+          current.record.delivery?.intent === "cancel" ? "cancelled" : "resolved",
           current.record.response,
         );
       });
@@ -244,39 +225,64 @@ export class ResumeCoordinator {
     } catch (error) {
       await this.#recordDispatchFailure(record, error);
     } finally {
-      prepared.release();
+      prepared?.release();
     }
   }
 
   async #recordDispatchFailure(record: HitlRecord, error: unknown): Promise<void> {
     const message = error instanceof Error ? error.message : String(error);
-    this.#logger.warn("hitl.resume.failed", {
+    this.#logger.warn("hitl.delivery.failed", {
       error,
       context: { hitlId: record.hitlId, ownerType: record.owner.ownerType, ownerId: record.owner.ownerId },
     });
     const identity = identityFromRecord(record);
-    await this.#withHitlLock(identity, async () => {
+    const failed = await this.#withHitlLock(identity, async () => {
       const current = await this.#lookupFound(identity);
-      if (current?.record.status !== "resume_claimed") return;
-      if (current.record.resume?.claimId !== record.resume?.claimId) return;
-      await this.#hitl.markResumeFailed(identity, message);
+      if (current?.record.status !== "answered") return undefined;
+      if (current.record.delivery?.claimId !== record.delivery?.claimId) return undefined;
+      const attempt = current.record.delivery?.attempt ?? 1;
+      const retryable = !isNonRetryableDeliveryError(error);
+      const delayMs = Math.min(1000 * 2 ** Math.max(0, attempt - 1), 30_000);
+      const nextAttemptAt = retryable ? new Date(Date.now() + delayMs).toISOString() : undefined;
+      return await this.#hitl.markDeliveryFailed(identity, message, nextAttemptAt);
     });
+    if (failed?.delivery?.nextAttemptAt !== undefined) {
+      this.#scheduleRetry(failed, Math.max(0, Date.parse(failed.delivery?.nextAttemptAt ?? "") - Date.now()));
+    }
   }
 
-  #isDispatched(record: HitlRecord): boolean {
-    const claimId = record.resume?.claimId;
-    return claimId !== undefined
-      && this.#dispatchedClaims.has(`${hitlIdentityKey(identityFromRecord(record))}:${claimId}`);
+  #scheduleRetry(record: HitlRecord, delayMs: number): void {
+    if (this.#disposed) return;
+    const identity = identityFromRecord(record);
+    const key = hitlIdentityKey(identity);
+    const existing = this.#retryTimers.get(key);
+    if (existing !== undefined) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      this.#retryTimers.delete(key);
+      if (this.#disposed) return;
+      void this.#withHitlLock(identity, async () => {
+        const current = await this.#lookupFound(identity);
+        if (current?.record.status !== "answered" || current.record.response === undefined) return;
+        await this.#prepareClaimAndSchedule(
+          identity,
+          current.record,
+          current.record.response,
+          current.record.delivery?.intent ?? (current.record.response.type === "cancel" ? "cancel" : "respond"),
+        );
+      }).catch((error: unknown) => this.#logDispatchFailure(record, error));
+    }, Math.max(0, delayMs));
+    if (typeof timer === "object" && "unref" in timer) timer.unref();
+    this.#retryTimers.set(key, timer);
   }
 
   #logDispatchFailure(record: HitlRecord, error: unknown): void {
-    this.#logger.error("hitl.resume.dispatch.failed", {
+    this.#logger.error("hitl.delivery.dispatch.failed", {
       error,
       context: {
         hitlId: record.hitlId,
         ownerType: record.owner.ownerType,
         ownerId: record.owner.ownerId,
-        claimId: record.resume?.claimId,
+        claimId: record.delivery?.claimId,
       },
     });
   }
@@ -313,4 +319,8 @@ export class ResumeCoordinator {
 
 function identityFromRecord(record: HitlRecord): HitlIdentity {
   return { owner: record.owner, hitlId: record.hitlId };
+}
+
+function isNonRetryableDeliveryError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "retryable" in error && error.retryable === false;
 }

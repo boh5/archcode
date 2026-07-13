@@ -5,7 +5,6 @@ import type { DashboardAutomation, DashboardGoal, GoalStatus } from "../api/type
 
 const STATUS_BADGE: Partial<Record<GoalStatus, string>> = {
   running: "bg-success-muted text-success",
-  blocked: "bg-warning-muted text-warning",
   reviewing: "bg-info-muted text-info",
   done: "bg-accent-muted text-accent",
   not_done: "bg-error-muted text-error",

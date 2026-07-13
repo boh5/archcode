@@ -121,7 +121,7 @@ function makeGoal(overrides: Partial<GoalState> = {}): GoalState {
     pendingHitlIds: [],
     approvalRefs: [],
     appliedHitlIds: [],
-    version: 3,
+    version: 4,
     createdFromSessionId: "origin",
     useWorktree: false,
     mainSessionId: "main-session",
@@ -138,7 +138,7 @@ function makeHitlItem(overrides: Partial<HitlProjection> = {}): HitlProjection {
     hitlId: "hitl-1",
     project: { slug: "demo", name: "Demo Project" },
     owner: { projectSlug: "demo", ownerType: "session", ownerId: "session-1" },
-    source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
+    source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan"},
     status: "pending",
     displayPayload: { title: "Approve?", summary: "Please approve", redacted: true },
     allowedActions: ["approve", "deny", "cancel"],
@@ -352,11 +352,11 @@ describe("GoalDetailRoute", () => {
     if (!container) throw new Error("Missing test root");
 
     const goal = makeGoal({
-      status: "blocked",
+      status: "running",
       blocker: {
         kind: "approval",
         summary: "Waiting for budget approval",
-        resumeStatus: "running",
+        hitlId: "hitl-budget",
         createdAt: "2026-01-01T12:00:00.000Z",
       },
       budget: {
@@ -653,7 +653,7 @@ describe("GoalDetailRoute", () => {
     const goal = makeGoal({ id: "goal-1", status: "running" });
     const matchingItem = makeHitlItem({
       hitlId: "hitl-goal-1",
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan"},
       displayPayload: { title: "Approve budget?", summary: "Confirm spend", redacted: true },
     });
 
@@ -696,7 +696,7 @@ describe("GoalDetailRoute", () => {
     const goal = makeGoal({ id: "goal-1", status: "running" });
     const ownItem = makeHitlItem({
       hitlId: "hitl-own",
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan"},
       displayPayload: { title: "Own approval", redacted: true },
     });
 
@@ -705,7 +705,7 @@ describe("GoalDetailRoute", () => {
       ownItem,
       makeHitlItem({
         hitlId: "hitl-other-goal",
-        source: { type: "goal_approval", goalId: "goal-other", approvalPoint: "after_plan" , resumeStatus: "running"},
+        source: { type: "goal_approval", goalId: "goal-other", approvalPoint: "after_plan"},
         displayPayload: { title: "Other approval", redacted: true },
       }),
     );
@@ -778,7 +778,7 @@ describe("GoalDetailRoute", () => {
     const matchingItem = makeHitlItem({
       hitlId: "hitl-cancel-target",
       owner: { projectSlug: "demo", ownerType: "goal", ownerId: "goal-1" },
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan"},
       displayPayload: { title: "Approve?", redacted: true },
     });
 

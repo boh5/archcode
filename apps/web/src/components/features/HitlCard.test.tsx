@@ -117,16 +117,20 @@ mock.module("react-router-dom", () => ({
 
 type RespondHitlArgs = { identity: { owner: HitlProjection["owner"]; hitlId: string }; body: { type?: string; decision?: string; outcome?: string; answers?: string[] } };
 type CancelHitlArgs = { identity: { owner: HitlProjection["owner"]; hitlId: string }; reason?: string };
+type StopSessionArgs = { slug: string; rootSessionId: string };
 
 const respondHitl = mock((_args: RespondHitlArgs) => {});
 const cancelHitl = mock((_args: CancelHitlArgs) => {});
+const stopSession = mock((_args: StopSessionArgs) => {});
 
 let respondIsPending = false;
 let cancelIsPending = false;
+let stopSessionIsPending = false;
 
 mock.module("../../api/mutations", () => ({
   useRespondHitl: () => ({ mutate: respondHitl, mutateAsync: respondHitl, isPending: respondIsPending }),
   useCancelHitl: () => ({ mutate: cancelHitl, mutateAsync: cancelHitl, isPending: cancelIsPending }),
+  useStopSessionFamily: () => ({ mutate: stopSession, mutateAsync: stopSession, isPending: stopSessionIsPending }),
 }));
 
 const { HitlCard } = await import("./HitlCard");
@@ -146,7 +150,7 @@ function makeProjection(overrides: Partial<HitlProjection> = {}): HitlProjection
     hitlId: "hitl-1",
     project: { slug: "demo", name: "Demo Project" },
     owner: { projectSlug: "demo", ownerType: "session", ownerId: "session-1" },
-    source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
+    source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan"},
     status: "pending",
     displayPayload: makeDisplayPayload({ title: "Approve?", summary: "Please approve" }),
     allowedActions: ["approve", "deny", "cancel"],
@@ -174,8 +178,10 @@ describe("HitlCard", () => {
   beforeEach(() => {
     respondHitl.mockClear();
     cancelHitl.mockClear();
+    stopSession.mockClear();
     respondIsPending = false;
     cancelIsPending = false;
+    stopSessionIsPending = false;
     resetHookState();
   });
 
@@ -187,7 +193,7 @@ describe("HitlCard", () => {
   });
 
   test("renders source label for goal_approval", () => {
-    const projection = makeProjection({ source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"} });
+    const projection = makeProjection({ source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan"} });
     const result = HitlCard({ projection });
     const text = textContent(result);
     expect(text.toLowerCase()).toContain("goal approval");
@@ -206,7 +212,7 @@ describe("HitlCard", () => {
 
   test("renders source label for goal_review", () => {
     const projection = makeProjection({
-      source: { type: "goal_review", goalId: "goal-1" , resumeStatus: "reviewing"},
+      source: { type: "goal_review", goalId: "goal-1"},
       allowedActions: ["approve", "deny", "cancel"],
       displayPayload: makeDisplayPayload({ title: "Review artifacts" }),
     });
@@ -304,7 +310,7 @@ describe("HitlCard", () => {
 
   test("renders approve and deny buttons for goal_approval", () => {
     const projection = makeProjection({
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan"},
       allowedActions: ["approve", "deny", "cancel"],
     });
     const result = HitlCard({ projection });
@@ -321,7 +327,7 @@ describe("HitlCard", () => {
   test("approve button calls respondHitl with decision=approved", () => {
     const projection = makeProjection({
       hitlId: "hitl-approve-test",
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan"},
       allowedActions: ["approve", "deny", "cancel"],
     });
     const result = HitlCard({ projection });
@@ -340,7 +346,7 @@ describe("HitlCard", () => {
   test("deny button calls respondHitl with decision=denied", () => {
     const projection = makeProjection({
       hitlId: "hitl-deny-test",
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan"},
       allowedActions: ["approve", "deny", "cancel"],
     });
     const result = HitlCard({ projection });
@@ -369,9 +375,28 @@ describe("HitlCard", () => {
     expect(callArg.identity.hitlId).toBe("hitl-cancel-test");
   });
 
+  test("inspection-required Session HITL shows context and stops the owning Session family", () => {
+    const projection = makeProjection({
+      status: "answered",
+      requiresInspection: true,
+      allowedActions: [],
+      owner: { projectSlug: "demo", ownerType: "session", ownerId: "child-session" },
+      ancestry: { rootSessionId: "root-session", parentSessionId: "root-session" },
+    });
+
+    const result = HitlCard({ projection });
+
+    expect(textContent(findByTestId(result, "hitl-inspection-required"))).toContain("outcome is unknown");
+    const stopButton = findByTestId(result, "hitl-stop-session-button");
+    expect(stopButton).toBeDefined();
+    (stopButton?.props?.onClick as (() => void) | undefined)?.();
+    expect(stopSession).toHaveBeenCalledWith({ slug: "demo", rootSessionId: "root-session" });
+    expect(cancelHitl).not.toHaveBeenCalled();
+  });
+
   test("goal_review renders DONE/NOT DONE action buttons", () => {
     const projection = makeProjection({
-      source: { type: "goal_review", goalId: "goal-1" , resumeStatus: "reviewing"},
+      source: { type: "goal_review", goalId: "goal-1"},
       allowedActions: ["approve", "deny", "cancel"],
       displayPayload: makeDisplayPayload({ title: "Review artifacts" }),
     });
@@ -386,7 +411,7 @@ describe("HitlCard", () => {
   test("goal_review DONE calls respondHitl with outcome=DONE", () => {
     const projection = makeProjection({
       hitlId: "review-1",
-      source: { type: "goal_review", goalId: "goal-1" , resumeStatus: "reviewing"},
+      source: { type: "goal_review", goalId: "goal-1"},
       allowedActions: ["approve", "deny", "cancel"],
       displayPayload: makeDisplayPayload({ title: "Review" }),
     });
@@ -405,7 +430,7 @@ describe("HitlCard", () => {
   test("goal_review NOT DONE calls respondHitl with outcome=NOT_DONE", () => {
     const projection = makeProjection({
       hitlId: "review-2",
-      source: { type: "goal_review", goalId: "goal-1" , resumeStatus: "reviewing"},
+      source: { type: "goal_review", goalId: "goal-1"},
       allowedActions: ["approve", "deny", "cancel"],
       displayPayload: makeDisplayPayload({ title: "Review" }),
     });
@@ -660,7 +685,7 @@ describe("HitlCard", () => {
 
   test("renders display title for approval source", () => {
     const projection = makeProjection({
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan"},
       displayPayload: makeDisplayPayload({ title: "deploy_to_production" }),
     });
     const result = HitlCard({ projection });
@@ -670,7 +695,7 @@ describe("HitlCard", () => {
 
   test("goal_approval card uses warning border accent", () => {
     const projection = makeProjection({
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan"},
     });
     const result = HitlCard({ projection });
     const cards = findAllWithClass(result, "border-warning");
@@ -679,7 +704,7 @@ describe("HitlCard", () => {
 
   test("goal_review card uses accent border", () => {
     const projection = makeProjection({
-      source: { type: "goal_review", goalId: "goal-1" , resumeStatus: "reviewing"},
+      source: { type: "goal_review", goalId: "goal-1"},
       allowedActions: ["approve", "deny", "cancel"],
       displayPayload: makeDisplayPayload({ title: "Review" }),
     });
@@ -745,7 +770,7 @@ describe("HitlCard", () => {
   test("approve button is disabled when respond mutation is pending", () => {
     respondIsPending = true;
     const projection = makeProjection({
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan"},
       allowedActions: ["approve", "deny", "cancel"],
     });
     const result = HitlCard({ projection });
@@ -756,7 +781,7 @@ describe("HitlCard", () => {
   test("deny button is disabled when respond mutation is pending", () => {
     respondIsPending = true;
     const projection = makeProjection({
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan"},
       allowedActions: ["approve", "deny", "cancel"],
     });
     const result = HitlCard({ projection });
@@ -775,7 +800,7 @@ describe("HitlCard", () => {
   test("all buttons are disabled when any mutation is pending", () => {
     respondIsPending = true;
     const projection = makeProjection({
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan"},
       allowedActions: ["approve", "deny", "cancel"],
     });
     const result = HitlCard({ projection });
@@ -788,7 +813,7 @@ describe("HitlCard", () => {
     respondIsPending = true;
     const projection = makeProjection({
       hitlId: "hitl-pending",
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan"},
       allowedActions: ["approve", "deny", "cancel"],
     });
     const result = HitlCard({ projection });
@@ -810,7 +835,7 @@ describe("HitlCard", () => {
 
   test("buttons are not disabled when no mutation is pending", () => {
     const projection = makeProjection({
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan"},
       allowedActions: ["approve", "deny", "cancel"],
     });
     const result = HitlCard({ projection });

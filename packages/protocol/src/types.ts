@@ -635,7 +635,7 @@ export interface GlobalSSEHitlSnapshotEvent {
 export type GlobalSSEHitlEventPayload =
   | { type: "hitl.request"; status: Extract<HitlStatus, "pending"> }
   | { type: "hitl.updated"; status: HitlStatus }
-  | { type: "hitl.resolved"; status: Extract<HitlStatus, "resolved" | "cancelled" | "resume_failed"> };
+  | { type: "hitl.resolved"; status: Extract<HitlStatus, "resolved" | "cancelled"> };
 
 export interface GlobalSSEHitlRealtimeEvent {
   type: "hitl.event";
@@ -1020,7 +1020,6 @@ export interface ToolResultMeta {
 
 export type GoalStatus =
   | "running"
-  | "blocked"
   | "reviewing"
   | "done"
   | "not_done"
@@ -1066,9 +1065,8 @@ export interface GoalReviewReceipt {
 export interface GoalBlocker {
   kind: GoalBlockerKind;
   summary: string;
-  hitlId?: string;
+  hitlId: string;
   source?: string;
-  resumeStatus: "running" | "reviewing";
   createdAt: string;
 }
 
@@ -1088,7 +1086,7 @@ export interface GoalWorktree {
 }
 
 export interface GoalState {
-  version: 3;
+  version: 4;
   id: string;
   projectId: string;
   /** Ordinary Engineer Session in which the user confirmed this Goal. */
@@ -1158,15 +1156,15 @@ export function hitlIdentityKey(identity: HitlIdentity): string {
   ]);
 }
 
-export type HitlStatus = "pending" | "resume_claimed" | "resolved" | "cancelled" | "resume_failed";
+export type HitlStatus = "pending" | "answered" | "resolved" | "cancelled";
 
 export type HitlSource =
   | { type: "ask_user"; sessionId: string; toolCallId?: string }
   | { type: "tool_permission"; sessionId: string; toolCallId: string; toolName: string }
-  | { type: "goal_approval"; goalId: string; approvalPoint?: string; resumeStatus: "running" | "reviewing" }
-  | { type: "goal_review"; goalId: string; resumeStatus: "reviewing" }
-  | { type: "goal_budget"; goalId: string; approvalPoint?: string; resumeStatus: "running" | "reviewing" }
-  | { type: "goal_question"; goalId: string; questionKey: string; resumeStatus: "running" | "reviewing" };
+  | { type: "goal_approval"; goalId: string; approvalPoint?: string }
+  | { type: "goal_review"; goalId: string }
+  | { type: "goal_budget"; goalId: string; approvalPoint?: string }
+  | { type: "goal_question"; goalId: string; questionKey: string };
 
 export interface HitlQuestionDisplayOption {
   label: string;
@@ -1189,7 +1187,7 @@ export interface HitlDisplayPayload {
   redacted: true;
 }
 
-export interface HitlResumeMetadata {
+export interface HitlDeliveryMetadata {
   claimId: string;
   claimedAt: string;
   claimedBy?: string;
@@ -1198,6 +1196,7 @@ export interface HitlResumeMetadata {
   lastError?: string;
   failedAt?: string;
   failureReason?: string;
+  nextAttemptAt?: string;
 }
 
 export type HitlResponse =
@@ -1217,7 +1216,7 @@ export interface HitlRecord {
   status: HitlStatus;
   displayPayload: HitlDisplayPayload;
   response?: HitlResponse;
-  resume?: HitlResumeMetadata;
+  delivery?: HitlDeliveryMetadata;
   createdAt: string;
   updatedAt: string;
   resolvedAt?: string;
@@ -1231,7 +1230,7 @@ export interface HitlFile {
   updatedAt: string;
 }
 
-export type HitlAllowedAction = "answer" | "approve" | "deny" | "cancel" | "retry_resume";
+export type HitlAllowedAction = "answer" | "approve" | "deny" | "cancel";
 
 export interface HitlProjectionContext {
   rootSessionId?: string;
@@ -1250,6 +1249,8 @@ export interface HitlProjection {
   status: HitlStatus;
   displayPayload: HitlDisplayPayload;
   allowedActions: HitlAllowedAction[];
+  /** Delivery stopped after the answer was accepted and requires owner-specific inspection. */
+  requiresInspection?: true;
   createdAt: string;
   updatedAt: string;
   resolvedAt?: string;
@@ -1260,7 +1261,7 @@ export interface HitlProjection {
 export type HitlStreamEvent =
   | { type: "hitl.request"; request: HitlRecord }
   | { type: "hitl.updated"; record: HitlRecord }
-  | { type: "hitl.resolved"; hitlId: string; status: Extract<HitlStatus, "resolved" | "cancelled" | "resume_failed">; response?: HitlResponse };
+  | { type: "hitl.resolved"; hitlId: string; status: Extract<HitlStatus, "resolved" | "cancelled">; response?: HitlResponse };
 
 // ─── Automation Types ───
 

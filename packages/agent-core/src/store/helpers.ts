@@ -66,10 +66,10 @@ const SessionExecutionRecordSchema = z.strictObject({
 const HitlSourceSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("ask_user"), sessionId: z.string(), toolCallId: z.string().optional() }),
   z.strictObject({ type: z.literal("tool_permission"), sessionId: z.string(), toolCallId: z.string(), toolName: z.string() }),
-  z.strictObject({ type: z.literal("goal_approval"), goalId: z.string(), approvalPoint: z.string().optional(), resumeStatus: z.enum(["running", "reviewing"]) }),
-  z.strictObject({ type: z.literal("goal_review"), goalId: z.string(), resumeStatus: z.literal("reviewing") }),
-  z.strictObject({ type: z.literal("goal_budget"), goalId: z.string(), approvalPoint: z.string().optional(), resumeStatus: z.enum(["running", "reviewing"]) }),
-  z.strictObject({ type: z.literal("goal_question"), goalId: z.string(), questionKey: z.string(), resumeStatus: z.enum(["running", "reviewing"]) }),
+  z.strictObject({ type: z.literal("goal_approval"), goalId: z.string(), approvalPoint: z.string().optional() }),
+  z.strictObject({ type: z.literal("goal_review"), goalId: z.string() }),
+  z.strictObject({ type: z.literal("goal_budget"), goalId: z.string(), approvalPoint: z.string().optional() }),
+  z.strictObject({ type: z.literal("goal_question"), goalId: z.string(), questionKey: z.string() }),
 ]);
 
 const SessionHitlCheckpointSchema = z.strictObject({

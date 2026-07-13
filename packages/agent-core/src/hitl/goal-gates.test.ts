@@ -78,7 +78,7 @@ describe("GoalApprovalGate", () => {
       hitlId: crypto.randomUUID(),
       owner: { projectSlug: goal.projectId, ownerType: "goal", ownerId: goal.id },
       blockingKey: `goal:${goal.id}:approval:after_plan`,
-      source: { type: "goal_approval", goalId: goal.id, approvalPoint: "after_plan", resumeStatus: "running" },
+      source: { type: "goal_approval", goalId: goal.id, approvalPoint: "after_plan" },
       status: "pending",
       displayPayload: { title: "Approve Goal continuation", redacted: true },
       createdAt,
@@ -96,7 +96,6 @@ describe("GoalApprovalGate", () => {
       projectSlug: goal.projectId,
       approvalPoint: "after_plan",
       summary: "Approve continuing the Goal.",
-      resumeStatus: "running",
     });
 
     expect(attachHitlBlocker).toHaveBeenCalledTimes(1);
@@ -106,14 +105,13 @@ describe("GoalApprovalGate", () => {
         summary: "Approve continuing the Goal.",
         hitlId: record.hitlId,
         source: "after_plan",
-        resumeStatus: "running",
       },
       approvalRef: record.hitlId,
     });
     expect(publishRequest).toHaveBeenCalledWith(record);
   });
 
-  it("creates Goal-owned approval records and blocks with pending HITL refs", async () => {
+  it("creates Goal-owned approval records while preserving lifecycle status", async () => {
     const goal = await createRunningGoal();
     const { gate, create, publishRequest } = createGate();
 
@@ -122,7 +120,6 @@ describe("GoalApprovalGate", () => {
       projectSlug: goal.projectId,
       approvalPoint: "after_plan",
       summary: "Approve continuing the Goal.",
-      resumeStatus: "running",
     });
 
     expect(record.owner).toEqual({ projectSlug: "project-a", ownerType: "goal", ownerId: goal.id });
@@ -130,12 +127,11 @@ describe("GoalApprovalGate", () => {
       type: "goal_approval",
       goalId: goal.id,
       approvalPoint: "after_plan",
-      resumeStatus: "running",
     });
     expect(create).toHaveBeenCalledTimes(1);
     expect(publishRequest).toHaveBeenCalledWith(record);
     expect(await goalStateManager.read(goal.id)).toMatchObject({
-      status: "blocked",
+      status: "running",
       pendingHitlIds: [record.hitlId],
       approvalRefs: [record.hitlId],
       appliedHitlIds: [],
@@ -143,22 +139,22 @@ describe("GoalApprovalGate", () => {
         kind: "approval",
         hitlId: record.hitlId,
         source: "after_plan",
-        resumeStatus: "running",
       },
     });
   });
 
-  it("creates review HITL records that resume to reviewing", async () => {
-    const goal = await createRunningGoal();
+  it("creates review HITL records while preserving reviewing lifecycle", async () => {
+    const running = await createRunningGoal();
+    const goal = await goalStateManager.beginReview(running.id);
     const { gate } = createGate();
 
     const record = await gate.requestReview({ goalId: goal.id, projectSlug: goal.projectId });
 
-    expect(record.source).toEqual({ type: "goal_review", goalId: goal.id, resumeStatus: "reviewing" });
+    expect(record.source).toEqual({ type: "goal_review", goalId: goal.id });
     expect(await goalStateManager.read(goal.id)).toMatchObject({
-      status: "blocked",
+      status: "reviewing",
       pendingHitlIds: [record.hitlId],
-      blocker: { kind: "approval", hitlId: record.hitlId, resumeStatus: "reviewing" },
+      blocker: { kind: "approval", hitlId: record.hitlId },
     });
   });
 

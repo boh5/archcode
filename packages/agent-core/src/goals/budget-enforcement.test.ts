@@ -37,7 +37,7 @@ afterAll(async () => {
 });
 
 describe("Goal budget enforcement", () => {
-  test("warning summary creates approval_budget_1 and blocks without artifact ledger", async () => {
+  test("warning summary creates approval_budget_1 without changing Goal lifecycle", async () => {
     const goal = await createRunningGoal(budget({ status: "warning", usedTokens: 890, maxTokens: 1000 }));
     const store = createGoalStore(goal.id);
 
@@ -50,18 +50,17 @@ describe("Goal budget enforcement", () => {
       type: "goal_budget",
       goalId: goal.id,
       approvalPoint: BUDGET_APPROVAL_POINT,
-      resumeStatus: "running",
     });
     expect(blocked).toMatchObject({
-      status: "blocked",
+      status: "running",
       pendingHitlIds: [pending.hitlId],
-      blocker: { kind: "budget", hitlId: pending.hitlId, resumeStatus: "running" },
+      blocker: { kind: "budget", hitlId: pending.hitlId },
       budget: { status: "warning", usedTokens: 890, maxTokens: 1000, reason: "Budget warning approval is pending" },
     });
     expect(await Bun.file(join(workspaceRoot, ".archcode", "goals", goal.id, "budget.md")).exists()).toBe(false);
   });
 
-  test("hard limit updates budget summary and blocks without budget.md", async () => {
+  test("hard limit stops execution without changing Goal lifecycle", async () => {
     const goal = await createRunningGoal(budget({ status: "blocked", usedTokens: 1005, maxTokens: 1000 }));
     const store = createGoalStore(goal.id);
 
@@ -69,9 +68,9 @@ describe("Goal budget enforcement", () => {
 
     const blocked = await projectContext.goalState.read(goal.id);
     expect(result).toBeInstanceOf(GoalBudgetEnforcementStopError);
-    expect(blocked.status).toBe("blocked");
+    expect(blocked.status).toBe("running");
     expect(blocked.budget).toMatchObject({ status: "blocked", usedTokens: 1005, maxTokens: 1000, reason: "Budget hard limit exceeded" });
-    expect(blocked.blocker).toMatchObject({ kind: "budget", source: "hard_limit" });
+    expect(blocked.blocker).toBeUndefined();
     expect(await Bun.file(join(workspaceRoot, ".archcode", "goals", goal.id, "budget.md")).exists()).toBe(false);
   });
 
@@ -87,7 +86,8 @@ describe("Goal budget enforcement", () => {
     const blocked = await projectContext.goalState.read(goal.id);
     expect(result).toBeInstanceOf(GoalBudgetEnforcementStopError);
     expect(blocked.budget).toMatchObject({ status: "blocked", usedTokens: 1010, maxTokens: 1000 });
-    expect(blocked.blocker).toMatchObject({ kind: "budget", summary: "Budget hard limit exceeded" });
+    expect(blocked.status).toBe("running");
+    expect(blocked.blocker).toBeUndefined();
   });
 });
 

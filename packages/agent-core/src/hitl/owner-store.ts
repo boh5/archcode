@@ -6,14 +6,14 @@ import {
   type HitlOwnerKey,
   type HitlRecord,
   type HitlResponse,
-  type HitlResumeMetadata,
+  type HitlDeliveryMetadata,
   type HitlSource,
   type HitlStatus,
 } from "@archcode/protocol";
 
 import { atomicWrite } from "../utils/safe-file";
 
-const ACTIVE_HITL_STATUSES = new Set<HitlStatus>(["pending", "resume_claimed", "resume_failed"]);
+const ACTIVE_HITL_STATUSES = new Set<HitlStatus>(["pending", "answered"]);
 const TERMINAL_HITL_STATUSES = new Set<HitlStatus>(["resolved", "cancelled"]);
 const ownerFileMutationLocks = new Map<string, Promise<void>>();
 
@@ -41,13 +41,13 @@ const HitlDisplayPayloadSchema: z.ZodType<HitlDisplayPayload> = z.strictObject({
 const HitlSourceSchema: z.ZodType<HitlSource> = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("ask_user"), sessionId: z.string(), toolCallId: z.string().optional() }),
   z.strictObject({ type: z.literal("tool_permission"), sessionId: z.string(), toolCallId: z.string(), toolName: z.string() }),
-  z.strictObject({ type: z.literal("goal_approval"), goalId: z.string(), approvalPoint: z.string().optional(), resumeStatus: z.enum(["running", "reviewing"]) }),
-  z.strictObject({ type: z.literal("goal_review"), goalId: z.string(), resumeStatus: z.literal("reviewing") }),
-  z.strictObject({ type: z.literal("goal_budget"), goalId: z.string(), approvalPoint: z.string().optional(), resumeStatus: z.enum(["running", "reviewing"]) }),
-  z.strictObject({ type: z.literal("goal_question"), goalId: z.string(), questionKey: z.string(), resumeStatus: z.enum(["running", "reviewing"]) }),
+  z.strictObject({ type: z.literal("goal_approval"), goalId: z.string(), approvalPoint: z.string().optional() }),
+  z.strictObject({ type: z.literal("goal_review"), goalId: z.string() }),
+  z.strictObject({ type: z.literal("goal_budget"), goalId: z.string(), approvalPoint: z.string().optional() }),
+  z.strictObject({ type: z.literal("goal_question"), goalId: z.string(), questionKey: z.string() }),
 ]);
 
-const HitlResumeMetadataSchema: z.ZodType<HitlResumeMetadata> = z.strictObject({
+const HitlDeliveryMetadataSchema: z.ZodType<HitlDeliveryMetadata> = z.strictObject({
   claimId: z.string().trim().min(1),
   claimedAt: z.string().trim().min(1),
   claimedBy: z.string().optional(),
@@ -56,6 +56,7 @@ const HitlResumeMetadataSchema: z.ZodType<HitlResumeMetadata> = z.strictObject({
   lastError: z.string().optional(),
   failedAt: z.string().optional(),
   failureReason: z.string().optional(),
+  nextAttemptAt: z.string().optional(),
 });
 
 const GoalEvidenceRefSchema = z.strictObject({
@@ -119,10 +120,10 @@ const HitlRecordSchema: z.ZodType<HitlRecord> = z.strictObject({
   sessionRootId: z.string().trim().min(1).optional(),
   blockingKey: z.string().trim().min(1),
   source: HitlSourceSchema,
-  status: z.enum(["pending", "resume_claimed", "resolved", "cancelled", "resume_failed"]),
+  status: z.enum(["pending", "answered", "resolved", "cancelled"]),
   displayPayload: HitlDisplayPayloadSchema,
   response: HitlResponseSchema.optional(),
-  resume: HitlResumeMetadataSchema.optional(),
+  delivery: HitlDeliveryMetadataSchema.optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
   resolvedAt: z.string().optional(),
@@ -133,12 +134,12 @@ const HitlRecordSchema: z.ZodType<HitlRecord> = z.strictObject({
   if (record.owner.ownerType !== "session" && record.sessionRootId !== undefined) {
     ctx.addIssue({ code: "custom", path: ["sessionRootId"], message: "Only Session-owned HITL may define sessionRootId" });
   }
-  if (record.status !== "resume_claimed" && record.status !== "resume_failed") return;
+  if (record.status !== "answered") return;
   if (record.response === undefined) {
     ctx.addIssue({ code: "custom", path: ["response"], message: `${record.status} requires a response` });
   }
-  if (record.resume === undefined) {
-    ctx.addIssue({ code: "custom", path: ["resume"], message: `${record.status} requires complete resume metadata` });
+  if (record.delivery === undefined) {
+    ctx.addIssue({ code: "custom", path: ["delivery"], message: `${record.status} requires complete delivery metadata` });
   }
 });
 
@@ -296,7 +297,7 @@ export class HitlOwnerStore {
     return { status: "found", record: cloneRecord(record), file };
   }
 
-  async claim(hitlId: string, response: HitlResponse, resume: HitlResumeMetadata): Promise<HitlRecord> {
+  async claim(hitlId: string, response: HitlResponse, delivery: HitlDeliveryMetadata): Promise<HitlRecord> {
     return await withOwnerFileMutationLock(this.filePath, async () => {
       const file = await this.#readUnlocked();
       const index = file.pending.findIndex((entry) => entry.hitlId === hitlId);
@@ -306,15 +307,22 @@ export class HitlOwnerStore {
       if (!ACTIVE_HITL_STATUSES.has(current.status)) {
         throw new HitlRecordStateError(hitlId, `Cannot claim HITL record with status ${current.status}`);
       }
+      if (current.response !== undefined && !responsesEquivalent(current.response, response)) {
+        throw new HitlRecordStateError(hitlId, "Cannot replace an accepted HITL response");
+      }
 
       const now = new Date().toISOString();
       const next = HitlRecordSchema.parse({
         ...current,
-        status: "resume_claimed",
-        response,
-        resume: {
-          ...current.resume,
-          ...resume,
+        status: "answered",
+        response: current.response ?? response,
+        delivery: {
+          ...current.delivery,
+          ...delivery,
+          lastError: undefined,
+          failedAt: undefined,
+          failureReason: undefined,
+          nextAttemptAt: undefined,
         },
         updatedAt: now,
       });
@@ -325,25 +333,25 @@ export class HitlOwnerStore {
     });
   }
 
-  async markResumeFailed(hitlId: string, reason: string): Promise<HitlRecord> {
+  async markDeliveryFailed(hitlId: string, reason: string, nextAttemptAt?: string): Promise<HitlRecord> {
     return await withOwnerFileMutationLock(this.filePath, async () => {
       const file = await this.#readUnlocked();
       const index = file.pending.findIndex((entry) => entry.hitlId === hitlId);
       if (index === -1) throw new HitlRecordStateError(hitlId, "Cannot fail missing or terminal HITL record");
 
       const current = file.pending[index]!;
-      if (current.status !== "resume_claimed") {
-        throw new HitlRecordStateError(hitlId, `Cannot fail HITL record with status ${current.status}`);
+      if (current.status !== "answered") {
+        throw new HitlRecordStateError(hitlId, `Cannot record delivery failure for HITL with status ${current.status}`);
       }
       const now = new Date().toISOString();
       const next = HitlRecordSchema.parse({
         ...current,
-        status: "resume_failed",
-        resume: {
-          ...current.resume,
+        delivery: {
+          ...current.delivery,
           failedAt: now,
           failureReason: reason,
           lastError: reason,
+          nextAttemptAt,
         },
         updatedAt: now,
       });
@@ -362,10 +370,13 @@ export class HitlOwnerStore {
 
       const now = new Date().toISOString();
       const current = file.pending[index]!;
+      if (current.response !== undefined && response !== undefined && !responsesEquivalent(current.response, response)) {
+        throw new HitlRecordStateError(hitlId, "Cannot replace an accepted HITL response while completing it");
+      }
       const next = HitlRecordSchema.parse({
         ...current,
         status,
-        response: response ?? current.response,
+        response: current.response ?? response,
         updatedAt: now,
         resolvedAt: now,
       });
@@ -387,7 +398,7 @@ export class HitlOwnerStore {
       const cancelled = file.pending.map((record) => HitlRecordSchema.parse({
         ...record,
         status: "cancelled",
-        response: { type: "cancel", reason, cancelledBy } satisfies HitlResponse,
+        response: record.response ?? ({ type: "cancel", reason, cancelledBy } satisfies HitlResponse),
         updatedAt: now,
         resolvedAt: now,
       }));
@@ -466,6 +477,22 @@ function assertUniqueHitlIds(file: HitlFile): void {
     }
     seen.add(record.hitlId);
   }
+}
+
+function responsesEquivalent(left: HitlResponse, right: HitlResponse): boolean {
+  return stableJson(left) === stableJson(right);
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(sortJson(value));
+}
+
+function sortJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJson);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, entry]) => [key, sortJson(entry)]),
+  );
 }
 
 function assertFileRecordIdentities(file: HitlFile): void {

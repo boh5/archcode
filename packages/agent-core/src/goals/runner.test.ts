@@ -81,7 +81,7 @@ describe("GoalRunner committed creation", () => {
     const main = await sessions.getSessionFile(workspaceRoot, goal.mainSessionId);
 
     expect(goal).toMatchObject({
-      version: 3,
+      version: 4,
       status: "running",
       createdFromSessionId: SOURCE_SESSION_ID,
       startedAt: expect.any(String),
@@ -244,14 +244,12 @@ describe("GoalRunner committed creation", () => {
 });
 
 describe("GoalRunner lifecycle", () => {
-  test("preserves block, review, retry, failure, cancellation, children, and budget lifecycle", async () => {
+  test("preserves review, retry, failure, cancellation, children, and budget lifecycle", async () => {
     const runner = new GoalRunner(runnerOptions());
     const goal = await runner.create(createInput());
-    const blocked = await runner.block(goal.id, { kind: "approval", summary: "Need approval", resumeStatus: "reviewing" });
-    expect(blocked.status).toBe("blocked");
-    expect((await runner.clearBlocker(goal.id)).status).toBe("reviewing");
+    expect((await runner.beginReview(goal.id)).status).toBe("reviewing");
     const notDone = await runner.finalizeReview(goal.id, {
-      expectedReviewGeneration: 0,
+      expectedReviewGeneration: 1,
       verdict: "NOT_DONE",
       summary: "More work is required.",
       authorization: reviewerAuth(goal.id),

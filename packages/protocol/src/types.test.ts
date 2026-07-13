@@ -314,7 +314,6 @@ describe("Goal types", () => {
   test("GoalStatus is the simplified durable execution envelope", () => {
     const statuses: GoalStatus[] = [
       "running",
-      "blocked",
       "reviewing",
       "done",
       "not_done",
@@ -324,7 +323,6 @@ describe("Goal types", () => {
 
     expect(statuses).toEqual([
       "running",
-      "blocked",
       "reviewing",
       "done",
       "not_done",
@@ -335,7 +333,7 @@ describe("Goal types", () => {
 
   test("GoalState serializes the natural-language contract with review evidence", () => {
     const state: GoalState = {
-      version: 3,
+      version: 4,
       id: "goal-1",
       projectId: "my-project",
       createdFromSessionId: "session-source",
@@ -398,7 +396,7 @@ describe("Goal types", () => {
 
   test("Goal blockers and NOT_DONE receipts round-trip", () => {
     const state: GoalState = {
-      version: 3,
+      version: 4,
       id: "goal-2",
       projectId: "my-project",
       createdFromSessionId: "session-source",
@@ -406,12 +404,11 @@ describe("Goal types", () => {
       objective: "Resolve the reported bug.",
       acceptanceCriteria: "The bug no longer reproduces.",
       useWorktree: false,
-      status: "blocked",
+      status: "running",
       blocker: {
         kind: "question",
         summary: "Need user clarification on expected behavior.",
         hitlId: "hitl-1",
-        resumeStatus: "running",
         createdAt: "2026-06-01T00:00:00.000Z",
       },
       attempt: 1,
@@ -442,7 +439,7 @@ describe("Goal types", () => {
 
     const parsed = serializeRoundTrip(state);
 
-    expect(parsed.status).toBe("blocked");
+    expect(parsed.status).toBe("running");
     expect(parsed.blocker?.kind).toBe("question");
     expect(parsed.review?.verdict).toBe("NOT_DONE");
     expect(parsed.review?.unresolvedItems).toEqual(["Clarify expected behavior"]);
@@ -512,7 +509,6 @@ describe("HITL types", () => {
         type: "goal_approval",
         goalId: "goal-1",
         approvalPoint: "before_complete",
-        resumeStatus: "running",
       },
       status: "pending",
       displayPayload: {
@@ -565,7 +561,7 @@ describe("HITL types", () => {
       project: { slug: "my-project", name: "My Project" },
       owner: { projectSlug: "my-project", ownerType: "goal", ownerId: "goal-1" },
       ancestry: { rootSessionId: "session-root", goalId: "goal-1", projectionPath: ["goal", "goal-1"] },
-      source: { type: "goal_budget", goalId: "goal-1", resumeStatus: "running" },
+      source: { type: "goal_budget", goalId: "goal-1" },
       status: "pending",
       displayPayload: { title: "Goal blocked", summary: "Budget warning", redacted: true },
       allowedActions: ["approve", "deny", "cancel"],
@@ -605,7 +601,7 @@ describe("HITL types", () => {
 describe("Goal/HITL stream events", () => {
   function makeGoalState(overrides: Partial<GoalState> = {}): GoalState {
     return {
-      version: 3,
+      version: 4,
       id: "goal-1",
       projectId: "p",
       createdFromSessionId: "session-source",
@@ -707,9 +703,9 @@ describe("Goal/HITL stream events", () => {
       type: "hitl.updated",
       record: {
         ...hitlRequestEvent.request,
-        status: "resume_claimed",
+        status: "answered",
         response: { type: "question_answer", answers: ["continue"] },
-        resume: {
+        delivery: {
           claimId: "claim-1",
           claimedAt: "2026-06-01T00:01:00.000Z",
           intent: "respond",

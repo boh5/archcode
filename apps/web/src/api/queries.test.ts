@@ -224,7 +224,7 @@ describe("web session query contracts", () => {
     globalThis.document = { cookie: "" } as Document;
     const goals: GoalState[] = [
       {
-        version: 3,
+        version: 4,
         id: "goal-1",
         projectId: TEST_PROJECT_SLUG,
         createdFromSessionId: "session-origin",
@@ -262,7 +262,7 @@ describe("web session query contracts", () => {
   test("goalQueryOptions fetches a single goal by goalId", async () => {
     globalThis.document = { cookie: "" } as Document;
     const goal: GoalState = {
-      version: 3,
+      version: 4,
       id: "goal-1",
       projectId: TEST_PROJECT_SLUG,
       createdFromSessionId: "session-origin",
@@ -312,7 +312,7 @@ describe("web session query contracts", () => {
         hitlId: "hitl-2",
         project: { slug: TEST_PROJECT_SLUG, name: TEST_PROJECT_NAME },
         owner: { projectSlug: TEST_PROJECT_SLUG, ownerType: "goal", ownerId: "goal-1" },
-        source: { type: "goal_review", goalId: "goal-1" , resumeStatus: "reviewing"},
+        source: { type: "goal_review", goalId: "goal-1"},
         status: "pending",
         displayPayload: { title: "Review artifacts", redacted: true },
         allowedActions: ["approve", "deny", "cancel"],
@@ -359,7 +359,7 @@ describe("web session query contracts", () => {
     globalThis.document = { cookie: "" } as Document;
     const goals: DashboardGoal[] = [
       {
-        version: 3,
+        version: 4,
         id: "goal-1",
         projectId: TEST_PROJECT_SLUG,
         createdFromSessionId: "session-origin",

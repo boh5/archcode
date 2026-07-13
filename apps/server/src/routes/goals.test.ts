@@ -170,7 +170,7 @@ function createFixture(goals: GoalState[], activity: "idle" | "running" = "idle"
 function makeGoal(overrides: Partial<GoalState> = {}): GoalState {
   const id = overrides.id ?? crypto.randomUUID();
   return {
-    version: 3,
+    version: 4,
     id,
     projectId: "test-project",
     createdFromSessionId: crypto.randomUUID(),

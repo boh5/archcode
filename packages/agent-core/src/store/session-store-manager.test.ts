@@ -446,7 +446,7 @@ describe("SessionStoreManager", () => {
     const createdFromSessionId = crypto.randomUUID();
     const mainSessionId = crypto.randomUUID();
     const goalState: GoalState = {
-      version: 3,
+      version: 4,
       id: goalId,
       projectId: "project-1",
       createdFromSessionId,

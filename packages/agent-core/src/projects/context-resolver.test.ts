@@ -350,7 +350,7 @@ describe("ProjectContextResolver", () => {
     const created = await first.hitl.create({
       owner: { projectSlug: first.project.slug, ownerType: "goal", ownerId: goal.id },
       blockingKey: `goal:${goal.id}:approval:after_plan`,
-      source: { type: "goal_approval", goalId: goal.id, approvalPoint: "after_plan", resumeStatus: "running" },
+      source: { type: "goal_approval", goalId: goal.id, approvalPoint: "after_plan" },
       displayPayload: { title: "Continue?", redacted: true },
     });
     expect(created).toBeDefined();
@@ -396,17 +396,17 @@ describe("ProjectContextResolver", () => {
     const second = await resolver.resolve(workspace);
     await waitFor(async () => {
       const lookup = await second.hitl.lookup({ owner: created.owner, hitlId: created.hitlId });
-      return lookup.status === "found" && lookup.record.status === "resume_failed";
+      return lookup.status === "found" && lookup.record.status === "answered";
     });
 
     expect(await second.hitl.lookup({ owner: created.owner, hitlId: created.hitlId })).toMatchObject({
       status: "found",
       record: {
         hitlId: created.hitlId,
-        status: "resume_failed",
+        status: "answered",
         response,
-        resume: {
-          claimId: claimed.resume?.claimId,
+        delivery: {
+          claimId: claimed.delivery?.claimId,
           intent: "respond",
           attempt: 1,
         },
@@ -505,7 +505,10 @@ describe("ProjectContextResolver", () => {
 
 function createExecutionManager(sessions: SessionStoreManager): SessionExecutionManager {
   return new SessionExecutionManager({
-    sessionAgentManager: {} as SessionAgentManager,
+    sessionAgentManager: {
+      acquireSlot: () => undefined,
+      releaseSlot: () => undefined,
+    } as unknown as SessionAgentManager,
     createSessionStore: (sessionId, workspaceRoot, options) => sessions.create(sessionId, workspaceRoot, options),
     flushSessionStore: (sessionId, workspaceRoot) => sessions.flushSession(sessionId, workspaceRoot),
     getSessionStore: (sessionId, workspaceRoot) => sessions.get(sessionId, workspaceRoot),

@@ -2686,7 +2686,7 @@ describe("SessionExecutionManager", () => {
     releaseFamilies();
   });
 
-  test("holds an exclusive HITL resume generation across nested cwd transitions and continuation", async () => {
+  test("holds a Session-scoped HITL generation across its optional cwd transition", async () => {
     const rootId = crypto.randomUUID();
     const childId = crypto.randomUUID();
     const rootStore = storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
@@ -2711,29 +2711,6 @@ describe("SessionExecutionManager", () => {
       sessionId: childId,
       userMessage: "child must wait",
     })).rejects.toThrow(SessionFamilyActiveError);
-    await expect(manager.startChildExecution(workspaceRoot, {
-      parentStore: rootStore,
-      parentSessionId: rootId,
-      parentToolCallId: "delegate-during-resume",
-      toolName: "delegate",
-      targetAgentName: "explore",
-      prompt: "must not launch",
-      skills: [],
-      currentDepth: 0,
-      parentAbort: undefined,
-    })).rejects.toThrow(SessionHitlResumeInProgressError);
-    await expect(manager.resumeChildExecution(workspaceRoot, {
-      parentStore: rootStore,
-      parentSessionId: rootId,
-      parentToolCallId: "resume-during-hitl",
-      toolName: "delegate",
-      sessionId: childId,
-      targetAgentName: "explore",
-      prompt: "must not resume",
-      currentDepth: 0,
-      parentAbort: undefined,
-    })).rejects.toThrow(SessionHitlResumeInProgressError);
-
     expect(() => manager.acquireSessionCwdTransition(workspaceRoot, rootId))
       .toThrow(SessionHitlResumeInProgressError);
     const releaseNestedTransition = lease.acquireSessionCwdTransition(workspaceRoot, rootId);
@@ -2755,7 +2732,7 @@ describe("SessionExecutionManager", () => {
     releaseTransition();
   });
 
-  test("a child-owned HITL resume exclusively owns its root family in both directions", async () => {
+  test("a child-owned HITL resume owns only that child Session", async () => {
     const rootId = crypto.randomUUID();
     const childId = crypto.randomUUID();
     const siblingId = crypto.randomUUID();
@@ -2780,40 +2757,99 @@ describe("SessionExecutionManager", () => {
     expect(() => manager.startExecution({
       slug: "project",
       workspaceRoot,
-      sessionId: rootId,
-      userMessage: "root must wait",
+      sessionId: childId,
+      userMessage: "same child must wait",
     })).toThrow(SessionHitlResumeInProgressError);
-    expect(() => manager.startExecution({
-      slug: "project",
-      workspaceRoot,
-      sessionId: siblingId,
-      userMessage: "sibling must wait",
-    })).toThrow(SessionHitlResumeInProgressError);
+    const siblingLease = reserveActivatedHitlResume(manager, siblingId, rootId);
     expect(() => manager.acquireSessionCwdTransition(workspaceRoot, rootId))
       .toThrow(SessionHitlResumeInProgressError);
-    await expect(manager.startChildExecution(workspaceRoot, {
+    const launched = await manager.startChildExecution(workspaceRoot, {
       parentStore: rootStore,
       parentSessionId: rootId,
       parentToolCallId: "delegate-during-child-resume",
       toolName: "delegate",
       targetAgentName: "explore",
-      prompt: "must not launch",
+      prompt: "may launch",
       skills: [],
       currentDepth: 0,
       parentAbort: undefined,
-    })).rejects.toThrow(SessionHitlResumeInProgressError);
+    });
+    await launched.result;
 
     const stopping = manager.stopSessionFamily(workspaceRoot, rootId);
     expect(lease.abortSignal.aborted).toBe(true);
+    expect(siblingLease.abortSignal.aborted).toBe(true);
     expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("stopping");
     lease.release();
+    siblingLease.release();
     await stopping;
     expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("idle");
   });
 
-  test("rejects HITL ownership while a related execution, transition, or child launch owns the family", async () => {
+  test("allows a child HITL continuation while its parent Session remains active", async () => {
+    const rootId = crypto.randomUUID();
+    const childId = crypto.randomUUID();
+    const rootRun = deferred<AgentResult>();
+    const rootAgent = new MockAgent(rootId, rootRun.promise, workspaceRoot);
+    rootAgent.store.setState({ rootSessionId: rootId });
+    storeManager.create(childId, workspaceRoot, {
+      rootSessionId: rootId,
+      parentSessionId: rootId,
+      agentName: "reviewer",
+    });
+    const { manager } = createManager({ [rootId]: rootAgent });
+    const rootExecution = manager.startExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: rootId,
+      userMessage: "wait for the reviewer",
+    });
+
+    const lease = manager.reserveSessionHitlResume(workspaceRoot, childId, rootId);
+    expect(() => lease.activate()).not.toThrow();
+    expect(() => manager.reserveSessionHitlResume(workspaceRoot, childId, rootId))
+      .toThrow(SessionHitlResumeInProgressError);
+
+    lease.release();
+    rootRun.resolve({ text: "done", steps: 1 });
+    await rootExecution.promise;
+  });
+
+  test("counts HITL continuations against Session concurrency and releases their slot", () => {
+    const rootId = crypto.randomUUID();
+    const firstChildId = crypto.randomUUID();
+    const secondChildId = crypto.randomUUID();
+    storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
+    storeManager.create(firstChildId, workspaceRoot, {
+      rootSessionId: rootId,
+      parentSessionId: rootId,
+      agentName: "reviewer",
+    });
+    storeManager.create(secondChildId, workspaceRoot, {
+      rootSessionId: rootId,
+      parentSessionId: rootId,
+      agentName: "reviewer",
+    });
+    const { manager } = createManager({}, { maxConcurrentSessions: 1 });
+
+    const firstLease = reserveActivatedHitlResume(manager, firstChildId, rootId);
+    expect(() => manager.reserveSessionHitlResume(workspaceRoot, secondChildId, rootId))
+      .toThrow(ConcurrentSessionLimitError);
+
+    firstLease.release();
+    const secondLease = reserveActivatedHitlResume(manager, secondChildId, rootId);
+    secondLease.release();
+  });
+
+  test("rejects same-Session HITL ownership and serializes only cwd transitions", async () => {
     const rootId = crypto.randomUUID();
     const rootStore = storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
+    const childId = crypto.randomUUID();
+    storeManager.create(childId, workspaceRoot, {
+      rootSessionId: rootId,
+      parentSessionId: rootId,
+      agentName: "reviewer",
+    });
     const rootRun = deferred<AgentResult>();
     const rootAgent = new MockAgent(rootId, rootRun.promise, workspaceRoot);
     const skillResolution = deferred<readonly []>();
@@ -2834,6 +2870,8 @@ describe("SessionExecutionManager", () => {
     });
     expect(() => manager.reserveSessionHitlResume(workspaceRoot, rootId, rootId))
       .toThrow(SessionHitlResumeConflictError);
+    const childLease = reserveActivatedHitlResume(manager, childId, rootId);
+    childLease.release();
     rootRun.resolve({ text: "done", steps: 1 });
     await execution.promise;
 
@@ -2854,8 +2892,8 @@ describe("SessionExecutionManager", () => {
       parentAbort: undefined,
     });
     await waitFor(() => skillResolutionStarted);
-    expect(() => manager.reserveSessionHitlResume(workspaceRoot, rootId, rootId))
-      .toThrow(SessionHitlResumeConflictError);
+    const relatedLease = reserveActivatedHitlResume(manager, rootId, rootId);
+    relatedLease.release();
     skillResolution.resolve([]);
     const child = await pendingChild;
     await child.result;

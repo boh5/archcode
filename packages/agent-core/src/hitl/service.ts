@@ -8,7 +8,7 @@ import {
   type HitlProjectionContext,
   type HitlRecord,
   type HitlResponse as ProtocolHitlResponse,
-  type HitlResumeMetadata,
+  type HitlDeliveryMetadata,
   type HitlSource,
 } from "@archcode/protocol";
 
@@ -16,9 +16,9 @@ import type { GoalStateManager } from "../goals/state";
 import { silentLogger, type Logger } from "../logger";
 import type { ProjectInfo } from "../projects/types";
 import type { SessionStoreManager } from "../store/session-store-manager";
-import { HitlOwnerStore, type HitlCreateResult } from "./owner-store";
+import { HitlOwnerStore, HitlRecordStateError, type HitlCreateResult } from "./owner-store";
 import { resolveHitlOwnerPath } from "./owner-paths";
-import { aggregateHitlProjections, collectKnownHitlOwners, type HitlAggregationQuery } from "./aggregation";
+import { aggregateHitlProjections, collectKnownHitlOwners, toHitlProjection, type HitlAggregationQuery } from "./aggregation";
 
 export type HitlRealtimeListener = (event: GlobalSSEHitlRealtimeEvent) => unknown;
 
@@ -114,19 +114,28 @@ export class HitlService {
     return { status: "found", record: result.record, owner: identity.owner };
   }
 
-  async claim(identity: HitlIdentity, response: ProtocolHitlResponse, resume: HitlResumeMetadata): Promise<HitlRecord | undefined> {
+  async claim(identity: HitlIdentity, response: ProtocolHitlResponse, delivery: HitlDeliveryMetadata): Promise<HitlRecord | undefined> {
     const found = await this.lookup(identity);
     if (found.status !== "found") return undefined;
-    const record = await (await this.#storeFor(identity.owner)).claim(identity.hitlId, response, resume);
+    let record: HitlRecord;
+    try {
+      record = await (await this.#storeFor(identity.owner)).claim(identity.hitlId, response, delivery);
+    } catch (error) {
+      if (!(error instanceof HitlRecordStateError)) throw error;
+      const latest = await this.lookup(identity);
+      if (latest.status === "missing" || latest.record.status === "resolved" || latest.record.status === "cancelled") return undefined;
+      if (latest.record.status === "answered") return latest.record;
+      throw error;
+    }
     await this.#publish({ type: "hitl.updated", status: record.status }, record);
     return record;
   }
 
-  async markResumeFailed(identity: HitlIdentity, reason: string): Promise<HitlRecord | undefined> {
+  async markDeliveryFailed(identity: HitlIdentity, reason: string, nextAttemptAt?: string): Promise<HitlRecord | undefined> {
     const found = await this.lookup(identity);
     if (found.status !== "found") return undefined;
-    const record = await (await this.#storeFor(identity.owner)).markResumeFailed(identity.hitlId, reason);
-    await this.#publishResolved(record);
+    const record = await (await this.#storeFor(identity.owner)).markDeliveryFailed(identity.hitlId, reason, nextAttemptAt);
+    await this.#publish({ type: "hitl.updated", status: record.status }, record);
     return record;
   }
 
@@ -186,7 +195,7 @@ export class HitlService {
   }
 
   async #publishResolved(record: HitlRecord): Promise<void> {
-    if (record.status !== "resolved" && record.status !== "cancelled" && record.status !== "resume_failed") return;
+    if (record.status !== "resolved" && record.status !== "cancelled") return;
     await this.#publish({
       type: "hitl.resolved",
       status: record.status,
@@ -242,19 +251,7 @@ export class HitlService {
 
   async #projectionFor(record: HitlRecord): Promise<HitlProjection> {
     const ancestry = await this.#ancestryFor(record);
-    return {
-      hitlId: record.hitlId,
-      project: { slug: this.#project.slug, name: this.#project.name },
-      owner: record.owner,
-      ...(ancestry === undefined ? {} : { ancestry }),
-      source: record.source,
-      status: record.status,
-      displayPayload: record.displayPayload,
-      allowedActions: allowedActionsFor(record),
-      createdAt: record.createdAt,
-      updatedAt: record.updatedAt,
-      ...(record.resolvedAt === undefined ? {} : { resolvedAt: record.resolvedAt }),
-    };
+    return toHitlProjection(this.#project, record, ancestry);
   }
 
   async #ancestryFor(record: HitlRecord): Promise<HitlProjectionContext> {
@@ -333,21 +330,4 @@ function ownerKey(owner: HitlOwnerKey): string {
 
 function withoutUndefined<T extends Record<string, unknown>>(value: T): T {
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
-}
-
-function allowedActionsFor(record: HitlRecord): HitlProjection["allowedActions"] {
-  if (record.status === "resume_failed") return ["retry_resume", "cancel"];
-  if (record.status !== "pending") return [];
-  switch (record.source.type) {
-    case "ask_user":
-    case "goal_question":
-      return ["answer", "cancel"];
-    case "tool_permission":
-      return ["approve", "deny", "cancel"];
-    case "goal_approval":
-    case "goal_budget":
-      return ["approve", "deny", "cancel"];
-    case "goal_review":
-      return ["approve", "deny", "cancel"];
-  }
 }

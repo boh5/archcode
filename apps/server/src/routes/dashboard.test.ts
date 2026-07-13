@@ -31,7 +31,7 @@ class FakeGoalStateManager {
     useWorktree?: boolean;
   }, title: string, status: GoalStatus): GoalState {
     const goal: GoalState = {
-      version: 3,
+      version: 4,
       id: input.id,
       projectId: input.projectId,
       createdFromSessionId: input.createdFromSessionId,
@@ -133,7 +133,7 @@ describe("dashboard routes", () => {
 
   test("GET /api/goals?status=active includes simplified active display statuses", async () => {
     const { app, managers, projects } = await createFixture("active-goals");
-    const activeStatuses: GoalStatus[] = ["running", "blocked", "reviewing", "not_done", "failed"];
+    const activeStatuses: GoalStatus[] = ["running", "reviewing", "not_done", "failed"];
     for (const status of activeStatuses) {
       addGoal(managers, projects[0], `${status} goal`, status);
     }

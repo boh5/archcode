@@ -5,7 +5,6 @@ import { BadRequestError } from "../errors";
 
 const GoalStatusSchemaValues = new Set<GoalStatus>([
   "running",
-  "blocked",
   "reviewing",
   "done",
   "not_done",
@@ -15,7 +14,6 @@ const GoalStatusSchemaValues = new Set<GoalStatus>([
 
 const ActiveGoalStatuses = new Set<GoalStatus>([
   "running",
-  "blocked",
   "reviewing",
   "not_done",
   "failed",

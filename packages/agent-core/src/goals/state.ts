@@ -20,7 +20,6 @@ import { silentLogger } from "../logger";
 
 export const GoalStatusSchema = z.enum([
   "running",
-  "blocked",
   "reviewing",
   "done",
   "not_done",
@@ -61,13 +60,10 @@ export const GoalReviewReceiptSchema = z.strictObject({
 export const GoalBlockerSchema = z.strictObject({
   kind: z.enum(["approval", "question", "budget", "permission", "tool_error"]),
   summary: GoalEvidenceSummarySchema,
-  hitlId: z.string().trim().min(1).optional(),
+  hitlId: z.string().trim().min(1),
   source: z.string().trim().min(1).optional(),
-  resumeStatus: z.enum(["running", "reviewing"]),
   createdAt: z.string().trim().min(1),
 }) satisfies z.ZodType<ProtocolGoalBlocker>;
-
-const GoalManualBlockerSchema = GoalBlockerSchema.omit({ hitlId: true });
 
 export const GoalBudgetSummarySchema = z.strictObject({
   status: z.enum(["ok", "warning", "blocked"]),
@@ -91,7 +87,7 @@ export const GoalWorktreeSchema = z.strictObject({
 }) satisfies z.ZodType<ProtocolGoalWorktree>;
 
 export const GoalStateSchema = z.strictObject({
-  version: z.literal(3),
+  version: z.literal(4),
   id: GoalUuidSchema,
   projectId: z.string().trim().min(1),
   createdFromSessionId: z.string().trim().min(1),
@@ -151,7 +147,7 @@ export const GoalStateSchema = z.strictObject({
     }
   }
 
-  if (state.blocker?.hitlId !== undefined && !state.pendingHitlIds.includes(state.blocker.hitlId)) {
+  if (state.blocker !== undefined && !state.pendingHitlIds.includes(state.blocker.hitlId)) {
     ctx.addIssue({
       code: "custom",
       path: ["blocker", "hitlId"],
@@ -167,8 +163,12 @@ export const GoalStateSchema = z.strictObject({
     });
   }
 
-  if (state.status === "blocked" && state.blocker === undefined) {
-    ctx.addIssue({ code: "custom", path: ["blocker"], message: "A blocked Goal requires blocker metadata" });
+  if ((state.blocker === undefined) !== (state.pendingHitlIds.length === 0)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["blocker"],
+      message: "A Goal HITL blocker and pending HITL ids must exist together",
+    });
   }
 
   if (state.review !== undefined && state.review.reviewGeneration !== state.reviewGeneration) {
@@ -239,11 +239,6 @@ export interface GoalFinalizeReviewInput {
   readonly finalSummary?: string;
   readonly authorization: GoalReviewerAuthorization;
 }
-
-export type GoalManualBlockerInput = Omit<GoalBlocker, "createdAt" | "hitlId"> & {
-  readonly createdAt?: string;
-  readonly hitlId?: never;
-};
 
 export interface GoalHitlBlockerAttachmentInput {
   readonly blocker: Omit<GoalBlocker, "createdAt" | "hitlId"> & {
@@ -321,9 +316,8 @@ export class GoalReviewFinalizationError extends Error {
 
 const TERMINAL_STATUSES = new Set<GoalStatus>(["done", "cancelled"]);
 const ALLOWED_TRANSITIONS: Record<GoalStatus, readonly GoalStatus[]> = {
-  running: ["blocked", "reviewing", "failed", "cancelled"],
-  blocked: ["running", "reviewing", "failed", "cancelled"],
-  reviewing: ["blocked", "done", "not_done", "failed", "cancelled"],
+  running: ["reviewing", "failed", "cancelled"],
+  reviewing: ["done", "not_done", "failed", "cancelled"],
   not_done: ["running", "cancelled"],
   failed: ["running", "cancelled"],
   done: [],
@@ -343,30 +337,30 @@ export class GoalStateManager {
   async commit(input: GoalCommitInput): Promise<GoalState> {
     return await this.withGoalMutation(input.id, async () => {
       const now = input.startedAt ?? new Date().toISOString();
-    const state = GoalStateSchema.parse({
-      version: 3,
-      id: input.id,
-      projectId: input.projectId,
-      createdFromSessionId: input.createdFromSessionId,
-      title: null,
-      objective: input.objective,
-      acceptanceCriteria: input.acceptanceCriteria,
-      useWorktree: input.useWorktree ?? false,
-      status: "running",
-      attempt: 1,
-      reviewGeneration: 0,
-      pendingHitlIds: [],
-      approvalRefs: [],
-      appliedHitlIds: [],
-      childSessionIds: [],
-      mainSessionId: input.mainSessionId,
-      createdAt: now,
-      updatedAt: now,
-      startedAt: now,
-    });
+      const state = GoalStateSchema.parse({
+        version: 4,
+        id: input.id,
+        projectId: input.projectId,
+        createdFromSessionId: input.createdFromSessionId,
+        title: null,
+        objective: input.objective,
+        acceptanceCriteria: input.acceptanceCriteria,
+        useWorktree: input.useWorktree ?? false,
+        status: "running",
+        attempt: 1,
+        reviewGeneration: 0,
+        pendingHitlIds: [],
+        approvalRefs: [],
+        appliedHitlIds: [],
+        childSessionIds: [],
+        mainSessionId: input.mainSessionId,
+        createdAt: now,
+        updatedAt: now,
+        startedAt: now,
+      });
 
       await this.writeNew(state);
-    return state;
+      return state;
     });
   }
 
@@ -409,18 +403,6 @@ export class GoalStateManager {
     });
   }
 
-  async block(goalId: string, blocker: GoalManualBlockerInput): Promise<GoalState> {
-    return await this.withGoalMutation(goalId, async () => {
-      const state = await this.read(goalId);
-      this.assertTransition(state, "blocked");
-      const parsed = GoalManualBlockerSchema.parse({ ...blocker, createdAt: blocker.createdAt ?? new Date().toISOString() });
-      return this.update(state, {
-        status: "blocked",
-        blocker: parsed,
-      });
-    });
-  }
-
   async attachHitlBlocker(goalId: string, input: GoalHitlBlockerAttachmentInput): Promise<GoalState> {
     return await this.withGoalMutation(goalId, async () => {
       const state = await this.read(goalId);
@@ -428,8 +410,7 @@ export class GoalStateManager {
       if (state.appliedHitlIds.includes(hitlId)) return state;
       if (state.approvalRefs.includes(hitlId)) {
         if (
-          state.status === "blocked"
-          && state.blocker?.hitlId === hitlId
+          state.blocker?.hitlId === hitlId
           && state.pendingHitlIds.includes(hitlId)
         ) return state;
         throw new GoalStateError(goalId, `Goal ${goalId} HITL ${hitlId} has an attachment marker without a pending blocker`);
@@ -438,14 +419,16 @@ export class GoalStateManager {
         throw new GoalStateError(goalId, `Goal ${goalId} HITL ${hitlId} is pending without a durable attachment marker`);
       }
 
-      this.assertTransition(state, "blocked");
+      this.assertNotTerminal(state);
+      if (state.blocker !== undefined || state.pendingHitlIds.length > 0) {
+        throw new GoalStateError(goalId, `Goal ${goalId} already has an active HITL blocker`);
+      }
       const parsed = GoalBlockerSchema.parse({
         ...input.blocker,
         createdAt: input.blocker.createdAt ?? new Date().toISOString(),
       });
       const approvalRefs = uniqueAppend(state.approvalRefs, hitlId);
       return this.update(state, {
-        status: "blocked",
         blocker: parsed,
         pendingHitlIds: uniqueAppend(state.pendingHitlIds, hitlId),
         approvalRefs: input.approvalRef === undefined
@@ -458,21 +441,13 @@ export class GoalStateManager {
   async clearBlocker(goalId: string, hitlId?: string): Promise<GoalState> {
     return await this.withGoalMutation(goalId, async () => {
       const state = await this.read(goalId);
-      if (state.status !== "blocked") throw new GoalTransitionError(goalId, state.status, "running");
-      if (state.blocker === undefined) throw new GoalStateError(goalId, `Blocked Goal ${goalId} has no blocker`);
-      const resolvedHitlId = hitlId ?? state.blocker?.hitlId;
-      if (resolvedHitlId !== undefined) this.assertPendingHitlBlocker(state, resolvedHitlId);
-      const nextStatus = state.blocker.resumeStatus;
-      this.assertTransition(state, nextStatus);
+      if (state.blocker === undefined) throw new GoalStateError(goalId, `Goal ${goalId} has no HITL blocker`);
+      const resolvedHitlId = hitlId ?? state.blocker.hitlId;
+      this.assertPendingHitlBlocker(state, resolvedHitlId);
       return this.update(state, {
-        status: nextStatus,
         blocker: undefined,
-        pendingHitlIds: resolvedHitlId === undefined
-          ? state.pendingHitlIds
-          : state.pendingHitlIds.filter((id) => id !== resolvedHitlId),
-        appliedHitlIds: resolvedHitlId === undefined
-          ? state.appliedHitlIds
-          : uniqueAppend(state.appliedHitlIds, resolvedHitlId),
+        pendingHitlIds: state.pendingHitlIds.filter((id) => id !== resolvedHitlId),
+        appliedHitlIds: uniqueAppend(state.appliedHitlIds, resolvedHitlId),
       });
     });
   }
@@ -500,8 +475,8 @@ export class GoalStateManager {
     return await this.withGoalMutation(goalId, async () => {
       const state = await this.read(goalId);
       this.assertPendingHitlBlocker(state, hitlId);
-      if (state.blocker?.resumeStatus !== "reviewing") {
-        throw new GoalReviewFinalizationError(goalId, `Goal HITL ${hitlId} does not resume a review`);
+      if (state.status !== "reviewing") {
+        throw new GoalReviewFinalizationError(goalId, `Goal HITL ${hitlId} is not attached to a review`);
       }
       return await this.commitReview(state, input, hitlId);
     });
@@ -727,7 +702,7 @@ export class GoalStateManager {
     if (!state.pendingHitlIds.includes(hitlId)) {
       throw new GoalStateError(state.id, `Goal ${state.id} HITL ${hitlId} is not pending`);
     }
-    if (state.status !== "blocked" || state.blocker?.hitlId !== hitlId) {
+    if (state.blocker?.hitlId !== hitlId) {
       throw new GoalStateError(state.id, `Goal ${state.id} HITL ${hitlId} is not the active blocker`);
     }
   }
@@ -748,8 +723,8 @@ export class GoalStateManager {
       if (state.status !== "reviewing") {
         throw new GoalReviewFinalizationError(state.id, `Goal must be reviewing, got ${state.status}`);
       }
-    } else if (state.status !== "blocked") {
-      throw new GoalReviewFinalizationError(state.id, `Goal HITL review must be blocked, got ${state.status}`);
+    } else if (state.status !== "reviewing") {
+      throw new GoalReviewFinalizationError(state.id, `Goal HITL review must remain reviewing, got ${state.status}`);
     }
     if (state.review !== undefined) throw new GoalReviewFinalizationError(state.id, "Goal review is already finalized");
 

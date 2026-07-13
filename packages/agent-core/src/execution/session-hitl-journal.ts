@@ -40,6 +40,8 @@ export class SessionHitlJournalBlockedError extends Error {
 }
 
 export class SessionHitlContinuationOutcomeUnknownError extends Error {
+  readonly retryable = false;
+
   constructor(public readonly hitlId: string) {
     super(`Session HITL ${hitlId} stopped during LLM continuation; its outcome is unknown and requires manual inspection`);
     this.name = "SessionHitlContinuationOutcomeUnknownError";

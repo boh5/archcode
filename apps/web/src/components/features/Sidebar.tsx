@@ -68,7 +68,6 @@ function SessionStatusDot({ activity }: { activity: SessionFamilyActivity | unde
 
 const GOAL_STATUS_DOT_COLORS: Partial<Record<GoalStatus, string>> = {
   running: "bg-success shadow-[0_0_6px_var(--success)] animate-pulse",
-  blocked: "bg-warning",
   reviewing: "bg-info",
   done: "bg-accent",
   not_done: "bg-error",

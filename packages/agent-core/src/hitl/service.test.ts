@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
-import type { GlobalSSEHitlRealtimeEvent, HitlIdentity, HitlOwnerKey, HitlResumeMetadata } from "@archcode/protocol";
+import type { GlobalSSEHitlRealtimeEvent, HitlIdentity, HitlOwnerKey, HitlDeliveryMetadata } from "@archcode/protocol";
 
 import { GoalStateManager } from "../goals/state";
 import { silentLogger, type Logger } from "../logger";
@@ -57,7 +57,7 @@ describe("HitlService owner-local storage", () => {
     expect((await service.list({ scope: "project" })).filter((projection) => projection.hitlId === "duplicated-hitl")).toHaveLength(2);
 
     await service.claim(firstIdentity, { type: "question_answer", answers: ["first"] }, claimMetadata("first-claim"));
-    expect(await service.lookup(firstIdentity)).toMatchObject({ status: "found", record: { status: "resume_claimed" } });
+    expect(await service.lookup(firstIdentity)).toMatchObject({ status: "found", record: { status: "answered" } });
     expect(await service.lookup(secondIdentity)).toMatchObject({ status: "found", record: { status: "pending" } });
   });
 
@@ -147,10 +147,10 @@ describe("HitlService owner-local storage", () => {
     });
 
     const claimed = await service.claim(identity(record), { type: "question_answer", answers: ["yes"] }, claimMetadata("realtime"));
-    expect(claimed?.status).toBe("resume_claimed");
+    expect(claimed?.status).toBe("answered");
     expect(events.at(-1)).toMatchObject({
-      payload: { type: "hitl.updated", status: "resume_claimed" },
-      projection: { status: "resume_claimed", allowedActions: [] },
+      payload: { type: "hitl.updated", status: "answered" },
+      projection: { status: "answered", allowedActions: [] },
     });
 
     await service.finishResume(identity(record), "resolved", { type: "question_answer", answers: ["yes"] });
@@ -187,7 +187,7 @@ describe("HitlService owner-local storage", () => {
     const record = await service.create(input(owner, "realtime-failure-block"));
     await expect(service.publishRequest(record)).resolves.toBeUndefined();
     const claimed = await service.claim(identity(record), { type: "question_answer", answers: ["yes"] }, claimMetadata("failure"));
-    expect(claimed?.status).toBe("resume_claimed");
+    expect(claimed?.status).toBe("answered");
     const resolved = await service.finishResume(identity(record), "resolved", { type: "question_answer", answers: ["yes"] });
     expect(resolved?.status).toBe("resolved");
 
@@ -230,12 +230,12 @@ function input(owner: HitlOwnerKey, blockingKey: string) {
     blockingKey,
     source: owner.ownerType === "session"
       ? { type: "ask_user" as const, sessionId: owner.ownerId }
-      : { type: "goal_approval" as const, goalId: owner.ownerId, approvalPoint: "after_plan" as const, resumeStatus: "running" as const },
+      : { type: "goal_approval" as const, goalId: owner.ownerId, approvalPoint: "after_plan" as const },
     displayPayload: { title: "Needs input", redacted: true as const },
   };
 }
 
-function claimMetadata(claimId: string): HitlResumeMetadata {
+function claimMetadata(claimId: string): HitlDeliveryMetadata {
   return {
     claimId,
     claimedAt: new Date().toISOString(),

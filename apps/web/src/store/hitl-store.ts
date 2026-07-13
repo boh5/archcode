@@ -29,7 +29,7 @@ export const hitlStore = createStore<HitlStoreState>((set, get) => ({
   applyRealtimeEvent: (event) => set((state) => {
     const next = { ...state.projections };
     const key = hitlIdentityKey(event.projection);
-    if (isVisiblePendingHitlStatus(event.projection.status)) {
+    if (isVisibleHitlProjection(event.projection)) {
       next[key] = event.projection;
     } else {
       delete next[key];
@@ -46,7 +46,7 @@ export const hitlStore = createStore<HitlStoreState>((set, get) => ({
       Object.entries(state.projections).filter(([, projection]) => !snapshotProjects.has(projection.project.slug)),
     );
     for (const projection of event.projections) {
-      if (!snapshotProjects.has(projection.project.slug) || !isVisiblePendingHitlStatus(projection.status)) continue;
+      if (!snapshotProjects.has(projection.project.slug) || !isVisibleHitlProjection(projection)) continue;
       projections[hitlIdentityKey(projection)] = projection;
     }
 
@@ -108,8 +108,8 @@ export function selectHitlProjections(
   return selected.sort((left, right) => left.createdAt.localeCompare(right.createdAt) || hitlIdentityKey(left).localeCompare(hitlIdentityKey(right)));
 }
 
-export function isVisiblePendingHitlStatus(status: HitlProjection["status"]): boolean {
-  return status === "pending" || status === "resume_failed";
+export function isVisibleHitlProjection(projection: Pick<HitlProjection, "status" | "requiresInspection">): boolean {
+  return projection.status === "pending" || projection.requiresInspection === true;
 }
 
 function isDescendantProjection(projection: HitlProjection, scope: Exclude<HitlScope, "project">, ownerId: string): boolean {

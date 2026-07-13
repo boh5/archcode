@@ -10,7 +10,6 @@ import { InspectorToggleButton } from "../components/features/InspectorToggleBut
 
 const STATUS_BADGE_CLASS: Partial<Record<GoalStatus, string>> = {
   running: "bg-success-muted text-success",
-  blocked: "bg-warning-muted text-warning",
   reviewing: "bg-info-muted text-info",
   done: "bg-accent-muted text-accent",
   not_done: "bg-error-muted text-error",
@@ -70,7 +69,7 @@ export function GoalDetailRoute() {
   }
 
   const canRetry = goal.status === "not_done" || goal.status === "failed";
-  const canCancel = goal.status === "running" || goal.status === "blocked" || goal.status === "reviewing" || goal.status === "not_done" || goal.status === "failed";
+  const canCancel = goal.status === "running" || goal.status === "reviewing" || goal.status === "not_done" || goal.status === "failed";
 
   return (
     <div className="flex h-full flex-col">

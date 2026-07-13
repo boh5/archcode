@@ -114,7 +114,9 @@ export class ProjectContextResolver {
     this.#contexts.delete(workspaceRoot);
     if (pending === undefined) return;
     try {
-      (await pending).hitl.shutdown();
+      const context = await pending;
+      context.hitlResumeCoordinator.dispose();
+      context.hitl.shutdown();
     } catch (error) {
       this.#logger.warn("projects.context.dispose_failed", { error, meta: { workspaceRoot } });
     }

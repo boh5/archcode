@@ -99,7 +99,7 @@ function makeProjection(overrides: Partial<HitlProjection> = {}): HitlProjection
     hitlId: "hitl-1",
     project: { slug: "demo", name: "Demo Project" },
     owner: { projectSlug: "demo", ownerType: "session", ownerId: "session-1" },
-    source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"},
+    source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan"},
     status: "pending",
     displayPayload: { title: "Approve?", summary: "Please approve", redacted: true },
     allowedActions: ["approve", "deny", "cancel"],
@@ -169,10 +169,10 @@ describe("HitlInbox", () => {
     expect(findAll(result, (el) => el.type === HitlCard)).toHaveLength(2);
   });
 
-  test("filters resume_claimed projections after the user responds", () => {
+  test("filters answered projections after the user responds", () => {
     const projections = [
       makeProjection({ hitlId: "hitl-pending", status: "pending" }),
-      makeProjection({ hitlId: "hitl-claimed", status: "resume_claimed" }),
+      makeProjection({ hitlId: "hitl-claimed", status: "answered" }),
     ];
 
     const result = HitlInbox({ projections });

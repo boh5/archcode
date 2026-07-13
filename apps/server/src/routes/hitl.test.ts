@@ -13,8 +13,8 @@ import { globalEventBus } from "../events/global-event-bus";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "hitl-routes");
 
-type HitlListBody = { hitl: Array<HitlProjection & { resumeStatus: string }> };
-type HitlMutationBody = { hitlId: string; status: string; resumeStatus: string; hitl: HitlProjection & { resumeStatus: string } };
+type HitlListBody = { hitl: HitlProjection[] };
+type HitlMutationBody = { hitlId: string; status: string; hitl: HitlProjection };
 type TestHitlService = ProjectContext["hitl"];
 
 interface TestFixture {
@@ -227,8 +227,7 @@ describe("hitl routes", () => {
     });
     expect(first.status).toBe(200);
     expect(first.body.hitlId).toBe(permission.hitlId);
-    expect(["resume_claimed", "resolved"]).toContain(first.body.status);
-    expect(["claimed", "terminal"]).toContain(first.body.resumeStatus);
+    expect(first.body.status).toBe("answered");
 
     const duplicate = await postJson<HitlMutationBody>(fixture.app, mutationUrl(permission, "respond"), {
       type: "permission_decision",
@@ -267,8 +266,7 @@ describe("hitl routes", () => {
     });
     expect(cancelFirst.status).toBe(200);
     expect(cancelFirst.body.hitlId).toBe(cancellable.hitlId);
-    expect(["resume_claimed", "cancelled"]).toContain(cancelFirst.body.status);
-    expect(["claimed", "terminal"]).toContain(cancelFirst.body.resumeStatus);
+    expect(cancelFirst.body.status).toBe("answered");
 
     const cancelDuplicate = await postJson<HitlMutationBody>(fixture.app, mutationUrl(cancellable, "cancel"), {
       reason: "No longer needed",
@@ -387,9 +385,9 @@ describe("hitl routes", () => {
     expect(emptyResponse.status).toBe(200);
   });
 
-  test("explicit cancel retries a resume_failed session HITL so its blocker can unwind", async () => {
-    const fixture = await createTestApp("resume-failed-cancel");
-    const project = await addProject(fixture.runtime, "resume-failed-cancel", "Resume Failed Project");
+  test("a second mutation cannot replace a durably answered session HITL", async () => {
+    const fixture = await createTestApp("answered-conflict");
+    const project = await addProject(fixture.runtime, "answered-conflict", "Answered Conflict Project");
     const context = await fixture.runtime.contextResolver.resolve(project.workspaceRoot);
     const sessionId = await createSession(fixture, project, { agentName: "engineer" });
     const hitl = await createSessionHitl(context.hitl, project.slug, sessionId, "Unknown continuation");
@@ -400,18 +398,18 @@ describe("hitl routes", () => {
       intent: "respond",
       attempt: 1,
     });
-    await context.hitl.markResumeFailed(identity(hitl), "LLM continuation outcome is unknown");
-
     const cancelled = await postJson<HitlMutationBody>(fixture.app, mutationUrl(hitl, "cancel"), {
-      reason: "I inspected the external state; unlock without replaying",
+      reason: "replace the existing answer",
     });
 
-    expect(cancelled.status).toBe(200);
+    expect(cancelled.status).toBe(409);
     expect(cancelled.body.hitlId).toBe(hitl.hitlId);
-    expect(cancelled.body.status).toBe("resume_claimed");
-    expect(fixture.sessionResumeCalls()).toBe(1);
-
-    await waitForHitlStatus(context.hitl, hitl, "cancelled");
+    expect(cancelled.body.status).toBe("answered");
+    expect(await context.hitl.lookup(identity(hitl))).toMatchObject({
+      status: "found",
+      record: { response: { type: "question_answer", answers: ["continue"] } },
+    });
+    expect(fixture.sessionResumeCalls()).toBe(0);
   });
 });
 
@@ -505,7 +503,7 @@ async function createGoalHitl(hitl: TestHitlService, projectSlug: string, goalId
   return await hitl.create({
     owner: { projectSlug, ownerType: "goal", ownerId: goalId },
     blockingKey: `goal:${goalId}:approval:after_plan:${crypto.randomUUID()}`,
-    source: { type: "goal_approval", goalId, approvalPoint: "after_plan", resumeStatus: "running" },
+    source: { type: "goal_approval", goalId, approvalPoint: "after_plan" },
     displayPayload: redactedPayload(title),
   });
 }

@@ -18,11 +18,12 @@ export type GoalSessionExecutionDecision =
   | { readonly allowed: false; readonly reason: "reviewer_required" | "not_executable" };
 
 export function decideGoalSessionExecution(input: {
-  readonly goal: Pick<GoalState, "status" | "mainSessionId">;
+  readonly goal: Pick<GoalState, "status" | "mainSessionId" | "pendingHitlIds">;
   readonly subject: GoalSessionIdentity;
   readonly entryKind: "user_message" | "hitl_replay";
 }): GoalSessionExecutionDecision {
   const { goal, subject } = input;
+  if (goal.pendingHitlIds.length > 0) return notExecutable();
   const mainGoalLead = isMainGoalLead(goal.mainSessionId, subject);
   if (goal.status === "running") {
     return mainGoalLead || isRunningChild(subject) ? { allowed: true } : notExecutable();
@@ -31,16 +32,16 @@ export function decideGoalSessionExecution(input: {
     return mainGoalLead || isReviewChild(subject) ? { allowed: true } : { allowed: false, reason: "reviewer_required" };
   }
   if (goal.status === "not_done" && mainGoalLead) return { allowed: true };
-  if (goal.status === "blocked" && input.entryKind === "hitl_replay" && mainGoalLead) return { allowed: true };
   return notExecutable();
 }
 
 export function isGoalDelegationAllowed(input: {
-  readonly goal: Pick<GoalState, "status" | "mainSessionId">;
+  readonly goal: Pick<GoalState, "status" | "mainSessionId" | "pendingHitlIds">;
   readonly parent: GoalSessionIdentity;
   readonly targetAgentName: AgentName;
 }): boolean {
   const { goal, parent, targetAgentName } = input;
+  if (goal.pendingHitlIds.length > 0) return false;
   if (!isCurrentFamilyMember(goal.mainSessionId, parent)) return false;
   if (goal.status === "running") {
     if (targetAgentName === "reviewer") return false;
