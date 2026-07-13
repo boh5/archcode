@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { JSDOM } from "jsdom";
 import { ContextInspector } from "./ContextInspector";
 import { WorkbenchLayoutProvider, useCloseMobileSurfacesOnNavigation, useWorkbenchLayout } from "../../context/workbench-layout";
-import type { GoalState, Session, SessionTreeResponse } from "../../api/types";
+import type { Automation, GoalState, Session, SessionTreeResponse } from "../../api/types";
 import { createEmptySessionStats } from "@archcode/protocol";
 import { __resetWebSessionStoresForTest, getWebSessionStore } from "../../store/session-store";
 
@@ -106,8 +106,42 @@ describe("ContextInspector interactions", () => {
       cwd: "/workspace/demo-child",
       title: "Build agent",
       agentName: "build",
+      goalId: "executing-goal",
       modelInfo: { providerId: "openai", modelId: "gpt-5", qualifiedId: "openai:gpt-5", displayName: "GPT-5" },
       stats: { ...createEmptySessionStats(), messages: { total: 4, user: 1, assistant: 3 }, tools: { calls: 2, completed: 2, failed: 0 } },
+    };
+    const relatedGoal: GoalState = {
+      version: 3,
+      id: "created-goal",
+      projectId: "demo",
+      createdFromSessionId: "child",
+      title: "Created Goal",
+      objective: "Ship the related Goal",
+      acceptanceCriteria: "The Goal is verifiably complete",
+      useWorktree: false,
+      status: "running",
+      attempt: 1,
+      reviewGeneration: 0,
+      pendingHitlIds: [],
+      approvalRefs: [],
+      appliedHitlIds: [],
+      mainSessionId: "goal-main",
+      childSessionIds: [],
+      createdAt: "2026-07-13T00:00:00.000Z",
+      updatedAt: "2026-07-13T00:00:00.000Z",
+      startedAt: "2026-07-13T00:00:00.000Z",
+    };
+    const relatedAutomation: Automation = {
+      id: "22222222-2222-4222-8222-222222222222",
+      projectId: "demo",
+      createdFromSessionId: "child",
+      name: "Created Automation",
+      trigger: { kind: "interval", everyMs: 60_000 },
+      action: { kind: "start_session", message: "Run checks", location: "project" },
+      status: "active",
+      createdAt: "2026-07-13T00:00:00.000Z",
+      updatedAt: "2026-07-13T00:00:00.000Z",
+      nextFireAt: "2026-07-13T01:00:00.000Z",
     };
     const tree: SessionTreeResponse = {
       root: { session: { sessionId: "root", rootSessionId: "root", cwd: session.cwd, title: session.title, createdAt: 1, updatedAt: 2, agentName: "engineer", modelInfo: null }, children: [
@@ -122,6 +156,8 @@ describe("ContextInspector interactions", () => {
         { name: "engineer", displayName: "Engineer" },
         { name: "build", displayName: "Build" },
       ] });
+      if (url.endsWith("/goals")) return Response.json({ goals: [relatedGoal] });
+      if (url.endsWith("/automations")) return Response.json({ automations: [relatedAutomation] });
       if (url.endsWith("/tree")) return Response.json(tree);
       if (url.includes("/diff")) return Response.json({ files: [{ path: "src/app.ts", status: "modified", additions: 2, deletions: 1, hunks: [] }] });
       if (url.endsWith("/sessions/child")) return Response.json(childSession);
@@ -152,7 +188,24 @@ describe("ContextInspector interactions", () => {
       await waitFor(() => {
         expect(container.textContent).toContain("/workspace/demo-child");
         expect(container.textContent).toContain("GPT-5");
+        expect(container.textContent).toContain("Executing Goal");
+        expect(container.textContent).toContain("Related work");
+        expect(container.textContent).toContain("Created here");
+        expect(container.textContent).toContain("Created Goal");
+        expect(container.textContent).toContain("Goal · running");
+        expect(container.textContent).toContain("Created Automation");
+        expect(container.textContent).toContain("Automation · active");
+        expect(container.textContent).toContain("next");
       });
+      expect(container.querySelector('a[href="/projects/demo/goals/executing-goal"]')).not.toBeNull();
+      const createdGoalLink = container.querySelector('a[href="/projects/demo/goals/created-goal"]') as HTMLAnchorElement;
+      const createdAutomationLink = container.querySelector('a[href="/projects/demo/automations/22222222-2222-4222-8222-222222222222"]') as HTMLAnchorElement;
+      expect(createdGoalLink).not.toBeNull();
+      expect(createdAutomationLink).not.toBeNull();
+      createdGoalLink.focus();
+      expect(document.activeElement).toBe(createdGoalLink);
+      createdAutomationLink.focus();
+      expect(document.activeElement).toBe(createdAutomationLink);
       await act(async () => getWebSessionStore("child", "demo").setState({
         hydrationStatus: "hydrated",
         cwd: "/workspace/live-child",
@@ -183,13 +236,13 @@ describe("ContextInspector interactions", () => {
   test("organizes Goal criteria, evidence, and sessions", async () => {
     const dom = installDom("/projects/demo/goals/g1");
     const goal: GoalState = {
-      version: 2, id: "g1", projectId: "demo", title: "Goal", objective: "Ship it", acceptanceCriteria: "Tests pass", useWorktree: true,
+      version: 3, id: "g1", projectId: "demo", createdFromSessionId: "origin", title: "Goal", objective: "Ship it", acceptanceCriteria: "Tests pass", useWorktree: true,
       status: "done", attempt: 1, reviewGeneration: 1, pendingHitlIds: [], approvalRefs: [], appliedHitlIds: [], mainSessionId: "main", childSessionIds: ["child"],
       blocker: { kind: "approval", summary: "Waiting for approval", resumeStatus: "reviewing", createdAt: "2026-01-01" },
       budget: { status: "warning", usedTokens: 1200, maxTokens: 2000, reason: "Near limit", updatedAt: "2026-01-01" },
       worktree: { path: "/workspace/goal", branchName: "codex/goal", baseSha: "abc123", createdAt: "2026-01-01" },
       review: { reviewGeneration: 1, verdict: "DONE", summary: "Verified", evidenceRefs: [{ kind: "test_output", ref: "test-1", summary: "All tests passed", sessionId: "main", path: "logs/test.txt", toolCallId: "tool-1", messageId: "message-1", url: "https://example.com/evidence", createdAt: "2026-01-01" }], reviewerSessionId: "reviewer", decidedAt: "2026-01-01" },
-      createdAt: "2026-01-01", updatedAt: "2026-01-01",
+      createdAt: "2026-01-01", updatedAt: "2026-01-01", startedAt: "2026-01-01",
     };
     Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async () => Response.json(goal)) });
     const container = document.getElementById("root")!;

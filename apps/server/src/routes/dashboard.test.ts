@@ -21,24 +21,35 @@ class FakeGoalStateManager {
   readonly #goals: GoalState[] = [];
   readonly #now = new Date("2026-07-08T00:00:00.000Z").toISOString();
 
-  add(projectId: string, title: string, status: GoalStatus): GoalState {
+  commit(input: {
+    id: string;
+    projectId: string;
+    createdFromSessionId: string;
+    objective: string;
+    acceptanceCriteria: string;
+    mainSessionId: string;
+    useWorktree?: boolean;
+  }, title: string, status: GoalStatus): GoalState {
     const goal: GoalState = {
-      version: 2,
-      id: crypto.randomUUID(),
-      projectId,
+      version: 3,
+      id: input.id,
+      projectId: input.projectId,
+      createdFromSessionId: input.createdFromSessionId,
       title,
-      objective: `Objective for ${title}`,
-      acceptanceCriteria: `Acceptance criteria for ${title}`,
-      useWorktree: false,
+      objective: input.objective,
+      acceptanceCriteria: input.acceptanceCriteria,
+      useWorktree: input.useWorktree ?? false,
       status,
       attempt: 1,
       reviewGeneration: 0,
       pendingHitlIds: [],
       approvalRefs: [],
       appliedHitlIds: [],
+      mainSessionId: input.mainSessionId,
       childSessionIds: [],
       createdAt: this.#now,
       updatedAt: this.#now,
+      startedAt: this.#now,
       ...(status === "done" ? { completedAt: this.#now } : {}),
       ...(status === "cancelled" ? { cancelledAt: this.#now } : {}),
     };
@@ -99,7 +110,15 @@ function managerFor(managers: Map<string, FakeGoalStateManager>, project: Projec
 }
 
 function addGoal(managers: Map<string, FakeGoalStateManager>, project: ProjectInfo, title: string, status: GoalStatus): GoalState {
-  return managerFor(managers, project).add(project.slug, title, status);
+  const id = crypto.randomUUID();
+  return managerFor(managers, project).commit({
+    id,
+    projectId: project.slug,
+    createdFromSessionId: `source-${id}`,
+    mainSessionId: `main-${id}`,
+    objective: `Objective for ${title}`,
+    acceptanceCriteria: `Acceptance criteria for ${title}`,
+  }, title, status);
 }
 
 describe("dashboard routes", () => {
@@ -114,7 +133,7 @@ describe("dashboard routes", () => {
 
   test("GET /api/goals?status=active includes simplified active display statuses", async () => {
     const { app, managers, projects } = await createFixture("active-goals");
-    const activeStatuses: GoalStatus[] = ["draft", "running", "blocked", "reviewing", "not_done", "failed"];
+    const activeStatuses: GoalStatus[] = ["running", "blocked", "reviewing", "not_done", "failed"];
     for (const status of activeStatuses) {
       addGoal(managers, projects[0], `${status} goal`, status);
     }
@@ -126,7 +145,7 @@ describe("dashboard routes", () => {
 
     expect(res.status).toBe(200);
     expect(body.goals.map((goal) => goal.status).sort()).toEqual([...activeStatuses].sort());
-    expect(body.goals).toContainEqual(expect.objectContaining({ title: "draft goal", projectSlug: projects[0].slug, projectName: projects[0].name }));
+    expect(body.goals).toContainEqual(expect.objectContaining({ title: "running goal", projectSlug: projects[0].slug, projectName: projects[0].name }));
     expect(body.goals).not.toContainEqual(expect.objectContaining({ status: "done" }));
     expect(body.goals).not.toContainEqual(expect.objectContaining({ status: "cancelled" }));
   });
@@ -198,6 +217,7 @@ describe("dashboard routes", () => {
     const automation: Automation = {
       id: crypto.randomUUID(),
       projectId: projects[0].slug,
+      createdFromSessionId: "session-source-automation",
       name: "Daily check-in",
       trigger: { kind: "cron", expression: "0 9 * * 1-5", timezone: "Asia/Shanghai" },
       action: { kind: "start_session", message: "Review the open work.", location: "project" },

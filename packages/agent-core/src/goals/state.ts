@@ -17,10 +17,8 @@ import { z } from "zod/v4";
 
 import type { Logger } from "../logger";
 import { silentLogger } from "../logger";
-import { goalExecutionStatusEligibility } from "./execution-policy";
 
 export const GoalStatusSchema = z.enum([
-  "draft",
   "running",
   "blocked",
   "reviewing",
@@ -93,9 +91,10 @@ export const GoalWorktreeSchema = z.strictObject({
 }) satisfies z.ZodType<ProtocolGoalWorktree>;
 
 export const GoalStateSchema = z.strictObject({
-  version: z.literal(2),
+  version: z.literal(3),
   id: GoalUuidSchema,
   projectId: z.string().trim().min(1),
+  createdFromSessionId: z.string().trim().min(1),
   title: GoalNullableTitleSchema,
   objective: GoalNaturalLanguageSchema,
   acceptanceCriteria: GoalNaturalLanguageSchema,
@@ -110,13 +109,13 @@ export const GoalStateSchema = z.strictObject({
   pendingHitlIds: z.array(z.string().trim().min(1)).max(100),
   approvalRefs: z.array(z.string().trim().min(1)).max(100),
   appliedHitlIds: z.array(z.string().trim().min(1)).max(100),
-  mainSessionId: z.string().trim().min(1).optional(),
+  mainSessionId: z.string().trim().min(1),
   childSessionIds: z.array(z.string().trim().min(1)).max(500),
   review: GoalReviewReceiptSchema.optional(),
   finalSummary: GoalFinalSummarySchema.optional(),
   createdAt: z.string().trim().min(1),
   updatedAt: z.string().trim().min(1),
-  startedAt: z.string().trim().min(1).optional(),
+  startedAt: z.string().trim().min(1),
   completedAt: z.string().trim().min(1).optional(),
   cancelledAt: z.string().trim().min(1).optional(),
   lastError: GoalLastErrorSchema.optional(),
@@ -172,16 +171,6 @@ export const GoalStateSchema = z.strictObject({
     ctx.addIssue({ code: "custom", path: ["blocker"], message: "A blocked Goal requires blocker metadata" });
   }
 
-  const requiresMainSession = state.status === "running"
-    || state.status === "blocked"
-    || state.status === "reviewing"
-    || state.status === "not_done"
-    || state.status === "done"
-    || state.status === "failed"
-    || (state.status === "cancelled" && state.startedAt !== undefined);
-  if (requiresMainSession && state.mainSessionId === undefined) {
-    ctx.addIssue({ code: "custom", path: ["mainSessionId"], message: `A ${state.status} Goal requires its stable main Session` });
-  }
   if (state.review !== undefined && state.review.reviewGeneration !== state.reviewGeneration) {
     ctx.addIssue({
       code: "custom",
@@ -223,15 +212,16 @@ export type GoalBlocker = ProtocolGoalBlocker;
 export type GoalBudgetSummary = ProtocolGoalBudgetSummary;
 export type GoalWorktree = ProtocolGoalWorktree;
 
-export interface GoalCreateInput {
+export interface GoalCommitInput {
+  readonly id: string;
   readonly projectId: string;
+  readonly createdFromSessionId: string;
   readonly objective: string;
   readonly acceptanceCriteria: string;
-  readonly mainSessionId?: string;
+  readonly mainSessionId: string;
   readonly useWorktree?: boolean;
+  readonly startedAt?: string;
 }
-
-export type GoalDraftPatch = Partial<Pick<GoalState, "objective" | "acceptanceCriteria" | "mainSessionId" | "useWorktree">>;
 
 export interface GoalReviewerAuthorization {
   readonly agentName?: string;
@@ -295,6 +285,13 @@ export class GoalNotFoundError extends Error {
   }
 }
 
+export class GoalAlreadyExistsError extends Error {
+  constructor(public readonly goalId: string) {
+    super(`Goal already exists: ${goalId}`);
+    this.name = "GoalAlreadyExistsError";
+  }
+}
+
 export class GoalTransitionError extends Error {
   constructor(
     public readonly goalId: string,
@@ -324,7 +321,6 @@ export class GoalReviewFinalizationError extends Error {
 
 const TERMINAL_STATUSES = new Set<GoalStatus>(["done", "cancelled"]);
 const ALLOWED_TRANSITIONS: Record<GoalStatus, readonly GoalStatus[]> = {
-  draft: ["running", "cancelled"],
   running: ["blocked", "reviewing", "failed", "cancelled"],
   blocked: ["running", "reviewing", "failed", "cancelled"],
   reviewing: ["blocked", "done", "not_done", "failed", "cancelled"],
@@ -344,30 +340,34 @@ export class GoalStateManager {
     this.#logger = logger.child({ module: "goals.state" });
   }
 
-  async create(input: GoalCreateInput): Promise<GoalState> {
-    const now = new Date().toISOString();
+  async commit(input: GoalCommitInput): Promise<GoalState> {
+    return await this.withGoalMutation(input.id, async () => {
+      const now = input.startedAt ?? new Date().toISOString();
     const state = GoalStateSchema.parse({
-      version: 2,
-      id: crypto.randomUUID(),
+      version: 3,
+      id: input.id,
       projectId: input.projectId,
+      createdFromSessionId: input.createdFromSessionId,
       title: null,
       objective: input.objective,
       acceptanceCriteria: input.acceptanceCriteria,
       useWorktree: input.useWorktree ?? false,
-      status: "draft",
+      status: "running",
       attempt: 1,
       reviewGeneration: 0,
       pendingHitlIds: [],
       approvalRefs: [],
       appliedHitlIds: [],
       childSessionIds: [],
-      ...(input.mainSessionId === undefined ? {} : { mainSessionId: input.mainSessionId }),
+      mainSessionId: input.mainSessionId,
       createdAt: now,
       updatedAt: now,
+      startedAt: now,
     });
 
-    await this.write(state);
+      await this.writeNew(state);
     return state;
+    });
   }
 
   async read(goalId: string): Promise<GoalState> {
@@ -401,57 +401,11 @@ export class GoalStateManager {
     return states.sort((left, right) => left.id.localeCompare(right.id));
   }
 
-  async patchDraft(goalId: string, updates: GoalDraftPatch): Promise<GoalState> {
-    return await this.withGoalMutation(goalId, async () => {
-      const state = await this.read(goalId);
-      this.assertMutableDraft(state);
-      if (
-        updates.useWorktree !== undefined
-        && state.worktree !== undefined
-        && updates.useWorktree !== state.useWorktree
-      ) {
-        throw new GoalStateError(goalId, `Goal ${goalId} worktree isolation cannot change after its resource is claimed`);
-      }
-      return this.update(state, updates);
-    });
-  }
-
   async setTitleIfEmpty(goalId: string, title: string): Promise<GoalState | undefined> {
     return await this.withGoalMutation(goalId, async () => {
       const state = await this.read(goalId);
       if (state.title !== null) return undefined;
       return this.update(state, { title });
-    });
-  }
-
-  async start(goalId: string, input: { readonly mainSessionId?: string } = {}): Promise<GoalState> {
-    return await this.withGoalMutation(goalId, async () => {
-      const state = await this.read(goalId);
-      const alreadyClaimedByMainSession = state.status === "running"
-        && input.mainSessionId !== undefined
-        && state.mainSessionId === input.mainSessionId;
-      if (alreadyClaimedByMainSession) return state;
-
-      if (goalExecutionStatusEligibility("start", state.status) !== "proceed") {
-        throw new GoalTransitionError(state.id, state.status, "running");
-      }
-      const mainSessionId = state.mainSessionId ?? input.mainSessionId;
-      if (mainSessionId === undefined) {
-        throw new GoalStateError(goalId, `Goal ${goalId} requires a main Session before start`);
-      }
-      if (state.mainSessionId !== undefined && input.mainSessionId !== undefined && state.mainSessionId !== input.mainSessionId) {
-        throw new GoalStateError(goalId, `Goal ${goalId} main Session is already reserved by ${state.mainSessionId}`);
-      }
-      return this.update(state, {
-        status: "running",
-        blocker: undefined,
-        review: undefined,
-        finalSummary: undefined,
-        completedAt: undefined,
-        cancelledAt: undefined,
-        startedAt: state.startedAt ?? new Date().toISOString(),
-        mainSessionId,
-      });
     });
   }
 
@@ -556,11 +510,8 @@ export class GoalStateManager {
   async retry(goalId: string): Promise<GoalState> {
     return await this.withGoalMutation(goalId, async () => {
       const state = await this.read(goalId);
-      if (goalExecutionStatusEligibility("retry", state.status) !== "proceed") {
+      if (state.status !== "not_done" && state.status !== "failed") {
         throw new GoalTransitionError(state.id, state.status, "running");
-      }
-      if (state.mainSessionId === undefined) {
-        throw new GoalStateError(goalId, `Goal ${goalId} cannot retry without its original main Session`);
       }
       const now = new Date().toISOString();
       return this.update(state, {
@@ -634,18 +585,6 @@ export class GoalStateManager {
     });
   }
 
-  async setMainSession(goalId: string, sessionId: string): Promise<GoalState> {
-    return await this.withGoalMutation(goalId, async () => {
-      const state = await this.read(goalId);
-      this.assertMutableDraft(state);
-      if (state.mainSessionId !== undefined && state.mainSessionId !== sessionId) {
-        throw new GoalStateError(goalId, `Goal ${goalId} main Session is already reserved by ${state.mainSessionId}`);
-      }
-      if (state.mainSessionId === sessionId) return state;
-      return this.update(state, { mainSessionId: sessionId });
-    });
-  }
-
   async setWorktree(goalId: string, worktree: GoalWorktree): Promise<GoalState> {
     return await this.withGoalMutation(goalId, async () => {
       const state = await this.read(goalId);
@@ -712,6 +651,23 @@ export class GoalStateManager {
     await atomicWrite(await this.goalStatePath(state.id), `${JSON.stringify(GoalStateSchema.parse(state), null, 2)}\n`);
   }
 
+  private async writeNew(state: GoalState): Promise<void> {
+    const filePath = await this.goalStatePath(state.id);
+    if (existsSync(filePath) || existsSync(dirname(filePath))) throw new GoalAlreadyExistsError(state.id);
+    const root = this.goalsRoot();
+    await mkdir(root, { recursive: true });
+    const temporaryDir = join(root, `.tmp-${state.id}-${crypto.randomUUID()}`);
+    try {
+      await mkdir(temporaryDir);
+      await Bun.write(join(temporaryDir, "goal.json"), `${JSON.stringify(GoalStateSchema.parse(state), null, 2)}\n`);
+      await rename(temporaryDir, dirname(filePath));
+    } catch (error) {
+      await rm(temporaryDir, { recursive: true, force: true }).catch(() => {});
+      if (existsSync(dirname(filePath))) throw new GoalAlreadyExistsError(state.id);
+      throw error;
+    }
+  }
+
   private async withGoalMutation<T>(goalId: string, action: () => Promise<T>): Promise<T> {
     const previous = this.#mutationLocks.get(goalId) ?? Promise.resolve();
     let release!: () => void;
@@ -754,10 +710,6 @@ export class GoalStateManager {
     const result = GoalStateSchema.safeParse(parsed);
     if (!result.success) throw new GoalStateError(goalId, `Goal state validation failed for ${goalId}`, result.error);
     return result.data;
-  }
-
-  private assertMutableDraft(state: GoalState): void {
-    if (state.status !== "draft") throw new GoalStateError(state.id, `Goal ${state.id} is ${state.status}; draft patch denied`);
   }
 
   private assertTransition(state: GoalState, next: GoalStatus): void {

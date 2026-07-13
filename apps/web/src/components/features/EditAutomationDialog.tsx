@@ -11,12 +11,12 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import { useCreateAutomation, useUpdateAutomation } from "../../api/mutations";
+import { useUpdateAutomation } from "../../api/mutations";
 import type {
   Automation,
   AutomationAction,
   AutomationTrigger,
-  CreateAutomationPayload,
+  UpdateAutomationPayload,
 } from "../../api/types";
 import {
   DialogContent,
@@ -50,22 +50,19 @@ export function intervalFromMilliseconds(everyMs: number): { value: number; unit
   return { value: everyMs / INTERVAL_UNIT_MS.seconds, unit: "seconds" };
 }
 
-interface AutomationDialogProps {
+interface EditAutomationDialogProps {
   open: boolean;
   onClose: () => void;
   slug: string;
-  automation?: Automation;
-  onCreated?: (automationId: string) => void;
+  automation: Automation;
 }
 
-export function AutomationDialog({
+export function EditAutomationDialog({
   open,
   onClose,
   slug,
   automation,
-  onCreated,
-}: AutomationDialogProps) {
-  const create = useCreateAutomation();
+}: EditAutomationDialogProps) {
   const update = useUpdateAutomation();
   const [name, setName] = useState("");
   const [triggerKind, setTriggerKind] = useState<AutomationTrigger["kind"]>("interval");
@@ -81,27 +78,27 @@ export function AutomationDialog({
 
   useEffect(() => {
     if (!open) return;
-    const interval = automation?.trigger.kind === "interval"
+    const interval = automation.trigger.kind === "interval"
       ? intervalFromMilliseconds(automation.trigger.everyMs)
       : { value: 1, unit: "minutes" as const };
 
-    setName(automation?.name ?? "");
-    setTriggerKind(automation?.trigger.kind ?? "interval");
-    setOnceAt(automation?.trigger.kind === "once" ? automation.trigger.at.slice(0, 16) : "");
+    setName(automation.name);
+    setTriggerKind(automation.trigger.kind);
+    setOnceAt(automation.trigger.kind === "once" ? automation.trigger.at.slice(0, 16) : "");
     setIntervalValue(interval.value);
     setIntervalUnit(interval.unit);
-    setCron(automation?.trigger.kind === "cron" ? automation.trigger.expression : "*/15 * * * *");
-    setTimezone(automation?.trigger.kind === "cron"
+    setCron(automation.trigger.kind === "cron" ? automation.trigger.expression : "*/15 * * * *");
+    setTimezone(automation.trigger.kind === "cron"
       ? automation.trigger.timezone
       : Intl.DateTimeFormat().resolvedOptions().timeZone);
-    setActionKind(automation?.action.kind ?? "start_session");
-    setMessage(automation?.action.message ?? "");
-    setSessionId(automation?.action.kind === "send_message" ? automation.action.sessionId : "");
-    setLocation(automation?.action.kind === "start_session" ? automation.action.location : "project");
-  }, [open, automation?.id]);
+    setActionKind(automation.action.kind);
+    setMessage(automation.action.message);
+    setSessionId(automation.action.kind === "send_message" ? automation.action.sessionId : "");
+    setLocation(automation.action.kind === "start_session" ? automation.action.location : "project");
+  }, [open, automation.id]);
 
-  const pending = create.isPending || update.isPending;
-  const error = create.error ?? update.error;
+  const pending = update.isPending;
+  const error = update.error;
   const everyMs = intervalToMilliseconds(intervalValue, intervalUnit);
   const valid = name.trim().length > 0
     && message.trim().length > 0
@@ -122,24 +119,8 @@ export function AutomationDialog({
     const action: AutomationAction = actionKind === "start_session"
       ? { kind: "start_session", message: message.trim(), location }
       : { kind: "send_message", message: message.trim(), sessionId: sessionId.trim() };
-    const payload: CreateAutomationPayload = { name: name.trim(), trigger, action };
-
-    if (automation) {
-      update.mutate(
-        { slug, automationId: automation.id, ...payload },
-        { onSuccess: onClose },
-      );
-      return;
-    }
-    create.mutate(
-      { slug, ...payload },
-      {
-        onSuccess: ({ automation: created }) => {
-          onCreated?.(created.id);
-          onClose();
-        },
-      },
-    );
+    const payload: Required<UpdateAutomationPayload> = { name: name.trim(), trigger, action };
+    update.mutate({ slug, automationId: automation.id, ...payload }, { onSuccess: onClose });
   };
 
   const errorMessage = error
@@ -158,7 +139,7 @@ export function AutomationDialog({
             </div>
             <div className="min-w-0 flex-1">
               <DialogTitle className="text-base font-semibold text-text-primary">
-                {automation ? "Edit Automation" : "New Automation"}
+                Edit Automation
               </DialogTitle>
               <DialogDescription className="mt-0.5 text-[12px] text-text-muted">
                 Schedule an ordinary Session message. The Session keeps its existing tools and permissions.
@@ -406,7 +387,7 @@ export function AutomationDialog({
                 disabled={!valid || pending}
                 className="rounded-sm bg-accent px-4 py-2 text-[13px] font-medium text-bg-base transition-colors duration-150 hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-40"
               >
-                {pending ? "Saving…" : automation ? "Save changes" : "Create Automation"}
+                {pending ? "Saving…" : "Save changes"}
               </button>
             </div>
           </footer>

@@ -3,8 +3,7 @@ import { useActiveAutomations, useActiveGoals, useDashboardHitl } from "../api/q
 import { HitlInbox } from "../components/features/HitlCard";
 import type { DashboardAutomation, DashboardGoal, GoalStatus } from "../api/types";
 
-const STATUS_BADGE: Record<GoalStatus, string> = {
-  draft: "bg-bg-active text-text-secondary",
+const STATUS_BADGE: Partial<Record<GoalStatus, string>> = {
   running: "bg-success-muted text-success",
   blocked: "bg-warning-muted text-warning",
   reviewing: "bg-info-muted text-info",

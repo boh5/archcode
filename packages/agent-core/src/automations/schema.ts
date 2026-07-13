@@ -28,6 +28,7 @@ export const AutomationActionSchema = z.discriminatedUnion("kind", [
 export const AutomationSchema = z.strictObject({
   id: z.uuid(),
   projectId: NonEmptyTextSchema,
+  createdFromSessionId: z.uuid(),
   name: NonEmptyTextSchema,
   trigger: AutomationTriggerSchema,
   action: AutomationActionSchema,
@@ -51,7 +52,7 @@ export const AutomationInvocationSchema = z.strictObject({
 }) satisfies z.ZodType<AutomationInvocation>;
 
 export const AutomationStateFileSchema = z.strictObject({
-  version: z.literal(1),
+  version: z.literal(2),
   automations: z.array(AutomationSchema),
   invocations: z.array(AutomationInvocationSchema),
 });

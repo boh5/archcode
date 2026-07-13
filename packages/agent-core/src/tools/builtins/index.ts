@@ -23,6 +23,7 @@ export { viewToolOutputTool } from "./view-tool-output";
 export { astGrepSearchTool, astGrepReplaceTool } from "./ast-grep";
 export { compressTool, CompressInputSchema } from "./compress";
 export { worktreeEnterTool, worktreeExitTool, WorktreeEnterInputSchema, WorktreeExitInputSchema } from "./worktree";
+export { automationCreateTool, AutomationCreateInputSchema } from "./automation-create";
 
 import { fileReadTool } from "./file-read";
 import { fileWriteTool } from "./file-write";

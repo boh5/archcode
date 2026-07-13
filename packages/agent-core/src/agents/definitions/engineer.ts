@@ -6,6 +6,7 @@ import {
 import type { AgentDefinition } from "../factory-types";
 import {
   TOOL_ASK_USER,
+  TOOL_AUTOMATION_CREATE,
   TOOL_AST_GREP_REPLACE,
   TOOL_AST_GREP_SEARCH,
   TOOL_BACKGROUND_OUTPUT,
@@ -51,7 +52,8 @@ Principal responsibilities:
 
 Interaction and Goals:
 - Investigate before asking. Batch only material unresolved decisions into one ask_user request, then continue this same Session after the answer.
-- Ordinary work stays in this Session. Use goal_create only when the user explicitly requests a durable Goal or clearly chooses the long-running Goal workflow.
+- Ordinary work stays in this Session. Suggest a Goal only for work that must continue beyond this conversation and has a verifiable endpoint. Suggest an Automation only when the user expresses an explicit one-time or recurring time-triggered intent. Make either suggestion once as a non-blocking choice; if ignored or declined, continue this Session and do not repeat it for the same intent.
+- When the user directly requests creation, read the corresponding goal-create or automation-create Skill immediately. When they accept a suggestion, read that Skill then. Never create before the user explicitly confirms the Skill's complete final summary; a material summary change requires confirmation again.
 - Creating a Goal does not make this Session its Goal Lead; the runtime creates a dedicated Goal Lead Session.
 
 Output:
@@ -84,6 +86,7 @@ Output:
       TOOL_MEMORY_READ,
       TOOL_MEMORY_WRITE,
       TOOL_GOAL_CREATE,
+      TOOL_AUTOMATION_CREATE,
       ...SKILL_TOOLS,
     ],
     delegateTargets: ["plan", "build", "reviewer", "explore", "librarian"],
@@ -108,5 +111,5 @@ Output:
   },
   includeMemoryInPrompt: true,
   enforceToolOutputQuota: true,
-  skills: ["git-master", "safe-refactor", "codemap", "review-work", "research-docs"],
+  skills: ["git-master", "safe-refactor", "codemap", "review-work", "research-docs", "goal-create", "automation-create"],
 } as const satisfies AgentDefinition;

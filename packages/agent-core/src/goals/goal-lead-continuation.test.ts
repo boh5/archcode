@@ -140,13 +140,14 @@ describe("GoalLeadContinuationService", () => {
       },
     });
     const secondMainSessionId = crypto.randomUUID();
-    const secondDraft = await fixture.context.goalState.create({
+    const secondGoal = await fixture.context.goalState.commit({
+      id: crypto.randomUUID(),
       projectId: fixture.context.project.slug,
+      createdFromSessionId: crypto.randomUUID(),
       objective: "Run the second Goal fairly",
       acceptanceCriteria: "The capacity waiter starts next",
       mainSessionId: secondMainSessionId,
     });
-    const secondGoal = await fixture.context.goalState.start(secondDraft.id, { mainSessionId: secondMainSessionId });
     fixture.sessions.set(secondMainSessionId, {
       ...fixture.sessions.get(fixture.mainSessionId)!,
       sessionId: secondMainSessionId,
@@ -193,13 +194,14 @@ async function createFixture(
   await mkdir(workspaceRoot, { recursive: true });
   const context = createTestProjectContext(workspaceRoot);
   const mainSessionId = crypto.randomUUID();
-  const draft = await context.goalState.create({
+  const goal = await context.goalState.commit({
+    id: crypto.randomUUID(),
     projectId: context.project.slug,
+    createdFromSessionId: crypto.randomUUID(),
     objective: "Ship continuation safely",
     acceptanceCriteria: "One checked continuation starts",
     mainSessionId,
   });
-  const goal = await context.goalState.start(draft.id, { mainSessionId });
   const starts: Array<{ sessionId: string; workspaceRoot: string; userMessage: string }> = [];
   const session = {
     schemaVersion: 1,

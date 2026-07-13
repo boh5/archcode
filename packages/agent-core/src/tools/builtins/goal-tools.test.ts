@@ -41,6 +41,7 @@ class SimplifiedGoalStateManagerMock {
 
   async create(input: {
     projectId: string;
+    createdFromSessionId: string;
     objective: string;
     acceptanceCriteria: string;
     useWorktree?: boolean;
@@ -48,16 +49,11 @@ class SimplifiedGoalStateManagerMock {
     this.calls.push({ method: "create", payload: input });
     return makeGoalState({
       projectId: input.projectId,
+      createdFromSessionId: input.createdFromSessionId,
       objective: input.objective,
       acceptanceCriteria: input.acceptanceCriteria,
       useWorktree: input.useWorktree,
     });
-  }
-
-  async start(goalId: string, input: { readonly mainSessionId?: string }): Promise<GoalState> {
-    const mainSessionId = input.mainSessionId ?? "main-session";
-    this.calls.push({ method: "start", payload: { goalId, mainSessionId } });
-    return makeGoalState({ id: goalId, status: "running", mainSessionId, startedAt: "2026-07-08T00:00:00.000Z" });
   }
 
   async block(goalId: string, blocker: {
@@ -163,7 +159,6 @@ afterAll(async () => {
 function makeProjectContext(
   goalState: SimplifiedGoalStateManagerMock | GoalStateManager = new SimplifiedGoalStateManagerMock(),
   workspaceRoot = TMP_DIR,
-  onGoalCreated?: (goal: GoalState) => void,
 ): ProjectContext {
   const project = {
     slug: "test-project",
@@ -176,6 +171,8 @@ function makeProjectContext(
   return {
     project,
     goalState: resolvedGoalState,
+    goalRunner: goalState as unknown as ProjectContext["goalRunner"],
+    createAutomation: async () => { throw new Error("unused automation creator"); },
     goalCancellation: {
       cancel: (goalId, request) => goalState.cancel(goalId, request.reason),
     },
@@ -193,7 +190,6 @@ function makeProjectContext(
       user: join(workspaceRoot, ".archcode", "user-memory"),
     }),
     approvals: new ProjectApprovalManager(silentLogger),
-    ...(onGoalCreated === undefined ? {} : { onGoalCreated }),
   };
 }
 
@@ -227,7 +223,6 @@ async function executeCreate(
   options: {
     store?: StoreApi<SessionStoreState>;
     goalState?: SimplifiedGoalStateManagerMock;
-    onGoalCreated?: (goal: GoalState) => void;
   } = {},
 ): Promise<{ result: ToolExecutionResult; goalState: SimplifiedGoalStateManagerMock }> {
   const goalState = options.goalState ?? new SimplifiedGoalStateManagerMock();
@@ -243,7 +238,7 @@ async function executeCreate(
     };
   }
 
-  const projectContext = makeProjectContext(goalState, TMP_DIR, options.onGoalCreated);
+  const projectContext = makeProjectContext(goalState, TMP_DIR);
   const output = await goalCreateTool.execute(
     parsed.data,
     makeCtx(parsed.data, options.store ?? engineerStore(), projectContext, projectContext.project.workspaceRoot, TOOL_GOAL_CREATE),
@@ -284,10 +279,11 @@ function makeGoalState(overrides: Partial<GoalState> = {}): GoalState {
   return {
     id: overrides.id ?? DEFAULT_GOAL_ID,
     projectId: "test-project",
+    createdFromSessionId: "engineer-session",
     title: null,
     objective: "Simplify Goal tools.",
     acceptanceCriteria: "The simplified lifecycle is enforced.",
-    status: "draft",
+    status: "running",
     attempt: 1,
     reviewGeneration: 0,
     mainSessionId: "main-session",
@@ -297,8 +293,9 @@ function makeGoalState(overrides: Partial<GoalState> = {}): GoalState {
     childSessionIds: [],
     createdAt: "2026-07-08T00:00:00.000Z",
     updatedAt: "2026-07-08T00:00:00.000Z",
+    startedAt: "2026-07-08T00:00:00.000Z",
     ...overrides,
-    version: overrides.version ?? 2,
+    version: overrides.version ?? 3,
     useWorktree: overrides.useWorktree ?? false,
   };
 }
@@ -338,14 +335,14 @@ async function runGit(cwd: string, args: readonly string[]): Promise<string> {
 }
 
 describe("goal_manage builtin tool", () => {
-  it("exposes separate draft creation and managed lifecycle descriptors", () => {
+  it("exposes committed creation and managed lifecycle descriptors", () => {
     expect(goalCreateTool.name).toBe(TOOL_GOAL_CREATE);
-    expect(goalCreateTool.description).toContain("draft Goal");
+    expect(goalCreateTool.description).toContain("Commit and activate");
     expect(goalManageTool.name).toBe(TOOL_GOAL_MANAGE);
     expect(goalManageTool.description).toContain("block, resume, begin_review, finalize_review, retry, or cancel");
   });
 
-  it("accepts draft input separately and rejects create/start in managed lifecycle", () => {
+  it("accepts confirmed creation input separately and rejects create/start in managed lifecycle", () => {
     const goalId = "11111111-1111-4111-8111-111111111111";
     const validCases = [
       { action: "block", goalId, kind: "approval", summary: "Waiting on approval", source: "test", resumeStatus: "running" },
@@ -363,6 +360,7 @@ describe("goal_manage builtin tool", () => {
 
     expect(GoalCreateInputSchema.safeParse({ objective: "Do the thing", acceptanceCriteria: "It works", useWorktree: true }).success).toBe(true);
     expect(GoalCreateInputSchema.safeParse({ action: "create", objective: "Do the thing", acceptanceCriteria: "It works" }).success).toBe(false);
+    expect(GoalCreateInputSchema.safeParse({ objective: "Do the thing", acceptanceCriteria: "It works", createdFromSessionId: "forged" }).success).toBe(false);
 
     expect(GoalManageInputSchema.safeParse({ action: "create", objective: "Do the thing", acceptanceCriteria: "It works" }).success).toBe(false);
     expect(GoalManageInputSchema.safeParse({ action: "start", goalId }).success).toBe(false);
@@ -504,22 +502,23 @@ describe("goal_manage builtin tool", () => {
     const workspaceRoot = join(TMP_DIR, `not-done-${crypto.randomUUID()}`);
     const manager = new GoalStateManager(workspaceRoot);
     const createNotDone = async () => {
-      const draft = await manager.create({
+      const committed = await manager.commit({
+        id: crypto.randomUUID(),
         projectId: "test-project",
+        createdFromSessionId: crypto.randomUUID(),
         objective: "Exercise not_done phase capabilities.",
         acceptanceCriteria: "Only retry and cancel remain executable.",
         mainSessionId: "main-session",
       });
-      await manager.start(draft.id);
-      const reviewing = await manager.beginReview(draft.id);
-      return await manager.finalizeReview(draft.id, {
+      const reviewing = await manager.beginReview(committed.id);
+      return await manager.finalizeReview(committed.id, {
         expectedReviewGeneration: reviewing.reviewGeneration,
         verdict: "NOT_DONE",
         summary: "More work remains.",
         authorization: {
           agentName: "reviewer",
           sessionRole: "review",
-          sessionGoalId: draft.id,
+          sessionGoalId: committed.id,
           reviewerSessionId: "review-session",
         },
       });
@@ -544,21 +543,23 @@ describe("goal_manage builtin tool", () => {
     expect((await executeManaged({ action: "cancel", goalId: cancellable.id }, cancellable.id)).isError).toBe(false);
   });
 
-  it("creates a draft Goal only from an unbound Engineer root Session", async () => {
+  it("commits a Goal only from an unbound Engineer root Session and derives provenance", async () => {
     const goalState = new SimplifiedGoalStateManagerMock();
-    const createdGoals: GoalState[] = [];
     const input = { objective: "Do the thing", acceptanceCriteria: "It works", useWorktree: true };
-    const { result } = await executeCreate(input, { goalState, onGoalCreated: (goal) => createdGoals.push(goal) });
+    const { result } = await executeCreate(input, { goalState });
 
     expect(result.isError).toBe(false);
     expect(goalState.calls).toEqual([{ method: "create", payload: {
       projectId: "test-project",
+      createdFromSessionId: "engineer-session",
       objective: "Do the thing",
       acceptanceCriteria: "It works",
       useWorktree: true,
     } }]);
-    expect(createdGoals).toHaveLength(1);
-    expect(createdGoals[0]).toMatchObject({ projectId: "test-project", status: "draft" });
+    expect(JSON.parse(result.output)).toMatchObject({ projectId: "test-project", status: "running", createdFromSessionId: "engineer-session" });
+
+    const standalone = await executeCreate(input, { store: engineerStore({ sessionRole: "standalone" }) });
+    expect(standalone.result.isError).toBe(false);
 
     for (const store of [
       mainStore({ goalId: undefined }),

@@ -5,6 +5,7 @@ import { basename, join } from "node:path";
 import type { HitlIdentity } from "@archcode/protocol";
 
 import { GoalStateManager } from "../goals/state";
+import { GoalRunner } from "../goals/runner";
 import { SessionFamilyActiveError } from "../execution/session-family-control";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
 import { SessionExecutionManager } from "../execution/session-execution-manager";
@@ -40,24 +41,35 @@ beforeEach(async () => {
 });
 
 function createResolver(overrides: Partial<ProjectContextResolverOptions> = {}): ProjectContextResolver {
+  const sessionStoreManager = overrides.sessionStoreManager ?? new SessionStoreManager({ logger: silentLogger });
   return new ProjectContextResolver({
-    projectInfoFactory: (workspaceRoot) => {
+    ...overrides,
+    projectInfoFactory: overrides.projectInfoFactory ?? ((workspaceRoot) => {
       const name = basename(workspaceRoot);
       return { slug: name, name, workspaceRoot, addedAt: new Date().toISOString() };
-    },
-    goalCancellationFactory: ({ goalState }) => ({
-      cancel: async (goalId, request) => await goalState.cancel(goalId, request.reason),
     }),
-    sessionStoreManager: new SessionStoreManager({ logger: silentLogger }),
-    resumeCoordinatorFactory: ({ hitl }) => new ResumeCoordinator({
+    goalCancellationFactory: overrides.goalCancellationFactory ?? (({ goalState }) => ({
+      cancel: async (goalId, request) => await goalState.cancel(goalId, request.reason),
+    })),
+    goalRunnerFactory: overrides.goalRunnerFactory ?? (({ workspaceRoot, goalState }) => new GoalRunner({
+      workspaceRoot,
+      goalStateManager: goalState,
+      readSourceSession: (root, sessionId) => sessionStoreManager.getSessionFile(root, sessionId),
+      ensureSessionFile: (root, sessionId, options) => sessionStoreManager.ensureSessionFile(root, sessionId, options),
+      startCheckedExecutionWithinGoalClaim: async () => ({}) as never,
+    })),
+    createAutomation: overrides.createAutomation ?? (async () => {
+      throw new Error("Automation creation is not configured for this test resolver");
+    }),
+    sessionStoreManager,
+    resumeCoordinatorFactory: overrides.resumeCoordinatorFactory ?? (({ hitl }) => new ResumeCoordinator({
       hitl,
       adapters: {
         session: { prepare: async () => createPreparedHitlResume(async () => undefined) },
         goal: { prepare: async () => createPreparedHitlResume(async () => undefined) },
       },
       logger: silentLogger,
-    }),
-    ...overrides,
+    })),
   });
 }
 
@@ -297,8 +309,22 @@ describe("ProjectContextResolver", () => {
     const contextA = await resolver.resolve(workspaceA);
     const contextB = await resolver.resolve(workspaceB);
 
-    const goalA = await contextA.goalState.create({ projectId: contextA.project.slug, objective: "A objective", acceptanceCriteria: "A criteria" });
-    const goalB = await contextB.goalState.create({ projectId: contextB.project.slug, objective: "B objective", acceptanceCriteria: "B criteria" });
+    const goalA = await contextA.goalState.commit({
+      id: crypto.randomUUID(),
+      projectId: contextA.project.slug,
+      createdFromSessionId: crypto.randomUUID(),
+      objective: "A objective",
+      acceptanceCriteria: "A criteria",
+      mainSessionId: crypto.randomUUID(),
+    });
+    const goalB = await contextB.goalState.commit({
+      id: crypto.randomUUID(),
+      projectId: contextB.project.slug,
+      createdFromSessionId: crypto.randomUUID(),
+      objective: "B objective",
+      acceptanceCriteria: "B criteria",
+      mainSessionId: crypto.randomUUID(),
+    });
 
     expect((await contextA.goalState.listGoals()).map((goal) => goal.id)).toEqual([goalA.id]);
     expect((await contextB.goalState.listGoals()).map((goal) => goal.id)).toEqual([goalB.id]);
@@ -312,7 +338,14 @@ describe("ProjectContextResolver", () => {
     const sessions = new SessionStoreManager({ logger: silentLogger });
     const resolver = createResolver({ sessionStoreManager: sessions });
     const first = await resolver.resolve(workspace);
-    const goal = await first.goalState.create({ projectId: first.project.slug, objective: "Get approval", acceptanceCriteria: "HITL persists" });
+    const goal = await first.goalState.commit({
+      id: crypto.randomUUID(),
+      projectId: first.project.slug,
+      createdFromSessionId: crypto.randomUUID(),
+      objective: "Get approval",
+      acceptanceCriteria: "HITL persists",
+      mainSessionId: crypto.randomUUID(),
+    });
 
     const created = await first.hitl.create({
       owner: { projectSlug: first.project.slug, ownerType: "goal", ownerId: goal.id },

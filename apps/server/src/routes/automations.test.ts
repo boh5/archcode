@@ -12,6 +12,7 @@ function automation(): Automation {
   return {
     id: "11111111-1111-4111-8111-111111111111",
     projectId: "project",
+    createdFromSessionId: "44444444-4444-4444-8444-444444444444",
     name: "Daily check",
     status: "active",
     trigger: { kind: "cron", expression: "0 9 * * 1", timezone: "Asia/Shanghai" },
@@ -33,7 +34,6 @@ async function fixture(name: string) {
     projectRegistry,
     listAutomations: mock(async () => [item]),
     readAutomation: mock(async () => item),
-    createAutomation: mock(async (_root: string, input: Pick<Automation, "name" | "trigger" | "action">) => ({ ...item, ...input })),
     updateAutomation: mock(async (_root: string, _id: string, input: Partial<Pick<Automation, "name" | "trigger" | "action">>) => ({ ...item, ...input })),
     deleteAutomation: mock(async () => undefined),
     pauseAutomation: mock(async () => ({ ...item, status: "paused" as const })),
@@ -63,8 +63,8 @@ describe("automation routes", () => {
     await rm(tempRoot, { recursive: true, force: true });
   });
 
-  test("creates a single-trigger ordinary Session Automation", async () => {
-    const { app, project, runtime } = await fixture("create");
+  test("does not expose direct Automation creation", async () => {
+    const { app, project } = await fixture("create");
     const res = await app.request(`/${project.slug}/automations`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -75,48 +75,7 @@ describe("automation routes", () => {
       }),
     });
 
-    expect(res.status).toBe(201);
-    expect(runtime.createAutomation).toHaveBeenCalledWith(project.workspaceRoot, {
-      name: "Morning review",
-      trigger: { kind: "cron", expression: "0 9 * * 1", timezone: "Asia/Shanghai" },
-      action: { kind: "start_session", message: "/skill use review", location: "worktree" },
-    });
-  });
-
-  test("rejects invalid cron, timezone, and sub-minimum interval", async () => {
-    const { app, project } = await fixture("validation");
-    const invalidTimezone = await app.request(`/${project.slug}/automations`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        name: "Invalid timezone",
-        trigger: { kind: "cron", expression: "0 9 * * 1", timezone: "Mars/Olympus" },
-        action: { kind: "send_message", sessionId: "11111111-1111-4111-8111-111111111111", message: "hello" },
-      }),
-    });
-    expect(invalidTimezone.status).toBe(400);
-
-    const invalidCron = await app.request(`/${project.slug}/automations`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        name: "Invalid cron",
-        trigger: { kind: "cron", expression: "61 * * * *", timezone: "UTC" },
-        action: { kind: "send_message", sessionId: "11111111-1111-4111-8111-111111111111", message: "hello" },
-      }),
-    });
-    expect(invalidCron.status).toBe(400);
-
-    const interval = await app.request(`/${project.slug}/automations`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        name: "Too fast",
-        trigger: { kind: "interval", everyMs: 1_000 },
-        action: { kind: "send_message", sessionId: "11111111-1111-4111-8111-111111111111", message: "hello" },
-      }),
-    });
-    expect(interval.status).toBe(400);
+    expect(res.status).toBe(404);
   });
 
   test("run now creates an invocation without mutating the trigger", async () => {
@@ -126,6 +85,18 @@ describe("automation routes", () => {
     expect(res.status).toBe(202);
     expect((await res.json() as { invocation: AutomationInvocation }).invocation.status).toBe("pending");
     expect(runtime.runAutomationNow).toHaveBeenCalledWith(project.workspaceRoot, item.id);
+  });
+
+  test("rejects provenance changes through the update route", async () => {
+    const { app, item, project, runtime } = await fixture("immutable-provenance");
+    const res = await app.request(`/${project.slug}/automations/${item.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ createdFromSessionId: crypto.randomUUID() }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(runtime.updateAutomation).not.toHaveBeenCalled();
   });
 
   test("exposes read, update, pause, resume, history, and delete as project-scoped operations", async () => {

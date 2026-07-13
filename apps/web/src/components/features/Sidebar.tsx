@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { ChevronRight, Focus, LayoutDashboard, PanelLeftClose, Plus } from "lucide-react";
-import { useCreateSession } from "../../api/mutations";
+import { useCreateSession, usePostMessage } from "../../api/mutations";
 import { useAutomations, useGoals, useProjects, useSessions } from "../../api/queries";
 import type {
   GoalState,
@@ -14,8 +14,6 @@ import type { SessionFamilyActivity } from "@archcode/protocol";
 import { ProjectActionDropdown } from "./ProjectActionMenu";
 import { EditProjectDialog } from "./EditProjectDialog";
 import { CloseProjectDialog } from "./CloseProjectDialog";
-import { CreateGoalDialog } from "./CreateGoalDialog";
-import { AutomationDialog } from "./AutomationDialog";
 import { formatRelativeTime } from "../../lib/time-format";
 import { useWorkbenchLayout } from "../../context/workbench-layout";
 import {
@@ -68,8 +66,7 @@ function SessionStatusDot({ activity }: { activity: SessionFamilyActivity | unde
   return <div className={`w-[7px] h-[7px] rounded-full shrink-0 ${STATUS_DOT_COLORS[activity ?? "unknown"]}`} />;
 }
 
-const GOAL_STATUS_DOT_COLORS: Record<GoalStatus, string> = {
-  draft: "bg-text-muted",
+const GOAL_STATUS_DOT_COLORS: Partial<Record<GoalStatus, string>> = {
   running: "bg-success shadow-[0_0_6px_var(--success)] animate-pulse",
   blocked: "bg-warning",
   reviewing: "bg-info",
@@ -335,12 +332,11 @@ export function Sidebar({
     automationId: string;
   }>();
   const createSession = useCreateSession();
+  const postMessage = usePostMessage();
   const { toggleSidebar, toggleFocusMode } = useWorkbenchLayout();
 
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [closingProject, setClosingProject] = useState<Project | null>(null);
-  const [createGoalOpen, setCreateGoalOpen] = useState(false);
-  const [createAutomationOpen, setCreateAutomationOpen] = useState(false);
 
   const [sessionsSearch, setSessionsSearch] = useState("");
   const [goalsSearch, setGoalsSearch] = useState("");
@@ -368,6 +364,19 @@ export function Sidebar({
     createSession.mutate({ slug }, {
       onSuccess: (session) => {
         navigate(`/projects/${slug}/sessions/${session.sessionId}`);
+      },
+    });
+  };
+
+  const handleNewSkillSession = (skill: "goal-create" | "automation-create") => {
+    createSession.mutate({ slug }, {
+      onSuccess: (session) => {
+        navigate(`/projects/${slug}/sessions/${session.sessionId}`);
+        postMessage.mutate({
+          slug,
+          sessionId: session.sessionId,
+          content: `/skill use ${skill}`,
+        });
       },
     });
   };
@@ -620,9 +629,10 @@ export function Sidebar({
                 className={SEARCH_INPUT_CLASS}
               />
               <CreateButton
-                onClick={() => setCreateGoalOpen(true)}
+                onClick={() => handleNewSkillSession("goal-create")}
                 title="New goal"
                 label="New goal"
+                disabled={!slug || createSession.isPending}
               />
             </div>
           </div>
@@ -665,10 +675,10 @@ export function Sidebar({
                 className={SEARCH_INPUT_CLASS}
               />
               <CreateButton
-                onClick={() => setCreateAutomationOpen(true)}
+                onClick={() => handleNewSkillSession("automation-create")}
                 title="New automation"
                 label="New automation"
-                disabled={!slug}
+                disabled={!slug || createSession.isPending}
               />
             </div>
           </div>
@@ -715,25 +725,6 @@ export function Sidebar({
         />
       )}
 
-      <CreateGoalDialog
-        open={createGoalOpen}
-        onClose={() => setCreateGoalOpen(false)}
-        slug={slug}
-        onCreated={(newGoalId) => {
-          setCreateGoalOpen(false);
-          navigate(`/projects/${slug}/goals/${newGoalId}`);
-        }}
-      />
-
-      <AutomationDialog
-        open={createAutomationOpen}
-        onClose={() => setCreateAutomationOpen(false)}
-        slug={slug}
-        onCreated={(newAutomationId) => {
-          setCreateAutomationOpen(false);
-          navigate(`/projects/${slug}/automations/${newAutomationId}`);
-        }}
-      />
     </div>
   );
 }

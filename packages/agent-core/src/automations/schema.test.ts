@@ -7,6 +7,7 @@ describe("automation schemas", () => {
     const automation = {
       id: crypto.randomUUID(),
       projectId: "project-a",
+      createdFromSessionId: crypto.randomUUID(),
       name: "check",
       trigger: { kind: "interval" as const, everyMs: 30_000 },
       action: { kind: "start_session" as const, message: "Check", location: "project" as const },
@@ -17,6 +18,9 @@ describe("automation schemas", () => {
     };
     expect(AutomationSchema.safeParse(automation).success).toBe(true);
     expect(AutomationSchema.safeParse({ ...automation, loopId: "legacy" }).success).toBe(false);
-    expect(AutomationStateFileSchema.safeParse({ version: 1, automations: [automation], invocations: [], loops: [] }).success).toBe(false);
+    const { createdFromSessionId: _, ...legacy } = automation;
+    expect(AutomationSchema.safeParse(legacy).success).toBe(false);
+    expect(AutomationStateFileSchema.safeParse({ version: 1, automations: [automation], invocations: [] }).success).toBe(false);
+    expect(AutomationStateFileSchema.safeParse({ version: 2, automations: [automation], invocations: [], loops: [] }).success).toBe(false);
   });
 });

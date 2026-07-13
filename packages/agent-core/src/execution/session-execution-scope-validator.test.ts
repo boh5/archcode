@@ -133,12 +133,15 @@ describe("SessionExecutionScopeValidator", () => {
 
   test("validates isolated Goal path, branch, and persisted base claim", async () => {
     const fixture = await createGitFixture("goal-worktree-valid");
-    const goal = await fixture.context.goalState.create({
+    const mainSessionId = crypto.randomUUID();
+    const goal = await fixture.context.goalState.commit({
+      id: crypto.randomUUID(),
       projectId: "test-project",
+      createdFromSessionId: crypto.randomUUID(),
       objective: "Use an isolated checkout",
       acceptanceCriteria: "The checkout is validated",
       useWorktree: true,
-      mainSessionId: "goal-main",
+      mainSessionId,
     });
     const created = await new WorktreeService({ canonicalRoot: fixture.projectRoot }).create({
       owner: { type: "goal", id: goal.id },
@@ -150,12 +153,10 @@ describe("SessionExecutionScopeValidator", () => {
       baseSha: created.baseSha,
       createdAt: new Date().toISOString(),
     });
-    await fixture.context.goalState.start(goal.id, { mainSessionId: "goal-main" });
-
     await expect(fixture.validator.validate({
       projectRoot: fixture.projectRoot,
       subject: sessionSubject({
-        sessionId: "goal-main",
+        sessionId: mainSessionId,
         cwd: created.worktreePath,
         goalId: goal.id,
         sessionRole: "main",
@@ -166,12 +167,15 @@ describe("SessionExecutionScopeValidator", () => {
 
   test("rejects a tampered isolated Goal base before execution", async () => {
     const fixture = await createGitFixture("goal-worktree-tampered-base");
-    const goal = await fixture.context.goalState.create({
+    const mainSessionId = crypto.randomUUID();
+    const goal = await fixture.context.goalState.commit({
+      id: crypto.randomUUID(),
       projectId: "test-project",
+      createdFromSessionId: crypto.randomUUID(),
       objective: "Use an isolated checkout",
       acceptanceCriteria: "Tampering is rejected",
       useWorktree: true,
-      mainSessionId: "goal-main",
+      mainSessionId,
     });
     const created = await new WorktreeService({ canonicalRoot: fixture.projectRoot }).create({
       owner: { type: "goal", id: goal.id },
@@ -183,13 +187,11 @@ describe("SessionExecutionScopeValidator", () => {
       baseSha: "0".repeat(40),
       createdAt: new Date().toISOString(),
     });
-    await fixture.context.goalState.start(goal.id, { mainSessionId: "goal-main" });
-
     await expectConflict(
       fixture.validator.validate({
         projectRoot: fixture.projectRoot,
         subject: sessionSubject({
-          sessionId: "goal-main",
+          sessionId: mainSessionId,
           cwd: created.worktreePath,
           goalId: goal.id,
           sessionRole: "main",
@@ -202,21 +204,18 @@ describe("SessionExecutionScopeValidator", () => {
 
   test("enforces Goal status and reviewer role", async () => {
     const fixture = await createFixture("goal-status");
-    const draft = await fixture.context.goalState.create({
+    const mainSessionId = crypto.randomUUID();
+    const goal = await fixture.context.goalState.commit({
+      id: crypto.randomUUID(),
       projectId: "test-project",
+      createdFromSessionId: crypto.randomUUID(),
       objective: "Review state",
       acceptanceCriteria: "Only the right role can run",
-      mainSessionId: "goal-main",
+      mainSessionId,
     });
-    const main = sessionSubject({ sessionId: "goal-main", cwd: fixture.projectRoot, goalId: draft.id, sessionRole: "main" });
+    const main = sessionSubject({ sessionId: mainSessionId, cwd: fixture.projectRoot, goalId: goal.id, sessionRole: "main" });
 
-    await expectConflict(
-      fixture.validator.validate({ projectRoot: fixture.projectRoot, subject: main, entry: { kind: "user_message" } }),
-      "SESSION_GOAL_NOT_EXECUTABLE",
-    );
-
-    await fixture.context.goalState.start(draft.id, { mainSessionId: "goal-main" });
-    await fixture.context.goalState.beginReview(draft.id);
+    await fixture.context.goalState.beginReview(goal.id);
     await expect(fixture.validator.validate({
       projectRoot: fixture.projectRoot,
       subject: main,
@@ -227,16 +226,16 @@ describe("SessionExecutionScopeValidator", () => {
       subject: { ...main, agentName: "engineer" },
       entry: { kind: "user_message" },
     }), "SESSION_GOAL_REVIEWER_REQUIRED");
-    await fixture.context.goalState.addChildSession(draft.id, "review-child");
+    await fixture.context.goalState.addChildSession(goal.id, "review-child");
     await expect(fixture.validator.validate({
       projectRoot: fixture.projectRoot,
       subject: sessionSubject({
         sessionId: "review-child",
-        rootSessionId: "goal-main",
-        parentSessionId: "goal-main",
+        rootSessionId: mainSessionId,
+        parentSessionId: mainSessionId,
         isDescendantOfRoot: true,
         cwd: fixture.projectRoot,
-        goalId: draft.id,
+        goalId: goal.id,
         sessionRole: "review",
       }),
       entry: { kind: "user_message" },
@@ -458,13 +457,15 @@ async function createRunningGoal(
   fixture: Awaited<ReturnType<typeof createFixture>>,
   input: { readonly mainSessionId: string },
 ) {
-  const goal = await fixture.context.goalState.create({
+  const goal = await fixture.context.goalState.commit({
+    id: crypto.randomUUID(),
     projectId: "test-project",
+    createdFromSessionId: crypto.randomUUID(),
     objective: "Run safely",
     acceptanceCriteria: "Execution is scoped",
     mainSessionId: input.mainSessionId,
   });
-  return await fixture.context.goalState.start(goal.id, { mainSessionId: input.mainSessionId });
+  return goal;
 }
 
 function sessionSubject(input: {

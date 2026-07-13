@@ -1226,22 +1226,25 @@ describe("reduceStreamEvent", () => {
 describe("Goal stream event reducers", () => {
   function makeGoalState(overrides: Partial<GoalState> = {}): GoalState {
     return {
-      version: 2,
+      version: 3,
       id: "goal-1",
       projectId: "p",
+      createdFromSessionId: "session-source",
       title: "Implement feature",
       objective: "Implement the requested feature.",
       acceptanceCriteria: "The feature behaves as requested and is reviewed.",
       useWorktree: false,
-      status: "draft",
+      status: "running",
       attempt: 1,
       reviewGeneration: 0,
       pendingHitlIds: [],
       approvalRefs: [],
       appliedHitlIds: [],
+      mainSessionId: "session-main",
       childSessionIds: [],
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
+      startedAt: "2026-01-01T00:00:00.000Z",
       ...overrides,
     };
   }
@@ -1253,7 +1256,7 @@ describe("Goal stream event reducers", () => {
     const result = reduceStreamEvent(state, {
       type: "goal.state_change",
       goalId: "goal-1",
-      status: "draft",
+      status: "running",
       state: goalState,
     }, createDeterministicContext());
 
@@ -1262,7 +1265,7 @@ describe("Goal stream event reducers", () => {
   });
 
   test("goal.state_change updates an existing goal in the projection", () => {
-    const goalState = makeGoalState({ status: "draft" });
+    const goalState = makeGoalState({ status: "running" });
     const state = createProjection({ goals: { "goal-1": goalState } });
     const updatedGoal = makeGoalState({ status: "running" });
 
@@ -1333,13 +1336,13 @@ describe("Goal stream event reducers", () => {
     const first = reduceStreamEvent(createProjection(), {
       type: "goal.state_change",
       goalId: "goal-1",
-      status: "draft",
+      status: "running",
       state: goalState,
     }, createDeterministicContext());
     const second = reduceStreamEvent(createProjection(), {
       type: "goal.state_change",
       goalId: "goal-1",
-      status: "draft",
+      status: "running",
       state: goalState,
     }, createDeterministicContext());
 
@@ -1351,7 +1354,7 @@ describe("Goal stream event reducers", () => {
       {
         type: "goal.state_change",
         goalId: "goal-1",
-        status: "draft",
+        status: "running",
         state: makeGoalState(),
       },
       {

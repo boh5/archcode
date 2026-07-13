@@ -22,8 +22,13 @@ import type { AgentDefinition } from "../agents/factory-types";
 import { createEmptyCompressionState } from "../compression";
 import type { SessionGoalDelegationContext } from "./session-goal-delegation-context";
 
-const workspaceRoot = join(import.meta.dir, "__test_tmp__", "session-execution-manager-workspace");
-const defaultAgentWorkspaceRoot = workspaceRoot;
+const testRoot = join(
+  import.meta.dir,
+  "__test_tmp__",
+  `session-execution-manager-${crypto.randomUUID()}`,
+);
+let workspaceRoot = join(testRoot, "bootstrap");
+let defaultAgentWorkspaceRoot = workspaceRoot;
 const storeManager = new SessionStoreManager({ logger: silentLogger });
 interface Deferred<T> {
   promise: Promise<T>;
@@ -318,12 +323,13 @@ function makeChildLink(parentSessionId: string, childSessionId: string, childAge
 describe("SessionExecutionManager", () => {
   beforeEach(async () => {
     storeManager.clearAll();
-    await rm(workspaceRoot, { recursive: true, force: true });
+    workspaceRoot = join(testRoot, crypto.randomUUID());
+    defaultAgentWorkspaceRoot = workspaceRoot;
     await mkdir(workspaceRoot, { recursive: true });
   });
 
   afterAll(async () => {
-    await rm(workspaceRoot, { recursive: true, force: true });
+    await rm(testRoot, { recursive: true, force: true });
   });
 
   test("projects root-family activity from live ownership and publishes only transitions", async () => {
@@ -2394,6 +2400,7 @@ describe("SessionExecutionManager", () => {
     const parentId = crypto.randomUUID();
     const goalId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer", goalId });
+    await storeManager.flushSession(parentId, workspaceRoot);
     let context = goalDelegationContext(goalId, { reviewGeneration: 1 });
     const messages: string[] = [];
     const { manager } = createManager({}, {

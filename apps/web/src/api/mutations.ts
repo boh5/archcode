@@ -6,7 +6,6 @@ import {
 } from "../store/control-plane-readiness";
 import type {
   ApiCommandResult,
-  CreateAutomationPayload,
   GoalState,
   HitlIdentity,
   HitlResponse,
@@ -135,46 +134,6 @@ export function useStopSessionFamily() {
 
 // ─── Goal Mutations ───
 
-export function useCreateGoal() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({
-      slug,
-      objective,
-      acceptanceCriteria,
-      useWorktree,
-    }: {
-      slug: string;
-      objective: string;
-      acceptanceCriteria: string;
-      useWorktree: boolean;
-    }) => apiFetch<GoalState>(`/api/projects/${encodeURIComponent(slug)}/goals`, {
-      method: "POST",
-      body: { objective, acceptanceCriteria, useWorktree },
-    }),
-    onSuccess: async (_data, variables) => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.projectGoals(variables.slug) });
-    },
-  });
-}
-
-export function useRunGoal() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ slug, goalId }: { slug: string; goalId: string }) =>
-      apiFetch<GoalState>(`/api/projects/${encodeURIComponent(slug)}/goals/${encodeURIComponent(goalId)}/run`, {
-        method: "POST",
-        body: {},
-      }),
-    onSuccess: async (_data, variables) => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.goal(variables.slug, variables.goalId) });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.projectGoals(variables.slug) });
-    },
-  });
-}
-
 export function useRetryGoal() {
   const queryClient = useQueryClient();
 
@@ -276,23 +235,6 @@ export function invalidateAutomation(
       qc.invalidateQueries({ queryKey: queryKeys.automationInvocations(slug, automationId) }),
     ]),
   ]);
-}
-
-export function useCreateAutomation() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (variables: { slug: string } & CreateAutomationPayload) => {
-      const { slug, ...payload } = variables;
-      return apiFetch<{ automation: { id: string } }>(`/api/projects/${encodeURIComponent(slug)}/automations`, {
-        method: "POST",
-        body: payload,
-      });
-    },
-    onSuccess: async (_data, variables) => {
-      await invalidateAutomation(queryClient, variables.slug);
-    },
-  });
 }
 
 export function useUpdateAutomation() {

@@ -145,6 +145,10 @@ describe("full system prompt contracts", () => {
     const librarian = await fullPrompt(librarianAgentDefinition);
 
     expect(engineer).toContain("goal_create");
+    expect(engineer).toContain("explicit one-time or recurring time-triggered intent");
+    expect(engineer).toContain("if ignored or declined, continue this Session and do not repeat it for the same intent");
+    expect(engineer).toContain("Never create before the user explicitly confirms");
+    expect(engineer).toContain("a material summary change requires confirmation again");
     expect(engineer).toContain("cannot be split without coordination overhead");
     expect(goalLead).toContain("action=begin_review");
     expect(goalLead).toContain("reviewGeneration");

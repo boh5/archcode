@@ -72,6 +72,14 @@ const directLifecycleMutationPatterns = [
   /\.startRetryAttempt\s*\(/,
 ] as const;
 
+const removedGoalCreationPatterns = [
+  /["']draft["']/,
+  /\bpatchDraft\b/,
+  /\bGoalDraftPatch\b/,
+  /\bGoalRunnerStartInput\b/,
+  /\bgoalExecutionStatusEligibility\b/,
+] as const;
+
 const activeGoalToolNames = [
   TOOL_GOAL_CREATE,
   TOOL_GOAL_MANAGE,
@@ -463,6 +471,32 @@ describe("Goal migration boundaries", () => {
         directGoalRunningTransitionAllowedFiles,
       ),
     );
+  });
+
+  test("Goal Draft and separate initial-start production contracts stay deleted", () => {
+    expectNoViolations(findTextViolations([
+      ...readProductionSources("packages/protocol/src"),
+      ...readProductionSources("packages/agent-core/src/goals"),
+      ...readProductionSources("apps/server/src/routes"),
+      ...readSpecificProductionSources([
+        join(projectRoot, "packages/agent-core/src/tools/builtins/goal-create.ts"),
+      ]),
+    ], removedGoalCreationPatterns));
+  });
+
+  test("goal_create delegates committed creation only to GoalRunner", () => {
+    const source = stripComments(readFileSync(join(projectRoot, "packages/agent-core/src/tools/builtins/goal-create.ts"), "utf8"));
+    expect(source).toContain("projectContext.goalRunner.create");
+    expect(source).not.toContain("projectContext.goalState");
+  });
+
+  test("Goal StateManager remains independent of Session runtime, tools, server, and Web", () => {
+    expectNoViolations(findImportViolations("packages/agent-core/src/goals", [
+      /apps\/server/,
+      /apps\/web/,
+      /tools\/builtins/,
+      /agents\/configured-agent/,
+    ]));
   });
 
   test("active Goal tool allowlists match the agent-driven lifecycle boundary", () => {

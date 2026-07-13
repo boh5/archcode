@@ -3,6 +3,7 @@ import { PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 
 import { GoalStateManager } from "../goals/state";
+import { GoalRunner } from "../goals/runner";
 import { HitlService } from "../hitl/service";
 import { createPreparedHitlResume, ResumeCoordinator } from "../hitl/resume-coordinator";
 import { MemoryFileManager } from "../memory/file-manager";
@@ -28,6 +29,8 @@ export function createTestProjectContext(
   return {
     project,
     goalState,
+    goalRunner: createTestGoalRunner(workspaceRoot, goalState, sessions),
+    createAutomation: async () => { throw new Error("Automation creation is not configured for this test context"); },
     goalCancellation: createTestGoalCancellation(goalState),
     hitl,
     hitlResumeCoordinator: createTestResumeCoordinator(hitl),
@@ -50,6 +53,10 @@ export function createTestProjectContextResolverOptions(
       addedAt: new Date().toISOString(),
     }),
     goalCancellationFactory: ({ goalState }) => createTestGoalCancellation(goalState),
+    goalRunnerFactory: ({ workspaceRoot, goalState }) => (
+      createTestGoalRunner(workspaceRoot, goalState, sessionStoreManager)
+    ),
+    createAutomation: async () => { throw new Error("Automation creation is not configured for this test resolver"); },
     sessionStoreManager,
     resumeCoordinatorFactory: ({ hitl }) => createTestResumeCoordinator(hitl),
   };
@@ -80,6 +87,20 @@ function createTestGoalCancellation(goalState: GoalStateManager): ProjectContext
   return {
     cancel: async (goalId, request) => await goalState.cancel(goalId, request.reason),
   };
+}
+
+export function createTestGoalRunner(
+  workspaceRoot: string,
+  goalState: GoalStateManager,
+  sessions: SessionStoreManager,
+): GoalRunner {
+  return new GoalRunner({
+    workspaceRoot,
+    goalStateManager: goalState,
+    readSourceSession: (root, sessionId) => sessions.getSessionFile(root, sessionId),
+    ensureSessionFile: (root, sessionId, options) => sessions.ensureSessionFile(root, sessionId, options),
+    startCheckedExecutionWithinGoalClaim: async () => ({}) as never,
+  });
 }
 
 function createTestResumeCoordinator(hitl: HitlService): ResumeCoordinator {

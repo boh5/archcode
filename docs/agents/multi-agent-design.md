@@ -4,7 +4,7 @@ ArchCode has seven closed Agent identities. An Agent identity determines prompt,
 
 | ID | Display name | Purpose |
 |---|---|---|
-| `engineer` | Engineer | Default ordinary Session Agent; investigates, implements, reviews, and may create draft Goals. |
+| `engineer` | Engineer | Default ordinary Session Agent; investigates, implements, reviews, and may create confirmed Goals or Automations. |
 | `goal_lead` | Goal Lead | Root Agent for an already-created and server-started Goal; coordinates lifecycle and specialists without direct source mutation. |
 | `plan` | Plan | Read-only planning for ordinary, Loop, or Goal work. |
 | `build` | Build | Source-writing implementation specialist. |
@@ -15,7 +15,7 @@ ArchCode has seven closed Agent identities. An Agent identity determines prompt,
 ## Root Session selection
 
 - `POST /sessions` creates an `engineer` Session.
-- Goal run/retry and internal GoalRunner create a `goal_lead` root Session with `sessionRole: "main"` and the Goal binding.
+- GoalRunner creates or recovers the stable `goal_lead` root Session with `sessionRole: "main"` and the Goal binding; retry reuses that identity.
 - Child delegation persists the selected specialist identity before execution.
 - Loaded Session files must contain a valid current Agent ID. There are no aliases or legacy-name fallbacks.
 
@@ -23,15 +23,16 @@ ArchCode has seven closed Agent identities. An Agent identity determines prompt,
 
 ## Goal authority
 
-Goal creation and Goal execution are deliberately separate:
+Goal creation is one product action with an internal recoverable commit/activate boundary:
 
-- An unbound ordinary Engineer root may call `goal_create` to create a draft Goal when the user explicitly requests durable Goal work.
-- Starting a Goal is a server/runtime operation. The Web run/retry routes, GoalRunner, and Loop runner own workspace preparation, Session creation, and state transition to running.
+- After the user confirms the creation Skill summary, an unbound ordinary Engineer root may call `goal_create` with the confirmed objective, acceptance criteria, and worktree choice.
+- GoalRunner is the sole initial creation/activation owner: it atomically commits the running Goal with stable Goal and main Session IDs, then idempotently prepares the workspace, persists the independent Goal Lead root Session, and starts execution.
+- There is no Goal Draft state, Draft update API, or manual initial Run route. Retry applies only to an existing failed or not-done Goal and reuses its stable execution identity.
 - Model-facing `goal_manage` has no `create` or `start` action.
 - Goal Lead uses `goal_manage` for the lifecycle of its already-started Goal.
 - Reviewer may call `goal_manage.finalize_review` only from the matching Goal review Session.
 
-The `goal_create` tool publishes a resource change immediately and queues asynchronous title generation, so Web consumers see the new draft without waiting for an incidental refetch.
+The committed Goal publishes a resource change immediately and queues asynchronous title generation, so Web consumers see the running Goal without waiting for an incidental refetch.
 
 ## Delegation
 

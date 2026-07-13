@@ -78,6 +78,7 @@ describe("AgentRuntime Automation wiring", () => {
       name: "check project",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Check the project", location: "project" },
+      createdFromSessionId: fixture.sourceSessionId,
     });
 
     const invocation = await fixture.runtime.runAutomationNow(fixture.workspaceRoot, automation.id);
@@ -101,6 +102,7 @@ describe("AgentRuntime Automation wiring", () => {
       name: "continue session",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "send_message", sessionId: session.sessionId, message: "/skill use git-master Review this." },
+      createdFromSessionId: fixture.sourceSessionId,
     });
 
     const invocation = await fixture.runtime.runAutomationNow(fixture.workspaceRoot, automation.id);
@@ -116,6 +118,7 @@ describe("AgentRuntime Automation wiring", () => {
       name: "server events",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Report status", location: "project" },
+      createdFromSessionId: fixture.sourceSessionId,
     });
     const ordinaryExecutor = fixture.runtime.startSessionMessageExecution;
     let wrappedExecutions = 0;
@@ -137,6 +140,7 @@ describe("AgentRuntime Automation wiring", () => {
       name: "isolated check",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Check in isolation", location: "worktree" },
+      createdFromSessionId: fixture.sourceSessionId,
     });
 
     const invocation = await fixture.runtime.runAutomationNow(fixture.workspaceRoot, automation.id);
@@ -158,12 +162,14 @@ describe("AgentRuntime Automation wiring", () => {
       name: "isolated check",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Check", location: "worktree" },
+      createdFromSessionId: fixture.sourceSessionId,
     })).rejects.toMatchObject({ name: "WorktreeServiceError" });
 
     const projectAutomation = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
       name: "project check",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Check", location: "project" },
+      createdFromSessionId: fixture.sourceSessionId,
     });
     await expect(fixture.runtime.updateAutomation(fixture.workspaceRoot, projectAutomation.id, {
       action: { kind: "start_session", message: "Check", location: "worktree" },
@@ -178,11 +184,13 @@ describe("AgentRuntime Automation wiring", () => {
       name: "first",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "First", location: "project" },
+      createdFromSessionId: fixture.sourceSessionId,
     });
     const second = await fixture.runtime.createAutomation(fixture.secondWorkspaceRoot!, {
       name: "second",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Second", location: "project" },
+      createdFromSessionId: fixture.secondSourceSessionId!,
     });
 
     await fixture.runtime.startAutomationScheduler(fixture.workspaceRoot);
@@ -217,6 +225,7 @@ describe("AgentRuntime Automation wiring", () => {
       name: "notifications",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Notify", location: "project" },
+      createdFromSessionId: fixture.sourceSessionId,
     });
     await fixture.runtime.updateAutomation(fixture.workspaceRoot, automation.id, { name: "renamed" });
     const invocation = await fixture.runtime.runAutomationNow(fixture.workspaceRoot, automation.id);
@@ -231,12 +240,72 @@ describe("AgentRuntime Automation wiring", () => {
       expect.objectContaining({ resourceType: "automation", resourceId: automation.id, reason: "deleted" }),
     ]));
   });
+
+  test("requires an ordinary root Engineer Session in the same project as creation source", async () => {
+    const fixture = await runtimeFixture({ git: false, secondProject: true });
+    const stores = new SessionStoreManager({ logger: silentLogger });
+    const child = await stores.createSessionFile(fixture.workspaceRoot, {
+      agentName: "explore",
+      rootSessionId: fixture.sourceSessionId,
+      parentSessionId: fixture.sourceSessionId,
+    });
+    const goalBound = await stores.createSessionFile(fixture.workspaceRoot, {
+      agentName: "goal_lead",
+      goalId: crypto.randomUUID(),
+      sessionRole: "main",
+    });
+    const wrongAgent = await stores.createSessionFile(fixture.workspaceRoot, {
+      agentName: "plan",
+    });
+    const missingSessionId = crypto.randomUUID();
+    const input = {
+      name: "invalid source",
+      trigger: { kind: "interval" as const, everyMs: 30_000 },
+      action: { kind: "start_session" as const, message: "Check", location: "project" as const },
+    };
+
+    await expect(fixture.runtime.createAutomation(fixture.workspaceRoot, {
+      ...input,
+      createdFromSessionId: missingSessionId,
+    })).rejects.toMatchObject({ name: "ResourceCreationSourceError", sessionId: missingSessionId });
+
+    await expect(fixture.runtime.createAutomation(fixture.workspaceRoot, {
+      ...input,
+      createdFromSessionId: fixture.secondSourceSessionId!,
+    })).rejects.toMatchObject({ name: "ResourceCreationSourceError", sessionId: fixture.secondSourceSessionId });
+
+    for (const source of [child, goalBound, wrongAgent]) {
+      await expect(fixture.runtime.createAutomation(fixture.workspaceRoot, {
+        ...input,
+        createdFromSessionId: source.sessionId,
+      })).rejects.toMatchObject({ name: "ResourceCreationSourceError", sessionId: source.sessionId });
+    }
+
+    expect(await fixture.runtime.listAutomations(fixture.workspaceRoot)).toEqual([]);
+  });
+
+  test("keeps Automation provenance after the source Session is deleted", async () => {
+    const fixture = await runtimeFixture({ git: false });
+    const automation = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
+      name: "durable provenance",
+      trigger: { kind: "interval", everyMs: 30_000 },
+      action: { kind: "start_session", message: "Check", location: "project" },
+      createdFromSessionId: fixture.sourceSessionId,
+    });
+
+    await fixture.runtime.deleteSession(fixture.workspaceRoot, fixture.sourceSessionId);
+
+    expect(await fixture.runtime.readAutomation(fixture.workspaceRoot, automation.id))
+      .toMatchObject({ createdFromSessionId: fixture.sourceSessionId });
+  });
 });
 
 async function runtimeFixture(options: { git: boolean; secondProject?: boolean }): Promise<{
   runtime: AgentRuntime;
   workspaceRoot: string;
+  sourceSessionId: string;
   secondWorkspaceRoot?: string;
+  secondSourceSessionId?: string;
   timer: FakeTimer;
 }> {
   const root = await tempDir("archcode-runtime-automations-");
@@ -260,10 +329,16 @@ async function runtimeFixture(options: { git: boolean; secondProject?: boolean }
     automationSchedulerClock: clock,
     automationSchedulerTimer: timer,
   });
+  const sourceSession = await runtime.createSession(workspaceRoot, { agentName: "engineer" });
+  const secondSourceSession = secondWorkspaceRoot === undefined
+    ? undefined
+    : await runtime.createSession(secondWorkspaceRoot, { agentName: "engineer" });
   return {
     runtime,
     workspaceRoot,
+    sourceSessionId: sourceSession.sessionId,
     ...(secondWorkspaceRoot === undefined ? {} : { secondWorkspaceRoot }),
+    ...(secondSourceSession === undefined ? {} : { secondSourceSessionId: secondSourceSession.sessionId }),
     timer,
   };
 }

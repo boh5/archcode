@@ -1019,7 +1019,6 @@ export interface ToolResultMeta {
 // ─── Goal Types ───
 
 export type GoalStatus =
-  | "draft"
   | "running"
   | "blocked"
   | "reviewing"
@@ -1089,9 +1088,11 @@ export interface GoalWorktree {
 }
 
 export interface GoalState {
-  version: 2;
+  version: 3;
   id: string;
   projectId: string;
+  /** Ordinary Engineer Session in which the user confirmed this Goal. */
+  createdFromSessionId: string;
   title: string | null;
   objective: string;
   acceptanceCriteria: string;
@@ -1108,13 +1109,13 @@ export interface GoalState {
   approvalRefs: string[];
   /** HITL ids whose Goal-side effect committed, even if owner-record terminalization is still pending. */
   appliedHitlIds: string[];
-  mainSessionId?: string;
+  mainSessionId: string;
   childSessionIds: string[];
   review?: GoalReviewReceipt;
   finalSummary?: string;
   createdAt: string;
   updatedAt: string;
-  startedAt?: string;
+  startedAt: string;
   completedAt?: string;
   cancelledAt?: string;
   lastError?: {
@@ -1292,6 +1293,8 @@ export interface AutomationInvocation {
 export interface Automation {
   id: string;
   projectId: string;
+  /** Ordinary Engineer Session in which the user confirmed this Automation. */
+  createdFromSessionId: string;
   name: string;
   trigger: AutomationTrigger;
   action: AutomationAction;

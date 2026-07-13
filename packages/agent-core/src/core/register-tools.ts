@@ -12,6 +12,7 @@ import {
 import { createMemoryReadTool } from "../tools/builtins/memory-read";
 import { createMemoryWriteTool } from "../tools/builtins/memory-write";
 import { goalCreateTool, goalManageTool } from "../tools/builtins/goal-tools";
+import { automationCreateTool } from "../tools/builtins/automation-create";
 import { createGitHubToolDescriptors } from "../tools/github";
 
 export interface RegisterBuiltinToolsOptions {
@@ -31,6 +32,7 @@ export function registerBuiltinTools(
 
   registry.register(goalCreateTool);
   registry.register(goalManageTool);
+  registry.register(automationCreateTool);
 
   registry.registerAll(createGitHubToolDescriptors({
     connector: () => createGitHubConnector(

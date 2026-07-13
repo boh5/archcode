@@ -198,10 +198,12 @@ describe("LspClientPool", () => {
     setInstallerProcessRunnerForTest(createSpawnFromExec(async () => {
       attempt += 1;
       if (attempt === 1) return { stdout: "", stderr: "missing", exitCode: 1 };
-      return { stdout: "/fake/bin/typescript-language-server\n", stderr: "", exitCode: 0 };
+      return { stdout: "/fake/bin/gopls\n", stderr: "", exitCode: 0 };
     }));
     const pool = new LspClientPool();
-    const key = poolKey("/workspace", "typescript");
+    // Go has no npm auto-install fallback, so this failure path remains pure
+    // and never touches the user's cache directory.
+    const key = poolKey("/workspace", "go");
 
     try {
       await pool.acquire(key, serverOptions());

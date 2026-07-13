@@ -1,5 +1,6 @@
 import type { Automation, AutomationAction, AutomationInvocation, AutomationTrigger } from "@archcode/protocol";
 import { join } from "node:path";
+import { z } from "zod/v4";
 
 import { atomicWrite } from "../utils/safe-file";
 import { nextFireAt, validateAutomationTrigger } from "./schedule";
@@ -25,6 +26,7 @@ export class AutomationInvocationNotFoundError extends Error {
 
 export interface CreateAutomationInput {
   readonly projectId: string;
+  readonly createdFromSessionId: string;
   readonly name: string;
   readonly trigger: AutomationTrigger;
   readonly action: AutomationAction;
@@ -75,6 +77,7 @@ export class AutomationStateManager {
       const automation: Automation = {
         id: crypto.randomUUID(),
         projectId: requireText(input.projectId, "projectId"),
+        createdFromSessionId: requireUuid(input.createdFromSessionId, "createdFromSessionId"),
         name: requireText(input.name, "name"),
         trigger,
         action,
@@ -272,7 +275,7 @@ export class AutomationStateManager {
     if (this.#state) return this.#state;
     const file = Bun.file(this.#filePath);
     if (!(await file.exists())) {
-      this.#state = { version: 1, automations: [], invocations: [] };
+      this.#state = { version: 2, automations: [], invocations: [] };
       return this.#state;
     }
     this.#state = AutomationStateFileSchema.parse(await file.json());
@@ -312,6 +315,12 @@ function requireText(value: string, field: string): string {
   const trimmed = value.trim();
   if (trimmed.length === 0) throw new Error(`${field} must not be empty`);
   return trimmed;
+}
+
+function requireUuid(value: string, field: string): string {
+  const parsed = z.uuid().safeParse(value);
+  if (!parsed.success) throw new Error(`${field} must be a UUID`);
+  return parsed.data;
 }
 
 function normalizeIso(value: string, field: string): string {

@@ -281,7 +281,7 @@ Minimal example:
 
 | Role | Hooks | Notes |
 |------|-------|-------|
-| **Engineer** (`"engineer"`) | auto-compact, auto-inject-reminder, title-generation, todo-continuation, transcript-save, memory-extraction, memory-consolidation | Default ordinary Session agent. Works directly, delegates to all five specialists, and may create a draft Goal with `goal_create`. |
+| **Engineer** (`"engineer"`) | auto-compact, auto-inject-reminder, title-generation, todo-continuation, transcript-save, memory-extraction, memory-consolidation | Default ordinary Session agent. Works directly, delegates to all five specialists, and may create a confirmed Goal or Automation through the corresponding creation Skill and tool. |
 | **Goal Lead** (`"goal_lead"`) | auto-compact, auto-inject-reminder, title-generation, todo-continuation, transcript-save, memory-extraction, memory-consolidation | Goal-only coordinator. Delegates implementation and verification, manages the bound Goal with `goal_manage`, and cannot directly mutate source or run shell commands. |
 | **Plan** (`"plan"`) | auto-compact, auto-inject-reminder, todo-continuation, transcript-save | Source read-only planning agent for ordinary or Goal work; delegates to `explore`/`librarian`. |
 | **Build** (`"build"`) | auto-compact, auto-inject-reminder, todo-continuation, transcript-save | Source write agent with file write/edit, bash, LSP, git diff/status, and `ast_grep_replace`. Implements the delegated scope and records verification in session output; delegates to `explore`. |
@@ -321,7 +321,7 @@ beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-in
 
 ## Tool System
 
-**35+ builtin tools** (base tools via `createBuiltinToolDescriptors()`, 2 memory tools, 2 Goal tools, and 8 GitHub connector tools — all registered in `core/register-tools.ts`):
+**35+ builtin tools** (base tools via `createBuiltinToolDescriptors()`, 2 memory tools, 2 Goal tools, the Automation creation tool, and 8 GitHub connector tools — all registered in `core/register-tools.ts`):
 
 | Category | Tools | Notes |
 |----------|-------|-------|
@@ -334,7 +334,7 @@ beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-in
 | LSP | lsp_diagnostics✅, lsp_goto_definition✅, lsp_find_references✅, lsp_symbols✅ | Guard: workspace |
 | Delegation / Skills | delegate❌, background_output✅, wait_for_reminder✅, view_tool_output✅, cancel_session❌, skill_list✅, skill_read✅ | Delegation tools are available only to agents whose definitions include them; skills are read-only discovery/read helpers. |
 | Memory | memory_read✅, memory_write❌ | memory_write rejects secrets |
-| Goal | goal_create❌, goal_manage❌ | Engineer can create a draft with `goal_create`. Goal Lead manages an already-started Goal and Reviewer finalizes it through `goal_manage`; model-facing create/start actions are not part of `goal_manage`. |
+| Goal / Automation creation | goal_create❌, goal_manage❌, automation_create❌ | After explicit user confirmation, Engineer uses `goal_create` to atomically commit and activate a Goal or `automation_create` to commit an Automation. Goal Lead manages an already-started Goal and Reviewer finalizes it through `goal_manage`; model-facing create/start actions are not part of `goal_manage`. |
 
 (✅ = readOnly, ❌ = not readOnly, ✅destructive = only destructive tool)
 
@@ -356,7 +356,7 @@ Project: `.archcode/memory/`, User: `~/.archcode/memory/`. Structure: `index.md`
 
 ## Goal System
 
-Goal is the primary execution primitive; legacy workflow runtime/tools/routes and removed Goal-specific artifact APIs are retired. `packages/agent-core/src/goals/` owns Goal state, Reviewer checks, retry state/backoff, token budgets, and isolated Goal memory. Goal evidence comes from ordinary session output, diffs, tool results, approvals, budget state, retry metadata, and Reviewer summaries rather than separate Goal artifact APIs. Engineer may create a draft with `goal_create`; the runtime starts it and assigns a dedicated Goal Lead. Reviewer finalization uses `goal_manage.finalize_review` to record external outcomes exactly as `DONE` or `NOT_DONE`; Goal Lead must not declare completion without Reviewer evidence.
+Goal is the primary execution primitive; legacy workflow runtime/tools/routes, Goal Draft, manual initial Run, and removed Goal-specific artifact APIs are retired. `packages/agent-core/src/goals/` owns Goal state, activation/recovery, Reviewer checks, retry state/backoff, token budgets, and isolated Goal memory. Goal evidence comes from ordinary session output, diffs, tool results, approvals, budget state, retry metadata, and Reviewer summaries rather than separate Goal artifact APIs. After the user confirms the creation summary, an ordinary root Engineer Session calls `goal_create`; GoalRunner atomically commits the running Goal and activates its stable, independent Goal Lead root Session. Reviewer finalization uses `goal_manage.finalize_review` to record external outcomes exactly as `DONE` or `NOT_DONE`; Goal Lead must not declare completion without Reviewer evidence.
 
 ## HITL
 
@@ -364,7 +364,7 @@ HITL is a durable project-scoped approval/question queue backed by `.archcode/hi
 
 ## Automation System
 
-`packages/agent-core/src/automations/` owns schedule calculation, durable Invocation persistence, and dispatch to the ordinary Session API. An Automation has exactly one `once`, `interval`, or `cron + timezone` trigger and one action: create an ordinary Engineer Session or send a message to an existing Session. Session execution, Agent behavior, permissions, HITL, Goal state, and worktree lifecycle remain outside Automation.
+`packages/agent-core/src/automations/` owns schedule calculation, durable Invocation persistence, and dispatch to the ordinary Session API. After the user confirms the creation summary, an ordinary root Engineer Session calls `automation_create`; the Runtime validates that Session as immutable provenance and commits the Automation through the existing scheduler/state path. An Automation has exactly one `once`, `interval`, or `cron + timezone` trigger and one action: create an ordinary Engineer Session or send a message to an existing Session. Session execution, Agent behavior, permissions, HITL, Goal state, and worktree lifecycle remain outside Automation.
 
 ## LSP Integration
 

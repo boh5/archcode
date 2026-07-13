@@ -11,7 +11,7 @@ describe("Automation navigation and detail actions", () => {
     const sidebar = await source("components/features/Sidebar.tsx");
     expect(sidebar).toContain('"automations"');
     expect(sidebar).toContain('/automations/${clickedAutomationId}');
-    expect(sidebar).toContain("AutomationDialog");
+    expect(sidebar).toContain('automation-create');
     expect(sidebar).not.toContain("/loops");
   });
 
@@ -25,5 +25,32 @@ describe("Automation navigation and detail actions", () => {
     expect(detail).not.toContain("Global kill");
     expect(detail).not.toContain("Budget");
     expect(detail).not.toContain("collision");
+  });
+
+  test("creation entry points start the conversation skills", async () => {
+    const goals = await source("routes/goals.tsx");
+    const automations = await source("routes/automations.tsx");
+    const sidebar = await source("components/features/Sidebar.tsx");
+    expect(goals).toContain('content: "/skill use goal-create"');
+    expect(automations).toContain('content: "/skill use automation-create"');
+    expect(sidebar).toContain('content: `/skill use ${skill}`');
+    expect(goals).toContain("usePostMessage");
+    expect(automations).toContain("usePostMessage");
+    expect(sidebar).toContain("usePostMessage");
+    expect(goals).not.toContain("usePostCommand");
+    expect(automations).not.toContain("usePostCommand");
+    expect(sidebar).not.toContain("usePostCommand");
+    expect(goals).not.toContain("CreateGoalDialog");
+    expect(automations).not.toContain("AutomationDialog");
+  });
+
+  test("resource details expose creation provenance", async () => {
+    const goal = await source("routes/goal-detail.tsx");
+    const automation = await source("routes/automation-detail.tsx");
+    const context = await source("components/features/context-inspector/SessionContextDetails.tsx");
+    expect(goal).toContain("Created from");
+    expect(automation).toContain("Created from");
+    expect(context).toContain("Created here");
+    expect(context).toContain("Executing Goal");
   });
 });

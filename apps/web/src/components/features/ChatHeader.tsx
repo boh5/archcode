@@ -4,8 +4,7 @@ import type { GoalStatus } from "../../api/types";
 import { TodoProgressButton } from "./TodoProgressButton";
 import { InspectorToggleButton } from "./InspectorToggleButton";
 
-const STATUS_BADGE_CLASS: Record<GoalStatus, string> = {
-  draft: "bg-bg-active text-text-muted",
+const STATUS_BADGE_CLASS: Partial<Record<GoalStatus, string>> = {
   running: "bg-success-muted text-success",
   blocked: "bg-warning-muted text-warning",
   reviewing: "bg-info-muted text-info",

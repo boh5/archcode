@@ -60,13 +60,14 @@ function createGate() {
 }
 
 async function createRunningGoal() {
-  const goal = await goalStateManager.create({
+  return await goalStateManager.commit({
+    id: crypto.randomUUID(),
     projectId: "project-a",
+    createdFromSessionId: crypto.randomUUID(),
     objective: "Integrate HITL gates with simplified Goal state.",
     acceptanceCriteria: "HITL requests block Goals through pending ids and blockers only.",
     mainSessionId: "main-session-1",
   });
-  return await goalStateManager.start(goal.id, { mainSessionId: "main-session-1" });
 }
 
 describe("GoalApprovalGate", () => {

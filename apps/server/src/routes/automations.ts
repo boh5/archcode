@@ -44,12 +44,6 @@ const ActionSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("send_message"), sessionId: z.uuid(), message: MessageSchema }),
 ]) satisfies z.ZodType<AutomationAction>;
 
-const CreateAutomationBodySchema = z.strictObject({
-  name: NameSchema,
-  trigger: TriggerSchema,
-  action: ActionSchema,
-});
-
 const UpdateAutomationBodySchema = z.strictObject({
   name: NameSchema.optional(),
   trigger: TriggerSchema.optional(),
@@ -62,12 +56,6 @@ export function createAutomationsRoutes(runtime: AgentRuntime): Hono {
   app.get("/:slug/automations", async (c) => {
     const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
     return c.json({ automations: await runtime.listAutomations(project.workspaceRoot) });
-  });
-
-  app.post("/:slug/automations", async (c) => {
-    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
-    const input = await readJsonBody(c.req.json(), CreateAutomationBodySchema);
-    return c.json({ automation: await runtime.createAutomation(project.workspaceRoot, input) }, 201);
   });
 
   app.get("/:slug/automations/:automationId", async (c) => {

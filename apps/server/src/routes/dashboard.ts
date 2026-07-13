@@ -4,7 +4,6 @@ import type { Automation, GoalState, GoalStatus } from "@archcode/protocol";
 import { BadRequestError } from "../errors";
 
 const GoalStatusSchemaValues = new Set<GoalStatus>([
-  "draft",
   "running",
   "blocked",
   "reviewing",
@@ -15,7 +14,6 @@ const GoalStatusSchemaValues = new Set<GoalStatus>([
 ]);
 
 const ActiveGoalStatuses = new Set<GoalStatus>([
-  "draft",
   "running",
   "blocked",
   "reviewing",

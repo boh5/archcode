@@ -19,38 +19,6 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
 }
 
 describe("web goal mutation API calls", () => {
-  test("createGoal calls POST /api/projects/:slug/goals with optional worktree isolation", async () => {
-    globalThis.document = { cookie: "" } as Document;
-    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/goals`);
-      expect(init?.method).toBe("POST");
-      return jsonResponse({ id: "goal-new", title: "New Goal" }, { status: 201 });
-    });
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
-
-    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/goals`, {
-      method: "POST",
-      body: { objective: "Simplify Goal", acceptanceCriteria: "Reviewer can decide DONE from logs and diff.", useWorktree: true },
-    });
-
-    expect(result).toMatchObject({ id: "goal-new" });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  test("runGoal calls POST /api/projects/:slug/goals/:goalId/run", async () => {
-    globalThis.document = { cookie: "" } as Document;
-    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/goals/goal-1/run`);
-      expect(init?.method).toBe("POST");
-      return jsonResponse({ id: "goal-1", status: "running" });
-    });
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
-
-    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/goals/goal-1/run`, { method: "POST", body: {} });
-    expect(result).toMatchObject({ id: "goal-1" });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
   test("retryGoal calls POST /api/projects/:slug/goals/:goalId/retry", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {

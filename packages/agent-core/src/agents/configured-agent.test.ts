@@ -806,10 +806,14 @@ describe("ConfiguredAgent", () => {
   test("simplified Goal retry sessions do not inject legacy operator repair context", async () => {
     const streamFn = setupMockStreamText("simplified retry ok");
     const goalState = new GoalStateManager(tmpRoot);
-    const goal = await goalState.create({
+    const mainSessionId = crypto.randomUUID();
+    const goal = await goalState.commit({
+      id: crypto.randomUUID(),
       projectId: "project-a",
+      createdFromSessionId: crypto.randomUUID(),
       objective: "Retry from natural language Goal state.",
       acceptanceCriteria: "Reviewer can decide from natural language acceptance criteria.",
+      mainSessionId,
     });
     const store = storeManager.create(`configured-repair-context-${crypto.randomUUID()}`, tmpRoot, {
       goalId: goal.id,

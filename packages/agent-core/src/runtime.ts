@@ -62,6 +62,7 @@ import {
 } from "./goals/goal-lead-continuation";
 import { withGoalExecutionClaimLock } from "./goals/execution-claim";
 import { GoalCancellationService, type GoalCancellationRequest } from "./goals/cancellation";
+import { GoalRunner } from "./goals/runner";
 import { HitlService } from "./hitl/service";
 import { ResumeCoordinator, type ResumeRecoverySummary } from "./hitl/resume-coordinator";
 import {
@@ -125,6 +126,19 @@ export class ProjectRuntimeActiveError extends Error {
   ) {
     super(`Project "${projectSlug}" has active Session families and cannot be removed`);
     this.name = "ProjectRuntimeActiveError";
+  }
+}
+
+export class ResourceCreationSourceError extends Error {
+  readonly code = "RESOURCE_CREATION_SOURCE_INVALID";
+
+  constructor(
+    public readonly sessionId: string,
+    message: string,
+    cause?: unknown,
+  ) {
+    super(message, { cause });
+    this.name = "ResourceCreationSourceError";
   }
 }
 
@@ -312,18 +326,30 @@ export async function createRuntime(
           acquireStop: (input) => executionManager.acquireSessionFamilyStop(input),
         },
       }),
+      goalRunnerFactory: ({ workspaceRoot, project, goalState }) => new GoalRunner({
+        workspaceRoot,
+        goalStateManager: goalState,
+        readSourceSession: (projectRoot, sessionId) => sessionStoreManager.getSessionFile(projectRoot, sessionId),
+        ensureSessionFile: (projectRoot, sessionId, createOptions) => (
+          sessionStoreManager.ensureSessionFile(projectRoot, sessionId, createOptions)
+        ),
+        startCheckedExecutionWithinGoalClaim: (input) => (
+          executionManager.startCheckedExecutionWithinGoalClaim(input)
+        ),
+        onGoalCommitted: (goal) => {
+          publishResourceChanged({
+            type: "resource.changed",
+            projectSlug: project.slug,
+            resourceType: "goal",
+            resourceId: goal.id,
+            reason: "created",
+            createdAt: Date.now(),
+          });
+          queueGoalTitleGeneration(workspaceRoot, goal.id);
+        },
+      }),
+      createAutomation: (workspaceRoot, input) => createAutomation(workspaceRoot, input),
       sessionStoreManager,
-      onGoalCreated: (workspaceRoot, goal) => {
-        publishResourceChanged({
-          type: "resource.changed",
-          projectSlug: goal.projectId,
-          resourceType: "goal",
-          resourceId: goal.id,
-          reason: "created",
-          createdAt: Date.now(),
-        });
-        queueGoalTitleGeneration(workspaceRoot, goal.id);
-      },
       resumeCoordinatorFactory: ({ workspaceRoot, hitl, goalState }) => new ResumeCoordinator({
         hitl,
         adapters: {
@@ -667,11 +693,41 @@ export async function createRuntime(
     ): Promise<Automation> {
       const project = await projectRegistry.getByWorkspace(workspaceRoot);
       if (project === undefined) throw new Error(`Project is not registered: ${workspaceRoot}`);
+      await assertResourceCreationSource(workspaceRoot, input.createdFromSessionId);
       await assertAutomationWorktreeSupported(workspaceRoot, input.action);
       return await (await getAutomationRuntimeServices(workspaceRoot)).scheduler.createAutomation({
         ...input,
         projectId: project.slug,
       });
+    }
+
+    async function assertResourceCreationSource(
+      workspaceRoot: string,
+      sessionId: string,
+    ): Promise<void> {
+      let session: SessionFile;
+      try {
+        session = await sessionStoreManager.getSessionFile(workspaceRoot, sessionId);
+      } catch (error) {
+        throw new ResourceCreationSourceError(
+          sessionId,
+          `Creation source Session ${sessionId} does not exist in this project`,
+          { cause: error },
+        );
+      }
+      const ordinaryRole = session.sessionRole === undefined || session.sessionRole === "standalone";
+      if (
+        session.sessionId !== session.rootSessionId
+        || session.parentSessionId !== undefined
+        || session.goalId !== undefined
+        || session.agentName !== "engineer"
+        || !ordinaryRole
+      ) {
+        throw new ResourceCreationSourceError(
+          sessionId,
+          `Creation source Session ${sessionId} must be an ordinary root Engineer Session`,
+        );
+      }
     }
 
     async function updateAutomation(
@@ -716,6 +772,7 @@ export async function createRuntime(
       projectReconcileInFlight.add(key);
       try {
         projectSlugsByWorkspace.set(workspaceRoot, projectSlug);
+        await (await contextResolver.resolve(workspaceRoot)).goalRunner.reconcile();
         await continuationService.reconcileWorkspace(workspaceRoot);
         projectReconcileRetries.delete(key);
       } catch (error) {
@@ -861,7 +918,10 @@ export async function createRuntime(
 
     const startupProjects = await projectRegistry.list();
     const startupContinuationResults = await Promise.allSettled(
-      startupProjects.map((project) => continuationService.reconcileWorkspace(project.workspaceRoot)),
+      startupProjects.map(async (project) => {
+        await (await contextResolver.resolve(project.workspaceRoot)).goalRunner.reconcile();
+        await continuationService.reconcileWorkspace(project.workspaceRoot);
+      }),
     );
     startupContinuationResults.forEach((result, index) => {
       if (result.status === "rejected") runtimeLogger.warn("goal.continuation.startup.failed", {

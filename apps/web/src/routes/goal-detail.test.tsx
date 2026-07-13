@@ -121,12 +121,15 @@ function makeGoal(overrides: Partial<GoalState> = {}): GoalState {
     pendingHitlIds: [],
     approvalRefs: [],
     appliedHitlIds: [],
+    version: 3,
+    createdFromSessionId: "origin",
+    useWorktree: false,
+    mainSessionId: "main-session",
+    startedAt: "2026-01-01T00:00:00Z",
     childSessionIds: [],
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
-    version: overrides.version ?? 2,
-    useWorktree: overrides.useWorktree ?? false,
   };
 }
 
@@ -281,7 +284,7 @@ describe("GoalDetailRoute", () => {
     try {
       await renderGoalDetailRoute(reactRoot, queryClient);
 
-      await waitFor(() => expect(container.textContent).toContain("Execution status"));
+      await waitFor(() => expect(container.textContent).toContain("Open execution session"));
       expect(container.textContent).not.toContain("Refactor the auth module to use JWT.");
       expect(container.textContent).not.toContain("All auth tests pass and Reviewer confirms DONE.");
     } finally {
@@ -547,59 +550,6 @@ describe("GoalDetailRoute", () => {
 
       await waitFor(() => {
         expect(container.textContent).toContain("Test Goal");
-      });
-    } finally {
-      await act(async () => {
-        reactRoot.unmount();
-      });
-      queryClient.clear();
-      dom.window.close();
-    }
-  });
-
-  test("draft goal renders Run Goal button and calls run endpoint", async () => {
-    const dom = installDom();
-    const container = document.getElementById("root");
-    if (!container) throw new Error("Missing test root");
-
-    const draftGoal = makeGoal({ id: "goal-1", title: "Draft Goal", status: "draft" });
-    const runningGoal = makeGoal({ id: "goal-1", title: "Draft Goal", status: "running", mainSessionId: "session-1" });
-    let currentGoal: GoalState = draftGoal;
-
-    const fetchMock = mock(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
-      const url = typeof input === "string" ? input : new URL(input instanceof URL ? input.href : input.url).href;
-      if (url.includes("/api/projects/demo/goals/goal-1/run") && init?.method === "POST") {
-        currentGoal = runningGoal;
-        return Response.json(runningGoal);
-      }
-      if (url.includes("/api/projects/demo/goals/goal-1") && !url.endsWith("/goals")) {
-        return Response.json(currentGoal);
-      }
-      return new Response("Not found", { status: 404 });
-    });
-    Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
-
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
-    });
-    const reactRoot = createRoot(container);
-
-    try {
-      await renderGoalDetailRoute(reactRoot, queryClient);
-
-      await waitFor(() => {
-        expect(container.textContent).toContain("Draft Goal");
-        expect(container.textContent).toContain("Run Goal");
-      });
-
-      await act(async () => {
-        findElementByText(container, "Run Goal").dispatchEvent(
-          new dom.window.MouseEvent("click", { bubbles: true }),
-        );
-      });
-
-      await waitFor(() => {
-        expect(container.textContent).toContain("running");
       });
     } finally {
       await act(async () => {

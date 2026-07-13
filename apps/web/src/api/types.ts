@@ -78,10 +78,8 @@ export interface DashboardAutomation extends Automation {
   projectName: string;
 }
 
-export interface CreateAutomationPayload {
-  name: string;
-  trigger: AutomationTrigger;
-  action: AutomationAction;
+export interface UpdateAutomationPayload {
+  name?: string;
+  trigger?: AutomationTrigger;
+  action?: AutomationAction;
 }
-
-export interface UpdateAutomationPayload extends Partial<CreateAutomationPayload> {}

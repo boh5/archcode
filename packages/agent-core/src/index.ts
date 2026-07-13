@@ -81,9 +81,9 @@ export type { ProjectContext, ProjectInfo } from "./projects/types";
 export type { ResumeCoordinatorResult } from "./hitl/resume-coordinator";
 export { GoalRunner, GoalRunnerError } from "./goals/runner";
 export type {
-  GoalRunnerCreateSessionOptions,
+  GoalActivationOutcome,
+  GoalRunnerCreateInput,
   GoalRunnerOptions,
-  GoalRunnerStartInput,
 } from "./goals/runner";
 export { GoalCancellationInProgressError, withGoalExecutionClaimLock } from "./goals/execution-claim";
 export {
@@ -98,8 +98,6 @@ export type {
   GoalCancellationServiceOptions,
   GoalCancellationSource,
 } from "./goals/cancellation";
-export { goalExecutionStatusEligibility } from "./goals/execution-policy";
-export type { GoalExecutionAction, GoalExecutionStatusEligibility } from "./goals/execution-policy";
 export { GoalWorkspaceError, GoalWorkspaceService } from "./goals/workspace";
 export type { GoalWorkspaceServiceOptions, GoalWorkspaceStateManager, PreparedGoalWorkspace } from "./goals/workspace";
 export { WorktreeService, WorktreeServiceError } from "./worktrees";

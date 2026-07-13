@@ -22,11 +22,23 @@ afterAll(async () => {
   await rm(TMP_DIR, { recursive: true, force: true });
 });
 
+async function commitGoal(
+  manager: GoalStateManager,
+  input: { projectId: string; objective: string; acceptanceCriteria: string; useWorktree?: boolean },
+) {
+  return await manager.commit({
+    id: crypto.randomUUID(),
+    createdFromSessionId: crypto.randomUUID(),
+    mainSessionId: crypto.randomUUID(),
+    ...input,
+  });
+}
+
 describe("GoalWorkspaceService", () => {
   test("creates one Goal-owned worktree and reuses it across retry preparation", async () => {
     const projectRoot = await createGitRepo("reuse");
     const manager = new GoalStateManager(projectRoot);
-    const goal = await manager.create({
+    const goal = await commitGoal(manager, {
       projectId: "project-a",
       objective: "Implement in isolation.",
       acceptanceCriteria: "All attempts use the same worktree.",
@@ -47,7 +59,7 @@ describe("GoalWorkspaceService", () => {
     const projectRoot = resolve(TMP_DIR, "plain-project");
     await mkdir(projectRoot, { recursive: true });
     const manager = new GoalStateManager(projectRoot);
-    const goal = await manager.create({
+    const goal = await commitGoal(manager, {
       projectId: "project-a",
       objective: "Run normally.",
       acceptanceCriteria: "No Git repository is required.",
@@ -61,7 +73,7 @@ describe("GoalWorkspaceService", () => {
     const projectRoot = resolve(TMP_DIR, "rollback-warning");
     await mkdir(projectRoot, { recursive: true });
     const persisted = new GoalStateManager(projectRoot);
-    const goal = await persisted.create({
+    const goal = await commitGoal(persisted, {
       projectId: "project-a",
       objective: "Fail the durable claim.",
       acceptanceCriteria: "An orphan branch is reported instead of hidden.",
@@ -126,7 +138,7 @@ describe("GoalWorkspaceService", () => {
   test("adopts a deterministic Goal worktree left behind before state persistence", async () => {
     const projectRoot = await createGitRepo("adopt-after-crash");
     const manager = new GoalStateManager(projectRoot);
-    const goal = await manager.create({
+    const goal = await commitGoal(manager, {
       projectId: "project-a",
       objective: "Recover an interrupted worktree claim.",
       acceptanceCriteria: "Preparation adopts the already-created managed worktree.",
@@ -149,7 +161,7 @@ describe("GoalWorkspaceService", () => {
   test("refuses to launder a clean committed orphan into the Goal creation base", async () => {
     const projectRoot = await createGitRepo("reject-changed-orphan");
     const manager = new GoalStateManager(projectRoot);
-    const goal = await manager.create({
+    const goal = await commitGoal(manager, {
       projectId: "project-a",
       objective: "Preserve ambiguous orphan changes.",
       acceptanceCriteria: "A changed pre-claim worktree is never adopted as a fresh base.",
@@ -170,7 +182,7 @@ describe("GoalWorkspaceService", () => {
   test("refuses orphan adoption after canonical HEAD advances without write-ahead base metadata", async () => {
     const projectRoot = await createGitRepo("reject-orphan-after-canonical-advance");
     const manager = new GoalStateManager(projectRoot);
-    const goal = await manager.create({
+    const goal = await commitGoal(manager, {
       projectId: "project-a",
       objective: "Fail closed when the orphan base is ambiguous.",
       acceptanceCriteria: "Canonical advancement cannot be guessed as the orphan creation base.",
@@ -193,7 +205,7 @@ describe("GoalWorkspaceService", () => {
     await git(projectRoot, ["add", "base.txt"]);
     await git(projectRoot, ["commit", "-m", "creation base"]);
     const manager = new GoalStateManager(projectRoot);
-    const goal = await manager.create({
+    const goal = await commitGoal(manager, {
       projectId: "project-a",
       objective: "Keep retries on the owned branch lineage.",
       acceptanceCriteria: "Descendant work is reused and branch rewinds are rejected.",
@@ -216,7 +228,7 @@ describe("GoalWorkspaceService", () => {
     const projectRoot = resolve(TMP_DIR, "concurrent-claim");
     await mkdir(projectRoot, { recursive: true });
     const manager = new GoalStateManager(projectRoot);
-    const goal = await manager.create({
+    const goal = await commitGoal(manager, {
       projectId: "project-a",
       objective: "Converge concurrent worktree claims.",
       acceptanceCriteria: "The same path, branch, and base are one write-once resource even if timestamps differ.",
@@ -285,7 +297,7 @@ describe("GoalWorkspaceService", () => {
   test("serializes real Git preparation across GoalWorkspaceService instances until state is claimed", async () => {
     const projectRoot = await createGitRepo("concurrent-service-instances");
     const manager = new GoalStateManager(projectRoot);
-    const goal = await manager.create({
+    const goal = await commitGoal(manager, {
       projectId: "project-a",
       objective: "Coordinate worktree preparation across service instances.",
       acceptanceCriteria: "Only one prepare path runs before the durable Goal claim is visible.",
@@ -341,7 +353,7 @@ describe("GoalWorkspaceService", () => {
   test("adopts a real worktree when a stale create loses to another creator before state persistence", async () => {
     const projectRoot = await createGitRepo("stale-create-adoption");
     const manager = new GoalStateManager(projectRoot);
-    const goal = await manager.create({
+    const goal = await commitGoal(manager, {
       projectId: "project-a",
       objective: "Recover a stale get-or-create race.",
       acceptanceCriteria: "A concurrently created registered worktree is adopted instead of surfacing WORKTREE_PATH_EXISTS.",
@@ -378,7 +390,7 @@ describe("GoalWorkspaceService", () => {
   test("rejects persisted metadata that points at another Goal worktree", async () => {
     const projectRoot = await createGitRepo("reject-other-goal");
     const manager = new GoalStateManager(projectRoot);
-    const goal = await manager.create({
+    const goal = await commitGoal(manager, {
       projectId: "project-a",
       objective: "Keep ownership isolated.",
       acceptanceCriteria: "A Goal cannot reuse another Goal worktree.",

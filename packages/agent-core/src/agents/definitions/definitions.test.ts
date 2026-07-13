@@ -126,6 +126,9 @@ describe("agentDefinitions", () => {
 
     for (const tool of SOURCE_WRITE_TOOLS) expect(tools).toContain(tool);
     expect(tools).toContain("goal_create");
+    expect(tools).toContain("automation_create");
+    expect(engineerAgentDefinition.skills).toContain("goal-create");
+    expect(engineerAgentDefinition.skills).toContain("automation-create");
     expect(tools).not.toContain(TOOL_GOAL_MANAGE);
     expect(tools).toContain(TOOL_COMPRESS);
     expect(tools).toContain(TOOL_DELEGATE);
@@ -286,6 +289,8 @@ describe("agentDefinitions", () => {
     "codemap",
     "review-work",
     "research-docs",
+    "goal-create",
+    "automation-create",
   ] as const;
 
   describe("skills", () => {
@@ -306,6 +311,8 @@ describe("agentDefinitions", () => {
         "codemap",
         "review-work",
         "research-docs",
+        "goal-create",
+        "automation-create",
       ]);
       expect(goalLeadAgentDefinition.skills).toEqual([
         "codemap",

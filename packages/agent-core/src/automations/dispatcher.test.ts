@@ -22,6 +22,7 @@ describe("AutomationDispatcher", () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     const automation = await manager.createAutomation({
       projectId: "project-a",
+      createdFromSessionId: crypto.randomUUID(),
       name: "run",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "/skill use reviewer", location: "project" },
@@ -50,6 +51,7 @@ describe("AutomationDispatcher", () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     const automation = await manager.createAutomation({
       projectId: "project-a",
+      createdFromSessionId: crypto.randomUUID(),
       name: "run",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "send_message", sessionId: crypto.randomUUID(), message: "Continue" },
@@ -70,6 +72,7 @@ describe("AutomationDispatcher", () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     const automation = await manager.createAutomation({
       projectId: "project-a",
+      createdFromSessionId: crypto.randomUUID(),
       name: "run",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Continue", location: "project" },
@@ -90,6 +93,7 @@ describe("AutomationDispatcher", () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     const automation = await manager.createAutomation({
       projectId: "project-a",
+      createdFromSessionId: crypto.randomUUID(),
       name: "run",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Continue", location: "project" },
@@ -110,6 +114,7 @@ describe("AutomationDispatcher", () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     const automation = await manager.createAutomation({
       projectId: "project-a",
+      createdFromSessionId: crypto.randomUUID(),
       name: "run",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Continue", location: "project" },
@@ -142,6 +147,7 @@ describe("AutomationDispatcher", () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     const automation = await manager.createAutomation({
       projectId: "project-a",
+      createdFromSessionId: crypto.randomUUID(),
       name: "run",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Continue", location: "project" },

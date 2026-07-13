@@ -112,8 +112,11 @@ function makeGoal(overrides: Partial<GoalState> = {}): GoalState {
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
-    version: overrides.version ?? 2,
+    version: 3,
+    createdFromSessionId: "origin",
     useWorktree: overrides.useWorktree ?? false,
+    mainSessionId: "main-session",
+    startedAt: "2026-01-01T00:00:00Z",
   };
 }
 

@@ -1,14 +1,14 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdir, readdir, rm } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { PROJECT_STATE_DIR_NAME, type GoalEvidenceRef } from "@archcode/protocol";
 
 import {
+  GoalAlreadyExistsError,
   GoalInvalidIdError,
   GoalNotFoundError,
-  GoalPathError,
   GoalReviewFinalizationError,
   GoalReviewerAuthorizationError,
   GoalStateError,
@@ -18,7 +18,9 @@ import {
 } from "./state";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "goal-state");
-const VALID_UUID = "550e8400-e29b-41d4-a716-446655440000";
+const GOAL_ID = "550e8400-e29b-41d4-a716-446655440000";
+const SOURCE_SESSION_ID = "660e8400-e29b-41d4-a716-446655440001";
+const MAIN_SESSION_ID = "770e8400-e29b-41d4-a716-446655440002";
 
 beforeEach(async () => {
   await rm(TMP_DIR, { recursive: true, force: true });
@@ -29,22 +31,24 @@ afterAll(async () => {
   await rm(TMP_DIR, { recursive: true, force: true });
 });
 
-async function captureAsyncError(action: () => Promise<unknown>): Promise<unknown> {
-  try {
-    await action();
-  } catch (error) {
-    return error;
-  }
-  throw new Error("Expected async action to throw");
+function commitInput(overrides: Partial<Parameters<GoalStateManager["commit"]>[0]> = {}) {
+  return {
+    id: GOAL_ID,
+    projectId: "project-a",
+    createdFromSessionId: SOURCE_SESSION_ID,
+    objective: "Persist a committed Goal envelope.",
+    acceptanceCriteria: "State transitions and reviewer finalization remain valid.",
+    mainSessionId: MAIN_SESSION_ID,
+    ...overrides,
+  };
+}
+
+async function commitGoal(manager = new GoalStateManager(TMP_DIR)) {
+  return await manager.commit(commitInput());
 }
 
 function evidenceRef(summary = "Tests passed"): GoalEvidenceRef {
-  return {
-    kind: "test_output",
-    ref: "bun-test-output",
-    summary,
-    createdAt: new Date().toISOString(),
-  };
+  return { kind: "test_output", ref: "bun-test-output", summary, createdAt: new Date().toISOString() };
 }
 
 function reviewerAuth(goalId: string) {
@@ -56,538 +60,145 @@ function reviewerAuth(goalId: string) {
   };
 }
 
-async function createGoal(manager = new GoalStateManager(TMP_DIR)) {
-  return manager.create({
-    projectId: "project-a",
-    objective: "Replace workflow state with a natural language goal envelope.",
-    acceptanceCriteria: "State transitions and reviewer finalization obey the simplified protocol.",
-    mainSessionId: "main-session",
-  });
-}
+describe("GoalStateSchema v3", () => {
+  test("requires committed provenance and execution ownership with no draft fallback", async () => {
+    const goal = await commitGoal();
+    expect(GoalStateSchema.parse(goal)).toEqual(goal);
 
-describe("GoalStateSchema", () => {
-  test("accepts the protocol state envelope and rejects unknown keys", () => {
-    const now = new Date().toISOString();
-    const state = GoalStateSchema.parse({
-      version: 2,
-      id: VALID_UUID,
-      projectId: "project-a",
-      title: "Ship thin state",
-      objective: "Keep only natural-language goal intent.",
-      acceptanceCriteria: "Reviewer finalizes with evidence.",
-      useWorktree: false,
-      status: "reviewing",
-      attempt: 1,
-      reviewGeneration: 1,
-      blocker: { kind: "approval", summary: "Waiting", hitlId: "hitl-1", resumeStatus: "reviewing", createdAt: now },
-      lastFailureSummary: "Previous review found missing tests.",
-      budget: { status: "warning", usedTokens: 100, maxTokens: 200, reason: "near limit", updatedAt: now },
-      pendingHitlIds: ["hitl-1"],
-      approvalRefs: ["hitl-1", "approval-1"],
-      appliedHitlIds: [],
-      mainSessionId: "main-session",
-      childSessionIds: ["child-session"],
-      createdAt: now,
-      updatedAt: now,
-      startedAt: now,
-      lastError: { name: "Error", message: "previous failure", at: now },
-    });
-
-    expect(state.status).toBe("reviewing");
-    expect(() => GoalStateSchema.parse({ ...state, workflowId: VALID_UUID })).toThrow();
-    const { version: _version, ...unversioned } = state;
-    const { useWorktree: _useWorktree, ...missingWorktreeMode } = state;
-    const { appliedHitlIds: _appliedHitlIds, ...missingAppliedHitlIds } = state;
-    expect(() => GoalStateSchema.parse(unversioned)).toThrow();
-    expect(() => GoalStateSchema.parse({ ...state, version: 1 })).toThrow();
-    expect(() => GoalStateSchema.parse(missingWorktreeMode)).toThrow();
-    expect(() => GoalStateSchema.parse(missingAppliedHitlIds)).toThrow();
-    expect(() => GoalStateSchema.parse({ ...state, loopId: "660e8400-e29b-41d4-a716-446655440001" })).toThrow();
+    const { createdFromSessionId: _source, ...withoutSource } = goal;
+    const { mainSessionId: _main, ...withoutMain } = goal;
+    const { startedAt: _started, ...withoutStarted } = goal;
+    expect(GoalStateSchema.safeParse(withoutSource).success).toBe(false);
+    expect(GoalStateSchema.safeParse(withoutMain).success).toBe(false);
+    expect(GoalStateSchema.safeParse(withoutStarted).success).toBe(false);
+    expect(GoalStateSchema.safeParse({ ...goal, version: 2 }).success).toBe(false);
+    expect(GoalStateSchema.safeParse({ ...goal, status: "draft" }).success).toBe(false);
+    expect(GoalStateSchema.safeParse({ ...goal, workflowId: GOAL_ID }).success).toBe(false);
   });
 
-  test("enforces field bounds for natural language and review evidence", () => {
+  test("enforces worktree, blocker, review, and HITL relational invariants", async () => {
+    const goal = await commitGoal();
     const now = new Date().toISOString();
-    const base = {
-      version: 2 as const,
-      id: VALID_UUID,
-      projectId: "project-a",
-      title: "A".repeat(160),
-      objective: "O".repeat(8000),
-      acceptanceCriteria: "C".repeat(8000),
-      useWorktree: false,
-      status: "reviewing" as const,
-      attempt: 1,
-      reviewGeneration: 0,
-      mainSessionId: "main-session",
-      pendingHitlIds: [],
-      approvalRefs: [],
-      appliedHitlIds: [],
-      childSessionIds: [],
-      createdAt: now,
-      updatedAt: now,
-    };
+    const worktree = { path: join(TMP_DIR, "worktree"), branchName: "archcode/goal/id", baseSha: "a".repeat(40), createdAt: now };
+    expect(GoalStateSchema.safeParse({ ...goal, worktree }).success).toBe(false);
+    expect(GoalStateSchema.safeParse({ ...goal, status: "blocked" }).success).toBe(false);
+    expect(GoalStateSchema.safeParse({ ...goal, pendingHitlIds: ["hitl-1"] }).success).toBe(false);
+    expect(GoalStateSchema.safeParse({ ...goal, approvalRefs: ["hitl-1"], appliedHitlIds: ["hitl-1"] }).success).toBe(true);
 
-    expect(GoalStateSchema.parse(base).title).toHaveLength(160);
-    expect(() => GoalStateSchema.parse({ ...base, title: "T".repeat(161) })).toThrow();
-    expect(() => GoalStateSchema.parse({ ...base, objective: "O".repeat(8001) })).toThrow();
-    expect(() => GoalStateSchema.parse({ ...base, finalSummary: "F".repeat(4001) })).toThrow();
-    expect(() => GoalStateSchema.parse({
-      ...base,
-      review: {
-        reviewGeneration: 0,
-        verdict: "DONE",
-        summary: "R".repeat(4001),
-        evidenceRefs: [],
-        reviewerSessionId: "review-session",
-        decidedAt: now,
-      },
-    })).toThrow();
-    expect(() => GoalStateSchema.parse({
-      ...base,
-      review: {
-        reviewGeneration: 0,
-        verdict: "DONE",
-        summary: "ok",
-        evidenceRefs: Array.from({ length: 21 }, (_, index) => evidenceRef(`evidence ${index}`)),
-        reviewerSessionId: "review-session",
-        decidedAt: now,
-      },
-    })).toThrow();
-  });
-
-  test("rejects impossible persisted status and worktree combinations", () => {
-    const now = new Date().toISOString();
-    const base = {
-      version: 2 as const,
-      id: VALID_UUID,
-      projectId: "project-a",
-      title: "Persisted invariants",
-      objective: "Reject states no current mutation path can create.",
-      acceptanceCriteria: "Status and worktree claims remain relationally valid.",
-      useWorktree: false,
-      status: "running" as const,
-      attempt: 1,
-      reviewGeneration: 0,
-      mainSessionId: "main-session",
-      pendingHitlIds: [],
-      approvalRefs: [],
-      appliedHitlIds: [],
-      childSessionIds: [],
-      createdAt: now,
-      updatedAt: now,
-      startedAt: now,
-    };
-    const worktree = {
-      path: join(TMP_DIR, "goal-worktree"),
-      branchName: "archcode/goal/123456789abc",
-      baseSha: "a".repeat(40),
-      createdAt: now,
-    };
-    const doneReview = {
+    const review = {
       reviewGeneration: 0,
       verdict: "DONE" as const,
-      summary: "All evidence passed.",
+      summary: "Verified.",
       evidenceRefs: [evidenceRef()],
       reviewerSessionId: "review-session",
       decidedAt: now,
     };
-
-    expect(() => GoalStateSchema.parse({ ...base, worktree })).toThrow();
-    expect(() => GoalStateSchema.parse({ ...base, status: "blocked" })).toThrow();
-    expect(() => GoalStateSchema.parse({ ...base, status: "done" })).toThrow();
-    expect(() => GoalStateSchema.parse({
-      ...base,
-      status: "done",
-      review: { ...doneReview, verdict: "NOT_DONE" },
-      finalSummary: "Done",
-      completedAt: now,
-    })).toThrow();
-    expect(() => GoalStateSchema.parse({
-      ...base,
-      status: "done",
-      review: doneReview,
-      finalSummary: "Done",
-      completedAt: now,
-    })).not.toThrow();
-    expect(() => GoalStateSchema.parse({
-      ...base,
-      status: "done",
-      reviewGeneration: 1,
-      review: doneReview,
-      finalSummary: "Done",
-      completedAt: now,
-    })).toThrow();
-    expect(() => GoalStateSchema.parse({
-      ...base,
-      status: "not_done",
-      review: { ...doneReview, verdict: "NOT_DONE", evidenceRefs: [] },
-      completedAt: now,
-    })).toThrow();
-  });
-
-  test("enforces durable HITL attachment and application relations", () => {
-    const now = new Date().toISOString();
-    const base = {
-      version: 2 as const,
-      id: VALID_UUID,
-      projectId: "project-a",
-      title: "HITL invariants",
-      objective: "Persist crash-recoverable HITL state.",
-      acceptanceCriteria: "Pending and applied HITL ids retain durable attachment markers.",
-      useWorktree: false,
-      status: "running" as const,
-      attempt: 1,
-      reviewGeneration: 0,
-      mainSessionId: "main-session",
-      pendingHitlIds: [],
-      approvalRefs: [],
-      appliedHitlIds: [],
-      childSessionIds: [],
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    expect(() => GoalStateSchema.parse({ ...base, pendingHitlIds: ["hitl-1"] })).toThrow();
-    expect(() => GoalStateSchema.parse({
-      ...base,
-      approvalRefs: ["hitl-1"],
-      appliedHitlIds: ["hitl-1"],
-      pendingHitlIds: ["hitl-1"],
-    })).toThrow();
-    expect(() => GoalStateSchema.parse({ ...base, appliedHitlIds: ["hitl-1"] })).toThrow();
-    expect(() => GoalStateSchema.parse({ ...base, approvalRefs: ["hitl-1"], appliedHitlIds: ["hitl-1"] })).not.toThrow();
-    expect(() => GoalStateSchema.parse({ ...base, approvalRefs: ["hitl-1", "hitl-1"] })).toThrow();
-    expect(() => GoalStateSchema.parse({
-      ...base,
-      status: "blocked",
-      blocker: {
-        kind: "approval",
-        summary: "Awaiting approval",
-        hitlId: "hitl-1",
-        createdAt: now,
-      },
-      pendingHitlIds: ["hitl-1"],
-      approvalRefs: ["hitl-1"],
-    })).toThrow();
+    expect(GoalStateSchema.safeParse({ ...goal, status: "done", review, finalSummary: "Done", completedAt: now }).success).toBe(true);
+    expect(GoalStateSchema.safeParse({ ...goal, status: "done", review: { ...review, evidenceRefs: [] }, finalSummary: "Done", completedAt: now }).success).toBe(false);
   });
 });
 
 describe("GoalStateManager", () => {
-  test("create persists a draft with only protocol fields", async () => {
+  test("atomically commits a running Goal from preallocated ids", async () => {
     const manager = new GoalStateManager(TMP_DIR);
-    const created = await createGoal(manager);
+    const goal = await commitGoal(manager);
 
-    expect(created).toMatchObject({
+    expect(goal).toMatchObject({
+      version: 3,
+      id: GOAL_ID,
       projectId: "project-a",
-      title: null,
-      status: "draft",
+      createdFromSessionId: SOURCE_SESSION_ID,
+      mainSessionId: MAIN_SESSION_ID,
+      status: "running",
       useWorktree: false,
       attempt: 1,
-      pendingHitlIds: [],
-      approvalRefs: [],
-      appliedHitlIds: [],
-      childSessionIds: [],
+      startedAt: expect.any(String),
     });
-    expect(existsSync(join(TMP_DIR, PROJECT_STATE_DIR_NAME, "goals", created.id, "goal.json"))).toBe(true);
-    expect(Object.keys(created).sort()).toEqual([
-      "acceptanceCriteria",
-      "appliedHitlIds",
-      "approvalRefs",
-      "attempt",
-      "childSessionIds",
-      "createdAt",
-      "id",
-      "mainSessionId",
-      "objective",
-      "pendingHitlIds",
-      "projectId",
-      "reviewGeneration",
-      "status",
-      "title",
-      "updatedAt",
-      "useWorktree",
-      "version",
-    ]);
+    expect(existsSync(join(TMP_DIR, PROJECT_STATE_DIR_NAME, "goals", GOAL_ID, "goal.json"))).toBe(true);
+    expect(await manager.read(GOAL_ID)).toEqual(goal);
   });
 
-  test("persists worktree opt-in only while a Goal is draft", async () => {
+  test("never overwrites a committed Goal identity", async () => {
     const manager = new GoalStateManager(TMP_DIR);
-    const created = await manager.create({
-      projectId: "project-a",
-      objective: "Run in isolation.",
-      acceptanceCriteria: "The Goal session executes from a managed worktree.",
-      useWorktree: true,
-    });
+    const original = await commitGoal(manager);
 
-    expect(created.useWorktree).toBe(true);
-    expect((await manager.patchDraft(created.id, { useWorktree: false })).useWorktree).toBe(false);
-    await manager.start(created.id, { mainSessionId: "main-session" });
-    expect(await captureAsyncError(() => manager.patchDraft(created.id, { useWorktree: true }))).toBeInstanceOf(GoalStateError);
+    await expect(manager.commit(commitInput({ objective: "Conflicting replacement." })))
+      .rejects.toBeInstanceOf(GoalAlreadyExistsError);
+    expect((await manager.read(GOAL_ID)).objective).toBe(original.objective);
   });
 
-  test("worktree claim is write-once and cannot revive a disabled draft", async () => {
+  test("rejects old schema and malformed persisted state without migration", async () => {
     const manager = new GoalStateManager(TMP_DIR);
-    const disabled = await manager.create({
-      projectId: "project-a",
-      objective: "Allow a concurrent disable.",
-      acceptanceCriteria: "A stale worktree claim cannot turn isolation back on.",
-      useWorktree: true,
-    });
-    await manager.patchDraft(disabled.id, { useWorktree: false });
-    const resource = {
+    const goal = await commitGoal(manager);
+    const path = join(TMP_DIR, PROJECT_STATE_DIR_NAME, "goals", goal.id, "goal.json");
+    await Bun.write(path, JSON.stringify({ ...goal, version: 2 }));
+    await expect(manager.read(goal.id)).rejects.toBeInstanceOf(GoalStateError);
+    await expect(manager.read("not-a-uuid")).rejects.toBeInstanceOf(GoalInvalidIdError);
+    await expect(manager.read(crypto.randomUUID())).rejects.toBeInstanceOf(GoalNotFoundError);
+  });
+
+  test("keeps worktree identity write-once", async () => {
+    const manager = new GoalStateManager(TMP_DIR);
+    const goal = await manager.commit(commitInput({ useWorktree: true }));
+    const worktree = {
       path: join(TMP_DIR, "goal-worktree"),
       branchName: "archcode/goal/123456789abc",
       baseSha: "a".repeat(40),
       createdAt: new Date().toISOString(),
     };
-
-    expect(await captureAsyncError(() => manager.setWorktree(disabled.id, resource))).toBeInstanceOf(GoalStateError);
-    const stillDisabled = await manager.read(disabled.id);
-    expect(stillDisabled.useWorktree).toBe(false);
-    expect(stillDisabled).not.toHaveProperty("worktree");
-
-    const claimed = await manager.create({
-      projectId: "project-a",
-      objective: "Claim one resource.",
-      acceptanceCriteria: "The resource identity cannot be replaced or disabled.",
-      useWorktree: true,
-    });
-    await manager.setWorktree(claimed.id, resource);
-    expect((await manager.setWorktree(claimed.id, resource)).worktree).toEqual(resource);
-    expect((await manager.setWorktree(claimed.id, {
-      ...resource,
-      createdAt: new Date(Date.parse(resource.createdAt) + 1_000).toISOString(),
-    })).worktree).toEqual(resource);
-    expect(await captureAsyncError(() => manager.setWorktree(claimed.id, {
-      ...resource,
-      path: join(TMP_DIR, "other-worktree"),
-    }))).toBeInstanceOf(GoalStateError);
-    expect(await captureAsyncError(() => manager.patchDraft(claimed.id, { useWorktree: false }))).toBeInstanceOf(GoalStateError);
+    expect((await manager.setWorktree(goal.id, worktree)).worktree).toEqual(worktree);
+    expect((await manager.setWorktree(goal.id, { ...worktree, createdAt: new Date().toISOString() })).worktree).toEqual(worktree);
+    await expect(manager.setWorktree(goal.id, { ...worktree, path: join(TMP_DIR, "other") }))
+      .rejects.toBeInstanceOf(GoalStateError);
   });
 
-  test("patchDraft is limited to draft goals", async () => {
+  test("preserves the running lifecycle, reviewer evidence, retry, and terminal rules", async () => {
     const manager = new GoalStateManager(TMP_DIR);
-    const created = await createGoal(manager);
-    const patched = await manager.patchDraft(created.id, { objective: "New objective" });
-    expect(patched.title).toBeNull();
-    expect(patched.objective).toBe("New objective");
-
-    await manager.start(created.id, { mainSessionId: "main-session" });
-    expect(await captureAsyncError(() => manager.patchDraft(created.id, { objective: "Denied" }))).toBeInstanceOf(GoalStateError);
-  });
-
-  test("setTitleIfEmpty writes generated metadata once", async () => {
-    const manager = new GoalStateManager(TMP_DIR);
-    const created = await createGoal(manager);
-
-    const titled = await manager.setTitleIfEmpty(created.id, "Generated title");
-    const skipped = await manager.setTitleIfEmpty(created.id, "Second title");
-
-    expect(titled?.title).toBe("Generated title");
-    expect(skipped).toBeUndefined();
-    expect((await manager.read(created.id)).title).toBe("Generated title");
-  });
-
-  test("allows exactly the simplified transition graph", async () => {
-    const manager = new GoalStateManager(TMP_DIR);
-    const done = await createGoal(manager);
-    await manager.start(done.id);
-    await manager.beginReview(done.id);
-    const finalized = await manager.finalizeReview(done.id, {
-      expectedReviewGeneration: 1,
-      verdict: "DONE",
-      summary: "All evidence passed.",
-      evidenceRefs: [evidenceRef()],
-      authorization: reviewerAuth(done.id),
-    });
-    expect(finalized.status).toBe("done");
-    expect(await captureAsyncError(() => manager.fail(done.id, "too late"))).toBeInstanceOf(GoalTransitionError);
-
-    const blocked = await createGoal(manager);
-    await manager.start(blocked.id);
-    expect((await manager.block(blocked.id, { kind: "question", summary: "Need answer", resumeStatus: "reviewing" })).status).toBe("blocked");
-    expect((await manager.clearBlocker(blocked.id)).status).toBe("reviewing");
-    expect((await manager.finalizeReview(blocked.id, {
+    const goal = await commitGoal(manager);
+    expect((await manager.block(goal.id, { kind: "question", summary: "Need answer", resumeStatus: "reviewing" })).status).toBe("blocked");
+    expect((await manager.clearBlocker(goal.id)).status).toBe("reviewing");
+    const notDone = await manager.finalizeReview(goal.id, {
       expectedReviewGeneration: 0,
       verdict: "NOT_DONE",
-      summary: "Missing acceptance evidence.",
-      authorization: reviewerAuth(blocked.id),
-    })).status).toBe("not_done");
-    expect((await manager.retry(blocked.id)).status).toBe("running");
+      summary: "Missing evidence.",
+      authorization: reviewerAuth(goal.id),
+    });
+    expect(notDone.status).toBe("not_done");
+    expect(await manager.retry(goal.id)).toMatchObject({ status: "running", attempt: 2 });
+    expect((await manager.beginReview(goal.id)).reviewGeneration).toBe(1);
 
-    const failed = await createGoal(manager);
-    await manager.start(failed.id);
-    expect((await manager.fail(failed.id, new Error("build failed"))).status).toBe("failed");
-    expect((await manager.retry(failed.id)).status).toBe("running");
-
-    const cancelled = await createGoal(manager);
-    expect((await manager.cancel(cancelled.id, "not needed")).status).toBe("cancelled");
-  });
-
-  test("start is idempotent when the same main session already claimed a running goal", async () => {
-    const manager = new GoalStateManager(TMP_DIR);
-    const created = await createGoal(manager);
-
-    const first = await manager.start(created.id, { mainSessionId: "main-session" });
-    const second = await manager.start(created.id, { mainSessionId: "main-session" });
-
-    expect(second).toEqual(first);
-    expect(await captureAsyncError(() => manager.start(created.id, { mainSessionId: "different-main-session" }))).toBeInstanceOf(GoalTransitionError);
-  });
-
-  test("rejects forbidden transitions", async () => {
-    const manager = new GoalStateManager(TMP_DIR);
-    const created = await createGoal(manager);
-
-    expect(await captureAsyncError(() => manager.beginReview(created.id))).toBeInstanceOf(GoalTransitionError);
-    await manager.start(created.id);
-    expect(await captureAsyncError(() => manager.retry(created.id))).toBeInstanceOf(GoalTransitionError);
-    await manager.beginReview(created.id);
-    expect(await captureAsyncError(() => manager.start(created.id))).toBeInstanceOf(GoalTransitionError);
-  });
-
-  test("enforces reviewer finalization rules", async () => {
-    const manager = new GoalStateManager(TMP_DIR);
-    const created = await createGoal(manager);
-    await manager.start(created.id);
-    await manager.beginReview(created.id);
-
-    await expect(manager.finalizeReview(created.id, {
+    await expect(manager.finalizeReview(goal.id, {
+      expectedReviewGeneration: 1,
+      verdict: "DONE",
+      summary: "Wrong reviewer.",
+      evidenceRefs: [evidenceRef()],
+      authorization: { ...reviewerAuth(goal.id), agentName: "build" },
+    })).rejects.toBeInstanceOf(GoalReviewerAuthorizationError);
+    await expect(manager.finalizeReview(goal.id, {
       expectedReviewGeneration: 1,
       verdict: "DONE",
       summary: "No evidence.",
       evidenceRefs: [],
-      authorization: reviewerAuth(created.id),
-    })).rejects.toBeInstanceOf(GoalReviewFinalizationError);
-    await expect(manager.finalizeReview(created.id, {
-      expectedReviewGeneration: 1,
-      verdict: "NOT_DONE",
-      summary: "",
-      authorization: reviewerAuth(created.id),
-    })).rejects.toBeInstanceOf(GoalReviewFinalizationError);
-    await expect(manager.finalizeReview(created.id, {
-      expectedReviewGeneration: 1,
-      verdict: "DONE",
-      summary: "All good.",
-      evidenceRefs: [evidenceRef()],
-      authorization: { ...reviewerAuth(created.id), agentName: "engineer" },
-    })).rejects.toBeInstanceOf(GoalReviewerAuthorizationError);
-
-    const completed = await manager.finalizeReview(created.id, {
-      expectedReviewGeneration: 1,
-      verdict: "DONE",
-      summary: "All evidence passed.",
-      evidenceRefs: [evidenceRef()],
-      authorization: reviewerAuth(created.id),
-    });
-    expect(completed.status).toBe("done");
-    expect(completed.finalSummary).toBe("All evidence passed.");
-    expect(completed.review).toMatchObject({ reviewGeneration: 1 });
-  });
-
-  test("retry increments attempt and clears current review", async () => {
-    const manager = new GoalStateManager(TMP_DIR);
-    const created = await createGoal(manager);
-    await manager.start(created.id);
-    await manager.beginReview(created.id);
-    await manager.finalizeReview(created.id, {
-      expectedReviewGeneration: 1,
-      verdict: "NOT_DONE",
-      summary: "Tests missing.",
-      authorization: reviewerAuth(created.id),
-    });
-    expect(await captureAsyncError(() => manager.finalizeReview(created.id, {
-      expectedReviewGeneration: 1,
-      verdict: "NOT_DONE",
-      summary: "duplicate",
-      authorization: reviewerAuth(created.id),
-    }))).toBeInstanceOf(GoalReviewFinalizationError);
-
-    const retry = await manager.retry(created.id);
-    expect(retry).toMatchObject({ status: "running", attempt: 2, mainSessionId: "main-session" });
-    expect(retry.review).toBeUndefined();
-    const reviewing = await manager.beginReview(created.id);
-    expect(reviewing).toMatchObject({ status: "reviewing", reviewGeneration: 2 });
-    await expect(manager.finalizeReview(created.id, {
-      expectedReviewGeneration: 1,
-      verdict: "DONE",
-      summary: "Stale reviewer result.",
-      evidenceRefs: [evidenceRef()],
-      authorization: reviewerAuth(created.id),
+      authorization: reviewerAuth(goal.id),
     })).rejects.toBeInstanceOf(GoalReviewFinalizationError);
 
-    const completed = await manager.finalizeReview(created.id, {
-      expectedReviewGeneration: 2,
+    const done = await manager.finalizeReview(goal.id, {
+      expectedReviewGeneration: 1,
       verdict: "DONE",
-      summary: "Current reviewer result.",
+      summary: "All criteria verified.",
       evidenceRefs: [evidenceRef()],
-      authorization: reviewerAuth(created.id),
+      authorization: reviewerAuth(goal.id),
     });
-    expect(completed.review).toMatchObject({ reviewGeneration: 2 });
+    expect(done.status).toBe("done");
+    await expect(manager.cancel(goal.id)).rejects.toBeInstanceOf(GoalTransitionError);
   });
 
-  test("records sessions and budget summaries without duplicates", async () => {
+  test("lists committed Goals deterministically by project", async () => {
     const manager = new GoalStateManager(TMP_DIR);
-    const created = await createGoal(manager);
-    await manager.start(created.id, { mainSessionId: "main-session" });
-
-    await manager.addChildSession(created.id, "child-1");
-    await manager.addChildSession(created.id, "child-1");
-    const budgeted = await manager.updateBudgetSummary(created.id, {
-      status: "warning",
-      usedTokens: 50,
-      maxTokens: 100,
-      reason: "half used",
-      updatedAt: new Date().toISOString(),
-    });
-
-    expect(budgeted.childSessionIds).toEqual(["child-1"]);
-    expect(budgeted.budget).toMatchObject({ status: "warning", usedTokens: 50, maxTokens: 100 });
-  });
-
-  test("rejects old persisted schema through strict state validation", async () => {
-    const manager = new GoalStateManager(TMP_DIR);
-    const goalId = VALID_UUID;
-    const goalDir = join(TMP_DIR, PROJECT_STATE_DIR_NAME, "goals", goalId);
-    const now = new Date().toISOString();
-    await mkdir(goalDir, { recursive: true });
-    const oldState: Record<string, unknown> = {
-      id: goalId,
-      projectId: "project-a",
-      title: "Old state",
-      objective: "Old objective",
-      acceptanceCriteria: "Old acceptance criteria",
-      status: "running",
-      attempt: 1,
-      pendingHitlIds: [],
-      approvalRefs: [],
-      childSessionIds: [],
-      [`done${"Conditions"}`]: [],
-      [`arti${"facts"}`]: [],
-      [`ph${"ase"}`]: "plan",
-      [`retry${"Policy"}`]: { maxRetries: 1 },
-      createdAt: now,
-      updatedAt: now,
-    };
-    await Bun.write(join(goalDir, "goal.json"), `${JSON.stringify(oldState, null, 2)}\n`);
-
-    const error = await captureAsyncError(() => manager.read(goalId));
-    expect(error).toBeInstanceOf(GoalStateError);
-    if (!(error instanceof GoalStateError)) throw new Error("Expected GoalStateError");
-    expect(error.message).toBe(`Goal state validation failed for ${goalId}`);
-    expect(String(error.cause)).toContain(`done${"Conditions"}`);
-  });
-
-  test("path validation and list filtering stay strict", async () => {
-    const manager = new GoalStateManager(TMP_DIR);
-    const valid = await createGoal(manager);
-    const staleGoalId = "78878538-b50c-4357-b6b8-087b1683adb4";
-    await mkdir(join(TMP_DIR, PROJECT_STATE_DIR_NAME, "goals", staleGoalId), { recursive: true });
-
-    expect(await captureAsyncError(() => manager.read("../escape"))).toBeInstanceOf(GoalInvalidIdError);
-    expect(await captureAsyncError(() => manager.read(VALID_UUID))).toBeInstanceOf(GoalNotFoundError);
-    expect(await captureAsyncError(() => manager.resolveContainedPathForTest("../escape/goal.json"))).toBeInstanceOf(GoalPathError);
-    expect((await manager.listGoals("project-a")).map((goal) => goal.id)).toEqual([valid.id]);
-    expect((await readdir(join(TMP_DIR, PROJECT_STATE_DIR_NAME, "goals", valid.id))).filter((entry) => entry.startsWith(".tmp-"))).toEqual([]);
+    const secondId = "880e8400-e29b-41d4-a716-446655440003";
+    await manager.commit(commitInput({ id: secondId, projectId: "project-b", mainSessionId: crypto.randomUUID() }));
+    await manager.commit(commitInput());
+    expect((await manager.listGoals()).map((goal) => goal.id)).toEqual([GOAL_ID, secondId]);
+    expect((await manager.listGoals("project-a")).map((goal) => goal.id)).toEqual([GOAL_ID]);
   });
 });

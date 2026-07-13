@@ -64,6 +64,18 @@ export interface SessionCwdPathBarrierLease {
   release(): void;
 }
 
+export class SessionFileIdentityConflictError extends Error {
+  constructor(
+    public readonly sessionId: string,
+    public readonly field: string,
+    public readonly expected: unknown,
+    public readonly actual: unknown,
+  ) {
+    super(`Session ${sessionId} identity conflict for ${field}`);
+    this.name = "SessionFileIdentityConflictError";
+  }
+}
+
 export class SessionStoreManager {
   #registry = new Map<string, StoreApi<SessionStoreState>>();
   #pendingLoads = new Map<string, Promise<StoreApi<SessionStoreState>>>();
@@ -341,6 +353,50 @@ export class SessionStoreManager {
       throw new SessionInitialPersistenceError(sessionId, workspaceRoot, error);
     }
     return sessionFileInternals.toSessionFile(store.getState());
+  }
+
+  /** Creates a caller-selected Session id or verifies the durable identity already using it. */
+  async ensureSessionFile(
+    workspaceRoot: string,
+    sessionId: string,
+    options: CreateSessionOptions,
+  ): Promise<HydratedSessionFile> {
+    let existing: HydratedSessionFile | undefined;
+    try {
+      existing = await this.getSessionFile(workspaceRoot, sessionId);
+    } catch (error) {
+      if (!(error instanceof SessionFileNotFoundError)) throw error;
+    }
+
+    const session = existing ?? await this.createSessionFile(workspaceRoot, options, sessionId);
+    const expected = {
+      sessionId,
+      rootSessionId: options.rootSessionId ?? sessionId,
+      parentSessionId: options.parentSessionId,
+      goalId: options.goalId,
+      sessionRole: options.sessionRole,
+      agentName: options.agentName,
+      cwd: options.cwd ?? workspaceRoot,
+    } as const;
+    const actual = {
+      sessionId: session.sessionId,
+      rootSessionId: session.rootSessionId,
+      parentSessionId: session.parentSessionId,
+      goalId: session.goalId,
+      sessionRole: session.sessionRole,
+      agentName: session.agentName,
+      cwd: session.cwd,
+    } as const;
+
+    for (const field of Object.keys(expected) as Array<keyof typeof expected>) {
+      const matches = field === "cwd"
+        ? sameResolvedPath(String(expected[field]), String(actual[field]))
+        : expected[field] === actual[field];
+      if (!matches) {
+        throw new SessionFileIdentityConflictError(sessionId, field, expected[field], actual[field]);
+      }
+    }
+    return session;
   }
 
   async getSessionFile(workspaceRoot: string, sessionId: string): Promise<HydratedSessionFile> {

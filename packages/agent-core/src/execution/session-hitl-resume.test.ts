@@ -1315,6 +1315,8 @@ function createAliasedResolver(
   const resolver = new ProjectContextResolver({
     projectInfoFactory: () => context.project,
     goalCancellationFactory: () => context.goalCancellation,
+    goalRunnerFactory: () => ({}) as never,
+    createAutomation: async () => { throw new Error("unused automation creator"); },
     sessionStoreManager: sessions,
     resumeCoordinatorFactory: () => context.hitlResumeCoordinator,
   });

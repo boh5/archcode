@@ -136,13 +136,14 @@ async function createFixture(name: string) {
   await mkdir(workspaceRoot, { recursive: true });
   const context = createTestProjectContext(workspaceRoot);
   const mainSessionId = crypto.randomUUID();
-  const draft = await context.goalState.create({
+  const goal = await context.goalState.commit({
+    id: crypto.randomUUID(),
     projectId: context.project.slug,
+    createdFromSessionId: crypto.randomUUID(),
     objective: "Protect Goal phase boundaries",
     acceptanceCriteria: "No forbidden child runs",
     mainSessionId,
   });
-  const goal = await context.goalState.start(draft.id, { mainSessionId });
   const admission = new RoleDrivenSessionGoalDelegationAdmission({ resolve: async () => context });
   const main = {
     sessionId: mainSessionId,

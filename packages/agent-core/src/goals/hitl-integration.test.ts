@@ -65,13 +65,14 @@ async function runAdapter(adapter: GoalHitlResumeAdapter, record: HitlRecord, re
 }
 
 async function createGoal(status: Extract<GoalState["status"], "running" | "reviewing"> = "running"): Promise<GoalState> {
-  const goal = await manager.create({
+  const running = await manager.commit({
+    id: crypto.randomUUID(),
     projectId: "project-a",
+    createdFromSessionId: crypto.randomUUID(),
     objective: "Resume simplified Goal blockers from HITL records.",
     acceptanceCriteria: "Approved HITL clears blockers; denied and cancelled responses reach deterministic terminal states.",
     mainSessionId: "main-session-1",
   });
-  const running = await manager.start(goal.id, { mainSessionId: "main-session-1" });
   return status === "reviewing" ? await manager.beginReview(running.id) : running;
 }
 

@@ -313,7 +313,6 @@ describe("compression protocol types", () => {
 describe("Goal types", () => {
   test("GoalStatus is the simplified durable execution envelope", () => {
     const statuses: GoalStatus[] = [
-      "draft",
       "running",
       "blocked",
       "reviewing",
@@ -324,7 +323,6 @@ describe("Goal types", () => {
     ];
 
     expect(statuses).toEqual([
-      "draft",
       "running",
       "blocked",
       "reviewing",
@@ -337,9 +335,10 @@ describe("Goal types", () => {
 
   test("GoalState serializes the natural-language contract with review evidence", () => {
     const state: GoalState = {
-      version: 2,
+      version: 3,
       id: "goal-1",
       projectId: "my-project",
+      createdFromSessionId: "session-source",
       title: "Implement auth",
       objective: "Build the requested authentication flow.",
       acceptanceCriteria: "Users can sign in and invalid credentials are rejected.",
@@ -399,9 +398,10 @@ describe("Goal types", () => {
 
   test("Goal blockers and NOT_DONE receipts round-trip", () => {
     const state: GoalState = {
-      version: 2,
+      version: 3,
       id: "goal-2",
       projectId: "my-project",
+      createdFromSessionId: "session-source",
       title: "Fix bug",
       objective: "Resolve the reported bug.",
       acceptanceCriteria: "The bug no longer reproduces.",
@@ -421,6 +421,7 @@ describe("Goal types", () => {
       appliedHitlIds: [],
       mainSessionId: "session-main",
       childSessionIds: [],
+      startedAt: "2026-06-01T00:00:00.000Z",
       review: {
         reviewGeneration: 1,
         verdict: "NOT_DONE",
@@ -604,9 +605,10 @@ describe("HITL types", () => {
 describe("Goal/HITL stream events", () => {
   function makeGoalState(overrides: Partial<GoalState> = {}): GoalState {
     return {
-      version: 2,
+      version: 3,
       id: "goal-1",
       projectId: "p",
+      createdFromSessionId: "session-source",
       title: "Implement feature",
       objective: "Implement the requested feature.",
       acceptanceCriteria: "Feature behavior satisfies the request.",
@@ -621,6 +623,7 @@ describe("Goal/HITL stream events", () => {
       childSessionIds: [],
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
+      startedAt: "2026-01-01T00:00:00.000Z",
       ...overrides,
     };
   }
@@ -733,6 +736,7 @@ describe("Automation types", () => {
     const automation: Automation = {
       id: "automation-1",
       projectId: "project-1",
+      createdFromSessionId: "session-source",
       name: "Weekly review",
       status: "active",
       trigger,

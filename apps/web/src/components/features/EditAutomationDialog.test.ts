@@ -3,9 +3,9 @@ import { describe, expect, test } from "bun:test";
 import {
   intervalFromMilliseconds,
   intervalToMilliseconds,
-} from "./AutomationDialog";
+} from "./EditAutomationDialog";
 
-describe("AutomationDialog interval controls", () => {
+describe("EditAutomationDialog interval controls", () => {
   test("converts readable interval units to the persisted milliseconds", () => {
     expect(intervalToMilliseconds(30, "seconds")).toBe(30_000);
     expect(intervalToMilliseconds(15, "minutes")).toBe(900_000);

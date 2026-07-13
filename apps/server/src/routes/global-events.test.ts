@@ -435,9 +435,10 @@ function compressionBlockCommittedEvent(): CompressionBlockCommittedEvent {
 
 function createGoalState(goalId: string, projectId: string, status: GoalState["status"]): GoalState {
   return {
-    version: 2,
+    version: 3,
     id: goalId,
     projectId,
+    createdFromSessionId: "session-source",
     title: "Ship Goal",
     objective: "Ship the Goal.",
     acceptanceCriteria: "Reviewer can decide DONE from evidence.",
@@ -452,5 +453,6 @@ function createGoalState(goalId: string, projectId: string, status: GoalState["s
     childSessionIds: [],
     createdAt: "2026-07-01T00:00:00.000Z",
     updatedAt: "2026-07-01T00:00:00.000Z",
+    startedAt: "2026-07-01T00:00:00.000Z",
   };
 }

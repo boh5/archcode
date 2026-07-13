@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Pause, Play, Settings2, Trash2 } from "lucide-react";
-import { useAutomation, useAutomationInvocations } from "../api/queries";
+import { useAutomation, useAutomationInvocations, useSession } from "../api/queries";
 import { useDeleteAutomation, usePauseAutomation, useResumeAutomation, useRunAutomationNow } from "../api/mutations";
 import type { Automation, AutomationInvocation } from "../api/types";
-import { AutomationDialog } from "../components/features/AutomationDialog";
+import { EditAutomationDialog } from "../components/features/EditAutomationDialog";
 import { formatTrigger } from "./automations";
 
 export function AutomationDetailRoute() {
@@ -38,11 +38,30 @@ export function AutomationDetailRoute() {
       />
       <main className="mx-auto w-full max-w-4xl space-y-4 overflow-y-auto p-4">
         <AutomationConfiguration automation={value} />
+        <AutomationProvenance slug={slug} sessionId={(value as Automation & { createdFromSessionId: string }).createdFromSessionId} />
         <AutomationAttention failedInvocation={failedInvocation} />
         <InvocationHistory invocations={invocations.data} isLoading={invocations.isLoading} slug={slug} />
       </main>
-      <AutomationDialog automation={value} onClose={() => setEditing(false)} open={editing} slug={slug} />
+      <EditAutomationDialog automation={value} onClose={() => setEditing(false)} open={editing} slug={slug} />
     </div>
+  );
+}
+
+function AutomationProvenance({ slug, sessionId }: { slug: string; sessionId: string }) {
+  const source = useSession(slug, sessionId);
+  return (
+    <section className="rounded-md border border-border-default bg-bg-surface p-4">
+      <h2 className="font-semibold">Created from</h2>
+      {sessionId && source.isLoading ? (
+        <p className="mt-2 text-sm text-text-tertiary">Loading…</p>
+      ) : sessionId && source.data ? (
+        <Link className="mt-2 block text-sm text-accent hover:underline" to={`/projects/${slug}/sessions/${sessionId}`}>
+          {source.data.title || sessionId}
+        </Link>
+      ) : (
+        <p className="mt-2 text-sm text-text-tertiary">Unavailable</p>
+      )}
+    </section>
   );
 }
 

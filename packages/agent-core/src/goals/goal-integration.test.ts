@@ -5,19 +5,25 @@ import { join } from "node:path";
 
 import { PROJECT_STATE_DIR_NAME, type GoalState } from "@archcode/protocol";
 
+import { silentLogger } from "../logger";
+import { SessionStoreManager } from "../store/session-store-manager";
 import { GoalRunner } from "./runner";
-import { GoalStateError, GoalStateManager } from "./state";
+import { GoalStateManager } from "./state";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-integration");
+const SOURCE_SESSION_ID = "11111111-1111-4111-8111-111111111111";
 
 let workspaceRoot = "";
 let manager: GoalStateManager;
+let sessions: SessionStoreManager;
 
 beforeEach(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });
   await mkdir(TMP_ROOT, { recursive: true });
   workspaceRoot = await mkdtemp(join(TMP_ROOT, "workspace-"));
   manager = new GoalStateManager(workspaceRoot);
+  sessions = new SessionStoreManager({ logger: silentLogger });
+  await sessions.createSessionFile(workspaceRoot, { agentName: "engineer" }, SOURCE_SESSION_ID);
 });
 
 afterAll(async () => {
@@ -25,23 +31,17 @@ afterAll(async () => {
 });
 
 function createRunner(): GoalRunner {
-  const sessionIds = ["main-session", "retry-session"];
   return new GoalRunner({
     goalStateManager: manager,
     workspaceRoot,
-    createSession: mock(async () => sessionIds.shift() ?? `session-${crypto.randomUUID()}`),
-    getSessionCwd: mock(async () => workspaceRoot),
-    isSessionActive: mock(async () => false),
+    readSourceSession: (root, id) => sessions.getSessionFile(root, id),
+    ensureSessionFile: (root, id, options) => sessions.ensureSessionFile(root, id, options),
+    startCheckedExecutionWithinGoalClaim: mock(async () => ({}) as never),
   });
 }
 
 function reviewerAuth(goalId: string, sessionId = "review-session") {
-  return {
-    agentName: "reviewer",
-    sessionRole: "review",
-    sessionGoalId: goalId,
-    reviewerSessionId: sessionId,
-  };
+  return { agentName: "reviewer", sessionRole: "review", sessionGoalId: goalId, reviewerSessionId: sessionId };
 }
 
 async function readGoalFile(goalId: string): Promise<GoalState> {
@@ -49,94 +49,47 @@ async function readGoalFile(goalId: string): Promise<GoalState> {
 }
 
 describe("Goal core integration", () => {
-  test("persists create to DONE as a natural-language state machine without auxiliary files", async () => {
+  test("persists committed creation through DONE without auxiliary artifacts", async () => {
     const runner = createRunner();
-    const draft = await runner.create({
+    const goal = await runner.create({
       projectId: "project-a",
-      objective: "Persist a protocol-shaped goal from draft through review.",
+      createdFromSessionId: SOURCE_SESSION_ID,
+      objective: "Persist a protocol-shaped committed Goal through review.",
       acceptanceCriteria: "Final state contains reviewer receipt and no auxiliary artifact files.",
     });
-    const running = await runner.start(draft.id);
-    await runner.addChildSession(draft.id, "plan-child-session");
-    await runner.addChildSession(draft.id, "build-child-session");
-    const reviewing = await runner.beginReview(draft.id);
-    const done = await runner.finalizeReview(reviewing.id, {
+    await runner.addChildSession(goal.id, "plan-child-session");
+    const reviewing = await runner.beginReview(goal.id);
+    const done = await runner.finalizeReview(goal.id, {
       expectedReviewGeneration: reviewing.reviewGeneration,
       verdict: "DONE",
       summary: "Reviewer verified the durable state and tests.",
-      evidenceRefs: [
-        { kind: "session", ref: running.mainSessionId ?? "main-session", summary: "Main session completed implementation." },
-        { kind: "test_output", ref: "targeted-tests", summary: "Targeted goal tests passed." },
-      ],
-      finalSummary: "Goal core state reached DONE with reviewer evidence.",
-      authorization: reviewerAuth(reviewing.id),
+      evidenceRefs: [{ kind: "session", ref: goal.mainSessionId, summary: "Main Session completed implementation." }],
+      authorization: reviewerAuth(goal.id),
     });
 
-    expect(done.status).toBe("done");
-    expect(done.review).toMatchObject({ verdict: "DONE", summary: "Reviewer verified the durable state and tests." });
-    expect(done.finalSummary).toBe("Goal core state reached DONE with reviewer evidence.");
-    const persisted = await readGoalFile(done.id);
-    expect(persisted).toEqual(done);
-    expect(persisted.childSessionIds).toEqual(["plan-child-session", "build-child-session"]);
+    expect(await readGoalFile(goal.id)).toEqual(done);
+    expect(done).toMatchObject({ status: "done", createdFromSessionId: SOURCE_SESSION_ID });
     expect(existsSync(join(workspaceRoot, PROJECT_STATE_DIR_NAME, "goals", done.id, `arti${"facts"}`))).toBe(false);
   });
 
-  test("persists NOT_DONE retry to second review without carrying previous receipt", async () => {
+  test("persists NOT_DONE retry without replacing Goal or main Session identity", async () => {
     const runner = createRunner();
-    const draft = await runner.create({
+    const goal = await runner.create({
       projectId: "project-a",
+      createdFromSessionId: SOURCE_SESSION_ID,
       objective: "Capture explicit retry semantics.",
-      acceptanceCriteria: "Retry increments attempt and clears current review.",
+      acceptanceCriteria: "Retry increments attempt and keeps stable ownership.",
     });
-    await runner.start(draft.id);
-    await runner.beginReview(draft.id);
-    const firstReview = await runner.finalizeReview(draft.id, {
+    await runner.beginReview(goal.id);
+    await runner.finalizeReview(goal.id, {
       expectedReviewGeneration: 1,
       verdict: "NOT_DONE",
-      summary: "Acceptance criteria are missing a regression test.",
-      unresolvedItems: ["Add regression test evidence"],
-      authorization: reviewerAuth(draft.id, "review-session-1"),
+      summary: "Regression evidence is missing.",
+      authorization: reviewerAuth(goal.id),
     });
-    expect(firstReview).toMatchObject({ status: "not_done", attempt: 1 });
-    expect(firstReview.review?.verdict).toBe("NOT_DONE");
+    const retry = await runner.retry(goal.id);
 
-    const retry = await runner.retry(draft.id);
-    expect(retry).toMatchObject({ status: "running", attempt: 2, mainSessionId: "main-session" });
+    expect(retry).toMatchObject({ id: goal.id, status: "running", attempt: 2, mainSessionId: goal.mainSessionId });
     expect(retry.review).toBeUndefined();
-    await runner.beginReview(draft.id);
-    const completed = await runner.finalizeReview(draft.id, {
-      expectedReviewGeneration: 2,
-      verdict: "DONE",
-      summary: "Regression test evidence is now present.",
-      evidenceRefs: [{ kind: "test_output", ref: "retry-tests", summary: "Regression test passed." }],
-      authorization: reviewerAuth(draft.id, "review-session-2"),
-    });
-
-    expect(completed).toMatchObject({ status: "done", attempt: 2 });
-    expect(completed.review).toMatchObject({ verdict: "DONE", reviewerSessionId: "review-session-2" });
-  });
-
-  test("old durable JSON is rejected instead of migrated", async () => {
-    const goalId = "550e8400-e29b-41d4-a716-446655440000";
-    const goalDir = join(workspaceRoot, PROJECT_STATE_DIR_NAME, "goals", goalId);
-    await mkdir(goalDir, { recursive: true });
-    await Bun.write(join(goalDir, "goal.json"), `${JSON.stringify({
-      id: goalId,
-      projectId: "project-a",
-      title: "Old durable state",
-      objective: "legacy",
-      acceptanceCriteria: "legacy",
-      status: "running",
-      attempt: 0,
-      pendingHitlIds: [],
-      approvalRefs: [],
-      childSessionIds: [],
-      [`resume${"Checkpoint"}`]: { version: 1, hitlId: "hitl-1" },
-      [`token${"Budget"}`]: { totalTokens: 1 },
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }, null, 2)}\n`);
-
-    await expect(manager.read(goalId)).rejects.toBeInstanceOf(GoalStateError);
   });
 });

@@ -6,7 +6,10 @@ import { createProcessRunner } from "../process/runner";
 import type { ProcessRunner, ProcessRunnerInput } from "../process/types";
 import { managedWorktreeNames, WorktreeService } from "./service";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__", "worktree-service");
+// A full test run may overlap with another validation process in the shared
+// checkout. Keep this module instance isolated so its cleanup cannot delete a
+// repository while another process is running Git inside it.
+const TMP_DIR = join(import.meta.dir, "__test_tmp__", `worktree-service-${crypto.randomUUID()}`);
 
 beforeEach(async () => {
   await rm(TMP_DIR, { recursive: true, force: true });

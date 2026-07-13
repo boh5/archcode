@@ -92,14 +92,16 @@ describe("Goal budget enforcement", () => {
 });
 
 async function createRunningGoal(budgetSummary: GoalBudgetSummary): Promise<GoalState> {
-  const goal = await projectContext.goalState.create({
+  const goal = await projectContext.goalState.commit({
+    id: crypto.randomUUID(),
     projectId: "test-project",
+    createdFromSessionId: crypto.randomUUID(),
     objective: "Exercise budget enforcement.",
     acceptanceCriteria: "Budget enforcement updates Goal state only.",
     mainSessionId: "session-budget",
   });
   await projectContext.goalState.updateBudgetSummary(goal.id, budgetSummary);
-  return await projectContext.goalState.start(goal.id, { mainSessionId: "session-budget" });
+  return await projectContext.goalState.read(goal.id);
 }
 
 function createGoalStore(goalId: string) {

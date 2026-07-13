@@ -17,7 +17,8 @@ import { migrateHitlOwnerFileProjectSlug } from "../hitl/owner-store";
 import { resolveHitlOwnerPath } from "../hitl/owner-paths";
 import { ProjectApprovalManager } from "../tools/permission/project-approvals";
 import type { ProjectContext, ProjectInfo } from "./types";
-import type { GoalState } from "@archcode/protocol";
+import type { Automation, AutomationAction, AutomationTrigger } from "@archcode/protocol";
+import type { GoalRunner } from "../goals/runner";
 
 export interface ProjectContextResolverOptions {
   /** Registry-backed ProjectInfo lookup. Missing projects must fail resolution. */
@@ -31,6 +32,19 @@ export interface ProjectContextResolverOptions {
     goalState: GoalStateManager;
     hitl: HitlService;
   }) => GoalCancellationCapability;
+  /** Application-level Goal orchestration supplied by runtime composition. */
+  goalRunnerFactory: (input: {
+    workspaceRoot: string;
+    project: ProjectInfo;
+    goalState: GoalStateManager;
+  }) => GoalRunner;
+  /** Runtime-owned Automation creation path used by the model-facing tool. */
+  createAutomation: (workspaceRoot: string, input: {
+    readonly name: string;
+    readonly trigger: AutomationTrigger;
+    readonly action: AutomationAction;
+    readonly createdFromSessionId: string;
+  }) => Promise<Automation>;
   /** Factory primarily for testing alternate HitlService construction. */
   hitlFactory?: (options: HitlServiceOptions) => HitlService;
   /** Shared SessionStoreManager used for owner-local HITL lookup and aggregation. */
@@ -41,7 +55,6 @@ export interface ProjectContextResolverOptions {
   memoryFactory?: (workspaceRoot: string) => MemoryFileManager;
   /** Factory primarily for testing ProjectApprovalManager load behavior. */
   approvalsFactory?: () => ProjectApprovalManager;
-  onGoalCreated?: (workspaceRoot: string, goal: GoalState) => void;
   logger?: Logger;
 }
 
@@ -51,12 +64,13 @@ export class ProjectContextResolver {
   readonly #projectInfoFactory: (workspaceRoot: string) => Promise<ProjectInfo> | ProjectInfo;
   readonly #goalStateFactory: (workspaceRoot: string) => GoalStateManager;
   readonly #goalCancellationFactory: ProjectContextResolverOptions["goalCancellationFactory"];
+  readonly #goalRunnerFactory: ProjectContextResolverOptions["goalRunnerFactory"];
+  readonly #createAutomation: ProjectContextResolverOptions["createAutomation"];
   readonly #hitlFactory: (options: HitlServiceOptions) => HitlService;
   readonly #sessionStoreManager: SessionStoreManager;
   readonly #resumeCoordinatorFactory: ProjectContextResolverOptions["resumeCoordinatorFactory"];
   readonly #memoryFactory: (workspaceRoot: string) => MemoryFileManager;
   readonly #approvalsFactory: () => ProjectApprovalManager;
-  readonly #onGoalCreated: ProjectContextResolverOptions["onGoalCreated"];
 
   constructor(options: ProjectContextResolverOptions) {
     this.#logger = (options.logger ?? silentLogger).child({ module: "projects.context" });
@@ -65,6 +79,8 @@ export class ProjectContextResolver {
       return new GoalStateManager(workspaceRoot, this.#logger.child({ module: "goals.state" }));
     });
     this.#goalCancellationFactory = options.goalCancellationFactory;
+    this.#goalRunnerFactory = options.goalRunnerFactory;
+    this.#createAutomation = options.createAutomation;
     this.#sessionStoreManager = options.sessionStoreManager;
     this.#resumeCoordinatorFactory = options.resumeCoordinatorFactory;
     this.#hitlFactory = options.hitlFactory ?? ((input) => new HitlService(input));
@@ -75,7 +91,6 @@ export class ProjectContextResolver {
       });
     });
     this.#approvalsFactory = options.approvalsFactory ?? (() => new ProjectApprovalManager(this.#logger.child({ module: "project.approvals" })));
-    this.#onGoalCreated = options.onGoalCreated;
   }
 
   async resolve(workspaceRoot: string): Promise<ProjectContext> {
@@ -131,14 +146,13 @@ export class ProjectContextResolver {
     const context: ProjectContext = {
       project,
       goalState,
+      goalRunner: this.#goalRunnerFactory({ workspaceRoot, project, goalState }),
+      createAutomation: (input) => this.#createAutomation(workspaceRoot, input),
       goalCancellation: this.#goalCancellationFactory({ workspaceRoot, project, goalState, hitl }),
       hitl,
       hitlResumeCoordinator,
       memory: this.#memoryFactory(workspaceRoot),
       approvals,
-      ...(this.#onGoalCreated === undefined
-        ? {}
-        : { onGoalCreated: (goal: GoalState) => this.#onGoalCreated?.(workspaceRoot, goal) }),
     };
     // Journal repair and durable resume claims are fail-closed before this
     // scan. recover() schedules claimed continuations without awaiting their

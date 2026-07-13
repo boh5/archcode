@@ -32,9 +32,6 @@ function withTrailingSeparator(path: string): string {
   return path.endsWith(sep) ? path : path + sep;
 }
 
-/** Lexically resolved output directory; canonicalization is deferred until a file is read. */
-const RESOLVED_OUTPUT_DIR = withTrailingSeparator(resolve(TOOL_OUTPUT_DIR));
-
 function findToolPartByCallId(
   messages: readonly StoredMessage[],
   callId: string,
@@ -66,11 +63,13 @@ function hasMetaField(
 async function resolveSafePath(
   fullOutputPath: string,
   callId: string,
+  outputDir: string,
 ): Promise<{ path: string } | { error: ToolExecutionResult }> {
   const resolved = resolve(fullOutputPath);
+  const resolvedOutputDir = withTrailingSeparator(resolve(outputDir));
 
   // ── Check 1: Path containment ──
-  if (!resolved.startsWith(RESOLVED_OUTPUT_DIR)) {
+  if (!resolved.startsWith(resolvedOutputDir)) {
     return {
       error: createToolErrorResult({
         kind: "workspace",
@@ -83,7 +82,7 @@ async function resolveSafePath(
   // ── Check 2: Resolve symlinks (defense in depth) ──
   try {
     const [canonicalOutputDir, realPath] = await Promise.all([
-      realpath(TOOL_OUTPUT_DIR),
+      realpath(outputDir),
       realpath(resolved),
     ]);
     if (!realPath.startsWith(withTrailingSeparator(canonicalOutputDir))) {
@@ -124,6 +123,7 @@ async function resolveSafePath(
 export async function executeViewToolOutput(
   input: ViewToolOutputInput,
   ctx: ToolExecutionContext,
+  options: { outputDir?: string } = {},
 ): Promise<string | ToolExecutionResult> {
   const { messages } = ctx.store.getState();
   const toolPart = findToolPartByCallId(messages, input.callId);
@@ -139,7 +139,11 @@ export async function executeViewToolOutput(
   // ── Persisted output on disk (fullOutputPath in meta) ──
   if (hasMetaField(toolPart) && toolPart.meta.fullOutputPath) {
     const fullOutputPath = String(toolPart.meta.fullOutputPath);
-    const result = await resolveSafePath(fullOutputPath, input.callId);
+    const result = await resolveSafePath(
+      fullOutputPath,
+      input.callId,
+      options.outputDir ?? TOOL_OUTPUT_DIR,
+    );
 
     if ("error" in result) {
       return result.error;

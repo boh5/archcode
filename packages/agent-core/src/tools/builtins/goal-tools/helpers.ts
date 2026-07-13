@@ -72,12 +72,12 @@ export function extractGoalToolAuthorization(ctx: ToolExecutionContext): GoalToo
   };
 }
 
-/** Goal drafts may only originate from an unbound interactive Engineer root Session. */
+/** Committed Goals may only originate from an unbound interactive Engineer root Session. */
 export function assertGoalCreateAuthorized(ctx: ToolExecutionContext): GoalToolAuthorizationContext {
   const authorization = extractGoalToolAuthorization(ctx);
   const isOrdinaryRoot = authorization.sessionId === authorization.rootSessionId
     && authorization.parentSessionId === undefined
-    && authorization.sessionRole === undefined
+    && (authorization.sessionRole === undefined || authorization.sessionRole === "standalone")
     && authorization.sessionGoalId === undefined;
   if (authorization.agentName !== "engineer" || !isOrdinaryRoot) {
     throw new GoalToolAuthorizationError(

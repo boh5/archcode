@@ -9,6 +9,7 @@ import { resolveContainedPath, SafePathError } from "../utils/safe-file";
 
 const PROJECT_SKILLS_DIR = join(PROJECT_STATE_DIR_NAME, "skills");
 const SKILL_FILE = "SKILL.md";
+const RESERVED_BUILTIN_SKILLS = new Set(["goal-create", "automation-create"]);
 
 export class SkillPathError extends Error {
   public readonly path: string;
@@ -136,9 +137,12 @@ export class SkillService {
   }
 
   async #candidates(projectRoot: string, name: string): Promise<SkillCandidate[]> {
+    const builtin = this.#builtinSkills[name];
+    if (RESERVED_BUILTIN_SKILLS.has(name)) {
+      return [{ source: "builtin", content: builtin }];
+    }
     const projectPath = await this.#resolveSkillPath(this.#projectSkillsRoot(projectRoot), name);
     const userPath = await this.#resolveSkillPath(this.userSkillsRoot, name);
-    const builtin = this.#builtinSkills[name];
 
     return [
       { source: "project", path: projectPath, content: await this.#readFileOrUndefined(projectPath) },

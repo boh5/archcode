@@ -10,7 +10,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test --max-concurrency=1"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^2.0.45",

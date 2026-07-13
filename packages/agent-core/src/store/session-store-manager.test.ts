@@ -5,6 +5,7 @@ import { createEmptySessionStats, type CompressionBlockSnapshot, type GoalState,
 import { createEmptyCompressionState } from "../compression";
 import { SessionStoreManager } from "./session-store-manager";
 import { NotRootSessionError, SessionInitialPersistenceError, SessionTreeIntegrityError } from "./errors";
+import { SessionFileIdentityConflictError } from "./session-store-manager";
 import { sessionFileInternals } from "./helpers";
 import { silentLogger } from "../logger";
 
@@ -120,6 +121,52 @@ describe("SessionStoreManager", () => {
     } finally {
       sessionFileInternals.saveSessionTranscript = originalSave;
     }
+  });
+
+  test("ensureSessionFile creates a caller-selected durable Session identity", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    const goalId = sessionId();
+
+    const created = await manager.ensureSessionFile(TMP_DIR, id, {
+      agentName: "goal_lead",
+      rootSessionId: id,
+      goalId,
+      sessionRole: "main",
+      cwd: TMP_DIR,
+    });
+
+    expect(created).toMatchObject({
+      sessionId: id,
+      rootSessionId: id,
+      agentName: "goal_lead",
+      goalId,
+      sessionRole: "main",
+      cwd: TMP_DIR,
+    });
+    expect((await manager.getSessionFile(TMP_DIR, id)).sessionId).toBe(id);
+  });
+
+  test("ensureSessionFile verifies an existing stable identity without overwriting it", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    const goalId = sessionId();
+    const options = {
+      agentName: "goal_lead" as const,
+      rootSessionId: id,
+      goalId,
+      sessionRole: "main" as const,
+      cwd: TMP_DIR,
+    };
+    const first = await manager.ensureSessionFile(TMP_DIR, id, options);
+
+    await expect(manager.ensureSessionFile(TMP_DIR, id, options)).resolves.toEqual(first);
+    await expect(manager.ensureSessionFile(TMP_DIR, id, {
+      ...options,
+      goalId: sessionId(),
+    })).rejects.toBeInstanceOf(SessionFileIdentityConflictError);
+
+    expect((await manager.getSessionFile(TMP_DIR, id)).goalId).toBe(goalId);
   });
 
   test("a background persistence failure poisons the Session until it is reloaded", async () => {
@@ -395,24 +442,29 @@ describe("SessionStoreManager", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
     const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
+    const goalId = crypto.randomUUID();
+    const createdFromSessionId = crypto.randomUUID();
+    const mainSessionId = crypto.randomUUID();
     const goalState: GoalState = {
-      version: 2,
-      id: "goal-1",
+      version: 3,
+      id: goalId,
       projectId: "project-1",
-      title: "Goal",
+      createdFromSessionId,
+      title: null,
       objective: "Do the Goal.",
       acceptanceCriteria: "Reviewer can decide DONE from evidence.",
       useWorktree: false,
       status: "running",
-      attempt: 0,
+      attempt: 1,
       reviewGeneration: 0,
-      mainSessionId: "goal-main",
+      mainSessionId,
       pendingHitlIds: [],
       approvalRefs: [],
       appliedHitlIds: [],
       childSessionIds: [],
       createdAt: "2026-07-07T00:00:00.000Z",
       updatedAt: "2026-07-07T00:00:00.000Z",
+      startedAt: "2026-07-07T00:00:00.000Z",
     };
     const hitlRequest: HitlRecord = {
       hitlId: "hitl-1",
@@ -425,7 +477,7 @@ describe("SessionStoreManager", () => {
       createdAt: "2026-07-07T00:00:00.000Z",
       updatedAt: "2026-07-07T00:00:00.000Z",
     };
-    store.getState().append({ type: "goal.state_change", goalId: "goal-1", status: "running", state: goalState });
+    store.getState().append({ type: "goal.state_change", goalId, status: "running", state: goalState });
     store.getState().append({ type: "hitl.request", request: hitlRequest });
     store.getState().append({
       type: "hitl.resolved",
@@ -434,7 +486,7 @@ describe("SessionStoreManager", () => {
       response: { type: "question_answer", answers: ["yes"] },
     });
     const stateAfterDottedEvents = store.getState() as ReturnType<typeof store.getState> & Pick<SessionProjection, "goals" | "hitlRequests">;
-    expect(stateAfterDottedEvents.goals?.["goal-1"]).toEqual(goalState);
+    expect(stateAfterDottedEvents.goals?.[goalId]).toEqual(goalState);
     expect(stateAfterDottedEvents.hitlRequests).toMatchObject([
       { hitlId: "hitl-1", status: "resolved", response: { type: "question_answer", answers: ["yes"] } },
     ]);

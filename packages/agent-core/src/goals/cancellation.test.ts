@@ -108,8 +108,10 @@ async function createRunningGoal(
   fixture: Fixture,
   mainSessionId = crypto.randomUUID(),
 ): Promise<GoalState> {
-  const goal = await fixture.goalState.create({
+  const goal = await fixture.goalState.commit({
+    id: crypto.randomUUID(),
     projectId: "project-a",
+    createdFromSessionId: crypto.randomUUID(),
     objective: "Cancel every durable execution owner safely.",
     acceptanceCriteria: "All Session families stop and durable blockers are cleared.",
     mainSessionId,
@@ -120,7 +122,7 @@ async function createRunningGoal(
     agentName: "engineer",
   });
   await fixture.sessions.flushSession(mainSessionId, TMP_ROOT);
-  return await fixture.goalState.start(goal.id, { mainSessionId });
+  return goal;
 }
 
 function hitlInput(ownerId: string, ownerType: "session" | "goal", hitlId: string) {
@@ -484,7 +486,6 @@ describe("GoalCancellationService", () => {
       const committed = await coldGoalState.read(goal.id);
       expect(committed).toMatchObject({ status: "cancelled", pendingHitlIds: [] });
       expect(committed.blocker).toBeUndefined();
-      await expect(fixture.goalState.start(goal.id, { mainSessionId: mainId })).rejects.toThrow();
       await expect(fixture.goalState.retry(goal.id)).rejects.toThrow();
       const goalResumeAdapter = new GoalHitlResumeAdapter({
         workspaceRoot: TMP_ROOT,

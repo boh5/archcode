@@ -43,6 +43,10 @@ function createTestRuntime(projectRegistry: ProjectRegistry): Omit<TestFixture, 
     goalCancellationFactory: ({ goalState }) => ({
       cancel: async (goalId, request) => await goalState.cancel(goalId, request.reason),
     }),
+    goalRunnerFactory: () => ({}) as never,
+    createAutomation: mock(async () => {
+      throw new Error("not implemented");
+    }),
     logger: silentLogger,
     sessionStoreManager,
     resumeCoordinatorFactory: (input) => new ResumeCoordinator({
@@ -466,10 +470,14 @@ function mutationUrl(record: Pick<HitlRecord, "owner" | "hitlId">, action: "resp
 }
 
 async function createGoal(manager: GoalStateManager, projectSlug: string, title: string) {
-  return await manager.create({
+  const goalId = crypto.randomUUID();
+  return await manager.commit({
+    id: goalId,
     projectId: projectSlug,
+    createdFromSessionId: crypto.randomUUID(),
     objective: `Exercise HITL route behavior for ${title}.`,
     acceptanceCriteria: "Reviewer can decide DONE from HITL route projections.",
+    mainSessionId: crypto.randomUUID(),
   });
 }
 

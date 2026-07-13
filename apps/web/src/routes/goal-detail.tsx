@@ -1,15 +1,14 @@
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, GitBranch, Play, RotateCcw, XCircle } from "lucide-react";
-import { useGoal } from "../api/queries";
-import { useRunGoal, useRetryGoal, useCancelGoal } from "../api/mutations";
+import { ArrowLeft, GitBranch, RotateCcw, XCircle } from "lucide-react";
+import { useGoal, useSession } from "../api/queries";
+import { useRetryGoal, useCancelGoal } from "../api/mutations";
 import type { GoalStatus } from "../api/types";
 import { HitlInbox } from "../components/features/HitlCard";
 import { useRealtimeHitl } from "../store/hitl-store";
 import { useWorkbenchLayout } from "../context/workbench-layout";
 import { InspectorToggleButton } from "../components/features/InspectorToggleButton";
 
-const STATUS_BADGE_CLASS: Record<GoalStatus, string> = {
-  draft: "bg-bg-active text-text-muted",
+const STATUS_BADGE_CLASS: Partial<Record<GoalStatus, string>> = {
   running: "bg-success-muted text-success",
   blocked: "bg-warning-muted text-warning",
   reviewing: "bg-info-muted text-info",
@@ -23,7 +22,6 @@ export function GoalDetailRoute() {
   const { slug = "", goalId = "" } = useParams<{ slug: string; goalId: string }>();
   const navigate = useNavigate();
   const { data: goal, isLoading, error } = useGoal(slug, goalId);
-  const runGoal = useRunGoal();
   const retryGoal = useRetryGoal();
   const cancelGoal = useCancelGoal();
   const layout = useWorkbenchLayout();
@@ -34,14 +32,12 @@ export function GoalDetailRoute() {
     ownerId: goalId,
     includeChildren: true,
   });
-  const mutationError = runGoal.error ?? retryGoal.error ?? cancelGoal.error;
+  const sourceSessionId = goal?.createdFromSessionId ?? "";
+  const sourceSession = useSession(slug, sourceSessionId);
+  const mutationError = retryGoal.error ?? cancelGoal.error;
 
   const handleBack = () => {
     navigate(`/projects/${slug}/goals`);
-  };
-
-  const handleRun = () => {
-    runGoal.mutate({ slug, goalId });
   };
 
   const handleRetry = () => {
@@ -73,9 +69,8 @@ export function GoalDetailRoute() {
     );
   }
 
-  const canRun = goal.status === "draft";
   const canRetry = goal.status === "not_done" || goal.status === "failed";
-  const canCancel = goal.status === "draft" || goal.status === "running" || goal.status === "blocked" || goal.status === "reviewing" || goal.status === "not_done" || goal.status === "failed";
+  const canCancel = goal.status === "running" || goal.status === "blocked" || goal.status === "reviewing" || goal.status === "not_done" || goal.status === "failed";
 
   return (
     <div className="flex h-full flex-col">
@@ -90,19 +85,6 @@ export function GoalDetailRoute() {
         <span className="text-text-muted">/</span>
         <span className="font-semibold text-sm text-text-primary truncate">{goal.title || "Untitled"}</span>
         <div className="flex items-center gap-2 ml-auto">
-          {canRun && (
-            <button
-              type="button"
-              onClick={handleRun}
-              disabled={runGoal.isPending}
-              aria-label="Run goal"
-              title="Run goal"
-              className="inline-flex items-center gap-1.5 rounded-sm bg-accent px-3 py-1.5 text-[12.5px] font-medium text-bg-base transition-colors duration-150 hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              <Play size={13} />
-              <span className="max-[900px]:hidden">{runGoal.isPending ? "Starting…" : "Run Goal"}</span>
-            </button>
-          )}
           {canRetry && (
             <button
               type="button"
@@ -152,24 +134,29 @@ export function GoalDetailRoute() {
               className="gap-2"
             />
           </div>
-          {goal.mainSessionId ? (
-            <Link
-              to={`/projects/${slug}/sessions/${goal.mainSessionId}`}
-              className="flex items-center gap-3 rounded-md border border-border-default bg-bg-surface p-4 transition-colors hover:bg-bg-hover"
-            >
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent-subtle text-accent"><GitBranch size={17} /></span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm font-semibold text-text-primary">Open execution session</span>
-                <span className="block truncate font-mono text-[11px] text-text-muted">{goal.mainSessionId}</span>
-              </span>
-              <span className="text-xs text-text-tertiary">Open →</span>
-            </Link>
-          ) : (
-            <div className="rounded-md border border-border-subtle bg-bg-surface p-4">
-              <div className="text-sm font-medium text-text-primary">Execution status</div>
-              <div className="mt-1 text-xs capitalize text-text-tertiary">{goal.status} · attempt {goal.attempt}</div>
-            </div>
-          )}
+          <Link
+            to={`/projects/${slug}/sessions/${goal.mainSessionId}`}
+            className="flex items-center gap-3 rounded-md border border-border-default bg-bg-surface p-4 transition-colors hover:bg-bg-hover"
+          >
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent-subtle text-accent"><GitBranch size={17} /></span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold text-text-primary">Open execution session</span>
+              <span className="block truncate font-mono text-[11px] text-text-muted">{goal.mainSessionId}</span>
+            </span>
+            <span className="text-xs text-text-tertiary">Open →</span>
+          </Link>
+          <section className="rounded-md border border-border-default bg-bg-surface p-4">
+            <h2 className="font-semibold">Created from</h2>
+            {sourceSessionId && sourceSession.isLoading ? (
+              <p className="mt-2 text-sm text-text-tertiary">Loading…</p>
+            ) : sourceSessionId && sourceSession.data ? (
+              <Link className="mt-2 block text-sm text-accent hover:underline" to={`/projects/${slug}/sessions/${sourceSessionId}`}>
+                {sourceSession.data.title || sourceSessionId}
+              </Link>
+            ) : (
+              <p className="mt-2 text-sm text-text-tertiary">Unavailable</p>
+            )}
+          </section>
           {goal.lastFailureSummary && (
             <div className="rounded-md border border-warning/30 bg-warning-muted p-4 text-xs leading-5 text-warning">
               {goal.lastFailureSummary}

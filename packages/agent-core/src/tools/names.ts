@@ -39,5 +39,6 @@ export {
   TOOL_MEMORY_WRITE,
   TOOL_GOAL_CREATE,
   TOOL_GOAL_MANAGE,
+  TOOL_AUTOMATION_CREATE,
   TOOL_COMPRESS,
 } from "@archcode/protocol";

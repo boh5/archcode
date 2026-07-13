@@ -1,53 +1,54 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 import type { GoalEvidenceRef } from "@archcode/protocol";
 
-import { GoalRunner, GoalRunnerError, type GoalRunnerCreateSessionOptions, type GoalRunnerOptions } from "./runner";
+import { silentLogger } from "../logger";
+import { SessionStoreManager } from "../store/session-store-manager";
+import { getSessionPath } from "../store/sessions-dir";
+import { managedWorktreeNames } from "../worktrees";
+import { GoalRunner, GoalSourceSessionError, type GoalRunnerOptions } from "./runner";
 import { GoalReviewFinalizationError, GoalReviewerAuthorizationError, GoalStateManager, GoalTransitionError } from "./state";
-import { WorktreeService } from "../worktrees";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-runner");
+const SOURCE_SESSION_ID = "11111111-1111-4111-8111-111111111111";
 
 let workspaceRoot = "";
 let manager: GoalStateManager;
+let sessions: SessionStoreManager;
 
 beforeEach(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });
   await mkdir(TMP_ROOT, { recursive: true });
   workspaceRoot = await mkdtemp(join(TMP_ROOT, "workspace-"));
   manager = new GoalStateManager(workspaceRoot);
+  sessions = new SessionStoreManager({ logger: silentLogger });
+  await sessions.createSessionFile(workspaceRoot, { agentName: "engineer" }, SOURCE_SESSION_ID);
 });
 
 afterAll(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });
 });
 
-function createRunner(sessionIds = ["main-session-1", "retry-session-2"]): GoalRunner {
-  const remaining = [...sessionIds];
-  return new GoalRunner(runnerOptions({
-    createSession: mock(async () => remaining.shift() ?? `session-${crypto.randomUUID()}`),
-  }));
-}
-
 function runnerOptions(overrides: Partial<GoalRunnerOptions> = {}): GoalRunnerOptions {
   return {
     goalStateManager: manager,
     workspaceRoot,
-    createSession: mock(async () => `session-${crypto.randomUUID()}`),
-    getSessionCwd: mock(async () => workspaceRoot),
-    isSessionActive: mock(async () => false),
+    readSourceSession: (root, id) => sessions.getSessionFile(root, id),
+    ensureSessionFile: (root, id, options) => sessions.ensureSessionFile(root, id, options),
+    startCheckedExecutionWithinGoalClaim: mock(async () => ({}) as never),
     ...overrides,
   };
 }
 
-async function createDraft(runner: GoalRunner) {
-  return runner.create({
+function createInput() {
+  return {
     projectId: "project-a",
-    objective: "Exercise the thin goal runner facade.",
-    acceptanceCriteria: "Runner delegates to state manager and enforces reviewer finalization.",
-  });
+    createdFromSessionId: SOURCE_SESSION_ID,
+    objective: "Create and activate a committed Goal.",
+    acceptanceCriteria: "One stable Goal Lead Session and initial execution are recovered.",
+  };
 }
 
 function evidenceRef(summary = "Targeted tests passed"): GoalEvidenceRef {
@@ -63,329 +64,240 @@ function reviewerAuth(goalId: string) {
   };
 }
 
-describe("GoalRunner", () => {
-  test("creates, patches, and starts a goal with a main session", async () => {
-    const runner = createRunner();
-    const draft = await createDraft(runner);
-    const patched = await runner.patchDraft(draft.id, { objective: "Exercise the patched goal runner facade." });
-    const running = await runner.start(patched.id);
+describe("GoalRunner committed creation", () => {
+  test("commits a running Goal before creating its stable Goal Lead Session and execution", async () => {
+    const observed: string[] = [];
+    const onGoalCommitted = mock(async (goal) => {
+      observed.push(`commit:${goal.id}`);
+      expect(await sessions.getSessionFile(workspaceRoot, goal.mainSessionId).catch(() => undefined)).toBeUndefined();
+    });
+    const start = mock(async (input) => {
+      observed.push(`start:${input.sessionId}`);
+      return {} as never;
+    });
+    const runner = new GoalRunner(runnerOptions({ onGoalCommitted, startCheckedExecutionWithinGoalClaim: start }));
 
-    expect(running).toMatchObject({
+    const goal = await runner.create(createInput());
+    const main = await sessions.getSessionFile(workspaceRoot, goal.mainSessionId);
+
+    expect(goal).toMatchObject({
+      version: 3,
       status: "running",
-      title: null,
-      objective: "Exercise the patched goal runner facade.",
-      mainSessionId: "main-session-1",
+      createdFromSessionId: SOURCE_SESSION_ID,
+      startedAt: expect.any(String),
     });
-    expect(await manager.read(draft.id)).toMatchObject({ status: "running", mainSessionId: "main-session-1" });
-  });
-
-  test("start is idempotent for an already running matching session", async () => {
-    const runner = createRunner(["main-session-1"]);
-    const draft = await createDraft(runner);
-
-    const first = await runner.start(draft.id, { mainSessionId: "reserved-session" });
-    const second = await runner.start(draft.id, { mainSessionId: "reserved-session" });
-
-    expect(first.status).toBe("running");
-    expect(second).toEqual(first);
-  });
-
-  test("does not pass generated Goal title metadata to the main session", async () => {
-    const createSession = mock(async () => "main-session-1");
-    const runner = new GoalRunner(runnerOptions({ createSession }));
-    const draft = await createDraft(runner);
-    await manager.setTitleIfEmpty(draft.id, "Generated goal title");
-
-    await runner.start(draft.id);
-
-    expect(createSession).toHaveBeenCalledWith({
-      cwd: workspaceRoot,
-      goalId: draft.id,
+    expect(main).toMatchObject({
+      sessionId: goal.mainSessionId,
+      rootSessionId: goal.mainSessionId,
+      agentName: "goal_lead",
       sessionRole: "main",
+      goalId: goal.id,
+    });
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({
+      slug: "project-a",
+      sessionId: goal.mainSessionId,
+      executionId: `goal-initial:${goal.id}`,
+    }));
+    expect(observed).toEqual([`commit:${goal.id}`, `start:${goal.mainSessionId}`]);
+    expect(onGoalCommitted).toHaveBeenCalledTimes(1);
+  });
+
+  test("keeps committed Goal ownership after its source Session is deleted", async () => {
+    const runner = new GoalRunner(runnerOptions());
+    const goal = await runner.create(createInput());
+
+    sessions.delete(SOURCE_SESSION_ID, workspaceRoot);
+    await rm(dirname(getSessionPath(workspaceRoot, SOURCE_SESSION_ID)), {
+      recursive: true,
+      force: true,
+    });
+
+    await expect(sessions.getSessionFile(workspaceRoot, SOURCE_SESSION_ID)).rejects.toThrow();
+    expect(await manager.read(goal.id)).toMatchObject({
+      status: "running",
+      createdFromSessionId: SOURCE_SESSION_ID,
+      mainSessionId: goal.mainSessionId,
+    });
+    expect(await sessions.getSessionFile(workspaceRoot, goal.mainSessionId)).toMatchObject({
+      goalId: goal.id,
+      agentName: "goal_lead",
     });
   });
 
-  test("pins non-isolated Goal start and retry Sessions to the canonical root", async () => {
-    const createSession = mock(async (_options?: GoalRunnerCreateSessionOptions) => `session-${createSession.mock.calls.length + 1}`);
-    const runner = new GoalRunner(runnerOptions({ createSession }));
-    const draft = await createDraft(runner);
+  test("rejects every non-ordinary source identity before committing", async () => {
+    const invalidSources = [
+      { agentName: "goal_lead" as const },
+      { agentName: "engineer" as const, rootSessionId: crypto.randomUUID() },
+      { agentName: "engineer" as const, parentSessionId: crypto.randomUUID() },
+      { agentName: "engineer" as const, goalId: crypto.randomUUID() },
+      { agentName: "engineer" as const, sessionRole: "main" as const },
+    ];
 
-    await runner.start(draft.id);
-    await runner.beginReview(draft.id);
-    await runner.finalizeReview(draft.id, {
-      expectedReviewGeneration: 1,
-      verdict: "NOT_DONE",
-      summary: "Retry in the canonical checkout.",
-      authorization: reviewerAuth(draft.id),
-    });
-    await runner.retry(draft.id);
-
-    expect(createSession.mock.calls.map((call) => call[0])).toEqual([
-      expect.objectContaining({ cwd: workspaceRoot }),
-    ]);
+    for (const [index, identity] of invalidSources.entries()) {
+      const sourceId = crypto.randomUUID();
+      const source = sessions.create(sourceId, workspaceRoot, identity);
+      await sessions.flushSession(sourceId, workspaceRoot);
+      const runner = new GoalRunner(runnerOptions({
+        readSourceSession: async () => (await sessions.getSessionFile(workspaceRoot, source.getState().sessionId)),
+      }));
+      await expect(runner.create({ ...createInput(), createdFromSessionId: sourceId }))
+        .rejects.toBeInstanceOf(GoalSourceSessionError);
+      expect(await manager.listGoals()).toHaveLength(index === invalidSources.length ? 1 : 0);
+    }
   });
 
-  test("rejects an invalid start before preparing a Goal worktree or creating a Session", async () => {
-    const createSession = mock(async () => "orphan-session");
-    const createWorktree = mock(async () => {
-      throw new Error("must not prepare worktree");
-    });
-    const findManaged = mock(async () => undefined);
-    const runner = new GoalRunner(runnerOptions({
-      createSession,
-      worktreeService: {
-        create: createWorktree,
-        findManaged,
-        validateManagedClaim: mock(async () => {
-          throw new Error("must not validate worktree");
-        }),
-        remove: mock(async () => false),
-      } as never,
-    }));
-    const goal = await manager.create({
-      projectId: "project-a",
-      objective: "Reject invalid execution before resource allocation.",
-      acceptanceCriteria: "No worktree or Session is orphaned.",
-      useWorktree: true,
-    });
-    await manager.start(goal.id, { mainSessionId: "existing-session" });
-    await manager.beginReview(goal.id);
+  test("recovers the commit-to-session window with the same preallocated identity", async () => {
+    const firstEnsure = mock(async () => { throw new Error("temporary storage outage"); });
+    const first = new GoalRunner(runnerOptions({ ensureSessionFile: firstEnsure }));
+    const committed = await first.create(createInput());
+    expect(committed.status).toBe("running");
+    expect(await sessions.getSessionFile(workspaceRoot, committed.mainSessionId).catch(() => undefined)).toBeUndefined();
 
-    await expect(runner.start(goal.id)).rejects.toBeInstanceOf(GoalRunnerError);
-    expect(findManaged).not.toHaveBeenCalled();
-    expect(createWorktree).not.toHaveBeenCalled();
-    expect(createSession).not.toHaveBeenCalled();
+    const start = mock(async () => ({}) as never);
+    const restarted = new GoalRunner(runnerOptions({ startCheckedExecutionWithinGoalClaim: start }));
+    await restarted.reconcile();
+
+    expect((await sessions.getSessionFile(workspaceRoot, committed.mainSessionId)).goalId).toBe(committed.id);
+    expect(start).toHaveBeenCalledTimes(1);
   });
 
-  test("running retry is idempotent only for the same active main Session", async () => {
-    const createSession = mock(async () => "orphan-retry-session");
-    const goal = await createDraft(createRunner());
-    const running = await manager.start(goal.id, { mainSessionId: "running-session" });
-    const inactiveRunner = new GoalRunner(runnerOptions({
-      createSession,
-      getSessionCwd: mock(async () => workspaceRoot),
-      isSessionActive: mock(async () => false),
+  test("recovers the worktree-to-session window without creating a second worktree", async () => {
+    const createWorktree = mock(async (input) => {
+      const names = managedWorktreeNames({ owner: input.owner });
+      return {
+        canonicalRoot: workspaceRoot,
+        managedRoot: join(workspaceRoot, ".archcode-worktrees"),
+        worktreePath: join(workspaceRoot, ".archcode-worktrees", names.worktreeName),
+        worktreeName: names.worktreeName,
+        branchName: names.branchName,
+        baseSha: "a".repeat(40),
+        resolvedHeadSha: "a".repeat(40),
+        canonicalStatus: { dirty: false, entries: [] },
+      };
+    });
+    const validateManagedClaim = mock(async (input) => ({
+      worktree: {
+        path: input.path,
+        branchName: input.branchName,
+        headSha: "a".repeat(40),
+        isManaged: true,
+      },
+      baseSha: input.baseSha ?? "a".repeat(40),
     }));
-
-    await expect(inactiveRunner.retry(goal.id)).rejects.toBeInstanceOf(GoalRunnerError);
-    await expect(inactiveRunner.retry(goal.id)).rejects.toBeInstanceOf(GoalRunnerError);
-    expect(createSession).not.toHaveBeenCalled();
-
-    const activeRunner = new GoalRunner(runnerOptions({
-      createSession,
-      getSessionCwd: mock(async () => workspaceRoot),
-      isSessionActive: mock(async (sessionId) => sessionId === "running-session"),
+    const worktreeService = {
+      create: createWorktree,
+      findManaged: mock(async () => undefined),
+      validateManagedClaim,
+      remove: mock(async () => ({ detached: true, branchDeleted: true })),
+    } as never;
+    const first = new GoalRunner(runnerOptions({
+      worktreeService,
+      ensureSessionFile: mock(async () => { throw new Error("temporary Session persistence outage"); }),
     }));
-    await expect(activeRunner.retry(goal.id)).resolves.toEqual(running);
-    expect(createSession).not.toHaveBeenCalled();
+    const goal = await first.create({ ...createInput(), useWorktree: true });
+    expect(goal.worktree).toBeDefined();
+
+    const restarted = new GoalRunner(runnerOptions({ worktreeService }));
+    await restarted.reconcile();
+
+    expect(createWorktree).toHaveBeenCalledTimes(1);
+    expect(validateManagedClaim).toHaveBeenCalledTimes(1);
+    expect((await sessions.getSessionFile(workspaceRoot, goal.mainSessionId)).cwd).toBe(goal.worktree!.path);
   });
 
-  test("creates one isolated Goal worktree and reuses its cwd for retry sessions", async () => {
-    await initializeGitRepo(workspaceRoot);
-    const sessionCwds = new Map<string, string>();
-    const createSession = mock(async (options?: GoalRunnerCreateSessionOptions) => {
-      const sessionId = `session-${createSession.mock.calls.length + 1}`;
-      if (options?.cwd !== undefined) sessionCwds.set(sessionId, options.cwd);
-      return sessionId;
+  test("recovers after Session persistence without accepting a second initial execution", async () => {
+    const acceptedThenUnknown = mock(async (input) => {
+      const store = await sessions.getOrLoad(input.sessionId, workspaceRoot);
+      store.getState().append({ type: "execution-start", executionId: input.executionId });
+      await sessions.flushSession(input.sessionId, workspaceRoot);
+      throw new Error("connection dropped after execution acceptance");
     });
-    const runner = new GoalRunner(runnerOptions({
-      createSession,
-      getSessionCwd: mock(async (sessionId) => sessionCwds.get(sessionId)),
-    }));
-    const draft = await runner.create({
-      projectId: "project-a",
-      objective: "Implement in a Goal worktree.",
-      acceptanceCriteria: "Retry continues in the same isolated checkout.",
-      useWorktree: true,
-    });
+    const first = new GoalRunner(runnerOptions({ startCheckedExecutionWithinGoalClaim: acceptedThenUnknown }));
+    const goal = await first.create(createInput());
 
-    const running = await runner.start(draft.id);
-    const firstCwd = (createSession.mock.calls[0]?.[0] as { cwd?: string } | undefined)?.cwd;
-    expect(firstCwd).toBe(running.worktree?.path);
-    await runner.beginReview(draft.id);
-    await runner.finalizeReview(draft.id, {
-      expectedReviewGeneration: 1,
+    const shouldNotReplay = mock(async () => ({}) as never);
+    await new GoalRunner(runnerOptions({ startCheckedExecutionWithinGoalClaim: shouldNotReplay })).reconcile();
+
+    const session = await sessions.getSessionFile(workspaceRoot, goal.mainSessionId);
+    expect(session.executions.filter((execution) => execution.id === `goal-initial:${goal.id}`)).toHaveLength(1);
+    expect(shouldNotReplay).not.toHaveBeenCalled();
+  });
+
+  test("leaves capacity and busy failures recoverable but marks deterministic identity conflicts failed", async () => {
+    for (const name of ["SessionFamilyActiveError", "ConcurrentSessionLimitError"]) {
+      const failure = Object.assign(new Error(name), { name });
+      const runner = new GoalRunner(runnerOptions({
+        startCheckedExecutionWithinGoalClaim: mock(async () => { throw failure; }),
+      }));
+      expect((await runner.create(createInput())).status).toBe("running");
+    }
+
+    const conflicting = new GoalRunner(runnerOptions({
+      ensureSessionFile: async (root, id, options) => {
+        const session = await sessions.ensureSessionFile(root, id, options);
+        return { ...session, goalId: crypto.randomUUID() };
+      },
+    }));
+    const failed = await conflicting.create(createInput());
+    expect(failed).toMatchObject({ status: "failed", lastError: { name: "GoalRunnerError" } });
+  });
+});
+
+describe("GoalRunner lifecycle", () => {
+  test("preserves block, review, retry, failure, cancellation, children, and budget lifecycle", async () => {
+    const runner = new GoalRunner(runnerOptions());
+    const goal = await runner.create(createInput());
+    const blocked = await runner.block(goal.id, { kind: "approval", summary: "Need approval", resumeStatus: "reviewing" });
+    expect(blocked.status).toBe("blocked");
+    expect((await runner.clearBlocker(goal.id)).status).toBe("reviewing");
+    const notDone = await runner.finalizeReview(goal.id, {
+      expectedReviewGeneration: 0,
       verdict: "NOT_DONE",
       summary: "More work is required.",
-      authorization: reviewerAuth(draft.id),
+      authorization: reviewerAuth(goal.id),
     });
-
-    await runner.retry(draft.id);
-    expect(createSession).toHaveBeenCalledTimes(1);
-    expect((createSession.mock.calls[0]?.[0] as { cwd?: string } | undefined)?.cwd).toBe(firstCwd);
-  });
-
-  test("rejects a preassigned Session whose cwd does not match an isolated Goal", async () => {
-    await initializeGitRepo(workspaceRoot);
-    const runner = new GoalRunner(runnerOptions({
-      createSession: mock(async () => "unused-session"),
-      getSessionCwd: mock(async () => workspaceRoot),
-    }));
-    const draft = await runner.create({
-      projectId: "project-a",
-      objective: "Validate an existing Session.",
-      acceptanceCriteria: "The Session must already use the Goal worktree.",
-      useWorktree: true,
-    });
-    await manager.setMainSession(draft.id, "canonical-session");
-
-    await expect(runner.start(draft.id)).rejects.toMatchObject({ name: "GoalRunnerError" });
-    expect(await manager.read(draft.id)).toMatchObject({ status: "draft", mainSessionId: "canonical-session" });
-    expect((await manager.read(draft.id)).worktree?.path).not.toBe(workspaceRoot);
-  });
-
-  test("revalidates the selected Session cwd before an idempotent isolated start", async () => {
-    await initializeGitRepo(workspaceRoot);
-    let sessionCwd: string | undefined;
-    const createSession = mock(async (options?: GoalRunnerCreateSessionOptions) => {
-      sessionCwd = options?.cwd;
-      return "isolated-session";
-    });
-    const runner = new GoalRunner(runnerOptions({
-      createSession,
-      getSessionCwd: mock(async () => sessionCwd),
-    }));
-    const draft = await runner.create({
-      projectId: "project-a",
-      objective: "Keep idempotent claims inside the Goal worktree.",
-      acceptanceCriteria: "A stale Session cwd cannot bypass isolated Goal validation.",
-      useWorktree: true,
-    });
-    const running = await runner.start(draft.id);
-    expect(sessionCwd).toBe(running.worktree?.path);
-
-    sessionCwd = workspaceRoot;
-    await expect(runner.start(draft.id, { mainSessionId: "isolated-session" }))
-      .rejects.toBeInstanceOf(GoalRunnerError);
-    expect((await manager.read(draft.id)).mainSessionId).toBe("isolated-session");
-  });
-
-  test("blocks and clears back to requested resume status", async () => {
-    const runner = createRunner();
-    const draft = await createDraft(runner);
-    await runner.start(draft.id);
-
-    const blocked = await runner.block(draft.id, {
-      kind: "approval",
-      summary: "Need approval",
-      resumeStatus: "reviewing",
-    });
-    expect(blocked).toMatchObject({ status: "blocked", pendingHitlIds: [] });
-
-    const reviewing = await runner.clearBlocker(draft.id);
-    expect(reviewing).toMatchObject({ status: "reviewing", pendingHitlIds: [] });
-  });
-
-  test("finalizes DONE only from reviewer authorization with evidence", async () => {
-    const runner = createRunner();
-    const draft = await createDraft(runner);
-    await runner.start(draft.id);
-    await runner.beginReview(draft.id);
-
-    await expect(runner.finalizeReview(draft.id, {
-      expectedReviewGeneration: 1,
-      verdict: "DONE",
-      summary: "Missing evidence.",
-      evidenceRefs: [],
-      authorization: reviewerAuth(draft.id),
-    })).rejects.toBeInstanceOf(GoalReviewFinalizationError);
-    await expect(runner.finalizeReview(draft.id, {
-      expectedReviewGeneration: 1,
-      verdict: "DONE",
-      summary: "Wrong agent.",
-      evidenceRefs: [evidenceRef()],
-      authorization: { ...reviewerAuth(draft.id), agentName: "build" },
-    })).rejects.toBeInstanceOf(GoalReviewerAuthorizationError);
-
-    const done = await runner.finalizeReview(draft.id, {
-      expectedReviewGeneration: 1,
-      verdict: "DONE",
-      summary: "Reviewer verified all criteria.",
-      evidenceRefs: [evidenceRef()],
-      authorization: reviewerAuth(draft.id),
-    });
-
-    expect(done.status).toBe("done");
-    expect(done.review).toMatchObject({ verdict: "DONE", reviewerSessionId: "review-session-1" });
-    await expect(runner.cancel(done.id, "too late")).rejects.toBeInstanceOf(GoalTransitionError);
-  });
-
-  test("finalizes NOT_DONE, rejects duplicate finalization, then explicit retry clears review", async () => {
-    const runner = createRunner();
-    const draft = await createDraft(runner);
-    await runner.start(draft.id);
-    await runner.beginReview(draft.id);
-
-    const notDone = await runner.finalizeReview(draft.id, {
-      expectedReviewGeneration: 1,
-      verdict: "NOT_DONE",
-      summary: "Acceptance criteria need repair.",
-      unresolvedItems: ["Add targeted tests"],
-      authorization: reviewerAuth(draft.id),
-    });
-    expect(notDone).toMatchObject({ status: "not_done", lastFailureSummary: "Acceptance criteria need repair." });
-
-    await expect(runner.finalizeReview(draft.id, {
-      expectedReviewGeneration: 1,
-      verdict: "NOT_DONE",
-      summary: "duplicate",
-      authorization: reviewerAuth(draft.id),
-    })).rejects.toBeInstanceOf(GoalReviewFinalizationError);
-
-    const retry = await runner.retry(draft.id);
-    expect(retry).toMatchObject({ status: "running", attempt: 2, mainSessionId: "main-session-1" });
-    expect(retry.review).toBeUndefined();
-    expect((await runner.beginReview(draft.id)).status).toBe("reviewing");
-  });
-
-  test("fail and cancel follow the simplified transition graph", async () => {
-    const runner = createRunner();
-    const failing = await createDraft(runner);
-    await runner.start(failing.id);
-    const failed = await runner.fail(failing.id, new Error("verification crashed"));
-    expect(failed).toMatchObject({ status: "failed", lastFailureSummary: "verification crashed" });
-    expect(failed.lastError).toMatchObject({ name: "Error", message: "verification crashed" });
-    expect((await runner.retry(failing.id)).status).toBe("running");
-
-    const cancelledDraft = await createDraft(runner);
-    expect((await runner.cancel(cancelledDraft.id, "duplicate request")).status).toBe("cancelled");
-  });
-
-  test("tracks child sessions, main session, and budget", async () => {
-    const runner = createRunner();
-    const draft = await createDraft(runner);
-    await runner.setMainSession(draft.id, "explicit-main");
-    await runner.start(draft.id);
-    await runner.addChildSession(draft.id, "child-1");
-    const budgeted = await runner.updateBudgetSummary(draft.id, {
+    expect(notDone.status).toBe("not_done");
+    expect((await runner.retry(goal.id)).status).toBe("running");
+    expect((await runner.addChildSession(goal.id, "child-1")).childSessionIds).toEqual(["child-1"]);
+    expect((await runner.updateBudgetSummary(goal.id, {
       status: "ok",
       usedTokens: 10,
       maxTokens: 100,
       updatedAt: new Date().toISOString(),
-    });
+    })).budget?.usedTokens).toBe(10);
+    expect((await runner.fail(goal.id, "build failed")).status).toBe("failed");
+    expect((await runner.retry(goal.id)).status).toBe("running");
+    expect((await runner.cancel(goal.id, "stop")).status).toBe("cancelled");
+  });
 
-    expect(budgeted).toMatchObject({
-      mainSessionId: "explicit-main",
-      childSessionIds: ["child-1"],
-      pendingHitlIds: [],
-      approvalRefs: [],
-      appliedHitlIds: [],
-      budget: { status: "ok", usedTokens: 10, maxTokens: 100 },
+  test("finalizes DONE only with reviewer authorization and evidence", async () => {
+    const runner = new GoalRunner(runnerOptions());
+    const goal = await runner.create(createInput());
+    await runner.beginReview(goal.id);
+
+    await expect(runner.finalizeReview(goal.id, {
+      expectedReviewGeneration: 1,
+      verdict: "DONE",
+      summary: "Missing evidence.",
+      evidenceRefs: [],
+      authorization: reviewerAuth(goal.id),
+    })).rejects.toBeInstanceOf(GoalReviewFinalizationError);
+    await expect(runner.finalizeReview(goal.id, {
+      expectedReviewGeneration: 1,
+      verdict: "DONE",
+      summary: "Wrong reviewer.",
+      evidenceRefs: [evidenceRef()],
+      authorization: { ...reviewerAuth(goal.id), agentName: "build" },
+    })).rejects.toBeInstanceOf(GoalReviewerAuthorizationError);
+
+    const done = await runner.finalizeReview(goal.id, {
+      expectedReviewGeneration: 1,
+      verdict: "DONE",
+      summary: "All criteria verified.",
+      evidenceRefs: [evidenceRef()],
+      authorization: reviewerAuth(goal.id),
     });
+    expect(done.status).toBe("done");
+    await expect(runner.cancel(goal.id)).rejects.toBeInstanceOf(GoalTransitionError);
   });
 });
-
-async function initializeGitRepo(cwd: string): Promise<void> {
-  await runGit(cwd, ["init", "--initial-branch=main"]);
-  await runGit(cwd, ["config", "user.email", "goal-runner@example.com"]);
-  await runGit(cwd, ["config", "user.name", "Goal Runner"]);
-  await writeFile(join(cwd, "README.md"), "# Goal runner\n");
-  await runGit(cwd, ["add", "README.md"]);
-  await runGit(cwd, ["commit", "-m", "initial commit"]);
-}
-
-async function runGit(cwd: string, args: readonly string[]): Promise<void> {
-  const process = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
-  const stderr = await new Response(process.stderr).text();
-  if (await process.exited !== 0) throw new Error(stderr);
-}

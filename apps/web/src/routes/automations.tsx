@@ -1,17 +1,29 @@
-import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { Plus } from "lucide-react";
 import { useAutomations } from "../api/queries";
-import { AutomationDialog } from "../components/features/AutomationDialog";
+import { useCreateSession, usePostMessage } from "../api/mutations";
 import type { Automation, AutomationTrigger } from "../api/types";
 
 export function AutomationsRoute() {
   const { slug = "" } = useParams<{ slug: string }>();
+  const navigate = useNavigate();
   const { data, isLoading, error } = useAutomations(slug);
-  const [open, setOpen] = useState(false);
-  return <div className="flex h-full flex-col"><header className="flex h-12 items-center justify-between border-b border-border-subtle px-4"><h1 className="font-semibold">Automations</h1><button onClick={() => setOpen(true)} className="inline-flex items-center gap-1 rounded-sm bg-accent px-3 py-1.5 text-sm text-bg-base"><Plus size={14} /> New Automation</button></header>
-    <main className="flex-1 overflow-y-auto">{isLoading ? <p className="p-4 text-text-tertiary">Loading automations…</p> : error ? <p className="p-4 text-error">Failed to load automations</p> : !data?.length ? <div className="flex h-full flex-col items-center justify-center gap-3"><h2 className="text-lg">No automations yet</h2><p className="max-w-sm text-center text-sm text-text-tertiary">Schedule a normal Session message for later or on a recurring cadence.</p></div> : data.map((automation) => <AutomationRow key={automation.id} slug={slug} automation={automation} />)}</main>
-    <AutomationDialog open={open} onClose={() => setOpen(false)} slug={slug} />
+  const createSession = useCreateSession();
+  const postMessage = usePostMessage();
+  const startAutomationSession = () => {
+    createSession.mutate({ slug }, {
+      onSuccess: (session) => {
+        navigate(`/projects/${slug}/sessions/${session.sessionId}`);
+        postMessage.mutate({
+          slug,
+          sessionId: session.sessionId,
+          content: "/skill use automation-create",
+        });
+      },
+    });
+  };
+  return <div className="flex h-full flex-col"><header className="flex h-12 items-center justify-between border-b border-border-subtle px-4"><h1 className="font-semibold">Automations</h1><button onClick={startAutomationSession} disabled={createSession.isPending} className="inline-flex items-center gap-1 rounded-sm bg-accent px-3 py-1.5 text-sm text-bg-base disabled:opacity-50"><Plus size={14} /> New Automation</button></header>
+    <main className="flex-1 overflow-y-auto">{isLoading ? <p className="p-4 text-text-tertiary">Loading automations…</p> : error ? <p className="p-4 text-error">Failed to load automations</p> : !data?.length ? <div className="flex h-full flex-col items-center justify-center gap-3"><h2 className="text-lg">No automations yet</h2><p className="max-w-sm text-center text-sm text-text-tertiary">Schedule a normal Session message for later or on a recurring cadence.</p><button onClick={startAutomationSession} disabled={createSession.isPending} className="inline-flex items-center gap-1 rounded-sm bg-accent px-3 py-1.5 text-sm text-bg-base disabled:opacity-50"><Plus size={14} /> New Automation</button></div> : data.map((automation) => <AutomationRow key={automation.id} slug={slug} automation={automation} />)}</main>
   </div>;
 }
 

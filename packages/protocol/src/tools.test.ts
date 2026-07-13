@@ -36,6 +36,8 @@ import {
   TOOL_MEMORY_READ,
   TOOL_MEMORY_WRITE,
   TOOL_GOAL_MANAGE,
+  TOOL_GOAL_CREATE,
+  TOOL_AUTOMATION_CREATE,
   TOOL_COMPRESS,
   TOOL_CATEGORY_MAP,
   getToolCategory,
@@ -79,6 +81,8 @@ const ALL_BUILTIN_NAMES = [
   TOOL_MEMORY_READ,
   TOOL_MEMORY_WRITE,
   TOOL_GOAL_MANAGE,
+  TOOL_GOAL_CREATE,
+  TOOL_AUTOMATION_CREATE,
   TOOL_COMPRESS,
 ] as const;
 
@@ -120,14 +124,15 @@ describe("tool name constants", () => {
     expect(TOOL_MEMORY_READ).toBe("memory_read");
     expect(TOOL_MEMORY_WRITE).toBe("memory_write");
     expect(TOOL_GOAL_MANAGE).toBe("goal_manage");
+    expect(TOOL_GOAL_CREATE).toBe("goal_create");
+    expect(TOOL_AUTOMATION_CREATE).toBe("automation_create");
     expect(TOOL_COMPRESS).toBe("compress");
   });
 
-  test("Goal builtin surface exposes only managed lifecycle", () => {
+  test("Goal builtin surface exposes confirmed creation and managed lifecycle", () => {
     const activeGoalNames = ALL_BUILTIN_NAMES.filter((name) => name.startsWith("goal_"));
 
-    expect(activeGoalNames).toEqual([TOOL_GOAL_MANAGE]);
-    expect(activeGoalNames).not.toContain("goal_create");
+    expect(activeGoalNames).toEqual([TOOL_GOAL_MANAGE, TOOL_GOAL_CREATE]);
     expect(activeGoalNames).not.toContain("goal_lock");
     expect(activeGoalNames).not.toContain("goal_run");
     expect(activeGoalNames).not.toContain("goal_retry");
@@ -166,6 +171,7 @@ describe("TOOL_CATEGORY_MAP", () => {
     expect(TOOL_CATEGORY_MAP[TOOL_SKILL_LIST]).toBe("skill");
     expect(TOOL_CATEGORY_MAP[TOOL_MEMORY_READ]).toBe("memory");
     expect(TOOL_CATEGORY_MAP[TOOL_GOAL_MANAGE]).toBe("goal");
+    expect(TOOL_CATEGORY_MAP[TOOL_AUTOMATION_CREATE]).toBe("automation");
     expect(TOOL_CATEGORY_MAP[TOOL_COMPRESS]).toBe("other");
   });
 });
@@ -248,7 +254,7 @@ describe("isBuiltinToolName()", () => {
   test("acts as a type guard narrowing to BuiltinToolName", () => {
     const name: string = "file_read";
     if (isBuiltinToolName(name)) {
-      const cat: "fileRead" | "fileWrite" | "search" | "git" | "shell" | "interaction" | "lsp" | "web" | "delegation" | "skill" | "memory" | "goal" | "mcp" | "other" = TOOL_CATEGORY_MAP[name];
+      const cat: "fileRead" | "fileWrite" | "search" | "git" | "shell" | "interaction" | "lsp" | "web" | "delegation" | "skill" | "memory" | "goal" | "automation" | "mcp" | "other" = TOOL_CATEGORY_MAP[name];
       expect(cat).toBe("fileRead");
     }
   });

@@ -165,8 +165,11 @@ function makeGoal(overrides: Partial<DashboardGoal> = {}): DashboardGoal {
     projectSlug: "demo",
     projectName: "Demo Project",
     ...overrides,
-    version: overrides.version ?? 2,
+    version: 3,
+    createdFromSessionId: "origin",
     useWorktree: overrides.useWorktree ?? false,
+    mainSessionId: "main-session",
+    startedAt: "2026-01-01T00:00:00Z",
   };
 }
 
@@ -263,7 +266,8 @@ describe("Dashboard", () => {
       await renderDashboard(ctx.reactRoot, ctx.queryClient);
 
       await waitFor(() => {
-        expect(ctx.queryClient.isFetching()).toBe(0);
+        expect(ctx.container.textContent).toContain("No active goals across projects");
+        expect(ctx.container.textContent).toContain("No active automations across projects");
         expect(ctx.container.querySelector('[data-testid="dashboard-approval-queue"]')).toBeNull();
       });
     } finally {

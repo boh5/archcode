@@ -124,7 +124,7 @@ mock.module("../../api/mutations", () => ({
     mutate: createSessionMutate,
     isPending: createSessionPending,
   }),
-  useCreateGoal: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
+  usePostMessage: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
   useAddProject: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
   useUpdateProjectName: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
   useDeleteProject: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
@@ -204,14 +204,6 @@ mock.module("../ui/Dialog", () => ({
   DialogContent: "DialogContent",
   DialogTitle: "DialogTitle",
   DialogDescription: "DialogDescription",
-}));
-
-mock.module("./CreateGoalDialog", () => ({
-  CreateGoalDialog: "CreateGoalDialog",
-}));
-
-mock.module("./AutomationDialog", () => ({
-  AutomationDialog: "AutomationDialog",
 }));
 
 ({ Sidebar } = await import("./Sidebar"));
@@ -617,27 +609,31 @@ describe("Sidebar", () => {
     projects = [project];
     goals = [
       {
-        version: 2,
+        version: 3,
         id: "goal-1",
         projectId: "archcode",
+        createdFromSessionId: "origin",
         title: "First Goal",
         objective: "Simplify the Goal experience",
         acceptanceCriteria: "Reviewer can decide DONE from logs and diff.",
         useWorktree: false,
-        status: "draft",
+        status: "running",
         attempt: 1,
         reviewGeneration: 0,
         pendingHitlIds: [],
         approvalRefs: [],
         appliedHitlIds: [],
         childSessionIds: [],
+        mainSessionId: "main-1",
+        startedAt: "1",
         createdAt: "1",
         updatedAt: "1",
       },
       {
-        version: 2,
+        version: 3,
         id: "goal-2",
         projectId: "archcode",
+        createdFromSessionId: "origin",
         title: "Second Goal",
         objective: "Simplify the Goal experience",
         acceptanceCriteria: "Reviewer can decide DONE from logs and diff.",
@@ -649,6 +645,8 @@ describe("Sidebar", () => {
         approvalRefs: [],
         appliedHitlIds: [],
         childSessionIds: [],
+        mainSessionId: "main-2",
+        startedAt: "2",
         createdAt: "2",
         updatedAt: "2",
       },
@@ -692,20 +690,23 @@ describe("Sidebar", () => {
     projects = [project];
     goals = [
       {
-        version: 2,
+        version: 3,
         id: "goal-abc",
         projectId: "archcode",
+        createdFromSessionId: "origin",
         title: "Target Goal",
         objective: "Simplify the Goal experience",
         acceptanceCriteria: "Reviewer can decide DONE from logs and diff.",
         useWorktree: false,
-        status: "draft",
+        status: "running",
         attempt: 1,
         reviewGeneration: 0,
         pendingHitlIds: [],
         approvalRefs: [],
         appliedHitlIds: [],
         childSessionIds: [],
+        mainSessionId: "main-abc",
+        startedAt: "1",
         createdAt: "1",
         updatedAt: "1",
       },
@@ -720,7 +721,7 @@ describe("Sidebar", () => {
     expect(navigate).toHaveBeenCalledWith("/projects/archcode/goals/goal-abc");
   });
 
-  test("new goal create button opens CreateGoalDialog", () => {
+  test("new goal create button starts an ordinary skill session", () => {
     projects = [project];
     goals = [];
     useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "" }));
@@ -733,8 +734,7 @@ describe("Sidebar", () => {
     expect(goalCreateButton?.props?.label).toBe("New goal");
     expect(typeof goalCreateButton?.props?.onClick).toBe("function");
 
-    const dialogs = findAll(tree, (element) => typeName(element) === "CreateGoalDialog");
-    expect(dialogs).toHaveLength(1);
-    expect(dialogs[0]?.props?.slug).toBe("archcode");
+    (goalCreateButton?.props?.onClick as (() => void) | undefined)?.();
+    expect(createSessionMutate).toHaveBeenCalled();
   });
 });

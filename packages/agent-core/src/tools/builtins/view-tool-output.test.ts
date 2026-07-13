@@ -3,14 +3,14 @@ import { join } from "node:path";
 import { mkdir, rm, symlink } from "node:fs/promises";
 import { randomUUID } from "crypto";
 import { storeManager } from "../../store/store";
-import { TOOL_OUTPUT_DIR } from "../persist-output";
 import type { ToolExecutionContext } from "../types";
 import type { CompletedToolPart, ErrorToolPart, ToolPart, StoredPart } from "../../store/types";
-import { executeViewToolOutput } from "./view-tool-output";
+import { executeViewToolOutput as executeViewToolOutputWithOptions } from "./view-tool-output";
 import { createTestProjectContext } from "../test-project-context";
 
 const TEST_SESSION = `view-test-${randomUUID()}`;
-const TEST_DIR = join(TOOL_OUTPUT_DIR, TEST_SESSION);
+const TEST_OUTPUT_DIR = join(import.meta.dir, "__test_tmp__", `tool-output-${randomUUID()}`);
+const TEST_DIR = join(TEST_OUTPUT_DIR, TEST_SESSION);
 const TEST_FILE_PATH = join(TEST_DIR, "file_read-test-call-full.txt");
 const TEST_FILE_CONTENT = "full output content on disk";
 
@@ -38,6 +38,13 @@ function makeContext(): ToolExecutionContext {
     cwd: import.meta.dir,
     projectContext: createTestProjectContext(import.meta.dir),
   };
+}
+
+function executeViewToolOutput(
+  input: { callId: string },
+  ctx: ToolExecutionContext,
+) {
+  return executeViewToolOutputWithOptions(input, ctx, { outputDir: TEST_OUTPUT_DIR });
 }
 
 function completeToolPart(

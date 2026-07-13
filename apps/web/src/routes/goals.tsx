@@ -1,12 +1,10 @@
-import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Plus } from "lucide-react";
 import { useGoals } from "../api/queries";
-import { CreateGoalDialog } from "../components/features/CreateGoalDialog";
+import { useCreateSession, usePostMessage } from "../api/mutations";
 import type { GoalState, GoalStatus } from "../api/types";
 
-const STATUS_BADGE_CLASS: Record<GoalStatus, string> = {
-  draft: "bg-bg-active text-text-muted",
+const STATUS_BADGE_CLASS: Partial<Record<GoalStatus, string>> = {
   running: "bg-success-muted text-success",
   blocked: "bg-warning-muted text-warning",
   reviewing: "bg-info-muted text-info",
@@ -20,11 +18,20 @@ export function GoalsRoute() {
   const { slug = "" } = useParams<{ slug: string }>();
   const navigate = useNavigate();
   const { data: goals, isLoading, error } = useGoals(slug);
-  const [createOpen, setCreateOpen] = useState(false);
+  const createSession = useCreateSession();
+  const postMessage = usePostMessage();
 
-  const handleCreated = (goalId: string) => {
-    setCreateOpen(false);
-    navigate(`/projects/${slug}/goals/${goalId}`);
+  const startGoalSession = () => {
+    createSession.mutate({ slug }, {
+      onSuccess: (session) => {
+        navigate(`/projects/${slug}/sessions/${session.sessionId}`);
+        postMessage.mutate({
+          slug,
+          sessionId: session.sessionId,
+          content: "/skill use goal-create",
+        });
+      },
+    });
   };
 
   if (isLoading) {
@@ -50,24 +57,18 @@ export function GoalsRoute() {
         <div className="flex h-full flex-col">
           <div className="flex items-center justify-between px-4 h-12 border-b border-border-subtle shrink-0 bg-bg-surface">
             <span className="font-semibold text-sm text-text-primary">Goals</span>
-            <NewGoalButton onClick={() => setCreateOpen(true)} />
+            <NewGoalButton onClick={startGoalSession} disabled={createSession.isPending} />
           </div>
           <div className="flex-1 flex items-center justify-center">
             <div className="flex flex-col items-center gap-3">
               <h2 className="text-lg font-medium text-text-primary">No goals yet</h2>
               <p className="text-sm text-text-tertiary text-center max-w-xs">
-                Create a draft goal to define what the agent should accomplish and how to verify it.
+                Start a conversation to clarify the goal, acceptance criteria, and execution setup.
               </p>
-              <NewGoalButton onClick={() => setCreateOpen(true)} variant="primary" />
+              <NewGoalButton onClick={startGoalSession} variant="primary" disabled={createSession.isPending} />
             </div>
           </div>
         </div>
-        <CreateGoalDialog
-          open={createOpen}
-          onClose={() => setCreateOpen(false)}
-          slug={slug}
-          onCreated={handleCreated}
-        />
       </>
     );
   }
@@ -83,7 +84,7 @@ export function GoalsRoute() {
           <span className="font-semibold text-sm text-text-primary">Goals</span>
           <div className="flex items-center gap-3">
             <span className="text-xs text-text-tertiary">{goals.length} total</span>
-            <NewGoalButton onClick={() => setCreateOpen(true)} />
+            <NewGoalButton onClick={startGoalSession} disabled={createSession.isPending} />
           </div>
         </div>
         <div className="flex-1 overflow-y-auto">
@@ -94,21 +95,17 @@ export function GoalsRoute() {
           </div>
         </div>
       </div>
-      <CreateGoalDialog
-        open={createOpen}
-        onClose={() => setCreateOpen(false)}
-        slug={slug}
-        onCreated={handleCreated}
-      />
     </>
   );
 }
 
 function NewGoalButton({
   onClick,
+  disabled,
   variant = "ghost",
 }: {
   onClick: () => void;
+  disabled?: boolean;
   variant?: "ghost" | "primary";
 }) {
   if (variant === "primary") {
@@ -116,6 +113,7 @@ function NewGoalButton({
       <button
         type="button"
         onClick={onClick}
+        disabled={disabled}
         className="inline-flex items-center gap-1.5 rounded-sm bg-accent px-3 py-1.5 text-[12.5px] font-medium text-bg-base transition-colors duration-150 hover:bg-accent-hover"
       >
         <Plus size={13} />
@@ -127,6 +125,7 @@ function NewGoalButton({
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       className="inline-flex items-center gap-1.5 rounded-sm bg-bg-active px-2.5 py-1.5 text-[12.5px] font-medium text-text-secondary transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary"
     >
       <Plus size={13} />

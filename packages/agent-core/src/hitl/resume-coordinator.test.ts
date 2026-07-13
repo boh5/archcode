@@ -256,10 +256,13 @@ describe("ResumeCoordinator", () => {
   test("partial adapter recovery durably fails claimed owner types without a matching adapter", async () => {
     const fixture = await createFixture();
     const sessionHitl = await fixture.createSessionHitl();
-    const goal = await fixture.goalState.create({
+    const goal = await fixture.goalState.commit({
+      id: crypto.randomUUID(),
       projectId: "archcode",
+      createdFromSessionId: crypto.randomUUID(),
       objective: "Wait for a future Goal adapter.",
       acceptanceCriteria: "Claimed Goal HITL records a durable resume failure when no adapter exists.",
+      mainSessionId: crypto.randomUUID(),
     });
     const goalOwner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "goal", ownerId: goal.id };
     const goalHitl = await fixture.service.create({
