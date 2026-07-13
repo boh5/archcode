@@ -392,9 +392,7 @@ function record(owner: HitlOwnerKey, hitlId: string, blockingKey: string): HitlR
     blockingKey,
     source: owner.ownerType === "session"
       ? { type: "ask_user", sessionId: owner.ownerId }
-      : owner.ownerType === "goal"
-        ? { type: "goal_budget", goalId: owner.ownerId, approvalPoint: "approval_budget_1", resumeStatus: "running" }
-        : { type: "loop_blocker", loopId: owner.ownerId, reason: "needs_user" },
+      : { type: "goal_budget", goalId: owner.ownerId, approvalPoint: "approval_budget_1", resumeStatus: "running" },
     status: "pending",
     displayPayload: { title: "Needs input", redacted: true },
     createdAt: now,

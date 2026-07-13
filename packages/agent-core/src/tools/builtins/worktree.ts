@@ -157,7 +157,7 @@ function validateExplicitTargetOwnership(
     return createToolErrorResult({
       kind: "permission-denied",
       code: "WORKTREE_TARGET_NOT_OWNED",
-      message: "A Session may enter only its own ArchCode-managed worktree. Goal, Loop, and other Session worktrees keep their lifecycle ownership.",
+      message: "A Session may enter only its own ArchCode-managed worktree. Goal and other Session worktrees keep their lifecycle ownership.",
     });
   }
   return undefined;
@@ -221,13 +221,12 @@ function validateInteractiveRootSession(ctx: ToolExecutionContext): ToolExecutio
     ctx.agentName !== "engineer"
     || state.parentSessionId !== undefined
     || state.goalId !== undefined
-    || state.loopId !== undefined
     || (ctx.currentDepth ?? 0) !== 0
   ) {
     return createToolErrorResult({
       kind: "permission-denied",
       code: "WORKTREE_SESSION_NOT_ELIGIBLE",
-      message: "Worktree transitions are available only to ordinary interactive root Engineer Sessions. Goal, Loop, child, and other Agent Sessions inherit their execution directory.",
+      message: "Worktree transitions are available only to ordinary interactive root Engineer Sessions. Goal, child, and other Agent Sessions inherit their execution directory.",
     });
   }
   return undefined;

@@ -111,16 +111,6 @@ describe("hitlStore", () => {
     expect(selectHitlProjections([child], { slug: "proj", scope: "session", ownerId: "root", includeChildren: false })).toEqual([]);
   });
 
-  test("selects goal HITL under loop scope through ancestry", () => {
-    const goalHitl = projection({
-      hitlId: "goal-hitl",
-      owner: { projectSlug: "proj", ownerType: "goal", ownerId: "goal-1" },
-      source: { type: "goal_budget", goalId: "goal-1", approvalPoint: "budget" , resumeStatus: "running"},
-      ancestry: { goalId: "goal-1", loopId: "loop-1", projectionPath: ["loop", "loop-1", "goal", "goal-1"] },
-    });
-
-    expect(selectHitlProjections([goalHitl], { slug: "proj", scope: "loop", ownerId: "loop-1", includeChildren: true })).toEqual([goalHitl]);
-  });
 });
 
 function hitlEvent(input: { hitlId: string; ownerId?: string; status?: HitlProjection["status"]; payloadType?: "hitl.request" | "hitl.updated" | "hitl.resolved" }): GlobalSSEHitlRealtimeEvent {

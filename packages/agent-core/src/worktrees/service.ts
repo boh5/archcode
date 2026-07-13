@@ -6,7 +6,7 @@ import { createProcessRunner } from "../process/runner";
 import type { ProcessRunner, ProcessRunnerResult } from "../process/types";
 import { isContained } from "../utils/safe-file";
 
-export type WorktreeOwnerType = "session" | "goal" | "loop";
+export type WorktreeOwnerType = "session" | "goal";
 
 export type WorktreeServiceErrorCode =
   | "INVALID_CANONICAL_ROOT"
@@ -854,12 +854,8 @@ export function managedWorktreeNames(input: WorktreeCreateInput): { worktreeName
     ? rawUnique
     : `${rawUnique}${"0".repeat(MIN_UNIQUE_ID_LENGTH - rawUnique.length)}`;
   const label = safeSegment(input.label ?? input.owner.type, input.owner.type, MAX_SEGMENT_LENGTH);
-  const branchName = input.owner.type === "loop"
-    ? `archcode/loop/${owner}/${unique}`
-    : `archcode/${input.owner.type}/${unique}`;
-  const worktreeName = (input.owner.type === "loop"
-    ? `${owner}-${label}-${unique}`
-    : `${input.owner.type}-${label}-${unique}`)
+  const branchName = `archcode/${input.owner.type}/${unique}`;
+  const worktreeName = `${input.owner.type}-${label}-${unique}`
     .slice(0, MAX_NAME_LENGTH)
     .replace(/-+$/g, "");
   return { worktreeName, branchName };

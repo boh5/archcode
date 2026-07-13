@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it, mock } from "bun:test";
+import { afterAll, describe, expect, it, mock, spyOn } from "bun:test";
 import { rmSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
@@ -148,14 +148,12 @@ describe("registerBuiltinTools", () => {
     ]);
   });
 
-  it("registers only Loop lifecycle policies as global permissions", () => {
+  it("does not register retired lifecycle policies as global permissions", () => {
     const registry = new ToolRegistry();
 
     registerBuiltinTools(registry, silentLogger);
 
-    expect(registry.globalPermissions).toHaveLength(1);
-    expect(registry.globalPermissions.map((permission) => permission.name)).not.toContain("loopCollisionToolPermission");
-    expect(registry.globalHooks.after.map((hook) => hook.name)).not.toContain("collisionReleaseAfterHook");
+    expect(registry.globalPermissions).toEqual([]);
   });
 
   it("registers GitHub connector-backed tools without adding them to builtin descriptor groups", () => {
@@ -178,6 +176,40 @@ describe("registerBuiltinTools", () => {
     }
     expect(registry.get(TOOL_GITHUB_CREATE_ISSUE_COMMENT)?.traits.readOnly).toBe(false);
     expect(registry.get(TOOL_GITHUB_RERUN_WORKFLOW_RUN)?.traits.readOnly).toBe(false);
+  });
+
+  it("injects integrations.github config into connector-backed tools", async () => {
+    const workspaceRoot = await createTmpRoot("github-config");
+    const registry = new ToolRegistry();
+    const tokenEnv = "ARCHCODE_REGISTER_TOOLS_GITHUB_TOKEN";
+    const previousToken = Bun.env[tokenEnv];
+    Bun.env[tokenEnv] = "ghp_registered_config_secret";
+    const fetch = spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      number: 42,
+      title: "Configured connector",
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+    try {
+      registerBuiltinTools(registry, silentLogger, { github: { tokenEnv } });
+      const input = { owner: "archcode", repo: "archcode", number: 42 };
+
+      const result = await registry.execute(
+        { toolName: TOOL_GITHUB_GET_PULL_REQUEST, toolCallId: "github-config", input },
+        makeContext(TOOL_GITHUB_GET_PULL_REQUEST, [TOOL_GITHUB_GET_PULL_REQUEST], workspaceRoot, { input }),
+      );
+
+      expect(result.isError).toBe(false);
+      const request = fetch.mock.calls[0];
+      expect(request?.[0]).toBe("https://api.github.com/repos/archcode/archcode/pulls/42");
+      expect((request?.[1]?.headers as Record<string, string>).Authorization)
+        .toBe("Bearer ghp_registered_config_secret");
+    } finally {
+      fetch.mockRestore();
+      if (previousToken === undefined) delete Bun.env[tokenEnv];
+      else Bun.env[tokenEnv] = previousToken;
+    }
   });
 
   it("does not register legacy workflow or artifact tools", () => {

@@ -7,7 +7,6 @@ import type { GoalState, HitlRecord, HitlResponse } from "@archcode/protocol";
 import { ResumeCoordinator } from "../hitl/resume-coordinator";
 import { HitlService } from "../hitl/service";
 import { silentLogger } from "../logger";
-import { LoopStateManager } from "../loops/state";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { GoalHitlResumeAdapter } from "./hitl-resume-adapter";
 import { withGoalExecutionClaimLock } from "./execution-claim";
@@ -18,7 +17,6 @@ const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-hitl-integration");
 let workspaceRoot = "";
 let manager: GoalStateManager;
 let sessions: SessionStoreManager;
-let loops: LoopStateManager;
 
 beforeEach(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });
@@ -26,7 +24,6 @@ beforeEach(async () => {
   workspaceRoot = await mkdtemp(join(TMP_ROOT, "workspace-"));
   manager = new GoalStateManager(workspaceRoot);
   sessions = new SessionStoreManager({ logger: silentLogger });
-  loops = new LoopStateManager(workspaceRoot);
 });
 
 afterAll(async () => {
@@ -39,7 +36,6 @@ function createHitlService(): HitlService {
     project: { slug: "project-a", name: "Project A" },
     sessions,
     goalState: manager,
-    loopState: loops,
   });
 }
 

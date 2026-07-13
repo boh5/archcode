@@ -40,26 +40,21 @@ describe("SessionLifecycleService", () => {
     })).resolves.toBeUndefined();
   });
 
-  test("rejects Goal- and Loop-owned Sessions with stable owner details", async () => {
+  test("rejects Goal-owned Sessions with stable owner details", async () => {
     const fixture = createFixture();
     fixture.sessions.create(GOAL_SESSION_ID, TMP_ROOT, { goalId: GOAL_OWNER_ID, agentName: "goal_lead" });
-    fixture.sessions.create(LOOP_SESSION_ID, TMP_ROOT, { loopId: LOOP_OWNER_ID, agentName: "engineer" });
-    await Promise.all([
-      fixture.sessions.flushSession(GOAL_SESSION_ID, TMP_ROOT),
-      fixture.sessions.flushSession(LOOP_SESSION_ID, TMP_ROOT),
-    ]);
+    await fixture.sessions.flushSession(GOAL_SESSION_ID, TMP_ROOT);
 
     await expect(fixture.service.assertDeletable({
       workspaceRoot: TMP_ROOT,
       rootSessionId: GOAL_SESSION_ID,
-      sessionIds: [GOAL_SESSION_ID, LOOP_SESSION_ID],
+      sessionIds: [GOAL_SESSION_ID],
     })).rejects.toMatchObject({
       name: "SessionDeleteOwnerConflictError",
       code: "SESSION_DELETE_OWNER_CONFLICT",
-      sessionIds: [GOAL_SESSION_ID, LOOP_SESSION_ID],
+      sessionIds: [GOAL_SESSION_ID],
       owners: [
         { sessionId: GOAL_SESSION_ID, ownerType: "goal", ownerId: GOAL_OWNER_ID },
-        { sessionId: LOOP_SESSION_ID, ownerType: "loop", ownerId: LOOP_OWNER_ID },
       ],
     } satisfies Partial<SessionDeleteOwnerConflictError>);
   });

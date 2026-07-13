@@ -15,7 +15,7 @@ export type {
   CompactEvent,
   StepStartEvent,
   StepEndEvent,
-  LoopErrorEvent,
+  ExecutionErrorEvent,
   TodoWriteEvent,
   ReminderEvent,
   ReminderConsumedEvent,

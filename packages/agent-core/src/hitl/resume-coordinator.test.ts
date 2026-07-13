@@ -5,7 +5,6 @@ import type { HitlIdentity, HitlOwnerKey, HitlRecord, HitlResponse } from "@arch
 
 import { GoalStateManager } from "../goals/state";
 import { createInMemoryLogger, silentLogger } from "../logger";
-import { LoopStateManager } from "../loops/state";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { HitlService } from "./service";
 import { ResumeCoordinator, type SessionHitlResumeAdapter } from "./resume-coordinator";
@@ -355,7 +354,6 @@ describe("ResumeCoordinator", () => {
       project: { slug: "archcode", name: "ArchCode" },
       sessions: fixture.sessions,
       goalState: fixture.goalState,
-      loopState: new LoopStateManager(fixture.workspaceRoot, silentLogger),
     });
     const { logger, entries } = createInMemoryLogger();
     const coordinator = new ResumeCoordinator({
@@ -423,13 +421,11 @@ async function createFixture(workspaceRoot?: string, sessions = new SessionStore
   sessions.create(sessionId, workspaceRoot, { agentName: "engineer" });
   await waitForSession(workspaceRoot, sessionId);
   const goalState = new GoalStateManager(workspaceRoot, silentLogger);
-  const loopState = new LoopStateManager(workspaceRoot, silentLogger);
   const service = new HitlService({
     workspaceRoot,
     project: { slug: "archcode", name: "ArchCode" },
     sessions,
     goalState,
-    loopState,
   });
   const owner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "session", ownerId: sessionId };
   return {

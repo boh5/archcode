@@ -8,7 +8,7 @@ import {
 } from "../../agents/errors";
 import type { ChildExecutionRequest, ResumeChildRequest } from "../../delegation/types";
 import { storeManager } from "../../store/store";
-import type { ToolExecutionContext, ToolExecutionOrigin, ToolExecutionResult } from "../types";
+import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { TOOL_ERROR_META_KEY } from "../errors";
 import { DelegateInputSchema, delegateTool, executeDelegate } from "./delegate";
 import { createTestProjectContext } from "../test-project-context";
@@ -71,14 +71,6 @@ function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecuti
     projectContext: createTestProjectContext(import.meta.dir),
   agentName: "engineer", ...overrides,  };
 }
-
-const LOOP_ORIGIN: ToolExecutionOrigin = {
-  kind: "loop",
-  loopId: "loop-delegate-origin",
-  runId: "run-delegate-origin",
-  trigger: "manual",
-  approvalPolicy: "interactive",
-};
 
 describe("delegate tool", () => {
   it("publishes the complete prompt envelope, background collection, resume, and authority contract", () => {
@@ -157,20 +149,6 @@ describe("delegate tool", () => {
     expect(executor.lastRequest?.prompt).toContain("Task:\ninspect");
     expect(executor.lastRequest?.prompt).toContain("Context:\nGoal draft");
     expect("tools" in executor.lastRequest!).toBe(false);
-  });
-
-  it("forwards the Loop execution origin when starting a child", async () => {
-    const executor = new ToolStubExecutor();
-
-    await executeDelegate(
-      { agent_type: "explore", task: "inspect", skills: [], background: false },
-      makeContext({
-        origin: LOOP_ORIGIN,
-        startChildExecution: (request) => executor.start(request),
-      }),
-    );
-
-    expect(executor.lastRequest?.origin).toEqual(LOOP_ORIGIN);
   });
 
   it("sync delegation waits and returns a plain formatted result", async () => {
@@ -414,20 +392,6 @@ describe("delegate tool", () => {
       expect(output).toContain(`Session ID: ${RESUME_SESSION_ID}`);
       expect(output).toContain("Status: completed");
       expect(output).toContain("Result:\nresumed output");
-    });
-
-    it("forwards the Loop execution origin when resuming a child", async () => {
-      const handle = makeResumeHandle();
-      const resumeChildSession = mock(
-        (_workspaceRoot: string, _request: ResumeChildRequest) => Promise.resolve(handle),
-      );
-
-      await executeDelegate(
-        { agent_type: "explore", task: "continue", skills: [], background: false, session_id: RESUME_SESSION_ID },
-        makeContext({ origin: LOOP_ORIGIN, resumeChildSession }),
-      );
-
-      expect(resumeChildSession.mock.calls[0]?.[1].origin).toEqual(LOOP_ORIGIN);
     });
 
     it("returns structured error when resumeChildSession is unavailable", async () => {

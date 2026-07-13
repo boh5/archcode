@@ -10,7 +10,7 @@ import { assertValidSessionCwd } from "../store/session-cwd";
 import type { SessionStoreState } from "../store/types";
 import type { ToolRegistry } from "../tools/registry";
 import { createToolExecutionContext } from "../tools/types";
-import type { ToolConfirmationResult, ToolExecutionOrigin, ToolExecutionResult, ToolCallLike } from "../tools/types";
+import type { ToolConfirmationResult, ToolExecutionResult, ToolCallLike } from "../tools/types";
 import { createToolErrorResult } from "../tools/errors";
 import { redactValue } from "../tools/security/redaction";
 import type { SessionHitlResumeAdapter as ResumeAdapterContract } from "../hitl/resume-coordinator";
@@ -31,23 +31,6 @@ import {
   moveContinuingJournalToManualUnknown,
   repairSessionHitlJournalForReplay,
 } from "./session-hitl-journal";
-
-export interface SessionLoopHitlContinuationLease {
-  /** Loop state/job are already committed; only the durable Session blocker remains. */
-  readonly alreadyCompleted?: boolean;
-  complete(input: { readonly blockedByHitlIds?: readonly string[] }): Promise<void>;
-  fail(error: unknown): Promise<void>;
-  afterSessionRelease?(): void | Promise<void>;
-}
-
-export interface SessionLoopHitlContinuationCoordinator {
-  acquire(input: {
-    readonly origin: ToolExecutionOrigin;
-    readonly sessionId: string;
-    readonly rootSessionId: string;
-    readonly hitlId: string;
-  }): Promise<SessionLoopHitlContinuationLease>;
-}
 
 export interface SessionHitlResumeAdapterOptions {
   readonly workspaceRoot: string;
@@ -71,7 +54,6 @@ export interface SessionHitlResumeAdapterOptions {
     childSessionId: string,
     status: ToolChildSessionLinkStatus,
   ) => Promise<void>;
-  readonly loopContinuation?: SessionLoopHitlContinuationCoordinator;
   readonly readCheckpoint?: typeof readSessionHitlCheckpoint;
   readonly attachSessionEvents?: (workspaceRoot: string, sessionId: string, store: StoreApi<SessionStoreState>) => void;
   readonly detachSessionEvents?: (workspaceRoot: string, sessionId: string) => void;
@@ -148,7 +130,6 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
     if (record.owner.ownerType !== "session") throw new Error(`Session adapter cannot resume ${record.owner.ownerType} HITL`);
     const sessionId = record.owner.ownerId;
     let eventsAttached = false;
-    let loopContinuation: SessionLoopHitlContinuationLease | undefined;
     try {
       let checkpoint = await (this.options.readCheckpoint ?? readSessionHitlCheckpoint)(
         this.options.workspaceRoot,
@@ -179,7 +160,7 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
       let phase = sessionHitlJournalPhase(checkpoint);
       // Explicit cancel is a fail-closed acknowledgement, not a replay. It must
       // remain available when the old execution scope is no longer runnable
-      // (for example a terminal Loop lease or a removed worktree). The durable
+      // (for example a removed worktree). The durable
       // owner/checkpoint/response match above is sufficient authority to clear
       // only this Session blocker without executing tools or the model.
       if (response.type === "cancel") {
@@ -221,41 +202,15 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
           ...(isDescendantOfRoot === undefined ? {} : { isDescendantOfRoot }),
           cwd: currentState.cwd,
           ...(currentState.goalId === undefined ? {} : { goalId: currentState.goalId }),
-          ...(currentState.loopId === undefined ? {} : { loopId: currentState.loopId }),
           ...(currentState.sessionRole === undefined ? {} : { sessionRole: currentState.sessionRole }),
         },
-        entry: {
-          kind: "hitl_replay",
-          ...(checkpoint.origin === undefined ? {} : { origin: checkpoint.origin }),
-        },
+        entry: { kind: "hitl_replay" },
       });
       await assertValidSessionCwd(this.options.workspaceRoot, store.getState().cwd);
-
-      if (checkpoint.origin !== undefined) {
-        if (this.options.loopContinuation === undefined) {
-          throw new Error(`Session HITL ${record.hitlId} belongs to Loop ${checkpoint.origin.loopId} but no Loop continuation coordinator is configured`);
-        }
-        loopContinuation = await this.options.loopContinuation.acquire({
-          origin: checkpoint.origin,
-          sessionId,
-          rootSessionId: store.getState().rootSessionId,
-          hitlId: record.hitlId,
-        });
-      }
       this.options.attachSessionEvents?.(this.options.workspaceRoot, sessionId, store);
       eventsAttached = this.options.attachSessionEvents !== undefined;
 
       phase = sessionHitlJournalPhase(checkpoint);
-      if (loopContinuation?.alreadyCompleted === true && phase !== "continued" && phase !== "resolving") {
-        checkpoint = await transitionSessionHitlJournalPhase(
-          this.options.workspaceRoot,
-          sessionId,
-          checkpoint.hitlId,
-          "continued",
-        );
-        phase = "continued";
-      }
-
       if (phase === "paused") {
         checkpoint = await transitionSessionHitlJournalPhase(
           this.options.workspaceRoot,
@@ -288,15 +243,6 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
       }
 
       if (phase === "continued") {
-        if (loopContinuation?.alreadyCompleted !== true) {
-          const familyBlockedIds = await this.options.storeManager.listSessionFamilyBlockedHitlIds(
-            this.options.workspaceRoot,
-            store.getState().rootSessionId,
-          );
-          await loopContinuation?.complete({
-            blockedByHitlIds: familyBlockedIds.filter((hitlId) => hitlId !== record.hitlId),
-          });
-        }
         checkpoint = await transitionSessionHitlJournalPhase(
           this.options.workspaceRoot,
           sessionId,
@@ -308,17 +254,10 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
       if (phase !== "resolving") throw new Error(`Unsupported Session HITL journal phase ${phase}`);
       await resolveSessionBlockerDurably(this.options.storeManager, this.options.workspaceRoot, store, record, response);
     } catch (error) {
-      if (loopContinuation !== undefined) {
-        try {
-          await loopContinuation.fail(error);
-        } catch (continuationError) {
-          throw new AggregateError([error, continuationError], `Session HITL ${record.hitlId} and its Loop continuation both failed`);
-        }
-      }
       throw error;
     } finally {
       if (eventsAttached) this.options.detachSessionEvents?.(this.options.workspaceRoot, sessionId);
-      setAfterSessionRelease(loopContinuation?.afterSessionRelease);
+      setAfterSessionRelease(undefined);
     }
   }
 
@@ -389,10 +328,7 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
     resumeLease: SessionHitlResumeLease,
   ): Promise<void> {
     const agent = await this.options.getAgent(this.options.workspaceRoot, sessionId);
-    await agent.run("", {
-      abort: resumeLease.abortSignal,
-      ...(checkpoint.origin === undefined ? {} : { origin: checkpoint.origin }),
-    });
+    await agent.run("", { abort: resumeLease.abortSignal });
   }
 
   private async resumeBlockedTool(
@@ -453,7 +389,6 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
       storeManager: this.options.storeManager,
       agentName: checkpoint.agentName,
       ...(checkpoint.currentDepth === undefined ? {} : { currentDepth: checkpoint.currentDepth }),
-      ...(checkpoint.origin === undefined ? {} : { origin: checkpoint.origin }),
       ...(response === undefined ? {} : { confirmPermission: async () => permissionDecisionFromResponse(response) }),
       ...(this.options.startChildExecution === undefined ? {} : { startChildExecution: (request) => this.options.startChildExecution!(this.options.workspaceRoot, request) }),
       ...(this.options.cancelChildSession === undefined ? {} : { cancelChildSession: this.options.cancelChildSession }),

@@ -112,7 +112,6 @@ export const GoalStateSchema = z.strictObject({
   appliedHitlIds: z.array(z.string().trim().min(1)).max(100),
   mainSessionId: z.string().trim().min(1).optional(),
   childSessionIds: z.array(z.string().trim().min(1)).max(500),
-  loopId: z.uuid().optional(),
   review: GoalReviewReceiptSchema.optional(),
   finalSummary: GoalFinalSummarySchema.optional(),
   createdAt: z.string().trim().min(1),
@@ -229,11 +228,10 @@ export interface GoalCreateInput {
   readonly objective: string;
   readonly acceptanceCriteria: string;
   readonly mainSessionId?: string;
-  readonly loopId?: string;
   readonly useWorktree?: boolean;
 }
 
-export type GoalDraftPatch = Partial<Pick<GoalState, "objective" | "acceptanceCriteria" | "mainSessionId" | "loopId" | "useWorktree">>;
+export type GoalDraftPatch = Partial<Pick<GoalState, "objective" | "acceptanceCriteria" | "mainSessionId" | "useWorktree">>;
 
 export interface GoalReviewerAuthorization {
   readonly agentName?: string;
@@ -364,7 +362,6 @@ export class GoalStateManager {
       appliedHitlIds: [],
       childSessionIds: [],
       ...(input.mainSessionId === undefined ? {} : { mainSessionId: input.mainSessionId }),
-      ...(input.loopId === undefined ? {} : { loopId: input.loopId }),
       createdAt: now,
       updatedAt: now,
     });
@@ -427,13 +424,12 @@ export class GoalStateManager {
     });
   }
 
-  async start(goalId: string, input: { readonly mainSessionId?: string; readonly loopId?: string } = {}): Promise<GoalState> {
+  async start(goalId: string, input: { readonly mainSessionId?: string } = {}): Promise<GoalState> {
     return await this.withGoalMutation(goalId, async () => {
       const state = await this.read(goalId);
       const alreadyClaimedByMainSession = state.status === "running"
         && input.mainSessionId !== undefined
-        && state.mainSessionId === input.mainSessionId
-        && (input.loopId === undefined || state.loopId === input.loopId);
+        && state.mainSessionId === input.mainSessionId;
       if (alreadyClaimedByMainSession) return state;
 
       if (goalExecutionStatusEligibility("start", state.status) !== "proceed") {
@@ -455,7 +451,6 @@ export class GoalStateManager {
         cancelledAt: undefined,
         startedAt: state.startedAt ?? new Date().toISOString(),
         mainSessionId,
-        ...(input.loopId === undefined ? {} : { loopId: input.loopId }),
       });
     });
   }

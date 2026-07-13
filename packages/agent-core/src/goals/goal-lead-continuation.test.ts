@@ -37,7 +37,7 @@ describe("GoalLeadContinuationService", () => {
     expect(fixture.starts[0]?.userMessage).toContain(`"reviewGeneration": ${fixture.goal.reviewGeneration}`);
   });
 
-  test("stops for pending HITL, blocked budget, terminal status, Loop ownership, and wrong root identity", async () => {
+  test("stops for pending HITL, blocked budget, terminal status, and wrong root identity", async () => {
     const pending = await createFixture("stop-pending");
     await pending.context.goalState.attachHitlBlocker(pending.goal.id, {
       blocker: { kind: "question", summary: "answer", hitlId: "hitl-1", resumeStatus: "running" },
@@ -50,8 +50,7 @@ describe("GoalLeadContinuationService", () => {
     });
     const terminal = await createFixture("stop-terminal");
     await terminal.context.goalState.cancel(terminal.goal.id, "stop");
-    const loop = await createFixture("stop-loop", { loopId: crypto.randomUUID() });
-    for (const fixture of [pending, budget, terminal, loop]) {
+    for (const fixture of [pending, budget, terminal]) {
       expect(await fixture.service.kick(fixture.workspaceRoot, fixture.goal.id)).toBe("ineligible");
       expect(fixture.starts).toHaveLength(0);
     }
@@ -182,7 +181,6 @@ async function createFixture(
   options: {
     readonly rootSessionId?: string;
     readonly startGate?: Promise<void>;
-    readonly loopId?: string;
     readonly executionStatus?: "failed" | "timed_out";
     readonly retryBaseDelayMs?: number;
     readonly startErrorOnce?: Error;
@@ -200,9 +198,8 @@ async function createFixture(
     objective: "Ship continuation safely",
     acceptanceCriteria: "One checked continuation starts",
     mainSessionId,
-    loopId: options.loopId,
   });
-  const goal = await context.goalState.start(draft.id, { mainSessionId, loopId: options.loopId });
+  const goal = await context.goalState.start(draft.id, { mainSessionId });
   const starts: Array<{ sessionId: string; workspaceRoot: string; userMessage: string }> = [];
   const session = {
     schemaVersion: 1,
@@ -211,7 +208,6 @@ async function createFixture(
     cwd: workspaceRoot,
     agentName: "goal_lead",
     goalId: goal.id,
-    loopId: options.loopId,
     sessionRole: "main",
     executions: options.executionStatus === undefined ? [] : [{ id: "execution-1", status: options.executionStatus }],
   } as unknown as SessionFile;

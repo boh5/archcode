@@ -6,7 +6,6 @@ import { ProjectContextResolver, ProjectRegistry, silentLogger } from "@archcode
 import type { AgentRuntime, ProjectContext, ProjectInfo } from "@archcode/agent-core";
 import { GoalStateManager } from "../../../../packages/agent-core/src/goals/state";
 import { createPreparedHitlResume, ResumeCoordinator, type SessionHitlResumeAdapter } from "../../../../packages/agent-core/src/hitl/resume-coordinator";
-import type { LoopConfig } from "../../../../packages/agent-core/src/loops/state";
 import { SessionStoreManager } from "../../../../packages/agent-core/src/store/session-store-manager";
 import { getSessionPath } from "../../../../packages/agent-core/src/store/sessions-dir";
 import { createServerApp, createServerEventRuntime } from "../app";
@@ -24,19 +23,6 @@ interface TestFixture {
   sessionStoreManager: SessionStoreManager;
   sessionResumeCalls: () => number;
 }
-
-const LOOP_CONFIG: LoopConfig = {
-  templateId: "watch_report",
-  title: "Route test loop",
-  schedule: { kind: "manual" },
-  approvalPolicy: "interactive",
-  limits: {
-    maxIterationsPerRun: 1,
-    softThresholdRatio: 0.8,
-    hardThresholdRatio: 1,
-  },
-  useWorktree: false,
-};
 
 function createTestRuntime(projectRegistry: ProjectRegistry): Omit<TestFixture, "app"> {
   const sessionStoreManager = new SessionStoreManager({ logger: silentLogger });
@@ -97,34 +83,29 @@ function createTestRuntime(projectRegistry: ProjectRegistry): Omit<TestFixture, 
     disposeAllSessionAgents: mock(() => undefined),
     isSessionTombstoned: mock(() => false),
     dispatchCommand: mock(async () => null),
-    listLoops: mock(async () => []),
-    readLoop: mock(async () => {
+    listAutomations: mock(async () => []),
+    readAutomation: mock(async () => {
       throw new Error("not implemented");
     }),
-    createLoop: mock(async () => {
+    createAutomation: mock(async () => {
       throw new Error("not implemented");
     }),
-    updateLoop: mock(async () => {
+    updateAutomation: mock(async () => {
       throw new Error("not implemented");
     }),
-    pauseLoop: mock(async () => {
+    deleteAutomation: mock(async () => undefined),
+    pauseAutomation: mock(async () => {
       throw new Error("not implemented");
     }),
-    resumeLoop: mock(async () => {
+    resumeAutomation: mock(async () => {
       throw new Error("not implemented");
     }),
-    triggerLoopRun: mock(async () => undefined),
-    readLoopKillState: mock(async () => ({ active: false, updatedAt: Date.now() })),
-    cancelLoopCurrentRun: mock(async () => undefined),
-    activateLoopGlobalKill: mock(async () => ({ active: true, updatedAt: Date.now() })),
-    clearLoopGlobalKill: mock(async () => ({ active: false, updatedAt: Date.now() })),
-    readLoopBudget: mock(async () => null),
-    readLoopCollisions: mock(async () => ({ targets: [], activeLeases: [], conflicts: [], updatedAt: Date.now() })),
-    readLoopIntegrationStatus: mock(async () => ({ statuses: [], snapshot: null, updatedAt: Date.now() })),
-    readLoopRunLog: mock(async () => []),
-    readLoopStateMarkdown: mock(async () => ""),
-    startLoopSchedulers: mock(async () => undefined),
-    stopLoopSchedulers: mock(async () => undefined),
+    runAutomationNow: mock(async () => {
+      throw new Error("not implemented");
+    }),
+    listAutomationInvocations: mock(async () => []),
+    startAutomationSchedulers: mock(async () => undefined),
+    stopAutomationSchedulers: mock(async () => undefined),
     notifyRuntimeShutdown: mock(() => undefined),
   } as unknown as AgentRuntime;
 
@@ -158,7 +139,7 @@ describe("hitl routes", () => {
     await rm(tempRoot, { recursive: true, force: true });
   });
 
-  test("scoped canonical route lists project/session/goal/loop HITL and redacts payloads", async () => {
+  test("scoped canonical route lists project/session/goal HITL and redacts payloads", async () => {
     const fixture = await createTestApp("scoped-list");
     const project = await addProject(fixture.runtime, "scoped-list", "Scoped Project");
     const context = await fixture.runtime.contextResolver.resolve(project.workspaceRoot);
@@ -175,29 +156,14 @@ describe("hitl routes", () => {
     const goalSessionHitl = await createSessionHitl(context.hitl, project.slug, goalSessionId, "Goal child session");
     const goalGrandchildHitl = await createSessionHitl(context.hitl, project.slug, goalChildSessionId, "Goal grandchild session");
 
-    const loop = await context.loopState.create(project.slug, LOOP_CONFIG);
-    const loopSessionId = await createSession(fixture, project, { agentName: "plan", loopId: loop.loopId });
-    const loopGoal = await createGoal(context.goalState, project.slug, "Loop Goal", loop.loopId);
-    const loopGoalSessionId = await createSession(fixture, project, { agentName: "goal_lead", goalId: loopGoal.id });
-    const loopHitl = await createLoopHitl(context.hitl, project.slug, loop.loopId, "Loop approval");
-    const loopSessionHitl = await createSessionHitl(context.hitl, project.slug, loopSessionId, "Loop child session");
-    const loopGoalHitl = await createGoalHitl(context.hitl, project.slug, loopGoal.id, "Loop child goal");
-    const loopGoalSessionHitl = await createSessionHitl(context.hitl, project.slug, loopGoalSessionId, "Loop goal session");
-    const staleLoopHitl = await createLoopHitl(context.hitl, project.slug, crypto.randomUUID(), "Stale loop HITL");
-
     const projectList = await getHitl(fixture.app, `/api/projects/${project.slug}/hitl?scope=project&status=pending`);
     expect(projectList.hitl.map((item) => item.hitlId)).toEqual([
       childHitl.hitlId,
       goalGrandchildHitl.hitlId,
       goalSessionHitl.hitlId,
-      loopGoalSessionHitl.hitlId,
-      loopSessionHitl.hitlId,
       rootHitl.hitlId,
       goalHitl.hitlId,
-      loopGoalHitl.hitlId,
-      loopHitl.hitlId,
     ].sort());
-    expect(projectList.hitl.map((item) => item.hitlId)).not.toContain(staleLoopHitl.hitlId);
     expectHitlListIsDisplaySafe(projectList);
 
     const sessionList = await getHitl(fixture.app, `/api/projects/${project.slug}/hitl?scope=session&ownerId=${rootSessionId}&includeChildren=true&status=pending`);
@@ -206,19 +172,8 @@ describe("hitl routes", () => {
     const goalList = await getHitl(fixture.app, `/api/projects/${project.slug}/hitl?scope=goal&ownerId=${goal.id}&includeChildren=true&status=pending`);
     expect(goalList.hitl.map((item) => item.hitlId)).toEqual([goalGrandchildHitl.hitlId, goalHitl.hitlId, goalSessionHitl.hitlId].sort());
 
-    const loopList = await getHitl(fixture.app, `/api/projects/${project.slug}/hitl?scope=loop&ownerId=${loop.loopId}&includeChildren=true&status=pending`);
-    expect(loopList.hitl.map((item) => item.hitlId)).toEqual([loopGoalHitl.hitlId, loopGoalSessionHitl.hitlId, loopHitl.hitlId, loopSessionHitl.hitlId].sort());
-
-    await context.hitl.cancelRecord(identity(loopHitl), "recent route coverage");
-    const recentList = await getHitl(fixture.app, `/api/projects/${project.slug}/hitl?scope=loop&ownerId=${loop.loopId}&includeChildren=true&status=recent`);
-    expect(recentList.hitl).toContainEqual(expect.objectContaining({ hitlId: loopHitl.hitlId, status: "cancelled", resumeStatus: "terminal" }));
-    const allList = await getHitl(fixture.app, `/api/projects/${project.slug}/hitl?scope=loop&ownerId=${loop.loopId}&includeChildren=true&status=all`);
-    expect(allList.hitl.map((item) => item.hitlId)).toContain(loopHitl.hitlId);
-
     const missingOwner = await fixture.app.request(`/api/projects/${project.slug}/hitl?scope=session&ownerId=${crypto.randomUUID()}&status=pending`);
     expect(missingOwner.status).toBe(404);
-    const missingLoopOwner = await fixture.app.request(`/api/projects/${project.slug}/hitl?scope=loop&ownerId=${staleLoopHitl.owner.ownerId}&status=pending`);
-    expect(missingLoopOwner.status).toBe(404);
     const missingProject = await fixture.app.request("/api/projects/missing-project/hitl?scope=project&status=pending");
     expect(missingProject.status).toBe(404);
 
@@ -459,7 +414,7 @@ describe("hitl routes", () => {
 async function createSession(
   fixture: TestFixture,
   project: ProjectInfo,
-  options: { agentName: "engineer" | "goal_lead" | "plan" | "explore"; rootSessionId?: string; parentSessionId?: string; goalId?: string; loopId?: string },
+  options: { agentName: "engineer" | "goal_lead" | "plan" | "explore"; rootSessionId?: string; parentSessionId?: string; goalId?: string },
 ): Promise<string> {
   const sessionId = crypto.randomUUID();
   fixture.sessionStoreManager.create(sessionId, project.workspaceRoot, options);
@@ -510,12 +465,11 @@ function mutationUrl(record: Pick<HitlRecord, "owner" | "hitlId">, action: "resp
   return `/api/projects/${encodeURIComponent(owner.projectSlug)}/hitl/${owner.ownerType}/${encodeURIComponent(owner.ownerId)}/${encodeURIComponent(hitlId)}/${action}`;
 }
 
-async function createGoal(manager: GoalStateManager, projectSlug: string, title: string, loopId?: string) {
+async function createGoal(manager: GoalStateManager, projectSlug: string, title: string) {
   return await manager.create({
     projectId: projectSlug,
     objective: `Exercise HITL route behavior for ${title}.`,
     acceptanceCriteria: "Reviewer can decide DONE from HITL route projections.",
-    ...(loopId === undefined ? {} : { loopId }),
   });
 }
 
@@ -544,15 +498,6 @@ async function createGoalHitl(hitl: TestHitlService, projectSlug: string, goalId
     owner: { projectSlug, ownerType: "goal", ownerId: goalId },
     blockingKey: `goal:${goalId}:approval:after_plan:${crypto.randomUUID()}`,
     source: { type: "goal_approval", goalId, approvalPoint: "after_plan", resumeStatus: "running" },
-    displayPayload: redactedPayload(title),
-  });
-}
-
-async function createLoopHitl(hitl: TestHitlService, projectSlug: string, loopId: string, title: string): Promise<HitlRecord> {
-  return await hitl.create({
-    owner: { projectSlug, ownerType: "loop", ownerId: loopId },
-    blockingKey: `loop:${loopId}:approval:manual:${crypto.randomUUID()}`,
-    source: { type: "loop_approval", loopId, approvalPoint: "manual" },
     displayPayload: redactedPayload(title),
   });
 }

@@ -1,5 +1,7 @@
 import type { ToolRegistry } from "../tools/index";
 import type { Logger } from "../logger";
+import type { GithubIntegrationConfig } from "../config";
+import { createGitHubConnector } from "../integrations/github";
 import { createBuiltinToolDescriptors } from "../tools/builtins";
 import {
   createAuditHook,
@@ -7,15 +9,19 @@ import {
   createOutputTruncator,
   createRedactionHook,
 } from "../tools/hooks";
-import { createLoopBudgetToolPermission } from "../loops/budget-tool-guard";
 import { createMemoryReadTool } from "../tools/builtins/memory-read";
 import { createMemoryWriteTool } from "../tools/builtins/memory-write";
 import { goalCreateTool, goalManageTool } from "../tools/builtins/goal-tools";
 import { createGitHubToolDescriptors } from "../tools/github";
 
+export interface RegisterBuiltinToolsOptions {
+  readonly github?: GithubIntegrationConfig;
+}
+
 export function registerBuiltinTools(
   registry: ToolRegistry,
   logger: Logger,
+  options: RegisterBuiltinToolsOptions = {},
 ): void {
   const descriptors = createBuiltinToolDescriptors();
   registry.registerAll(descriptors);
@@ -26,9 +32,11 @@ export function registerBuiltinTools(
   registry.register(goalCreateTool);
   registry.register(goalManageTool);
 
-  registry.registerAll(createGitHubToolDescriptors());
-
-  registry.globalPermissions.push(createLoopBudgetToolPermission());
+  registry.registerAll(createGitHubToolDescriptors({
+    connector: () => createGitHubConnector(
+      options.github === undefined ? {} : { config: options.github },
+    ),
+  }));
 
   registry.globalHooks.after.push(createRedactionHook());
   registry.globalHooks.after.push(createOutputTruncator({ logger: logger.child({ module: "tools.truncate" }) }));

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { GoalState, LoopState, Project, SessionSummary, SessionTreeResponse } from "../../api/types";
+import type { Automation, GoalState, Project, SessionSummary, SessionTreeResponse } from "../../api/types";
 import type { SessionFamilyRuntimeProjection } from "@archcode/protocol";
 
 interface ElementLike {
@@ -74,7 +74,7 @@ const useState = mock(<T,>(initial: T): [T, (value: T | ((previous: T) => T)) =>
   setState as (value: T | ((previous: T) => T)) => void,
 ]);
 const useNavigate = mock(() => navigate);
-const useParams = mock(() => ({ slug: "missing-project", sessionId: "", goalId: "", loopId: "" }));
+const useParams = mock(() => ({ slug: "missing-project", sessionId: "", goalId: "" }));
 let currentPathname = "/projects/missing-project";
 const useLocation = mock(() => ({ pathname: currentPathname }));
 const useCreateSession = mock(() => ({
@@ -84,7 +84,7 @@ const useCreateSession = mock(() => ({
 let projects: Project[] = [];
 let sessions: SessionSummary[] = [];
 let goals: GoalState[] = [];
-let loops: LoopState[] = [];
+let automations: Automation[] = [];
 let sessionTree: SessionTreeResponse | null = null;
 let createSessionPending = false;
 let runtimeInitialized = false;
@@ -92,7 +92,6 @@ let runtimeFamilies: Record<string, SessionFamilyRuntimeProjection> = {};
 const useProjects = mock(() => ({ data: projects }));
 const useSessions = mock((_slug: string) => ({ data: sessions }));
 const useGoals = mock((_slug: string) => ({ data: goals }));
-const useLoops = mock((_slug: string) => ({ data: loops }));
 const useSessionTree = mock((_slug: string, _rootSessionId: string) => ({ data: sessionTree }));
 
 let Sidebar: SidebarComponent;
@@ -168,7 +167,7 @@ mock.module("../../api/queries", () => ({
   useProjects,
   useSessions,
   useGoals,
-  useLoops,
+  useAutomations: (_slug: string) => ({ data: automations }),
   useSession: (_slug: string, _sessionId: string) => ({ data: null }),
   useSessionTree,
   useDiff: (_slug: string) => ({ data: [] }),
@@ -211,8 +210,8 @@ mock.module("./CreateGoalDialog", () => ({
   CreateGoalDialog: "CreateGoalDialog",
 }));
 
-mock.module("./CreateLoopDialog", () => ({
-  CreateLoopDialog: "CreateLoopDialog",
+mock.module("./AutomationDialog", () => ({
+  AutomationDialog: "AutomationDialog",
 }));
 
 ({ Sidebar } = await import("./Sidebar"));
@@ -226,14 +225,14 @@ describe("Sidebar", () => {
     projects = [];
     sessions = [];
     goals = [];
-    loops = [];
+    automations = [];
     sessionTree = null;
     createSessionPending = false;
     runtimeInitialized = false;
     runtimeFamilies = {};
     focusSessionId = null;
     currentPathname = "/projects/missing-project";
-    useParams.mockImplementation(() => ({ slug: "missing-project", sessionId: "", goalId: "", loopId: "" }));
+    useParams.mockImplementation(() => ({ slug: "missing-project", sessionId: "", goalId: "" }));
     for (const fn of [
       navigate,
       createSessionMutate,
@@ -247,7 +246,6 @@ describe("Sidebar", () => {
       useProjects,
       useSessions,
       useGoals,
-      useLoops,
       useSessionTree,
       setFocusSessionId,
       getWebSessionStore,
@@ -268,7 +266,7 @@ describe("Sidebar", () => {
 
   test("active project renders action menu and workspace path", () => {
     projects = [project];
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "", loopId: "" }));
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "" }));
     currentPathname = "/projects/archcode";
     const tree = render();
 
@@ -279,7 +277,7 @@ describe("Sidebar", () => {
 
   test("renders the real project dashboard entry without placeholder copy", () => {
     projects = [project];
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "", loopId: "" }));
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "" }));
     currentPathname = "/projects/archcode";
     const tree = render();
 
@@ -292,7 +290,7 @@ describe("Sidebar", () => {
 
   test("preserves the future sessions dashboard placeholder", () => {
     projects = [project];
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "", loopId: "" }));
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "" }));
     currentPathname = "/projects/archcode";
     const tree = render();
 
@@ -303,7 +301,7 @@ describe("Sidebar", () => {
 
   test("keeps the project dashboard reachable on session routes", () => {
     projects = [project];
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "s1", goalId: "", loopId: "" }));
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "s1", goalId: "" }));
     currentPathname = "/projects/archcode/sessions/s1";
     const tree = render();
 
@@ -312,28 +310,10 @@ describe("Sidebar", () => {
     expect(dashboards[0]?.props?.label).toBe("Project Dashboard");
   });
 
-  test("tab selector renders Sessions, Goals, Loops tabs with accessible roles", () => {
-    projects = [project];
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "", loopId: "" }));
-    currentPathname = "/projects/archcode";
-    const tree = render();
-
-    const tabs = findAll(tree, (element) => element.props?.role === "tab");
-    expect(tabs).toHaveLength(3);
-    expect(tabs.map((t) => t.props?.children)).toEqual(["Sessions", "Goals", "Loops"]);
-    expect(tabs.every((t) => t.props?.["aria-selected"] !== undefined)).toBe(true);
-    expect(tabs.every((t) => t.props?.["aria-controls"] !== undefined)).toBe(true);
-
-    const tablist = findAll(tree, (element) => element.props?.role === "tablist");
-    expect(tablist.length).toBeGreaterThan(0);
-
-    const panels = findAll(tree, (element) => element.props?.role === "tabpanel");
-    expect(panels).toHaveLength(3);
-  });
 
   test("active tab defaults to sessions for project dashboard path", () => {
     projects = [project];
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "", loopId: "" }));
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "" }));
     currentPathname = "/projects/archcode";
     const tree = render();
 
@@ -344,7 +324,7 @@ describe("Sidebar", () => {
 
   test("clicking tabs switches the sidebar tab without navigating", () => {
     projects = [project];
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "", loopId: "" }));
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "" }));
     currentPathname = "/projects/archcode";
     const tree = render();
 
@@ -354,21 +334,18 @@ describe("Sidebar", () => {
     const tabs = findAll(tree, (element) => element.props?.role === "tab");
     const sessionsTab = tabs.find((t) => t.props?.children === "Sessions");
     const goalsTab = tabs.find((t) => t.props?.children === "Goals");
-    const loopsTab = tabs.find((t) => t.props?.children === "Loops");
 
     (sessionsTab?.props?.onClick as () => void)?.();
     (goalsTab?.props?.onClick as () => void)?.();
-    (loopsTab?.props?.onClick as () => void)?.();
 
     expect(setState).toHaveBeenCalledWith("sessions");
     expect(setState).toHaveBeenCalledWith("goals");
-    expect(setState).toHaveBeenCalledWith("loops");
     expect(navigate).not.toHaveBeenCalled();
   });
 
   test("active tab derives from /goals path", () => {
     projects = [project];
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "", loopId: "" }));
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "" }));
     currentPathname = "/projects/archcode/goals";
     const tree = render();
 
@@ -377,21 +354,11 @@ describe("Sidebar", () => {
     expect(goalsTab?.props?.["aria-selected"]).toBe(true);
   });
 
-  test("active tab derives from /loops path", () => {
-    projects = [project];
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "", loopId: "" }));
-    currentPathname = "/projects/archcode/loops";
-    const tree = render();
-
-    const tabs = findAll(tree, (element) => element.props?.role === "tab");
-    const loopsTab = tabs.find((t) => t.props?.children === "Loops");
-    expect(loopsTab?.props?.["aria-selected"]).toBe(true);
-  });
 
   test("New Session create button exposes disabled state while mutation is pending", () => {
     projects = [project];
     createSessionPending = true;
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "", loopId: "" }));
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "" }));
     currentPathname = "/projects/archcode";
     const tree = render();
 
@@ -449,7 +416,7 @@ describe("Sidebar", () => {
       },
       diagnostics: [],
     };
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "child-session", goalId: "", loopId: "" }));
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "child-session", goalId: "" }));
     currentPathname = "/projects/archcode/sessions/child-session";
 
     const tree = render();
@@ -494,7 +461,7 @@ describe("Sidebar", () => {
         activity: "running",
       },
     };
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "", loopId: "" }));
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "" }));
     currentPathname = "/projects/archcode";
 
     const tree = render();
@@ -524,7 +491,7 @@ describe("Sidebar", () => {
       updatedAt: Date.now(),
     }];
     runtimeInitialized = false;
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "", loopId: "" }));
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "" }));
     currentPathname = "/projects/archcode";
 
     const tree = render();
@@ -580,7 +547,7 @@ describe("Sidebar", () => {
       },
       diagnostics: [],
     };
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "root-session", goalId: "", loopId: "" }));
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "root-session", goalId: "" }));
     currentPathname = "/projects/archcode/sessions/root-session";
 
     const tree = render();
@@ -638,7 +605,7 @@ describe("Sidebar", () => {
       },
       diagnostics: [],
     };
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "root-session", goalId: "", loopId: "" }));
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "root-session", goalId: "" }));
     currentPathname = "/projects/archcode/sessions/root-session";
 
     focusSessionId = "child-session";
@@ -686,7 +653,7 @@ describe("Sidebar", () => {
         updatedAt: "2",
       },
     ];
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "goal-2", loopId: "" }));
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "goal-2" }));
     currentPathname = "/projects/archcode/goals/goal-2";
 
     const tree = render();
@@ -701,7 +668,7 @@ describe("Sidebar", () => {
   test("goals panel shows empty state when no goals", () => {
     projects = [project];
     goals = [];
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "", loopId: "" }));
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "" }));
     currentPathname = "/projects/archcode/goals";
 
     const tree = render();
@@ -712,12 +679,11 @@ describe("Sidebar", () => {
   test("renders the real goals dashboard entry", () => {
     projects = [project];
     goals = [];
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "", loopId: "" }));
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "" }));
     currentPathname = "/projects/archcode/goals";
 
     const tree = render();
     const dashboards = findAll(tree, (element) => typeName(element) === "DashboardLinkButton");
-    expect(dashboards.map((item) => item.props?.label)).toEqual(["Project Dashboard", "Goals Dashboard", "Loops Dashboard"]);
     expect(dashboards[1]?.props?.to).toBe("/projects/archcode/goals");
     expect(dashboards[1]?.props?.isActive).toBe(true);
   });
@@ -744,7 +710,7 @@ describe("Sidebar", () => {
         updatedAt: "1",
       },
     ];
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "", loopId: "" }));
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "" }));
     currentPathname = "/projects/archcode/goals";
 
     const tree = render();
@@ -757,7 +723,7 @@ describe("Sidebar", () => {
   test("new goal create button opens CreateGoalDialog", () => {
     projects = [project];
     goals = [];
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "", loopId: "" }));
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "" }));
     currentPathname = "/projects/archcode/goals";
 
     const tree = render();
@@ -770,160 +736,5 @@ describe("Sidebar", () => {
     const dialogs = findAll(tree, (element) => typeName(element) === "CreateGoalDialog");
     expect(dialogs).toHaveLength(1);
     expect(dialogs[0]?.props?.slug).toBe("archcode");
-  });
-
-  test("loops panel renders loop items and highlights active loop", () => {
-    projects = [project];
-    loops = [
-      {
-        loopId: "loop-aaaa1111",
-        projectId: "archcode",
-        config: {
-          templateId: "watch_report",
-          title: "Nightly Watch",
-          schedule: { kind: "interval", everyMs: 60000 },
-          approvalPolicy: "interactive",
-          limits: { maxIterationsPerRun: 10, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
-          useWorktree: false,
-        },
-        status: "active",
-        createdAt: 1,
-        updatedAt: 1,
-        runCount: 0,
-        stateVersion: 1,
-      },
-      {
-        loopId: "loop-bbbb2222",
-        projectId: "archcode",
-        config: {
-          templateId: "goal_runner",
-          title: "PR Babysitter",
-          schedule: { kind: "manual" },
-          approvalPolicy: "explicit_per_run",
-          limits: { maxIterationsPerRun: 5, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
-          useWorktree: false,
-        },
-        status: "paused",
-        createdAt: 2,
-        updatedAt: 2,
-        runCount: 0,
-        stateVersion: 1,
-      },
-    ];
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "", loopId: "loop-bbbb2222" }));
-    currentPathname = "/projects/archcode/loops/loop-bbbb2222";
-
-    const tree = render();
-    const loopItems = findAll(tree, (element) => typeName(element) === "LoopItem");
-
-    expect(loopItems).toHaveLength(2);
-    expect(loopItems[0]?.props?.isActive).toBe(false);
-    expect(loopItems[1]?.props?.isActive).toBe(true);
-    expect((loopItems[1]?.props?.loop as LoopState).loopId).toBe("loop-bbbb2222");
-  });
-
-  test("loops panel shows empty state when no loops", () => {
-    projects = [project];
-    loops = [];
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "", loopId: "" }));
-    currentPathname = "/projects/archcode/loops";
-
-    const tree = render();
-    expect(textContent(tree)).toContain("No loops yet");
-    expect(findAll(tree, (element) => typeName(element) === "LoopItem")).toHaveLength(0);
-  });
-
-  test("renders the real loops dashboard entry", () => {
-    projects = [project];
-    loops = [];
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "", loopId: "" }));
-    currentPathname = "/projects/archcode/loops";
-
-    const tree = render();
-    const dashboards = findAll(tree, (element) => typeName(element) === "DashboardLinkButton");
-    expect(dashboards.map((item) => item.props?.label)).toEqual(["Project Dashboard", "Goals Dashboard", "Loops Dashboard"]);
-    expect(dashboards[2]?.props?.to).toBe("/projects/archcode/loops");
-    expect(dashboards[2]?.props?.isActive).toBe(true);
-  });
-
-  test("clicking a loop item navigates to loop detail route", () => {
-    projects = [project];
-    loops = [
-      {
-        loopId: "loop-xyz12345",
-        projectId: "archcode",
-        config: {
-          templateId: "watch_report",
-          title: "Watch Loop",
-          schedule: { kind: "manual" },
-          approvalPolicy: "interactive",
-          limits: { maxIterationsPerRun: 3, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
-          useWorktree: false,
-        },
-        status: "active",
-        createdAt: 1,
-        updatedAt: 1,
-        runCount: 0,
-        stateVersion: 1,
-      },
-    ];
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "", loopId: "" }));
-    currentPathname = "/projects/archcode/loops";
-
-    const tree = render();
-    const loopItems = findAll(tree, (element) => typeName(element) === "LoopItem");
-    (loopItems[0]?.props?.onClick as () => void)?.();
-
-    expect(navigate).toHaveBeenCalledWith("/projects/archcode/loops/loop-xyz12345");
-  });
-
-  test("new loop create button opens CreateLoopDialog", () => {
-    projects = [project];
-    loops = [];
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "", loopId: "" }));
-    currentPathname = "/projects/archcode/loops";
-
-    const tree = render();
-    const createButtons = findAll(tree, (element) => typeName(element) === "CreateButton");
-    const loopCreateButton = createButtons.find((b) => b.props?.title === "New loop");
-    expect(loopCreateButton).toBeDefined();
-    expect(loopCreateButton?.props?.label).toBe("New loop");
-    expect(typeof loopCreateButton?.props?.onClick).toBe("function");
-
-    const dialogs = findAll(tree, (element) => typeName(element) === "CreateLoopDialog");
-    expect(dialogs).toHaveLength(1);
-    expect(dialogs[0]?.props?.slug).toBe("archcode");
-  });
-
-  test("loop item receives loop with empty title and uses placeholder inside component", () => {
-    projects = [project];
-    loops = [
-      {
-        loopId: "loop-placeholder9",
-        projectId: "archcode",
-        config: {
-          templateId: "watch_report",
-          title: "",
-          schedule: { kind: "manual" },
-          approvalPolicy: "interactive",
-          limits: { maxIterationsPerRun: 3, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
-          useWorktree: false,
-        },
-        status: "active",
-        createdAt: 1,
-        updatedAt: 1,
-        runCount: 0,
-        stateVersion: 1,
-      },
-    ];
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "", loopId: "" }));
-    currentPathname = "/projects/archcode/loops";
-
-    const tree = render();
-    const loopItems = findAll(tree, (element) => typeName(element) === "LoopItem");
-    expect(loopItems).toHaveLength(1);
-    const loopProp = loopItems[0]?.props?.loop as LoopState;
-    expect(loopProp.config.title).toBe("");
-    expect(loopProp.loopId).toBe("loop-placeholder9");
   });
 });

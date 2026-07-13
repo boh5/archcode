@@ -6,7 +6,6 @@ import { GoalStateManager } from "../goals/state";
 import type { GoalCancellationCapability } from "../goals/cancellation";
 import { type ResumeCoordinator } from "../hitl/resume-coordinator";
 import { HitlService, type HitlServiceOptions } from "../hitl/service";
-import { LoopStateManager } from "../loops/state";
 import { MemoryFileManager } from "../memory/file-manager";
 import { silentLogger } from "../logger";
 import type { Logger } from "../logger";
@@ -32,14 +31,12 @@ export interface ProjectContextResolverOptions {
     goalState: GoalStateManager;
     hitl: HitlService;
   }) => GoalCancellationCapability;
-  /** Factory primarily for testing alternate LoopStateManager construction. */
-  loopStateFactory?: (workspaceRoot: string) => LoopStateManager;
   /** Factory primarily for testing alternate HitlService construction. */
   hitlFactory?: (options: HitlServiceOptions) => HitlService;
   /** Shared SessionStoreManager used for owner-local HITL lookup and aggregation. */
   sessionStoreManager: SessionStoreManager;
   /** Application-level ResumeCoordinator composition with all production adapters. */
-  resumeCoordinatorFactory: (input: { workspaceRoot: string; hitl: HitlService; goalState: GoalStateManager; loopState: LoopStateManager }) => ResumeCoordinator;
+  resumeCoordinatorFactory: (input: { workspaceRoot: string; hitl: HitlService; goalState: GoalStateManager }) => ResumeCoordinator;
   /** Factory primarily for testing alternate MemoryFileManager construction. */
   memoryFactory?: (workspaceRoot: string) => MemoryFileManager;
   /** Factory primarily for testing ProjectApprovalManager load behavior. */
@@ -54,7 +51,6 @@ export class ProjectContextResolver {
   readonly #projectInfoFactory: (workspaceRoot: string) => Promise<ProjectInfo> | ProjectInfo;
   readonly #goalStateFactory: (workspaceRoot: string) => GoalStateManager;
   readonly #goalCancellationFactory: ProjectContextResolverOptions["goalCancellationFactory"];
-  readonly #loopStateFactory: (workspaceRoot: string) => LoopStateManager;
   readonly #hitlFactory: (options: HitlServiceOptions) => HitlService;
   readonly #sessionStoreManager: SessionStoreManager;
   readonly #resumeCoordinatorFactory: ProjectContextResolverOptions["resumeCoordinatorFactory"];
@@ -69,9 +65,6 @@ export class ProjectContextResolver {
       return new GoalStateManager(workspaceRoot, this.#logger.child({ module: "goals.state" }));
     });
     this.#goalCancellationFactory = options.goalCancellationFactory;
-    this.#loopStateFactory = options.loopStateFactory ?? ((workspaceRoot) => {
-      return new LoopStateManager(workspaceRoot, this.#logger.child({ module: "loops.state" }));
-    });
     this.#sessionStoreManager = options.sessionStoreManager;
     this.#resumeCoordinatorFactory = options.resumeCoordinatorFactory;
     this.#hitlFactory = options.hitlFactory ?? ((input) => new HitlService(input));
@@ -117,32 +110,28 @@ export class ProjectContextResolver {
     await approvals.load(workspaceRoot);
     const project = await this.#projectInfoFactory(workspaceRoot);
     const goalState = this.#goalStateFactory(workspaceRoot);
-    const loopState = this.#loopStateFactory(workspaceRoot);
     const hitl = this.#hitlFactory({
       workspaceRoot,
       project,
       sessions: this.#sessionStoreManager,
       goalState,
-      loopState,
     });
     await migrateWorkspaceHitlProjectSlug({
       workspaceRoot,
       project,
       sessions: this.#sessionStoreManager,
       goalState,
-      loopState,
     });
     await recoverSessionHitlJournals({
       workspaceRoot,
       sessions: this.#sessionStoreManager,
       hitl,
     });
-    const hitlResumeCoordinator = this.#resumeCoordinatorFactory({ workspaceRoot, hitl, goalState, loopState });
+    const hitlResumeCoordinator = this.#resumeCoordinatorFactory({ workspaceRoot, hitl, goalState });
     const context: ProjectContext = {
       project,
       goalState,
       goalCancellation: this.#goalCancellationFactory({ workspaceRoot, project, goalState, hitl }),
-      loopState,
       hitl,
       hitlResumeCoordinator,
       memory: this.#memoryFactory(workspaceRoot),
@@ -153,7 +142,7 @@ export class ProjectContextResolver {
     };
     // Journal repair and durable resume claims are fail-closed before this
     // scan. recover() schedules claimed continuations without awaiting their
-    // potentially long Agent/Loop tails, so adapter re-entry can resolve this
+    // potentially long Agent tails, so adapter re-entry can resolve this
     // same context once this build promise publishes it.
     await hitlResumeCoordinator.recover();
 
@@ -166,19 +155,16 @@ async function migrateWorkspaceHitlProjectSlug(input: {
   readonly project: ProjectInfo;
   readonly sessions: SessionStoreManager;
   readonly goalState: GoalStateManager;
-  readonly loopState: LoopStateManager;
 }): Promise<void> {
   const context = {
     workspaceRoot: input.workspaceRoot,
     project: input.project,
     sessions: input.sessions,
     goalState: input.goalState,
-    loopState: input.loopState,
   };
   for (const owner of await collectKnownHitlOwners(context)) {
     const filePath = await resolveHitlOwnerPath(input.workspaceRoot, owner, {
       goalState: input.goalState,
-      loopState: input.loopState,
     });
     await migrateHitlOwnerFileProjectSlug(filePath, owner);
     if (owner.ownerType === "session") {

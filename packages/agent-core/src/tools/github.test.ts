@@ -20,10 +20,6 @@ import { createSessionStore } from "../store/store";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { SkillService } from "../skills";
 import { silentLogger } from "../logger";
-import { createLoopCollisionToolPermission } from "../loops/collision-tool-guard";
-import { createLoopBudgetToolPermission } from "../loops/budget-tool-guard";
-import { CollisionLedger } from "../loops/collision-ledger";
-import { LoopBudgetConfigSchema, LoopStateManager, type LoopBudgetConfig, type LoopConfig } from "../loops/state";
 import type { GitHubConnectorApi, GitHubResponse, GitHubWorkflowRunsPage } from "../integrations/github";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "github-tools");
@@ -38,15 +34,6 @@ interface PullRequestChecksOutput {
     workflowRuns: Array<{ id: number }>;
   };
 }
-
-const LOOP_CONFIG: LoopConfig = {
-  templateId: "pr_babysitter",
-  title: "GitHub guarded loop",
-  schedule: { kind: "manual" },
-  approvalPolicy: "interactive",
-  limits: { maxIterationsPerRun: 4, maxTokensPerRun: 1_000, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
-  useWorktree: false,
-};
 
 beforeEach(async () => {
   await rm(TMP_DIR, { recursive: true, force: true }).catch(() => {});
@@ -172,89 +159,6 @@ describe("GitHub connector-backed tools", () => {
     expect(connector.rerunWorkflowRun).not.toHaveBeenCalled();
   });
 
-  test("Loop collision conflict blocks issue comment before connector and HITL", async () => {
-    const connector = makeConnector();
-    const registry = createRegistry(createGitHubToolDescriptors({ connector }));
-    registry.globalPermissions.push(createLoopCollisionToolPermission({ leaseTtlMs: 60_000 }));
-    const stateManager = new LoopStateManager(TMP_DIR);
-    const holder = await stateManager.create("project-a", LOOP_CONFIG);
-    const contender = await stateManager.create("project-a", LOOP_CONFIG);
-    const ledger = new CollisionLedger({ stateManager, workspaceRoot: TMP_DIR, leaseTtlMs: 60_000 });
-    await ledger.acquire({
-      target: { type: "issue", owner: "test-owner", repo: "test-repo", number: 42 },
-      loopId: holder.loopId,
-      runId: "run-a",
-      priority: 10,
-      expiresAt: Date.now() + 60_000,
-    });
-    const input = { owner: "test-owner", repo: "test-repo", issueNumber: 42, body: "Looks good" };
-    const confirmPermission = mock(async () => "approve_once" as const);
-
-    const result = await registry.execute(
-      { toolName: TOOL_GITHUB_CREATE_ISSUE_COMMENT, toolCallId: "gh-comment-collision", input },
-      context(TOOL_GITHUB_CREATE_ISSUE_COMMENT, [TOOL_GITHUB_CREATE_ISSUE_COMMENT], input, {
-        confirmPermission,
-        projectContext: createTestProjectContext(TMP_DIR),
-        origin: {
-          kind: "loop",
-          loopId: contender.loopId,
-          runId: "run-b",
-          trigger: "manual",
-          approvalPolicy: "interactive",
-        },
-      }),
-    );
-
-    expect(result.isError).toBe(true);
-    expect(result.output).toContain("LOOP_COLLISION_CONFLICT");
-    expect(result.output).toContain("collision_conflict");
-    expect(confirmPermission).not.toHaveBeenCalled();
-    expect(connector.createIssueComment).not.toHaveBeenCalled();
-  });
-
-  test("Loop soft budget blocks issue comment before connector and HITL", async () => {
-    const connector = makeConnector();
-    const registry = createRegistry(createGitHubToolDescriptors({ connector }));
-    registry.globalPermissions.push(createLoopBudgetToolPermission());
-    const stateManager = new LoopStateManager(TMP_DIR);
-    const loop = await stateManager.create("project-a", LOOP_CONFIG);
-    await stateManager.updateBudgetSnapshot(loop.loopId, {
-      budget: normalizedBudget(loop.config.limits),
-      usage: {
-        iterations: 1,
-        inputTokens: 800,
-        outputTokens: 0,
-        totalTokens: 800,
-        wallClockMs: 4,
-        runsToday: 1,
-        resetDateUtc: "2026-07-05",
-        pricingUnavailable: true,
-      },
-      updatedAt: Date.now(),
-    });
-    const input = { owner: "test-owner", repo: "test-repo", issueNumber: 42, body: "Looks good" };
-    const confirmPermission = mock(async () => "approve_once" as const);
-
-    const result = await registry.execute(
-      { toolName: TOOL_GITHUB_CREATE_ISSUE_COMMENT, toolCallId: "gh-comment-budget", input },
-      context(TOOL_GITHUB_CREATE_ISSUE_COMMENT, [TOOL_GITHUB_CREATE_ISSUE_COMMENT], input, {
-        confirmPermission,
-        projectContext: createTestProjectContext(TMP_DIR),
-        origin: {
-          kind: "loop",
-          loopId: loop.loopId,
-          runId: "run-soft",
-          trigger: "manual",
-          approvalPolicy: "interactive",
-        },
-      }),
-    );
-
-    expect(result.isError).toBe(true);
-    expect(result.output).toContain("LOOP_SOFT_BUDGET_BLOCKED");
-    expect(confirmPermission).not.toHaveBeenCalled();
-    expect(connector.createIssueComment).not.toHaveBeenCalled();
-  });
 });
 
 function context(
@@ -303,8 +207,4 @@ function makeConnector(): GitHubConnectorApi & Record<string, ReturnType<typeof 
 
 function response<T>(data: T, status = 200): GitHubResponse<T> {
   return { data, status };
-}
-
-function normalizedBudget(value: unknown): LoopBudgetConfig {
-  return LoopBudgetConfigSchema.parse(value);
 }

@@ -315,7 +315,6 @@ export class ToolRegistry {
       ...(ctx.currentDepth !== undefined ? { currentDepth: ctx.currentDepth } : {}),
       ...(unsatisfiedAsk.display ? { decisionDisplay: unsatisfiedAsk.display } : {}),
       ...(unsatisfiedAsk.ruleId ? { ruleId: unsatisfiedAsk.ruleId } : {}),
-      ...(ctx.origin ? { origin: ctx.origin } : {}),
     };
 
     const confirmPermission = ctx.confirmPermission;

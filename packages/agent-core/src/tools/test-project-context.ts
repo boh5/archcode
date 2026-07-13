@@ -5,7 +5,6 @@ import type { StoreApi } from "zustand";
 import { GoalStateManager } from "../goals/state";
 import { HitlService } from "../hitl/service";
 import { createPreparedHitlResume, ResumeCoordinator } from "../hitl/resume-coordinator";
-import { LoopStateManager } from "../loops/state";
 import { MemoryFileManager } from "../memory/file-manager";
 import { silentLogger } from "../logger";
 import type { ProjectContextResolverOptions } from "../projects/context-resolver";
@@ -25,13 +24,11 @@ export function createTestProjectContext(
     addedAt: new Date().toISOString(),
   };
   const goalState = new GoalStateManager(workspaceRoot);
-  const loopState = new LoopStateManager(workspaceRoot);
-  const hitl = new HitlService({ workspaceRoot, project, sessions, goalState, loopState });
+  const hitl = new HitlService({ workspaceRoot, project, sessions, goalState });
   return {
     project,
     goalState,
     goalCancellation: createTestGoalCancellation(goalState),
-    loopState,
     hitl,
     hitlResumeCoordinator: createTestResumeCoordinator(hitl),
     memory: new MemoryFileManager({
@@ -91,7 +88,6 @@ function createTestResumeCoordinator(hitl: HitlService): ResumeCoordinator {
     adapters: {
       session: { prepare: async () => createPreparedHitlResume(async () => undefined) },
       goal: { prepare: async () => createPreparedHitlResume(async () => undefined) },
-      loop: { prepare: async () => createPreparedHitlResume(async () => undefined) },
     },
     logger: silentLogger,
   });

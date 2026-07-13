@@ -3,7 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createEmptySessionStats } from "@archcode/protocol";
 import type { Agent, AgentResult, AgentRunOptions } from "../agents/types";
-import { AgentRunningError, ConcurrentLimitError, ConcurrentSessionLimitError, DelegateTargetNotAllowedError, DepthLimitError, ChildSessionNotFoundError, ChildSessionAgentMismatchError, ChildSessionParentMismatchError, ChildSessionNotDescendantError, ChildSessionCwdMismatchError, ChildSessionLoopScopeMismatchError, SessionCwdTransitionConflictError, SessionCwdTransitionInProgressError, SessionHitlBlockedError, SessionHitlCancelOnlyLeaseError, SessionHitlResumeConflictError, SessionHitlResumeInProgressError, SessionHitlResumeLeaseExpiredError } from "../agents/errors";
+import { AgentRunningError, ConcurrentLimitError, ConcurrentSessionLimitError, DelegateTargetNotAllowedError, DepthLimitError, ChildSessionNotFoundError, ChildSessionAgentMismatchError, ChildSessionParentMismatchError, ChildSessionNotDescendantError, ChildSessionCwdMismatchError, SessionCwdTransitionConflictError, SessionCwdTransitionInProgressError, SessionHitlBlockedError, SessionHitlCancelOnlyLeaseError, SessionHitlResumeConflictError, SessionHitlResumeInProgressError, SessionHitlResumeLeaseExpiredError } from "../agents/errors";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
 import type { SlashCommandResult } from "../commands/types";
 import { NotRootSessionError, SessionDeleteConflictError } from "../store/errors";
@@ -19,21 +19,12 @@ import { silentLogger } from "../logger";
 import type { SessionStoreState, ToolChildSessionLink } from "../store/types";
 import type { AgentFactory } from "../agents/factory";
 import type { AgentDefinition } from "../agents/factory-types";
-import type { ToolExecutionOrigin } from "../tools/types";
 import { createEmptyCompressionState } from "../compression";
 import type { SessionGoalDelegationContext } from "./session-goal-delegation-context";
 
 const workspaceRoot = join(import.meta.dir, "__test_tmp__", "session-execution-manager-workspace");
 const defaultAgentWorkspaceRoot = workspaceRoot;
 const storeManager = new SessionStoreManager({ logger: silentLogger });
-const LOOP_ORIGIN: ToolExecutionOrigin = {
-  kind: "loop",
-  loopId: "loop-child-origin",
-  runId: "run-child-origin",
-  trigger: "manual",
-  approvalPolicy: "interactive",
-};
-
 interface Deferred<T> {
   promise: Promise<T>;
   resolve(value: T): void;
@@ -648,24 +639,6 @@ describe("SessionExecutionManager", () => {
     await execution.promise;
 
     expect(agent.runMock).toHaveBeenCalledWith("work", expect.objectContaining({ maxSteps: 1 }));
-  });
-
-  test("startExecution forwards loop origin to agent.run options", async () => {
-    const agent = new MockAgent("loop-origin-session", Promise.resolve({ text: "done", steps: 1 }));
-    const { manager } = createManager({ "loop-origin-session": agent });
-    const origin = {
-      kind: "loop" as const,
-      loopId: crypto.randomUUID(),
-      runId: "run-1",
-      trigger: "manual" as const,
-      approvalPolicy: "interactive" as const,
-    };
-
-    const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "loop-origin-session", userMessage: "work", origin });
-    await execution.promise;
-
-    expect(execution.origin).toBe("user_message");
-    expect(agent.runMock).toHaveBeenCalledWith("work", expect.objectContaining({ origin }));
   });
 
   test("startExecution forwards extraTools to agent.run", async () => {
@@ -1388,82 +1361,6 @@ describe("SessionExecutionManager", () => {
     await expect(manager.startChildExecution(workspaceRoot, { ...base, skills: [] })).rejects.toBe(denied);
     await expect(manager.resumeChildExecution(workspaceRoot, { ...base, sessionId: crypto.randomUUID() })).rejects.toBe(denied);
     expect(run).toHaveBeenCalledTimes(2);
-  });
-
-  test("startChildExecution preserves Loop origin so child tool guards execute in the same run scope", async () => {
-    const parentId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, {
-      agentName: "engineer",
-      loopId: LOOP_ORIGIN.loopId,
-    });
-    let childOrigin: ToolExecutionOrigin | undefined;
-    const loopGuard = mock((origin: ToolExecutionOrigin | undefined) => {
-      if (origin?.kind !== "loop" || origin.loopId !== LOOP_ORIGIN.loopId) {
-        throw new Error("Loop child guard lost its execution origin");
-      }
-    });
-    const { manager } = createManager({}, {
-      factory: makeFactory(),
-      childRunOptions: (options) => {
-        childOrigin = options instanceof AbortSignal ? undefined : options?.origin;
-        loopGuard(childOrigin);
-      },
-    });
-
-    const handle = await manager.startChildExecution(workspaceRoot, {
-      parentStore,
-      parentSessionId: parentId,
-      parentToolCallId: "loop-delegate-call",
-      toolName: "delegate",
-      targetAgentName: "explore",
-      prompt: "inspect under Loop guardrails",
-      skills: [],
-      background: false,
-      currentDepth: 0,
-      parentAbort: undefined,
-      origin: LOOP_ORIGIN,
-    });
-    await handle.result;
-
-    expect(handle.store.getState().loopId).toBe(LOOP_ORIGIN.loopId);
-    expect(childOrigin).toEqual(LOOP_ORIGIN);
-    expect(loopGuard).toHaveBeenCalledTimes(1);
-  });
-
-  test("startChildExecution rejects Loop origin that does not match its parent Session", async () => {
-    const parentId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, {
-      agentName: "engineer",
-      loopId: "loop-parent",
-    });
-    const { manager } = createManager({}, { factory: makeFactory() });
-
-    await expect(manager.startChildExecution(workspaceRoot, {
-      parentStore,
-      parentSessionId: parentId,
-      parentToolCallId: "loop-delegate-call",
-      toolName: "delegate",
-      targetAgentName: "explore",
-      prompt: "inspect",
-      skills: [],
-      background: false,
-      currentDepth: 0,
-      parentAbort: undefined,
-      origin: { ...LOOP_ORIGIN, loopId: "loop-other" },
-    })).rejects.toThrow(ChildSessionLoopScopeMismatchError);
-
-    await expect(manager.startChildExecution(workspaceRoot, {
-      parentStore,
-      parentSessionId: parentId,
-      parentToolCallId: "loop-delegate-call-without-origin",
-      toolName: "delegate",
-      targetAgentName: "explore",
-      prompt: "inspect",
-      skills: [],
-      background: false,
-      currentDepth: 0,
-      parentAbort: undefined,
-    })).rejects.toThrow(ChildSessionLoopScopeMismatchError);
   });
 
   test("legacy active workflow child prompt is omitted during Goal migration", async () => {
@@ -3142,51 +3039,6 @@ describe("SessionExecutionManager", () => {
     expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("idle");
   });
 
-  test("validates persisted execution scope before claiming a user-message execution", async () => {
-    const sessionId = crypto.randomUUID();
-    const loopId = crypto.randomUUID();
-    const origin = {
-      kind: "loop" as const,
-      loopId,
-      runId: crypto.randomUUID(),
-      trigger: "manual" as const,
-      approvalPolicy: "interactive" as const,
-    };
-    storeManager.create(sessionId, workspaceRoot, { loopId, sessionRole: "main", agentName: "engineer" });
-    const conflict = new SessionExecutionScopeConflictError(
-      "SESSION_LOOP_EXECUTION_SCOPE_REQUIRED",
-      sessionId,
-      "scope rejected",
-    );
-    const validate = mock(async () => { throw conflict; });
-    const { manager, sessionAgentManager } = createManager({}, {
-      executionScopeValidator: { validate },
-    });
-
-    await expect(manager.startCheckedExecution({
-      slug: "project",
-      workspaceRoot,
-      sessionId,
-      userMessage: "continue",
-      origin,
-    })).rejects.toBe(conflict);
-
-    expect(validate).toHaveBeenCalledWith({
-      projectRoot: workspaceRoot,
-      subject: {
-        sessionId,
-        rootSessionId: sessionId,
-        cwd: workspaceRoot,
-        loopId,
-        sessionRole: "main",
-        agentName: "engineer",
-      },
-      entry: { kind: "user_message", origin },
-    });
-    expect(sessionAgentManager.getOrCreate).not.toHaveBeenCalled();
-    expect(manager.getSessionFamilyActivity(workspaceRoot, sessionId)).toBe("idle");
-  });
-
   test("fails closed when Session cwd changes during asynchronous scope validation", async () => {
     const sessionId = crypto.randomUUID();
     const store = storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" });
@@ -3278,7 +3130,6 @@ describe("SessionExecutionManager", () => {
     await validationStarted.promise;
     store.setState({
       goalId: crypto.randomUUID(),
-      loopId: crypto.randomUUID(),
       rootSessionId: "different-root",
       parentSessionId: "different-parent",
       sessionRole: "build",
@@ -3290,7 +3141,7 @@ describe("SessionExecutionManager", () => {
       code: "SESSION_EXECUTION_SCOPE_CHANGED",
       sessionId,
       details: {
-        changedFields: ["goalId", "loopId", "rootSessionId", "parentSessionId", "sessionRole"],
+        changedFields: ["goalId", "rootSessionId", "parentSessionId", "sessionRole"],
       },
     });
     expect(manager.getSessionFamilyActivity(workspaceRoot, sessionId)).toBe("idle");
@@ -3497,96 +3348,6 @@ describe("SessionExecutionManager", () => {
     })).rejects.toMatchObject({ name: "SessionHitlBlockedError", hitlIds: ["raced-resume-hitl"] });
     expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({ status: "completed" });
     expect(childAgent.runMock).not.toHaveBeenCalled();
-  });
-
-  test("resumeChildExecution preserves matching Loop origin for the continued child", async () => {
-    const parentId = crypto.randomUUID();
-    const childSessionId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, {
-      agentName: "engineer",
-      loopId: LOOP_ORIGIN.loopId,
-    });
-    const childStore = storeManager.create(childSessionId, workspaceRoot, {
-      rootSessionId: parentId,
-      parentSessionId: parentId,
-      agentName: "explore",
-      loopId: LOOP_ORIGIN.loopId,
-    });
-    const childAgent = new MockAgent(childSessionId, Promise.resolve({ text: "resumed", steps: 1 }), workspaceRoot);
-    childAgent.store.setState({
-      rootSessionId: parentId,
-      parentSessionId: parentId,
-      agentName: "explore",
-      loopId: LOOP_ORIGIN.loopId,
-      append: childStore.getState().append,
-    });
-    const { manager } = createManager({ [childSessionId]: childAgent }, { factory: makeFactory() });
-
-    const resumed = await manager.resumeChildExecution(workspaceRoot, {
-      parentStore,
-      parentSessionId: parentId,
-      parentToolCallId: "loop-resume-call",
-      toolName: "delegate",
-      sessionId: childSessionId,
-      targetAgentName: "explore",
-      prompt: "continue under Loop guardrails",
-      currentDepth: 0,
-      parentAbort: undefined,
-      origin: LOOP_ORIGIN,
-    });
-    await resumed.result;
-
-    const runOptions = childAgent.runMock.mock.calls[0]?.[1];
-    if (!runOptions || runOptions instanceof AbortSignal) throw new Error("Expected AgentRunOptions");
-    expect(runOptions.origin).toEqual(LOOP_ORIGIN);
-  });
-
-  test("resumeChildExecution rejects parent and child Sessions from different Loops", async () => {
-    const parentId = crypto.randomUUID();
-    const childSessionId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, {
-      agentName: "engineer",
-      loopId: LOOP_ORIGIN.loopId,
-    });
-    storeManager.create(childSessionId, workspaceRoot, {
-      rootSessionId: parentId,
-      parentSessionId: parentId,
-      agentName: "explore",
-      loopId: "loop-other",
-    });
-    const { manager } = createManager({}, { factory: makeFactory() });
-
-    await expect(manager.resumeChildExecution(workspaceRoot, {
-      parentStore,
-      parentSessionId: parentId,
-      parentToolCallId: "loop-resume-call",
-      toolName: "delegate",
-      sessionId: childSessionId,
-      targetAgentName: "explore",
-      prompt: "continue",
-      currentDepth: 0,
-      parentAbort: undefined,
-      origin: LOOP_ORIGIN,
-    })).rejects.toThrow(ChildSessionLoopScopeMismatchError);
-
-    const matchingChildId = crypto.randomUUID();
-    storeManager.create(matchingChildId, workspaceRoot, {
-      rootSessionId: parentId,
-      parentSessionId: parentId,
-      agentName: "explore",
-      loopId: LOOP_ORIGIN.loopId,
-    });
-    await expect(manager.resumeChildExecution(workspaceRoot, {
-      parentStore,
-      parentSessionId: parentId,
-      parentToolCallId: "loop-resume-call-without-origin",
-      toolName: "delegate",
-      sessionId: matchingChildId,
-      targetAgentName: "explore",
-      prompt: "continue",
-      currentDepth: 0,
-      parentAbort: undefined,
-    })).rejects.toThrow(ChildSessionLoopScopeMismatchError);
   });
 
   test("resumeChildExecution supports background links and terminal reminders", async () => {

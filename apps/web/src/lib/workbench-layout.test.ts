@@ -29,10 +29,8 @@ describe("workbench layout", () => {
     expect(getInspectorKind("/")).toBeNull();
     expect(getInspectorKind("/projects/archcode")).toBeNull();
     expect(getInspectorKind("/projects/archcode/goals")).toBeNull();
-    expect(getInspectorKind("/projects/archcode/loops")).toBeNull();
     expect(getInspectorKind("/projects/archcode/sessions/session-1")).toBe("session");
     expect(getInspectorKind("/projects/archcode/goals/goal-1")).toBe("goal");
-    expect(getInspectorKind("/projects/archcode/loops/loop-1")).toBe("loop");
   });
 
   test("falls back safely when persisted preferences are missing or malformed", () => {

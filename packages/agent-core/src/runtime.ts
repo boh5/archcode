@@ -12,7 +12,6 @@ import { configureDefaultBinaryManagerLogger } from "./binary/manager";
 import { configureDefaultProcessRunnerLogger } from "./process/runner";
 import { configureDefaultLspToolLogger } from "./tools/builtins/lsp/tool-logger";
 import { configureDefaultWebFetchLogger } from "./tools/builtins/web-fetch";
-import { GithubIntegrationTokenError, resolveGithubIntegrationConfig } from "./config";
 import {
   resolveMcpConfig,
   type ResolvedMcpConfig,
@@ -34,6 +33,8 @@ import { NotRootSessionError } from "./store/errors";
 import type { CompressionOriginalRangeResult } from "./compression";
 import type {
   AgentDescriptor,
+  Automation,
+  AutomationInvocation,
   GlobalSSEEvent,
   GlobalSSEHitlRealtimeEvent,
   GlobalSSEHitlSnapshotEvent,
@@ -48,7 +49,6 @@ import type {
 import { CONFIG_FILE_NAME, ENV_WORKSPACE_ROOT } from "@archcode/protocol";
 import { createRegistry as createToolRegistry, DuplicateToolError, type ToolRegistry } from "./tools/index";
 import {
-  SessionCwdReferenceMigrationService,
   SessionExecutionManager,
   SessionExecutionScopeValidator,
   SessionFamilyStopService,
@@ -58,7 +58,6 @@ import {
 } from "./execution";
 import type { ActiveSessionExecution, StartSessionExecutionInput, SubscribeSessionEventsInput } from "./execution";
 import { GoalHitlResumeAdapter } from "./goals/hitl-resume-adapter";
-import { GoalRunner } from "./goals/runner";
 import {
   GoalLeadContinuationService,
   type GoalLeadContinuationCoordinator,
@@ -68,28 +67,24 @@ import { withGoalExecutionClaimLock } from "./goals/execution-claim";
 import { GoalCancellationService, type GoalCancellationRequest } from "./goals/cancellation";
 import { HitlService } from "./hitl/service";
 import { ResumeCoordinator, type ResumeRecoverySummary } from "./hitl/resume-coordinator";
-import { createGitHubConnector } from "./integrations/github";
-import { LoopRunner } from "./loops/runner";
-import { LoopHitlResumeAdapter } from "./loops/hitl-resume-adapter";
-import { LoopBudgetLedger } from "./loops/budget-ledger";
-import { CollisionLedger } from "./loops/collision-ledger";
-import { LoopKillStateManager, type LoopKillActivateInput, type LoopKillState } from "./loops/kill-state";
-import { LoopJobQueue } from "./loops/job-queue";
-import { LoopTriggerPoller } from "./loops/triggers";
-import { LoopScheduler, type LoopSchedulerTimer } from "./loops/scheduler";
-import { LoopWorktreeManager } from "./loops/worktree-manager";
-import { LoopCleanupService } from "./loops/cleanup";
-import { LoopJobCoordinator } from "./loops/coordinator";
-import { LoopSessionExecutionClaimResolver } from "./loops/session-execution-claim";
-import { LoopSessionHitlContinuationCoordinator } from "./loops/session-hitl-continuation";
-import type { LoopBudgetSnapshot, LoopCollisionSnapshot, LoopConfig, LoopIntegrationError, LoopIntegrationSnapshot, LoopRunReport, LoopState, LoopUpdateInput } from "./loops/state";
+import {
+  AutomationCoordinator,
+  AutomationDispatcher,
+  AutomationScheduler,
+  AutomationStateManager,
+  type AutomationSchedulerClock,
+  type AutomationSchedulerTimer,
+  type CreateAutomationInput,
+  type UpdateAutomationInput,
+} from "./automations";
+import { RuntimeSessionDispatchGateway } from "./automations/runtime-session-gateway";
 import { scopedKey } from "./store/key";
 import { Logger, createConsoleLogger } from "./logger";
 import { SessionStoreManager } from "./store/session-store-manager";
-import { redactString } from "./tools/security";
 import type { SessionRole } from "./store/types";
 import { generateTitle } from "./title-generation";
 import type { GoalState } from "./goals/state";
+import { WorktreeService } from "./worktrees";
 
 const DEFAULT_CONFIG_PATH = CONFIG_FILE_NAME;
 
@@ -98,8 +93,8 @@ export interface AgentRuntimeOptions {
   workspaceRoot?: string;
   mcpManagerFactory?: (config: ResolvedMcpConfig) => McpManager;
   projectRegistryHomeDir?: string;
-  loopSchedulerTimer?: LoopSchedulerTimer;
-  loopSchedulerClock?: { now(): number };
+  automationSchedulerTimer?: AutomationSchedulerTimer;
+  automationSchedulerClock?: AutomationSchedulerClock;
   logger?: Logger;
   goalLeadContinuationFactory?: (options: GoalLeadContinuationOptions) => GoalLeadContinuationCoordinator;
 }
@@ -109,24 +104,8 @@ export interface CreateRuntimeSessionOptions {
   /** Current execution directory; Session persistence remains under workspaceRoot. */
   readonly cwd?: string;
   readonly goalId?: string;
-  readonly loopId?: string;
   readonly sessionRole?: SessionRole;
   readonly title?: string;
-}
-
-export interface LoopIntegrationStatus {
-  readonly integrationId: "github" | "github_actions";
-  readonly status: "disabled" | "ready" | "auth_missing" | "rate_limited" | "error";
-  readonly reason?: "integration_auth_missing" | "integration_rate_limited";
-  readonly message?: string;
-  readonly retryAfterMs?: number;
-  readonly updatedAt: number;
-}
-
-export interface LoopIntegrationStatusSnapshot {
-  readonly statuses: LoopIntegrationStatus[];
-  readonly snapshot: LoopIntegrationSnapshot | null;
-  readonly updatedAt: number;
 }
 
 export interface ProjectControlPlaneSnapshot {
@@ -173,7 +152,6 @@ export interface AgentRuntime {
   subscribeResourceChanges?(listener: (event: GlobalSSEResourceChangedEvent) => void): () => void;
   queueGoalTitleGeneration?(workspaceRoot: string, goalId: string): void;
   cancelGoal(workspaceRoot: string, goalId: string, request: GoalCancellationRequest): Promise<GoalState>;
-  queueLoopTitleGeneration?(workspaceRoot: string, loopId: string): void;
   subscribeMcpStatusChanges(listener: (serverName: string, status: McpServerStatus) => void): () => void;
   getMcpServerStatuses(): Map<string, McpServerStatus>;
   createSession(workspaceRoot: string, options: CreateRuntimeSessionOptions): Promise<SessionFile>;
@@ -183,6 +161,10 @@ export interface AgentRuntime {
   startSessionExecution(input: StartSessionExecutionInput): ActiveSessionExecution;
   /** User-message entry point with cold Session/root cwd validation. */
   startSessionMessageExecution(input: StartSessionExecutionInput): Promise<ActiveSessionExecution>;
+  /** Installs the server transport wrapper used by Automation Session dispatch. */
+  setAutomationSessionMessageExecutor(
+    executor: (input: StartSessionExecutionInput) => Promise<ActiveSessionExecution>,
+  ): void;
   getSessionFamilyActivity(workspaceRoot: string, rootSessionId: string): SessionFamilyActivity;
   stopSessionFamily(workspaceRoot: string, rootSessionId: string): Promise<void>;
   abortAllSessionExecutions(): Promise<void>;
@@ -194,25 +176,19 @@ export interface AgentRuntime {
   disposeAllSessionAgents(): void;
   isSessionTombstoned(workspaceRoot: string, sessionId: string): boolean;
   dispatchCommand(workspaceRoot: string, sessionId: string, name: string, args?: string): Promise<SlashCommandResult | null>;
-  listLoops(workspaceRoot: string): Promise<LoopState[]>;
-  readLoop(workspaceRoot: string, loopId: string): Promise<LoopState>;
-  createLoop(workspaceRoot: string, config: LoopConfig): Promise<LoopState>;
-  updateLoop(workspaceRoot: string, loopId: string, updates: LoopUpdateInput): Promise<LoopState>;
-  pauseLoop(workspaceRoot: string, loopId: string): Promise<LoopState>;
-  resumeLoop(workspaceRoot: string, loopId: string): Promise<LoopState>;
-  triggerLoopRun(workspaceRoot: string, loopId: string): Promise<LoopRunReport | undefined>;
-  readLoopKillState(workspaceRoot: string): Promise<LoopKillState>;
-  cancelLoopCurrentRun(workspaceRoot: string, loopId: string): Promise<LoopRunReport | undefined>;
-  activateLoopGlobalKill(workspaceRoot: string, input?: LoopKillActivateInput): Promise<LoopKillState>;
-  clearLoopGlobalKill(workspaceRoot: string): Promise<LoopKillState>;
-  readLoopBudget(workspaceRoot: string, loopId: string): Promise<LoopBudgetSnapshot | null>;
-  readLoopCollisions(workspaceRoot: string, loopId: string): Promise<LoopCollisionSnapshot>;
-  readLoopIntegrationStatus(workspaceRoot: string, loopId: string): Promise<LoopIntegrationStatusSnapshot>;
-  readLoopRunLog(workspaceRoot: string, loopId: string, limit?: number): Promise<LoopRunReport[]>;
-  readLoopStateMarkdown(workspaceRoot: string, loopId: string): Promise<string>;
-  startLoopSchedulers(): Promise<void>;
+  listAutomations(workspaceRoot: string): Promise<Automation[]>;
+  readAutomation(workspaceRoot: string, automationId: string): Promise<Automation>;
+  createAutomation(workspaceRoot: string, input: Omit<CreateAutomationInput, "projectId">): Promise<Automation>;
+  updateAutomation(workspaceRoot: string, automationId: string, input: UpdateAutomationInput): Promise<Automation>;
+  deleteAutomation(workspaceRoot: string, automationId: string): Promise<void>;
+  pauseAutomation(workspaceRoot: string, automationId: string): Promise<Automation>;
+  resumeAutomation(workspaceRoot: string, automationId: string): Promise<Automation>;
+  runAutomationNow(workspaceRoot: string, automationId: string): Promise<AutomationInvocation>;
+  listAutomationInvocations(workspaceRoot: string, automationId: string, limit?: number): Promise<AutomationInvocation[]>;
+  startAutomationScheduler(workspaceRoot: string): Promise<void>;
+  startAutomationSchedulers(): Promise<void>;
   reconcileRegisteredProject(workspaceRoot: string, projectSlug: string): Promise<void>;
-  stopLoopSchedulers(): Promise<void>;
+  stopAutomationSchedulers(): Promise<void>;
   notifyRuntimeShutdown(reason: string): void;
 }
 
@@ -225,7 +201,9 @@ export async function createRuntime(
   const config = await loadConfig(options.configPath ?? DEFAULT_CONFIG_PATH, { logger: runtimeLogger });
   const providerRegistry = createProviderRegistry(config.provider);
   const toolRegistry = createToolRegistry();
-  registerBuiltinTools(toolRegistry, logger.child({ module: "tools" }));
+  registerBuiltinTools(toolRegistry, logger.child({ module: "tools" }), {
+    ...(config.integrations?.github === undefined ? {} : { github: config.integrations.github }),
+  });
   const skillService = new SkillService();
 
   const resolvedMcpConfig = resolveMcpConfig(config.mcp);
@@ -302,7 +280,16 @@ export async function createRuntime(
       for (const listener of hitlListeners) listener(event);
     };
     const publishResourceChanged = (event: GlobalSSEResourceChangedEvent): void => {
-      for (const listener of resourceChangeListeners) listener(event);
+      for (const listener of resourceChangeListeners) {
+        try {
+          listener(event);
+        } catch (error) {
+          runtimeLogger.warn("resource.changed.listener.failed", {
+            error,
+            context: { resourceType: event.resourceType, resourceId: event.resourceId },
+          });
+        }
+      }
     };
     let contextResolver!: ProjectContextResolver;
     let executionScopeValidator!: SessionExecutionScopeValidator;
@@ -341,7 +328,7 @@ export async function createRuntime(
         });
         queueGoalTitleGeneration(workspaceRoot, goal.id);
       },
-      resumeCoordinatorFactory: ({ workspaceRoot, hitl, goalState, loopState }) => new ResumeCoordinator({
+      resumeCoordinatorFactory: ({ workspaceRoot, hitl, goalState }) => new ResumeCoordinator({
         hitl,
         adapters: {
           session: new SessionHitlResumeAdapter({
@@ -361,20 +348,8 @@ export async function createRuntime(
             updateChildSessionLinkForHitl: (childWorkspaceRoot, sessionId, status) => (
               executionManager.updateChildSessionLinkForHitl(childWorkspaceRoot, sessionId, status)
             ),
-            loopContinuation: {
-              acquire: async (input) => await (await getLoopSessionHitlContinuation(workspaceRoot)).acquire(input),
-            },
             attachSessionEvents: (eventWorkspaceRoot, sessionId, store) => executionManager.attachSessionEvents(eventWorkspaceRoot, sessionId, store),
             detachSessionEvents: (eventWorkspaceRoot, sessionId) => executionManager.detachSessionEvents(eventWorkspaceRoot, sessionId),
-          }),
-          loop: new LoopHitlResumeAdapter({
-            workspaceRoot,
-            stateManager: loopState,
-            jobQueue: new LoopJobQueue({ workspaceRoot, clock: options.loopSchedulerClock }),
-            now: options.loopSchedulerClock?.now,
-            onContinuationQueued: async () => {
-              await (await getLoopScheduler(workspaceRoot)).dispatchPendingJobs();
-            },
           }),
           goal: new GoalHitlResumeAdapter({
             workspaceRoot,
@@ -396,10 +371,7 @@ export async function createRuntime(
       }),
       logger: runtimeLogger.child({ module: "projects" }),
     });
-    executionScopeValidator = new SessionExecutionScopeValidator({
-      projectContextResolver: contextResolver,
-      loopExecutionClaimResolver: new LoopSessionExecutionClaimResolver(),
-    });
+    executionScopeValidator = new SessionExecutionScopeValidator({ projectContextResolver: contextResolver });
     const sessionAgentManager = new SessionAgentManager({
       definitions: defaultAgentDefinitions,
       providerRegistry,
@@ -523,11 +495,11 @@ export async function createRuntime(
             meta: { workspaceRoot: change.workspaceRoot },
           });
         });
-        if (loopSchedulersStarted) {
-          void getLoopScheduler(change.workspaceRoot)
-            .then((scheduler) => scheduler.dispatchPendingJobs())
+        if (automationSchedulersStarted) {
+          void getAutomationRuntimeServices(change.workspaceRoot)
+            .then(({ scheduler }) => scheduler.tick())
             .catch((error) => {
-              runtimeLogger.warn("loops.goal_continuation.idle_dispatch.failed", {
+              runtimeLogger.warn("automations.pending_dispatch.failed", {
                 error,
                 context: { rootSessionId: change.rootSessionId },
                 meta: { workspaceRoot: change.workspaceRoot },
@@ -536,87 +508,67 @@ export async function createRuntime(
         }
       }
     });
-    const sessionCwdReferenceMigration = new SessionCwdReferenceMigrationService({
-      storeManager: sessionStoreManager,
-      acquireIdleSessionFamilyCwdTransitions: (projectRoot, rootSessionIds) => (
-        executionManager.acquireIdleSessionFamilyCwdTransitions(projectRoot, rootSessionIds)
-      ),
-      releaseSessionAgent: (projectRoot, sessionId) => sessionAgentManager.releaseAgent(projectRoot, sessionId),
-    });
-    type LoopRuntimeServices = {
-      readonly scheduler: LoopScheduler;
-      readonly sessionHitlContinuation: LoopSessionHitlContinuationCoordinator;
+    type AutomationRuntimeServices = {
+      readonly stateManager: AutomationStateManager;
+      readonly scheduler: AutomationScheduler;
     };
-    const loopRuntimeServices = new Map<string, Promise<LoopRuntimeServices>>();
-    let loopSchedulersStarted = false;
+    const automationRuntimeServices = new Map<string, Promise<AutomationRuntimeServices>>();
+    let automationSchedulersStarted = false;
+    let automationSessionMessageExecutor = (input: StartSessionExecutionInput) => (
+      executionManager.startCheckedExecution(input)
+    );
 
-    const createGoalRunnerForLoop = (workspaceRoot: string, loopId?: string): Promise<GoalRunner> => {
-      return contextResolver.resolve(workspaceRoot).then((projectContext) => new GoalRunner({
-        goalStateManager: projectContext.goalState,
-        workspaceRoot,
-        createSession: async (createOptions) => (await sessionStoreManager.createSessionFile(workspaceRoot, {
-          ...createOptions,
-          agentName: "goal_lead",
-          ...(loopId !== undefined && createOptions?.loopId === undefined ? { loopId } : {}),
-        })).sessionId,
-        getSessionCwd: async (sessionId) => (await sessionStoreManager.getSessionFile(workspaceRoot, sessionId)).cwd,
-        isSessionActive: async (sessionId) => {
-          const session = await sessionStoreManager.getSessionFile(workspaceRoot, sessionId);
-          return executionManager.getSessionFamilyActivity(workspaceRoot, session.rootSessionId) !== "idle";
+    async function createAutomationRuntimeServices(workspaceRoot: string): Promise<AutomationRuntimeServices> {
+      const project = await projectRegistry.getByWorkspace(workspaceRoot);
+      if (project === undefined) throw new Error(`Project is not registered: ${workspaceRoot}`);
+      projectSlugsByWorkspace.set(workspaceRoot, project.slug);
+      const clock = options.automationSchedulerClock ?? { now: () => Date.now() };
+      const now = (): number => clock.now();
+      const stateManager = new AutomationStateManager(workspaceRoot, { now });
+      const onChange = (change: { automationId: string; reason: "created" | "updated" | "deleted" | "invocation_changed" }): void => {
+        publishResourceChanged({
+          type: "resource.changed",
+          projectSlug: project.slug,
+          resourceType: "automation",
+          resourceId: change.automationId,
+          reason: change.reason,
+          createdAt: Date.now(),
+        });
+      };
+      const coordinator = new AutomationCoordinator();
+      const gateway = new RuntimeSessionDispatchGateway({
+        sessionStoreManager,
+        sessionRuntime: {
+          getSessionExecution: (projectRoot, sessionId) => executionManager.getExecution(projectRoot, sessionId),
+          getSessionFamilyActivity: (projectRoot, rootSessionId) => (
+            executionManager.getSessionFamilyActivity(projectRoot, rootSessionId)
+          ),
+          startSessionMessageExecution: (input) => automationSessionMessageExecutor(input),
         },
-      }));
-    };
-
-    async function createLoopRunner(
-      workspaceRoot: string,
-      collisionLedger?: CollisionLedger,
-      worktreeManager = new LoopWorktreeManager({ canonicalRoot: workspaceRoot }),
-    ): Promise<LoopRunner> {
-      const projectContext = await contextResolver.resolve(workspaceRoot);
-      return new LoopRunner({
-        stateManager: projectContext.loopState,
-        runtime: {
-          createSession: (projectRoot, createOptions) => sessionStoreManager.createSessionFile(projectRoot, createOptions),
-          getSessionFile: (projectRoot, sessionId) => sessionStoreManager.getSessionFile(projectRoot, sessionId),
-          startSessionExecution: (input) => executionManager.startExecution(input),
-          startCheckedSessionExecution: (input) => executionManager.startCheckedExecution(input),
-          releaseSessionAgent: (projectRoot, sessionId) => sessionAgentManager.releaseAgent(projectRoot, sessionId),
-          waitForSessionFamilyIdle: async (projectRoot, rootSessionId) => {
-            if (executionManager.getSessionFamilyActivity(projectRoot, rootSessionId) !== "idle") {
-              await new Promise<void>((resolve) => {
-                const unsubscribe = executionManager.subscribeSessionRuntimeChanges((change) => {
-                  if (
-                    change.workspaceRoot === projectRoot
-                    && change.rootSessionId === rootSessionId
-                    && change.activity === "idle"
-                  ) {
-                    unsubscribe();
-                    resolve();
-                  }
-                });
-                if (executionManager.getSessionFamilyActivity(projectRoot, rootSessionId) === "idle") {
-                  unsubscribe();
-                  resolve();
-                }
-              });
-            }
-            return {
-              blockedByHitlIds: await sessionStoreManager.listSessionFamilyBlockedHitlIds(projectRoot, rootSessionId),
-            };
-          },
-        },
-        goalStateManager: projectContext.goalState,
-        goalRunner: {
-          start: async (goalId, startOptions) => (
-            await createGoalRunnerForLoop(workspaceRoot, startOptions.executionScope.loopId)
-          ).start(goalId, startOptions),
-        },
-        workspaceRoot,
-        projectSlug: projectContext.project.slug,
-        ...(collisionLedger === undefined ? {} : { collisionLedger }),
-        worktreeManager,
-        queueGoalTitleGeneration: (goalId) => queueGoalTitleGeneration(workspaceRoot, goalId),
+        resolveProject: (projectId) => projectRegistry.get(projectId),
       });
+      const dispatcher = new AutomationDispatcher({ stateManager, gateway, now, onChange, coordinator });
+      const scheduler = new AutomationScheduler({
+        stateManager,
+        dispatcher,
+        clock,
+        onChange,
+        ...(options.automationSchedulerTimer === undefined ? {} : { timer: options.automationSchedulerTimer }),
+      });
+      return { stateManager, scheduler };
+    }
+
+    async function getAutomationRuntimeServices(workspaceRoot: string): Promise<AutomationRuntimeServices> {
+      const existing = automationRuntimeServices.get(workspaceRoot);
+      if (existing !== undefined) return await existing;
+      const pending = createAutomationRuntimeServices(workspaceRoot);
+      automationRuntimeServices.set(workspaceRoot, pending);
+      try {
+        return await pending;
+      } catch (error) {
+        if (automationRuntimeServices.get(workspaceRoot) === pending) automationRuntimeServices.delete(workspaceRoot);
+        throw error;
+      }
     }
 
     function queueGoalTitleGeneration(workspaceRoot: string, goalId: string): void {
@@ -624,7 +576,7 @@ export async function createRuntime(
         const projectContext = await contextResolver.resolve(workspaceRoot);
         const goal = await projectContext.goalState.read(goalId);
         if (goal.title !== null) return;
-        const title = await generateResourceTitle("goal", goalTitleSource(goal));
+        const title = await generateGoalTitle(goalTitleSource(goal));
         if (title === null) return;
         const updated = await projectContext.goalState.setTitleIfEmpty(goal.id, title);
         if (updated === undefined) return;
@@ -639,163 +591,9 @@ export async function createRuntime(
       });
     }
 
-    function queueLoopTitleGeneration(workspaceRoot: string, loopId: string): void {
-      resourceTitleTasks.dispatch(scopedKey(workspaceRoot, `loop-title:${loopId}`), async () => {
-        const projectContext = await contextResolver.resolve(workspaceRoot);
-        const loop = await projectContext.loopState.read(loopId);
-        if (loop.config.title !== null) return;
-        const title = await generateResourceTitle("loop", loopTitleSource(loop));
-        if (title === null) return;
-        const updated = await projectContext.loopState.setTitleIfEmpty(loop.loopId, title);
-        if (updated === undefined) return;
-        publishResourceChanged({
-          type: "resource.changed",
-          projectSlug: projectContext.project.slug,
-          resourceType: "loop",
-          resourceId: loop.loopId,
-          reason: "title_generated",
-          createdAt: Date.now(),
-        });
-      });
-    }
-
-    async function generateResourceTitle(kind: "goal" | "loop", text: string): Promise<string | null> {
+    async function generateGoalTitle(text: string): Promise<string | null> {
       const { modelInfo, options: modelOptions } = resolveAgentModel("engineer", config, providerRegistry);
-      return await generateTitle({ kind, text, modelInfo, modelOptions });
-    }
-
-    async function createLoopRuntimeServices(workspaceRoot: string): Promise<LoopRuntimeServices> {
-      const projectContext = await contextResolver.resolve(workspaceRoot);
-      const schedulerClock = options.loopSchedulerClock ?? { now: () => Date.now() };
-      const budgetLedger = new LoopBudgetLedger({
-        stateManager: projectContext.loopState,
-        workspaceRoot,
-        clock: schedulerClock,
-      });
-      const collisionLedger = new CollisionLedger({
-        stateManager: projectContext.loopState,
-        workspaceRoot,
-        clock: schedulerClock,
-      });
-      const jobQueue = new LoopJobQueue({
-        workspaceRoot,
-        clock: schedulerClock,
-      });
-      const jobCoordinator = new LoopJobCoordinator({ queue: jobQueue, clock: schedulerClock });
-      const github = createGitHubConnector({ config: config.integrations?.github });
-      const triggerPoller = new LoopTriggerPoller({
-        workspaceRoot,
-        stateManager: projectContext.loopState,
-        queue: jobQueue,
-        github,
-        repository: config.integrations?.github?.defaultOwner === undefined || config.integrations.github.defaultRepo === undefined
-          ? undefined
-          : { owner: config.integrations.github.defaultOwner, repo: config.integrations.github.defaultRepo },
-        clock: schedulerClock,
-      });
-      const worktreeManager = new LoopWorktreeManager({ canonicalRoot: workspaceRoot });
-      const runner = await createLoopRunner(workspaceRoot, collisionLedger, worktreeManager);
-      const cleanupService = new LoopCleanupService({
-        stateManager: projectContext.loopState,
-        jobQueue,
-        collisionLedger,
-        worktreeManager,
-        workspaceRoot,
-        clock: schedulerClock,
-        migrateSessionCwdReferencesForRemoval: (migrationInput, operation) => (
-          sessionCwdReferenceMigration.migrateForRemoval(migrationInput, operation)
-        ),
-      });
-      let sessionHitlContinuation!: LoopSessionHitlContinuationCoordinator;
-      const scheduler = new LoopScheduler({
-        stateManager: projectContext.loopState,
-        runner: runner.createSchedulerRunner(),
-        continueGoalRun: (input) => runner.continueScheduledGoalRun(input),
-        reconcileGoalState: (goalId) => sessionHitlContinuation.reconcileGoalState(goalId),
-        clock: schedulerClock,
-        ...(options.loopSchedulerTimer === undefined ? {} : { timer: options.loopSchedulerTimer }),
-        budgetLedger,
-        collisionLedger,
-        jobQueue,
-        coordinator: jobCoordinator,
-        hitl: projectContext.hitl,
-        cleanupJob: (jobId) => cleanupService.cleanupJob(jobId),
-        readSessionAttempt: async (sessionId, executionId) => {
-          const session = await sessionStoreManager.getSessionFile(workspaceRoot, sessionId);
-          return {
-            execution: session.executions.find((execution) => execution.id === executionId),
-            blockedByHitlIds: session.blockedByHitlIds
-              ?? (session.blockedHitl === undefined ? undefined : [session.blockedHitl.hitlId]),
-          };
-        },
-        triggerPoller,
-        killStateManager: new LoopKillStateManager(workspaceRoot, {
-          clock: schedulerClock,
-          logger: runtimeLogger.child({ module: "loops.kill-state" }),
-        }),
-        stopSessionFamily: async (sessionId) => {
-          const session = await sessionStoreManager.getSessionFile(workspaceRoot, sessionId);
-          await executionManager.stopSessionFamily(workspaceRoot, session.rootSessionId);
-        },
-        logger: runtimeLogger.child({ module: "loops.scheduler" }),
-      });
-      sessionHitlContinuation = new LoopSessionHitlContinuationCoordinator({
-        stateManager: projectContext.loopState,
-        jobQueue,
-        jobCoordinator,
-        collisionLedger,
-        now: schedulerClock.now,
-        readGoal: (goalId) => projectContext.goalState.read(goalId),
-        onGoalContinuationQueued: () => {
-          void scheduler.dispatchPendingJobs().catch((error) => {
-            runtimeLogger.warn("loops.goal_continuation.dispatch.failed", { error, meta: { workspaceRoot } });
-          });
-        },
-        logger: runtimeLogger.child({ module: "loops.goal-continuation" }),
-        scheduleCleanup: ({ loopId, runId, jobId }) => {
-          const timer = setTimeout(() => {
-            void (async () => {
-              await cleanupService.cleanupJob(jobId);
-              const completed = await jobQueue.read(jobId);
-              if (completed.cleanupState === undefined || completed.cleanupState === "in_progress") return;
-              await projectContext.loopState.recordRunCleanupCompletion(loopId, runId, {
-                cleanupState: completed.cleanupState,
-                cleanupWarning: completed.cleanupWarning,
-                observedArtifacts: completed.observedArtifacts,
-              });
-            })().catch((error) => {
-              runtimeLogger.warn("loops.session_hitl.cleanup.failed", {
-                error,
-                meta: { workspaceRoot, loopId, runId, jobId },
-              });
-            });
-          }, 0);
-          if (typeof timer === "object" && "unref" in timer) timer.unref();
-        },
-      });
-      return { scheduler, sessionHitlContinuation };
-    }
-
-    async function getLoopRuntimeServices(workspaceRoot: string): Promise<LoopRuntimeServices> {
-      const existing = loopRuntimeServices.get(workspaceRoot);
-      if (existing !== undefined) return await existing;
-
-      const pending = createLoopRuntimeServices(workspaceRoot);
-      loopRuntimeServices.set(workspaceRoot, pending);
-      try {
-        return await pending;
-      } catch (error) {
-        if (loopRuntimeServices.get(workspaceRoot) === pending) loopRuntimeServices.delete(workspaceRoot);
-        throw error;
-      }
-    }
-
-    async function getLoopScheduler(workspaceRoot: string): Promise<LoopScheduler> {
-      return (await getLoopRuntimeServices(workspaceRoot)).scheduler;
-    }
-
-    async function getLoopSessionHitlContinuation(workspaceRoot: string): Promise<LoopSessionHitlContinuationCoordinator> {
-      return (await getLoopRuntimeServices(workspaceRoot)).sessionHitlContinuation;
+      return await generateTitle({ kind: "goal", text, modelInfo, modelOptions });
     }
 
     async function notifyGoalStateChanged(workspaceRoot: string, goalId: string): Promise<void> {
@@ -803,13 +601,8 @@ export async function createRuntime(
       if (goalStateReconciliationShuttingDown || cancelledReconcileWorkspaces.has(workspaceRoot) || goalStateReconcileInFlight.has(key) || goalStateReconcileRetries.get(key)?.timer !== undefined) return;
       goalStateReconcileInFlight.add(key);
       try {
-        const context = await contextResolver.resolve(workspaceRoot);
-        const goal = await context.goalState.read(goalId);
-        if (goal.loopId !== undefined) {
-          await (await getLoopSessionHitlContinuation(workspaceRoot)).reconcileGoalState(goalId);
-        } else {
-          await goalLeadContinuation?.kick(workspaceRoot, goalId);
-        }
+        await contextResolver.resolve(workspaceRoot);
+        await goalLeadContinuation?.kick(workspaceRoot, goalId);
         goalStateReconcileRetries.delete(key);
       } catch (error) {
         if (goalStateReconciliationShuttingDown || cancelledReconcileWorkspaces.has(workspaceRoot)) return;
@@ -864,118 +657,54 @@ export async function createRuntime(
       goalLeadContinuation?.releaseWorkspace(workspaceRoot);
     }
 
-    async function scheduleLoopIfStarted(workspaceRoot: string, loopId: string): Promise<void> {
-      if (!loopSchedulersStarted) return;
-      await (await getLoopScheduler(workspaceRoot)).scheduleLoop(loopId);
+    async function listAutomations(workspaceRoot: string): Promise<Automation[]> {
+      return await (await getAutomationRuntimeServices(workspaceRoot)).scheduler.listAutomations();
     }
 
-    async function listLoops(workspaceRoot: string): Promise<LoopState[]> {
-      const projectContext = await contextResolver.resolve(workspaceRoot);
-      return await projectContext.loopState.list(projectContext.project.slug);
+    async function readAutomation(workspaceRoot: string, automationId: string): Promise<Automation> {
+      return await (await getAutomationRuntimeServices(workspaceRoot)).scheduler.readAutomation(automationId);
     }
 
-    async function readLoop(workspaceRoot: string, loopId: string): Promise<LoopState> {
-      return await (await contextResolver.resolve(workspaceRoot)).loopState.read(loopId);
+    async function createAutomation(
+      workspaceRoot: string,
+      input: Omit<CreateAutomationInput, "projectId">,
+    ): Promise<Automation> {
+      const project = await projectRegistry.getByWorkspace(workspaceRoot);
+      if (project === undefined) throw new Error(`Project is not registered: ${workspaceRoot}`);
+      await assertAutomationWorktreeSupported(workspaceRoot, input.action);
+      return await (await getAutomationRuntimeServices(workspaceRoot)).scheduler.createAutomation({
+        ...input,
+        projectId: project.slug,
+      });
     }
 
-    async function createLoop(workspaceRoot: string, config: LoopConfig): Promise<LoopState> {
-      const projectContext = await contextResolver.resolve(workspaceRoot);
-      const loop = await projectContext.loopState.create(projectContext.project.slug, config);
-      queueLoopTitleGeneration(workspaceRoot, loop.loopId);
-      await scheduleLoopIfStarted(workspaceRoot, loop.loopId);
-      return loop;
+    async function updateAutomation(
+      workspaceRoot: string,
+      automationId: string,
+      input: UpdateAutomationInput,
+    ): Promise<Automation> {
+      const services = await getAutomationRuntimeServices(workspaceRoot);
+      const current = await services.scheduler.readAutomation(automationId);
+      await assertAutomationWorktreeSupported(workspaceRoot, input.action ?? current.action);
+      return await services.scheduler.updateAutomation(automationId, input);
     }
 
-    async function updateLoop(workspaceRoot: string, loopId: string, updates: LoopUpdateInput): Promise<LoopState> {
-      const updated = await (await contextResolver.resolve(workspaceRoot)).loopState.update(loopId, updates);
-      await scheduleLoopIfStarted(workspaceRoot, loopId);
-      return updated;
+    async function assertAutomationWorktreeSupported(
+      workspaceRoot: string,
+      action: Automation["action"],
+    ): Promise<void> {
+      if (action.kind !== "start_session" || action.location !== "worktree") return;
+      await new WorktreeService({ canonicalRoot: workspaceRoot }).list();
     }
 
-    async function pauseLoop(workspaceRoot: string, loopId: string): Promise<LoopState> {
-      const services = loopRuntimeServices.get(workspaceRoot);
-      if (services !== undefined) return await (await services).scheduler.pause(loopId);
-      return await (await contextResolver.resolve(workspaceRoot)).loopState.pause(loopId);
+    async function startAutomationScheduler(workspaceRoot: string): Promise<void> {
+      await (await getAutomationRuntimeServices(workspaceRoot)).scheduler.start();
     }
 
-    async function resumeLoop(workspaceRoot: string, loopId: string): Promise<LoopState> {
-      const services = loopRuntimeServices.get(workspaceRoot);
-      if (services !== undefined) return await (await services).scheduler.resume(loopId);
-      const resumed = await (await contextResolver.resolve(workspaceRoot)).loopState.resume(loopId);
-      await scheduleLoopIfStarted(workspaceRoot, loopId);
-      return resumed;
-    }
-
-    async function triggerLoopRun(workspaceRoot: string, loopId: string): Promise<LoopRunReport | undefined> {
-      return await (await getLoopScheduler(workspaceRoot)).runManual(loopId);
-    }
-
-    async function readLoopKillState(workspaceRoot: string): Promise<LoopKillState> {
-      return await (await getLoopScheduler(workspaceRoot)).readKillState();
-    }
-
-    async function cancelLoopCurrentRun(workspaceRoot: string, loopId: string): Promise<LoopRunReport | undefined> {
-      return await (await getLoopScheduler(workspaceRoot)).cancelCurrentRun(loopId);
-    }
-
-    async function activateLoopGlobalKill(workspaceRoot: string, input?: LoopKillActivateInput): Promise<LoopKillState> {
-      return await (await getLoopScheduler(workspaceRoot)).activateGlobalKill(input);
-    }
-
-    async function clearLoopGlobalKill(workspaceRoot: string): Promise<LoopKillState> {
-      return await (await getLoopScheduler(workspaceRoot)).clearGlobalKill();
-    }
-
-    async function readLoopBudget(workspaceRoot: string, loopId: string): Promise<LoopBudgetSnapshot | null> {
-      const loop = await readLoop(workspaceRoot, loopId);
-      return loop.latestBudget ?? null;
-    }
-
-    async function readLoopCollisions(workspaceRoot: string, loopId: string): Promise<LoopCollisionSnapshot> {
-      const loop = await readLoop(workspaceRoot, loopId);
-      return loop.latestCollisions ?? {
-        targets: loop.config.collisionTargets ?? [],
-        activeLeases: [],
-        conflicts: [],
-        updatedAt: loop.updatedAt,
-      };
-    }
-
-    async function readLoopIntegrationStatus(workspaceRoot: string, loopId: string): Promise<LoopIntegrationStatusSnapshot> {
-      const loop = await readLoop(workspaceRoot, loopId);
-      const snapshot = loop.latestIntegrations ?? null;
-      const statusById = new Map<LoopIntegrationStatus["integrationId"], LoopIntegrationStatus>();
-
-      const githubStatus = githubIntegrationStatus(config.integrations?.github, loop.updatedAt);
-      statusById.set(githubStatus.integrationId, githubStatus);
-
-      for (const error of snapshot?.errors ?? []) {
-        statusById.set(error.integrationId, statusFromIntegrationError(error));
-      }
-
-      const updatedAt = Math.max(loop.updatedAt, snapshot?.updatedAt ?? 0, ...[...statusById.values()].map((status) => status.updatedAt));
-      return {
-        statuses: [...statusById.values()].sort((left, right) => left.integrationId.localeCompare(right.integrationId)),
-        snapshot: snapshot === null ? null : sanitizeIntegrationSnapshot(snapshot),
-        updatedAt,
-      };
-    }
-
-    async function readLoopRunLog(workspaceRoot: string, loopId: string, limit?: number): Promise<LoopRunReport[]> {
-      return await (await contextResolver.resolve(workspaceRoot)).loopState.readRunLog(loopId, limit);
-    }
-
-    async function readLoopStateMarkdown(workspaceRoot: string, loopId: string): Promise<string> {
-      return await (await contextResolver.resolve(workspaceRoot)).loopState.readGeneratedStateMarkdown(loopId);
-    }
-
-    async function startLoopSchedulers(): Promise<void> {
-      if (loopSchedulersStarted) return;
-      loopSchedulersStarted = true;
-      const projects = await projectRegistry.list();
-      for (const project of projects) {
-        const services = await getLoopRuntimeServices(project.workspaceRoot);
-        await services.scheduler.start(project.slug);
+    async function startAutomationSchedulers(): Promise<void> {
+      automationSchedulersStarted = true;
+      for (const project of await projectRegistry.list()) {
+        await startAutomationScheduler(project.workspaceRoot);
       }
     }
 
@@ -992,9 +721,6 @@ export async function createRuntime(
       try {
         projectSlugsByWorkspace.set(workspaceRoot, projectSlug);
         await continuationService.reconcileWorkspace(workspaceRoot);
-        if (loopSchedulersStarted) {
-          await (await getLoopRuntimeServices(workspaceRoot)).scheduler.start(projectSlug);
-        }
         projectReconcileRetries.delete(key);
       } catch (error) {
         if (goalStateReconciliationShuttingDown || cancelledReconcileWorkspaces.has(workspaceRoot)) {
@@ -1024,11 +750,13 @@ export async function createRuntime(
       }
     }
 
-    async function stopLoopSchedulers(): Promise<void> {
-      loopSchedulersStarted = false;
-      const services = await Promise.allSettled([...loopRuntimeServices.values()]);
-      await Promise.all(services.flatMap((result) => result.status === "fulfilled" ? [result.value.scheduler.stop()] : []));
-      loopRuntimeServices.clear();
+    async function stopAutomationSchedulers(): Promise<void> {
+      automationSchedulersStarted = false;
+      const services = await Promise.allSettled([...automationRuntimeServices.values()]);
+      for (const result of services) {
+        if (result.status === "fulfilled") result.value.scheduler.dispose();
+      }
+      automationRuntimeServices.clear();
     }
 
     sessionAgentManager.setStartChildExecution((workspaceRoot, request) => executionManager.startChildExecution(workspaceRoot, request));
@@ -1093,8 +821,8 @@ export async function createRuntime(
           throw new ProjectRuntimeActiveError(project.slug, activeFamilies);
         }
 
-        const loopServices = loopRuntimeServices.get(project.workspaceRoot);
-        if (loopServices !== undefined) await (await loopServices).scheduler.stop();
+        const automationServices = automationRuntimeServices.get(project.workspaceRoot);
+        if (automationServices !== undefined) (await automationServices).scheduler.dispose();
 
         const removed = await projectRegistry.remove(project.slug);
         if (removed === undefined) return undefined;
@@ -1104,7 +832,7 @@ export async function createRuntime(
         if (projectRetry?.timer !== undefined) clearTimeout(projectRetry.timer);
         projectReconcileRetries.delete(projectRetryKey);
         projectSlugsByWorkspace.delete(project.workspaceRoot);
-        loopRuntimeServices.delete(project.workspaceRoot);
+        automationRuntimeServices.delete(project.workspaceRoot);
         await contextResolver.dispose(project.workspaceRoot);
         sessionAgentManager.releaseWorkspace(project.workspaceRoot);
         sessionStoreManager.releaseWorkspace(project.workspaceRoot);
@@ -1217,7 +945,6 @@ export async function createRuntime(
         await notifyGoalStateChanged(workspaceRoot, goalId);
         return goal;
       },
-      queueLoopTitleGeneration,
       subscribeMcpStatusChanges: (listener) => mcpManager.onStatusChange(listener),
       getMcpServerStatuses: () => mcpManager.getStatus(),
       createSession: (workspaceRoot, createOptions) => {
@@ -1235,6 +962,9 @@ export async function createRuntime(
       startSessionMessageExecution: (input) => {
         projectSlugsByWorkspace.set(input.workspaceRoot, input.slug);
         return executionManager.startCheckedExecution(input);
+      },
+      setAutomationSessionMessageExecutor: (executor) => {
+        automationSessionMessageExecutor = executor;
       },
       getSessionFamilyActivity: (workspaceRoot, rootSessionId) => executionManager.getSessionFamilyActivity(workspaceRoot, rootSessionId),
       stopSessionFamily: async (workspaceRoot, rootSessionId) => {
@@ -1259,25 +989,31 @@ export async function createRuntime(
       disposeAllSessionAgents: () => sessionAgentManager.disposeAll(),
       isSessionTombstoned: (workspaceRoot, sessionId) => sessionAgentManager.isTombstoned(workspaceRoot, sessionId),
       dispatchCommand,
-      listLoops,
-      readLoop,
-      createLoop,
-      updateLoop,
-      pauseLoop,
-      resumeLoop,
-      triggerLoopRun,
-      readLoopKillState,
-      cancelLoopCurrentRun,
-      activateLoopGlobalKill,
-      clearLoopGlobalKill,
-      readLoopBudget,
-      readLoopCollisions,
-      readLoopIntegrationStatus,
-      readLoopRunLog,
-      readLoopStateMarkdown,
-      startLoopSchedulers,
+      listAutomations,
+      readAutomation,
+      createAutomation,
+      updateAutomation,
+      deleteAutomation: async (workspaceRoot, automationId) => {
+        await (await getAutomationRuntimeServices(workspaceRoot)).scheduler.deleteAutomation(automationId);
+      },
+      pauseAutomation: async (workspaceRoot, automationId) => (
+        await (await getAutomationRuntimeServices(workspaceRoot)).scheduler.pauseAutomation(automationId)
+      ),
+      resumeAutomation: async (workspaceRoot, automationId) => (
+        await (await getAutomationRuntimeServices(workspaceRoot)).scheduler.resumeAutomation(automationId)
+      ),
+      runAutomationNow: async (workspaceRoot, automationId) => (
+        await (await getAutomationRuntimeServices(workspaceRoot)).scheduler.runAutomationNow(automationId)
+      ),
+      listAutomationInvocations: async (workspaceRoot, automationId, limit) => {
+        const scheduler = (await getAutomationRuntimeServices(workspaceRoot)).scheduler;
+        await scheduler.readAutomation(automationId);
+        return await scheduler.listAutomationInvocations(automationId, limit);
+      },
+      startAutomationScheduler,
+      startAutomationSchedulers,
       reconcileRegisteredProject,
-      stopLoopSchedulers,
+      stopAutomationSchedulers,
       notifyRuntimeShutdown,
     };
   } catch (err) {
@@ -1289,61 +1025,6 @@ export async function createRuntime(
   }
 }
 
-function githubIntegrationStatus(githubConfig: Parameters<typeof resolveGithubIntegrationConfig>[0], updatedAt: number): LoopIntegrationStatus {
-  try {
-    const resolved = resolveGithubIntegrationConfig(githubConfig);
-    if (!resolved.enabled) {
-      return {
-        integrationId: "github",
-        status: "disabled",
-        updatedAt,
-      };
-    }
-    return {
-      integrationId: "github",
-      status: "ready",
-      updatedAt,
-    };
-  } catch (error) {
-    if (error instanceof GithubIntegrationTokenError) {
-      return {
-        integrationId: "github",
-        status: "auth_missing",
-        reason: "integration_auth_missing",
-        message: redactString(error.message),
-        updatedAt,
-      };
-    }
-    return {
-      integrationId: "github",
-      status: "error",
-      message: error instanceof Error ? redactString(error.message) : redactString(String(error)),
-      updatedAt,
-    };
-  }
-}
-
-function statusFromIntegrationError(error: LoopIntegrationError): LoopIntegrationStatus {
-  return {
-    integrationId: error.integrationId,
-    status: error.reason === "integration_auth_missing" ? "auth_missing" : "rate_limited",
-    reason: error.reason,
-    message: redactString(error.message),
-    retryAfterMs: error.retryAfterMs,
-    updatedAt: error.occurredAt,
-  };
-}
-
-function sanitizeIntegrationSnapshot(snapshot: LoopIntegrationSnapshot): LoopIntegrationSnapshot {
-  return {
-    ...snapshot,
-    errors: snapshot.errors.map((error) => ({
-      ...error,
-      message: redactString(error.message),
-    })),
-  };
-}
-
 function goalTitleSource(goal: GoalState): string {
   return [
     "Objective:",
@@ -1351,16 +1032,6 @@ function goalTitleSource(goal: GoalState): string {
     "Acceptance criteria:",
     goal.acceptanceCriteria,
   ].join("\n");
-}
-
-function loopTitleSource(loop: LoopState): string {
-  const goalTemplate = loop.config.goalTemplate;
-  return [
-    `Template: ${loop.config.templateId}`,
-    loop.config.taskPrompt === undefined ? undefined : `Run instructions:\n${loop.config.taskPrompt}`,
-    goalTemplate === undefined ? undefined : `Goal objective:\n${goalTemplate.objective}`,
-    goalTemplate === undefined ? undefined : `Goal acceptance criteria:\n${goalTemplate.acceptanceCriteria}`,
-  ].filter((section): section is string => section !== undefined).join("\n\n");
 }
 
 function assertRuntimeSessionAgentScope(options: CreateRuntimeSessionOptions): void {

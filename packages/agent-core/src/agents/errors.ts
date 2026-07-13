@@ -164,23 +164,6 @@ export class ChildSessionCwdMismatchError extends Error {
   }
 }
 
-export class ChildSessionLoopScopeMismatchError extends Error {
-  constructor(
-    public readonly parentSessionId: string,
-    public readonly childSessionId: string | undefined,
-    public readonly parentLoopId: string | undefined,
-    public readonly childLoopId: string | undefined,
-    public readonly originLoopId: string | undefined,
-  ) {
-    const child = childSessionId === undefined ? "new child session" : `child session "${childSessionId}"`;
-    super(
-      `Loop execution scope mismatch for parent session "${parentSessionId}" and ${child}: `
-      + `parent=${parentLoopId ?? "<none>"}, child=${childLoopId ?? "<none>"}, origin=${originLoopId ?? "<none>"}`,
-    );
-    this.name = "ChildSessionLoopScopeMismatchError";
-  }
-}
-
 export class SessionCwdTransitionConflictError extends Error {
   constructor(
     public readonly sessionId: string,

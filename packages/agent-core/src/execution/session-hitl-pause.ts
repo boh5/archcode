@@ -104,7 +104,6 @@ async function createRecordAndCheckpoint(input: {
     agentSkills: [...ctx.agentSkills],
     agentName: ctx.agentName,
     ...(ctx.currentDepth === undefined ? {} : { currentDepth: ctx.currentDepth }),
-    ...(ctx.origin === undefined ? {} : { origin: ctx.origin }),
     toolCalls: (ctx.hitlCheckpoint?.toolCalls ?? [{ toolCallId: ctx.toolCallId, toolName: ctx.toolName, input: ctx.input }]).map(cloneToolCall),
     completedToolResults: (ctx.hitlCheckpoint?.completedToolResults ?? []).map((result) => ({
       toolCallId: result.toolCallId,

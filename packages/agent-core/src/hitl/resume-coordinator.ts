@@ -34,14 +34,9 @@ export interface GoalHitlResumeAdapter {
   prepare(record: HitlRecord, response: HitlResponse): Promise<PreparedHitlResume>;
 }
 
-export interface LoopHitlResumeAdapter {
-  prepare(record: HitlRecord, response: HitlResponse): Promise<PreparedHitlResume>;
-}
-
 export interface ResumeCoordinatorAdapters {
   readonly session?: SessionHitlResumeAdapter;
   readonly goal?: GoalHitlResumeAdapter;
-  readonly loop?: LoopHitlResumeAdapter;
 }
 
 export interface ResumeCoordinatorOptions {
@@ -63,7 +58,7 @@ export interface ResumeRecoverySummary {
   missingResponse: number;
 }
 
-type ResumeAdapter = SessionHitlResumeAdapter | GoalHitlResumeAdapter | LoopHitlResumeAdapter;
+type ResumeAdapter = SessionHitlResumeAdapter | GoalHitlResumeAdapter;
 
 export class ResumeCoordinator {
   readonly #hitl: HitlService;
@@ -128,7 +123,7 @@ export class ResumeCoordinator {
     }
 
     // Durable claims and owner-local blockers are the readiness boundary.
-    // Adapter work may include a full agent or Loop run, so recovery only
+    // Adapter work may include a full agent run, so recovery only
     // registers each claim exactly once and lets that work continue after the
     // project context becomes available.
     return { scanned, scheduled, skippedPending, missingResponse };

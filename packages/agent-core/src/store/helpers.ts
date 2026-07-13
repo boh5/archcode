@@ -70,10 +70,6 @@ const HitlSourceSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("goal_review"), goalId: z.string(), resumeStatus: z.literal("reviewing") }),
   z.strictObject({ type: z.literal("goal_budget"), goalId: z.string(), approvalPoint: z.string().optional(), resumeStatus: z.enum(["running", "reviewing"]) }),
   z.strictObject({ type: z.literal("goal_question"), goalId: z.string(), questionKey: z.string(), resumeStatus: z.enum(["running", "reviewing"]) }),
-  z.strictObject({ type: z.literal("loop_approval"), loopId: z.string(), approvalPoint: z.string() }),
-  z.strictObject({ type: z.literal("loop_blocker"), loopId: z.string(), runId: z.string().optional(), reason: z.string() }),
-  z.strictObject({ type: z.literal("loop_retry"), loopId: z.string(), runId: z.string(), attempt: z.number().int().nonnegative() }),
-  z.strictObject({ type: z.literal("loop_question"), loopId: z.string(), questionKey: z.string() }),
 ]);
 
 const SessionHitlCheckpointSchema = z.strictObject({
@@ -435,7 +431,6 @@ export const SessionFileSchema = z.strictObject({
   rootSessionId: z.string(),
   parentSessionId: z.string().optional(),
   goalId: z.string().uuid().optional(),
-  loopId: z.string().uuid().optional(),
   sessionRole: SessionRoleSchema.optional(),
   blockedHitl: SessionHitlCheckpointSchema.optional(),
   blockedByHitlIds: z.array(z.string().trim().min(1)).optional(),
@@ -451,7 +446,6 @@ export interface SessionSummary {
   rootSessionId: string;
   parentSessionId?: string;
   goalId?: string;
-  loopId?: string;
   sessionRole?: SessionRole;
   agentName: string;
   modelInfo: SessionModelInfo | null;
@@ -465,7 +459,7 @@ type PersistableSessionState = Pick<
   "sessionId" | "createdAt" | "updatedAt" | "cwd" | "agentName" | "modelInfo" | "title" | "messages" | "steps" | "stats" | "executions" | "compression" | "todos" | "reminders" | "childSessionLinks" | "rootSessionId"
 > & Partial<Pick<
   SessionStoreState,
-  "parentSessionId" | "goalId" | "loopId" | "sessionRole" | "blockedHitl" | "blockedByHitlIds" | "events"
+  "parentSessionId" | "goalId" | "sessionRole" | "blockedHitl" | "blockedByHitlIds" | "events"
 >>;
 
 export function getAssistantText(messages: StoredMessage[]): string {
@@ -519,7 +513,6 @@ async function saveSessionTranscript(
     ...((state.events?.length ?? 0) === 0 ? {} : { events: state.events }),
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
     ...(state.goalId === undefined ? {} : { goalId: state.goalId }),
-    ...(state.loopId === undefined ? {} : { loopId: state.loopId }),
     ...(state.sessionRole === undefined ? {} : { sessionRole: state.sessionRole }),
     ...(state.blockedHitl === undefined ? {} : { blockedHitl: state.blockedHitl }),
     ...(state.blockedByHitlIds === undefined ? {} : { blockedByHitlIds: state.blockedByHitlIds }),
@@ -581,7 +574,6 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
     ...((state.events?.length ?? 0) === 0 ? {} : { events: state.events }),
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
     ...(state.goalId === undefined ? {} : { goalId: state.goalId }),
-    ...(state.loopId === undefined ? {} : { loopId: state.loopId }),
     ...(state.sessionRole === undefined ? {} : { sessionRole: state.sessionRole }),
     ...(state.blockedHitl === undefined ? {} : { blockedHitl: state.blockedHitl }),
     ...(state.blockedByHitlIds === undefined ? {} : { blockedByHitlIds: state.blockedByHitlIds }),
@@ -603,7 +595,6 @@ async function listSessionSummaries(workspaceRoot: string): Promise<SessionSumma
         rootSessionId: parsed.rootSessionId,
         ...(parsed.parentSessionId === undefined ? {} : { parentSessionId: parsed.parentSessionId }),
         ...(parsed.goalId === undefined ? {} : { goalId: parsed.goalId }),
-        ...(parsed.loopId === undefined ? {} : { loopId: parsed.loopId }),
         ...(parsed.sessionRole === undefined ? {} : { sessionRole: parsed.sessionRole }),
         agentName: parsed.agentName,
         modelInfo: parsed.modelInfo,
@@ -656,7 +647,6 @@ async function scanAllSessionSummaries(workspaceRoot: string): Promise<SessionSu
       rootSessionId: parsed.rootSessionId,
       ...(parsed.parentSessionId === undefined ? {} : { parentSessionId: parsed.parentSessionId }),
       ...(parsed.goalId === undefined ? {} : { goalId: parsed.goalId }),
-      ...(parsed.loopId === undefined ? {} : { loopId: parsed.loopId }),
       ...(parsed.sessionRole === undefined ? {} : { sessionRole: parsed.sessionRole }),
       agentName: parsed.agentName,
       modelInfo: parsed.modelInfo,

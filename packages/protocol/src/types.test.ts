@@ -16,6 +16,7 @@ import type {
   HitlStreamEvent,
   GoalStreamEvent,
   GlobalSSEEvent,
+  GlobalSSEResourceChangedEvent,
   GlobalSSEHeartbeatEvent,
   GlobalSSELaggedEvent,
   GlobalSSEResetEvent,
@@ -27,20 +28,11 @@ import type {
   TextDeltaEvent,
   ToolAttemptEvent,
   SessionEventPayload,
-  LoopConfig,
-  LoopCleanupPolicy,
-  LoopProjectConfig,
-  LoopStatus,
-  LoopScheduleSpec,
-  LoopRunReport,
-  LoopRunReportStatus,
-  LoopRunTrigger,
-  LoopTriggerHealth,
-  LoopTriggerSpec,
-  LoopWorktreeArtifact,
-  LoopGoalTemplate,
-  LoopState,
-  LoopStreamEvent,
+  Automation,
+  AutomationInvocation,
+  AutomationStatus,
+  AutomationTrigger,
+  AutomationAction,
   SessionSummary,
   Session,
 } from "./types";
@@ -54,6 +46,26 @@ function compositeIdentity(event: GlobalSessionEventEnvelope): string {
 }
 
 describe("global SSE wire protocol types", () => {
+  test("uses strict resource.changed variants for Goals and Automations", () => {
+    const events: GlobalSSEResourceChangedEvent[] = [{
+      type: "resource.changed",
+      projectSlug: "project-a",
+      resourceType: "goal",
+      resourceId: "goal-1",
+      reason: "title_generated",
+      createdAt: 1,
+    }, {
+      type: "resource.changed",
+      projectSlug: "project-a",
+      resourceType: "automation",
+      resourceId: "automation-1",
+      reason: "invocation_changed",
+      createdAt: 2,
+    }];
+
+    expect(serializeRoundTrip(events)).toEqual(events);
+  });
+
   test("round-trips a global session event envelope", () => {
     const event: GlobalSessionEventEnvelope<TextDeltaEvent> = {
       type: "event",
@@ -550,11 +562,11 @@ describe("HITL types", () => {
     const projection: HitlProjection = {
       hitlId: "hitl-1",
       project: { slug: "my-project", name: "My Project" },
-      owner: { projectSlug: "my-project", ownerType: "loop", ownerId: "loop-1" },
-      ancestry: { rootSessionId: "session-root", loopId: "loop-1", projectionPath: ["loop", "goal"] },
-      source: { type: "loop_blocker", loopId: "loop-1", reason: "budget warning" },
+      owner: { projectSlug: "my-project", ownerType: "goal", ownerId: "goal-1" },
+      ancestry: { rootSessionId: "session-root", goalId: "goal-1", projectionPath: ["goal", "goal-1"] },
+      source: { type: "goal_budget", goalId: "goal-1", resumeStatus: "running" },
       status: "pending",
-      displayPayload: { title: "Loop blocked", summary: "Budget warning", redacted: true },
+      displayPayload: { title: "Goal blocked", summary: "Budget warning", redacted: true },
       allowedActions: ["approve", "deny", "cancel"],
       createdAt: "2026-07-03T00:00:00.000Z",
       updatedAt: "2026-07-03T00:00:00.000Z",
@@ -562,7 +574,7 @@ describe("HITL types", () => {
 
     const serialized = JSON.stringify(serializeRoundTrip(projection));
 
-    expect(serialized).toContain("Loop blocked");
+    expect(serialized).toContain("Goal blocked");
     expect(serialized).not.toContain("workspaceRoot");
     expect(serialized).not.toContain("rawToolInput");
     expect(serialized).not.toContain("rawCheckpoint");
@@ -709,478 +721,36 @@ describe("Goal/HITL stream events", () => {
   });
 });
 
-describe("Loop types", () => {
+describe("Automation types", () => {
   function serializeRoundTrip<T>(value: T): T {
     return JSON.parse(JSON.stringify(value)) as T;
   }
 
-  test("LoopStatus values are correct", () => {
-    const statuses: LoopStatus[] = ["active", "paused", "disabled", "error"];
-    expect(statuses).toHaveLength(4);
-    expect(statuses).toContain("active");
-    expect(statuses).toContain("paused");
-    expect(statuses).toContain("disabled");
-    expect(statuses).toContain("error");
-  });
-
-  test("LoopScheduleSpec accepts manual, interval, and cron", () => {
-    const manual: LoopScheduleSpec = { kind: "manual" };
-    const interval: LoopScheduleSpec = { kind: "interval", everyMs: 60000 };
-    const cron: LoopScheduleSpec = { kind: "cron", expression: "*/15 * * * *" };
-
-    expect(serializeRoundTrip(manual)).toEqual(manual);
-    expect(serializeRoundTrip(interval)).toEqual(interval);
-    expect(serializeRoundTrip(cron)).toEqual(cron);
-    expect(interval.everyMs).toBe(60000);
-    expect(cron.expression).toBe("*/15 * * * *");
-  });
-
-  test("LoopTriggerSpec accepts automation trigger filters", () => {
-    const triggers: LoopTriggerSpec[] = [
-      { kind: "on_commit", branch: "main", cadenceMs: 60000 },
-      { kind: "on_pr", baseBranch: "main", prScope: "review_requested", cadenceMs: 60000 },
-      { kind: "on_ci_fail", baseBranch: "main", checkName: "test", workflowName: "ci", cadenceMs: 60000 },
-    ];
-
-    expect(serializeRoundTrip(triggers)).toEqual(triggers);
-    expect(triggers.map((trigger) => trigger.kind)).toEqual(["on_commit", "on_pr", "on_ci_fail"]);
-  });
-
-  test("LoopRunReportStatus values are correct", () => {
-    const statuses: LoopRunReportStatus[] = ["running", "succeeded", "failed", "skipped", "cancelled", "budget_exceeded", "needs_user"];
-    expect(statuses).toHaveLength(7);
-    expect(statuses).toContain("running");
-    expect(statuses).toContain("succeeded");
-    expect(statuses).toContain("failed");
-    expect(statuses).toContain("skipped");
-    expect(statuses).toContain("cancelled");
-    expect(statuses).toContain("budget_exceeded");
-    expect(statuses).toContain("needs_user");
-  });
-
-  test("LoopRunTrigger values are correct", () => {
-    const triggers: LoopRunTrigger[] = ["manual", "interval", "cron", "on_commit", "on_pr", "on_ci_fail"];
-    expect(triggers).toHaveLength(6);
-    expect(triggers).toContain("manual");
-    expect(triggers).toContain("interval");
-    expect(triggers).toContain("cron");
-    expect(triggers).toContain("on_commit");
-    expect(triggers).toContain("on_pr");
-    expect(triggers).toContain("on_ci_fail");
-  });
-
-  test("Loop project coordinator config carries maxConcurrent", () => {
-    const projectConfig: LoopProjectConfig = { coordinator: { maxConcurrent: 2 } };
-
-    expect(serializeRoundTrip(projectConfig)).toEqual(projectConfig);
-    expect(projectConfig.coordinator.maxConcurrent).toBe(2);
-  });
-
-  test("Loop cleanup and trigger metadata types serialize", () => {
-    const cleanupPolicy: LoopCleanupPolicy = {
-      enabled: true,
-      deleteUnchangedWorktrees: true,
-      preserveChangedArtifacts: true,
-      maxPreservedWorktrees: 5,
-    };
-    const artifact: LoopWorktreeArtifact = {
-      path: "report.md",
-      status: "modified",
-      sizeBytes: 120,
-      sha: "abc123",
-    };
-    const health: LoopTriggerHealth = {
-      triggerKind: "on_ci_fail",
-      status: "healthy",
-      cadenceMs: 60000,
-      lastCheckedAt: 2000,
-      missedCount: 0,
-    };
-
-    expect(serializeRoundTrip(cleanupPolicy)).toEqual(cleanupPolicy);
-    expect(serializeRoundTrip(artifact)).toEqual(artifact);
-    expect(serializeRoundTrip(health)).toEqual(health);
-  });
-
-  test("LoopRunReport serializes round-trip", () => {
-    const report: LoopRunReport = {
-      runId: "run-1",
-      loopId: "loop-1",
-      status: "succeeded",
-      trigger: "manual",
-      startedAt: 1000,
-      endedAt: 2000,
-      sessionId: "session-1",
-      summary: "Completed successfully",
-      jobId: "job-1",
-      subjectKey: "cron:1000",
-      dedupeKey: "loop-1:cron:cron:1000",
-      branchKey: "test-owner/test-repo:main",
-      worktreePath: "/tmp/worktree",
-      baseSha: "base",
-      resolvedHeadSha: "head",
-      missedCount: 1,
-      cleanupState: "cleaned",
-      observedArtifacts: [{ path: "report.md", status: "observed" }],
-    };
-
-    const parsed = serializeRoundTrip(report);
-    expect(parsed).toEqual(report);
-    expect(parsed.status).toBe("succeeded");
-    expect(parsed.trigger).toBe("manual");
-    expect(parsed.sessionId).toBe("session-1");
-    expect(parsed.jobId).toBe("job-1");
-    expect(parsed.observedArtifacts).toEqual([{ path: "report.md", status: "observed" }]);
-  });
-
-  test("LoopRunReport with error and skippedReason serializes", () => {
-    const report: LoopRunReport = {
-      runId: "run-2",
-      loopId: "loop-1",
-      status: "skipped",
-      trigger: "interval",
-      startedAt: 1000,
-      skippedReason: "Loop already active",
-    };
-
-    const parsed = serializeRoundTrip(report);
-    expect(parsed).toEqual(report);
-    expect(parsed.status).toBe("skipped");
-    expect(parsed.skippedReason).toBe("Loop already active");
-  });
-
-  test("LoopGoalTemplate has only natural-language Goal fields", () => {
-    const template: LoopGoalTemplate = {
-      title: null,
-      objective: "Implement the feature according to the loop finding.",
-      acceptanceCriteria: "The feature is implemented and reviewed against the finding.",
-    };
-
-    const parsed = serializeRoundTrip(template);
-    expect(parsed).toEqual(template);
-    expect(parsed.title).toBeNull();
-    expect(parsed.objective).toContain("feature");
-    expect(parsed.acceptanceCriteria).toContain("reviewed");
-  });
-
-  test("LoopGoalTemplate rejects non-natural-language Goal DSL fields at type level", () => {
-    // @ts-expect-error - old typed criteria arrays are not valid on LoopGoalTemplate
-    const invalid: LoopGoalTemplate = { title: "t", objective: "o", acceptanceCriteria: "a", doneConditions: [] };
-    expect(invalid).toBeDefined();
-  });
-
-  test("LoopConfig serializes minimal manual session report loop", () => {
-    const config: LoopConfig = {
-      templateId: "watch_report",
-      title: null,
-      schedule: { kind: "manual" },
-      approvalPolicy: "interactive",
-      limits: { maxIterationsPerRun: 10, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
-      useWorktree: false,
-      taskPrompt: "Inspect git status and report findings",
-    };
-
-    const parsed = serializeRoundTrip(config);
-    expect(parsed).toEqual(config);
-    expect(parsed.schedule).toEqual({ kind: "manual" });
-    expect(parsed.templateId).toBe("watch_report");
-    expect(parsed.approvalPolicy).toBe("interactive");
-    expect(parsed.limits.maxIterationsPerRun).toBe(10);
-  });
-
-  test("LoopConfig serializes interval goal loop with inline template", () => {
-    const config: LoopConfig = {
-      templateId: "goal_runner",
-      title: null,
-      schedule: { kind: "interval", everyMs: 3600000 },
-      approvalPolicy: "interactive",
-      limits: { maxIterationsPerRun: 5, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
-      useWorktree: false,
-      goalTemplate: {
-        title: null,
-        objective: "Draft a changelog from recent project changes.",
-        acceptanceCriteria: "The changelog draft summarizes user-facing changes in natural language.",
-      },
-    };
-
-    const parsed = serializeRoundTrip(config);
-    expect(parsed).toEqual(config);
-    expect(parsed.schedule).toEqual({ kind: "interval", everyMs: 3600000 });
-    expect(parsed.templateId).toBe("goal_runner");
-    expect(parsed.goalTemplate).toBeDefined();
-    expect(parsed.goalTemplate!.title).toBeNull();
-  });
-
-  test("LoopConfig accepts cron, triggers, and cleanup policy", () => {
-    const config: LoopConfig = {
-      templateId: "pr_babysitter",
-      title: "PR watcher",
-      schedule: { kind: "cron", expression: "*/15 * * * *" },
-      approvalPolicy: "interactive",
-      limits: { maxIterationsPerRun: 1, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
-      useWorktree: false,
-      triggers: [{ kind: "on_pr", cadenceMs: 60000, baseBranch: "main" }],
-      cleanupPolicy: { enabled: true, deleteUnchangedWorktrees: true, preserveChangedArtifacts: true },
-    };
-
-    expect(serializeRoundTrip(config)).toEqual(config);
-    expect(config.triggers?.[0]?.kind).toBe("on_pr");
-  });
-
-  test("LoopConfig rejects goalTemplateId at type level", () => {
-    // @ts-expect-error - goalTemplateId is not a valid LoopConfig field
-    const invalid: LoopConfig = { templateId: "goal_runner", title: "t", schedule: { kind: "manual" }, approvalPolicy: "interactive", limits: { maxIterationsPerRun: 1, softThresholdRatio: 0.8, hardThresholdRatio: 1 }, useWorktree: false, goalTemplateId: "goal-123" };
-    expect(invalid).toBeDefined();
-  });
-
-  test("LoopState serializes round-trip without readinessScore", () => {
-    const state: LoopState = {
-      loopId: "loop-1",
-      projectId: "my-project",
-      config: {
-        templateId: "watch_report",
-        title: "Daily Triage",
-        schedule: { kind: "manual" },
-        approvalPolicy: "interactive",
-        limits: { maxIterationsPerRun: 10, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
-        useWorktree: false,
-      },
+  test("models exactly one time trigger and one Session action", () => {
+    const statuses: AutomationStatus[] = ["active", "paused", "disabled"];
+    const trigger: AutomationTrigger = { kind: "cron", expression: "0 9 * * 1", timezone: "Asia/Shanghai" };
+    const action: AutomationAction = { kind: "start_session", message: "/skill use review", location: "worktree" };
+    const automation: Automation = {
+      id: "automation-1",
+      projectId: "project-1",
+      name: "Weekly review",
       status: "active",
-      createdAt: 1000,
-      updatedAt: 1000,
-      runCount: 0,
-      stateVersion: 1,
+      trigger,
+      action,
+      createdAt: "2026-07-13T00:00:00.000Z",
+      updatedAt: "2026-07-13T00:00:00.000Z",
+    };
+    const invocation: AutomationInvocation = {
+      id: "invocation-1",
+      automationId: automation.id,
+      dueAt: "2026-07-14T01:00:00.000Z",
+      status: "pending",
+      executionId: "execution-1",
+      createdAt: "2026-07-14T01:00:00.000Z",
     };
 
-    const parsed = serializeRoundTrip(state);
-    expect(parsed).toEqual(state);
-    expect(parsed.status).toBe("active");
-    expect(parsed.runCount).toBe(0);
-    expect(parsed.stateVersion).toBe(1);
-    expect("readinessScore" in parsed).toBe(false);
-  });
-
-  test("LoopState with lastRun and currentRun serializes", () => {
-    const state: LoopState = {
-      loopId: "loop-1",
-      projectId: "my-project",
-      config: {
-        templateId: "watch_report",
-        title: "Changelog",
-        schedule: { kind: "interval", everyMs: 60000 },
-        approvalPolicy: "interactive",
-        limits: { maxIterationsPerRun: 5, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
-        useWorktree: false,
-      },
-      status: "active",
-      createdAt: 1000,
-      updatedAt: 3000,
-      lastRun: {
-        runId: "run-1",
-        loopId: "loop-1",
-        status: "succeeded",
-        trigger: "interval",
-        startedAt: 2000,
-        endedAt: 3000,
-        summary: "Completed",
-      },
-      currentRun: {
-        runId: "run-2",
-        loopId: "loop-1",
-        status: "running",
-        trigger: "interval",
-        startedAt: 4000,
-      },
-      nextRunAt: 10000,
-      runCount: 1,
-      stateVersion: 2,
-      generatedStateSummary: "Loop has run 1 time(s). Last run: succeeded.",
-      triggerHealth: [{ triggerKind: "on_pr", status: "healthy", cadenceMs: 60000 }],
-      cleanupState: "not_started",
-    };
-
-    const parsed = serializeRoundTrip(state);
-    expect(parsed).toEqual(state);
-    expect(parsed.lastRun!.status).toBe("succeeded");
-    expect(parsed.currentRun!.status).toBe("running");
-    expect(parsed.nextRunAt).toBe(10000);
-    expect(parsed.runCount).toBe(1);
-    expect(parsed.generatedStateSummary).toContain("succeeded");
-    expect(parsed.triggerHealth?.[0]?.triggerKind).toBe("on_pr");
-  });
-
-  test("LoopStreamEvent types are serializable", () => {
-    const stateChange: LoopStreamEvent = {
-      type: "loop.state_change",
-      loopId: "loop-1",
-      status: "active",
-      state: {
-        loopId: "loop-1",
-        projectId: "p",
-        config: {
-          templateId: "watch_report",
-          title: "t",
-          schedule: { kind: "manual" },
-          approvalPolicy: "interactive",
-          limits: { maxIterationsPerRun: 10, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
-          useWorktree: false,
-        },
-        status: "active",
-        createdAt: 1000,
-        updatedAt: 1000,
-        runCount: 0,
-        stateVersion: 1,
-      },
-    };
-
-    const runAppended: LoopStreamEvent = {
-      type: "loop.run_appended",
-      loopId: "loop-1",
-      report: {
-        runId: "run-1",
-        loopId: "loop-1",
-        status: "succeeded",
-        trigger: "manual",
-        startedAt: 2000,
-        endedAt: 3000,
-        summary: "Done",
-      },
-    };
-
-    expect(serializeRoundTrip(stateChange)).toEqual(stateChange);
-    expect(serializeRoundTrip(runAppended)).toEqual(runAppended);
-  });
-
-  test("StreamEvent union accepts Loop events", () => {
-    const events: StreamEvent[] = [
-      {
-        type: "loop.state_change",
-        loopId: "loop-1",
-        status: "active",
-        state: {} as LoopState,
-      },
-      {
-        type: "loop.run_appended",
-        loopId: "loop-1",
-        report: {} as LoopRunReport,
-      },
-    ];
-
-    expect(events).toHaveLength(2);
-    expect(events[0]!.type).toBe("loop.state_change");
-    expect(events[1]!.type).toBe("loop.run_appended");
-  });
-
-  test("SessionSummary can carry loopId alongside goalId", () => {
-    const summary: SessionSummary = {
-      sessionId: "session-1",
-      cwd: "/workspace",
-      rootSessionId: "session-1",
-      agentName: "engineer",
-      modelInfo: null,
-      title: null,
-      goalId: "goal-1",
-      loopId: "loop-1",
-      createdAt: 1000,
-      updatedAt: 1000,
-    };
-
-    const parsed = serializeRoundTrip(summary);
-    expect(parsed.goalId).toBe("goal-1");
-    expect(parsed.loopId).toBe("loop-1");
-  });
-
-  test("SessionSummary without loopId still works", () => {
-    const summary: SessionSummary = {
-      sessionId: "session-1",
-      cwd: "/workspace",
-      rootSessionId: "session-1",
-      agentName: "engineer",
-      modelInfo: null,
-      title: null,
-      goalId: "goal-1",
-      createdAt: 1000,
-      updatedAt: 1000,
-    };
-
-    const parsed = serializeRoundTrip(summary);
-    expect(parsed.goalId).toBe("goal-1");
-    expect(parsed.loopId).toBeUndefined();
-  });
-
-  test("Session can carry loopId alongside goalId", () => {
-    const session: Session = {
-      schemaVersion: 1,
-      sessionId: "session-1",
-      cwd: "/workspace",
-      rootSessionId: "session-1",
-      title: null,
-      goalId: "goal-1",
-      loopId: "loop-1",
-      createdAt: 1000,
-      updatedAt: 1000,
-      messages: [],
-      steps: [],
-      todos: [],
-      reminders: [],
-      childSessionLinks: [],
-      stats: createEmptySessionStats(),
-      executions: [],
-      modelInfo: null,
-      agentName: "engineer",
-    };
-
-    const parsed = serializeRoundTrip(session);
-    expect(parsed.goalId).toBe("goal-1");
-    expect(parsed.loopId).toBe("loop-1");
-  });
-
-  test("Session without loopId still works", () => {
-    const session: Session = {
-      schemaVersion: 1,
-      sessionId: "session-1",
-      cwd: "/workspace",
-      rootSessionId: "session-1",
-      title: null,
-      goalId: "goal-1",
-      createdAt: 1000,
-      updatedAt: 1000,
-      messages: [],
-      steps: [],
-      todos: [],
-      reminders: [],
-      childSessionLinks: [],
-      stats: createEmptySessionStats(),
-      executions: [],
-      modelInfo: null,
-      agentName: "engineer",
-    };
-
-    const parsed = serializeRoundTrip(session);
-    expect(parsed.goalId).toBe("goal-1");
-    expect(parsed.loopId).toBeUndefined();
-  });
-
-  test("readinessScore remains absent from LoopState fixtures", () => {
-    const state: LoopState = {
-      loopId: "loop-1",
-      projectId: "p",
-      config: {
-        templateId: "watch_report",
-        title: "t",
-        schedule: { kind: "manual" },
-        approvalPolicy: "interactive",
-        limits: { maxIterationsPerRun: 10, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
-        useWorktree: false,
-      },
-      status: "active",
-      createdAt: 1000,
-      updatedAt: 1000,
-      runCount: 0,
-      stateVersion: 1,
-    };
-
-    const serialized = JSON.stringify(state);
-    expect(serialized).not.toContain("readinessScore");
+    expect(statuses).toEqual(["active", "paused", "disabled"]);
+    expect(serializeRoundTrip(automation)).toEqual(automation);
+    expect(serializeRoundTrip(invocation)).toEqual(invocation);
   });
 });

@@ -40,7 +40,6 @@ export interface GoalToolAuthorizationContext {
   readonly agentName?: string;
   readonly sessionRole?: SessionRole;
   readonly sessionGoalId?: string;
-  readonly sessionLoopId?: string;
 }
 
 export interface GoalToolErrorMappingOptions {
@@ -70,7 +69,6 @@ export function extractGoalToolAuthorization(ctx: ToolExecutionContext): GoalToo
     agentName: ctx.agentName ?? state.agentName,
     sessionRole: state.sessionRole,
     sessionGoalId: state.goalId,
-    ...(state.loopId === undefined ? {} : { sessionLoopId: state.loopId }),
   };
 }
 
@@ -80,8 +78,7 @@ export function assertGoalCreateAuthorized(ctx: ToolExecutionContext): GoalToolA
   const isOrdinaryRoot = authorization.sessionId === authorization.rootSessionId
     && authorization.parentSessionId === undefined
     && authorization.sessionRole === undefined
-    && authorization.sessionGoalId === undefined
-    && authorization.sessionLoopId === undefined;
+    && authorization.sessionGoalId === undefined;
   if (authorization.agentName !== "engineer" || !isOrdinaryRoot) {
     throw new GoalToolAuthorizationError(
       "GOAL_CREATE_DENIED",

@@ -7,7 +7,6 @@ import { GoalStateManager } from "../goals/state";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
 import { HitlService } from "../hitl/service";
 import { silentLogger } from "../logger";
-import { LoopStateManager } from "../loops/state";
 import { SessionStoreManager } from "../store/session-store-manager";
 import {
   getSessionHitlCheckpointPath,
@@ -297,13 +296,11 @@ async function createFixture() {
   sessions.create(sessionId, workspaceRoot, { agentName: "engineer" });
   await sessions.flushSession(sessionId, workspaceRoot);
   const goalState = new GoalStateManager(workspaceRoot, silentLogger);
-  const loopState = new LoopStateManager(workspaceRoot, silentLogger);
   const hitl = new HitlService({
     workspaceRoot,
     project: { slug: "archcode", name: "ArchCode" },
     sessions,
     goalState,
-    loopState,
   });
   const owner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "session", ownerId: sessionId };
   return { workspaceRoot, sessionId, sessions, hitl, owner };

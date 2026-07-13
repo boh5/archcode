@@ -4,7 +4,7 @@ import type {
   GoalReviewVerdict,
   GoalState,
 } from "@archcode/protocol";
-import { isAbsolute, resolve } from "node:path";
+import { resolve } from "node:path";
 
 import type {
   GoalCreateInput,
@@ -15,7 +15,6 @@ import type {
   GoalStateManager,
 } from "./state";
 import type { SessionRole } from "../store/types";
-import { assertValidSessionCwd } from "../store/session-cwd";
 import { withGoalExecutionClaimLock } from "./execution-claim";
 import { goalExecutionStatusEligibility } from "./execution-policy";
 import { GoalWorkspaceService } from "./workspace";
@@ -24,21 +23,13 @@ import type { WorktreeService } from "../worktrees";
 export interface GoalRunnerCreateSessionOptions {
   readonly cwd?: string;
   readonly goalId?: string;
-  readonly loopId?: string;
   readonly sessionRole?: SessionRole;
   readonly title?: string;
-}
-
-export interface GoalRunnerLoopExecutionScope {
-  readonly kind: "loop";
-  readonly loopId: string;
-  readonly cwd: string;
 }
 
 export interface GoalRunnerStartInput {
   readonly mainSessionId?: string;
   readonly sessionTitle?: string;
-  readonly executionScope?: GoalRunnerLoopExecutionScope;
 }
 
 export interface GoalRunnerOptions {
@@ -113,14 +104,11 @@ export class GoalRunner {
       )) {
         throw new GoalRunnerError(goalId, `Running Goal ${goalId} is claimed by ${current.mainSessionId ?? "no main Session"}`);
       }
-      const cwd = await this.resolveExecutionCwd(current, input.executionScope);
+      const cwd = await this.resolveExecutionCwd(current);
       if (requestedSessionId !== undefined) await this.assertSessionCwd(goalId, requestedSessionId, cwd);
       if (eligibility === "running_claim") return current;
       const mainSessionId = requestedSessionId ?? await this.createMainSession(goalId, { ...input, cwd });
-      return this.#goalStateManager.start(goalId, {
-        mainSessionId,
-        ...(input.executionScope === undefined ? {} : { loopId: input.executionScope.loopId }),
-      });
+      return this.#goalStateManager.start(goalId, { mainSessionId });
     });
   }
 
@@ -196,45 +184,17 @@ export class GoalRunner {
     input: {
       readonly sessionTitle?: string;
       readonly cwd?: string;
-      readonly executionScope?: GoalRunnerLoopExecutionScope;
     },
   ): Promise<string> {
     return this.#createSession({
       goalId,
       ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
-      loopId: input.executionScope?.loopId,
       sessionRole: "main",
       ...(input.sessionTitle === undefined ? {} : { title: input.sessionTitle }),
     });
   }
 
-  private async resolveExecutionCwd(
-    goal: GoalState,
-    executionScope?: GoalRunnerLoopExecutionScope,
-  ): Promise<string> {
-    if (executionScope !== undefined) {
-      if (goal.useWorktree === true) {
-        throw new GoalRunnerError(goal.id, `Goal ${goal.id} cannot combine Goal and Loop worktree ownership`);
-      }
-      if (goal.loopId === undefined || goal.loopId !== executionScope.loopId) {
-        throw new GoalRunnerError(goal.id, `Loop execution scope ${executionScope.loopId} does not own Goal ${goal.id}`);
-      }
-      if (!isAbsolute(executionScope.cwd)) {
-        throw new GoalRunnerError(goal.id, "Loop execution scope cwd must be an absolute path");
-      }
-      try {
-        await assertValidSessionCwd(this.#workspaceRoot, executionScope.cwd);
-      } catch (error) {
-        throw new GoalRunnerError(
-          goal.id,
-          `Loop execution scope cwd is invalid: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-      return resolve(executionScope.cwd);
-    }
-    if (goal.loopId !== undefined) {
-      throw new GoalRunnerError(goal.id, `Loop-owned Goal ${goal.id} requires an explicit Loop execution scope`);
-    }
+  private async resolveExecutionCwd(goal: GoalState): Promise<string> {
     const prepared = await this.#workspaceService.prepare(goal.id);
     return prepared.cwd;
   }

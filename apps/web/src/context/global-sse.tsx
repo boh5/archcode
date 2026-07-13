@@ -237,14 +237,6 @@ export function handleSSEEvent(
         });
       }
 
-      if (isLoopPayload(envelope.payload)) {
-        invalidateLoopGuardrailQueries(deps, envelope.slug, envelope.payload.loopId, envelope.sessionId);
-      } else {
-        const loopId = extractLoopIdFromPayload(envelope.payload);
-        if (loopId) {
-          invalidateLoopGuardrailQueries(deps, envelope.slug, loopId, envelope.sessionId);
-        }
-      }
       break;
     }
     case "heartbeat": {
@@ -314,7 +306,7 @@ function invalidateResourceQueries(deps: SSEEventHandlerDeps, event: GlobalSSERe
     return;
   }
 
-  invalidateLoopQueries(deps, event.projectSlug, event.resourceId);
+  if (event.resourceType === "automation") invalidateAutomationQueries(deps, event.projectSlug, event.resourceId);
 }
 
 function invalidateHitlRelatedQueries(deps: SSEEventHandlerDeps, event: GlobalSSEHitlRealtimeEvent): void {
@@ -324,8 +316,6 @@ function invalidateHitlRelatedQueries(deps: SSEEventHandlerDeps, event: GlobalSS
   const goalId = event.owner.ownerType === "goal" ? event.owner.ownerId : goalIdFromHitlEvent(event);
   if (goalId) deps.invalidateQueries({ queryKey: queryKeys.goal(event.projectSlug, goalId) });
 
-  const loopId = event.owner.ownerType === "loop" ? event.owner.ownerId : loopIdFromHitlEvent(event);
-  if (loopId) invalidateLoopQueries(deps, event.projectSlug, loopId);
 }
 
 function sessionIdFromHitlEvent(event: GlobalSSEHitlRealtimeEvent): string | undefined {
@@ -340,12 +330,6 @@ function goalIdFromHitlEvent(event: GlobalSSEHitlRealtimeEvent): string | undefi
   return event.projection.ancestry?.goalId;
 }
 
-function loopIdFromHitlEvent(event: GlobalSSEHitlRealtimeEvent): string | undefined {
-  const source = event.projection.source;
-  if (source.type === "loop_approval" || source.type === "loop_blocker" || source.type === "loop_retry" || source.type === "loop_question") return source.loopId;
-  return event.projection.ancestry?.loopId;
-}
-
 function isGoalPayload(
   payload: SessionEventPayload,
 ): payload is Extract<SessionEventPayload, { type: "goal.state_change" }> {
@@ -358,50 +342,15 @@ function isHitlPayload(
   return payload.type === "hitl.request" || payload.type === "hitl.updated" || payload.type === "hitl.resolved";
 }
 
-function isLoopPayload(
-  payload: SessionEventPayload,
-): payload is Extract<SessionEventPayload, { type: "loop.state_change" | "loop.run_appended" }> {
-  return payload.type === "loop.state_change" || payload.type === "loop.run_appended";
-}
-
-/** Extract loopId from any session payload that carries it (e.g. hitl.request, loop stream events). */
-function extractLoopIdFromPayload(payload: SessionEventPayload): string | undefined {
-  if ("loopId" in payload && typeof (payload as Record<string, unknown>).loopId === "string") {
-    return (payload as Record<string, unknown>).loopId as string;
-  }
-  // hitl.request nests loop ownership/source inside the request object.
-  if (payload.type === "hitl.request") {
-    if (payload.request.owner.ownerType === "loop") return payload.request.owner.ownerId;
-    const source = payload.request.source;
-    if ("loopId" in source && typeof source.loopId === "string") return source.loopId;
-  }
-  return undefined;
-}
-
-/** Invalidate all loop guardrail query keys for a given slug + loopId. */
-function invalidateLoopGuardrailQueries(
+function invalidateAutomationQueries(
   deps: { invalidateQueries: (opts: { queryKey: readonly unknown[] }) => Promise<void> },
   slug: string,
-  loopId: string,
-  sessionId: string,
+  automationId: string,
 ): void {
-  invalidateLoopQueries(deps, slug, loopId);
-  deps.invalidateQueries({ queryKey: queryKeys.session(slug, sessionId) });
-}
-
-function invalidateLoopQueries(
-  deps: { invalidateQueries: (opts: { queryKey: readonly unknown[] }) => Promise<void> },
-  slug: string,
-  loopId: string,
-): void {
-  deps.invalidateQueries({ queryKey: queryKeys.loop(slug, loopId) });
-  deps.invalidateQueries({ queryKey: queryKeys.loopRuns(slug, loopId) });
-  deps.invalidateQueries({ queryKey: queryKeys.loopBudget(slug, loopId) });
-  deps.invalidateQueries({ queryKey: queryKeys.loopCollisions(slug, loopId) });
-  deps.invalidateQueries({ queryKey: queryKeys.loopIntegrations(slug, loopId) });
-  deps.invalidateQueries({ queryKey: queryKeys.projectLoops(slug) });
-  deps.invalidateQueries({ queryKey: queryKeys.activeLoops });
-  deps.invalidateQueries({ queryKey: queryKeys.loopKillState(slug) });
+  deps.invalidateQueries({ queryKey: queryKeys.automation(slug, automationId) });
+  deps.invalidateQueries({ queryKey: queryKeys.automationInvocations(slug, automationId) });
+  deps.invalidateQueries({ queryKey: queryKeys.projectAutomations(slug) });
+  deps.invalidateQueries({ queryKey: queryKeys.activeAutomations });
 }
 
 export function GlobalSSEProvider({ children }: { children: ReactNode }) {

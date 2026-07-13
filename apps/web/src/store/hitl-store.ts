@@ -10,7 +10,7 @@ import {
 
 export { hitlIdentityKey };
 
-export type HitlScope = "project" | "session" | "goal" | "loop";
+export type HitlScope = "project" | "session" | "goal";
 
 interface HitlStoreState {
   projections: Record<string, HitlProjection>;
@@ -119,7 +119,6 @@ function isDescendantProjection(projection: HitlProjection, scope: Exclude<HitlS
     return ancestry?.ancestorSessionIds?.includes(ownerId) ?? false;
   }
   if (scope === "goal") return ancestry?.goalId === ownerId || sourceGoalId(projection) === ownerId;
-  if (scope === "loop") return ancestry?.loopId === ownerId || sourceLoopId(projection) === ownerId;
   return false;
 }
 
@@ -130,18 +129,6 @@ function sourceGoalId(projection: HitlProjection): string | undefined {
     case "goal_budget":
     case "goal_question":
       return projection.source.goalId;
-    default:
-      return undefined;
-  }
-}
-
-function sourceLoopId(projection: HitlProjection): string | undefined {
-  switch (projection.source.type) {
-    case "loop_approval":
-    case "loop_blocker":
-    case "loop_retry":
-    case "loop_question":
-      return projection.source.loopId;
     default:
       return undefined;
   }

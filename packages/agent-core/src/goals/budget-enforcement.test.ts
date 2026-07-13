@@ -6,7 +6,6 @@ import type { GoalBudgetSummary } from "@archcode/protocol";
 
 import type { ModelCallOptions } from "../config/provider";
 import { HitlService } from "../hitl/service";
-import { LoopStateManager } from "../loops/state";
 import type { ProjectContext } from "../projects/types";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { createSessionStore } from "../store/store";
@@ -30,7 +29,6 @@ beforeEach(async () => {
     project: projectContext.project,
     sessions: new SessionStoreManager({ logger: silentLogger }),
     goalState: projectContext.goalState,
-    loopState: new LoopStateManager(workspaceRoot),
   });
 });
 

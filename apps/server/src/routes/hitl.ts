@@ -16,7 +16,7 @@ import { BadRequestError, ServerError } from "../errors";
 import { resolveProject } from "../resolve";
 import { globalEventBus } from "../events/global-event-bus";
 
-type HitlRouteScope = "project" | "session" | "goal" | "loop";
+type HitlRouteScope = "project" | "session" | "goal";
 type HitlRouteStatus = "pending" | "recent" | "all";
 type ResumeStatus = "idle" | "claimed" | "failed" | "terminal";
 
@@ -32,8 +32,8 @@ interface HitlMutationResponse {
 }
 
 const HitlListStatusSchema = z.enum(["pending", "recent", "all"]);
-const HitlScopeSchema = z.enum(["project", "session", "goal", "loop"]);
-const HitlOwnerTypeSchema = z.enum(["session", "goal", "loop"]);
+const HitlScopeSchema = z.enum(["project", "session", "goal"]);
+const HitlOwnerTypeSchema = z.enum(["session", "goal"]);
 
 const GoalEvidenceRefSchema = z.strictObject({
   kind: z.enum(["session", "message", "tool_call", "diff", "test_output", "file", "url", "hitl"]),
@@ -259,8 +259,8 @@ function parseListQuery(query: Record<string, string | undefined>): {
   const status = parseOptionalEnum(query.status, HitlListStatusSchema, "status") ?? "pending";
   const includeChildren = parseIncludeChildren(query.includeChildren);
   const ownerId = query.ownerId?.trim();
-  if (scope !== "project" && !ownerId) throw new BadRequestError("ownerId is required for session, goal, and loop HITL scope");
-  if (scope === "project" && ownerId) throw new BadRequestError("ownerId is only valid for session, goal, and loop HITL scope");
+  if (scope !== "project" && !ownerId) throw new BadRequestError("ownerId is required for session and goal HITL scope");
+  if (scope === "project" && ownerId) throw new BadRequestError("ownerId is only valid for session and goal HITL scope");
 
   return {
     scope,
@@ -312,7 +312,6 @@ async function assertOwnerExists(
       await context.goalState.read(id);
       return;
     }
-    await context.loopState.read(id);
   } catch (error) {
     if (error instanceof ServerError) throw error;
     throw ownerNotFound(scope, id);
@@ -322,26 +321,17 @@ async function assertOwnerExists(
 function validateResponseForSource(source: HitlSource, response: HitlResponse): void {
   const expectedType = responseTypeForSource(source);
   if (response.type !== expectedType) throw invalidResponsePayload(expectedType);
-  if ((source.type === "loop_blocker" || source.type === "loop_retry")
-    && response.type === "approval_decision"
-    && response.decision === "denied") {
-    throw new BadRequestError("deny is not an allowed action for this HITL source");
-  }
 }
 
 function responseTypeForSource(source: HitlSource): Exclude<HitlResponse["type"], "cancel"> {
   switch (source.type) {
     case "ask_user":
     case "goal_question":
-    case "loop_question":
       return "question_answer";
     case "tool_permission":
       return "permission_decision";
     case "goal_approval":
     case "goal_budget":
-    case "loop_approval":
-    case "loop_blocker":
-    case "loop_retry":
       return "approval_decision";
     case "goal_review":
       return "review_outcome";
@@ -430,19 +420,14 @@ function allowedActionsFor(record: HitlRecord): HitlAllowedAction[] {
   switch (record.source.type) {
     case "ask_user":
     case "goal_question":
-    case "loop_question":
       return ["answer", "cancel"];
     case "tool_permission":
       return ["approve", "deny", "cancel"];
     case "goal_approval":
     case "goal_budget":
-    case "loop_approval":
       return ["approve", "deny", "cancel"];
     case "goal_review":
       return ["approve", "deny", "cancel"];
-    case "loop_blocker":
-    case "loop_retry":
-      return ["approve", "cancel"];
   }
 }
 

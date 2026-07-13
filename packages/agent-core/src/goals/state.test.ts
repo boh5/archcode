@@ -19,7 +19,6 @@ import {
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "goal-state");
 const VALID_UUID = "550e8400-e29b-41d4-a716-446655440000";
-const VALID_LOOP_ID = "660e8400-e29b-41d4-a716-446655440001";
 
 beforeEach(async () => {
   await rm(TMP_DIR, { recursive: true, force: true });
@@ -88,7 +87,6 @@ describe("GoalStateSchema", () => {
       appliedHitlIds: [],
       mainSessionId: "main-session",
       childSessionIds: ["child-session"],
-      loopId: VALID_LOOP_ID,
       createdAt: now,
       updatedAt: now,
       startedAt: now,
@@ -104,6 +102,7 @@ describe("GoalStateSchema", () => {
     expect(() => GoalStateSchema.parse({ ...state, version: 1 })).toThrow();
     expect(() => GoalStateSchema.parse(missingWorktreeMode)).toThrow();
     expect(() => GoalStateSchema.parse(missingAppliedHitlIds)).toThrow();
+    expect(() => GoalStateSchema.parse({ ...state, loopId: "660e8400-e29b-41d4-a716-446655440001" })).toThrow();
   });
 
   test("enforces field bounds for natural language and review evidence", () => {

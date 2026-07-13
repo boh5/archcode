@@ -224,7 +224,7 @@ describe("query loop LLM stream recovery", () => {
     await runQueryLoop(makeOptions({ store, toolRegistry: registry, allowedTools: ["explode"] }), "Use tool");
 
     expect(events).toContainEqual(expect.objectContaining({
-      type: "loop-error",
+      type: "execution-error",
       error: "tool executor escaped",
     }));
     expect(store.getState().executions.at(-1)).toMatchObject({ status: "failed", error: "Execution failed" });
@@ -288,7 +288,7 @@ describe("query loop LLM stream recovery", () => {
     expect(result).toEqual({ text: "", steps: 0 });
     expect(streamFn).not.toHaveBeenCalled();
     expect(events).toContainEqual(expect.objectContaining({
-      type: "loop-error",
+      type: "execution-error",
       error: "internal registry resolve bug",
     }));
     expect(events.filter((event) => event.type === "llm-retry")).toHaveLength(0);

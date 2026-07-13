@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Hono } from "hono";
-import type { GoalState, GoalStatus, LoopState } from "@archcode/protocol";
+import type { Automation, GoalState, GoalStatus } from "@archcode/protocol";
 import { errorHandler } from "../error-handler";
 import { createDashboardRoutes } from "./dashboard";
 
@@ -82,7 +82,7 @@ async function createFixture(testName: string) {
         return { goalState };
       }),
     },
-    listLoops: mock(async () => []),
+    listAutomations: mock(async () => []),
   } as unknown as RouteRuntime;
 
   const app = new Hono();
@@ -193,167 +193,35 @@ describe("dashboard routes", () => {
     }));
   });
 
-  test("GET /api/loops exposes simplified summaries without raw scheduler internals", async () => {
-    const { app, projects, runtime } = await createFixture("loop-smoke");
-    const loop: LoopState = {
-      loopId: crypto.randomUUID(),
+  test("GET /api/automations aggregates active automations by project", async () => {
+    const { app, projects, runtime } = await createFixture("automation-smoke");
+    const automation: Automation = {
+      id: crypto.randomUUID(),
       projectId: projects[0].slug,
-      config: {
-        templateId: "watch_report",
-        title: "Daily loop",
-        schedule: { kind: "manual" },
-        approvalPolicy: "interactive",
-        limits: { maxIterationsPerRun: 1, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
-        useWorktree: false,
-      },
+      name: "Daily check-in",
+      trigger: { kind: "cron", expression: "0 9 * * 1-5", timezone: "Asia/Shanghai" },
+      action: { kind: "start_session", message: "Review the open work.", location: "project" },
       status: "active",
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      runCount: 0,
-      stateVersion: 1,
-      currentRun: {
-        runId: "run-current",
-        loopId: "00000000-0000-4000-8000-000000000001",
-        status: "needs_user",
-        trigger: "on_pr",
-        startedAt: 1_000,
-        endedAt: 1_100,
-        jobId: "job-current",
-        subjectKey: "pr:owner/repo#42",
-        dedupeKey: "loop:on_pr:pr:owner/repo#42",
-        branchKey: "github:owner/repo:main",
-        cleanupState: "preserved",
-        blockedReason: "waiting for approval",
-        blockedByHitlIds: ["hitl-current"],
-        attentionStatus: "waiting_for_human",
-        resumeCheckpoint: {
-          version: 1,
-          hitlId: "hitl-current",
-          loopId: "00000000-0000-4000-8000-000000000001",
-          runId: "run-current",
-          jobId: "job-current",
-          trigger: "on_pr",
-          subjectKey: "pr:owner/repo#42",
-          intendedContinuation: "resume_run",
-        },
-      },
-      lastRun: {
-        runId: "run-last",
-        loopId: "00000000-0000-4000-8000-000000000001",
-        status: "succeeded",
-        trigger: "cron",
-        startedAt: 500,
-        endedAt: 750,
-        summary: "Loop completed.",
-        jobId: "job-last",
-        subjectKey: "branch:main",
-        dedupeKey: "loop:cron:main",
-        cleanupState: "cleaned",
-      },
-      triggerHealth: [{ triggerKind: "on_pr", status: "blocked", cadenceMs: 60_000, lastCheckedAt: 1_200 }],
-      cleanupState: "cleanup_candidate",
+      createdAt: "2026-07-08T00:00:00.000Z",
+      updatedAt: "2026-07-08T00:00:00.000Z",
+      nextFireAt: "2026-07-09T01:00:00.000Z",
     };
-    (runtime.listLoops as ReturnType<typeof mock>).mockImplementation(async (workspaceRoot: string) => workspaceRoot === projects[0].workspaceRoot ? [loop] : []);
+    (runtime.listAutomations as ReturnType<typeof mock>).mockImplementation(async (workspaceRoot: string) =>
+      workspaceRoot === projects[0].workspaceRoot ? [automation] : [],
+    );
 
-    const res = await app.request("/api/loops?status=active");
-    const body = await res.json() as { loops: Array<Record<string, unknown>> };
-    const serialized = JSON.stringify(body);
+    const res = await app.request("/api/automations?status=active");
+    const body = await res.json() as { automations: Array<Automation & { projectSlug: string; projectName: string }> };
 
     expect(res.status).toBe(200);
-    expect(body.loops).toContainEqual(expect.objectContaining({
-      loopId: loop.loopId,
-      title: "Daily loop",
-      status: "active",
-      templateId: "watch_report",
-      projectSlug: projects[0].slug,
-      projectName: projects[0].name,
-    }));
-    expect(body.loops[0]?.currentRun).toEqual({ runId: "run-current", status: "needs_user", trigger: "on_pr", startedAt: 1_000, endedAt: 1_100 });
-    expect(body.loops[0]?.lastRun).toEqual({ runId: "run-last", status: "succeeded", trigger: "cron", startedAt: 500, endedAt: 750, summary: "Loop completed." });
-    expect(body.loops[0]).not.toHaveProperty("config");
-    expect(body.loops[0]).not.toHaveProperty("currentJob");
-    expect(body.loops[0]).not.toHaveProperty("queuedJobs");
-    expect(body.loops[0]).not.toHaveProperty("triggerHealth");
-    expect(body.loops[0]).not.toHaveProperty("cleanupState");
-    expect(serialized).not.toContain("runKind");
-    expect(serialized).not.toContain("mode");
-    expect(serialized).not.toContain("currentJob");
-    expect(serialized).not.toContain("queuedJobs");
-    expect(serialized).not.toContain("triggerHealth");
-    expect(serialized).not.toContain("cleanupState");
-    expect(serialized).not.toContain("subjectKey");
-    expect(serialized).not.toContain("dedupeKey");
-    expect(serialized).not.toContain("branchKey");
-    expect(serialized).not.toContain("pr:owner/repo#42");
-  });
-
-  test("GET /api/loops redacts run summary and error secrets", async () => {
-    const { app, projects, runtime } = await createFixture("loop-redaction");
-    const fakeGithubToken = `github_pat_${"1".repeat(16)}`;
-    const fakeApiSecretValue = "plain-secret";
-    const fakeOpenAiToken = `sk-${"1".repeat(16)}`;
-    const loop: LoopState = {
-      loopId: crypto.randomUUID(),
-      projectId: projects[0].slug,
-      config: {
-        templateId: "watch_report",
-        title: "Secret loop",
-        schedule: { kind: "manual" },
-        approvalPolicy: "interactive",
-        limits: { maxIterationsPerRun: 1, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
-        useWorktree: false,
-      },
-      status: "active",
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      runCount: 1,
-      stateVersion: 1,
-      currentRun: {
-        runId: "run-current",
-        loopId: "00000000-0000-4000-8000-000000000001",
-        status: "running",
-        trigger: "manual",
-        startedAt: 1_000,
-        reason: "execution_failed",
-        summary: `uses ${fakeGithubToken} and api_key=${fakeApiSecretValue}`,
-      },
-      lastRun: {
-        runId: "run-last",
-        loopId: "00000000-0000-4000-8000-000000000001",
-        status: "failed",
-        trigger: "cron",
-        startedAt: 500,
-        endedAt: 750,
-        reason: "execution_failed",
-        error: `provider rejected ${fakeOpenAiToken}`,
-      },
-    };
-    (runtime.listLoops as ReturnType<typeof mock>).mockImplementation(async (workspaceRoot: string) => workspaceRoot === projects[0].workspaceRoot ? [loop] : []);
-
-    const res = await app.request("/api/loops?status=active");
-    const body = await res.json() as { loops: Array<Record<string, unknown>> };
-    const serialized = JSON.stringify(body);
-
-    expect(res.status).toBe(200);
-    expect(body.loops[0]?.currentRun).toEqual({
-      runId: "run-current",
-      status: "running",
-      trigger: "manual",
-      startedAt: 1_000,
-      reason: "execution_failed",
-      summary: "uses [REDACTED:SECRET] and api_key=[REDACTED:SECRET]",
-    });
-    expect(body.loops[0]?.lastRun).toEqual({
-      runId: "run-last",
-      status: "failed",
-      trigger: "cron",
-      startedAt: 500,
-      endedAt: 750,
-      reason: "execution_failed",
-      error: "provider rejected [REDACTED:SECRET]",
-    });
-    expect(serialized).not.toContain(fakeGithubToken);
-    expect(serialized).not.toContain(fakeApiSecretValue);
-    expect(serialized).not.toContain(fakeOpenAiToken);
+    expect(body.automations).toEqual([
+      expect.objectContaining({
+        id: automation.id,
+        name: "Daily check-in",
+        status: "active",
+        projectSlug: projects[0].slug,
+        projectName: projects[0].name,
+      }),
+    ]);
   });
 });

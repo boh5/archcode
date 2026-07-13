@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { AgentRuntime } from "@archcode/agent-core";
 import type { GlobalSSEEvent, HitlRecord, McpServerStatus } from "@archcode/protocol";
-import { createServerApp, createServerEventRuntime } from "./app";
+import { createServerApp } from "./app";
 import { globalEventBus } from "./events/global-event-bus";
 
 const mockRuntime = {
@@ -104,7 +104,7 @@ describe("createServerApp", () => {
 
   test("recursively forwards child session events to global SSE", async () => {
     const runtime = createRuntimeWithManualSubscriptions();
-    const serverRuntime = createServerEventRuntime(runtime);
+    const { runtime: serverRuntime } = createServerApp(runtime, { dev: true });
     const observed: GlobalSSEEvent[] = [];
     const unsubscribeBus = globalEventBus.subscribe((event) => observed.push(event));
 

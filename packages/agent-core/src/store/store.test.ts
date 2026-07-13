@@ -150,19 +150,16 @@ describe("SessionStoreManager", () => {
     expect(state.nextEventId).toBe(0);
   });
 
-  test("create with goalId, loopId, and sessionRole sets them on state", () => {
+  test("create with goalId and sessionRole sets them on state", () => {
     const sessionId = uniqueSessionId("with-goal");
     const goalId = crypto.randomUUID();
-    const loopId = crypto.randomUUID();
     const store = storeManager.create(sessionId, TMP_DIR, {
       goalId,
-      loopId,
       sessionRole: "explore", agentName: "explore"
     });
     const state = store.getState();
 
     expect(state.goalId).toBe(goalId);
-    expect(state.loopId).toBe(loopId);
     expect(state.sessionRole).toBe("explore");
   });
 
@@ -180,14 +177,6 @@ describe("SessionStoreManager", () => {
     const persisted = await waitForPersistedSession(sessionId, (session) => session.goalId === goalId);
     expect(persisted.goalId).toBe(goalId);
     expect(persisted.sessionRole).toBe("main");
-  });
-
-  test("setLoopId updates loopId", () => {
-    const sessionId = uniqueSessionId("loop-update");
-    const loopId = crypto.randomUUID();
-    const store = storeManager.create(sessionId, TMP_DIR, { agentName: "engineer" });
-    store.getState().setLoopId(loopId);
-    expect(store.getState().loopId).toBe(loopId);
   });
 
   test("createSessionStore persists a new session file", async () => {
@@ -1025,17 +1014,17 @@ describe("steps and errors", () => {
     expect(store.getState().steps.map((step) => step.step)).toEqual([1, 2]);
   });
 
-  test("loop-error records error on a matching step", () => {
-    const store = createFreshStore("loop-error-match");
+  test("execution-error records error on a matching step", () => {
+    const store = createFreshStore("execution-error-match");
     store.getState().append({ type: "step-start", step: 3 });
-    store.getState().append({ type: "loop-error", step: 3, error: "bad loop" });
-    expect(onlyStep(store.getState().steps).error).toBe("bad loop");
+    store.getState().append({ type: "execution-error", step: 3, error: "bad execution" });
+    expect(onlyStep(store.getState().steps).error).toBe("bad execution");
   });
 
-  test("loop-error without a matching step appends an error step", () => {
-    const store = createFreshStore("loop-error-append");
+  test("execution-error without a matching step appends an error step", () => {
+    const store = createFreshStore("execution-error-append");
     store.getState().append({ type: "execution-start", executionId: "run-error" });
-    store.getState().append({ type: "loop-error", step: 4, error: "missing step" });
+    store.getState().append({ type: "execution-error", step: 4, error: "missing step" });
 
     const step = onlyStep(store.getState().steps);
     expect(step.step).toBe(4);
@@ -1179,9 +1168,9 @@ describe("Oracle regression tests", () => {
     store.getState().append({ type: "text-delta", text: "partial" });
 
     // consumeFullStream's finally block would flush text-end,
-    // then loop-error records the failure, then execution-end settles incomplete state
+    // then execution-error records the failure, then execution-end settles incomplete state
     store.getState().append({ type: "text-end" }); // flushed by try/finally
-    store.getState().append({ type: "loop-error", step: 0, error: "stream failed" });
+    store.getState().append({ type: "execution-error", step: 0, error: "stream failed" });
     store.getState().append({ type: "execution-end", status: "failed" });
 
     // Partial text should be persisted (not lost)
@@ -1226,7 +1215,7 @@ describe("Oracle regression tests", () => {
     store.getState().append({ type: "tool-call", toolCallId: "tc-1", toolName: "bash", input: "ls" });
 
     // Execution ends before tool-result arrives
-    store.getState().append({ type: "loop-error", step: 0, error: "model crashed" });
+    store.getState().append({ type: "execution-error", step: 0, error: "model crashed" });
     store.getState().append({ type: "execution-end", status: "failed" });
 
     const assistantMsg = store.getState().messages.find(m => m.role === "assistant");

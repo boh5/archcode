@@ -2,7 +2,7 @@ import type { ModelCallOptions } from "../config/provider";
 import type { ModelInfo } from "../provider/model";
 import { runLlmText } from "../llm";
 
-export type TitleGenerationKind = "session" | "goal" | "loop";
+export type TitleGenerationKind = "session" | "goal";
 
 export interface GenerateTitleInput {
   readonly kind: TitleGenerationKind;
@@ -36,10 +36,6 @@ export function normalizeGeneratedTitle(value: string): string {
 }
 
 function buildTitlePrompt(kind: TitleGenerationKind, text: string): string {
-  const subject = kind === "session"
-    ? "session"
-    : kind === "goal"
-      ? "Goal"
-      : "Loop";
+  const subject = kind === "session" ? "session" : "Goal";
   return `Generate a concise ${subject} title (3-8 words) based on this text: ${text}`;
 }

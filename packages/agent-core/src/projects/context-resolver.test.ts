@@ -10,7 +10,6 @@ import type { SessionAgentManager } from "../agents/session-agent-manager";
 import { SessionExecutionManager } from "../execution/session-execution-manager";
 import { HitlService } from "../hitl/service";
 import { createPreparedHitlResume, ResumeCoordinator } from "../hitl/resume-coordinator";
-import { LoopStateManager, type LoopConfig } from "../loops/state";
 import { MemoryFileManager } from "../memory/file-manager";
 import { SessionStoreManager } from "../store/session-store-manager";
 import type { PermissionApprovalScope } from "../tools/permission/policy-types";
@@ -24,16 +23,6 @@ const TEST_SCOPE: PermissionApprovalScope = {
   kind: "tool-operation",
   toolName: "file_write",
   operation: "write",
-};
-
-const LOOP_CONFIG: LoopConfig = {
-  templateId: "watch_report",
-  title: "Project loop",
-  schedule: { kind: "interval", everyMs: 60_000 },
-  approvalPolicy: "interactive",
-  limits: { maxIterationsPerRun: 5, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
-  taskPrompt: "Summarize local project state.",
-  useWorktree: false,
 };
 
 async function makeWorkspace(name: string): Promise<string> {
@@ -65,7 +54,6 @@ function createResolver(overrides: Partial<ProjectContextResolverOptions> = {}):
       adapters: {
         session: { prepare: async () => createPreparedHitlResume(async () => undefined) },
         goal: { prepare: async () => createPreparedHitlResume(async () => undefined) },
-        loop: { prepare: async () => createPreparedHitlResume(async () => undefined) },
       },
       logger: silentLogger,
     }),
@@ -106,7 +94,6 @@ describe("ProjectContextResolver", () => {
 
     expect(second).not.toBe(first);
     expect(second.goalState).not.toBe(first.goalState);
-    expect(second.loopState).not.toBe(first.loopState);
     expect(second.hitl).not.toBe(first.hitl);
     expect(second.memory).not.toBe(first.memory);
     expect(second.approvals).not.toBe(first.approvals);
@@ -255,7 +242,6 @@ describe("ProjectContextResolver", () => {
     const context = await resolver.resolve(workspace);
 
     expect(context.goalState).toBeInstanceOf(GoalStateManager);
-    expect(context.loopState).toBeInstanceOf(LoopStateManager);
     expect(context.hitl).toBeInstanceOf(HitlService);
     expect(context.hitlResumeCoordinator).toBeInstanceOf(ResumeCoordinator);
     expect(context.memory).toBeInstanceOf(MemoryFileManager);
@@ -301,30 +287,6 @@ describe("ProjectContextResolver", () => {
     expect(contextRecord.goalMemory).toBeUndefined();
     expect(contextRecord.workflowState).toBeUndefined();
     expect(contextRecord.artifacts).toBeUndefined();
-  });
-
-  test("loops are isolated under each workspace .archcode/loops directory", async () => {
-    const workspaceA = await makeWorkspace("loops-a");
-    const workspaceB = await makeWorkspace("loops-b");
-    const resolver = createResolver();
-
-    const contextA = await resolver.resolve(workspaceA);
-    const contextB = await resolver.resolve(workspaceB);
-
-    const loopA = await contextA.loopState.create(contextA.project.slug, LOOP_CONFIG);
-    const loopB = await contextB.loopState.create(contextB.project.slug, LOOP_CONFIG);
-
-    expect((await contextA.loopState.list(contextA.project.slug)).map((loop) => loop.loopId)).toEqual([loopA.loopId]);
-    expect((await contextB.loopState.list(contextB.project.slug)).map((loop) => loop.loopId)).toEqual([loopB.loopId]);
-    expect(await Bun.file(join(workspaceA, ".archcode", "loops", loopA.loopId, "state.json")).exists()).toBe(true);
-    expect(await Bun.file(join(workspaceB, ".archcode", "loops", loopB.loopId, "state.json")).exists()).toBe(true);
-    expect(await Bun.file(join(workspaceB, ".archcode", "loops", loopA.loopId, "state.json")).exists()).toBe(false);
-
-    resolver.dispose(workspaceA);
-    const recreatedA = await resolver.resolve(workspaceA);
-
-    expect(recreatedA.loopState).not.toBe(contextA.loopState);
-    expect((await recreatedA.loopState.list(contextA.project.slug)).map((loop) => loop.loopId)).toEqual([loopA.loopId]);
   });
 
   test("goals are isolated under each workspace .archcode/goals directory", async () => {
@@ -479,93 +441,6 @@ describe("ProjectContextResolver", () => {
     await waitFor(async () => await isHitlStatus(context.hitl, claimed, "resolved"));
   });
 
-  test("lets Loop dependencies re-enter after claimed Session recovery is scheduled", async () => {
-    const workspace = await makeWorkspace("loop-hitl-recovery-ready-gate");
-    const sessions = new SessionStoreManager({ logger: silentLogger });
-    const loopState = new LoopStateManager(workspace, silentLogger);
-    const loop = await loopState.create(basename(workspace), LOOP_CONFIG);
-    const sessionId = crypto.randomUUID();
-    sessions.create(sessionId, workspace, { loopId: loop.loopId, sessionRole: "main", agentName: "engineer" });
-    await sessions.flushSession(sessionId, workspace);
-    const claimed = await seedClaimedSessionHitl(workspace, sessions, sessionId, "loop-recovery");
-    const entered = deferred<void>();
-    const release = deferred<void>();
-    let resolver!: ProjectContextResolver;
-    const adapter = {
-      prepare: async () => createPreparedHitlResume(async () => {
-        const adapterContext = await resolver.resolve(workspace);
-        await adapterContext.loopState.read(loop.loopId);
-        // Mirrors getLoopSessionHitlContinuation -> getLoopScheduler resolving
-        // the same project again from a deeper recovery dependency.
-        const schedulerContext = await resolver.resolve(workspace);
-        expect(schedulerContext).toBe(adapterContext);
-        entered.resolve(undefined);
-        await release.promise;
-      }),
-    };
-    resolver = createResolver({
-      sessionStoreManager: sessions,
-      resumeCoordinatorFactory: ({ hitl }) => new ResumeCoordinator({
-        hitl,
-        adapters: { session: adapter },
-        logger: silentLogger,
-      }),
-    });
-
-    const publicResolution = resolver.resolve(workspace);
-    const resolvedBeforeAdapterTail = await Promise.race([
-      publicResolution.then(() => true),
-      Bun.sleep(1_000).then(() => false),
-    ]);
-    if (resolvedBeforeAdapterTail) await entered.promise;
-    release.resolve(undefined);
-    const context = await publicResolution;
-    expect(resolvedBeforeAdapterTail).toBe(true);
-    await waitFor(async () => await isHitlStatus(context.hitl, claimed, "resolved"));
-  });
-
-  test("lets Loop-owner runtime callbacks re-enter after recovery is scheduled", async () => {
-    const workspace = await makeWorkspace("loop-owner-hitl-recovery-ready-gate");
-    const sessions = new SessionStoreManager({ logger: silentLogger });
-    const loopState = new LoopStateManager(workspace, silentLogger);
-    const loop = await loopState.create(basename(workspace), LOOP_CONFIG);
-    const claimed = await seedClaimedLoopHitl(workspace, sessions, loop.loopId);
-    const entered = deferred<void>();
-    const release = deferred<void>();
-    let resolver!: ProjectContextResolver;
-    const adapter = {
-      prepare: async () => createPreparedHitlResume(async () => {
-        const adapterContext = await resolver.resolve(workspace);
-        await adapterContext.loopState.read(loop.loopId);
-        // Mirrors LoopHitlResumeAdapter.onContinuationQueued ->
-        // getLoopScheduler -> contextResolver.resolve during cold recovery.
-        const schedulerContext = await resolver.resolve(workspace);
-        expect(schedulerContext).toBe(adapterContext);
-        entered.resolve(undefined);
-        await release.promise;
-      }),
-    };
-    resolver = createResolver({
-      sessionStoreManager: sessions,
-      resumeCoordinatorFactory: ({ hitl }) => new ResumeCoordinator({
-        hitl,
-        adapters: { loop: adapter },
-        logger: silentLogger,
-      }),
-    });
-
-    const publicResolution = resolver.resolve(workspace);
-    const resolvedBeforeAdapterTail = await Promise.race([
-      publicResolution.then(() => true),
-      Bun.sleep(1_000).then(() => false),
-    ]);
-    if (resolvedBeforeAdapterTail) await entered.promise;
-    release.resolve(undefined);
-    const context = await publicResolution;
-    expect(resolvedBeforeAdapterTail).toBe(true);
-    await waitFor(async () => await isHitlStatus(context.hitl, claimed, "resolved"));
-  });
-
   test("custom Goal/HITL factories are used per resolved context", async () => {
     const workspace = await makeWorkspace("custom-factories");
     const goalState = new GoalStateManager(workspace);
@@ -580,7 +455,6 @@ describe("ProjectContextResolver", () => {
         expect(input.project.slug).toBe(basename(workspace));
         expect(input.sessions).toBeInstanceOf(SessionStoreManager);
         expect(input.goalState).toBe(goalState);
-        expect(input.loopState).toBeInstanceOf(LoopStateManager);
         const hitl = new HitlService(input);
         createdHitl.push(hitl);
         return hitl;
@@ -594,20 +468,6 @@ describe("ProjectContextResolver", () => {
     expect(context.hitlResumeCoordinator).toBeInstanceOf(ResumeCoordinator);
   });
 
-  test("custom Loop factory is used per resolved context", async () => {
-    const workspace = await makeWorkspace("custom-loop-factory");
-    const loopState = new LoopStateManager(workspace);
-    const resolver = createResolver({
-      loopStateFactory: mock((workspaceRoot: string) => {
-        expect(workspaceRoot).toBe(workspace);
-        return loopState;
-      }),
-    });
-
-    const context = await resolver.resolve(workspace);
-
-    expect(context.loopState).toBe(loopState);
-  });
 });
 
 function createExecutionManager(sessions: SessionStoreManager): SessionExecutionManager {
@@ -663,7 +523,6 @@ async function seedClaimedSessionHitl(
     project,
     sessions,
     goalState: new GoalStateManager(workspaceRoot, silentLogger),
-    loopState: new LoopStateManager(workspaceRoot, silentLogger),
   });
   const created = await hitl.create({
     owner: { projectSlug: project.slug, ownerType: "session", ownerId: sessionId },
@@ -674,34 +533,6 @@ async function seedClaimedSessionHitl(
   });
   await hitl.claim({ owner: created.owner, hitlId: created.hitlId }, { type: "question_answer", answers: ["continue"] }, {
     claimId: `claim-${suffix}`,
-    claimedAt: new Date().toISOString(),
-    intent: "respond",
-    attempt: 1,
-  });
-  return created;
-}
-
-async function seedClaimedLoopHitl(
-  workspaceRoot: string,
-  sessions: SessionStoreManager,
-  loopId: string,
-) {
-  const project = { slug: basename(workspaceRoot), name: basename(workspaceRoot) };
-  const hitl = new HitlService({
-    workspaceRoot,
-    project,
-    sessions,
-    goalState: new GoalStateManager(workspaceRoot, silentLogger),
-    loopState: new LoopStateManager(workspaceRoot, silentLogger),
-  });
-  const created = await hitl.create({
-    owner: { projectSlug: project.slug, ownerType: "loop", ownerId: loopId },
-    blockingKey: `loop:${loopId}:question:recovery`,
-    source: { type: "loop_question", loopId, questionKey: "recovery" },
-    displayPayload: { title: "Resume Loop after restart", redacted: true },
-  });
-  await hitl.claim({ owner: created.owner, hitlId: created.hitlId }, { type: "question_answer", answers: ["continue"] }, {
-    claimId: "claim-loop-owner-recovery",
     claimedAt: new Date().toISOString(),
     intent: "respond",
     attempt: 1,

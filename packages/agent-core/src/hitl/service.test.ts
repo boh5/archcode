@@ -5,7 +5,6 @@ import type { GlobalSSEHitlRealtimeEvent, HitlIdentity, HitlOwnerKey, HitlResume
 
 import { GoalStateManager } from "../goals/state";
 import { silentLogger, type Logger } from "../logger";
-import { LoopStateManager } from "../loops/state";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { getSessionHitlPath } from "../store/sessions-dir";
 import { HitlService, type HitlServiceOptions } from "./service";
@@ -22,19 +21,16 @@ describe("HitlService owner-local storage", () => {
     await rm(TMP_ROOT, { recursive: true, force: true });
   });
 
-  test("creates Session, Goal, and Loop HITL records beside their owners", async () => {
-    const { service, workspaceRoot, goalState, loopState } = await createService();
+  test("creates Session and Goal HITL records beside their owners", async () => {
+    const { service, workspaceRoot, goalState } = await createService();
     const sessionOwner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "session", ownerId: crypto.randomUUID() };
     const goalOwner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "goal", ownerId: crypto.randomUUID() };
-    const loopOwner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "loop", ownerId: crypto.randomUUID() };
 
     await service.create(input(sessionOwner, "session-block"));
     await service.create(input(goalOwner, "goal-block"));
-    await service.create(input(loopOwner, "loop-block"));
 
     expect(await Bun.file(getSessionHitlPath(workspaceRoot, sessionOwner.ownerId)).exists()).toBe(true);
     expect(await Bun.file(await goalState.goalHitlPath(goalOwner.ownerId)).exists()).toBe(true);
-    expect(await Bun.file(await loopState.loopHitlPath(loopOwner.ownerId)).exists()).toBe(true);
     expect(await Bun.file(join(workspaceRoot, ".archcode", "hitl-queue.json")).exists()).toBe(false);
   });
 
@@ -71,7 +67,6 @@ describe("HitlService owner-local storage", () => {
       workspaceRoot,
       sessions: new SessionStoreManager({ logger: silentLogger }),
       goalState: new GoalStateManager(workspaceRoot, silentLogger),
-      loopState: new LoopStateManager(workspaceRoot, silentLogger),
     } as HitlServiceOptions;
 
     expect(() => new HitlService(incomplete)).toThrow("project");
@@ -218,16 +213,14 @@ async function createService(
   workspaceRoot ??= await mkdtemp(join(TMP_ROOT, "workspace-"));
   sessions ??= new SessionStoreManager({ logger: silentLogger });
   const goalState = new GoalStateManager(workspaceRoot, silentLogger);
-  const loopState = new LoopStateManager(workspaceRoot, silentLogger);
   const service = new HitlService({
     workspaceRoot,
     project: { slug: "archcode", name: "ArchCode" },
     sessions,
     goalState,
-    loopState,
     ...options,
   });
-  return { service, workspaceRoot, sessions, goalState, loopState };
+  return { service, workspaceRoot, sessions, goalState };
 }
 
 function input(owner: HitlOwnerKey, blockingKey: string) {
@@ -237,9 +230,7 @@ function input(owner: HitlOwnerKey, blockingKey: string) {
     blockingKey,
     source: owner.ownerType === "session"
       ? { type: "ask_user" as const, sessionId: owner.ownerId }
-      : owner.ownerType === "goal"
-        ? { type: "goal_approval" as const, goalId: owner.ownerId, approvalPoint: "after_plan" as const, resumeStatus: "running" as const }
-        : { type: "loop_approval" as const, loopId: owner.ownerId, approvalPoint: "manual" },
+      : { type: "goal_approval" as const, goalId: owner.ownerId, approvalPoint: "after_plan" as const, resumeStatus: "running" as const },
     displayPayload: { title: "Needs input", redacted: true as const },
   };
 }

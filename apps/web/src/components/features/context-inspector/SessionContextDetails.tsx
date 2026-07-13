@@ -38,7 +38,6 @@ export function SessionContextDetails() {
         ]} />
       </InspectorSection>
       {session.goalId && <Link className="block text-xs text-accent hover:underline" to={`/projects/${slug}/goals/${session.goalId}`}>Open linked goal</Link>}
-      {session.loopId && <Link className="block text-xs text-accent hover:underline" to={`/projects/${slug}/loops/${session.loopId}`}>Open linked loop</Link>}
     </div>
   );
 }

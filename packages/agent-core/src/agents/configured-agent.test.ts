@@ -679,13 +679,6 @@ describe("ConfiguredAgent", () => {
     const agent = createAgent({ definition: engineerAgentDefinition, toolRegistry });
 
     await agent.run("extra tools run", {
-      origin: {
-        kind: "loop",
-        loopId: crypto.randomUUID(),
-        runId: "run-1",
-        trigger: "manual",
-        approvalPolicy: "interactive",
-      },
       extraTools: ["github_get_pull_request", "github_create_issue_comment", "github_get_pull_request"],
     });
 
@@ -701,9 +694,7 @@ describe("ConfiguredAgent", () => {
 
   test("extraTools effective tools are enforced in tool execution context", async () => {
     setupToolCallStreamText("github_create_issue_comment");
-    const loopId = crypto.randomUUID();
     let capturedAllowedTools: string[] = [];
-    let capturedOriginLoopId: string | undefined;
     const toolRegistry = createRegistry([
       ...engineerAgentDefinition.tools.tools.map(makeTool),
     ]);
@@ -714,11 +705,10 @@ describe("ConfiguredAgent", () => {
       traits: { readOnly: false, destructive: false, concurrencySafe: false },
       execute: (_input, ctx) => {
         capturedAllowedTools = [...ctx.allowedTools];
-        capturedOriginLoopId = ctx.origin?.loopId;
         return "commented";
       },
     });
-    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { loopId, agentName: "engineer" });
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "engineer" });
     // ProjectContextResolver scans durable Session identities. Mirror the
     // production createSessionFile barrier instead of racing the queued write.
     await storeManager.flushSession(store.getState().sessionId, tmpRoot);
@@ -727,17 +717,9 @@ describe("ConfiguredAgent", () => {
     await agent.run("comment on PR", {
       maxSteps: 1,
       confirmPermission: async () => "approve",
-      origin: {
-        kind: "loop",
-        loopId,
-        runId: "run-1",
-        trigger: "manual",
-        approvalPolicy: "interactive",
-      },
       extraTools: ["github_create_issue_comment"],
     });
 
-    expect(capturedOriginLoopId).toBe(loopId);
     expect(capturedAllowedTools).toContain("file_read");
     expect(capturedAllowedTools).toContain("file_write");
     expect(capturedAllowedTools).toContain("bash");

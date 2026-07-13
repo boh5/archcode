@@ -41,7 +41,7 @@ export type {
   ReminderConsumedEvent,
   StepStartEvent,
   StepEndEvent,
-  LoopErrorEvent,
+  ExecutionErrorEvent,
   LlmRetryEvent,
   LlmRecoveryEvent,
   LlmRecoveryFailedEvent,
@@ -104,7 +104,6 @@ export interface SessionStoreState {
   rootSessionId: string;
   parentSessionId?: string;
   goalId?: string;
-  loopId?: string;
   sessionRole?: SessionRole;
   blockedHitl?: SessionHitlCheckpoint;
   blockedByHitlIds?: string[];
@@ -141,7 +140,6 @@ export interface SessionStoreState {
   setTitle: (title: string | null) => void;
   setParentSessionId: (parentSessionId: string | undefined) => void;
   setGoalId: (goalId: string | undefined) => void;
-  setLoopId: (loopId: string | undefined) => void;
   setSessionRole: (sessionRole: SessionRole | undefined) => void;
   toModelMessages: () => ModelMessage[];
 }

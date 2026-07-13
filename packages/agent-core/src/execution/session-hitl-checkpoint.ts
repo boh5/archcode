@@ -9,7 +9,6 @@ import type {
 } from "@archcode/protocol";
 
 import { getSessionDir } from "../store/sessions-dir";
-import type { ToolExecutionOrigin } from "../tools/types";
 
 export interface SessionHitlToolCallCheckpoint {
   readonly toolCallId: string;
@@ -57,7 +56,6 @@ export interface SessionHitlCheckpointRecord {
   readonly agentSkills: string[];
   readonly agentName: string;
   readonly currentDepth?: number;
-  readonly origin?: ToolExecutionOrigin;
   readonly toolCalls: SessionHitlToolCallCheckpoint[];
   readonly completedToolResults: SessionHitlCompletedToolResult[];
   readonly pendingToolCalls: SessionHitlToolCallCheckpoint[];
@@ -81,17 +79,6 @@ export interface SessionHitlCheckpointFile {
   readonly updatedAt: string;
 }
 
-const ToolExecutionOriginSchema: z.ZodType<ToolExecutionOrigin> = z.strictObject({
-  kind: z.literal("loop"),
-  loopId: z.string(),
-  runId: z.string().optional(),
-  trigger: z.union([
-    z.enum(["manual", "interval", "cron"]),
-    z.enum(["on_commit", "on_pr", "on_ci_fail"]),
-  ]),
-  approvalPolicy: z.enum(["interactive", "explicit_per_run"]),
-});
-
 const SessionHitlJournalPhaseSchema = z.enum([
   "preparing",
   "paused",
@@ -104,7 +91,7 @@ const SessionHitlJournalPhaseSchema = z.enum([
 
 const HitlOwnerKeySchema: z.ZodType<HitlOwnerKey> = z.strictObject({
   projectSlug: z.string().trim().min(1),
-  ownerType: z.enum(["session", "goal", "loop"]),
+  ownerType: z.enum(["session", "goal"]),
   ownerId: z.string().trim().min(1),
   workspaceRoot: z.never().optional(),
 });
@@ -136,10 +123,6 @@ const HitlSourceSchema: z.ZodType<HitlSource> = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("goal_review"), goalId: z.string(), resumeStatus: z.literal("reviewing") }),
   z.strictObject({ type: z.literal("goal_budget"), goalId: z.string(), approvalPoint: z.string().optional(), resumeStatus: z.enum(["running", "reviewing"]) }),
   z.strictObject({ type: z.literal("goal_question"), goalId: z.string(), questionKey: z.string(), resumeStatus: z.enum(["running", "reviewing"]) }),
-  z.strictObject({ type: z.literal("loop_approval"), loopId: z.string(), approvalPoint: z.string() }),
-  z.strictObject({ type: z.literal("loop_blocker"), loopId: z.string(), runId: z.string().optional(), reason: z.string() }),
-  z.strictObject({ type: z.literal("loop_retry"), loopId: z.string(), runId: z.string(), attempt: z.number().int().nonnegative() }),
-  z.strictObject({ type: z.literal("loop_question"), loopId: z.string(), questionKey: z.string() }),
 ]);
 
 const ToolCallCheckpointSchema: z.ZodType<SessionHitlToolCallCheckpoint> = z.strictObject({
@@ -173,7 +156,6 @@ const CheckpointRecordSchema: z.ZodType<SessionHitlCheckpointRecord> = z.strictO
   agentSkills: z.array(z.string()),
   agentName: z.string().trim().min(1),
   currentDepth: z.number().optional(),
-  origin: ToolExecutionOriginSchema.optional(),
   toolCalls: z.array(ToolCallCheckpointSchema),
   completedToolResults: z.array(CompletedToolResultSchema),
   pendingToolCalls: z.array(ToolCallCheckpointSchema),

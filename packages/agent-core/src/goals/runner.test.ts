@@ -125,63 +125,6 @@ describe("GoalRunner", () => {
     ]);
   });
 
-  test("rejects a Loop scope that does not own the Goal and preassigned non-canonical cwd", async () => {
-    const foreignCwd = join(workspaceRoot, "foreign-worktree");
-    const createSession = mock(async () => "should-not-be-created");
-    const runner = new GoalRunner(runnerOptions({
-      createSession,
-      getSessionCwd: mock(async () => foreignCwd),
-    }));
-    const explicitDraft = await createDraft(runner);
-
-    await expect(runner.start(explicitDraft.id, {
-      executionScope: { kind: "loop", loopId: "foreign-loop", cwd: foreignCwd },
-    })).rejects.toBeInstanceOf(GoalRunnerError);
-
-    const assignedDraft = await createDraft(runner);
-    await manager.setMainSession(assignedDraft.id, "foreign-session");
-    await expect(runner.start(assignedDraft.id)).rejects.toBeInstanceOf(GoalRunnerError);
-    expect(createSession).not.toHaveBeenCalled();
-  });
-
-  test("accepts only a matching trusted Loop execution scope for a Loop-owned Goal", async () => {
-    await initializeGitRepo(workspaceRoot);
-    const loopId = "11111111-1111-4111-8111-111111111111";
-    const createSession = mock(async () => "loop-goal-session");
-    const runner = new GoalRunner(runnerOptions({ createSession }));
-    const goal = await runner.create({
-      projectId: "project-a",
-      objective: "Execute inside the owning Loop scope.",
-      acceptanceCriteria: "The Loop worktree is passed through an explicit trusted scope.",
-      loopId,
-    });
-
-    await expect(runner.start(goal.id, {
-      executionScope: { kind: "loop", loopId, cwd: "relative-loop-worktree" },
-    })).rejects.toBeInstanceOf(GoalRunnerError);
-    await expect(runner.start(goal.id, {
-      executionScope: { kind: "loop", loopId, cwd: join(workspaceRoot, "not-registered") },
-    })).rejects.toBeInstanceOf(GoalRunnerError);
-    expect(createSession).not.toHaveBeenCalled();
-
-    const loopWorktree = await new WorktreeService({ canonicalRoot: workspaceRoot }).create({
-      owner: { type: "loop", id: loopId },
-      uniqueId: crypto.randomUUID(),
-    });
-
-    const running = await runner.start(goal.id, {
-      executionScope: { kind: "loop", loopId, cwd: loopWorktree.worktreePath },
-    });
-
-    expect(running).toMatchObject({ status: "running", loopId, mainSessionId: "loop-goal-session" });
-    expect(createSession).toHaveBeenCalledWith(expect.objectContaining({
-      cwd: loopWorktree.worktreePath,
-      goalId: goal.id,
-      loopId,
-      sessionRole: "main",
-    }));
-  });
-
   test("rejects an invalid start before preparing a Goal worktree or creating a Session", async () => {
     const createSession = mock(async () => "orphan-session");
     const createWorktree = mock(async () => {
@@ -315,27 +258,6 @@ describe("GoalRunner", () => {
     await expect(runner.start(draft.id, { mainSessionId: "isolated-session" }))
       .rejects.toBeInstanceOf(GoalRunnerError);
     expect((await manager.read(draft.id)).mainSessionId).toBe("isolated-session");
-  });
-
-  test("does not let an explicit cwd bypass an isolated Goal worktree claim", async () => {
-    await initializeGitRepo(workspaceRoot);
-    const createSession = mock(async () => "should-not-be-created");
-    const runner = new GoalRunner(runnerOptions({
-      createSession,
-    }));
-    const draft = await runner.create({
-      projectId: "project-a",
-      objective: "Reject an explicit canonical cwd for an isolated Goal.",
-      acceptanceCriteria: "The Goal-owned worktree remains the only valid execution directory.",
-      useWorktree: true,
-    });
-
-    await expect(runner.start(draft.id, {
-      executionScope: { kind: "loop", loopId: "foreign-loop", cwd: workspaceRoot },
-    })).rejects.toBeInstanceOf(GoalRunnerError);
-    expect(createSession).not.toHaveBeenCalled();
-    expect(await manager.read(draft.id)).toMatchObject({ status: "draft", useWorktree: true });
-    expect((await manager.read(draft.id)).worktree).toBeUndefined();
   });
 
   test("blocks and clears back to requested resume status", async () => {

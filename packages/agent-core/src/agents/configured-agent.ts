@@ -11,7 +11,6 @@ import type { MemoryRoots } from "../memory";
 import type { ProjectContextResolver } from "../projects/context-resolver";
 import type { ProjectContext } from "../projects/types";
 import { createGoalBudgetEnforcementHooks } from "../goals/budget-enforcement";
-import { createLoopBudgetEnforcementHooks } from "../loops/budget-hooks";
 import type { ProviderRegistry } from "../provider/index";
 import type { ModelInfo } from "../provider/model";
 import type { SkillService } from "../skills";
@@ -190,7 +189,7 @@ export class ConfiguredAgent implements Agent {
       throw new Error("Agent has been disposed");
     }
 
-    const { abort, confirm, askUser, maxSteps, origin, extraTools } = this.parseRunOptions(abortOrOptions, confirmPermission);
+    const { abort, confirm, askUser, maxSteps, extraTools } = this.parseRunOptions(abortOrOptions, confirmPermission);
 
     if (this.running) {
       throw new AgentRunningError();
@@ -230,7 +229,7 @@ export class ConfiguredAgent implements Agent {
           : {}),
       };
       const systemPrompt = await buildSystemPrompt(promptContext);
-      const hooks = this.buildHooks(btm, origin);
+      const hooks = this.buildHooks(btm);
       let currentUserMessage = userMessage;
 
       while (true) {
@@ -260,7 +259,6 @@ export class ConfiguredAgent implements Agent {
             currentDepth: this.depth,
             hooks,
             ...(maxSteps === undefined ? {} : { maxSteps }),
-            ...(origin === undefined ? {} : { origin }),
           },
           currentUserMessage,
         );
@@ -284,7 +282,7 @@ export class ConfiguredAgent implements Agent {
           error: error instanceof Error ? error.message : String(error),
         });
         this.store.getState().append({
-          type: "loop-error",
+          type: "execution-error",
           step: -1,
           error: error instanceof Error ? error.message : String(error),
         });
@@ -339,7 +337,6 @@ export class ConfiguredAgent implements Agent {
     confirm: ToolConfirmationCallback | undefined;
     askUser: AskUserCallback | undefined;
     maxSteps: number | undefined;
-    origin: AgentRunOptions["origin"];
     extraTools: readonly string[] | undefined;
   } {
     if (abortOrOptions && typeof abortOrOptions === "object" && abortOrOptions instanceof AbortSignal) {
@@ -348,7 +345,6 @@ export class ConfiguredAgent implements Agent {
         confirm: confirmPermission ?? this.confirmPermission,
         askUser: this.askUserDefault,
         maxSteps: undefined,
-        origin: undefined,
         extraTools: undefined,
       };
     }
@@ -360,7 +356,6 @@ export class ConfiguredAgent implements Agent {
         confirm: opts.confirmPermission ?? this.confirmPermission,
         askUser: opts.askUser ?? this.askUserDefault,
         maxSteps: opts.maxSteps,
-        origin: opts.origin,
         extraTools: opts.extraTools,
       };
     }
@@ -370,7 +365,6 @@ export class ConfiguredAgent implements Agent {
       confirm: confirmPermission ?? this.confirmPermission,
       askUser: this.askUserDefault,
       maxSteps: undefined,
-      origin: undefined,
       extraTools: undefined,
     };
   }
@@ -394,7 +388,7 @@ export class ConfiguredAgent implements Agent {
     }
   }
 
-  private buildHooks(btm: BackgroundTaskManager, origin: AgentRunOptions["origin"]): QueryLoopHooks {
+  private buildHooks(btm: BackgroundTaskManager): QueryLoopHooks {
     const hooks: QueryLoopHooks = {};
     const policy = this.definition.hooks;
     const isCancelled = () => this.disposed;
@@ -417,9 +411,7 @@ export class ConfiguredAgent implements Agent {
       beforeModelCall.push(createTitleGenerationHook(btm, this.projectRoot, isCancelled));
     }
     const budgetEnforcement = createGoalBudgetEnforcementHooks();
-    const loopBudgetEnforcement = createLoopBudgetEnforcementHooks({ origin });
     beforeModelCall.push(budgetEnforcement.beforeModelCall);
-    beforeModelCall.push(loopBudgetEnforcement.beforeModelCall);
     if (beforeModelCall.length > 0) {
       hooks.beforeModelCall = beforeModelCall;
     }
@@ -429,12 +421,11 @@ export class ConfiguredAgent implements Agent {
       const todoContinuation = createTodoContinuationHook();
       hooks.afterStepEnd = [
         budgetEnforcement.afterStepEnd,
-        loopBudgetEnforcement.afterStepEnd,
         ...(policy.todoStepReminder ? [todoContinuation.afterStepEnd] : []),
       ];
       if (policy.todoQueryLoopContinuation) afterLoopEnd.push(todoContinuation.afterLoopEnd);
     } else {
-      hooks.afterStepEnd = [budgetEnforcement.afterStepEnd, loopBudgetEnforcement.afterStepEnd];
+      hooks.afterStepEnd = [budgetEnforcement.afterStepEnd];
     }
     // Memory hooks only run on a root principal Agent (depth 0).
     // Sub-agents at depth > 0 must not write to project/user memory independently.
@@ -492,7 +483,6 @@ export class ConfiguredAgent implements Agent {
       || this.definition.name !== "engineer"
       || state.parentSessionId !== undefined
       || state.goalId !== undefined
-      || state.loopId !== undefined
     ) return [];
 
     const toolName = this.cwd === this.projectRoot ? TOOL_WORKTREE_ENTER : TOOL_WORKTREE_EXIT;

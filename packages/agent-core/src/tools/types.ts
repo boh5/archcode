@@ -1,5 +1,4 @@
 import type { Schema as AiSchema } from "ai";
-import type { LoopApprovalPolicy, LoopRunTrigger } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 import type { SessionStoreState } from "../store/index";
 import type { SessionStoreManager } from "../store/session-store-manager";
@@ -45,17 +44,9 @@ export interface ToolAttemptMetadata {
   destructive: boolean;
 }
 
-export type ToolExecutionOrigin = {
-  kind: "loop";
-  loopId: string;
-  runId?: string;
-  trigger: LoopRunTrigger;
-  approvalPolicy: LoopApprovalPolicy;
-};
-
 export interface ToolExecutionControl {
   readonly action: "stop_session_family";
-  readonly reason: "goal_cancelled" | "loop_budget_exceeded";
+  readonly reason: "goal_cancelled";
 }
 
 export interface ToolExecutionContext {
@@ -88,7 +79,6 @@ export interface ToolExecutionContext {
   /** Acquires a root-scoped cwd-transition lease; callers must always release it. */
   acquireSessionCwdTransition?: (workspaceRoot: string, sessionId: string) => () => void;
   currentDepth?: number;
-  origin?: ToolExecutionOrigin;
   /** Called once after prepareInput + safeParse succeeds, with the resolved (defaults-filled, redacted) input. */
   onInputResolved?: (redactedInput: unknown) => void;
   /** Called immediately before an effectful tool's execute() can perform side effects. */
@@ -144,7 +134,6 @@ export interface ToolConfirmationRequest {
   currentDepth?: number;
   decisionDisplay?: string;
   ruleId?: string;
-  origin?: ToolExecutionOrigin;
 }
 
 export type ToolConfirmationResult =

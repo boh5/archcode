@@ -294,12 +294,11 @@ describe("HitlCard", () => {
   test("renders ancestry context when present", () => {
     const projection = makeProjection({
       owner: { projectSlug: "demo", ownerType: "session", ownerId: "child-session" },
-      ancestry: { loopId: "loop-1", goalId: "goal-1" },
+      ancestry: { goalId: "goal-1" },
     });
     const result = HitlCard({ projection });
     const ancestryEl = findByTestId(result, "hitl-ancestry");
     expect(ancestryEl).toBeDefined();
-    expect(textContent(ancestryEl)).toContain("loop-1");
     expect(textContent(ancestryEl)).toContain("goal-1");
   });
 
@@ -482,31 +481,7 @@ describe("HitlCard", () => {
     expect(callArg.body.decision).toBe("deny");
   });
 
-  test("loop_retry renders retry_resume button", () => {
-    const projection = makeProjection({
-      hitlId: "retry-1",
-      source: { type: "loop_retry", loopId: "loop-1", runId: "run-1", attempt: 1 },
-      allowedActions: ["retry_resume", "cancel"],
-    });
-    const result = HitlCard({ projection });
-    expect(findByTestId(result, "hitl-retry-resume-button")).toBeDefined();
-  });
 
-  test("loop_retry resume calls respondHitl with decision=approved", () => {
-    const projection = makeProjection({
-      hitlId: "retry-resume-test",
-      source: { type: "loop_retry", loopId: "loop-1", runId: "run-1", attempt: 1 },
-      allowedActions: ["retry_resume", "cancel"],
-    });
-    const result = HitlCard({ projection });
-    const resumeBtn = findByTestId(result, "hitl-retry-resume-button");
-    const onClick = resumeBtn?.props?.onClick as (() => void) | undefined;
-    onClick!();
-    expect(respondHitl).toHaveBeenCalledTimes(1);
-    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as RespondHitlArgs;
-    expect(callArg.body.type).toBe("approval_decision");
-    expect(callArg.body.decision).toBe("approved");
-  });
 
   test("ask_user renders submit and cancel buttons", () => {
     const projection = makeProjection({
@@ -663,22 +638,6 @@ describe("HitlCard", () => {
     expect(findByTestId(result, "hitl-question-tab-1")?.props?.["aria-selected"]).toBe(true);
   });
 
-  test("goal_question and loop_question render answer UI", () => {
-    const goalQuestion = HitlCard({ projection: makeProjection({
-      source: { type: "goal_question", goalId: "goal-1", questionKey: "scope" , resumeStatus: "running"},
-      allowedActions: ["answer", "cancel"],
-      displayPayload: makeDisplayPayload({ questions: [{ header: "Scope", question: "Clarify scope?", options: [], custom: true }] }),
-    }) });
-    resetHookState();
-    const loopQuestion = HitlCard({ projection: makeProjection({
-      source: { type: "loop_question", loopId: "loop-1", questionKey: "retry" },
-      allowedActions: ["answer", "cancel"],
-      displayPayload: makeDisplayPayload({ questions: [{ header: "Retry", question: "Retry loop?", options: [], custom: true }] }),
-    }) });
-
-    expect(findByTestId(goalQuestion, "hitl-approve-button")).toBeDefined();
-    expect(findByTestId(loopQuestion, "hitl-approve-button")).toBeDefined();
-  });
 
   test("question payload does not repeat question text in summary or fields", () => {
     const projection = makeProjection({

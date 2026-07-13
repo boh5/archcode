@@ -193,7 +193,6 @@ type PersistedSessionState = Pick<
   | "rootSessionId"
   | "parentSessionId"
   | "goalId"
-  | "loopId"
   | "sessionRole"
 >;
 
@@ -209,7 +208,6 @@ function persistedState(
   parentSessionId: string | undefined = undefined,
   childSessionLinks: ToolChildSessionLink[] = [],
   goalId: string | undefined = undefined,
-  loopId: string | undefined = undefined,
   sessionRole: SessionRole | undefined = undefined,
   compression: CompressionState = createEmptyCompressionState(),
 ): PersistedSessionState {
@@ -232,7 +230,6 @@ function persistedState(
     rootSessionId: rootSessionId ?? sessionId,
     parentSessionId,
     goalId,
-    loopId,
     sessionRole,
   };
 }
@@ -714,7 +711,6 @@ describe("session transcript serialization", () => {
       undefined,
       [],
       undefined,
-      undefined,
       "explore",
     );
 
@@ -727,45 +723,18 @@ describe("session transcript serialization", () => {
     expect(loaded.getState().sessionRole).toBe("explore");
   });
 
-  test("save/load serializes loopId when set", async () => {
-    const sessionId = uniqueSessionId("loop-roundtrip");
-    const loopId = crypto.randomUUID();
-    const state = persistedState(
-      sessionId,
-      sampleMessages(),
-      sampleSteps(),
-      sampleTodos(),
-      createEmptySessionStats(),
-      [],
-      sampleReminders(),
-      undefined,
-      undefined,
-      [],
-      undefined,
-      loopId,
-    );
-
-    await sessionFileInternals.saveSessionTranscript(state, TMP_DIR);
-    const raw = await Bun.file(sessionFilePath(sessionId)).text();
-    const parsed: Record<string, unknown> = JSON.parse(raw);
-    const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
-
-    expect(parsed.loopId).toBe(loopId);
-    expect(loaded.getState().loopId).toBe(loopId);
-  });
-
   test("child session inherits goalId with different sessionRole", async () => {
     const rootSessionId = uniqueSessionId("root-inherit");
     const childSessionId = uniqueSessionId("child-inherit");
     const goalId = crypto.randomUUID();
 
     await sessionFileInternals.saveSessionTranscript(
-      persistedState(rootSessionId, [], [], [], createEmptySessionStats(), [], [], undefined, undefined, [], goalId, undefined, "main"),
+      persistedState(rootSessionId, [], [], [], createEmptySessionStats(), [], [], undefined, undefined, [], goalId, "main"),
       TMP_DIR,
     );
 
     await sessionFileInternals.saveSessionTranscript(
-      persistedState(childSessionId, [], [], [], createEmptySessionStats(), [], [], rootSessionId, rootSessionId, [], goalId, undefined, "explore"),
+      persistedState(childSessionId, [], [], [], createEmptySessionStats(), [], [], rootSessionId, rootSessionId, [], goalId, "explore"),
       TMP_DIR,
     );
 
@@ -1256,7 +1225,7 @@ describe("compaction and meta transcript round-trip", () => {
     ];
     const compression = richCompressionState();
 
-    await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, messages, [], [], createEmptySessionStats(), [], [], undefined, undefined, [], undefined, undefined, undefined, compression), TMP_DIR);
+    await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, messages, [], [], createEmptySessionStats(), [], [], undefined, undefined, [], undefined, undefined, compression), TMP_DIR);
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
 
     const loadedCompression = loaded.getState().compression;

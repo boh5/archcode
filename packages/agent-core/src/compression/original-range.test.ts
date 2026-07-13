@@ -128,7 +128,6 @@ function compressedSession(): SessionFile {
     setTitle: () => undefined,
     setParentSessionId: () => undefined,
     setGoalId: () => undefined,
-    setLoopId: () => undefined,
     setSessionRole: () => undefined,
     toModelMessages: () => [],
   };
@@ -180,7 +179,6 @@ function nestedCompressedSession(): SessionFile {
     setTitle: () => undefined,
     setParentSessionId: () => undefined,
     setGoalId: () => undefined,
-    setLoopId: () => undefined,
     setSessionRole: () => undefined,
     toModelMessages: () => [],
   };

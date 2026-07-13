@@ -6,7 +6,7 @@ const DialogClose = DialogPrimitive.Close;
 const DialogTitle = DialogPrimitive.Title;
 const DialogDescription = DialogPrimitive.Description;
 
-type DialogSize = "default" | "x-large";
+type DialogSize = "default" | "large" | "x-large";
 
 function DialogContent({
   children,
@@ -16,7 +16,9 @@ function DialogContent({
 }: React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { size?: DialogSize }) {
   const sizeClass = size === "x-large"
     ? "h-[min(calc(100vh-32px),600px)] w-[min(calc(100vw-32px),960px)]"
-    : "w-[min(480px,90vw)]";
+    : size === "large"
+      ? "max-h-[calc(100vh-32px)] w-[min(calc(100vw-32px),900px)]"
+      : "w-[min(480px,90vw)]";
 
   return (
     <DialogPrimitive.Portal>

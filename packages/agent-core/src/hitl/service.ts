@@ -14,7 +14,6 @@ import {
 
 import type { GoalStateManager } from "../goals/state";
 import { silentLogger, type Logger } from "../logger";
-import type { LoopStateManager } from "../loops/state";
 import type { ProjectInfo } from "../projects/types";
 import type { SessionStoreManager } from "../store/session-store-manager";
 import { HitlOwnerStore, type HitlCreateResult } from "./owner-store";
@@ -26,7 +25,6 @@ export type HitlRealtimeListener = (event: GlobalSSEHitlRealtimeEvent) => unknow
 export interface HitlServiceManagers {
   readonly sessions: SessionStoreManager;
   readonly goalState: GoalStateManager;
-  readonly loopState: LoopStateManager;
 }
 
 export interface HitlServiceOptions extends HitlServiceManagers {
@@ -55,7 +53,6 @@ export class HitlService {
   readonly #project: Pick<ProjectInfo, "slug" | "name">;
   readonly #sessions: SessionStoreManager;
   readonly #goalState: GoalStateManager;
-  readonly #loopState: LoopStateManager;
   #realtimePublisher: HitlRealtimeListener | undefined;
   #logger: Logger;
   readonly #localOwners = new Map<string, HitlOwnerKey>();
@@ -68,12 +65,10 @@ export class HitlService {
     if (options.project === undefined) throw new TypeError("HitlService requires project");
     if (options.sessions === undefined) throw new TypeError("HitlService requires sessions");
     if (options.goalState === undefined) throw new TypeError("HitlService requires goalState");
-    if (options.loopState === undefined) throw new TypeError("HitlService requires loopState");
     this.#workspaceRoot = options.workspaceRoot;
     this.#project = options.project;
     this.#sessions = options.sessions;
     this.#goalState = options.goalState;
-    this.#loopState = options.loopState;
     this.#realtimePublisher = options.realtimePublisher;
     this.#logger = (options.logger ?? silentLogger).child({ module: "hitl" });
   }
@@ -266,7 +261,6 @@ export class HitlService {
     const source = record.source;
     if (record.owner.ownerType === "session") return await this.#sessionAncestry(record.owner.ownerId);
     if (record.owner.ownerType === "goal") return await this.#goalAncestry(record.owner.ownerId, source);
-    if (record.owner.ownerType === "loop") return { loopId: record.owner.ownerId, projectionPath: ["loop", record.owner.ownerId] };
     throw new Error("Unsupported HITL owner type");
   }
 
@@ -278,7 +272,6 @@ export class HitlService {
       parentSessionId: file.parentSessionId,
       ancestorSessionIds,
       goalId: file.goalId,
-      loopId: file.loopId,
       projectionPath: ["session", file.rootSessionId, sessionId],
     });
   }
@@ -297,18 +290,14 @@ export class HitlService {
     return ancestors.length === 0 ? undefined : ancestors;
   }
 
-  async #goalAncestry(goalId: string, source: HitlSource): Promise<HitlProjectionContext> {
-    let loopId = "loopId" in source ? source.loopId : undefined;
-    if (loopId === undefined) {
-      loopId = (await this.#goalState.read(goalId)).loopId;
-    }
-    return withoutUndefined({ goalId, loopId, projectionPath: loopId === undefined ? ["goal", goalId] : ["loop", loopId, "goal", goalId] });
+  async #goalAncestry(goalId: string, _source: HitlSource): Promise<HitlProjectionContext> {
+    await this.#goalState.read(goalId);
+    return { goalId, projectionPath: ["goal", goalId] };
   }
 
   async #storeFor(owner: HitlOwnerKey): Promise<HitlOwnerStore> {
     const filePath = await resolveHitlOwnerPath(this.#workspaceRoot, owner, {
       goalState: this.#goalState,
-      loopState: this.#loopState,
     });
     return new HitlOwnerStore(filePath, owner);
   }
@@ -333,7 +322,6 @@ export class HitlService {
       project: this.#project,
       sessions: this.#sessions,
       goalState: this.#goalState,
-      loopState: this.#loopState,
     };
   }
 
@@ -353,18 +341,13 @@ function allowedActionsFor(record: HitlRecord): HitlProjection["allowedActions"]
   switch (record.source.type) {
     case "ask_user":
     case "goal_question":
-    case "loop_question":
       return ["answer", "cancel"];
     case "tool_permission":
       return ["approve", "deny", "cancel"];
     case "goal_approval":
     case "goal_budget":
-    case "loop_approval":
       return ["approve", "deny", "cancel"];
     case "goal_review":
       return ["approve", "deny", "cancel"];
-    case "loop_blocker":
-    case "loop_retry":
-      return ["approve", "cancel"];
   }
 }

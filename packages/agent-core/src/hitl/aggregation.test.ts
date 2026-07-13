@@ -1,11 +1,9 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
-import type { GoalState } from "@archcode/protocol";
 
 import { GoalStateManager } from "../goals/state";
 import { silentLogger } from "../logger";
-import { LoopStateManager } from "../loops/state";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { HitlService } from "./service";
 
@@ -21,162 +19,20 @@ describe("HITL aggregation", () => {
     await rm(TMP_ROOT, { recursive: true, force: true });
   });
 
-  test("loop scope includeChildren returns loop, child goal, and descendant session HITL without project queue", async () => {
-    const workspaceRoot = await mkdtemp(join(TMP_ROOT, "workspace-"));
-    const sessions = new SessionStoreManager({ logger: silentLogger });
-    const goalState = new GoalStateManager(workspaceRoot, silentLogger);
-    const loopState = new LoopStateManager(workspaceRoot, silentLogger);
-    const service = new HitlService({
-      workspaceRoot,
-      project: { slug: "archcode", name: "ArchCode" },
-      sessions,
-      goalState,
-      loopState,
-    });
-    const loop = await loopState.create("archcode", {
-      templateId: "goal_runner",
-      title: "Watch CI",
-      schedule: { kind: "manual" },
-      approvalPolicy: "interactive",
-      limits: { maxIterationsPerRun: 1, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
-      useWorktree: false,
-    });
-    const goal = await createGoalOwnedByLoop(goalState, loop.loopId);
-    const rootSessionId = crypto.randomUUID();
-    const childSessionId = crypto.randomUUID();
-    sessions.create(rootSessionId, workspaceRoot, { loopId: loop.loopId, agentName: "engineer" });
-    sessions.create(childSessionId, workspaceRoot, {
-      rootSessionId,
-      parentSessionId: rootSessionId,
-      goalId: goal.id, agentName: "goal_lead"
-    });
-    await waitForSession(workspaceRoot, rootSessionId);
-    await waitForSession(workspaceRoot, childSessionId);
-
-    const loopHitl = await service.create({
-      owner: { projectSlug: "archcode", ownerType: "loop", ownerId: loop.loopId },
-      blockingKey: `loop:${loop.loopId}:approval:manual`,
-      source: { type: "loop_approval", loopId: loop.loopId, approvalPoint: "manual" },
-      displayPayload: { title: "Approve loop", redacted: true },
-    });
-    const goalHitl = await service.create({
-      owner: { projectSlug: "archcode", ownerType: "goal", ownerId: goal.id },
-      blockingKey: `goal:${goal.id}:approval:after_plan`,
-      source: { type: "goal_approval", goalId: goal.id, approvalPoint: "after_plan", resumeStatus: "running" },
-      displayPayload: { title: "Approve goal", redacted: true },
-    });
-    const sessionHitl = await service.create({
-      owner: { projectSlug: "archcode", ownerType: "session", ownerId: childSessionId },
-      sessionRootId: rootSessionId,
-      blockingKey: `session:${childSessionId}:ask:tool`,
-      source: { type: "ask_user", sessionId: childSessionId, toolCallId: "tool" },
-      displayPayload: { title: "Answer child session", redacted: true },
-    });
-
-    const projections = await service.list({ scope: "loop", ownerId: loop.loopId, includeChildren: true });
-    expect(projections.map((projection) => projection.hitlId).sort()).toEqual([goalHitl.hitlId, loopHitl.hitlId, sessionHitl.hitlId].sort());
-    expect(new Set(projections.map((projection) => projection.hitlId)).size).toBe(projections.length);
-    expect(projections.find((projection) => projection.hitlId === sessionHitl.hitlId)?.ancestry?.projectionPath).toEqual([
-      "loop",
-      loop.loopId,
-      "goal",
-      goal.id,
-      "session",
-      childSessionId,
-    ]);
-    expect(projections.find((projection) => projection.hitlId === sessionHitl.hitlId)?.ancestry).toMatchObject({
-      goalId: goal.id,
-      rootSessionId,
-      parentSessionId: rootSessionId,
-    });
-    expect(await Bun.file(join(workspaceRoot, ".archcode", "hitl-queue.json")).exists()).toBe(false);
-  });
-
-  test("loop scope without includeChildren excludes sessions owned only by loop child goals", async () => {
-    const workspaceRoot = await mkdtemp(join(TMP_ROOT, "workspace-"));
-    const sessions = new SessionStoreManager({ logger: silentLogger });
-    const goalState = new GoalStateManager(workspaceRoot, silentLogger);
-    const loopState = new LoopStateManager(workspaceRoot, silentLogger);
-    const service = new HitlService({
-      workspaceRoot,
-      project: { slug: "archcode", name: "ArchCode" },
-      sessions,
-      goalState,
-      loopState,
-    });
-    const loop = await loopState.create("archcode", {
-      templateId: "goal_runner",
-      title: "Watch CI",
-      schedule: { kind: "manual" },
-      approvalPolicy: "interactive",
-      limits: { maxIterationsPerRun: 1, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
-      useWorktree: false,
-    });
-    const goal = await createGoalOwnedByLoop(goalState, loop.loopId);
-    const directLoopSessionId = crypto.randomUUID();
-    const goalSessionId = crypto.randomUUID();
-    sessions.create(directLoopSessionId, workspaceRoot, { loopId: loop.loopId, agentName: "engineer" });
-    sessions.create(goalSessionId, workspaceRoot, { goalId: goal.id, agentName: "goal_lead" });
-    await waitForSession(workspaceRoot, directLoopSessionId);
-    await waitForSession(workspaceRoot, goalSessionId);
-
-    const directLoopSessionHitl = await service.create({
-      owner: { projectSlug: "archcode", ownerType: "session", ownerId: directLoopSessionId },
-      sessionRootId: directLoopSessionId,
-      blockingKey: `session:${directLoopSessionId}:ask:tool`,
-      source: { type: "ask_user", sessionId: directLoopSessionId, toolCallId: "tool" },
-      displayPayload: { title: "Answer loop session", redacted: true },
-    });
-    const goalSessionHitl = await service.create({
-      owner: { projectSlug: "archcode", ownerType: "session", ownerId: goalSessionId },
-      sessionRootId: goalSessionId,
-      blockingKey: `session:${goalSessionId}:ask:tool`,
-      source: { type: "ask_user", sessionId: goalSessionId, toolCallId: "tool" },
-      displayPayload: { title: "Answer goal session", redacted: true },
-    });
-
-    const projections = await service.list({ scope: "loop", ownerId: loop.loopId });
-    expect(projections.map((projection) => projection.hitlId)).toContain(directLoopSessionHitl.hitlId);
-    expect(projections.map((projection) => projection.hitlId)).not.toContain(goalSessionHitl.hitlId);
-  });
-
-  test("session tree read failures abort aggregation instead of dropping descendants", async () => {
+  test("session tree read failures abort project aggregation", async () => {
     const workspaceRoot = await mkdtemp(join(TMP_ROOT, "workspace-"));
     const sessions = new SessionStoreManager({ logger: silentLogger });
     const sessionId = crypto.randomUUID();
     sessions.create(sessionId, workspaceRoot, { agentName: "engineer" });
     await sessions.flushSession(sessionId, workspaceRoot);
-    sessions.buildSessionTree = mock(async () => {
-      throw new Error("corrupt session tree");
-    });
+    sessions.buildSessionTree = mock(async () => { throw new Error("corrupt session tree"); });
     const service = new HitlService({
       workspaceRoot,
       project: { slug: "archcode", name: "ArchCode" },
       sessions,
       goalState: new GoalStateManager(workspaceRoot, silentLogger),
-      loopState: new LoopStateManager(workspaceRoot, silentLogger),
     });
+
     await expect(service.list({ scope: "project" })).rejects.toThrow("corrupt session tree");
   });
 });
-
-async function createGoalOwnedByLoop(goalState: GoalStateManager, loopId: string): Promise<GoalState> {
-  const goal = await goalState.create({
-    projectId: "archcode",
-    objective: "Run the loop child goal.",
-    acceptanceCriteria: "Reviewer can decide from loop run evidence.",
-  });
-  const filePath = await goalState.resolveContainedPathForTest(join(goal.id, "goal.json"));
-  const updated: GoalState = { ...goal, loopId, updatedAt: new Date().toISOString() };
-  await Bun.write(filePath, `${JSON.stringify(updated, null, 2)}\n`);
-  return updated;
-}
-
-async function waitForSession(workspaceRoot: string, sessionId: string): Promise<void> {
-  const path = join(workspaceRoot, ".archcode", "sessions", sessionId, "session.json");
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    if (await Bun.file(path).exists()) return;
-    await Bun.sleep(5);
-  }
-  throw new Error(`session was not persisted: ${sessionId}`);
-}

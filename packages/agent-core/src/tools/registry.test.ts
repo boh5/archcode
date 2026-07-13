@@ -916,32 +916,6 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       expect(desc.execute).not.toHaveBeenCalled();
     });
 
-    test("permission deny preserves execution control in result metadata", async () => {
-      const desc = makeSpiedDescriptor("safeTool");
-      desc.permissions = [async () => ({
-        outcome: "deny",
-        reason: "Loop hard budget exceeded",
-        errorKind: "permission-denied",
-        errorCode: "LOOP_HARD_BUDGET_EXCEEDED",
-        executionControl: {
-          action: "stop_session_family",
-          reason: "loop_budget_exceeded",
-        },
-      })];
-      registry.register(desc);
-
-      const result = await registry.execute(
-        makeToolCall({ toolName: "safeTool" }),
-        makeContext({ toolName: "safeTool", allowedTools: new Set(["safeTool"]) }),
-      );
-
-      expect(result.meta?.executionControl).toEqual({
-        action: "stop_session_family",
-        reason: "loop_budget_exceeded",
-      });
-      expect(desc.execute).not.toHaveBeenCalled();
-    });
-
     test("permission deny without structured fields falls back to generic permission denial", async () => {
       const desc = makeSpiedDescriptor("safeTool");
       desc.permissions = [async () => ({ outcome: "deny", reason: "blocked" })];

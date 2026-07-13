@@ -10,7 +10,7 @@ import { silentLogger } from "../logger";
 import { ProjectApprovalManager } from "./permission";
 import type { PermissionApprovalScope } from "./permission";
 import { createRegistry } from "./registry";
-import { createToolExecutionContext, type ToolDescriptor, type ToolExecutionContext, type ToolExecutionOrigin } from "./types";
+import { createToolExecutionContext, type ToolDescriptor, type ToolExecutionContext } from "./types";
 import { z } from "zod";
 import { createTestProjectContext } from "./test-project-context";
 
@@ -21,13 +21,6 @@ const APPROVAL_SCOPE: PermissionApprovalScope = {
   kind: "tool-operation",
   toolName: "ctx_sensitive_tool",
   operation: "write",
-};
-
-const LOOP_ORIGIN: ToolExecutionOrigin = {
-  kind: "loop",
-  loopId: "loop-approval-guard",
-  trigger: "interval",
-  approvalPolicy: "interactive",
 };
 
 afterAll(async () => {
@@ -131,7 +124,7 @@ describe("ToolRegistry projectContext approval flow", () => {
     expect(confirmPermission).not.toHaveBeenCalled();
   });
 
-  test("loop metadata origin still reuses project approvals for effectful tools", async () => {
+  test("project approvals allow effectful tools", async () => {
     const registry = createRegistry([createSensitiveDescriptor()]);
     const projectContext = await createProjectContext("loop-metadata-approval");
     await projectContext.approvals.addApproval(APPROVAL_SCOPE, {
@@ -141,8 +134,8 @@ describe("ToolRegistry projectContext approval flow", () => {
     const confirmPermission = mock(async () => "deny" as const);
 
     const result = await registry.execute(
-      { toolName: "ctx_sensitive_tool", toolCallId: "loop-metadata", input: {} },
-      { ...createContext(projectContext), toolCallId: "loop-metadata", confirmPermission, origin: LOOP_ORIGIN },
+      { toolName: "ctx_sensitive_tool", toolCallId: "project-approval", input: {} },
+      { ...createContext(projectContext), toolCallId: "project-approval", confirmPermission },
     );
 
     expect(result.isError).toBe(false);
@@ -150,7 +143,7 @@ describe("ToolRegistry projectContext approval flow", () => {
     expect(confirmPermission).not.toHaveBeenCalled();
   });
 
-  test("loop metadata origin read-only tools can still use matching project approvals", async () => {
+  test("project approvals allow matching read-only tools", async () => {
     const registry = createRegistry([createSensitiveDescriptor({ readOnly: true, destructive: false, concurrencySafe: true })]);
     const projectContext = await createProjectContext("loop-readonly-regression");
     await projectContext.approvals.addApproval(APPROVAL_SCOPE, {
@@ -160,8 +153,8 @@ describe("ToolRegistry projectContext approval flow", () => {
     const confirmPermission = mock(async () => "deny" as const);
 
     const result = await registry.execute(
-      { toolName: "ctx_sensitive_tool", toolCallId: "loop-readonly", input: {} },
-      { ...createContext(projectContext), toolCallId: "loop-readonly", confirmPermission, origin: LOOP_ORIGIN },
+      { toolName: "ctx_sensitive_tool", toolCallId: "project-readonly", input: {} },
+      { ...createContext(projectContext), toolCallId: "project-readonly", confirmPermission },
     );
 
     expect(result.isError).toBe(false);

@@ -33,10 +33,6 @@ export class SessionLifecycleService implements SessionDeletionPreflight {
       if (state.goalId !== undefined) {
         owners.push({ sessionId, ownerType: "goal", ownerId: state.goalId });
       }
-      if (state.loopId !== undefined) {
-        owners.push({ sessionId, ownerType: "loop", ownerId: state.loopId });
-      }
-
       const sessionOwner = {
         projectSlug: context.project.slug,
         ownerType: "session" as const,

@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { createEmptySessionStats, type CompressionBlockSnapshot, type GoalState, type HitlRecord, type LoopState, type SessionProjection } from "@archcode/protocol";
+import { createEmptySessionStats, type CompressionBlockSnapshot, type GoalState, type HitlRecord, type SessionProjection } from "@archcode/protocol";
 import { createEmptyCompressionState } from "../compression";
 import { SessionStoreManager } from "./session-store-manager";
 import { NotRootSessionError, SessionInitialPersistenceError, SessionTreeIntegrityError } from "./errors";
@@ -425,29 +425,6 @@ describe("SessionStoreManager", () => {
       createdAt: "2026-07-07T00:00:00.000Z",
       updatedAt: "2026-07-07T00:00:00.000Z",
     };
-    const loopState: LoopState = {
-      loopId: "loop-1",
-      projectId: "project-1",
-      config: {
-        templateId: "goal_runner",
-        title: "Loop",
-        schedule: { kind: "manual" },
-        approvalPolicy: "interactive",
-        limits: { maxIterationsPerRun: 1, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
-        useWorktree: false,
-        goalTemplate: {
-          title: "Goal",
-          objective: "Do it.",
-          acceptanceCriteria: "Reviewer can decide DONE from loop evidence.",
-        },
-      },
-      status: "active",
-      createdAt: 1,
-      updatedAt: 2,
-      runCount: 0,
-      stateVersion: 1,
-    };
-
     store.getState().append({ type: "goal.state_change", goalId: "goal-1", status: "running", state: goalState });
     store.getState().append({ type: "hitl.request", request: hitlRequest });
     store.getState().append({
@@ -456,21 +433,17 @@ describe("SessionStoreManager", () => {
       status: "resolved",
       response: { type: "question_answer", answers: ["yes"] },
     });
-    store.getState().append({ type: "loop.state_change", loopId: "loop-1", status: "active", state: loopState });
-
-    const stateAfterDottedEvents = store.getState() as ReturnType<typeof store.getState> & Pick<SessionProjection, "goals" | "hitlRequests" | "loops">;
+    const stateAfterDottedEvents = store.getState() as ReturnType<typeof store.getState> & Pick<SessionProjection, "goals" | "hitlRequests">;
     expect(stateAfterDottedEvents.goals?.["goal-1"]).toEqual(goalState);
     expect(stateAfterDottedEvents.hitlRequests).toMatchObject([
       { hitlId: "hitl-1", status: "resolved", response: { type: "question_answer", answers: ["yes"] } },
     ]);
-    expect(stateAfterDottedEvents.loops?.["loop-1"]).toEqual(loopState);
 
     store.getState().append({ type: "shutdown", reason: "test" });
 
-    const stateAfterServerOnlyEvents = store.getState() as ReturnType<typeof store.getState> & Pick<SessionProjection, "goals" | "hitlRequests" | "loops">;
+    const stateAfterServerOnlyEvents = store.getState() as ReturnType<typeof store.getState> & Pick<SessionProjection, "goals" | "hitlRequests">;
     expect(stateAfterServerOnlyEvents.goals).toEqual(stateAfterDottedEvents.goals);
     expect(stateAfterServerOnlyEvents.hitlRequests).toEqual(stateAfterDottedEvents.hitlRequests);
-    expect(stateAfterServerOnlyEvents.loops).toEqual(stateAfterDottedEvents.loops);
   });
 
   test("get() returns undefined for unknown session", () => {
@@ -708,22 +681,22 @@ describe("SessionStoreManager", () => {
     expect(JSON.stringify(tool)).not.toContain("unknownResult");
   });
 
-  test("persists loop-error in session JSON file", async () => {
+  test("persists execution-error in session JSON file", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
     const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
-    const errorMsg = "Loop terminated due to terminal failure";
+    const errorMsg = "Execution terminated due to terminal failure";
 
     store.getState().append({ type: "execution-start", executionId: "run-1" });
     store.getState().append({ type: "step-start", step: 0 });
-    store.getState().append({ type: "loop-error", step: 0, error: errorMsg });
+    store.getState().append({ type: "execution-error", step: 0, error: errorMsg });
 
     const filePath = canonicalSessionPath(id);
     const raw = await waitForSessionJson(filePath, (json) => JSON.stringify(json).includes(errorMsg));
     expect(JSON.stringify(raw)).toContain(errorMsg);
   });
 
-  test("restarted SessionStoreManager reloads loop error in steps", async () => {
+  test("restarted SessionStoreManager reloads execution error in steps", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
     const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
@@ -731,7 +704,7 @@ describe("SessionStoreManager", () => {
 
     store.getState().append({ type: "execution-start", executionId: "run-1" });
     store.getState().append({ type: "step-start", step: 0 });
-    store.getState().append({ type: "loop-error", step: 0, error: errorMsg });
+    store.getState().append({ type: "execution-error", step: 0, error: errorMsg });
 
     const filePath = canonicalSessionPath(id);
     await waitForSessionJson(filePath, (json) => JSON.stringify(json).includes(errorMsg));

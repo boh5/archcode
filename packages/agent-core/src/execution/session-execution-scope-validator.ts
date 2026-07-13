@@ -1,12 +1,11 @@
 import { resolve } from "node:path";
 
-import type { GoalState, LoopState } from "@archcode/protocol";
+import type { GoalState } from "@archcode/protocol";
 
 import type { ProjectContextResolver } from "../projects/context-resolver";
 import { resolveValidSessionCwd } from "../store/session-cwd";
 import type { SessionRole } from "../store/types";
 import type { AgentName } from "../agents";
-import type { ToolExecutionOrigin } from "../tools/types";
 import { decideGoalSessionExecution } from "./goal-session-phase-policy";
 import {
   isArchCodeManagedBranch,
@@ -20,18 +19,12 @@ export type SessionExecutionScopeConflictCode =
   | "SESSION_EXECUTION_SCOPE_CHANGED"
   | "SESSION_CWD_INVALID"
   | "SESSION_WORKTREE_OWNER_MISMATCH"
-  | "SESSION_LOOP_EXECUTION_SCOPE_REQUIRED"
-  | "SESSION_LOOP_HITL_ORIGIN_MISMATCH"
-  | "SESSION_LOOP_RUN_CLAIM_INVALID"
-  | "SESSION_LOOP_NOT_FOUND"
-  | "SESSION_LOOP_OWNER_MISMATCH"
   | "SESSION_GOAL_NOT_FOUND"
   | "SESSION_GOAL_OWNER_MISMATCH"
   | "SESSION_GOAL_NOT_EXECUTABLE"
   | "SESSION_GOAL_REVIEWER_REQUIRED"
   | "SESSION_GOAL_CWD_MISMATCH"
-  | "SESSION_GOAL_WORKTREE_CLAIM_INVALID"
-  | "SESSION_GOAL_LOOP_SCOPE_MISMATCH";
+  | "SESSION_GOAL_WORKTREE_CLAIM_INVALID";
 
 export class SessionExecutionScopeConflictError extends Error {
   constructor(
@@ -55,41 +48,19 @@ export interface SessionExecutionScopeSubject {
   readonly isDescendantOfRoot?: boolean;
   readonly cwd: string;
   readonly goalId?: string;
-  readonly loopId?: string;
   readonly sessionRole?: SessionRole;
   readonly agentName?: AgentName;
 }
 
 export type SessionExecutionScopeEntry =
-  | { readonly kind: "user_message"; readonly origin?: ToolExecutionOrigin }
-  | { readonly kind: "hitl_replay"; readonly origin?: ToolExecutionOrigin };
+  | { readonly kind: "user_message" }
+  | { readonly kind: "hitl_replay" };
 
 export interface SessionExecutionScopeValidatorOptions {
   readonly projectContextResolver: Pick<ProjectContextResolver, "resolve">;
-  readonly loopExecutionClaimResolver: SessionLoopExecutionClaimResolver;
   readonly worktreeServiceFactory?: (
     canonicalRoot: string,
   ) => Pick<WorktreeService, "validateManagedClaim">;
-}
-
-export interface SessionLoopExecutionClaimInput {
-  readonly projectRoot: string;
-  readonly loop: LoopState;
-  readonly subject: SessionExecutionScopeSubject;
-  readonly origin: ToolExecutionOrigin;
-}
-
-export type SessionLoopExecutionClaimDecision =
-  | { readonly outcome: "allow" }
-  | {
-    readonly outcome: "deny";
-    readonly code: string;
-    readonly message: string;
-    readonly details?: Readonly<Record<string, unknown>>;
-  };
-
-export interface SessionLoopExecutionClaimResolver {
-  resolve(input: SessionLoopExecutionClaimInput): Promise<SessionLoopExecutionClaimDecision>;
 }
 
 export interface SessionExecutionScopeValidationInput {
@@ -100,34 +71,24 @@ export interface SessionExecutionScopeValidationInput {
 
 /**
  * Validates the persisted owner and execution domain of an existing Session.
- * Ordinary Sessions stay owner-free; Goal and Loop Sessions must prove their
- * current claim before a generic message or a persisted HITL replay can run.
+ * Ordinary Sessions stay owner-free; Goal Sessions must prove their current
+ * claim before a generic message or a persisted HITL replay can run.
  */
 export class SessionExecutionScopeValidator {
   readonly #projectContextResolver: Pick<ProjectContextResolver, "resolve">;
-  readonly #loopExecutionClaimResolver: SessionLoopExecutionClaimResolver;
   readonly #worktreeServiceFactory: (
     canonicalRoot: string,
   ) => Pick<WorktreeService, "validateManagedClaim">;
 
   constructor(options: SessionExecutionScopeValidatorOptions) {
     this.#projectContextResolver = options.projectContextResolver;
-    this.#loopExecutionClaimResolver = options.loopExecutionClaimResolver;
     this.#worktreeServiceFactory = options.worktreeServiceFactory
       ?? ((canonicalRoot) => new WorktreeService({ canonicalRoot }));
   }
 
   async validate(input: SessionExecutionScopeValidationInput): Promise<void> {
     const { subject, entry } = input;
-    if (subject.goalId === undefined && subject.loopId === undefined) {
-      if (entry.origin !== undefined) {
-        throw conflict(
-          "SESSION_LOOP_OWNER_MISMATCH",
-          subject,
-          "An owner-free Session cannot run with a Loop execution origin",
-          { originLoopId: entry.origin.loopId },
-        );
-      }
+    if (subject.goalId === undefined) {
       const worktree = await this.#assertRegisteredCwd(input.projectRoot, subject);
       this.#assertOrdinaryWorktreeOwner(subject, worktree);
       return;
@@ -158,68 +119,9 @@ export class SessionExecutionScopeValidator {
       this.#assertCurrentGoalAttempt(subject, goal);
     }
 
-    const goalLoopId = goal?.loopId;
-    if (goal !== undefined && subject.loopId !== goalLoopId) {
-      throw conflict(
-        "SESSION_GOAL_LOOP_SCOPE_MISMATCH",
-        subject,
-        `Session ${subject.sessionId} does not match Goal ${goal?.id}'s Loop owner`,
-        { sessionLoopId: subject.loopId, goalLoopId },
-      );
-    }
-
-    const loopId = subject.loopId ?? goalLoopId;
-    if (loopId !== undefined) {
-      this.#assertLoopOrigin(subject, entry, loopId);
-      try {
-        const loop = await context.loopState.read(loopId);
-        if (loop.projectId !== context.project.slug) {
-          throw conflict(
-            "SESSION_LOOP_OWNER_MISMATCH",
-            subject,
-            `Loop ${loopId} belongs to a different project`,
-            { loopId, loopProjectId: loop.projectId, projectId: context.project.slug },
-          );
-        }
-        const claim = await this.#loopExecutionClaimResolver.resolve({
-          projectRoot: input.projectRoot,
-          loop,
-          subject,
-          origin: entry.origin!,
-        });
-        if (claim.outcome === "deny") {
-          throw conflict(
-            "SESSION_LOOP_RUN_CLAIM_INVALID",
-            subject,
-            claim.message,
-            { loopId, runId: entry.origin?.runId, claimCode: claim.code, ...claim.details },
-          );
-        }
-      } catch (error) {
-        if (error instanceof SessionExecutionScopeConflictError) throw error;
-        throw conflict(
-          "SESSION_LOOP_NOT_FOUND",
-          subject,
-          `Loop ${loopId} cannot be loaded for Session ${subject.sessionId}`,
-          { loopId },
-          error,
-        );
-      }
-      if (goal?.useWorktree !== true) {
-        await this.#assertRegisteredCwd(input.projectRoot, subject);
-      }
-    } else if (entry.origin !== undefined) {
-      throw conflict(
-        "SESSION_LOOP_OWNER_MISMATCH",
-        subject,
-        `Session ${subject.sessionId} is not owned by Loop ${entry.origin.loopId}`,
-        { originLoopId: entry.origin.loopId },
-      );
-    }
-
     if (goal !== undefined) {
       this.#assertGoalStatus(subject, goal, entry);
-      await this.#assertGoalCwd(input.projectRoot, subject, goal, loopId !== undefined);
+      await this.#assertGoalCwd(input.projectRoot, subject, goal);
     }
   }
 
@@ -293,25 +195,6 @@ export class SessionExecutionScopeValidator {
     );
   }
 
-  #assertLoopOrigin(
-    subject: SessionExecutionScopeSubject,
-    entry: SessionExecutionScopeEntry,
-    loopId: string,
-  ): void {
-    if (entry.origin?.loopId === loopId) return;
-    const code = entry.kind === "hitl_replay"
-      ? "SESSION_LOOP_HITL_ORIGIN_MISMATCH"
-      : "SESSION_LOOP_EXECUTION_SCOPE_REQUIRED";
-    throw conflict(
-      code,
-      subject,
-      entry.kind === "hitl_replay"
-        ? `Loop Session ${subject.sessionId} can replay HITL only from Loop ${loopId}`
-        : `Loop Session ${subject.sessionId} can execute only inside Loop ${loopId}`,
-      { loopId, originLoopId: entry.origin?.loopId },
-    );
-  }
-
   #assertGoalStatus(
     subject: SessionExecutionScopeSubject,
     goal: GoalState,
@@ -339,10 +222,9 @@ export class SessionExecutionScopeValidator {
     projectRoot: string,
     subject: SessionExecutionScopeSubject,
     goal: GoalState,
-    isLoopOwned: boolean,
   ): Promise<void> {
     if (goal.useWorktree !== true) {
-      if (!isLoopOwned && resolve(subject.cwd) !== resolve(projectRoot)) {
+      if (resolve(subject.cwd) !== resolve(projectRoot)) {
         throw conflict(
           "SESSION_GOAL_CWD_MISMATCH",
           subject,

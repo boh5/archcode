@@ -91,7 +91,7 @@ class FakeGoalStateManager {
     return [...this.#goals.values()].filter((goal) => projectId === undefined || goal.projectId === projectId);
   }
 
-  async create(input: { readonly projectId: string; readonly title?: string | null; readonly objective: string; readonly acceptanceCriteria: string; readonly useWorktree?: boolean; readonly loopId?: string }): Promise<GoalState> {
+  async create(input: { readonly projectId: string; readonly title?: string | null; readonly objective: string; readonly acceptanceCriteria: string; readonly useWorktree?: boolean }): Promise<GoalState> {
     const goal: GoalState = {
       version: 2,
       id: crypto.randomUUID(),
@@ -100,7 +100,6 @@ class FakeGoalStateManager {
       objective: input.objective,
       acceptanceCriteria: input.acceptanceCriteria,
       useWorktree: input.useWorktree ?? false,
-      ...(input.loopId === undefined ? {} : { loopId: input.loopId }),
       status: "draft",
       attempt: 1,
       reviewGeneration: 0,
@@ -315,11 +314,6 @@ function createRuntime(
     listSessionTree,
     cancelGoal: mock(async (workspaceRoot: string, goalId: string, request: { source: string; reason?: string }) => {
       const goal = await manager.read(goalId);
-      if (request.source === "http" && goal.loopId !== undefined) {
-        const error = new Error(`Goal ${goal.id} is owned by Loop ${goal.loopId} and must be resumed by its owning Loop`);
-        error.name = "GoalCancellationError";
-        throw error;
-      }
       const sessionIds = new Set(goal.childSessionIds);
       if (goal.mainSessionId !== undefined) {
         sessionIds.add(goal.mainSessionId);
@@ -1079,37 +1073,6 @@ describe("goals routes", () => {
     expect(await runRes.json()).toEqual({
       error: { code: "BAD_REQUEST", message: `Invalid goal state for ${created.id}` },
     });
-    expect(runtime.createSession).not.toHaveBeenCalled();
-    expect(runtime.startSessionExecution).not.toHaveBeenCalled();
-  });
-
-  test("HTTP run, retry, and cancel reject Loop-owned Goals without a trusted Loop execution scope", async () => {
-    const { app, manager, project, runtime } = await createFixture("reject-loop-owned-goal");
-    const loopId = "11111111-1111-4111-8111-111111111111";
-    const goal = await manager.create({
-      projectId: project.slug,
-      objective: "Run only through the owning Loop.",
-      acceptanceCriteria: "HTTP Goal routes cannot infer a Loop execution scope.",
-      loopId,
-    });
-
-    const runRes = await app.request(`/api/projects/${project.slug}/goals/${goal.id}/run`, { method: "POST" });
-    const cancelRes = await app.request(`/api/projects/${project.slug}/goals/${goal.id}/cancel`, { method: "POST" });
-    await manager.setStatus(goal.id, "failed");
-    const retryRes = await app.request(`/api/projects/${project.slug}/goals/${goal.id}/retry`, { method: "POST" });
-    const expected = {
-      error: {
-        code: "BAD_REQUEST",
-        message: `Goal ${goal.id} is owned by Loop ${loopId} and must be resumed by its owning Loop`,
-      },
-    };
-
-    expect(runRes.status).toBe(409);
-    expect(await runRes.json()).toEqual(expected);
-    expect(retryRes.status).toBe(409);
-    expect(await retryRes.json()).toEqual(expected);
-    expect(cancelRes.status).toBe(409);
-    expect(await cancelRes.json()).toEqual(expected);
     expect(runtime.createSession).not.toHaveBeenCalled();
     expect(runtime.startSessionExecution).not.toHaveBeenCalled();
   });

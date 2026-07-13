@@ -5,7 +5,6 @@ import type { GoalState } from "@archcode/protocol";
 import type { GoalCancellationCapability } from "../goals/cancellation";
 import type { HitlService } from "../hitl/service";
 import type { ResumeCoordinator } from "../hitl/resume-coordinator";
-import type { LoopStateManager } from "../loops/state";
 import type { MemoryFileManager } from "../memory/file-manager";
 import type { ProjectApprovalManager } from "../tools/permission/project-approvals";
 
@@ -27,7 +26,6 @@ export interface ProjectContext {
   project: ProjectInfo;
   goalState: GoalStateManager;
   goalCancellation: GoalCancellationCapability;
-  loopState: LoopStateManager;
   hitl: HitlService;
   hitlResumeCoordinator: ResumeCoordinator;
   memory: MemoryFileManager;

@@ -12,7 +12,6 @@ import { classifyLlmError, runLlmStream } from "../../llm";
 import type { BeforeModelBuildContext, BeforeModelCallContext } from "./loop-hooks";
 import { SessionHitlPause } from "../../execution/session-hitl-pause";
 import { createToolErrorResult } from "../../tools/errors";
-import { LoopBudgetHardStopError } from "../../loops/budget-ledger";
 
 const DEFAULT_MAX_STEPS = 50;
 const ZERO_OUTPUT_SHORT_ATTEMPTS = 3;
@@ -185,7 +184,6 @@ export async function runQueryLoop(
     maxSteps = DEFAULT_MAX_STEPS,
     store,
     currentDepth,
-    origin: executionOrigin,
   } = options;
   const { beforeModelBuild, beforeModelCall, afterStepEnd, afterLoopEnd } = options.hooks ?? {};
   const abort = options.abort ?? new AbortController().signal;
@@ -318,7 +316,7 @@ export async function runQueryLoop(
           markCurrentAssistantModelOutputDiscardedFromContext(store);
         } else {
           store.getState().append({
-            type: "loop-error",
+            type: "execution-error",
             step: steps,
             error: attempt.message,
           });
@@ -394,7 +392,6 @@ export async function runQueryLoop(
         options.agentSkills,
         options.skillService,
         options.storeManager,
-        executionOrigin,
         currentDepth,
         doomTracker,
       );
@@ -419,7 +416,7 @@ export async function runQueryLoop(
     if (steps >= maxSteps) {
       runEndStatus = "max_steps";
       store.getState().append({
-        type: "loop-error",
+        type: "execution-error",
         step: steps,
         error: `Max steps (${maxSteps}) reached`,
       });
@@ -438,10 +435,6 @@ export async function runQueryLoop(
       });
       return { text: lastText, steps };
     }
-    if (err instanceof LoopBudgetHardStopError) {
-      runEndStatus = executionEndStatusFromControl(err.executionControl);
-      return { text: lastText, steps, executionControl: err.executionControl };
-    }
     failed = true;
     runEndStatus = abort.aborted ? "aborted" : "failed";
     logger.error("query.loop.fatal", {
@@ -449,7 +442,7 @@ export async function runQueryLoop(
       context: { step: steps, sessionId, agentName },
     });
     store.getState().append({
-      type: "loop-error",
+      type: "execution-error",
       step: steps,
       error: errorMessage(err),
     });
@@ -763,7 +756,7 @@ function appendPostStreamTerminalFailure(
   }
 
   store.getState().append({
-    type: "loop-error",
+    type: "execution-error",
     step,
     error: message,
   });
@@ -931,7 +924,6 @@ async function executeToolCalls(
   agentSkills: QueryLoopOptions["agentSkills"],
   skillService: QueryLoopOptions["skillService"],
   storeManager: QueryLoopOptions["storeManager"],
-  executionOrigin: QueryLoopOptions["origin"],
   currentDepth?: number,
   doomTracker?: DoomTracker,
 ): Promise<ToolBatchExecutionResult> {
@@ -967,7 +959,6 @@ async function executeToolCalls(
       agentSkills,
       skillService,
       storeManager,
-      executionOrigin,
       currentDepth,
       completedToolResults,
     });
@@ -1019,7 +1010,6 @@ async function executeToolCalls(
             ...(acquireSessionCwdTransition ? { acquireSessionCwdTransition } : {}),
             agentName,
             ...(currentDepth !== undefined ? { currentDepth } : {}),
-            ...(executionOrigin === undefined ? {} : { origin: executionOrigin }),
             hitlCheckpoint: {
               toolCalls: executableToolCalls,
               completedToolResults,
@@ -1090,7 +1080,6 @@ async function executeToolCalls(
         ...(acquireSessionCwdTransition ? { acquireSessionCwdTransition } : {}),
         agentName,
         ...(currentDepth !== undefined ? { currentDepth } : {}),
-        ...(executionOrigin === undefined ? {} : { origin: executionOrigin }),
         hitlCheckpoint: {
           toolCalls: executableToolCalls,
           completedToolResults,
@@ -1159,7 +1148,6 @@ async function executeToolCallsSequentially(input: {
   agentSkills: QueryLoopOptions["agentSkills"];
   skillService: QueryLoopOptions["skillService"];
   storeManager: QueryLoopOptions["storeManager"];
-  executionOrigin: QueryLoopOptions["origin"];
   currentDepth?: number;
   completedToolResults: Array<{ toolCallId: string; toolName: string; output: string; isError: boolean; meta?: Record<string, unknown> }>;
 }): Promise<ToolBatchExecutionResult> {
@@ -1193,7 +1181,6 @@ async function executeToolCallsSequentially(input: {
       ...(input.acquireSessionCwdTransition ? { acquireSessionCwdTransition: input.acquireSessionCwdTransition } : {}),
       agentName: input.agentName,
       ...(input.currentDepth !== undefined ? { currentDepth: input.currentDepth } : {}),
-      ...(input.executionOrigin === undefined ? {} : { origin: input.executionOrigin }),
       hitlCheckpoint: {
         toolCalls: input.toolCalls,
         completedToolResults: input.completedToolResults,

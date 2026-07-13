@@ -7,11 +7,6 @@ import type { HitlIdentity, HitlRecord, HitlResponse, HitlResumeMetadata, ToolCh
 import { GoalStateManager } from "../goals/state";
 import { HitlService } from "../hitl/service";
 import { ResumeCoordinator } from "../hitl/resume-coordinator";
-import { LoopStateManager } from "../loops/state";
-import { CollisionLedger } from "../loops/collision-ledger";
-import { LoopJobCoordinator } from "../loops/coordinator";
-import { LoopJobQueue } from "../loops/job-queue";
-import { LoopSessionHitlContinuationCoordinator } from "../loops/session-hitl-continuation";
 import { setLlmAdapterForTest } from "../llm";
 import type { Agent, AgentRunOptions } from "../agents/types";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
@@ -31,9 +26,9 @@ import { SkillService } from "../skills";
 import { silentLogger } from "../logger";
 import { runQueryLoop } from "../agents/query/loop";
 import type { QueryLoopOptions } from "../agents/query/types";
-import { SessionHitlResumeAdapter, type SessionLoopHitlContinuationCoordinator } from "./session-hitl-resume-adapter";
+import { SessionHitlResumeAdapter } from "./session-hitl-resume-adapter";
 import { SessionExecutionManager, type SessionHitlResumeLease } from "./session-execution-manager";
-import { SessionExecutionScopeConflictError, SessionExecutionScopeValidator } from "./session-execution-scope-validator";
+import { SessionExecutionScopeValidator } from "./session-execution-scope-validator";
 import {
   getSessionHitlCheckpointPath,
   readSessionHitlCheckpoint,
@@ -52,7 +47,6 @@ function identity(record: Pick<HitlRecord, "owner" | "hitlId">) {
   return { owner: record.owner, hitlId: record.hitlId };
 }
 const testSkillService = new SkillService({ builtinSkills: {} });
-const allowLoopExecutionClaims = { resolve: async () => ({ outcome: "allow" as const }) };
 const dummyModelInfo = {
   model: { modelId: "mock-model", provider: "mock-provider" },
   displayName: "Mock Model",
@@ -288,141 +282,6 @@ describe("Session HITL resume", () => {
     expect(await readSessionHitlCheckpoint(fixture.workspaceRoot, fixture.sessionId, pending.hitlId)).toBeDefined();
     expect(fixture.store.getState().executions.at(-1)).toMatchObject({ status: "waiting_for_human" });
     expect(fixture.store.getState().blockedByHitlIds).toEqual([pending.hitlId]);
-  });
-
-  test("Loop-owned Session HITL reacquires the exact job and collision lease before tool replay, then finishes the run", async () => {
-    let continuation!: LoopSessionHitlContinuationCoordinator;
-    const fixture = await createFixture({
-      loopContinuation: { acquire: async (input) => await continuation.acquire(input) },
-    });
-    const loop = await fixture.loopState.create("archcode", {
-      templateId: "watch_report",
-      title: null,
-      schedule: { kind: "manual" },
-      approvalPolicy: "interactive",
-      limits: { maxIterationsPerRun: 3, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
-      collisionTargets: [{ type: "file", path: "." }],
-      useWorktree: false,
-    });
-    fixture.store.setState({ loopId: loop.loopId });
-    const jobQueue = new LoopJobQueue({ workspaceRoot: fixture.workspaceRoot, clock: { now: () => 1_000 } });
-    const jobCoordinator = new LoopJobCoordinator({
-      queue: jobQueue,
-      clock: { now: () => 1_000 },
-      incarnationId: "session-hitl-test",
-    });
-    const collisionLedger = new CollisionLedger({
-      stateManager: fixture.loopState,
-      workspaceRoot: fixture.workspaceRoot,
-      clock: { now: () => 1_000 },
-    });
-    const enqueued = await jobQueue.enqueue({
-      loopId: loop.loopId,
-      triggerKind: "manual",
-      subjectKey: `manual:${loop.loopId}`,
-    });
-    const claimed = (await jobCoordinator.dispatchReady())[0]!;
-    const runId = crypto.randomUUID();
-    const runningReport = {
-      runId,
-      loopId: loop.loopId,
-      status: "running" as const,
-      trigger: "manual" as const,
-      startedAt: 1_000,
-      jobId: claimed.jobId,
-      subjectKey: claimed.subjectKey,
-      sessionId: fixture.sessionId,
-      collisionTargets: loop.config.collisionTargets,
-    };
-    await fixture.loopState.recordRunStart(loop.loopId, runningReport);
-    expect((await collisionLedger.acquireStaticTargets({ loop, runId, priority: claimed.priority })).every((result) => result.acquired)).toBe(true);
-
-    let protectedDuringReplay = false;
-    let unrelatedStayedPending = false;
-    let unrelatedJobId = "";
-    const execute = mock(async () => {
-      const currentJob = await jobQueue.read(claimed.jobId);
-      const unrelatedJob = await jobQueue.read(unrelatedJobId);
-      const leases = await collisionLedger.readActiveLeases();
-      protectedDuringReplay = currentJob.status === "running"
-        && currentJob.leaseToken !== undefined
-        && leases.some((lease) => lease.loopId === loop.loopId && lease.runId === runId);
-      unrelatedStayedPending = unrelatedJob.status === "pending";
-      return "continued under Loop lease";
-    });
-    const registry = createRegistry([guardedTool("loop_resume_guarded", execute)]);
-    const origin = {
-      kind: "loop" as const,
-      loopId: loop.loopId,
-      runId,
-      trigger: "manual" as const,
-      approvalPolicy: "interactive" as const,
-    };
-    mockToolCallStream([{ toolCallId: "loop-resume-guarded-1", toolName: "loop_resume_guarded", input: {} }]);
-    await runQueryLoop({ ...fixture.options(registry, ["loop_resume_guarded"]), origin }, "pause Loop Session");
-    const pending = await singlePendingHitl(fixture);
-    const blockedReport = {
-      ...runningReport,
-      status: "needs_user" as const,
-      endedAt: 1_000,
-      blockedReason: "needs_user",
-      blockedByHitlIds: [pending.hitlId],
-      attentionStatus: "waiting_for_human" as const,
-      resumeCheckpoint: {
-        version: 1 as const,
-        hitlId: pending.hitlId,
-        loopId: loop.loopId,
-        runId,
-        jobId: claimed.jobId,
-        trigger: "manual" as const,
-        subjectKey: claimed.subjectKey,
-        intendedContinuation: "resume_run" as const,
-      },
-      summary: "Session is waiting for user input.",
-    };
-    await fixture.loopState.recordRunBlocked(loop.loopId, blockedReport);
-    await jobCoordinator.finish(claimed.jobId, {
-      leaseOwnerId: claimed.leaseOwnerId!,
-      leaseToken: claimed.leaseToken!,
-    }, {
-      status: "needs_user",
-      blockedReason: "needs_user",
-      blockedByHitlIds: [pending.hitlId],
-      attentionStatus: "waiting_for_human",
-      resumeCheckpoint: blockedReport.resumeCheckpoint,
-    });
-    await collisionLedger.releaseRun(loop.loopId, runId);
-    unrelatedJobId = (await jobQueue.enqueue({
-      loopId: loop.loopId,
-      triggerKind: "manual",
-      subjectKey: `unrelated:${loop.loopId}`,
-      priority: 100,
-    })).job.jobId;
-    continuation = new LoopSessionHitlContinuationCoordinator({
-      stateManager: fixture.loopState,
-      jobQueue,
-      jobCoordinator,
-      collisionLedger,
-      now: () => 1_000,
-      scheduleCleanup: () => undefined,
-    });
-
-    await fixture.coordinator.respond(identity(pending), { type: "permission_decision", decision: "approve_once" });
-    await waitFor(async () => {
-      const found = await fixture.hitl.lookup(identity(pending));
-      return found.status === "found" && found.record.status === "resolved";
-    });
-
-    expect(execute).toHaveBeenCalledTimes(1);
-    expect(protectedDuringReplay).toBe(true);
-    expect(unrelatedStayedPending).toBe(true);
-    expect((await jobQueue.read(unrelatedJobId)).status).toBe("pending");
-    expect(await jobQueue.read(enqueued.job.jobId)).toMatchObject({ status: "succeeded", attentionStatus: "clear" });
-    const finished = await fixture.loopState.read(loop.loopId);
-    expect(finished.currentRun).toBeUndefined();
-    expect(finished.lastRun?.status).toBe("succeeded");
-    expect(finished.attentionStatus).toBe("clear");
-    expect(await collisionLedger.readActiveLeases()).toEqual([]);
   });
 
   test("stores HITL checkpoints under the project root and resumes tools in Session cwd", async () => {
@@ -866,31 +725,10 @@ describe("Session HITL resume", () => {
     const registry = createRegistry([guardedTool("mutate", execute)]);
     mockToolCallStream([{ toolCallId: "perm-1", toolName: "mutate", input: { message: "raw secret value" } }]);
 
-    const loop = await fixture.loopState.create("archcode", {
-      templateId: "watch_report",
-      title: null,
-      schedule: { kind: "manual" },
-      approvalPolicy: "interactive",
-      limits: { maxIterationsPerRun: 8, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
-      taskPrompt: "Resume the guarded tool",
-      useWorktree: false,
-    });
-    fixture.store.setState({ loopId: loop.loopId });
-    const loopOrigin = {
-      kind: "loop" as const,
-      loopId: loop.loopId,
-      runId: "run-1",
-      trigger: "manual" as const,
-      approvalPolicy: "interactive" as const,
-    };
-
-    await runQueryLoop({ ...fixture.options(registry, ["mutate"]), origin: loopOrigin }, "mutate");
+    await runQueryLoop(fixture.options(registry, ["mutate"]), "mutate");
 
     const pending = await singlePendingHitl(fixture);
-    expect((await readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId)).checkpoints[0]?.origin).toEqual(loopOrigin);
-    const restarted = await recreateResumeRuntime(fixture, registry, {
-      acquire: async () => ({ complete: async () => undefined, fail: async () => undefined }),
-    });
+    const restarted = await recreateResumeRuntime(fixture, registry);
     const claimed = await restarted.coordinator.respond(identity(pending), { type: "permission_decision", decision: "approve_once" });
     expect(claimed).toMatchObject({ status: "claimed", scheduled: true, record: { status: "resume_claimed" } });
     await waitFor(async () => execute.mock.calls.length === 1);
@@ -1041,136 +879,6 @@ describe("Session HITL resume", () => {
     expect(coldStore.getState().blockedByHitlIds).toBeUndefined();
   });
 
-  test("cancelling an unknown Loop-origin continuation clears the Session blocker after the Loop is terminal", async () => {
-    const acquire = mock(async () => {
-      throw new Error("Loop continuation must not be acquired for an unknown outcome cancellation");
-    });
-    const validate = mock(async () => {
-      throw new Error("Terminal Loop execution scope is no longer runnable");
-    });
-    const fixture = await createFixture({
-      loopContinuation: { acquire },
-      executionScopeValidator: { validate },
-    });
-    const loop = await fixture.loopState.create("archcode", {
-      templateId: "watch_report",
-      title: null,
-      schedule: { kind: "manual" },
-      approvalPolicy: "interactive",
-      limits: { maxIterationsPerRun: 3, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
-      useWorktree: false,
-    });
-    fixture.store.setState({ loopId: loop.loopId });
-    const jobQueue = new LoopJobQueue({ workspaceRoot: fixture.workspaceRoot, clock: { now: () => 1_000 } });
-    const jobCoordinator = new LoopJobCoordinator({
-      queue: jobQueue,
-      clock: { now: () => 1_000 },
-      incarnationId: "unknown-loop-continuation-test",
-    });
-    const enqueued = await jobQueue.enqueue({
-      loopId: loop.loopId,
-      triggerKind: "manual",
-      subjectKey: `manual:${loop.loopId}`,
-    });
-    const claimed = (await jobCoordinator.dispatchReady())[0]!;
-    const runId = crypto.randomUUID();
-    const runningReport = {
-      runId,
-      loopId: loop.loopId,
-      status: "running" as const,
-      trigger: "manual" as const,
-      startedAt: 1_000,
-      jobId: claimed.jobId,
-      subjectKey: claimed.subjectKey,
-      sessionId: fixture.sessionId,
-    };
-    await fixture.loopState.recordRunStart(loop.loopId, runningReport);
-
-    const registry = createRegistry([askUserTool]);
-    const origin = {
-      kind: "loop" as const,
-      loopId: loop.loopId,
-      runId,
-      trigger: "manual" as const,
-      approvalPolicy: "interactive" as const,
-    };
-    mockToolCallStream([{ toolCallId: "ask-unknown-loop-continuation", toolName: "ask_user", input: {
-      questions: [{ header: "Continue", question: "Continue Loop?", options: [], custom: true }],
-    } }]);
-    await runQueryLoop({ ...fixture.options(registry, ["ask_user"]), origin }, "pause Loop Session");
-    const pending = await singlePendingHitl(fixture);
-    const blockedReport = {
-      ...runningReport,
-      status: "needs_user" as const,
-      endedAt: 1_000,
-      blockedReason: "needs_user",
-      blockedByHitlIds: [pending.hitlId],
-      attentionStatus: "waiting_for_human" as const,
-      resumeCheckpoint: {
-        version: 1 as const,
-        hitlId: pending.hitlId,
-        loopId: loop.loopId,
-        runId,
-        jobId: claimed.jobId,
-        trigger: "manual" as const,
-        subjectKey: claimed.subjectKey,
-        intendedContinuation: "resume_run" as const,
-      },
-      summary: "Session is waiting for user input.",
-    };
-    await fixture.loopState.recordRunBlocked(loop.loopId, blockedReport);
-    await jobCoordinator.finish(claimed.jobId, {
-      leaseOwnerId: claimed.leaseOwnerId!,
-      leaseToken: claimed.leaseToken!,
-    }, {
-      status: "needs_user",
-      blockedReason: "needs_user",
-      blockedByHitlIds: [pending.hitlId],
-      attentionStatus: "waiting_for_human",
-      resumeCheckpoint: blockedReport.resumeCheckpoint,
-    });
-    await transitionSessionHitlJournalPhase(fixture.workspaceRoot, fixture.sessionId, pending.hitlId, "replaying");
-    await transitionSessionHitlJournalPhase(fixture.workspaceRoot, fixture.sessionId, pending.hitlId, "continuing");
-    await fixture.loopState.recordRunFinish(loop.loopId, {
-      ...blockedReport,
-      status: "cancelled",
-      endedAt: 990,
-      reason: "cancelled_by_user",
-      blockedReason: "cancelled_by_user",
-      blockedByHitlIds: undefined,
-      attentionStatus: "clear",
-    });
-    await fixture.loopState.clearHitlBlocker(loop.loopId, pending.hitlId);
-    await jobQueue.update(enqueued.job.jobId, {
-      status: "cancelled",
-      endedAt: 990,
-      blockedReason: "cancelled_by_user",
-      blockedByHitlIds: undefined,
-      attentionStatus: "clear",
-      resumeCheckpoint: undefined,
-    });
-
-    await fixture.coordinator.cancel(identity(pending), "Acknowledge unknown Session continuation outcome");
-    await waitFor(async () => {
-      const found = await fixture.hitl.lookup(identity(pending));
-      return found.status === "found" && found.record.status === "cancelled";
-    });
-
-    expect(acquire).not.toHaveBeenCalled();
-    expect(validate).not.toHaveBeenCalled();
-    expect(await jobQueue.read(enqueued.job.jobId)).toMatchObject({
-      status: "cancelled",
-      attentionStatus: "clear",
-    });
-    expect(await fixture.loopState.read(loop.loopId)).toMatchObject({
-      lastRun: { status: "cancelled", reason: "cancelled_by_user" },
-      attentionStatus: "clear",
-    });
-    expect((await fixture.loopState.read(loop.loopId)).currentRun).toBeUndefined();
-    const coldSessions = new SessionStoreManager({ logger: silentLogger });
-    expect((await coldSessions.getOrLoad(fixture.sessionId, fixture.workspaceRoot)).getState().blockedByHitlIds).toBeUndefined();
-  });
-
   test("explicit cancel clears a Session blocker after its persisted worktree cwd is removed", async () => {
     const continueAgent = mock(async () => ({ text: "must not run", steps: 0 }));
     const fixture = await createFixture({
@@ -1237,36 +945,6 @@ describe("Session HITL resume", () => {
 
     expect(continuationRuns).toBe(0);
     expect(await readSessionHitlCheckpoint(fixture.workspaceRoot, fixture.sessionId, pending.hitlId)).toBeUndefined();
-  });
-
-  test("rejects Loop HITL replay when the checkpoint origin does not match the Session owner", async () => {
-    const fixture = await createFixture();
-    const loop = await fixture.loopState.create("archcode", {
-      templateId: "watch_report",
-      title: null,
-      schedule: { kind: "manual" },
-      approvalPolicy: "interactive",
-      limits: { maxIterationsPerRun: 8, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
-      taskPrompt: "Resume only inside this Loop",
-      useWorktree: false,
-    });
-    fixture.store.setState({ loopId: loop.loopId });
-    const execute = mock(async () => "must not run");
-    const registry = createRegistry([guardedTool("loop-mutate", execute)]);
-    mockToolCallStream([{ toolCallId: "loop-perm", toolName: "loop-mutate", input: {} }]);
-    await runQueryLoop(fixture.options(registry, ["loop-mutate"]), "pause without Loop origin");
-    const pending = await singlePendingHitl(fixture);
-
-    await expect(runPreparedSessionResume(fixture.adapter(registry), pending, {
-      type: "permission_decision",
-      decision: "approve_once",
-    })).rejects.toMatchObject({
-      name: "SessionExecutionScopeConflictError",
-      code: "SESSION_LOOP_HITL_ORIGIN_MISMATCH",
-    } satisfies Partial<SessionExecutionScopeConflictError>);
-
-    expect(execute).not.toHaveBeenCalled();
-    expect(await readSessionHitlCheckpoint(fixture.workspaceRoot, fixture.sessionId, pending.hitlId)).toBeDefined();
   });
 
   test("chained Session HITL pause from continuation preserves the new blocker", async () => {
@@ -1483,7 +1161,6 @@ async function createFixture(options: {
     status: ToolChildSessionLinkStatus,
   ) => Promise<void>;
   readonly readCheckpoint?: (workspaceRoot: string, sessionId: string, hitlId: string) => ReturnType<typeof readSessionHitlCheckpoint>;
-  readonly loopContinuation?: SessionLoopHitlContinuationCoordinator;
   readonly executionScopeValidator?: Pick<SessionExecutionScopeValidator, "validate">;
   readonly hitlFactory?: (options: ConstructorParameters<typeof HitlService>[0]) => HitlService;
   readonly sessionStoreManager?: SessionStoreManager;
@@ -1499,8 +1176,7 @@ async function createFixture(options: {
   }
   const store = sessions.create(sessionId, workspaceRoot, options.sessionIdentity ?? { agentName: "engineer" });
   const goalState = new GoalStateManager(workspaceRoot, silentLogger);
-  const loopState = new LoopStateManager(workspaceRoot, silentLogger);
-  const hitlOptions = { workspaceRoot, project: { slug: "archcode", name: "ArchCode" }, sessions, goalState, loopState };
+  const hitlOptions = { workspaceRoot, project: { slug: "archcode", name: "ArchCode" }, sessions, goalState };
   const hitl = options.hitlFactory?.(hitlOptions) ?? new HitlService(hitlOptions);
   const approvals = new ProjectApprovalManager(silentLogger);
   await approvals.load(workspaceRoot);
@@ -1509,7 +1185,6 @@ async function createFixture(options: {
     project: { slug: "archcode", name: "ArchCode", workspaceRoot, addedAt: new Date().toISOString() },
     goalState,
     goalCancellation: { cancel: async (goalId, request) => await goalState.cancel(goalId, request.reason) },
-    loopState,
     hitl,
     hitlResumeCoordinator: new ResumeCoordinator({ hitl, adapters: {} }),
     memory: new MemoryFileManager({ project: join(workspaceRoot, ".archcode", "memory"), user: join(workspaceRoot, ".archcode", "user-memory") }),
@@ -1518,7 +1193,6 @@ async function createFixture(options: {
   const resolver = createAliasedResolver(workspaceRoot, sessions, projectContext);
   const executionScopeValidator = options.executionScopeValidator ?? new SessionExecutionScopeValidator({
     projectContextResolver: resolver,
-    loopExecutionClaimResolver: allowLoopExecutionClaims,
   });
   const adapter = (registry: ReturnType<typeof createRegistry>) => new SessionHitlResumeAdapter({
     workspaceRoot,
@@ -1531,7 +1205,6 @@ async function createFixture(options: {
     ...(options.updateChildSessionLinkForHitl === undefined ? {} : {
       updateChildSessionLinkForHitl: options.updateChildSessionLinkForHitl,
     }),
-    ...(options.loopContinuation === undefined ? {} : { loopContinuation: options.loopContinuation }),
     ...(options.readCheckpoint === undefined ? {} : { readCheckpoint: options.readCheckpoint }),
     getAgent: async () => options.getAgent?.({ workspaceRoot, sessionId, store, hitl }) ?? noOpAgent(store),
     ...(options.attachSessionEvents === undefined ? {} : { attachSessionEvents: options.attachSessionEvents }),
@@ -1555,7 +1228,6 @@ async function createFixture(options: {
     sessions,
     store,
     hitl,
-    loopState,
     coordinator,
     adapter,
     options(registry: ReturnType<typeof createRegistry>, allowedTools: string[]): QueryLoopOptions {
@@ -1580,12 +1252,10 @@ async function createFixture(options: {
 async function recreateResumeRuntime(
   fixture: Awaited<ReturnType<typeof createFixture>>,
   registry: ReturnType<typeof createRegistry>,
-  loopContinuation?: SessionLoopHitlContinuationCoordinator,
 ) {
   const sessions = new SessionStoreManager({ logger: silentLogger });
   const goalState = new GoalStateManager(fixture.workspaceRoot, silentLogger);
-  const loopState = new LoopStateManager(fixture.workspaceRoot, silentLogger);
-  const hitl = new HitlService({ workspaceRoot: fixture.workspaceRoot, project: { slug: "archcode", name: "ArchCode" }, sessions, goalState, loopState });
+  const hitl = new HitlService({ workspaceRoot: fixture.workspaceRoot, project: { slug: "archcode", name: "ArchCode" }, sessions, goalState });
   const approvals = new ProjectApprovalManager(silentLogger);
   await approvals.load(fixture.workspaceRoot);
   const projectContext: ProjectContext = {
@@ -1593,7 +1263,6 @@ async function recreateResumeRuntime(
     project: { slug: "archcode", name: "ArchCode", workspaceRoot: fixture.workspaceRoot, addedAt: new Date().toISOString() },
     goalState,
     goalCancellation: { cancel: async (goalId, request) => await goalState.cancel(goalId, request.reason) },
-    loopState,
     hitl,
     hitlResumeCoordinator: new ResumeCoordinator({ hitl, adapters: {} }),
     memory: new MemoryFileManager({ project: join(fixture.workspaceRoot, ".archcode", "memory"), user: join(fixture.workspaceRoot, ".archcode", "user-memory") }),
@@ -1602,7 +1271,6 @@ async function recreateResumeRuntime(
   const resolver = createAliasedResolver(fixture.workspaceRoot, sessions, projectContext);
   const executionScopeValidator = new SessionExecutionScopeValidator({
     projectContextResolver: resolver,
-    loopExecutionClaimResolver: allowLoopExecutionClaims,
   });
   const adapter = new SessionHitlResumeAdapter({
     workspaceRoot: fixture.workspaceRoot,
@@ -1613,7 +1281,6 @@ async function recreateResumeRuntime(
     skillService: testSkillService,
     getAgent: async (_workspaceRoot, sessionId) => noOpAgent(await sessions.getOrLoad(sessionId, fixture.workspaceRoot)),
     reserveSessionHitlResume: () => createTestResumeLease(),
-    ...(loopContinuation === undefined ? {} : { loopContinuation }),
   });
   const coordinator = new ResumeCoordinator({ hitl, adapters: { session: adapter } });
   projectContext.hitlResumeCoordinator = coordinator;

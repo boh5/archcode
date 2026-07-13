@@ -1,0 +1,146 @@
+import { useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { ArrowLeft, Pause, Play, Settings2, Trash2 } from "lucide-react";
+import { useAutomation, useAutomationInvocations } from "../api/queries";
+import { useDeleteAutomation, usePauseAutomation, useResumeAutomation, useRunAutomationNow } from "../api/mutations";
+import type { Automation, AutomationInvocation } from "../api/types";
+import { AutomationDialog } from "../components/features/AutomationDialog";
+import { formatTrigger } from "./automations";
+
+export function AutomationDetailRoute() {
+  const { slug = "", automationId = "" } = useParams<{ slug: string; automationId: string }>();
+  const navigate = useNavigate();
+  const [editing, setEditing] = useState(false);
+  const automation = useAutomation(slug, automationId);
+  const invocations = useAutomationInvocations(slug, automationId);
+  const runNow = useRunAutomationNow();
+  const pause = usePauseAutomation();
+  const resume = useResumeAutomation();
+  const remove = useDeleteAutomation();
+
+  if (automation.isLoading) return <div className="p-4 text-text-tertiary">Loading automation…</div>;
+  if (!automation.data) return <div className="p-4 text-error">Automation not found</div>;
+
+  const value = automation.data;
+  const failedInvocation = invocations.data?.find((item) => item.status === "failed");
+
+  return (
+    <div className="flex h-full flex-col">
+      <AutomationHeader
+        automation={value}
+        isRunningNow={runNow.isPending}
+        onDelete={() => remove.mutate({ slug, automationId }, { onSuccess: () => navigate(`/projects/${slug}/automations`) })}
+        onEdit={() => setEditing(true)}
+        onPause={() => pause.mutate({ slug, automationId })}
+        onResume={() => resume.mutate({ slug, automationId })}
+        onRunNow={() => runNow.mutate({ slug, automationId })}
+        slug={slug}
+      />
+      <main className="mx-auto w-full max-w-4xl space-y-4 overflow-y-auto p-4">
+        <AutomationConfiguration automation={value} />
+        <AutomationAttention failedInvocation={failedInvocation} />
+        <InvocationHistory invocations={invocations.data} isLoading={invocations.isLoading} slug={slug} />
+      </main>
+      <AutomationDialog automation={value} onClose={() => setEditing(false)} open={editing} slug={slug} />
+    </div>
+  );
+}
+
+function AutomationHeader({
+  automation,
+  isRunningNow,
+  onDelete,
+  onEdit,
+  onPause,
+  onResume,
+  onRunNow,
+  slug,
+}: {
+  automation: Automation;
+  isRunningNow: boolean;
+  onDelete: () => void;
+  onEdit: () => void;
+  onPause: () => void;
+  onResume: () => void;
+  onRunNow: () => void;
+  slug: string;
+}) {
+  return (
+    <header className="flex h-12 items-center gap-3 border-b border-border-subtle px-4">
+      <Link className="text-text-tertiary" to={`/projects/${slug}/automations`}>
+        <ArrowLeft size={15} />
+      </Link>
+      <h1 className="min-w-0 flex-1 truncate font-semibold">{automation.name}</h1>
+      <button onClick={onEdit} title="Edit Automation"><Settings2 size={15} /></button>
+      <button className="inline-flex items-center gap-1 rounded-sm bg-accent px-3 py-1.5 text-sm text-bg-base" disabled={isRunningNow} onClick={onRunNow}>
+        <Play size={14} /> Run now
+      </button>
+      {automation.status === "paused" ? (
+        <button onClick={onResume}><Play size={15} /> Resume</button>
+      ) : (
+        <button onClick={onPause}><Pause size={15} /> Pause</button>
+      )}
+      <button onClick={onDelete} title="Delete Automation"><Trash2 size={15} /></button>
+    </header>
+  );
+}
+
+function AutomationConfiguration({ automation }: { automation: Automation }) {
+  const action = automation.action.kind === "start_session"
+    ? `Start an Engineer Session in ${automation.action.location}`
+    : `Send to Session ${automation.action.sessionId}`;
+
+  return (
+    <section className="rounded-md border border-border-default bg-bg-surface p-4">
+      <h2 className="font-semibold">Configuration</h2>
+      <dl className="mt-3 grid gap-2 text-sm">
+        <AutomationDefinition label="Schedule">{formatTrigger(automation.trigger)}</AutomationDefinition>
+        <AutomationDefinition label="Action">{action}</AutomationDefinition>
+        <AutomationDefinition label="Message"><span className="whitespace-pre-wrap">{automation.action.message}</span></AutomationDefinition>
+      </dl>
+    </section>
+  );
+}
+
+function AutomationDefinition({ children, label }: { children: React.ReactNode; label: string }) {
+  return <div><dt className="text-text-muted">{label}</dt><dd>{children}</dd></div>;
+}
+
+function AutomationAttention({ failedInvocation }: { failedInvocation?: AutomationInvocation }) {
+  return (
+    <section className="rounded-md border border-border-default bg-bg-surface p-4">
+      <h2 className="font-semibold">Attention</h2>
+      {failedInvocation ? (
+        <p className="mt-2 text-sm text-error">Dispatch failed: {failedInvocation.error ?? failedInvocation.id}</p>
+      ) : (
+        <p className="mt-2 text-sm text-text-tertiary">No failed dispatches. Session approvals and questions appear in the normal attention queue.</p>
+      )}
+    </section>
+  );
+}
+
+function InvocationHistory({ invocations, isLoading, slug }: {
+  invocations?: AutomationInvocation[];
+  isLoading: boolean;
+  slug: string;
+}) {
+  return (
+    <section className="rounded-md border border-border-default bg-bg-surface p-4">
+      <h2 className="font-semibold">Invocation History</h2>
+      {isLoading ? <p className="mt-2 text-sm text-text-tertiary">Loading history…</p> : null}
+      {!isLoading && !invocations?.length ? <p className="mt-2 text-sm text-text-tertiary">No invocations yet.</p> : null}
+      {invocations?.length ? <div className="mt-2 divide-y divide-border-subtle">{invocations.map((item) => <InvocationRow item={item} key={item.id} slug={slug} />)}</div> : null}
+    </section>
+  );
+}
+
+function InvocationRow({ item, slug }: { item: AutomationInvocation; slug: string }) {
+  return (
+    <div className="py-2 text-sm">
+      <span className="font-medium">{item.status}</span>
+      <span className="ml-2 text-text-muted">due {new Date(item.dueAt).toLocaleString()}</span>
+      {item.sessionId ? <Link className="ml-2 text-accent hover:underline" to={`/projects/${slug}/sessions/${item.sessionId}`}>Open Session</Link> : null}
+      {item.error ? <p className="text-error">{item.error}</p> : null}
+    </div>
+  );
+}

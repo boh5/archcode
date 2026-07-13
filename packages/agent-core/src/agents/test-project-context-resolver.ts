@@ -23,7 +23,6 @@ export function createTestProjectContextResolver(
       adapters: {
         session: { prepare: async () => createPreparedHitlResume(async () => undefined) },
         goal: { prepare: async () => createPreparedHitlResume(async () => undefined) },
-        loop: { prepare: async () => createPreparedHitlResume(async () => undefined) },
       },
       logger: silentLogger,
     }),

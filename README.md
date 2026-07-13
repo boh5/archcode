@@ -9,7 +9,7 @@ Unlike a coding CLI that runs a task and exits, ArchCode keeps the engineering w
 ## What ArchCode gives you
 
 - **Always-on server runtime** — run ArchCode on a local machine or remote server and keep coding work moving even when your terminal is closed.
-- **Web workbench** — manage projects, sessions, goals, loops, approvals, and reviews from a browser.
+- **Web workbench** — manage projects, sessions, goals, automations, approvals, and reviews from a browser.
 - **AI engineering workflow** — describe a goal, let agents plan and build, then review evidence before accepting the result.
 - **Human-in-the-loop control** — approve sensitive actions, answer agent questions, and inspect what changed.
 - **Bring your own models** — configure OpenAI-compatible providers and choose models per agent role.
@@ -96,7 +96,7 @@ ArchCode keeps project ownership separate from execution location: a Session is
 always stored under its registered project, while its working directory can be
 the canonical checkout or a registered worktree from the same Git repository.
 All file, shell, Git, Skill, and LSP tools use that Session working directory;
-Goal, Loop, HITL, memory, and Session state remain owned by the project root.
+Goal, Automation, HITL, memory, and Session state remain owned by the project root.
 This is working-directory and Git-branch isolation, not an operating-system
 sandbox: the normal permission policy still governs commands and explicit path
 access outside the worktree.
@@ -106,9 +106,8 @@ access outside the worktree.
   does not provide worktree list or remove tools.
 - A Goal can opt into a dedicated worktree when the draft is created. Retries
   reuse the same validated worktree; terminal Goals preserve it for review.
-- Loop jobs use isolated worktrees when configured. Cleanup removes only proven
-  unchanged worktrees, treats ignored files as changes, and first migrates every
-  Session reference back to the project checkout.
+- An Automation may create an ordinary Session in a dedicated worktree. That
+  worktree remains owned by the Session and follows the normal Session lifecycle.
 - Git worktree lifecycle changes go through ArchCode's shared worktree service,
   so ownership checks and cleanup policy stay centralized. Agent shell policy
   additionally denies direct worktree enumeration/lifecycle commands and direct

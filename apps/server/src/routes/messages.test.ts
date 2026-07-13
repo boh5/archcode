@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { AgentRunningError, ChildSessionCwdMismatchError, ProjectRegistry, SessionCwdTransitionInProgressError, SessionExecutionScopeConflictError, SessionFamilyActiveError, SessionFamilyStopInProgressError, SessionHitlBlockedError, SessionHitlJournalBlockedError, SessionHitlResumeInProgressError, silentLogger } from "@archcode/agent-core";
+import { AgentRunningError, ChildSessionCwdMismatchError, ProjectRegistry, SessionCwdTransitionInProgressError, SessionFamilyActiveError, SessionFamilyStopInProgressError, SessionHitlBlockedError, SessionHitlJournalBlockedError, SessionHitlResumeInProgressError, silentLogger } from "@archcode/agent-core";
 import type { ActiveSessionExecution, AgentRuntime } from "@archcode/agent-core";
 import { createServerApp } from "../app";
 import { globalEventBus } from "../events/global-event-bus";
@@ -365,37 +365,6 @@ describe("messages routes", () => {
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({
       error: { code: "BAD_REQUEST", message: conflict.message },
-    });
-  });
-
-  test("POST message outside its persisted execution scope returns stable 409", async () => {
-    const { app, project, runtime } = await createTestApp("execution-scope-conflict");
-    const conflict = new SessionExecutionScopeConflictError(
-      "SESSION_LOOP_EXECUTION_SCOPE_REQUIRED",
-      "loop-session",
-      "Loop Session loop-session can execute only inside its owner Loop",
-      { loopId: "loop-1" },
-    );
-    const start = runtime.startSessionMessageExecution as unknown as ReturnType<typeof mock>;
-    start.mockImplementation(async () => { throw conflict; });
-
-    const res = await app.request(`/api/projects/${project.slug}/sessions/loop-session/messages`, {
-      method: "POST",
-      body: JSON.stringify({ text: "Run this outside the Loop" }),
-      headers: { "content-type": "application/json" },
-    });
-
-    expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({
-      error: {
-        code: "BAD_REQUEST",
-        message: conflict.message,
-        details: {
-          scopeCode: "SESSION_LOOP_EXECUTION_SCOPE_REQUIRED",
-          sessionId: "loop-session",
-          loopId: "loop-1",
-        },
-      },
     });
   });
 

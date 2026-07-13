@@ -21,7 +21,7 @@ export const TOOL_GIT_DIFF = "git_diff";
 export const TOOL_WORKTREE_ENTER = "worktree_enter";
 export const TOOL_WORKTREE_EXIT = "worktree_exit";
 
-// GitHub connectors (Loop profile-only; not default agent tools)
+// Generic GitHub connectors; registered globally but not default agent tools.
 export const TOOL_GITHUB_GET_PULL_REQUEST = "github_get_pull_request";
 export const TOOL_GITHUB_LIST_PULL_REQUESTS = "github_list_pull_requests";
 export const TOOL_GITHUB_GET_PULL_REQUEST_CHECKS = "github_get_pull_request_checks";

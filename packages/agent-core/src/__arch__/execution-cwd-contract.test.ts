@@ -56,7 +56,6 @@ describe("Session execution cwd architecture", () => {
       "tools/types.ts",
       "agents/query/types.ts",
       "commands/types.ts",
-      "loops/tool-target-extractors.ts",
       "tools/permission/scopes.ts",
     ] as const;
 
@@ -68,12 +67,11 @@ describe("Session execution cwd architecture", () => {
     expect(source("tools/types.ts")).not.toMatch(/\bworkspaceRoot:\s*string\s*;/);
     expect(source("agents/query/types.ts")).not.toMatch(/\bworkspaceRoot\??:\s*string\s*;/);
     expect(source("commands/types.ts")).not.toMatch(/\bworkspaceRoot\??:\s*string\s*;/);
-    expect(source("loops/tool-target-extractors.ts")).not.toMatch(/\bworkspaceRoot:\s*string\s*;/);
     expect(source("tools/permission/scopes.ts")).not.toMatch(/\bworkspaceRoot:\s*string\s*;/);
   });
 
   test("tool code never reads an overloaded ctx.workspaceRoot field", () => {
-    const files = ["tools", "agents/query", "execution", "loops"]
+    const files = ["tools", "agents/query", "execution"]
       .flatMap(productionTypeScriptFiles);
 
     const violations = files.filter((file) => /\bctx\.workspaceRoot\b/.test(source(file)));

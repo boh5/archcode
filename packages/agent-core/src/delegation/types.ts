@@ -1,7 +1,6 @@
 import type { StoreApi } from "zustand";
 import type { SessionStoreState } from "../store/types";
 import type { AgentResult } from "../agents/types";
-import type { ToolExecutionOrigin } from "../tools/types";
 
 export interface ChildExecutionRequest {
   readonly parentStore: StoreApi<SessionStoreState>;
@@ -17,8 +16,6 @@ export interface ChildExecutionRequest {
   readonly background?: boolean;
   readonly currentDepth?: number;
   readonly parentAbort?: AbortSignal;
-  /** Preserves Loop run authority and guardrails across delegated execution. */
-  readonly origin?: ToolExecutionOrigin;
 }
 
 export interface ChildExecutionHandle {
@@ -47,6 +44,4 @@ export interface ResumeChildRequest {
   readonly background?: boolean;
   readonly currentDepth?: number;
   readonly parentAbort?: AbortSignal;
-  /** Preserves Loop run authority and guardrails across delegated continuation. */
-  readonly origin?: ToolExecutionOrigin;
 }

@@ -43,7 +43,7 @@ describe("WorktreeService", () => {
   test("self-heals an unregistered deterministic branch left at the requested base", async () => {
     const repo = await createGitRepo("branch-only-self-heal");
     const baseSha = await git(repo, ["rev-parse", "HEAD"]);
-    const input = { owner: { type: "loop" as const, id: "loop-self-heal" }, uniqueId: "job-123456789", baseSha };
+    const input = { owner: { type: "session" as const, id: "session-self-heal" }, uniqueId: "job-123456789", baseSha };
     const names = managedWorktreeNames(input);
     await git(repo, ["branch", names.branchName, baseSha]);
 
@@ -56,7 +56,7 @@ describe("WorktreeService", () => {
   test("preserves an unregistered deterministic branch that advanced beyond the requested base", async () => {
     const repo = await createGitRepo("branch-only-preserve");
     const baseSha = await git(repo, ["rev-parse", "HEAD"]);
-    const input = { owner: { type: "loop" as const, id: "loop-preserve" }, uniqueId: "job-123456789", baseSha };
+    const input = { owner: { type: "session" as const, id: "session-preserve" }, uniqueId: "job-123456789", baseSha };
     const names = managedWorktreeNames(input);
     await git(repo, ["branch", names.branchName, baseSha]);
     await git(repo, ["commit", "--allow-empty", "-m", "advance orphan"]);
@@ -194,7 +194,7 @@ describe("WorktreeService", () => {
     await git(repo, ["add", ".gitignore"]);
     await git(repo, ["commit", "-m", "ignore dependencies"]);
     const service = new WorktreeService({ canonicalRoot: repo });
-    const created = await service.create({ owner: { type: "loop", id: "ignored-remove-loop" } });
+    const created = await service.create({ owner: { type: "session", id: "ignored-remove-session" } });
     const ignoredFile = join(created.worktreePath, "node_modules", "cache.bin");
     await mkdir(dirname(ignoredFile), { recursive: true });
     await writeFile(ignoredFile, "must survive cleanup\n");
@@ -250,7 +250,7 @@ describe("WorktreeService", () => {
   test("runs beforeRemove after final validation and before lifecycle deletion", async () => {
     const repo = await createGitRepo("before-remove");
     const service = new WorktreeService({ canonicalRoot: repo });
-    const created = await service.create({ owner: { type: "loop", id: "loop-before-remove" } });
+    const created = await service.create({ owner: { type: "session", id: "session-before-remove" } });
     const beforeRemove = mock(async () => {
       expect(await pathExists(created.worktreePath)).toBe(true);
       expect(await git(repo, ["rev-parse", `refs/heads/${created.branchName}`])).toBe(created.baseSha);
@@ -270,7 +270,7 @@ describe("WorktreeService", () => {
   test("preserves the worktree and branch when beforeRemove fails", async () => {
     const repo = await createGitRepo("before-remove-failure");
     const service = new WorktreeService({ canonicalRoot: repo });
-    const created = await service.create({ owner: { type: "loop", id: "loop-before-remove-failure" } });
+    const created = await service.create({ owner: { type: "session", id: "session-before-remove-failure" } });
 
     await expect(service.remove({
       path: created.worktreePath,
@@ -289,7 +289,7 @@ describe("WorktreeService", () => {
     await git(repo, ["add", ".gitignore"]);
     await git(repo, ["commit", "-m", "ignore generated state"]);
     const service = new WorktreeService({ canonicalRoot: repo });
-    const created = await service.create({ owner: { type: "loop", id: "loop-revalidation" } });
+    const created = await service.create({ owner: { type: "session", id: "session-revalidation" } });
     const events: string[] = [];
     const generated = join(created.worktreePath, "generated", "late.bin");
 
@@ -317,7 +317,7 @@ describe("WorktreeService", () => {
   test("invokes the pre-detach failure callback exactly once when git worktree remove fails", async () => {
     const repo = await createGitRepo("remove-command-failure");
     const created = await new WorktreeService({ canonicalRoot: repo }).create({
-      owner: { type: "loop", id: "remove-command-failure-loop" },
+      owner: { type: "session", id: "remove-command-failure-session" },
     });
     const delegate = createProcessRunner();
     const runner: ProcessRunner = {

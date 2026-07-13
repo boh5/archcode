@@ -1,13 +1,12 @@
 import { hitlIdentityKey, type HitlOwnerKey, type HitlProjection, type HitlRecord } from "@archcode/protocol";
 
 import type { GoalState, GoalStateManager } from "../goals/state";
-import type { LoopState, LoopStateManager } from "../loops/state";
 import type { SessionStoreManager } from "../store/session-store-manager";
 import type { SessionSummary } from "../store/helpers";
 import { HitlOwnerStore } from "./owner-store";
 import { resolveHitlOwnerPath } from "./owner-paths";
 
-export type HitlAggregationScope = "project" | "session" | "goal" | "loop";
+export type HitlAggregationScope = "project" | "session" | "goal";
 
 export interface HitlAggregationQuery {
   readonly scope: HitlAggregationScope;
@@ -21,7 +20,6 @@ export interface HitlAggregationContext {
   readonly project: { readonly slug: string; readonly name?: string };
   readonly sessions: SessionStoreManager;
   readonly goalState: GoalStateManager;
-  readonly loopState: LoopStateManager;
 }
 
 interface OwnerDescriptor {
@@ -42,7 +40,6 @@ export async function aggregateHitlProjections(
   for (const descriptor of owners) {
     const filePath = await resolveHitlOwnerPath(context.workspaceRoot, descriptor.owner, {
       goalState: context.goalState,
-      loopState: context.loopState,
     });
     const store = new HitlOwnerStore(filePath, descriptor.owner);
     for (const record of await store.list()) {
@@ -60,11 +57,9 @@ export async function collectKnownHitlOwners(context: HitlAggregationContext): P
   // registration slug: remove/re-add may intentionally assign a new slug while
   // durable owner history still belongs to the same workspace resources.
   const goals = await context.goalState.listGoals();
-  const loops = await context.loopState.list();
   return [
     ...sessions.map((session) => ownerKey(context.project.slug, "session", session.sessionId)),
     ...goals.map((goal) => ownerKey(context.project.slug, "goal", goal.id)),
-    ...loops.map((loop) => ownerKey(context.project.slug, "loop", loop.loopId)),
   ];
 }
 
@@ -91,21 +86,17 @@ export function toHitlProjection(
 async function collectOwners(context: HitlAggregationContext, query: HitlAggregationQuery): Promise<OwnerDescriptor[]> {
   const sessions = await collectAllSessions(context.sessions, context.workspaceRoot);
   const goals = await context.goalState.listGoals();
-  const loops = await context.loopState.list();
 
   switch (query.scope) {
     case "project":
       return [
         ...sessions.map((session) => sessionDescriptor(context.project.slug, session, ["project", context.project.slug, "session", session.sessionId])),
         ...goals.map((goal) => goalDescriptor(context.project.slug, goal, ["project", context.project.slug, "goal", goal.id])),
-        ...loops.map((loop) => loopDescriptor(context.project.slug, loop, ["project", context.project.slug, "loop", loop.loopId])),
       ];
     case "session":
       return sessionScopeOwners(context.project.slug, sessions, requiredOwnerId(query), query.includeChildren === true);
     case "goal":
       return goalScopeOwners(context.project.slug, sessions, goals, requiredOwnerId(query), query.includeChildren === true);
-    case "loop":
-      return loopScopeOwners(context.project.slug, sessions, goals, loops, requiredOwnerId(query), query.includeChildren === true);
   }
 }
 
@@ -144,36 +135,6 @@ function goalScopeOwners(projectSlug: string, sessions: SessionSummary[], goals:
   return descriptors;
 }
 
-function loopScopeOwners(
-  projectSlug: string,
-  sessions: SessionSummary[],
-  goals: GoalState[],
-  loops: LoopState[],
-  loopId: string,
-  includeChildren: boolean,
-): OwnerDescriptor[] {
-  const descriptors: OwnerDescriptor[] = [];
-  const loop = loops.find((entry) => entry.loopId === loopId);
-  if (loop !== undefined) descriptors.push(loopDescriptor(projectSlug, loop, ["loop", loopId]));
-
-  const loopGoals = goals.filter((goal) => goal.loopId === loopId);
-  descriptors.push(...loopGoals.map((goal) => goalDescriptor(projectSlug, goal, ["loop", loopId, "goal", goal.id])));
-
-  const directLoopSessions = sessions.filter((session) => session.loopId === loopId);
-  const goalSessions = sessions.filter((session) => loopGoals.some((goal) => goal.id === session.goalId));
-  const selectedSessions = includeChildren
-    ? includeSessionDescendants([...directLoopSessions, ...goalSessions], sessions)
-    : directLoopSessions;
-  descriptors.push(...selectedSessions.map((session) => sessionDescriptor(projectSlug, session, loopSessionProjectionPath(loopId, loopGoals, session))));
-  return descriptors;
-}
-
-function loopSessionProjectionPath(loopId: string, loopGoals: GoalState[], session: SessionSummary): string[] {
-  const childGoal = loopGoals.find((goal) => goal.id === session.goalId);
-  if (childGoal !== undefined) return ["loop", loopId, "goal", childGoal.id, "session", session.sessionId];
-  return ["loop", loopId, "session", session.sessionId];
-}
-
 function includeSessionDescendants(seed: SessionSummary[], sessions: SessionSummary[]): SessionSummary[] {
   const selected = new Map(seed.map((session) => [session.sessionId, session]));
   let changed = true;
@@ -208,7 +169,6 @@ function sessionDescriptor(projectSlug: string, session: SessionSummary, project
       rootSessionId: session.rootSessionId,
       parentSessionId: session.parentSessionId,
       goalId: session.goalId,
-      loopId: session.loopId,
       projectionPath,
     }),
   };
@@ -218,15 +178,7 @@ function goalDescriptor(projectSlug: string, goal: GoalState, projectionPath: st
   return {
     owner: ownerKey(projectSlug, "goal", goal.id),
     projectionPath,
-    ancestry: withoutUndefined({ goalId: goal.id, loopId: goal.loopId, projectionPath }),
-  };
-}
-
-function loopDescriptor(projectSlug: string, loop: LoopState, projectionPath: string[]): OwnerDescriptor {
-  return {
-    owner: ownerKey(projectSlug, "loop", loop.loopId),
-    projectionPath,
-    ancestry: { loopId: loop.loopId, projectionPath },
+    ancestry: withoutUndefined({ goalId: goal.id, projectionPath }),
   };
 }
 
@@ -261,19 +213,14 @@ function allowedActionsFor(record: HitlRecord): HitlProjection["allowedActions"]
   switch (record.source.type) {
     case "ask_user":
     case "goal_question":
-    case "loop_question":
       return ["answer", "cancel"];
     case "tool_permission":
       return ["approve", "deny", "cancel"];
     case "goal_approval":
     case "goal_budget":
-    case "loop_approval":
       return ["approve", "deny", "cancel"];
     case "goal_review":
       return ["approve", "deny", "cancel"];
-    case "loop_blocker":
-    case "loop_retry":
-      return ["approve", "cancel"];
   }
 }
 

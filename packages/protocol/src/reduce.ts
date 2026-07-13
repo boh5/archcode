@@ -504,7 +504,7 @@ export function reduceStreamEvent(
       };
     }
 
-    case "loop-error": {
+    case "execution-error": {
       const matchingStep =
         event.step !== undefined
           ? state.steps.find(
@@ -677,29 +677,6 @@ export function reduceStreamEvent(
         blockedHitl: state.blockedHitl?.hitlId === event.hitlId ? undefined : state.blockedHitl,
         blockedByHitlIds: blockedByHitlIds === undefined || blockedByHitlIds.length === 0 ? undefined : blockedByHitlIds,
       };
-    }
-
-    case "loop.state_change": {
-      const loops = { ...(state.loops ?? {}) };
-      loops[event.loopId] = event.state;
-
-      return { loops };
-    }
-
-    case "loop.run_appended": {
-      const loops = { ...(state.loops ?? {}) };
-      const existing = loops[event.loopId];
-
-      if (existing) {
-        loops[event.loopId] = {
-          ...existing,
-          lastRun: event.report,
-          runCount: existing.runCount + 1,
-          updatedAt: event.report.startedAt,
-        };
-      }
-
-      return { loops };
     }
 
     case "compact": {

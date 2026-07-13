@@ -17,7 +17,6 @@ import {
 } from "../execution/session-hitl-checkpoint";
 import { HitlService } from "../hitl/service";
 import { silentLogger } from "../logger";
-import { LoopStateManager } from "../loops/state";
 import { SessionStoreManager } from "../store/session-store-manager";
 import type { SessionStoreState } from "../store/types";
 import {
@@ -92,7 +91,6 @@ async function createFixture(): Promise<Fixture> {
     project: { slug: "project-a", name: "Project A" },
     sessions,
     goalState,
-    loopState: new LoopStateManager(TMP_ROOT, silentLogger),
     logger: silentLogger,
   });
   const families = new FakeFamilyController();

@@ -133,9 +133,9 @@ describe("HitlInbox", () => {
   });
 
   test("renders custom empty message", () => {
-    const result = HitlInbox({ projections: [], emptyMessage: "No HITL for this loop" });
+    const result = HitlInbox({ projections: [], emptyMessage: "No HITL for this project" });
     const text = textContent(result);
-    expect(text).toContain("No HITL for this loop");
+    expect(text).toContain("No HITL for this project");
   });
 
   test("renders HitlCard for each projection", () => {
@@ -183,29 +183,18 @@ describe("HitlInbox", () => {
     expect(cardProps?.projection.hitlId).toBe("hitl-pending");
   });
 
-  test("shows same hitlId on child Session and parent Goal/Loop pages without duplicates within a page", () => {
-    const sharedProjection = makeProjection({
-      hitlId: "shared-hitl",
-      owner: { projectSlug: "demo", ownerType: "session", ownerId: "child-session" },
-      ancestry: { goalId: "goal-1", loopId: "loop-1" },
-    });
-    const result = HitlInbox({ projections: [sharedProjection, sharedProjection] });
-    const cards = findAll(result, (el) => el.type === HitlCard);
-    expect(cards).toHaveLength(1);
-  });
 
   test("renders owner context with ancestry for parent surface display", () => {
     const projection = makeProjection({
       hitlId: "child-hitl",
       owner: { projectSlug: "demo", ownerType: "session", ownerId: "child-session" },
-      ancestry: { loopId: "loop-1", goalId: "goal-1" },
+      ancestry: { goalId: "goal-1" },
     });
     const result = HitlInbox({ projections: [projection] });
     const cards = findAll(result, (el) => el.type === HitlCard);
     expect(cards).toHaveLength(1);
     const cardProps = cards[0]?.props as { projection: HitlProjection } | undefined;
     expect(cardProps?.projection.owner.ownerId).toBe("child-session");
-    expect(cardProps?.projection.ancestry?.loopId).toBe("loop-1");
     expect(cardProps?.projection.ancestry?.goalId).toBe("goal-1");
   });
 

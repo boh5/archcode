@@ -1,13 +1,9 @@
 import { queryOptions, useQuery, useQueries } from "@tanstack/react-query";
 import { apiFetch } from "./client";
-import type {
-  AgentDescriptor,
-  LoopBudgetSnapshot,
-  LoopCollisionSnapshot,
-} from "@archcode/protocol";
+import type { AgentDescriptor } from "@archcode/protocol";
 import type {
   DashboardGoal,
-  DashboardLoop,
+  DashboardAutomation,
   DiffFile,
   DirectoryListResponse,
   DirectorySearchResponse,
@@ -16,11 +12,8 @@ import type {
   HitlProjection,
   HitlScope,
   HitlStatusFilter,
-  LoopIntegrationStatusSnapshot,
-  LoopKillState,
-  LoopRunReport,
-  LoopState,
-  LoopStateResponse,
+  Automation,
+  AutomationInvocation,
   Project,
   Session,
   SessionSummary,
@@ -51,16 +44,10 @@ export const queryKeys = {
     list: (path: string, limit?: number) => ["directories", "list", path, limit] as const,
     search: (query: string, limit?: number) => ["directories", "search", query, limit] as const,
   },
-  // ─── Loop query keys ───
-  projectLoops: (slug: string) => ["projects", slug, "loops"] as const,
-  loop: (slug: string, loopId: string) => ["projects", slug, "loops", loopId] as const,
-  loopRuns: (slug: string, loopId: string) => ["projects", slug, "loops", loopId, "runs"] as const,
-  loopState: (slug: string, loopId: string) => ["projects", slug, "loops", loopId, "state"] as const,
-  loopBudget: (slug: string, loopId: string) => ["projects", slug, "loops", loopId, "budget"] as const,
-  loopCollisions: (slug: string, loopId: string) => ["projects", slug, "loops", loopId, "collisions"] as const,
-  loopIntegrations: (slug: string, loopId: string) => ["projects", slug, "loops", loopId, "integrations"] as const,
-  loopKillState: (slug: string) => ["projects", slug, "loops", "kill-state"] as const,
-  activeLoops: ["loops", "active"] as const,
+  projectAutomations: (slug: string) => ["projects", slug, "automations"] as const,
+  automation: (slug: string, automationId: string) => ["projects", slug, "automations", automationId] as const,
+  automationInvocations: (slug: string, automationId: string) => ["projects", slug, "automations", automationId, "invocations"] as const,
+  activeAutomations: ["automations", "active"] as const,
 };
 
 export function agentsQueryOptions() {
@@ -337,156 +324,71 @@ export function useDirectorySearch(query: string, limit?: number) {
   });
 }
 
-// ─── Loop query options ───
+// ─── Automation query options ───
 
-export function loopsQueryOptions(slug: string) {
+export function automationsQueryOptions(slug: string) {
   return queryOptions({
-    queryKey: queryKeys.projectLoops(slug),
+    queryKey: queryKeys.projectAutomations(slug),
     queryFn: async () => {
-      const response = await apiFetch<{ loops: LoopState[] }>(
-        `/api/projects/${encodeURIComponent(slug)}/loops`,
+      const response = await apiFetch<{ automations: Automation[] }>(
+        `/api/projects/${encodeURIComponent(slug)}/automations`,
       );
-      return response.loops;
+      return response.automations;
     },
     enabled: slug.length > 0,
   });
 }
 
-export function loopQueryOptions(slug: string, loopId: string) {
+export function automationQueryOptions(slug: string, automationId: string) {
   return queryOptions({
-    queryKey: queryKeys.loop(slug, loopId),
+    queryKey: queryKeys.automation(slug, automationId),
     queryFn: async () => {
-      const response = await apiFetch<{ loop: LoopState }>(
-        `/api/projects/${encodeURIComponent(slug)}/loops/${encodeURIComponent(loopId)}`,
+      const response = await apiFetch<{ automation: Automation }>(
+        `/api/projects/${encodeURIComponent(slug)}/automations/${encodeURIComponent(automationId)}`,
       );
-      return response.loop;
+      return response.automation;
     },
-    enabled: slug.length > 0 && loopId.length > 0,
+    enabled: slug.length > 0 && automationId.length > 0,
   });
 }
 
-export function loopRunsQueryOptions(slug: string, loopId: string) {
+export function automationInvocationsQueryOptions(slug: string, automationId: string) {
   return queryOptions({
-    queryKey: queryKeys.loopRuns(slug, loopId),
+    queryKey: queryKeys.automationInvocations(slug, automationId),
     queryFn: async () => {
-      const response = await apiFetch<{ runs: LoopRunReport[] }>(
-        `/api/projects/${encodeURIComponent(slug)}/loops/${encodeURIComponent(loopId)}/runs`,
+      const response = await apiFetch<{ invocations: AutomationInvocation[] }>(
+        `/api/projects/${encodeURIComponent(slug)}/automations/${encodeURIComponent(automationId)}/invocations`,
       );
-      return response.runs;
+      return response.invocations;
     },
-    enabled: slug.length > 0 && loopId.length > 0,
+    enabled: slug.length > 0 && automationId.length > 0,
   });
 }
 
-export function loopStateQueryOptions(slug: string, loopId: string) {
+export function activeAutomationsQueryOptions() {
   return queryOptions({
-    queryKey: queryKeys.loopState(slug, loopId),
+    queryKey: queryKeys.activeAutomations,
     queryFn: async () => {
-      const response = await apiFetch<LoopStateResponse>(
-        `/api/projects/${encodeURIComponent(slug)}/loops/${encodeURIComponent(loopId)}/state`,
-      );
-      return response;
-    },
-    enabled: slug.length > 0 && loopId.length > 0,
-  });
-}
-
-export function activeLoopsQueryOptions() {
-  return queryOptions({
-    queryKey: queryKeys.activeLoops,
-    queryFn: async () => {
-      const response = await apiFetch<{ loops: DashboardLoop[] }>("/api/loops?status=active");
-      return response.loops;
+      const response = await apiFetch<{ automations: DashboardAutomation[] }>("/api/automations?status=active");
+      return response.automations;
     },
   });
 }
 
-export function loopBudgetQueryOptions(slug: string, loopId: string) {
-  return queryOptions({
-    queryKey: queryKeys.loopBudget(slug, loopId),
-    queryFn: async () => {
-      const response = await apiFetch<{ loopId: string; budget: LoopBudgetSnapshot | null }>(
-        `/api/projects/${encodeURIComponent(slug)}/loops/${encodeURIComponent(loopId)}/budget`,
-      );
-      return response.budget;
-    },
-    enabled: slug.length > 0 && loopId.length > 0,
-  });
+// ─── Automation hooks ───
+
+export function useAutomations(slug: string) {
+  return useQuery(automationsQueryOptions(slug));
 }
 
-export function loopCollisionsQueryOptions(slug: string, loopId: string) {
-  return queryOptions({
-    queryKey: queryKeys.loopCollisions(slug, loopId),
-    queryFn: async () => {
-      const response = await apiFetch<{ loopId: string; collisions: LoopCollisionSnapshot }>(
-        `/api/projects/${encodeURIComponent(slug)}/loops/${encodeURIComponent(loopId)}/collisions`,
-      );
-      return response.collisions;
-    },
-    enabled: slug.length > 0 && loopId.length > 0,
-  });
+export function useAutomation(slug: string, automationId: string) {
+  return useQuery(automationQueryOptions(slug, automationId));
 }
 
-export function loopIntegrationsQueryOptions(slug: string, loopId: string) {
-  return queryOptions({
-    queryKey: queryKeys.loopIntegrations(slug, loopId),
-    queryFn: async () => {
-      const response = await apiFetch<{ loopId: string; integrations: LoopIntegrationStatusSnapshot }>(
-        `/api/projects/${encodeURIComponent(slug)}/loops/${encodeURIComponent(loopId)}/integrations`,
-      );
-      return response.integrations;
-    },
-    enabled: slug.length > 0 && loopId.length > 0,
-  });
+export function useAutomationInvocations(slug: string, automationId: string) {
+  return useQuery(automationInvocationsQueryOptions(slug, automationId));
 }
 
-export function loopKillStateQueryOptions(slug: string) {
-  return queryOptions({
-    queryKey: queryKeys.loopKillState(slug),
-    queryFn: async () => {
-      const response = await apiFetch<{ killState: LoopKillState }>(
-        `/api/projects/${encodeURIComponent(slug)}/loops/kill-state`,
-      );
-      return response.killState;
-    },
-    enabled: slug.length > 0,
-  });
-}
-
-// ─── Loop hooks ───
-
-export function useLoops(slug: string) {
-  return useQuery(loopsQueryOptions(slug));
-}
-
-export function useLoop(slug: string, loopId: string) {
-  return useQuery(loopQueryOptions(slug, loopId));
-}
-
-export function useLoopRuns(slug: string, loopId: string) {
-  return useQuery(loopRunsQueryOptions(slug, loopId));
-}
-
-export function useLoopState(slug: string, loopId: string) {
-  return useQuery(loopStateQueryOptions(slug, loopId));
-}
-
-export function useActiveLoops() {
-  return useQuery(activeLoopsQueryOptions());
-}
-
-export function useLoopBudget(slug: string, loopId: string) {
-  return useQuery(loopBudgetQueryOptions(slug, loopId));
-}
-
-export function useLoopCollisions(slug: string, loopId: string) {
-  return useQuery(loopCollisionsQueryOptions(slug, loopId));
-}
-
-export function useLoopIntegrations(slug: string, loopId: string) {
-  return useQuery(loopIntegrationsQueryOptions(slug, loopId));
-}
-
-export function useLoopKillState(slug: string) {
-  return useQuery(loopKillStateQueryOptions(slug));
+export function useActiveAutomations() {
+  return useQuery(activeAutomationsQueryOptions());
 }

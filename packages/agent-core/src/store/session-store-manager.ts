@@ -47,7 +47,6 @@ export interface CreateSessionOptions {
   readonly rootSessionId?: string;
   readonly parentSessionId?: string;
   readonly goalId?: string;
-  readonly loopId?: string;
   readonly sessionRole?: SessionRole;
   readonly modelInfo?: SessionModelInfo | null;
   readonly title?: string;
@@ -111,7 +110,6 @@ export class SessionStoreManager {
     if (!this.#hydrating.has(key)) this.#assertCwdTargetAllowed(cwd);
     const parentSessionId = options.parentSessionId;
     const goalId = options.goalId;
-    const loopId = options.loopId;
     const sessionRole = options.sessionRole;
     let store: StoreApi<SessionStoreState>;
 
@@ -132,7 +130,7 @@ export class SessionStoreManager {
         || event.type === "llm-recovery-failed"
         || event.type === "compact"
         || event.type === "tool-child-session-link"
-        || event.type === "loop-error"
+        || event.type === "execution-error"
         || event.type === "hitl.request"
         || event.type === "hitl.updated"
         || event.type === "hitl.resolved"
@@ -163,7 +161,6 @@ export class SessionStoreManager {
       rootSessionId,
       parentSessionId,
       goalId,
-      loopId,
       sessionRole,
       blockedHitl: undefined,
       blockedByHitlIds: undefined,
@@ -224,10 +221,6 @@ export class SessionStoreManager {
       },
       setGoalId: (goalId: string | undefined) => {
         set({ goalId });
-        persist();
-      },
-      setLoopId: (loopId: string | undefined) => {
-        set({ loopId });
         persist();
       },
       setSessionRole: (sessionRole: SessionRole | undefined) => {
@@ -324,8 +317,11 @@ export class SessionStoreManager {
     }
   }
 
-  async createSessionFile(workspaceRoot: string, options: CreateSessionOptions): Promise<HydratedSessionFile> {
-    const sessionId = crypto.randomUUID();
+  async createSessionFile(
+    workspaceRoot: string,
+    options: CreateSessionOptions,
+    sessionId: string = crypto.randomUUID(),
+  ): Promise<HydratedSessionFile> {
     const store = this.create(sessionId, workspaceRoot, options);
     const key = this.key(sessionId, workspaceRoot);
     const initialPersist = this.#pendingPersists.get(key);
@@ -800,7 +796,6 @@ export class SessionStoreManager {
         rootSessionId: parsed.rootSessionId,
         parentSessionId: parsed.parentSessionId,
         goalId: parsed.goalId,
-        loopId: parsed.loopId,
         sessionRole: parsed.sessionRole,
         agentName: parsed.agentName,
         modelInfo: parsed.modelInfo,
@@ -826,7 +821,6 @@ export class SessionStoreManager {
         rootSessionId: parsed.rootSessionId,
         parentSessionId: parsed.parentSessionId,
         goalId: parsed.goalId,
-        loopId: parsed.loopId,
         sessionRole: parsed.sessionRole,
         blockedHitl: parsed.blockedHitl,
         blockedByHitlIds: parsed.blockedByHitlIds,
@@ -955,7 +949,7 @@ const STREAM_EVENT_TYPES = new Set<StreamEvent["type"]>([
   "tool-child-session-link",
   "step-start",
   "step-end",
-  "loop-error",
+  "execution-error",
   "todo-write",
   "reminder",
   "reminder-consumed",
@@ -969,8 +963,6 @@ const STREAM_EVENT_TYPES = new Set<StreamEvent["type"]>([
   "hitl.request",
   "hitl.updated",
   "hitl.resolved",
-  "loop.state_change",
-  "loop.run_appended",
   "compact",
 ]);
 
@@ -1048,7 +1040,6 @@ function toSessionSummary(file: HydratedSessionFile): SessionSummary {
     rootSessionId: file.rootSessionId,
     ...(file.parentSessionId === undefined ? {} : { parentSessionId: file.parentSessionId }),
     ...(file.goalId === undefined ? {} : { goalId: file.goalId }),
-    ...(file.loopId === undefined ? {} : { loopId: file.loopId }),
     ...(file.sessionRole === undefined ? {} : { sessionRole: file.sessionRole }),
     agentName: file.agentName,
     modelInfo: file.modelInfo,

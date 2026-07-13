@@ -68,7 +68,6 @@ function createTestStore(sessionId: string): StoreApi<SessionStoreState> {
       set({ parentSessionId });
     },
     setGoalId: (goalId) => set({ goalId }),
-    setLoopId: (loopId) => set({ loopId }),
     setSessionRole: (sessionRole) => set({ sessionRole }),
     toModelMessages: () => [],
   }));

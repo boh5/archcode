@@ -32,10 +32,6 @@ const SOURCE_BORDER: Record<string, string> = {
   goal_review: "border-accent",
   goal_budget: "border-warning",
   goal_question: "border-info",
-  loop_approval: "border-warning",
-  loop_blocker: "border-error",
-  loop_retry: "border-warning",
-  loop_question: "border-info",
   ask_user: "border-info",
   tool_permission: "border-warning",
 };
@@ -45,10 +41,6 @@ const SOURCE_ICON: Record<string, typeof ShieldCheck> = {
   goal_review: FileSearch,
   goal_budget: ShieldCheck,
   goal_question: CircleQuestionMark,
-  loop_approval: ShieldCheck,
-  loop_blocker: TriangleAlert,
-  loop_retry: RotateCcw,
-  loop_question: CircleQuestionMark,
   ask_user: CircleQuestionMark,
   tool_permission: Lock,
 };
@@ -58,10 +50,6 @@ const SOURCE_LABEL: Record<string, string> = {
   goal_review: "Goal Review",
   goal_budget: "Goal Budget",
   goal_question: "Goal Question",
-  loop_approval: "Loop Approval",
-  loop_blocker: "Loop Blocker",
-  loop_retry: "Loop Retry",
-  loop_question: "Loop Question",
   ask_user: "Question",
   tool_permission: "Permission",
 };
@@ -73,14 +61,12 @@ function ownerLabel(owner: HitlOwnerKey): string {
 function ownerLink(owner: HitlOwnerKey, projectSlug: string): string {
   if (owner.ownerType === "session") return `/projects/${projectSlug}/sessions/${owner.ownerId}`;
   if (owner.ownerType === "goal") return `/projects/${projectSlug}/goals/${owner.ownerId}`;
-  if (owner.ownerType === "loop") return `/projects/${projectSlug}/loops/${owner.ownerId}`;
   return `/projects/${projectSlug}`;
 }
 
 function ancestryLabel(ancestry: HitlProjectionContext | undefined): string | undefined {
   if (!ancestry) return undefined;
   const parts: string[] = [];
-  if (ancestry.loopId) parts.push(`Loop ${ancestry.loopId}`);
   if (ancestry.goalId) parts.push(`Goal ${ancestry.goalId}`);
   if (ancestry.parentSessionId) parts.push(`Session ${ancestry.parentSessionId}`);
   return parts.length > 0 ? parts.join(" → ") : undefined;
@@ -110,7 +96,7 @@ function normalizeQuestion(question: HitlQuestionDisplayItem): QuestionData {
 }
 
 function isQuestionSource(sourceType: SourceType): boolean {
-  return sourceType === "ask_user" || sourceType === "goal_question" || sourceType === "loop_question";
+  return sourceType === "ask_user" || sourceType === "goal_question";
 }
 
 function answerForQuestion(question: QuestionData, selectedAnswers: readonly string[], customText: string | undefined): string {

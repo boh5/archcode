@@ -2,7 +2,6 @@ import { useState, type ReactNode } from "react";
 import { PanelRightClose } from "lucide-react";
 import type { InspectorKind } from "../../lib/workbench-layout";
 import { GoalInspector, type GoalInspectorTab } from "./context-inspector/GoalInspector";
-import { LoopInspector, type LoopInspectorTab } from "./context-inspector/LoopInspector";
 import { SessionInspector, type SessionInspectorTab } from "./context-inspector/SessionInspector";
 
 interface InspectorTab<T extends string> {
@@ -22,12 +21,6 @@ const GOAL_TABS = [
   { id: "sessions", label: "Sessions" },
 ] satisfies [InspectorTab<GoalInspectorTab>, ...InspectorTab<GoalInspectorTab>[]];
 
-const LOOP_TABS = [
-  { id: "status", label: "Status" },
-  { id: "schedule", label: "Schedule" },
-  { id: "config", label: "Config" },
-] satisfies [InspectorTab<LoopInspectorTab>, ...InspectorTab<LoopInspectorTab>[]];
-
 export function ContextInspector({
   kind,
   id = "context-inspector",
@@ -39,9 +32,6 @@ export function ContextInspector({
 }) {
   if (kind === "goal") {
     return <InspectorShell key="goal" id={id} kind={kind} tabs={GOAL_TABS} onCollapse={onCollapse} renderPanel={(activeTab) => <GoalInspector activeTab={activeTab} />} />;
-  }
-  if (kind === "loop") {
-    return <InspectorShell key="loop" id={id} kind={kind} tabs={LOOP_TABS} onCollapse={onCollapse} renderPanel={(activeTab) => <LoopInspector activeTab={activeTab} />} />;
   }
   if (kind === "session") {
     return <InspectorShell key="session" id={id} kind={kind} tabs={SESSION_TABS} onCollapse={onCollapse} renderPanel={(activeTab) => <SessionInspector activeTab={activeTab} />} />;

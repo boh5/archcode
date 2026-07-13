@@ -1,12 +1,10 @@
 import type { HitlOwnerKey } from "@archcode/protocol";
 
 import type { GoalStateManager } from "../goals/state";
-import type { LoopStateManager } from "../loops/state";
 import { getSessionHitlPath } from "../store/sessions-dir";
 
 export interface HitlOwnerPathManagers {
   readonly goalState?: GoalStateManager;
-  readonly loopState?: LoopStateManager;
 }
 
 export class HitlOwnerPathError extends Error {
@@ -33,13 +31,6 @@ export async function resolveHitlOwnerPath(
         throw new HitlOwnerPathError(owner, "GoalStateManager is required to resolve Goal HITL path");
       }
       return await manager.goalHitlPath(owner.ownerId);
-    }
-    case "loop": {
-      const manager = managers.loopState;
-      if (manager === undefined) {
-        throw new HitlOwnerPathError(owner, "LoopStateManager is required to resolve Loop HITL path");
-      }
-      return await manager.loopHitlPath(owner.ownerId);
     }
   }
 }

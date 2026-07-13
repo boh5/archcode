@@ -343,8 +343,9 @@ export interface StepEndEvent {
   usage?: unknown;
 }
 
-export interface LoopErrorEvent {
-  type: "loop-error";
+/** An error raised by the generic LLM query loop, not a product Automation. */
+export interface ExecutionErrorEvent {
+  type: "execution-error";
   step?: number;
   error: string;
 }
@@ -416,15 +417,14 @@ export type StreamEvent =
   | ReminderConsumedEvent
   | StepStartEvent
   | StepEndEvent
-  | LoopErrorEvent
+  | ExecutionErrorEvent
   | LlmRetryEvent
   | LlmRecoveryEvent
   | LlmRecoveryFailedEvent
   | CompactEvent
   | CompressionStreamEvent
   | GoalStreamEvent
-  | HitlStreamEvent
-  | LoopStreamEvent;
+  | HitlStreamEvent;
 
 export const MAX_EVENTS = 10000;
 
@@ -529,14 +529,23 @@ export interface GlobalSSEHitlRealtimeEvent {
   projection: HitlProjection;
 }
 
-export interface GlobalSSEResourceChangedEvent {
-  type: "resource.changed";
-  projectSlug: string;
-  resourceType: "goal" | "loop";
-  resourceId: string;
-  reason: "created" | "title_generated";
-  createdAt: number;
-}
+export type GlobalSSEResourceChangedEvent =
+  | {
+    type: "resource.changed";
+    projectSlug: string;
+    resourceType: "goal";
+    resourceId: string;
+    reason: "created" | "title_generated";
+    createdAt: number;
+  }
+  | {
+    type: "resource.changed";
+    projectSlug: string;
+    resourceType: "automation";
+    resourceId: string;
+    reason: "created" | "updated" | "deleted" | "invocation_changed";
+    createdAt: number;
+  };
 
 export type GlobalSSEEvent =
   | GlobalSessionEventEnvelope
@@ -744,8 +753,6 @@ export interface SessionProjection {
   goals?: Record<string, GoalState>;
   /** Owner-local HITL records projected from hitl.request/hitl.resolved stream events. */
   hitlRequests?: HitlRecord[];
-  /** Loop states indexed by loopId. Populated by loop.state_change events. */
-  loops?: Record<string, LoopState>;
   /** DCP-like dynamic compression state. Cleared when hard compact emits a compact event. */
   compression?: CompressionStateSnapshot;
   /** Projection-only compression block display parts. Canonical messages remain unchanged. */
@@ -794,8 +801,6 @@ export interface SessionSummary {
   title: string | null;
   /** Goal this session belongs to. */
   goalId?: string;
-  /** Loop this session belongs to. */
-  loopId?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -834,8 +839,6 @@ export interface Session {
   title: string | null;
   /** Goal this session belongs to. */
   goalId?: string;
-  /** Loop this session belongs to. */
-  loopId?: string;
   createdAt: number;
   updatedAt: number;
   messages: SessionMessage[];
@@ -989,7 +992,6 @@ export interface GoalState {
   appliedHitlIds: string[];
   mainSessionId?: string;
   childSessionIds: string[];
-  loopId?: string;
   review?: GoalReviewReceipt;
   finalSummary?: string;
   createdAt: string;
@@ -1014,7 +1016,7 @@ export type GoalStreamEvent = { type: "goal.state_change"; goalId: string; statu
 
 export const HITL_RECENT_TERMINAL_LIMIT = 20;
 
-export type HitlOwnerType = "session" | "goal" | "loop";
+export type HitlOwnerType = "session" | "goal";
 
 export interface HitlOwnerKey {
   projectSlug: string;
@@ -1045,11 +1047,7 @@ export type HitlSource =
   | { type: "goal_approval"; goalId: string; approvalPoint?: string; resumeStatus: "running" | "reviewing" }
   | { type: "goal_review"; goalId: string; resumeStatus: "reviewing" }
   | { type: "goal_budget"; goalId: string; approvalPoint?: string; resumeStatus: "running" | "reviewing" }
-  | { type: "goal_question"; goalId: string; questionKey: string; resumeStatus: "running" | "reviewing" }
-  | { type: "loop_approval"; loopId: string; approvalPoint: string }
-  | { type: "loop_blocker"; loopId: string; runId?: string; reason: string }
-  | { type: "loop_retry"; loopId: string; runId: string; attempt: number }
-  | { type: "loop_question"; loopId: string; questionKey: string };
+  | { type: "goal_question"; goalId: string; questionKey: string; resumeStatus: "running" | "reviewing" };
 
 export interface HitlQuestionDisplayOption {
   label: string;
@@ -1121,7 +1119,6 @@ export interface HitlProjectionContext {
   parentSessionId?: string;
   ancestorSessionIds?: string[];
   goalId?: string;
-  loopId?: string;
   projectionPath?: string[];
 }
 
@@ -1146,291 +1143,45 @@ export type HitlStreamEvent =
   | { type: "hitl.updated"; record: HitlRecord }
   | { type: "hitl.resolved"; hitlId: string; status: Extract<HitlStatus, "resolved" | "cancelled" | "resume_failed">; response?: HitlResponse };
 
-// ─── Loop Types ───
+// ─── Automation Types ───
 
-export type LoopId = string;
+export type AutomationStatus = "active" | "paused" | "disabled";
 
-export type LoopStatus = "active" | "paused" | "disabled" | "error";
-
-export type LoopScheduleSpec =
-  | { kind: "manual" }
+export type AutomationTrigger =
+  | { kind: "once"; at: string }
   | { kind: "interval"; everyMs: number }
-  | { kind: "cron"; expression: string };
+  | { kind: "cron"; expression: string; timezone: string };
 
-export type LoopPullRequestScope = "open" | "authored" | "assigned" | "review_requested";
+export type AutomationAction =
+  | { kind: "start_session"; message: string; location: "project" | "worktree" }
+  | { kind: "send_message"; sessionId: string; message: string };
 
-export type LoopTriggerSpec =
-  | { kind: "on_commit"; branch?: string; cadenceMs: number }
-  | { kind: "on_pr"; branch?: string; baseBranch?: string; prScope?: LoopPullRequestScope; cadenceMs: number }
-  | { kind: "on_ci_fail"; branch?: string; baseBranch?: string; checkName?: string; workflowName?: string; cadenceMs: number };
+export type AutomationInvocationStatus = "pending" | "dispatched" | "failed" | "cancelled" | "missed";
 
-export interface LoopCoordinatorConfig {
-  maxConcurrent: number;
-}
-
-export interface LoopProjectConfig {
-  coordinator: LoopCoordinatorConfig;
-}
-
-export type LoopRunKind = "session" | "goal";
-
-export type LoopTemplateId = "watch_report" | "maintain_fix" | "pr_babysitter" | "goal_runner";
-
-export type LoopApprovalPolicy = "interactive" | "explicit_per_run";
-
-export interface LoopBudgetConfig {
-  maxIterationsPerRun: number;
-  maxTokensPerRun?: number;
-  maxEstimatedUsdPerRun?: number;
-  maxWallClockMsPerRun?: number;
-  maxRunsPerDay?: number;
-  softThresholdRatio: number;
-  hardThresholdRatio: number;
-}
-
-export type LoopLimits = LoopBudgetConfig;
-
-export interface LoopBudgetUsage {
-  iterations: number;
-  inputTokens: number;
-  outputTokens: number;
-  reasoningTokens?: number;
-  cachedInputTokens?: number;
-  totalTokens: number;
-  estimatedUsd?: number;
-  wallClockMs: number;
-  runsToday: number;
-  resetDateUtc: string;
-  pricingUnavailable?: boolean;
-}
-
-export type LoopRunReason =
-  | "completed"
-  | "soft_budget_blocked"
-  | "hard_budget_exceeded"
-  | "collision_conflict"
-  | "cancelled_by_user"
-  | "global_kill_active"
-  | "loop_paused"
-  | "integration_auth_missing"
-  | "integration_rate_limited"
-  | "execution_failed"
-  | "max_steps_reached"
-  | "scheduler_overlap";
-
-export type CollisionTarget =
-  | { type: "pr"; owner: string; repo: string; number: number }
-  | { type: "issue"; owner: string; repo: string; number: number }
-  | { type: "branch"; owner: string; repo: string; branch: string }
-  | { type: "file"; path: string };
-
-export interface CollisionLease {
-  targetKey: string;
-  target: CollisionTarget;
-  loopId: string;
-  runId: string;
-  actionId?: string;
-  toolCallId?: string;
-  priority: number;
-  createdAt: number;
-  expiresAt: number;
-}
-
-export interface CollisionConflict {
-  targetKey: string;
-  target: CollisionTarget;
-  conflictingLease: CollisionLease;
-  detectedAt: number;
-}
-
-export type LoopIntegrationId = "github" | "github_actions";
-
-export interface LoopIntegrationError {
-  integrationId: LoopIntegrationId;
-  reason: Extract<LoopRunReason, "integration_auth_missing" | "integration_rate_limited">;
-  message: string;
-  retryAfterMs?: number;
-  occurredAt: number;
-}
-
-export interface LoopBudgetSnapshot {
-  budget: LoopBudgetConfig;
-  usage: LoopBudgetUsage;
-  updatedAt: number;
-}
-
-export interface LoopCollisionSnapshot {
-  targets: CollisionTarget[];
-  activeLeases: CollisionLease[];
-  conflicts: CollisionConflict[];
-  updatedAt: number;
-}
-
-export interface LoopIntegrationSnapshot {
-  errors: LoopIntegrationError[];
-  updatedAt: number;
-}
-
-export interface LoopGoalTemplate {
-  title: string | null;
-  objective: string;
-  acceptanceCriteria: string;
-}
-
-export interface LoopConfig {
-  templateId: LoopTemplateId;
-  title: string | null;
-  schedule: LoopScheduleSpec;
-  approvalPolicy: LoopApprovalPolicy;
-  limits: LoopLimits;
-  collisionTargets?: CollisionTarget[];
-  taskPrompt?: string;
-  goalTemplate?: LoopGoalTemplate;
-  triggers?: LoopTriggerSpec[];
-  useWorktree: boolean;
-  cleanupPolicy?: LoopCleanupPolicy;
-}
-
-export type LoopRunReportStatus = "running" | "succeeded" | "failed" | "skipped" | "cancelled" | "budget_exceeded" | "needs_user";
-
-export interface LoopHitlCheckpoint {
-  version: 1;
-  hitlId: string;
-  loopId: string;
-  runId: string;
-  jobId?: string;
-  trigger: LoopRunTrigger;
-  subjectKey?: string;
-  worktreePath?: string;
-  worktreeBranchName?: string;
-  baseSha?: string;
-  resolvedHeadSha?: string;
-  intendedContinuation: "rerun_job" | "resume_run";
-}
-
-export type LoopRunTrigger = "manual" | "interval" | "cron" | LoopTriggerSpec["kind"];
-
-export type LoopJobStatus =
-  | "pending"
-  | "queued"
-  | "running"
-  | "blocked"
-  | "needs_user"
-  | "succeeded"
-  | "failed"
-  | "cancelled"
-  | "skipped"
-  | "expired";
-
-export type LoopCleanupState =
-  | "not_started"
-  | "in_progress"
-  | "cleaned"
-  | "preserved"
-  | "failed"
-  | "skipped"
-  | "cleanup_candidate"
-  | "auto_paused"
-  | "cleanup_failed"
-  | "expired_needs_review";
-
-export interface LoopCleanupPolicy {
-  enabled: boolean;
-  action?: "mark" | "pause";
-  deleteUnchangedWorktrees?: boolean;
-  preserveChangedArtifacts?: true;
-  maxPreservedWorktrees?: number;
-  noFindingRuns?: number;
-  quietDays?: number;
-  requiresNoPendingQueue?: boolean;
-}
-
-export interface LoopWorktreeArtifact {
-  path: string;
-  status: "observed" | "unchanged" | "created" | "modified" | "deleted";
-  sizeBytes?: number;
-  sha?: string;
-}
-
-export interface LoopTriggerHealth {
-  triggerKind: LoopRunTrigger;
-  status: "healthy" | "degraded" | "blocked" | "disabled";
-  cadenceMs?: number;
-  lastCheckedAt?: number;
-  lastSuccessAt?: number;
-  lastError?: string;
-  retryAfterMs?: number;
-  missedCount?: number;
-}
-
-export interface LoopRunReport {
-  runId: string;
-  loopId: string;
-  status: LoopRunReportStatus;
-  trigger: LoopRunTrigger;
-  startedAt: number;
-  endedAt?: number;
-  reason?: LoopRunReason;
-  budgetUsage?: LoopBudgetUsage;
-  collisionTargets?: CollisionTarget[];
-  collisionConflicts?: CollisionConflict[];
-  integrationErrors?: LoopIntegrationError[];
+export interface AutomationInvocation {
+  id: string;
+  automationId: string;
+  dueAt: string;
+  status: AutomationInvocationStatus;
+  executionId: string;
   sessionId?: string;
-  goalId?: string;
-  summary?: string;
+  createdAt: string;
+  dispatchedAt?: string;
+  completedAt?: string;
   error?: string;
-  skippedReason?: string;
-  jobId?: string;
-  subjectKey?: string;
-  dedupeKey?: string;
-  branchKey?: string;
-  worktreePath?: string;
-  /** Exact managed Git branch owning worktreePath; never stored in lossy evidence artifacts. */
-  worktreeBranchName?: string;
-  baseSha?: string;
-  resolvedHeadSha?: string;
-  missedCount?: number;
-  blockedReason?: string;
-  blockedByHitlIds?: string[];
-  attentionStatus?: HitlAttentionStatus;
-  resumeCheckpoint?: LoopHitlCheckpoint;
-  cleanupState?: LoopCleanupState;
-  cleanupWarning?: string;
-  observedArtifacts?: LoopWorktreeArtifact[];
 }
 
-export interface LoopState {
-  loopId: string;
+export interface Automation {
+  id: string;
   projectId: string;
-  config: LoopConfig;
-  status: LoopStatus;
-  createdAt: number;
-  updatedAt: number;
-  lastRun?: LoopRunReport;
-  currentRun?: LoopRunReport;
-  nextRunAt?: number;
-  lastScheduledAt?: number;
-  nextScheduledAt?: number;
-  lastEnqueuedAt?: number;
-  missedCount?: number;
-  runCount: number;
-  stateVersion: number;
-  generatedStateSummary?: string;
-  latestBudget?: LoopBudgetSnapshot;
-  latestCollisions?: LoopCollisionSnapshot;
-  latestIntegrations?: LoopIntegrationSnapshot;
-  blockedByHitlIds?: string[];
-  attentionStatus?: HitlAttentionStatus;
-  resumeCheckpoint?: LoopHitlCheckpoint;
-  triggerHealth?: LoopTriggerHealth[];
-  cleanupState?: LoopCleanupState;
+  name: string;
+  trigger: AutomationTrigger;
+  action: AutomationAction;
+  status: AutomationStatus;
+  createdAt: string;
+  updatedAt: string;
+  nextFireAt?: string;
 }
-
-// ─── Loop Stream Events ───
-
-export type LoopStreamEvent =
-  | { type: "loop.state_change"; loopId: string; status: LoopStatus; state: LoopState }
-  | { type: "loop.run_appended"; loopId: string; report: LoopRunReport };
 
 export interface ApiCommandResult {
   success: boolean;

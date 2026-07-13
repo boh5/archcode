@@ -80,7 +80,6 @@ export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionCo
       background: input.background ?? false,
       currentDepth: ctx.currentDepth ?? 0,
       parentAbort: ctx.abort,
-      ...(ctx.origin === undefined ? {} : { origin: ctx.origin }),
     });
   } catch (error) {
     const safeError = error instanceof Error ? error : new Error(String(error));
@@ -135,7 +134,6 @@ async function executeResumeDelegate(input: DelegateInput, ctx: ToolExecutionCon
       background: input.background ?? false,
       currentDepth: ctx.currentDepth ?? 0,
       parentAbort: ctx.abort,
-      ...(ctx.origin === undefined ? {} : { origin: ctx.origin }),
     });
   } catch (error) {
     const safeError = error instanceof Error ? error : new Error(String(error));

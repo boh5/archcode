@@ -140,7 +140,6 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
     try {
       const reserved = await withGoalExecutionClaimLock(goalId, async () => {
         let goal = await manager.read(goalId);
-        assertHttpGoalOwnership(goal);
         assertGoalCanRun(goal);
         await validateGoalSessionIdentities(runtime, project.workspaceRoot, goal, body);
         if (goal.status === "running") {
@@ -198,7 +197,6 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
     try {
       const reserved = await withGoalExecutionClaimLock(goalId, async () => {
         let goal = await manager.read(goalId);
-        assertHttpGoalOwnership(goal);
         assertGoalCanRetry(goal);
         const mainSessionId = requireGoalLeadMainSession(goal);
         await assertSessionAssignable(runtime, project.workspaceRoot, goal, mainSessionId, "main");
@@ -308,15 +306,6 @@ function buildGoalRetryUserMessage(goal: GoalState): string {
 function assertGoalCanRun(goal: GoalState): void {
   if (goalExecutionStatusEligibility("start", goal.status) !== "reject") return;
   throw new ServerError("BAD_REQUEST", `Invalid goal state for ${goal.id}`, 409);
-}
-
-function assertHttpGoalOwnership(goal: GoalState): void {
-  if (goal.loopId === undefined) return;
-  throw new ServerError(
-    "BAD_REQUEST",
-    `Goal ${goal.id} is owned by Loop ${goal.loopId} and must be resumed by its owning Loop`,
-    409,
-  );
 }
 
 function assertGoalCanRetry(goal: GoalState): void {

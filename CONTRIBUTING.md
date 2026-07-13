@@ -10,7 +10,7 @@ ArchCode is a Bun/Turborepo monorepo with a Hono server, React Web UI, shared pr
 archcode/
 ├── apps/server/          # Hono API/SSE server
 ├── apps/web/             # Vite + React Web UI
-├── packages/agent-core/  # Agent runtime, tools, memory, goals, loops, LSP, MCP
+├── packages/agent-core/  # Agent runtime, tools, memory, goals, automations, LSP, MCP
 ├── packages/protocol/    # Shared protocol types and reducers
 ├── packages/utils/       # Shared utility helpers
 └── scripts/build.ts      # Production build pipeline
@@ -109,7 +109,7 @@ High-level runtime flow:
   → provider and model resolution
   → builtin tools and MCP discovery
   → Hono server
-  → project-scoped agents, goals, loops, HITL, memory
+  → project-scoped agents, goals, automations, HITL, memory
   → query loop and tool execution
   → session store
   → SSE
@@ -128,7 +128,7 @@ Important areas:
 | `packages/agent-core/src/tools/` | Tool descriptors, registry, guards, hooks, permissions |
 | `packages/agent-core/src/goals/` | Goal state, review checks, retry, budget, evidence |
 | `packages/agent-core/src/hitl/` | Durable approval/question queue |
-| `packages/agent-core/src/loops/` | Long-running loop scheduler and guardrails |
+| `packages/agent-core/src/automations/` | Schedule, durable Invocation state, and Session dispatch |
 | `packages/agent-core/src/lsp/` | LSP client pool and language server integration |
 | `packages/agent-core/src/llm/` | Managed LLM runtime and retry/recovery boundary |
 | `packages/protocol/src/` | Shared event and protocol types |

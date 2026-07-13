@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { JSDOM } from "jsdom";
 import { ContextInspector } from "./ContextInspector";
 import { WorkbenchLayoutProvider, useCloseMobileSurfacesOnNavigation, useWorkbenchLayout } from "../../context/workbench-layout";
-import type { GoalState, LoopState, Session, SessionTreeResponse } from "../../api/types";
+import type { GoalState, Session, SessionTreeResponse } from "../../api/types";
 import { createEmptySessionStats } from "@archcode/protocol";
 import { __resetWebSessionStoresForTest, getWebSessionStore } from "../../store/session-store";
 
@@ -46,7 +46,7 @@ async function waitFor(assertion: () => void): Promise<void> {
   throw lastError;
 }
 
-async function renderInspector(root: Root, path: string, kind: "session" | "goal" | "loop") {
+async function renderInspector(root: Root, path: string, kind: "session" | "goal") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   await act(async () => {
     root.render(
@@ -56,7 +56,6 @@ async function renderInspector(root: Root, path: string, kind: "session" | "goal
             <Routes>
               <Route path="/projects/:slug/sessions/:sessionId" element={<><ContextInspector id="mobile-context-inspector" kind={kind} onCollapse={collapseInspector} /><LocationProbe /><LayoutProbe /></>} />
               <Route path="/projects/:slug/goals/:goalId" element={<ContextInspector kind={kind} onCollapse={collapseInspector} />} />
-              <Route path="/projects/:slug/loops/:loopId" element={<ContextInspector kind={kind} onCollapse={collapseInspector} />} />
             </Routes>
           </MemoryRouter>
         </QueryClientProvider>
@@ -214,42 +213,6 @@ describe("ContextInspector interactions", () => {
       await act(async () => { (Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Sessions") as HTMLButtonElement).click(); });
       expect(container.textContent).toContain("main");
       expect(container.textContent).toContain("child");
-    } finally {
-      await act(async () => root.unmount()); client.clear(); dom.window.close();
-    }
-  });
-
-  test("organizes Loop status, schedule, and config", async () => {
-    const dom = installDom("/projects/demo/loops/l1");
-    const loop: LoopState = {
-      loopId: "l1", projectId: "demo", status: "active", createdAt: 1, updatedAt: 2, runCount: 3, stateVersion: 1,
-      config: {
-        templateId: "goal_runner", title: "Loop", schedule: { kind: "interval", everyMs: 60000 }, approvalPolicy: "explicit_per_run", useWorktree: true,
-        limits: { maxIterationsPerRun: 4, maxWallClockMsPerRun: 600000, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
-        goalTemplate: { title: "Follow-up", objective: "Investigate failures", acceptanceCriteria: "Tests pass" },
-      },
-      currentRun: { runId: "run-current", loopId: "l1", status: "running", trigger: "manual", startedAt: 1, sessionId: "session-current", goalId: "goal-current" },
-      lastRun: { runId: "run-last", loopId: "l1", status: "succeeded", trigger: "interval", startedAt: 1, sessionId: "session-last", goalId: "goal-last" },
-    };
-    Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async () => Response.json({ loop })) });
-    const container = document.getElementById("root")!;
-    const root = createRoot(container);
-    const client = await renderInspector(root, "/projects/demo/loops/l1", "loop");
-    try {
-      await waitFor(() => expect(container.textContent).toContain("Running"));
-      expect(container.textContent).toContain("Running manual run (session session-current)");
-      expect(container.querySelector('a[href="/projects/demo/sessions/session-current"]')).not.toBeNull();
-      expect(container.querySelector('a[href="/projects/demo/goals/goal-current"]')).not.toBeNull();
-      expect(container.querySelector('a[href="/projects/demo/sessions/session-last"]')).not.toBeNull();
-      expect(container.querySelector('a[href="/projects/demo/goals/goal-last"]')).not.toBeNull();
-      await act(async () => { (Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Schedule") as HTMLButtonElement).click(); });
-      expect(container.textContent).toContain("Every 60000 ms");
-      await act(async () => { (Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Config") as HTMLButtonElement).click(); });
-      expect(container.textContent).toContain("goal runner");
-      expect(container.textContent).toContain("enabled");
-      expect(container.textContent).toContain("Investigate failures");
-      expect(container.textContent).toContain("600,000 ms");
-      expect(container.textContent).toContain("Every 60000 ms");
     } finally {
       await act(async () => root.unmount()); client.clear(); dom.window.close();
     }

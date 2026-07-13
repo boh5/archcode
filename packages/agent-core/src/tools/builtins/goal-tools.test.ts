@@ -9,7 +9,6 @@ import { GoalCancellationCleanupError } from "../../goals/cancellation";
 import { WorktreeService } from "../../worktrees";
 import { HitlService } from "../../hitl/service";
 import { createPreparedHitlResume, ResumeCoordinator } from "../../hitl/resume-coordinator";
-import { LoopStateManager } from "../../loops/state";
 import { MemoryFileManager } from "../../memory/file-manager";
 import type { ProjectContext } from "../../projects/types";
 import { SkillService } from "../../skills";
@@ -173,22 +172,19 @@ function makeProjectContext(
     addedAt: new Date().toISOString(),
   };
   const resolvedGoalState = goalState as unknown as GoalStateManager;
-  const loopState = new LoopStateManager(workspaceRoot);
-  const hitl = new HitlService({ workspaceRoot, project, sessions: storeManager, goalState: resolvedGoalState, loopState });
+  const hitl = new HitlService({ workspaceRoot, project, sessions: storeManager, goalState: resolvedGoalState });
   return {
     project,
     goalState: resolvedGoalState,
     goalCancellation: {
       cancel: (goalId, request) => goalState.cancel(goalId, request.reason),
     },
-    loopState,
     hitl,
     hitlResumeCoordinator: new ResumeCoordinator({
       hitl,
       adapters: {
         session: { prepare: async () => createPreparedHitlResume(async () => undefined) },
         goal: { prepare: async () => createPreparedHitlResume(async () => undefined) },
-        loop: { prepare: async () => createPreparedHitlResume(async () => undefined) },
       },
       logger: silentLogger,
     }),
@@ -567,7 +563,6 @@ describe("goal_manage builtin tool", () => {
     for (const store of [
       mainStore({ goalId: undefined }),
       engineerStore({ goalId: DEFAULT_GOAL_ID }),
-      engineerStore({ loopId: "22222222-2222-4222-8222-222222222222" }),
       engineerStore({ sessionRole: "main" }),
       engineerStore({ parentSessionId: "parent-session", rootSessionId: "parent-session" }),
     ]) {

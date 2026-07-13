@@ -1,5 +1,6 @@
 export { closeMcpManagerBestEffort, createRuntime, ProjectRuntimeActiveError } from "./runtime";
-export type { AgentRuntime, AgentRuntimeOptions, CreateRuntimeSessionOptions, LoopIntegrationStatus, LoopIntegrationStatusSnapshot, ProjectControlPlaneSnapshot, ProjectRemovalResult } from "./runtime";
+export type { AgentRuntime, AgentRuntimeOptions, CreateRuntimeSessionOptions, ProjectControlPlaneSnapshot, ProjectRemovalResult } from "./runtime";
+export * from "./automations";
 export type { CompressionOriginalRangeResult } from "./compression";
 
 export { createProcessRunner } from "./process/runner";
@@ -45,9 +46,6 @@ export type {
   SessionExecutionScopeSubject,
   SessionExecutionScopeValidationInput,
   SessionExecutionScopeValidatorOptions,
-  SessionLoopExecutionClaimDecision,
-  SessionLoopExecutionClaimInput,
-  SessionLoopExecutionClaimResolver,
   SessionRuntimeChange,
   SessionRuntimeChangeListener,
   StartSessionExecutionInput,
@@ -76,7 +74,6 @@ export type { ResumeCoordinatorResult } from "./hitl/resume-coordinator";
 export { GoalRunner, GoalRunnerError } from "./goals/runner";
 export type {
   GoalRunnerCreateSessionOptions,
-  GoalRunnerLoopExecutionScope,
   GoalRunnerOptions,
   GoalRunnerStartInput,
 } from "./goals/runner";
@@ -114,21 +111,6 @@ export type {
 } from "./worktrees";
 
 export * from "./integrations";
-
-export {
-  expandLoopTemplate,
-  getLoopTemplate,
-  isLoopTemplateId,
-  LoopActiveConflictError,
-  LoopConfigSchema,
-  LoopNotFoundError,
-  LoopRunLogError,
-  LoopSessionExecutionClaimResolver,
-  LoopStateError,
-  LoopUuidSchema,
-} from "./loops";
-export type { LoopConfig, LoopKillActivateInput, LoopKillState, LoopRunReport, LoopState, LoopUpdateInput } from "./loops";
-export type { LoopSessionExecutionClaimResolverOptions } from "./loops";
 
 export {
   InvalidSessionCwdError,

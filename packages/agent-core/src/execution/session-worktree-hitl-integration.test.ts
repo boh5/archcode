@@ -10,7 +10,6 @@ import { GoalStateManager } from "../goals/state";
 import { HitlService } from "../hitl/service";
 import { ResumeCoordinator } from "../hitl/resume-coordinator";
 import { setLlmAdapterForTest } from "../llm";
-import { LoopStateManager } from "../loops/state";
 import { MemoryFileManager } from "../memory/file-manager";
 import { ProjectContextResolver } from "../projects/context-resolver";
 import type { ProjectContext } from "../projects/types";
@@ -82,13 +81,11 @@ describe("durable Session worktree approval integration", () => {
     const sessions = new SessionStoreManager({ logger: silentLogger });
     const store = sessions.create(sessionId, projectRoot, { agentName: "engineer" });
     const goalState = new GoalStateManager(projectRoot, silentLogger);
-    const loopState = new LoopStateManager(projectRoot, silentLogger);
     const hitl = new HitlService({
       workspaceRoot: projectRoot,
       project: { slug: "project", name: "Project" },
       sessions,
       goalState,
-      loopState,
     });
     const approvals = new ProjectApprovalManager(silentLogger);
     await approvals.load(projectRoot);
@@ -97,7 +94,6 @@ describe("durable Session worktree approval integration", () => {
       project: { slug: "project", name: "Project", workspaceRoot: projectRoot, addedAt: new Date().toISOString() },
       goalState,
       goalCancellation: { cancel: async (goalId, request) => await goalState.cancel(goalId, request.reason) },
-      loopState,
       hitl,
       hitlResumeCoordinator: new ResumeCoordinator({ hitl, adapters: {} }),
       memory: new MemoryFileManager({
@@ -115,7 +111,6 @@ describe("durable Session worktree approval integration", () => {
     resolver.alias(projectRoot, projectContext);
     const executionScopeValidator = new SessionExecutionScopeValidator({
       projectContextResolver: resolver,
-      loopExecutionClaimResolver: { resolve: async () => ({ outcome: "allow" as const }) },
     });
     const providerRegistry = makeProviderRegistry();
     const skillService = new SkillService({ builtinSkills: {} });

@@ -80,7 +80,7 @@ async function runShutdown(
     setTimeout(() => resolve("timeout"), timeoutMs);
   });
   const result = await Promise.race([
-    Promise.all([runtime.stopLoopSchedulers(), runtime.abortAllSessionExecutions()]).then(() => "completed" as const),
+    Promise.all([runtime.stopAutomationSchedulers(), runtime.abortAllSessionExecutions()]).then(() => "completed" as const),
     timeout,
   ]);
   const exitCode = result === "timeout" ? 1 : 0;

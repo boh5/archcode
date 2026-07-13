@@ -7,7 +7,6 @@ import {
   AgentRunningError,
   ChildSessionAgentMismatchError,
   ChildSessionCwdMismatchError,
-  ChildSessionLoopScopeMismatchError,
   ChildSessionNotFoundError,
   ChildSessionNotDescendantError,
   ChildSessionParentMismatchError,
@@ -35,7 +34,6 @@ import { NotRootSessionError, SessionDeleteConflictError } from "../store/errors
 import { scopedKey } from "../store/key";
 import type { Reminder, SessionRole, SessionStoreState } from "../store/types";
 import type { StoredMessage } from "../store/types";
-import type { ToolExecutionOrigin } from "../tools/types";
 import type { AgentName } from "../agents/names";
 import type { Logger } from "../logger";
 import {
@@ -125,7 +123,7 @@ export interface StartSessionExecutionInput {
   readonly workspaceRoot: string;
   readonly sessionId: string;
   readonly userMessage: string;
-  readonly origin?: SessionExecutionOrigin | ToolExecutionOrigin;
+  readonly origin?: SessionExecutionOrigin;
   readonly maxSteps?: number;
   readonly extraTools?: readonly string[];
   /** Caller-supplied durable attempt id when an owner must checkpoint before start. */
@@ -190,7 +188,6 @@ interface SessionExecutionManagerConfig {
       readonly parentSessionId?: string;
       readonly cwd?: string;
       readonly goalId?: string;
-      readonly loopId?: string;
       readonly sessionRole?: SessionStoreState["sessionRole"];
       readonly agentName: AgentName;
       readonly title?: string;
@@ -347,10 +344,7 @@ export class SessionExecutionManager {
       await this.#config.executionScopeValidator.validate({
         projectRoot: input.workspaceRoot,
         subject: executionScopeSubject(validationState, isDescendantOfRoot, parentAgentName),
-        entry: {
-          kind: "user_message",
-          ...(isToolExecutionOrigin(input.origin) ? { origin: input.origin } : {}),
-        },
+        entry: { kind: "user_message" },
       });
 
       const currentState = store.getState();
@@ -802,12 +796,6 @@ export class SessionExecutionManager {
     }
 
     const parentState = request.parentStore.getState();
-    assertChildLoopScope({
-      parentSessionId: request.parentSessionId,
-      parentLoopId: parentState.loopId,
-      childLoopId: parentState.loopId,
-      origin: request.origin,
-    });
     const childSessionId = crypto.randomUUID();
     const releaseChildLaunch = this.#reserveChildLaunch(
       workspaceRoot,
@@ -835,7 +823,6 @@ export class SessionExecutionManager {
         rootSessionId: parentState.rootSessionId,
         parentSessionId: request.parentSessionId,
         goalId: parentState.goalId,
-        loopId: parentState.loopId,
         sessionRole: sessionRoleForAgent(targetDefinition.name),
         agentName: targetDefinition.name,
         ...(childTitle === undefined ? {} : { title: childTitle }),
@@ -843,7 +830,7 @@ export class SessionExecutionManager {
       // A parent must never durably reference a child whose identity snapshot can
       // still disappear in the same-process crash window.
       await this.#config.flushSessionStore(childSessionId, workspaceRoot);
-      await this.#validateChildExecutionScope(workspaceRoot, childStore, request.origin, true);
+      await this.#validateChildExecutionScope(workspaceRoot, childStore, true);
       this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, "linked", childTitle, createdAt, background);
       childLinked = true;
       this.#eventBridge.attachSession(workspaceRoot, childSessionId, childStore);
@@ -868,7 +855,7 @@ export class SessionExecutionManager {
         workspaceRoot,
         sessionId: childSessionId,
         userMessage: prependSessionGoalDelegationContext(request.prompt, goalContext),
-        origin: request.origin ?? "tool_call",
+        origin: "tool_call",
       });
       this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, "running", childTitle, createdAt, background);
       releaseChildLaunch();
@@ -1039,18 +1026,11 @@ export class SessionExecutionManager {
       throw new ChildSessionParentMismatchError(request.sessionId, request.parentSessionId, childState.parentSessionId);
     }
     const parentState = request.parentStore.getState();
-    assertChildLoopScope({
-      parentSessionId: request.parentSessionId,
-      parentLoopId: parentState.loopId,
-      childSessionId: request.sessionId,
-      childLoopId: childState.loopId,
-      origin: request.origin,
-    });
     const parentCwd = parentState.cwd;
     if (childState.cwd !== parentCwd) {
       throw new ChildSessionCwdMismatchError(request.sessionId, request.parentSessionId, parentCwd, childState.cwd);
     }
-    await this.#validateChildExecutionScope(workspaceRoot, childStore, request.origin, false);
+    await this.#validateChildExecutionScope(workspaceRoot, childStore, false);
 
     const background = request.background ?? false;
     const parentAgentName = request.parentStore.getState().agentName;
@@ -1074,7 +1054,7 @@ export class SessionExecutionManager {
         workspaceRoot,
         sessionId: request.sessionId,
         userMessage: prependSessionGoalDelegationContext(request.prompt, goalContext),
-        origin: request.origin ?? "tool_call",
+        origin: "tool_call",
       });
       releaseChildLaunch();
       childLaunchReserved = false;
@@ -1176,7 +1156,6 @@ export class SessionExecutionManager {
 
   async #runExecution(input: StartSessionExecutionInput, execution: PendingSessionExecution): Promise<void> {
     try {
-      const loopOrigin = isToolExecutionOrigin(input.origin) ? input.origin : undefined;
       let userMessage = input.userMessage;
       for (let transitionCount = 0; transitionCount <= MAX_CWD_TRANSITIONS_PER_EXECUTION; transitionCount += 1) {
         const agent = await this.#config.sessionAgentManager.getOrCreate(input.workspaceRoot, input.sessionId);
@@ -1201,7 +1180,6 @@ export class SessionExecutionManager {
           abort: execution.abortController.signal,
           ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
           ...(input.extraTools === undefined ? {} : { extraTools: input.extraTools }),
-          ...(loopOrigin === undefined ? {} : { origin: loopOrigin }),
         });
         if (result.executionControl?.action === "stop_session_family") {
           const rootSessionId = execution.rootSessionId;
@@ -1748,7 +1726,6 @@ export class SessionExecutionManager {
   async #validateChildExecutionScope(
     workspaceRoot: string,
     store: StoreApi<SessionStoreState>,
-    origin: ChildExecutionRequest["origin"] | ResumeChildRequest["origin"],
     freshlyCreated: boolean,
   ): Promise<void> {
     const claimedState = store.getState();
@@ -1765,10 +1742,7 @@ export class SessionExecutionManager {
     await this.#config.executionScopeValidator.validate({
       projectRoot: workspaceRoot,
       subject: executionScopeSubject(claimedState, isDescendantOfRoot, parentAgentName),
-      entry: {
-        kind: "user_message",
-        ...(isToolExecutionOrigin(origin) ? { origin } : {}),
-      },
+      entry: { kind: "user_message" },
     });
     const currentState = store.getState();
     const currentScope = executionScopeSnapshot(currentState);
@@ -1795,7 +1769,6 @@ function executionScopeSubject(
     ...(isDescendantOfRoot === undefined ? {} : { isDescendantOfRoot }),
     cwd: state.cwd,
     ...(state.goalId === undefined ? {} : { goalId: state.goalId }),
-    ...(state.loopId === undefined ? {} : { loopId: state.loopId }),
     ...(state.sessionRole === undefined ? {} : { sessionRole: state.sessionRole }),
     agentName: state.agentName,
   };
@@ -1804,7 +1777,6 @@ function executionScopeSubject(
 interface ExecutionScopeSnapshot {
   readonly cwd: string;
   readonly goalId: string | undefined;
-  readonly loopId: string | undefined;
   readonly rootSessionId: string;
   readonly parentSessionId: string | undefined;
   readonly sessionRole: SessionRole | undefined;
@@ -1814,7 +1786,6 @@ function executionScopeSnapshot(state: SessionStoreState): ExecutionScopeSnapsho
   return {
     cwd: state.cwd,
     goalId: state.goalId,
-    loopId: state.loopId,
     rootSessionId: state.rootSessionId,
     parentSessionId: state.parentSessionId,
     sessionRole: state.sessionRole,
@@ -1849,33 +1820,11 @@ function executionScopeChangedFields(
   const fields: Array<keyof ExecutionScopeSnapshot> = [
     "cwd",
     "goalId",
-    "loopId",
     "rootSessionId",
     "parentSessionId",
     "sessionRole",
   ];
   return fields.filter((field) => previous[field] !== current[field]);
-}
-
-interface ChildLoopScopeInput {
-  readonly parentSessionId: string;
-  readonly parentLoopId: string | undefined;
-  readonly childSessionId?: string;
-  readonly childLoopId: string | undefined;
-  readonly origin: ToolExecutionOrigin | undefined;
-}
-
-function assertChildLoopScope(input: ChildLoopScopeInput): void {
-  const originLoopId = input.origin?.loopId;
-  if (input.parentLoopId === input.childLoopId && input.parentLoopId === originLoopId) return;
-
-  throw new ChildSessionLoopScopeMismatchError(
-    input.parentSessionId,
-    input.childSessionId,
-    input.parentLoopId,
-    input.childLoopId,
-    originLoopId,
-  );
 }
 
 type SubAgentTerminalStatus = Extract<ToolChildSessionLinkStatus, "completed" | "failed" | "timed_out" | "cancelled" | "interrupted">;
@@ -1917,13 +1866,9 @@ function childTerminalStatus(run: SessionExecutionRecord | undefined, signal: Ab
   return "failed";
 }
 
-function sessionExecutionOrigin(origin: SessionExecutionOrigin | ToolExecutionOrigin | undefined): SessionExecutionOrigin {
+function sessionExecutionOrigin(origin: SessionExecutionOrigin | undefined): SessionExecutionOrigin {
   if (origin === "tool_call") return "tool_call";
   return "user_message";
-}
-
-function isToolExecutionOrigin(origin: SessionExecutionOrigin | ToolExecutionOrigin | undefined): origin is ToolExecutionOrigin {
-  return typeof origin === "object" && origin !== null && origin.kind === "loop";
 }
 
 function sessionRoleForAgent(agentName: AgentName): SessionRole | undefined {

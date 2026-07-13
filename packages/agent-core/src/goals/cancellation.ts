@@ -143,16 +143,10 @@ export class GoalCancellationService implements GoalCancellationCapability {
     }
   }
 
-  #assertCanCancel(goal: GoalState, source: GoalCancellationSource): void {
+  #assertCanCancel(goal: GoalState, _source: GoalCancellationSource): void {
     if (goal.status === "cancelled") return;
     if (goal.status === "done") {
       throw new GoalCancellationError(goal.id, `Goal ${goal.id} cannot cancel from ${goal.status}`);
-    }
-    if (source === "http" && goal.loopId !== undefined) {
-      throw new GoalCancellationError(
-        goal.id,
-        `Goal ${goal.id} is owned by Loop ${goal.loopId} and must be resumed by its owning Loop`,
-      );
     }
   }
 

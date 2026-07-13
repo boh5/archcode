@@ -304,7 +304,6 @@ function stateWith(overrides: Partial<SessionStoreState>): SessionStoreState {
   setTitle: () => {},
   setParentSessionId: () => {},
   setGoalId: () => {},
-  setLoopId: () => {},
   setSessionRole: () => {},
   toModelMessages: () => [],
   ...overrides,

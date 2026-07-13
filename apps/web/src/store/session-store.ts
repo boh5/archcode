@@ -145,7 +145,7 @@ function isReducibleStreamEvent(event: SessionEventPayload): event is StreamEven
     case "reminder-consumed":
     case "step-start":
     case "step-end":
-    case "loop-error":
+    case "execution-error":
     case "llm-retry":
     case "llm-recovery":
     case "llm-recovery-failed":

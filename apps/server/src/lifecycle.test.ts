@@ -33,7 +33,7 @@ function createProcess() {
 function makeRuntime(abortAllSessionExecutions = mock(async () => undefined)): AgentRuntime {
   return {
     abortAllSessionExecutions,
-    stopLoopSchedulers: mock(() => undefined),
+    stopAutomationSchedulers: mock(() => undefined),
     notifyRuntimeShutdown: mock(() => undefined),
   } as unknown as AgentRuntime;
 }
@@ -62,7 +62,7 @@ describe("server lifecycle", () => {
       order.push("abort");
       order.push("wait");
     }));
-    runtime.stopLoopSchedulers = mock(async () => {
+    runtime.stopAutomationSchedulers = mock(async () => {
       order.push("stop-schedulers");
     });
     const globalEvents: unknown[] = [];
@@ -82,7 +82,7 @@ describe("server lifecycle", () => {
     expect(runtime.notifyRuntimeShutdown).toHaveBeenCalledWith("server_shutdown");
     expect(runtime.abortAllSessionExecutions).toHaveBeenCalled();
     expect(globalEvents).toContainEqual({ type: "shutdown", reason: "server_shutdown" });
-    expect(runtime.stopLoopSchedulers).toHaveBeenCalled();
+    expect(runtime.stopAutomationSchedulers).toHaveBeenCalled();
     expect(order).toEqual(["stop-schedulers", "abort", "wait", "stop", "exit:0"]);
   });
 

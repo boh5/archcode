@@ -10,10 +10,6 @@ export {
   SessionHitlJournalBlockedError,
   SessionHitlContinuationOutcomeUnknownError,
 } from "./session-hitl-journal";
-export type {
-  SessionLoopHitlContinuationCoordinator,
-  SessionLoopHitlContinuationLease,
-} from "./session-hitl-resume-adapter";
 export { SessionCwdReferenceMigrationService } from "./session-cwd-reference-migration";
 export { SessionFamilyStopService } from "./session-family-stop-service";
 export {
@@ -48,9 +44,6 @@ export type {
   SessionExecutionScopeSubject,
   SessionExecutionScopeValidationInput,
   SessionExecutionScopeValidatorOptions,
-  SessionLoopExecutionClaimDecision,
-  SessionLoopExecutionClaimInput,
-  SessionLoopExecutionClaimResolver,
 } from "./session-execution-scope-validator";
 export type {
   SessionCwdReferenceMigrationInput,

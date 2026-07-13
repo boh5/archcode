@@ -1,7 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import type { LoopConfig } from "@archcode/protocol";
 
 import { ProjectContextResolver } from "../projects/context-resolver";
 import { silentLogger } from "../logger";
@@ -10,7 +9,6 @@ import type { SessionRole } from "../store/types";
 import type { AgentName } from "../agents";
 import { createTestProjectContext, createTestProjectContextResolverOptions } from "../tools/test-project-context";
 import { WorktreeService } from "../worktrees";
-import { LoopSessionExecutionClaimResolver } from "../loops/session-execution-claim";
 import {
   SessionExecutionScopeConflictError,
   SessionExecutionScopeValidator,
@@ -18,17 +16,6 @@ import {
 } from "./session-execution-scope-validator";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "session-execution-scope-validator");
-const LOOP_CONFIG: LoopConfig = {
-  templateId: "watch_report",
-  title: null,
-  schedule: { kind: "manual" },
-  approvalPolicy: "interactive",
-  limits: { maxIterationsPerRun: 8, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
-  useWorktree: false,
-  taskPrompt: "Inspect the project",
-};
-const ALLOW_LOOP_CLAIMS = { resolve: async () => ({ outcome: "allow" as const }) };
-
 beforeEach(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });
   await mkdir(TMP_ROOT, { recursive: true });
@@ -49,7 +36,6 @@ describe("SessionExecutionScopeValidator", () => {
     });
     const validator = new SessionExecutionScopeValidator({
       projectContextResolver: resolver,
-      loopExecutionClaimResolver: ALLOW_LOOP_CLAIMS,
     });
 
     await expect(validator.validate({
@@ -63,48 +49,6 @@ describe("SessionExecutionScopeValidator", () => {
         projectRoot: join(TMP_ROOT, "ordinary"),
         subject: sessionSubject({ sessionId: "ordinary", cwd: join(TMP_ROOT, "outside") }),
         entry: { kind: "user_message" },
-      }),
-      "SESSION_CWD_INVALID",
-    );
-  });
-
-  test("rejects a generic user message for a Loop-owned Session", async () => {
-    const fixture = await createFixture("loop-generic");
-    const loop = await fixture.context.loopState.create("test-project", LOOP_CONFIG);
-
-    await expectConflict(
-      fixture.validator.validate({
-        projectRoot: fixture.projectRoot,
-        subject: sessionSubject({ sessionId: "loop-session", cwd: fixture.projectRoot, loopId: loop.loopId }),
-        entry: { kind: "user_message" },
-      }),
-      "SESSION_LOOP_EXECUTION_SCOPE_REQUIRED",
-    );
-
-    await expect(fixture.validator.validate({
-      projectRoot: fixture.projectRoot,
-      subject: sessionSubject({ sessionId: "loop-session", cwd: fixture.projectRoot, loopId: loop.loopId }),
-      entry: { kind: "user_message", origin: loopOrigin(loop.loopId) },
-    })).resolves.toBeUndefined();
-
-    await expectConflict(
-      fixture.validator.validate({
-        projectRoot: fixture.projectRoot,
-        subject: sessionSubject({ sessionId: "loop-session", cwd: fixture.projectRoot, loopId: loop.loopId }),
-        entry: { kind: "user_message", origin: loopOrigin(crypto.randomUUID()) },
-      }),
-      "SESSION_LOOP_EXECUTION_SCOPE_REQUIRED",
-    );
-
-    await expectConflict(
-      fixture.validator.validate({
-        projectRoot: fixture.projectRoot,
-        subject: sessionSubject({
-          sessionId: "loop-session",
-          cwd: join(TMP_ROOT, "outside-loop-cwd"),
-          loopId: loop.loopId,
-        }),
-        entry: { kind: "user_message", origin: loopOrigin(loop.loopId) },
       }),
       "SESSION_CWD_INVALID",
     );
@@ -156,56 +100,6 @@ describe("SessionExecutionScopeValidator", () => {
     })).resolves.toBeUndefined();
   });
 
-  test("allows only a matching Loop origin to replay Loop Session HITL", async () => {
-    const fixture = await createFixture("loop-hitl");
-    const loop = await fixture.context.loopState.create("test-project", LOOP_CONFIG);
-    const runId = crypto.randomUUID();
-    await fixture.context.loopState.recordRunStart(loop.loopId, {
-      runId,
-      loopId: loop.loopId,
-      status: "running",
-      trigger: "manual",
-      startedAt: Date.now(),
-      sessionId: "loop-session",
-    });
-    const validator = new SessionExecutionScopeValidator({
-      projectContextResolver: fixture.resolver,
-      loopExecutionClaimResolver: new LoopSessionExecutionClaimResolver(),
-    });
-    const subject = sessionSubject({ sessionId: "loop-session", cwd: fixture.projectRoot, loopId: loop.loopId });
-
-    await expect(validator.validate({
-      projectRoot: fixture.projectRoot,
-      subject,
-      entry: { kind: "hitl_replay", origin: loopOrigin(loop.loopId, runId) },
-    })).resolves.toBeUndefined();
-
-    await expectConflict(
-      validator.validate({
-        projectRoot: fixture.projectRoot,
-        subject,
-        entry: { kind: "hitl_replay", origin: loopOrigin(crypto.randomUUID()) },
-      }),
-      "SESSION_LOOP_HITL_ORIGIN_MISMATCH",
-    );
-    await expectConflict(
-      validator.validate({
-        projectRoot: fixture.projectRoot,
-        subject,
-        entry: { kind: "hitl_replay", origin: loopOrigin(loop.loopId, crypto.randomUUID()) },
-      }),
-      "SESSION_LOOP_RUN_CLAIM_INVALID",
-    );
-    await expectConflict(
-      validator.validate({
-        projectRoot: fixture.projectRoot,
-        subject,
-        entry: { kind: "hitl_replay" },
-      }),
-      "SESSION_LOOP_HITL_ORIGIN_MISMATCH",
-    );
-  });
-
   test("allows a claimed running Goal Session in the canonical checkout", async () => {
     const fixture = await createFixture("goal-valid");
     const goal = await createRunningGoal(fixture, { mainSessionId: "goal-main" });
@@ -216,21 +110,6 @@ describe("SessionExecutionScopeValidator", () => {
       entry: { kind: "user_message" },
     })).resolves.toBeUndefined();
 
-    const unrelatedLoop = await fixture.context.loopState.create("test-project", LOOP_CONFIG);
-    await expectConflict(
-      fixture.validator.validate({
-        projectRoot: fixture.projectRoot,
-        subject: sessionSubject({
-          sessionId: "goal-main",
-          cwd: fixture.projectRoot,
-          goalId: goal.id,
-          loopId: unrelatedLoop.loopId,
-          sessionRole: "main",
-        }),
-        entry: { kind: "user_message", origin: loopOrigin(unrelatedLoop.loopId) },
-      }),
-      "SESSION_GOAL_LOOP_SCOPE_MISMATCH",
-    );
   });
 
   test("rejects non-isolated Goal Sessions outside the canonical checkout", async () => {
@@ -321,7 +200,7 @@ describe("SessionExecutionScopeValidator", () => {
     );
   });
 
-  test("enforces Goal status, reviewer role, and Loop ownership", async () => {
+  test("enforces Goal status and reviewer role", async () => {
     const fixture = await createFixture("goal-status");
     const draft = await fixture.context.goalState.create({
       projectId: "test-project",
@@ -363,40 +242,6 @@ describe("SessionExecutionScopeValidator", () => {
       entry: { kind: "user_message" },
     })).resolves.toBeUndefined();
 
-    const loop = await fixture.context.loopState.create("test-project", LOOP_CONFIG);
-    const loopGoal = await fixture.context.goalState.create({
-      projectId: "test-project",
-      objective: "Loop Goal",
-      acceptanceCriteria: "Only Loop scope runs it",
-      mainSessionId: "loop-goal-main",
-      loopId: loop.loopId,
-    });
-    await fixture.context.goalState.start(loopGoal.id, { mainSessionId: "loop-goal-main", loopId: loop.loopId });
-    await expectConflict(
-      fixture.validator.validate({
-        projectRoot: fixture.projectRoot,
-        subject: sessionSubject({
-          sessionId: "loop-goal-main",
-          cwd: fixture.projectRoot,
-          goalId: loopGoal.id,
-          loopId: loop.loopId,
-          sessionRole: "main",
-        }),
-        entry: { kind: "user_message" },
-      }),
-      "SESSION_LOOP_EXECUTION_SCOPE_REQUIRED",
-    );
-    await expect(fixture.validator.validate({
-      projectRoot: fixture.projectRoot,
-      subject: sessionSubject({
-        sessionId: "loop-goal-main",
-        cwd: fixture.projectRoot,
-        goalId: loopGoal.id,
-        loopId: loop.loopId,
-        sessionRole: "main",
-      }),
-      entry: { kind: "user_message", origin: loopOrigin(loop.loopId) },
-    })).resolves.toBeUndefined();
   });
 
   test("allows not_done continuation only on the current Goal Lead main Session", async () => {
@@ -594,7 +439,6 @@ async function createFixture(name: string) {
     resolver,
     validator: new SessionExecutionScopeValidator({
       projectContextResolver: resolver,
-      loopExecutionClaimResolver: ALLOW_LOOP_CLAIMS,
     }),
   };
 }
@@ -630,7 +474,6 @@ function sessionSubject(input: {
   readonly isDescendantOfRoot?: boolean;
   readonly cwd: string;
   readonly goalId?: string;
-  readonly loopId?: string;
   readonly sessionRole?: SessionRole;
   readonly agentName?: AgentName;
 }): SessionExecutionScopeSubject {
@@ -641,7 +484,6 @@ function sessionSubject(input: {
     ...(input.isDescendantOfRoot === undefined ? {} : { isDescendantOfRoot: input.isDescendantOfRoot }),
     cwd: input.cwd,
     ...(input.goalId === undefined ? {} : { goalId: input.goalId }),
-    ...(input.loopId === undefined ? {} : { loopId: input.loopId }),
     ...(input.sessionRole === undefined ? {} : { sessionRole: input.sessionRole }),
     agentName: input.agentName ?? agentNameForRole(input.sessionRole),
   };
@@ -655,16 +497,6 @@ function agentNameForRole(role: SessionRole | undefined): AgentName {
   if (role === "explore") return "explore";
   if (role === "librarian") return "librarian";
   return "engineer";
-}
-
-function loopOrigin(loopId: string, runId: string = crypto.randomUUID()) {
-  return {
-    kind: "loop" as const,
-    loopId,
-    runId,
-    trigger: "manual" as const,
-    approvalPolicy: "interactive" as const,
-  };
 }
 
 async function expectConflict(

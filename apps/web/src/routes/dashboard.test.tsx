@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { JSDOM } from "jsdom";
-import type { DashboardGoal, DashboardLoop, DashboardLoopRunSummary, HitlProjection } from "../api/types";
+import type { DashboardGoal, HitlProjection } from "../api/types";
 import { Dashboard } from "./dashboard";
 
 // ─── Test helpers ───
@@ -185,38 +185,11 @@ function makeHitlItem(overrides: Partial<HitlProjection> = {}): HitlProjection {
   };
 }
 
-function makeLoopRun(overrides: Partial<DashboardLoopRunSummary> = {}): DashboardLoopRunSummary {
-  return {
-    runId: "run-1",
-    status: "running",
-    trigger: "manual",
-    startedAt: 1700000000000,
-    ...overrides,
-  };
-}
-
-function makeLoop(overrides: Partial<DashboardLoop> = {}): DashboardLoop {
-  return {
-    loopId: "loop-1",
-    title: "Daily Triage Loop",
-    status: "active",
-    currentRun: makeLoopRun({ runId: "run-current", status: "running" }),
-    lastRun: makeLoopRun({ runId: "run-last", status: "succeeded", endedAt: 1700000060000 }),
-    nextRunAt: 1700000600000,
-    templateId: "watch_report",
-    projectSlug: "demo",
-    projectName: "Demo Project",
-    ...overrides,
-  };
-}
-
 function createDashboardHandler(input: {
   goals?: DashboardGoal[];
-  loops?: DashboardLoop[];
   hitl?: HitlProjection[];
   projects?: Array<{ slug: string; name: string; workspaceRoot: string }>;
   delayGoals?: boolean;
-  delayLoops?: boolean;
   delayHitl?: boolean;
 }): (path: string) => Promise<Response> {
   const projects = input.projects ?? [{ slug: "demo", name: "Demo Project", workspaceRoot: "/demo" }];
@@ -238,10 +211,6 @@ function createDashboardHandler(input: {
       return Response.json({ goals: input.goals ?? [] });
     }
 
-    if (path === "/api/loops?status=active") {
-      if (input.delayLoops) await new Promise((resolve) => setTimeout(resolve, 50));
-      return Response.json({ loops: input.loops ?? [] });
-    }
 
     if (path.startsWith("/api/projects/") && path.includes("/hitl?scope=project")) {
       if (input.delayHitl) await new Promise((resolve) => setTimeout(resolve, 50));
@@ -325,54 +294,6 @@ describe("Dashboard", () => {
     }
   });
 
-  test("active loops section renders primary state, last result, next run, and detail link without forbidden UI", async () => {
-    const loop = makeLoop({
-      loopId: "loop-active-1",
-      title: "Nightly Loop Sweep",
-      projectSlug: "alpha",
-      projectName: "Alpha Project",
-      currentRun: makeLoopRun({ runId: "run-current-alpha", status: "running" }),
-      lastRun: makeLoopRun({ runId: "run-last-alpha", status: "succeeded", endedAt: 1700000100000 }),
-      nextRunAt: 1700000900000,
-      templateId: "goal_runner",
-    });
-    const ctx = await setupDashboard(createDashboardHandler({ loops: [loop] }));
-
-    try {
-      await renderDashboard(ctx.reactRoot, ctx.queryClient);
-
-      await waitFor(() => {
-        const loopsSection = ctx.container.querySelector('[data-testid="dashboard-active-loops"]');
-        expect(loopsSection).not.toBeNull();
-        const text = loopsSection?.textContent ?? "";
-        expect(text).toContain("Nightly Loop Sweep");
-        expect(text).toContain("Alpha Project");
-        expect(text).toContain("Running");
-        expect(text).toContain("last: Completed");
-        expect(text).toContain("next:");
-      });
-
-      const detailLink = ctx.container.querySelector('a[href="/projects/alpha/loops/loop-active-1"]');
-      expect(detailLink).not.toBeNull();
-
-      const lowerText = ctx.container.querySelector('[data-testid="dashboard-active-loops"]')?.textContent?.toLowerCase() ?? "";
-      expect(lowerText).not.toContain("readiness");
-      expect(lowerText).not.toContain("budget");
-      expect(lowerText).not.toContain("cron");
-      expect(lowerText).not.toContain("runkind");
-      expect(lowerText).not.toContain("toolprofileid");
-      expect(lowerText).not.toContain("trigger health");
-      expect(lowerText).not.toContain("queue:");
-      expect(lowerText).not.toContain("cleanup");
-      expect(lowerText).not.toContain("dedupekey");
-      expect(lowerText).not.toContain("subjectkey");
-      expect(lowerText).not.toContain("branchkey");
-      expect(lowerText).not.toContain("run-current-alpha");
-      expect(lowerText).not.toContain("run-last-alpha");
-    } finally {
-      await cleanupDashboard(ctx);
-    }
-  });
 
   test("renders HITL cards in approval queue", async () => {
     const hitl1 = makeHitlItem({ hitlId: "h1", source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" , resumeStatus: "running"}, displayPayload: { title: "Deploy?", summary: "Confirm", redacted: true }, project: { slug: "demo", name: "Alpha Project" } });

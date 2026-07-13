@@ -2,12 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { ChevronRight, Focus, LayoutDashboard, PanelLeftClose, Plus } from "lucide-react";
 import { useCreateSession } from "../../api/mutations";
-import { useGoals, useLoops, useProjects, useSessions } from "../../api/queries";
+import { useAutomations, useGoals, useProjects, useSessions } from "../../api/queries";
 import type {
   GoalState,
   GoalStatus,
-  LoopState,
-  LoopStatus,
+  Automation,
   Project,
   SessionSummary,
 } from "../../api/types";
@@ -16,7 +15,7 @@ import { ProjectActionDropdown } from "./ProjectActionMenu";
 import { EditProjectDialog } from "./EditProjectDialog";
 import { CloseProjectDialog } from "./CloseProjectDialog";
 import { CreateGoalDialog } from "./CreateGoalDialog";
-import { CreateLoopDialog } from "./CreateLoopDialog";
+import { AutomationDialog } from "./AutomationDialog";
 import { formatRelativeTime } from "../../lib/time-format";
 import { useWorkbenchLayout } from "../../context/workbench-layout";
 import {
@@ -41,18 +40,18 @@ function toSearchable(value: unknown): string {
 
 // Tab model
 
-type SidebarTab = "sessions" | "goals" | "loops";
+type SidebarTab = "sessions" | "goals" | "automations";
 
 const TABS: Array<{ id: SidebarTab; label: string }> = [
   { id: "sessions", label: "Sessions" },
   { id: "goals", label: "Goals" },
-  { id: "loops", label: "Loops" },
+  { id: "automations", label: "Automations" },
 ];
 
 function deriveTabFromPath(pathname: string): SidebarTab {
   if (pathname.includes("/sessions/")) return "sessions";
   if (pathname.includes("/goals")) return "goals";
-  if (pathname.includes("/loops")) return "loops";
+  if (pathname.includes("/automations")) return "automations";
   return "sessions";
 }
 
@@ -84,15 +83,14 @@ function GoalStatusDot({ status }: { status: GoalStatus }) {
   return <div className={`w-[7px] h-[7px] rounded-full shrink-0 ${GOAL_STATUS_DOT_COLORS[status] ?? ""}`} />;
 }
 
-const LOOP_STATUS_DOT_COLORS: Record<LoopStatus, string> = {
+const AUTOMATION_STATUS_DOT_COLORS: Record<Automation["status"], string> = {
   active: "bg-success shadow-[0_0_6px_var(--success)] animate-pulse",
   paused: "bg-warning",
   disabled: "bg-text-muted",
-  error: "bg-error",
 };
 
-function LoopStatusDot({ status }: { status: LoopStatus }) {
-  return <div className={`w-[7px] h-[7px] rounded-full shrink-0 ${LOOP_STATUS_DOT_COLORS[status] ?? ""}`} />;
+function AutomationStatusDot({ status }: { status: Automation["status"] }) {
+  return <div className={`w-[7px] h-[7px] rounded-full shrink-0 ${AUTOMATION_STATUS_DOT_COLORS[status] ?? ""}`} />;
 }
 
 // List items
@@ -182,24 +180,16 @@ function GoalItem({
   );
 }
 
-function LoopItem({
-  loop,
+function AutomationItem({
+  automation,
   isActive,
   onClick,
 }: {
-  loop: LoopState;
+  automation: Automation;
   isActive: boolean;
   onClick: () => void;
 }) {
-  const title = loop.config.title || "Untitled";
-  const schedule = loop.config?.schedule;
-  const scheduleLabel = schedule
-    ? schedule.kind === "manual"
-      ? "manual"
-      : schedule.kind === "interval"
-        ? `interval ${schedule.everyMs}ms`
-        : `cron ${schedule.expression}`
-    : "";
+  const scheduleLabel = automation.trigger.kind === "once" ? "once" : automation.trigger.kind === "interval" ? `interval ${automation.trigger.everyMs}ms` : `cron ${automation.trigger.expression}`;
 
   return (
     <div
@@ -216,15 +206,15 @@ function LoopItem({
       {isActive && (
         <div className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r-sm bg-accent" />
       )}
-      <LoopStatusDot status={loop.status} />
+      <AutomationStatusDot status={automation.status} />
       <div className="flex-1 min-w-0">
         <div className="text-[12.5px] font-medium text-text-primary whitespace-nowrap overflow-hidden text-ellipsis">
-          {title}
+          {automation.name}
         </div>
         <div className="flex items-center gap-1.5 text-[11px] text-text-muted mt-px">
-          <span className="font-mono">{loop.loopId.slice(0, 8)}</span>
+          <span className="font-mono">{automation.id.slice(0, 8)}</span>
           {scheduleLabel && <span className="truncate">{scheduleLabel}</span>}
-          {loop.config?.templateId && <span className="capitalize">{loop.config.templateId.replaceAll("_", " ")}</span>}
+          <span className="capitalize">{automation.action.kind.replaceAll("_", " ")}</span>
         </div>
       </div>
     </div>
@@ -338,11 +328,11 @@ export function Sidebar({
 } = {}) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { slug = "", sessionId = "", goalId = "", loopId = "" } = useParams<{
+  const { slug = "", sessionId = "", goalId = "", automationId = "" } = useParams<{
     slug: string;
     sessionId: string;
     goalId: string;
-    loopId: string;
+    automationId: string;
   }>();
   const createSession = useCreateSession();
   const { toggleSidebar, toggleFocusMode } = useWorkbenchLayout();
@@ -350,18 +340,18 @@ export function Sidebar({
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [closingProject, setClosingProject] = useState<Project | null>(null);
   const [createGoalOpen, setCreateGoalOpen] = useState(false);
-  const [createLoopOpen, setCreateLoopOpen] = useState(false);
+  const [createAutomationOpen, setCreateAutomationOpen] = useState(false);
 
   const [sessionsSearch, setSessionsSearch] = useState("");
   const [goalsSearch, setGoalsSearch] = useState("");
-  const [loopsSearch, setLoopsSearch] = useState("");
+  const [automationsSearch, setAutomationsSearch] = useState("");
   const [selectedTab, setSelectedTab] = useState<SidebarTab>(deriveTabFromPath(location.pathname));
 
   const { data: projects } = useProjects();
   const activeProject = projects?.find(p => p.slug === slug) ?? null;
   const { data: sessions } = useSessions(slug);
   const { data: goals } = useGoals(slug);
-  const { data: loops } = useLoops(slug);
+  const { data: automations } = useAutomations(slug);
   const runtimeInitialized = useSessionRuntimeInitialized(slug);
   const runtimeFamilies = useSessionRuntimeFamilies();
 
@@ -390,8 +380,8 @@ export function Sidebar({
     navigate(`/projects/${slug}/goals/${clickedGoalId}`);
   };
 
-  const handleLoopClick = (clickedLoopId: string) => {
-    navigate(`/projects/${slug}/loops/${clickedLoopId}`);
+  const handleAutomationClick = (clickedAutomationId: string) => {
+    navigate(`/projects/${slug}/automations/${clickedAutomationId}`);
   };
 
   // Filtered lists
@@ -441,18 +431,15 @@ export function Sidebar({
     });
   }, [goals, goalsSearch]);
 
-  const filteredLoops = useMemo(() => {
-    const loopsList = loops ?? [];
-    if (!loopsSearch.trim()) return loopsList;
-    const q = loopsSearch.toLowerCase();
-    return loopsList.filter((l) => {
-      const id = toSearchable(l.loopId).toLowerCase();
-      const status = toSearchable(l.status).toLowerCase();
-      const templateId = toSearchable(l.config?.templateId).toLowerCase();
-      const schedule = toSearchable(l.config?.schedule?.kind).toLowerCase();
-      return id.includes(q) || status.includes(q) || templateId.includes(q) || schedule.includes(q);
+  const filteredAutomations = useMemo(() => {
+    const list = automations ?? [];
+    if (!automationsSearch.trim()) return list;
+    const q = automationsSearch.toLowerCase();
+    return list.filter((automation) => {
+      return [automation.id, automation.name, automation.status, automation.trigger.kind, automation.action.kind]
+        .some((value) => toSearchable(value).toLowerCase().includes(q));
     });
-  }, [loops, loopsSearch]);
+  }, [automations, automationsSearch]);
 
   // Render
 
@@ -657,46 +644,46 @@ export function Sidebar({
         </section>
 
         <section
-          id="sidebar-panel-loops"
+          id="sidebar-panel-automations"
           role="tabpanel"
-          aria-labelledby="sidebar-tab-loops"
-          hidden={activeTab !== "loops"}
+          aria-labelledby="sidebar-tab-automations"
+          hidden={activeTab !== "automations"}
         >
           <div className="px-3 py-2 space-y-2">
             <DashboardLinkButton
-              to={`/projects/${slug}/loops`}
-              label="Loops Dashboard"
-              isActive={location.pathname === `/projects/${slug}/loops`}
+              to={`/projects/${slug}/automations`}
+              label="Automations"
+              isActive={location.pathname === `/projects/${slug}/automations`}
             />
             <div className="flex items-center gap-2">
               <input
                 type="text"
-                aria-label="Search loops"
-                placeholder="Search loops..."
-                value={loopsSearch}
-                onChange={(e) => setLoopsSearch(e.target.value)}
+                aria-label="Search automations"
+                placeholder="Search automations..."
+                value={automationsSearch}
+                onChange={(e) => setAutomationsSearch(e.target.value)}
                 className={SEARCH_INPUT_CLASS}
               />
               <CreateButton
-                onClick={() => setCreateLoopOpen(true)}
-                title="New loop"
-                label="New loop"
+                onClick={() => setCreateAutomationOpen(true)}
+                title="New automation"
+                label="New automation"
                 disabled={!slug}
               />
             </div>
           </div>
 
-          {filteredLoops.length === 0 ? (
+          {filteredAutomations.length === 0 ? (
             <EmptyRow>
-              {loopsSearch ? "No matching loops" : "No loops yet"}
+              {automationsSearch ? "No matching automations" : "No automations yet"}
             </EmptyRow>
           ) : (
-            filteredLoops.map((loop) => (
-              <LoopItem
-                key={loop.loopId}
-                loop={loop}
-                isActive={loop.loopId === loopId}
-                onClick={() => handleLoopClick(loop.loopId)}
+            filteredAutomations.map((automation) => (
+              <AutomationItem
+                key={automation.id}
+                automation={automation}
+                isActive={automation.id === automationId}
+                onClick={() => handleAutomationClick(automation.id)}
               />
             ))
           )}
@@ -738,13 +725,13 @@ export function Sidebar({
         }}
       />
 
-      <CreateLoopDialog
-        open={createLoopOpen}
-        onClose={() => setCreateLoopOpen(false)}
+      <AutomationDialog
+        open={createAutomationOpen}
+        onClose={() => setCreateAutomationOpen(false)}
         slug={slug}
-        onCreated={(newLoopId) => {
-          setCreateLoopOpen(false);
-          navigate(`/projects/${slug}/loops/${newLoopId}`);
+        onCreated={(newAutomationId) => {
+          setCreateAutomationOpen(false);
+          navigate(`/projects/${slug}/automations/${newAutomationId}`);
         }}
       />
     </div>

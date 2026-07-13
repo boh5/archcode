@@ -14,7 +14,7 @@ import { createFilesRoutes } from "./routes/files";
 import { createGlobalEventsRoutes } from "./routes/global-events";
 import { createGoalsRoutes } from "./routes/goals";
 import { createHitlRoutes } from "./routes/hitl";
-import { createLoopsRoutes } from "./routes/loops";
+import { createAutomationsRoutes } from "./routes/automations";
 import { createMessagesRoutes } from "./routes/messages";
 import { createMcpRoutes } from "./routes/mcp";
 import { createProjectsRoutes } from "./routes/projects";
@@ -30,7 +30,7 @@ export interface CreateServerAppOptions {
 export function createServerApp(
   runtime: AgentRuntime,
   options: CreateServerAppOptions = {},
-): { app: Hono } {
+): { app: Hono; runtime: AgentRuntime } {
   const app = new Hono();
   const serverRuntime = createServerEventRuntime(runtime);
 
@@ -78,6 +78,7 @@ export function createServerApp(
     onProjectRegistered: async (project) => {
       await publishProjectControlPlaneSnapshot(serverRuntime, globalEventBus, project);
       await serverRuntime.reconcileRegisteredProject(project.workspaceRoot, project.slug);
+      await serverRuntime.startAutomationScheduler(project.workspaceRoot);
     },
     onProjectRemoved: async (snapshot) => {
       globalEventBus.emit(snapshot.sessionRuntime);
@@ -87,7 +88,7 @@ export function createServerApp(
   const dashboard = createDashboardRoutes(serverRuntime);
   const goals = createGoalsRoutes(serverRuntime);
   const projectHitl = createHitlRoutes(serverRuntime);
-  const loops = createLoopsRoutes(serverRuntime);
+  const automations = createAutomationsRoutes(serverRuntime);
   const sessions = createSessionsRoutes(serverRuntime);
   const messages = createMessagesRoutes(serverRuntime);
   const globalEvents = createGlobalEventsRoutes(globalEventBus, {
@@ -109,7 +110,7 @@ export function createServerApp(
   app.route("/api", dashboard);
   app.route("/api/projects", projects);
   app.route("/api/projects", goals);
-  app.route("/api/projects", loops);
+  app.route("/api/projects", automations);
   app.route("/api/projects", projectHitl);
   app.route("/api/projects/:slug/sessions", sessions);
   app.route("/api/projects/:slug/sessions/:sessionId", messages);
@@ -133,7 +134,7 @@ export function createServerApp(
   wireMcpStatusBridge(serverRuntime, globalEventBus);
   wireResourceChangeBridge(serverRuntime, globalEventBus);
 
-  return { app };
+  return { app, runtime: serverRuntime };
 }
 
 export function createServerEventRuntime(runtime: AgentRuntime): AgentRuntime {

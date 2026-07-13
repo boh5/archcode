@@ -19,7 +19,7 @@ const ownerFileMutationLocks = new Map<string, Promise<void>>();
 
 const HitlOwnerKeySchema: z.ZodType<HitlOwnerKey> = z.strictObject({
   projectSlug: z.string().trim().min(1),
-  ownerType: z.enum(["session", "goal", "loop"]),
+  ownerType: z.enum(["session", "goal"]),
   ownerId: z.string().trim().min(1),
   workspaceRoot: z.never().optional(),
 });
@@ -45,10 +45,6 @@ const HitlSourceSchema: z.ZodType<HitlSource> = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("goal_review"), goalId: z.string(), resumeStatus: z.literal("reviewing") }),
   z.strictObject({ type: z.literal("goal_budget"), goalId: z.string(), approvalPoint: z.string().optional(), resumeStatus: z.enum(["running", "reviewing"]) }),
   z.strictObject({ type: z.literal("goal_question"), goalId: z.string(), questionKey: z.string(), resumeStatus: z.enum(["running", "reviewing"]) }),
-  z.strictObject({ type: z.literal("loop_approval"), loopId: z.string(), approvalPoint: z.string() }),
-  z.strictObject({ type: z.literal("loop_blocker"), loopId: z.string(), runId: z.string().optional(), reason: z.string() }),
-  z.strictObject({ type: z.literal("loop_retry"), loopId: z.string(), runId: z.string(), attempt: z.number().int().nonnegative() }),
-  z.strictObject({ type: z.literal("loop_question"), loopId: z.string(), questionKey: z.string() }),
 ]);
 
 const HitlResumeMetadataSchema: z.ZodType<HitlResumeMetadata> = z.strictObject({
@@ -483,11 +479,8 @@ function assertRecordIdentity(owner: HitlOwnerKey, record: HitlRecord): void {
   const source = record.source;
   const matches = owner.ownerType === "session"
     ? (source.type === "ask_user" || source.type === "tool_permission") && source.sessionId === owner.ownerId
-    : owner.ownerType === "goal"
-      ? (source.type === "goal_approval" || source.type === "goal_review" || source.type === "goal_budget" || source.type === "goal_question")
-        && source.goalId === owner.ownerId
-      : (source.type === "loop_approval" || source.type === "loop_blocker" || source.type === "loop_retry" || source.type === "loop_question")
-        && source.loopId === owner.ownerId;
+    : (source.type === "goal_approval" || source.type === "goal_review" || source.type === "goal_budget" || source.type === "goal_question")
+      && source.goalId === owner.ownerId;
   if (!matches) {
     throw new HitlRecordStateError(
       record.hitlId,

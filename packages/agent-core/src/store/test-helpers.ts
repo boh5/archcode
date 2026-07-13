@@ -80,9 +80,6 @@ export function createMockStore(
     setGoalId: (goalId) => {
       state.goalId = goalId;
     },
-    setLoopId: (loopId) => {
-      state.loopId = loopId;
-    },
     setSessionRole: (sessionRole) => {
       state.sessionRole = sessionRole;
     },

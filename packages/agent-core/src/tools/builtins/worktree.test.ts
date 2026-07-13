@@ -235,7 +235,7 @@ describe("worktree Session tools", () => {
     const service = new WorktreeService({ canonicalRoot: projectRoot });
     const foreignTargets = await Promise.all([
       service.create({ owner: { type: "goal", id: crypto.randomUUID() } }),
-      service.create({ owner: { type: "loop", id: crypto.randomUUID() }, uniqueId: crypto.randomUUID() }),
+      service.create({ owner: { type: "session", id: crypto.randomUUID() }, uniqueId: crypto.randomUUID() }),
       service.create({ owner: { type: "session", id: crypto.randomUUID() } }),
     ]);
 

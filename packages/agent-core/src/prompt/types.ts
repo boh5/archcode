@@ -49,7 +49,7 @@ export interface PromptEnv {
   /** BCP-47 locale string (e.g. "en-US") */
   readonly locale: string;
 
-  /** Canonical project root that owns Session, Goal, Loop, HITL, and memory state. */
+  /** Canonical project root that owns Session, Goal, Automation, HITL, and memory state. */
   readonly projectRoot: string;
 
   /** Current working directory */

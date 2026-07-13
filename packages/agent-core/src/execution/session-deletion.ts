@@ -10,7 +10,6 @@ export interface SessionDeletionPreflight {
 
 export type SessionDeletionOwnerType =
   | "goal"
-  | "loop"
   | "session_hitl"
   | "session_hitl_checkpoint";
 

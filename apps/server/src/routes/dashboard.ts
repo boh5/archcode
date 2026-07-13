@@ -1,8 +1,7 @@
 import { Hono } from "hono";
 import type { AgentRuntime, ProjectInfo } from "@archcode/agent-core";
-import type { GoalState, GoalStatus, LoopRunReport, LoopStatus, LoopTemplateId } from "@archcode/protocol";
+import type { Automation, GoalState, GoalStatus } from "@archcode/protocol";
 import { BadRequestError } from "../errors";
-import { redactPublicString } from "../redact";
 
 const GoalStatusSchemaValues = new Set<GoalStatus>([
   "draft",
@@ -29,11 +28,10 @@ const TerminalGoalStatuses = new Set<GoalStatus>([
   "cancelled",
 ]);
 
-const LoopStatusSchemaValues = new Set<LoopStatus>([
+const AutomationStatusSchemaValues = new Set<Automation["status"]>([
   "active",
   "paused",
   "disabled",
-  "error",
 ]);
 
 type DashboardGoal = GoalState & {
@@ -47,26 +45,7 @@ type DashboardProjectError = {
   message: string;
 };
 
-type DashboardLoopRunSummary = {
-  runId: string;
-  status: LoopRunReport["status"];
-  trigger: LoopRunReport["trigger"];
-  startedAt: number;
-  endedAt?: number;
-  sessionId?: string;
-  reason?: string;
-  summary?: string;
-  error?: string;
-};
-
-type DashboardLoop = {
-  loopId: string;
-  title: string | null;
-  status: LoopStatus;
-  currentRun?: DashboardLoopRunSummary;
-  lastRun?: DashboardLoopRunSummary;
-  nextRunAt?: number;
-  templateId: LoopTemplateId;
+type DashboardAutomation = Automation & {
   projectSlug: string;
   projectName: string;
 };
@@ -98,25 +77,19 @@ export function createDashboardRoutes(runtime: AgentRuntime): Hono {
     return c.json({ goals, errors });
   });
 
-  app.get("/loops", async (c) => {
-    const status = parseLoopStatusFilter(c.req.query("status"));
-    const loops: DashboardLoop[] = [];
+  app.get("/automations", async (c) => {
+    const status = parseAutomationStatusFilter(c.req.query("status"));
+    const automations: DashboardAutomation[] = [];
     const errors: DashboardProjectError[] = [];
 
     for (const project of await listProjects(runtime)) {
       try {
-        const projectLoops = await runtime.listLoops(project.workspaceRoot);
-        loops.push(
-          ...projectLoops
-            .filter((loop) => matchesLoopStatus(loop, status))
-            .map((loop) => ({
-              loopId: loop.loopId,
-              title: loop.config.title,
-              status: loop.status,
-              ...(loop.currentRun === undefined ? {} : { currentRun: toDashboardLoopRunSummary(loop.currentRun) }),
-              ...(loop.lastRun === undefined ? {} : { lastRun: toDashboardLoopRunSummary(loop.lastRun) }),
-              nextRunAt: loop.nextRunAt,
-              templateId: loop.config.templateId,
+        const projectAutomations = await runtime.listAutomations(project.workspaceRoot);
+        automations.push(
+          ...projectAutomations
+            .filter((automation) => matchesAutomationStatus(automation, status))
+            .map((automation) => ({
+              ...automation,
               projectSlug: project.slug,
               projectName: project.name,
             })),
@@ -126,7 +99,7 @@ export function createDashboardRoutes(runtime: AgentRuntime): Hono {
       }
     }
 
-    return c.json({ loops, errors });
+    return c.json({ automations, errors });
   });
 
   return app;
@@ -149,19 +122,19 @@ function matchesGoalStatus(goal: GoalState, status: GoalStatus | "active" | "ter
   return goal.status === status;
 }
 
-function parseLoopStatusFilter(status: string | undefined): LoopStatus | "active" | undefined {
+function parseAutomationStatusFilter(status: string | undefined): Automation["status"] | "active" | undefined {
   if (status === undefined) return undefined;
   if (status === "active") return "active";
-  if (!LoopStatusSchemaValues.has(status as LoopStatus)) {
-    throw new BadRequestError("status must be active or a valid loop status");
+  if (!AutomationStatusSchemaValues.has(status as Automation["status"])) {
+    throw new BadRequestError("status must be active or a valid automation status");
   }
-  return status as LoopStatus;
+  return status as Automation["status"];
 }
 
-function matchesLoopStatus(loop: { status: LoopStatus }, status: LoopStatus | "active" | undefined): boolean {
+function matchesAutomationStatus(automation: Automation, status: Automation["status"] | "active" | undefined): boolean {
   if (status === undefined) return true;
-  if (status === "active") return loop.status === "active";
-  return loop.status === status;
+  if (status === "active") return automation.status === "active";
+  return automation.status === status;
 }
 
 function withProject(goal: GoalState, project: ProjectInfo): DashboardGoal {
@@ -169,20 +142,6 @@ function withProject(goal: GoalState, project: ProjectInfo): DashboardGoal {
     ...goal,
     projectSlug: project.slug,
     projectName: project.name,
-  };
-}
-
-function toDashboardLoopRunSummary(run: LoopRunReport): DashboardLoopRunSummary {
-  return {
-    runId: run.runId,
-    status: run.status,
-    trigger: run.trigger,
-    startedAt: run.startedAt,
-    ...(run.sessionId === undefined ? {} : { sessionId: run.sessionId }),
-    ...(run.endedAt === undefined ? {} : { endedAt: run.endedAt }),
-    ...(run.reason === undefined ? {} : { reason: redactPublicString(run.reason) }),
-    ...(run.summary === undefined ? {} : { summary: redactPublicString(run.summary) }),
-    ...(run.error === undefined ? {} : { error: redactPublicString(run.error) }),
   };
 }
 

@@ -2,7 +2,7 @@ export type ServerErrorCode =
   | "PROJECT_NOT_FOUND"
   | "WORKSPACE_NOT_FOUND"
   | "SESSION_NOT_FOUND"
-  | "LOOP_NOT_FOUND"
+  | "AUTOMATION_NOT_FOUND"
   | "SESSION_CWD_INVALID"
   | "QUESTION_NOT_FOUND"
   | "PROJECT_SCOPED_HITL_REQUIRED"
@@ -13,8 +13,7 @@ export type ServerErrorCode =
   | "INTERNAL_ERROR"
   | "DELETE_CONFLICT"
   | "SESSION_STOP_CONFLICT"
-  | "PROJECT_REMOVE_CONFLICT"
-  | "LOOP_ACTIVE_CONFLICT";
+  | "PROJECT_REMOVE_CONFLICT";
 
 export class ServerError extends Error {
   constructor(

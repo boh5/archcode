@@ -178,8 +178,7 @@ export class GoalLeadContinuationService implements GoalLeadContinuationCoordina
     goal: GoalState,
   ): Promise<{ readonly sessionId: string; readonly projectId: string; readonly goal: GoalState; readonly session: SessionFile } | undefined> {
     if (
-      goal.loopId !== undefined
-      || !isContinuableStatus(goal.status)
+      !isContinuableStatus(goal.status)
       || goal.pendingHitlIds.length > 0
       || goal.budget?.status === "blocked"
       || goal.mainSessionId === undefined
@@ -191,7 +190,6 @@ export class GoalLeadContinuationService implements GoalLeadContinuationCoordina
       || session.rootSessionId !== goal.mainSessionId
       || session.parentSessionId !== undefined
       || session.goalId !== goal.id
-      || session.loopId !== undefined
       || session.sessionRole !== "main"
       || session.agentName !== "goal_lead"
     ) return undefined;
@@ -293,7 +291,7 @@ function goalKey(workspaceRoot: string, goalId: string): string {
   return `${workspaceRoot}\0${goalId}`;
 }
 
-export function buildGoalContinuationPrompt(goal: GoalState, options: { readonly loopId?: string } = {}): string {
+export function buildGoalContinuationPrompt(goal: GoalState): string {
   const snapshot = {
     goalId: goal.id,
     objective: goal.objective,
@@ -310,10 +308,7 @@ export function buildGoalContinuationPrompt(goal: GoalState, options: { readonly
     blocker: goal.blocker,
     budget: goal.budget,
   };
-  const ownership = options.loopId === undefined
-    ? "This is a direct Goal continuation."
-    : `This is the same Loop-owned Goal for Loop ${options.loopId}. Do not create another Goal, Run, or main Session.`;
-  return `Continue pursuing the bound Goal from this freshly loaded persisted snapshot:\n${JSON.stringify(snapshot, null, 2)}\n\n${ownership}\nKeep the original scope. If status is running, continue the work. If it is reviewing, coordinate a Reviewer and wait for reviewer evidence. If it is not_done, call goal_manage.retry before any Plan or Build delegation, then address the recorded unresolved items. Before stopping, audit whether the Goal is genuinely complete, blocked on HITL, or budget-limited, and persist the appropriate Goal transition.`;
+  return `Continue pursuing the bound Goal from this freshly loaded persisted snapshot:\n${JSON.stringify(snapshot, null, 2)}\n\nThis is a direct Goal continuation.\nKeep the original scope. If status is running, continue the work. If it is reviewing, coordinate a Reviewer and wait for reviewer evidence. If it is not_done, call goal_manage.retry before any Plan or Build delegation, then address the recorded unresolved items. Before stopping, audit whether the Goal is genuinely complete, blocked on HITL, or budget-limited, and persist the appropriate Goal transition.`;
 }
 
 function isContinuableStatus(status: GoalState["status"]): boolean {

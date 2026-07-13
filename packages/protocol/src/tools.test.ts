@@ -41,7 +41,6 @@ import {
   getToolCategory,
   isBuiltinToolName,
 } from "./tools";
-import type { CollisionLease, LoopConfig, LoopRunReason, LoopRunReport, LoopRunReportStatus } from "./types";
 
 const ALL_BUILTIN_NAMES = [
   TOOL_FILE_READ,
@@ -136,45 +135,6 @@ describe("tool name constants", () => {
     expect(activeGoalNames).not.toContain("goal_evidence");
     expect(activeGoalNames).not.toContain("goal_artifact_read");
     expect(activeGoalNames).not.toContain("goal_artifact_write");
-  });
-});
-
-describe("loop protocol contracts", () => {
-  test("loop guardrail reason and budget status compile through protocol imports", () => {
-    const reason: LoopRunReason = "hard_budget_exceeded";
-    const status: LoopRunReportStatus = "budget_exceeded";
-    const config: LoopConfig = {
-      templateId: "pr_babysitter",
-      title: "PR watch",
-      schedule: { kind: "manual" },
-      approvalPolicy: "interactive",
-      limits: { maxIterationsPerRun: 8, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
-      useWorktree: false,
-      collisionTargets: [{ type: "pr", owner: "arch", repo: "code", number: 42 }],
-    };
-    const lease: CollisionLease = {
-      targetKey: "pr:arch/code#42",
-      target: config.collisionTargets![0]!,
-      loopId: "loop-1",
-      runId: "run-1",
-      priority: 1,
-      createdAt: 1,
-      expiresAt: 2,
-    };
-    const report: LoopRunReport = {
-      runId: "run-1",
-      loopId: lease.loopId,
-      status,
-      trigger: "manual",
-      startedAt: 1,
-      reason,
-      collisionTargets: config.collisionTargets!,
-      collisionConflicts: [{ targetKey: lease.targetKey, target: lease.target, conflictingLease: lease, detectedAt: 2 }],
-    };
-
-    expect(report.status).toBe("budget_exceeded");
-    expect(report.reason).toBe("hard_budget_exceeded");
-    expect(config.templateId).toBe("pr_babysitter");
   });
 });
 
