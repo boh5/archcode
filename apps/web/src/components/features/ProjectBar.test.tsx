@@ -102,6 +102,13 @@ mock.module("react-router-dom", () => ({
   useParams,
 }));
 
+mock.module("lucide-react", () => ({
+  Moon: "Moon",
+  Plus: "Plus",
+  Settings: "Settings",
+  Sun: "Sun",
+}));
+
 mock.module("../../api/queries", () => ({
   queryKeys: {},
   projectsQueryOptions: () => ({}),
@@ -212,6 +219,18 @@ describe("ProjectBar", () => {
     (addNode?.props?.onClick as () => void)();
 
     expect(onAddProject).toHaveBeenCalledTimes(1);
+  });
+
+  test("tooltips do not expand project button hit areas", () => {
+    const tooltips = findAll(
+      render(),
+      (element) => element.props?.role === "tooltip",
+    );
+
+    expect(tooltips).toHaveLength(2);
+    for (const tooltip of tooltips) {
+      expect(String(tooltip.props?.className).split(/\s+/)).toContain("pointer-events-none");
+    }
   });
 
   test("does not add a separate approvals destination outside Dashboard", () => {

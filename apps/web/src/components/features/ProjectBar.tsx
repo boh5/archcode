@@ -109,7 +109,7 @@ export function ProjectBar({ onAddProject, onSettings }: ProjectBarProps) {
         onClick={handleAddProject}
       >
         <Plus size={16} aria-hidden="true" />
-        <span role="tooltip" className="absolute left-12 z-50 whitespace-nowrap rounded-sm border border-border-default bg-bg-elevated px-2.5 py-1 text-xs text-text-primary opacity-0 shadow-md transition-opacity duration-150 group-hover:opacity-100 group-focus:opacity-100">
+        <span role="tooltip" className="pointer-events-none absolute left-12 z-50 whitespace-nowrap rounded-sm border border-border-default bg-bg-elevated px-2.5 py-1 text-xs text-text-primary opacity-0 shadow-md transition-opacity duration-150 group-hover:opacity-100 group-focus:opacity-100">
           Open project
         </span>
       </button>
