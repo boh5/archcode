@@ -62,6 +62,15 @@ async function waitFor(predicate: () => boolean): Promise<void> {
   }
 }
 
+function getUserMessageTexts(state: SessionStoreState): string[] {
+  return state.messages
+    .filter((message) => message.role === "user")
+    .map((message) => message.parts
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join(""));
+}
+
 function reserveActivatedHitlResume(
   manager: SessionExecutionManager,
   sessionId: string,
@@ -1214,12 +1223,10 @@ describe("SessionExecutionManager", () => {
     const goalId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer", goalId });
     const context = goalDelegationContext(goalId, { reviewGeneration: 3 });
-    let message = "";
     const { manager } = createManager({}, {
       factory: makeFactory(),
       goalDelegationAdmission: admitGoal(context),
       listSessionFamilyBlockedHitlIds: async () => [],
-      childRunMessage: (value) => { message = value; },
     });
 
     const child = await manager.startChildExecution(workspaceRoot, {
@@ -1233,21 +1240,21 @@ describe("SessionExecutionManager", () => {
     });
     await child.result;
 
+    const [message] = getUserMessageTexts(child.store.getState());
     expect(message).toStartWith("<goal-delegation-context>\n");
     expect(message).toContain(`"goalId": "${goalId}"`);
     expect(message).toContain('"reviewGeneration": 3');
     expect(message).toEndWith("</goal-delegation-context>\n\nInspect the implementation");
+    expect(getUserMessageTexts(child.store.getState())).toHaveLength(1);
   });
 
   test("startChildExecution leaves ordinary non-Goal delegation prompts unchanged", async () => {
     const parentId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
     const admissionRun = mock(async () => { throw new Error("ordinary delegation must bypass Goal admission"); });
-    let message = "";
     const { manager } = createManager({}, {
       factory: makeFactory(),
       goalDelegationAdmission: { run: admissionRun },
-      childRunMessage: (value) => { message = value; },
     });
 
     const child = await manager.startChildExecution(workspaceRoot, {
@@ -1262,7 +1269,7 @@ describe("SessionExecutionManager", () => {
     await child.result;
 
     expect(admissionRun).not.toHaveBeenCalled();
-    expect(message).toBe("Keep this prompt byte-for-byte");
+    expect(getUserMessageTexts(child.store.getState())).toEqual(["Keep this prompt byte-for-byte"]);
   });
 
   test("Goal delegation fails closed when runtime admission provides no snapshot", async () => {
@@ -1373,7 +1380,6 @@ describe("SessionExecutionManager", () => {
     const parentId = crypto.randomUUID();
     const goalId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer", goalId });
-    let childPrompt = "";
     const factory = makeFactory({
       getDefinition: mock((name: string) => {
         const base = makeFactory().getDefinition(name);
@@ -1385,9 +1391,6 @@ describe("SessionExecutionManager", () => {
       factory,
       goalDelegationAdmission: admitGoal(goalDelegationContext(goalId)),
       listSessionFamilyBlockedHitlIds: async () => [],
-      childRunMessage: (message) => {
-        childPrompt = message;
-      },
     });
 
     const handle = await manager.startChildExecution(workspaceRoot, {
@@ -1404,6 +1407,7 @@ describe("SessionExecutionManager", () => {
     });
     await handle.result;
 
+    const [childPrompt] = getUserMessageTexts(handle.store.getState());
     expect(childPrompt).toEndWith("</goal-delegation-context>\n\ninspect files");
     expect(handle.store.getState().goalId).toBe(goalId);
     expect(childPrompt).not.toContain("## Active Workflow");
@@ -1413,14 +1417,10 @@ describe("SessionExecutionManager", () => {
     const parentId = crypto.randomUUID();
     const goalId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer", goalId });
-    let childPrompt = "";
     const { manager } = createManager({}, {
       factory: makeFactory(),
       goalDelegationAdmission: admitGoal(goalDelegationContext(goalId)),
       listSessionFamilyBlockedHitlIds: async () => [],
-      childRunMessage: (message) => {
-        childPrompt = message;
-      },
     });
 
     const handle = await manager.startChildExecution(workspaceRoot, {
@@ -1437,6 +1437,7 @@ describe("SessionExecutionManager", () => {
     });
     await handle.result;
 
+    const [childPrompt] = getUserMessageTexts(handle.store.getState());
     expect(childPrompt).toEndWith("</goal-delegation-context>\n\ninspect without workflow tools");
     expect(handle.store.getState().goalId).toBe(goalId);
     expect(childPrompt).not.toContain("## Active Workflow");
@@ -1453,7 +1454,6 @@ describe("SessionExecutionManager", () => {
       agentName: "explore",
       goalId,
     });
-    let childPrompt = "";
     const parentDefinition: AgentDefinition = {
       name: "explore",
       displayName: "Explore",
@@ -1484,9 +1484,6 @@ describe("SessionExecutionManager", () => {
       factory,
       goalDelegationAdmission: admitGoal(goalDelegationContext(goalId)),
       listSessionFamilyBlockedHitlIds: async () => [],
-      childRunMessage: (message) => {
-        childPrompt = message;
-      },
     });
 
     const handle = await manager.startChildExecution(workspaceRoot, {
@@ -1503,6 +1500,7 @@ describe("SessionExecutionManager", () => {
     });
     await handle.result;
 
+    const [childPrompt] = getUserMessageTexts(handle.store.getState());
     expect(handle.store.getState().goalId).toBe(goalId);
     expect(childPrompt).toEndWith("</goal-delegation-context>\n\ngrandchild inspect");
     expect(childPrompt).not.toContain("## Active Workflow");
@@ -1564,12 +1562,18 @@ describe("SessionExecutionManager", () => {
     const factory = makeFactory();
     const received: unknown[] = [];
     let linkStatusesAtRunStart: string[] = [];
+    let promptsAtRunStart: string[] = [];
+    let childRunMessage: string | undefined;
     const { manager } = createManager({}, {
       factory,
+      childRunMessage: (message) => { childRunMessage = message; },
       childRunStarted: () => {
         linkStatusesAtRunStart = parentStore.getState().events
           .filter((event) => event.kind === "tool-child-session-link")
           .map((event) => (event.payload as { link: ToolChildSessionLink }).link.status);
+        const childSessionId = parentStore.getState().childSessionLinks.at(-1)?.childSessionId;
+        const childStore = childSessionId === undefined ? undefined : storeManager.get(childSessionId, workspaceRoot);
+        promptsAtRunStart = childStore === undefined ? [] : getUserMessageTexts(childStore.getState());
       },
     });
 
@@ -1590,20 +1594,26 @@ describe("SessionExecutionManager", () => {
     unsubscribe();
 
     expect(linkStatusesAtRunStart).toEqual(["linked", "running"]);
+    expect(promptsAtRunStart).toEqual(["inspect"]);
+    expect(childRunMessage).toBe("");
+    expect(received.some((event) => "kind" in (event as { kind?: unknown }) && (event as { kind: unknown }).kind === "user-message")).toBe(true);
     expect(received.some((event) => "kind" in (event as { kind?: unknown }) && (event as { kind: unknown }).kind === "execution-start")).toBe(true);
     expect(received.some((event) => "kind" in (event as { kind?: unknown }) && (event as { kind: unknown }).kind === "text-delta")).toBe(true);
   });
 
-  test("startChildExecution persists the child identity before exposing its parent link or running it", async () => {
+  test("startChildExecution persists child identity and prompt before exposing its parent link or running it", async () => {
     const parentId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
     const flush = deferred<void>();
     let flushedChildSessionId: string | undefined;
+    let promptsAtFlush: string[] = [];
     let childRunStarted = false;
     const { manager, sessionAgentManager } = createManager({}, {
       factory: makeFactory(),
       flushSessionStore: async (sessionId) => {
         flushedChildSessionId = sessionId;
+        const childStore = storeManager.get(sessionId, workspaceRoot);
+        promptsAtFlush = childStore === undefined ? [] : getUserMessageTexts(childStore.getState());
         await flush.promise;
       },
       childRunStarted: () => { childRunStarted = true; },
@@ -1623,6 +1633,7 @@ describe("SessionExecutionManager", () => {
     });
     await waitFor(() => flushedChildSessionId !== undefined);
 
+    expect(promptsAtFlush).toEqual(["inspect"]);
     expect(parentStore.getState().childSessionLinks).toEqual([]);
     expect(sessionAgentManager.createChildAgent).not.toHaveBeenCalled();
     expect(childRunStarted).toBe(false);
@@ -1647,9 +1658,11 @@ describe("SessionExecutionManager", () => {
     let childSessionId = "";
     let linkWhileRunning: ToolChildSessionLink | undefined;
     let resultResolved = false;
+    let childRunMessage: string | undefined;
     const { manager } = createManager({}, {
       factory: makeFactory(),
       childRun: childRun.promise,
+      childRunMessage: (message) => { childRunMessage = message; },
       childRunStarted: () => {
         linkWhileRunning = parentStore.getState().childSessionLinks.at(-1);
         childSessionId = linkWhileRunning?.childSessionId ?? "";
@@ -1682,6 +1695,10 @@ describe("SessionExecutionManager", () => {
       status: "running",
       background: false,
     });
+    expect(childRunMessage).toBe("");
+    expect(getUserMessageTexts(handle.store.getState())).toEqual(["inspect"]);
+    expect(handle.store.getState().messages.some((message) => message.role === "assistant")).toBe(false);
+    expect(received.some((event) => "kind" in (event as { kind?: unknown }) && (event as { kind: unknown }).kind === "user-message")).toBe(true);
     expect(received.some((event) => "kind" in (event as { kind?: unknown }) && (event as { kind: unknown }).kind === "execution-start")).toBe(true);
 
     childRun.resolve({ text: "live child done", steps: 1 });

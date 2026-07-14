@@ -797,6 +797,7 @@ export class SessionExecutionManager {
     }
 
     const parentState = request.parentStore.getState();
+    const childPrompt = prependSessionGoalDelegationContext(request.prompt, goalContext);
     const childSessionId = crypto.randomUUID();
     const releaseChildLaunch = this.#reserveChildLaunch(
       workspaceRoot,
@@ -828,8 +829,10 @@ export class SessionExecutionManager {
         agentName: targetDefinition.name,
         ...(childTitle === undefined ? {} : { title: childTitle }),
       });
-      // A parent must never durably reference a child whose identity snapshot can
-      // still disappear in the same-process crash window.
+      // Publishing the parent link makes the child immediately navigable. Its
+      // durable snapshot must therefore already contain both identity and the
+      // delegated prompt, even when the child model has not produced output.
+      childStore.getState().append({ type: "user-message", content: childPrompt });
       await this.#config.flushSessionStore(childSessionId, workspaceRoot);
       await this.#validateChildExecutionScope(workspaceRoot, childStore, true);
       this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, "linked", childTitle, createdAt, background);
@@ -855,7 +858,9 @@ export class SessionExecutionManager {
         slug: "",
         workspaceRoot,
         sessionId: childSessionId,
-        userMessage: prependSessionGoalDelegationContext(request.prompt, goalContext),
+        // The initial delegated prompt was durably seeded before publishing the
+        // child link. Run from that transcript without appending it a second time.
+        userMessage: "",
         origin: "tool_call",
       });
       this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, "running", childTitle, createdAt, background);
