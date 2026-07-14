@@ -1,9 +1,10 @@
 import fuzzysort from "fuzzysort";
 import { Hono } from "hono";
+import { z } from "zod/v4";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { readdir, stat } from "node:fs/promises";
-import { BadRequestError } from "../errors";
+import { zValidator } from "../validation";
 
 export interface DirectoryEntry {
   name: string;
@@ -41,12 +42,34 @@ const DEFAULT_MAX_DEPTH = 5;
 const DEFAULT_TIME_BUDGET_MS = 1_500;
 const SKIPPED_EXACT_NAMES = new Set(["node_modules", ".git", "dist", "build", "target", "vendor", ".Trash"]);
 
+const PositiveLimitQueryValueSchema = z.string().optional().transform((value, context) => {
+  if (value === undefined || value.length === 0) return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    context.addIssue({ code: "custom", message: "limit must be a positive integer" });
+    return z.NEVER;
+  }
+  return parsed;
+});
+
+const ListDirectoriesQuerySchema = z.object({
+  path: z.string({ error: "path is required" }).min(1, "path is required"),
+  limit: PositiveLimitQueryValueSchema.transform((value) => Math.min(value ?? DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT)),
+}).strict();
+
+const SearchDirectoriesQuerySchema = z.object({
+  query: z.string({ error: "query is required" })
+    .min(1, "query is required")
+    .transform((value) => value.trim())
+    .refine((value) => value.length > 0, "query must not be empty"),
+  limit: PositiveLimitQueryValueSchema.transform((value) => Math.min(value ?? DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT)),
+}).strict();
+
 export function createDirectoriesRoutes(options: DirectoriesRoutesOptions = {}): Hono {
   const app = new Hono();
 
-  app.get("/list", async (c) => {
-    const path = requiredQuery(c.req.query("path"), "path");
-    const limit = parseLimit(c.req.query("limit"), DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+  app.get("/list", zValidator("query", ListDirectoriesQuerySchema), async (c) => {
+    const { path, limit } = c.req.valid("query");
     const resolved = resolvePath(path);
     const rootStat = await safeStat(resolved);
 
@@ -74,13 +97,8 @@ export function createDirectoriesRoutes(options: DirectoriesRoutesOptions = {}):
     return c.json({ entries: sorted.slice(0, limit), truncated: sorted.length > limit } satisfies DirectoriesResponse);
   });
 
-  app.get("/search", async (c) => {
-    const query = requiredQuery(c.req.query("query"), "query").trim();
-    if (query.length === 0) {
-      throw new BadRequestError("query must not be empty");
-    }
-
-    const limit = parseLimit(c.req.query("limit"), DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT);
+  app.get("/search", zValidator("query", SearchDirectoriesQuerySchema), async (c) => {
+    const { query, limit } = c.req.valid("query");
     const candidates = await collectSearchCandidates({
       roots: await resolveSearchRoots(options.roots),
       maxVisited: options.maxVisited ?? DEFAULT_MAX_VISITED,
@@ -181,22 +199,6 @@ function compareDirectoryEntries(left: DirectoryEntry, right: DirectoryEntry): n
   const rightHidden = right.name.startsWith(".");
   if (leftHidden !== rightHidden) return leftHidden ? 1 : -1;
   return left.name.localeCompare(right.name);
-}
-
-function requiredQuery(value: string | undefined, name: string): string {
-  if (value === undefined || value.length === 0) {
-    throw new BadRequestError(`${name} is required`);
-  }
-  return value;
-}
-
-function parseLimit(value: string | undefined, fallback: number, max: number): number {
-  if (value === undefined || value.length === 0) return fallback;
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1) {
-    throw new BadRequestError("limit must be a positive integer");
-  }
-  return Math.min(parsed, max);
 }
 
 function resolvePath(path: string): string {

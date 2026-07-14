@@ -71,6 +71,30 @@ function ancestryLabel(ancestry: HitlProjectionContext | undefined): string | un
   return parts.length > 0 ? parts.join(" → ") : undefined;
 }
 
+function createGoalReviewResponse(
+  projection: HitlProjection,
+  outcome: "DONE" | "NOT_DONE",
+  comment: string,
+): Extract<import("@archcode/protocol").HitlResponse, { type: "review_outcome" }> {
+  if (projection.source.type !== "goal_review") throw new Error("Goal review response requires a goal_review source");
+  const summary = comment.trim() || `Human review outcome: ${outcome}`;
+  return {
+    type: "review_outcome",
+    outcome,
+    ...(comment.trim().length === 0 ? {} : { comment: comment.trim() }),
+    receipt: {
+      reviewGeneration: projection.source.reviewGeneration,
+      verdict: outcome,
+      summary,
+      evidenceRefs: outcome === "DONE"
+        ? [{ kind: "hitl", ref: projection.hitlId, summary }]
+        : [],
+      reviewerSessionId: projection.source.reviewerSessionId,
+      decidedAt: new Date().toISOString(),
+    },
+  };
+}
+
 interface QuestionData {
   question: string;
   header: string;
@@ -159,13 +183,13 @@ export function HitlCard({ projection }: HitlCardProps) {
   const handleApprove = useCallback(() => {
     if (respondPending) return;
     if (sourceType === "goal_review") {
-      respond.mutate({ identity, body: { type: "review_outcome", outcome: "DONE", comment: comment || undefined } });
+      respond.mutate({ identity, body: createGoalReviewResponse(projection, "DONE", comment) });
     } else if (sourceType === "tool_permission") {
       respond.mutate({ identity, body: { type: "permission_decision", decision: "approve_once", comment: comment || undefined } });
     } else {
       respond.mutate({ identity, body: { type: "approval_decision", decision: "approved", comment: comment || undefined } });
     }
-  }, [respond, respondPending, sourceType, identity, comment]);
+  }, [respond, respondPending, sourceType, identity, comment, projection]);
 
   const handleApproveAlways = useCallback(() => {
     if (respondPending) return;
@@ -175,13 +199,13 @@ export function HitlCard({ projection }: HitlCardProps) {
   const handleDeny = useCallback(() => {
     if (respondPending) return;
     if (sourceType === "goal_review") {
-      respond.mutate({ identity, body: { type: "review_outcome", outcome: "NOT_DONE", comment: comment || undefined } });
+      respond.mutate({ identity, body: createGoalReviewResponse(projection, "NOT_DONE", comment) });
     } else if (sourceType === "tool_permission") {
       respond.mutate({ identity, body: { type: "permission_decision", decision: "deny", comment: comment || undefined } });
     } else {
       respond.mutate({ identity, body: { type: "approval_decision", decision: "denied", comment: comment || undefined } });
     }
-  }, [respond, respondPending, sourceType, identity, comment]);
+  }, [respond, respondPending, sourceType, identity, comment, projection]);
 
   const handleAnswer = useCallback(() => {
     if (respondPending || !allAnswered) return;

@@ -1,9 +1,10 @@
-import type { HitlOwnerKey, SessionTreeNode } from "@archcode/protocol";
+import type { HitlOwnerKey } from "@archcode/protocol";
 
 import { deleteSessionHitlCheckpointFile } from "./session-hitl-checkpoint";
 import type { SessionFamilyController } from "./session-family-control";
 import type { HitlService } from "../hitl/service";
 import type { SessionStoreManager } from "../store/session-store-manager";
+import { collectSessionTreeIds } from "./session-tree";
 
 export interface SessionFamilyStopServiceOptions {
   readonly sessionFamilyController: SessionFamilyController;
@@ -34,7 +35,7 @@ export class SessionFamilyStopService {
         this.#sessionStoreManager.buildSessionTree(workspaceRoot, rootSessionId),
         this.#resolveHitlOwner(workspaceRoot),
       ]);
-      for (const sessionId of flattenSessionTree(tree.root)) {
+      for (const sessionId of collectSessionTreeIds(tree.root)) {
         const hitlOwner: HitlOwnerKey = {
           projectSlug: owner.projectSlug,
           ownerType: "session",
@@ -51,11 +52,4 @@ export class SessionFamilyStopService {
       lease.release();
     }
   }
-}
-
-function flattenSessionTree(node: SessionTreeNode): string[] {
-  return [
-    node.session.sessionId,
-    ...node.children.flatMap((child) => flattenSessionTree(child)),
-  ];
 }

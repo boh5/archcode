@@ -5,7 +5,8 @@ import { createMockStore } from "../../store/test-helpers";
 import { storeManager } from "../../store/store";
 import type { SessionStoreState } from "../../store/types";
 import { createToolExecutionContext, type ToolExecutionContext, type ToolExecutionResult } from "../types";
-import { AutomationCreateInputSchema, automationCreateTool } from "./automation-create";
+import { AutomationCreateSchema } from "../../automations/schema";
+import { automationCreateTool } from "./automation-create";
 
 const input = {
   name: "Daily review",
@@ -57,9 +58,9 @@ function makeContext(
 
 describe("automation_create", () => {
   test("model input is strict and excludes provenance", () => {
-    expect(AutomationCreateInputSchema.safeParse(input).success).toBe(true);
-    expect(AutomationCreateInputSchema.safeParse({ ...input, createdFromSessionId: crypto.randomUUID() }).success).toBe(false);
-    expect(AutomationCreateInputSchema.safeParse({ ...input, status: "active" }).success).toBe(false);
+    expect(AutomationCreateSchema.safeParse(input).success).toBe(true);
+    expect(AutomationCreateSchema.safeParse({ ...input, createdFromSessionId: crypto.randomUUID() }).success).toBe(false);
+    expect(AutomationCreateSchema.safeParse({ ...input, status: "active" }).success).toBe(false);
   });
 
   test("derives provenance from an ordinary Engineer root Session", async () => {

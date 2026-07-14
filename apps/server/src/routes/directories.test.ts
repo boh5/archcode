@@ -124,6 +124,19 @@ describe("directories routes", () => {
     expect(body.entries.every((entry) => entry.kind === "directory")).toBe(true);
   });
 
+  test("GET /api/directories/list rejects a non-positive or non-integer limit", async () => {
+    const root = await createDir(join(tempRoot, "invalid-list-limit"));
+    const app = createTestApp();
+
+    for (const limit of ["0", "-1", "1.5", "not-a-number"]) {
+      const res = await app.request(`/api/directories/list?path=${encodeURIComponent(root)}&limit=${limit}`);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({
+        error: { code: "BAD_REQUEST", message: "limit must be a positive integer" },
+      });
+    }
+  });
+
   test("GET /api/directories/list sorts visible directories before hidden directories", async () => {
     const root = await createDir(join(tempRoot, "hidden-sort"));
     for (const name of ["zeta", ".z-hidden", "alpha", ".a-hidden"]) {
@@ -180,6 +193,17 @@ describe("directories routes", () => {
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({
       error: { code: "BAD_REQUEST", message: "query must not be empty" },
+    });
+  });
+
+  test("GET /api/directories/search rejects an invalid limit", async () => {
+    const app = createTestApp({ roots: [tempRoot] });
+
+    const res = await app.request("/api/directories/search?query=project&limit=invalid");
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: { code: "BAD_REQUEST", message: "limit must be a positive integer" },
     });
   });
 

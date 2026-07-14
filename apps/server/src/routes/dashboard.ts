@@ -1,16 +1,33 @@
 import { Hono } from "hono";
+import { z } from "zod/v4";
 import type { AgentRuntime, ProjectInfo } from "@archcode/agent-core";
 import type { Automation, GoalState, GoalStatus } from "@archcode/protocol";
-import { BadRequestError } from "../errors";
+import { zValidator } from "../validation";
 
-const GoalStatusSchemaValues = new Set<GoalStatus>([
+const DashboardGoalStatusSchema = z.enum([
   "running",
   "reviewing",
   "done",
   "not_done",
   "failed",
   "cancelled",
-]);
+  "active",
+  "terminal",
+], { error: "status must be active, terminal, or a valid goal status" });
+
+const DashboardGoalQuerySchema = z.object({
+  status: DashboardGoalStatusSchema.optional(),
+}).strict();
+
+const DashboardAutomationStatusSchema = z.enum([
+  "active",
+  "paused",
+  "disabled",
+], { error: "status must be active or a valid automation status" });
+
+const DashboardAutomationQuerySchema = z.object({
+  status: DashboardAutomationStatusSchema.optional(),
+}).strict();
 
 const ActiveGoalStatuses = new Set<GoalStatus>([
   "running",
@@ -22,12 +39,6 @@ const ActiveGoalStatuses = new Set<GoalStatus>([
 const TerminalGoalStatuses = new Set<GoalStatus>([
   "done",
   "cancelled",
-]);
-
-const AutomationStatusSchemaValues = new Set<Automation["status"]>([
-  "active",
-  "paused",
-  "disabled",
 ]);
 
 type DashboardGoal = GoalState & {
@@ -49,8 +60,8 @@ type DashboardAutomation = Automation & {
 export function createDashboardRoutes(runtime: AgentRuntime): Hono {
   const app = new Hono();
 
-  app.get("/goals", async (c) => {
-    const status = parseGoalStatusFilter(c.req.query("status"));
+  app.get("/goals", zValidator("query", DashboardGoalQuerySchema), async (c) => {
+    const { status } = c.req.valid("query");
     const goals: DashboardGoal[] = [];
     const errors: DashboardProjectError[] = [];
 
@@ -73,8 +84,8 @@ export function createDashboardRoutes(runtime: AgentRuntime): Hono {
     return c.json({ goals, errors });
   });
 
-  app.get("/automations", async (c) => {
-    const status = parseAutomationStatusFilter(c.req.query("status"));
+  app.get("/automations", zValidator("query", DashboardAutomationQuerySchema), async (c) => {
+    const { status } = c.req.valid("query");
     const automations: DashboardAutomation[] = [];
     const errors: DashboardProjectError[] = [];
 
@@ -101,16 +112,6 @@ export function createDashboardRoutes(runtime: AgentRuntime): Hono {
   return app;
 }
 
-function parseGoalStatusFilter(status: string | undefined): GoalStatus | "active" | "terminal" | undefined {
-  if (status === undefined) return undefined;
-  if (status === "active") return "active";
-  if (status === "terminal") return "terminal";
-  if (!GoalStatusSchemaValues.has(status as GoalStatus)) {
-    throw new BadRequestError("status must be active, terminal, or a valid goal status");
-  }
-  return status as GoalStatus;
-}
-
 function matchesGoalStatus(goal: GoalState, status: GoalStatus | "active" | "terminal" | undefined): boolean {
   if (status === undefined) return true;
   if (status === "active") return ActiveGoalStatuses.has(goal.status);
@@ -118,16 +119,7 @@ function matchesGoalStatus(goal: GoalState, status: GoalStatus | "active" | "ter
   return goal.status === status;
 }
 
-function parseAutomationStatusFilter(status: string | undefined): Automation["status"] | "active" | undefined {
-  if (status === undefined) return undefined;
-  if (status === "active") return "active";
-  if (!AutomationStatusSchemaValues.has(status as Automation["status"])) {
-    throw new BadRequestError("status must be active or a valid automation status");
-  }
-  return status as Automation["status"];
-}
-
-function matchesAutomationStatus(automation: Automation, status: Automation["status"] | "active" | undefined): boolean {
+function matchesAutomationStatus(automation: Automation, status: Automation["status"] | undefined): boolean {
   if (status === undefined) return true;
   if (status === "active") return automation.status === "active";
   return automation.status === status;

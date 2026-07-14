@@ -1,4 +1,4 @@
-import type { GoalState, HitlOwnerKey, SessionTreeNode } from "@archcode/protocol";
+import type { GoalState, HitlOwnerKey } from "@archcode/protocol";
 
 import type { SessionFamilyController, SessionFamilyStopLease } from "../execution/session-family-control";
 import { deleteSessionHitlCheckpointFile } from "../execution/session-hitl-checkpoint";
@@ -12,6 +12,7 @@ import {
   type GoalCancellationIntent,
 } from "./execution-claim";
 import type { GoalStateManager } from "./state";
+import { collectSessionTreeIds } from "../execution/session-tree";
 
 export type GoalCancellationSource = "http" | "agent" | "hitl";
 
@@ -192,7 +193,7 @@ export class GoalCancellationService implements GoalCancellationCapability {
     for (const rootSessionId of rootSessionIds) {
       try {
         const tree = await this.#sessionStoreManager.buildSessionTree(this.#workspaceRoot, rootSessionId);
-        flattenSessionTree(tree.root).forEach((sessionId) => sessionIds.add(sessionId));
+        collectSessionTreeIds(tree.root).forEach((sessionId) => sessionIds.add(sessionId));
       } catch (error) {
         throw new GoalCancellationError(
           goal.id,
@@ -228,13 +229,6 @@ export class GoalCancellationService implements GoalCancellationCapability {
       ownerId: goal.id,
     }, "goal_cancelled");
   }
-}
-
-function flattenSessionTree(node: SessionTreeNode): string[] {
-  return [
-    node.session.sessionId,
-    ...node.children.flatMap((child) => flattenSessionTree(child)),
-  ];
 }
 
 function errorMessage(error: unknown): string {

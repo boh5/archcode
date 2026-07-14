@@ -13,3 +13,4 @@ export * from "./dynamic-range";
 export * from "./concurrency";
 export * from "./tokens";
 export * from "./original-range";
+export * from "./normalize";

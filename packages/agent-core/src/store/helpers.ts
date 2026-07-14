@@ -1,10 +1,9 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readdir, rename } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod/v4";
 import type { SessionEventEnvelope, SessionStoreState, StoredMessage } from "./types";
 import type { SessionModelInfo } from "@archcode/protocol";
-import { getSessionDir, getSessionPath, getSessionsDir } from "./sessions-dir";
+import { getSessionPath, getSessionsDir } from "./sessions-dir";
 import type { SessionRole } from "./types";
 import {
   COMPRESSION_BLOCK_STATUSES,
@@ -17,6 +16,7 @@ import {
   createEmptyCompressionState,
 } from "../compression";
 import { AGENT_NAMES, type AgentName } from "../agents/names";
+import { atomicWrite } from "../utils/safe-file";
 
 const SessionRoleSchema = z.enum(["main", "plan", "build", "review", "explore", "librarian", "standalone"]);
 const AgentNameSchema = z.enum(AGENT_NAMES);
@@ -67,7 +67,12 @@ const HitlSourceSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("ask_user"), sessionId: z.string(), toolCallId: z.string().optional() }),
   z.strictObject({ type: z.literal("tool_permission"), sessionId: z.string(), toolCallId: z.string(), toolName: z.string() }),
   z.strictObject({ type: z.literal("goal_approval"), goalId: z.string(), approvalPoint: z.string().optional() }),
-  z.strictObject({ type: z.literal("goal_review"), goalId: z.string() }),
+  z.strictObject({
+    type: z.literal("goal_review"),
+    goalId: z.string(),
+    reviewGeneration: z.number().int().nonnegative(),
+    reviewerSessionId: z.string().trim().min(1),
+  }),
   z.strictObject({ type: z.literal("goal_budget"), goalId: z.string(), approvalPoint: z.string().optional() }),
   z.strictObject({ type: z.literal("goal_question"), goalId: z.string(), questionKey: z.string() }),
 ]);
@@ -484,13 +489,6 @@ async function saveSessionTranscript(
   workspaceRoot: string,
 ): Promise<void> {
   const finalPath = getSessionPath(workspaceRoot, state.sessionId);
-  const dir = getSessionDir(workspaceRoot, state.sessionId);
-
-  try {
-    await mkdir(dir, { recursive: true });
-  } catch (err) {
-    throw new Error(`Failed to create sessions directory "${dir}": ${err instanceof Error ? err.message : String(err)}`, { cause: err });
-  }
 
   const data: HydratedSessionFile = {
     schemaVersion: 1,
@@ -519,19 +517,7 @@ async function saveSessionTranscript(
   };
 
   const json = JSON.stringify(data, null, 2);
-  const tmpPath = join(dir, `session.${randomUUID()}.json.tmp`);
-
-  try {
-    await Bun.write(tmpPath, json);
-  } catch (err) {
-    throw new Error(`Failed to write session transcript to "${tmpPath}": ${err instanceof Error ? err.message : String(err)}`, { cause: err });
-  }
-
-  try {
-    await rename(tmpPath, finalPath);
-  } catch (err) {
-    throw new Error(`Failed to rename session transcript from "${tmpPath}" to "${finalPath}": ${err instanceof Error ? err.message : String(err)}`, { cause: err });
-  }
+  await atomicWrite(finalPath, json);
 }
 
 async function readSessionFile(

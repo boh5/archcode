@@ -1,5 +1,5 @@
 import { rm } from "node:fs/promises";
-import type { SessionExecutionRecord, SessionFamilyActivity, SessionTreeNode, SessionTreeResponse, ToolChildSessionLink, ToolChildSessionLinkStatus } from "@archcode/protocol";
+import { isTerminalChildSessionStatus, type SessionExecutionRecord, type SessionFamilyActivity, type SessionTreeNode, type SessionTreeResponse, type ToolChildSessionLink, type ToolChildSessionLinkStatus } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
 import {
@@ -62,17 +62,10 @@ import {
   prependSessionGoalDelegationContext,
   type SessionGoalDelegationContext,
 } from "./session-goal-delegation-context";
+import { collectSessionTreeIds } from "./session-tree";
 
 const ABORT_AND_WAIT_TIMEOUT_MS = 10000;
 const MAX_CWD_TRANSITIONS_PER_EXECUTION = 4;
-
-const TERMINAL_CHILD_LINK_STATUSES = new Set<ToolChildSessionLinkStatus>([
-  "completed",
-  "failed",
-  "timed_out",
-  "cancelled",
-  "interrupted",
-]);
 
 export type SessionExecutionOrigin =
   | "user_message"
@@ -948,7 +941,7 @@ export class SessionExecutionManager {
     const now = Date.now();
     const run = childState.executions.at(-1);
     const { startedAt: _startedAt, endedAt: _endedAt, durationMs: _durationMs, error: _error, ...base } = existing;
-    const isTerminal = isSubAgentTerminalStatus(status);
+    const isTerminal = isTerminalChildSessionStatus(status);
     const runMatchesStatus = childLinkStatusFromExecution(run) === status;
     const startedAt = status === "running"
       ? now
@@ -1125,9 +1118,7 @@ export class SessionExecutionManager {
     const releaseDeletion = this.#acquireSessionDeletion(workspaceRoot, rootSessionId, sessionId);
     try {
       const tree = await this.#config.buildSessionTree(workspaceRoot, rootSessionId);
-      const sessionIds = sessionId === rootSessionId
-        ? flattenSessionTree(tree.root)
-        : collectSubtreeSessionIds(tree.root, sessionId);
+      const sessionIds = collectSessionTreeIds(tree.root, sessionId);
 
       if (sessionIds.length === 0) {
         throw new Error(`Session "${sessionId}" was not found in tree rooted at "${rootSessionId}"`);
@@ -1659,7 +1650,7 @@ export class SessionExecutionManager {
     createdAt: number,
   ): void {
     const run = this.#config.getSessionStore(request.sessionId, workspaceRoot)?.getState().executions.at(-1);
-    const includeRunMetadata = TERMINAL_CHILD_LINK_STATUSES.has(status);
+    const includeRunMetadata = isTerminalChildSessionStatus(status);
     request.parentStore.getState().append({
       type: "tool-child-session-link",
       link: {
@@ -1692,7 +1683,7 @@ export class SessionExecutionManager {
     let link: ToolChildSessionLink | undefined;
     for (let index = links.length - 1; index >= 0; index -= 1) {
       const candidate = links[index];
-      if (candidate?.childSessionId === childSessionId && !TERMINAL_CHILD_LINK_STATUSES.has(candidate.status)) {
+      if (candidate?.childSessionId === childSessionId && !isTerminalChildSessionStatus(candidate.status)) {
         link = candidate;
         break;
       }
@@ -1817,10 +1808,6 @@ function executionScopeChangedFields(
 type SubAgentTerminalStatus = Extract<ToolChildSessionLinkStatus, "completed" | "failed" | "timed_out" | "cancelled" | "interrupted">;
 type SubAgentExecutionStatus = SubAgentTerminalStatus | "waiting_for_human";
 
-function isSubAgentTerminalStatus(status: ToolChildSessionLinkStatus): status is SubAgentTerminalStatus {
-  return TERMINAL_CHILD_LINK_STATUSES.has(status);
-}
-
 function childLinkStatusFromExecution(run: SessionExecutionRecord | undefined): SubAgentExecutionStatus | undefined {
   if (run?.status === "completed") return "completed";
   if (run?.status === "waiting_for_human") return "waiting_for_human";
@@ -1932,19 +1919,6 @@ async function waitForHitlResumeToStop(resume: SessionHitlResumeLeaseState): Pro
     setTimeout(() => reject(new Error(`Timed out waiting for Session HITL resume "${resume.sessionId}" to abort`)), ABORT_AND_WAIT_TIMEOUT_MS);
   });
   await Promise.race([resume.completed, timeout]);
-}
-
-function flattenSessionTree(node: SessionTreeNode): string[] {
-  return [node.session.sessionId, ...node.children.flatMap((child) => flattenSessionTree(child))];
-}
-
-function collectSubtreeSessionIds(node: SessionTreeNode, targetSessionId: string): string[] {
-  if (node.session.sessionId === targetSessionId) return flattenSessionTree(node);
-  for (const child of node.children) {
-    const found = collectSubtreeSessionIds(child, targetSessionId);
-    if (found.length > 0) return found;
-  }
-  return [];
 }
 
 function assertGoalDelegationContext(

@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, readdir, rm } from "node:fs/promises";
+import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { atomicWrite, isContained, resolveContainedPath } from "./safe-file";
 
@@ -32,6 +32,12 @@ describe("atomicWrite", () => {
     expect(await Bun.file(filePath).text()).toBe("second");
     const entries = await readdir(TMP_DIR);
     expect(entries.some((entry) => entry.startsWith(".tmp-"))).toBe(false);
+  });
+
+  test("applies requested file mode", async () => {
+    const filePath = join(TMP_DIR, "private.json");
+    await atomicWrite(filePath, "{}", { mode: 0o600 });
+    expect((await stat(filePath)).mode & 0o777).toBe(0o600);
   });
 });
 

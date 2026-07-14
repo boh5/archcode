@@ -1,5 +1,5 @@
 import type { AgentDefinition } from "../factory-types";
-import { SKILL_TOOLS } from "../constants";
+import { SKILL_ACCESS_TOOLS } from "../constants";
 import {
   TOOL_AST_GREP_SEARCH,
   TOOL_COMPRESS,
@@ -54,7 +54,7 @@ Output contract:
       TOOL_LSP_SYMBOLS,
       TOOL_TODO_WRITE,
       TOOL_COMPRESS,
-      ...SKILL_TOOLS,
+      ...SKILL_ACCESS_TOOLS,
     ],
   },
   hooks: {

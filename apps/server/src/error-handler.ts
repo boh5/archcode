@@ -1,4 +1,5 @@
 import type { Context } from "hono";
+import { HTTPException } from "hono/http-exception";
 import { ServerError } from "./errors";
 
 export function errorHandler(err: Error, c: Context): Response {
@@ -12,6 +13,10 @@ export function errorHandler(err: Error, c: Context): Response {
       },
       err.httpStatus,
     );
+  }
+
+  if (err instanceof HTTPException && err.status === 400) {
+    return jsonError(c, { code: "BAD_REQUEST", message: err.message }, 400);
   }
 
   console.error(err);

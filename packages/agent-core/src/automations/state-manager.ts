@@ -4,7 +4,7 @@ import { z } from "zod/v4";
 
 import { atomicWrite } from "../utils/safe-file";
 import { nextFireAt, validateAutomationTrigger } from "./schedule";
-import { AutomationActionSchema, AutomationStateFileSchema, type AutomationStateFile } from "./schema";
+import { AutomationCreateSchema, AutomationStateFileSchema, AutomationUpdateSchema, type AutomationStateFile } from "./schema";
 
 export class AutomationNotFoundError extends Error {
   readonly code = "AUTOMATION_NOT_FOUND";
@@ -68,17 +68,22 @@ export class AutomationStateManager {
   }
 
   async createAutomation(input: CreateAutomationInput): Promise<Automation> {
+    const validated = AutomationCreateSchema.parse({
+      name: input.name,
+      trigger: input.trigger,
+      action: input.action,
+    });
     return this.#mutate((state) => {
       const now = this.#now();
       const nowIso = new Date(now).toISOString();
-      const trigger = validateAutomationTrigger(input.trigger);
-      const action = AutomationActionSchema.parse(input.action);
+      const trigger = validateAutomationTrigger(validated.trigger);
+      const action = validated.action;
       const scheduledAt = nextFireAt(trigger, now);
       const automation: Automation = {
         id: crypto.randomUUID(),
-        projectId: requireText(input.projectId, "projectId"),
+        projectId: requireProjectId(input.projectId),
         createdFromSessionId: requireUuid(input.createdFromSessionId, "createdFromSessionId"),
-        name: requireText(input.name, "name"),
+        name: validated.name,
         trigger,
         action,
         status: scheduledAt === undefined && trigger.kind === "once" ? "disabled" : "active",
@@ -95,13 +100,14 @@ export class AutomationStateManager {
   }
 
   async updateAutomation(automationId: string, input: UpdateAutomationInput): Promise<Automation> {
+    const validated = AutomationUpdateSchema.parse(input);
     return this.#mutate((state) => {
       const automation = requiredAutomation(state, automationId);
       const now = this.#now();
-      const invalidatesPending = input.action !== undefined || input.trigger !== undefined;
-      if (input.name !== undefined) automation.name = requireText(input.name, "name");
-      if (input.action !== undefined) automation.action = AutomationActionSchema.parse(input.action);
-      if (input.trigger !== undefined) automation.trigger = validateAutomationTrigger(input.trigger);
+      const invalidatesPending = validated.action !== undefined || validated.trigger !== undefined;
+      if (validated.name !== undefined) automation.name = validated.name;
+      if (validated.action !== undefined) automation.action = validated.action;
+      if (validated.trigger !== undefined) automation.trigger = validateAutomationTrigger(validated.trigger);
       if (invalidatesPending) {
         const completedAt = new Date(now).toISOString();
         for (const invocation of state.invocations) {
@@ -111,7 +117,7 @@ export class AutomationStateManager {
           }
         }
       }
-      if (automation.status === "active" && input.trigger !== undefined) {
+      if (automation.status === "active" && validated.trigger !== undefined) {
         const scheduledAt = nextFireAt(automation.trigger, now);
         automation.nextFireAt = scheduledAt;
         if (scheduledAt === undefined && automation.trigger.kind === "once") {
@@ -311,9 +317,9 @@ function hasMissedInvocation(state: AutomationStateFile, automationId: string, d
   ));
 }
 
-function requireText(value: string, field: string): string {
+function requireProjectId(value: string): string {
   const trimmed = value.trim();
-  if (trimmed.length === 0) throw new Error(`${field} must not be empty`);
+  if (trimmed.length === 0) throw new Error("projectId must not be empty");
   return trimmed;
 }
 

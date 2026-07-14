@@ -99,6 +99,23 @@ describe("automation routes", () => {
     expect(runtime.updateAutomation).not.toHaveBeenCalled();
   });
 
+  test("rejects malformed JSON, invalid IDs, and invalid invocation limits", async () => {
+    const { app, item, project, runtime } = await fixture("validation");
+    const malformed = await app.request(`/${project.slug}/automations/${item.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: "{",
+    });
+    const invalidId = await app.request(`/${project.slug}/automations/not-a-uuid`);
+    const invalidLimit = await app.request(`/${project.slug}/automations/${item.id}/invocations?limit=0`);
+
+    expect(malformed.status).toBe(400);
+    expect(await malformed.json()).toMatchObject({ error: { code: "BAD_REQUEST" } });
+    expect(invalidId.status).toBe(400);
+    expect(invalidLimit.status).toBe(400);
+    expect(runtime.updateAutomation).not.toHaveBeenCalled();
+  });
+
   test("exposes read, update, pause, resume, history, and delete as project-scoped operations", async () => {
     const { app, item, project, runtime } = await fixture("operations");
     const read = await app.request(`/${project.slug}/automations/${item.id}`);

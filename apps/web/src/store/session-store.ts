@@ -1,7 +1,7 @@
 import type { StoreApi } from "zustand";
 import { useStore } from "zustand/react";
 import { createStore } from "zustand/vanilla";
-import { MAX_EVENTS, createEmptySessionStats, reduceStreamEvent } from "@archcode/protocol";
+import { MAX_EVENTS, createEmptySessionStats, isStreamEvent, reduceStreamEvent } from "@archcode/protocol";
 import type {
   CompressionBlockPart,
   CompressionStateSnapshot,
@@ -17,7 +17,6 @@ import type {
   SessionStats,
   SessionStep,
   SessionTodo,
-  StreamEvent,
 } from "@archcode/protocol";
 
 const MAX_IDLE_SESSION_STORES = 20;
@@ -109,7 +108,7 @@ function appendEnvelopeToState(
     return { events, eventOffset, nextEventId };
   }
 
-  if (!isReducibleStreamEvent(envelope.payload)) {
+  if (!isStreamEvent(envelope.payload)) {
     return { events, eventOffset, nextEventId };
   }
 
@@ -119,48 +118,6 @@ function appendEnvelopeToState(
   });
 
   return { ...partial, events, eventOffset, nextEventId };
-}
-
-function isReducibleStreamEvent(event: SessionEventPayload): event is StreamEvent {
-  switch (event.type) {
-    case "execution-start":
-    case "execution-end":
-    case "session.cwd_changed":
-    case "user-message":
-    case "system-notice":
-    case "text-start":
-    case "text-delta":
-    case "text-end":
-    case "reasoning-start":
-    case "reasoning-delta":
-    case "reasoning-end":
-    case "tool-input-start":
-    case "tool-call":
-    case "tool-input-resolved":
-    case "tool-attempt":
-    case "tool-result":
-    case "tool-child-session-link":
-    case "todo-write":
-    case "reminder":
-    case "reminder-consumed":
-    case "step-start":
-    case "step-end":
-    case "execution-error":
-    case "llm-retry":
-    case "llm-recovery":
-    case "llm-recovery-failed":
-    case "compact":
-    case "compression.block_committed":
-    case "compression.block_failed":
-    case "compression.ref_map_updated":
-    case "goal.state_change":
-    case "hitl.request":
-    case "hitl.updated":
-    case "hitl.resolved":
-      return true;
-    default:
-      return false;
-  }
 }
 
 function toLocalEnvelope(envelope: GlobalSessionEventEnvelope): SessionEventEnvelope {

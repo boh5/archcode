@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 
-import { computeDelayMs, withLlmRetry, type LlmRetryAuditEntry } from "./retry";
+import { computeDelayMs, parseRetryAfter, withLlmRetry, type LlmRetryAuditEntry } from "./retry";
 import type { LlmRetryProfile } from "./constants";
 import { LlmMaxRetriesError } from "./errors";
 
@@ -13,6 +13,11 @@ const noJitterProfile: LlmRetryProfile = {
 };
 
 describe("computeDelayMs", () => {
+  test("parses Retry-After values in seconds and HTTP-date form", () => {
+    expect(parseRetryAfter({ headers: { "retry-after": "0.03" } })).toBe(30);
+    expect(parseRetryAfter({ retryAfterMs: 42 })).toBe(42_000);
+    expect(parseRetryAfter({ retryAfter: 2_000 })).toBe(2_000);
+  });
   test("caps retry-after seconds at profile maxDelayMs", () => {
     const err = Object.assign(new Error("rate limit"), { retryAfter: 999 });
 

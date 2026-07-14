@@ -295,7 +295,12 @@ describe("HitlOwnerStore", () => {
     };
     const wrongSourceType = {
       ...record(owner, "wrong-source-type", "wrong-source-type"),
-      source: { type: "goal_review" as const, goalId: owner.ownerId },
+      source: {
+        type: "goal_review" as const,
+        goalId: owner.ownerId,
+        reviewGeneration: 1,
+        reviewerSessionId: "reviewer-session",
+      },
     };
 
     await expectRejects(store.create(wrongSourceId), HitlRecordStateError);

@@ -3,15 +3,19 @@ import { AgentRunningError, ChildSessionCwdMismatchError, ConcurrentSessionLimit
 import type { AgentRuntime } from "@archcode/agent-core";
 import { z } from "zod/v4";
 import {
-  BadRequestError,
   ConcurrentSessionLimitHttpError,
   ServerError,
 } from "../errors";
 import { resolveProject } from "../resolve";
+import { zValidator } from "../validation";
 
 const MessageBodySchema = z.strictObject({
   text: z.string({ error: "text is required" })
     .refine((value) => value.trim().length > 0, { message: "text is required" }),
+});
+const MessageParamsSchema = z.strictObject({
+  slug: z.string().min(1),
+  sessionId: z.string().min(1),
 });
 
 class AgentAlreadyRunningError extends ServerError {
@@ -31,10 +35,9 @@ class SessionCwdTransitionHttpError extends ServerError {
 export function createMessagesRoutes(runtime: AgentRuntime): Hono {
   const app = new Hono();
 
-  app.post("/messages", async (c) => {
-    const slug = requiredParam(c.req.param("slug"), "slug");
-    const sessionId = requiredParam(c.req.param("sessionId"), "sessionId");
-    const { text } = await readMessageBody(c.req.json());
+  app.post("/messages", zValidator("param", MessageParamsSchema), zValidator("json", MessageBodySchema), async (c) => {
+    const { slug, sessionId } = c.req.valid("param");
+    const { text } = c.req.valid("json");
     const project = await resolveProject(runtime, slug);
 
     try {
@@ -95,27 +98,4 @@ export function createMessagesRoutes(runtime: AgentRuntime): Hono {
   });
 
   return app;
-}
-
-function requiredParam(value: string | undefined, name: string): string {
-  if (!value) {
-    throw new BadRequestError(`${name} is required`);
-  }
-
-  return value;
-}
-
-async function readMessageBody(bodyPromise: Promise<unknown>): Promise<z.infer<typeof MessageBodySchema>> {
-  let body: unknown;
-  try {
-    body = await bodyPromise;
-  } catch {
-    throw new BadRequestError("Invalid JSON body");
-  }
-
-  const result = MessageBodySchema.safeParse(body);
-  if (!result.success) {
-    throw new BadRequestError(result.error.issues[0]?.message ?? "Request body is invalid");
-  }
-  return result.data;
 }

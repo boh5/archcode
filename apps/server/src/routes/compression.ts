@@ -1,16 +1,22 @@
 import { Hono } from "hono";
 import { SessionFileNotFoundError } from "@archcode/agent-core";
 import type { AgentRuntime } from "@archcode/agent-core";
-import { BadRequestError, ServerError, SessionNotFoundError } from "../errors";
+import { z } from "zod/v4";
+import { ServerError, SessionNotFoundError } from "../errors";
 import { resolveProject } from "../resolve";
+import { zValidator } from "../validation";
+
+const CompressionParamsSchema = z.strictObject({
+  slug: z.string().min(1),
+  sessionId: z.string().min(1),
+  blockRef: z.string().min(1),
+});
 
 export function createCompressionRoutes(runtime: AgentRuntime): Hono {
   const app = new Hono();
 
-  app.get("/:blockRef/original", async (c) => {
-    const slug = requiredParam(c.req.param("slug"), "slug");
-    const sessionId = requiredParam(c.req.param("sessionId"), "sessionId");
-    const blockRef = requiredParam(c.req.param("blockRef"), "blockRef");
+  app.get("/:blockRef/original", zValidator("param", CompressionParamsSchema), async (c) => {
+    const { slug, sessionId, blockRef } = c.req.valid("param");
     const project = await resolveProject(runtime, slug);
 
     try {
@@ -34,14 +40,6 @@ export function createCompressionRoutes(runtime: AgentRuntime): Hono {
   });
 
   return app;
-}
-
-function requiredParam(value: string | undefined, name: string): string {
-  if (!value) {
-    throw new BadRequestError(`${name} is required`);
-  }
-
-  return value;
 }
 
 function isMissingFileError(error: unknown): boolean {

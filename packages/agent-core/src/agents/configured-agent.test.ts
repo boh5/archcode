@@ -11,7 +11,7 @@ import { __setSessionsDirForTest } from "../store/sessions-dir";
 import { createRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
 import { worktreeEnterTool, worktreeExitTool } from "../tools/builtins/worktree";
-import { DELEGATION_TOOLS, EXPLORER_READ_ONLY_TOOLS, MAX_SUB_AGENT_DEPTH } from "./constants";
+import { DELEGATION_CORE_TOOLS, MAX_SUB_AGENT_DEPTH } from "./constants";
 import {
   ConfiguredAgent,
   IneligibleSessionWorktreeToolError,
@@ -123,11 +123,16 @@ function makeModelInfo(): ModelInfo {
   return makeProviderRegistry().getModel("test:configured");
 }
 
+const READ_ONLY_FIXTURE_TOOLS = [
+  "file_read", "grep", "glob", "git_status", "git_diff", "ast_grep_search",
+  "lsp_diagnostics", "lsp_goto_definition", "lsp_find_references", "lsp_symbols", "web_fetch",
+] as const;
+
 function makeToolRegistry() {
   return createRegistry([
     makeTool("unknown_tool"),
-    ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
-    ...DELEGATION_TOOLS.map(makeTool),
+    ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
+    ...DELEGATION_CORE_TOOLS.map(makeTool),
   ]);
 }
 
@@ -226,7 +231,7 @@ function createAgent(options: {
     resolveAllowedTools: (definition, depth) => {
       const resolved = toolRegistry.resolveForAgent(definition.tools.tools).descriptors.map((tool) => tool.name);
       if (depth >= MAX_SUB_AGENT_DEPTH) {
-        return resolved.filter((name) => !(DELEGATION_TOOLS as readonly string[]).includes(name));
+        return resolved.filter((name) => !(DELEGATION_CORE_TOOLS as readonly string[]).includes(name));
       }
       return resolved;
     },

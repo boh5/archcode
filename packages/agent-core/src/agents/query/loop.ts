@@ -9,6 +9,7 @@ import { partitionToolCalls } from "../../tools/concurrency/partition";
 import { DOOM_LOOP_MESSAGE, type NormalizedToolCall, type QueryLoopOptions, type QueryLoopResult } from "./types";
 import { redactValue } from "../../tools/security";
 import { classifyLlmError, runLlmStream } from "../../llm";
+import { parseRetryAfter, sleepAbortable } from "../../llm/retry";
 import type { BeforeModelBuildContext, BeforeModelCallContext } from "./loop-hooks";
 import { SessionHitlPause } from "../../execution/session-hitl-pause";
 import { createToolErrorResult } from "../../tools/errors";
@@ -861,48 +862,10 @@ function hasRecoveryAttempts(attempts: {
 }
 
 function computeSessionRetryDelayMs(attempt: number, error: unknown): number {
-  const retryAfterMs = getRetryAfterMs(error);
+  const retryAfterMs = parseRetryAfter(error);
   if (retryAfterMs !== undefined) return Math.min(retryAfterMs, SESSION_RETRY_MAX_DELAY_MS);
   const exponential = SESSION_RETRY_INITIAL_DELAY_MS * SESSION_RETRY_FACTOR ** Math.max(0, attempt - 1);
   return Math.min(exponential, SESSION_RETRY_MAX_DELAY_MS);
-}
-
-function getRetryAfterMs(error: unknown): number | undefined {
-  if (!error || typeof error !== "object") return undefined;
-  const record = error as Record<string, unknown>;
-  const headers = record.headers;
-  const candidates = [record.retryAfter, record.retryAfterMs];
-  if (headers && typeof headers === "object") {
-    const headerRecord = headers as Record<string, unknown> & { get?: (name: string) => unknown };
-    candidates.push(headerRecord["retry-after"], headerRecord["Retry-After"], headerRecord.get?.("retry-after"));
-  }
-
-  for (const candidate of candidates) {
-    if (typeof candidate === "number" && Number.isFinite(candidate)) {
-      return candidate > 1_000 ? candidate : candidate * 1_000;
-    }
-    if (typeof candidate === "string") {
-      const seconds = Number(candidate);
-      if (Number.isFinite(seconds)) return seconds * 1_000;
-      const dateMs = Date.parse(candidate);
-      if (Number.isFinite(dateMs)) return Math.max(0, dateMs - Date.now());
-    }
-  }
-
-  return undefined;
-}
-
-async function sleepAbortable(ms: number, abort: AbortSignal): Promise<void> {
-  if (ms <= 0 || abort.aborted) return;
-  await new Promise<void>((resolve) => {
-    const timeout = setTimeout(done, ms);
-    function done() {
-      clearTimeout(timeout);
-      abort.removeEventListener("abort", done);
-      resolve();
-    }
-    abort.addEventListener("abort", done, { once: true });
-  });
 }
 
 async function executeToolCalls(

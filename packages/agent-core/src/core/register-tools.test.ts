@@ -4,7 +4,8 @@ import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
-import { EXPLORER_READ_ONLY_TOOLS, DELEGATION_EXECUTION_TOOLS } from "../tools/groups";
+import { TOOL_FILE_READ, TOOL_GREP, TOOL_GLOB, TOOL_GIT_STATUS, TOOL_GIT_DIFF, TOOL_AST_GREP_SEARCH, TOOL_LSP_DIAGNOSTICS, TOOL_LSP_GOTO_DEFINITION, TOOL_LSP_FIND_REFERENCES, TOOL_LSP_SYMBOLS, TOOL_WEB_FETCH } from "../tools/names";
+import { DELEGATION_CORE_TOOLS } from "../agents/constants";
 import type { ProjectContext } from "../projects/types";
 import { SkillService } from "../skills";
 import { storeManager } from "../store/store";
@@ -640,7 +641,7 @@ describe("registerBuiltinTools", () => {
     });
   });
 
-  describe("EXPLORER_READ_ONLY_TOOLS trait integrity", () => {
+  describe("read-only Explore tool trait integrity", () => {
     it("each listed tool has traits.readOnly === true", () => {
       // Build the same set of descriptors that registerBuiltinTools produces
       const descriptors = [
@@ -651,7 +652,7 @@ describe("registerBuiltinTools", () => {
       const toolMap = new Map(descriptors.map((d) => [d.name, d]));
       const errors: string[] = [];
 
-      for (const toolName of EXPLORER_READ_ONLY_TOOLS) {
+      for (const toolName of [TOOL_FILE_READ, TOOL_GREP, TOOL_GLOB, TOOL_GIT_STATUS, TOOL_GIT_DIFF, TOOL_AST_GREP_SEARCH, TOOL_LSP_DIAGNOSTICS, TOOL_LSP_GOTO_DEFINITION, TOOL_LSP_FIND_REFERENCES, TOOL_LSP_SYMBOLS, TOOL_WEB_FETCH]) {
         const descriptor = toolMap.get(toolName);
         expect(descriptor, `${toolName} should exist in registered descriptors`).toBeDefined();
         if (descriptor && !descriptor.traits.readOnly) {
@@ -662,14 +663,12 @@ describe("registerBuiltinTools", () => {
     });
   });
 
-  describe("DELEGATION_EXECUTION_TOOLS", () => {
-    it("includes exactly delegate, background_output, wait_for_reminder, view_tool_output, cancel_session", () => {
-      expect(DELEGATION_EXECUTION_TOOLS).toEqual([
+  describe("DELEGATION_CORE_TOOLS", () => {
+    it("includes exactly delegate, background_output, wait_for_reminder", () => {
+      expect(DELEGATION_CORE_TOOLS).toEqual([
         "delegate",
         "background_output",
         "wait_for_reminder",
-        "view_tool_output",
-        "cancel_session",
       ]);
     });
   });

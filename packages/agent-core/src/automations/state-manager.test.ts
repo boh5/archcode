@@ -35,10 +35,34 @@ describe("AutomationStateManager", () => {
     expect(await Bun.file(join(TMP_ROOT, ".archcode", "automations", "state.json")).exists()).toBe(true);
     expect(await Bun.file(join(TMP_ROOT, ".archcode", "loops", "state.json")).exists()).toBe(false);
 
-    const unchanged = await manager.updateAutomation(automation.id, {
+    await expect(manager.updateAutomation(automation.id, {
       createdFromSessionId: crypto.randomUUID(),
-    } as never);
-    expect(unchanged.createdFromSessionId).toBe("11111111-1111-4111-8111-111111111111");
+    } as never)).rejects.toThrow();
+    expect((await manager.readAutomation(automation.id)).createdFromSessionId).toBe("11111111-1111-4111-8111-111111111111");
+  });
+
+  test("rejects over-limit create and update inputs before persistence", async () => {
+    const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
+    await expect(manager.createAutomation({
+      projectId: "project-a",
+      createdFromSessionId: crypto.randomUUID(),
+      name: "n".repeat(201),
+      trigger: { kind: "interval", everyMs: 30_000 },
+      action: { kind: "start_session", message: "Check", location: "project" },
+    })).rejects.toThrow();
+    expect(await manager.listAutomations()).toEqual([]);
+
+    const automation = await manager.createAutomation({
+      projectId: "project-a",
+      createdFromSessionId: crypto.randomUUID(),
+      name: "valid",
+      trigger: { kind: "interval", everyMs: 30_000 },
+      action: { kind: "start_session", message: "Check", location: "project" },
+    });
+    await expect(manager.updateAutomation(automation.id, {
+      action: { kind: "start_session", message: "x".repeat(10_001), location: "project" },
+    })).rejects.toThrow();
+    expect((await manager.readAutomation(automation.id)).action.message).toBe("Check");
   });
 
   test("preallocates stable dispatch identities and coalesces pending work", async () => {

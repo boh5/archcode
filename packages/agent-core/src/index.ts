@@ -81,6 +81,13 @@ export type { ProjectContext, ProjectInfo } from "./projects/types";
 export type { ResumeCoordinatorResult } from "./hitl/resume-coordinator";
 export { hitlRequiresInspection } from "./hitl/aggregation";
 export { GoalRunner, GoalRunnerError } from "./goals/runner";
+export {
+  GoalEvidenceRefSchema,
+  GoalEvidenceSummarySchema,
+  GoalReviewOutcomeResponseSchema,
+  GoalReviewReceiptSchema,
+  GoalReviewSummarySchema,
+} from "./goals/review-schema";
 export type {
   GoalActivationOutcome,
   GoalRunnerCreateInput,

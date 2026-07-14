@@ -1,4 +1,4 @@
-import { mkdir, rename, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod/v4";
 import type {
@@ -9,6 +9,7 @@ import type {
 } from "@archcode/protocol";
 
 import { getSessionDir } from "../store/sessions-dir";
+import { atomicWrite } from "../utils/safe-file";
 
 export interface SessionHitlToolCallCheckpoint {
   readonly toolCallId: string;
@@ -120,7 +121,12 @@ const HitlSourceSchema: z.ZodType<HitlSource> = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("ask_user"), sessionId: z.string(), toolCallId: z.string().optional() }),
   z.strictObject({ type: z.literal("tool_permission"), sessionId: z.string(), toolCallId: z.string(), toolName: z.string() }),
   z.strictObject({ type: z.literal("goal_approval"), goalId: z.string(), approvalPoint: z.string().optional() }),
-  z.strictObject({ type: z.literal("goal_review"), goalId: z.string() }),
+  z.strictObject({
+    type: z.literal("goal_review"),
+    goalId: z.string(),
+    reviewGeneration: z.number().int().nonnegative(),
+    reviewerSessionId: z.string().trim().min(1),
+  }),
   z.strictObject({ type: z.literal("goal_budget"), goalId: z.string(), approvalPoint: z.string().optional() }),
   z.strictObject({ type: z.literal("goal_question"), goalId: z.string(), questionKey: z.string() }),
 ]);
@@ -351,12 +357,8 @@ export function isResponseForSessionCheckpoint(checkpoint: SessionHitlCheckpoint
 }
 
 async function writeCheckpointFile(file: SessionHitlCheckpointFile, workspaceRoot: string, sessionId: string): Promise<void> {
-  const dir = getSessionDir(workspaceRoot, sessionId);
-  await mkdir(dir, { recursive: true });
   const finalPath = getSessionHitlCheckpointPath(workspaceRoot, sessionId);
-  const tmpPath = join(dir, `hitl-checkpoints.${crypto.randomUUID()}.json.tmp`);
-  await Bun.write(tmpPath, `${JSON.stringify(parseCheckpointFile(file, sessionId), null, 2)}\n`);
-  await rename(tmpPath, finalPath);
+  await atomicWrite(finalPath, `${JSON.stringify(parseCheckpointFile(file, sessionId), null, 2)}\n`);
 }
 
 function parseCheckpointFile(file: unknown, sessionId: string): SessionHitlCheckpointFile {

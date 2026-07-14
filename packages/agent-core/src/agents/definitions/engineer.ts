@@ -1,7 +1,8 @@
 import {
+  DELEGATION_CORE_TOOLS,
   DEFAULT_SUB_AGENT_TIMEOUT_MS,
   MAX_CONCURRENT_SUB_AGENTS,
-  SKILL_TOOLS,
+  SKILL_ACCESS_TOOLS,
 } from "../constants";
 import type { AgentDefinition } from "../factory-types";
 import {
@@ -9,11 +10,9 @@ import {
   TOOL_AUTOMATION_CREATE,
   TOOL_AST_GREP_REPLACE,
   TOOL_AST_GREP_SEARCH,
-  TOOL_BACKGROUND_OUTPUT,
   TOOL_BASH,
   TOOL_CANCEL_SESSION,
   TOOL_COMPRESS,
-  TOOL_DELEGATE,
   TOOL_FILE_EDIT,
   TOOL_FILE_READ,
   TOOL_FILE_WRITE,
@@ -30,7 +29,6 @@ import {
   TOOL_MEMORY_WRITE,
   TOOL_TODO_WRITE,
   TOOL_VIEW_TOOL_OUTPUT,
-  TOOL_WAIT_FOR_REMINDER,
   TOOL_WEB_FETCH,
 } from "../../tools/names";
 
@@ -77,17 +75,15 @@ Output:
       TOOL_LSP_FIND_REFERENCES,
       TOOL_LSP_SYMBOLS,
       TOOL_WEB_FETCH,
-      TOOL_WAIT_FOR_REMINDER,
-      TOOL_DELEGATE,
+      ...DELEGATION_CORE_TOOLS,
       TOOL_CANCEL_SESSION,
-      TOOL_BACKGROUND_OUTPUT,
       TOOL_VIEW_TOOL_OUTPUT,
       TOOL_COMPRESS,
       TOOL_MEMORY_READ,
       TOOL_MEMORY_WRITE,
       TOOL_GOAL_CREATE,
       TOOL_AUTOMATION_CREATE,
-      ...SKILL_TOOLS,
+      ...SKILL_ACCESS_TOOLS,
     ],
     delegateTargets: ["plan", "build", "reviewer", "explore", "librarian"],
   },

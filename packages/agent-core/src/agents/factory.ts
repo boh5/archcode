@@ -21,7 +21,7 @@ import {
 import type { StoreApi } from "zustand";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
 import type { AgentDefinition, AgentName } from "./factory-types";
-import { DELEGATION_TOOLS, MAX_SUB_AGENT_DEPTH } from "./constants";
+import { DELEGATION_CORE_TOOLS, MAX_SUB_AGENT_DEPTH } from "./constants";
 import type { Agent } from "./types";
 import { resolveAgentModel } from "./model-resolver";
 
@@ -225,7 +225,7 @@ function factoryResolveAllowedTools(
   const all = [...resolved, ...mcpToolNames];
 
   if (depth >= MAX_SUB_AGENT_DEPTH) {
-    return all.filter((name) => !(DELEGATION_TOOLS as readonly string[]).includes(name));
+    return all.filter((name) => !(DELEGATION_CORE_TOOLS as readonly string[]).includes(name));
   }
 
   return all;

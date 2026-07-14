@@ -261,7 +261,12 @@ describe("Goal HITL resume integration", () => {
     const record = await hitlService.create({
       owner: { projectSlug: goal.projectId, ownerType: "goal", ownerId: goal.id },
       blockingKey: `goal:${goal.id}:review`,
-      source: { type: "goal_review", goalId: goal.id },
+      source: {
+        type: "goal_review",
+        goalId: goal.id,
+        reviewGeneration: goal.reviewGeneration,
+        reviewerSessionId: "reviewer-session",
+      },
       displayPayload: { title: "Review Goal outcome", redacted: true },
     });
     await manager.attachHitlBlocker(goal.id, {
@@ -274,7 +279,19 @@ describe("Goal HITL resume integration", () => {
       approvalRef: record.hitlId,
     });
 
-    await runAdapter(adapter, record, { type: "review_outcome", outcome: "DONE", comment: "criteria satisfied" });
+    await runAdapter(adapter, record, {
+      type: "review_outcome",
+      outcome: "DONE",
+      comment: "criteria satisfied",
+      receipt: {
+        reviewGeneration: goal.reviewGeneration,
+        verdict: "DONE",
+        summary: "criteria satisfied",
+        evidenceRefs: [{ kind: "hitl", ref: record.hitlId, summary: "criteria satisfied" }],
+        reviewerSessionId: "reviewer-session",
+        decidedAt: "2026-07-14T00:00:00.000Z",
+      },
+    });
 
     const completed = await manager.read(goal.id);
     expect(completed).toMatchObject({
@@ -294,7 +311,12 @@ describe("Goal HITL resume integration", () => {
     const record = await hitlService.create({
       owner: { projectSlug: goal.projectId, ownerType: "goal", ownerId: goal.id },
       blockingKey: `goal:${goal.id}:stale-review`,
-      source: { type: "goal_review", goalId: goal.id },
+      source: {
+        type: "goal_review",
+        goalId: goal.id,
+        reviewGeneration: goal.reviewGeneration,
+        reviewerSessionId: "reviewer-session",
+      },
       displayPayload: { title: "Review Goal outcome", redacted: true },
     });
     await manager.attachHitlBlocker(goal.id, {

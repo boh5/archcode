@@ -1,4 +1,4 @@
-import type { GoalBlocker, GoalReviewReceipt, GoalReviewVerdict, GoalState, HitlRecord, HitlResponse } from "@archcode/protocol";
+import type { GoalBlocker, GoalState, HitlRecord, HitlResponse } from "@archcode/protocol";
 
 import { GoalApprovalGate, approvalOutcomeFromResponse, reviewOutcomeFromResponse } from "../hitl/goal-gates";
 import { createPreparedHitlResume, type GoalHitlResumeAdapter as ResumeAdapterContract } from "../hitl/resume-coordinator";
@@ -115,7 +115,7 @@ export class GoalHitlResumeAdapter implements ResumeAdapterContract {
     await this.options.goalStateManager.finalizeHitlReview(
       goalId,
       record.hitlId,
-      reviewInputFromResponse(goalId, goal.reviewGeneration, response, outcome.outcome, outcome.comment),
+      reviewInputFromResponse(goalId, response),
     );
     return true;
   }
@@ -164,12 +164,10 @@ function blockerFromOwnerRecord(record: HitlRecord): Omit<GoalBlocker, "createdA
 
 function reviewInputFromResponse(
   goalId: string,
-  currentReviewGeneration: number,
   response: HitlResponse,
-  verdict: GoalReviewVerdict,
-  comment: string | undefined,
 ): GoalFinalizeReviewInput {
-  const receipt = reviewReceiptFromResponse(response, currentReviewGeneration, verdict, comment);
+  if (response.type !== "review_outcome") throw new GoalStateError(goalId, `Goal review requires review_outcome, got ${response.type}`);
+  const receipt = response.receipt;
   return {
     expectedReviewGeneration: receipt.reviewGeneration,
     verdict: receipt.verdict,
@@ -182,23 +180,5 @@ function reviewInputFromResponse(
       sessionGoalId: goalId,
       reviewerSessionId: receipt.reviewerSessionId,
     },
-  };
-}
-
-function reviewReceiptFromResponse(
-  response: HitlResponse,
-  currentReviewGeneration: number,
-  verdict: GoalReviewVerdict,
-  comment: string | undefined,
-): GoalReviewReceipt {
-  if (response.type === "review_outcome" && response.receipt !== undefined) return response.receipt;
-  const summary = comment ?? `Review outcome: ${verdict}`;
-  return {
-    reviewGeneration: currentReviewGeneration,
-    verdict,
-    summary,
-    evidenceRefs: verdict === "DONE" ? [{ kind: "hitl", ref: "review_outcome", summary }] : [],
-    reviewerSessionId: response.type === "review_outcome" ? response.reviewedBy ?? "hitl-reviewer" : "hitl-reviewer",
-    decidedAt: new Date().toISOString(),
   };
 }

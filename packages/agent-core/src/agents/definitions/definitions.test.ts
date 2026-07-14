@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_SUB_AGENT_TIMEOUT_MS,
   MAX_CONCURRENT_SUB_AGENTS,
-  SKILL_TOOLS,
+  SKILL_ACCESS_TOOLS,
 } from "../constants";
 import {
   agentDefinitions,
@@ -206,6 +206,40 @@ describe("agentDefinitions", () => {
     expect(goalManageAgents).toEqual(["goal_lead", "reviewer"]);
   });
 
+  test("audits the complete role-sensitive capability matrix from real definitions", () => {
+    const capabilityNames = [
+      "view_tool_output",
+      "cancel_session",
+      "bash",
+      "memory_read",
+      "memory_write",
+      "file_write",
+      "file_edit",
+      "ast_grep_replace",
+      "goal_create",
+      "goal_manage",
+      "delegate",
+      "skill_list",
+      "skill_read",
+    ] as const;
+    const expected = {
+      engineer: ["view_tool_output", "cancel_session", "bash", "memory_read", "memory_write", "file_write", "file_edit", "ast_grep_replace", "goal_create", "delegate", "skill_list", "skill_read"],
+      goal_lead: ["view_tool_output", "cancel_session", "memory_read", "memory_write", "goal_manage", "delegate", "skill_list", "skill_read"],
+      plan: ["view_tool_output", "memory_read", "delegate", "skill_list", "skill_read"],
+      build: ["view_tool_output", "bash", "memory_read", "memory_write", "file_write", "file_edit", "ast_grep_replace", "delegate", "skill_list", "skill_read"],
+      reviewer: ["view_tool_output", "bash", "memory_read", "goal_manage", "delegate", "skill_list", "skill_read"],
+      explore: ["skill_list", "skill_read"],
+      librarian: ["memory_read", "skill_list", "skill_read"],
+    } as const;
+
+    for (const definition of agentDefinitions) {
+      const actual = capabilityNames.filter((tool) => (
+        definition.tools.tools as readonly string[]
+      ).includes(tool));
+      expect(actual, definition.name).toEqual([...expected[definition.name]]);
+    }
+  });
+
   test("Explore and Librarian are ancillary read-only agents with no delegation", () => {
     for (const definition of [exploreAgentDefinition, librarianAgentDefinition]) {
       expectNoTools(definition.tools.tools, SOURCE_WRITE_TOOLS);
@@ -299,7 +333,7 @@ describe("agentDefinitions", () => {
         expect(Array.isArray(definition.skills)).toBe(true);
         for (const skill of definition.skills) expect(KNOWN_SKILLS).toContain(skill);
         if (definition.skills.length > 0) {
-          for (const skillTool of SKILL_TOOLS) expect(definition.tools.tools).toContain(skillTool);
+          for (const skillTool of SKILL_ACCESS_TOOLS) expect(definition.tools.tools).toContain(skillTool);
         }
       }
     });

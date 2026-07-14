@@ -1,17 +1,8 @@
 import { useGoal } from "../../api/queries";
 import { useSessionStore } from "../../store/session-store";
-import type { GoalStatus } from "../../api/types";
 import { TodoProgressButton } from "./TodoProgressButton";
 import { InspectorToggleButton } from "./InspectorToggleButton";
-
-const STATUS_BADGE_CLASS: Partial<Record<GoalStatus, string>> = {
-  running: "bg-success-muted text-success",
-  reviewing: "bg-info-muted text-info",
-  done: "bg-accent-muted text-accent",
-  not_done: "bg-error-muted text-error",
-  failed: "bg-error-muted text-error",
-  cancelled: "bg-bg-active text-text-muted",
-};
+import { getGoalStatusBadgeClass } from "../../lib/goal-status";
 
 interface ChatHeaderProps {
   slug: string;
@@ -39,7 +30,7 @@ export function ChatHeader({ slug, sessionId, goalId, projectRoot, onToggleInspe
             data-testid="goal-status-badge"
             className="text-[11px] px-2 py-0.5 rounded-sm font-medium whitespace-nowrap"
           >
-            <span className={`px-1.5 py-0.5 rounded-sm ${STATUS_BADGE_CLASS[goal.status]}`}>
+            <span className={`px-1.5 py-0.5 rounded-sm ${getGoalStatusBadgeClass(goal.status)}`}>
               {goal.status}
             </span>
           </span>

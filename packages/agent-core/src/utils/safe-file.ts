@@ -1,4 +1,4 @@
-import { mkdir, realpath, rename, rm } from "node:fs/promises";
+import { chmod, mkdir, realpath, rename, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 export class SafePathError extends Error {
@@ -14,6 +14,7 @@ export class SafePathError extends Error {
 export async function atomicWrite(
   filePath: string,
   content: string,
+  options?: { readonly mode?: number },
 ): Promise<void> {
   const dir = dirname(filePath);
   await mkdir(dir, { recursive: true });
@@ -21,6 +22,7 @@ export async function atomicWrite(
   const tmpPath = join(dir, `.tmp-${crypto.randomUUID()}`);
   try {
     await Bun.write(tmpPath, content);
+    if (options?.mode !== undefined) await chmod(tmpPath, options.mode);
   } catch (err) {
     try {
       await rm(tmpPath);

@@ -44,7 +44,7 @@ export async function withLlmRetry<T>(
         delayMs,
         nextRetryAt: Date.now() + delayMs,
       });
-      await sleep(delayMs, options?.abortSignal);
+      await sleepAbortable(delayMs, options?.abortSignal);
       if (options?.abortSignal?.aborted) throw createAbortError();
     }
   }
@@ -58,7 +58,7 @@ export async function withLlmRetry<T>(
 }
 
 export function computeDelayMs(failedAttempt: number, profile: LlmRetryProfile = LLM_SHORT_RETRY_PROFILE, error?: unknown): number {
-  const retryAfterMs = getRetryAfterMs(error);
+  const retryAfterMs = parseRetryAfter(error);
   if (retryAfterMs !== undefined) return Math.min(retryAfterMs, profile.maxDelayMs);
   const exponential = profile.baseDelayMs * profile.factor ** Math.max(0, failedAttempt - 1);
   const capped = Math.min(exponential, profile.maxDelayMs);
@@ -66,7 +66,7 @@ export function computeDelayMs(failedAttempt: number, profile: LlmRetryProfile =
   return Math.max(0, Math.round(capped + jitter));
 }
 
-function getRetryAfterMs(error: unknown): number | undefined {
+export function parseRetryAfter(error: unknown): number | undefined {
   if (!error || typeof error !== "object") return undefined;
   const record = error as Record<string, unknown>;
   const headers = record.headers;
@@ -91,7 +91,7 @@ function getRetryAfterMs(error: unknown): number | undefined {
   return undefined;
 }
 
-async function sleep(ms: number, abortSignal?: AbortSignal): Promise<void> {
+export async function sleepAbortable(ms: number, abortSignal?: AbortSignal): Promise<void> {
   if (ms <= 0 || abortSignal?.aborted) return;
   await new Promise<void>((resolve) => {
     const timeout = setTimeout(done, ms);

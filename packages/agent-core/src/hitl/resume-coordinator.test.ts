@@ -329,6 +329,7 @@ describe("ResumeCoordinator", () => {
       delivery: { claimId: resultRecord(claimed).delivery?.claimId, intent: "respond", attempt: 1, lastError: "adapter offline" },
     });
 
+    coordinator.dispose();
     const recovering = new RecordingSessionAdapter();
     const reloaded = await createFixture(fixture.workspaceRoot, fixture.sessions, fixture.sessionId);
     const recoveryCoordinator = new ResumeCoordinator({ hitl: reloaded.service, adapters: { session: recovering } });

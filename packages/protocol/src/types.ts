@@ -1162,7 +1162,7 @@ export type HitlSource =
   | { type: "ask_user"; sessionId: string; toolCallId?: string }
   | { type: "tool_permission"; sessionId: string; toolCallId: string; toolName: string }
   | { type: "goal_approval"; goalId: string; approvalPoint?: string }
-  | { type: "goal_review"; goalId: string }
+  | { type: "goal_review"; goalId: string; reviewGeneration: number; reviewerSessionId: string }
   | { type: "goal_budget"; goalId: string; approvalPoint?: string }
   | { type: "goal_question"; goalId: string; questionKey: string };
 
@@ -1203,7 +1203,7 @@ export type HitlResponse =
   | { type: "question_answer"; answers: string[]; comment?: string; answeredBy?: string }
   | { type: "permission_decision"; decision: "approve_once" | "approve_always" | "deny"; comment?: string; decidedBy?: string }
   | { type: "approval_decision"; decision: "approved" | "denied"; comment?: string; decidedBy?: string }
-  | { type: "review_outcome"; outcome: GoalReviewVerdict; comment?: string; receipt?: GoalReviewReceipt; reviewedBy?: string }
+  | { type: "review_outcome"; outcome: GoalReviewVerdict; comment?: string; receipt: GoalReviewReceipt }
   | { type: "cancel"; reason: string; cancelledBy?: string };
 
 export interface HitlRecord {

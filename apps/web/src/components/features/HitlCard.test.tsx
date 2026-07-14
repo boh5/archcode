@@ -115,7 +115,21 @@ mock.module("react-router-dom", () => ({
   Link: ({ children, className, to, ...props }: MockLinkProps) => jsxDEV("a", { ...props, href: to, className, children }),
 }));
 
-type RespondHitlArgs = { identity: { owner: HitlProjection["owner"]; hitlId: string }; body: { type?: string; decision?: string; outcome?: string; answers?: string[] } };
+type RespondHitlArgs = {
+  identity: { owner: HitlProjection["owner"]; hitlId: string };
+  body: {
+    type?: string;
+    decision?: string;
+    outcome?: string;
+    answers?: string[];
+    receipt?: {
+      reviewGeneration: number;
+      verdict: string;
+      reviewerSessionId: string;
+      evidenceRefs: Array<{ kind: string; ref: string }>;
+    };
+  };
+};
 type CancelHitlArgs = { identity: { owner: HitlProjection["owner"]; hitlId: string }; reason?: string };
 type StopSessionArgs = { slug: string; rootSessionId: string };
 
@@ -212,7 +226,7 @@ describe("HitlCard", () => {
 
   test("renders source label for goal_review", () => {
     const projection = makeProjection({
-      source: { type: "goal_review", goalId: "goal-1"},
+      source: { type: "goal_review", goalId: "goal-1", reviewGeneration: 1, reviewerSessionId: "reviewer-1" },
       allowedActions: ["approve", "deny", "cancel"],
       displayPayload: makeDisplayPayload({ title: "Review artifacts" }),
     });
@@ -396,7 +410,7 @@ describe("HitlCard", () => {
 
   test("goal_review renders DONE/NOT DONE action buttons", () => {
     const projection = makeProjection({
-      source: { type: "goal_review", goalId: "goal-1"},
+      source: { type: "goal_review", goalId: "goal-1", reviewGeneration: 1, reviewerSessionId: "reviewer-1" },
       allowedActions: ["approve", "deny", "cancel"],
       displayPayload: makeDisplayPayload({ title: "Review artifacts" }),
     });
@@ -411,7 +425,7 @@ describe("HitlCard", () => {
   test("goal_review DONE calls respondHitl with outcome=DONE", () => {
     const projection = makeProjection({
       hitlId: "review-1",
-      source: { type: "goal_review", goalId: "goal-1"},
+      source: { type: "goal_review", goalId: "goal-1", reviewGeneration: 1, reviewerSessionId: "reviewer-1" },
       allowedActions: ["approve", "deny", "cancel"],
       displayPayload: makeDisplayPayload({ title: "Review" }),
     });
@@ -425,12 +439,18 @@ describe("HitlCard", () => {
     expect(callArg.identity.hitlId).toBe("review-1");
     expect(callArg.body.type).toBe("review_outcome");
     expect(callArg.body.outcome).toBe("DONE");
+    expect(callArg.body.receipt).toMatchObject({
+      reviewGeneration: 1,
+      verdict: "DONE",
+      reviewerSessionId: "reviewer-1",
+      evidenceRefs: [{ kind: "hitl", ref: "review-1" }],
+    });
   });
 
   test("goal_review NOT DONE calls respondHitl with outcome=NOT_DONE", () => {
     const projection = makeProjection({
       hitlId: "review-2",
-      source: { type: "goal_review", goalId: "goal-1"},
+      source: { type: "goal_review", goalId: "goal-1", reviewGeneration: 1, reviewerSessionId: "reviewer-1" },
       allowedActions: ["approve", "deny", "cancel"],
       displayPayload: makeDisplayPayload({ title: "Review" }),
     });
@@ -444,6 +464,12 @@ describe("HitlCard", () => {
     expect(callArg.identity.hitlId).toBe("review-2");
     expect(callArg.body.type).toBe("review_outcome");
     expect(callArg.body.outcome).toBe("NOT_DONE");
+    expect(callArg.body.receipt).toMatchObject({
+      reviewGeneration: 1,
+      verdict: "NOT_DONE",
+      reviewerSessionId: "reviewer-1",
+      evidenceRefs: [],
+    });
   });
 
   test("tool_permission renders Allow Once, Allow for Project, and Deny buttons", () => {
@@ -704,7 +730,7 @@ describe("HitlCard", () => {
 
   test("goal_review card uses accent border", () => {
     const projection = makeProjection({
-      source: { type: "goal_review", goalId: "goal-1"},
+      source: { type: "goal_review", goalId: "goal-1", reviewGeneration: 1, reviewerSessionId: "reviewer-1" },
       allowedActions: ["approve", "deny", "cancel"],
       displayPayload: makeDisplayPayload({ title: "Review" }),
     });

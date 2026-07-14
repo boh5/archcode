@@ -4,16 +4,15 @@ import { formatElapsed } from "../../lib/time-format";
 import { Check, X } from "lucide-react";
 import { getToolSummary, getToolIcon } from "../../lib/tool-format";
 import { getToolCategory } from "@archcode/protocol";
+import type { DelegationCardViewModel, DelegationToolStatus } from "../../lib/delegation-card-model";
 
-type ToolStatus = "success" | "error" | "default";
-
-const TOOL_CHIP_STATUS_CLASSES: Record<ToolStatus, string> = {
+const TOOL_CHIP_STATUS_CLASSES: Record<DelegationToolStatus, string> = {
   success: "text-success",
   error: "text-error",
   default: "text-text-tertiary",
 };
 
-export function ToolChip({ name, status, input }: { name: string; status: ToolStatus; input?: unknown }) {
+export function ToolChip({ name, status, input }: { name: string; status: DelegationToolStatus; input?: unknown }) {
   const summary = input !== undefined ? getToolSummary(name, input) : null;
   const category = getToolCategory(name);
   const Icon = getToolIcon(category);
@@ -35,22 +34,6 @@ export function ToolChip({ name, status, input }: { name: string; status: ToolSt
   );
 }
 
-export interface DelegationCardProps {
-  sessionId: string;
-  focusStoreSessionId: string;
-  agentType: string;
-  agentDisplayName: string;
-  taskTitle?: string;
-  status: BadgeStatus;
-  depth: number;
-  startedAt: number;
-  summary: string;
-  tools: Array<{ name: string; status: ToolStatus; input?: unknown }>;
-  projectSlug: string;
-  /** When true, the "View full conversation" button is disabled (sessionId not yet available). */
-  canNavigate?: boolean;
-}
-
 export function DelegationCard({
   sessionId,
   focusStoreSessionId,
@@ -64,7 +47,7 @@ export function DelegationCard({
   tools,
   projectSlug,
   canNavigate = true,
-}: DelegationCardProps) {
+}: DelegationCardViewModel) {
   const appearance = resolveAgentAppearance(agentType, agentDisplayName);
 
   const handleViewConversation = () => {

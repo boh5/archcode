@@ -10,11 +10,13 @@ import type {
   HitlStatus,
   GlobalSSEEvent,
 } from "@archcode/protocol";
-import { hitlRequiresInspection, type AgentRuntime, type ProjectContext, type ResumeCoordinatorResult } from "@archcode/agent-core";
+import { GoalReviewOutcomeResponseSchema, hitlRequiresInspection, type AgentRuntime, type ProjectContext, type ResumeCoordinatorResult } from "@archcode/agent-core";
+import { sortJsonValue } from "@archcode/utils";
 import { z } from "zod/v4";
 import { BadRequestError, ServerError } from "../errors";
 import { resolveProject } from "../resolve";
 import { globalEventBus } from "../events/global-event-bus";
+import { zValidator } from "../validation";
 
 type HitlRouteScope = "project" | "session" | "goal";
 type HitlRouteStatus = "pending" | "recent" | "all";
@@ -28,30 +30,28 @@ interface HitlMutationResponse {
 const HitlListStatusSchema = z.enum(["pending", "recent", "all"]);
 const HitlScopeSchema = z.enum(["project", "session", "goal"]);
 const HitlOwnerTypeSchema = z.enum(["session", "goal"]);
-
-const GoalEvidenceRefSchema = z.strictObject({
-  kind: z.enum(["session", "message", "tool_call", "diff", "test_output", "file", "url", "hitl"]),
-  ref: z.string(),
-  summary: z.string(),
-  sessionId: z.string().optional(),
-  messageId: z.string().optional(),
-  toolCallId: z.string().optional(),
-  path: z.string().optional(),
-  url: z.string().optional(),
-  createdAt: z.string().optional(),
+const HitlListParamsSchema = z.strictObject({ slug: z.string().min(1) });
+const HitlMutationParamsSchema = z.strictObject({
+  slug: z.string().min(1),
+  ownerType: HitlOwnerTypeSchema,
+  ownerId: z.string().min(1),
+  hitlId: z.string().min(1),
+});
+const HitlListQuerySchema = z.strictObject({
+  scope: HitlScopeSchema.default("project"),
+  ownerId: z.string().trim().min(1).optional(),
+  includeChildren: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
+  status: HitlListStatusSchema.default("pending"),
+}).superRefine((query, context) => {
+  if (query.scope !== "project" && query.ownerId === undefined) {
+    context.addIssue({ code: "custom", path: ["ownerId"], message: "ownerId is required for session and goal HITL scope" });
+  }
+  if (query.scope === "project" && query.ownerId !== undefined) {
+    context.addIssue({ code: "custom", path: ["ownerId"], message: "ownerId is only valid for session and goal HITL scope" });
+  }
 });
 
-const GoalReviewReceiptSchema = z.strictObject({
-  reviewGeneration: z.number().int().nonnegative(),
-  verdict: z.enum(["DONE", "NOT_DONE"]),
-  summary: z.string(),
-  evidenceRefs: z.array(GoalEvidenceRefSchema),
-  unresolvedItems: z.array(z.string()).optional(),
-  reviewerSessionId: z.string(),
-  decidedAt: z.string(),
-});
-
-const HitlResponseSchema: z.ZodType<HitlResponse> = z.discriminatedUnion("type", [
+const HitlResponseSchema: z.ZodType<HitlResponse> = z.union([
   z.strictObject({
     type: z.literal("question_answer"),
     answers: z.array(z.string()),
@@ -70,13 +70,7 @@ const HitlResponseSchema: z.ZodType<HitlResponse> = z.discriminatedUnion("type",
     comment: z.string().optional(),
     decidedBy: z.string().optional(),
   }),
-  z.strictObject({
-    type: z.literal("review_outcome"),
-    outcome: z.enum(["DONE", "NOT_DONE"]),
-    comment: z.string().optional(),
-    receipt: GoalReviewReceiptSchema.optional(),
-    reviewedBy: z.string().optional(),
-  }),
+  GoalReviewOutcomeResponseSchema,
   z.strictObject({
     type: z.literal("cancel"),
     reason: z.string(),
@@ -94,10 +88,10 @@ const TERMINAL_STATUSES = new Set<HitlStatus>(["resolved", "cancelled"]);
 export function createHitlRoutes(runtime: AgentRuntime): Hono {
   const app = new Hono();
 
-  app.get("/:slug/hitl", async (c) => {
-    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
+  app.get("/:slug/hitl", zValidator("param", HitlListParamsSchema), zValidator("query", HitlListQuerySchema), async (c) => {
+    const project = await resolveProject(runtime, c.req.valid("param").slug);
     const context = await runtime.contextResolver.resolve(project.workspaceRoot);
-    const query = parseListQuery(c.req.query());
+    const query = c.req.valid("query");
     await assertOwnerExists(runtime, project.workspaceRoot, context, query.scope, query.ownerId);
 
     const hitl = (await context.hitl.list({
@@ -110,16 +104,11 @@ export function createHitlRoutes(runtime: AgentRuntime): Hono {
     return c.json({ hitl });
   });
 
-  app.post("/:slug/hitl/:ownerType/:ownerId/:hitlId/respond", async (c) => {
-    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
-    const identity = hitlIdentityFromParams(
-      project.slug,
-      c.req.param("ownerType"),
-      c.req.param("ownerId"),
-      c.req.param("hitlId"),
-    );
-    const { hitlId } = identity;
-    const response = await readJsonBody(c.req.json(), HitlResponseSchema);
+  app.post("/:slug/hitl/:ownerType/:ownerId/:hitlId/respond", zValidator("param", HitlMutationParamsSchema), zValidator("json", HitlResponseSchema), async (c) => {
+    const { slug, ownerType, ownerId, hitlId } = c.req.valid("param");
+    const project = await resolveProject(runtime, slug);
+    const identity: HitlIdentity = { owner: { projectSlug: project.slug, ownerType, ownerId }, hitlId };
+    const response = c.req.valid("json");
     const context = await runtime.contextResolver.resolve(project.workspaceRoot);
     const lookup = await context.hitl.lookup(identity);
     if (lookup.status === "missing") throw hitlNotFound(hitlId);
@@ -143,16 +132,11 @@ export function createHitlRoutes(runtime: AgentRuntime): Hono {
     return c.json(toMutationResponse(project, record), statusCode);
   });
 
-  app.post("/:slug/hitl/:ownerType/:ownerId/:hitlId/cancel", async (c) => {
-    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
-    const identity = hitlIdentityFromParams(
-      project.slug,
-      c.req.param("ownerType"),
-      c.req.param("ownerId"),
-      c.req.param("hitlId"),
-    );
-    const { hitlId } = identity;
-    const body = await readOptionalJsonBody(c.req.text(), HitlCancelBodySchema);
+  app.post("/:slug/hitl/:ownerType/:ownerId/:hitlId/cancel", zValidator("param", HitlMutationParamsSchema), zValidator("json", HitlCancelBodySchema), async (c) => {
+    const { slug, ownerType, ownerId, hitlId } = c.req.valid("param");
+    const project = await resolveProject(runtime, slug);
+    const identity: HitlIdentity = { owner: { projectSlug: project.slug, ownerType, ownerId }, hitlId };
+    const body = c.req.valid("json");
     const context = await runtime.contextResolver.resolve(project.workspaceRoot);
     const lookup = await context.hitl.lookup(identity);
     if (lookup.status === "missing") throw hitlNotFound(hitlId);
@@ -243,40 +227,6 @@ function isExecutionEndAfter(event: GlobalSSEEvent, sessionId: string, eventCurs
     && event.eventId > eventCursor;
 }
 
-function parseListQuery(query: Record<string, string | undefined>): {
-  scope: HitlRouteScope;
-  ownerId?: string;
-  includeChildren: boolean;
-  status: HitlRouteStatus;
-} {
-  const scope = parseOptionalEnum(query.scope, HitlScopeSchema, "scope") ?? "project";
-  const status = parseOptionalEnum(query.status, HitlListStatusSchema, "status") ?? "pending";
-  const includeChildren = parseIncludeChildren(query.includeChildren);
-  const ownerId = query.ownerId?.trim();
-  if (scope !== "project" && !ownerId) throw new BadRequestError("ownerId is required for session and goal HITL scope");
-  if (scope === "project" && ownerId) throw new BadRequestError("ownerId is only valid for session and goal HITL scope");
-
-  return {
-    scope,
-    ...(ownerId ? { ownerId } : {}),
-    includeChildren,
-    status,
-  };
-}
-
-function parseIncludeChildren(value: string | undefined): boolean {
-  if (value === undefined || value === "false") return false;
-  if (value === "true") return true;
-  throw new BadRequestError("includeChildren must be true or false");
-}
-
-function parseOptionalEnum<Schema extends z.ZodEnum>(value: string | undefined, schema: Schema, name: string): z.infer<Schema> | undefined {
-  if (value === undefined || value.trim() === "") return undefined;
-  const result = schema.safeParse(value);
-  if (!result.success) throw new BadRequestError(`${name} is invalid`, z.treeifyError(result.error));
-  return result.data;
-}
-
 function statusForService(status: HitlRouteStatus): "active" | "terminal" | "all" {
   switch (status) {
     case "pending":
@@ -315,6 +265,14 @@ async function assertOwnerExists(
 function validateResponseForSource(source: HitlSource, response: HitlResponse): void {
   const expectedType = responseTypeForSource(source);
   if (response.type !== expectedType) throw invalidResponsePayload(expectedType);
+  if (source.type !== "goal_review") return;
+  if (response.type !== "review_outcome") throw invalidResponsePayload("review_outcome");
+  if (response.receipt.reviewGeneration !== source.reviewGeneration) {
+    throw new BadRequestError("Review receipt generation must match the HITL review source");
+  }
+  if (response.receipt.reviewerSessionId !== source.reviewerSessionId) {
+    throw new BadRequestError("Review receipt Reviewer Session must match the HITL review source");
+  }
 }
 
 function responseTypeForSource(source: HitlSource): Exclude<HitlResponse["type"], "cancel"> {
@@ -407,62 +365,6 @@ function requiredResumeCoordinator(
   return coordinator;
 }
 
-function requiredParam(value: string | undefined, name: string): string {
-  if (!value) throw new BadRequestError(`${name} is required`);
-  return value;
-}
-
-function hitlIdentityFromParams(
-  projectSlug: string,
-  ownerTypeValue: string | undefined,
-  ownerIdValue: string | undefined,
-  hitlIdValue: string | undefined,
-): HitlIdentity {
-  const ownerType = parseOptionalEnum(ownerTypeValue, HitlOwnerTypeSchema, "ownerType");
-  if (ownerType === undefined) throw new BadRequestError("ownerType is required");
-  return {
-    owner: {
-      projectSlug,
-      ownerType,
-      ownerId: requiredParam(ownerIdValue, "ownerId"),
-    },
-    hitlId: requiredParam(hitlIdValue, "hitlId"),
-  };
-}
-
-async function readJsonBody<Schema extends z.ZodType>(bodyPromise: Promise<unknown>, schema: Schema): Promise<z.infer<Schema>> {
-  let body: unknown;
-  try {
-    body = await bodyPromise;
-  } catch {
-    throw new BadRequestError("Request body must be valid JSON");
-  }
-
-  const result = schema.safeParse(body);
-  if (!result.success) throw new BadRequestError("Request body is invalid", z.treeifyError(result.error));
-  return result.data;
-}
-
-async function readOptionalJsonBody<Schema extends z.ZodType>(bodyPromise: Promise<string>, schema: Schema): Promise<z.infer<Schema>> {
-  let rawBody: string;
-  try {
-    rawBody = await bodyPromise;
-  } catch {
-    throw new BadRequestError("Request body must be valid JSON");
-  }
-  if (rawBody.trim() === "") return schema.parse({});
-
-  let body: unknown;
-  try {
-    body = JSON.parse(rawBody);
-  } catch {
-    throw new BadRequestError("Request body must be valid JSON");
-  }
-  const result = schema.safeParse(body);
-  if (!result.success) throw new BadRequestError("Request body is invalid", z.treeifyError(result.error));
-  return result.data;
-}
-
 function invalidResponsePayload(expectedType: HitlResponse["type"]): BadRequestError {
   return new BadRequestError(`Response type must be ${expectedType}`);
 }
@@ -476,11 +378,5 @@ function hitlNotFound(hitlId: string): ServerError {
 }
 
 function stableJson(value: unknown): string {
-  return JSON.stringify(sortJson(value));
-}
-
-function sortJson(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortJson);
-  if (value === null || typeof value !== "object") return value;
-  return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, entry]) => [key, sortJson(entry)]));
+  return JSON.stringify(sortJsonValue(value));
 }

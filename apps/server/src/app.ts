@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { AgentRuntime, ProjectInfo } from "@archcode/agent-core";
-import type { GlobalSSEEvent, GlobalSessionEventEnvelope, HitlStreamEvent, ToolChildSessionLinkEvent, ToolChildSessionLinkStatus } from "@archcode/protocol";
+import { isTerminalChildSessionStatus, type GlobalSSEEvent, type GlobalSessionEventEnvelope, type HitlStreamEvent, type ToolChildSessionLinkEvent } from "@archcode/protocol";
 import { errorHandler } from "./error-handler";
 import { UnauthorizedError } from "./errors";
 import { requestLogger } from "./logger";
@@ -175,7 +175,7 @@ export function createServerEventRuntime(runtime: AgentRuntime): AgentRuntime {
 
           const childSessionId = event.payload.link.childSessionId;
           const childKey = scopedSessionSubscriptionKey(input.slug, childSessionId);
-          if (isTerminalChildLinkStatus(event.payload.link.status)) {
+          if (isTerminalChildSessionStatus(event.payload.link.status)) {
             terminalChildren.add(childKey);
             unsubscribeSession(input.slug, childSessionId);
             maybeReleaseRoot();
@@ -226,24 +226,12 @@ export function createServerEventRuntime(runtime: AgentRuntime): AgentRuntime {
   };
 }
 
-const TERMINAL_CHILD_LINK_STATUSES = new Set<ToolChildSessionLinkStatus>([
-  "completed",
-  "failed",
-  "cancelled",
-  "timed_out",
-  "interrupted",
-]);
-
 function scopedSessionSubscriptionKey(slug: string, sessionId: string): string {
   return `${slug}\0${sessionId}`;
 }
 
 function isChildSessionLinkEvent(event: GlobalSSEEvent): event is GlobalSessionEventEnvelope<ToolChildSessionLinkEvent> {
   return event.type === "event" && event.payload.type === "tool-child-session-link";
-}
-
-function isTerminalChildLinkStatus(status: ToolChildSessionLinkStatus): boolean {
-  return TERMINAL_CHILD_LINK_STATUSES.has(status);
 }
 
 function isHitlSessionEvent(event: GlobalSSEEvent): event is GlobalSessionEventEnvelope<HitlStreamEvent> {

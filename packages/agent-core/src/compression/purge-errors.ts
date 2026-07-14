@@ -1,5 +1,6 @@
 import type { CompressionRange, MessageRef } from "./types";
 import type { ErrorToolPart, StoredMessage } from "../store/types";
+import { normalizeText, normalizeValue } from "./normalize";
 
 export interface PurgedRepeatedErrorGroup {
   readonly key: string;
@@ -59,21 +60,4 @@ function normalizedErrorKey(part: ErrorToolPart): string {
     input: normalizeValue(part.input),
     errorMessage: normalizeText(part.errorMessage),
   });
-}
-
-function normalizeText(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
-}
-
-function normalizeValue(value: unknown): unknown {
-  if (typeof value === "string") return normalizeText(value);
-  if (Array.isArray(value)) return value.map(normalizeValue);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, item]) => [key, normalizeValue(item)]),
-    );
-  }
-  return value;
 }

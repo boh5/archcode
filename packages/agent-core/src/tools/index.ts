@@ -160,11 +160,3 @@ export {
   TOOL_MEMORY_READ,
   TOOL_MEMORY_WRITE,
 } from "./names";
-
-// ─── Tool Groups ───
-export {
-  EXPLORER_READ_ONLY_TOOLS,
-  DELEGATION_TOOLS,
-  SKILL_TOOLS,
-  DELEGATION_EXECUTION_TOOLS,
-} from "./groups";

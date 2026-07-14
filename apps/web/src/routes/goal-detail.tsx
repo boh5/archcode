@@ -2,20 +2,11 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, GitBranch, RotateCcw, XCircle } from "lucide-react";
 import { useGoal, useSession } from "../api/queries";
 import { useRetryGoal, useCancelGoal } from "../api/mutations";
-import type { GoalStatus } from "../api/types";
 import { HitlInbox } from "../components/features/HitlCard";
 import { useRealtimeHitl } from "../store/hitl-store";
 import { useWorkbenchLayout } from "../context/workbench-layout";
 import { InspectorToggleButton } from "../components/features/InspectorToggleButton";
-
-const STATUS_BADGE_CLASS: Partial<Record<GoalStatus, string>> = {
-  running: "bg-success-muted text-success",
-  reviewing: "bg-info-muted text-info",
-  done: "bg-accent-muted text-accent",
-  not_done: "bg-error-muted text-error",
-  failed: "bg-error-muted text-error",
-  cancelled: "bg-bg-active text-text-muted",
-};
+import { getGoalStatusBadgeClass } from "../lib/goal-status";
 
 export function GoalDetailRoute() {
   const { slug = "", goalId = "" } = useParams<{ slug: string; goalId: string }>();
@@ -110,7 +101,7 @@ export function GoalDetailRoute() {
               <span className="max-[900px]:hidden">{cancelGoal.isPending ? "Cancelling…" : "Cancel Goal"}</span>
             </button>
           )}
-          <span className={`text-[11px] px-2 py-0.5 rounded-sm font-medium ${STATUS_BADGE_CLASS[goal.status]}`}>
+          <span className={`text-[11px] px-2 py-0.5 rounded-sm font-medium ${getGoalStatusBadgeClass(goal.status)}`}>
             {goal.status}
           </span>
           <InspectorToggleButton expanded={layout.inspectorExpanded} onToggle={toggleInspectorSurface} />

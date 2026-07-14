@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
-import type { CompressionBlockPart, CompressionBlockSnapshot, CompactionPart, ToolChildSessionLink, ToolChildSessionLinkStatus, RecoveryNoticePart, TextPart, ReasoningPart } from "@archcode/protocol";
-import { parseToolInput, parseToolOutput, mapLinkStatusToBadge, PartRenderer } from "./ChatMessages";
+import type { CompressionBlockPart, CompressionBlockSnapshot, CompactionPart, ToolChildSessionLink, RecoveryNoticePart, TextPart, ReasoningPart } from "@archcode/protocol";
+import { parseToolOutput, PartRenderer } from "./ChatMessages";
 import { CompressionBlock } from "./CompressionBlock";
 import type { CompressionOriginalRangeSuccess } from "../../api/compression";
 
@@ -81,36 +81,6 @@ function textContent(value: unknown): string {
   return "";
 }
 
-// ─── parseToolInput ───
-
-describe("parseToolInput", () => {
-  test("parses object input directly", () => {
-    const result = parseToolInput({ agent_type: "explore", prompt: "test" });
-    expect(result).toEqual({ agent_type: "explore", prompt: "test" });
-  });
-
-  test("parses string JSON input", () => {
-    const result = parseToolInput(JSON.stringify({ agent_type: "explore", description: "Search" }));
-    expect(result).toEqual({ agent_type: "explore", description: "Search" });
-  });
-
-  test("returns null for null input", () => {
-    expect(parseToolInput(null)).toBeNull();
-  });
-
-  test("returns null for undefined input", () => {
-    expect(parseToolInput(undefined)).toBeNull();
-  });
-
-  test("returns null for invalid JSON string", () => {
-    expect(parseToolInput("not json")).toBeNull();
-  });
-
-  test("returns null for number input", () => {
-    expect(parseToolInput(42)).toBeNull();
-  });
-});
-
 // ─── parseToolOutput ───
 
 describe("parseToolOutput", () => {
@@ -129,57 +99,6 @@ describe("parseToolOutput", () => {
 
   test("returns null for empty string", () => {
     expect(parseToolOutput("")).toBeNull();
-  });
-});
-
-// ─── mapLinkStatusToBadge ───
-
-describe("mapLinkStatusToBadge", () => {
-  test("completed maps to completed", () => {
-    expect(mapLinkStatusToBadge("completed")).toBe("completed");
-  });
-
-  test("running maps to running", () => {
-    expect(mapLinkStatusToBadge("running")).toBe("running");
-  });
-
-  test("linked maps to running", () => {
-    expect(mapLinkStatusToBadge("linked")).toBe("running");
-  });
-
-  test("cancelling maps to running", () => {
-    expect(mapLinkStatusToBadge("cancelling")).toBe("running");
-  });
-
-  test("failed maps to error", () => {
-    expect(mapLinkStatusToBadge("failed")).toBe("error");
-  });
-
-  test("timed_out maps to error", () => {
-    expect(mapLinkStatusToBadge("timed_out")).toBe("error");
-  });
-
-  test("cancelled maps to error", () => {
-    expect(mapLinkStatusToBadge("cancelled")).toBe("error");
-  });
-
-  test("interrupted maps to error", () => {
-    expect(mapLinkStatusToBadge("interrupted")).toBe("error");
-  });
-
-  test("all ToolChildSessionLinkStatus values are covered", () => {
-    const statuses: ToolChildSessionLinkStatus[] = [
-      "linked", "running", "waiting_for_human", "cancelling", "completed", "failed", "timed_out", "cancelled", "interrupted",
-    ];
-    for (const status of statuses) {
-      const result = mapLinkStatusToBadge(status);
-      expect(typeof result).toBe("string");
-      expect(["running", "completed", "pending", "error"]).toContain(result);
-    }
-  });
-
-  test("waiting_for_human maps to pending", () => {
-    expect(mapLinkStatusToBadge("waiting_for_human")).toBe("pending");
   });
 });
 

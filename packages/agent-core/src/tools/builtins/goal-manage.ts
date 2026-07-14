@@ -12,6 +12,7 @@ import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } fro
 import { withGoalExecutionClaimLock } from "../../goals/execution-claim";
 import { GoalCancellationCleanupError } from "../../goals/cancellation";
 import { GoalUuidSchema } from "../../goals/state";
+import { GoalReviewReceiptSchema, GoalReviewSummarySchema } from "../../goals/review-schema";
 import { WorktreeService } from "../../worktrees";
 import {
   assertGoalManageActionAuthorized,
@@ -21,20 +22,6 @@ import {
 } from "./goal-tools/helpers";
 
 const GoalTextSchema = z.string().trim().min(1);
-const GoalReceiptSummarySchema = GoalTextSchema.max(4_000);
-const GoalEvidenceSummarySchema = GoalTextSchema.max(1_000);
-
-const GoalEvidenceRefSchema = z.strictObject({
-  kind: z.enum(["session", "message", "tool_call", "diff", "test_output", "file", "url", "hitl"]),
-  ref: GoalTextSchema,
-  summary: GoalEvidenceSummarySchema,
-  sessionId: GoalTextSchema.optional(),
-  messageId: GoalTextSchema.optional(),
-  toolCallId: GoalTextSchema.optional(),
-  path: GoalTextSchema.optional(),
-  url: z.url().optional(),
-  createdAt: GoalTextSchema.optional(),
-}) satisfies z.ZodType<GoalEvidenceRef>;
 
 const GoalManageBeginReviewInputSchema = z.strictObject({
   action: z.literal("begin_review"),
@@ -44,12 +31,12 @@ const GoalManageBeginReviewInputSchema = z.strictObject({
 const GoalManageFinalizeReviewInputSchema = z.strictObject({
   action: z.literal("finalize_review"),
   goalId: GoalUuidSchema.describe("Goal UUID whose Reviewer receipt should be recorded."),
-  expectedReviewGeneration: z.number().int().nonnegative().describe("Review generation observed by this Reviewer session."),
-  verdict: z.enum(["DONE", "NOT_DONE"]) satisfies z.ZodType<GoalReviewVerdict>,
-  summary: GoalReceiptSummarySchema.describe("Reviewer result summary."),
-  evidenceRefs: z.array(GoalEvidenceRefSchema).max(20).describe("Evidence references supporting the verdict."),
-  unresolvedItems: z.array(GoalTextSchema.max(1_000)).max(20).optional(),
-  finalSummary: GoalReceiptSummarySchema.optional(),
+  expectedReviewGeneration: GoalReviewReceiptSchema.shape.reviewGeneration.describe("Review generation observed by this Reviewer session."),
+  verdict: GoalReviewReceiptSchema.shape.verdict satisfies z.ZodType<GoalReviewVerdict>,
+  summary: GoalReviewReceiptSchema.shape.summary.describe("Reviewer result summary."),
+  evidenceRefs: GoalReviewReceiptSchema.shape.evidenceRefs.describe("Evidence references supporting the verdict."),
+  unresolvedItems: GoalReviewReceiptSchema.shape.unresolvedItems,
+  finalSummary: GoalReviewSummarySchema.optional(),
 });
 
 const GoalManageRetryInputSchema = z.strictObject({
@@ -60,7 +47,7 @@ const GoalManageRetryInputSchema = z.strictObject({
 const GoalManageCancelInputSchema = z.strictObject({
   action: z.literal("cancel"),
   goalId: GoalUuidSchema.describe("Goal UUID to cancel."),
-  reason: GoalReceiptSummarySchema.optional(),
+  reason: GoalReviewSummarySchema.optional(),
 });
 
 const GoalManageInputSchema = z.discriminatedUnion("action", [

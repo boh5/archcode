@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { sortJsonValue } from "@archcode/utils";
 import {
   HITL_RECENT_TERMINAL_LIMIT,
   type HitlDisplayPayload,
@@ -12,6 +13,7 @@ import {
 } from "@archcode/protocol";
 
 import { atomicWrite } from "../utils/safe-file";
+import { GoalReviewOutcomeResponseSchema } from "../goals/review-schema";
 
 const ACTIVE_HITL_STATUSES = new Set<HitlStatus>(["pending", "answered"]);
 const TERMINAL_HITL_STATUSES = new Set<HitlStatus>(["resolved", "cancelled"]);
@@ -42,7 +44,12 @@ const HitlSourceSchema: z.ZodType<HitlSource> = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("ask_user"), sessionId: z.string(), toolCallId: z.string().optional() }),
   z.strictObject({ type: z.literal("tool_permission"), sessionId: z.string(), toolCallId: z.string(), toolName: z.string() }),
   z.strictObject({ type: z.literal("goal_approval"), goalId: z.string(), approvalPoint: z.string().optional() }),
-  z.strictObject({ type: z.literal("goal_review"), goalId: z.string() }),
+  z.strictObject({
+    type: z.literal("goal_review"),
+    goalId: z.string(),
+    reviewGeneration: z.number().int().nonnegative(),
+    reviewerSessionId: z.string().trim().min(1),
+  }),
   z.strictObject({ type: z.literal("goal_budget"), goalId: z.string(), approvalPoint: z.string().optional() }),
   z.strictObject({ type: z.literal("goal_question"), goalId: z.string(), questionKey: z.string() }),
 ]);
@@ -57,28 +64,6 @@ const HitlDeliveryMetadataSchema: z.ZodType<HitlDeliveryMetadata> = z.strictObje
   failedAt: z.string().optional(),
   failureReason: z.string().optional(),
   nextAttemptAt: z.string().optional(),
-});
-
-const GoalEvidenceRefSchema = z.strictObject({
-  kind: z.enum(["session", "message", "tool_call", "diff", "test_output", "file", "url", "hitl"]),
-  ref: z.string(),
-  summary: z.string(),
-  sessionId: z.string().optional(),
-  messageId: z.string().optional(),
-  toolCallId: z.string().optional(),
-  path: z.string().optional(),
-  url: z.string().optional(),
-  createdAt: z.string().optional(),
-});
-
-const GoalReviewReceiptSchema = z.strictObject({
-  reviewGeneration: z.number().int().nonnegative(),
-  verdict: z.enum(["DONE", "NOT_DONE"]),
-  summary: z.string(),
-  evidenceRefs: z.array(GoalEvidenceRefSchema).max(20),
-  unresolvedItems: z.array(z.string()).optional(),
-  reviewerSessionId: z.string(),
-  decidedAt: z.string(),
 });
 
 const HitlResponseSchema: z.ZodType<HitlResponse> = z.union([
@@ -100,13 +85,7 @@ const HitlResponseSchema: z.ZodType<HitlResponse> = z.union([
     comment: z.string().optional(),
     decidedBy: z.string().optional(),
   }),
-  z.strictObject({
-    type: z.literal("review_outcome"),
-    outcome: z.enum(["DONE", "NOT_DONE"]),
-    comment: z.string().optional(),
-    receipt: GoalReviewReceiptSchema.optional(),
-    reviewedBy: z.string().optional(),
-  }),
+  GoalReviewOutcomeResponseSchema,
   z.strictObject({
     type: z.literal("cancel"),
     reason: z.string(),
@@ -484,15 +463,7 @@ function responsesEquivalent(left: HitlResponse, right: HitlResponse): boolean {
 }
 
 function stableJson(value: unknown): string {
-  return JSON.stringify(sortJson(value));
-}
-
-function sortJson(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortJson);
-  if (value === null || typeof value !== "object") return value;
-  return Object.fromEntries(
-    Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, entry]) => [key, sortJson(entry)]),
-  );
+  return JSON.stringify(sortJsonValue(value));
 }
 
 function assertFileRecordIdentities(file: HitlFile): void {

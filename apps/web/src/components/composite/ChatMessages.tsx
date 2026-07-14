@@ -4,13 +4,12 @@ import { useSessionStore } from "../../store/session-store";
 import { MarkdownContent } from "../primitives/MarkdownContent";
 import { ToolCard } from "./ToolCard";
 import { DelegationCard } from "./DelegationCard";
-import type { DelegationCardProps } from "./DelegationCard";
 import { CompressionBlock } from "./CompressionBlock";
 import {
   resolveAgentAppearance,
   resolveAgentDisplayName,
-  type BadgeStatus,
 } from "../../lib/agent-constants";
+import { buildDelegationCardViewModel } from "../../lib/delegation-card-model";
 import type {
   AgentDescriptor,
   SessionMessage,
@@ -20,7 +19,6 @@ import type {
   TextPart,
   ToolPart,
   ToolChildSessionLink,
-  ToolChildSessionLinkStatus,
   CompressionBlockPart,
 } from "@archcode/protocol";
 import { TOOL_DELEGATE } from "@archcode/protocol";
@@ -143,32 +141,9 @@ function CompactionBlock({ part }: { part: { type: "compaction"; summary: string
   );
 }
 
-export function parseToolInput(input: unknown): Record<string, unknown> | null {
-  if (!input) return null;
-  if (typeof input === "object" && input !== null) return input as Record<string, unknown>;
-  if (typeof input === "string") {
-    try { return JSON.parse(input); } catch { return null; }
-  }
-  return null;
-}
-
 export function parseToolOutput(output: string | undefined): Record<string, unknown> | null {
   if (!output) return null;
   try { return JSON.parse(output); } catch { return null; }
-}
-
-export function mapLinkStatusToBadge(status: ToolChildSessionLinkStatus): BadgeStatus {
-  switch (status) {
-    case "completed": return "completed";
-    case "waiting_for_human": return "pending";
-    case "running":
-    case "linked": return "running";
-    case "cancelling": return "running";
-    case "failed":
-    case "timed_out":
-    case "cancelled":
-    case "interrupted": return "error";
-  }
 }
 
 function DelegateToolCard({
@@ -184,37 +159,13 @@ function DelegateToolCard({
   childSessionLinks: ToolChildSessionLink[];
   agentDescriptors: readonly AgentDescriptor[];
 }) {
-  const parsedInput = parseToolInput("input" in part ? part.input : undefined);
-
-  const link = childSessionLinks.find((l) => l.parentToolCallId === part.toolCallId);
-
-  const sessionId = link?.childSessionId ?? "";
-  const agentType = link?.childAgentName ?? (parsedInput?.agent_type as string) ?? "unknown";
-  const agentDisplayName = resolveAgentDisplayName(agentType, agentDescriptors);
-  const taskTitle = link?.title ?? link?.description ?? (parsedInput?.title as string) ?? (parsedInput?.description as string);
-  const summary = link?.summary ?? link?.description ?? (parsedInput?.description as string) ?? "";
-  const status: BadgeStatus = link
-    ? mapLinkStatusToBadge(link.status)
-    : part.state === "error" ? "error" : "running";
-  const depth = link?.depth ?? 1;
-  const startedAt = link?.startedAt ?? ("startedAt" in part ? (part as { startedAt: number }).startedAt : part.createdAt);
-
-  const delegationProps: DelegationCardProps = {
-    sessionId,
-    focusStoreSessionId,
-    agentType,
-    agentDisplayName,
-    taskTitle,
-    status,
-    depth,
-    startedAt,
-    summary,
-    tools: [],
+  return <DelegationCard {...buildDelegationCardViewModel({
+    part,
     projectSlug,
-    canNavigate: Boolean(link?.childSessionId),
-  };
-
-  return <DelegationCard {...delegationProps} />;
+    focusStoreSessionId,
+    childSessionLinks,
+    agentDescriptors,
+  })} />;
 }
 
 function InterruptedBadge() {

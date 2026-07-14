@@ -1,8 +1,9 @@
 import type { StoreApi } from "zustand";
 import { createStore } from "zustand/vanilla";
 import type { ModelMessage } from "ai";
-import { createEmptySessionStats } from "@archcode/protocol";
+import { createEmptySessionStats, isStreamEvent } from "@archcode/protocol";
 import type { AgentName } from "../agents/names";
+import { collectSessionTreeIds } from "../execution/session-tree";
 import { createEmptyCompressionState, resolveCompressionOriginalRange, type CompressionOriginalRangeResult } from "../compression";
 import type {
   SessionModelInfo,
@@ -32,7 +33,6 @@ import {
   type SessionEventPayload,
   type SessionRole,
   type SessionStoreState,
-  type StreamEvent,
   type TextPart,
   MAX_EVENTS,
 } from "./types";
@@ -815,12 +815,7 @@ export class SessionStoreManager {
 
   async listSessionFamilyBlockedHitlIds(workspaceRoot: string, rootSessionId: string): Promise<string[]> {
     const tree = await this.buildSessionTree(workspaceRoot, rootSessionId);
-    const sessionIds: string[] = [];
-    const visit = (node: SessionTreeNode): void => {
-      sessionIds.push(node.session.sessionId);
-      for (const child of node.children) visit(child);
-    };
-    visit(tree.root);
+    const sessionIds = collectSessionTreeIds(tree.root);
     const blocked = new Set<string>();
     for (const sessionId of sessionIds) {
       const session = await this.getSessionFile(workspaceRoot, sessionId);
@@ -980,47 +975,6 @@ function reduceStoreEvent(
 
   return {};
 }
-
-function isStreamEvent(event: SessionEventPayload): event is StreamEvent {
-  return STREAM_EVENT_TYPES.has(event.type as StreamEvent["type"]);
-}
-
-const STREAM_EVENT_TYPES = new Set<StreamEvent["type"]>([
-  "execution-start",
-  "execution-end",
-  "session.cwd_changed",
-  "user-message",
-  "system-notice",
-  "text-start",
-  "text-delta",
-  "text-end",
-  "reasoning-start",
-  "reasoning-delta",
-  "reasoning-end",
-  "tool-input-start",
-  "tool-call",
-  "tool-input-resolved",
-  "tool-attempt",
-  "tool-result",
-  "tool-child-session-link",
-  "step-start",
-  "step-end",
-  "execution-error",
-  "todo-write",
-  "reminder",
-  "reminder-consumed",
-  "llm-retry",
-  "llm-recovery",
-  "llm-recovery-failed",
-  "compression.block_committed",
-  "compression.block_failed",
-  "compression.ref_map_updated",
-  "goal.state_change",
-  "hitl.request",
-  "hitl.updated",
-  "hitl.resolved",
-  "compact",
-]);
 
 function nextEventIdFromEvents(events: readonly SessionEventEnvelope[]): number {
   const latest = events.at(-1);

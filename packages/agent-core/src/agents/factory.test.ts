@@ -7,7 +7,7 @@ import { SkillService } from "../skills";
 import { storeManager } from "../store/store";
 import { createRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
-import { DELEGATION_TOOLS, EXPLORER_READ_ONLY_TOOLS } from "./constants";
+import { DELEGATION_CORE_TOOLS } from "./constants";
 import { MissingAgentModelConfigError, NoModelsConfiguredError } from "./errors";
 import {
   DuplicateAgentDefinitionError,
@@ -121,8 +121,8 @@ function makeFactory(
   providerRegistry,
   toolRegistry: createRegistry([
     makeTool("unknown_tool"),
-    ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
-    ...DELEGATION_TOOLS.map(makeTool),
+    ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
+    ...DELEGATION_CORE_TOOLS.map(makeTool),
   ]),
   skillService: options.skillService ?? createTestSkillService(),
   storeManager,
@@ -131,8 +131,12 @@ function makeFactory(
   config, logger: silentLogger });
 }
 
-const explorerTools = [...EXPLORER_READ_ONLY_TOOLS, ...DELEGATION_TOOLS] as const;
-const nonDelegatingExplorerTools = EXPLORER_READ_ONLY_TOOLS;
+const READ_ONLY_FIXTURE_TOOLS = [
+  "file_read", "grep", "glob", "git_status", "git_diff", "ast_grep_search",
+  "lsp_diagnostics", "lsp_goto_definition", "lsp_find_references", "lsp_symbols", "web_fetch",
+] as const;
+const explorerTools = [...READ_ONLY_FIXTURE_TOOLS, ...DELEGATION_CORE_TOOLS] as const;
+const nonDelegatingExplorerTools = READ_ONLY_FIXTURE_TOOLS;
 
 describe("createAgentFactory", () => {
   test("rejects duplicate definitions with a named error", () => {
@@ -188,8 +192,8 @@ describe("createAgentFactory", () => {
     providerRegistry,
     toolRegistry: createRegistry([
       makeTool("unknown_tool"),
-      ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
-      ...DELEGATION_TOOLS.map(makeTool),
+      ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
+      ...DELEGATION_CORE_TOOLS.map(makeTool),
     ]),
     skillService,
     storeManager,
@@ -215,8 +219,8 @@ describe("createAgentFactory", () => {
     providerRegistry,
     toolRegistry: createRegistry([
       makeTool("unknown_tool"),
-      ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
-      ...DELEGATION_TOOLS.map(makeTool),
+      ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
+      ...DELEGATION_CORE_TOOLS.map(makeTool),
     ]),
     skillService: createTestSkillService(),
     storeManager,
@@ -241,8 +245,8 @@ describe("createAgentFactory", () => {
     providerRegistry,
     toolRegistry: createRegistry([
       makeTool("unknown_tool"),
-      ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
-      ...DELEGATION_TOOLS.map(makeTool),
+      ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
+      ...DELEGATION_CORE_TOOLS.map(makeTool),
     ]),
     skillService: createTestSkillService(),
     storeManager,
@@ -274,8 +278,8 @@ describe("createAgentFactory", () => {
     providerRegistry,
     toolRegistry: createRegistry([
       makeTool("unknown_tool"),
-      ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
-      ...DELEGATION_TOOLS.map(makeTool),
+      ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
+      ...DELEGATION_CORE_TOOLS.map(makeTool),
     ]),
     skillService: createTestSkillService(),
     storeManager,
@@ -314,8 +318,8 @@ describe("createAgentFactory", () => {
     providerRegistry: emptyProviderRegistry,
     toolRegistry: createRegistry([
       makeTool("unknown_tool"),
-      ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
-      ...DELEGATION_TOOLS.map(makeTool),
+      ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
+      ...DELEGATION_CORE_TOOLS.map(makeTool),
     ]),
     skillService: createTestSkillService(),
     storeManager,
@@ -337,8 +341,8 @@ describe("createAgentFactory", () => {
     providerRegistry,
     toolRegistry: createRegistry([
       makeTool("unknown_tool"),
-      ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
-      ...DELEGATION_TOOLS.map(makeTool),
+      ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
+      ...DELEGATION_CORE_TOOLS.map(makeTool),
     ]),
     skillService: createTestSkillService(),
     storeManager,
@@ -412,8 +416,8 @@ describe("createAgentFactory", () => {
 
     expect(factory.resolveAllowedTools(definition(), 0)).toEqual([
       "unknown_tool",
-      ...EXPLORER_READ_ONLY_TOOLS,
-      ...DELEGATION_TOOLS,
+      ...READ_ONLY_FIXTURE_TOOLS,
+      ...DELEGATION_CORE_TOOLS,
     ]);
     expect(factory.resolveAllowedTools(customDefinition, 0)).toEqual(["grep", "delegate"]);
     // depth < MAX_SUB_AGENT_DEPTH (3): delegation tools still present
@@ -422,17 +426,17 @@ describe("createAgentFactory", () => {
     expect(factory.resolveAllowedTools(customDefinition, 3)).toEqual(["grep"]);
     expect(factory.resolveAllowedTools(delegatingDefinition, 1)).toEqual([
       "unknown_tool",
-      ...EXPLORER_READ_ONLY_TOOLS,
-      ...DELEGATION_TOOLS,
+      ...READ_ONLY_FIXTURE_TOOLS,
+      ...DELEGATION_CORE_TOOLS,
     ]);
     // depth 2 (< 3): delegation tools still present
     expect(factory.resolveAllowedTools(delegatingDefinition, 2)).toEqual([
       "unknown_tool",
-      ...EXPLORER_READ_ONLY_TOOLS,
-      ...DELEGATION_TOOLS,
+      ...READ_ONLY_FIXTURE_TOOLS,
+      ...DELEGATION_CORE_TOOLS,
     ]);
     // depth 3 (>= 3): delegation tools stripped
-    expect(factory.resolveAllowedTools(delegatingDefinition, 3)).toEqual(["unknown_tool", ...EXPLORER_READ_ONLY_TOOLS]);
+    expect(factory.resolveAllowedTools(delegatingDefinition, 3)).toEqual(["unknown_tool", ...READ_ONLY_FIXTURE_TOOLS]);
   });
 
   test("resolves delegate targets only when depth allows delegation", () => {
@@ -473,8 +477,8 @@ describe("factoryResolveAllowedTools with MCP tools", () => {
       providerRegistry,
       toolRegistry: createRegistry([
         makeTool("unknown_tool"),
-        ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
-        ...DELEGATION_TOOLS.map(makeTool),
+        ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
+        ...DELEGATION_CORE_TOOLS.map(makeTool),
         ...extraTools,
       ]),
       skillService: createTestSkillService(),
@@ -528,8 +532,8 @@ describe("factoryResolveAllowedTools with MCP tools", () => {
     const providerRegistry = makeProviderRegistry();
     const registry = createRegistry([
       makeTool("unknown_tool"),
-      ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
-      ...DELEGATION_TOOLS.map(makeTool),
+      ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
+      ...DELEGATION_CORE_TOOLS.map(makeTool),
     ]);
     const factory = createAgentFactory({
       definitions: [def],

@@ -17,6 +17,12 @@ import { z } from "zod/v4";
 
 import type { Logger } from "../logger";
 import { silentLogger } from "../logger";
+import {
+  GoalEvidenceSummarySchema,
+  GoalReviewReceiptSchema,
+  GoalReviewSummarySchema,
+} from "./review-schema";
+import { atomicWrite } from "../utils/safe-file";
 
 export const GoalStatusSchema = z.enum([
   "running",
@@ -31,31 +37,7 @@ export const GoalUuidSchema = z.uuid();
 export const GoalTitleSchema = z.string().trim().min(1).max(160);
 export const GoalNullableTitleSchema = GoalTitleSchema.nullable();
 export const GoalNaturalLanguageSchema = z.string().trim().min(1).max(8000);
-export const GoalEvidenceSummarySchema = z.string().trim().min(1).max(1000);
-export const GoalReviewSummarySchema = z.string().trim().min(1).max(4000);
 export const GoalFinalSummarySchema = z.string().trim().min(1).max(4000);
-
-export const GoalEvidenceRefSchema = z.strictObject({
-  kind: z.enum(["session", "message", "tool_call", "diff", "test_output", "file", "url", "hitl"]),
-  ref: z.string().trim().min(1),
-  summary: GoalEvidenceSummarySchema,
-  sessionId: z.string().trim().min(1).optional(),
-  messageId: z.string().trim().min(1).optional(),
-  toolCallId: z.string().trim().min(1).optional(),
-  path: z.string().trim().min(1).optional(),
-  url: z.url().optional(),
-  createdAt: z.string().trim().min(1).optional(),
-}) satisfies z.ZodType<ProtocolGoalEvidenceRef>;
-
-export const GoalReviewReceiptSchema = z.strictObject({
-  reviewGeneration: z.number().int().nonnegative(),
-  verdict: z.enum(["DONE", "NOT_DONE"]),
-  summary: GoalReviewSummarySchema,
-  evidenceRefs: z.array(GoalEvidenceRefSchema).max(20),
-  unresolvedItems: z.array(z.string().trim().min(1).max(1000)).max(20).optional(),
-  reviewerSessionId: z.string().trim().min(1),
-  decidedAt: z.string().trim().min(1),
-}) satisfies z.ZodType<ProtocolGoalReviewReceipt>;
 
 export const GoalBlockerSchema = z.strictObject({
   kind: z.enum(["approval", "question", "budget", "permission", "tool_error"]),
@@ -821,19 +803,6 @@ class SafeGoalPathError extends Error {
   ) {
     super(`Safe goal path error: ${reason} (path: "${path}")`);
     this.name = "SafeGoalPathError";
-  }
-}
-
-async function atomicWrite(filePath: string, content: string): Promise<void> {
-  const dir = dirname(filePath);
-  await mkdir(dir, { recursive: true });
-  const tmpPath = join(dir, `.tmp-${crypto.randomUUID()}`);
-  try {
-    await Bun.write(tmpPath, content);
-    await rename(tmpPath, filePath);
-  } catch (error) {
-    await rm(tmpPath, { force: true }).catch(() => {});
-    throw error;
   }
 }
 

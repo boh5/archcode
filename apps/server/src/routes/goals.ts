@@ -5,6 +5,7 @@ import { z } from "zod/v4";
 
 import { BadRequestError, ConcurrentSessionLimitHttpError, ServerError } from "../errors";
 import { resolveProject } from "../resolve";
+import { zValidator } from "../validation";
 
 const GoalUuidSchema = z.uuid();
 const GoalStatusSchema = z.enum([
@@ -15,16 +16,19 @@ const GoalStatusSchema = z.enum([
   "failed",
   "cancelled",
 ]) satisfies z.ZodType<GoalStatus>;
+const GoalListParamsSchema = z.strictObject({ slug: z.string().min(1) });
+const GoalParamsSchema = z.strictObject({
+  slug: z.string().min(1),
+  goalId: GoalUuidSchema,
+});
+const GoalListQuerySchema = z.strictObject({ status: GoalStatusSchema.optional() });
 
 export function createGoalsRoutes(runtime: AgentRuntime): Hono {
   const app = new Hono();
 
-  app.get("/:slug/goals", async (c) => {
-    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
-    const status = c.req.query("status");
-    if (status !== undefined && !GoalStatusSchema.safeParse(status).success) {
-      throw new BadRequestError("status must be a valid goal status");
-    }
+  app.get("/:slug/goals", zValidator("param", GoalListParamsSchema), zValidator("query", GoalListQuerySchema), async (c) => {
+    const project = await resolveProject(runtime, c.req.valid("param").slug);
+    const { status } = c.req.valid("query");
 
     const goals = (await (await runtime.contextResolver.resolve(project.workspaceRoot)).goalState.listGoals(project.slug))
       .filter((goal) => status === undefined || goal.status === status)
@@ -32,9 +36,9 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
     return c.json({ goals });
   });
 
-  app.get("/:slug/goals/:goalId", async (c) => {
-    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
-    const goalId = requiredGoalId(c.req.param("goalId"));
+  app.get("/:slug/goals/:goalId", zValidator("param", GoalParamsSchema), async (c) => {
+    const { slug, goalId } = c.req.valid("param");
+    const project = await resolveProject(runtime, slug);
 
     try {
       const goal = await (await runtime.contextResolver.resolve(project.workspaceRoot)).goalState.read(goalId);
@@ -44,9 +48,9 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
     }
   });
 
-  app.post("/:slug/goals/:goalId/retry", async (c) => {
-    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
-    const goalId = requiredGoalId(c.req.param("goalId"));
+  app.post("/:slug/goals/:goalId/retry", zValidator("param", GoalParamsSchema), async (c) => {
+    const { slug, goalId } = c.req.valid("param");
+    const project = await resolveProject(runtime, slug);
     await requireEmptyRequestBody(c.req.text());
     const context = await runtime.contextResolver.resolve(project.workspaceRoot);
 
@@ -79,9 +83,9 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
     }
   });
 
-  app.post("/:slug/goals/:goalId/cancel", async (c) => {
-    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
-    const goalId = requiredGoalId(c.req.param("goalId"));
+  app.post("/:slug/goals/:goalId/cancel", zValidator("param", GoalParamsSchema), async (c) => {
+    const { slug, goalId } = c.req.valid("param");
+    const project = await resolveProject(runtime, slug);
 
     try {
       return c.json(toPublicGoal(await runtime.cancelGoal(project.workspaceRoot, goalId, { source: "http" })));
@@ -91,17 +95,6 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
   });
 
   return app;
-}
-
-function requiredParam(value: string | undefined, name: string): string {
-  if (!value) throw new BadRequestError(`${name} is required`);
-  return value;
-}
-
-function requiredGoalId(value: string | undefined): string {
-  const goalId = requiredParam(value, "goalId");
-  if (!GoalUuidSchema.safeParse(goalId).success) throw new BadRequestError("goalId must be a UUID");
-  return goalId;
 }
 
 async function requireEmptyRequestBody(bodyPromise: Promise<string>): Promise<void> {

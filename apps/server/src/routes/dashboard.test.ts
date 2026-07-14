@@ -244,4 +244,15 @@ describe("dashboard routes", () => {
       }),
     ]);
   });
+
+  test("GET /api/automations rejects an invalid status", async () => {
+    const { app } = await createFixture("invalid-automation-status");
+
+    const res = await app.request("/api/automations?status=running");
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: { code: "BAD_REQUEST", message: "status must be active or a valid automation status" },
+    });
+  });
 });

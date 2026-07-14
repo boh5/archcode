@@ -1,15 +1,14 @@
 import {
+  DELEGATION_CORE_TOOLS,
   DEFAULT_SUB_AGENT_TIMEOUT_MS,
   MAX_CONCURRENT_SUB_AGENTS,
-  SKILL_TOOLS,
+  SKILL_ACCESS_TOOLS,
 } from "../constants";
 import type { AgentDefinition } from "../factory-types";
 import {
   TOOL_AST_GREP_SEARCH,
-  TOOL_BACKGROUND_OUTPUT,
   TOOL_BASH,
   TOOL_COMPRESS,
-  TOOL_DELEGATE,
   TOOL_FILE_READ,
   TOOL_GIT_DIFF,
   TOOL_GIT_STATUS,
@@ -23,7 +22,6 @@ import {
   TOOL_MEMORY_READ,
   TOOL_TODO_WRITE,
   TOOL_VIEW_TOOL_OUTPUT,
-  TOOL_WAIT_FOR_REMINDER,
   TOOL_WEB_FETCH,
 } from "../../tools/names";
 
@@ -71,12 +69,10 @@ Goal output:
       TOOL_MEMORY_READ,
       TOOL_TODO_WRITE,
       TOOL_GOAL_MANAGE,
-      TOOL_DELEGATE,
-      TOOL_BACKGROUND_OUTPUT,
-      TOOL_WAIT_FOR_REMINDER,
+      ...DELEGATION_CORE_TOOLS,
       TOOL_VIEW_TOOL_OUTPUT,
       TOOL_COMPRESS,
-      ...SKILL_TOOLS,
+      ...SKILL_ACCESS_TOOLS,
     ],
     delegateTargets: ["explore", "librarian"],
   },

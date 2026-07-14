@@ -1,5 +1,5 @@
 import type { AgentDefinition } from "../factory-types";
-import { SKILL_TOOLS } from "../constants";
+import { SKILL_ACCESS_TOOLS } from "../constants";
 import {
   TOOL_COMPRESS,
   TOOL_FILE_READ,
@@ -41,7 +41,7 @@ Output contract:
       TOOL_MEMORY_READ,
       TOOL_TODO_WRITE,
       TOOL_COMPRESS,
-      ...SKILL_TOOLS,
+      ...SKILL_ACCESS_TOOLS,
     ],
   },
   mcpTools: ["context7", "grep.app", "exa"],

@@ -28,7 +28,20 @@ function approvalResponse(decision: "approved" | "denied", comment?: string): Hi
 }
 
 function reviewResponse(outcome: "DONE" | "NOT_DONE", comment?: string): HitlResponse {
-  return { type: "review_outcome", outcome, ...(comment === undefined ? {} : { comment }) };
+  const summary = comment ?? `Review outcome: ${outcome}`;
+  return {
+    type: "review_outcome",
+    outcome,
+    ...(comment === undefined ? {} : { comment }),
+    receipt: {
+      reviewGeneration: 1,
+      verdict: outcome,
+      summary,
+      evidenceRefs: outcome === "DONE" ? [{ kind: "hitl", ref: "review", summary }] : [],
+      reviewerSessionId: "reviewer-session",
+      decidedAt: "2026-07-14T00:00:00.000Z",
+    },
+  };
 }
 
 function terminalResponse(): HitlResponse {
@@ -148,9 +161,19 @@ describe("GoalApprovalGate", () => {
     const goal = await goalStateManager.beginReview(running.id);
     const { gate } = createGate();
 
-    const record = await gate.requestReview({ goalId: goal.id, projectSlug: goal.projectId });
+    const record = await gate.requestReview({
+      goalId: goal.id,
+      projectSlug: goal.projectId,
+      reviewGeneration: goal.reviewGeneration,
+      reviewerSessionId: "reviewer-session",
+    });
 
-    expect(record.source).toEqual({ type: "goal_review", goalId: goal.id });
+    expect(record.source).toEqual({
+      type: "goal_review",
+      goalId: goal.id,
+      reviewGeneration: goal.reviewGeneration,
+      reviewerSessionId: "reviewer-session",
+    });
     expect(await goalStateManager.read(goal.id)).toMatchObject({
       status: "reviewing",
       pendingHitlIds: [record.hitlId],
@@ -175,7 +198,13 @@ describe("GoalApprovalGate", () => {
   });
 
   it("maps review responses", () => {
-    expect(reviewOutcomeFromResponse(reviewResponse("DONE", "Evidence looks correct"))).toEqual({ outcome: "DONE", comment: "Evidence looks correct" });
-    expect(reviewOutcomeFromResponse(terminalResponse())).toEqual({ outcome: "NOT_DONE", comment: "Cancelled" });
+    const response = reviewResponse("DONE", "Evidence looks correct");
+    if (response.type !== "review_outcome") throw new Error("Expected review outcome fixture");
+    expect(reviewOutcomeFromResponse(response)).toEqual({
+      outcome: "DONE",
+      comment: "Evidence looks correct",
+      receipt: response.receipt,
+    });
+    expect(() => reviewOutcomeFromResponse(terminalResponse())).toThrow("Goal review requires review_outcome");
   });
 });

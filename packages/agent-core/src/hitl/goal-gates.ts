@@ -13,7 +13,7 @@ export type ApprovalOutcome = {
 export type ReviewOutcome = {
   outcome: "DONE" | "NOT_DONE";
   comment?: string;
-  receipt?: GoalReviewReceipt;
+  receipt: GoalReviewReceipt;
 };
 
 export type GoalHitlGateway = {
@@ -79,6 +79,8 @@ export class GoalApprovalGate {
   async requestReview(input: {
     goalId: string;
     projectSlug: string;
+    reviewGeneration: number;
+    reviewerSessionId: string;
     summary?: string;
   }): Promise<HitlRecord> {
     return await withGoalExecutionClaimLock(input.goalId, async () => {
@@ -86,7 +88,12 @@ export class GoalApprovalGate {
       const record = await this.#hitlService.create({
         owner: { projectSlug: input.projectSlug, ownerType: "goal", ownerId: input.goalId },
         blockingKey: `goal:${input.goalId}:review`,
-        source: { type: "goal_review", goalId: input.goalId },
+        source: {
+          type: "goal_review",
+          goalId: input.goalId,
+          reviewGeneration: input.reviewGeneration,
+          reviewerSessionId: input.reviewerSessionId,
+        },
         displayPayload: {
           title: "Review Goal outcome",
           summary,
@@ -128,7 +135,7 @@ export function approvalOutcomeFromResponse(response: HitlResponse): ApprovalOut
 
 export function reviewOutcomeFromResponse(response: HitlResponse): ReviewOutcome {
   if (response.type !== "review_outcome") {
-    return { outcome: "NOT_DONE", comment: response.type === "cancel" ? response.reason : undefined };
+    throw new Error(`Goal review requires review_outcome, got ${response.type}`);
   }
   return withoutUndefined({ outcome: response.outcome, comment: response.comment, receipt: response.receipt });
 }

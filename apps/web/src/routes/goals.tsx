@@ -2,16 +2,8 @@ import { useNavigate, useParams } from "react-router-dom";
 import { Plus } from "lucide-react";
 import { useGoals } from "../api/queries";
 import { useCreateSession, usePostMessage } from "../api/mutations";
-import type { GoalState, GoalStatus } from "../api/types";
-
-const STATUS_BADGE_CLASS: Partial<Record<GoalStatus, string>> = {
-  running: "bg-success-muted text-success",
-  reviewing: "bg-info-muted text-info",
-  done: "bg-accent-muted text-accent",
-  not_done: "bg-error-muted text-error",
-  failed: "bg-error-muted text-error",
-  cancelled: "bg-bg-active text-text-muted",
-};
+import type { GoalState } from "../api/types";
+import { getGoalStatusBadgeClass } from "../lib/goal-status";
 
 export function GoalsRoute() {
   const { slug = "" } = useParams<{ slug: string }>();
@@ -156,7 +148,7 @@ function GoalListItem({ goal, onClick }: { goal: GoalState; onClick: () => void 
         </div>
       </div>
       <div className="flex items-center gap-2 shrink-0">
-        <span className={`text-[11px] px-2 py-0.5 rounded-sm font-medium ${STATUS_BADGE_CLASS[goal.status]}`}>
+        <span className={`text-[11px] px-2 py-0.5 rounded-sm font-medium ${getGoalStatusBadgeClass(goal.status)}`}>
           {goal.status}
         </span>
       </div>

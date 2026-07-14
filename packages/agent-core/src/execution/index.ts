@@ -12,6 +12,7 @@ export {
 } from "./session-hitl-journal";
 export { SessionCwdReferenceMigrationService } from "./session-cwd-reference-migration";
 export { SessionFamilyStopService } from "./session-family-stop-service";
+export { collectSessionTreeIds } from "./session-tree";
 export {
   RoleDrivenSessionGoalDelegationAdmission,
   SessionGoalDelegationDeniedError,

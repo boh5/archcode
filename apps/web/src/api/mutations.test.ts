@@ -127,7 +127,18 @@ describe("web HITL mutation API calls", () => {
 
     const result = await apiFetch("/api/projects/demo/hitl/goal/goal-1/review-1/respond", {
       method: "POST",
-      body: { type: "review_outcome", outcome: "DONE" },
+      body: {
+        type: "review_outcome",
+        outcome: "DONE",
+        receipt: {
+          reviewGeneration: 1,
+          verdict: "DONE",
+          summary: "Reviewed",
+          evidenceRefs: [{ kind: "hitl", ref: "review-1", summary: "Reviewed" }],
+          reviewerSessionId: "reviewer-1",
+          decidedAt: "2026-07-14T00:00:00.000Z",
+        },
+      },
     });
     expect(result).toEqual({ ok: true, hitlId: "review-1" });
     expect(fetchMock).toHaveBeenCalledTimes(1);

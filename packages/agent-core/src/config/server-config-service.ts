@@ -1,6 +1,6 @@
-import { chmod, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { resolve } from "node:path";
 import {
   type ConfigSecretMutation,
   BUILTIN_MCP_SERVER_NAMES,
@@ -11,6 +11,8 @@ import {
   type UpdateServerConfigRequest,
   type UpdateServerConfigResponse,
 } from "@archcode/protocol";
+import { sortJsonValue } from "@archcode/utils";
+import { atomicWrite } from "../utils/safe-file";
 import { OPENAI_COMPATIBLE_PROVIDER_PACKAGE } from "./provider";
 import { resolveMcpConfig } from "./mcp";
 import { archcodeConfigSchema, type ArchCodeConfig } from "./schema";
@@ -112,7 +114,14 @@ export class ServerConfigService {
           restartRequired: this.startupRevision !== undefined && current.revision !== this.startupRevision,
         };
       }
-      await writeConfigAtomically(this.configPath, stableJson(validated));
+      try {
+        await atomicWrite(this.configPath, stableJson(validated), { mode: 0o600 });
+      } catch (cause) {
+        throw new ConfigSemanticValidationError([{
+          path: this.configPath,
+          message: `Failed to write global configuration at ${this.configPath}: ${errorMessage(cause)}`,
+        }]);
+      }
       const revision = await revisionForText(stableJson(validated));
       return {
         config: redactConfig(validated),
@@ -334,31 +343,8 @@ function redactSecretRecord(record: Record<string, unknown> | undefined): void {
   for (const key of Object.keys(record)) record[key] = { configured: true };
 }
 
-async function writeConfigAtomically(configPath: string, contents: string): Promise<void> {
-  const tempPath = join(dirname(configPath), `.${SERVER_CONFIG_FILE_NAME}.${crypto.randomUUID()}.tmp`);
-  try {
-    await writeFile(tempPath, contents, { mode: 0o600 });
-    await chmod(tempPath, 0o600);
-    await rename(tempPath, configPath);
-  } catch (cause) {
-    await rm(tempPath, { force: true }).catch(() => undefined);
-    throw new ConfigSemanticValidationError([{
-      path: configPath,
-      message: `Failed to write global configuration at ${configPath}: ${errorMessage(cause)}`,
-    }]);
-  }
-}
-
 function stableJson(value: unknown): string {
-  return `${JSON.stringify(sortJson(value), null, 2)}\n`;
-}
-
-function sortJson(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortJson);
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, child]) => [key, sortJson(child)]));
+  return `${JSON.stringify(sortJsonValue(value), null, 2)}\n`;
 }
 
 async function revisionForText(text: string): Promise<string> {

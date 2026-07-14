@@ -7,8 +7,10 @@ import {
   SessionFileNotFoundError,
   type AgentRuntime,
 } from "@archcode/agent-core";
-import { BadRequestError, ServerError, SessionNotFoundError } from "../errors";
+import { z } from "zod/v4";
+import { ServerError, SessionNotFoundError } from "../errors";
 import { resolveProject } from "../resolve";
+import { zValidator } from "../validation";
 
 export type DiffLineType = "context" | "add" | "delete";
 
@@ -36,13 +38,18 @@ export interface DiffFile {
 
 const HUNK_HEADER_PATTERN = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 const processRunner = createProcessRunner();
+const DiffParamsSchema = z.strictObject({ slug: z.string().min(1) });
+const DiffQuerySchema = z.strictObject({
+  sessionId: z.string().trim().min(1, "sessionId must not be empty").optional(),
+});
 
 export function createFilesRoutes(runtime: AgentRuntime): Hono {
   const app = new Hono();
 
-  app.get("/:slug/diff", async (c) => {
-    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
-    const sessionId = optionalQuery(c.req.query("sessionId"), "sessionId");
+  app.get("/:slug/diff", zValidator("param", DiffParamsSchema), zValidator("query", DiffQuerySchema), async (c) => {
+    const { slug } = c.req.valid("param");
+    const { sessionId } = c.req.valid("query");
+    const project = await resolveProject(runtime, slug);
     const cwd = await resolveDiffCwd(runtime, project.workspaceRoot, sessionId);
 
     if (!(await isGitRepository(cwd))) {
@@ -111,12 +118,6 @@ async function resolveDiffCwd(
     }
     throw error;
   }
-}
-
-function optionalQuery(value: string | undefined, name: string): string | undefined {
-  if (value === undefined) return undefined;
-  if (value.trim().length === 0) throw new BadRequestError(`${name} must not be empty`);
-  return value;
 }
 
 function isMissingFileError(error: unknown): boolean {
@@ -195,14 +196,6 @@ export function parseUnifiedDiff(raw: string): DiffFile[] {
   }
 
   return files.filter((file) => file.path.length > 0);
-}
-
-function requiredParam(value: string | undefined, name: string): string {
-  if (!value) {
-    throw new BadRequestError(`${name} is required`);
-  }
-
-  return value;
 }
 
 async function isGitRepository(workspaceRoot: string): Promise<boolean> {

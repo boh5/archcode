@@ -493,6 +493,14 @@ describe("HITL types", () => {
       type: "review_outcome",
       outcome: "NOT_DONE",
       comment: "Needs more tests",
+      receipt: {
+        reviewGeneration: 1,
+        verdict: "NOT_DONE",
+        summary: "Needs more tests",
+        evidenceRefs: [],
+        reviewerSessionId: "reviewer-session",
+        decidedAt: "2026-07-14T00:00:00.000Z",
+      },
     };
 
     const parsed = serializeRoundTrip(response);

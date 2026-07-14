@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
 import {
+  AUTOMATION_MESSAGE_MAX_LENGTH,
+  AUTOMATION_NAME_MAX_LENGTH,
+  AUTOMATION_TIMEZONE_MAX_LENGTH,
+  MIN_AUTOMATION_INTERVAL_MS,
+} from "@archcode/protocol";
+import {
   Calendar,
   Clock,
   Folder,
@@ -101,10 +107,14 @@ export function EditAutomationDialog({
   const error = update.error;
   const everyMs = intervalToMilliseconds(intervalValue, intervalUnit);
   const valid = name.trim().length > 0
+    && name.trim().length <= AUTOMATION_NAME_MAX_LENGTH
     && message.trim().length > 0
+    && message.trim().length <= AUTOMATION_MESSAGE_MAX_LENGTH
     && (triggerKind !== "once" || Number.isFinite(new Date(onceAt).getTime()))
-    && (triggerKind !== "interval" || Number.isInteger(everyMs) && everyMs >= 30_000)
-    && (triggerKind !== "cron" || cron.trim().split(/\s+/).length === 5 && timezone.trim().length > 0)
+    && (triggerKind !== "interval" || Number.isInteger(everyMs) && everyMs >= MIN_AUTOMATION_INTERVAL_MS)
+    && (triggerKind !== "cron" || cron.trim().split(/\s+/).length === 5
+      && timezone.trim().length > 0
+      && timezone.trim().length <= AUTOMATION_TIMEZONE_MAX_LENGTH)
     && (actionKind !== "send_message" || sessionId.trim().length > 0);
 
   const submit = (event: React.FormEvent) => {
@@ -165,6 +175,7 @@ export function EditAutomationDialog({
                   value={name}
                   onChange={(event) => setName(event.target.value)}
                   placeholder="e.g. Daily project health check"
+                  maxLength={AUTOMATION_NAME_MAX_LENGTH}
                   autoFocus
                   disabled={pending}
                   className={INPUT_CLASS}
@@ -272,6 +283,7 @@ export function EditAutomationDialog({
                           value={timezone}
                           onChange={(event) => setTimezone(event.target.value)}
                           placeholder="Asia/Shanghai"
+                          maxLength={AUTOMATION_TIMEZONE_MAX_LENGTH}
                           disabled={pending}
                           className={INPUT_CLASS}
                         />
@@ -361,6 +373,7 @@ export function EditAutomationDialog({
                   onChange={(event) => setMessage(event.target.value)}
                   placeholder="Describe the work to perform. You can use /skill use … just like in a normal Session."
                   rows={7}
+                  maxLength={AUTOMATION_MESSAGE_MAX_LENGTH}
                   disabled={pending}
                   className={`${INPUT_CLASS} min-h-36 resize-y leading-5`}
                 />

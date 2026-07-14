@@ -385,6 +385,73 @@ describe("hitl routes", () => {
     expect(emptyResponse.status).toBe(200);
   });
 
+  test("invalid Goal review receipts remain pending without delivery metadata", async () => {
+    const fixture = await createTestApp("strict-goal-review-receipt");
+    const project = await addProject(fixture.runtime, "strict-goal-review-receipt", "Strict Review Project");
+    const context = await fixture.runtime.contextResolver.resolve(project.workspaceRoot);
+    const goal = await createGoal(context.goalState, project.slug, "Strict Goal Review");
+    const reviewerSessionId = crypto.randomUUID();
+    const review = await createGoalReviewHitl(
+      context.hitl,
+      project.slug,
+      goal.id,
+      goal.reviewGeneration,
+      reviewerSessionId,
+    );
+
+    for (const body of [
+      { type: "review_outcome", outcome: "DONE" },
+      {
+        type: "review_outcome",
+        outcome: "DONE",
+        receipt: {
+          reviewGeneration: goal.reviewGeneration,
+          verdict: "NOT_DONE",
+          summary: "The receipt deliberately disagrees with the response outcome.",
+          evidenceRefs: [],
+          reviewerSessionId,
+          decidedAt: new Date().toISOString(),
+        },
+      },
+      {
+        type: "review_outcome",
+        outcome: "DONE",
+        receipt: {
+          reviewGeneration: goal.reviewGeneration + 1,
+          verdict: "DONE",
+          summary: "The receipt belongs to a different review generation.",
+          evidenceRefs: [{ kind: "hitl", ref: review.hitlId, summary: "Mismatched generation" }],
+          reviewerSessionId,
+          decidedAt: new Date().toISOString(),
+        },
+      },
+      {
+        type: "review_outcome",
+        outcome: "DONE",
+        receipt: {
+          reviewGeneration: goal.reviewGeneration,
+          verdict: "DONE",
+          summary: "The receipt belongs to a different Reviewer Session.",
+          evidenceRefs: [{ kind: "hitl", ref: review.hitlId, summary: "Mismatched Reviewer Session" }],
+          reviewerSessionId: crypto.randomUUID(),
+          decidedAt: new Date().toISOString(),
+        },
+      },
+    ]) {
+      const response = await fixture.app.request(mutationUrl(review, "respond"), {
+        method: "POST",
+        body: JSON.stringify(body),
+        headers: { "content-type": "application/json" },
+      });
+      expect(response.status).toBe(400);
+      const lookup = await context.hitl.lookup(identity(review));
+      expect(lookup).toMatchObject({ status: "found", record: { status: "pending" } });
+      if (lookup.status !== "found") throw new Error("Expected Goal review HITL to remain present");
+      expect("response" in lookup.record).toBe(false);
+      expect("delivery" in lookup.record).toBe(false);
+    }
+  });
+
   test("a second mutation cannot replace a durably answered session HITL", async () => {
     const fixture = await createTestApp("answered-conflict");
     const project = await addProject(fixture.runtime, "answered-conflict", "Answered Conflict Project");
@@ -505,6 +572,21 @@ async function createGoalHitl(hitl: TestHitlService, projectSlug: string, goalId
     blockingKey: `goal:${goalId}:approval:after_plan:${crypto.randomUUID()}`,
     source: { type: "goal_approval", goalId, approvalPoint: "after_plan" },
     displayPayload: redactedPayload(title),
+  });
+}
+
+async function createGoalReviewHitl(
+  hitl: TestHitlService,
+  projectSlug: string,
+  goalId: string,
+  reviewGeneration: number,
+  reviewerSessionId: string,
+): Promise<HitlRecord> {
+  return await hitl.create({
+    owner: { projectSlug, ownerType: "goal", ownerId: goalId },
+    blockingKey: `goal:${goalId}:review:${reviewGeneration}`,
+    source: { type: "goal_review", goalId, reviewGeneration, reviewerSessionId },
+    displayPayload: redactedPayload("Goal review outcome"),
   });
 }
 

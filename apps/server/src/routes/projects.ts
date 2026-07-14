@@ -3,6 +3,7 @@ import type { AgentRuntime, ProjectControlPlaneSnapshot, ProjectInfo } from "@ar
 import { ProjectRegistryError, ProjectRuntimeActiveError } from "@archcode/agent-core";
 import { z } from "zod/v4";
 import { BadRequestError, ProjectNotFoundError, ProjectRemoveConflictHttpError } from "../errors";
+import { zValidator } from "../validation";
 
 export interface ProjectsRoutesOptions {
   readonly onProjectRegistered: (project: ProjectInfo) => Promise<void>;
@@ -20,6 +21,7 @@ const UpdateProjectBodySchema = z.strictObject({
     .min(1, "name must not be empty")
     .max(80, "name must be 80 characters or fewer"),
 });
+const ProjectParamsSchema = z.strictObject({ slug: z.string().min(1) });
 
 export function createProjectsRoutes(runtime: AgentRuntime, options: ProjectsRoutesOptions): Hono {
   const app = new Hono();
@@ -29,9 +31,8 @@ export function createProjectsRoutes(runtime: AgentRuntime, options: ProjectsRou
     return c.json({ projects });
   });
 
-  app.post("/", async (c) => {
-    const body = await readJsonBody(c.req.json(), CreateProjectBodySchema);
-    const { workspaceRoot, name } = body;
+  app.post("/", zValidator("json", CreateProjectBodySchema), async (c) => {
+    const { workspaceRoot, name } = c.req.valid("json");
 
     try {
       const registration = await runtime.projectRegistry.addWithResult({ workspaceRoot, name });
@@ -50,9 +51,10 @@ export function createProjectsRoutes(runtime: AgentRuntime, options: ProjectsRou
     }
   });
 
-  app.delete("/:slug", async (c) => {
+  app.delete("/:slug", zValidator("param", ProjectParamsSchema), async (c) => {
+    const { slug } = c.req.valid("param");
     try {
-      const removed = await runtime.removeProject(c.req.param("slug"));
+      const removed = await runtime.removeProject(slug);
       if (removed !== undefined) await options.onProjectRemoved(removed.snapshot);
       return c.json({ ok: true });
     } catch (error) {
@@ -63,9 +65,9 @@ export function createProjectsRoutes(runtime: AgentRuntime, options: ProjectsRou
     }
   });
 
-  app.patch("/:slug", async (c) => {
-    const slug = c.req.param("slug");
-    const { name } = await readJsonBody(c.req.json(), UpdateProjectBodySchema);
+  app.patch("/:slug", zValidator("param", ProjectParamsSchema), zValidator("json", UpdateProjectBodySchema), async (c) => {
+    const { slug } = c.req.valid("param");
+    const { name } = c.req.valid("json");
 
     try {
       const project = await runtime.projectRegistry.updateName(slug, name);
@@ -81,8 +83,8 @@ export function createProjectsRoutes(runtime: AgentRuntime, options: ProjectsRou
     }
   });
 
-  app.post("/:slug/touch", async (c) => {
-    const slug = c.req.param("slug");
+  app.post("/:slug/touch", zValidator("param", ProjectParamsSchema), async (c) => {
+    const { slug } = c.req.valid("param");
     const project = await runtime.projectRegistry.touch(slug);
     if (!project) {
       throw new ProjectNotFoundError(slug);
@@ -92,22 +94,4 @@ export function createProjectsRoutes(runtime: AgentRuntime, options: ProjectsRou
   });
 
   return app;
-}
-
-async function readJsonBody<Schema extends z.ZodType>(
-  bodyPromise: Promise<unknown>,
-  schema: Schema,
-): Promise<z.infer<Schema>> {
-  let body: unknown;
-  try {
-    body = await bodyPromise;
-  } catch {
-    throw new BadRequestError("Request body must be valid JSON");
-  }
-
-  const result = schema.safeParse(body);
-  if (!result.success) {
-    throw new BadRequestError(result.error.issues[0]?.message ?? "Request body is invalid");
-  }
-  return result.data;
 }

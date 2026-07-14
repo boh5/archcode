@@ -1,28 +1,40 @@
 import { Hono } from "hono";
 import { NotRootSessionError, SessionDeleteConflictError, SessionDeleteInProgressError, SessionDeleteOwnerConflictError, SessionFamilyStopConflictError, SessionFamilyStopInProgressError, SessionFileNotFoundError } from "@archcode/agent-core";
 import type { AgentRuntime } from "@archcode/agent-core";
+import { z } from "zod/v4";
 import { BadRequestError, ConflictError, SessionNotFoundError, SessionStopConflictHttpError } from "../errors";
 import { resolveProject } from "../resolve";
+import { zValidator } from "../validation";
+
+const ProjectParamsSchema = z.strictObject({ slug: z.string().min(1) });
+const SessionParamsSchema = z.strictObject({
+  slug: z.string().min(1),
+  sessionId: z.string().min(1),
+});
+const RootSessionParamsSchema = z.strictObject({
+  slug: z.string().min(1),
+  rootSessionId: z.string().min(1),
+});
 
 export function createSessionsRoutes(runtime: AgentRuntime): Hono {
   const app = new Hono();
 
-  app.get("/", async (c) => {
-    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
+  app.get("/", zValidator("param", ProjectParamsSchema), async (c) => {
+    const project = await resolveProject(runtime, c.req.valid("param").slug);
     const sessions = await runtime.listSessions(project.workspaceRoot);
 
     return c.json({ sessions });
   });
 
-  app.post("/", async (c) => {
+  app.post("/", zValidator("param", ProjectParamsSchema), async (c) => {
     await rejectRequestBody(c.req.text());
-    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
+    const project = await resolveProject(runtime, c.req.valid("param").slug);
     return c.json(await runtime.createSession(project.workspaceRoot, { agentName: "engineer" }), 201);
   });
 
-  app.get("/:sessionId", async (c) => {
-    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
-    const sessionId = requiredParam(c.req.param("sessionId"), "sessionId");
+  app.get("/:sessionId", zValidator("param", SessionParamsSchema), async (c) => {
+    const { slug, sessionId } = c.req.valid("param");
+    const project = await resolveProject(runtime, slug);
 
     try {
       return c.json(await runtime.getSessionFile(project.workspaceRoot, sessionId));
@@ -34,9 +46,9 @@ export function createSessionsRoutes(runtime: AgentRuntime): Hono {
     }
   });
 
-  app.get("/:sessionId/tree", async (c) => {
-    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
-    const sessionId = requiredParam(c.req.param("sessionId"), "sessionId");
+  app.get("/:sessionId/tree", zValidator("param", SessionParamsSchema), async (c) => {
+    const { slug, sessionId } = c.req.valid("param");
+    const project = await resolveProject(runtime, slug);
 
     try {
       return c.json(await runtime.listSessionTree(project.workspaceRoot, sessionId));
@@ -51,10 +63,10 @@ export function createSessionsRoutes(runtime: AgentRuntime): Hono {
     }
   });
 
-  app.post("/:rootSessionId/stop", async (c) => {
+  app.post("/:rootSessionId/stop", zValidator("param", RootSessionParamsSchema), async (c) => {
     await rejectRequestBody(c.req.text());
-    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
-    const rootSessionId = requiredParam(c.req.param("rootSessionId"), "rootSessionId");
+    const { slug, rootSessionId } = c.req.valid("param");
+    const project = await resolveProject(runtime, slug);
 
     try {
       await runtime.stopSessionFamily(project.workspaceRoot, rootSessionId);
@@ -79,9 +91,9 @@ export function createSessionsRoutes(runtime: AgentRuntime): Hono {
     }
   });
 
-  app.delete("/:sessionId", async (c) => {
-    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
-    const sessionId = requiredParam(c.req.param("sessionId"), "sessionId");
+  app.delete("/:sessionId", zValidator("param", SessionParamsSchema), async (c) => {
+    const { slug, sessionId } = c.req.valid("param");
+    const project = await resolveProject(runtime, slug);
 
     try {
       await runtime.deleteSession(project.workspaceRoot, sessionId);
@@ -116,14 +128,6 @@ export function createSessionsRoutes(runtime: AgentRuntime): Hono {
   });
 
   return app;
-}
-
-function requiredParam(value: string | undefined, name: string): string {
-  if (!value) {
-    throw new BadRequestError(`${name} is required`);
-  }
-
-  return value;
 }
 
 async function rejectRequestBody(bodyPromise: Promise<string>): Promise<void> {

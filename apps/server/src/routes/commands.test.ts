@@ -130,6 +130,20 @@ describe("commands routes", () => {
     expect(await res.json()).toMatchObject({ error: { code: "BAD_REQUEST" } });
   });
 
+  test("POST malformed JSON returns the bad request envelope", async () => {
+    const { app, project } = await createTestApp("malformed-command");
+    const res = await app.request(`/api/projects/${project.slug}/sessions/session-invalid/commands`, {
+      method: "POST",
+      body: "{",
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: { code: "BAD_REQUEST", message: "Malformed JSON in request body" },
+    });
+  });
+
   test("POST unknown session returns 404", async () => {
     const { app, project } = await createTestApp("unknown-session");
 

@@ -1,27 +1,19 @@
 import {
   TOOL_AUTOMATION_CREATE,
 } from "@archcode/protocol";
-import { z } from "zod/v4";
+import type { z } from "zod/v4";
 
-import { AutomationActionSchema, AutomationTriggerSchema } from "../../automations/schema";
+import { AutomationCreateSchema } from "../../automations/schema";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../types";
 
-const NameSchema = z.string().trim().min(1).max(200);
-
-export const AutomationCreateInputSchema = z.strictObject({
-  name: NameSchema,
-  trigger: AutomationTriggerSchema,
-  action: AutomationActionSchema,
-});
-
-type AutomationCreateInput = z.infer<typeof AutomationCreateInputSchema>;
+type AutomationCreateInput = z.infer<typeof AutomationCreateSchema>;
 
 export const automationCreateTool: AnyToolDescriptor = defineTool({
   name: TOOL_AUTOMATION_CREATE,
   description: "Create a confirmed Automation from an ordinary root Engineer Session.",
-  inputSchema: AutomationCreateInputSchema,
+  inputSchema: AutomationCreateSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   execute: async (input: AutomationCreateInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
     const state = ctx.store.getState();
