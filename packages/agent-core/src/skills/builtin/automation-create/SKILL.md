@@ -8,9 +8,9 @@ allowed_tools: [automation_create, ask_user]
 Turn the user's scheduling intent into one concise, committed Automation proposal.
 
 - Ask only for information that is genuinely missing. Do not run a fixed questionnaire.
-- Before confirmation, present a complete final summary containing the name, trigger, and action.
-- For `start_session`, include the message and location (`project` or `worktree`). For `send_message`, include the target Session and message.
-- Do not call `automation_create` until the user explicitly confirms that final summary in a subsequent message.
-- If the summary changes materially after confirmation, present the revised summary and obtain confirmation again.
+- Once the proposal is complete, call `ask_user` with one confirmation question whose text contains the complete final summary: name, trigger, and action. For `start_session`, include the message and location (`project` or `worktree`); for `send_message`, include the target Session and message. Offer exactly two options, `Create Automation` and `Revise proposal`, and set `custom` to `false`; cancellation means decline.
+- The confirmation step must call only `ask_user`. Do not call `automation_create` in the same response.
+- Call `automation_create` with the confirmed values only after `ask_user` returns the Create choice. If the user chooses Revise, collect the requested change, present the revised summary through a new `ask_user` confirmation, and do not create yet.
+- If the confirmed values would change materially before creation, obtain a new `ask_user` confirmation first.
 - If any required field is missing, keep clarifying in this ordinary Session; do not create a partial Automation.
 - If the user declines, continue helping in the ordinary Session. Do not create the Automation and do not repeat the suggestion for the same intent.
