@@ -43,7 +43,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry): Omit<TestFixture, 
     goalCancellationFactory: ({ goalState }) => ({
       cancel: async (goalId, request) => await goalState.cancel(goalId, request.reason),
     }),
-    goalRunnerFactory: () => ({}) as never,
+    goalLifecycleFactory: () => ({}) as never,
     createAutomation: mock(async () => {
       throw new Error("not implemented");
     }),
@@ -538,7 +538,7 @@ async function createGoal(manager: GoalStateManager, projectSlug: string, title:
   const goalId = crypto.randomUUID();
   return await manager.commit({
     id: goalId,
-    projectId: projectSlug,
+    projectSlug: projectSlug,
     createdFromSessionId: crypto.randomUUID(),
     objective: `Exercise HITL route behavior for ${title}.`,
     acceptanceCriteria: "Reviewer can decide DONE from HITL route projections.",
@@ -636,7 +636,6 @@ function hitlRequestEvent(): GlobalSSEEvent {
     sessionId: "session-1",
     eventId: 1,
     createdAt: 42,
-    kind: "hitl.request",
     agentName: "engineer",
     payload: {
       type: "hitl.request",

@@ -121,14 +121,14 @@ const EXECUTABLE_DCP_PARITY_COVERAGE = {
     {
       file: "packages/agent-core/src/agents/query/hooks/hybrid-compression.test.ts",
       testName: "runs forced hard compact at exactly 85% when a safe range exists",
-      anchors: ["state.events.at(-1)?.kind).toBe(\"compact\")", "compression.block_committed"],
+      anchors: ["state.events.at(-1)?.payload.type).toBe(\"compact\")", "compression.block_committed"],
     },
   ],
   manual_compact_entry_contract: [
     {
       file: "packages/agent-core/src/commands/compact.test.ts",
       testName: "manual compact emits compact event and compaction part without compression block",
-      anchors: ["CompactionPart", "events.at(-1)?.kind).toBe(\"compact\")", "compression.block_committed"],
+      anchors: ["CompactionPart", "events.at(-1)?.payload.type).toBe(\"compact\")", "compression.block_committed"],
     },
   ],
   ui_expandable_original_range_contract: [
@@ -148,10 +148,10 @@ const EXECUTABLE_DCP_PARITY_COVERAGE = {
 const executableCoverage: Record<DcpParityItem, readonly ExecutableTestMapping[]> = EXECUTABLE_DCP_PARITY_COVERAGE;
 const repoRoot = new URL("../../../../", import.meta.url);
 
-describe("DCP V1 executable parity coverage", () => {
+describe("DCP executable parity coverage", () => {
   test("maps every contract checklist item to non-empty executable coverage", () => {
     expect(isDcpParityContractComplete()).toBe(true);
-    expect(DCP_PARITY_CHECKLIST.map((entry) => entry.item).sort()).toEqual([...DCP_PARITY_ITEMS].sort());
+    expect([...DCP_PARITY_CHECKLIST].sort()).toEqual([...DCP_PARITY_ITEMS].sort());
 
     const mappedItems = Object.keys(executableCoverage).sort();
     expect(mappedItems).toEqual([...DCP_PARITY_ITEMS].sort());

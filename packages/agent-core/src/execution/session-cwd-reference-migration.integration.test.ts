@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
 
 import { silentLogger } from "../logger";
 import { createProcessRunner } from "../process/runner";
@@ -32,6 +33,32 @@ afterAll(async () => {
 });
 
 describe("SessionCwdReferenceMigrationService", () => {
+  test("rejects a migration journal carrying the removed version field", async () => {
+    const digest = new Bun.CryptoHasher("sha256").update(WORKTREE_ROOT).digest("hex");
+    const journalPath = join(PROJECT_ROOT, PROJECT_STATE_DIR_NAME, "session-cwd-migrations", `${digest}.json`);
+    await mkdir(dirname(journalPath), { recursive: true });
+    await writeFile(journalPath, JSON.stringify({
+      version: 1,
+      projectRoot: PROJECT_ROOT,
+      fromCwd: WORKTREE_ROOT,
+      toCwd: PROJECT_ROOT,
+      phase: "prepared",
+      references: [],
+    }));
+    const operation = mock(async () => ({ removed: true }));
+    const migration = new SessionCwdReferenceMigrationService({
+      storeManager: new SessionStoreManager({ logger: silentLogger }),
+      acquireIdleSessionFamilyCwdTransitions: () => () => undefined,
+    });
+
+    await expect(migration.migrateForRemoval({
+      projectRoot: PROJECT_ROOT,
+      fromCwd: WORKTREE_ROOT,
+      toCwd: PROJECT_ROOT,
+    }, operation)).rejects.toThrow("Session cwd migration journal does not match the requested removal");
+    expect(operation).not.toHaveBeenCalled();
+  });
+
   test("real worktree removal migrates crash-old and retry-new Sessions before Git cleanup", async () => {
     await initializeGitRepo(PROJECT_ROOT);
     const worktrees = new WorktreeService({ canonicalRoot: PROJECT_ROOT });
@@ -538,7 +565,6 @@ describe("SessionCwdReferenceMigrationService", () => {
     const journalPath = await migration.__journalPathForTest(input);
     await mkdir(dirname(journalPath), { recursive: true });
     await Bun.write(journalPath, `${JSON.stringify({
-      version: 1,
       projectRoot: PROJECT_ROOT,
       fromCwd: WORKTREE_ROOT,
       toCwd: PROJECT_ROOT,

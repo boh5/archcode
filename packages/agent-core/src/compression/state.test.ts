@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { COMPRESSION_SUMMARY_FORMAT_VERSION } from "./constants";
 import { commitCompressionBlock, createEmptyCompressionState, CompressionStateError } from "./state";
 import type { BlockRef, CompressionBlockDraft, CompressionRange, CompressionSummary } from "./types";
 
@@ -16,7 +15,6 @@ function range(startIndex: number, endIndex: number): CompressionRange {
 
 function summary(childBlockRefs: BlockRef[] = []): CompressionSummary {
   return {
-    version: COMPRESSION_SUMMARY_FORMAT_VERSION,
     childBlockRefs,
     sections: {
       "Current Objective": childBlockRefs.length > 0 ? `Continue after (${childBlockRefs[0]})` : "Continue task",

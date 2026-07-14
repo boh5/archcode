@@ -1,14 +1,12 @@
-import { COMPRESSION_SUMMARY_FORMAT_VERSION, COMPRESSION_SUMMARY_SECTION_NAMES } from "./constants";
+import { COMPRESSION_SUMMARY_SECTION_NAMES } from "./constants";
 import type { BlockRef, CompressionSummary, CompressionSummarySectionName } from "./types";
 
 export interface CompressionSummarySchemaContract {
-  readonly version: typeof COMPRESSION_SUMMARY_FORMAT_VERSION;
   readonly requiredSections: readonly CompressionSummarySectionName[];
   readonly strict: true;
 }
 
 export const CompressionSummarySchema: CompressionSummarySchemaContract = {
-  version: COMPRESSION_SUMMARY_FORMAT_VERSION,
   requiredSections: COMPRESSION_SUMMARY_SECTION_NAMES,
   strict: true,
 };
@@ -98,13 +96,9 @@ function parseCompressionSummary(
     return { ok: false, errors: ["Summary must be an object"] };
   }
 
-  const allowedTopLevel = new Set(["version", "sections", "childBlockRefs"]);
+  const allowedTopLevel = new Set(["sections", "childBlockRefs"]);
   for (const key of Object.keys(value)) {
     if (!allowedTopLevel.has(key)) errors.push(`Unknown summary field ${key}`);
-  }
-
-  if (value.version !== COMPRESSION_SUMMARY_FORMAT_VERSION) {
-    errors.push(`Summary version must be ${COMPRESSION_SUMMARY_FORMAT_VERSION}`);
   }
 
   if (!Array.isArray(value.childBlockRefs)) {

@@ -19,14 +19,14 @@ import type { ReserveSessionHitlResumeOptions, SessionHitlResumeLease } from "./
 import type { SessionExecutionScopeValidator } from "./session-execution-scope-validator";
 import { resolveSessionExecutionIdentity } from "./session-execution-identity";
 import {
-  isResponseForSessionCheckpoint,
-  readSessionHitlCheckpoint,
-  readSessionHitlCheckpointByBlockingKey,
+  isResponseForSessionHitlJournalEntry,
+  readSessionHitlJournalEntry,
+  readSessionHitlJournalEntryByBlockingKey,
   sessionHitlJournalPhase,
   transitionSessionHitlJournalPhase,
-  type SessionHitlCheckpointRecord,
+  type SessionHitlJournalEntry,
   type SessionHitlCompletedToolResult,
-} from "./session-hitl-checkpoint";
+} from "./session-hitl-journal-store";
 import {
   finalizeResolvedSessionHitlJournal,
   moveContinuingJournalToManualUnknown,
@@ -55,7 +55,7 @@ export interface SessionHitlResumeAdapterOptions {
     childSessionId: string,
     status: ToolChildSessionLinkStatus,
   ) => Promise<void>;
-  readonly readCheckpoint?: typeof readSessionHitlCheckpoint;
+  readonly readEntry?: typeof readSessionHitlJournalEntry;
   readonly attachSessionEvents?: (workspaceRoot: string, sessionId: string, store: StoreApi<SessionStoreState>) => void;
   readonly detachSessionEvents?: (workspaceRoot: string, sessionId: string) => void;
 }
@@ -131,48 +131,48 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
     if (record.owner.ownerType !== "session") throw new Error(`Session adapter cannot resume ${record.owner.ownerType} HITL`);
     const sessionId = record.owner.ownerId;
     let eventsAttached = false;
-    let checkpoint: SessionHitlCheckpointRecord | undefined;
+    let entry: SessionHitlJournalEntry | undefined;
     try {
-      checkpoint = await (this.options.readCheckpoint ?? readSessionHitlCheckpoint)(
+      entry = await (this.options.readEntry ?? readSessionHitlJournalEntry)(
         this.options.workspaceRoot,
         sessionId,
         record.hitlId,
       );
-      if (checkpoint === undefined && this.options.readCheckpoint === undefined) {
-        checkpoint = await readSessionHitlCheckpointByBlockingKey(
+      if (entry === undefined && this.options.readEntry === undefined) {
+        entry = await readSessionHitlJournalEntryByBlockingKey(
           this.options.workspaceRoot,
           sessionId,
           record.blockingKey,
         );
       }
-      if (checkpoint === undefined) throw new Error(`Missing Session HITL checkpoint for ${record.hitlId}`);
+      if (entry === undefined) throw new Error(`Missing Session HITL entry for ${record.hitlId}`);
       const projectContext = await this.options.projectContextResolver.resolve(this.options.workspaceRoot);
-      checkpoint = await repairSessionHitlJournalForReplay({
+      entry = await repairSessionHitlJournalForReplay({
         workspaceRoot: this.options.workspaceRoot,
         sessionId,
         sessions: this.options.storeManager,
         hitl: projectContext.hitl,
-        checkpoint,
+        entry,
       });
-      if (checkpoint.hitlId !== record.hitlId) {
-        throw new Error(`Session HITL journal ${checkpoint.hitlId} does not match claimed owner record ${record.hitlId}`);
+      if (entry.hitlId !== record.hitlId) {
+        throw new Error(`Session HITL journal ${entry.hitlId} does not match claimed owner record ${record.hitlId}`);
       }
-      if (!isResponseForSessionCheckpoint(checkpoint, response)) throw new Error(`Invalid response type ${response.type} for Session HITL ${record.hitlId}`);
+      if (!isResponseForSessionHitlJournalEntry(entry, response)) throw new Error(`Invalid response type ${response.type} for Session HITL ${record.hitlId}`);
 
-      let phase = sessionHitlJournalPhase(checkpoint);
+      let phase = sessionHitlJournalPhase(entry);
       // Explicit cancel is a fail-closed acknowledgement, not a replay. It must
       // remain available when the old execution scope is no longer runnable
       // (for example a removed worktree). The durable
-      // owner/checkpoint/response match above is sufficient authority to clear
+      // owner/entry/response match above is sufficient authority to clear
       // only this Session blocker without executing tools or the model.
       if (response.type === "cancel") {
-        await cancelCheckpointWithoutExecution(store, checkpoint, response);
+        await cancelEntryWithoutExecution(store, entry, response);
         await this.options.storeManager.flushSession(sessionId, this.options.workspaceRoot);
         if (phase !== "resolving") {
-          checkpoint = await transitionSessionHitlJournalPhase(
+          entry = await transitionSessionHitlJournalPhase(
             this.options.workspaceRoot,
             sessionId,
-            checkpoint.hitlId,
+            entry.hitlId,
             "resolving",
           );
           phase = "resolving";
@@ -184,7 +184,7 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
         await moveContinuingJournalToManualUnknown({
           workspaceRoot: this.options.workspaceRoot,
           sessionId,
-          checkpoint,
+          entry,
         });
       }
 
@@ -201,43 +201,43 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
       this.options.attachSessionEvents?.(this.options.workspaceRoot, sessionId, store);
       eventsAttached = this.options.attachSessionEvents !== undefined;
 
-      phase = sessionHitlJournalPhase(checkpoint);
+      phase = sessionHitlJournalPhase(entry);
       if (phase === "paused") {
-        checkpoint = await transitionSessionHitlJournalPhase(
+        entry = await transitionSessionHitlJournalPhase(
           this.options.workspaceRoot,
           sessionId,
-          checkpoint.hitlId,
+          entry.hitlId,
           "replaying",
         );
         phase = "replaying";
       }
 
       if (phase === "replaying") {
-        await this.replayCheckpoint(checkpoint, response, store, projectContext, resumeLease);
+        await this.replayEntry(entry, response, store, projectContext, resumeLease);
         await this.options.storeManager.flushSession(sessionId, this.options.workspaceRoot);
-        checkpoint = await transitionSessionHitlJournalPhase(
+        entry = await transitionSessionHitlJournalPhase(
           this.options.workspaceRoot,
           sessionId,
-          checkpoint.hitlId,
+          entry.hitlId,
           "continuing",
         );
-        await this.continueAgent(checkpoint, sessionId, resumeLease);
+        await this.continueAgent(entry, sessionId, resumeLease);
         resumeLease.abortSignal.throwIfAborted();
         await this.options.storeManager.flushSession(sessionId, this.options.workspaceRoot);
-        checkpoint = await transitionSessionHitlJournalPhase(
+        entry = await transitionSessionHitlJournalPhase(
           this.options.workspaceRoot,
           sessionId,
-          checkpoint.hitlId,
+          entry.hitlId,
           "continued",
         );
         phase = "continued";
       }
 
       if (phase === "continued") {
-        checkpoint = await transitionSessionHitlJournalPhase(
+        entry = await transitionSessionHitlJournalPhase(
           this.options.workspaceRoot,
           sessionId,
-          checkpoint.hitlId,
+          entry.hitlId,
           "resolving",
         );
         phase = "resolving";
@@ -245,11 +245,11 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
       if (phase !== "resolving") throw new Error(`Unsupported Session HITL journal phase ${phase}`);
       await resolveSessionBlockerDurably(this.options.storeManager, this.options.workspaceRoot, store, record, response);
     } catch (error) {
-      if (checkpoint !== undefined && sessionHitlJournalPhase(checkpoint) === "continuing") {
+      if (entry !== undefined && sessionHitlJournalPhase(entry) === "continuing") {
         await moveContinuingJournalToManualUnknown({
           workspaceRoot: this.options.workspaceRoot,
           sessionId,
-          checkpoint,
+          entry,
         });
       }
       throw error;
@@ -267,27 +267,27 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
     await this.options.updateChildSessionLinkForHitl?.(this.options.workspaceRoot, sessionId, status);
   }
 
-  private async replayCheckpoint(
-    checkpoint: SessionHitlCheckpointRecord,
+  private async replayEntry(
+    entry: SessionHitlJournalEntry,
     response: HitlResponse,
     store: StoreApi<SessionStoreState>,
     projectContext: Awaited<ReturnType<ProjectContextResolver["resolve"]>>,
     resumeLease: SessionHitlResumeLease,
   ): Promise<void> {
-    const completed = [...checkpoint.completedToolResults];
-    restoreAssistantPointer(store, checkpoint);
-    const pending = pendingFromCheckpoint(checkpoint);
+    const completed = [...entry.completedToolResults];
+    restoreAssistantPointer(store, entry);
+    const pending = pendingFromEntry(entry);
     if (pending instanceof Error) {
-      appendToolResult(store, blockedToolCall(checkpoint), createToolErrorResult({
+      appendToolResult(store, blockedToolCall(entry), createToolErrorResult({
         kind: "execution",
         message: pending.message,
-        code: "SESSION_HITL_CHECKPOINT_INVALID",
+        code: "SESSION_HITL_JOURNAL_INVALID",
       }));
-      for (const call of checkpoint.pendingToolCalls.filter((call) => call.toolCallId !== checkpoint.toolCallId)) {
+      for (const call of entry.pendingToolCalls.filter((call) => call.toolCallId !== entry.toolCallId)) {
         appendToolResult(store, call, createToolErrorResult({
           kind: "execution",
-          message: `Skipped ${call.toolName} because Session HITL checkpoint ${checkpoint.hitlId} is invalid`,
-          code: "SESSION_HITL_CHECKPOINT_INVALID",
+          message: `Skipped ${call.toolName} because Session HITL entry ${entry.hitlId} is invalid`,
+          code: "SESSION_HITL_JOURNAL_INVALID",
         }));
       }
       return;
@@ -297,8 +297,8 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
       resumeLease.abortSignal.throwIfAborted();
       const call = pending[index]!;
       const result = index === 0
-        ? await this.resumeBlockedTool(checkpoint, response, store, completed, resumeLease)
-        : await this.executeTool(call, checkpoint, store, completed, pending.slice(index), projectContext, resumeLease);
+        ? await this.resumeBlockedTool(entry, response, store, completed, resumeLease)
+        : await this.executeTool(call, entry, store, completed, pending.slice(index), projectContext, resumeLease);
       appendToolResult(store, call, result);
       completed.push({ toolCallId: call.toolCallId, toolName: call.toolName, output: result.output, isError: result.isError, ...(result.meta === undefined ? {} : { meta: result.meta }) });
       if (result.meta?.unknownResult === true) {
@@ -321,7 +321,7 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
   }
 
   private async continueAgent(
-    checkpoint: SessionHitlCheckpointRecord,
+    entry: SessionHitlJournalEntry,
     sessionId: string,
     resumeLease: SessionHitlResumeLease,
   ): Promise<void> {
@@ -330,7 +330,7 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
   }
 
   private async resumeBlockedTool(
-    checkpoint: SessionHitlCheckpointRecord,
+    entry: SessionHitlJournalEntry,
     response: HitlResponse,
     store: StoreApi<SessionStoreState>,
     completed: readonly SessionHitlCompletedToolResult[],
@@ -339,16 +339,16 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
     if (response.type === "cancel") {
       return createToolErrorResult({ kind: "cancelled", message: response.reason });
     }
-    if (checkpoint.kind === "ask_user") {
-      return askUserResponseToToolResult({ questions: extractAskUserQuestions(checkpoint.rawToolInput) }, response);
+    if (entry.source.type === "ask_user") {
+      return askUserResponseToToolResult({ questions: extractAskUserQuestions(entry.rawToolInput) }, response);
     }
     const projectContext = await this.options.projectContextResolver.resolve(this.options.workspaceRoot);
     return await this.executeTool(
-      { toolCallId: checkpoint.toolCallId, toolName: checkpoint.toolName, input: checkpoint.rawToolInput },
-      checkpoint,
+      { toolCallId: entry.toolCallId, toolName: entry.toolName, input: entry.rawToolInput },
+      entry,
       store,
       completed,
-      checkpoint.pendingToolCalls,
+      entry.pendingToolCalls,
       projectContext,
       resumeLease,
       response,
@@ -357,7 +357,7 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
 
   private async executeTool(
     call: ToolCallLike,
-    checkpoint: SessionHitlCheckpointRecord,
+    entry: SessionHitlJournalEntry,
     store: StoreApi<SessionStoreState>,
     completed: readonly SessionHitlCompletedToolResult[],
     pending: readonly ToolCallLike[],
@@ -376,28 +376,28 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
       toolCallId: call.toolCallId,
       input: call.input,
       redactedInput: redactValue(call.input),
-      step: checkpoint.step,
+      step: entry.step,
       abort,
       startedAt: Date.now(),
-      allowedTools: new Set(checkpoint.allowedTools),
-      agentSkills: checkpoint.agentSkills,
+      allowedTools: new Set(entry.allowedTools),
+      agentSkills: entry.agentSkills,
       skillService: this.options.skillService,
       projectContext,
       cwd: store.getState().cwd,
       storeManager: this.options.storeManager,
-      agentName: checkpoint.agentName,
-      ...(checkpoint.currentDepth === undefined ? {} : { currentDepth: checkpoint.currentDepth }),
+      agentName: entry.agentName,
+      ...(entry.currentDepth === undefined ? {} : { currentDepth: entry.currentDepth }),
       ...(response === undefined ? {} : { confirmPermission: async () => permissionDecisionFromResponse(response) }),
       ...(this.options.startChildExecution === undefined ? {} : { startChildExecution: (request) => this.options.startChildExecution!(this.options.workspaceRoot, request) }),
       ...(this.options.cancelChildSession === undefined ? {} : { cancelChildSession: this.options.cancelChildSession }),
       ...(this.options.resumeChildSession === undefined ? {} : { resumeChildSession: this.options.resumeChildSession }),
       acquireSessionCwdTransition: resumeLease.acquireSessionCwdTransition,
-      hitlCheckpoint: {
-        toolCalls: checkpoint.toolCalls,
+      hitlJournal: {
+        toolCalls: entry.toolCalls,
         completedToolResults: [...completed],
         pendingToolCalls: [...pending],
-        blockedToolIndex: checkpoint.blockedToolIndex,
-        ...(checkpoint.assistantMessageId === undefined ? {} : { assistantMessageId: checkpoint.assistantMessageId }),
+        blockedToolIndex: entry.blockedToolIndex,
+        ...(entry.assistantMessageId === undefined ? {} : { assistantMessageId: entry.assistantMessageId }),
       },
       onInputResolved(redactedInput) {
         store.getState().append({ type: "tool-input-resolved", toolCallId: call.toolCallId, toolName: call.toolName, input: redactedInput });
@@ -492,45 +492,45 @@ function durableToolResult(store: StoreApi<SessionStoreState>, call: ToolCallLik
   return undefined;
 }
 
-async function cancelCheckpointWithoutExecution(
+async function cancelEntryWithoutExecution(
   store: StoreApi<SessionStoreState>,
-  checkpoint: SessionHitlCheckpointRecord,
+  entry: SessionHitlJournalEntry,
   response: Extract<HitlResponse, { type: "cancel" }>,
 ): Promise<void> {
   const cancelled = createToolErrorResult({ kind: "cancelled", message: response.reason });
-  const pending = pendingFromCheckpoint(checkpoint);
+  const pending = pendingFromEntry(entry);
   const calls = pending instanceof Error
-    ? checkpoint.pendingToolCalls.length === 0 ? [blockedToolCall(checkpoint)] : checkpoint.pendingToolCalls
+    ? entry.pendingToolCalls.length === 0 ? [blockedToolCall(entry)] : entry.pendingToolCalls
     : pending;
   for (const call of calls) appendToolResult(store, call, cancelled);
 }
 
-function pendingFromCheckpoint(checkpoint: SessionHitlCheckpointRecord): readonly ToolCallLike[] | Error {
-  const startIndex = checkpoint.pendingToolCalls.findIndex((call) => call.toolCallId === checkpoint.toolCallId);
+function pendingFromEntry(entry: SessionHitlJournalEntry): readonly ToolCallLike[] | Error {
+  const startIndex = entry.pendingToolCalls.findIndex((call) => call.toolCallId === entry.toolCallId);
   if (startIndex === -1) {
-    return new Error(`Session HITL checkpoint ${checkpoint.hitlId} is invalid: blocked tool ${checkpoint.toolCallId} is missing from pendingToolCalls`);
+    return new Error(`Session HITL entry ${entry.hitlId} is invalid: blocked tool ${entry.toolCallId} is missing from pendingToolCalls`);
   }
-  const absoluteIndex = checkpoint.toolCalls.findIndex((call) => call.toolCallId === checkpoint.toolCallId);
+  const absoluteIndex = entry.toolCalls.findIndex((call) => call.toolCallId === entry.toolCallId);
   if (absoluteIndex === -1) {
-    return new Error(`Session HITL checkpoint ${checkpoint.hitlId} is invalid: blocked tool ${checkpoint.toolCallId} is missing from toolCalls`);
+    return new Error(`Session HITL entry ${entry.hitlId} is invalid: blocked tool ${entry.toolCallId} is missing from toolCalls`);
   }
-  if (absoluteIndex !== checkpoint.blockedToolIndex) {
-    return new Error(`Session HITL checkpoint ${checkpoint.hitlId} is invalid: blockedToolIndex ${checkpoint.blockedToolIndex} does not match ${checkpoint.toolCallId}`);
+  if (absoluteIndex !== entry.blockedToolIndex) {
+    return new Error(`Session HITL entry ${entry.hitlId} is invalid: blockedToolIndex ${entry.blockedToolIndex} does not match ${entry.toolCallId}`);
   }
-  const blocked = checkpoint.pendingToolCalls[startIndex];
-  if (blocked?.toolName !== checkpoint.toolName) {
-    return new Error(`Session HITL checkpoint ${checkpoint.hitlId} is invalid: blocked tool name does not match ${checkpoint.toolName}`);
+  const blocked = entry.pendingToolCalls[startIndex];
+  if (blocked?.toolName !== entry.toolName) {
+    return new Error(`Session HITL entry ${entry.hitlId} is invalid: blocked tool name does not match ${entry.toolName}`);
   }
-  return checkpoint.pendingToolCalls.slice(startIndex);
+  return entry.pendingToolCalls.slice(startIndex);
 }
 
-function blockedToolCall(checkpoint: SessionHitlCheckpointRecord): ToolCallLike {
-  return { toolCallId: checkpoint.toolCallId, toolName: checkpoint.toolName, input: checkpoint.rawToolInput };
+function blockedToolCall(entry: SessionHitlJournalEntry): ToolCallLike {
+  return { toolCallId: entry.toolCallId, toolName: entry.toolName, input: entry.rawToolInput };
 }
 
-function restoreAssistantPointer(store: StoreApi<SessionStoreState>, checkpoint: SessionHitlCheckpointRecord): void {
-  if (checkpoint.assistantMessageId === undefined) return;
-  store.setState({ currentAssistantMessageId: checkpoint.assistantMessageId });
+function restoreAssistantPointer(store: StoreApi<SessionStoreState>, entry: SessionHitlJournalEntry): void {
+  if (entry.assistantMessageId === undefined) return;
+  store.setState({ currentAssistantMessageId: entry.assistantMessageId });
 }
 
 async function resolveSessionBlockerDurably(

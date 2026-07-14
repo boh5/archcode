@@ -124,7 +124,6 @@ function toLocalEnvelope(envelope: GlobalSessionEventEnvelope): SessionEventEnve
   return {
     id: envelope.eventId,
     createdAt: envelope.createdAt,
-    kind: envelope.kind,
     payload: envelope.payload,
   };
 }
@@ -236,7 +235,6 @@ export function createWebSessionStore(
         const envelope = {
           id: state.nextEventId,
           createdAt: Date.now(),
-          kind: event.type,
           payload: event,
         };
         return appendEnvelopeToState(state, envelope);

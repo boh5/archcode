@@ -620,14 +620,6 @@ export function reduceStreamEvent(
       return { compression };
     }
 
-    case "goal.state_change": {
-      const goals = { ...(state.goals ?? {}) };
-      goals[event.goalId] = event.state;
-
-      return { goals };
-    }
-
-
     case "hitl.request": {
       const hitlRequests = [...(state.hitlRequests ?? [])];
       const existingIndex = hitlRequests.findIndex((r) => r.hitlId === event.request.hitlId);
@@ -753,7 +745,6 @@ function createEmptyCompressionRefMapSnapshot(): CompressionRefMapSnapshot {
 
 function createEmptyCompressionStateSnapshot(): CompressionStateSnapshot {
   return {
-    version: 1,
     refMap: createEmptyCompressionRefMapSnapshot(),
     blocksByRef: {},
     activeBlockRefs: [],

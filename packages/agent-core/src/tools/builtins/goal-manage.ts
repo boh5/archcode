@@ -2,14 +2,12 @@ import { z } from "zod/v4";
 import { resolve } from "node:path";
 import {
   TOOL_GOAL_MANAGE,
-  type GoalEvidenceRef,
   type GoalReviewVerdict,
   type GoalState,
 } from "@archcode/protocol";
 
 import { defineTool } from "../define-tool";
 import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../types";
-import { withGoalExecutionClaimLock } from "../../goals/execution-claim";
 import { GoalCancellationCleanupError } from "../../goals/cancellation";
 import { GoalUuidSchema } from "../../goals/state";
 import { GoalReviewReceiptSchema, GoalReviewSummarySchema } from "../../goals/review-schema";
@@ -67,25 +65,8 @@ const GoalManageInputSchema = z.discriminatedUnion("action", [
 
 type GoalManageInput = z.infer<typeof GoalManageInputSchema>;
 
-interface SimplifiedGoalStateManager {
+interface GoalStateReader {
   read(goalId: string): Promise<GoalState>;
-  beginReview(goalId: string): Promise<GoalState>;
-  finalizeReview(goalId: string, input: {
-    readonly expectedReviewGeneration: number;
-    readonly verdict: GoalReviewVerdict;
-    readonly summary: string;
-    readonly evidenceRefs?: readonly GoalEvidenceRef[];
-    readonly unresolvedItems?: readonly string[];
-    readonly finalSummary?: string;
-    readonly authorization: {
-      readonly agentName?: string;
-      readonly sessionRole?: string;
-      readonly sessionGoalId?: string;
-      readonly reviewerSessionId?: string;
-    };
-  }): Promise<GoalState>;
-  retry(goalId: string): Promise<GoalState>;
-  cancel(goalId: string, reason?: string): Promise<GoalState>;
 }
 
 export const goalManageTool: AnyToolDescriptor = defineTool({
@@ -100,47 +81,40 @@ export const goalManageTool: AnyToolDescriptor = defineTool({
         ctx,
         input.goalId,
       );
-      const manager = simplifiedGoalStateManager(ctx);
+      const state = ctx.projectContext.goalState;
+      const lifecycle = ctx.projectContext.goalLifecycle;
       if (input.action !== "finalize_review") {
-        await assertCurrentGoalLeadMain(manager, input.goalId, authorization.sessionId, input.action);
+        await assertCurrentGoalLeadMain(state, input.goalId, authorization.sessionId, input.action);
       }
 
       switch (input.action) {
         case "begin_review": {
-          await assertGoalExecutionWorkspace(manager, input.goalId, ctx);
-          return formatGoalToolResult(await withGoalExecutionClaimLock(
+          await assertGoalExecutionWorkspace(state, input.goalId, ctx);
+          return formatGoalToolResult(await lifecycle.beginReview(
             input.goalId,
-            async () => {
-              await assertNoActiveBuildChild(ctx);
-              return await manager.beginReview(input.goalId);
-            },
+            () => assertNoActiveBuildChild(ctx),
           ));
         }
         case "finalize_review": {
-          await assertGoalExecutionWorkspace(manager, input.goalId, ctx);
-          return formatGoalToolResult(await withGoalExecutionClaimLock(input.goalId, () => (
-            manager.finalizeReview(input.goalId, {
-              expectedReviewGeneration: input.expectedReviewGeneration,
-              verdict: input.verdict,
-              summary: input.summary,
-              evidenceRefs: input.evidenceRefs,
-              ...(input.unresolvedItems === undefined ? {} : { unresolvedItems: input.unresolvedItems }),
-              ...(input.finalSummary === undefined ? {} : { finalSummary: input.finalSummary }),
-              authorization: {
-                agentName: authorization.agentName,
-                sessionRole: authorization.sessionRole,
-                sessionGoalId: authorization.sessionGoalId,
-                reviewerSessionId: authorization.sessionId,
-              },
-            })
-          )));
+          await assertGoalExecutionWorkspace(state, input.goalId, ctx);
+          return formatGoalToolResult(await lifecycle.finalizeReview(input.goalId, {
+            expectedReviewGeneration: input.expectedReviewGeneration,
+            verdict: input.verdict,
+            summary: input.summary,
+            evidenceRefs: input.evidenceRefs,
+            ...(input.unresolvedItems === undefined ? {} : { unresolvedItems: input.unresolvedItems }),
+            ...(input.finalSummary === undefined ? {} : { finalSummary: input.finalSummary }),
+            authorization: {
+              agentName: authorization.agentName,
+              sessionRole: authorization.sessionRole,
+              sessionGoalId: authorization.sessionGoalId,
+              reviewerSessionId: authorization.sessionId,
+            },
+          }));
         }
         case "retry": {
-          await assertGoalExecutionWorkspace(manager, input.goalId, ctx);
-          return formatGoalToolResult(await withGoalExecutionClaimLock(
-            input.goalId,
-            () => manager.retry(input.goalId),
-          ));
+          await assertGoalExecutionWorkspace(state, input.goalId, ctx);
+          return formatGoalToolResult(await lifecycle.retry(input.goalId));
         }
         case "cancel": {
           const cancellation = ctx.projectContext.goalCancellation;
@@ -191,10 +165,6 @@ export const goalManageTool: AnyToolDescriptor = defineTool({
   },
 });
 
-function simplifiedGoalStateManager(ctx: ToolExecutionContext): SimplifiedGoalStateManager {
-  return ctx.projectContext.goalState as unknown as SimplifiedGoalStateManager;
-}
-
 async function assertNoActiveBuildChild(ctx: ToolExecutionContext): Promise<void> {
   const workspaceRoot = ctx.projectContext.project.workspaceRoot;
   const stores = [ctx.store];
@@ -220,7 +190,7 @@ async function assertNoActiveBuildChild(ctx: ToolExecutionContext): Promise<void
 }
 
 async function assertGoalExecutionWorkspace(
-  manager: SimplifiedGoalStateManager,
+  manager: GoalStateReader,
   goalId: string,
   ctx: ToolExecutionContext,
 ): Promise<void> {
@@ -256,7 +226,7 @@ async function assertGoalExecutionWorkspace(
 }
 
 async function assertCurrentGoalLeadMain(
-  manager: SimplifiedGoalStateManager,
+  manager: GoalStateReader,
   goalId: string,
   sessionId: string,
   action: Exclude<GoalManageInput["action"], "finalize_review">,

@@ -3,7 +3,7 @@ import { PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 
 import { GoalStateManager } from "../goals/state";
-import { GoalRunner } from "../goals/runner";
+import { GoalLifecycleService } from "../goals/lifecycle-service";
 import { HitlService } from "../hitl/service";
 import { createPreparedHitlResume, ResumeCoordinator } from "../hitl/resume-coordinator";
 import { MemoryFileManager } from "../memory/file-manager";
@@ -29,7 +29,7 @@ export function createTestProjectContext(
   return {
     project,
     goalState,
-    goalRunner: createTestGoalRunner(workspaceRoot, goalState, sessions),
+    goalLifecycle: createTestGoalLifecycle(workspaceRoot, goalState, sessions),
     createAutomation: async () => { throw new Error("Automation creation is not configured for this test context"); },
     goalCancellation: createTestGoalCancellation(goalState),
     hitl,
@@ -53,8 +53,8 @@ export function createTestProjectContextResolverOptions(
       addedAt: new Date().toISOString(),
     }),
     goalCancellationFactory: ({ goalState }) => createTestGoalCancellation(goalState),
-    goalRunnerFactory: ({ workspaceRoot, goalState }) => (
-      createTestGoalRunner(workspaceRoot, goalState, sessionStoreManager)
+    goalLifecycleFactory: ({ workspaceRoot, goalState }) => (
+      createTestGoalLifecycle(workspaceRoot, goalState, sessionStoreManager)
     ),
     createAutomation: async () => { throw new Error("Automation creation is not configured for this test resolver"); },
     sessionStoreManager,
@@ -89,12 +89,12 @@ function createTestGoalCancellation(goalState: GoalStateManager): ProjectContext
   };
 }
 
-export function createTestGoalRunner(
+export function createTestGoalLifecycle(
   workspaceRoot: string,
   goalState: GoalStateManager,
   sessions: SessionStoreManager,
-): GoalRunner {
-  return new GoalRunner({
+): GoalLifecycleService {
+  return new GoalLifecycleService({
     workspaceRoot,
     goalStateManager: goalState,
     readSourceSession: (root, sessionId) => sessions.getSessionFile(root, sessionId),

@@ -95,7 +95,7 @@ describe("ContextInspector interactions", () => {
   test("organizes Session agents, changed files, and context from real APIs", async () => {
     const dom = installDom("/projects/demo/sessions/root");
     const session: Session = {
-      schemaVersion: 1, sessionId: "root", rootSessionId: "root", cwd: "/workspace/demo", title: "Root execution",
+      sessionId: "root", rootSessionId: "root", cwd: "/workspace/demo", title: "Root execution",
       createdAt: 1, updatedAt: 2, agentName: "engineer", modelInfo: null, messages: [], steps: [], todos: [], reminders: [], childSessionLinks: [], executions: [], stats: createEmptySessionStats(),
     };
     const childSession: Session = {
@@ -111,9 +111,8 @@ describe("ContextInspector interactions", () => {
       stats: { ...createEmptySessionStats(), messages: { total: 4, user: 1, assistant: 3 }, tools: { calls: 2, completed: 2, failed: 0 } },
     };
     const relatedGoal: GoalState = {
-      version: 4,
       id: "created-goal",
-      projectId: "demo",
+      projectSlug: "demo",
       createdFromSessionId: "child",
       title: "Created Goal",
       objective: "Ship the related Goal",
@@ -133,7 +132,7 @@ describe("ContextInspector interactions", () => {
     };
     const relatedAutomation: Automation = {
       id: "22222222-2222-4222-8222-222222222222",
-      projectId: "demo",
+      projectSlug: "demo",
       createdFromSessionId: "child",
       name: "Created Automation",
       trigger: { kind: "interval", everyMs: 60_000 },
@@ -236,7 +235,7 @@ describe("ContextInspector interactions", () => {
   test("organizes Goal criteria, evidence, and sessions", async () => {
     const dom = installDom("/projects/demo/goals/g1");
     const goal: GoalState = {
-      version: 4, id: "g1", projectId: "demo", createdFromSessionId: "origin", title: "Goal", objective: "Ship it", acceptanceCriteria: "Tests pass", useWorktree: true,
+      id: "g1", projectSlug: "demo", createdFromSessionId: "origin", title: "Goal", objective: "Ship it", acceptanceCriteria: "Tests pass", useWorktree: true,
       status: "done", attempt: 1, reviewGeneration: 1, pendingHitlIds: [], approvalRefs: [], appliedHitlIds: [], mainSessionId: "main", childSessionIds: ["child"],
       budget: { status: "warning", usedTokens: 1200, maxTokens: 2000, reason: "Near limit", updatedAt: "2026-01-01" },
       worktree: { path: "/workspace/goal", branchName: "codex/goal", baseSha: "abc123", createdAt: "2026-01-01" },

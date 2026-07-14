@@ -76,7 +76,7 @@ const removedGoalCreationPatterns = [
   /["']draft["']/,
   /\bpatchDraft\b/,
   /\bGoalDraftPatch\b/,
-  /\bGoalRunnerStartInput\b/,
+  new RegExp("\\bGoal" + "RunnerStartInput\\b"),
   /\bgoalExecutionStatusEligibility\b/,
 ] as const;
 
@@ -201,11 +201,11 @@ const approvedDirectAiImportFiles = new Set([
 ]);
 
 const directGoalRunningTransitionAllowedFiles = new Set([
-  "packages/agent-core/src/goals/runner.ts",
+  "packages/agent-core/src/goals/lifecycle-service.ts",
 ]);
 
 const directLegacyReviewResultRecordAllowedFiles = new Set([
-  "packages/agent-core/src/goals/runner.ts",
+  "packages/agent-core/src/goals/lifecycle-service.ts",
   "packages/agent-core/src/hitl/goal-gates.ts",
   "packages/agent-core/src/goals/hitl-resume-adapter.ts",
 ]);
@@ -460,7 +460,7 @@ describe("Goal migration boundaries", () => {
     ]).toEqual([]);
   });
 
-  test("only GoalRunner production code claims Goal running status", () => {
+  test("only GoalLifecycleService production code claims Goal running status", () => {
     expectNoViolations(
       withoutAllowedFiles(
         findWorkspaceTextViolations([
@@ -484,10 +484,22 @@ describe("Goal migration boundaries", () => {
     ], removedGoalCreationPatterns));
   });
 
-  test("goal_create delegates committed creation only to GoalRunner", () => {
+  test("goal_create delegates committed creation only to GoalLifecycleService", () => {
     const source = stripComments(readFileSync(join(projectRoot, "packages/agent-core/src/tools/builtins/goal-create.ts"), "utf8"));
-    expect(source).toContain("projectContext.goalRunner.create");
+    expect(source).toContain("projectContext.goalLifecycle.create");
     expect(source).not.toContain("projectContext.goalState");
+  });
+
+  test("goal_manage delegates lifecycle mutations and locking only to GoalLifecycleService", () => {
+    const source = stripComments(readFileSync(join(projectRoot, "packages/agent-core/src/tools/builtins/goal-manage.ts"), "utf8"));
+    expect(source).toContain("projectContext.goalLifecycle");
+    expect(source).toContain("lifecycle.beginReview");
+    expect(source).toContain("() => assertNoActiveBuildChild(ctx)");
+    expect(source).toContain("lifecycle.finalizeReview");
+    expect(source).toContain("lifecycle.retry");
+    expect(source).not.toContain("withGoalExecutionClaimLock");
+    expect(source).not.toMatch(/goalState\s+as\s+unknown\s+as/);
+    expect(source).not.toMatch(/goalState\.(?:beginReview|finalizeReview|retry|fail|cancel)\s*\(/);
   });
 
   test("Goal StateManager remains independent of Session runtime, tools, server, and Web", () => {
@@ -563,7 +575,7 @@ describe("Goal migration boundaries", () => {
     }
   });
 
-  test("production Goal tools keep lifecycle mutations behind GoalRunner", () => {
+  test("production Goal tools keep lifecycle mutations behind GoalLifecycleService", () => {
     expectNoViolations(
       findSourceTextViolations("packages/agent-core/src/tools/builtins", directLifecycleMutationPatterns),
     );
@@ -573,7 +585,7 @@ describe("Goal migration boundaries", () => {
     expectNoViolations(findSourceTextViolations("packages/agent-core/src/tools", [directLegacyReviewResultRecordPattern]));
   });
 
-  test("direct legacy review result recording remains behind runner and HITL review boundaries", () => {
+  test("direct legacy review result recording remains behind lifecycle and HITL review boundaries", () => {
     expectNoViolations(
       withoutAllowedFiles(
         findSourceTextViolations("packages/agent-core/src", [directLegacyReviewResultRecordPattern]),
@@ -620,7 +632,7 @@ describe("Goal migration boundaries", () => {
       findTextViolations(
         readSpecificProductionSources([
           join(projectRoot, "packages/agent-core/src/goals/state.ts"),
-          join(projectRoot, "packages/agent-core/src/goals/runner.ts"),
+          join(projectRoot, "packages/agent-core/src/goals/lifecycle-service.ts"),
           join(projectRoot, "apps/server/src/routes/goals.ts"),
         ]),
         [

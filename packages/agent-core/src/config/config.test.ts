@@ -14,7 +14,6 @@ import {
 } from "./index";
 
 const VALID_CONFIG = {
-  $schema: "http://xxxx/config.json",
   provider: {
     xxx: {
       npm: "@ai-sdk/openai-compatible",
@@ -66,10 +65,8 @@ describe("parseConfig", () => {
     expect(config.agents.librarian.model).toBe("xxx:gpt-5.2");
   });
 
-  test("parses config without $schema", () => {
-    const { $schema: _, ...noSchema } = VALID_CONFIG_WITH_AGENTS;
-    const config = parseConfig(noSchema);
-    expect(config.provider).toBeDefined();
+  test("rejects the removed $schema field", () => {
+    expect(() => parseConfig({ ...VALID_CONFIG_WITH_AGENTS, $schema: "http://xxxx/config.json" })).toThrow(ConfigValidationError);
   });
 
   test("keeps provider credential expressions literal", () => {
@@ -389,7 +386,6 @@ describe("parseConfig", () => {
         github: {
           enabled: true,
           tokenEnv: "ARCHCODE_GITHUB_TOKEN",
-          apiBaseUrl: "https://api.github.com",
           defaultOwner: "test-owner",
           defaultRepo: "test-repo",
         },
@@ -399,18 +395,17 @@ describe("parseConfig", () => {
     expect(parsed.integrations?.github).toEqual({
       enabled: true,
       tokenEnv: "ARCHCODE_GITHUB_TOKEN",
-      apiBaseUrl: "https://api.github.com",
       defaultOwner: "test-owner",
       defaultRepo: "test-repo",
     });
   });
 
-  test("rejects github enterprise and custom api base urls", () => {
+  test("rejects the removed github apiBaseUrl field", () => {
     expect(() =>
       parseConfig({
         ...VALID_CONFIG_WITH_AGENTS,
         integrations: {
-          github: { apiBaseUrl: "https://github.enterprise.example/api/v3" },
+          github: { apiBaseUrl: "https://api.github.com" },
         },
       }),
     ).toThrow(ConfigValidationError);
@@ -558,7 +553,6 @@ describe("resolveGithubIntegrationConfig", () => {
   test("keeps github integration disabled when config block is absent", () => {
     expect(resolveGithubIntegrationConfig(undefined, {})).toEqual({
       enabled: false,
-      apiBaseUrl: "https://api.github.com",
     });
   });
 
@@ -579,7 +573,6 @@ describe("resolveGithubIntegrationConfig", () => {
   test("keeps explicitly disabled github integration from resolving tokens", () => {
     expect(resolveGithubIntegrationConfig({ enabled: false }, {})).toEqual({
       enabled: false,
-      apiBaseUrl: "https://api.github.com",
     });
   });
 

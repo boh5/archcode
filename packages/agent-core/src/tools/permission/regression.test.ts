@@ -82,7 +82,7 @@ function resetWorkspace(): void {
   mkdirSync(join(WORKSPACE, ".archcode", "memory"), { recursive: true });
   mkdirSync(OUTSIDE, { recursive: true });
   writeFileSync(join(WORKSPACE, "src", "main.ts"), "export const value = 1;\n");
-  writeFileSync(join(WORKSPACE, ".archcode", "permissions.json"), '{"version":1,"approvals":[]}\n');
+  writeFileSync(join(WORKSPACE, ".archcode", "permissions.json"), '{"approvals":[]}\n');
   writeFileSync(join(OUTSIDE, "outside.txt"), "outside\n");
 }
 

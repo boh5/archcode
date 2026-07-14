@@ -123,7 +123,6 @@ const HitlRecordSchema: z.ZodType<HitlRecord> = z.strictObject({
 });
 
 const HitlFileSchema: z.ZodType<HitlFile> = z.strictObject({
-  version: z.literal(1),
   owner: HitlOwnerKeySchema,
   pending: z.array(HitlRecordSchema),
   recentTerminal: z.array(HitlRecordSchema),
@@ -137,42 +136,6 @@ export type HitlCreateResult =
 export type HitlLookupResult =
   | { status: "found"; record: HitlRecord; file: HitlFile }
   | { status: "missing" };
-
-/**
- * Rebinds an owner-local file to the current registration slug. The physical
- * owner identity is its workspace-local type/id path; HITL ids, blocking keys,
- * status buckets, responses, and history timestamps remain unchanged.
- */
-export async function migrateHitlOwnerFileProjectSlug(
-  filePath: string,
-  nextOwner: HitlOwnerKey,
-): Promise<boolean> {
-  return await withOwnerFileMutationLock(filePath, async () => {
-    const file = Bun.file(filePath);
-    if (!(await file.exists())) return false;
-
-    const parsed = HitlFileSchema.parse(JSON.parse(await file.text()));
-    assertFileRecordIdentities(parsed);
-    assertUniqueHitlIds(parsed);
-    assertHitlBuckets(parsed);
-    if (parsed.owner.ownerType !== nextOwner.ownerType || parsed.owner.ownerId !== nextOwner.ownerId) {
-      throw new HitlOwnerMismatchError(nextOwner, parsed.owner);
-    }
-    if (parsed.owner.projectSlug === nextOwner.projectSlug) return false;
-
-    const migrated = HitlFileSchema.parse({
-      ...parsed,
-      owner: nextOwner,
-      pending: parsed.pending.map((record) => ({ ...record, owner: nextOwner })),
-      recentTerminal: parsed.recentTerminal.map((record) => ({ ...record, owner: nextOwner })),
-    });
-    assertFileRecordIdentities(migrated);
-    assertUniqueHitlIds(migrated);
-    assertHitlBuckets(migrated);
-    await atomicWrite(filePath, `${JSON.stringify(migrated, null, 2)}\n`);
-    return true;
-  });
-}
 
 export class HitlOwnerMismatchError extends Error {
   constructor(
@@ -418,7 +381,7 @@ async function withOwnerFileMutationLock<T>(filePath: string, action: () => Prom
 }
 
 export function emptyHitlFile(owner: HitlOwnerKey, now = new Date().toISOString()): HitlFile {
-  return { version: 1, owner, pending: [], recentTerminal: [], updatedAt: now };
+  return { owner, pending: [], recentTerminal: [], updatedAt: now };
 }
 
 export function isActiveHitlStatus(status: HitlStatus): boolean {

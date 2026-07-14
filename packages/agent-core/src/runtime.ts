@@ -62,7 +62,7 @@ import {
 } from "./goals/goal-lead-continuation";
 import { withGoalExecutionClaimLock } from "./goals/execution-claim";
 import { GoalCancellationService, type GoalCancellationRequest } from "./goals/cancellation";
-import { GoalRunner } from "./goals/runner";
+import { GoalLifecycleService } from "./goals/lifecycle-service";
 import { HitlService } from "./hitl/service";
 import { ResumeCoordinator, type ResumeRecoverySummary } from "./hitl/resume-coordinator";
 import {
@@ -188,7 +188,7 @@ export interface AgentRuntime {
   dispatchCommand(workspaceRoot: string, sessionId: string, name: string, args?: string): Promise<SlashCommandResult | null>;
   listAutomations(workspaceRoot: string): Promise<Automation[]>;
   readAutomation(workspaceRoot: string, automationId: string): Promise<Automation>;
-  createAutomation(workspaceRoot: string, input: Omit<CreateAutomationInput, "projectId">): Promise<Automation>;
+  createAutomation(workspaceRoot: string, input: Omit<CreateAutomationInput, "projectSlug">): Promise<Automation>;
   updateAutomation(workspaceRoot: string, automationId: string, input: UpdateAutomationInput): Promise<Automation>;
   deleteAutomation(workspaceRoot: string, automationId: string): Promise<void>;
   pauseAutomation(workspaceRoot: string, automationId: string): Promise<Automation>;
@@ -326,7 +326,16 @@ export async function createRuntime(
           acquireStop: (input) => executionManager.acquireSessionFamilyStop(input),
         },
       }),
-      goalRunnerFactory: ({ workspaceRoot, project, goalState }) => new GoalRunner({
+      goalCommitted: ({ workspaceRoot, project, goal }) => {
+        publishResourceChanged({
+          type: "resource.changed",
+          projectSlug: project.slug,
+          resourceType: "goal",
+          resourceId: goal.id,
+          createdAt: Date.now(),
+        });
+      },
+      goalLifecycleFactory: ({ workspaceRoot, goalState }) => new GoalLifecycleService({
         workspaceRoot,
         goalStateManager: goalState,
         readSourceSession: (projectRoot, sessionId) => sessionStoreManager.getSessionFile(projectRoot, sessionId),
@@ -336,17 +345,7 @@ export async function createRuntime(
         startCheckedExecutionWithinGoalClaim: (input) => (
           executionManager.startCheckedExecutionWithinGoalClaim(input)
         ),
-        onGoalCommitted: (goal) => {
-          publishResourceChanged({
-            type: "resource.changed",
-            projectSlug: project.slug,
-            resourceType: "goal",
-            resourceId: goal.id,
-            reason: "created",
-            createdAt: Date.now(),
-          });
-          queueGoalTitleGeneration(workspaceRoot, goal.id);
-        },
+        onCreated: (goal) => queueGoalTitleGeneration(workspaceRoot, goal.id),
       }),
       createAutomation: (workspaceRoot, input) => createAutomation(workspaceRoot, input),
       sessionStoreManager,
@@ -547,13 +546,12 @@ export async function createRuntime(
       const clock = options.automationSchedulerClock ?? { now: () => Date.now() };
       const now = (): number => clock.now();
       const stateManager = new AutomationStateManager(workspaceRoot, { now });
-      const onChange = (change: { automationId: string; reason: "created" | "updated" | "deleted" | "invocation_changed" }): void => {
+      const onChange = (change: { automationId: string }): void => {
         publishResourceChanged({
           type: "resource.changed",
           projectSlug: project.slug,
           resourceType: "automation",
           resourceId: change.automationId,
-          reason: change.reason,
           createdAt: Date.now(),
         });
       };
@@ -567,7 +565,7 @@ export async function createRuntime(
           ),
           startSessionMessageExecution: (input) => automationSessionMessageExecutor(input),
         },
-        resolveProject: (projectId) => projectRegistry.get(projectId),
+        resolveProject: (projectSlug) => projectRegistry.get(projectSlug),
       });
       const dispatcher = new AutomationDispatcher({ stateManager, gateway, now, onChange, coordinator });
       const scheduler = new AutomationScheduler({
@@ -602,14 +600,6 @@ export async function createRuntime(
         if (title === null) return;
         const updated = await projectContext.goalState.setTitleIfEmpty(goal.id, title);
         if (updated === undefined) return;
-        publishResourceChanged({
-          type: "resource.changed",
-          projectSlug: projectContext.project.slug,
-          resourceType: "goal",
-          resourceId: goal.id,
-          reason: "title_generated",
-          createdAt: Date.now(),
-        });
       });
     }
 
@@ -641,7 +631,7 @@ export async function createRuntime(
         }, delay);
         retry.timer.unref?.();
         goalStateReconcileRetries.set(key, retry);
-        runtimeLogger.warn("goal.state_changed.reconcile_failed", {
+        runtimeLogger.warn("goals.reconcile_failed", {
           error,
           context: { goalId },
           meta: { workspaceRoot, attempt, retryDelayMs: delay },
@@ -689,7 +679,7 @@ export async function createRuntime(
 
     async function createAutomation(
       workspaceRoot: string,
-      input: Omit<CreateAutomationInput, "projectId">,
+      input: Omit<CreateAutomationInput, "projectSlug">,
     ): Promise<Automation> {
       const project = await projectRegistry.getByWorkspace(workspaceRoot);
       if (project === undefined) throw new Error(`Project is not registered: ${workspaceRoot}`);
@@ -697,7 +687,7 @@ export async function createRuntime(
       await assertAutomationWorktreeSupported(workspaceRoot, input.action);
       return await (await getAutomationRuntimeServices(workspaceRoot)).scheduler.createAutomation({
         ...input,
-        projectId: project.slug,
+        projectSlug: project.slug,
       });
     }
 
@@ -772,7 +762,7 @@ export async function createRuntime(
       projectReconcileInFlight.add(key);
       try {
         projectSlugsByWorkspace.set(workspaceRoot, projectSlug);
-        await (await contextResolver.resolve(workspaceRoot)).goalRunner.reconcile();
+        await (await contextResolver.resolve(workspaceRoot)).goalLifecycle.reconcile();
         await continuationService.reconcileWorkspace(workspaceRoot);
         projectReconcileRetries.delete(key);
       } catch (error) {
@@ -919,7 +909,7 @@ export async function createRuntime(
     const startupProjects = await projectRegistry.list();
     const startupContinuationResults = await Promise.allSettled(
       startupProjects.map(async (project) => {
-        await (await contextResolver.resolve(project.workspaceRoot)).goalRunner.reconcile();
+        await (await contextResolver.resolve(project.workspaceRoot)).goalLifecycle.reconcile();
         await continuationService.reconcileWorkspace(project.workspaceRoot);
       }),
     );

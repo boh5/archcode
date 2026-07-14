@@ -39,7 +39,7 @@ class SimplifiedGoalStateManagerMock {
   }
 
   async create(input: {
-    projectId: string;
+    projectSlug: string;
     createdFromSessionId: string;
     objective: string;
     acceptanceCriteria: string;
@@ -47,7 +47,7 @@ class SimplifiedGoalStateManagerMock {
   }): Promise<GoalState> {
     this.calls.push({ method: "create", payload: input });
     return makeGoalState({
-      projectId: input.projectId,
+      projectSlug: input.projectSlug,
       createdFromSessionId: input.createdFromSessionId,
       objective: input.objective,
       acceptanceCriteria: input.acceptanceCriteria,
@@ -55,7 +55,8 @@ class SimplifiedGoalStateManagerMock {
     });
   }
 
-  async beginReview(goalId: string): Promise<GoalState> {
+  async beginReview(goalId: string, assertReady?: () => Promise<void>): Promise<GoalState> {
+    await assertReady?.();
     this.calls.push({ method: "beginReview", payload: { goalId } });
     return makeGoalState({ id: goalId, status: "reviewing", reviewGeneration: this.readableGoal.reviewGeneration + 1 });
   }
@@ -150,7 +151,7 @@ function makeProjectContext(
   return {
     project,
     goalState: resolvedGoalState,
-    goalRunner: goalState as unknown as ProjectContext["goalRunner"],
+    goalLifecycle: goalState as unknown as ProjectContext["goalLifecycle"],
     createAutomation: async () => { throw new Error("unused automation creator"); },
     goalCancellation: {
       cancel: (goalId, request) => goalState.cancel(goalId, request.reason),
@@ -257,7 +258,7 @@ function normalizeOutput(output: string | ToolExecutionResult): ToolExecutionRes
 function makeGoalState(overrides: Partial<GoalState> = {}): GoalState {
   return {
     id: overrides.id ?? DEFAULT_GOAL_ID,
-    projectId: "test-project",
+    projectSlug: "test-project",
     createdFromSessionId: "engineer-session",
     title: null,
     objective: "Simplify Goal tools.",
@@ -274,7 +275,6 @@ function makeGoalState(overrides: Partial<GoalState> = {}): GoalState {
     updatedAt: "2026-07-08T00:00:00.000Z",
     startedAt: "2026-07-08T00:00:00.000Z",
     ...overrides,
-    version: 4,
     useWorktree: overrides.useWorktree ?? false,
   };
 }
@@ -443,7 +443,7 @@ describe("goal_manage builtin tool", () => {
     const createNotDone = async () => {
       const committed = await manager.commit({
         id: crypto.randomUUID(),
-        projectId: "test-project",
+        projectSlug: "test-project",
         createdFromSessionId: crypto.randomUUID(),
         objective: "Exercise not_done phase capabilities.",
         acceptanceCriteria: "Only retry and cancel remain executable.",
@@ -485,13 +485,13 @@ describe("goal_manage builtin tool", () => {
 
     expect(result.isError).toBe(false);
     expect(goalState.calls).toEqual([{ method: "create", payload: {
-      projectId: "test-project",
+      projectSlug: "test-project",
       createdFromSessionId: "engineer-session",
       objective: "Do the thing",
       acceptanceCriteria: "It works",
       useWorktree: true,
     } }]);
-    expect(JSON.parse(result.output)).toMatchObject({ projectId: "test-project", status: "running", createdFromSessionId: "engineer-session" });
+    expect(JSON.parse(result.output)).toMatchObject({ projectSlug: "test-project", status: "running", createdFromSessionId: "engineer-session" });
 
     const standalone = await executeCreate(input, { store: engineerStore({ sessionRole: "standalone" }) });
     expect(standalone.result.isError).toBe(false);

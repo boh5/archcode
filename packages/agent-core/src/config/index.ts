@@ -1,6 +1,5 @@
 export {
   agentConfigSchema,
-  GITHUB_API_BASE_URL,
   GithubIntegrationTokenError,
   githubIntegrationConfigSchema,
   integrationsConfigSchema,
@@ -60,7 +59,6 @@ export {
 export {
   type McpConfig,
   type McpServerConfig,
-  type McpTransport,
   type ResolvedMcpConfig,
   type ResolvedMcpServerConfig,
   McpConfigError,
@@ -69,5 +67,4 @@ export {
   mcpConfigSchema,
   mcpServerConfigSchema,
   mcpServerNameSchema,
-  mcpTransportSchema,
 } from "./mcp";

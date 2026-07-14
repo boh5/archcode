@@ -269,13 +269,12 @@ async function computeApplyDiffs(files: CapturedApplyFile[]) {
     }
 
     if (diffInputs.length === 0) {
-      return files.length > 0 ? { version: 1 as const, files: [], unsupportedReason: "no_change" as const } : undefined;
+      return files.length > 0 ? { files: [], unsupportedReason: "no_change" as const } : undefined;
     }
 
     return computeToolDiffs(diffInputs);
   } catch (error) {
     return {
-      version: 1 as const,
       files: [],
       unsupportedReason: "diff_error" as const,
       warning: error instanceof Error ? error.message : String(error),

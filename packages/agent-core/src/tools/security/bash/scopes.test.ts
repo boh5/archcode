@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { NormalizedShellRequest, PermissionApprovalScope } from "../../permission/policy-types";
@@ -9,7 +10,11 @@ import { attachShellEffects } from "./effects";
 import { parseShellRequest } from "./parse";
 import { deriveShellApprovalScope } from "./scopes";
 
-const workspaceRoot = join(tmpdir(), "archcode-bash-scopes-tests");
+const workspaceRoot = join(tmpdir(), `archcode-bash-scopes-tests-${crypto.randomUUID()}`);
+
+afterAll(() => {
+  rmSync(workspaceRoot, { recursive: true, force: true });
+});
 
 function requestFor(command: string): NormalizedShellRequest {
   const parsed = parseShellRequest(command, { workspaceRoot });

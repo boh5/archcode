@@ -63,7 +63,7 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
         throw new ServerError("BAD_REQUEST", `Goal ${goalId} main Session is active`, 409);
       }
 
-      const retried = await context.goalRunner.retry(goalId);
+      const retried = await context.goalLifecycle.retry(goalId);
       try {
         runtime.startSessionExecution({
           slug: project.slug,
@@ -73,7 +73,7 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
         });
       } catch (error) {
         if (!hasErrorName(error, "AgentRunningError")) {
-          await context.goalRunner.fail(goalId, new Error(`Goal retry could not start: ${errorMessage(error)}`));
+          await context.goalLifecycle.fail(goalId, new Error(`Goal retry could not start: ${errorMessage(error)}`));
           throw error;
         }
       }
@@ -137,7 +137,7 @@ function mapGoalError(error: unknown): Error {
     || hasErrorName(error, "GoalReviewerAuthorizationError")
     || hasErrorName(error, "GoalReviewFinalizationError")
     || hasErrorName(error, "GoalWorkspaceError")
-    || hasErrorName(error, "GoalRunnerError")
+    || hasErrorName(error, "GoalLifecycleServiceError")
     || hasErrorName(error, "GoalCancellationError")
     || hasErrorName(error, "GoalCancellationInProgressError")
     || hasErrorName(error, "SessionFamilyStopConflictError")

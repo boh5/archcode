@@ -2,7 +2,7 @@ import { isAbsolute } from "node:path";
 import { z } from "zod/v4";
 import type { GoalStateManager } from "../goals/state";
 import type { Automation, AutomationAction, AutomationTrigger } from "@archcode/protocol";
-import type { GoalRunner } from "../goals/runner";
+import type { GoalLifecycleService } from "../goals/lifecycle-service";
 import type { GoalCancellationCapability } from "../goals/cancellation";
 import type { HitlService } from "../hitl/service";
 import type { ResumeCoordinator } from "../hitl/resume-coordinator";
@@ -26,7 +26,7 @@ export interface ProjectInfo {
 export interface ProjectContext {
   project: ProjectInfo;
   goalState: GoalStateManager;
-  goalRunner: GoalRunner;
+  goalLifecycle: GoalLifecycleService;
   createAutomation(input: {
     readonly name: string;
     readonly trigger: AutomationTrigger;

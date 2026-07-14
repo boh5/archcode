@@ -1,17 +1,17 @@
-import type { HitlDisplayPayload, HitlOwnerKey, HitlRecord, HitlResponse, HitlSource, SessionHitlCheckpoint } from "@archcode/protocol";
+import type { HitlDisplayPayload, HitlOwnerKey, HitlRecord, HitlResponse, SessionHitlBlocker } from "@archcode/protocol";
 
 import type { AskUserInput } from "../tools/builtins/ask-user";
 import { createAskUserSuccessResult } from "../tools/builtins/ask-user-format";
 import { createToolErrorResult } from "../tools/errors";
 import type { ToolExecutionContext, ToolConfirmationRequest } from "../tools/types";
 import { redactString, redactValue } from "../tools/security/redaction";
-import type { SessionHitlCheckpointRecord } from "./session-hitl-checkpoint";
+import type { SessionHitlJournalEntry } from "./session-hitl-journal-store";
 import { prepareSessionHitlPause, sessionHitlBlockerFromJournal } from "./session-hitl-journal";
 
 export class SessionHitlPause extends Error {
   constructor(
     public readonly record: HitlRecord,
-    public readonly checkpoint: SessionHitlCheckpoint,
+    public readonly blocker: SessionHitlBlocker,
   ) {
     super(`Session execution is waiting for HITL response ${record.hitlId}`);
     this.name = "SessionHitlPause";
@@ -20,30 +20,28 @@ export class SessionHitlPause extends Error {
 
 export async function pauseForAskUser(input: AskUserInput, ctx: ToolExecutionContext): Promise<never> {
   const sessionId = ctx.store.getState().sessionId;
-  const source: HitlSource = { type: "ask_user", sessionId, toolCallId: ctx.toolCallId };
+  const source: SessionHitlJournalEntry["source"] = { type: "ask_user", sessionId, toolCallId: ctx.toolCallId };
   const blockingKey = `session:${sessionId}:ask:${ctx.toolCallId}`;
   const displayPayload = askUserDisplayPayload(input);
-  const prepared = await createRecordAndCheckpoint({
+  const prepared = await createRecordAndEntry({
     ctx,
     source,
     blockingKey,
     displayPayload,
-    kind: "ask_user",
   });
-  throw new SessionHitlPause(prepared.record, sessionHitlBlockerFromJournal(prepared.checkpoint));
+  throw new SessionHitlPause(prepared.record, sessionHitlBlockerFromJournal(prepared.entry));
 }
 
 export async function pauseForPermission(request: ToolConfirmationRequest, ctx: ToolExecutionContext): Promise<never> {
   const sessionId = ctx.store.getState().sessionId;
-  const source: HitlSource = { type: "tool_permission", sessionId, toolCallId: ctx.toolCallId, toolName: ctx.toolName };
+  const source: SessionHitlJournalEntry["source"] = { type: "tool_permission", sessionId, toolCallId: ctx.toolCallId, toolName: ctx.toolName };
   const blockingKey = `session:${sessionId}:tool:${ctx.toolCallId}`;
   const displayPayload = permissionDisplayPayload(request);
-  const prepared = await createRecordAndCheckpoint({
+  const prepared = await createRecordAndEntry({
     ctx,
     source,
     blockingKey,
     displayPayload,
-    kind: "permission",
     permission: {
       description: request.description,
       ...(request.reason === undefined ? {} : { reason: request.reason }),
@@ -52,7 +50,7 @@ export async function pauseForPermission(request: ToolConfirmationRequest, ctx: 
       ...(request.ruleId === undefined ? {} : { ruleId: request.ruleId }),
     },
   });
-  throw new SessionHitlPause(prepared.record, sessionHitlBlockerFromJournal(prepared.checkpoint));
+  throw new SessionHitlPause(prepared.record, sessionHitlBlockerFromJournal(prepared.entry));
 }
 
 export function askUserResponseToToolResult(input: AskUserInput, response: HitlResponse): { output: string; isError: boolean } {
@@ -69,14 +67,13 @@ export function askUserResponseToToolResult(input: AskUserInput, response: HitlR
   return createAskUserSuccessResult(answers, input.questions);
 }
 
-async function createRecordAndCheckpoint(input: {
+async function createRecordAndEntry(input: {
   readonly ctx: ToolExecutionContext;
-  readonly source: HitlSource;
+  readonly source: SessionHitlJournalEntry["source"];
   readonly blockingKey: string;
   readonly displayPayload: HitlDisplayPayload;
-  readonly kind: "ask_user" | "permission";
-  readonly permission?: SessionHitlCheckpointRecord["permission"];
-}): Promise<{ readonly record: HitlRecord; readonly checkpoint: SessionHitlCheckpointRecord }> {
+  readonly permission?: SessionHitlJournalEntry["permission"];
+}): Promise<{ readonly record: HitlRecord; readonly entry: SessionHitlJournalEntry }> {
   const { ctx } = input;
   const sessionId = ctx.store.getState().sessionId;
   const owner: HitlOwnerKey = {
@@ -85,10 +82,9 @@ async function createRecordAndCheckpoint(input: {
     ownerId: sessionId,
   };
   const createdAt = new Date().toISOString();
-  if (ctx.agentName === undefined) throw new Error("Session HITL checkpoint requires agentName");
-  if (ctx.agentSkills === undefined) throw new Error("Session HITL checkpoint requires agentSkills");
-  const checkpoint: SessionHitlCheckpointRecord = {
-    version: 1,
+  if (ctx.agentName === undefined) throw new Error("Session HITL entry requires agentName");
+  if (ctx.agentSkills === undefined) throw new Error("Session HITL entry requires agentSkills");
+  const entry: SessionHitlJournalEntry = {
     phase: "preparing",
     phaseUpdatedAt: createdAt,
     hitlId: crypto.randomUUID(),
@@ -97,25 +93,24 @@ async function createRecordAndCheckpoint(input: {
     toolCallId: ctx.toolCallId,
     toolName: ctx.toolName,
     step: ctx.step,
-    ...(ctx.hitlCheckpoint?.assistantMessageId === undefined ? {} : { assistantMessageId: ctx.hitlCheckpoint.assistantMessageId }),
+    ...(ctx.hitlJournal?.assistantMessageId === undefined ? {} : { assistantMessageId: ctx.hitlJournal.assistantMessageId }),
     rawToolInput: ctx.input,
     displayInput: ctx.redactedInput ?? redactValue(ctx.input),
     allowedTools: [...ctx.allowedTools],
     agentSkills: [...ctx.agentSkills],
     agentName: ctx.agentName,
     ...(ctx.currentDepth === undefined ? {} : { currentDepth: ctx.currentDepth }),
-    toolCalls: (ctx.hitlCheckpoint?.toolCalls ?? [{ toolCallId: ctx.toolCallId, toolName: ctx.toolName, input: ctx.input }]).map(cloneToolCall),
-    completedToolResults: (ctx.hitlCheckpoint?.completedToolResults ?? []).map((result) => ({
+    toolCalls: (ctx.hitlJournal?.toolCalls ?? [{ toolCallId: ctx.toolCallId, toolName: ctx.toolName, input: ctx.input }]).map(cloneToolCall),
+    completedToolResults: (ctx.hitlJournal?.completedToolResults ?? []).map((result) => ({
       toolCallId: result.toolCallId,
       toolName: result.toolName,
       output: result.output,
       isError: result.isError,
       ...(result.meta === undefined ? {} : { meta: result.meta }),
     })),
-    pendingToolCalls: (ctx.hitlCheckpoint?.pendingToolCalls ?? []).map(cloneToolCall),
-    blockedToolIndex: ctx.hitlCheckpoint?.blockedToolIndex ?? 0,
+    pendingToolCalls: (ctx.hitlJournal?.pendingToolCalls ?? []).map(cloneToolCall),
+    blockedToolIndex: ctx.hitlJournal?.blockedToolIndex ?? 0,
     createdAt,
-    kind: input.kind,
     request: {
       owner,
       displayPayload: input.displayPayload,
@@ -129,7 +124,7 @@ async function createRecordAndCheckpoint(input: {
     store: ctx.store,
     sessions: ctx.storeManager,
     hitl: ctx.projectContext.hitl,
-    checkpoint,
+    entry,
   });
 }
 

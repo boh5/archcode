@@ -20,7 +20,7 @@ describe("AutomationStateManager", () => {
   test("persists strict state under .archcode/automations and reloads it", async () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     const automation = await manager.createAutomation({
-      projectId: "project-a",
+      projectSlug: "project-a",
       createdFromSessionId: "11111111-1111-4111-8111-111111111111",
       name: "daily check",
       trigger: { kind: "interval", everyMs: 60_000 },
@@ -44,7 +44,7 @@ describe("AutomationStateManager", () => {
   test("rejects over-limit create and update inputs before persistence", async () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     await expect(manager.createAutomation({
-      projectId: "project-a",
+      projectSlug: "project-a",
       createdFromSessionId: crypto.randomUUID(),
       name: "n".repeat(201),
       trigger: { kind: "interval", everyMs: 30_000 },
@@ -53,7 +53,7 @@ describe("AutomationStateManager", () => {
     expect(await manager.listAutomations()).toEqual([]);
 
     const automation = await manager.createAutomation({
-      projectId: "project-a",
+      projectSlug: "project-a",
       createdFromSessionId: crypto.randomUUID(),
       name: "valid",
       trigger: { kind: "interval", everyMs: 30_000 },
@@ -68,7 +68,7 @@ describe("AutomationStateManager", () => {
   test("preallocates stable dispatch identities and coalesces pending work", async () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     const automation = await manager.createAutomation({
-      projectId: "project-a",
+      projectSlug: "project-a",
       createdFromSessionId: crypto.randomUUID(),
       name: "watch",
       trigger: { kind: "interval", everyMs: 30_000 },
@@ -88,7 +88,7 @@ describe("AutomationStateManager", () => {
     let now = NOW;
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => now });
     const automation = await manager.createAutomation({
-      projectId: "project-a",
+      projectSlug: "project-a",
       createdFromSessionId: crypto.randomUUID(),
       name: "watch",
       trigger: { kind: "interval", everyMs: 30_000 },
@@ -111,7 +111,7 @@ describe("AutomationStateManager", () => {
   test("records an expired one-shot as missed and disables it during recovery", async () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     const automation = await manager.createAutomation({
-      projectId: "project-a",
+      projectSlug: "project-a",
       createdFromSessionId: crypto.randomUUID(),
       name: "expired",
       trigger: { kind: "once", at: "2026-07-12T23:59:00.000Z" },

@@ -108,12 +108,12 @@ export class SessionExecutionScopeValidator {
           error,
         );
       }
-      if (goal.projectId !== context.project.slug) {
+      if (goal.projectSlug !== context.project.slug) {
         throw conflict(
           "SESSION_GOAL_OWNER_MISMATCH",
           subject,
           `Goal ${goal.id} belongs to a different project`,
-          { goalId: goal.id, goalProjectId: goal.projectId, projectId: context.project.slug },
+          { goalId: goal.id, goalProjectSlug: goal.projectSlug, projectSlug: context.project.slug },
         );
       }
       this.#assertCurrentGoalAttempt(subject, goal);

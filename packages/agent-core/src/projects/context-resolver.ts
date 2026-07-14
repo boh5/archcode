@@ -11,20 +11,25 @@ import { silentLogger } from "../logger";
 import type { Logger } from "../logger";
 import type { SessionStoreManager } from "../store/session-store-manager";
 import { recoverSessionHitlJournals } from "../execution/session-hitl-journal";
-import { migrateSessionHitlCheckpointProjectSlug } from "../execution/session-hitl-checkpoint";
-import { collectKnownHitlOwners } from "../hitl/aggregation";
-import { migrateHitlOwnerFileProjectSlug } from "../hitl/owner-store";
-import { resolveHitlOwnerPath } from "../hitl/owner-paths";
 import { ProjectApprovalManager } from "../tools/permission/project-approvals";
 import type { ProjectContext, ProjectInfo } from "./types";
 import type { Automation, AutomationAction, AutomationTrigger } from "@archcode/protocol";
-import type { GoalRunner } from "../goals/runner";
+import type { GoalLifecycleService } from "../goals/lifecycle-service";
 
 export interface ProjectContextResolverOptions {
   /** Registry-backed ProjectInfo lookup. Missing projects must fail resolution. */
   projectInfoFactory: (workspaceRoot: string) => Promise<ProjectInfo> | ProjectInfo;
   /** Factory primarily for testing alternate GoalStateManager construction. */
-  goalStateFactory?: (workspaceRoot: string) => GoalStateManager;
+  goalStateFactory?: (
+    workspaceRoot: string,
+    onCommitted: (goal: import("@archcode/protocol").GoalState) => void | Promise<void>,
+  ) => GoalStateManager;
+  /** Narrow post-commit observer; Goal persistence remains domain-owned. */
+  goalCommitted?: (input: {
+    readonly workspaceRoot: string;
+    readonly project: ProjectInfo;
+    readonly goal: import("@archcode/protocol").GoalState;
+  }) => void | Promise<void>;
   /** Application-level Goal cancellation capability supplied by runtime composition. */
   goalCancellationFactory: (input: {
     workspaceRoot: string;
@@ -33,11 +38,11 @@ export interface ProjectContextResolverOptions {
     hitl: HitlService;
   }) => GoalCancellationCapability;
   /** Application-level Goal orchestration supplied by runtime composition. */
-  goalRunnerFactory: (input: {
+  goalLifecycleFactory: (input: {
     workspaceRoot: string;
     project: ProjectInfo;
     goalState: GoalStateManager;
-  }) => GoalRunner;
+  }) => GoalLifecycleService;
   /** Runtime-owned Automation creation path used by the model-facing tool. */
   createAutomation: (workspaceRoot: string, input: {
     readonly name: string;
@@ -62,9 +67,10 @@ export class ProjectContextResolver {
   #contexts = new Map<string, Promise<ProjectContext>>();
   readonly #logger: Logger;
   readonly #projectInfoFactory: (workspaceRoot: string) => Promise<ProjectInfo> | ProjectInfo;
-  readonly #goalStateFactory: (workspaceRoot: string) => GoalStateManager;
+  readonly #goalStateFactory: NonNullable<ProjectContextResolverOptions["goalStateFactory"]>;
+  readonly #goalCommitted: NonNullable<ProjectContextResolverOptions["goalCommitted"]>;
   readonly #goalCancellationFactory: ProjectContextResolverOptions["goalCancellationFactory"];
-  readonly #goalRunnerFactory: ProjectContextResolverOptions["goalRunnerFactory"];
+  readonly #goalLifecycleFactory: ProjectContextResolverOptions["goalLifecycleFactory"];
   readonly #createAutomation: ProjectContextResolverOptions["createAutomation"];
   readonly #hitlFactory: (options: HitlServiceOptions) => HitlService;
   readonly #sessionStoreManager: SessionStoreManager;
@@ -75,11 +81,12 @@ export class ProjectContextResolver {
   constructor(options: ProjectContextResolverOptions) {
     this.#logger = (options.logger ?? silentLogger).child({ module: "projects.context" });
     this.#projectInfoFactory = options.projectInfoFactory;
-    this.#goalStateFactory = options.goalStateFactory ?? ((workspaceRoot) => {
-      return new GoalStateManager(workspaceRoot, this.#logger.child({ module: "goals.state" }));
+    this.#goalStateFactory = options.goalStateFactory ?? ((workspaceRoot, onCommitted) => {
+      return new GoalStateManager(workspaceRoot, this.#logger.child({ module: "goals.state" }), onCommitted);
     });
+    this.#goalCommitted = options.goalCommitted ?? (() => {});
     this.#goalCancellationFactory = options.goalCancellationFactory;
-    this.#goalRunnerFactory = options.goalRunnerFactory;
+    this.#goalLifecycleFactory = options.goalLifecycleFactory;
     this.#createAutomation = options.createAutomation;
     this.#sessionStoreManager = options.sessionStoreManager;
     this.#resumeCoordinatorFactory = options.resumeCoordinatorFactory;
@@ -126,14 +133,11 @@ export class ProjectContextResolver {
     const approvals = this.#approvalsFactory();
     await approvals.load(workspaceRoot);
     const project = await this.#projectInfoFactory(workspaceRoot);
-    const goalState = this.#goalStateFactory(workspaceRoot);
-    const hitl = this.#hitlFactory({
+    const goalState = this.#goalStateFactory(
       workspaceRoot,
-      project,
-      sessions: this.#sessionStoreManager,
-      goalState,
-    });
-    await migrateWorkspaceHitlProjectSlug({
+      (goal) => this.#goalCommitted({ workspaceRoot, project, goal }),
+    );
+    const hitl = this.#hitlFactory({
       workspaceRoot,
       project,
       sessions: this.#sessionStoreManager,
@@ -148,7 +152,7 @@ export class ProjectContextResolver {
     const context: ProjectContext = {
       project,
       goalState,
-      goalRunner: this.#goalRunnerFactory({ workspaceRoot, project, goalState }),
+      goalLifecycle: this.#goalLifecycleFactory({ workspaceRoot, project, goalState }),
       createAutomation: (input) => this.#createAutomation(workspaceRoot, input),
       goalCancellation: this.#goalCancellationFactory({ workspaceRoot, project, goalState, hitl }),
       hitl,
@@ -163,32 +167,5 @@ export class ProjectContextResolver {
     await hitlResumeCoordinator.recover();
 
     return context;
-  }
-}
-
-async function migrateWorkspaceHitlProjectSlug(input: {
-  readonly workspaceRoot: string;
-  readonly project: ProjectInfo;
-  readonly sessions: SessionStoreManager;
-  readonly goalState: GoalStateManager;
-}): Promise<void> {
-  const context = {
-    workspaceRoot: input.workspaceRoot,
-    project: input.project,
-    sessions: input.sessions,
-    goalState: input.goalState,
-  };
-  for (const owner of await collectKnownHitlOwners(context)) {
-    const filePath = await resolveHitlOwnerPath(input.workspaceRoot, owner, {
-      goalState: input.goalState,
-    });
-    await migrateHitlOwnerFileProjectSlug(filePath, owner);
-    if (owner.ownerType === "session") {
-      await migrateSessionHitlCheckpointProjectSlug(
-        input.workspaceRoot,
-        owner.ownerId,
-        input.project.slug,
-      );
-    }
   }
 }

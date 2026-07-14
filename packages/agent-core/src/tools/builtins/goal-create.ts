@@ -28,8 +28,8 @@ export const goalCreateTool: AnyToolDescriptor = defineTool({
   execute: async (input: GoalCreateInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
     try {
       const source = assertGoalCreateAuthorized(ctx);
-      const goal = await ctx.projectContext.goalRunner.create({
-        projectId: ctx.projectContext.project.slug,
+      const goal = await ctx.projectContext.goalLifecycle.create({
+        projectSlug: ctx.projectContext.project.slug,
         createdFromSessionId: source.sessionId,
         objective: input.objective,
         acceptanceCriteria: input.acceptanceCriteria,

@@ -52,7 +52,6 @@ export const PermissionApprovalScopeSchema = z.discriminatedUnion("kind", [
 ]);
 
 export const PermissionApprovalFileSchema = z.object({
-  version: z.literal(1),
   approvals: z.array(z.object({
     id: z.uuid(),
     scope: PermissionApprovalScopeSchema,
@@ -73,7 +72,6 @@ export interface ProjectApprovalMetadata {
 }
 
 const EMPTY_APPROVAL_FILE: PermissionApprovalFile = {
-  version: 1,
   approvals: [],
 };
 
@@ -185,7 +183,6 @@ export class ProjectApprovalManager {
         ...(metadata.grantedBy ? { grantedBy: metadata.grantedBy } : {}),
       };
       const snapshot: PermissionApprovalFile = {
-        version: 1,
         approvals: [...this.#approvalFile.approvals, approval],
       };
       const filePath = approvalsPath(workspaceRoot);

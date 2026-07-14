@@ -15,7 +15,7 @@ const snapshot: ServerConfigSnapshot = {
   config: {
     provider: { local: { npm: "@ai-sdk/openai-compatible", name: "Local", options: { baseURL: "http://localhost/v1", apiKey: { action: "preserve" }, headers: { Authorization: { action: "preserve" } } }, models: { demo: { name: "Demo", limit: { context: 1000, output: 500 }, modalities: { input: ["text"], output: ["text"] }, variants: { fast: { temperature: 0.1 } } } } } },
     agents: { engineer: { model: "local:demo" }, goal_lead: { model: "local:demo" }, plan: { model: "local:demo" }, build: { model: "local:demo" }, reviewer: { model: "local:demo" }, explore: { model: "local:demo" }, librarian: { model: "local:demo" } },
-    mcp: { servers: { custom: { transport: "http", url: "https://example.com/mcp", headers: { Authorization: { action: "preserve" } } } } },
+    mcp: { servers: { custom: { url: "https://example.com/mcp", headers: { Authorization: { action: "preserve" } } } } },
   },
 };
 
@@ -111,7 +111,7 @@ describe("SettingsDialog interactions", () => {
       name: "Existing provider three",
     };
     sparse.config.provider.local.models["model-3"] = structuredClone(snapshot.config.provider.local.models.demo);
-    sparse.config.mcp!.servers["server-3"] = { transport: "http", url: "https://three.example.com/mcp" };
+    sparse.config.mcp!.servers["server-3"] = { url: "https://three.example.com/mcp" };
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={sparse} servers={{}} onReload={async () => {}} /></DialogRoot>));
 
     click("Add provider");
@@ -402,6 +402,8 @@ describe("SettingsDialog interactions", () => {
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={withGithub} servers={{}} onReload={async () => {}} /></DialogRoot>));
     click("GitHub");
     expect((container.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(true);
+    expect(container.textContent).not.toContain("API base URL");
+    expect(container.textContent).not.toContain("https://api.github.com");
   });
 
 });

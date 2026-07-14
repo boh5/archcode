@@ -4,18 +4,18 @@ import { mkdir, mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
-import type { GlobalSSESessionRuntimeChangedEvent, SessionHitlCheckpoint } from "@archcode/protocol";
+import type { GlobalSSESessionRuntimeChangedEvent, SessionHitlBlocker } from "@archcode/protocol";
 import type { ResolvedMcpConfig } from "./config/mcp";
 import {
-  getSessionHitlCheckpointPath,
-  writeSessionHitlCheckpoint,
-} from "./execution/session-hitl-checkpoint";
+  getSessionHitlJournalPath,
+  writeSessionHitlJournalEntry,
+} from "./execution/session-hitl-journal-store";
 import { redactMcpMessage, type McpDiscoveryResult, type McpManager, type McpWarning } from "./mcp/index";
 import { SessionStoreManager } from "./store/session-store-manager";
 import { storeManager } from "./store/store";
 import { defineTool, REDACTION_MARKER, type ToolExecutionContext } from "./tools/index";
 import type { AnyToolDescriptor } from "./tools/types";
-import { createRuntime } from "./runtime";
+import { createRuntime as createProductionRuntime } from "./runtime";
 import { createTestProjectContext } from "./tools/test-project-context";
 import { createInMemoryLogger } from "./logger";
 import { ServerConfigService, resolveServerConfigPath } from "./config";
@@ -59,6 +59,13 @@ async function makeTempRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "archcode-main-"));
   tmpRoots.push(root);
   return root;
+}
+
+async function createRuntime(
+  options: Parameters<typeof createProductionRuntime>[0] = {},
+): ReturnType<typeof createProductionRuntime> {
+  const projectRegistryHomeDir = options.projectRegistryHomeDir ?? await makeTempRoot();
+  return createProductionRuntime({ ...options, projectRegistryHomeDir });
 }
 
 function makeConfig(mcp?: Record<string, unknown>): Record<string, unknown> {
@@ -144,9 +151,8 @@ function makeContext(toolName: string, input: unknown): ToolExecutionContext {
   };
 }
 
-function sessionHitlBlocker(sessionId: string, hitlId: string): SessionHitlCheckpoint {
+function sessionHitlBlocker(sessionId: string, hitlId: string): SessionHitlBlocker {
   return {
-    version: 1,
     hitlId,
     blockingKey: `session:${sessionId}:bash-1`,
     source: { type: "tool_permission", sessionId, toolCallId: "bash-1", toolName: "bash" },
@@ -159,15 +165,14 @@ function sessionHitlBlocker(sessionId: string, hitlId: string): SessionHitlCheck
   };
 }
 
-async function writeSessionPermissionCheckpoint(input: {
+async function writeSessionPermissionEntry(input: {
   readonly workspaceRoot: string;
   readonly projectSlug: string;
   readonly sessionId: string;
   readonly hitlId: string;
 }): Promise<void> {
   const createdAt = new Date().toISOString();
-  await writeSessionHitlCheckpoint({
-    version: 1,
+  await writeSessionHitlJournalEntry({
     phase: "paused",
     phaseUpdatedAt: createdAt,
     hitlId: input.hitlId,
@@ -191,7 +196,6 @@ async function writeSessionPermissionCheckpoint(input: {
     pendingToolCalls: [{ toolCallId: "bash-1", toolName: "bash", input: { command: "while true; do sleep 1; done" } }],
     blockedToolIndex: 0,
     createdAt,
-    kind: "permission",
     permission: { description: "Run a long command" },
   }, input.workspaceRoot, input.sessionId);
 }
@@ -336,7 +340,7 @@ describe("createRuntime", () => {
     unsubscribe();
   });
 
-  test("project removal disposes old runtime state, emits empty snapshots, and re-adds the workspace with a fresh slug context", async () => {
+  test("project removal re-adds a workspace only after its old runtime data is explicitly cleared", async () => {
     const configService = await writeConfig(makeConfig());
     const projectRegistryHomeDir = await makeTempRoot();
     const workspaceRoot = await makeTempRoot();
@@ -380,9 +384,10 @@ describe("createRuntime", () => {
     expect(await runtime.projectRegistry.get(originalProject.slug)).toBeUndefined();
     expect(realtimeProjectSlugs).toEqual([]);
 
+    rmSync(join(workspaceRoot, ".archcode"), { recursive: true, force: true });
     const readded = await runtime.projectRegistry.add({ workspaceRoot, name: "Fresh Project" });
     const freshContext = await runtime.contextResolver.resolve(workspaceRoot);
-    const migrated = await freshContext.hitl.lookup({
+    const oldRecord = await freshContext.hitl.lookup({
       owner: { projectSlug: readded.slug, ownerType: "session", ownerId: session.sessionId },
       hitlId: record.hitlId,
     });
@@ -390,10 +395,7 @@ describe("createRuntime", () => {
 
     expect(readded.slug).toBe("fresh-project");
     expect(freshContext).not.toBe(originalContext);
-    expect(migrated).toMatchObject({
-      status: "found",
-      record: { hitlId: record.hitlId, owner: { projectSlug: readded.slug } },
-    });
+    expect(oldRecord).toEqual({ status: "missing" });
     expect(runtimeSnapshots[0]?.projectSlugs).toEqual([readded.slug]);
     unsubscribe();
   });
@@ -463,8 +465,8 @@ describe("createRuntime", () => {
     await Promise.all([
       persistedSessions.flushSession(rootSessionId, workspaceRoot),
       persistedSessions.flushSession(childSessionId, workspaceRoot),
-      writeSessionPermissionCheckpoint({ workspaceRoot, projectSlug: project.slug, sessionId: rootSessionId, hitlId: rootHitlId }),
-      writeSessionPermissionCheckpoint({ workspaceRoot, projectSlug: project.slug, sessionId: childSessionId, hitlId: childHitlId }),
+      writeSessionPermissionEntry({ workspaceRoot, projectSlug: project.slug, sessionId: rootSessionId, hitlId: rootHitlId }),
+      writeSessionPermissionEntry({ workspaceRoot, projectSlug: project.slug, sessionId: childSessionId, hitlId: childHitlId }),
     ]);
 
     const response = { type: "permission_decision" as const, decision: "approve_once" as const };
@@ -480,7 +482,7 @@ describe("createRuntime", () => {
 
     const activityAtCancellation: string[] = [];
     const unsubscribeHitl = runtime.subscribeHitlEvents((event) => {
-      if (event.payload.status === "cancelled") {
+      if (event.projection.status === "cancelled") {
         activityAtCancellation.push(runtime.getSessionFamilyActivity(workspaceRoot, rootSessionId));
       }
     });
@@ -494,7 +496,7 @@ describe("createRuntime", () => {
         owner: { projectSlug: project.slug, ownerType: "session", ownerId: sessionId },
         hitlId,
       })).toMatchObject({ status: "found", record: { status: "cancelled" } });
-      expect(await Bun.file(getSessionHitlCheckpointPath(workspaceRoot, sessionId)).exists()).toBe(false);
+      expect(await Bun.file(getSessionHitlJournalPath(workspaceRoot, sessionId)).exists()).toBe(false);
     }
     const coldSessions = new SessionStoreManager({ logger });
     expect((await coldSessions.getOrLoad(rootSessionId, workspaceRoot)).getState()).toMatchObject({
@@ -534,7 +536,6 @@ describe("createRuntime", () => {
       makeConfig({
         servers: {
           private_docs: {
-            transport: "http",
             url: "https://mcp.example.test",
             headers: { Authorization: secret },
           },
@@ -561,7 +562,7 @@ describe("createRuntime", () => {
     const configService = await writeConfig(
       makeConfig({
         servers: {
-          public: { transport: "http", url: publicUrl },
+          public: { url: publicUrl },
         },
       }),
     );

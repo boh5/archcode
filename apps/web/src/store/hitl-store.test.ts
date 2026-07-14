@@ -142,10 +142,10 @@ function hitlEvent(input: { hitlId: string; ownerId?: string; status?: HitlProje
     hitlId: eventProjection.hitlId,
     createdAt: 1,
     payload: input.payloadType === "hitl.resolved"
-      ? { type: "hitl.resolved", status: "resolved" }
+      ? { type: "hitl.resolved" }
       : input.payloadType === "hitl.updated"
-        ? { type: "hitl.updated", status: eventProjection.status }
-        : { type: "hitl.request", status: "pending" },
+        ? { type: "hitl.updated" }
+        : { type: "hitl.request" },
     projection: eventProjection,
   };
 }

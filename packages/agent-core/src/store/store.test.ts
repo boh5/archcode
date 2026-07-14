@@ -400,7 +400,7 @@ describe("events log", () => {
     const envelope = state.events[0]!;
     expect(envelope.id).toBe(0);
     expect(envelope.createdAt).toBeGreaterThan(0);
-    expect(envelope.kind).toBe("user-message");
+    expect(envelope.payload.type).toBe("user-message");
     expect(envelope.payload).toEqual({ type: "user-message", content: "hello" });
     expect(state.messages).toHaveLength(1);
     expect(state.messages[0]!.role).toBe("user");
@@ -1417,7 +1417,7 @@ describe("compression events", () => {
     if (compression === undefined) throw new Error("Expected compression event to materialize compression state");
 
     expect(compression.activeBlockRefs).toEqual(["b1"]);
-    expect(compression.blocksByRef.b1?.summary.version).toBe(1);
+    expect(compression.blocksByRef.b1?.summary.sections["Current Objective"]).toBe("Old discussion summary");
     expect(compression.blocksByRef.b1?.tokenEstimate?.savedTokens).toBe(80);
     expect(compression.protectedRefs[0]?.ref).toBe("m0002");
     expect(state.messages.some((message) => message.compacted === true)).toBe(false);

@@ -21,7 +21,6 @@ export class ProjectRegistryError extends Error {
 }
 
 const RegistryFileSchema = z.strictObject({
-  version: z.literal(1),
   projects: z.array(ProjectInfoSchema),
 }).superRefine((file, ctx) => {
   const slugs = new Set<string>();
@@ -98,7 +97,7 @@ function uniqueSlug(baseSlug: string, projects: ProjectInfo[]): string {
 }
 
 function serializeRegistry(projects: ProjectInfo[]): string {
-  return `${JSON.stringify(RegistryFileSchema.parse({ version: 1, projects }), null, 2)}\n`;
+  return `${JSON.stringify(RegistryFileSchema.parse({ projects }), null, 2)}\n`;
 }
 
 export class ProjectRegistry {

@@ -92,7 +92,6 @@ function commandContext(
 
 function summary() {
   return {
-    version: 1 as const,
     childBlockRefs: [],
     sections: {
       "Current Objective": "Continue the current task",
@@ -154,8 +153,8 @@ describe("createCompactCommand", () => {
 
     expect(result.success).toBe(true);
     expect(result.message).toBe("Context compacted. 6 messages summarized. 5 messages preserved in tail.");
-    expect(store.getState().events.at(-1)?.kind).toBe("compact");
-    expect(store.getState().events.some((event) => event.kind === "compression.block_committed")).toBe(false);
+    expect(store.getState().events.at(-1)?.payload.type).toBe("compact");
+    expect(store.getState().events.some((event) => event.payload.type === "compression.block_committed")).toBe(false);
     expect(store.getState().messages.slice(0, 6).every((message) => message.compacted === true)).toBe(true);
     const compactionMessage = store.getState().messages.find((message) => message.parts.some((part) => part.type === "compaction"));
     const compactionPart = compactionMessage?.parts.find((part) => part.type === "compaction") as CompactionPart | undefined;

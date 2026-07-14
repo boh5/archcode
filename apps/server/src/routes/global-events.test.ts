@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { AgentRuntime } from "@archcode/agent-core";
-import type { CompressionBlockCommittedEvent, GlobalSSEEvent, GoalState, HitlProjection } from "@archcode/protocol";
+import type { CompressionBlockCommittedEvent, GlobalSSEEvent, HitlProjection } from "@archcode/protocol";
 import { Hono } from "hono";
 import { createServerApp, createServerEventRuntime } from "../app";
 import { errorHandler } from "../error-handler";
@@ -19,7 +19,6 @@ class CountingGlobalEventBus extends GlobalEventBus {
     };
   }
 }
-
 function createApp(bus: GlobalEventBus, options?: Parameters<typeof createGlobalEventsRoutes>[1]): Hono {
   const app = new Hono();
   app.onError(errorHandler);
@@ -79,7 +78,6 @@ function sessionEvent(input: { slug: string; sessionId: string; eventId: number;
     sessionId: input.sessionId,
     eventId: input.eventId,
     createdAt: 123 + input.eventId,
-    kind: "system-notice",
     payload: { type: "system-notice", message: input.message },
     agentName: "engineer",
   };
@@ -311,38 +309,6 @@ describe("global events route", () => {
     expect(text).toContain("id: shared:singleton:1");
   });
 
-  test("bridges goal state changes from session events to global SSE consumers", async () => {
-    const runtime = createRuntimeWithManualSubscriptions();
-    const serverRuntime = createServerEventRuntime(runtime);
-    const response = await createApp(globalEventBus).request("/api/events");
-    const goal = createGoalState("goal-1", "proj", "running");
-
-    const execution = serverRuntime.startSessionExecution({
-      slug: "proj",
-      workspaceRoot: "/workspace",
-      sessionId: "session-1",
-      userMessage: "run goal",
-    });
-    runtime.emitSession("session-1", {
-      type: "event",
-      slug: "proj",
-      sessionId: "session-1",
-      eventId: 11,
-      createdAt: 1700000000000,
-      kind: "goal.state_change",
-      payload: { type: "goal.state_change", goalId: goal.id, status: goal.status, state: goal },
-      agentName: "engineer",
-    });
-
-    const text = await readUntil(response, (chunk) => chunk.includes("goal.state_change"));
-    expect(text).toContain("id: proj:session-1:11");
-    expect(text).toContain('"goalId":"goal-1"');
-    expect(text).toContain('"projectId":"proj"');
-
-    runtime.resolveExecution();
-    await execution.promise;
-  });
-
   test("bridges compression block commits through existing global SSE consumers", async () => {
     const runtime = createRuntimeWithManualSubscriptions();
     const serverRuntime = createServerEventRuntime(runtime);
@@ -360,7 +326,6 @@ describe("global events route", () => {
       sessionId: "session-1",
       eventId: 12,
       createdAt: 1700000000001,
-      kind: "compression.block_committed",
       payload: compressionBlockCommittedEvent(),
       agentName: "engineer",
     });
@@ -430,29 +395,5 @@ function compressionBlockCommittedEvent(): CompressionBlockCommittedEvent {
       createdAt: 100,
       updatedAt: 100,
     },
-  };
-}
-
-function createGoalState(goalId: string, projectId: string, status: GoalState["status"]): GoalState {
-  return {
-    version: 4,
-    id: goalId,
-    projectId,
-    createdFromSessionId: "session-source",
-    title: "Ship Goal",
-    objective: "Ship the Goal.",
-    acceptanceCriteria: "Reviewer can decide DONE from evidence.",
-    useWorktree: false,
-    status,
-    attempt: 0,
-    reviewGeneration: 0,
-    pendingHitlIds: [],
-    approvalRefs: [],
-    appliedHitlIds: [],
-    mainSessionId: "session-1",
-    childSessionIds: [],
-    createdAt: "2026-07-01T00:00:00.000Z",
-    updatedAt: "2026-07-01T00:00:00.000Z",
-    startedAt: "2026-07-01T00:00:00.000Z",
   };
 }

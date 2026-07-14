@@ -9,7 +9,7 @@ import type { PermissionApprovalRequest } from "./permission/policy-types";
 import type { ProjectContext } from "../projects/types";
 import type { SkillService } from "../skills";
 
-export interface ToolHitlCheckpointContext {
+export interface ToolHitlJournalContext {
   readonly toolCalls: readonly ToolCallLike[];
   readonly completedToolResults: readonly ToolExecutionResultWithCall[];
   readonly pendingToolCalls: readonly ToolCallLike[];
@@ -83,8 +83,8 @@ export interface ToolExecutionContext {
   onInputResolved?: (redactedInput: unknown) => void;
   /** Called immediately before an effectful tool's execute() can perform side effects. */
   onToolAttempt?: (attempt: ToolAttemptMetadata) => MaybePromise<void>;
-  /** Current ordered model tool-call batch details used to checkpoint HITL boundaries. */
-  hitlCheckpoint?: ToolHitlCheckpointContext;
+  /** Current ordered model tool-call batch details recorded in the Session HITL journal. */
+  hitlJournal?: ToolHitlJournalContext;
 }
 
 type ToolExecutionContextInput = ToolExecutionContext;

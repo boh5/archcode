@@ -227,7 +227,7 @@ describe("AddProjectModal", () => {
   });
 
   test("manages directory selection from click, input change, Enter, and Tab", () => {
-    directoryEntries = [{ name: "archcode", path: "/workspace/archcode", kind: "directory" }];
+    directoryEntries = [{ name: "archcode", path: "/workspace/archcode" }];
     const tree = renderWithState(["/workspace", "/workspace", null, 0]);
     const candidate = findAll(tree, (element) => element.props?.["data-index"] === 0)[0];
     const input = findAll(tree, (element) => element.type === "input")[0];

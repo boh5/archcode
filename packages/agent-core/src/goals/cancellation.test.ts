@@ -11,10 +11,10 @@ import type {
 } from "../execution/session-family-control";
 import { SessionFamilyStopConflictError } from "../execution/session-family-control";
 import {
-  deleteSessionHitlCheckpointFile,
-  getSessionHitlCheckpointPath,
-  writeSessionHitlCheckpoint,
-} from "../execution/session-hitl-checkpoint";
+  deleteSessionHitlJournalFile,
+  getSessionHitlJournalPath,
+  writeSessionHitlJournalEntry,
+} from "../execution/session-hitl-journal-store";
 import { HitlService } from "../hitl/service";
 import { silentLogger } from "../logger";
 import { SessionStoreManager } from "../store/session-store-manager";
@@ -110,7 +110,7 @@ async function createRunningGoal(
 ): Promise<GoalState> {
   const goal = await fixture.goalState.commit({
     id: crypto.randomUUID(),
-    projectId: "project-a",
+    projectSlug: "project-a",
     createdFromSessionId: crypto.randomUUID(),
     objective: "Cancel every durable execution owner safely.",
     acceptanceCriteria: "All Session families stop and durable blockers are cleared.",
@@ -145,7 +145,6 @@ function hitlInput(ownerId: string, ownerType: "session" | "goal", hitlId: strin
 
 function blockedHitl(hitlId: string): NonNullable<SessionStoreState["blockedHitl"]> {
   return {
-    version: 1,
     hitlId,
     blockingKey: `session:blocked:${hitlId}`,
     source: { type: "ask_user", sessionId: "main", toolCallId: "ask-1" },
@@ -167,7 +166,7 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 }
 
 describe("GoalCancellationService", () => {
-  test("stops all independent root families and durably clears Goal, Session, HITL, and checkpoint blockers", async () => {
+  test("stops all independent root families and durably clears Goal, Session, HITL, and entry blockers", async () => {
     const fixture = await createFixture();
     const mainId = crypto.randomUUID();
     const childId = crypto.randomUUID();
@@ -213,18 +212,17 @@ describe("GoalCancellationService", () => {
       blockedHitl: blockedHitl(sessionHitlId),
     });
     await fixture.sessions.flushSession(mainId, TMP_ROOT);
-    const checkpointCreatedAt = new Date().toISOString();
-    await writeSessionHitlCheckpoint({
-      version: 1,
+    const entryCreatedAt = new Date().toISOString();
+    await writeSessionHitlJournalEntry({
       phase: "paused",
-      phaseUpdatedAt: checkpointCreatedAt,
+      phaseUpdatedAt: entryCreatedAt,
       hitlId: sessionHitlId,
       blockingKey: `session:${mainId}:ask-1`,
       source: { type: "ask_user", sessionId: mainId, toolCallId: "ask-1" },
       request: {
         owner: { projectSlug: "project-a", ownerType: "session", ownerId: mainId },
         displayPayload: { title: "Pending approval", summary: "Wait for a human decision.", fields: [], redacted: true },
-        createdAt: checkpointCreatedAt,
+        createdAt: entryCreatedAt,
       },
       toolCallId: "ask-1",
       toolName: "ask_user",
@@ -238,8 +236,7 @@ describe("GoalCancellationService", () => {
       completedToolResults: [],
       pendingToolCalls: [{ toolCallId: "ask-1", toolName: "ask_user", input: {} }],
       blockedToolIndex: 0,
-      createdAt: checkpointCreatedAt,
-      kind: "ask_user",
+      createdAt: entryCreatedAt,
     }, TMP_ROOT, mainId);
 
     const cancelled = await fixture.service.cancel(goal.id, { source: "http", reason: "user cancelled" });
@@ -250,7 +247,7 @@ describe("GoalCancellationService", () => {
     expect([...fixture.families.released].sort()).toEqual(expectedRoots);
     expect(cancelled).toMatchObject({ status: "cancelled", pendingHitlIds: [] });
     expect(cancelled.blocker).toBeUndefined();
-    expect(await Bun.file(getSessionHitlCheckpointPath(TMP_ROOT, mainId)).exists()).toBe(false);
+    expect(await Bun.file(getSessionHitlJournalPath(TMP_ROOT, mainId)).exists()).toBe(false);
 
     const coldSessions = new SessionStoreManager({ logger: silentLogger });
     const coldMain = await coldSessions.getOrLoad(mainId, TMP_ROOT);
@@ -393,7 +390,7 @@ describe("GoalCancellationService", () => {
     });
   });
 
-  for (const failurePhase of ["session_hitl", "checkpoint", "session_blocker", "goal_hitl"] as const) {
+  for (const failurePhase of ["session_hitl", "entry", "session_blocker", "goal_hitl"] as const) {
     test(`persists the cancelled tombstone before ${failurePhase} cleanup failure and reconciles idempotently`, async () => {
       const fixture = await createFixture();
       const goal = await createRunningGoal(fixture);
@@ -419,18 +416,17 @@ describe("GoalCancellationService", () => {
         blockedHitl: blockedHitl(sessionHitlId),
       });
       await fixture.sessions.flushSession(mainId, TMP_ROOT);
-      const checkpointCreatedAt = new Date().toISOString();
-      await writeSessionHitlCheckpoint({
-        version: 1,
+      const entryCreatedAt = new Date().toISOString();
+      await writeSessionHitlJournalEntry({
         phase: "paused",
-        phaseUpdatedAt: checkpointCreatedAt,
+        phaseUpdatedAt: entryCreatedAt,
         hitlId: sessionHitlId,
         blockingKey: `session:${mainId}:ask-1`,
         source: { type: "ask_user", sessionId: mainId, toolCallId: "ask-1" },
         request: {
           owner: { projectSlug: "project-a", ownerType: "session", ownerId: mainId },
           displayPayload: { title: "Pending approval", summary: "Wait for a human decision.", fields: [], redacted: true },
-          createdAt: checkpointCreatedAt,
+          createdAt: entryCreatedAt,
         },
         toolCallId: "ask-1",
         toolName: "ask_user",
@@ -444,8 +440,7 @@ describe("GoalCancellationService", () => {
         completedToolResults: [],
         pendingToolCalls: [{ toolCallId: "ask-1", toolName: "ask_user", input: {} }],
         blockedToolIndex: 0,
-        createdAt: checkpointCreatedAt,
-        kind: "ask_user",
+        createdAt: entryCreatedAt,
       }, TMP_ROOT, mainId);
 
       let injected = false;
@@ -460,9 +455,9 @@ describe("GoalCancellationService", () => {
           maybeFail(owner.ownerType === "goal" ? "goal_hitl" : "session_hitl");
           return await fixture.hitl.cancelOwner(owner, reason);
         },
-        deleteSessionCheckpoint: async (workspaceRoot, sessionId) => {
-          maybeFail("checkpoint");
-          await deleteSessionHitlCheckpointFile(workspaceRoot, sessionId);
+        deleteSessionEntry: async (workspaceRoot, sessionId) => {
+          maybeFail("entry");
+          await deleteSessionHitlJournalFile(workspaceRoot, sessionId);
         },
         clearSessionHitlBlockers: async (sessionId, workspaceRoot) => {
           maybeFail("session_blocker");
@@ -513,7 +508,7 @@ describe("GoalCancellationService", () => {
       const coldMain = await coldSessions.getOrLoad(mainId, TMP_ROOT);
       expect(coldMain.getState().blockedByHitlIds).toBeUndefined();
       expect(coldMain.getState().blockedHitl).toBeUndefined();
-      expect(await Bun.file(getSessionHitlCheckpointPath(TMP_ROOT, mainId)).exists()).toBe(false);
+      expect(await Bun.file(getSessionHitlJournalPath(TMP_ROOT, mainId)).exists()).toBe(false);
       expect(await fixture.hitl.lookup({ owner: sessionRecord.owner, hitlId: sessionRecord.hitlId })).toMatchObject({
         status: "found",
         record: { status: "cancelled" },

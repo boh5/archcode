@@ -7,7 +7,7 @@ export type SessionExecutionDispatchState = "missing" | "ready" | "active" | "ac
 
 export interface SessionExecutionIdentity {
   readonly workspaceRoot: string;
-  readonly projectId: string;
+  readonly projectSlug: string;
   readonly sessionId: string;
   readonly executionId: string;
 }
@@ -32,11 +32,8 @@ export interface SessionDispatchGateway {
   dispatch(input: SessionDispatchInput): Promise<{ readonly accepted: boolean }>;
 }
 
-export type AutomationChangeReason = "created" | "updated" | "deleted" | "invocation_changed";
-
 export interface AutomationChangeNotification {
   readonly automationId: string;
-  readonly reason: AutomationChangeReason;
 }
 
 export type AutomationChangeListener = (change: AutomationChangeNotification) => void;
@@ -100,7 +97,7 @@ export class AutomationDispatcher {
     const invocation = await this.#stateManager.readInvocation(invocationId);
     if (invocation.status !== "pending") return invocation;
     const automation = await this.#stateManager.readAutomation(invocation.automationId);
-    const identity = invocationIdentity(this.#stateManager.workspaceRoot, automation.projectId, invocation);
+    const identity = invocationIdentity(this.#stateManager.workspaceRoot, automation.projectSlug, invocation);
     const recovered = await this.#recoverAcceptedInvocation(invocation, identity);
     if (recovered.status !== "pending") return recovered;
     const recoveredState = await this.#gateway.inspectExecution(identity);
@@ -150,7 +147,7 @@ export class AutomationDispatcher {
       : undefined;
     const identity = knownIdentity ?? invocationIdentity(
       this.#stateManager.workspaceRoot,
-      automation!.projectId,
+      automation!.projectSlug,
       invocation,
     );
     const recoveredState = await this.#gateway.inspectExecution(identity);
@@ -175,7 +172,7 @@ export class AutomationDispatcher {
     const automation = await this.#stateManager.readAutomation(invocation.automationId);
     const state = await this.#gateway.inspectExecution({
       workspaceRoot: this.#stateManager.workspaceRoot,
-      projectId: automation.projectId,
+      projectSlug: automation.projectSlug,
       sessionId: previous.sessionId,
       executionId: previous.executionId,
     });
@@ -194,7 +191,6 @@ export class AutomationDispatcher {
   #notifyInvocationChanged(invocation: AutomationInvocation): void {
     this.#onChange?.({
       automationId: invocation.automationId,
-      reason: "invocation_changed",
     });
   }
 }
@@ -206,12 +202,12 @@ function requiredSessionId(invocation: AutomationInvocation): string {
 
 function invocationIdentity(
   workspaceRoot: string,
-  projectId: string,
+  projectSlug: string,
   invocation: AutomationInvocation,
 ): SessionExecutionIdentity {
   return {
     workspaceRoot,
-    projectId,
+    projectSlug,
     sessionId: requiredSessionId(invocation),
     executionId: invocation.executionId,
   };

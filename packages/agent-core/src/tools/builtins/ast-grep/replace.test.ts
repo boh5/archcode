@@ -216,7 +216,6 @@ describe("ast_grep_replace tool", () => {
       if (typeof result === "string") throw new Error("Expected tool execution result");
       expect(JSON.parse(result.output)).toMatchObject({ dryRun: false, applied: true, count: 1 });
       expect(result.meta?.diffs).toMatchObject({
-        version: 1,
         files: [
           {
             path: "src-app.ts",
@@ -477,7 +476,7 @@ describe("ast_grep_replace tool", () => {
       expect(typeof result).toBe("object");
       if (typeof result === "string") throw new Error("Expected tool execution result");
       expect(JSON.parse(result.output)).toMatchObject({ dryRun: false, applied: true, count: 1 });
-      expect(result.meta?.diffs).toEqual({ version: 1, files: [], unsupportedReason: "no_change" });
+      expect(result.meta?.diffs).toEqual({ files: [], unsupportedReason: "no_change" });
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }

@@ -135,7 +135,7 @@ describe("HitlService owner-local storage", () => {
       type: "hitl.event",
       projectSlug: "archcode",
       hitlId: record.hitlId,
-      payload: { type: "hitl.request", status: "pending" },
+      payload: { type: "hitl.request" },
       projection: {
         hitlId: record.hitlId,
         project: { slug: "archcode", name: "ArchCode" },
@@ -149,13 +149,13 @@ describe("HitlService owner-local storage", () => {
     const claimed = await service.claim(identity(record), { type: "question_answer", answers: ["yes"] }, claimMetadata("realtime"));
     expect(claimed?.status).toBe("answered");
     expect(events.at(-1)).toMatchObject({
-      payload: { type: "hitl.updated", status: "answered" },
+      payload: { type: "hitl.updated" },
       projection: { status: "answered", allowedActions: [] },
     });
 
     await service.finishResume(identity(record), "resolved", { type: "question_answer", answers: ["yes"] });
     expect(events.at(-1)).toMatchObject({
-      payload: { type: "hitl.resolved", status: "resolved" },
+      payload: { type: "hitl.resolved" },
       projection: { status: "resolved", allowedActions: [] },
     });
     unsubscribe();

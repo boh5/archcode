@@ -45,7 +45,6 @@ describe("computeToolDiff", () => {
 
     const result = computeToolDiff({ path: "test.txt", before, after });
 
-    expect(result.version).toBe(1);
     expect(result.unsupportedReason).toBeUndefined();
     expect(result.files).toHaveLength(1);
 

@@ -132,7 +132,6 @@ function compressionStateFromSnapshot(snapshot: CompressionStateSnapshot): Compr
   }
 
   return normalizeCompressionState({
-    version: 1,
     refMap: compressionRefMapFromSnapshot(snapshot.refMap),
     blocksByRef,
     activeBlockRefs: snapshot.activeBlockRefs as BlockRef[],
@@ -178,7 +177,7 @@ function compressionBlockFromSnapshot(block: CompressionBlockSnapshot): Compress
 
 function summaryFromSnapshot(summary: string, childBlockRefs: BlockRef[]): CompressionSummary {
   const parsed = parseRenderedSummarySnapshot(summary);
-  if (parsed !== undefined) return { version: 1, sections: parsed, childBlockRefs };
+  if (parsed !== undefined) return { sections: parsed, childBlockRefs };
 
   const sections = Object.fromEntries(
     COMPRESSION_SUMMARY_SECTION_NAMES.map((section) => {
@@ -188,7 +187,7 @@ function summaryFromSnapshot(summary: string, childBlockRefs: BlockRef[]): Compr
     }),
   ) as CompressionSummary["sections"];
 
-  return { version: 1, sections, childBlockRefs };
+  return { sections, childBlockRefs };
 }
 
 function parseRenderedSummarySnapshot(summary: string): CompressionSummary["sections"] | undefined {

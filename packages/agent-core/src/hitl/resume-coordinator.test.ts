@@ -258,7 +258,7 @@ describe("ResumeCoordinator", () => {
     const sessionHitl = await fixture.createSessionHitl();
     const goal = await fixture.goalState.commit({
       id: crypto.randomUUID(),
-      projectId: "archcode",
+      projectSlug: "archcode",
       createdFromSessionId: crypto.randomUUID(),
       objective: "Wait for a future Goal adapter.",
       acceptanceCriteria: "Claimed Goal HITL records a durable resume failure when no adapter exists.",

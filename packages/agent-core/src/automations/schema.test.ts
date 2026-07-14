@@ -43,7 +43,7 @@ describe("automation schemas", () => {
   test("rejects unknown persisted fields at every contract boundary", () => {
     const automation = {
       id: crypto.randomUUID(),
-      projectId: "project-a",
+      projectSlug: "project-a",
       createdFromSessionId: crypto.randomUUID(),
       name: "check",
       trigger: { kind: "interval" as const, everyMs: 30_000 },

@@ -432,8 +432,8 @@ export async function runQueryLoop(
         type: "execution-end",
         status: "waiting_for_human",
         blockedByHitlIds: [err.record.hitlId],
-        blockedToolCallId: err.checkpoint.toolCallId,
-        blockedHitl: err.checkpoint,
+        blockedToolCallId: err.blocker.toolCallId,
+        blockedHitl: err.blocker,
       });
       return { text: lastText, steps };
     }
@@ -974,7 +974,7 @@ async function executeToolCalls(
             ...(acquireSessionCwdTransition ? { acquireSessionCwdTransition } : {}),
             agentName,
             ...(currentDepth !== undefined ? { currentDepth } : {}),
-            hitlCheckpoint: {
+            hitlJournal: {
               toolCalls: executableToolCalls,
               completedToolResults,
               pendingToolCalls: executableToolCalls.slice(executableToolCalls.findIndex((candidate) => candidate.toolCallId === toolCall.toolCallId)),
@@ -1044,7 +1044,7 @@ async function executeToolCalls(
         ...(acquireSessionCwdTransition ? { acquireSessionCwdTransition } : {}),
         agentName,
         ...(currentDepth !== undefined ? { currentDepth } : {}),
-        hitlCheckpoint: {
+        hitlJournal: {
           toolCalls: executableToolCalls,
           completedToolResults,
           pendingToolCalls: executableToolCalls.slice(executableToolCalls.findIndex((candidate) => candidate.toolCallId === toolCall.toolCallId)),
@@ -1145,7 +1145,7 @@ async function executeToolCallsSequentially(input: {
       ...(input.acquireSessionCwdTransition ? { acquireSessionCwdTransition: input.acquireSessionCwdTransition } : {}),
       agentName: input.agentName,
       ...(input.currentDepth !== undefined ? { currentDepth: input.currentDepth } : {}),
-      hitlCheckpoint: {
+      hitlJournal: {
         toolCalls: input.toolCalls,
         completedToolResults: input.completedToolResults,
         pendingToolCalls: input.toolCalls.slice(index),

@@ -142,7 +142,7 @@ describe("GoalLeadContinuationService", () => {
     const secondMainSessionId = crypto.randomUUID();
     const secondGoal = await fixture.context.goalState.commit({
       id: crypto.randomUUID(),
-      projectId: fixture.context.project.slug,
+      projectSlug: fixture.context.project.slug,
       createdFromSessionId: crypto.randomUUID(),
       objective: "Run the second Goal fairly",
       acceptanceCriteria: "The capacity waiter starts next",
@@ -196,7 +196,7 @@ async function createFixture(
   const mainSessionId = crypto.randomUUID();
   const goal = await context.goalState.commit({
     id: crypto.randomUUID(),
-    projectId: context.project.slug,
+    projectSlug: context.project.slug,
     createdFromSessionId: crypto.randomUUID(),
     objective: "Ship continuation safely",
     acceptanceCriteria: "One checked continuation starts",
@@ -204,7 +204,6 @@ async function createFixture(
   });
   const starts: Array<{ sessionId: string; workspaceRoot: string; userMessage: string }> = [];
   const session = {
-    schemaVersion: 1,
     sessionId: mainSessionId,
     rootSessionId: options.rootSessionId ?? mainSessionId,
     cwd: workspaceRoot,

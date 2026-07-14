@@ -25,7 +25,7 @@ export class AutomationInvocationNotFoundError extends Error {
 }
 
 export interface CreateAutomationInput {
-  readonly projectId: string;
+  readonly projectSlug: string;
   readonly createdFromSessionId: string;
   readonly name: string;
   readonly trigger: AutomationTrigger;
@@ -81,7 +81,7 @@ export class AutomationStateManager {
       const scheduledAt = nextFireAt(trigger, now);
       const automation: Automation = {
         id: crypto.randomUUID(),
-        projectId: requireProjectId(input.projectId),
+        projectSlug: requireProjectSlug(input.projectSlug),
         createdFromSessionId: requireUuid(input.createdFromSessionId, "createdFromSessionId"),
         name: validated.name,
         trigger,
@@ -281,7 +281,7 @@ export class AutomationStateManager {
     if (this.#state) return this.#state;
     const file = Bun.file(this.#filePath);
     if (!(await file.exists())) {
-      this.#state = { version: 2, automations: [], invocations: [] };
+      this.#state = { automations: [], invocations: [] };
       return this.#state;
     }
     this.#state = AutomationStateFileSchema.parse(await file.json());
@@ -317,9 +317,9 @@ function hasMissedInvocation(state: AutomationStateFile, automationId: string, d
   ));
 }
 
-function requireProjectId(value: string): string {
+function requireProjectSlug(value: string): string {
   const trimmed = value.trim();
-  if (trimmed.length === 0) throw new Error("projectId must not be empty");
+  if (trimmed.length === 0) throw new Error("projectSlug must not be empty");
   return trimmed;
 }
 

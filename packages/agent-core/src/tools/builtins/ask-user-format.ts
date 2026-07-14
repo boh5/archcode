@@ -4,7 +4,6 @@ import type { ToolExecutionResult } from "../types";
 export const ASK_USER_RESULT_META_KEY = "askUser";
 
 export interface AskUserResultMetadata {
-  version: 1;
   answers: string[][];
 }
 
@@ -25,7 +24,6 @@ export function createAskUserSuccessResult(
   questions: AskUserInput["questions"],
 ): ToolExecutionResult {
   const metadata: AskUserResultMetadata = {
-    version: 1,
     answers: answers.map((answer) => [...answer]),
   };
   return {

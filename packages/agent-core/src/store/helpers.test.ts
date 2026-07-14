@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { chmod, mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { getAssistantText, sessionFileInternals } from "./helpers";
+import { getAssistantText, SessionFileSchema, sessionFileInternals } from "./helpers";
 import { storeManager } from "./store";
 import { __setSessionsDirForTest } from "./sessions-dir";
 import { createEmptySessionStats, type SessionExecutionRecord, type SessionStats, type ToolChildSessionLink } from "@archcode/protocol";
@@ -46,7 +46,7 @@ async function writeSessionFile(sessionId: string, data: unknown): Promise<void>
   await Bun.write(
     sessionFilePath(sessionId),
     JSON.stringify(
-      { schemaVersion: 1, ...(data as Record<string, unknown>) },
+      data,
       (_key, value: unknown) => {
         if (value instanceof Set) return Array.from(value);
         if (value instanceof Map) return Array.from(value.entries());
@@ -242,7 +242,6 @@ function persistedState(
 
 function compressionSummary(childBlockRefs: CompressionState["activeBlockRefs"] = []) {
   return {
-    version: 1 as const,
     childBlockRefs,
     sections: {
       "Current Objective": "Keep the implementation moving",
@@ -403,14 +402,45 @@ describe("session transcript serialization", () => {
     await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
   });
 
-  test("load rejects files without schemaVersion", async () => {
-    const sessionId = uniqueSessionId("missing-schema-version");
+  test("load rejects the removed schemaVersion field", async () => {
+    const sessionId = uniqueSessionId("removed-schema-version");
     await sessionFileInternals.saveSessionTranscript(persistedState(sessionId), TMP_DIR);
     const raw = JSON.parse(await Bun.file(sessionFilePath(sessionId)).text()) as Record<string, unknown>;
-    delete raw.schemaVersion;
+    raw.schemaVersion = 1;
     await writeRawSessionFile(sessionId, JSON.stringify(raw));
 
     await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
+  });
+
+  test("Session event persistence rejects known payload types with missing or extra fields", async () => {
+    const sessionId = uniqueSessionId("strict-event-payload");
+    await sessionFileInternals.saveSessionTranscript(persistedState(sessionId), TMP_DIR);
+    const raw = JSON.parse(await Bun.file(sessionFilePath(sessionId)).text()) as Record<string, unknown>;
+
+    expect(SessionFileSchema.safeParse({
+      ...raw,
+      events: [{ id: 1, createdAt: 1, payload: { type: "text-delta", text: "ok" } }],
+    }).success).toBe(true);
+    expect(SessionFileSchema.safeParse({
+      ...raw,
+      events: [{ id: 1, createdAt: 1, payload: {
+        type: "llm-retry",
+        scope: "session",
+        visibility: "session",
+        attempt: 1,
+        errorKind: "network",
+        message: "Retrying",
+        nextRetryAt: 2,
+      } }],
+    }).success).toBe(true);
+    expect(SessionFileSchema.safeParse({
+      ...raw,
+      events: [{ id: 1, createdAt: 1, payload: { type: "text-delta" } }],
+    }).success).toBe(false);
+    expect(SessionFileSchema.safeParse({
+      ...raw,
+      events: [{ id: 1, createdAt: 1, payload: { type: "text-start", legacy: true } }],
+    }).success).toBe(false);
   });
 
   test("root save writes only owner-local session.json", async () => {
@@ -960,7 +990,6 @@ describe("session transcript serialization", () => {
       "modelInfo",
       "reminders",
       "rootSessionId",
-      "schemaVersion",
       "sessionId",
       "stats",
       "steps",
@@ -977,7 +1006,7 @@ describe("session transcript serialization", () => {
     expect(parsed.reminders).toEqual([]);
     expect(parsed.childSessionLinks).toEqual([]);
     expect(parsed.agentName).toBe("engineer");
-    expect(parsed.schemaVersion).toBe(1);
+    expect(parsed).not.toHaveProperty("schemaVersion");
     expect(parsed.cwd).toBe(TMP_DIR);
     expect(parsed.rootSessionId).toBe(sessionId);
   });
@@ -1222,7 +1251,7 @@ describe("saveSessionTranscript error handling", () => {
 });
 
 describe("compaction and meta transcript round-trip", () => {
-  test("compression state roundtrip preserves refs, blocks, protected refs, token estimates, and summary version", async () => {
+  test("compression state roundtrip preserves refs, blocks, protected refs, and token estimates", async () => {
     const sessionId = uniqueSessionId("compression-state-roundtrip");
     const messages: StoredMessage[] = [
       { id: "msg-1", role: "user", parts: [textPart("part-1", "old user", 1)], createdAt: 1, completedAt: 1 },
@@ -1238,7 +1267,6 @@ describe("compaction and meta transcript round-trip", () => {
     if (loadedCompression === undefined) throw new Error("Expected loaded session to hydrate compression state");
 
     expect(loadedCompression).toEqual(compression);
-    expect(loadedCompression.blocksByRef.b1?.summary.version).toBe(1);
     expect(loadedCompression.blocksByRef.b1?.tokenEstimate?.savedTokens).toBe(1000);
     expect(loadedCompression.protectedRefs[0]?.kind).toBe("latest_tail");
   });

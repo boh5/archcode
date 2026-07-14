@@ -221,7 +221,7 @@ describe("executeAskUser", () => {
         ownerId: ctx.store.getState().sessionId,
       });
       expect(pause.record.source).toEqual({ type: "ask_user", sessionId: ctx.store.getState().sessionId, toolCallId: "call-1" });
-      expect(pause.checkpoint).toMatchObject({ hitlId: pause.record.hitlId, toolCallId: "call-1", toolName: "ask_user" });
+      expect(pause.blocker).toMatchObject({ hitlId: pause.record.hitlId, toolCallId: "call-1", toolName: "ask_user" });
 
       const hitlFile = await Bun.file(getSessionHitlPath(
         ctx.projectContext.project.workspaceRoot,
@@ -242,7 +242,6 @@ describe("executeAskUser", () => {
     expect(result.output).toContain("You can now continue with the user's answers in mind");
     expect(result.meta).toEqual({
       askUser: {
-        version: 1,
         answers: [["my answer"]],
       },
     });
@@ -262,7 +261,6 @@ describe("executeAskUser", () => {
     expect(result.output).toContain('Answer 2: ["Dark mode","Compact"]');
     expect(result.meta).toEqual({
       askUser: {
-        version: 1,
         answers: [["src/main.ts"], ["Dark mode", "Compact"]],
       },
     });

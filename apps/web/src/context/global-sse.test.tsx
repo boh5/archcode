@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { StoreApi } from "zustand";
 import type {
-  GoalState,
   GlobalSessionEventEnvelope,
   GlobalSSEHeartbeatEvent,
   GlobalSSEHitlRealtimeEvent,
@@ -188,35 +187,57 @@ describe("SSE liveness watchdog", () => {
 
 describe("parseSSEEvent", () => {
   test("parses valid event type", () => {
-    const data = JSON.stringify({ type: "event", slug: "p", sessionId: "s", eventId: 1, createdAt: 0, kind: "text-start", payload: { type: "text-start" } });
+    const data = JSON.stringify({ type: "event", slug: "p", sessionId: "s", eventId: 1, createdAt: 0, payload: { type: "text-start" }, agentName: "engineer" });
     const result = parseSSEEvent("event", data);
     expect(result).not.toBeNull();
     expect(result!.type).toBe("event");
   });
 
-  test("parses goal state change event payload", () => {
-    const state = createGoalState("goal-1", "proj", "running");
-    const payload = {
-      type: "goal.state_change",
-      goalId: state.id,
-      status: state.status,
-      state,
-    } as const;
+  test("parses the current llm-retry payload including nextRetryAt", () => {
     const data = JSON.stringify({
       type: "event",
       slug: "p",
       sessionId: "s",
       eventId: 1,
       createdAt: 0,
-      kind: payload.type,
-      payload,
+      payload: {
+        type: "llm-retry",
+        scope: "session",
+        visibility: "session",
+        attempt: 1,
+        errorKind: "network",
+        message: "Retrying",
+        nextRetryAt: 123,
+      },
+      agentName: "engineer",
     });
 
-    const result = parseSSEEvent("event", data);
+    expect(parseSSEEvent("event", data)).not.toBeNull();
+  });
 
-    expect(result).not.toBeNull();
-    expect(result!.type).toBe("event");
-    expect((result as GlobalSessionEventEnvelope).payload).toEqual(payload);
+  test("rejects session envelopes without a valid payload type", () => {
+    const missingType = JSON.stringify({
+      type: "event",
+      slug: "p",
+      sessionId: "s",
+      eventId: 1,
+      createdAt: 0,
+      payload: {},
+      agentName: "engineer",
+    });
+    const removedKind = JSON.stringify({
+      type: "event",
+      slug: "p",
+      sessionId: "s",
+      eventId: 1,
+      createdAt: 0,
+      kind: "text-start",
+      payload: { type: "text-start" },
+      agentName: "engineer",
+    });
+
+    expect(parseSSEEvent("event", missingType)).toBeNull();
+    expect(parseSSEEvent("event", removedKind)).toBeNull();
   });
 
   test("parses heartbeat event", () => {
@@ -278,6 +299,28 @@ describe("parseSSEEvent", () => {
     expect(result).toEqual(event);
   });
 
+  test("rejects removed and malformed global event contracts", () => {
+    const hitlEvent = hitlRealtimeEvent({ projectSlug: "proj", hitlId: "hitl-1" });
+    const resourceEvent = {
+      type: "resource.changed",
+      projectSlug: "proj",
+      resourceType: "goal",
+      resourceId: "goal-1",
+      createdAt: 1,
+    };
+
+    expect(parseSSEEvent("hitl.event", JSON.stringify({
+      ...hitlEvent,
+      payload: { ...hitlEvent.payload, status: "pending" },
+    }))).toBeNull();
+    expect(parseSSEEvent("hitl.event", JSON.stringify({ type: "hitl.event" }))).toBeNull();
+    expect(parseSSEEvent("resource.changed", JSON.stringify({
+      ...resourceEvent,
+      reason: "created",
+    }))).toBeNull();
+    expect(parseSSEEvent("resource.changed", JSON.stringify({ type: "resource.changed" }))).toBeNull();
+  });
+
   test("parses authoritative hitl.snapshot reset events", () => {
     const projection = hitlRealtimeEvent({ projectSlug: "proj", hitlId: "hitl-1" }).projection;
     const event = {
@@ -322,7 +365,7 @@ describe("parseSSEEvent", () => {
   });
 
   test("returns null for unknown SSE event name", () => {
-    const result = parseSSEEvent("unknown-type", JSON.stringify({ type: "event" }));
+    const result = parseSSEEvent("unknown-type", JSON.stringify({ type: "event", slug: "p", sessionId: "s", eventId: 1, createdAt: 0, payload: { type: "text-start" }, agentName: "engineer" }));
     expect(result).not.toBeNull();
   });
 });
@@ -357,7 +400,6 @@ describe("handleSSEEvent", () => {
       sessionId: "session-1",
       eventId: 42,
       createdAt: Date.now(),
-      kind: "text-start",
       payload: { type: "text-start" },
       agentName: "engineer",
     };
@@ -379,7 +421,6 @@ describe("handleSSEEvent", () => {
       sessionId: "unknown-session",
       eventId: 1,
       createdAt: Date.now(),
-      kind: "text-start",
       payload: { type: "text-start" },
       agentName: "engineer",
     };
@@ -414,7 +455,6 @@ describe("handleSSEEvent", () => {
       sessionId: "parent-session",
       eventId: 1,
       createdAt: Date.now(),
-      kind: "tool-child-session-link",
       payload: {
         type: "tool-child-session-link",
         link: {
@@ -447,37 +487,26 @@ describe("handleSSEEvent", () => {
     });
   });
 
-  test("invalidates goal and session queries on goal state change", () => {
-    const state = createGoalState("goal-123", "proj", "running");
-    const envelope: GlobalSessionEventEnvelope = {
-      type: "event",
-      slug: "proj",
-      sessionId: "session-1",
-      eventId: 2,
+  test("refreshes Goal list, active list, and detail without invalidating Sessions", () => {
+    handleSSEEvent({ event: "resource.changed", data: JSON.stringify({
+      type: "resource.changed",
+      projectSlug: "proj",
+      resourceType: "goal",
+      resourceId: "goal-123",
       createdAt: Date.now(),
-      kind: "goal.state_change",
-      payload: {
-        type: "goal.state_change",
-        goalId: state.id,
-        status: state.status,
-        state,
-      },
-      agentName: "engineer",
-    };
+    }) }, deps);
 
-    handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
-
-    expect(mockApplyRemoteEnvelope).toHaveBeenCalledWith(envelope);
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["goals"] });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["goals", "active"] });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({
       queryKey: ["projects", "proj", "goals"],
     });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({
       queryKey: ["projects", "proj", "goals", "goal-123"],
     });
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({
-      queryKey: ["projects", "proj", "sessions", "session-1"],
-    });
+    expect(mockInvalidateQueries.mock.calls.every(([options]) => (
+      !Array.isArray(options.queryKey) || !options.queryKey.includes("sessions")
+    ))).toBe(true);
   });
 
   test("session-local HITL events only invalidate the owning session query", () => {
@@ -487,7 +516,6 @@ describe("handleSSEEvent", () => {
       sessionId: "session-1",
       eventId: 3,
       createdAt: Date.now(),
-      kind: "hitl.resolved",
       payload: {
         type: "hitl.resolved",
         hitlId: "hitl-123",
@@ -748,30 +776,6 @@ describe("handleSSEEvent", () => {
   });
 });
 
-function createGoalState(goalId: string, projectId: string, status: GoalState["status"]): GoalState {
-  return {
-    version: 4,
-    id: goalId,
-    projectId,
-    createdFromSessionId: "origin",
-    title: "Ship Goal",
-    objective: "Simplify the Goal experience",
-    acceptanceCriteria: "Reviewer can decide DONE from logs and diff.",
-    useWorktree: false,
-    status,
-    attempt: 1,
-    reviewGeneration: 0,
-    pendingHitlIds: [],
-    approvalRefs: [],
-    appliedHitlIds: [],
-    mainSessionId: "session-1",
-    childSessionIds: [],
-    createdAt: "2026-07-01T00:00:00.000Z",
-    updatedAt: "2026-07-01T00:00:00.000Z",
-    startedAt: "2026-07-01T00:00:00.000Z",
-  };
-}
-
 function hitlRealtimeEvent(input: {
   projectSlug: string;
   hitlId: string;
@@ -817,8 +821,8 @@ function hitlRealtimeEvent(input: {
     hitlId: input.hitlId,
     createdAt: 1700000000000,
     payload: input.payloadType === "hitl.resolved"
-      ? { type: "hitl.resolved", status: "resolved" }
-      : { type: "hitl.request", status: "pending" },
+      ? { type: "hitl.resolved" }
+      : { type: "hitl.request" },
     projection,
   };
 }

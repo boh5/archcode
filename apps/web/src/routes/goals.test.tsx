@@ -98,7 +98,7 @@ function findElementByText(container: Element, text: string): Element {
 function makeGoal(overrides: Partial<GoalState> = {}): GoalState {
   return {
     id: "goal-1",
-    projectId: "demo",
+    projectSlug: "demo",
     title: "Test Goal",
     objective: "Simplify the Goal experience",
     acceptanceCriteria: "Reviewer can decide DONE from logs and diff.",
@@ -112,7 +112,6 @@ function makeGoal(overrides: Partial<GoalState> = {}): GoalState {
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
-    version: 4,
     createdFromSessionId: "origin",
     useWorktree: overrides.useWorktree ?? false,
     mainSessionId: "main-session",

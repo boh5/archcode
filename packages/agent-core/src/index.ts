@@ -80,7 +80,7 @@ export type { SessionLifecycleServiceOptions } from "./projects/session-lifecycl
 export type { ProjectContext, ProjectInfo } from "./projects/types";
 export type { ResumeCoordinatorResult } from "./hitl/resume-coordinator";
 export { hitlRequiresInspection } from "./hitl/aggregation";
-export { GoalRunner, GoalRunnerError } from "./goals/runner";
+export { GoalLifecycleService, GoalLifecycleServiceError } from "./goals/lifecycle-service";
 export {
   GoalEvidenceRefSchema,
   GoalEvidenceSummarySchema,
@@ -90,9 +90,9 @@ export {
 } from "./goals/review-schema";
 export type {
   GoalActivationOutcome,
-  GoalRunnerCreateInput,
-  GoalRunnerOptions,
-} from "./goals/runner";
+  GoalLifecycleCreateInput,
+  GoalLifecycleServiceOptions,
+} from "./goals/lifecycle-service";
 export { GoalCancellationInProgressError, withGoalExecutionClaimLock } from "./goals/execution-claim";
 export {
   GoalCancellationCleanupError,

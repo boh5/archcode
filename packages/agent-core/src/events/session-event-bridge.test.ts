@@ -47,7 +47,6 @@ function createTestStore(sessionId: string): StoreApi<SessionStoreState> {
         const envelope = {
           id: state.nextEventId,
           createdAt: Date.now(),
-          kind: event.type,
           payload: event,
         };
         const events = [...state.events, envelope];
@@ -100,7 +99,6 @@ describe("SessionEventBridge", () => {
       slug: "project",
       sessionId: "root",
       eventId: 0,
-      kind: "system-notice",
       payload: { type: "system-notice", message: "hello" },
     });
     unsubscribe();
@@ -126,7 +124,6 @@ describe("SessionEventBridge", () => {
     expect(received).toEqual([
       expect.objectContaining({
         type: "event",
-        kind: "session.cwd_changed",
         payload: {
           type: "session.cwd_changed",
           previousCwd: workspaceRoot,
@@ -150,7 +147,7 @@ describe("SessionEventBridge", () => {
     childStore.getState().append({ type: "system-notice", message: "child-ready" });
 
     expect(received).toMatchObject([
-      { type: "event", slug: "project", sessionId: "child", kind: "system-notice" },
+      { type: "event", slug: "project", sessionId: "child" },
     ]);
     unsubscribe();
   });
@@ -161,8 +158,8 @@ describe("SessionEventBridge", () => {
       eventOffset: 3,
       nextEventId: 5,
       events: [
-        { id: 3, createdAt: 10, kind: "system-notice", payload: { type: "system-notice", message: "three" } },
-        { id: 4, createdAt: 11, kind: "system-notice", payload: { type: "system-notice", message: "four" } },
+        { id: 3, createdAt: 10, payload: { type: "system-notice", message: "three" } },
+        { id: 4, createdAt: 11, payload: { type: "system-notice", message: "four" } },
       ],
     });
     const received: unknown[] = [];

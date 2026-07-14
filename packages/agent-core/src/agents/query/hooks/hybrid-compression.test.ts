@@ -37,7 +37,6 @@ beforeEach(() => {
 
 function summary(childBlockRefs: string[] = []) {
   return {
-    version: 1 as const,
     childBlockRefs,
     sections: {
       "Current Objective": childBlockRefs.length === 0 ? "Continue the current task" : `Continue after (${childBlockRefs[0]})`,
@@ -121,8 +120,8 @@ describe("hybrid compression hooks", () => {
 
     const state = store.getState();
     const compactionMessage = state.messages.find((storedMessage) => storedMessage.parts.some((part) => part.type === "compaction"));
-    expect(state.events.at(-1)?.kind).toBe("compact");
-    expect(state.events.some((event) => event.kind === "compression.block_committed")).toBe(false);
+    expect(state.events.at(-1)?.payload.type).toBe("compact");
+    expect(state.events.some((event) => event.payload.type === "compression.block_committed")).toBe(false);
     expect(compactionMessage).toBeDefined();
     expect(state.messages.slice(0, 2).every((storedMessage) => storedMessage.compacted === true)).toBe(true);
     expect(state.messages.slice(2).some((storedMessage) => storedMessage.compacted === true)).toBe(false);
@@ -136,8 +135,8 @@ describe("hybrid compression hooks", () => {
     const call = callCtx(store, 850);
     await hook.beforeModelCall(call);
 
-    expect(store.getState().events.filter((event) => event.kind === "compact")).toHaveLength(1);
-    expect(store.getState().events.filter((event) => event.kind === "compression.block_committed")).toHaveLength(0);
+    expect(store.getState().events.filter((event) => event.payload.type === "compact")).toHaveLength(1);
+    expect(store.getState().events.filter((event) => event.payload.type === "compression.block_committed")).toHaveLength(0);
     expect(call.messages).toHaveLength(0);
   });
 
@@ -164,8 +163,8 @@ describe("hybrid compression hooks", () => {
 
     await hook.beforeModelBuild(buildCtx(store, 920));
 
-    expect(store.getState().events.at(-1)?.kind).toBe("compact");
-    expect(store.getState().events.some((event) => event.kind === "compression.block_committed")).toBe(false);
+    expect(store.getState().events.at(-1)?.payload.type).toBe("compact");
+    expect(store.getState().events.some((event) => event.payload.type === "compression.block_committed")).toBe(false);
     expect(store.getState().messages.some((storedMessage) => storedMessage.parts.some((part) => part.type === "compaction"))).toBe(true);
   });
 
@@ -177,8 +176,8 @@ describe("hybrid compression hooks", () => {
     const call = callCtx(store, 920);
     await hook.beforeModelCall(call);
 
-    expect(store.getState().events.filter((event) => event.kind === "compact")).toHaveLength(1);
-    expect(store.getState().events.filter((event) => event.kind === "compression.block_committed")).toHaveLength(0);
+    expect(store.getState().events.filter((event) => event.payload.type === "compact")).toHaveLength(1);
+    expect(store.getState().events.filter((event) => event.payload.type === "compression.block_committed")).toHaveLength(0);
     expect(call.messages).toHaveLength(0);
   });
 
@@ -188,8 +187,8 @@ describe("hybrid compression hooks", () => {
 
     await hook.beforeModelBuild(buildCtx(store, 850));
 
-    expect(store.getState().events.some((event) => event.kind === "compact")).toBe(false);
-    expect(store.getState().events.some((event) => event.kind === "compression.block_failed")).toBe(false);
+    expect(store.getState().events.some((event) => event.payload.type === "compact")).toBe(false);
+    expect(store.getState().events.some((event) => event.payload.type === "compression.block_failed")).toBe(false);
     expect(streamText).not.toHaveBeenCalled();
   });
 
@@ -207,7 +206,7 @@ describe("hybrid compression hooks", () => {
     expect(store.getState().compression?.activeBlockRefs).toEqual([]);
     expect(store.getState().compression?.blocksByRef).toEqual({});
     expect(store.getState().compression?.failures).toHaveLength(0);
-    expect(store.getState().events.at(-1)?.kind).toBe("compact");
+    expect(store.getState().events.at(-1)?.payload.type).toBe("compact");
     expect(streamText).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(store.getState().toModelMessages())).not.toContain("compression-block");
   });
@@ -217,7 +216,7 @@ describe("hybrid compression hooks", () => {
     const hook = createHybridCompressionHook(silentLogger);
 
     await hook.beforeModelBuild(buildCtx(store, 850));
-    expect(store.getState().events.filter((event) => event.kind === "compact")).toHaveLength(1);
+    expect(store.getState().events.filter((event) => event.payload.type === "compact")).toHaveLength(1);
     streamText.mockClear();
 
     for (let extra = 1; extra <= 4; extra += 1) {
@@ -226,7 +225,7 @@ describe("hybrid compression hooks", () => {
     }
 
     expect(streamText).not.toHaveBeenCalled();
-    expect(store.getState().events.filter((event) => event.kind === "compact")).toHaveLength(1);
+    expect(store.getState().events.filter((event) => event.payload.type === "compact")).toHaveLength(1);
   });
 
   test("opens circuit breaker after three forced hard compact skips", async () => {

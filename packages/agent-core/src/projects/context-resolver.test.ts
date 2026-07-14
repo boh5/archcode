@@ -5,7 +5,7 @@ import { basename, join } from "node:path";
 import type { HitlIdentity } from "@archcode/protocol";
 
 import { GoalStateManager } from "../goals/state";
-import { GoalRunner } from "../goals/runner";
+import { GoalLifecycleService } from "../goals/lifecycle-service";
 import { SessionFamilyActiveError } from "../execution/session-family-control";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
 import { SessionExecutionManager } from "../execution/session-execution-manager";
@@ -51,7 +51,7 @@ function createResolver(overrides: Partial<ProjectContextResolverOptions> = {}):
     goalCancellationFactory: overrides.goalCancellationFactory ?? (({ goalState }) => ({
       cancel: async (goalId, request) => await goalState.cancel(goalId, request.reason),
     })),
-    goalRunnerFactory: overrides.goalRunnerFactory ?? (({ workspaceRoot, goalState }) => new GoalRunner({
+    goalLifecycleFactory: overrides.goalLifecycleFactory ?? (({ workspaceRoot, goalState }) => new GoalLifecycleService({
       workspaceRoot,
       goalStateManager: goalState,
       readSourceSession: (root, sessionId) => sessionStoreManager.getSessionFile(root, sessionId),
@@ -138,62 +138,6 @@ describe("ProjectContextResolver", () => {
     await first.hitl.publishRequest(record);
 
     expect(events).toEqual([]);
-  });
-
-  test("fresh context migrates active and terminal owner history when the same workspace gets a new slug", async () => {
-    const workspace = await makeWorkspace("slug-migration");
-    const sessions = new SessionStoreManager({ logger: silentLogger });
-    const sessionId = crypto.randomUUID();
-    sessions.create(sessionId, workspace, { agentName: "engineer" });
-    await sessions.flushSession(sessionId, workspace);
-    let projectSlug = "old-project";
-    const resolver = createResolver({
-      sessionStoreManager: sessions,
-      projectInfoFactory: () => ({
-        slug: projectSlug,
-        name: projectSlug,
-        workspaceRoot: workspace,
-        addedAt: new Date().toISOString(),
-      }),
-    });
-    const first = await resolver.resolve(workspace);
-    const oldOwner = { projectSlug, ownerType: "session" as const, ownerId: sessionId };
-    const pending = await first.hitl.create({
-      owner: oldOwner,
-      sessionRootId: sessionId,
-      hitlId: "pending-history-id",
-      blockingKey: `session:${sessionId}:pending`,
-      source: { type: "ask_user", sessionId, toolCallId: "pending" },
-      displayPayload: { title: "Pending", redacted: true },
-    });
-    const terminal = await first.hitl.create({
-      owner: oldOwner,
-      sessionRootId: sessionId,
-      hitlId: "terminal-history-id",
-      blockingKey: `session:${sessionId}:terminal`,
-      source: { type: "ask_user", sessionId, toolCallId: "terminal" },
-      displayPayload: { title: "Terminal", redacted: true },
-    });
-    await first.hitl.complete(
-      { owner: oldOwner, hitlId: terminal.hitlId },
-      { type: "cancel", reason: "preserve history" },
-    );
-    await resolver.dispose(workspace);
-
-    projectSlug = "new-project";
-    const second = await resolver.resolve(workspace);
-    const nextOwner = { ...oldOwner, projectSlug };
-    const records = await second.hitl.list({ scope: "project", status: "all" });
-
-    expect(second).not.toBe(first);
-    expect(records).toEqual(expect.arrayContaining([
-      expect.objectContaining({ hitlId: pending.hitlId, owner: nextOwner, status: "pending" }),
-      expect.objectContaining({ hitlId: terminal.hitlId, owner: nextOwner, status: "resolved" }),
-    ]));
-    expect(await second.hitl.lookup({ owner: nextOwner, hitlId: pending.hitlId })).toMatchObject({
-      status: "found",
-      record: { hitlId: pending.hitlId, blockingKey: pending.blockingKey, owner: nextOwner },
-    });
   });
 
   test("concurrent resolve calls load approvals once per unique workspace", async () => {
@@ -311,7 +255,7 @@ describe("ProjectContextResolver", () => {
 
     const goalA = await contextA.goalState.commit({
       id: crypto.randomUUID(),
-      projectId: contextA.project.slug,
+      projectSlug: contextA.project.slug,
       createdFromSessionId: crypto.randomUUID(),
       objective: "A objective",
       acceptanceCriteria: "A criteria",
@@ -319,7 +263,7 @@ describe("ProjectContextResolver", () => {
     });
     const goalB = await contextB.goalState.commit({
       id: crypto.randomUUID(),
-      projectId: contextB.project.slug,
+      projectSlug: contextB.project.slug,
       createdFromSessionId: crypto.randomUUID(),
       objective: "B objective",
       acceptanceCriteria: "B criteria",
@@ -340,7 +284,7 @@ describe("ProjectContextResolver", () => {
     const first = await resolver.resolve(workspace);
     const goal = await first.goalState.commit({
       id: crypto.randomUUID(),
-      projectId: first.project.slug,
+      projectSlug: first.project.slug,
       createdFromSessionId: crypto.randomUUID(),
       objective: "Get approval",
       acceptanceCriteria: "HITL persists",

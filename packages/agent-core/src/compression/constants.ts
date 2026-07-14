@@ -2,9 +2,6 @@ export const SOFT_NUDGE_RATIO = 0.55;
 export const STRONG_NUDGE_RATIO = 0.70;
 export const HARD_COMPACT_RATIO = 0.85;
 
-export const COMPRESSION_SUMMARY_FORMAT_VERSION = 1;
-export const COMPRESSION_STATE_VERSION = 1;
-
 export const COMPRESSION_STRATEGIES = ["dynamic-range"] as const;
 
 export const COMPRESSION_TRIGGERS = [

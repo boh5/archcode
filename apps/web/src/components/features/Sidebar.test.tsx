@@ -609,9 +609,8 @@ describe("Sidebar", () => {
     projects = [project];
     goals = [
       {
-        version: 4,
         id: "goal-1",
-        projectId: "archcode",
+        projectSlug: "archcode",
         createdFromSessionId: "origin",
         title: "First Goal",
         objective: "Simplify the Goal experience",
@@ -630,9 +629,8 @@ describe("Sidebar", () => {
         updatedAt: "1",
       },
       {
-        version: 4,
         id: "goal-2",
-        projectId: "archcode",
+        projectSlug: "archcode",
         createdFromSessionId: "origin",
         title: "Second Goal",
         objective: "Simplify the Goal experience",
@@ -690,9 +688,8 @@ describe("Sidebar", () => {
     projects = [project];
     goals = [
       {
-        version: 4,
         id: "goal-abc",
-        projectId: "archcode",
+        projectSlug: "archcode",
         createdFromSessionId: "origin",
         title: "Target Goal",
         objective: "Simplify the Goal experience",

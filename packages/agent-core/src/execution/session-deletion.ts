@@ -11,7 +11,7 @@ export interface SessionDeletionPreflight {
 export type SessionDeletionOwnerType =
   | "goal"
   | "session_hitl"
-  | "session_hitl_checkpoint";
+  | "session_hitl_journal";
 
 export interface SessionDeletionOwnerDetail {
   readonly sessionId: string;

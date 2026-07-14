@@ -1,6 +1,5 @@
 import { HTTP_USER_AGENT } from "@archcode/protocol";
 import {
-  GITHUB_API_BASE_URL,
   GithubIntegrationTokenError,
   type GithubIntegrationConfig,
   type ResolvedGithubIntegrationConfig,
@@ -10,6 +9,7 @@ import { REDACTION_MARKER as SECURITY_REDACTION_MARKER, redactString } from "../
 
 export const GITHUB_REST_API_VERSION = "2022-11-28" as const;
 export const REDACTION_MARKER = SECURITY_REDACTION_MARKER;
+const GITHUB_API_BASE_URL = "https://api.github.com";
 
 export type IntegrationErrorCode =
   | "integration_auth_missing"
@@ -352,7 +352,6 @@ export interface GitHubReadCiFailuresForRefResult {
 export type GitHubFetchAdapter = typeof fetch;
 
 export interface GitHubIntegrationProvider {
-  readonly apiBaseUrl: typeof GITHUB_API_BASE_URL;
   resolveTokenMetadata(): GitHubTokenResolutionMetadata;
   requestJson<T>(request: GitHubRequest<T>): Promise<GitHubResponse<T>>;
   redactMessage(message: string): string;
@@ -448,8 +447,6 @@ interface ResolvedTokenState {
 const GITHUB_TOKEN_PREFIXES = ["ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_"];
 
 export class GitHubRestProvider implements GitHubIntegrationProvider {
-  readonly apiBaseUrl: typeof GITHUB_API_BASE_URL = GITHUB_API_BASE_URL;
-
   readonly #config?: GithubIntegrationConfig;
   readonly #resolvedConfig?: ResolvedGithubIntegrationConfig;
   readonly #env: NodeJS.ProcessEnv;
@@ -571,7 +568,7 @@ export class GitHubRestProvider implements GitHubIntegrationProvider {
   }
 
   #buildUrl(path: string, query?: Record<string, string | number | undefined>): string {
-    const url = new URL(path, this.apiBaseUrl);
+    const url = new URL(path, GITHUB_API_BASE_URL);
     for (const [key, value] of Object.entries(query ?? {})) {
       if (value !== undefined) {
         url.searchParams.set(key, String(value));

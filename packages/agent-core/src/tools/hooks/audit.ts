@@ -2,7 +2,6 @@ import type { AfterHook, ToolExecutionContext, ToolExecutionResult } from "../ty
 import { redactValue } from "../security";
 
 export interface AuditEvent {
-  version: 1;
   toolName: string;
   toolCallId: string;
   input: unknown;
@@ -30,7 +29,6 @@ export function createAuditHook(options: AuditHookOptions = {}): AfterHook {
     ctx: ToolExecutionContext,
   ): Promise<void> {
     const event: AuditEvent = {
-      version: 1,
       toolName: ctx.toolName,
       toolCallId: ctx.toolCallId,
       input: redactValue(ctx.redactedInput ?? ctx.input),

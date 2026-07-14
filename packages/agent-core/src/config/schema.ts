@@ -3,15 +3,12 @@ import { providersConfigSchema, modelCallOptionsSchema } from "./provider";
 import { mcpConfigSchema } from "./mcp";
 import { expandEnvVars } from "./env";
 
-export const GITHUB_API_BASE_URL = "https://api.github.com" as const;
-
 const ENV_NAME_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
 
 export const githubIntegrationConfigSchema = z
   .object({
     enabled: z.boolean().optional(),
     tokenEnv: z.string().min(1).optional(),
-    apiBaseUrl: z.literal(GITHUB_API_BASE_URL).optional(),
     defaultOwner: z.string().min(1).optional(),
     defaultRepo: z.string().min(1).optional(),
   })
@@ -40,7 +37,6 @@ export const memoryExtractionConfigSchema = z.strictObject({
 
 export const archcodeConfigSchema = z
   .object({
-    $schema: z.string().optional(),
     provider: providersConfigSchema,
     mcp: mcpConfigSchema.optional(),
     integrations: integrationsConfigSchema.optional(),
@@ -65,7 +61,6 @@ export type ArchCodeConfig = z.infer<typeof archcodeConfigSchema>;
 
 export interface ResolvedGithubIntegrationConfig {
   readonly enabled: boolean;
-  readonly apiBaseUrl: typeof GITHUB_API_BASE_URL;
   readonly token?: string;
   readonly tokenSource?: string;
   readonly defaultOwner?: string;
@@ -86,17 +81,15 @@ export function resolveGithubIntegrationConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): ResolvedGithubIntegrationConfig {
   if (!config) {
-    return { enabled: false, apiBaseUrl: GITHUB_API_BASE_URL };
+    return { enabled: false };
   }
 
   const enabled = config.enabled ?? true;
-  const apiBaseUrl = config?.apiBaseUrl ?? GITHUB_API_BASE_URL;
   const attemptedEnvNames: string[] = [];
 
   if (!enabled) {
     return {
       enabled,
-      apiBaseUrl,
       defaultOwner: config.defaultOwner,
       defaultRepo: config.defaultRepo,
     };
@@ -111,7 +104,6 @@ export function resolveGithubIntegrationConfig(
       if (tokenFromExpandedEnvName !== undefined && tokenFromExpandedEnvName !== "") {
         return {
           enabled,
-          apiBaseUrl,
           token: tokenFromExpandedEnvName,
           tokenSource: expandedTokenEnv,
           defaultOwner: config.defaultOwner,
@@ -124,7 +116,6 @@ export function resolveGithubIntegrationConfig(
       } else {
         return {
           enabled,
-          apiBaseUrl,
           token: expandedTokenEnv,
           tokenSource: "integrations.github.tokenEnv",
           defaultOwner: config.defaultOwner,
@@ -139,7 +130,6 @@ export function resolveGithubIntegrationConfig(
       if (token !== undefined && token !== "") {
         return {
           enabled,
-          apiBaseUrl,
           token,
           tokenSource: expandedTokenEnv,
           defaultOwner: config.defaultOwner,
@@ -157,7 +147,6 @@ export function resolveGithubIntegrationConfig(
     if (token !== undefined && token !== "") {
       return {
         enabled,
-        apiBaseUrl,
         token,
         tokenSource: envName,
         defaultOwner: config?.defaultOwner,

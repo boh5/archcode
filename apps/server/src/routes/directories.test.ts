@@ -51,8 +51,8 @@ describe("directories routes", () => {
     expect(res.status).toBe(200);
     expect(body).toEqual({
       entries: [
-        { name: "alpha", path: join(root, "alpha"), kind: "directory" },
-        { name: "beta", path: join(root, "beta"), kind: "directory" },
+        { name: "alpha", path: join(root, "alpha") },
+        { name: "beta", path: join(root, "beta") },
       ],
       truncated: false,
     });
@@ -121,7 +121,7 @@ describe("directories routes", () => {
     expect(res.status).toBe(200);
     expect(body.entries).toHaveLength(100);
     expect(body.truncated).toBe(true);
-    expect(body.entries.every((entry) => entry.kind === "directory")).toBe(true);
+    expect(body.entries.every((entry) => Object.keys(entry).sort().join(",") === "name,path")).toBe(true);
   });
 
   test("GET /api/directories/list rejects a non-positive or non-integer limit", async () => {
@@ -165,7 +165,7 @@ describe("directories routes", () => {
 
       expect(res.status).toBe(200);
       if (probe === undefined) {
-        expect(body.entries).toEqual([{ name: "readable", path: readable, kind: "directory" }]);
+        expect(body.entries).toEqual([{ name: "readable", path: readable }]);
       } else {
         expect(body.entries.map((entry) => entry.name)).toContain("readable");
       }

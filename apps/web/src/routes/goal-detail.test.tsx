@@ -111,7 +111,7 @@ function makeEvidenceRef(overrides: Partial<GoalEvidenceRef> = {}): GoalEvidence
 function makeGoal(overrides: Partial<GoalState> = {}): GoalState {
   return {
     id: "goal-1",
-    projectId: "demo",
+    projectSlug: "demo",
     title: "Test Goal",
     objective: "Simplify the Goal experience",
     acceptanceCriteria: "Reviewer can decide DONE from logs and diff.",
@@ -121,7 +121,6 @@ function makeGoal(overrides: Partial<GoalState> = {}): GoalState {
     pendingHitlIds: [],
     approvalRefs: [],
     appliedHitlIds: [],
-    version: 4,
     createdFromSessionId: "origin",
     useWorktree: false,
     mainSessionId: "main-session",
@@ -156,7 +155,7 @@ function seedRealtimeHitl(...projections: HitlProjection[]): void {
       owner: projection.owner,
       hitlId: projection.hitlId,
       createdAt: Date.now(),
-      payload: { type: "hitl.request", status: "pending" },
+      payload: { type: "hitl.request" },
       projection,
     };
     hitlStore.getState().applyRealtimeEvent(event);

@@ -226,10 +226,10 @@ describe("ProjectRegistry", () => {
     await expect(registry.list()).rejects.toThrow(ProjectRegistryError);
   });
 
-  test("load rejects an old registry schema version", async () => {
+  test("load rejects the removed registry version field", async () => {
     const registryDir = join(tmpHome, ".archcode", "projects");
     await mkdir(registryDir, { recursive: true });
-    await writeFile(join(registryDir, "index.json"), JSON.stringify({ version: 0, projects: [] }));
+    await writeFile(join(registryDir, "index.json"), JSON.stringify({ version: 1, projects: [] }));
 
     const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
 
@@ -242,14 +242,13 @@ describe("ProjectRegistry", () => {
     const addedAt = new Date().toISOString();
     const projectA = { slug: "duplicate", name: "Project A", workspaceRoot: tmpWorkspaceA, addedAt };
     const projectB = { slug: "duplicate", name: "Project B", workspaceRoot: tmpWorkspaceB, addedAt };
-    await writeFile(join(registryDir, "index.json"), JSON.stringify({ version: 1, projects: [projectA, projectB] }));
+    await writeFile(join(registryDir, "index.json"), JSON.stringify({ projects: [projectA, projectB] }));
 
     await expect(new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger }).list())
       .rejects.toThrow(ProjectRegistryError);
 
     const normalizedAlias = join(tmpWorkspaceA, "nested", "..");
     await writeFile(join(registryDir, "index.json"), JSON.stringify({
-      version: 1,
       projects: [projectA, { ...projectB, slug: "second", workspaceRoot: normalizedAlias }],
     }));
     await expect(new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger }).list())

@@ -1,13 +1,13 @@
 import type { StoreApi } from "zustand";
 import { createStore } from "zustand/vanilla";
 import type { ModelMessage } from "ai";
-import { createEmptySessionStats, isStreamEvent } from "@archcode/protocol";
+import { createEmptySessionStats } from "@archcode/protocol";
 import type { AgentName } from "../agents/names";
 import { collectSessionTreeIds } from "../execution/session-tree";
 import { createEmptyCompressionState, resolveCompressionOriginalRange, type CompressionOriginalRangeResult } from "../compression";
 import type {
   SessionModelInfo,
-  SessionHitlCheckpoint,
+  SessionHitlBlocker,
   SessionTreeNode,
   SessionTreeResponse,
 } from "@archcode/protocol";
@@ -196,7 +196,6 @@ export class SessionStoreManager {
           const envelope: SessionEventEnvelope = {
             id: state.nextEventId,
             createdAt: Date.now(),
-            kind: event.type,
             payload: event,
           };
 
@@ -289,7 +288,7 @@ export class SessionStoreManager {
   async setHitlBlocker(
     sessionId: string,
     workspaceRoot: string,
-    blocker: SessionHitlCheckpoint,
+    blocker: SessionHitlBlocker,
     replacesHitlId?: string,
   ): Promise<void> {
     const store = await this.getOrLoad(sessionId, workspaceRoot);
@@ -971,7 +970,7 @@ function reduceStoreEvent(
   state: SessionStoreState,
   event: SessionEventPayload,
 ): Partial<SessionStoreState> {
-  if (isStreamEvent(event)) return reduceStreamEvent(state, event);
+  if (event.type !== "shutdown") return reduceStreamEvent(state, event);
 
   return {};
 }

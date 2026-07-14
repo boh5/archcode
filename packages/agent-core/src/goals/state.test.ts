@@ -1,9 +1,9 @@
-import { afterAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import { PROJECT_STATE_DIR_NAME, type GoalEvidenceRef } from "@archcode/protocol";
+import { PROJECT_STATE_DIR_NAME, type GoalEvidenceRef, type GoalState } from "@archcode/protocol";
 
 import {
   GoalAlreadyExistsError,
@@ -34,7 +34,7 @@ afterAll(async () => {
 function commitInput(overrides: Partial<Parameters<GoalStateManager["commit"]>[0]> = {}) {
   return {
     id: GOAL_ID,
-    projectId: "project-a",
+    projectSlug: "project-a",
     createdFromSessionId: SOURCE_SESSION_ID,
     objective: "Persist a committed Goal envelope.",
     acceptanceCriteria: "State transitions and reviewer finalization remain valid.",
@@ -60,7 +60,7 @@ function reviewerAuth(goalId: string) {
   };
 }
 
-describe("GoalStateSchema v4", () => {
+describe("GoalStateSchema", () => {
   test("requires committed provenance and execution ownership with no draft fallback", async () => {
     const goal = await commitGoal();
     expect(GoalStateSchema.parse(goal)).toEqual(goal);
@@ -71,7 +71,7 @@ describe("GoalStateSchema v4", () => {
     expect(GoalStateSchema.safeParse(withoutSource).success).toBe(false);
     expect(GoalStateSchema.safeParse(withoutMain).success).toBe(false);
     expect(GoalStateSchema.safeParse(withoutStarted).success).toBe(false);
-    expect(GoalStateSchema.safeParse({ ...goal, version: 2 }).success).toBe(false);
+    expect(GoalStateSchema.safeParse({ ...goal, version: 4 }).success).toBe(false);
     expect(GoalStateSchema.safeParse({ ...goal, status: "draft" }).success).toBe(false);
     expect(GoalStateSchema.safeParse({ ...goal, workflowId: GOAL_ID }).success).toBe(false);
   });
@@ -99,14 +99,44 @@ describe("GoalStateSchema v4", () => {
 });
 
 describe("GoalStateManager", () => {
+  test("notifies exactly once after each durable commit", async () => {
+    const committed = mock((_state: GoalState) => {});
+    const manager = new GoalStateManager(TMP_DIR, undefined, committed);
+    const goal = await commitGoal(manager);
+    await manager.beginReview(goal.id);
+
+    expect(committed).toHaveBeenCalledTimes(2);
+    expect(committed.mock.calls.map(([state]) => state.status)).toEqual(["running", "reviewing"]);
+  });
+
+  test("keeps committed command results when notification fails", async () => {
+    const manager = new GoalStateManager(TMP_DIR, undefined, () => {
+      throw new Error("subscriber unavailable");
+    });
+
+    const goal = await commitGoal(manager);
+    expect(goal.status).toBe("running");
+    expect((await manager.beginReview(goal.id)).status).toBe("reviewing");
+  });
+
+  test("keeps committed command results when async notification rejects", async () => {
+    const manager = new GoalStateManager(TMP_DIR, undefined, async () => {
+      throw new Error("subscriber rejected");
+    });
+
+    const goal = await commitGoal(manager);
+    expect(goal.status).toBe("running");
+    expect((await manager.beginReview(goal.id)).status).toBe("reviewing");
+    expect((await manager.read(goal.id)).status).toBe("reviewing");
+  });
+
   test("atomically commits a running Goal from preallocated ids", async () => {
     const manager = new GoalStateManager(TMP_DIR);
     const goal = await commitGoal(manager);
 
     expect(goal).toMatchObject({
-      version: 4,
       id: GOAL_ID,
-      projectId: "project-a",
+      projectSlug: "project-a",
       createdFromSessionId: SOURCE_SESSION_ID,
       mainSessionId: MAIN_SESSION_ID,
       status: "running",
@@ -131,7 +161,7 @@ describe("GoalStateManager", () => {
     const manager = new GoalStateManager(TMP_DIR);
     const goal = await commitGoal(manager);
     const path = join(TMP_DIR, PROJECT_STATE_DIR_NAME, "goals", goal.id, "goal.json");
-    await Bun.write(path, JSON.stringify({ ...goal, version: 2 }));
+    await Bun.write(path, JSON.stringify({ ...goal, version: 4 }));
     await expect(manager.read(goal.id)).rejects.toBeInstanceOf(GoalStateError);
     await expect(manager.read("not-a-uuid")).rejects.toBeInstanceOf(GoalInvalidIdError);
     await expect(manager.read(crypto.randomUUID())).rejects.toBeInstanceOf(GoalNotFoundError);
@@ -195,7 +225,7 @@ describe("GoalStateManager", () => {
   test("lists committed Goals deterministically by project", async () => {
     const manager = new GoalStateManager(TMP_DIR);
     const secondId = "880e8400-e29b-41d4-a716-446655440003";
-    await manager.commit(commitInput({ id: secondId, projectId: "project-b", mainSessionId: crypto.randomUUID() }));
+    await manager.commit(commitInput({ id: secondId, projectSlug: "project-b", mainSessionId: crypto.randomUUID() }));
     await manager.commit(commitInput());
     expect((await manager.listGoals()).map((goal) => goal.id)).toEqual([GOAL_ID, secondId]);
     expect((await manager.listGoals("project-a")).map((goal) => goal.id)).toEqual([GOAL_ID]);

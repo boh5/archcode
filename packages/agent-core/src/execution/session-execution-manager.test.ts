@@ -290,7 +290,6 @@ async function writeSessionFile(input: {
 }): Promise<void> {
   const rootSessionId = input.rootSessionId ?? input.sessionId;
   const file: SessionFile = {
-    schemaVersion: 1,
     sessionId: input.sessionId,
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -587,7 +586,7 @@ describe("SessionExecutionManager", () => {
 
     expect(flushedSessionIds).toEqual([sessionId]);
     expect(agent.store.getState().events.some((event) => (
-      event.kind === "execution-start"
+      event.payload.type === "execution-start"
       && (event.payload as { executionId?: string }).executionId === "loop-attempt-1"
     ))).toBe(true);
     expect(agent.runMock).not.toHaveBeenCalled();
@@ -619,8 +618,7 @@ describe("SessionExecutionManager", () => {
     expect(agent.runMock).not.toHaveBeenCalled();
     expect(agent.store.getState().isRunning).toBe(false);
     expect(agent.store.getState().events.at(-1)).toMatchObject({
-      kind: "execution-end",
-      payload: { status: "failed", error: "durable execution-start flush failed" },
+      payload: { type: "execution-end", status: "failed", error: "durable execution-start flush failed" },
     });
   });
 
@@ -1203,7 +1201,7 @@ describe("SessionExecutionManager", () => {
     expect(handle.store.getState().cwd).toBe(worktreeCwd);
     expect(handle.store.getState().agentName).toBe("explore");
     expect(parentStore.getState().events
-      .filter((event) => event.kind === "tool-child-session-link")
+      .filter((event) => event.payload.type === "tool-child-session-link")
       .map((event) => (event.payload as { link: ToolChildSessionLink }).link.status)).toEqual(["linked", "running", "completed"]);
     expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({
       parentSessionId: parentId,
@@ -1569,7 +1567,7 @@ describe("SessionExecutionManager", () => {
       childRunMessage: (message) => { childRunMessage = message; },
       childRunStarted: () => {
         linkStatusesAtRunStart = parentStore.getState().events
-          .filter((event) => event.kind === "tool-child-session-link")
+          .filter((event) => event.payload.type === "tool-child-session-link")
           .map((event) => (event.payload as { link: ToolChildSessionLink }).link.status);
         const childSessionId = parentStore.getState().childSessionLinks.at(-1)?.childSessionId;
         const childStore = childSessionId === undefined ? undefined : storeManager.get(childSessionId, workspaceRoot);
@@ -1596,9 +1594,9 @@ describe("SessionExecutionManager", () => {
     expect(linkStatusesAtRunStart).toEqual(["linked", "running"]);
     expect(promptsAtRunStart).toEqual(["inspect"]);
     expect(childRunMessage).toBe("");
-    expect(received.some((event) => "kind" in (event as { kind?: unknown }) && (event as { kind: unknown }).kind === "user-message")).toBe(true);
-    expect(received.some((event) => "kind" in (event as { kind?: unknown }) && (event as { kind: unknown }).kind === "execution-start")).toBe(true);
-    expect(received.some((event) => "kind" in (event as { kind?: unknown }) && (event as { kind: unknown }).kind === "text-delta")).toBe(true);
+    expect(received.some((event) => "payload" in (event as { payload?: unknown }) && (event as { payload: { type: unknown } }).payload.type === "user-message")).toBe(true);
+    expect(received.some((event) => "payload" in (event as { payload?: unknown }) && (event as { payload: { type: unknown } }).payload.type === "execution-start")).toBe(true);
+    expect(received.some((event) => "payload" in (event as { payload?: unknown }) && (event as { payload: { type: unknown } }).payload.type === "text-delta")).toBe(true);
   });
 
   test("startChildExecution persists child identity and prompt before exposing its parent link or running it", async () => {
@@ -1698,8 +1696,8 @@ describe("SessionExecutionManager", () => {
     expect(childRunMessage).toBe("");
     expect(getUserMessageTexts(handle.store.getState())).toEqual(["inspect"]);
     expect(handle.store.getState().messages.some((message) => message.role === "assistant")).toBe(false);
-    expect(received.some((event) => "kind" in (event as { kind?: unknown }) && (event as { kind: unknown }).kind === "user-message")).toBe(true);
-    expect(received.some((event) => "kind" in (event as { kind?: unknown }) && (event as { kind: unknown }).kind === "execution-start")).toBe(true);
+    expect(received.some((event) => "payload" in (event as { payload?: unknown }) && (event as { payload: { type: unknown } }).payload.type === "user-message")).toBe(true);
+    expect(received.some((event) => "payload" in (event as { payload?: unknown }) && (event as { payload: { type: unknown } }).payload.type === "execution-start")).toBe(true);
 
     childRun.resolve({ text: "live child done", steps: 1 });
     const result = await handle.result;
@@ -1710,7 +1708,7 @@ describe("SessionExecutionManager", () => {
       childSessionId: handle.sessionId,
       status: "completed",
     });
-    expect(received.some((event) => "kind" in (event as { kind?: unknown }) && (event as { kind: unknown }).kind === "text-delta")).toBe(true);
+    expect(received.some((event) => "payload" in (event as { payload?: unknown }) && (event as { payload: { type: unknown } }).payload.type === "text-delta")).toBe(true);
   });
 
   test("child HITL pause remains non-terminal and emits no failed reminder", async () => {
@@ -1766,12 +1764,12 @@ describe("SessionExecutionManager", () => {
         childSessionId = parentStore.getState().childSessionLinks.at(-1)?.childSessionId ?? "";
       },
     });
-    const received: Array<{ kind?: string; payload?: { link?: ToolChildSessionLink } }> = [];
+    const received: Array<{ payload?: { type?: string; link?: ToolChildSessionLink } }> = [];
     const unsubscribe = manager.subscribe({
       slug: "project",
       workspaceRoot,
       sessionId: parentId,
-      onEvent: (event) => received.push(event as { kind?: string; payload?: { link?: ToolChildSessionLink } }),
+      onEvent: (event) => received.push(event as { payload?: { type?: string; link?: ToolChildSessionLink } }),
     });
     const parentExecution = manager.startExecution({
       slug: "project",
@@ -1808,7 +1806,7 @@ describe("SessionExecutionManager", () => {
     await manager.updateChildSessionLinkForHitl(workspaceRoot, childSessionId, "completed");
 
     expect(received
-      .filter((event) => event.kind === "tool-child-session-link")
+      .filter((event) => event.payload?.type === "tool-child-session-link")
       .map((event) => event.payload?.link?.status)).toEqual([
         "linked",
         "running",
@@ -2001,7 +1999,7 @@ describe("SessionExecutionManager", () => {
     first.abort();
     await first.result;
     expect(parentStore.getState().events
-      .filter((event) => event.kind === "tool-child-session-link")
+      .filter((event) => event.payload.type === "tool-child-session-link")
       .map((event) => (event.payload as { link: ToolChildSessionLink }).link.status)).toContain("cancelling");
     expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({ status: "cancelled" });
     expect(() => sessionAgentManager.acquireSlot(workspaceRoot, "after-cancel")).not.toThrow();
@@ -2032,7 +2030,10 @@ describe("SessionExecutionManager", () => {
     await Promise.resolve();
     agent.store.getState().append({ type: "system-notice", message: "hello" });
 
-    expect(received.filter((event) => "kind" in (event as { kind?: unknown }) && (event as { kind: unknown }).kind === "system-notice")).toMatchObject([{ type: "event", slug: "project", sessionId: "events", kind: "system-notice" }]);
+    expect(received.filter((event) => {
+      const candidate = event as { type?: unknown; payload?: { type?: unknown } };
+      return candidate.type === "event" && candidate.payload?.type === "system-notice";
+    })).toMatchObject([{ type: "event", slug: "project", sessionId: "events", payload: { type: "system-notice" } }]);
     unsubscribe();
     run.resolve({ text: "done", steps: 1 });
     await execution.promise;
@@ -2048,7 +2049,10 @@ describe("SessionExecutionManager", () => {
     await Promise.resolve();
     child.store.getState().append({ type: "system-notice", message: "child" });
 
-    expect(received.filter((event) => "kind" in (event as { kind?: unknown }) && (event as { kind: unknown }).kind === "system-notice")).toMatchObject([{ type: "event", slug: "project", sessionId: "child-events", kind: "system-notice" }]);
+    expect(received.filter((event) => {
+      const candidate = event as { type?: unknown; payload?: { type?: unknown } };
+      return candidate.type === "event" && candidate.payload?.type === "system-notice";
+    })).toMatchObject([{ type: "event", slug: "project", sessionId: "child-events", payload: { type: "system-notice" } }]);
     unsubscribe();
     await execution.promise;
   });
@@ -2139,7 +2143,7 @@ describe("SessionExecutionManager", () => {
           if (ownerCreatedDuringAbort) {
             throw new SessionDeleteOwnerConflictError([{
               sessionId: rootId,
-              ownerType: "session_hitl_checkpoint",
+              ownerType: "session_hitl_journal",
               ownerId: rootId,
             }]);
           }

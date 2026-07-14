@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import { writeSessionHitlCheckpoint } from "../execution/session-hitl-checkpoint";
+import { writeSessionHitlJournalEntry } from "../execution/session-hitl-journal-store";
 import { SessionDeleteOwnerConflictError } from "../execution/session-deletion";
 import { silentLogger } from "../logger";
 import { SessionStoreManager } from "../store/session-store-manager";
@@ -59,7 +59,7 @@ describe("SessionLifecycleService", () => {
     } satisfies Partial<SessionDeleteOwnerConflictError>);
   });
 
-  test("rejects active Session HITL and durable checkpoints", async () => {
+  test("rejects active Session HITL and durable entries", async () => {
     const fixture = createFixture();
     fixture.sessions.create(BLOCKED_SESSION_ID, TMP_ROOT, { agentName: "engineer" });
     await fixture.sessions.flushSession(BLOCKED_SESSION_ID, TMP_ROOT);
@@ -76,18 +76,17 @@ describe("SessionLifecycleService", () => {
       },
       hitlId: "hitl-active",
     });
-    const checkpointCreatedAt = new Date().toISOString();
-    await writeSessionHitlCheckpoint({
-      version: 1,
+    const entryCreatedAt = new Date().toISOString();
+    await writeSessionHitlJournalEntry({
       phase: "paused",
-      phaseUpdatedAt: checkpointCreatedAt,
-      hitlId: "hitl-checkpoint",
+      phaseUpdatedAt: entryCreatedAt,
+      hitlId: "hitl-entry",
       blockingKey: "permission-1",
       source: { type: "tool_permission", sessionId: BLOCKED_SESSION_ID, toolCallId: "write-1", toolName: "file_write" },
       request: {
         owner: { projectSlug: "project", ownerType: "session", ownerId: BLOCKED_SESSION_ID },
         displayPayload: { title: "Write file", redacted: true },
-        createdAt: checkpointCreatedAt,
+        createdAt: entryCreatedAt,
       },
       toolCallId: "write-1",
       toolName: "file_write",
@@ -101,8 +100,7 @@ describe("SessionLifecycleService", () => {
       completedToolResults: [],
       pendingToolCalls: [{ toolCallId: "write-1", toolName: "file_write", input: {} }],
       blockedToolIndex: 0,
-      createdAt: checkpointCreatedAt,
-      kind: "permission",
+      createdAt: entryCreatedAt,
       permission: { description: "Write file" },
     }, TMP_ROOT, BLOCKED_SESSION_ID);
 
@@ -113,7 +111,7 @@ describe("SessionLifecycleService", () => {
     })).rejects.toMatchObject({
       owners: [
         { sessionId: BLOCKED_SESSION_ID, ownerType: "session_hitl", hitlIds: ["hitl-active"] },
-        { sessionId: BLOCKED_SESSION_ID, ownerType: "session_hitl_checkpoint", hitlIds: ["hitl-checkpoint"] },
+        { sessionId: BLOCKED_SESSION_ID, ownerType: "session_hitl_journal", hitlIds: ["hitl-entry"] },
       ],
     });
   });

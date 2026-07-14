@@ -224,9 +224,8 @@ describe("web session query contracts", () => {
     globalThis.document = { cookie: "" } as Document;
     const goals: GoalState[] = [
       {
-        version: 4,
         id: "goal-1",
-        projectId: TEST_PROJECT_SLUG,
+        projectSlug: TEST_PROJECT_SLUG,
         createdFromSessionId: "session-origin",
         title: "Test Goal",
         objective: "Simplify the Goal experience",
@@ -262,9 +261,8 @@ describe("web session query contracts", () => {
   test("goalQueryOptions fetches a single goal by goalId", async () => {
     globalThis.document = { cookie: "" } as Document;
     const goal: GoalState = {
-      version: 4,
       id: "goal-1",
-      projectId: TEST_PROJECT_SLUG,
+      projectSlug: TEST_PROJECT_SLUG,
       createdFromSessionId: "session-origin",
       title: "Single Goal",
       objective: "Simplify the Goal experience",
@@ -359,9 +357,8 @@ describe("web session query contracts", () => {
     globalThis.document = { cookie: "" } as Document;
     const goals: DashboardGoal[] = [
       {
-        version: 4,
         id: "goal-1",
-        projectId: TEST_PROJECT_SLUG,
+        projectSlug: TEST_PROJECT_SLUG,
         createdFromSessionId: "session-origin",
         title: "Active Goal",
         objective: "Simplify the Goal experience",
@@ -378,7 +375,6 @@ describe("web session query contracts", () => {
         startedAt: "2026-01-01T00:00:00Z",
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-01T00:00:00Z",
-        projectSlug: TEST_PROJECT_SLUG,
         projectName: TEST_PROJECT_NAME,
       },
     ];

@@ -8,10 +8,11 @@ import { silentLogger } from "../logger";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { getSessionPath } from "../store/sessions-dir";
 import { managedWorktreeNames } from "../worktrees";
-import { GoalRunner, GoalSourceSessionError, type GoalRunnerOptions } from "./runner";
+import { withGoalExecutionClaimLock } from "./execution-claim";
+import { GoalLifecycleService, GoalLifecycleServiceError, GoalSourceSessionError, type GoalLifecycleServiceOptions } from "./lifecycle-service";
 import { GoalReviewFinalizationError, GoalReviewerAuthorizationError, GoalStateManager, GoalTransitionError } from "./state";
 
-const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-runner", crypto.randomUUID());
+const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-lifecycle", crypto.randomUUID());
 const SOURCE_SESSION_ID = "11111111-1111-4111-8111-111111111111";
 
 let workspaceRoot = "";
@@ -31,7 +32,7 @@ afterAll(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });
 });
 
-function runnerOptions(overrides: Partial<GoalRunnerOptions> = {}): GoalRunnerOptions {
+function lifecycleOptions(overrides: Partial<GoalLifecycleServiceOptions> = {}): GoalLifecycleServiceOptions {
   return {
     goalStateManager: manager,
     workspaceRoot,
@@ -44,7 +45,7 @@ function runnerOptions(overrides: Partial<GoalRunnerOptions> = {}): GoalRunnerOp
 
 function createInput() {
   return {
-    projectId: "project-a",
+    projectSlug: "project-a",
     createdFromSessionId: SOURCE_SESSION_ID,
     objective: "Create and activate a committed Goal.",
     acceptanceCriteria: "One stable Goal Lead Session and initial execution are recovered.",
@@ -52,7 +53,7 @@ function createInput() {
 }
 
 function evidenceRef(summary = "Targeted tests passed"): GoalEvidenceRef {
-  return { kind: "test_output", ref: "runner-test", summary };
+  return { kind: "test_output", ref: "lifecycle-test", summary };
 }
 
 function reviewerAuth(goalId: string) {
@@ -64,7 +65,7 @@ function reviewerAuth(goalId: string) {
   };
 }
 
-describe("GoalRunner committed creation", () => {
+describe("GoalLifecycleService committed creation", () => {
   test("commits a running Goal before creating its stable Goal Lead Session and execution", async () => {
     const observed: string[] = [];
     const onGoalCommitted = mock(async (goal) => {
@@ -75,13 +76,13 @@ describe("GoalRunner committed creation", () => {
       observed.push(`start:${input.sessionId}`);
       return {} as never;
     });
-    const runner = new GoalRunner(runnerOptions({ onGoalCommitted, startCheckedExecutionWithinGoalClaim: start }));
+    const stateManager = new GoalStateManager(workspaceRoot, undefined, onGoalCommitted);
+    const lifecycle = new GoalLifecycleService(lifecycleOptions({ goalStateManager: stateManager, startCheckedExecutionWithinGoalClaim: start }));
 
-    const goal = await runner.create(createInput());
+    const goal = await lifecycle.create(createInput());
     const main = await sessions.getSessionFile(workspaceRoot, goal.mainSessionId);
 
     expect(goal).toMatchObject({
-      version: 4,
       status: "running",
       createdFromSessionId: SOURCE_SESSION_ID,
       startedAt: expect.any(String),
@@ -102,9 +103,40 @@ describe("GoalRunner committed creation", () => {
     expect(onGoalCommitted).toHaveBeenCalledTimes(1);
   });
 
+  test("runs the creation hook once and never for later state commits", async () => {
+    const onCreated = mock((_goal: import("@archcode/protocol").GoalState) => {});
+    const lifecycle = new GoalLifecycleService(lifecycleOptions({ onCreated }));
+    const goal = await lifecycle.create(createInput());
+    await lifecycle.beginReview(goal.id);
+
+    expect(onCreated).toHaveBeenCalledTimes(1);
+  });
+
+  test("activates the committed Goal even when the creation hook fails", async () => {
+    const start = mock(async () => ({}) as never);
+    const lifecycle = new GoalLifecycleService(lifecycleOptions({
+      onCreated: async () => { throw new Error("title queue unavailable"); },
+      startCheckedExecutionWithinGoalClaim: start,
+    }));
+
+    await expect(lifecycle.create(createInput())).rejects.toThrow("title queue unavailable");
+
+    const [goal] = await manager.listGoals();
+    expect(goal).toBeDefined();
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({
+      slug: "project-a",
+      sessionId: goal!.mainSessionId,
+      executionId: `goal-initial:${goal!.id}`,
+    }));
+    expect(await sessions.getSessionFile(workspaceRoot, goal!.mainSessionId)).toMatchObject({
+      goalId: goal!.id,
+      agentName: "goal_lead",
+    });
+  });
+
   test("keeps committed Goal ownership after its source Session is deleted", async () => {
-    const runner = new GoalRunner(runnerOptions());
-    const goal = await runner.create(createInput());
+    const lifecycle = new GoalLifecycleService(lifecycleOptions());
+    const goal = await lifecycle.create(createInput());
 
     sessions.delete(SOURCE_SESSION_ID, workspaceRoot);
     await rm(dirname(getSessionPath(workspaceRoot, SOURCE_SESSION_ID)), {
@@ -137,10 +169,10 @@ describe("GoalRunner committed creation", () => {
       const sourceId = crypto.randomUUID();
       const source = sessions.create(sourceId, workspaceRoot, identity);
       await sessions.flushSession(sourceId, workspaceRoot);
-      const runner = new GoalRunner(runnerOptions({
+      const lifecycle = new GoalLifecycleService(lifecycleOptions({
         readSourceSession: async () => (await sessions.getSessionFile(workspaceRoot, source.getState().sessionId)),
       }));
-      await expect(runner.create({ ...createInput(), createdFromSessionId: sourceId }))
+      await expect(lifecycle.create({ ...createInput(), createdFromSessionId: sourceId }))
         .rejects.toBeInstanceOf(GoalSourceSessionError);
       expect(await manager.listGoals()).toHaveLength(index === invalidSources.length ? 1 : 0);
     }
@@ -148,13 +180,13 @@ describe("GoalRunner committed creation", () => {
 
   test("recovers the commit-to-session window with the same preallocated identity", async () => {
     const firstEnsure = mock(async () => { throw new Error("temporary storage outage"); });
-    const first = new GoalRunner(runnerOptions({ ensureSessionFile: firstEnsure }));
+    const first = new GoalLifecycleService(lifecycleOptions({ ensureSessionFile: firstEnsure }));
     const committed = await first.create(createInput());
     expect(committed.status).toBe("running");
     expect(await sessions.getSessionFile(workspaceRoot, committed.mainSessionId).catch(() => undefined)).toBeUndefined();
 
     const start = mock(async () => ({}) as never);
-    const restarted = new GoalRunner(runnerOptions({ startCheckedExecutionWithinGoalClaim: start }));
+    const restarted = new GoalLifecycleService(lifecycleOptions({ startCheckedExecutionWithinGoalClaim: start }));
     await restarted.reconcile();
 
     expect((await sessions.getSessionFile(workspaceRoot, committed.mainSessionId)).goalId).toBe(committed.id);
@@ -190,14 +222,14 @@ describe("GoalRunner committed creation", () => {
       validateManagedClaim,
       remove: mock(async () => ({ detached: true, branchDeleted: true })),
     } as never;
-    const first = new GoalRunner(runnerOptions({
+    const first = new GoalLifecycleService(lifecycleOptions({
       worktreeService,
       ensureSessionFile: mock(async () => { throw new Error("temporary Session persistence outage"); }),
     }));
     const goal = await first.create({ ...createInput(), useWorktree: true });
     expect(goal.worktree).toBeDefined();
 
-    const restarted = new GoalRunner(runnerOptions({ worktreeService }));
+    const restarted = new GoalLifecycleService(lifecycleOptions({ worktreeService }));
     await restarted.reconcile();
 
     expect(createWorktree).toHaveBeenCalledTimes(1);
@@ -212,11 +244,11 @@ describe("GoalRunner committed creation", () => {
       await sessions.flushSession(input.sessionId, workspaceRoot);
       throw new Error("connection dropped after execution acceptance");
     });
-    const first = new GoalRunner(runnerOptions({ startCheckedExecutionWithinGoalClaim: acceptedThenUnknown }));
+    const first = new GoalLifecycleService(lifecycleOptions({ startCheckedExecutionWithinGoalClaim: acceptedThenUnknown }));
     const goal = await first.create(createInput());
 
     const shouldNotReplay = mock(async () => ({}) as never);
-    await new GoalRunner(runnerOptions({ startCheckedExecutionWithinGoalClaim: shouldNotReplay })).reconcile();
+    await new GoalLifecycleService(lifecycleOptions({ startCheckedExecutionWithinGoalClaim: shouldNotReplay })).reconcile();
 
     const session = await sessions.getSessionFile(workspaceRoot, goal.mainSessionId);
     expect(session.executions.filter((execution) => execution.id === `goal-initial:${goal.id}`)).toHaveLength(1);
@@ -226,61 +258,53 @@ describe("GoalRunner committed creation", () => {
   test("leaves capacity and busy failures recoverable but marks deterministic identity conflicts failed", async () => {
     for (const name of ["SessionFamilyActiveError", "ConcurrentSessionLimitError"]) {
       const failure = Object.assign(new Error(name), { name });
-      const runner = new GoalRunner(runnerOptions({
+      const lifecycle = new GoalLifecycleService(lifecycleOptions({
         startCheckedExecutionWithinGoalClaim: mock(async () => { throw failure; }),
       }));
-      expect((await runner.create(createInput())).status).toBe("running");
+      expect((await lifecycle.create(createInput())).status).toBe("running");
     }
 
-    const conflicting = new GoalRunner(runnerOptions({
+    const conflicting = new GoalLifecycleService(lifecycleOptions({
       ensureSessionFile: async (root, id, options) => {
         const session = await sessions.ensureSessionFile(root, id, options);
         return { ...session, goalId: crypto.randomUUID() };
       },
     }));
     const failed = await conflicting.create(createInput());
-    expect(failed).toMatchObject({ status: "failed", lastError: { name: "GoalRunnerError" } });
+    expect(failed).toMatchObject({ status: "failed", lastError: { name: "GoalLifecycleServiceError" } });
   });
 });
 
-describe("GoalRunner lifecycle", () => {
-  test("preserves review, retry, failure, cancellation, children, and budget lifecycle", async () => {
-    const runner = new GoalRunner(runnerOptions());
-    const goal = await runner.create(createInput());
-    expect((await runner.beginReview(goal.id)).status).toBe("reviewing");
-    const notDone = await runner.finalizeReview(goal.id, {
+describe("GoalLifecycleService lifecycle", () => {
+  test("orchestrates review, retry, and failure lifecycle", async () => {
+    const lifecycle = new GoalLifecycleService(lifecycleOptions());
+    const goal = await lifecycle.create(createInput());
+    expect((await lifecycle.beginReview(goal.id)).status).toBe("reviewing");
+    const notDone = await lifecycle.finalizeReview(goal.id, {
       expectedReviewGeneration: 1,
       verdict: "NOT_DONE",
       summary: "More work is required.",
       authorization: reviewerAuth(goal.id),
     });
     expect(notDone.status).toBe("not_done");
-    expect((await runner.retry(goal.id)).status).toBe("running");
-    expect((await runner.addChildSession(goal.id, "child-1")).childSessionIds).toEqual(["child-1"]);
-    expect((await runner.updateBudgetSummary(goal.id, {
-      status: "ok",
-      usedTokens: 10,
-      maxTokens: 100,
-      updatedAt: new Date().toISOString(),
-    })).budget?.usedTokens).toBe(10);
-    expect((await runner.fail(goal.id, "build failed")).status).toBe("failed");
-    expect((await runner.retry(goal.id)).status).toBe("running");
-    expect((await runner.cancel(goal.id, "stop")).status).toBe("cancelled");
+    expect((await lifecycle.retry(goal.id)).status).toBe("running");
+    expect((await lifecycle.fail(goal.id, "build failed")).status).toBe("failed");
+    expect((await lifecycle.retry(goal.id)).status).toBe("running");
   });
 
   test("finalizes DONE only with reviewer authorization and evidence", async () => {
-    const runner = new GoalRunner(runnerOptions());
-    const goal = await runner.create(createInput());
-    await runner.beginReview(goal.id);
+    const lifecycle = new GoalLifecycleService(lifecycleOptions());
+    const goal = await lifecycle.create(createInput());
+    await lifecycle.beginReview(goal.id);
 
-    await expect(runner.finalizeReview(goal.id, {
+    await expect(lifecycle.finalizeReview(goal.id, {
       expectedReviewGeneration: 1,
       verdict: "DONE",
       summary: "Missing evidence.",
       evidenceRefs: [],
       authorization: reviewerAuth(goal.id),
     })).rejects.toBeInstanceOf(GoalReviewFinalizationError);
-    await expect(runner.finalizeReview(goal.id, {
+    await expect(lifecycle.finalizeReview(goal.id, {
       expectedReviewGeneration: 1,
       verdict: "DONE",
       summary: "Wrong reviewer.",
@@ -288,7 +312,7 @@ describe("GoalRunner lifecycle", () => {
       authorization: { ...reviewerAuth(goal.id), agentName: "build" },
     })).rejects.toBeInstanceOf(GoalReviewerAuthorizationError);
 
-    const done = await runner.finalizeReview(goal.id, {
+    const done = await lifecycle.finalizeReview(goal.id, {
       expectedReviewGeneration: 1,
       verdict: "DONE",
       summary: "All criteria verified.",
@@ -296,6 +320,57 @@ describe("GoalRunner lifecycle", () => {
       authorization: reviewerAuth(goal.id),
     });
     expect(done.status).toBe("done");
-    await expect(runner.cancel(goal.id)).rejects.toBeInstanceOf(GoalTransitionError);
+    await expect(lifecycle.retry(goal.id)).rejects.toBeInstanceOf(GoalTransitionError);
+  });
+
+  test("validates prepared workspace and stable main Session identity before retry commit", async () => {
+    const lifecycle = new GoalLifecycleService(lifecycleOptions());
+    const goal = await lifecycle.create(createInput());
+    await lifecycle.beginReview(goal.id);
+    await lifecycle.finalizeReview(goal.id, {
+      expectedReviewGeneration: 1,
+      verdict: "NOT_DONE",
+      summary: "Retry after correcting the implementation.",
+      authorization: reviewerAuth(goal.id),
+    });
+    const conflicting = new GoalLifecycleService(lifecycleOptions({
+      ensureSessionFile: async (root, id, options) => ({
+        ...await sessions.ensureSessionFile(root, id, options),
+        goalId: crypto.randomUUID(),
+      }),
+    }));
+
+    await expect(conflicting.retry(goal.id)).rejects.toBeInstanceOf(GoalLifecycleServiceError);
+    expect((await manager.read(goal.id)).status).toBe("not_done");
+  });
+
+  test("holds the Goal execution claim across readiness check and review commit", async () => {
+    const order: string[] = [];
+    const committed = mock((state: import("@archcode/protocol").GoalState) => {
+      if (state.status === "reviewing") order.push("review-committed");
+    });
+    const stateManager = new GoalStateManager(workspaceRoot, undefined, committed);
+    const lifecycle = new GoalLifecycleService(lifecycleOptions({ goalStateManager: stateManager }));
+    const goal = await lifecycle.create(createInput());
+    let releaseGuard!: () => void;
+    const guardBlocked = new Promise<void>((resolveGuard) => { releaseGuard = resolveGuard; });
+    let guardEntered!: () => void;
+    const entered = new Promise<void>((resolveEntered) => { guardEntered = resolveEntered; });
+
+    const beginReview = lifecycle.beginReview(goal.id, async () => {
+      order.push("guard-entered");
+      guardEntered();
+      await guardBlocked;
+    });
+    await entered;
+    const competitor = withGoalExecutionClaimLock(goal.id, async () => {
+      order.push("competitor-entered");
+    });
+    await Bun.sleep(5);
+    expect(order).toEqual(["guard-entered"]);
+
+    releaseGuard();
+    await Promise.all([beginReview, competitor]);
+    expect(order).toEqual(["guard-entered", "review-committed", "competitor-entered"]);
   });
 });

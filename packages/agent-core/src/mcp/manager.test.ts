@@ -19,9 +19,8 @@ describe("BUILTIN_MCP_SERVERS", () => {
     expect(names).toEqual(["context7", "exa", "grep.app"]);
   });
 
-  test("each server has required ResolvedMcpServerConfig fields", () => {
+  test("each server has required HTTP client configuration fields", () => {
     for (const [name, config] of Object.entries(BUILTIN_MCP_SERVERS)) {
-      expect(config.transport).toBe("http");
       expect(config.url).toStartWith("https://");
       expect(config.timeout).toBeGreaterThan(0);
       expect(config.headers).toBeUndefined();
@@ -39,7 +38,6 @@ describe("BUILTIN_MCP_SERVERS", () => {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const BASE_SERVER: ResolvedMcpServerConfig = {
-  transport: "http",
   url: "https://mcp.example.test/rpc",
   timeout: 50,
 };

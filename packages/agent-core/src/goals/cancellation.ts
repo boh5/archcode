@@ -1,7 +1,7 @@
 import type { GoalState, HitlOwnerKey } from "@archcode/protocol";
 
 import type { SessionFamilyController, SessionFamilyStopLease } from "../execution/session-family-control";
-import { deleteSessionHitlCheckpointFile } from "../execution/session-hitl-checkpoint";
+import { deleteSessionHitlJournalFile } from "../execution/session-hitl-journal-store";
 import type { HitlService } from "../hitl/service";
 import type { SessionStoreManager } from "../store/session-store-manager";
 import {
@@ -38,7 +38,7 @@ export interface GoalCancellationServiceOptions {
 
 export interface GoalCancellationCleanupOperations {
   cancelOwner(owner: HitlOwnerKey, reason: string): Promise<unknown>;
-  deleteSessionCheckpoint(workspaceRoot: string, sessionId: string): Promise<void>;
+  deleteSessionEntry(workspaceRoot: string, sessionId: string): Promise<void>;
   clearSessionHitlBlockers(sessionId: string, workspaceRoot: string): Promise<void>;
 }
 
@@ -94,7 +94,7 @@ export class GoalCancellationService implements GoalCancellationCapability {
     this.#sessionFamilyController = options.sessionFamilyController;
     this.#cleanup = options.cleanupOperations ?? {
       cancelOwner: (owner, reason) => this.#hitlService.cancelOwner(owner, reason),
-      deleteSessionCheckpoint: deleteSessionHitlCheckpointFile,
+      deleteSessionEntry: deleteSessionHitlJournalFile,
       clearSessionHitlBlockers: (sessionId, workspaceRoot) => (
         this.#sessionStoreManager.clearHitlBlockers(sessionId, workspaceRoot)
       ),
@@ -216,15 +216,15 @@ export class GoalCancellationService implements GoalCancellationCapability {
   async #cleanupDurableOwners(goal: GoalState, sessionIds: readonly string[]): Promise<void> {
     for (const sessionId of sessionIds) {
       await this.#cleanup.cancelOwner({
-        projectSlug: goal.projectId,
+        projectSlug: goal.projectSlug,
         ownerType: "session",
         ownerId: sessionId,
       }, "goal_cancelled");
-      await this.#cleanup.deleteSessionCheckpoint(this.#workspaceRoot, sessionId);
+      await this.#cleanup.deleteSessionEntry(this.#workspaceRoot, sessionId);
       await this.#cleanup.clearSessionHitlBlockers(sessionId, this.#workspaceRoot);
     }
     await this.#cleanup.cancelOwner({
-      projectSlug: goal.projectId,
+      projectSlug: goal.projectSlug,
       ownerType: "goal",
       ownerId: goal.id,
     }, "goal_cancelled");

@@ -7,7 +7,7 @@ import { PROJECT_STATE_DIR_NAME, type GoalState } from "@archcode/protocol";
 
 import { silentLogger } from "../logger";
 import { SessionStoreManager } from "../store/session-store-manager";
-import { GoalRunner } from "./runner";
+import { GoalLifecycleService } from "./lifecycle-service";
 import { GoalStateManager } from "./state";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-integration", crypto.randomUUID());
@@ -30,8 +30,8 @@ afterAll(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });
 });
 
-function createRunner(): GoalRunner {
-  return new GoalRunner({
+function createLifecycle(): GoalLifecycleService {
+  return new GoalLifecycleService({
     goalStateManager: manager,
     workspaceRoot,
     readSourceSession: (root, id) => sessions.getSessionFile(root, id),
@@ -50,16 +50,16 @@ async function readGoalFile(goalId: string): Promise<GoalState> {
 
 describe("Goal core lifecycle", () => {
   test("persists committed creation through DONE without auxiliary artifacts", async () => {
-    const runner = createRunner();
-    const goal = await runner.create({
-      projectId: "project-a",
+    const lifecycle = createLifecycle();
+    const goal = await lifecycle.create({
+      projectSlug: "project-a",
       createdFromSessionId: SOURCE_SESSION_ID,
       objective: "Persist a protocol-shaped committed Goal through review.",
       acceptanceCriteria: "Final state contains reviewer receipt and no auxiliary artifact files.",
     });
-    await runner.addChildSession(goal.id, "plan-child-session");
-    const reviewing = await runner.beginReview(goal.id);
-    const done = await runner.finalizeReview(goal.id, {
+    await manager.addChildSession(goal.id, "plan-child-session");
+    const reviewing = await lifecycle.beginReview(goal.id);
+    const done = await lifecycle.finalizeReview(goal.id, {
       expectedReviewGeneration: reviewing.reviewGeneration,
       verdict: "DONE",
       summary: "Reviewer verified the durable state and tests.",
@@ -73,21 +73,21 @@ describe("Goal core lifecycle", () => {
   });
 
   test("persists NOT_DONE retry without replacing Goal or main Session identity", async () => {
-    const runner = createRunner();
-    const goal = await runner.create({
-      projectId: "project-a",
+    const lifecycle = createLifecycle();
+    const goal = await lifecycle.create({
+      projectSlug: "project-a",
       createdFromSessionId: SOURCE_SESSION_ID,
       objective: "Capture explicit retry semantics.",
       acceptanceCriteria: "Retry increments attempt and keeps stable ownership.",
     });
-    await runner.beginReview(goal.id);
-    await runner.finalizeReview(goal.id, {
+    await lifecycle.beginReview(goal.id);
+    await lifecycle.finalizeReview(goal.id, {
       expectedReviewGeneration: 1,
       verdict: "NOT_DONE",
       summary: "Regression evidence is missing.",
       authorization: reviewerAuth(goal.id),
     });
-    const retry = await runner.retry(goal.id);
+    const retry = await lifecycle.retry(goal.id);
 
     expect(retry).toMatchObject({ id: goal.id, status: "running", attempt: 2, mainSessionId: goal.mainSessionId });
     expect(retry.review).toBeUndefined();

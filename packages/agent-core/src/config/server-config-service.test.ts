@@ -20,7 +20,6 @@ afterAll(async () => {
 function config(): Record<string, unknown> {
   const agent = { model: "local:test-model" };
   return {
-    $schema: "https://archcode.dev/schema.json",
     provider: {
       local: {
         npm: "@ai-sdk/openai-compatible",
@@ -53,7 +52,6 @@ function config(): Record<string, unknown> {
     mcp: {
       servers: {
         custom: {
-          transport: "http",
           url: "https://mcp.example.test",
           headers: { Authorization: "mcp-secret" },
         },
@@ -170,6 +168,26 @@ describe("ServerConfigService", () => {
     expect(saved.restartRequired).toBe(true);
   });
 
+  test("rejects removed fixed config fields without touching preserved secrets", async () => {
+    for (const mutate of [
+      (draft: Record<string, any>) => { draft.$schema = "https://archcode.dev/schema.json"; },
+      (draft: Record<string, any>) => { draft.mcp.servers.custom.transport = "http"; },
+      (draft: Record<string, any>) => { draft.integrations = { github: { enabled: false, apiBaseUrl: "https://api.github.com" } }; },
+    ]) {
+      const service = await createService();
+      const snapshot = await service.getSnapshot();
+      const before = await readFile(service.configPath, "utf8");
+      const invalid = preserveSecrets(snapshot.config) as unknown as Record<string, any>;
+      mutate(invalid);
+
+      await expect(service.save({
+        expectedRevision: snapshot.revision,
+        config: invalid as ServerConfigUpdate,
+      })).rejects.toBeInstanceOf(ConfigSemanticValidationError);
+      expect(await readFile(service.configPath, "utf8")).toBe(before);
+    }
+  });
+
   test("rejects unsupported provider packages, unknown variants, and invalid MCP URLs before writing", async () => {
     for (const mutate of [
       (draft: ServerConfigUpdate) => { draft.provider.local.npm = "unsupported"; },
@@ -190,7 +208,7 @@ describe("ServerConfigService", () => {
     const service = await createService();
     const snapshot = await service.getSnapshot();
     const invalid = preserveSecrets(snapshot.config);
-    invalid.mcp!.servers.context7 = { transport: "http", url: "https://example.test" };
+    invalid.mcp!.servers.context7 = { url: "https://example.test" };
 
     await expect(service.save({ expectedRevision: snapshot.revision, config: invalid })).rejects.toBeInstanceOf(BuiltinMcpConfigNameError);
   });

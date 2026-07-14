@@ -23,7 +23,7 @@ class FakeGoalStateManager {
 
   commit(input: {
     id: string;
-    projectId: string;
+    projectSlug: string;
     createdFromSessionId: string;
     objective: string;
     acceptanceCriteria: string;
@@ -31,9 +31,8 @@ class FakeGoalStateManager {
     useWorktree?: boolean;
   }, title: string, status: GoalStatus): GoalState {
     const goal: GoalState = {
-      version: 4,
       id: input.id,
-      projectId: input.projectId,
+      projectSlug: input.projectSlug,
       createdFromSessionId: input.createdFromSessionId,
       title,
       objective: input.objective,
@@ -57,8 +56,8 @@ class FakeGoalStateManager {
     return goal;
   }
 
-  async listGoals(projectId?: string): Promise<GoalState[]> {
-    return this.#goals.filter((goal) => projectId === undefined || goal.projectId === projectId);
+  async listGoals(projectSlug?: string): Promise<GoalState[]> {
+    return this.#goals.filter((goal) => projectSlug === undefined || goal.projectSlug === projectSlug);
   }
 }
 
@@ -113,7 +112,7 @@ function addGoal(managers: Map<string, FakeGoalStateManager>, project: ProjectIn
   const id = crypto.randomUUID();
   return managerFor(managers, project).commit({
     id,
-    projectId: project.slug,
+    projectSlug: project.slug,
     createdFromSessionId: `source-${id}`,
     mainSessionId: `main-${id}`,
     objective: `Objective for ${title}`,
@@ -216,7 +215,7 @@ describe("dashboard routes", () => {
     const { app, projects, runtime } = await createFixture("automation-smoke");
     const automation: Automation = {
       id: crypto.randomUUID(),
-      projectId: projects[0].slug,
+      projectSlug: projects[0].slug,
       createdFromSessionId: "session-source-automation",
       name: "Daily check-in",
       trigger: { kind: "cron", expression: "0 9 * * 1-5", timezone: "Asia/Shanghai" },

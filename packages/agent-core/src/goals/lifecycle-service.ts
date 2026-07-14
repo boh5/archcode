@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 
-import type { GoalBudgetSummary, GoalEvidenceRef, GoalReviewVerdict, GoalState } from "@archcode/protocol";
+import type { GoalEvidenceRef, GoalReviewVerdict, GoalState } from "@archcode/protocol";
 
 import type { ActiveSessionExecution, StartSessionExecutionInput } from "../execution";
 import type { SessionFile } from "../store/helpers";
@@ -15,15 +15,15 @@ import type {
 } from "./state";
 import { GoalWorkspaceService } from "./workspace";
 
-export interface GoalRunnerCreateInput {
-  readonly projectId: string;
+export interface GoalLifecycleCreateInput {
+  readonly projectSlug: string;
   readonly createdFromSessionId: string;
   readonly objective: string;
   readonly acceptanceCriteria: string;
   readonly useWorktree?: boolean;
 }
 
-export interface GoalRunnerOptions {
+export interface GoalLifecycleServiceOptions {
   readonly goalStateManager: GoalStateManager;
   readonly workspaceRoot: string;
   readonly readSourceSession: (workspaceRoot: string, sessionId: string) => Promise<SessionFile>;
@@ -35,11 +35,12 @@ export interface GoalRunnerOptions {
   readonly startCheckedExecutionWithinGoalClaim: (
     input: StartSessionExecutionInput,
   ) => Promise<ActiveSessionExecution>;
-  readonly onGoalCommitted?: (goal: GoalState) => void | Promise<void>;
+  /** Creation-only side effect such as scheduling title generation. */
+  readonly onCreated?: (goal: GoalState) => void | Promise<void>;
   readonly worktreeService?: Pick<WorktreeService, "create" | "findManaged" | "validateManagedClaim" | "remove">;
 }
 
-export interface GoalRunnerFinalizeInput {
+export interface GoalLifecycleFinalizeInput {
   readonly expectedReviewGeneration: number;
   readonly verdict: GoalReviewVerdict;
   readonly summary: string;
@@ -51,14 +52,14 @@ export interface GoalRunnerFinalizeInput {
 
 export type GoalActivationOutcome = "started" | "already_started" | "busy" | "capacity" | "pending" | "failed" | "ineligible";
 
-export class GoalRunnerError extends Error {
+export class GoalLifecycleServiceError extends Error {
   constructor(
     public readonly goalId: string,
     message: string,
     public readonly cause?: unknown,
   ) {
     super(message);
-    this.name = "GoalRunnerError";
+    this.name = "GoalLifecycleServiceError";
   }
 }
 
@@ -72,12 +73,12 @@ export class GoalSourceSessionError extends Error {
   }
 }
 
-export class GoalRunner {
+export class GoalLifecycleService {
   readonly #goalStateManager: GoalStateManager;
   readonly #workspaceRoot: string;
   readonly #workspaceService: GoalWorkspaceService;
 
-  constructor(private readonly options: GoalRunnerOptions) {
+  constructor(private readonly options: GoalLifecycleServiceOptions) {
     this.#goalStateManager = options.goalStateManager;
     this.#workspaceRoot = resolve(options.workspaceRoot);
     this.#workspaceService = new GoalWorkspaceService({
@@ -87,7 +88,7 @@ export class GoalRunner {
     });
   }
 
-  async create(input: GoalRunnerCreateInput): Promise<GoalState> {
+  async create(input: GoalLifecycleCreateInput): Promise<GoalState> {
     const source = await this.options.readSourceSession(this.#workspaceRoot, input.createdFromSessionId);
     assertCreationSource(source, input.createdFromSessionId);
 
@@ -95,7 +96,7 @@ export class GoalRunner {
     const mainSessionId = crypto.randomUUID();
     const committed = await this.#goalStateManager.commit({
       id: goalId,
-      projectId: input.projectId,
+      projectSlug: input.projectSlug,
       createdFromSessionId: input.createdFromSessionId,
       objective: input.objective,
       acceptanceCriteria: input.acceptanceCriteria,
@@ -103,7 +104,7 @@ export class GoalRunner {
       ...(input.useWorktree === undefined ? {} : { useWorktree: input.useWorktree }),
     });
     try {
-      await this.options.onGoalCommitted?.(committed);
+      await this.options.onCreated?.(committed);
     } finally {
       await this.activate(goalId);
     }
@@ -128,7 +129,7 @@ export class GoalRunner {
         const executionId = initialExecutionId(goal.id);
         if (session.executions.some((execution) => execution.id === executionId)) return "already_started";
         await this.options.startCheckedExecutionWithinGoalClaim({
-          slug: goal.projectId,
+          slug: goal.projectSlug,
           workspaceRoot: this.#workspaceRoot,
           sessionId: goal.mainSessionId,
           userMessage: buildGoalContinuationPrompt(goal),
@@ -152,11 +153,14 @@ export class GoalRunner {
     }
   }
 
-  async beginReview(goalId: string): Promise<GoalState> {
-    return withGoalExecutionClaimLock(goalId, () => this.#goalStateManager.beginReview(goalId));
+  async beginReview(goalId: string, assertReady?: () => Promise<void>): Promise<GoalState> {
+    return withGoalExecutionClaimLock(goalId, async () => {
+      await assertReady?.();
+      return await this.#goalStateManager.beginReview(goalId);
+    });
   }
 
-  async finalizeReview(goalId: string, input: GoalRunnerFinalizeInput): Promise<GoalState> {
+  async finalizeReview(goalId: string, input: GoalLifecycleFinalizeInput): Promise<GoalState> {
     return withGoalExecutionClaimLock(goalId, () => (
       this.#goalStateManager.finalizeReview(goalId, input satisfies GoalFinalizeReviewInput)
     ));
@@ -182,17 +186,6 @@ export class GoalRunner {
     return withGoalExecutionClaimLock(goalId, () => this.#goalStateManager.fail(goalId, error));
   }
 
-  async cancel(goalId: string, reason?: string): Promise<GoalState> {
-    return withGoalExecutionClaimLock(goalId, () => this.#goalStateManager.cancel(goalId, reason));
-  }
-
-  async addChildSession(goalId: string, sessionId: string): Promise<GoalState> {
-    return withGoalExecutionClaimLock(goalId, () => this.#goalStateManager.addChildSession(goalId, sessionId));
-  }
-
-  async updateBudgetSummary(goalId: string, budget: GoalBudgetSummary): Promise<GoalState> {
-    return withGoalExecutionClaimLock(goalId, () => this.#goalStateManager.updateBudgetSummary(goalId, budget));
-  }
 }
 
 function assertCreationSource(session: SessionFile, sourceSessionId: string): void {
@@ -220,7 +213,7 @@ function assertGoalMainSession(goal: GoalState, session: SessionFile, expectedCw
     || session.sessionRole !== "main"
     || resolve(session.cwd) !== resolve(expectedCwd)
   ) {
-    throw new GoalRunnerError(goal.id, `Goal main Session identity conflict: ${goal.mainSessionId}`);
+    throw new GoalLifecycleServiceError(goal.id, `Goal main Session identity conflict: ${goal.mainSessionId}`);
   }
 }
 
@@ -238,7 +231,7 @@ function isCapacityError(error: unknown): boolean {
 
 function isPermanentActivationError(error: unknown): boolean {
   return error instanceof Error && [
-    "GoalRunnerError",
+    "GoalLifecycleServiceError",
     "GoalWorkspaceError",
     "SessionFileIdentityConflictError",
     "WorktreeServiceError",

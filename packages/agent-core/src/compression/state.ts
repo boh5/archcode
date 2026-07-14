@@ -1,4 +1,3 @@
-import { COMPRESSION_STATE_VERSION } from "./constants";
 import { rangeContains, rangesPartiallyOverlap } from "./coverage";
 import { createEmptyCompressionRefMap, ensureBlockRef } from "./refs";
 import { assertValidCompressionSummary } from "./summary";
@@ -16,7 +15,6 @@ export class CompressionStateError extends Error {
 
 export function createEmptyCompressionState(): CompressionState {
   return {
-    version: COMPRESSION_STATE_VERSION,
     refMap: createEmptyCompressionRefMap(),
     blocksByRef: {},
     activeBlockRefs: [],
@@ -124,7 +122,7 @@ export function validateCompressionBlockDraft(state: CompressionState, draft: Co
 
     throw new CompressionStateError(
       "partial_active_overlap",
-      `Draft range is inside active block ${activeRef}; V1 only allows consuming whole child blocks`,
+      `Draft range is inside active block ${activeRef}; the current contract only allows consuming whole child blocks`,
     );
   }
 }

@@ -1,7 +1,7 @@
 import type {
   HitlOwnerKey,
   HitlRecord,
-  SessionHitlCheckpoint,
+  SessionHitlBlocker,
 } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 
@@ -9,15 +9,15 @@ import type { HitlService } from "../hitl/service";
 import type { SessionStoreManager } from "../store/session-store-manager";
 import type { SessionStoreState } from "../store/types";
 import {
-  deleteSessionHitlCheckpoint,
-  readSessionHitlCheckpointFile,
-  replaceSessionHitlCheckpoint,
+  deleteSessionHitlJournalEntry,
+  readSessionHitlJournalFile,
+  replaceSessionHitlJournalEntry,
   sessionHitlJournalPhase,
   transitionSessionHitlJournalPhase,
-  type SessionHitlCheckpointRecord,
+  type SessionHitlJournalEntry,
   type SessionHitlJournalPhase,
-  writeSessionHitlCheckpoint,
-} from "./session-hitl-checkpoint";
+  writeSessionHitlJournalEntry,
+} from "./session-hitl-journal-store";
 
 export interface SessionHitlJournalRecoverySummary {
   readonly scanned: number;
@@ -52,7 +52,7 @@ export async function assertSessionHitlJournalAllowsExecution(
   workspaceRoot: string,
   sessionId: string,
 ): Promise<void> {
-  const entries = (await readSessionHitlCheckpointFile(workspaceRoot, sessionId)).checkpoints;
+  const entries = (await readSessionHitlJournalFile(workspaceRoot, sessionId)).entries;
   if (entries.length === 0) return;
   throw new SessionHitlJournalBlockedError(
     sessionId,
@@ -72,34 +72,34 @@ export async function prepareSessionHitlPause(input: {
   readonly store: StoreApi<SessionStoreState>;
   readonly sessions: SessionStoreManager;
   readonly hitl: HitlService;
-  readonly checkpoint: SessionHitlCheckpointRecord;
-}): Promise<{ readonly record: HitlRecord; readonly checkpoint: SessionHitlCheckpointRecord }> {
-  if (sessionHitlJournalPhase(input.checkpoint) !== "preparing") {
-    throw new Error(`Session HITL ${input.checkpoint.hitlId} must start from a complete preparing journal entry`);
+  readonly entry: SessionHitlJournalEntry;
+}): Promise<{ readonly record: HitlRecord; readonly entry: SessionHitlJournalEntry }> {
+  if (sessionHitlJournalPhase(input.entry) !== "preparing") {
+    throw new Error(`Session HITL ${input.entry.hitlId} must start from a complete preparing journal entry`);
   }
-  assertSessionRequestOwner(input.checkpoint.request.owner, input.sessionId);
+  assertSessionRequestOwner(input.entry.request.owner, input.sessionId);
 
-  await writeSessionHitlCheckpoint(input.checkpoint, input.workspaceRoot, input.sessionId);
+  await writeSessionHitlJournalEntry(input.entry, input.workspaceRoot, input.sessionId);
   await input.sessions.setHitlBlocker(
     input.sessionId,
     input.workspaceRoot,
-    sessionHitlBlockerFromJournal(input.checkpoint),
+    sessionHitlBlockerFromJournal(input.entry),
   );
 
   const created = await input.hitl.createWithResult({
-    owner: input.checkpoint.request.owner,
+    owner: input.entry.request.owner,
     sessionRootId: input.store.getState().rootSessionId,
-    hitlId: input.checkpoint.hitlId,
-    blockingKey: input.checkpoint.blockingKey,
-    source: input.checkpoint.source,
-    displayPayload: input.checkpoint.request.displayPayload,
-    createdAt: input.checkpoint.request.createdAt,
+    hitlId: input.entry.hitlId,
+    blockingKey: input.entry.blockingKey,
+    source: input.entry.source,
+    displayPayload: input.entry.request.displayPayload,
+    createdAt: input.entry.request.createdAt,
   });
   const converged = await convergePreparedRecord({
     workspaceRoot: input.workspaceRoot,
     sessionId: input.sessionId,
     sessions: input.sessions,
-    checkpoint: input.checkpoint,
+    entry: input.entry,
     record: created.record,
   });
   const paused = await transitionSessionHitlJournalPhase(
@@ -112,7 +112,7 @@ export async function prepareSessionHitlPause(input: {
   await input.sessions.flushSession(input.sessionId, input.workspaceRoot);
   // HitlService delivery is deliberately best-effort after all durable state.
   await input.hitl.publishRequest(created.record);
-  return { record: created.record, checkpoint: paused };
+  return { record: created.record, entry: paused };
 }
 
 export async function recoverSessionHitlJournals(input: {
@@ -126,15 +126,15 @@ export async function recoverSessionHitlJournals(input: {
   let terminalCleaned = 0;
 
   for (const session of await input.sessions.listAllSessionSummaries(input.workspaceRoot)) {
-    const journal = await readSessionHitlCheckpointFile(input.workspaceRoot, session.sessionId);
-    for (const original of journal.checkpoints) {
+    const journal = await readSessionHitlJournalFile(input.workspaceRoot, session.sessionId);
+    for (const original of journal.entries) {
       scanned += 1;
-      let checkpoint = original;
-      let phase = sessionHitlJournalPhase(checkpoint);
+      let entry = original;
+      let phase = sessionHitlJournalPhase(entry);
       const store = await input.sessions.getOrLoad(session.sessionId, input.workspaceRoot);
-      const owner = checkpoint.request.owner;
+      const owner = entry.request.owner;
       assertSessionRequestOwner(owner, session.sessionId);
-      const ownerLookup = await (await input.hitl.ownerStore(owner)).lookup(checkpoint.hitlId);
+      const ownerLookup = await (await input.hitl.ownerStore(owner)).lookup(entry.hitlId);
 
       if (ownerLookup.status === "found" && isTerminalRecord(ownerLookup.record)) {
         await resolveTerminalJournal({
@@ -151,25 +151,25 @@ export async function recoverSessionHitlJournals(input: {
       await input.sessions.setHitlBlocker(
         session.sessionId,
         input.workspaceRoot,
-        sessionHitlBlockerFromJournal(checkpoint),
+        sessionHitlBlockerFromJournal(entry),
       );
 
       if (ownerLookup.status === "missing") {
-        checkpoint = await repairMissingOwner({
+        entry = await repairMissingOwner({
           workspaceRoot: input.workspaceRoot,
           sessionId: session.sessionId,
           sessions: input.sessions,
           hitl: input.hitl,
-          checkpoint,
+          entry,
         });
-        phase = sessionHitlJournalPhase(checkpoint);
+        phase = sessionHitlJournalPhase(entry);
       }
 
       if (phase === "preparing") {
-        checkpoint = await transitionSessionHitlJournalPhase(
+        entry = await transitionSessionHitlJournalPhase(
           input.workspaceRoot,
           session.sessionId,
-          checkpoint.hitlId,
+          entry.hitlId,
           "paused",
         );
         phase = "paused";
@@ -178,14 +178,14 @@ export async function recoverSessionHitlJournals(input: {
         await transitionSessionHitlJournalPhase(
           input.workspaceRoot,
           session.sessionId,
-          checkpoint.hitlId,
+          entry.hitlId,
           "manual_unknown",
         );
         phase = "manual_unknown";
         manualUnknown += 1;
       }
 
-      const current = await (await input.hitl.ownerStore(checkpoint.request.owner)).lookup(checkpoint.hitlId);
+      const current = await (await input.hitl.ownerStore(entry.request.owner)).lookup(entry.hitlId);
       if (current.status === "found") {
         store.getState().append({ type: "hitl.request", request: current.record });
         await input.sessions.flushSession(session.sessionId, input.workspaceRoot);
@@ -203,16 +203,16 @@ export async function repairSessionHitlJournalForReplay(input: {
   readonly sessionId: string;
   readonly sessions: SessionStoreManager;
   readonly hitl: HitlService;
-  readonly checkpoint: SessionHitlCheckpointRecord;
-}): Promise<SessionHitlCheckpointRecord> {
-  const phase = sessionHitlJournalPhase(input.checkpoint);
-  if (phase !== "preparing") return input.checkpoint;
+  readonly entry: SessionHitlJournalEntry;
+}): Promise<SessionHitlJournalEntry> {
+  const phase = sessionHitlJournalPhase(input.entry);
+  if (phase !== "preparing") return input.entry;
   const repaired = await repairMissingOwner(input);
   await input.sessions.setHitlBlocker(
     input.sessionId,
     input.workspaceRoot,
     sessionHitlBlockerFromJournal(repaired),
-    input.checkpoint.hitlId === repaired.hitlId ? undefined : input.checkpoint.hitlId,
+    input.entry.hitlId === repaired.hitlId ? undefined : input.entry.hitlId,
   );
   return await transitionSessionHitlJournalPhase(
     input.workspaceRoot,
@@ -225,33 +225,32 @@ export async function repairSessionHitlJournalForReplay(input: {
 export async function moveContinuingJournalToManualUnknown(input: {
   readonly workspaceRoot: string;
   readonly sessionId: string;
-  readonly checkpoint: SessionHitlCheckpointRecord;
+  readonly entry: SessionHitlJournalEntry;
 }): Promise<never> {
-  const phase = sessionHitlJournalPhase(input.checkpoint);
+  const phase = sessionHitlJournalPhase(input.entry);
   if (phase === "continuing") {
     await transitionSessionHitlJournalPhase(
       input.workspaceRoot,
       input.sessionId,
-      input.checkpoint.hitlId,
+      input.entry.hitlId,
       "manual_unknown",
     );
   }
-  throw new SessionHitlContinuationOutcomeUnknownError(input.checkpoint.hitlId);
+  throw new SessionHitlContinuationOutcomeUnknownError(input.entry.hitlId);
 }
 
-export function sessionHitlBlockerFromJournal(checkpoint: SessionHitlCheckpointRecord): SessionHitlCheckpoint {
+export function sessionHitlBlockerFromJournal(entry: SessionHitlJournalEntry): SessionHitlBlocker {
   return {
-    version: 1,
-    hitlId: checkpoint.hitlId,
-    blockingKey: checkpoint.blockingKey,
-    source: checkpoint.source,
-    toolCallId: checkpoint.toolCallId,
-    toolName: checkpoint.toolName,
-    step: checkpoint.step,
-    ...(checkpoint.assistantMessageId === undefined ? {} : { assistantMessageId: checkpoint.assistantMessageId }),
-    displayInput: checkpoint.displayInput,
-    blockedAt: checkpoint.createdAt,
-    reason: checkpoint.request.displayPayload.title,
+    hitlId: entry.hitlId,
+    blockingKey: entry.blockingKey,
+    source: entry.source,
+    toolCallId: entry.toolCallId,
+    toolName: entry.toolName,
+    step: entry.step,
+    ...(entry.assistantMessageId === undefined ? {} : { assistantMessageId: entry.assistantMessageId }),
+    displayInput: entry.displayInput,
+    blockedAt: entry.createdAt,
+    reason: entry.request.displayPayload.title,
   };
 }
 
@@ -260,7 +259,7 @@ export async function finalizeResolvedSessionHitlJournal(
   record: HitlRecord,
 ): Promise<void> {
   if (record.owner.ownerType !== "session" || !isTerminalRecord(record)) return;
-  await deleteSessionHitlCheckpoint(workspaceRoot, record.owner.ownerId, record.hitlId);
+  await deleteSessionHitlJournalEntry(workspaceRoot, record.owner.ownerId, record.hitlId);
 }
 
 async function repairMissingOwner(input: {
@@ -268,17 +267,17 @@ async function repairMissingOwner(input: {
   readonly sessionId: string;
   readonly sessions: SessionStoreManager;
   readonly hitl: HitlService;
-  readonly checkpoint: SessionHitlCheckpointRecord;
-}): Promise<SessionHitlCheckpointRecord> {
-  const request = input.checkpoint.request;
+  readonly entry: SessionHitlJournalEntry;
+}): Promise<SessionHitlJournalEntry> {
+  const request = input.entry.request;
   assertSessionRequestOwner(request.owner, input.sessionId);
   const sessionRootId = (await input.sessions.getOrLoad(input.sessionId, input.workspaceRoot)).getState().rootSessionId;
   const result = await input.hitl.createWithResult({
     owner: request.owner,
     sessionRootId,
-    hitlId: input.checkpoint.hitlId,
-    blockingKey: input.checkpoint.blockingKey,
-    source: input.checkpoint.source,
+    hitlId: input.entry.hitlId,
+    blockingKey: input.entry.blockingKey,
+    source: input.entry.source,
     displayPayload: request.displayPayload,
     createdAt: request.createdAt,
   });
@@ -286,7 +285,7 @@ async function repairMissingOwner(input: {
     workspaceRoot: input.workspaceRoot,
     sessionId: input.sessionId,
     sessions: input.sessions,
-    checkpoint: input.checkpoint,
+    entry: input.entry,
     record: result.record,
   });
 }
@@ -295,24 +294,24 @@ async function convergePreparedRecord(input: {
   readonly workspaceRoot: string;
   readonly sessionId: string;
   readonly sessions: SessionStoreManager;
-  readonly checkpoint: SessionHitlCheckpointRecord;
+  readonly entry: SessionHitlJournalEntry;
   readonly record: HitlRecord;
-}): Promise<SessionHitlCheckpointRecord> {
+}): Promise<SessionHitlJournalEntry> {
   const canonicalRootId = (await input.sessions.getOrLoad(input.sessionId, input.workspaceRoot)).getState().rootSessionId;
   if (input.record.sessionRootId !== canonicalRootId) {
     throw new Error(
       `Session HITL ${input.record.hitlId} root ${input.record.sessionRootId ?? "missing"} does not match canonical root ${canonicalRootId}`,
     );
   }
-  if (input.record.hitlId === input.checkpoint.hitlId) return input.checkpoint;
-  if (input.record.blockingKey !== input.checkpoint.blockingKey) {
-    throw new Error(`Session HITL ${input.checkpoint.hitlId} cannot converge onto unrelated owner record ${input.record.hitlId}`);
+  if (input.record.hitlId === input.entry.hitlId) return input.entry;
+  if (input.record.blockingKey !== input.entry.blockingKey) {
+    throw new Error(`Session HITL ${input.entry.hitlId} cannot converge onto unrelated owner record ${input.record.hitlId}`);
   }
-  const replacement: SessionHitlCheckpointRecord = {
-    ...input.checkpoint,
+  const replacement: SessionHitlJournalEntry = {
+    ...input.entry,
     hitlId: input.record.hitlId,
     blockingKey: input.record.blockingKey,
-    source: input.record.source,
+    source: sessionHitlSource(input.record),
     request: {
       owner: input.record.owner,
       displayPayload: input.record.displayPayload,
@@ -321,17 +320,17 @@ async function convergePreparedRecord(input: {
     phase: "preparing",
     phaseUpdatedAt: new Date().toISOString(),
   };
-  const replaced = await replaceSessionHitlCheckpoint(
+  const replaced = await replaceSessionHitlJournalEntry(
     input.workspaceRoot,
     input.sessionId,
-    input.checkpoint.hitlId,
+    input.entry.hitlId,
     replacement,
   );
   await input.sessions.setHitlBlocker(
     input.sessionId,
     input.workspaceRoot,
     sessionHitlBlockerFromJournal(replaced),
-    input.checkpoint.hitlId,
+    input.entry.hitlId,
   );
   return replaced;
 }
@@ -350,7 +349,7 @@ async function resolveTerminalJournal(input: {
     ...(input.record.response === undefined ? {} : { response: input.record.response }),
   });
   await input.sessions.flushSession(input.sessionId, input.workspaceRoot);
-  await deleteSessionHitlCheckpoint(input.workspaceRoot, input.sessionId, input.record.hitlId);
+  await deleteSessionHitlJournalEntry(input.workspaceRoot, input.sessionId, input.record.hitlId);
 }
 
 function assertSessionRequestOwner(owner: HitlOwnerKey, sessionId: string): void {
@@ -361,4 +360,11 @@ function assertSessionRequestOwner(owner: HitlOwnerKey, sessionId: string): void
 
 function isTerminalRecord(record: HitlRecord): record is HitlRecord & { status: "resolved" | "cancelled" } {
   return record.status === "resolved" || record.status === "cancelled";
+}
+
+function sessionHitlSource(record: HitlRecord): SessionHitlJournalEntry["source"] {
+  if (record.source.type !== "ask_user" && record.source.type !== "tool_permission") {
+    throw new Error(`Session HITL ${record.hitlId} has non-Session source ${record.source.type}`);
+  }
+  return record.source;
 }

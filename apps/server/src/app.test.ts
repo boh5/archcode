@@ -145,7 +145,6 @@ describe("createServerApp", () => {
       sessionId: "child",
       eventId: 0,
       createdAt: 2,
-      kind: "text-delta",
       payload: { type: "text-delta", text: "live" },
       agentName: "explore",
     });
@@ -356,7 +355,6 @@ function childLinkEvent(parentSessionId: string, childSessionId: string, status:
     sessionId: parentSessionId,
     eventId: status === "running" ? 0 : 1,
     createdAt: Date.now(),
-    kind: "tool-child-session-link",
     payload: {
       type: "tool-child-session-link",
       link: {
@@ -397,7 +395,7 @@ function hitlRealtimeEvent(): Extract<GlobalSSEEvent, { type: "hitl.event" }> {
     owner: record.owner,
     hitlId: record.hitlId,
     createdAt: 1,
-    payload: { type: "hitl.request", status: "pending" },
+    payload: { type: "hitl.request" },
     projection: {
       hitlId: record.hitlId,
       project: { slug: "proj" },

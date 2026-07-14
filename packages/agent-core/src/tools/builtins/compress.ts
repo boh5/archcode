@@ -18,7 +18,6 @@ export const CompressInputSchema = z.strictObject({
   startId: z.string().describe("Projection start ref, e.g. m0001 or a known block ref like b1."),
   endId: z.string().describe("Projection end ref, e.g. m0004 or a known block ref like b1."),
   summary: z.strictObject({
-    version: z.literal(1),
     sections: CompressionSummarySectionsSchema,
     childBlockRefs: z.array(z.string().regex(/^b\d+$/)).describe("Nested child block refs that this summary consumes."),
   }).describe("Strict structured compression summary with all required sections."),

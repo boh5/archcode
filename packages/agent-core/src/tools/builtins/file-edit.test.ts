@@ -139,7 +139,6 @@ describe("fileEditTool", () => {
     expect(result.output).toBe("Successfully applied 1 edit(s) to single.txt");
     expect(result.isError).toBe(false);
     expect(result.meta?.diffs).toMatchObject({
-      version: 1,
       files: [
         {
           path: "single.txt",

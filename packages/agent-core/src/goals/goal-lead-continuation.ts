@@ -146,7 +146,7 @@ export class GoalLeadContinuationService implements GoalLeadContinuationCoordina
           return "shutdown";
         }
         await this.options.sessionRuntime.startCheckedExecutionWithinGoalClaim({
-          slug: candidate.projectId,
+          slug: candidate.projectSlug,
           workspaceRoot,
           sessionId: candidate.sessionId,
           userMessage: buildGoalContinuationPrompt(candidate.goal),
@@ -176,7 +176,7 @@ export class GoalLeadContinuationService implements GoalLeadContinuationCoordina
   async #eligibleSession(
     workspaceRoot: string,
     goal: GoalState,
-  ): Promise<{ readonly sessionId: string; readonly projectId: string; readonly goal: GoalState; readonly session: SessionFile } | undefined> {
+  ): Promise<{ readonly sessionId: string; readonly projectSlug: string; readonly goal: GoalState; readonly session: SessionFile } | undefined> {
     if (
       !isContinuableStatus(goal.status)
       || goal.pendingHitlIds.length > 0
@@ -193,7 +193,7 @@ export class GoalLeadContinuationService implements GoalLeadContinuationCoordina
       || session.sessionRole !== "main"
       || session.agentName !== "goal_lead"
     ) return undefined;
-    return { sessionId: session.sessionId, projectId: goal.projectId, goal, session };
+    return { sessionId: session.sessionId, projectSlug: goal.projectSlug, goal, session };
   }
 
   #executionOutcomeGate(

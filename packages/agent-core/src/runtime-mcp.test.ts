@@ -13,7 +13,7 @@ import type {
 } from "./mcp/index";
 import type { AnyToolDescriptor } from "./tools/types";
 import { defineTool } from "./tools/index";
-import { createRuntime } from "./runtime";
+import { createRuntime as createProductionRuntime } from "./runtime";
 import { ServerConfigService, resolveServerConfigPath } from "./config";
 
 const tmpRoots: string[] = [];
@@ -28,6 +28,13 @@ async function makeTempRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "archcode-runtime-mcp-"));
   tmpRoots.push(root);
   return root;
+}
+
+async function createRuntime(
+  options: Parameters<typeof createProductionRuntime>[0] = {},
+): ReturnType<typeof createProductionRuntime> {
+  const projectRegistryHomeDir = options.projectRegistryHomeDir ?? await makeTempRoot();
+  return createProductionRuntime({ ...options, projectRegistryHomeDir });
 }
 
 async function writeConfig(config: Record<string, unknown>): Promise<ServerConfigService> {

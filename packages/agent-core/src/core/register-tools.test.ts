@@ -249,7 +249,7 @@ describe("registerBuiltinTools", () => {
     const store = storeManager.create("goal-main-tools-session", workspaceRoot, { agentName: "engineer" });
     const goal = await projectContext.goalState.commit({
       id: crypto.randomUUID(),
-      projectId: projectContext.project.slug,
+      projectSlug: projectContext.project.slug,
       createdFromSessionId: crypto.randomUUID(),
       objective: "Verify Goal lifecycle does not govern unrelated tool execution.",
       acceptanceCriteria: "Agent/tool permissions decide ordinary tool availability.",
@@ -283,7 +283,7 @@ describe("registerBuiltinTools", () => {
     const store = storeManager.create("goal-todo-cleanup-session", workspaceRoot, { agentName: "engineer" });
     const goal = await projectContext.goalState.commit({
       id: crypto.randomUUID(),
-      projectId: projectContext.project.slug,
+      projectSlug: projectContext.project.slug,
       createdFromSessionId: crypto.randomUUID(),
       objective: "Verify todo bookkeeping is independent from Goal lifecycle state.",
       acceptanceCriteria: "Todo updates continue to work while a Goal is reviewing and after it is done.",

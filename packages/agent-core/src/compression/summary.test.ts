@@ -1,11 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { COMPRESSION_SUMMARY_FORMAT_VERSION } from "./constants";
 import { validateCompressionSummary } from "./summary";
 import type { CompressionSummary } from "./types";
 
 function validSummary(overrides: Partial<CompressionSummary> = {}): CompressionSummary {
   return {
-    version: COMPRESSION_SUMMARY_FORMAT_VERSION,
     childBlockRefs: [],
     sections: {
       "Current Objective": "Ship contract layer",
@@ -31,6 +29,10 @@ describe("compression summary schema", () => {
     const result = validateCompressionSummary({ ...summary, sections });
 
     expect(result.ok).toBe(false);
+  });
+
+  test("summary rejects the removed version field", () => {
+    expect(validateCompressionSummary({ ...validSummary(), version: 1 }).ok).toBe(false);
   });
 
   test("summary requires child placeholders exactly once", () => {

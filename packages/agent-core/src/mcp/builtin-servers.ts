@@ -16,17 +16,14 @@ import type { BuiltinMcpServerName } from "@archcode/protocol";
  */
 export const BUILTIN_MCP_SERVERS: Record<BuiltinMcpServerName, ResolvedMcpServerConfig> = {
   context7: {
-    transport: "http",
     url: "https://mcp.context7.com/mcp",
     timeout: 30000,
   },
   "grep.app": {
-    transport: "http",
     url: "https://mcp.grep.app",
     timeout: 30000,
   },
   exa: {
-    transport: "http",
     url: "https://mcp.exa.ai/mcp",
     timeout: 30000,
   },

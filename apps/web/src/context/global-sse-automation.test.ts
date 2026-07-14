@@ -6,7 +6,7 @@ describe("global SSE Automation invalidation", () => {
   test("invalidates only Automation caches for an Automation resource change", () => {
     const calls: unknown[] = [];
     handleSSEEvent({ event: "resource.changed", data: JSON.stringify({
-      type: "resource.changed", projectSlug: "demo", resourceType: "automation", resourceId: "a1", reason: "updated", createdAt: 1,
+      type: "resource.changed", projectSlug: "demo", resourceType: "automation", resourceId: "a1", createdAt: 1,
     }) }, {
       findStore: () => undefined,
       createStore: (() => { throw new Error("not used"); }) as never,

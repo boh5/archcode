@@ -56,7 +56,7 @@ describe("Goal routes", () => {
     expect(draftFilter.status).toBe(400);
   });
 
-  test("retries through GoalRunner and the existing Goal Lead Session", async () => {
+  test("retries through GoalLifecycleService and the existing Goal Lead Session", async () => {
     const goal = makeGoal({ status: "not_done" });
     const fixture = createFixture([goal]);
 
@@ -149,7 +149,7 @@ function createFixture(goals: GoalState[], activity: "idle" | "running" = "idle"
       listGoals: mock(async () => goals),
       read,
     },
-    goalRunner: {
+    goalLifecycle: {
       retry,
       fail: mock(async (goalId: string) => ({ ...await read(goalId), status: "failed" as const })),
     },
@@ -170,9 +170,8 @@ function createFixture(goals: GoalState[], activity: "idle" | "running" = "idle"
 function makeGoal(overrides: Partial<GoalState> = {}): GoalState {
   const id = overrides.id ?? crypto.randomUUID();
   return {
-    version: 4,
     id,
-    projectId: "test-project",
+    projectSlug: "test-project",
     createdFromSessionId: crypto.randomUUID(),
     title: "Committed Goal",
     objective: "Complete the requested work.",

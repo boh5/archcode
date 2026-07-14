@@ -15,8 +15,10 @@ import { SessionStoreManager } from "./store/session-store-manager";
 
 const roots: string[] = [];
 const START = Date.parse("2026-07-13T00:00:00.000Z");
+let generatedTitlePrompts: string[] = [];
 
 beforeEach(() => {
+  generatedTitlePrompts = [];
   setLlmAdapterForTest({
     streamText: mock(() => ({
       fullStream: (async function* () {
@@ -27,7 +29,10 @@ beforeEach(() => {
       text: Promise.resolve("Automation accepted."),
       toolCalls: Promise.resolve([]),
     })) as never,
-    generateText: mock(async () => ({ text: "Automation session" })) as never,
+    generateText: mock(async (input: { prompt?: string }) => {
+      generatedTitlePrompts.push(input.prompt ?? "");
+      return { text: "Generated title" };
+    }) as never,
   });
 });
 
@@ -63,7 +68,7 @@ describe("RuntimeSessionDispatchGateway", () => {
 
     await expect(gateway.inspectExecution({
       workspaceRoot,
-      projectId: "project-a",
+      projectSlug: "project-a",
       sessionId,
       executionId,
     })).resolves.toBe("active");
@@ -71,6 +76,40 @@ describe("RuntimeSessionDispatchGateway", () => {
 });
 
 describe("AgentRuntime Automation wiring", () => {
+  test("publishes every Goal commit and schedules Goal title generation only on creation", async () => {
+    const fixture = await runtimeFixture();
+    const events: unknown[] = [];
+    const unsubscribe = fixture.runtime.subscribeResourceChanges?.((event) => { events.push(event); });
+    const context = await fixture.runtime.contextResolver.resolve(fixture.workspaceRoot);
+
+    const goal = await context.goalLifecycle.create({
+      projectSlug: "automation-one",
+      createdFromSessionId: fixture.sourceSessionId,
+      objective: "Prove runtime Goal commit notifications.",
+      acceptanceCriteria: "Creation and every later commit publish one resource event.",
+    });
+    await waitFor(async () => (await context.goalState.read(goal.id)).title !== null);
+    const goalTitlePromptsAfterCreation = generatedTitlePrompts.filter((prompt) => prompt.includes("concise Goal title"));
+    expect(goalTitlePromptsAfterCreation).toHaveLength(1);
+
+    await context.goalLifecycle.beginReview(goal.id);
+    await Bun.sleep(10);
+    unsubscribe?.();
+
+    const goalEvents = events.filter((event) => (
+      event !== null
+      && typeof event === "object"
+      && "resourceType" in event
+      && event.resourceType === "goal"
+      && "resourceId" in event
+      && event.resourceId === goal.id
+    ));
+    expect(goalEvents).toHaveLength(3);
+    expect(goalEvents.every((event) => !(event && typeof event === "object" && "reason" in event))).toBe(true);
+    expect(generatedTitlePrompts.filter((prompt) => prompt.includes("concise Goal title"))).toHaveLength(1);
+    await fixture.runtime.abortAllSessionExecutions();
+  });
+
   test("creates a normal Engineer Session with the preallocated dispatch identities", async () => {
     const fixture = await runtimeFixture();
     const automation = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
@@ -212,11 +251,12 @@ describe("AgentRuntime Automation wiring", () => {
     unsubscribe?.();
 
     expect(events).toEqual(expect.arrayContaining([
-      expect.objectContaining({ resourceType: "automation", resourceId: automation.id, reason: "created" }),
-      expect.objectContaining({ resourceType: "automation", resourceId: automation.id, reason: "updated" }),
-      expect.objectContaining({ resourceType: "automation", resourceId: automation.id, reason: "invocation_changed" }),
-      expect.objectContaining({ resourceType: "automation", resourceId: automation.id, reason: "deleted" }),
+      expect.objectContaining({ resourceType: "automation", resourceId: automation.id }),
+      expect.objectContaining({ resourceType: "automation", resourceId: automation.id }),
+      expect.objectContaining({ resourceType: "automation", resourceId: automation.id }),
+      expect.objectContaining({ resourceType: "automation", resourceId: automation.id }),
     ]));
+    expect(events.every((event) => !(event && typeof event === "object" && "reason" in event))).toBe(true);
   });
 
   test("requires an ordinary root Engineer Session in the same project as creation source", async () => {

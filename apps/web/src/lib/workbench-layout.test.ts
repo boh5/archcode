@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   INSPECTOR_DEFAULT_WIDTH,
   SIDEBAR_DEFAULT_WIDTH,
+  WORKBENCH_PREFERENCES_KEY,
   clampInspectorWidth,
   clampSidebarWidth,
   getInspectorKind,
@@ -10,6 +11,10 @@ import {
 } from "./workbench-layout";
 
 describe("workbench layout", () => {
+  test("uses only the current unversioned browser storage key", () => {
+    expect(WORKBENCH_PREFERENCES_KEY).toBe("archcode.workbench.layout");
+  });
+
   test("clamps resizable panel widths to their supported ranges", () => {
     expect(clampSidebarWidth(120)).toBe(220);
     expect(clampSidebarWidth(320)).toBe(320);

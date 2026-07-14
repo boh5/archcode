@@ -114,7 +114,6 @@ export function prepareDynamicRangeCompression(
 
 export function compressionStateSnapshot(state: CompressionState): CompressionStateSnapshot {
   return {
-    version: 1,
     refMap: state.refMap,
     blocksByRef: Object.fromEntries(
       Object.entries(state.blocksByRef).map(([ref, block]) => [ref, compressionBlockSnapshot(block)]),

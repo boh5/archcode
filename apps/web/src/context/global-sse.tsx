@@ -8,6 +8,11 @@ import { sessionRuntimeStore } from "../store/session-runtime-store";
 import { invalidateControlPlaneReadiness } from "../store/control-plane-readiness";
 import { getMcpStatus } from "../api/mcp";
 import { queryKeys } from "../api/queries";
+import {
+  isGlobalSSEHitlRealtimeEvent,
+  isGlobalSSEResourceChangedEvent,
+  isSessionEventPayload,
+} from "@archcode/protocol";
 import type {
   GlobalSSEEvent,
   GlobalSessionEventEnvelope,
@@ -155,23 +160,41 @@ export function parseSSEEvent(_event: string, data: string): GlobalSSEEvent | nu
     const parsed = JSON.parse(data) as GlobalSSEEvent;
     switch (parsed.type) {
       case "event":
+        return isGlobalSessionEventEnvelope(parsed) ? parsed : null;
       case "heartbeat":
       case "reset":
       case "lagged":
       case "shutdown":
       case "mcp_status":
       case "hitl.snapshot":
-      case "hitl.event":
-      case "resource.changed":
       case "session.runtime.snapshot":
       case "session.runtime_changed":
         return parsed;
+      case "hitl.event":
+        return isGlobalSSEHitlRealtimeEvent(parsed) ? parsed : null;
+      case "resource.changed":
+        return isGlobalSSEResourceChangedEvent(parsed) ? parsed : null;
       default:
         return null;
     }
   } catch {
     return null;
   }
+}
+
+function isGlobalSessionEventEnvelope(value: unknown): value is GlobalSessionEventEnvelope {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const expected = ["type", "slug", "sessionId", "eventId", "createdAt", "payload", "agentName"] as const;
+  return Object.keys(record).length === expected.length
+    && expected.every((key) => Object.hasOwn(record, key))
+    && record.type === "event"
+    && typeof record.slug === "string"
+    && typeof record.sessionId === "string"
+    && typeof record.eventId === "number"
+    && typeof record.createdAt === "number"
+    && typeof record.agentName === "string"
+    && isSessionEventPayload(record.payload);
 }
 
 export interface SSEEventHandlerDeps {
@@ -211,17 +234,6 @@ export function handleSSEEvent(
           agentName: link.childAgentName,
           title: link.title ?? link.description ?? null,
           createdAt: link.createdAt,
-        });
-      }
-
-      if (isGoalPayload(envelope.payload)) {
-        deps.invalidateQueries({ queryKey: queryKeys.goals });
-        deps.invalidateQueries({ queryKey: queryKeys.projectGoals(envelope.slug) });
-        deps.invalidateQueries({
-          queryKey: queryKeys.goal(envelope.slug, envelope.payload.goalId),
-        });
-        deps.invalidateQueries({
-          queryKey: queryKeys.session(envelope.slug, envelope.sessionId),
         });
       }
 
@@ -328,12 +340,6 @@ function goalIdFromHitlEvent(event: GlobalSSEHitlRealtimeEvent): string | undefi
   const source = event.projection.source;
   if (source.type === "goal_approval" || source.type === "goal_review" || source.type === "goal_budget" || source.type === "goal_question") return source.goalId;
   return event.projection.ancestry?.goalId;
-}
-
-function isGoalPayload(
-  payload: SessionEventPayload,
-): payload is Extract<SessionEventPayload, { type: "goal.state_change" }> {
-  return payload.type === "goal.state_change";
 }
 
 function isHitlPayload(

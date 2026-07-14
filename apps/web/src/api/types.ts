@@ -69,12 +69,10 @@ export interface HitlListResponse {
 
 /** Goal with project metadata, returned by GET /api/goals?status=active. */
 export type DashboardGoal = GoalState & {
-  projectSlug: string;
   projectName: string;
 };
 
 export interface DashboardAutomation extends Automation {
-  projectSlug: string;
   projectName: string;
 }
 

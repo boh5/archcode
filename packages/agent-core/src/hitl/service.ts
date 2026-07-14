@@ -104,7 +104,7 @@ export class HitlService {
   }
 
   async publishRequest(record: HitlRecord): Promise<void> {
-    await this.#publish({ type: "hitl.request", status: "pending" }, record);
+    await this.#publish({ type: "hitl.request" }, record);
   }
 
   async lookup(identity: HitlIdentity): Promise<HitlLookupResult> {
@@ -127,7 +127,7 @@ export class HitlService {
       if (latest.record.status === "answered") return latest.record;
       throw error;
     }
-    await this.#publish({ type: "hitl.updated", status: record.status }, record);
+    await this.#publish({ type: "hitl.updated" }, record);
     return record;
   }
 
@@ -135,7 +135,7 @@ export class HitlService {
     const found = await this.lookup(identity);
     if (found.status !== "found") return undefined;
     const record = await (await this.#storeFor(identity.owner)).markDeliveryFailed(identity.hitlId, reason, nextAttemptAt);
-    await this.#publish({ type: "hitl.updated", status: record.status }, record);
+    await this.#publish({ type: "hitl.updated" }, record);
     return record;
   }
 
@@ -196,10 +196,7 @@ export class HitlService {
 
   async #publishResolved(record: HitlRecord): Promise<void> {
     if (record.status !== "resolved" && record.status !== "cancelled") return;
-    await this.#publish({
-      type: "hitl.resolved",
-      status: record.status,
-    }, record);
+    await this.#publish({ type: "hitl.resolved" }, record);
   }
 
   async #publish(payload: GlobalSSEHitlEventPayload, record: HitlRecord): Promise<void> {

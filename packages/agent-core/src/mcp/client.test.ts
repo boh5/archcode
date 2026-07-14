@@ -13,7 +13,6 @@ import { McpConnectionError, McpToolExecutionError } from "./errors";
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const BASE_CONFIG: ResolvedMcpServerConfig = {
-  transport: "http",
   url: "https://mcp.example.test/rpc",
   timeout: 50,
 };

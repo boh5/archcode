@@ -24,7 +24,7 @@ describe("AutomationScheduler", () => {
     let now = START;
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => now });
     const automation = await manager.createAutomation({
-      projectId: "project-a",
+      projectSlug: "project-a",
       createdFromSessionId: crypto.randomUUID(),
       name: "watch",
       trigger: { kind: "interval", everyMs: 30_000 },
@@ -59,8 +59,8 @@ describe("AutomationScheduler", () => {
     expect((await manager.listInvocations(automation.id))[0]?.status).toBe("dispatched");
     expect((await manager.readAutomation(automation.id)).nextFireAt).toBe("2026-07-13T00:01:00.000Z");
     expect(changes).toEqual([
-      { automationId: automation.id, reason: "invocation_changed" },
-      { automationId: automation.id, reason: "invocation_changed" },
+      { automationId: automation.id },
+      { automationId: automation.id },
     ]);
   });
 
@@ -80,7 +80,7 @@ describe("AutomationScheduler", () => {
       onChange,
     });
     const automation = await scheduler.createAutomation({
-      projectId: "project-a",
+      projectSlug: "project-a",
       createdFromSessionId: crypto.randomUUID(),
       name: "watch",
       trigger: { kind: "interval", everyMs: 30_000 },
@@ -93,13 +93,13 @@ describe("AutomationScheduler", () => {
     await scheduler.deleteAutomation(automation.id);
 
     expect(changes).toEqual([
-      { automationId: automation.id, reason: "created" },
-      { automationId: automation.id, reason: "updated" },
-      { automationId: automation.id, reason: "invocation_changed" },
-      { automationId: automation.id, reason: "invocation_changed" },
-      { automationId: automation.id, reason: "updated" },
-      { automationId: automation.id, reason: "updated" },
-      { automationId: automation.id, reason: "deleted" },
+      { automationId: automation.id },
+      { automationId: automation.id },
+      { automationId: automation.id },
+      { automationId: automation.id },
+      { automationId: automation.id },
+      { automationId: automation.id },
+      { automationId: automation.id },
     ]);
   });
 
@@ -107,7 +107,7 @@ describe("AutomationScheduler", () => {
     let now = START;
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => now });
     const automation = await manager.createAutomation({
-      projectId: "project-a",
+      projectSlug: "project-a",
       createdFromSessionId: crypto.randomUUID(),
       name: "watch",
       trigger: { kind: "interval", everyMs: 30_000 },
@@ -138,7 +138,7 @@ describe("AutomationScheduler", () => {
   test("run-now does not mutate the configured trigger or its next occurrence", async () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => START });
     const automation = await manager.createAutomation({
-      projectId: "project-a",
+      projectSlug: "project-a",
       createdFromSessionId: crypto.randomUUID(),
       name: "watch",
       trigger: { kind: "interval", everyMs: 30_000 },
@@ -164,7 +164,7 @@ describe("AutomationScheduler", () => {
   test("linearizes pause with an already claimed dispatch", async () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => START });
     const automation = await manager.createAutomation({
-      projectId: "project-a",
+      projectSlug: "project-a",
       createdFromSessionId: crypto.randomUUID(),
       name: "watch",
       trigger: { kind: "interval", everyMs: 30_000 },
@@ -211,7 +211,7 @@ describe("AutomationScheduler", () => {
   test("reconciles an accepted dispatch before pause cancels pending work", async () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => START });
     const automation = await manager.createAutomation({
-      projectId: "project-a",
+      projectSlug: "project-a",
       createdFromSessionId: crypto.randomUUID(),
       name: "watch",
       trigger: { kind: "interval", everyMs: 30_000 },

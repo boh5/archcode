@@ -42,7 +42,6 @@ export function createMockStore(
       state.events = [...state.events, {
         id: state.nextEventId,
         createdAt: Date.now(),
-        kind: event.type,
         payload: event,
       }];
       state.nextEventId += 1;

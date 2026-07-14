@@ -133,7 +133,6 @@ function storedMessage(role: StoredMessage["role"], parts: StoredPart[], compact
 
 function compressionSummary(childBlockRefs: CompressionState["activeBlockRefs"] = []) {
   return {
-    version: 1 as const,
     childBlockRefs,
     sections: {
       "Current Objective": "Compressed old implementation discussion",

@@ -67,7 +67,7 @@ async function runAdapter(adapter: GoalHitlResumeAdapter, record: HitlRecord, re
 async function createGoal(status: Extract<GoalState["status"], "running" | "reviewing"> = "running"): Promise<GoalState> {
   const running = await manager.commit({
     id: crypto.randomUUID(),
-    projectId: "project-a",
+    projectSlug: "project-a",
     createdFromSessionId: crypto.randomUUID(),
     objective: "Resume simplified Goal blockers from HITL records.",
     acceptanceCriteria: "Approved HITL clears blockers; denied and cancelled responses reach deterministic terminal states.",
@@ -83,7 +83,7 @@ async function blockGoal(
   sourceType: "goal_approval" | "goal_budget" = "goal_approval",
 ) {
   const record = await hitlService.create({
-    owner: { projectSlug: goal.projectId, ownerType: "goal", ownerId: goal.id },
+    owner: { projectSlug: goal.projectSlug, ownerType: "goal", ownerId: goal.id },
     blockingKey: `goal:${goal.id}:${phase}:${crypto.randomUUID()}`,
     source: sourceType === "goal_approval"
       ? { type: "goal_approval", goalId: goal.id, approvalPoint: phase }
@@ -146,7 +146,7 @@ describe("Goal HITL resume", () => {
     expect(callbackEntered).toBe(true);
   });
 
-  test("notifies Loop projection after denied and cancelled Goal HITL outcomes", async () => {
+  test("notifies Goal continuation after denied and cancelled HITL outcomes", async () => {
     const hitlService = createHitlService();
     const onGoalStateChanged = mock(() => undefined);
     const adapter = createAdapter(hitlService, onGoalStateChanged);
@@ -188,7 +188,7 @@ describe("Goal HITL resume", () => {
     const coordinator = createCoordinator(hitlService);
     const goal = await createGoal("running");
     const record = await hitlService.create({
-      owner: { projectSlug: goal.projectId, ownerType: "goal", ownerId: goal.id },
+      owner: { projectSlug: goal.projectSlug, ownerType: "goal", ownerId: goal.id },
       blockingKey: `goal:${goal.id}:approval:after_plan`,
       source: {
         type: "goal_approval",
@@ -259,7 +259,7 @@ describe("Goal HITL resume", () => {
     const adapter = createAdapter(hitlService);
     const goal = await createGoal("reviewing");
     const record = await hitlService.create({
-      owner: { projectSlug: goal.projectId, ownerType: "goal", ownerId: goal.id },
+      owner: { projectSlug: goal.projectSlug, ownerType: "goal", ownerId: goal.id },
       blockingKey: `goal:${goal.id}:review`,
       source: {
         type: "goal_review",
@@ -309,7 +309,7 @@ describe("Goal HITL resume", () => {
     const adapter = createAdapter(hitlService);
     const goal = await createGoal("reviewing");
     const record = await hitlService.create({
-      owner: { projectSlug: goal.projectId, ownerType: "goal", ownerId: goal.id },
+      owner: { projectSlug: goal.projectSlug, ownerType: "goal", ownerId: goal.id },
       blockingKey: `goal:${goal.id}:stale-review`,
       source: {
         type: "goal_review",
@@ -350,7 +350,7 @@ describe("Goal HITL resume", () => {
     const adapter = createAdapter(hitlService);
     const goal = await createGoal("running");
     const record = await hitlService.create({
-      owner: { projectSlug: goal.projectId, ownerType: "goal", ownerId: goal.id },
+      owner: { projectSlug: goal.projectSlug, ownerType: "goal", ownerId: goal.id },
       blockingKey: `goal:${goal.id}:approval:invalid-gap`,
       source: { type: "goal_approval", goalId: goal.id, approvalPoint: "invalid-gap" },
       displayPayload: { title: "Invalid attachment gap", redacted: true },

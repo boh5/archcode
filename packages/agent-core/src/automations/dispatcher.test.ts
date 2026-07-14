@@ -21,7 +21,7 @@ describe("AutomationDispatcher", () => {
   test("dispatches through the ordinary Session gateway with preallocated ids", async () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     const automation = await manager.createAutomation({
-      projectId: "project-a",
+      projectSlug: "project-a",
       createdFromSessionId: crypto.randomUUID(),
       name: "run",
       trigger: { kind: "interval", everyMs: 30_000 },
@@ -39,7 +39,7 @@ describe("AutomationDispatcher", () => {
     expect(calls).toEqual([{
       kind: "start_session",
       workspaceRoot: TMP_ROOT,
-      projectId: "project-a",
+      projectSlug: "project-a",
       sessionId: invocation.sessionId,
       executionId: invocation.executionId,
       message: "/skill use reviewer",
@@ -50,7 +50,7 @@ describe("AutomationDispatcher", () => {
   test("recovers an accepted dispatch without sending it twice", async () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     const automation = await manager.createAutomation({
-      projectId: "project-a",
+      projectSlug: "project-a",
       createdFromSessionId: crypto.randomUUID(),
       name: "run",
       trigger: { kind: "interval", everyMs: 30_000 },
@@ -71,7 +71,7 @@ describe("AutomationDispatcher", () => {
   test("leaves an accepted execution recoverable when the dispatched checkpoint fails", async () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     const automation = await manager.createAutomation({
-      projectId: "project-a",
+      projectSlug: "project-a",
       createdFromSessionId: crypto.randomUUID(),
       name: "run",
       trigger: { kind: "interval", everyMs: 30_000 },
@@ -92,7 +92,7 @@ describe("AutomationDispatcher", () => {
   test("keeps one coalesced pending invocation while the previous execution is active", async () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     const automation = await manager.createAutomation({
-      projectId: "project-a",
+      projectSlug: "project-a",
       createdFromSessionId: crypto.randomUUID(),
       name: "run",
       trigger: { kind: "interval", everyMs: 30_000 },
@@ -113,7 +113,7 @@ describe("AutomationDispatcher", () => {
   test("serializes concurrent dispatch attempts for the same Invocation", async () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     const automation = await manager.createAutomation({
-      projectId: "project-a",
+      projectSlug: "project-a",
       createdFromSessionId: crypto.randomUUID(),
       name: "run",
       trigger: { kind: "interval", everyMs: 30_000 },
@@ -146,7 +146,7 @@ describe("AutomationDispatcher", () => {
   test("notifies after a failed Invocation is durably recorded", async () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     const automation = await manager.createAutomation({
-      projectId: "project-a",
+      projectSlug: "project-a",
       createdFromSessionId: crypto.randomUUID(),
       name: "run",
       trigger: { kind: "interval", everyMs: 30_000 },
@@ -168,7 +168,6 @@ describe("AutomationDispatcher", () => {
     expect(result.status).toBe("failed");
     expect(changes).toEqual([{
       automationId: automation.id,
-      reason: "invocation_changed",
     }]);
   });
 });

@@ -9,7 +9,7 @@ import type {
   SessionEventPayload,
   SessionStats,
   SessionExecutionRecord,
-  SessionHitlCheckpoint,
+  SessionHitlBlocker,
   ToolChildSessionLink,
 } from "@archcode/protocol";
 import type { CompressionState } from "../compression";
@@ -61,7 +61,7 @@ export type {
   SessionTodo,
   SessionTodoStatus,
   SessionProjection,
-  SessionHitlCheckpoint,
+  SessionHitlBlocker,
   SessionEventEnvelope,
   SessionEventPayload,
   ShutdownEvent,
@@ -105,7 +105,7 @@ export interface SessionStoreState {
   parentSessionId?: string;
   goalId?: string;
   sessionRole?: SessionRole;
-  blockedHitl?: SessionHitlCheckpoint;
+  blockedHitl?: SessionHitlBlocker;
   blockedByHitlIds?: string[];
 
   // Running state

@@ -21,7 +21,6 @@ function event(eventId: number, payload: SessionEventPayload): GlobalSessionEven
     sessionId: "session-1",
     eventId,
     createdAt: 1_700_000_000_000 + eventId,
-    kind: payload.type,
     payload,
     agentName: "engineer",
   };
@@ -405,7 +404,6 @@ function makeCompressionBlock(overrides: Partial<CompressionBlockSnapshot> = {})
 
 function makeCompressionState(block: CompressionBlockSnapshot): CompressionStateSnapshot {
   return {
-    version: 1,
     refMap: {
       messageRefsById: { first: "m0001", tail: "m0002" },
       messageIdsByRef: { m0001: "first", m0002: "tail" },

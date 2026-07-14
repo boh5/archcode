@@ -22,7 +22,6 @@ export interface MatchLine {
 }
 
 export interface MatchResult {
-  type: "match";
   path: string;
   lineNumber: number;
   content: string;
@@ -92,7 +91,7 @@ export function parseRgJsonLine(line: string): MatchResult | null {
   // rg appends trailing newline (\n or \r\n) to lines.text
   content = content.replace(/\r?\n$/, "");
 
-  return { type: "match", path, lineNumber, content };
+  return { path, lineNumber, content };
 }
 
 /**

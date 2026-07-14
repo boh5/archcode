@@ -8,7 +8,6 @@ import type { SessionStoreState, StoredMessage } from "../store/types";
 
 function summary(childBlockRefs: CompressionSummary["childBlockRefs"] = []): CompressionSummary {
   return {
-    version: 1,
     childBlockRefs,
     sections: {
       "Current Objective": childBlockRefs.length > 0 ? "Continue task after child blocks" : "Continue task",
@@ -69,7 +68,6 @@ function messagesWithTools(): StoredMessage[] {
 
 function sessionFile(messages: StoredMessage[], compression = createEmptyCompressionState()): SessionFile {
   return {
-    schemaVersion: 1,
     sessionId: "session-1",
     createdAt: 100,
     updatedAt: 100,

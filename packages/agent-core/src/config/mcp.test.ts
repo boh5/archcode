@@ -16,7 +16,6 @@ import {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const VALID_SERVER = {
-  transport: "http" as const,
   url: "http://localhost:3000",
 };
 
@@ -83,20 +82,16 @@ describe("mcpServerConfigSchema", () => {
     expect(result.success).toBe(true);
   });
 
-  test("rejects unknown transport", () => {
+  test("rejects the removed transport field", () => {
     const result = mcpServerConfigSchema.safeParse({
-      transport: "stdio",
+      transport: "http",
       url: "http://localhost:3000",
     });
     expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.issues[0].message).toContain("http");
-    }
   });
 
   test("rejects empty url", () => {
     const result = mcpServerConfigSchema.safeParse({
-      transport: "http",
       url: "",
     });
     expect(result.success).toBe(false);
@@ -440,11 +435,6 @@ describe("resolveMcpConfig", () => {
     expect(result.servers.myserver.headers).toBeUndefined();
   });
 
-  test("sets transport to http", () => {
-    const result = resolveMcpConfig(makeValidConfig());
-    expect(result.servers.myserver.transport).toBe("http");
-  });
-
   test("resolves multiple servers", () => {
     const config = makeValidConfig();
     config.servers.server2 = { ...VALID_SERVER };
@@ -459,7 +449,6 @@ describe("resolveMcpConfig", () => {
   test("returns ResolvedMcpConfig shape with proper interface", () => {
     const result: ResolvedMcpConfig = resolveMcpConfig(makeValidConfig());
     expect(result.servers.myserver).toMatchObject({
-      transport: "http",
       url: "http://localhost:3000",
       timeout: 30000,
     });
@@ -540,7 +529,6 @@ import { archcodeConfigSchema } from "./index";
 
 describe("archcodeConfigSchema with mcp", () => {
   const BASE = {
-    $schema: "http://schema",
     provider: {
       p: {
         npm: "@ai-sdk/openai-compatible",
@@ -574,7 +562,7 @@ describe("archcodeConfigSchema with mcp", () => {
   test("accepts config with valid mcp", () => {
     const result = archcodeConfigSchema.safeParse({
       ...BASE,
-      mcp: { servers: { s: { transport: "http", url: "http://localhost" } } },
+      mcp: { servers: { s: { url: "http://localhost" } } },
     });
     expect(result.success).toBe(true);
   });
@@ -583,18 +571,18 @@ describe("archcodeConfigSchema with mcp", () => {
     const result = archcodeConfigSchema.safeParse({
       ...BASE,
       mcp: {
-        servers: { s: { transport: "http", url: "http://localhost" } },
+        servers: { s: { url: "http://localhost" } },
         extraKey: "bad",
       },
     });
     expect(result.success).toBe(false);
   });
 
-  test("rejects mcp with stdio transport in full config", () => {
+  test("rejects the removed transport field in full config", () => {
     const result = archcodeConfigSchema.safeParse({
       ...BASE,
       mcp: {
-        servers: { s: { transport: "stdio", url: "http://localhost" } },
+        servers: { s: { transport: "http", url: "http://localhost" } },
       },
     });
     expect(result.success).toBe(false);

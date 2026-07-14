@@ -115,7 +115,6 @@ export class SessionEventBridge {
         sessionId: registration.sessionId,
         eventId: envelope.id,
         createdAt: envelope.createdAt,
-        kind: envelope.kind,
         payload: envelope.payload,
         agentName: current.agentName,
       };

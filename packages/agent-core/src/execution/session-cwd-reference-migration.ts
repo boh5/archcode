@@ -45,7 +45,6 @@ export interface SessionCwdRemovalLifecycle {
 type SessionCwdMigrationPhase = "prepared" | "migrating" | "migrated" | "detached" | "rolling_back";
 
 interface SessionCwdMigrationJournal {
-  readonly version: 1;
   readonly projectRoot: string;
   readonly fromCwd: string;
   readonly toCwd: string;
@@ -107,7 +106,6 @@ export class SessionCwdReferenceMigrationService {
 
       if (journal === undefined) {
         journal = {
-          version: 1,
           projectRoot: resolve(input.projectRoot),
           fromCwd: resolve(input.fromCwd),
           toCwd: resolve(input.toCwd),
@@ -134,7 +132,6 @@ export class SessionCwdReferenceMigrationService {
 
           const references = mergeReferences(journal?.references ?? [], latest);
           journal = {
-            version: 1,
             projectRoot: resolve(input.projectRoot),
             fromCwd: resolve(input.fromCwd),
             toCwd: resolve(input.toCwd),
@@ -404,7 +401,7 @@ function mergeReferences(
 function isMigrationJournal(value: unknown): value is SessionCwdMigrationJournal {
   if (typeof value !== "object" || value === null) return false;
   const record = value as Record<string, unknown>;
-  if (record.version !== 1
+  if (!hasExactKeys(record, ["projectRoot", "fromCwd", "toCwd", "phase", "references"])
     || typeof record.projectRoot !== "string"
     || typeof record.fromCwd !== "string"
     || typeof record.toCwd !== "string"
@@ -413,6 +410,14 @@ function isMigrationJournal(value: unknown): value is SessionCwdMigrationJournal
   return record.references.every((reference) => {
     if (typeof reference !== "object" || reference === null) return false;
     const item = reference as Record<string, unknown>;
-    return typeof item.sessionId === "string" && typeof item.rootSessionId === "string" && typeof item.cwd === "string";
+    return hasExactKeys(item, ["sessionId", "rootSessionId", "cwd"])
+      && typeof item.sessionId === "string"
+      && typeof item.rootSessionId === "string"
+      && typeof item.cwd === "string";
   });
+}
+
+function hasExactKeys(record: Record<string, unknown>, expected: readonly string[]): boolean {
+  const keys = Object.keys(record);
+  return keys.length === expected.length && expected.every((key) => Object.hasOwn(record, key));
 }

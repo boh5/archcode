@@ -9,7 +9,6 @@ import { zValidator } from "../validation";
 export interface DirectoryEntry {
   name: string;
   path: string;
-  kind: "directory";
 }
 
 export interface DirectoriesResponse {
@@ -124,7 +123,7 @@ async function listDirectories(root: string): Promise<DirectoryEntry[]> {
     const childStat = await safeStat(childPath);
     if (!childStat?.isDirectory()) continue;
     if (!(await canReadDirectory(childPath))) continue;
-    entries.push({ name: dirent.name, path: childPath, kind: "directory" });
+    entries.push({ name: dirent.name, path: childPath });
   }
 
   return entries;
@@ -187,11 +186,11 @@ async function resolveSearchRoots(roots?: string[]): Promise<string[]> {
 }
 
 function toSearchCandidate(path: string): SearchCandidate {
-  return { ...toDirectoryEntry({ name: basename(path) || path, path, kind: "directory" }), target: `${basename(path)} ${path}` };
+  return { ...toDirectoryEntry({ name: basename(path) || path, path }), target: `${basename(path)} ${path}` };
 }
 
 function toDirectoryEntry(entry: DirectoryEntry): DirectoryEntry {
-  return { name: entry.name, path: entry.path, kind: "directory" };
+  return { name: entry.name, path: entry.path };
 }
 
 function compareDirectoryEntries(left: DirectoryEntry, right: DirectoryEntry): number {

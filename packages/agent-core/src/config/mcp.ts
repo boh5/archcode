@@ -14,13 +14,8 @@ const mcpServerNameSchema = z
     message: "Server name must not contain '__' (double underscore)",
   });
 
-const mcpTransportSchema = z.literal("http", {
-  message: "Only 'http' transport is supported",
-});
-
 const mcpServerConfigSchema = z
   .object({
-    transport: mcpTransportSchema,
     url: z.string().min(1, "url must not be empty"),
     headers: z.record(z.string(), z.string()).optional(),
     timeout: z.number().int().positive().optional(),
@@ -35,12 +30,10 @@ const mcpConfigSchema = z
 
 // ─── Inferred Types ─────────────────────────────────────────────────────────
 
-export type McpTransport = z.infer<typeof mcpTransportSchema>;
 export type McpServerConfig = z.infer<typeof mcpServerConfigSchema>;
 export type McpConfig = z.infer<typeof mcpConfigSchema>;
 
 export interface ResolvedMcpServerConfig {
-  transport: "http";
   url: string;
   headers?: Record<string, string>;
   timeout: number;
@@ -139,7 +132,6 @@ export function resolveMcpConfig(config?: McpConfig): ResolvedMcpConfig {
       : undefined;
 
     servers[serverName] = {
-      transport: "http" as const,
       url,
       headers,
       timeout: serverConfig.timeout ?? 30000,
@@ -153,7 +145,6 @@ export function resolveMcpConfig(config?: McpConfig): ResolvedMcpConfig {
 
 export {
   mcpServerNameSchema,
-  mcpTransportSchema,
   mcpServerConfigSchema,
   mcpConfigSchema,
 };

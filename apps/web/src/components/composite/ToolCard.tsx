@@ -56,34 +56,47 @@ interface AskUserExchange {
   answer: string;
 }
 
-function getAskUserExchanges(part: ToolPart, outputText: string | null): AskUserExchange[] | undefined {
+function isExactRecord(value: unknown, requiredKeys: readonly string[], optionalKeys: readonly string[] = []): value is Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const allowedKeys = new Set([...requiredKeys, ...optionalKeys]);
+  return requiredKeys.every((key) => Object.hasOwn(record, key))
+    && Object.keys(record).every((key) => allowedKeys.has(key));
+}
+
+function isAskUserOption(value: unknown): boolean {
+  return isExactRecord(value, ["label", "description"])
+    && typeof value.label === "string"
+    && typeof value.description === "string";
+}
+
+function isAskUserQuestion(value: unknown): value is Record<string, unknown> {
+  if (!isExactRecord(value, ["question", "header"], ["options", "multiple", "custom"])) return false;
+  return typeof value.question === "string" && value.question.length > 0
+    && typeof value.header === "string" && value.header.length > 0 && value.header.length <= 30
+    && (value.options === undefined || (Array.isArray(value.options) && value.options.every(isAskUserOption)))
+    && (value.multiple === undefined || typeof value.multiple === "boolean")
+    && (value.custom === undefined || typeof value.custom === "boolean");
+}
+
+function getAskUserExchanges(part: ToolPart): AskUserExchange[] | undefined {
   if (part.toolName !== TOOL_ASK_USER || part.state !== "completed" || !("input" in part)) return undefined;
-  if (!part.input || typeof part.input !== "object" || Array.isArray(part.input)) return undefined;
-  const questions = (part.input as Record<string, unknown>).questions;
-  if (!Array.isArray(questions) || questions.length === 0) return undefined;
+  if (!isExactRecord(part.input, ["questions"])) return undefined;
+  const questions = part.input.questions;
+  if (!Array.isArray(questions) || questions.length === 0 || !questions.every(isAskUserQuestion)) return undefined;
 
   const metadata = part.meta?.askUser;
-  const structuredAnswers = metadata !== null && typeof metadata === "object"
-    && (metadata as Record<string, unknown>).version === 1
-    && Array.isArray((metadata as Record<string, unknown>).answers)
-    ? (metadata as { answers: unknown[] }).answers
-    : undefined;
+  if (!isExactRecord(metadata, ["answers"]) || !Array.isArray(metadata.answers)) return undefined;
+  if (metadata.answers.length !== questions.length) return undefined;
+  if (!metadata.answers.every((answer) => Array.isArray(answer)
+    && answer.length > 0
+    && answer.every((item) => typeof item === "string"))) return undefined;
 
-  return questions.flatMap((value, index) => {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
-    const question = value as Record<string, unknown>;
-    if (typeof question.question !== "string") return [];
-    const answerValue = structuredAnswers?.[index];
-    const answer = Array.isArray(answerValue) && answerValue.every((item) => typeof item === "string")
-      ? answerValue.join(", ")
-      : questions.length === 1 && outputText !== null ? outputText : "";
-    if (answer.length === 0) return [];
-    return [{
-      header: typeof question.header === "string" ? question.header : `Q${index + 1}`,
-      question: question.question,
-      answer,
-    }];
-  });
+  return questions.map((question, index) => ({
+    header: question.header as string,
+    question: question.question as string,
+    answer: (metadata.answers as string[][])[index].join(", "),
+  }));
 }
 
 function AskUserResult({ exchanges }: { exchanges: AskUserExchange[] }) {
@@ -126,7 +139,7 @@ export function ToolCard({ part }: ToolCardProps) {
       : part.state === "error"
         ? (part as { errorMessage: string }).errorMessage
         : null;
-  const askUserExchanges = getAskUserExchanges(part, outputText);
+  const askUserExchanges = getAskUserExchanges(part);
 
   const diffMeta =
     part.state === "completed" || part.state === "error"

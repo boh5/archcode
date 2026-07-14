@@ -56,7 +56,6 @@ function message(id: string, role: StoredMessage["role"], text: string): StoredM
 
 function summary(childBlockRefs: string[] = []) {
   return {
-    version: 1 as const,
     childBlockRefs,
     sections: {
       "Current Objective": childBlockRefs.length > 0 ? `Continue after (${childBlockRefs[0]})` : "Continue task",
@@ -94,7 +93,7 @@ describe("compressTool", () => {
     const output = JSON.parse(result.output) as { ok: boolean; blockRef: string };
     expect(output).toMatchObject({ ok: true, blockRef: "b1" });
     expect(store.getState().compression?.activeBlockRefs).toEqual(["b1"]);
-    expect(store.getState().events.at(-1)?.kind).toBe("compression.block_committed");
+    expect(store.getState().events.at(-1)?.payload.type).toBe("compression.block_committed");
     expect(JSON.stringify(store.getState().messages)).toBe(beforeMessages);
   });
 
@@ -112,7 +111,7 @@ describe("compressTool", () => {
     const output = JSON.parse(result.output) as { ok: boolean; code: string };
     expect(output).toMatchObject({ ok: false, code: "range_rejected" });
     expect(store.getState().compression?.activeBlockRefs).toEqual([]);
-    expect(store.getState().events.at(-1)?.kind).toBe("compression.block_failed");
+    expect(store.getState().events.at(-1)?.payload.type).toBe("compression.block_failed");
   });
 
   test("rejects latest-tail ranges transactionally", async () => {
@@ -130,6 +129,18 @@ describe("compressTool", () => {
     expect(output).toMatchObject({ ok: false, code: "protected_content" });
     expect(output.protectedRefs?.map((ref) => ref.kind)).toEqual(expect.arrayContaining(["latest_tail"]));
     expect(store.getState().compression?.activeBlockRefs).toEqual([]);
-    expect(store.getState().events.at(-1)?.kind).toBe("compression.block_failed");
+    expect(store.getState().events.at(-1)?.payload.type).toBe("compression.block_failed");
+  });
+
+  test("rejects the removed summary version field", async () => {
+    const registry = createRegistry([compressTool]);
+
+    const result = await registry.execute({
+      toolCallId: "compress-call-version",
+      toolName: TOOL_COMPRESS,
+      input: { startId: "m0001", endId: "m0004", summary: { ...summary(), version: 1 } },
+    }, makeCtx(makeStore()));
+
+    expect(result.isError).toBe(true);
   });
 });

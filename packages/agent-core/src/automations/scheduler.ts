@@ -112,7 +112,7 @@ export class AutomationScheduler implements AutomationService {
 
   async createAutomation(input: CreateAutomationInput): Promise<Automation> {
     const automation = await this.#stateManager.createAutomation(input);
-    this.#onChange?.({ automationId: automation.id, reason: "created" });
+    this.#onChange?.({ automationId: automation.id });
     await this.#armIfStarted();
     return automation;
   }
@@ -122,7 +122,7 @@ export class AutomationScheduler implements AutomationService {
     const automation = input.action !== undefined || input.trigger !== undefined
       ? await this.#dispatcher.reconcileAcceptedBeforeMutation(automationId, mutate)
       : await this.#coordinator.runExclusive(automationId, mutate);
-    this.#onChange?.({ automationId: automation.id, reason: "updated" });
+    this.#onChange?.({ automationId: automation.id });
     await this.#armIfStarted();
     return automation;
   }
@@ -132,7 +132,7 @@ export class AutomationScheduler implements AutomationService {
       automationId,
       () => this.#stateManager.pauseAutomation(automationId),
     );
-    this.#onChange?.({ automationId: automation.id, reason: "updated" });
+    this.#onChange?.({ automationId: automation.id });
     await this.#armIfStarted();
     return automation;
   }
@@ -142,7 +142,7 @@ export class AutomationScheduler implements AutomationService {
       automationId,
       () => this.#stateManager.resumeAutomation(automationId),
     );
-    this.#onChange?.({ automationId: automation.id, reason: "updated" });
+    this.#onChange?.({ automationId: automation.id });
     await this.#armIfStarted();
     return automation;
   }
@@ -152,7 +152,7 @@ export class AutomationScheduler implements AutomationService {
       automationId,
       () => this.#stateManager.deleteAutomation(automationId),
     );
-    this.#onChange?.({ automationId, reason: "deleted" });
+    this.#onChange?.({ automationId });
     await this.#armIfStarted();
   }
 
@@ -162,7 +162,7 @@ export class AutomationScheduler implements AutomationService {
       automationId,
       () => this.#stateManager.enqueueInvocation(automationId, new Date(this.#clock.now()).toISOString()),
     );
-    this.#onChange?.({ automationId, reason: "invocation_changed" });
+    this.#onChange?.({ automationId });
     const result = await this.#dispatcher.dispatchInvocation(invocation.id);
     await this.#armIfStarted();
     return result;
@@ -182,7 +182,7 @@ export class AutomationScheduler implements AutomationService {
         () => this.#stateManager.advanceSchedule(automation.id, dueAt, now),
       );
       if (invocation !== undefined) {
-        this.#onChange?.({ automationId: automation.id, reason: "invocation_changed" });
+        this.#onChange?.({ automationId: automation.id });
       }
     }
     await this.#dispatcher.dispatchPending();

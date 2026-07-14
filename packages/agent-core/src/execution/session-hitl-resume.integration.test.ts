@@ -26,8 +26,8 @@ import { createTestProjectContext } from "../tools/test-project-context";
 import { WorktreeService } from "../worktrees";
 import { SessionExecutionScopeValidator } from "./session-execution-scope-validator";
 import {
-  readSessionHitlCheckpointFile,
-} from "./session-hitl-checkpoint";
+  readSessionHitlJournalFile,
+} from "./session-hitl-journal-store";
 import type { SessionHitlResumeLease } from "./session-execution-manager";
 import { SessionHitlResumeAdapter } from "./session-hitl-resume-adapter";
 
@@ -67,7 +67,7 @@ afterAll(async () => {
 });
 
 describe("Session HITL resume worktree integration", () => {
-  test("stores HITL checkpoints under the project root and resumes tools in Session cwd", async () => {
+  test("stores HITL entries under the project root and resumes tools in Session cwd", async () => {
     const fixture = await createFixture();
     await initializeGitRepo(fixture.workspaceRoot);
     const worktreeCwd = (await new WorktreeService({ canonicalRoot: fixture.workspaceRoot }).create({
@@ -95,8 +95,8 @@ describe("Session HITL resume worktree integration", () => {
     );
     const pending = await singlePendingHitl(fixture);
 
-    expect(await Bun.file(join(worktreeCwd, ".archcode", "sessions", fixture.sessionId, "hitl-checkpoints.json")).exists()).toBe(false);
-    expect((await readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId)).checkpoints).toHaveLength(1);
+    expect(await Bun.file(join(worktreeCwd, ".archcode", "sessions", fixture.sessionId, "hitl-journal.json")).exists()).toBe(false);
+    expect((await readSessionHitlJournalFile(fixture.workspaceRoot, fixture.sessionId)).entries).toHaveLength(1);
 
     await fixture.coordinator.respond(
       { owner: pending.owner, hitlId: pending.hitlId },
@@ -200,7 +200,7 @@ function createAliasedResolver(
   const resolver = new ProjectContextResolver({
     projectInfoFactory: () => context.project,
     goalCancellationFactory: () => context.goalCancellation,
-    goalRunnerFactory: () => ({}) as never,
+    goalLifecycleFactory: () => ({}) as never,
     createAutomation: async () => { throw new Error("unused automation creator"); },
     sessionStoreManager: sessions,
     resumeCoordinatorFactory: () => context.hitlResumeCoordinator,

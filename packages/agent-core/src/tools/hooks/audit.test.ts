@@ -41,7 +41,6 @@ describe("createAuditHook", () => {
 
     expect(events).toEqual([
       {
-        version: 1,
         toolName: "bash",
         toolCallId: "call-1",
         input: { command: `echo ${REDACTION_MARKER}`, token: REDACTION_MARKER },

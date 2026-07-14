@@ -203,7 +203,7 @@ describe("ToolCard", () => {
     expect(text).toContain("done");
   });
 
-  test("completed ask_user renders the question and legacy bare answer as a pair", () => {
+  test("completed ask_user without metadata shows raw output and never infers a bare answer", () => {
     const part = makeCompleted({
       toolName: "ask_user",
       input: {
@@ -215,10 +215,8 @@ describe("ToolCard", () => {
     const el = ToolCard({ part });
     const text = textContent(el);
 
-    expect(text).toContain("Question");
-    expect(text).toContain("What do you want to learn or finish?");
-    expect(text).toContain("Answer");
     expect(text).toContain("agent");
+    expect(text).not.toContain("Answer");
   });
 
   test("completed ask_user renders every structured answer from metadata", () => {
@@ -233,7 +231,6 @@ describe("ToolCard", () => {
       output: "model-facing formatted result",
       meta: {
         askUser: {
-          version: 1,
           answers: [["src/main.ts"], ["Dark mode", "Compact"]],
         },
       },
@@ -247,6 +244,44 @@ describe("ToolCard", () => {
     expect(text).toContain("Which styles?");
     expect(text).toContain("Dark mode, Compact");
     expect(text).not.toContain("model-facing formatted result");
+  });
+
+  test.each([
+    ["missing answers", {}],
+    ["old version", { version: 1, answers: [["agent"]] }],
+    ["extra key", { answers: [["agent"]], extra: true }],
+    ["wrong nesting", { answers: ["agent"] }],
+    ["answer count mismatch", { answers: [["agent"], ["extra"]] }],
+    ["empty answer", { answers: [[]] }],
+  ])("completed ask_user with %s metadata shows raw output", (_label, askUser) => {
+    const part = makeCompleted({
+      toolName: "ask_user",
+      input: {
+        questions: [{ header: "Recent goal", question: "What do you want to learn or finish?", options: [], custom: true }],
+      },
+      output: "raw ask_user output",
+      meta: { askUser },
+    });
+
+    const text = textContent(ToolCard({ part }));
+    expect(text).toContain("raw ask_user output");
+    expect(text).not.toContain("Answer");
+  });
+
+  test.each([
+    ["unknown key", { header: "Recent goal", question: "What next?", options: [], custom: true, extra: true }],
+    ["oversized header", { header: "x".repeat(31), question: "What next?", options: [], custom: true }],
+  ])("completed ask_user with malformed question structure (%s) shows raw output", (_label, question) => {
+    const part = makeCompleted({
+      toolName: "ask_user",
+      input: {
+        questions: [question],
+      },
+      output: "raw ask_user output",
+      meta: { askUser: { answers: [["agent"]] } },
+    });
+
+    expect(textContent(ToolCard({ part }))).toContain("raw ask_user output");
   });
 
   test("failed ask_user keeps the error message instead of presenting it as an answer", () => {
@@ -338,7 +373,6 @@ describe("ToolCard", () => {
       output: "Edit applied",
       meta: {
         diffs: {
-          version: 1,
           files: diffFiles,
         },
       },
@@ -360,15 +394,15 @@ describe("ToolCard", () => {
     expect(text).not.toContain("No changes");
   });
 
-  test("malformed diff metadata is ignored safely", () => {
+  test("diff metadata with an old version is ignored safely", () => {
     const part = makeCompleted({
       toolName: "file_edit",
       input: { filePath: "/src/index.ts" },
       output: "Edit applied",
       meta: {
         diffs: {
-          version: 2,
-          files: "malformed-only.ts",
+          version: 1,
+          files: [{ path: "malformed-only.ts", hunks: [] }],
         },
       },
     });
@@ -377,6 +411,33 @@ describe("ToolCard", () => {
     expect(text).toContain("Edit applied");
     expect(text).not.toContain("malformed-only.ts");
     expect(text).not.toContain("M");
+  });
+
+  test("nested malformed diff metadata is ignored safely", () => {
+    const part = makeCompleted({
+      toolName: "file_edit",
+      input: { filePath: "/src/index.ts" },
+      output: "raw edit output",
+      meta: {
+        diffs: {
+          files: [{
+            path: "malformed-only.ts",
+            hunks: [{
+              header: "@@",
+              oldStart: 1,
+              oldLines: 1,
+              newStart: 1,
+              newLines: 1,
+              lines: [{ type: "add", content: "x", extra: true }],
+            }],
+          }],
+        },
+      },
+    });
+
+    const text = textContent(ToolCard({ part }));
+    expect(text).toContain("raw edit output");
+    expect(text).not.toContain("malformed-only.ts");
   });
 
   test("error tool with diff metadata renders diff section", () => {
@@ -395,7 +456,6 @@ describe("ToolCard", () => {
       errorMessage: "Edit failed",
       meta: {
         diffs: {
-          version: 1,
           files: diffFiles,
         },
       },

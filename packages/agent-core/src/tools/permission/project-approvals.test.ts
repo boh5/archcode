@@ -75,9 +75,9 @@ describe("ProjectApprovalManager", () => {
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
-  test("legacy permissions file version fails closed instead of resetting authority", async () => {
+  test("removed permissions file version fails closed instead of resetting authority", async () => {
     mkdirSync(join(WORKSPACE, ".archcode"), { recursive: true });
-    writeFileSync(PERMISSIONS_PATH, JSON.stringify({ version: 0, approvals: [] }));
+    writeFileSync(PERMISSIONS_PATH, JSON.stringify({ version: 1, approvals: [] }));
     const manager = makeManager();
 
     await expect(manager.load(WORKSPACE)).rejects.toMatchObject({
@@ -124,7 +124,7 @@ describe("ProjectApprovalManager", () => {
 
     const raw = readFileSync(PERMISSIONS_PATH, "utf8");
     expect(raw.endsWith("\n")).toBe(true);
-    expect(raw).toContain('  "version": 1');
+    expect(raw).not.toContain('"version"');
     expect(raw).toContain('    {\n      "id"');
     expect(PermissionApprovalFileSchema.parse(JSON.parse(raw)).approvals[0]).toEqual(approval);
 

@@ -1,6 +1,6 @@
 import type { SessionDeletionOwnerDetail, SessionDeletionPreflight, SessionDeletionPreflightInput } from "../execution/session-deletion";
 import { SessionDeleteOwnerConflictError } from "../execution/session-deletion";
-import { readSessionHitlCheckpointFile } from "../execution/session-hitl-checkpoint";
+import { readSessionHitlJournalFile } from "../execution/session-hitl-journal-store";
 import { isActiveHitlStatus } from "../hitl/owner-store";
 import type { SessionStoreManager } from "../store/session-store-manager";
 import type { ProjectContextResolver } from "./context-resolver";
@@ -54,16 +54,16 @@ export class SessionLifecycleService implements SessionDeletionPreflight {
         });
       }
 
-      const checkpointHitlIds = (await readSessionHitlCheckpointFile(input.workspaceRoot, sessionId))
-        .checkpoints
-        .map((checkpoint) => checkpoint.hitlId)
+      const entryHitlIds = (await readSessionHitlJournalFile(input.workspaceRoot, sessionId))
+        .entries
+        .map((entry) => entry.hitlId)
         .sort();
-      if (checkpointHitlIds.length > 0) {
+      if (entryHitlIds.length > 0) {
         owners.push({
           sessionId,
-          ownerType: "session_hitl_checkpoint",
+          ownerType: "session_hitl_journal",
           ownerId: sessionId,
-          hitlIds: checkpointHitlIds,
+          hitlIds: entryHitlIds,
         });
       }
     }

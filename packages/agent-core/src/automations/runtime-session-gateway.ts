@@ -30,7 +30,7 @@ export interface RuntimeSessionDispatchGatewayOptions {
     "createSessionFile" | "getSessionFile"
   >;
   readonly sessionRuntime: AutomationSessionRuntime;
-  readonly resolveProject: (projectId: string) => Promise<Pick<ProjectInfo, "slug" | "workspaceRoot"> | undefined>;
+  readonly resolveProject: (projectSlug: string) => Promise<Pick<ProjectInfo, "slug" | "workspaceRoot"> | undefined>;
   readonly worktreeServiceFactory?: (workspaceRoot: string) => Pick<
     WorktreeService,
     "create" | "findManaged" | "validate" | "validateManagedClaim"
@@ -96,9 +96,9 @@ export class RuntimeSessionDispatchGateway implements SessionDispatchGateway {
     if (state === "active" || state === "accepted") return { accepted: true };
     if (state === "unavailable") return { accepted: false };
 
-    const project = await this.#resolveProject(input.projectId);
-    if (project === undefined || project.workspaceRoot !== input.workspaceRoot || project.slug !== input.projectId) {
-      throw new Error(`Automation project scope is unavailable: ${input.projectId}`);
+    const project = await this.#resolveProject(input.projectSlug);
+    if (project === undefined || project.workspaceRoot !== input.workspaceRoot || project.slug !== input.projectSlug) {
+      throw new Error(`Automation project scope is unavailable: ${input.projectSlug}`);
     }
 
     if (input.kind === "start_session") {

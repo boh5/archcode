@@ -69,9 +69,8 @@ export const GoalWorktreeSchema = z.strictObject({
 }) satisfies z.ZodType<ProtocolGoalWorktree>;
 
 export const GoalStateSchema = z.strictObject({
-  version: z.literal(4),
   id: GoalUuidSchema,
-  projectId: z.string().trim().min(1),
+  projectSlug: z.string().trim().min(1),
   createdFromSessionId: z.string().trim().min(1),
   title: GoalNullableTitleSchema,
   objective: GoalNaturalLanguageSchema,
@@ -196,7 +195,7 @@ export type GoalWorktree = ProtocolGoalWorktree;
 
 export interface GoalCommitInput {
   readonly id: string;
-  readonly projectId: string;
+  readonly projectSlug: string;
   readonly createdFromSessionId: string;
   readonly objective: string;
   readonly acceptanceCriteria: string;
@@ -312,6 +311,7 @@ export class GoalStateManager {
   constructor(
     private readonly workspaceRoot: string,
     logger: Logger = silentLogger,
+    private readonly onCommitted?: (goal: GoalState) => void | Promise<void>,
   ) {
     this.#logger = logger.child({ module: "goals.state" });
   }
@@ -320,9 +320,8 @@ export class GoalStateManager {
     return await this.withGoalMutation(input.id, async () => {
       const now = input.startedAt ?? new Date().toISOString();
       const state = GoalStateSchema.parse({
-        version: 4,
         id: input.id,
-        projectId: input.projectId,
+        projectSlug: input.projectSlug,
         createdFromSessionId: input.createdFromSessionId,
         title: null,
         objective: input.objective,
@@ -342,6 +341,7 @@ export class GoalStateManager {
       });
 
       await this.writeNew(state);
+      this.notifyCommitted(state);
       return state;
     });
   }
@@ -353,7 +353,7 @@ export class GoalStateManager {
     return this.parseGoalState(goalId, await Bun.file(filePath).text());
   }
 
-  async listGoals(projectId?: string): Promise<GoalState[]> {
+  async listGoals(projectSlug?: string): Promise<GoalState[]> {
     const entries = await readdir(this.goalsRoot(), { withFileTypes: true }).catch((error: unknown) => {
       if (this.isMissingDirectoryError(error)) return [];
       this.#logger.warn("goals.list.failed", { error: logError(error) });
@@ -367,7 +367,7 @@ export class GoalStateManager {
       if (!GoalUuidSchema.safeParse(goalId).success) throw new GoalInvalidIdError(goalId);
       try {
         const state = await this.read(goalId);
-        if (projectId === undefined || state.projectId === projectId) states.push(state);
+        if (projectSlug === undefined || state.projectSlug === projectSlug) states.push(state);
       } catch (error) {
         if (error instanceof GoalNotFoundError) continue;
         throw error;
@@ -601,7 +601,25 @@ export class GoalStateManager {
       updatedAt: new Date().toISOString(),
     });
     await this.write(updated);
+    this.notifyCommitted(updated);
     return updated;
+  }
+
+  private notifyCommitted(state: GoalState): void {
+    if (this.onCommitted === undefined) return;
+    try {
+      void Promise.resolve(this.onCommitted(state)).catch((error: unknown) => {
+        this.#logger.warn("goals.commit.notification_failed", {
+          error: logError(error),
+          context: { goalId: state.id },
+        });
+      });
+    } catch (error) {
+      this.#logger.warn("goals.commit.notification_failed", {
+        error: logError(error),
+        context: { goalId: state.id },
+      });
+    }
   }
 
   private async write(state: GoalState): Promise<void> {

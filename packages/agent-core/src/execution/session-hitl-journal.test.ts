@@ -2,21 +2,20 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { HitlOwnerKey, HitlSource } from "@archcode/protocol";
+import type { HitlOwnerKey } from "@archcode/protocol";
 import { GoalStateManager } from "../goals/state";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
 import { HitlService } from "../hitl/service";
 import { silentLogger } from "../logger";
 import { SessionStoreManager } from "../store/session-store-manager";
 import {
-  getSessionHitlCheckpointPath,
-  migrateSessionHitlCheckpointProjectSlug,
-  readSessionHitlCheckpoint,
-  readSessionHitlCheckpointFile,
+  getSessionHitlJournalPath,
+  readSessionHitlJournalEntry,
+  readSessionHitlJournalFile,
   sessionHitlJournalPhase,
-  type SessionHitlCheckpointRecord,
-  writeSessionHitlCheckpoint,
-} from "./session-hitl-checkpoint";
+  type SessionHitlJournalEntry,
+  writeSessionHitlJournalEntry,
+} from "./session-hitl-journal-store";
 import {
   assertSessionHitlJournalAllowsExecution,
   recoverSessionHitlJournals,
@@ -37,12 +36,12 @@ describe("Session HITL journal", () => {
 
   test("cold recovery completes a prepared journal written before the Session blocker and owner record", async () => {
     const fixture = await createFixture();
-    const checkpoint = preparingCheckpoint(fixture);
-    await writeSessionHitlCheckpoint(checkpoint, fixture.workspaceRoot, fixture.sessionId);
+    const entry = preparingEntry(fixture);
+    await writeSessionHitlJournalEntry(entry, fixture.workspaceRoot, fixture.sessionId);
 
     await expect(assertSessionHitlJournalAllowsExecution(fixture.workspaceRoot, fixture.sessionId)).rejects.toMatchObject({
       name: "SessionHitlJournalBlockedError",
-      hitlIds: [checkpoint.hitlId],
+      hitlIds: [entry.hitlId],
     });
 
     const summary = await recoverSessionHitlJournals({
@@ -52,120 +51,92 @@ describe("Session HITL journal", () => {
     });
 
     expect(summary).toMatchObject({ prepared: 1, manualUnknown: 0 });
-    const repaired = await readSessionHitlCheckpoint(fixture.workspaceRoot, fixture.sessionId, checkpoint.hitlId);
+    const repaired = await readSessionHitlJournalEntry(fixture.workspaceRoot, fixture.sessionId, entry.hitlId);
     expect(repaired === undefined ? undefined : sessionHitlJournalPhase(repaired)).toBe("paused");
     const ownerFile = await (await fixture.hitl.ownerStore(fixture.owner)).read();
     expect(ownerFile.pending).toHaveLength(1);
-    expect(ownerFile.pending[0]).toMatchObject({ hitlId: checkpoint.hitlId, blockingKey: checkpoint.blockingKey });
+    expect(ownerFile.pending[0]).toMatchObject({ hitlId: entry.hitlId, blockingKey: entry.blockingKey });
 
     const coldSessions = new SessionStoreManager({ logger: silentLogger });
     const coldStore = await coldSessions.getOrLoad(fixture.sessionId, fixture.workspaceRoot);
-    expect(coldStore.getState().blockedByHitlIds).toEqual([checkpoint.hitlId]);
-    expect(coldStore.getState().blockedHitl).toMatchObject({ hitlId: checkpoint.hitlId });
+    expect(coldStore.getState().blockedByHitlIds).toEqual([entry.hitlId]);
+    expect(coldStore.getState().blockedHitl).toMatchObject({ hitlId: entry.hitlId });
   });
 
-  test("rejects unversioned files and incomplete checkpoint records", async () => {
+  test("rejects the removed version field and incomplete entry records", async () => {
     const fixture = await createFixture();
-    const checkpoint = preparingCheckpoint(fixture);
-    const { phase: _phase, ...missingPhase } = checkpoint;
-    const { phaseUpdatedAt: _phaseUpdatedAt, ...missingPhaseUpdatedAt } = checkpoint;
-    const { request: _request, ...missingRequest } = checkpoint;
-    const { agentName: _agentName, ...missingAgentName } = checkpoint;
+    const entry = preparingEntry(fixture);
+    const { phase: _phase, ...missingPhase } = entry;
+    const { phaseUpdatedAt: _phaseUpdatedAt, ...missingPhaseUpdatedAt } = entry;
+    const { request: _request, ...missingRequest } = entry;
+    const { agentName: _agentName, ...missingAgentName } = entry;
 
-    await expect(writeSessionHitlCheckpoint(
-      missingPhase as unknown as SessionHitlCheckpointRecord,
+    await expect(writeSessionHitlJournalEntry(
+      missingPhase as unknown as SessionHitlJournalEntry,
       fixture.workspaceRoot,
       fixture.sessionId,
     )).rejects.toThrow();
-    await expect(writeSessionHitlCheckpoint(
-      missingPhaseUpdatedAt as unknown as SessionHitlCheckpointRecord,
+    await expect(writeSessionHitlJournalEntry(
+      missingPhaseUpdatedAt as unknown as SessionHitlJournalEntry,
       fixture.workspaceRoot,
       fixture.sessionId,
     )).rejects.toThrow();
-    await expect(writeSessionHitlCheckpoint(
-      missingRequest as unknown as SessionHitlCheckpointRecord,
+    await expect(writeSessionHitlJournalEntry(
+      missingRequest as unknown as SessionHitlJournalEntry,
       fixture.workspaceRoot,
       fixture.sessionId,
     )).rejects.toThrow();
-    await expect(writeSessionHitlCheckpoint(
-      missingAgentName as unknown as SessionHitlCheckpointRecord,
+    await expect(writeSessionHitlJournalEntry(
+      missingAgentName as unknown as SessionHitlJournalEntry,
       fixture.workspaceRoot,
       fixture.sessionId,
     )).rejects.toThrow();
 
-    await Bun.write(getSessionHitlCheckpointPath(fixture.workspaceRoot, fixture.sessionId), `${JSON.stringify({
-      checkpoints: [],
+    await Bun.write(getSessionHitlJournalPath(fixture.workspaceRoot, fixture.sessionId), `${JSON.stringify({
+      version: 1,
+      entries: [],
       updatedAt: new Date().toISOString(),
     }, null, 2)}\n`);
-    await expect(readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId)).rejects.toThrow();
+    await expect(readSessionHitlJournalFile(fixture.workspaceRoot, fixture.sessionId)).rejects.toThrow();
   });
 
-  test("rejects duplicate checkpoint identities in one durable file", async () => {
+  test("rejects duplicate entry identities in one durable file", async () => {
     const fixture = await createFixture();
-    const first = preparingCheckpoint(fixture);
-    const second = indexedCheckpoint(fixture, 2);
+    const first = preparingEntry(fixture);
+    const second = indexedEntry(fixture, 2);
 
-    await writeRawCheckpointFile(fixture, [first, { ...second, hitlId: first.hitlId }]);
-    await expect(readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId)).rejects.toThrow();
+    await writeRawEntryFile(fixture, [first, { ...second, hitlId: first.hitlId }]);
+    await expect(readSessionHitlJournalFile(fixture.workspaceRoot, fixture.sessionId)).rejects.toThrow();
 
-    await writeRawCheckpointFile(fixture, [first, { ...second, blockingKey: first.blockingKey }]);
-    await expect(readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId)).rejects.toThrow();
+    await writeRawEntryFile(fixture, [first, { ...second, blockingKey: first.blockingKey }]);
+    await expect(readSessionHitlJournalFile(fixture.workspaceRoot, fixture.sessionId)).rejects.toThrow();
   });
 
-  test("migrates checkpoint request owners to the current project slug without changing journal identity", async () => {
+  test("rejects entry owner source kind and permission mismatches", async () => {
     const fixture = await createFixture();
-    const checkpoint = preparingCheckpoint(fixture);
-    await writeSessionHitlCheckpoint(checkpoint, fixture.workspaceRoot, fixture.sessionId);
+    const entry = preparingEntry(fixture);
 
-    await expect(migrateSessionHitlCheckpointProjectSlug(
-      fixture.workspaceRoot,
-      fixture.sessionId,
-      "re-added-project",
-    )).resolves.toBe(true);
-
-    const migrated = await readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId);
-    expect(migrated.checkpoints).toEqual([
-      expect.objectContaining({
-        hitlId: checkpoint.hitlId,
-        blockingKey: checkpoint.blockingKey,
-        phase: checkpoint.phase,
-        request: expect.objectContaining({
-          owner: { ...fixture.owner, projectSlug: "re-added-project" },
-        }),
-      }),
-    ]);
-    await expect(migrateSessionHitlCheckpointProjectSlug(
-      fixture.workspaceRoot,
-      fixture.sessionId,
-      "re-added-project",
-    )).resolves.toBe(false);
-  });
-
-  test("rejects checkpoint owner source kind and permission mismatches", async () => {
-    const fixture = await createFixture();
-    const checkpoint = preparingCheckpoint(fixture);
-
-    await writeRawCheckpointFile(fixture, [{
-      ...checkpoint,
-      request: { ...checkpoint.request, owner: { ...fixture.owner, ownerId: crypto.randomUUID() } },
+    await writeRawEntryFile(fixture, [{
+      ...entry,
+      request: { ...entry.request, owner: { ...fixture.owner, ownerId: crypto.randomUUID() } },
     }]);
-    await expect(readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId)).rejects.toThrow();
+    await expect(readSessionHitlJournalFile(fixture.workspaceRoot, fixture.sessionId)).rejects.toThrow();
 
-    await writeRawCheckpointFile(fixture, [{
-      ...checkpoint,
-      source: { ...checkpoint.source, sessionId: crypto.randomUUID() },
+    await writeRawEntryFile(fixture, [{
+      ...entry,
+      source: { ...entry.source, sessionId: crypto.randomUUID() },
     }]);
-    await expect(readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId)).rejects.toThrow();
+    await expect(readSessionHitlJournalFile(fixture.workspaceRoot, fixture.sessionId)).rejects.toThrow();
 
-    const { permission: _permission, ...withoutPermission } = checkpoint;
-    await writeRawCheckpointFile(fixture, [withoutPermission]);
-    await expect(readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId)).rejects.toThrow();
+    const { permission: _permission, ...withoutPermission } = entry;
+    await writeRawEntryFile(fixture, [withoutPermission]);
+    await expect(readSessionHitlJournalFile(fixture.workspaceRoot, fixture.sessionId)).rejects.toThrow();
 
-    await writeRawCheckpointFile(fixture, [{ ...checkpoint, kind: "ask_user" }]);
-    await expect(readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId)).rejects.toThrow();
+    await writeRawEntryFile(fixture, [{ ...entry, kind: "ask_user" }]);
+    await expect(readSessionHitlJournalFile(fixture.workspaceRoot, fixture.sessionId)).rejects.toThrow();
 
-    await expect(writeSessionHitlCheckpoint(
-      { ...checkpoint, request: { ...checkpoint.request, owner: { ...fixture.owner, ownerId: crypto.randomUUID() } } },
+    await expect(writeSessionHitlJournalEntry(
+      { ...entry, request: { ...entry.request, owner: { ...fixture.owner, ownerId: crypto.randomUUID() } } },
       fixture.workspaceRoot,
       fixture.sessionId,
     )).rejects.toThrow();
@@ -173,8 +144,8 @@ describe("Session HITL journal", () => {
 
   test("cold user-message entry fails closed on a prepared journal even before the Session blocker snapshot", async () => {
     const fixture = await createFixture();
-    const checkpoint = preparingCheckpoint(fixture);
-    await writeSessionHitlCheckpoint(checkpoint, fixture.workspaceRoot, fixture.sessionId);
+    const entry = preparingEntry(fixture);
+    await writeSessionHitlJournalEntry(entry, fixture.workspaceRoot, fixture.sessionId);
     const manager = new SessionExecutionManager({
       sessionAgentManager: {} as SessionAgentManager,
       createSessionStore: (sessionId, workspaceRoot, options) => fixture.sessions.create(sessionId, workspaceRoot, options),
@@ -201,23 +172,23 @@ describe("Session HITL journal", () => {
       userMessage: "must not pass the prepared HITL journal",
     })).rejects.toMatchObject({
       name: "SessionHitlJournalBlockedError",
-      hitlIds: [checkpoint.hitlId],
+      hitlIds: [entry.hitlId],
     });
     expect(manager.getSessionFamilyActivity(fixture.workspaceRoot, fixture.sessionId)).toBe("idle");
   });
 
   test("cold recovery completes the owner-created boundary without duplicating the visible request", async () => {
     const fixture = await createFixture();
-    const checkpoint = preparingCheckpoint(fixture);
-    await writeSessionHitlCheckpoint(checkpoint, fixture.workspaceRoot, fixture.sessionId);
+    const entry = preparingEntry(fixture);
+    await writeSessionHitlJournalEntry(entry, fixture.workspaceRoot, fixture.sessionId);
     await fixture.hitl.create({
       owner: fixture.owner,
       sessionRootId: fixture.sessionId,
-      hitlId: checkpoint.hitlId,
-      blockingKey: checkpoint.blockingKey,
-      source: checkpoint.source,
-      displayPayload: checkpoint.request!.displayPayload,
-      createdAt: checkpoint.request!.createdAt,
+      hitlId: entry.hitlId,
+      blockingKey: entry.blockingKey,
+      source: entry.source,
+      displayPayload: entry.request!.displayPayload,
+      createdAt: entry.request!.createdAt,
     });
 
     await recoverSessionHitlJournals({
@@ -228,23 +199,23 @@ describe("Session HITL journal", () => {
 
     const ownerFile = await (await fixture.hitl.ownerStore(fixture.owner)).read();
     expect(ownerFile.pending).toHaveLength(1);
-    expect(ownerFile.pending[0]?.hitlId).toBe(checkpoint.hitlId);
-    const repaired = await readSessionHitlCheckpoint(fixture.workspaceRoot, fixture.sessionId, checkpoint.hitlId);
+    expect(ownerFile.pending[0]?.hitlId).toBe(entry.hitlId);
+    const repaired = await readSessionHitlJournalEntry(fixture.workspaceRoot, fixture.sessionId, entry.hitlId);
     expect(repaired === undefined ? undefined : sessionHitlJournalPhase(repaired)).toBe("paused");
   });
 
   test("repair rekeys a prepared journal onto a reused blocking-key record without cancelling it", async () => {
     const fixture = await createFixture();
-    const checkpoint = preparingCheckpoint(fixture);
+    const entry = preparingEntry(fixture);
     const existing = await fixture.hitl.create({
       owner: fixture.owner,
       sessionRootId: fixture.sessionId,
-      blockingKey: checkpoint.blockingKey,
-      source: checkpoint.source,
-      displayPayload: checkpoint.request!.displayPayload,
+      blockingKey: entry.blockingKey,
+      source: entry.source,
+      displayPayload: entry.request!.displayPayload,
     });
-    expect(existing.hitlId).not.toBe(checkpoint.hitlId);
-    await writeSessionHitlCheckpoint(checkpoint, fixture.workspaceRoot, fixture.sessionId);
+    expect(existing.hitlId).not.toBe(entry.hitlId);
+    await writeSessionHitlJournalEntry(entry, fixture.workspaceRoot, fixture.sessionId);
 
     await recoverSessionHitlJournals({
       workspaceRoot: fixture.workspaceRoot,
@@ -252,10 +223,10 @@ describe("Session HITL journal", () => {
       hitl: fixture.hitl,
     });
 
-    const file = await readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId);
-    expect(file.checkpoints).toHaveLength(1);
-    expect(file.checkpoints[0]?.hitlId).toBe(existing.hitlId);
-    expect(sessionHitlJournalPhase(file.checkpoints[0]!)).toBe("paused");
+    const file = await readSessionHitlJournalFile(fixture.workspaceRoot, fixture.sessionId);
+    expect(file.entries).toHaveLength(1);
+    expect(file.entries[0]?.hitlId).toBe(existing.hitlId);
+    expect(sessionHitlJournalPhase(file.entries[0]!)).toBe("paused");
     const ownerFile = await (await fixture.hitl.ownerStore(fixture.owner)).read();
     expect(ownerFile.pending).toHaveLength(1);
     expect(ownerFile.pending[0]).toMatchObject({ hitlId: existing.hitlId, status: "pending" });
@@ -266,25 +237,25 @@ describe("Session HITL journal", () => {
     expect(coldStore.getState().blockedByHitlIds).toEqual([existing.hitlId]);
   });
 
-  test("serializes checkpoint reads with concurrent journal mutations", async () => {
+  test("serializes entry reads with concurrent journal mutations", async () => {
     const fixture = await createFixture();
-    const checkpoints = Array.from({ length: 24 }, (_, index) => indexedCheckpoint(fixture, index));
-    for (const checkpoint of checkpoints.slice(0, 12)) {
-      await writeSessionHitlCheckpoint(checkpoint, fixture.workspaceRoot, fixture.sessionId);
+    const entries = Array.from({ length: 24 }, (_, index) => indexedEntry(fixture, index));
+    for (const entry of entries.slice(0, 12)) {
+      await writeSessionHitlJournalEntry(entry, fixture.workspaceRoot, fixture.sessionId);
     }
 
     await Promise.all([
-      ...checkpoints.slice(12).map((checkpoint) => (
-        writeSessionHitlCheckpoint(checkpoint, fixture.workspaceRoot, fixture.sessionId)
+      ...entries.slice(12).map((entry) => (
+        writeSessionHitlJournalEntry(entry, fixture.workspaceRoot, fixture.sessionId)
       )),
       ...Array.from({ length: 96 }, () => (
-        readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId)
+        readSessionHitlJournalFile(fixture.workspaceRoot, fixture.sessionId)
       )),
     ]);
 
-    const file = await readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId);
-    expect(file.checkpoints.map((checkpoint) => checkpoint.hitlId).sort()).toEqual(
-      checkpoints.map((checkpoint) => checkpoint.hitlId).sort(),
+    const file = await readSessionHitlJournalFile(fixture.workspaceRoot, fixture.sessionId);
+    expect(file.entries.map((entry) => entry.hitlId).sort()).toEqual(
+      entries.map((entry) => entry.hitlId).sort(),
     );
   });
 });
@@ -306,9 +277,9 @@ async function createFixture() {
   return { workspaceRoot, sessionId, sessions, hitl, owner };
 }
 
-function preparingCheckpoint(fixture: Awaited<ReturnType<typeof createFixture>>): SessionHitlCheckpointRecord {
+function preparingEntry(fixture: Awaited<ReturnType<typeof createFixture>>): SessionHitlJournalEntry {
   const hitlId = crypto.randomUUID();
-  const source: HitlSource = {
+  const source: SessionHitlJournalEntry["source"] = {
     type: "tool_permission",
     sessionId: fixture.sessionId,
     toolCallId: "journal-tool-call",
@@ -316,7 +287,6 @@ function preparingCheckpoint(fixture: Awaited<ReturnType<typeof createFixture>>)
   };
   const createdAt = new Date().toISOString();
   return {
-    version: 1,
     phase: "preparing",
     phaseUpdatedAt: createdAt,
     hitlId,
@@ -340,35 +310,33 @@ function preparingCheckpoint(fixture: Awaited<ReturnType<typeof createFixture>>)
     pendingToolCalls: [{ toolCallId: "journal-tool-call", toolName: "file_write", input: { path: "README.md", content: "changed" } }],
     blockedToolIndex: 0,
     createdAt,
-    kind: "permission",
     permission: { description: "Write README" },
   };
 }
 
-function indexedCheckpoint(
+function indexedEntry(
   fixture: Awaited<ReturnType<typeof createFixture>>,
   index: number,
-): SessionHitlCheckpointRecord {
-  const checkpoint = preparingCheckpoint(fixture);
+): SessionHitlJournalEntry {
+  const entry = preparingEntry(fixture);
   const toolCallId = `journal-tool-call-${index}`;
   return {
-    ...checkpoint,
+    ...entry,
     hitlId: `journal-hitl-${index}`,
     blockingKey: `session:${fixture.sessionId}:tool:${toolCallId}`,
     source: { type: "tool_permission", sessionId: fixture.sessionId, toolCallId, toolName: "file_write" },
     toolCallId,
-    toolCalls: [{ toolCallId, toolName: "file_write", input: checkpoint.rawToolInput }],
-    pendingToolCalls: [{ toolCallId, toolName: "file_write", input: checkpoint.rawToolInput }],
+    toolCalls: [{ toolCallId, toolName: "file_write", input: entry.rawToolInput }],
+    pendingToolCalls: [{ toolCallId, toolName: "file_write", input: entry.rawToolInput }],
   };
 }
 
-async function writeRawCheckpointFile(
+async function writeRawEntryFile(
   fixture: Awaited<ReturnType<typeof createFixture>>,
-  checkpoints: readonly unknown[],
+  entries: readonly unknown[],
 ): Promise<void> {
-  await Bun.write(getSessionHitlCheckpointPath(fixture.workspaceRoot, fixture.sessionId), `${JSON.stringify({
-    version: 1,
-    checkpoints,
+  await Bun.write(getSessionHitlJournalPath(fixture.workspaceRoot, fixture.sessionId), `${JSON.stringify({
+    entries,
     updatedAt: new Date().toISOString(),
   }, null, 2)}\n`);
 }

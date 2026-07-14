@@ -17,7 +17,7 @@ const input = {
 function makeAutomation(createdFromSessionId: string): Automation {
   return {
     id: "11111111-1111-4111-8111-111111111111",
-    projectId: "test-project",
+    projectSlug: "test-project",
     createdFromSessionId,
     ...input,
     status: "active",

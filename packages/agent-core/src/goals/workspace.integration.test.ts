@@ -27,7 +27,7 @@ afterAll(async () => {
 
 async function commitGoal(
   manager: GoalStateManager,
-  input: { projectId: string; objective: string; acceptanceCriteria: string; useWorktree?: boolean },
+  input: { projectSlug: string; objective: string; acceptanceCriteria: string; useWorktree?: boolean },
 ) {
   return await manager.commit({
     id: crypto.randomUUID(),
@@ -42,7 +42,7 @@ describe("GoalWorkspaceService", () => {
     const projectRoot = await createGitRepo("reuse");
     const manager = new GoalStateManager(projectRoot);
     const goal = await commitGoal(manager, {
-      projectId: "project-a",
+      projectSlug: "project-a",
       objective: "Implement in isolation.",
       acceptanceCriteria: "All attempts use the same worktree.",
       useWorktree: true,
@@ -63,7 +63,7 @@ describe("GoalWorkspaceService", () => {
     await mkdir(projectRoot, { recursive: true });
     const manager = new GoalStateManager(projectRoot);
     const goal = await commitGoal(manager, {
-      projectId: "project-a",
+      projectSlug: "project-a",
       objective: "Run normally.",
       acceptanceCriteria: "No Git repository is required.",
     });
@@ -77,7 +77,7 @@ describe("GoalWorkspaceService", () => {
     await mkdir(projectRoot, { recursive: true });
     const persisted = new GoalStateManager(projectRoot);
     const goal = await commitGoal(persisted, {
-      projectId: "project-a",
+      projectSlug: "project-a",
       objective: "Fail the durable claim.",
       acceptanceCriteria: "An orphan branch is reported instead of hidden.",
       useWorktree: true,
@@ -142,7 +142,7 @@ describe("GoalWorkspaceService", () => {
     const projectRoot = await createGitRepo("adopt-after-crash");
     const manager = new GoalStateManager(projectRoot);
     const goal = await commitGoal(manager, {
-      projectId: "project-a",
+      projectSlug: "project-a",
       objective: "Recover an interrupted worktree claim.",
       acceptanceCriteria: "Preparation adopts the already-created managed worktree.",
       useWorktree: true,
@@ -165,7 +165,7 @@ describe("GoalWorkspaceService", () => {
     const projectRoot = await createGitRepo("reject-changed-orphan");
     const manager = new GoalStateManager(projectRoot);
     const goal = await commitGoal(manager, {
-      projectId: "project-a",
+      projectSlug: "project-a",
       objective: "Preserve ambiguous orphan changes.",
       acceptanceCriteria: "A changed pre-claim worktree is never adopted as a fresh base.",
       useWorktree: true,
@@ -186,7 +186,7 @@ describe("GoalWorkspaceService", () => {
     const projectRoot = await createGitRepo("reject-orphan-after-canonical-advance");
     const manager = new GoalStateManager(projectRoot);
     const goal = await commitGoal(manager, {
-      projectId: "project-a",
+      projectSlug: "project-a",
       objective: "Fail closed when the orphan base is ambiguous.",
       acceptanceCriteria: "Canonical advancement cannot be guessed as the orphan creation base.",
       useWorktree: true,
@@ -209,7 +209,7 @@ describe("GoalWorkspaceService", () => {
     await git(projectRoot, ["commit", "-m", "creation base"]);
     const manager = new GoalStateManager(projectRoot);
     const goal = await commitGoal(manager, {
-      projectId: "project-a",
+      projectSlug: "project-a",
       objective: "Keep retries on the owned branch lineage.",
       acceptanceCriteria: "Descendant work is reused and branch rewinds are rejected.",
       useWorktree: true,
@@ -232,7 +232,7 @@ describe("GoalWorkspaceService", () => {
     await mkdir(projectRoot, { recursive: true });
     const manager = new GoalStateManager(projectRoot);
     const goal = await commitGoal(manager, {
-      projectId: "project-a",
+      projectSlug: "project-a",
       objective: "Converge concurrent worktree claims.",
       acceptanceCriteria: "The same path, branch, and base are one write-once resource even if timestamps differ.",
       useWorktree: true,
@@ -301,7 +301,7 @@ describe("GoalWorkspaceService", () => {
     const projectRoot = await createGitRepo("concurrent-service-instances");
     const manager = new GoalStateManager(projectRoot);
     const goal = await commitGoal(manager, {
-      projectId: "project-a",
+      projectSlug: "project-a",
       objective: "Coordinate worktree preparation across service instances.",
       acceptanceCriteria: "Only one prepare path runs before the durable Goal claim is visible.",
       useWorktree: true,
@@ -357,7 +357,7 @@ describe("GoalWorkspaceService", () => {
     const projectRoot = await createGitRepo("stale-create-adoption");
     const manager = new GoalStateManager(projectRoot);
     const goal = await commitGoal(manager, {
-      projectId: "project-a",
+      projectSlug: "project-a",
       objective: "Recover a stale get-or-create race.",
       acceptanceCriteria: "A concurrently created registered worktree is adopted instead of surfacing WORKTREE_PATH_EXISTS.",
       useWorktree: true,
@@ -394,7 +394,7 @@ describe("GoalWorkspaceService", () => {
     const projectRoot = await createGitRepo("reject-other-goal");
     const manager = new GoalStateManager(projectRoot);
     const goal = await commitGoal(manager, {
-      projectId: "project-a",
+      projectSlug: "project-a",
       objective: "Keep ownership isolated.",
       acceptanceCriteria: "A Goal cannot reuse another Goal worktree.",
       useWorktree: true,

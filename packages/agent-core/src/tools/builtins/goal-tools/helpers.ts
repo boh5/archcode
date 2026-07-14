@@ -133,7 +133,7 @@ export function goalToolErrorResult(
   if (error instanceof GoalStateError || error instanceof GoalTransitionError || error instanceof GoalReviewFinalizationError) {
     return goalWorkspaceError(options.stateErrorCode ?? "GOAL_INVALID_TRANSITION", error.message);
   }
-  if (error instanceof Error && error.name === "GoalRunnerError") {
+  if (error instanceof Error && error.name === "GoalLifecycleServiceError") {
     return goalWorkspaceError(options.stateErrorCode ?? "GOAL_INVALID_TRANSITION", error.message);
   }
   return createToolErrorResult({ kind: "execution", error: error instanceof Error ? error : new Error(String(error)) });

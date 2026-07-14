@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { createEmptySessionStats, type CompressionBlockSnapshot, type GoalState, type HitlRecord, type SessionProjection } from "@archcode/protocol";
+import { createEmptySessionStats, type CompressionBlockSnapshot, type HitlRecord, type SessionProjection } from "@archcode/protocol";
 import { createEmptyCompressionState } from "../compression";
 import { SessionStoreManager } from "./session-store-manager";
 import { NotRootSessionError, SessionInitialPersistenceError, SessionTreeIntegrityError } from "./errors";
@@ -442,30 +442,6 @@ describe("SessionStoreManager", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
     const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
-    const goalId = crypto.randomUUID();
-    const createdFromSessionId = crypto.randomUUID();
-    const mainSessionId = crypto.randomUUID();
-    const goalState: GoalState = {
-      version: 4,
-      id: goalId,
-      projectId: "project-1",
-      createdFromSessionId,
-      title: null,
-      objective: "Do the Goal.",
-      acceptanceCriteria: "Reviewer can decide DONE from evidence.",
-      useWorktree: false,
-      status: "running",
-      attempt: 1,
-      reviewGeneration: 0,
-      mainSessionId,
-      pendingHitlIds: [],
-      approvalRefs: [],
-      appliedHitlIds: [],
-      childSessionIds: [],
-      createdAt: "2026-07-07T00:00:00.000Z",
-      updatedAt: "2026-07-07T00:00:00.000Z",
-      startedAt: "2026-07-07T00:00:00.000Z",
-    };
     const hitlRequest: HitlRecord = {
       hitlId: "hitl-1",
       owner: { projectSlug: "project-1", ownerType: "session", ownerId: id },
@@ -477,7 +453,6 @@ describe("SessionStoreManager", () => {
       createdAt: "2026-07-07T00:00:00.000Z",
       updatedAt: "2026-07-07T00:00:00.000Z",
     };
-    store.getState().append({ type: "goal.state_change", goalId, status: "running", state: goalState });
     store.getState().append({ type: "hitl.request", request: hitlRequest });
     store.getState().append({
       type: "hitl.resolved",
@@ -485,16 +460,14 @@ describe("SessionStoreManager", () => {
       status: "resolved",
       response: { type: "question_answer", answers: ["yes"] },
     });
-    const stateAfterDottedEvents = store.getState() as ReturnType<typeof store.getState> & Pick<SessionProjection, "goals" | "hitlRequests">;
-    expect(stateAfterDottedEvents.goals?.[goalId]).toEqual(goalState);
+    const stateAfterDottedEvents = store.getState() as ReturnType<typeof store.getState> & Pick<SessionProjection, "hitlRequests">;
     expect(stateAfterDottedEvents.hitlRequests).toMatchObject([
       { hitlId: "hitl-1", status: "resolved", response: { type: "question_answer", answers: ["yes"] } },
     ]);
 
     store.getState().append({ type: "shutdown", reason: "test" });
 
-    const stateAfterServerOnlyEvents = store.getState() as ReturnType<typeof store.getState> & Pick<SessionProjection, "goals" | "hitlRequests">;
-    expect(stateAfterServerOnlyEvents.goals).toEqual(stateAfterDottedEvents.goals);
+    const stateAfterServerOnlyEvents = store.getState() as ReturnType<typeof store.getState> & Pick<SessionProjection, "hitlRequests">;
     expect(stateAfterServerOnlyEvents.hitlRequests).toEqual(stateAfterDottedEvents.hitlRequests);
   });
 
@@ -1049,18 +1022,18 @@ describe("SessionStoreManager", () => {
     await writeSessionFile({ sessionId: validChildId, rootSessionId, parentSessionId: rootSessionId, title: "valid" });
     await writeSessionFile({ sessionId: missingParentId, rootSessionId, parentSessionId: absentParentId, title: "orphan" });
 
-    await writeRawSessionFile(rootMismatchId, JSON.stringify({ schemaVersion: 1, ...persistedSession(rootMismatchId, {
+    await writeRawSessionFile(rootMismatchId, JSON.stringify(persistedSession(rootMismatchId, {
       agentName: "explore",
       title: "bad-root",
       rootSessionId: otherRootId,
       parentSessionId: rootSessionId,
-    }) }));
-    await writeRawSessionFile(mismatchFileId, JSON.stringify({ schemaVersion: 1, ...persistedSession(mismatchJsonId, {
+    })));
+    await writeRawSessionFile(mismatchFileId, JSON.stringify(persistedSession(mismatchJsonId, {
       agentName: "explore",
       title: "mismatch",
       rootSessionId,
       parentSessionId: rootSessionId,
-    }) }));
+    })));
     await writeRawSessionFile(invalidJsonId, "not json");
 
     await expect(manager.buildSessionTree(TMP_DIR, rootSessionId)).rejects.toBeInstanceOf(SessionTreeIntegrityError);
@@ -1072,13 +1045,13 @@ describe("SessionStoreManager", () => {
     const fileSessionId = sessionId();
     const jsonSessionId = sessionId();
     await writeSessionFile({ sessionId: rootSessionId, title: "root" });
-    await writeRawSessionFile(fileSessionId, JSON.stringify({ schemaVersion: 1, ...persistedSession(jsonSessionId, {
+    await writeRawSessionFile(fileSessionId, JSON.stringify(persistedSession(jsonSessionId, {
       agentName: "explore",
       title: "invalid-node",
       todos: [{ id: "a", content: "first", status: "in_progress" }, { id: "b", content: "second", status: "in_progress" }],
       rootSessionId,
       parentSessionId: rootSessionId,
-    }) }));
+    })));
 
     await expect(manager.buildSessionTree(TMP_DIR, rootSessionId)).rejects.toMatchObject({
       name: "SessionTreeIntegrityError",
@@ -1091,12 +1064,12 @@ describe("SessionStoreManager", () => {
     const rootSessionId = sessionId();
     await writeSessionFile({ sessionId: rootSessionId, title: "root" });
     const duplicateDirSessionId = sessionId();
-    await writeRawSessionFile(duplicateDirSessionId, JSON.stringify({ schemaVersion: 1, ...persistedSession(rootSessionId, {
+    await writeRawSessionFile(duplicateDirSessionId, JSON.stringify(persistedSession(rootSessionId, {
       agentName: "explore",
       title: "duplicate-root",
       rootSessionId,
       parentSessionId: rootSessionId,
-    }) }));
+    })));
 
     await expect(manager.buildSessionTree(TMP_DIR, rootSessionId)).rejects.toMatchObject({
       name: "SessionTreeIntegrityError",
@@ -1119,15 +1092,15 @@ describe("SessionStoreManager", () => {
     });
   });
 
-  test("buildSessionTree() rejects a legacy descendant without schemaVersion", async () => {
+  test("buildSessionTree() rejects a descendant with the removed schemaVersion field", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const rootSessionId = sessionId();
     const childSessionId = sessionId();
     await writeSessionFile({ sessionId: rootSessionId, title: "root" });
-    await writeRawSessionFile(childSessionId, JSON.stringify(persistedSession(childSessionId, {
+    await writeRawSessionFile(childSessionId, JSON.stringify({ ...persistedSession(childSessionId, {
       rootSessionId,
       parentSessionId: rootSessionId,
-    })));
+    }), schemaVersion: 1 }));
 
     await expect(manager.buildSessionTree(TMP_DIR, rootSessionId)).rejects.toMatchObject({
       name: "SessionTreeIntegrityError",

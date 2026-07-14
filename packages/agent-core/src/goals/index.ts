@@ -1,5 +1,5 @@
 export * from "./state";
-export * from "./runner";
+export * from "./lifecycle-service";
 export * from "./workspace";
 export * from "./execution-claim";
 export * from "./cancellation";

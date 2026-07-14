@@ -30,7 +30,8 @@ class GoalStateManagerMock {
     return this.goal;
   }
 
-  async beginReview(): Promise<GoalState> {
+  async beginReview(_goalId?: string, assertReady?: () => Promise<void>): Promise<GoalState> {
+    await assertReady?.();
     this.calls.push("beginReview");
     return { ...this.goal, status: "reviewing", reviewGeneration: this.goal.reviewGeneration + 1 };
   }
@@ -64,7 +65,7 @@ class GoalStateManagerMock {
 function makeGoalState(goalId: string, worktree: GoalState["worktree"]): GoalState {
   return {
     id: goalId,
-    projectId: "test-project",
+    projectSlug: "test-project",
     createdFromSessionId: "engineer-session",
     title: null,
     objective: "Validate a persisted Goal worktree claim.",
@@ -80,7 +81,6 @@ function makeGoalState(goalId: string, worktree: GoalState["worktree"]): GoalSta
     createdAt: "2026-07-08T00:00:00.000Z",
     updatedAt: "2026-07-08T00:00:00.000Z",
     startedAt: "2026-07-08T00:00:00.000Z",
-    version: 4,
     useWorktree: true,
     worktree,
   };
@@ -114,7 +114,7 @@ function makeProjectContext(
   return {
     project,
     goalState,
-    goalRunner: manager as unknown as ProjectContext["goalRunner"],
+    goalLifecycle: manager as unknown as ProjectContext["goalLifecycle"],
     createAutomation: async () => { throw new Error("unused automation creator"); },
     goalCancellation: {
       cancel: async () => { throw new Error("unused goal cancellation"); },

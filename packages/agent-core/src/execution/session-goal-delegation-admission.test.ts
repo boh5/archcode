@@ -138,7 +138,7 @@ async function createFixture(name: string) {
   const mainSessionId = crypto.randomUUID();
   const goal = await context.goalState.commit({
     id: crypto.randomUUID(),
-    projectId: context.project.slug,
+    projectSlug: context.project.slug,
     createdFromSessionId: crypto.randomUUID(),
     objective: "Protect Goal phase boundaries",
     acceptanceCriteria: "No forbidden child runs",

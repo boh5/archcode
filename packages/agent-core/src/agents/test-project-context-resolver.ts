@@ -2,7 +2,7 @@ import { createPreparedHitlResume, ResumeCoordinator } from "../hitl/resume-coor
 import { silentLogger } from "../logger";
 import { ProjectContextResolver } from "../projects/context-resolver";
 import type { SessionStoreManager } from "../store/session-store-manager";
-import { createTestGoalRunner } from "../tools/test-project-context";
+import { createTestGoalLifecycle } from "../tools/test-project-context";
 
 /** Builds the complete project-context composition required by Agent tests. */
 export function createTestProjectContextResolver(
@@ -18,8 +18,8 @@ export function createTestProjectContextResolver(
     goalCancellationFactory: ({ goalState }) => ({
       cancel: async (goalId, request) => await goalState.cancel(goalId, request.reason),
     }),
-    goalRunnerFactory: ({ workspaceRoot, goalState }) => (
-      createTestGoalRunner(workspaceRoot, goalState, sessionStoreManager)
+    goalLifecycleFactory: ({ workspaceRoot, goalState }) => (
+      createTestGoalLifecycle(workspaceRoot, goalState, sessionStoreManager)
     ),
     createAutomation: async () => { throw new Error("Automation creation is not configured for this test resolver"); },
     sessionStoreManager,

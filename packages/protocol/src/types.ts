@@ -9,7 +9,7 @@ export interface ExecutionEndEvent {
   error?: string;
   blockedByHitlIds?: string[];
   blockedToolCallId?: string;
-  blockedHitl?: SessionHitlCheckpoint;
+  blockedHitl?: SessionHitlBlocker;
 }
 
 /** Durable Session execution-directory transition. Session storage remains at the canonical project root. */
@@ -43,8 +43,7 @@ export interface SessionExecutionRecord {
   error?: string;
 }
 
-export interface SessionHitlCheckpoint {
-  version: 1;
+export interface SessionHitlBlocker {
   hitlId: string;
   blockingKey?: string;
   source?: HitlSource;
@@ -283,7 +282,6 @@ export interface CompressionFailureSnapshot {
 }
 
 export interface CompressionStateSnapshot {
-  version: 1;
   refMap: CompressionRefMapSnapshot;
   blocksByRef: Record<CompressionBlockRef, CompressionBlockSnapshot>;
   activeBlockRefs: CompressionBlockRef[];
@@ -423,7 +421,6 @@ export type StreamEvent =
   | LlmRecoveryFailedEvent
   | CompactEvent
   | CompressionStreamEvent
-  | GoalStreamEvent
   | HitlStreamEvent;
 
 export const MAX_EVENTS = 10000;
@@ -431,7 +428,6 @@ export const MAX_EVENTS = 10000;
 export interface SessionEventEnvelope<P extends SessionEventPayload = SessionEventPayload> {
   id: number;
   createdAt: number;
-  kind: P["type"];
   payload: P;
 }
 
@@ -442,7 +438,6 @@ export interface GlobalSessionEventEnvelope<P extends SessionEventPayload = Sess
   sessionId: string;
   eventId: number;
   createdAt: number;
-  kind: P["type"];
   payload: P;
   agentName: string;
 }
@@ -524,7 +519,6 @@ export interface ConfigAgentSettings {
 }
 
 export interface ConfigMcpServerSettings<Secret> {
-  transport: "http";
   url: string;
   headers?: Record<string, Secret>;
   timeout?: number;
@@ -540,14 +534,12 @@ export interface ConfigMemorySettings {
 export interface ConfigGithubIntegrationSettings {
   enabled?: boolean;
   tokenEnv?: string;
-  apiBaseUrl?: "https://api.github.com";
   defaultOwner?: string;
   defaultRepo?: string;
 }
 
 /** The complete safe-to-edit representation of ~/.archcode/config.json. */
 export interface ServerConfigDocument<Secret> {
-  $schema?: string;
   provider: Record<string, ConfigProviderSettings<Secret>>;
   agents: {
     engineer: ConfigAgentSettings;
@@ -633,9 +625,9 @@ export interface GlobalSSEHitlSnapshotEvent {
 }
 
 export type GlobalSSEHitlEventPayload =
-  | { type: "hitl.request"; status: Extract<HitlStatus, "pending"> }
-  | { type: "hitl.updated"; status: HitlStatus }
-  | { type: "hitl.resolved"; status: Extract<HitlStatus, "resolved" | "cancelled"> };
+  | { type: "hitl.request" }
+  | { type: "hitl.updated" }
+  | { type: "hitl.resolved" };
 
 export interface GlobalSSEHitlRealtimeEvent {
   type: "hitl.event";
@@ -648,20 +640,11 @@ export interface GlobalSSEHitlRealtimeEvent {
 }
 
 export type GlobalSSEResourceChangedEvent =
-  | {
+  {
     type: "resource.changed";
     projectSlug: string;
-    resourceType: "goal";
+    resourceType: "goal" | "automation";
     resourceId: string;
-    reason: "created" | "title_generated";
-    createdAt: number;
-  }
-  | {
-    type: "resource.changed";
-    projectSlug: string;
-    resourceType: "automation";
-    resourceId: string;
-    reason: "created" | "updated" | "deleted" | "invocation_changed";
     createdAt: number;
   };
 
@@ -860,15 +843,13 @@ export interface SessionProjection {
   stats: SessionStats;
   executions: SessionExecutionRecord[];
   executionCount: number;
-  blockedHitl?: SessionHitlCheckpoint;
+  blockedHitl?: SessionHitlBlocker;
   blockedByHitlIds?: string[];
   isRunning: boolean;
   isStreamingModel: boolean;
   currentExecutionId?: string;
   currentAssistantMessageId?: string;
   modelInfo?: SessionModelInfo | null;
-  /** Goal states indexed by goalId. Populated by goal.state_change events. */
-  goals?: Record<string, GoalState>;
   /** Owner-local HITL records projected from hitl.request/hitl.resolved stream events. */
   hitlRequests?: HitlRecord[];
   /** DCP-like dynamic compression state. Cleared when hard compact emits a compact event. */
@@ -888,7 +869,6 @@ export interface Project {
 export interface DirectoryEntry {
   name: string;
   path: string;
-  kind: "directory";
 }
 
 export interface DirectoryListResponse {
@@ -950,7 +930,6 @@ export interface SessionTreeResponse {
 }
 
 export interface Session {
-  schemaVersion: 1;
   sessionId: string;
   cwd: string;
   rootSessionId: string;
@@ -971,7 +950,7 @@ export interface Session {
   eventCursor?: number;
   modelInfo: SessionModelInfo | null;
   agentName: string;
-  blockedHitl?: SessionHitlCheckpoint;
+  blockedHitl?: SessionHitlBlocker;
   blockedByHitlIds?: string[];
 }
 
@@ -1002,7 +981,6 @@ export interface DiffFile {
 export type ToolDiffUnsupportedReason = "binary" | "too_large" | "not_text" | "no_change" | "diff_error";
 
 export interface ToolDiffMetadata {
-  version: 1;
   files: DiffFile[];
   truncated?: boolean;
   unsupportedReason?: ToolDiffUnsupportedReason;
@@ -1086,9 +1064,8 @@ export interface GoalWorktree {
 }
 
 export interface GoalState {
-  version: 4;
   id: string;
-  projectId: string;
+  projectSlug: string;
   /** Ordinary Engineer Session in which the user confirmed this Goal. */
   createdFromSessionId: string;
   title: string | null;
@@ -1124,10 +1101,6 @@ export interface GoalState {
 }
 
 export type HitlAttentionStatus = "clear" | "waiting_for_human";
-
-// ─── Goal Stream Events ───
-
-export type GoalStreamEvent = { type: "goal.state_change"; goalId: string; status: GoalStatus; state: GoalState };
 
 // ─── HITL Types ───
 
@@ -1223,7 +1196,6 @@ export interface HitlRecord {
 }
 
 export interface HitlFile {
-  version: 1;
   owner: HitlOwnerKey;
   pending: HitlRecord[];
   recentTerminal: HitlRecord[];
@@ -1293,7 +1265,7 @@ export interface AutomationInvocation {
 
 export interface Automation {
   id: string;
-  projectId: string;
+  projectSlug: string;
   /** Ordinary Engineer Session in which the user confirmed this Automation. */
   createdFromSessionId: string;
   name: string;

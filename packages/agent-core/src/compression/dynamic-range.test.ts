@@ -6,7 +6,6 @@ import { createEmptySessionStats } from "@archcode/protocol";
 
 function summary(childBlockRefs: string[] = []): CompressionSummary {
   return {
-    version: 1,
     childBlockRefs: childBlockRefs as CompressionSummary["childBlockRefs"],
     sections: {
       "Current Objective": childBlockRefs.length > 0 ? "Continue after nested child block" : "Continue task",

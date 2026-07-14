@@ -14,7 +14,6 @@ import type {
   HitlRecord,
   HitlResponse,
   HitlStreamEvent,
-  GoalStreamEvent,
   GlobalSSEEvent,
   GlobalSSEResourceChangedEvent,
   GlobalSSEHeartbeatEvent,
@@ -35,6 +34,8 @@ import type {
   AutomationAction,
   SessionSummary,
   Session,
+  ToolDiffMetadata,
+  ServerConfigUpdate,
 } from "./types";
 
 function serializeRoundTrip<T>(value: T): T {
@@ -45,21 +46,53 @@ function compositeIdentity(event: GlobalSessionEventEnvelope): string {
   return `${event.slug}:${event.sessionId}:${event.eventId}`;
 }
 
+describe("current tool and config wire types", () => {
+  test("round-trips unversioned ToolDiff metadata", () => {
+    const diffs: ToolDiffMetadata = {
+      files: [{
+        path: "src/index.ts",
+        status: "modified",
+        additions: 1,
+        deletions: 1,
+        hunks: [{
+          header: "@@ -1 +1 @@",
+          oldStart: 1,
+          oldLines: 1,
+          newStart: 1,
+          newLines: 1,
+          lines: [{ type: "delete", content: "old" }, { type: "add", content: "new" }],
+        }],
+      }],
+    };
+
+    expect(serializeRoundTrip(diffs)).toEqual(diffs);
+  });
+
+  test("represents only editable MCP and GitHub config fields", () => {
+    const config = {
+      provider: {},
+      agents: {} as ServerConfigUpdate["agents"],
+      mcp: { servers: { docs: { url: "https://mcp.example.test", timeout: 30000 } } },
+      integrations: { github: { enabled: true, tokenEnv: "GITHUB_TOKEN" } },
+    } satisfies ServerConfigUpdate;
+
+    expect(serializeRoundTrip(config)).toEqual(config);
+  });
+});
+
 describe("global SSE wire protocol types", () => {
-  test("uses strict resource.changed variants for Goals and Automations", () => {
+  test("uses an unreasoned resource.changed contract for Goals and Automations", () => {
     const events: GlobalSSEResourceChangedEvent[] = [{
       type: "resource.changed",
       projectSlug: "project-a",
       resourceType: "goal",
       resourceId: "goal-1",
-      reason: "title_generated",
       createdAt: 1,
     }, {
       type: "resource.changed",
       projectSlug: "project-a",
       resourceType: "automation",
       resourceId: "automation-1",
-      reason: "invocation_changed",
       createdAt: 2,
     }];
 
@@ -73,7 +106,6 @@ describe("global SSE wire protocol types", () => {
       sessionId: "s1",
       eventId: 42,
       createdAt: 1,
-      kind: "text-delta",
       payload: { type: "text-delta", text: "hello" },
       agentName: "engineer",
     };
@@ -86,7 +118,7 @@ describe("global SSE wire protocol types", () => {
     expect(parsed.sessionId).toBe("s1");
     expect(parsed.eventId).toBe(42);
     expect(parsed.createdAt).toBe(1);
-    expect(parsed.kind).toBe("text-delta");
+    expect(parsed.payload.type).toBe("text-delta");
     expect(parsed.payload).toEqual({ type: "text-delta", text: "hello" });
     expect(parsed.agentName).toBe("engineer");
   });
@@ -98,7 +130,6 @@ describe("global SSE wire protocol types", () => {
       sessionId: "s1",
       eventId: 42,
       createdAt: 1,
-      kind: "text-delta",
       payload: { type: "text-delta", text: "hello" },
       agentName: "engineer",
     };
@@ -163,7 +194,6 @@ describe("global SSE wire protocol types", () => {
         sessionId: "s1",
         eventId: 42,
         createdAt: 1,
-        kind: "text-delta",
         payload: { type: "text-delta", text: "hello" },
         agentName: "engineer",
       },
@@ -196,7 +226,7 @@ describe("global SSE wire protocol types", () => {
         owner: { projectSlug: "proj-a", ownerType: "session", ownerId: "s1" },
         hitlId: "hitl-1",
         createdAt: 4,
-        payload: { type: "hitl.request", status: "pending" },
+        payload: { type: "hitl.request" },
         projection: {} as HitlProjection,
       },
     ];
@@ -252,7 +282,6 @@ describe("compression protocol types", () => {
       updatedAt: 1,
     };
     const state: CompressionStateSnapshot = {
-      version: 1,
       refMap: {
         messageRefsById: { "msg-a": "m0001", "msg-b": "m0002" },
         messageIdsByRef: { m0001: "msg-a", m0002: "msg-b" },
@@ -333,9 +362,8 @@ describe("Goal types", () => {
 
   test("GoalState serializes the natural-language contract with review evidence", () => {
     const state: GoalState = {
-      version: 4,
       id: "goal-1",
-      projectId: "my-project",
+      projectSlug: "my-project",
       createdFromSessionId: "session-source",
       title: "Implement auth",
       objective: "Build the requested authentication flow.",
@@ -396,9 +424,8 @@ describe("Goal types", () => {
 
   test("Goal blockers and NOT_DONE receipts round-trip", () => {
     const state: GoalState = {
-      version: 4,
       id: "goal-2",
-      projectId: "my-project",
+      projectSlug: "my-project",
       createdFromSessionId: "session-source",
       title: "Fix bug",
       objective: "Resolve the reported bug.",
@@ -553,7 +580,6 @@ describe("HITL types", () => {
       updatedAt: "2026-07-03T00:00:00.000Z",
     };
     const file: HitlFile = {
-      version: 1,
       owner: pending.owner,
       pending: [pending],
       recentTerminal: [{ ...pending, hitlId: "hitl-0", status: "resolved", response: { type: "question_answer", answers: ["A"] }, resolvedAt: "2026-07-03T00:01:00.000Z" }],
@@ -606,85 +632,7 @@ describe("HITL types", () => {
   });
 });
 
-describe("Goal/HITL stream events", () => {
-  function makeGoalState(overrides: Partial<GoalState> = {}): GoalState {
-    return {
-      version: 4,
-      id: "goal-1",
-      projectId: "p",
-      createdFromSessionId: "session-source",
-      title: "Implement feature",
-      objective: "Implement the requested feature.",
-      acceptanceCriteria: "Feature behavior satisfies the request.",
-      useWorktree: false,
-      status: "running",
-      attempt: 1,
-      reviewGeneration: 0,
-      mainSessionId: "session-main",
-      pendingHitlIds: [],
-      approvalRefs: [],
-      appliedHitlIds: [],
-      childSessionIds: [],
-      createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:00:00.000Z",
-      startedAt: "2026-01-01T00:00:00.000Z",
-      ...overrides,
-    };
-  }
-
-  test("GoalStreamEvent only carries state changes", () => {
-    const stateChange: GoalStreamEvent = {
-      type: "goal.state_change",
-      goalId: "goal-1",
-      status: "running",
-      state: makeGoalState(),
-    };
-
-    expect(serializeRoundTrip(stateChange)).toEqual(stateChange);
-  });
-
-  test("StreamEvent and SessionEventPayload unions accept Goal state change and HITL events", () => {
-    const goalEvent: GoalStreamEvent = {
-      type: "goal.state_change",
-      goalId: "g-1",
-      status: "reviewing",
-      state: makeGoalState({ id: "g-1", status: "reviewing" }),
-    };
-    const events: StreamEvent[] = [
-      goalEvent,
-      { type: "hitl.request", request: {} as HitlRecord },
-      { type: "hitl.updated", record: {} as HitlRecord },
-      { type: "hitl.resolved", hitlId: "h-1", status: "resolved" },
-    ];
-    const payloads: SessionEventPayload[] = events;
-
-    expect(events).toHaveLength(4);
-    expect(payloads.map((p) => p.type)).toEqual([
-      "goal.state_change",
-      "hitl.request",
-      "hitl.updated",
-      "hitl.resolved",
-    ]);
-  });
-
-  test("GoalStreamEvent discriminates simplified status values", () => {
-    const reviewingEvent: GoalStreamEvent = {
-      type: "goal.state_change",
-      goalId: "g-1",
-      status: "reviewing",
-      state: makeGoalState({ id: "g-1", status: "reviewing" }),
-    };
-    const notDoneEvent: GoalStreamEvent = {
-      type: "goal.state_change",
-      goalId: "g-2",
-      status: "not_done",
-      state: makeGoalState({ id: "g-2", status: "not_done" }),
-    };
-
-    expect(reviewingEvent.status).toBe("reviewing");
-    expect(notDoneEvent.status).toBe("not_done");
-  });
-
+describe("HITL stream events", () => {
   test("HitlStreamEvent types are serializable", () => {
     const hitlRequestEvent: HitlStreamEvent = {
       type: "hitl.request",
@@ -739,7 +687,7 @@ describe("Automation types", () => {
     const action: AutomationAction = { kind: "start_session", message: "/skill use review", location: "worktree" };
     const automation: Automation = {
       id: "automation-1",
-      projectId: "project-1",
+      projectSlug: "project-1",
       createdFromSessionId: "session-source",
       name: "Weekly review",
       status: "active",

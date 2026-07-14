@@ -81,7 +81,7 @@ describe("SessionExecutionScopeValidator worktrees", () => {
     const mainSessionId = crypto.randomUUID();
     const goal = await fixture.context.goalState.commit({
       id: crypto.randomUUID(),
-      projectId: "test-project",
+      projectSlug: "test-project",
       createdFromSessionId: crypto.randomUUID(),
       objective: "Use an isolated checkout",
       acceptanceCriteria: "The checkout is validated",
@@ -115,7 +115,7 @@ describe("SessionExecutionScopeValidator worktrees", () => {
     const mainSessionId = crypto.randomUUID();
     const goal = await fixture.context.goalState.commit({
       id: crypto.randomUUID(),
-      projectId: "test-project",
+      projectSlug: "test-project",
       createdFromSessionId: crypto.randomUUID(),
       objective: "Use an isolated checkout",
       acceptanceCriteria: "Tampering is rejected",

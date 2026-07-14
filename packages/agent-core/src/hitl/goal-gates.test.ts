@@ -75,7 +75,7 @@ function createGate() {
 async function createRunningGoal() {
   return await goalStateManager.commit({
     id: crypto.randomUUID(),
-    projectId: "project-a",
+    projectSlug: "project-a",
     createdFromSessionId: crypto.randomUUID(),
     objective: "Integrate HITL gates with simplified Goal state.",
     acceptanceCriteria: "HITL requests block Goals through pending ids and blockers only.",
@@ -89,7 +89,7 @@ describe("GoalApprovalGate", () => {
     const createdAt = new Date().toISOString();
     const record: HitlRecord = {
       hitlId: crypto.randomUUID(),
-      owner: { projectSlug: goal.projectId, ownerType: "goal", ownerId: goal.id },
+      owner: { projectSlug: goal.projectSlug, ownerType: "goal", ownerId: goal.id },
       blockingKey: `goal:${goal.id}:approval:after_plan`,
       source: { type: "goal_approval", goalId: goal.id, approvalPoint: "after_plan" },
       status: "pending",
@@ -106,7 +106,7 @@ describe("GoalApprovalGate", () => {
 
     await gate.requestApproval({
       goalId: goal.id,
-      projectSlug: goal.projectId,
+      projectSlug: goal.projectSlug,
       approvalPoint: "after_plan",
       summary: "Approve continuing the Goal.",
     });
@@ -130,7 +130,7 @@ describe("GoalApprovalGate", () => {
 
     const record = await gate.requestApproval({
       goalId: goal.id,
-      projectSlug: goal.projectId,
+      projectSlug: goal.projectSlug,
       approvalPoint: "after_plan",
       summary: "Approve continuing the Goal.",
     });
@@ -163,7 +163,7 @@ describe("GoalApprovalGate", () => {
 
     const record = await gate.requestReview({
       goalId: goal.id,
-      projectSlug: goal.projectId,
+      projectSlug: goal.projectSlug,
       reviewGeneration: goal.reviewGeneration,
       reviewerSessionId: "reviewer-session",
     });

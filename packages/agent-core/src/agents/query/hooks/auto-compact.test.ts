@@ -35,7 +35,6 @@ beforeEach(() => {
 
 function summary() {
   return {
-    version: 1 as const,
     childBlockRefs: [],
     sections: {
       "Current Objective": "Continue the current task",
@@ -103,8 +102,8 @@ describe("createAutoCompactHook", () => {
 
     await result.hook(buildCtx(store, 850));
 
-    expect(store.getState().events.at(-1)?.kind).toBe("compact");
-    expect(store.getState().events.some((event) => event.kind === "compression.block_committed")).toBe(false);
+    expect(store.getState().events.at(-1)?.payload.type).toBe("compact");
+    expect(store.getState().events.some((event) => event.payload.type === "compression.block_committed")).toBe(false);
     expect(store.getState().messages.some((storedMessage) => storedMessage.parts.some((part) => part.type === "compaction"))).toBe(true);
     expect(store.getState().messages.slice(0, 2).every((storedMessage) => storedMessage.compacted === true)).toBe(true);
   });

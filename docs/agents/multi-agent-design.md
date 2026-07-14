@@ -15,7 +15,7 @@ ArchCode has seven closed Agent identities. An Agent identity determines prompt,
 ## Root Session selection
 
 - `POST /sessions` creates an `engineer` Session.
-- GoalRunner creates or recovers the stable `goal_lead` root Session with `sessionRole: "main"` and the Goal binding; retry reuses that identity.
+- `GoalLifecycleService` creates or recovers the stable `goal_lead` root Session with `sessionRole: "main"` and the Goal binding; retry reuses that identity.
 - Child delegation persists the selected specialist identity before execution.
 - Loaded Session files must contain a valid current Agent ID. There are no aliases or legacy-name fallbacks.
 
@@ -26,7 +26,7 @@ ArchCode has seven closed Agent identities. An Agent identity determines prompt,
 Goal creation is one product action with an internal recoverable commit/activate boundary:
 
 - After the user confirms the creation Skill summary, an unbound ordinary Engineer root may call `goal_create` with the confirmed objective, acceptance criteria, and worktree choice.
-- GoalRunner is the sole initial creation/activation owner: it atomically commits the running Goal with stable Goal and main Session IDs, then idempotently prepares the workspace, persists the independent Goal Lead root Session, and starts execution.
+- `GoalLifecycleService` is the sole initial creation/activation owner: it atomically commits the running Goal with stable Goal and main Session IDs, then idempotently prepares the workspace, persists the independent Goal Lead root Session, and starts execution.
 - There is no Goal Draft state, Draft update API, or manual initial Run route. Retry applies only to an existing failed or not-done Goal and reuses its stable execution identity.
 - Model-facing `goal_manage` has no `create` or `start` action.
 - Goal Lead uses `goal_manage` for the lifecycle of its already-started Goal.

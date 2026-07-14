@@ -29,7 +29,6 @@ function createSession(input: {
   childSessionLinks?: ToolChildSessionLink[];
 }): Session {
   return {
-    schemaVersion: 1,
     sessionId: input.id,
     cwd: "/workspace",
     rootSessionId: input.rootSessionId,
@@ -396,7 +395,7 @@ describe("SessionRoute focused view store behavior", () => {
       owner: projection.owner,
       hitlId: projection.hitlId,
       createdAt: 1,
-      payload: { type: "hitl.request", status: "pending" },
+      payload: { type: "hitl.request" },
       projection,
     };
     hitlStore.getState().applyRealtimeEvent(event);

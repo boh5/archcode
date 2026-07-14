@@ -1,6 +1,6 @@
 import type { HitlOwnerKey } from "@archcode/protocol";
 
-import { deleteSessionHitlCheckpointFile } from "./session-hitl-checkpoint";
+import { deleteSessionHitlJournalFile } from "./session-hitl-journal-store";
 import type { SessionFamilyController } from "./session-family-control";
 import type { HitlService } from "../hitl/service";
 import type { SessionStoreManager } from "../store/session-store-manager";
@@ -43,10 +43,10 @@ export class SessionFamilyStopService {
         };
         await owner.hitl.cancelOwner(hitlOwner, "session_family_stopped");
         await this.#sessionStoreManager.clearHitlBlockers(sessionId, workspaceRoot);
-        // The checkpoint is the cold-start repair record. Delete it only after
+        // The entry is the cold-start repair record. Delete it only after
         // the Session snapshot durably proves that its execution blocker is
         // gone; a crash or write failure before this point remains repairable.
-        await deleteSessionHitlCheckpointFile(workspaceRoot, sessionId);
+        await deleteSessionHitlJournalFile(workspaceRoot, sessionId);
       }
     } finally {
       lease.release();

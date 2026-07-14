@@ -42,7 +42,6 @@ const TerminalGoalStatuses = new Set<GoalStatus>([
 ]);
 
 type DashboardGoal = GoalState & {
-  projectSlug: string;
   projectName: string;
 };
 
@@ -53,7 +52,6 @@ type DashboardProjectError = {
 };
 
 type DashboardAutomation = Automation & {
-  projectSlug: string;
   projectName: string;
 };
 

@@ -53,7 +53,6 @@ export interface ProtectedRef {
 export type CompressionSummarySections = Record<CompressionSummarySectionName, string>;
 
 export interface CompressionSummary {
-  readonly version: 1;
   readonly sections: CompressionSummarySections;
   readonly childBlockRefs: BlockRef[];
 }
@@ -91,7 +90,6 @@ export interface CompressionCoverage {
 }
 
 export interface CompressionState {
-  readonly version: 1;
   readonly refMap: CompressionRefMap;
   readonly blocksByRef: Record<BlockRef, CompressionBlock>;
   readonly activeBlockRefs: BlockRef[];
@@ -113,10 +111,4 @@ export interface CompressionBlockDraft {
   readonly childBlockRefs?: BlockRef[];
   readonly tokenEstimate?: CompressionTokenEstimate;
   readonly createdAt: number;
-}
-
-export interface CompressionDcpParityEntry {
-  readonly item: DcpParityItem;
-  readonly coveredBy: string;
-  readonly status: "contract_defined";
 }

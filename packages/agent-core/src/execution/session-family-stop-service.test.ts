@@ -2,14 +2,14 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { SessionHitlCheckpoint } from "@archcode/protocol";
+import type { SessionHitlBlocker } from "@archcode/protocol";
 
 import { silentLogger } from "../logger";
 import { SessionStoreManager } from "../store/session-store-manager";
 import {
-  getSessionHitlCheckpointPath,
-  writeSessionHitlCheckpoint,
-} from "./session-hitl-checkpoint";
+  getSessionHitlJournalPath,
+  writeSessionHitlJournalEntry,
+} from "./session-hitl-journal-store";
 import { SessionFamilyStopService } from "./session-family-stop-service";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "session-family-stop-service", crypto.randomUUID());
@@ -30,7 +30,7 @@ afterAll(async () => {
 });
 
 describe("SessionFamilyStopService", () => {
-  test("keeps the recovery checkpoint when durable blocker clearing fails", async () => {
+  test("keeps the recovery entry when durable blocker clearing fails", async () => {
     const workspaceRoot = join(TMP_ROOT, "workspace");
     await mkdir(workspaceRoot, { recursive: true });
     const sessionId = crypto.randomUUID();
@@ -38,7 +38,7 @@ describe("SessionFamilyStopService", () => {
     const sessions = new FailingClearSessionStoreManager({ logger: silentLogger });
     sessions.create(sessionId, workspaceRoot, { agentName: "engineer" });
     await sessions.setHitlBlocker(sessionId, workspaceRoot, blocker(sessionId, hitlId));
-    await writeCheckpoint(workspaceRoot, sessionId, hitlId);
+    await writeEntry(workspaceRoot, sessionId, hitlId);
 
     const cancelOwner = mock(async () => []);
     const release = mock(() => undefined);
@@ -61,7 +61,7 @@ describe("SessionFamilyStopService", () => {
 
     expect(cancelOwner).toHaveBeenCalledTimes(1);
     expect(release).toHaveBeenCalledTimes(1);
-    expect(await Bun.file(getSessionHitlCheckpointPath(workspaceRoot, sessionId)).exists()).toBe(true);
+    expect(await Bun.file(getSessionHitlJournalPath(workspaceRoot, sessionId)).exists()).toBe(true);
     const coldSessions = new SessionStoreManager({ logger: silentLogger });
     expect((await coldSessions.getOrLoad(sessionId, workspaceRoot)).getState()).toMatchObject({
       blockedByHitlIds: [hitlId],
@@ -69,9 +69,8 @@ describe("SessionFamilyStopService", () => {
   });
 });
 
-function blocker(sessionId: string, hitlId: string): SessionHitlCheckpoint {
+function blocker(sessionId: string, hitlId: string): SessionHitlBlocker {
   return {
-    version: 1,
     hitlId,
     blockingKey: `session:${sessionId}:ask`,
     source: { type: "ask_user", sessionId, toolCallId: "ask" },
@@ -84,10 +83,9 @@ function blocker(sessionId: string, hitlId: string): SessionHitlCheckpoint {
   };
 }
 
-async function writeCheckpoint(workspaceRoot: string, sessionId: string, hitlId: string): Promise<void> {
+async function writeEntry(workspaceRoot: string, sessionId: string, hitlId: string): Promise<void> {
   const createdAt = new Date().toISOString();
-  await writeSessionHitlCheckpoint({
-    version: 1,
+  await writeSessionHitlJournalEntry({
     phase: "paused",
     phaseUpdatedAt: createdAt,
     hitlId,
@@ -111,6 +109,5 @@ async function writeCheckpoint(workspaceRoot: string, sessionId: string, hitlId:
     pendingToolCalls: [{ toolCallId: "ask", toolName: "ask_user", input: {} }],
     blockedToolIndex: 0,
     createdAt,
-    kind: "ask_user",
   }, workspaceRoot, sessionId);
 }

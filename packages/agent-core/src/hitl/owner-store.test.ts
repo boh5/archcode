@@ -7,7 +7,6 @@ import {
   HitlOwnerMismatchError,
   HitlOwnerStore,
   HitlRecordStateError,
-  migrateHitlOwnerFileProjectSlug,
 } from "./owner-store";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "owner-store", crypto.randomUUID());
@@ -90,30 +89,6 @@ describe("HitlOwnerStore", () => {
     expect(file.recentTerminal.at(-1)?.hitlId).toBe("terminal-24");
   });
 
-  test("migrates one workspace-local owner file to a new project slug without changing history identities", async () => {
-    const workspace = await mkdtemp(join(TMP_ROOT, "workspace-"));
-    const oldOwner: HitlOwnerKey = { projectSlug: "old-project", ownerType: "session", ownerId: crypto.randomUUID() };
-    const nextOwner: HitlOwnerKey = { ...oldOwner, projectSlug: "new-project" };
-    const filePath = join(workspace, ".archcode", "sessions", oldOwner.ownerId, "hitl.json");
-    const oldStore = new HitlOwnerStore(filePath, oldOwner);
-    await oldStore.create(record(oldOwner, "pending-id", "pending-key"));
-    const terminal = await oldStore.create(record(oldOwner, "terminal-id", "terminal-key"));
-    await oldStore.complete(terminal.record.hitlId, "cancelled", { type: "cancel", reason: "kept" });
-
-    await expect(migrateHitlOwnerFileProjectSlug(filePath, nextOwner)).resolves.toBe(true);
-
-    const migrated = await new HitlOwnerStore(filePath, nextOwner).read();
-    expect(migrated.owner).toEqual(nextOwner);
-    expect(migrated.pending).toEqual([
-      expect.objectContaining({ hitlId: "pending-id", blockingKey: "pending-key", status: "pending", owner: nextOwner }),
-    ]);
-    expect(migrated.recentTerminal).toEqual([
-      expect.objectContaining({ hitlId: "terminal-id", blockingKey: "terminal-key", status: "cancelled", owner: nextOwner }),
-    ]);
-    await expect(oldStore.read()).rejects.toBeInstanceOf(HitlOwnerMismatchError);
-    await expect(migrateHitlOwnerFileProjectSlug(filePath, nextOwner)).resolves.toBe(false);
-  });
-
   test("rejects unknown raw response fields when reading owner-local files", async () => {
     const workspace = await mkdtemp(join(TMP_ROOT, "workspace-"));
     const owner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "session", ownerId: crypto.randomUUID() };
@@ -127,7 +102,6 @@ describe("HitlOwnerStore", () => {
     };
 
     await Bun.write(filePath, `${JSON.stringify({
-      version: 1,
       owner,
       pending: [],
       recentTerminal: [unsafeRecord],
@@ -137,7 +111,7 @@ describe("HitlOwnerStore", () => {
     await expectRejects(store.read(), Error);
   });
 
-  test("rejects unversioned owner files and the removed resume attempts field", async () => {
+  test("rejects the removed version field and resume attempts field", async () => {
     const workspace = await mkdtemp(join(TMP_ROOT, "workspace-"));
     const owner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "session", ownerId: crypto.randomUUID() };
     const filePath = join(workspace, ".archcode", "sessions", owner.ownerId, "hitl.json");
@@ -151,6 +125,7 @@ describe("HitlOwnerStore", () => {
     };
 
     await Bun.write(filePath, `${JSON.stringify({
+      version: 1,
       owner,
       pending: [],
       recentTerminal: [],
@@ -159,7 +134,6 @@ describe("HitlOwnerStore", () => {
     await expectRejects(store.read(), Error);
 
     await Bun.write(filePath, `${JSON.stringify({
-      version: 1,
       owner,
       pending: [claimed],
       recentTerminal: [],
@@ -202,7 +176,6 @@ describe("HitlOwnerStore", () => {
     };
 
     await Bun.write(filePath, `${JSON.stringify({
-      version: 1,
       owner,
       pending: [terminal],
       recentTerminal: [],
@@ -211,7 +184,6 @@ describe("HitlOwnerStore", () => {
     await expectRejects(store.read(), HitlRecordStateError);
 
     await Bun.write(filePath, `${JSON.stringify({
-      version: 1,
       owner,
       pending: [],
       recentTerminal: [active],
@@ -256,7 +228,6 @@ describe("HitlOwnerStore", () => {
     };
 
     await expectRejects(store.write({
-      version: 1,
       owner,
       pending: [pending],
       recentTerminal: [terminal],
@@ -272,7 +243,6 @@ describe("HitlOwnerStore", () => {
     const store = new HitlOwnerStore(filePath, owner);
     const foreignRecord = record(foreignOwner, "foreign-owner", "foreign-owner");
     const file = {
-      version: 1 as const,
       owner,
       pending: [foreignRecord],
       recentTerminal: [],
@@ -305,7 +275,6 @@ describe("HitlOwnerStore", () => {
 
     await expectRejects(store.create(wrongSourceId), HitlRecordStateError);
     await expectRejects(store.write({
-      version: 1,
       owner,
       pending: [wrongSourceType],
       recentTerminal: [],
@@ -313,7 +282,6 @@ describe("HitlOwnerStore", () => {
     }), HitlRecordStateError);
 
     await Bun.write(filePath, `${JSON.stringify({
-      version: 1,
       owner,
       pending: [wrongSourceId],
       recentTerminal: [],
@@ -336,7 +304,6 @@ describe("HitlOwnerStore", () => {
     };
 
     await Bun.write(filePath, `${JSON.stringify({
-      version: 1,
       owner,
       pending: [pending],
       recentTerminal: [terminal],

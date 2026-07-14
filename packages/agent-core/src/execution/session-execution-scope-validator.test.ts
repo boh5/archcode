@@ -89,7 +89,7 @@ describe("SessionExecutionScopeValidator", () => {
     const mainSessionId = crypto.randomUUID();
     const goal = await fixture.context.goalState.commit({
       id: crypto.randomUUID(),
-      projectId: "test-project",
+      projectSlug: "test-project",
       createdFromSessionId: crypto.randomUUID(),
       objective: "Review state",
       acceptanceCriteria: "Only the right role can run",
@@ -333,7 +333,7 @@ async function createRunningGoal(
 ) {
   const goal = await fixture.context.goalState.commit({
     id: crypto.randomUUID(),
-    projectId: "test-project",
+    projectSlug: "test-project",
     createdFromSessionId: crypto.randomUUID(),
     objective: "Run safely",
     acceptanceCriteria: "Execution is scoped",

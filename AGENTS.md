@@ -193,7 +193,7 @@ partitionToolCalls → global permissions
   → global after (redact → truncate → audit → logger)
 ```
 
-**Config** (`~/.archcode/config.json`): server-wide `provider.<id>.{npm, name, options, models}` + strict seven-agent `agents.<agentName>.{model, variant, options}` + optional `memory`, `integrations.github`, and `mcp.servers.<id>.{transport, url, headers, timeout}`. Strict Zod. Provider values are literal; MCP URL/headers and GitHub token resolution retain their environment-variable behavior. Project directories are never searched for configuration.
+**Config** (`~/.archcode/config.json`): server-wide `provider.<id>.{npm, name, options, models}` + strict seven-agent `agents.<agentName>.{model, variant, options}` + optional `memory`, `integrations.github`, and `mcp.servers.<id>.{url, headers, timeout}`. Strict Zod. Provider values are literal; MCP URL/headers and GitHub token resolution retain their environment-variable behavior. Project directories are never searched for configuration.
 
 **Model configuration** (`~/.archcode/config.json`):
 - Provider ids and model ids combine as `provider:modelId` (example: `"local:glm-5"`). Do **not** use `provider/model`.
@@ -365,7 +365,7 @@ Project: `.archcode/memory/`, User: `~/.archcode/memory/`. Structure: `index.md`
 
 ## Goal System
 
-Goal is the primary execution primitive; legacy workflow runtime/tools/routes, Goal Draft, manual initial Run, and removed Goal-specific artifact APIs are retired. `packages/agent-core/src/goals/` owns Goal state, activation/recovery, Reviewer checks, retry state/backoff, token budgets, and isolated Goal memory. Goal evidence comes from ordinary session output, diffs, tool results, approvals, budget state, retry metadata, and Reviewer summaries rather than separate Goal artifact APIs. After the user confirms the creation summary, an ordinary root Engineer Session calls `goal_create`; GoalRunner atomically commits the running Goal and activates its stable, independent Goal Lead root Session. Reviewer finalization uses `goal_manage.finalize_review` to record external outcomes exactly as `DONE` or `NOT_DONE`; Goal Lead must not declare completion without Reviewer evidence.
+Goal is the primary execution primitive; legacy workflow runtime/tools/routes, Goal Draft, manual initial Run, and removed Goal-specific artifact APIs are retired. `packages/agent-core/src/goals/` owns Goal state, activation/recovery, Reviewer checks, retry state/backoff, token budgets, and isolated Goal memory. Goal evidence comes from ordinary session output, diffs, tool results, approvals, budget state, retry metadata, and Reviewer summaries rather than separate Goal artifact APIs. After the user confirms the creation summary, an ordinary root Engineer Session calls `goal_create`; `GoalLifecycleService` atomically commits the running Goal and activates its stable, independent Goal Lead root Session. Reviewer finalization uses `goal_manage.finalize_review` to record external outcomes exactly as `DONE` or `NOT_DONE`; Goal Lead must not declare completion without Reviewer evidence.
 
 ## HITL
 

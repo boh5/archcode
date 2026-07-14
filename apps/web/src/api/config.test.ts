@@ -36,11 +36,10 @@ describe("config API", () => {
     });
   });
 
-  test("retains metadata while converting safe secret views into explicit preserve mutations", () => {
+  test("converts safe secret views into explicit preserve mutations", () => {
     const draft = toConfigDraft({
       config: {
         ...config,
-        $schema: "https://example.com/schema.json",
         provider: {
           local: {
             npm: "@ai-sdk/openai-compatible",
@@ -55,7 +54,6 @@ describe("config API", () => {
       restartRequired: false,
     });
 
-    expect(draft.config.$schema).toBe("https://example.com/schema.json");
     expect(draft.config.provider.local!.options.apiKey).toEqual({ action: "preserve" });
   });
 });

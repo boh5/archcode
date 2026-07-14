@@ -30,13 +30,13 @@ import { SessionHitlResumeAdapter } from "./session-hitl-resume-adapter";
 import { SessionExecutionManager, type SessionHitlResumeLease } from "./session-execution-manager";
 import { SessionExecutionScopeValidator } from "./session-execution-scope-validator";
 import {
-  getSessionHitlCheckpointPath,
-  readSessionHitlCheckpoint,
-  readSessionHitlCheckpointFile,
+  getSessionHitlJournalPath,
+  readSessionHitlJournalEntry,
+  readSessionHitlJournalFile,
   sessionHitlJournalPhase,
   transitionSessionHitlJournalPhase,
-  writeSessionHitlCheckpoint,
-} from "./session-hitl-checkpoint";
+  writeSessionHitlJournalEntry,
+} from "./session-hitl-journal-store";
 
 type StreamTextFn = typeof import("ai").streamText;
 
@@ -88,8 +88,8 @@ describe("Session HITL resume", () => {
     expect(fixture.store.getState().executions.at(-1)).toMatchObject({ status: "waiting_for_human" });
     expect(fixture.store.getState().blockedByHitlIds).toEqual([pending.hitlId]);
     expect(JSON.stringify(await Bun.file(getSessionHitlPath(fixture.workspaceRoot, fixture.sessionId)).json())).not.toContain("rawToolInput");
-    const checkpointFile = await readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId);
-    expect(JSON.stringify(checkpointFile)).toContain("Choose a color");
+    const entryFile = await readSessionHitlJournalFile(fixture.workspaceRoot, fixture.sessionId);
+    expect(JSON.stringify(entryFile)).toContain("Choose a color");
 
     await fixture.coordinator.respond(identity(pending), { type: "question_answer", answers: ["blue"] });
     await waitFor(async () => (await fixture.hitl.lookup(identity(pending))).status === "found" && ((await fixture.hitl.lookup(identity(pending))) as { record: HitlRecord }).record.status === "resolved");
@@ -97,7 +97,7 @@ describe("Session HITL resume", () => {
     const tool = latestToolPart(fixture.store.getState().messages, "ask-1");
     expect(tool).toMatchObject({
       state: "completed",
-      meta: { askUser: { version: 1, answers: [["blue"]] } },
+      meta: { askUser: { answers: [["blue"]] } },
     });
     expect(tool?.state === "completed" ? tool.output : "").toContain('Question 1 (Pick): "Choose a color"');
     expect(tool?.state === "completed" ? tool.output : "").toContain('Answer 1: ["blue"]');
@@ -105,7 +105,7 @@ describe("Session HITL resume", () => {
     const coldStore = await coldSessions.getOrLoad(fixture.sessionId, fixture.workspaceRoot);
     expect(coldStore.getState().blockedHitl).toBeUndefined();
     expect(coldStore.getState().blockedByHitlIds).toBeUndefined();
-    expect(await readSessionHitlCheckpoint(fixture.workspaceRoot, fixture.sessionId, pending.hitlId)).toBeUndefined();
+    expect(await readSessionHitlJournalEntry(fixture.workspaceRoot, fixture.sessionId, pending.hitlId)).toBeUndefined();
   });
 
   test.each([
@@ -130,7 +130,7 @@ describe("Session HITL resume", () => {
     const goalState = new GoalStateManager(fixture.workspaceRoot, silentLogger);
     await goalState.commit({
       id: goalId,
-      projectId: "archcode",
+      projectSlug: "archcode",
       createdFromSessionId: rootSessionId,
       objective: "Resume the exact Goal child Session after human input.",
       acceptanceCriteria: "The persisted Goal and Session tree authorize the child replay.",
@@ -182,7 +182,7 @@ describe("Session HITL resume", () => {
     const resumedTool = latestToolPart(fixture.store.getState().messages, `ask-${agentName}-child`);
     expect(resumedTool).toMatchObject({
       state: "completed",
-      meta: { askUser: { version: 1, answers: [["continue"]] } },
+      meta: { askUser: { answers: [["continue"]] } },
     });
     expect(resumedTool?.state === "completed" ? resumedTool.output : "").toContain('Answer 1: ["continue"]');
     expect(fixture.store.getState().blockedByHitlIds).toBeUndefined();
@@ -208,7 +208,7 @@ describe("Session HITL resume", () => {
     const goalState = new GoalStateManager(fixture.workspaceRoot, silentLogger);
     await goalState.commit({
       id: goalId,
-      projectId: "archcode",
+      projectSlug: "archcode",
       createdFromSessionId: rootSessionId,
       objective: "Approve a guarded command in the Goal build child.",
       acceptanceCriteria: "Approval executes the guarded tool once in the original build Session.",
@@ -342,11 +342,11 @@ describe("Session HITL resume", () => {
   test("journal persistence failure publishes no owner record", async () => {
     const fixture = await createFixture();
     const execute = mock(async () => "must not execute");
-    const registry = createRegistry([guardedTool("checkpoint_failure_guarded", execute)]);
-    await mkdir(getSessionHitlCheckpointPath(fixture.workspaceRoot, fixture.sessionId), { recursive: true });
-    mockToolCallStream([{ toolCallId: "checkpoint-failure-1", toolName: "checkpoint_failure_guarded", input: {} }]);
+    const registry = createRegistry([guardedTool("entry_failure_guarded", execute)]);
+    await mkdir(getSessionHitlJournalPath(fixture.workspaceRoot, fixture.sessionId), { recursive: true });
+    mockToolCallStream([{ toolCallId: "entry-failure-1", toolName: "entry_failure_guarded", input: {} }]);
 
-    await runQueryLoop({ ...fixture.options(registry, ["checkpoint_failure_guarded"]), maxSteps: 1 }, "force checkpoint failure");
+    await runQueryLoop({ ...fixture.options(registry, ["entry_failure_guarded"]), maxSteps: 1 }, "force entry failure");
 
     const owner = { projectSlug: "archcode", ownerType: "session" as const, ownerId: fixture.sessionId };
     const file = await (await fixture.hitl.ownerStore(owner)).read();
@@ -356,22 +356,22 @@ describe("Session HITL resume", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  test("checkpoint persistence failure does not cancel a reused blocking-key record", async () => {
+  test("entry persistence failure does not cancel a reused blocking-key record", async () => {
     const fixture = await createFixture();
-    const toolCallId = "checkpoint-existing-1";
+    const toolCallId = "entry-existing-1";
     const owner = { projectSlug: "archcode", ownerType: "session" as const, ownerId: fixture.sessionId };
     const existing = await fixture.hitl.create({
       owner,
       sessionRootId: fixture.store.getState().rootSessionId,
       blockingKey: `session:${fixture.sessionId}:tool:${toolCallId}`,
-      source: { type: "tool_permission", sessionId: fixture.sessionId, toolCallId, toolName: "checkpoint_existing_guarded" },
+      source: { type: "tool_permission", sessionId: fixture.sessionId, toolCallId, toolName: "entry_existing_guarded" },
       displayPayload: { title: "Existing approval", redacted: true },
     });
-    await mkdir(getSessionHitlCheckpointPath(fixture.workspaceRoot, fixture.sessionId), { recursive: true });
-    const registry = createRegistry([guardedTool("checkpoint_existing_guarded", mock(async () => "must not execute"))]);
-    mockToolCallStream([{ toolCallId, toolName: "checkpoint_existing_guarded", input: {} }]);
+    await mkdir(getSessionHitlJournalPath(fixture.workspaceRoot, fixture.sessionId), { recursive: true });
+    const registry = createRegistry([guardedTool("entry_existing_guarded", mock(async () => "must not execute"))]);
+    mockToolCallStream([{ toolCallId, toolName: "entry_existing_guarded", input: {} }]);
 
-    await runQueryLoop({ ...fixture.options(registry, ["checkpoint_existing_guarded"]), maxSteps: 1 }, "reuse pending owner record");
+    await runQueryLoop({ ...fixture.options(registry, ["entry_existing_guarded"]), maxSteps: 1 }, "reuse pending owner record");
 
     const file = await (await fixture.hitl.ownerStore(owner)).read();
     expect(file.pending).toHaveLength(1);
@@ -379,7 +379,7 @@ describe("Session HITL resume", () => {
     expect(file.recentTerminal).toEqual([]);
   });
 
-  test("realtime publish failure still leaves a durable checkpoint and enters Session HITL pause", async () => {
+  test("realtime publish failure still leaves a durable entry and enters Session HITL pause", async () => {
     const fixture = await createFixture();
     fixture.hitl.subscribeRealtimeEvents(() => { throw new Error("SSE unavailable"); });
     const registry = createRegistry([askUserTool]);
@@ -390,7 +390,7 @@ describe("Session HITL resume", () => {
     await runQueryLoop(fixture.options(registry, ["ask_user"]), "ask with failing publisher");
 
     const pending = await singlePendingHitl(fixture);
-    expect(await readSessionHitlCheckpoint(fixture.workspaceRoot, fixture.sessionId, pending.hitlId)).toBeDefined();
+    expect(await readSessionHitlJournalEntry(fixture.workspaceRoot, fixture.sessionId, pending.hitlId)).toBeDefined();
     expect(fixture.store.getState().executions.at(-1)).toMatchObject({ status: "waiting_for_human" });
     expect(fixture.store.getState().blockedByHitlIds).toEqual([pending.hitlId]);
   });
@@ -512,7 +512,7 @@ describe("Session HITL resume", () => {
     expect(detachSessionEvents).toHaveBeenCalledTimes(1);
   });
 
-  test("abort signal spans durable replay and continuation and preserves the checkpoint", async () => {
+  test("abort signal spans durable replay and continuation and preserves the entry", async () => {
     const abortController = new AbortController();
     const release = mock(() => undefined);
     const childLinkStatuses: ToolChildSessionLinkStatus[] = [];
@@ -559,7 +559,7 @@ describe("Session HITL resume", () => {
 
     expect(release).toHaveBeenCalledTimes(1);
     expect(childLinkStatuses).toEqual(["running", "cancelled"]);
-    expect((await readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId)).checkpoints)
+    expect((await readSessionHitlJournalFile(fixture.workspaceRoot, fixture.sessionId)).entries)
       .toHaveLength(1);
     expect(fixture.store.getState().blockedByHitlIds).toEqual([pending.hitlId]);
   });
@@ -638,7 +638,7 @@ describe("Session HITL resume", () => {
     expect((await coldSessions.getOrLoad(fixture.sessionId, fixture.workspaceRoot)).getState().blockedByHitlIds).toBeUndefined();
   });
 
-  test("claims Session ownership before asynchronously reading the durable checkpoint", async () => {
+  test("claims Session ownership before asynchronously reading the durable entry", async () => {
     let executionManager!: SessionExecutionManager;
     let signalReadStarted!: () => void;
     const readStarted = new Promise<void>((resolve) => { signalReadStarted = resolve; });
@@ -648,15 +648,15 @@ describe("Session HITL resume", () => {
       reserveSessionHitlResume: (workspaceRoot, sessionId, durableRootSessionId) => (
         executionManager.reserveSessionHitlResume(workspaceRoot, sessionId, durableRootSessionId)
       ),
-      readCheckpoint: async (workspaceRoot, sessionId, hitlId) => {
+      readEntry: async (workspaceRoot, sessionId, hitlId) => {
         signalReadStarted();
         await readAllowed;
-        return await readSessionHitlCheckpoint(workspaceRoot, sessionId, hitlId);
+        return await readSessionHitlJournalEntry(workspaceRoot, sessionId, hitlId);
       },
     });
     executionManager = createResumeExecutionManager(fixture.sessions);
     const registry = createRegistry([askUserTool]);
-    mockToolCallStream([{ toolCallId: "ask-checkpoint-race", toolName: "ask_user", input: {
+    mockToolCallStream([{ toolCallId: "ask-entry-race", toolName: "ask_user", input: {
       questions: [{ header: "Race", question: "Continue?", options: [], custom: true }],
     } }]);
     await runQueryLoop(fixture.options(registry, ["ask_user"]), "pause");
@@ -670,7 +670,7 @@ describe("Session HITL resume", () => {
       slug: "archcode",
       workspaceRoot: fixture.workspaceRoot,
       sessionId: fixture.sessionId,
-      userMessage: "must not overtake checkpoint replay",
+      userMessage: "must not overtake entry replay",
     })).rejects.toThrow(SessionFamilyActiveError);
 
     allowRead();
@@ -731,7 +731,7 @@ describe("Session HITL resume", () => {
     expect(lookup).toMatchObject({ status: "found", record: { status: "cancelled" } });
     expect(fixture.store.getState().blockedHitl).toBeUndefined();
     expect(fixture.store.getState().blockedByHitlIds).toBeUndefined();
-    expect(await Bun.file(getSessionHitlCheckpointPath(fixture.workspaceRoot, fixture.sessionId)).exists()).toBe(false);
+    expect(await Bun.file(getSessionHitlJournalPath(fixture.workspaceRoot, fixture.sessionId)).exists()).toBe(false);
     expect(executionManager.getSessionFamilyActivity(fixture.workspaceRoot, fixture.sessionId)).toBe("idle");
   });
 
@@ -786,7 +786,7 @@ describe("Session HITL resume", () => {
     if (lookup.status !== "found") throw new Error("Expected terminal HITL after strong family Stop");
     expect(fixture.store.getState().blockedHitl).toBeUndefined();
     expect(fixture.store.getState().blockedByHitlIds).toBeUndefined();
-    expect(await Bun.file(getSessionHitlCheckpointPath(fixture.workspaceRoot, fixture.sessionId)).exists()).toBe(false);
+    expect(await Bun.file(getSessionHitlJournalPath(fixture.workspaceRoot, fixture.sessionId)).exists()).toBe(false);
     expect(lookup).toMatchObject({ record: { response: { type: "question_answer", answers: ["yes"] } } });
     expect(lookup.record).not.toHaveProperty("resume");
   });
@@ -931,8 +931,8 @@ describe("Session HITL resume", () => {
 
     expect(recovery.scheduled).toBe(0);
     expect(continuationRuns).toBe(1);
-    const checkpoint = await readSessionHitlCheckpoint(fixture.workspaceRoot, fixture.sessionId, pending.hitlId);
-    expect(checkpoint === undefined ? undefined : sessionHitlJournalPhase(checkpoint)).toBe("manual_unknown");
+    const entry = await readSessionHitlJournalEntry(fixture.workspaceRoot, fixture.sessionId, pending.hitlId);
+    expect(entry === undefined ? undefined : sessionHitlJournalPhase(entry)).toBe("manual_unknown");
 
     const lookup = await fixture.hitl.lookup(identity(pending));
     expect(lookup).toMatchObject({ status: "found", record: { status: "answered" } });
@@ -970,7 +970,7 @@ describe("Session HITL resume", () => {
     });
 
     expect(continueAgent).not.toHaveBeenCalled();
-    expect(await readSessionHitlCheckpoint(fixture.workspaceRoot, fixture.sessionId, pending.hitlId)).toBeUndefined();
+    expect(await readSessionHitlJournalEntry(fixture.workspaceRoot, fixture.sessionId, pending.hitlId)).toBeUndefined();
     const coldSessions = new SessionStoreManager({ logger: silentLogger });
     const coldStore = await coldSessions.getOrLoad(fixture.sessionId, fixture.workspaceRoot);
     expect(coldStore.getState().cwd).toBe(removedWorktree);
@@ -994,7 +994,7 @@ describe("Session HITL resume", () => {
     mockToolCallStream([{ toolCallId: "ask-already-continued", toolName: "ask_user", input: {
       questions: [{ header: "Continue", question: "Continue?", options: [], custom: true }],
     } }]);
-    await runQueryLoop(fixture.options(registry, ["ask_user"]), "pause before completed continuation checkpoint");
+    await runQueryLoop(fixture.options(registry, ["ask_user"]), "pause before completed continuation entry");
     const pending = await singlePendingHitl(fixture);
     await transitionSessionHitlJournalPhase(fixture.workspaceRoot, fixture.sessionId, pending.hitlId, "replaying");
     await transitionSessionHitlJournalPhase(fixture.workspaceRoot, fixture.sessionId, pending.hitlId, "continuing");
@@ -1007,7 +1007,7 @@ describe("Session HITL resume", () => {
     });
 
     expect(continuationRuns).toBe(0);
-    expect(await readSessionHitlCheckpoint(fixture.workspaceRoot, fixture.sessionId, pending.hitlId)).toBeUndefined();
+    expect(await readSessionHitlJournalEntry(fixture.workspaceRoot, fixture.sessionId, pending.hitlId)).toBeUndefined();
   });
 
   test("chained Session HITL pause from continuation preserves the new blocker", async () => {
@@ -1023,14 +1023,13 @@ describe("Session HITL resume", () => {
             source: { type: "ask_user", sessionId, toolCallId: "ask-next" },
             displayPayload: { title: "Next question", summary: "Continue?", redacted: true },
           });
-          const checkpointCreatedAt = new Date().toISOString();
-          await writeSessionHitlCheckpoint({
-            version: 1,
+          const entryCreatedAt = new Date().toISOString();
+          await writeSessionHitlJournalEntry({
             phase: "paused",
-            phaseUpdatedAt: checkpointCreatedAt,
+            phaseUpdatedAt: entryCreatedAt,
             hitlId: next.hitlId,
             blockingKey: next.blockingKey,
-            source: next.source,
+            source: { type: "ask_user", sessionId, toolCallId: "ask-next" },
             request: {
               owner: next.owner,
               displayPayload: next.displayPayload,
@@ -1048,8 +1047,7 @@ describe("Session HITL resume", () => {
             completedToolResults: [],
             pendingToolCalls: [{ toolCallId: "ask-next", toolName: "ask_user", input: { questions: [{ header: "Next", question: "Continue?", options: [], custom: true }] } }],
             blockedToolIndex: 0,
-            createdAt: checkpointCreatedAt,
-            kind: "ask_user",
+            createdAt: entryCreatedAt,
           }, workspaceRoot, sessionId);
           store.getState().append({ type: "hitl.request", request: next });
           store.getState().append({
@@ -1058,7 +1056,6 @@ describe("Session HITL resume", () => {
             blockedByHitlIds: [next.hitlId],
             blockedToolCallId: "ask-next",
             blockedHitl: {
-              version: 1,
               hitlId: next.hitlId,
               blockingKey: next.blockingKey,
               source: next.source,
@@ -1090,8 +1087,8 @@ describe("Session HITL resume", () => {
     expect(nextHitlId).not.toBe(oldPending.hitlId);
     expect(state.blockedByHitlIds).toEqual([nextHitlId]);
     expect(state.blockedHitl).toMatchObject({ hitlId: nextHitlId, toolCallId: "ask-next", toolName: "ask_user" });
-    const checkpointFile = await readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId);
-    expect(checkpointFile.checkpoints.map((checkpoint) => checkpoint.hitlId)).toEqual([nextHitlId]);
+    const entryFile = await readSessionHitlJournalFile(fixture.workspaceRoot, fixture.sessionId);
+    expect(entryFile.entries.map((entry) => entry.hitlId)).toEqual([nextHitlId]);
   });
 
   test("permission denial and cancel resume stable original toolCallId errors without executing tool", async () => {
@@ -1126,7 +1123,7 @@ describe("Session HITL resume", () => {
     expect(JSON.stringify(cancelledTool)).toContain("TOOL_CANCELLED");
   });
 
-  test("permission resume fails closed when checkpoint blocked tool is missing", async () => {
+  test("permission resume fails closed when entry blocked tool is missing", async () => {
     const fixture = await createFixture();
     const execute = mock(async () => "should not run");
     const registry = createRegistry([
@@ -1134,14 +1131,14 @@ describe("Session HITL resume", () => {
       guardedTool("later", execute, { ask: false }),
     ]);
     mockToolCallStream([
-      { toolCallId: "perm-missing", toolName: "blocked", input: { message: "raw should stay checkpoint-only" } },
+      { toolCallId: "perm-missing", toolName: "blocked", input: { message: "raw should stay entry-only" } },
       { toolCallId: "later-after-missing", toolName: "later", input: {} },
     ]);
-    await runQueryLoop(fixture.options(registry, ["blocked", "later"]), "invalid checkpoint");
+    await runQueryLoop(fixture.options(registry, ["blocked", "later"]), "invalid entry");
 
     const pending = await singlePendingHitl(fixture);
-    const checkpoint = (await readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId)).checkpoints[0]!;
-    await writeSessionHitlCheckpoint({ ...checkpoint, pendingToolCalls: checkpoint.pendingToolCalls.slice(1) }, fixture.workspaceRoot, fixture.sessionId);
+    const entry = (await readSessionHitlJournalFile(fixture.workspaceRoot, fixture.sessionId)).entries[0]!;
+    await writeSessionHitlJournalEntry({ ...entry, pendingToolCalls: entry.pendingToolCalls.slice(1) }, fixture.workspaceRoot, fixture.sessionId);
 
     await fixture.coordinator.respond(identity(pending), { type: "permission_decision", decision: "approve_once" });
     await waitFor(async () => (await fixture.hitl.lookup(identity(pending))).status === "found" && ((await fixture.hitl.lookup(identity(pending))) as { record: HitlRecord }).record.status === "resolved");
@@ -1149,7 +1146,7 @@ describe("Session HITL resume", () => {
     expect(execute).not.toHaveBeenCalled();
     const failedTool = latestToolPart(fixture.store.getState().messages, "perm-missing");
     expect(failedTool).toMatchObject({ state: "error", toolCallId: "perm-missing", toolName: "blocked" });
-    expect(JSON.stringify(failedTool)).toContain("SESSION_HITL_CHECKPOINT_INVALID");
+    expect(JSON.stringify(failedTool)).toContain("SESSION_HITL_JOURNAL_INVALID");
     expect(latestToolPart(fixture.store.getState().messages, "later-after-missing")).toMatchObject({
       state: "error",
       toolCallId: "later-after-missing",
@@ -1157,7 +1154,7 @@ describe("Session HITL resume", () => {
     });
   });
 
-  test("multi-tool HITL checkpoint preserves ordered batch and does not start later effectful tool before response", async () => {
+  test("multi-tool HITL entry preserves ordered batch and does not start later effectful tool before response", async () => {
     const fixture = await createFixture();
     const events: string[] = [];
     const registry = createRegistry([
@@ -1190,10 +1187,10 @@ describe("Session HITL resume", () => {
 
     expect(events).toEqual(["execute:first"]);
     const pending = await singlePendingHitl(fixture);
-    const checkpoint = (await readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId)).checkpoints[0]!;
-    expect(checkpoint.toolCalls.map((call) => call.toolCallId)).toEqual(["tc-first", "tc-blocked", "tc-later"]);
-    expect(checkpoint.completedToolResults.map((result) => result.toolCallId)).toEqual(["tc-first"]);
-    expect(checkpoint.pendingToolCalls.map((call) => call.toolCallId)).toEqual(["tc-blocked", "tc-later"]);
+    const entry = (await readSessionHitlJournalFile(fixture.workspaceRoot, fixture.sessionId)).entries[0]!;
+    expect(entry.toolCalls.map((call) => call.toolCallId)).toEqual(["tc-first", "tc-blocked", "tc-later"]);
+    expect(entry.completedToolResults.map((result) => result.toolCallId)).toEqual(["tc-first"]);
+    expect(entry.pendingToolCalls.map((call) => call.toolCallId)).toEqual(["tc-blocked", "tc-later"]);
 
     await fixture.coordinator.respond(identity(pending), { type: "permission_decision", decision: "approve_once" });
     await waitFor(() => events.includes("execute:later"));
@@ -1227,7 +1224,7 @@ async function createFixture(options: {
     childSessionId: string,
     status: ToolChildSessionLinkStatus,
   ) => Promise<void>;
-  readonly readCheckpoint?: (workspaceRoot: string, sessionId: string, hitlId: string) => ReturnType<typeof readSessionHitlCheckpoint>;
+  readonly readEntry?: (workspaceRoot: string, sessionId: string, hitlId: string) => ReturnType<typeof readSessionHitlJournalEntry>;
   readonly executionScopeValidator?: Pick<SessionExecutionScopeValidator, "validate">;
   readonly hitlFactory?: (options: ConstructorParameters<typeof HitlService>[0]) => HitlService;
   readonly sessionStoreManager?: SessionStoreManager;
@@ -1272,7 +1269,7 @@ async function createFixture(options: {
     ...(options.updateChildSessionLinkForHitl === undefined ? {} : {
       updateChildSessionLinkForHitl: options.updateChildSessionLinkForHitl,
     }),
-    ...(options.readCheckpoint === undefined ? {} : { readCheckpoint: options.readCheckpoint }),
+    ...(options.readEntry === undefined ? {} : { readEntry: options.readEntry }),
     getAgent: async () => options.getAgent?.({ workspaceRoot, sessionId, store, hitl }) ?? noOpAgent(store),
     ...(options.attachSessionEvents === undefined ? {} : { attachSessionEvents: options.attachSessionEvents }),
     ...(options.detachSessionEvents === undefined ? {} : { detachSessionEvents: options.detachSessionEvents }),
@@ -1390,7 +1387,7 @@ function createAliasedResolver(
   const resolver = new ProjectContextResolver({
     projectInfoFactory: () => context.project,
     goalCancellationFactory: () => context.goalCancellation,
-    goalRunnerFactory: () => ({}) as never,
+    goalLifecycleFactory: () => ({}) as never,
     createAutomation: async () => { throw new Error("unused automation creator"); },
     sessionStoreManager: sessions,
     resumeCoordinatorFactory: () => context.hitlResumeCoordinator,

@@ -21,7 +21,7 @@ let EditAutomationDialog: EditAutomationDialogComponent;
 const automationTimezone = "Asia/Shanghai";
 const automation: Automation = {
   id: "automation-edit-limits",
-  projectId: "archcode",
+  projectSlug: "archcode",
   createdFromSessionId: "session-source",
   name: "Daily review",
   trigger: { kind: "cron", expression: "0 9 * * *", timezone: automationTimezone },

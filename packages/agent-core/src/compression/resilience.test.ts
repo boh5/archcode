@@ -66,7 +66,6 @@ function makeStore(sessionId = `compression-resilience-${crypto.randomUUID()}`) 
 
 function sessionFileFixture(overrides: Record<string, unknown> = {}) {
   return {
-    schemaVersion: 1,
     sessionId: "session-1",
     createdAt: 1,
     updatedAt: 1,
@@ -115,8 +114,8 @@ describe("compression resilience", () => {
     expect(second).toEqual({ success: false, message: "Compact already in progress" });
     expect(streamText).toHaveBeenCalledTimes(1);
     expect(store.getState().compression?.activeBlockRefs).toEqual([]);
-    expect(store.getState().events.filter((event) => event.kind === "compact")).toHaveLength(1);
-    expect(store.getState().events.filter((event) => event.kind === "compression.block_committed")).toHaveLength(0);
+    expect(store.getState().events.filter((event) => event.payload.type === "compact")).toHaveLength(1);
+    expect(store.getState().events.filter((event) => event.payload.type === "compression.block_committed")).toHaveLength(0);
   });
 
   test("corrupt compression metadata is rejected instead of hydrating partial state", () => {

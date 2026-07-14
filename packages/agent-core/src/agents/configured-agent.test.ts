@@ -814,7 +814,7 @@ describe("ConfiguredAgent", () => {
     const mainSessionId = crypto.randomUUID();
     const goal = await goalState.commit({
       id: crypto.randomUUID(),
-      projectId: "project-a",
+      projectSlug: "project-a",
       createdFromSessionId: crypto.randomUUID(),
       objective: "Retry from natural language Goal state.",
       acceptanceCriteria: "Reviewer can decide from natural language acceptance criteria.",

@@ -93,17 +93,17 @@ export function computeToolDiff({
   try {
     // ── Guard: identical content ───────────────────────────────────────────
     if (before === after) {
-      return { version: 1, files: [], unsupportedReason: "no_change" };
+      return { files: [], unsupportedReason: "no_change" };
     }
 
     // ── Guard: binary content ─────────────────────────────────────────────
     if (isProbablyBinaryText(before) || isProbablyBinaryText(after)) {
-      return { version: 1, files: [], unsupportedReason: "binary" };
+      return { files: [], unsupportedReason: "binary" };
     }
 
     // ── Guard: input too large ────────────────────────────────────────────
     if (before.length + after.length > MAX_DIFF_INPUT_CHARS) {
-      return { version: 1, files: [], unsupportedReason: "too_large" };
+      return { files: [], unsupportedReason: "too_large" };
     }
 
     // ── Resolve file status ───────────────────────────────────────────────
@@ -177,14 +177,12 @@ export function computeToolDiff({
     };
 
     return {
-      version: 1,
       files: [diffFile],
       truncated: truncated || undefined,
     };
   } catch (error) {
     // Diff failure must NEVER fail an already-successful tool
     return {
-      version: 1,
       files: [],
       unsupportedReason: "diff_error",
       warning: error instanceof Error ? error.message : String(error),
@@ -224,7 +222,7 @@ export function computeToolDiffs(
     if (r.truncated) truncated = true;
   }
 
-  const meta: ToolDiffMetadata = { version: 1, files: allFiles };
+  const meta: ToolDiffMetadata = { files: allFiles };
 
   if (truncated || exceeded) meta.truncated = true;
 

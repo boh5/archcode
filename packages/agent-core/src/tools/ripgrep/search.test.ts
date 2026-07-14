@@ -24,7 +24,7 @@ describe("parseRgJsonLine", () => {
     });
     const result = parseRgJsonLine(line);
     expect(result).not.toBeNull();
-    expect(result!.type).toBe("match");
+    expect(result).toEqual({ path: "src/foo.ts", lineNumber: 42, content: "const x = 1" });
     expect(result!.path).toBe("src/foo.ts");
     expect(result!.lineNumber).toBe(42);
     expect(result!.content).toBe("const x = 1");
@@ -192,8 +192,8 @@ describe("formatSearchResult", () => {
   test("formats content output correctly (default)", () => {
     const result = {
       matches: [
-        { type: "match" as const, path: "src/foo.ts", lineNumber: 42, content: "const x = 1" },
-        { type: "match" as const, path: "src/bar.ts", lineNumber: 15, content: "const y = 2" },
+        { path: "src/foo.ts", lineNumber: 42, content: "const x = 1" },
+        { path: "src/bar.ts", lineNumber: 15, content: "const y = 2" },
       ],
       totalMatches: 2,
       truncated: false,
@@ -206,9 +206,9 @@ describe("formatSearchResult", () => {
   test("formats files_with_matches output", () => {
     const result = {
       matches: [
-        { type: "match" as const, path: "src/foo.ts", lineNumber: 42, content: "const x = 1" },
-        { type: "match" as const, path: "src/foo.ts", lineNumber: 43, content: "const y = 2" },
-        { type: "match" as const, path: "src/bar.ts", lineNumber: 15, content: "const z = 3" },
+        { path: "src/foo.ts", lineNumber: 42, content: "const x = 1" },
+        { path: "src/foo.ts", lineNumber: 43, content: "const y = 2" },
+        { path: "src/bar.ts", lineNumber: 15, content: "const z = 3" },
       ],
       totalMatches: 3,
       truncated: false,
@@ -219,11 +219,11 @@ describe("formatSearchResult", () => {
   test("formats count output", () => {
     const result = {
       matches: [
-        { type: "match" as const, path: "src/foo.ts", lineNumber: 42, content: "a" },
-        { type: "match" as const, path: "src/foo.ts", lineNumber: 43, content: "b" },
-        { type: "match" as const, path: "src/bar.ts", lineNumber: 15, content: "c" },
-        { type: "match" as const, path: "src/bar.ts", lineNumber: 16, content: "d" },
-        { type: "match" as const, path: "src/bar.ts", lineNumber: 17, content: "e" },
+        { path: "src/foo.ts", lineNumber: 42, content: "a" },
+        { path: "src/foo.ts", lineNumber: 43, content: "b" },
+        { path: "src/bar.ts", lineNumber: 15, content: "c" },
+        { path: "src/bar.ts", lineNumber: 16, content: "d" },
+        { path: "src/bar.ts", lineNumber: 17, content: "e" },
       ],
       totalMatches: 5,
       truncated: false,
@@ -243,7 +243,7 @@ describe("formatSearchResult", () => {
   test("defaults outputMode to content", () => {
     const result = {
       matches: [
-        { type: "match" as const, path: "a.ts", lineNumber: 1, content: "x" },
+        { path: "a.ts", lineNumber: 1, content: "x" },
       ],
       totalMatches: 1,
       truncated: false,

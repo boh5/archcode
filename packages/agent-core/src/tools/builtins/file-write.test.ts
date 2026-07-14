@@ -104,7 +104,6 @@ describe("fileWriteTool", () => {
     expect(result.output).toBe("File written to sample.txt");
     expect(result.isError).toBe(false);
     expect(result.meta?.diffs).toMatchObject({
-      version: 1,
       files: [
         {
           path: "sample.txt",
@@ -127,7 +126,6 @@ describe("fileWriteTool", () => {
     expect(result.isError).toBe(false);
     expect(result.output).toBe("File written to registry-new.txt");
     expect(result.meta?.diffs).toMatchObject({
-      version: 1,
       files: [{ path: "registry-new.txt", status: "created" }],
     });
   });

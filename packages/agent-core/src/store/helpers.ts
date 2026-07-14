@@ -2,14 +2,12 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod/v4";
 import type { SessionEventEnvelope, SessionStoreState, StoredMessage } from "./types";
-import type { SessionModelInfo } from "@archcode/protocol";
+import { isSessionEventPayload, type SessionEventPayload, type SessionModelInfo } from "@archcode/protocol";
 import { getSessionPath, getSessionsDir } from "./sessions-dir";
 import type { SessionRole } from "./types";
 import {
   COMPRESSION_BLOCK_STATUSES,
-  COMPRESSION_STATE_VERSION,
   COMPRESSION_STRATEGIES,
-  COMPRESSION_SUMMARY_FORMAT_VERSION,
   COMPRESSION_SUMMARY_SECTION_NAMES,
   COMPRESSION_TRIGGERS,
   PROTECTED_CONTENT_KINDS,
@@ -77,8 +75,7 @@ const HitlSourceSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("goal_question"), goalId: z.string(), questionKey: z.string() }),
 ]);
 
-const SessionHitlCheckpointSchema = z.strictObject({
-  version: z.literal(1),
+const SessionHitlBlockerSchema = z.strictObject({
   hitlId: z.string().trim().min(1),
   blockingKey: z.string().trim().min(1).optional(),
   source: HitlSourceSchema.optional(),
@@ -358,7 +355,6 @@ const ProtectedRefSchema = z.strictObject({
 });
 
 const CompressionSummarySchema = z.strictObject({
-  version: z.literal(COMPRESSION_SUMMARY_FORMAT_VERSION),
   sections: z.strictObject(Object.fromEntries(
     COMPRESSION_SUMMARY_SECTION_NAMES.map((section) => [section, z.string()]),
   ) as Record<(typeof COMPRESSION_SUMMARY_SECTION_NAMES)[number], z.ZodString>),
@@ -392,7 +388,6 @@ const CompressionFailureSchema = z.strictObject({
 });
 
 const CompressionStateSchema = z.strictObject({
-  version: z.literal(COMPRESSION_STATE_VERSION),
   refMap: CompressionRefMapSchema,
   blocksByRef: z.record(BlockRefSchema, CompressionBlockSchema),
   activeBlockRefs: z.array(BlockRefSchema),
@@ -406,12 +401,10 @@ const CompressionStateSchema = z.strictObject({
 const SessionEventEnvelopeSchema = z.strictObject({
   id: z.number(),
   createdAt: z.number(),
-  kind: z.string(),
-  payload: z.unknown(),
+  payload: z.custom<SessionEventPayload>(isSessionEventPayload, "Expected a Session event payload with a current type"),
 }).transform((value) => value as SessionEventEnvelope);
 
 export const SessionFileSchema = z.strictObject({
-  schemaVersion: z.literal(1),
   sessionId: z.string(),
   createdAt: z.number(),
   updatedAt: z.number(),
@@ -437,7 +430,7 @@ export const SessionFileSchema = z.strictObject({
   parentSessionId: z.string().optional(),
   goalId: z.string().uuid().optional(),
   sessionRole: SessionRoleSchema.optional(),
-  blockedHitl: SessionHitlCheckpointSchema.optional(),
+  blockedHitl: SessionHitlBlockerSchema.optional(),
   blockedByHitlIds: z.array(z.string().trim().min(1)).optional(),
   eventCursor: z.number().optional(),
 });
@@ -491,7 +484,6 @@ async function saveSessionTranscript(
   const finalPath = getSessionPath(workspaceRoot, state.sessionId);
 
   const data: HydratedSessionFile = {
-    schemaVersion: 1,
     sessionId: state.sessionId,
     createdAt: state.createdAt,
     updatedAt: state.updatedAt,
@@ -539,7 +531,6 @@ async function readSessionFile(
 
 function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, "nextEventId">): HydratedSessionFile {
   return {
-    schemaVersion: 1,
     sessionId: state.sessionId,
     createdAt: state.createdAt,
     updatedAt: state.updatedAt,

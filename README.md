@@ -170,9 +170,26 @@ GitHub support is optional and configured through `~/.archcode/config.json`:
 
 GitHub authentication is environment-variable based. Do not put raw GitHub tokens in `~/.archcode/config.json`.
 
+Custom MCP servers use the current HTTP-only configuration shape without a transport selector:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "internal-docs": {
+        "url": "https://mcp.example.com/mcp",
+        "headers": { "Authorization": "Bearer ${MCP_TOKEN}" },
+        "timeout": 30000
+      }
+    }
+  }
+}
+```
+
 ## Configuration notes
 
 - `~/.archcode/config.json` uses strict validation; unknown fields are rejected.
+- `$schema`, MCP `transport`, and GitHub `apiBaseUrl` are not configuration fields; HTTP and GitHub.com are fixed implementation choices.
 - The `agents` section must include `engineer`, `goal_lead`, `plan`, `build`, `reviewer`, `explore`, and `librarian`.
 - Model options use AI SDK-style camelCase names, such as `maxOutputTokens`, `temperature`, `topP`, `topK`, `timeout`, and `providerOptions`.
 - Settings edits model options, complete variant maps, and per-Agent overrides as validated JSON objects; provider-specific call settings belong under `providerOptions`.

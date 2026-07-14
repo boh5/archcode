@@ -295,30 +295,27 @@ describe("getToolDiffMetadata", () => {
     expect(getToolDiffMetadata([])).toBeUndefined();
   });
 
-  test("returns undefined for object without version 1", () => {
-    expect(getToolDiffMetadata({ version: 2, files: [] })).toBeUndefined();
-    expect(getToolDiffMetadata({ files: [] })).toBeUndefined();
+  test("rejects old versions while accepting the current unversioned shape", () => {
+    expect(getToolDiffMetadata({ version: 1, files: [] })).toBeUndefined();
+    expect(getToolDiffMetadata({ files: [] })).toEqual({ files: [] });
   });
 
   test("returns undefined for object without files array", () => {
-    expect(getToolDiffMetadata({ version: 1 })).toBeUndefined();
-    expect(getToolDiffMetadata({ version: 1, files: "not array" })).toBeUndefined();
+    expect(getToolDiffMetadata({ warning: "missing" })).toBeUndefined();
+    expect(getToolDiffMetadata({ files: "not array" })).toBeUndefined();
   });
 
   test("returns metadata for valid ToolDiffMetadata", () => {
     const meta: ToolDiffMetadata = {
-      version: 1,
       files: [{ path: "/src/app.ts", hunks: [] }],
     };
     const result = getToolDiffMetadata(meta);
     expect(result).not.toBeUndefined();
-    expect(result!.version).toBe(1);
     expect(result!.files).toHaveLength(1);
   });
 
   test("returns metadata with optional fields", () => {
     const meta: ToolDiffMetadata = {
-      version: 1,
       files: [],
       truncated: true,
       warning: "Large diff",
@@ -326,6 +323,42 @@ describe("getToolDiffMetadata", () => {
     const result = getToolDiffMetadata(meta);
     expect(result!.truncated).toBe(true);
     expect(result!.warning).toBe("Large diff");
+  });
+
+  test("rejects unknown top-level and recursive keys", () => {
+    expect(getToolDiffMetadata({ files: [], extra: true })).toBeUndefined();
+    expect(getToolDiffMetadata({ files: [{ path: "a.ts", hunks: [], extra: true }] })).toBeUndefined();
+    expect(getToolDiffMetadata({
+      files: [{
+        path: "a.ts",
+        hunks: [{
+          header: "@@ -1 +1 @@",
+          oldStart: 1,
+          oldLines: 1,
+          newStart: 1,
+          newLines: 1,
+          lines: [{ type: "add", content: "x", extra: true }],
+        }],
+      }],
+    })).toBeUndefined();
+  });
+
+  test("rejects missing and invalid nested fields", () => {
+    expect(getToolDiffMetadata({ files: [{ path: "a.ts" }] })).toBeUndefined();
+    expect(getToolDiffMetadata({ files: [{ path: "a.ts", hunks: [{ header: "@@", lines: [] }] }] })).toBeUndefined();
+    expect(getToolDiffMetadata({
+      files: [{
+        path: "a.ts",
+        hunks: [{
+          header: "@@",
+          oldStart: 1,
+          oldLines: 1,
+          newStart: 1,
+          newLines: 1,
+          lines: [{ type: "future", content: "x" }],
+        }],
+      }],
+    })).toBeUndefined();
   });
 });
 
