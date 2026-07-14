@@ -1,8 +1,7 @@
-import type { GoalState, HitlOwnerKey } from "@archcode/protocol";
+import type { GoalState } from "@archcode/protocol";
 
 import type { SessionFamilyController, SessionFamilyStopLease } from "../execution/session-family-control";
-import { deleteSessionHitlJournalFile } from "../execution/session-hitl-journal-store";
-import type { HitlService } from "../hitl/service";
+import type { CancelSessionToolBatch } from "../execution/session-family-stop-service";
 import type { SessionStoreManager } from "../store/session-store-manager";
 import {
   abortGoalCancellationIntent,
@@ -14,13 +13,12 @@ import {
 import type { GoalStateManager } from "./state";
 import { collectSessionTreeIds } from "../execution/session-tree";
 
-export type GoalCancellationSource = "http" | "agent" | "hitl";
+export type GoalCancellationSource = "http" | "agent";
 
 export interface GoalCancellationRequest {
   readonly reason?: string;
   readonly source: GoalCancellationSource;
   readonly selfSessionId?: string;
-  readonly hitlId?: string;
 }
 
 export interface GoalCancellationCapability {
@@ -30,21 +28,16 @@ export interface GoalCancellationCapability {
 export interface GoalCancellationServiceOptions {
   readonly workspaceRoot: string;
   readonly goalStateManager: GoalStateManager;
-  readonly hitlService: HitlService;
   readonly sessionStoreManager: SessionStoreManager;
   readonly sessionFamilyController: SessionFamilyController;
-  readonly cleanupOperations?: GoalCancellationCleanupOperations;
-}
-
-export interface GoalCancellationCleanupOperations {
-  cancelOwner(owner: HitlOwnerKey, reason: string): Promise<unknown>;
-  deleteSessionEntry(workspaceRoot: string, sessionId: string): Promise<void>;
-  clearSessionHitlBlockers(sessionId: string, workspaceRoot: string): Promise<void>;
+  readonly cancelSessionToolBatch: CancelSessionToolBatch;
+  readonly cancelGoalBudgetHitl: (hitlId: string, reason: string) => Promise<void>;
 }
 
 interface PreparedGoalCancellation {
   readonly goal: GoalState;
   readonly stopLeases: readonly SessionFamilyStopLease[];
+  readonly budgetHitlId?: string;
 }
 
 export class GoalCancellationError extends Error {
@@ -70,35 +63,29 @@ export class GoalCancellationCleanupError extends GoalCancellationError {
   ) {
     super(
       goalId,
-      `Goal ${goalId} is durably cancelled but its owner cleanup is incomplete: ${errorMessage(cause)}`,
+      `Goal ${goalId} is durably cancelled but its execution cleanup is incomplete: ${errorMessage(cause)}`,
       cause,
     );
     this.name = "GoalCancellationCleanupError";
   }
 }
 
-/** Stop proof, durable cancelled tombstone, then idempotent owner cleanup. */
+/** Stop proof, settle the captured budget request, persist cancellation, then clean Session execution state. */
 export class GoalCancellationService implements GoalCancellationCapability {
   readonly #workspaceRoot: string;
   readonly #goalStateManager: GoalStateManager;
-  readonly #hitlService: HitlService;
   readonly #sessionStoreManager: SessionStoreManager;
   readonly #sessionFamilyController: SessionFamilyController;
-  readonly #cleanup: GoalCancellationCleanupOperations;
+  readonly #cancelSessionToolBatch: CancelSessionToolBatch;
+  readonly #cancelGoalBudgetHitl: GoalCancellationServiceOptions["cancelGoalBudgetHitl"];
 
   constructor(options: GoalCancellationServiceOptions) {
     this.#workspaceRoot = options.workspaceRoot;
     this.#goalStateManager = options.goalStateManager;
-    this.#hitlService = options.hitlService;
     this.#sessionStoreManager = options.sessionStoreManager;
     this.#sessionFamilyController = options.sessionFamilyController;
-    this.#cleanup = options.cleanupOperations ?? {
-      cancelOwner: (owner, reason) => this.#hitlService.cancelOwner(owner, reason),
-      deleteSessionEntry: deleteSessionHitlJournalFile,
-      clearSessionHitlBlockers: (sessionId, workspaceRoot) => (
-        this.#sessionStoreManager.clearHitlBlockers(sessionId, workspaceRoot)
-      ),
-    };
+    this.#cancelSessionToolBatch = options.cancelSessionToolBatch;
+    this.#cancelGoalBudgetHitl = options.cancelGoalBudgetHitl;
   }
 
   async cancel(goalId: string, request: GoalCancellationRequest): Promise<GoalState> {
@@ -109,7 +96,7 @@ export class GoalCancellationService implements GoalCancellationCapability {
         const goal = await this.#goalStateManager.read(goalId);
         this.#assertCanCancel(goal, request.source);
         const stopLeases = await this.#acquireFamilyStops(goal, request.selfSessionId);
-        return { goal, stopLeases };
+        return { goal, stopLeases, budgetHitlId: goal.budgetApproval?.hitlId };
       });
 
       const stopResults = await Promise.allSettled(intent.value.stopLeases.map((lease) => lease.stopAndWait()));
@@ -125,13 +112,16 @@ export class GoalCancellationService implements GoalCancellationCapability {
         );
       }
       const sessionIds = await this.#sessionIds(intent.value.goal, intent.value.stopLeases.map((lease) => lease.rootSessionId));
+      if (intent.value.budgetHitlId !== undefined) {
+        await this.#cancelGoalBudgetHitl(intent.value.budgetHitlId, "goal_cancelled");
+      }
       committedGoal = intent.value.goal.status === "cancelled"
         ? intent.value.goal
         : await commitGoalCancellationIntent(intent, () => (
-          this.#goalStateManager.cancel(goalId, request.reason, request.hitlId)
+          this.#goalStateManager.cancel(goalId, request.reason)
         ));
 
-      await this.#cleanupDurableOwners(committedGoal, sessionIds);
+      await this.#cleanupSessionBatches(sessionIds);
       return await completeGoalCancellationIntent(intent, async () => committedGoal!);
     } catch (error) {
       if (intent !== undefined) await abortGoalCancellationIntent(intent);
@@ -213,21 +203,10 @@ export class GoalCancellationService implements GoalCancellationCapability {
     return sorted;
   }
 
-  async #cleanupDurableOwners(goal: GoalState, sessionIds: readonly string[]): Promise<void> {
+  async #cleanupSessionBatches(sessionIds: readonly string[]): Promise<void> {
     for (const sessionId of sessionIds) {
-      await this.#cleanup.cancelOwner({
-        projectSlug: goal.projectSlug,
-        ownerType: "session",
-        ownerId: sessionId,
-      }, "goal_cancelled");
-      await this.#cleanup.deleteSessionEntry(this.#workspaceRoot, sessionId);
-      await this.#cleanup.clearSessionHitlBlockers(sessionId, this.#workspaceRoot);
+      await this.#cancelSessionToolBatch(sessionId, this.#workspaceRoot, "goal_cancelled");
     }
-    await this.#cleanup.cancelOwner({
-      projectSlug: goal.projectSlug,
-      ownerType: "goal",
-      ownerId: goal.id,
-    }, "goal_cancelled");
   }
 }
 

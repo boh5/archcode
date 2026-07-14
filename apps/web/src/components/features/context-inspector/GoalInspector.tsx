@@ -36,12 +36,14 @@ export function GoalInspector({ activeTab }: { activeTab: GoalInspectorTab }) {
             ]} />
           </InspectorSection>
         )}
-        {goal.blocker && (
-          <InspectorSection title="Blocker">
+        {goal.budgetApproval && (
+          <InspectorSection title="Budget approval">
             <InspectorRows rows={[
-              ["Kind", goal.blocker.kind],
+              ["HITL", goal.budgetApproval.hitlId],
+              ["Approval point", goal.budgetApproval.approvalPoint],
+              ["Created", goal.budgetApproval.createdAt],
             ]} />
-            <InspectorNotice tone="warning">{goal.blocker.summary}</InspectorNotice>
+            <InspectorNotice tone="warning">Waiting for a budget decision</InspectorNotice>
           </InspectorSection>
         )}
       </div>

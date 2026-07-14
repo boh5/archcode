@@ -7,20 +7,8 @@ import type { ZodTypeAny } from "zod";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
 import type { PermissionApprovalRequest } from "./permission/policy-types";
 import type { ProjectContext } from "../projects/types";
+import type { HitlDisplayPayload, HitlSource } from "@archcode/protocol";
 import type { SkillService } from "../skills";
-
-export interface ToolHitlJournalContext {
-  readonly toolCalls: readonly ToolCallLike[];
-  readonly completedToolResults: readonly ToolExecutionResultWithCall[];
-  readonly pendingToolCalls: readonly ToolCallLike[];
-  readonly blockedToolIndex: number;
-  readonly assistantMessageId?: string;
-}
-
-export interface ToolExecutionResultWithCall extends ToolExecutionResult {
-  readonly toolCallId: string;
-  readonly toolName: string;
-}
 
 export type MaybePromise<T> = T | Promise<T>;
 
@@ -34,6 +22,20 @@ export interface ToolExecutionResult {
   output: string;
   isError: boolean;
   meta?: Record<string, unknown>;
+  /** Internal scheduler control outcome. It is never appended as a tool result. */
+  blocked?: ToolBlockedRequest;
+}
+
+export interface ToolBlockedRequest {
+  readonly source: Extract<HitlSource, { type: "ask_user" | "tool_permission" }>;
+  readonly displayPayload: HitlDisplayPayload;
+  readonly permission?: {
+    readonly description: string;
+    readonly reason?: string;
+    readonly approval?: PermissionApprovalRequest;
+    readonly decisionDisplay?: string;
+    readonly ruleId?: string;
+  };
 }
 
 export interface ToolAttemptMetadata {
@@ -83,8 +85,6 @@ export interface ToolExecutionContext {
   onInputResolved?: (redactedInput: unknown) => void;
   /** Called immediately before an effectful tool's execute() can perform side effects. */
   onToolAttempt?: (attempt: ToolAttemptMetadata) => MaybePromise<void>;
-  /** Current ordered model tool-call batch details recorded in the Session HITL journal. */
-  hitlJournal?: ToolHitlJournalContext;
 }
 
 type ToolExecutionContextInput = ToolExecutionContext;

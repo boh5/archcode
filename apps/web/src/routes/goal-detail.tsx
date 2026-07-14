@@ -20,7 +20,6 @@ export function GoalDetailRoute() {
     slug,
     scope: "goal",
     ownerId: goalId,
-    includeChildren: true,
   });
   const sourceSessionId = goal?.createdFromSessionId ?? "";
   const sourceSession = useSession(slug, sourceSessionId);
@@ -118,7 +117,8 @@ export function GoalDetailRoute() {
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
           <div data-testid="goal-approval-queue">
             <HitlInbox
-              projections={goalHitl}
+              views={goalHitl}
+              projectSlug={slug}
               emptyMessage="No pending approvals for this goal"
               title="Goal approvals"
               className="gap-2"

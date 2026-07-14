@@ -27,12 +27,11 @@ export function isSessionEventPayload(value: unknown): value is SessionEventPayl
     case "execution-start":
       return exact(event, ["type"], ["executionId"]) && optionalString(event.executionId);
     case "execution-end":
-      return exact(event, ["type", "status"], ["error", "blockedByHitlIds", "blockedToolCallId", "blockedHitl"])
+      return exact(event, ["type", "status"], ["error", "blockedByHitlIds", "blockedToolCallId"])
         && oneOf(event.status, ["completed", "max_steps", "failed", "aborted", "cancelled", "timed_out", "interrupted", "waiting_for_human"])
         && optionalString(event.error)
         && optionalArray(event.blockedByHitlIds, isString)
-        && optionalString(event.blockedToolCallId)
-        && (event.blockedHitl === undefined || isSessionHitlBlocker(event.blockedHitl));
+        && optionalString(event.blockedToolCallId);
     case "session.cwd_changed":
       return exact(event, ["type", "previousCwd", "cwd"])
         && isString(event.previousCwd) && isString(event.cwd);
@@ -100,14 +99,6 @@ export function isSessionEventPayload(value: unknown): value is SessionEventPayl
     case "compression.ref_map_updated":
       return exact(event, ["type", "refMap"], ["updatedAt"])
         && isCompressionRefMap(event.refMap) && optionalFiniteNumber(event.updatedAt);
-    case "hitl.request":
-      return exact(event, ["type", "request"]) && isHitlRecord(event.request);
-    case "hitl.updated":
-      return exact(event, ["type", "record"]) && isHitlRecord(event.record);
-    case "hitl.resolved":
-      return exact(event, ["type", "hitlId", "status"], ["response"])
-        && isString(event.hitlId) && oneOf(event.status, ["resolved", "cancelled"])
-        && (event.response === undefined || isHitlResponse(event.response));
     default:
       return false;
   }
@@ -120,19 +111,16 @@ export function isStreamEvent(event: unknown): event is StreamEvent {
 export function isGlobalSSEHitlRealtimeEvent(value: unknown): value is GlobalSSEHitlRealtimeEvent {
   const event = record(value);
   if (event === undefined
-    || !exact(event, ["type", "projectSlug", "owner", "hitlId", "createdAt", "payload", "projection"])
+    || !exact(event, ["type", "projectSlug", "hitlId", "createdAt", "payload", "view"])
     || event.type !== "hitl.event"
     || !isString(event.projectSlug)
-    || !isHitlOwner(event.owner)
     || !isString(event.hitlId)
     || !isFiniteNumber(event.createdAt)
     || !isGlobalHitlPayload(event.payload)
-    || !isHitlProjection(event.projection)) return false;
+    || !isHitlView(event.view)) return false;
 
-  const projection = event.projection as UnknownRecord;
-  return projection.hitlId === event.hitlId
-    && (projection.project as UnknownRecord).slug === event.projectSlug
-    && sameHitlOwner(event.owner as UnknownRecord, projection.owner as UnknownRecord);
+  const view = event.view as UnknownRecord;
+  return view.hitlId === event.hitlId;
 }
 
 export function isGlobalSSEResourceChangedEvent(value: unknown): value is GlobalSSEResourceChangedEvent {
@@ -150,21 +138,6 @@ export function isTerminalChildSessionStatus(
   status: ToolChildSessionLinkStatus,
 ): status is TerminalChildSessionStatus {
   return TERMINAL_CHILD_SESSION_STATUSES.has(status);
-}
-
-function isSessionHitlBlocker(value: unknown): boolean {
-  const blocker = record(value);
-  return blocker !== undefined
-    && exact(blocker, ["hitlId", "blockedAt"], ["blockingKey", "source", "toolCallId", "toolName", "step", "assistantMessageId", "displayInput", "reason"])
-    && isString(blocker.hitlId)
-    && isString(blocker.blockedAt)
-    && optionalString(blocker.blockingKey)
-    && (blocker.source === undefined || isHitlSource(blocker.source))
-    && optionalString(blocker.toolCallId)
-    && optionalString(blocker.toolName)
-    && optionalFiniteNumber(blocker.step)
-    && optionalString(blocker.assistantMessageId)
-    && optionalString(blocker.reason);
 }
 
 function isSessionTodo(value: unknown): boolean {
@@ -308,23 +281,6 @@ function isCompressionState(value: unknown): boolean {
     && optionalFiniteNumber(state.updatedAt);
 }
 
-function isHitlRecord(value: unknown): boolean {
-  const hitl = record(value);
-  return hitl !== undefined
-    && exact(
-      hitl,
-      ["hitlId", "owner", "blockingKey", "source", "status", "displayPayload", "createdAt", "updatedAt"],
-      ["sessionRootId", "response", "delivery", "resolvedAt"],
-    )
-    && isString(hitl.hitlId) && isHitlOwner(hitl.owner) && optionalString(hitl.sessionRootId)
-    && isString(hitl.blockingKey) && isHitlSource(hitl.source)
-    && oneOf(hitl.status, ["pending", "answered", "resolved", "cancelled"])
-    && isHitlDisplayPayload(hitl.displayPayload)
-    && (hitl.response === undefined || isHitlResponse(hitl.response))
-    && (hitl.delivery === undefined || isHitlDelivery(hitl.delivery))
-    && isString(hitl.createdAt) && isString(hitl.updatedAt) && optionalString(hitl.resolvedAt);
-}
-
 function isGlobalHitlPayload(value: unknown): boolean {
   const payload = record(value);
   return payload !== undefined
@@ -332,58 +288,31 @@ function isGlobalHitlPayload(value: unknown): boolean {
     && oneOf(payload.type, ["hitl.request", "hitl.updated", "hitl.resolved"]);
 }
 
-function isHitlProjection(value: unknown): boolean {
-  const projection = record(value);
-  return projection !== undefined
+function isHitlView(value: unknown): boolean {
+  const view = record(value);
+  return view !== undefined
     && exact(
-      projection,
-      ["hitlId", "project", "owner", "source", "status", "displayPayload", "allowedActions", "createdAt", "updatedAt"],
-      ["ancestry", "requiresInspection", "resolvedAt"],
+      view,
+      ["hitlId", "owner", "source", "status", "displayPayload", "allowedActions", "createdAt", "updatedAt"],
+      ["requiresInspection", "resolvedAt"],
     )
-    && isString(projection.hitlId)
-    && isHitlProject(projection.project)
-    && isHitlOwner(projection.owner)
-    && isHitlSource(projection.source)
-    && oneOf(projection.status, ["pending", "answered", "resolved", "cancelled"])
-    && isHitlDisplayPayload(projection.displayPayload)
-    && arrayOf(projection.allowedActions, (action) => oneOf(action, ["answer", "approve", "deny", "cancel"]))
-    && (projection.ancestry === undefined || isHitlProjectionContext(projection.ancestry))
-    && (projection.requiresInspection === undefined || projection.requiresInspection === true)
-    && isString(projection.createdAt)
-    && isString(projection.updatedAt)
-    && optionalString(projection.resolvedAt);
-}
-
-function isHitlProject(value: unknown): boolean {
-  const project = record(value);
-  return project !== undefined
-    && exact(project, ["slug"], ["name"])
-    && isString(project.slug)
-    && optionalString(project.name);
-}
-
-function isHitlProjectionContext(value: unknown): boolean {
-  const context = record(value);
-  return context !== undefined
-    && exact(context, [], ["rootSessionId", "parentSessionId", "ancestorSessionIds", "goalId", "projectionPath"])
-    && optionalString(context.rootSessionId)
-    && optionalString(context.parentSessionId)
-    && optionalArray(context.ancestorSessionIds, isString)
-    && optionalString(context.goalId)
-    && optionalArray(context.projectionPath, isString);
-}
-
-function sameHitlOwner(left: UnknownRecord, right: UnknownRecord): boolean {
-  return left.projectSlug === right.projectSlug
-    && left.ownerType === right.ownerType
-    && left.ownerId === right.ownerId;
+    && isString(view.hitlId)
+    && isHitlOwner(view.owner)
+    && isHitlSource(view.source)
+    && oneOf(view.status, ["pending", "answered", "resolved", "cancelled"])
+    && isHitlDisplayPayload(view.displayPayload)
+    && arrayOf(view.allowedActions, (action) => oneOf(action, ["answer", "approve", "deny", "cancel"]))
+    && (view.requiresInspection === undefined || view.requiresInspection === true)
+    && isString(view.createdAt)
+    && isString(view.updatedAt)
+    && optionalString(view.resolvedAt);
 }
 
 function isHitlOwner(value: unknown): boolean {
   const owner = record(value);
   return owner !== undefined
-    && exact(owner, ["projectSlug", "ownerType", "ownerId"])
-    && isString(owner.projectSlug) && oneOf(owner.ownerType, ["session", "goal"]) && isString(owner.ownerId);
+    && exact(owner, ["type", "id"])
+    && oneOf(owner.type, ["session", "goal"]) && isString(owner.id);
 }
 
 function isHitlSource(value: unknown): boolean {
@@ -391,21 +320,14 @@ function isHitlSource(value: unknown): boolean {
   if (source === undefined || typeof source.type !== "string") return false;
   switch (source.type) {
     case "ask_user":
-      return exact(source, ["type", "sessionId"], ["toolCallId"])
-        && isString(source.sessionId) && optionalString(source.toolCallId);
+      return exact(source, ["type", "toolCallId"])
+        && isString(source.toolCallId);
     case "tool_permission":
-      return exact(source, ["type", "sessionId", "toolCallId", "toolName"])
-        && isString(source.sessionId) && isString(source.toolCallId) && isString(source.toolName);
-    case "goal_approval":
+      return exact(source, ["type", "toolCallId", "toolName"])
+        && isString(source.toolCallId) && isString(source.toolName);
     case "goal_budget":
-      return exact(source, ["type", "goalId"], ["approvalPoint"])
-        && isString(source.goalId) && optionalString(source.approvalPoint);
-    case "goal_review":
-      return exact(source, ["type", "goalId", "reviewGeneration", "reviewerSessionId"])
-        && isString(source.goalId) && isFiniteNumber(source.reviewGeneration) && isString(source.reviewerSessionId);
-    case "goal_question":
-      return exact(source, ["type", "goalId", "questionKey"])
-        && isString(source.goalId) && isString(source.questionKey);
+      return exact(source, ["type", "approvalPoint"])
+        && isString(source.approvalPoint);
     default:
       return false;
   }
@@ -437,16 +359,6 @@ function isHitlQuestion(value: unknown): boolean {
     && (question.multiple === undefined || typeof question.multiple === "boolean");
 }
 
-function isHitlDelivery(value: unknown): boolean {
-  const delivery = record(value);
-  return delivery !== undefined
-    && exact(delivery, ["claimId", "claimedAt", "intent", "attempt"], ["claimedBy", "lastError", "failedAt", "failureReason", "nextAttemptAt"])
-    && isString(delivery.claimId) && isString(delivery.claimedAt) && optionalString(delivery.claimedBy)
-    && oneOf(delivery.intent, ["respond", "cancel"]) && isFiniteNumber(delivery.attempt)
-    && optionalString(delivery.lastError) && optionalString(delivery.failedAt)
-    && optionalString(delivery.failureReason) && optionalString(delivery.nextAttemptAt);
-}
-
 function isHitlResponse(value: unknown): boolean {
   const response = record(value);
   if (response === undefined || typeof response.type !== "string") return false;
@@ -458,14 +370,10 @@ function isHitlResponse(value: unknown): boolean {
       return exact(response, ["type", "decision"], ["comment", "decidedBy"])
         && oneOf(response.decision, ["approve_once", "approve_always", "deny"])
         && optionalString(response.comment) && optionalString(response.decidedBy);
-    case "approval_decision":
+    case "budget_decision":
       return exact(response, ["type", "decision"], ["comment", "decidedBy"])
         && oneOf(response.decision, ["approved", "denied"])
         && optionalString(response.comment) && optionalString(response.decidedBy);
-    case "review_outcome":
-      return exact(response, ["type", "outcome", "receipt"], ["comment"])
-        && oneOf(response.outcome, ["DONE", "NOT_DONE"])
-        && optionalString(response.comment) && isGoalReviewReceipt(response.receipt);
     case "cancel":
       return exact(response, ["type", "reason"], ["cancelledBy"])
         && isString(response.reason) && optionalString(response.cancelledBy);

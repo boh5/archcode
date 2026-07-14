@@ -7,7 +7,6 @@ import type {
   CompactionPart,
   CompletedToolPart,
   ErrorToolPart,
-  HitlRecord,
   ReasoningPart,
   RecoveryNoticePart,
   RunningToolPart,
@@ -87,8 +86,6 @@ export function reduceStreamEvent(
         isStreamingModel: false,
         currentExecutionId: undefined,
         currentAssistantMessageId: event.status === "waiting_for_human" ? state.currentAssistantMessageId : undefined,
-        blockedHitl: event.status === "waiting_for_human" ? event.blockedHitl : undefined,
-        blockedByHitlIds: event.status === "waiting_for_human" ? event.blockedByHitlIds : undefined,
       };
     }
 
@@ -618,56 +615,6 @@ export function reduceStreamEvent(
       } satisfies CompressionStateSnapshot;
 
       return { compression };
-    }
-
-    case "hitl.request": {
-      const hitlRequests = [...(state.hitlRequests ?? [])];
-      const existingIndex = hitlRequests.findIndex((r) => r.hitlId === event.request.hitlId);
-
-      if (existingIndex !== -1) {
-        hitlRequests[existingIndex] = event.request;
-      } else {
-        hitlRequests.push(event.request);
-      }
-
-      return { hitlRequests };
-    }
-
-    case "hitl.updated": {
-      const hitlRequests = [...(state.hitlRequests ?? [])];
-      const existingIndex = hitlRequests.findIndex((r) => r.hitlId === event.record.hitlId);
-
-      if (existingIndex !== -1) {
-        hitlRequests[existingIndex] = event.record;
-      } else {
-        hitlRequests.push(event.record);
-      }
-
-      return { hitlRequests };
-    }
-
-    case "hitl.resolved": {
-      const hitlRequests = state.hitlRequests?.slice() ?? [];
-      const existingIndex = hitlRequests.findIndex((r) => r.hitlId === event.hitlId);
-      const matchesBlocker = state.blockedHitl?.hitlId === event.hitlId
-        || state.blockedByHitlIds?.includes(event.hitlId) === true;
-      if (existingIndex === -1 && !matchesBlocker) return {};
-      if (existingIndex !== -1) {
-        const update: Partial<HitlRecord> = {
-          status: event.status,
-          ...(event.response ? { response: event.response } : {}),
-        };
-        if (event.status === "resolved") {
-          update.resolvedAt = new Date(timestamp).toISOString();
-        }
-        hitlRequests[existingIndex] = { ...hitlRequests[existingIndex]!, ...update };
-      }
-      const blockedByHitlIds = state.blockedByHitlIds?.filter((hitlId) => hitlId !== event.hitlId);
-      return {
-        hitlRequests,
-        blockedHitl: state.blockedHitl?.hitlId === event.hitlId ? undefined : state.blockedHitl,
-        blockedByHitlIds: blockedByHitlIds === undefined || blockedByHitlIds.length === 0 ? undefined : blockedByHitlIds,
-      };
     }
 
     case "compact": {

@@ -74,16 +74,32 @@ describe("GoalStateSchema", () => {
     expect(GoalStateSchema.safeParse({ ...goal, version: 4 }).success).toBe(false);
     expect(GoalStateSchema.safeParse({ ...goal, status: "draft" }).success).toBe(false);
     expect(GoalStateSchema.safeParse({ ...goal, workflowId: GOAL_ID }).success).toBe(false);
+    expect(GoalStateSchema.safeParse({
+      ...goal,
+      blocker: { kind: "budget", summary: "legacy", hitlId: "hitl-1", createdAt: goal.createdAt },
+      pendingHitlIds: ["hitl-1"],
+      approvalRefs: ["hitl-1"],
+      appliedHitlIds: [],
+    }).success).toBe(false);
   });
 
-  test("enforces worktree, blocker, review, and HITL relational invariants", async () => {
+  test("enforces worktree, budget approval, review, and HITL relational invariants", async () => {
     const goal = await commitGoal();
     const now = new Date().toISOString();
     const worktree = { path: join(TMP_DIR, "worktree"), branchName: "archcode/goal/id", baseSha: "a".repeat(40), createdAt: now };
     expect(GoalStateSchema.safeParse({ ...goal, worktree }).success).toBe(false);
     expect(GoalStateSchema.safeParse({ ...goal, status: "blocked" }).success).toBe(false);
     expect(GoalStateSchema.safeParse({ ...goal, pendingHitlIds: ["hitl-1"] }).success).toBe(false);
-    expect(GoalStateSchema.safeParse({ ...goal, approvalRefs: ["hitl-1"], appliedHitlIds: ["hitl-1"] }).success).toBe(true);
+    expect(GoalStateSchema.safeParse({
+      ...goal,
+      budgetApproval: { hitlId: "hitl-1", approvalPoint: "warning-1", createdAt: now },
+    }).success).toBe(false);
+    const withBudget = { ...goal, budget: { status: "warning" as const, updatedAt: now } };
+    expect(GoalStateSchema.safeParse({
+      ...withBudget,
+      budgetApproval: { hitlId: "hitl-1", approvalPoint: "warning-1", createdAt: now },
+    }).success).toBe(true);
+    expect(GoalStateSchema.safeParse({ ...goal, appliedBudgetHitlIds: ["hitl-1", "hitl-1"] }).success).toBe(false);
 
     const review = {
       reviewGeneration: 0,
@@ -99,6 +115,55 @@ describe("GoalStateSchema", () => {
 });
 
 describe("GoalStateManager", () => {
+  test("attaches and atomically applies one budget decision idempotently", async () => {
+    const manager = new GoalStateManager(TMP_DIR);
+    const goal = await commitGoal(manager);
+    const now = new Date().toISOString();
+    await manager.updateBudgetSummary(goal.id, {
+      status: "warning",
+      usedTokens: 500,
+      maxTokens: 1000,
+      reason: "Budget warning threshold reached",
+      updatedAt: now,
+    });
+    const attached = await manager.attachBudgetApproval(goal.id, {
+      hitlId: "budget-hitl-1",
+      approvalPoint: "warning-1",
+      createdAt: now,
+    });
+    expect(attached).toMatchObject({
+      budgetApproval: { hitlId: "budget-hitl-1", approvalPoint: "warning-1", createdAt: now },
+      budget: { status: "warning", reason: "Budget warning approval is pending", updatedAt: now },
+    });
+    expect(await manager.attachBudgetApproval(goal.id, {
+      hitlId: "budget-hitl-1",
+      approvalPoint: "warning-1",
+    })).toEqual(attached);
+    await expect(manager.attachBudgetApproval(goal.id, {
+      hitlId: "budget-hitl-2",
+      approvalPoint: "warning-2",
+    })).rejects.toThrow("already has active budget approval");
+
+    const applied = await manager.applyBudgetDecision(goal.id, {
+      hitlId: "budget-hitl-1",
+      approvalPoint: "warning-1",
+      decision: "approved",
+      reason: "Budget warning approved",
+      decidedAt: now,
+    });
+    expect(applied).toMatchObject({
+      budget: { status: "ok", reason: "Budget warning approved" },
+      appliedBudgetHitlIds: ["budget-hitl-1"],
+    });
+    expect(applied.budgetApproval).toBeUndefined();
+    expect(await manager.applyBudgetDecision(goal.id, {
+      hitlId: "budget-hitl-1",
+      approvalPoint: "warning-1",
+      decision: "approved",
+      reason: "Budget warning approved",
+    })).toEqual(applied);
+  });
+
   test("notifies exactly once after each durable commit", async () => {
     const committed = mock((_state: GoalState) => {});
     const manager = new GoalStateManager(TMP_DIR, undefined, committed);

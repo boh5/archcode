@@ -48,6 +48,7 @@ export function createOutputTruncator(options?: TruncatorOptions): AfterHook {
     }
 
     return {
+      ...result,
       output: persisted.updatedOutput,
       isError: result.isError,
       meta: {

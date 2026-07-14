@@ -24,6 +24,7 @@ import { DOOM_LOOP_MESSAGE, type QueryLoopOptions } from "./types";
 import { sessionFileInternals } from "../../store/helpers";
 import { createFakeRetryScheduler } from "../../testing/fake-retry-scheduler";
 import { createTestTempRoot } from "../../testing/test-temp-root";
+import { SessionToolBatchScheduler } from "../../execution/session-tool-batch-scheduler";
 
 const testTempRoot = createTestTempRoot("query-loop");
 const TEST_WORKSPACE_ROOT = testTempRoot.path;
@@ -796,7 +797,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     }
   });
 
-  test("permission ask without legacy callback pauses for durable Session HITL", async () => {
+  test("permission ask persists a blocked tool batch and waits for a human", async () => {
     sessionFileInternals.saveSessionTranscript = realSaveSessionTranscript;
     const workspaceRoot = `${TEST_WORKSPACE_ROOT}/durable-permission-${crypto.randomUUID()}`;
     const durable = await createDurableTestSessionContext(workspaceRoot);
@@ -836,19 +837,121 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
         toolName: "sensitiveReadTool",
       });
       const executionEnd = lastExecutionEnd(events);
-      expect(executionEnd).toMatchObject({
-        status: "waiting_for_human",
-        blockedToolCallId: "tc-durable-permission",
-      });
-      expect(executionEnd?.blockedHitl).toMatchObject({
-        source: { type: "tool_permission", sessionId: store.getState().sessionId, toolCallId: "tc-durable-permission", toolName: "sensitiveReadTool" },
+      expect(executionEnd).toMatchObject({ status: "waiting_for_human" });
+      expect(store.getState().toolBatches.find((batch) => batch.archivedAt === undefined)?.calls[0]).toMatchObject({
+        state: "blocked",
         toolCallId: "tc-durable-permission",
         toolName: "sensitiveReadTool",
+        blocker: {
+          source: { type: "tool_permission", toolCallId: "tc-durable-permission", toolName: "sensitiveReadTool" },
+        },
       });
     } finally {
       await durableStoreManager.flushSession(store.getState().sessionId, workspaceRoot);
       await rm(workspaceRoot, { recursive: true, force: true });
     }
+  });
+
+  test("one durable batch continuation claim survives provider retry", async () => {
+    const store = createStore();
+    const registry = createTestRegistry();
+    const projectContext = createTestProjectContext(TEST_WORKSPACE_ROOT);
+    const scheduler = new SessionToolBatchScheduler({
+      store,
+      storeManager,
+      workspaceRoot: TEST_WORKSPACE_ROOT,
+      registry,
+      hitlQueue: projectContext.hitl,
+      agentName: "engineer",
+      allowedTools: ["echo"],
+      agentSkills: [],
+      executeCall: async () => ({ output: "ok", isError: false }),
+    });
+    const batch = await scheduler.createBatch([{ toolCallId: "prior-call", toolName: "echo", input: {} }], 0);
+    await storeManager.updateToolBatches(store.getState().sessionId, TEST_WORKSPACE_ROOT, (batches) => batches.map((candidate) => candidate.batchId === batch.batchId ? {
+      ...candidate,
+      calls: candidate.calls.map((call) => ({ ...call, state: "completed", result: { output: "ok", isError: false } })),
+    } : candidate));
+    const streamText = createMockStreamText([
+      { fullStreamError: retryableError("transient EOF") },
+      { text: "Recovered" },
+    ]);
+    const continuationClaims: string[] = [];
+
+    const result = await runQueryLoop(
+      makeOptions({
+        store,
+        toolRegistry: registry,
+        allowedTools: ["echo"],
+        projectContext,
+        hooks: {
+          beforeModelCall: [async () => {
+            continuationClaims.push(store.getState().toolBatches[0]?.continuationStartedAt ?? "missing");
+          }],
+        },
+      }),
+      "",
+      createFakeRetryScheduler(),
+    );
+
+    expect(streamText).toHaveBeenCalledTimes(2);
+    expect(continuationClaims).toHaveLength(2);
+    expect(continuationClaims[0]).toBeString();
+    expect(continuationClaims[0]).not.toBe("missing");
+    expect(new Set(continuationClaims)).toEqual(new Set([continuationClaims[0]!]));
+    expect(result.text).toBe("Recovered");
+    expect(store.getState().toolBatches).toHaveLength(1);
+    expect(store.getState().toolBatches[0]).toMatchObject({
+      batchId: batch.batchId,
+      continuationStartedAt: expect.any(String),
+      continuationCompletedAt: expect.any(String),
+      archivedAt: expect.any(String),
+    });
+  });
+
+  test("effectful running recovery archives for manual inspection without calling the model", async () => {
+    const store = createStore();
+    const executor = mock(async (_input: z.infer<typeof testToolSchema>, _ctx: ToolExecutionContext) => "must not execute");
+    const registry = createPermissionBranchRegistry(async (_name, input, ctx) => executor(input, ctx));
+    const projectContext = createTestProjectContext(TEST_WORKSPACE_ROOT);
+    const scheduler = new SessionToolBatchScheduler({
+      store,
+      storeManager,
+      workspaceRoot: TEST_WORKSPACE_ROOT,
+      registry,
+      hitlQueue: projectContext.hitl,
+      agentName: "engineer",
+      allowedTools: ["destructiveTool"],
+      agentSkills: [],
+      executeCall: async () => ({ output: "must not execute", isError: false }),
+    });
+    const batch = await scheduler.createBatch([{
+      toolCallId: "effectful-crash",
+      toolName: "destructiveTool",
+      input: {},
+    }], 0);
+    await storeManager.updateToolBatches(store.getState().sessionId, TEST_WORKSPACE_ROOT, (batches) => batches.map((candidate) => candidate.batchId !== batch.batchId ? candidate : {
+      ...candidate,
+      calls: candidate.calls.map((call) => ({ ...call, state: "running", attempt: 1 })),
+    }));
+    const events = captureEvents(store);
+    const streamText = createMockStreamText([{ text: "must not run" }]);
+
+    const result = await runQueryLoop(
+      makeOptions({ store, toolRegistry: registry, allowedTools: ["destructiveTool"], projectContext }),
+      "",
+    );
+
+    expect(result).toEqual({ text: "", steps: 0 });
+    expect(streamText).not.toHaveBeenCalled();
+    expect(executor).not.toHaveBeenCalled();
+    expect(scheduler.activeBatch()).toBeUndefined();
+    expect(store.getState().toolBatches[0]).toMatchObject({
+      archivedAt: expect.any(String),
+      manualInspectionReason: expect.stringContaining("unknown outcome"),
+      calls: [expect.objectContaining({ state: "manual_inspection_required", attempt: 1 })],
+    });
+    expect(lastExecutionEnd(events)).toMatchObject({ status: "failed" });
   });
 
   test("throwing registry tool stores error message", async () => {
@@ -2353,6 +2456,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
   test("keeps canonical project context separate from the tool execution cwd", async () => {
     let context: ToolExecutionContext | undefined;
     const projectContext = createTestProjectContext("/canonical/workspace");
+    const store = storeManager.create(crypto.randomUUID(), projectContext.project.workspaceRoot, { agentName: "engineer" });
     const registry = createTestRegistry(async (_, ctx) => {
       context = ctx;
       return "ok";
@@ -2367,6 +2471,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     await runQueryLoop(
       makeOptions({
+        store,
         toolRegistry: registry,
         allowedTools: ["echo"],
         projectContext,
@@ -2383,7 +2488,8 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
   test("stops before another model call when a tool changes Session cwd", async () => {
     const projectRoot = import.meta.dir;
     const nextCwd = `${projectRoot}.worktrees/session-switch`;
-    const store = createSessionStore(crypto.randomUUID(), projectRoot);
+    const store = storeManager.create(crypto.randomUUID(), projectRoot, { agentName: "engineer" });
+    const projectContext = createTestProjectContext(projectRoot);
     const registry = createRegistry([defineTool({
       name: "change_cwd",
       description: "Change cwd",
@@ -2406,7 +2512,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     ]);
 
     const result = await runQueryLoop(
-      makeOptions({ store, toolRegistry: registry, allowedTools: ["change_cwd"], cwd: projectRoot }),
+      makeOptions({ store, toolRegistry: registry, allowedTools: ["change_cwd"], projectContext, cwd: projectRoot }),
       "switch cwd",
     );
 
@@ -2461,7 +2567,8 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
   test("skips later tool calls emitted from the stale context after Session cwd changes", async () => {
     const projectRoot = import.meta.dir;
     const nextCwd = `${projectRoot}.worktrees/session-switch`;
-    const store = createSessionStore(crypto.randomUUID(), projectRoot);
+    const store = storeManager.create(crypto.randomUUID(), projectRoot, { agentName: "engineer" });
+    const projectContext = createTestProjectContext(projectRoot);
     const staleExecute = mock(async () => "must not run");
     const registry = createRegistry([
       defineTool({
@@ -2492,7 +2599,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     }]);
 
     await runQueryLoop(
-      makeOptions({ store, toolRegistry: registry, allowedTools: ["change_cwd", "stale_write"], cwd: projectRoot }),
+      makeOptions({ store, toolRegistry: registry, allowedTools: ["change_cwd", "stale_write"], projectContext, cwd: projectRoot }),
       "switch then write",
     );
 
@@ -2630,7 +2737,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     ]);
   });
 
-  test("sequential multi-tool calls with one ask only confirms the guarded tool", async () => {
+  test("parallel multi-tool calls with one ask only confirm the guarded tool", async () => {
     const store = createStore();
     const events: string[] = [];
     const registry = createRegistry([
@@ -2674,14 +2781,14 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       "Use tools",
     );
 
-    // With parallel execution, openTool (no permissions) runs while askTool awaits
-    // confirmation, so openTool executes before askTool.
-    expect(events).toEqual([
+    expect([...events].sort()).toEqual([
       "perm:askTool",
       "execute:openTool",
       "confirm:askTool",
       "execute:askTool",
-    ]);
+    ].sort());
+    expect(events.indexOf("perm:askTool")).toBeLessThan(events.indexOf("confirm:askTool"));
+    expect(events.indexOf("confirm:askTool")).toBeLessThan(events.indexOf("execute:askTool"));
     expect(confirmPermission).toHaveBeenCalledTimes(1);
     expect(assistantMessages(store)[0].parts).toEqual([
       expect.objectContaining({ state: "completed", toolName: "askTool", output: "asked output" }),
@@ -2689,7 +2796,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     ]);
   });
 
-  test("multi-tool-call response runs sequentially and pauses/resumes around permission asks", async () => {
+  test("parallel-safe tools settle before the serial permission partition", async () => {
     const store = createStore();
     const events: string[] = [];
     const registry = createPermissionBranchRegistry(async (name) => {
@@ -2735,11 +2842,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       "Use tools",
     );
 
-    // With parallel execution of concurrencySafe tools (safeTool
-    // and sensitiveReadTool), sensitiveReadTool's permission fires during the
-    // synchronous phase before safeTool's execute microtask. Confirm/execute
-    // ordering within each tool remains intact. destructiveTool is serial.
-    expect(events).toEqual([
+    expect([...events].sort()).toEqual([
       "ask:sensitiveReadTool",
       "execute:safeTool",
       "confirm-start:sensitiveReadTool",
@@ -2749,7 +2852,15 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       "confirm-start:destructiveTool",
       "confirm-end:destructiveTool",
       "execute:destructiveTool",
-    ]);
+    ].sort());
+    expect(events.indexOf("ask:sensitiveReadTool")).toBeLessThan(events.indexOf("confirm-start:sensitiveReadTool"));
+    expect(events.indexOf("confirm-start:sensitiveReadTool")).toBeLessThan(events.indexOf("confirm-end:sensitiveReadTool"));
+    expect(events.indexOf("confirm-end:sensitiveReadTool")).toBeLessThan(events.indexOf("execute:sensitiveReadTool"));
+    expect(events.indexOf("ask:destructiveTool")).toBeGreaterThan(events.indexOf("execute:safeTool"));
+    expect(events.indexOf("ask:destructiveTool")).toBeGreaterThan(events.indexOf("execute:sensitiveReadTool"));
+    expect(events.indexOf("ask:destructiveTool")).toBeLessThan(events.indexOf("confirm-start:destructiveTool"));
+    expect(events.indexOf("confirm-start:destructiveTool")).toBeLessThan(events.indexOf("confirm-end:destructiveTool"));
+    expect(events.indexOf("confirm-end:destructiveTool")).toBeLessThan(events.indexOf("execute:destructiveTool"));
     expect(confirmPermission).toHaveBeenCalledTimes(2);
     expect(assistantMessages(store)[0].parts).toEqual([
       expect.objectContaining({ state: "completed", toolName: "safeTool", output: "safeTool output" }),

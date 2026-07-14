@@ -7,7 +7,6 @@ import { ToolRegistry } from "../../registry";
 import type { ToolExecutionContext } from "../../types";
 import { lspSymbolsTool } from "./lsp-symbols";
 import { createDurableTestSessionContext, createTestProjectContext } from "../../test-project-context";
-import { SessionHitlPause } from "../../../execution/session-hitl-pause";
 
 const testDir = path.join(import.meta.dir, "__test_tmp__", "lsp-symbols", crypto.randomUUID());
 
@@ -54,26 +53,19 @@ describe("lspSymbolsTool", () => {
     }
   });
 
-  test("workspace permission asks for document path outside workspace through registry and pauses for durable Session HITL", async () => {
+  test("workspace permission asks for document path outside workspace through registry", async () => {
     const registry = new ToolRegistry();
     registry.register(lspSymbolsTool);
 
     const input = { scope: "document", filePath: "../outside.ts" };
-    const sessionId = crypto.randomUUID();
-    const durable = await createDurableTestSessionContext(testDir, sessionId);
+    const durable = await createDurableTestSessionContext(testDir, crypto.randomUUID());
     const ctx = makeCtx({ toolName: "lsp_symbols", toolCallId: "call-1", agentName: "engineer", agentSkills: [], input, ...durable });
 
-    try {
-      await registry.execute(
+    const result = await registry.execute(
         { toolName: "lsp_symbols", toolCallId: "call-1", input },
         ctx,
       );
-      throw new Error("Expected LSP traversal permission to pause for Session HITL");
-    } catch (error) {
-      expect(error).toBeInstanceOf(SessionHitlPause);
-      if (!(error instanceof SessionHitlPause)) throw error;
-      expect(error.record.source).toEqual({ type: "tool_permission", sessionId, toolCallId: "call-1", toolName: "lsp_symbols" });
-    }
+    expect(result.blocked?.source).toEqual({ type: "tool_permission", toolCallId: "call-1", toolName: "lsp_symbols" });
   });
 
 });

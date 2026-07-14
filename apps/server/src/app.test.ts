@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { AgentRuntime } from "@archcode/agent-core";
-import type { GlobalSSEEvent, HitlRecord, McpServerStatus } from "@archcode/protocol";
+import type { GlobalSSEEvent, HitlView, McpServerStatus } from "@archcode/protocol";
 import { createServerApp } from "./app";
 import { globalEventBus } from "./events/global-event-bus";
 
@@ -112,7 +112,7 @@ describe("createServerApp", () => {
       subscribeSessionRuntimeChanges: mock(() => () => undefined),
       subscribeMcpStatusChanges: mock(() => () => undefined),
       getMcpServerStatuses: mock(() => new Map()),
-      listPendingHitlEvents: mock(async () => []),
+      listHitlSnapshotEvents: mock(async () => []),
       listSessionRuntimeEvents: mock(async () => [snapshot]),
     } as unknown as AgentRuntime;
     const { app } = createServerApp(runtime, { dev: true });
@@ -156,6 +156,51 @@ describe("createServerApp", () => {
     expect(runtime.subscribedSessionIds()).toEqual(["root"]);
     runtime.resolveExecution();
     await execution.promise;
+    await runtime.waitForUnsubscribed();
+    expect(runtime.subscribedSessionIds()).toEqual([]);
+    unsubscribeBus();
+  });
+
+  test("keeps forwarding Session events across a durable HITL continuation", async () => {
+    const runtime = createRuntimeWithManualSubscriptions();
+    const { runtime: serverRuntime } = createServerApp(runtime, { dev: true });
+    const observed: GlobalSSEEvent[] = [];
+    const unsubscribeBus = globalEventBus.subscribe((event) => observed.push(event));
+
+    const execution = serverRuntime.startSessionExecution({
+      slug: "proj",
+      workspaceRoot: "/workspace",
+      sessionId: "root",
+      userMessage: "run",
+    });
+    runtime.setActiveToolBatch(true);
+    runtime.resolveExecution();
+    await execution.promise;
+    await Promise.resolve();
+
+    expect(runtime.subscribedSessionIds()).toEqual(["root"]);
+    runtime.emitSession("root", {
+      type: "event",
+      slug: "proj",
+      sessionId: "root",
+      eventId: 1,
+      createdAt: 2,
+      payload: { type: "tool-result", toolCallId: "call-1", toolName: "ask_user", output: "answered", isError: false },
+      agentName: "engineer",
+    });
+    runtime.setActiveToolBatch(false);
+    runtime.emitSession("root", {
+      type: "event",
+      slug: "proj",
+      sessionId: "root",
+      eventId: 2,
+      createdAt: 3,
+      payload: { type: "execution-end", status: "completed" },
+      agentName: "engineer",
+    });
+    await runtime.waitForUnsubscribed();
+
+    expect(observed.some((event) => event.type === "event" && event.eventId === 1)).toBe(true);
     expect(runtime.subscribedSessionIds()).toEqual([]);
     unsubscribeBus();
   });
@@ -183,28 +228,43 @@ async function readSSEUntil(response: Response, expected: string): Promise<strin
 
 function createRuntimeWithManualSubscriptions() {
   const subscriptions = new Map<string, (event: GlobalSSEEvent) => void>();
+  let activeToolBatch = false;
   let resolveExecution!: () => void;
+  let resolveUnsubscribed!: () => void;
   const promise = new Promise<void>((resolve) => {
     resolveExecution = resolve;
+  });
+  const unsubscribed = new Promise<void>((resolve) => {
+    resolveUnsubscribed = resolve;
   });
 
   const runtime = {
     subscribeSessionEvents: mock((input: { sessionId: string; onEvent: (event: GlobalSSEEvent) => void }) => {
       subscriptions.set(input.sessionId, input.onEvent);
-      return () => subscriptions.delete(input.sessionId);
+      return () => {
+        subscriptions.delete(input.sessionId);
+        if (subscriptions.size === 0) resolveUnsubscribed();
+      };
     }),
     subscribeHitlEvents: mock(() => () => undefined),
     subscribeSessionRuntimeChanges: mock(() => () => undefined),
     startSessionExecution: mock(() => ({ promise })),
+    getSessionFile: mock(async () => ({
+      toolBatches: activeToolBatch ? [{ batchId: "batch-1" }] : [],
+    })),
     emitSession: (sessionId: string, event: GlobalSSEEvent) => subscriptions.get(sessionId)?.(event),
     subscribedSessionIds: () => [...subscriptions.keys()],
     resolveExecution: () => resolveExecution(),
+    setActiveToolBatch: (active: boolean) => { activeToolBatch = active; },
+    waitForUnsubscribed: () => unsubscribed,
   };
 
   return runtime as unknown as AgentRuntime & {
     emitSession: (sessionId: string, event: GlobalSSEEvent) => void;
     subscribedSessionIds: () => string[];
     resolveExecution: () => void;
+    setActiveToolBatch: (active: boolean) => void;
+    waitForUnsubscribed: () => Promise<void>;
   };
 }
 
@@ -374,38 +434,13 @@ function childLinkEvent(parentSessionId: string, childSessionId: string, status:
 }
 
 function hitlRealtimeEvent(): Extract<GlobalSSEEvent, { type: "hitl.event" }> {
-  const record: HitlRecord = {
-    hitlId: "hitl-1",
-    owner: { projectSlug: "proj", ownerType: "session", ownerId: "session-1" } as const,
-    sessionRootId: "session-1",
-    blockingKey: "session:session-1:ask:call-1",
-    source: { type: "ask_user", sessionId: "session-1", toolCallId: "call-1" } as const,
-    status: "pending" as const,
-    displayPayload: {
-      title: "Need input",
-      questions: [{ header: "Q1", question: "Continue?", options: [], custom: true as const }],
-      redacted: true as const,
-    },
-    createdAt: "2026-07-08T00:00:00.000Z",
-    updatedAt: "2026-07-08T00:00:00.000Z",
-  };
+  const view: HitlView = { hitlId: "hitl-1", owner: { type: "session", id: "session-1" }, source: { type: "ask_user", toolCallId: "call-1" }, status: "pending", displayPayload: { title: "Need input", redacted: true }, allowedActions: ["answer", "cancel"], createdAt: "2026-07-08T00:00:00.000Z", updatedAt: "2026-07-08T00:00:00.000Z" };
   return {
     type: "hitl.event",
     projectSlug: "proj",
-    owner: record.owner,
-    hitlId: record.hitlId,
+    hitlId: view.hitlId,
     createdAt: 1,
     payload: { type: "hitl.request" },
-    projection: {
-      hitlId: record.hitlId,
-      project: { slug: "proj" },
-      owner: record.owner,
-      source: record.source,
-      status: record.status,
-      displayPayload: record.displayPayload,
-      allowedActions: ["answer", "cancel"],
-      createdAt: record.createdAt,
-      updatedAt: record.updatedAt,
-    },
+    view,
   };
 }

@@ -6,8 +6,7 @@ import type { StoreApi } from "zustand";
 import { TOOL_GOAL_CREATE, TOOL_GOAL_MANAGE, type GoalReviewReceipt, type GoalState } from "@archcode/protocol";
 import { GoalStateManager } from "../../goals/state";
 import { GoalCancellationCleanupError } from "../../goals/cancellation";
-import { HitlService } from "../../hitl/service";
-import { createPreparedHitlResume, ResumeCoordinator } from "../../hitl/resume-coordinator";
+import { ProjectHitlQueue } from "../../hitl";
 import { MemoryFileManager } from "../../memory/file-manager";
 import type { ProjectContext } from "../../projects/types";
 import { SkillService } from "../../skills";
@@ -147,7 +146,7 @@ function makeProjectContext(
     addedAt: new Date().toISOString(),
   };
   const resolvedGoalState = goalState as unknown as GoalStateManager;
-  const hitl = new HitlService({ workspaceRoot, project, sessions: storeManager, goalState: resolvedGoalState });
+  const hitl = new ProjectHitlQueue({ workspaceRoot });
   return {
     project,
     goalState: resolvedGoalState,
@@ -157,14 +156,6 @@ function makeProjectContext(
       cancel: (goalId, request) => goalState.cancel(goalId, request.reason),
     },
     hitl,
-    hitlResumeCoordinator: new ResumeCoordinator({
-      hitl,
-      adapters: {
-        session: { prepare: async () => createPreparedHitlResume(async () => undefined) },
-        goal: { prepare: async () => createPreparedHitlResume(async () => undefined) },
-      },
-      logger: silentLogger,
-    }),
     memory: new MemoryFileManager({
       project: join(workspaceRoot, ".archcode", "memory"),
       user: join(workspaceRoot, ".archcode", "user-memory"),
@@ -267,14 +258,12 @@ function makeGoalState(overrides: Partial<GoalState> = {}): GoalState {
     attempt: 1,
     reviewGeneration: 0,
     mainSessionId: "main-session",
-    pendingHitlIds: [],
-    approvalRefs: [],
-    appliedHitlIds: [],
     childSessionIds: [],
     createdAt: "2026-07-08T00:00:00.000Z",
     updatedAt: "2026-07-08T00:00:00.000Z",
     startedAt: "2026-07-08T00:00:00.000Z",
     ...overrides,
+    appliedBudgetHitlIds: overrides.appliedBudgetHitlIds ?? [],
     useWorktree: overrides.useWorktree ?? false,
   };
 }

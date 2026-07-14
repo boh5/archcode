@@ -3,13 +3,14 @@ export {
   SessionExecutionScopeConflictError,
   SessionExecutionScopeValidator,
 } from "./session-execution-scope-validator";
-export { SessionHitlResumeAdapter } from "./session-hitl-resume-adapter";
 export {
-  assertSessionHitlJournalAllowsExecution,
-  recoverSessionHitlJournals,
-  SessionHitlJournalBlockedError,
-  SessionHitlContinuationOutcomeUnknownError,
-} from "./session-hitl-journal";
+  SessionToolBatchScheduler,
+  applySessionToolBatchResponse,
+  cancelSessionToolBatch,
+  hasRunnableSessionToolBatch,
+  listSessionToolBatchHitlIds,
+  validateSessionToolBatchResponse,
+} from "./session-tool-batch-scheduler";
 export { SessionCwdReferenceMigrationService } from "./session-cwd-reference-migration";
 export { SessionFamilyStopService } from "./session-family-stop-service";
 export { collectSessionTreeIds } from "./session-tree";
@@ -30,18 +31,20 @@ export {
   SessionFamilyStopInProgressError,
 } from "./session-family-control";
 export type {
-  ReserveSessionHitlResumeOptions,
   ActiveSessionExecution,
   SessionExecutionClaimCoordinator,
-  SessionHitlResumeLease,
   SessionExecutionOrigin,
   SessionRuntimeChange,
   SessionRuntimeChangeListener,
   StartSessionExecutionInput,
 } from "./session-execution-manager";
 export type {
+  SessionToolBatchAdvanceResult,
+  SessionToolBatchQueue,
+  SessionToolBatchSchedulerOptions,
+} from "./session-tool-batch-scheduler";
+export type {
   SessionExecutionScopeConflictCode,
-  SessionExecutionScopeEntry,
   SessionExecutionScopeSubject,
   SessionExecutionScopeValidationInput,
   SessionExecutionScopeValidatorOptions,
@@ -58,9 +61,13 @@ export type {
   SessionGoalDelegationAdmissionInput,
 } from "./session-goal-delegation-admission";
 export type {
+  CancelSessionToolBatch,
+  SessionFamilyStopServiceOptions,
+} from "./session-family-stop-service";
+export type {
+  SessionDeletionLifecycle,
   SessionDeletionOwnerDetail,
   SessionDeletionOwnerType,
-  SessionDeletionPreflight,
   SessionDeletionPreflightInput,
 } from "./session-deletion";
 export type {

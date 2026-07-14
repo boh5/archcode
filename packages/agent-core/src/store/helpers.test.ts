@@ -196,6 +196,7 @@ type PersistedSessionState = Pick<
   | "todos"
   | "reminders"
   | "childSessionLinks"
+  | "toolBatches"
   | "rootSessionId"
   | "parentSessionId"
   | "goalId"
@@ -233,6 +234,7 @@ function persistedState(
     todos,
     reminders,
     childSessionLinks,
+    toolBatches: [],
     rootSessionId: rootSessionId ?? sessionId,
     parentSessionId,
     goalId,
@@ -995,6 +997,7 @@ describe("session transcript serialization", () => {
       "steps",
       "title",
       "todos",
+      "toolBatches",
       "updatedAt",
     ]);
     expect("events" in parsed).toBe(false);

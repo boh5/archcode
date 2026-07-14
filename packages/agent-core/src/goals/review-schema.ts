@@ -1,7 +1,6 @@
 import type {
   GoalEvidenceRef as ProtocolGoalEvidenceRef,
   GoalReviewReceipt as ProtocolGoalReviewReceipt,
-  HitlResponse,
 } from "@archcode/protocol";
 import { z } from "zod/v4";
 
@@ -29,15 +28,3 @@ export const GoalReviewReceiptSchema = z.strictObject({
   reviewerSessionId: z.string().trim().min(1),
   decidedAt: z.string().datetime({ offset: true }),
 }) satisfies z.ZodType<ProtocolGoalReviewReceipt>;
-
-type GoalReviewOutcomeResponse = Extract<HitlResponse, { type: "review_outcome" }>;
-
-export const GoalReviewOutcomeResponseSchema = z.strictObject({
-  type: z.literal("review_outcome"),
-  outcome: GoalReviewReceiptSchema.shape.verdict,
-  comment: GoalReviewSummarySchema.optional(),
-  receipt: GoalReviewReceiptSchema,
-}).refine((response) => response.outcome === response.receipt.verdict, {
-  path: ["receipt", "verdict"],
-  message: "Review outcome must match receipt verdict",
-}) satisfies z.ZodType<GoalReviewOutcomeResponse>;

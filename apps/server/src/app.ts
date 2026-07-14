@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { AgentRuntime, ProjectInfo } from "@archcode/agent-core";
-import { isTerminalChildSessionStatus, type GlobalSSEEvent, type GlobalSessionEventEnvelope, type HitlStreamEvent, type ToolChildSessionLinkEvent } from "@archcode/protocol";
+import { isTerminalChildSessionStatus, type GlobalSSEEvent, type GlobalSessionEventEnvelope, type ToolChildSessionLinkEvent } from "@archcode/protocol";
 import { errorHandler } from "./error-handler";
 import { UnauthorizedError } from "./errors";
 import { requestLogger } from "./logger";
@@ -96,7 +96,7 @@ export function createServerApp(
     initialEvents: async () => {
       const [sessionRuntimeEvents, hitlEvents] = await Promise.all([
         serverRuntime.listSessionRuntimeEvents(),
-        serverRuntime.listPendingHitlEvents(),
+        serverRuntime.listHitlSnapshotEvents(),
       ]);
       return [...sessionRuntimeEvents, ...hitlEvents];
     },
@@ -146,6 +146,7 @@ export function createServerEventRuntime(runtime: AgentRuntime): AgentRuntime {
     const terminalChildren = new Set<string>();
     const rootKey = scopedSessionSubscriptionKey(input.slug, input.sessionId);
     let rootCompleted = false;
+    let releaseCheck = Promise.resolve();
 
     const unsubscribeSession = (slug: string, sessionId: string) => {
       const key = scopedSessionSubscriptionKey(slug, sessionId);
@@ -156,10 +157,18 @@ export function createServerEventRuntime(runtime: AgentRuntime): AgentRuntime {
 
     const maybeReleaseRoot = () => {
       if (!rootCompleted) return;
-      const activeChildren = [...subscriptions.keys()].filter((key) => key !== rootKey && !terminalChildren.has(key));
-      if (activeChildren.length > 0) return;
-      for (const unsubscribe of subscriptions.values()) unsubscribe();
-      subscriptions.clear();
+      releaseCheck = releaseCheck.then(async () => {
+        const activeChildren = [...subscriptions.keys()].filter((key) => key !== rootKey && !terminalChildren.has(key));
+        if (activeChildren.length > 0) return;
+        try {
+          const session = await runtime.getSessionFile(input.workspaceRoot, input.sessionId);
+          if (session.toolBatches.some((batch) => batch.archivedAt === undefined)) return;
+        } catch {
+          // A deleted Session has no later events to forward.
+        }
+        for (const unsubscribe of subscriptions.values()) unsubscribe();
+        subscriptions.clear();
+      });
     };
 
     const subscribe = (sessionId: string) => {
@@ -170,8 +179,11 @@ export function createServerEventRuntime(runtime: AgentRuntime): AgentRuntime {
         workspaceRoot: input.workspaceRoot,
         sessionId,
         onEvent: (event) => {
-          if (!isHitlSessionEvent(event)) globalEventBus.emit(event);
-          if (!isChildSessionLinkEvent(event)) return;
+          globalEventBus.emit(event);
+          if (!isChildSessionLinkEvent(event)) {
+            maybeReleaseRoot();
+            return;
+          }
 
           const childSessionId = event.payload.link.childSessionId;
           const childKey = scopedSessionSubscriptionKey(input.slug, childSessionId);
@@ -182,6 +194,7 @@ export function createServerEventRuntime(runtime: AgentRuntime): AgentRuntime {
             return;
           }
           subscribe(childSessionId);
+          maybeReleaseRoot();
         },
       });
       subscriptions.set(key, unsubscribe);
@@ -232,14 +245,6 @@ function scopedSessionSubscriptionKey(slug: string, sessionId: string): string {
 
 function isChildSessionLinkEvent(event: GlobalSSEEvent): event is GlobalSessionEventEnvelope<ToolChildSessionLinkEvent> {
   return event.type === "event" && event.payload.type === "tool-child-session-link";
-}
-
-function isHitlSessionEvent(event: GlobalSSEEvent): event is GlobalSessionEventEnvelope<HitlStreamEvent> {
-  return event.type === "event" && (
-    event.payload.type === "hitl.request"
-    || event.payload.type === "hitl.updated"
-    || event.payload.type === "hitl.resolved"
-  );
 }
 
 function wireHitlRealtimeBridge(runtime: AgentRuntime, bus: typeof globalEventBus): void {

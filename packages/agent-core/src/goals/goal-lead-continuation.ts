@@ -13,7 +13,7 @@ export type GoalLeadContinuationOutcome = "started" | "ineligible" | "busy" | "c
 export interface GoalLeadContinuationSessionRuntime {
   getSessionFile(workspaceRoot: string, sessionId: string): Promise<SessionFile>;
   getSessionFamilyActivity(workspaceRoot: string, rootSessionId: string): SessionFamilyActivity;
-  listSessionFamilyBlockedHitlIds(workspaceRoot: string, rootSessionId: string): Promise<string[]>;
+  listSessionFamilyToolBatchHitlIds(workspaceRoot: string, rootSessionId: string): Promise<string[]>;
   startCheckedExecutionWithinGoalClaim(input: StartSessionExecutionInput): Promise<ActiveSessionExecution>;
 }
 
@@ -137,7 +137,7 @@ export class GoalLeadContinuationService implements GoalLeadContinuationCoordina
           this.#removeCapacityWaiter(key);
           return "busy";
         }
-        if ((await this.options.sessionRuntime.listSessionFamilyBlockedHitlIds(workspaceRoot, candidate.sessionId)).length > 0) {
+        if ((await this.options.sessionRuntime.listSessionFamilyToolBatchHitlIds(workspaceRoot, candidate.sessionId)).length > 0) {
           this.#removeCapacityWaiter(key);
           return "ineligible";
         }
@@ -162,7 +162,7 @@ export class GoalLeadContinuationService implements GoalLeadContinuationCoordina
           this.#enqueueCapacityWaiter(key);
           return "capacity";
         }
-        if (isHitlBlockedError(error)) {
+        if (isToolBatchBlockedError(error)) {
           this.#removeCapacityWaiter(key);
           return "ineligible";
         }
@@ -179,7 +179,7 @@ export class GoalLeadContinuationService implements GoalLeadContinuationCoordina
   ): Promise<{ readonly sessionId: string; readonly projectSlug: string; readonly goal: GoalState; readonly session: SessionFile } | undefined> {
     if (
       !isContinuableStatus(goal.status)
-      || goal.pendingHitlIds.length > 0
+      || goal.budgetApproval !== undefined
       || goal.budget?.status === "blocked"
       || goal.mainSessionId === undefined
     ) return undefined;
@@ -305,7 +305,7 @@ export function buildGoalContinuationPrompt(goal: GoalState): string {
       summary: goal.review.summary,
       unresolvedItems: goal.review.unresolvedItems,
     },
-    blocker: goal.blocker,
+    budgetApproval: goal.budgetApproval,
     budget: goal.budget,
   };
   return `Continue pursuing the bound Goal from this freshly loaded persisted snapshot:\n${JSON.stringify(snapshot, null, 2)}\n\nThis is a direct Goal continuation.\nKeep the original scope. If status is running, continue the work. If it is reviewing, coordinate a Reviewer and wait for reviewer evidence. If it is not_done, call goal_manage.retry before any Plan or Build delegation, then address the recorded unresolved items. Before stopping, audit whether the Goal is genuinely complete, blocked on HITL, or budget-limited, and persist the appropriate Goal transition.`;
@@ -323,6 +323,6 @@ function isCapacityError(error: unknown): boolean {
   return error instanceof Error && error.name === "ConcurrentSessionLimitError";
 }
 
-function isHitlBlockedError(error: unknown): boolean {
-  return error instanceof Error && error.name === "SessionHitlBlockedError";
+function isToolBatchBlockedError(error: unknown): boolean {
+  return error instanceof Error && error.name === "SessionToolBatchActiveError";
 }

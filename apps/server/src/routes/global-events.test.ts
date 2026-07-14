@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { AgentRuntime } from "@archcode/agent-core";
-import type { CompressionBlockCommittedEvent, GlobalSSEEvent, HitlProjection } from "@archcode/protocol";
+import type { CompressionBlockCommittedEvent, GlobalSSEEvent, HitlView } from "@archcode/protocol";
 import { Hono } from "hono";
 import { createServerApp, createServerEventRuntime } from "../app";
 import { errorHandler } from "../error-handler";
@@ -34,7 +34,7 @@ function createGlobalServerRuntime(): AgentRuntime {
       families: [],
       createdAt: 0,
     }]),
-    listPendingHitlEvents: mock(async () => []),
+    listHitlSnapshotEvents: mock(async () => []),
     subscribeSessionRuntimeChanges: mock(() => () => undefined),
   } as unknown as AgentRuntime;
 }
@@ -83,12 +83,11 @@ function sessionEvent(input: { slug: string; sessionId: string; eventId: number;
   };
 }
 
-function hitlProjection(hitlId: string): HitlProjection {
+function hitlProjection(hitlId: string): HitlView {
   return {
     hitlId,
-    project: { slug: "proj" },
-    owner: { projectSlug: "proj", ownerType: "session", ownerId: "session-1" },
-    source: { type: "ask_user", sessionId: "session-1", toolCallId: "call-1" },
+    owner: { type: "session", id: "session-1" },
+    source: { type: "ask_user", toolCallId: "call-1" },
     status: "pending",
     displayPayload: {
       title: "Need input",
@@ -102,10 +101,10 @@ function hitlProjection(hitlId: string): HitlProjection {
 }
 
 function hitlSnapshot(
-  projections: HitlProjection[] = [],
+  views: HitlView[] = [],
   projectSlugs: string[] = ["proj"],
 ): Extract<GlobalSSEEvent, { type: "hitl.snapshot" }> {
-  return { type: "hitl.snapshot", projectSlugs, projections, createdAt: 0 };
+  return { type: "hitl.snapshot", projectSlugs, entries: views.map((view) => ({ projectSlug: "proj", view })), createdAt: 0 };
 }
 
 function sessionRuntimeSnapshot(): Extract<GlobalSSEEvent, { type: "session.runtime.snapshot" }> {
@@ -169,7 +168,8 @@ describe("global events route", () => {
 
     expect(text).toContain("event: hitl.snapshot");
     expect(text).not.toContain("event: hitl.event");
-    expect(text).toContain('\"projections\":[');
+    expect(text).toContain('\"entries\":[');
+    expect(text).toContain('\"projectSlug\":\"proj\"');
     expect(text).toContain('\"hitlId\":\"hitl-refresh\"');
   });
 

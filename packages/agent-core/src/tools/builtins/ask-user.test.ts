@@ -2,13 +2,11 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createSessionStore, storeManager } from "../../store/store";
-import { getSessionHitlPath } from "../../store/sessions-dir";
 import { askUserTool, AskUserInputSchema, executeAskUser } from "./ask-user";
 import { createRegistry } from "../registry";
 import type { AskUserCallback, AskUserQuestion, ToolExecutionContext } from "../types";
 import { createTestProjectContext } from "../test-project-context";
 import { SkillService } from "../../skills";
-import { SessionHitlPause } from "../../execution/session-hitl-pause";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "ask-user", crypto.randomUUID());
 
@@ -205,30 +203,13 @@ describe("AskUserInputSchema", () => {
 });
 
 describe("executeAskUser", () => {
-  test("creates durable Session HITL pause when askUser callback is missing", async () => {
+  test("returns a scheduler blocker when askUser callback is missing", async () => {
     const ctx = await makeDurableCtx({ askUser: undefined });
-
-    try {
-      await executeAskUser({ questions: [SINGLE_QUESTION] }, ctx);
-      throw new Error("Expected ask_user to pause for Session HITL");
-    } catch (error) {
-      expect(error).toBeInstanceOf(SessionHitlPause);
-      if (!(error instanceof SessionHitlPause)) throw error;
-      const pause = error;
-      expect(pause.record.owner).toEqual({
-        projectSlug: "test-project",
-        ownerType: "session",
-        ownerId: ctx.store.getState().sessionId,
-      });
-      expect(pause.record.source).toEqual({ type: "ask_user", sessionId: ctx.store.getState().sessionId, toolCallId: "call-1" });
-      expect(pause.blocker).toMatchObject({ hitlId: pause.record.hitlId, toolCallId: "call-1", toolName: "ask_user" });
-
-      const hitlFile = await Bun.file(getSessionHitlPath(
-        ctx.projectContext.project.workspaceRoot,
-        ctx.store.getState().sessionId,
-      )).json() as { pending: Array<{ hitlId: string }> };
-      expect(hitlFile.pending.map((record) => record.hitlId)).toContain(pause.record.hitlId);
-    }
+    const result = await executeAskUser({ questions: [SINGLE_QUESTION] }, ctx);
+    expect(result.blocked).toMatchObject({
+      source: { type: "ask_user", toolCallId: "call-1" },
+      displayPayload: { redacted: true },
+    });
   });
 
   test("returns answers as tool result for single question", async () => {

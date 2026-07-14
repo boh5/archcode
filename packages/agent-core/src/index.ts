@@ -15,7 +15,7 @@ export { createProcessRunner } from "./process/runner";
 export type { ProcessRunner, ProcessRunnerInput, ProcessRunnerResult } from "./process/types";
 
 export type { Agent, AgentResult, AgentRunOptions } from "./agents/types";
-export { AgentRunningError, ChildSessionCwdMismatchError, ConcurrentSessionLimitError, SessionCwdTransitionInProgressError, SessionHitlBlockedError, SessionHitlResumeInProgressError } from "./agents/errors";
+export { AgentRunningError, ChildSessionCwdMismatchError, ConcurrentSessionLimitError, SessionCwdTransitionInProgressError, SessionToolBatchActiveError } from "./agents/errors";
 
 export type { SlashCommandResult } from "./commands/types";
 export {
@@ -30,27 +30,30 @@ export {
   SessionExecutionManager,
   SessionExecutionScopeConflictError,
   SessionExecutionScopeValidator,
-  SessionHitlJournalBlockedError,
+  SessionToolBatchScheduler,
+  applySessionToolBatchResponse,
+  cancelSessionToolBatch,
+  hasRunnableSessionToolBatch,
+  listSessionToolBatchHitlIds,
 } from "./execution";
 export type {
-  ReserveSessionHitlResumeOptions,
   ActiveSessionExecution,
+  CancelSessionToolBatch,
   SessionCwdReferenceMigrationInput,
   SessionCwdReferenceMigrationServiceOptions,
   SessionCwdRemovalLifecycle,
   SessionCwdRemovalResult,
   SessionDeletionOwnerDetail,
   SessionDeletionOwnerType,
-  SessionDeletionPreflight,
+  SessionDeletionLifecycle,
   SessionDeletionPreflightInput,
   SessionExecutionClaimCoordinator,
   AcquireSessionFamilyStopInput,
   SessionFamilyController,
   SessionFamilyStopLease,
+  SessionFamilyStopServiceOptions,
   SessionWorkspaceCloseLease,
-  SessionHitlResumeLease,
   SessionExecutionScopeConflictCode,
-  SessionExecutionScopeEntry,
   SessionExecutionScopeSubject,
   SessionExecutionScopeValidationInput,
   SessionExecutionScopeValidatorOptions,
@@ -78,13 +81,30 @@ export type { ProjectRegistrationResult } from "./projects/registry";
 export { SessionLifecycleService } from "./projects/session-lifecycle-service";
 export type { SessionLifecycleServiceOptions } from "./projects/session-lifecycle-service";
 export type { ProjectContext, ProjectInfo } from "./projects/types";
-export type { ResumeCoordinatorResult } from "./hitl/resume-coordinator";
-export { hitlRequiresInspection } from "./hitl/aggregation";
+export {
+  HitlConflictError,
+  HitlNotFoundError,
+  MAX_HITL_DELIVERY_ATTEMPTS,
+  ProjectHitlQueue,
+  projectHitlQueuePath,
+  requiresInspection,
+  toHitlView,
+} from "./hitl";
+export type {
+  CreateHitlInput,
+  HitlDelivery,
+  HitlListFilter,
+  HitlRecord,
+  ProjectHitlQueueEvent,
+  ProjectHitlQueueOptions,
+  ResolveHitlOutcome,
+} from "./hitl";
+export { GoalBudgetHandler } from "./goals/budget-handler";
+export type { GoalBudgetHandlerOptions, GoalBudgetHitlRecord } from "./goals/budget-handler";
 export { GoalLifecycleService, GoalLifecycleServiceError } from "./goals/lifecycle-service";
 export {
   GoalEvidenceRefSchema,
   GoalEvidenceSummarySchema,
-  GoalReviewOutcomeResponseSchema,
   GoalReviewReceiptSchema,
   GoalReviewSummarySchema,
 } from "./goals/review-schema";
@@ -101,7 +121,6 @@ export {
 } from "./goals/cancellation";
 export type {
   GoalCancellationCapability,
-  GoalCancellationCleanupOperations,
   GoalCancellationRequest,
   GoalCancellationServiceOptions,
   GoalCancellationSource,

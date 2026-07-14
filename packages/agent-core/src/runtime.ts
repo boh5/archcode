@@ -39,22 +39,25 @@ import type {
   GlobalSSEResourceChangedEvent,
   GlobalSSESessionRuntimeChangedEvent,
   GlobalSSESessionRuntimeSnapshotEvent,
-  HitlProjection,
+  HitlResponse,
+  HitlView,
   McpServerStatus,
   SessionFamilyActivity,
   SessionTreeResponse,
 } from "@archcode/protocol";
 import { createRegistry as createToolRegistry, DuplicateToolError, type ToolRegistry } from "./tools/index";
 import {
+  applySessionToolBatchResponse,
+  cancelSessionToolBatch,
+  hasRunnableSessionToolBatch,
+  validateSessionToolBatchResponse,
   SessionExecutionManager,
   SessionExecutionScopeValidator,
   SessionFamilyStopService,
   RoleDrivenSessionGoalDelegationAdmission,
-  SessionHitlResumeAdapter,
-  assertSessionHitlJournalAllowsExecution,
 } from "./execution";
 import type { ActiveSessionExecution, StartSessionExecutionInput, SubscribeSessionEventsInput } from "./execution";
-import { GoalHitlResumeAdapter } from "./goals/hitl-resume-adapter";
+import { GoalBudgetHandler } from "./goals/budget-handler";
 import {
   GoalLeadContinuationService,
   type GoalLeadContinuationCoordinator,
@@ -63,8 +66,15 @@ import {
 import { withGoalExecutionClaimLock } from "./goals/execution-claim";
 import { GoalCancellationService, type GoalCancellationRequest } from "./goals/cancellation";
 import { GoalLifecycleService } from "./goals/lifecycle-service";
-import { HitlService } from "./hitl/service";
-import { ResumeCoordinator, type ResumeRecoverySummary } from "./hitl/resume-coordinator";
+import {
+  MAX_HITL_DELIVERY_ATTEMPTS,
+  HitlConflictError,
+  ProjectHitlQueue,
+  requiresInspection,
+  toHitlView,
+  type HitlRecord,
+  type ProjectHitlQueueEvent,
+} from "./hitl";
 import {
   AutomationCoordinator,
   AutomationDispatcher,
@@ -153,8 +163,20 @@ export interface AgentRuntime {
   readonly contextResolver: ProjectContextResolver;
   listAgentDescriptors(): readonly AgentDescriptor[];
   removeProject(projectSlug: string): Promise<ProjectRemovalResult | undefined>;
-  recoverHitlResumes(workspaceRoot: string): Promise<ResumeRecoverySummary | undefined>;
-  listPendingHitlEvents(): Promise<GlobalSSEEvent[]>;
+  respondToHitl(input: {
+    readonly slug: string;
+    readonly workspaceRoot: string;
+    readonly hitlId: string;
+    readonly response: Exclude<HitlResponse, { type: "cancel" }>;
+  }): Promise<HitlMutationResult>;
+  cancelHitl(input: {
+    readonly slug: string;
+    readonly workspaceRoot: string;
+    readonly hitlId: string;
+    readonly reason: string;
+    readonly cancelledBy?: string;
+  }): Promise<HitlMutationResult>;
+  listHitlSnapshotEvents(): Promise<GlobalSSEEvent[]>;
   subscribeHitlEvents(listener: (event: GlobalSSEHitlRealtimeEvent) => void): () => void;
   listSessionRuntimeEvents(): Promise<GlobalSSESessionRuntimeSnapshotEvent[]>;
   getProjectControlPlaneSnapshot(workspaceRoot: string, projectSlug: string): Promise<ProjectControlPlaneSnapshot>;
@@ -200,6 +222,12 @@ export interface AgentRuntime {
   reconcileRegisteredProject(workspaceRoot: string, projectSlug: string): Promise<void>;
   stopAutomationSchedulers(): Promise<void>;
   notifyRuntimeShutdown(reason: string): void;
+}
+
+export interface HitlMutationResult {
+  readonly hitlId: string;
+  readonly status: import("@archcode/protocol").HitlStatus;
+  readonly view: HitlView;
 }
 
 export async function createRuntime(
@@ -283,6 +311,7 @@ export async function createRuntime(
     const goalStateReconcileInFlight = new Set<string>();
     const projectReconcileRetries = new Map<string, { attempt: number; timer?: ReturnType<typeof setTimeout> }>();
     const projectReconcileInFlight = new Set<string>();
+    const hitlDispatches = new Map<string, Promise<HitlRecord>>();
     const cancelledReconcileWorkspaces = new Set<string>();
     let goalStateReconciliationShuttingDown = false;
     let goalLeadContinuation: GoalLeadContinuationCoordinator | undefined;
@@ -301,6 +330,29 @@ export async function createRuntime(
         }
       }
     };
+    const publishProjectHitlEvent = (workspaceRoot: string, event: ProjectHitlQueueEvent): void => {
+      const projectSlug = projectSlugsByWorkspace.get(workspaceRoot);
+      if (projectSlug === undefined) {
+        runtimeLogger.warn("hitl.event.project_missing", {
+          context: { hitlId: event.view.hitlId },
+          meta: { workspaceRoot },
+        });
+        return;
+      }
+      const payload = event.type === "hitl.created"
+        ? { type: "hitl.request" as const }
+        : event.type === "hitl.resolved" || event.type === "hitl.cancelled"
+          ? { type: "hitl.resolved" as const }
+          : { type: "hitl.updated" as const };
+      publishHitlEvent({
+        type: "hitl.event",
+        projectSlug,
+        hitlId: event.view.hitlId,
+        createdAt: Date.now(),
+        payload,
+        view: event.view,
+      });
+    };
     let contextResolver!: ProjectContextResolver;
     let executionScopeValidator!: SessionExecutionScopeValidator;
     contextResolver = new ProjectContextResolver({
@@ -312,19 +364,21 @@ export async function createRuntime(
         projectSlugsByWorkspace.set(project.workspaceRoot, project.slug);
         return project;
       },
-      hitlFactory: (hitlOptions) => new HitlService({
-        ...hitlOptions,
-        realtimePublisher: publishHitlEvent,
-        logger: runtimeLogger.child({ module: "hitl" }),
+      hitlFactory: ({ workspaceRoot }) => new ProjectHitlQueue({
+        workspaceRoot,
+        onEvent: (event) => publishProjectHitlEvent(workspaceRoot, event),
       }),
-      goalCancellationFactory: ({ workspaceRoot, goalState, hitl }) => new GoalCancellationService({
+      goalCancellationFactory: ({ workspaceRoot, goalState }) => new GoalCancellationService({
         workspaceRoot,
         goalStateManager: goalState,
-        hitlService: hitl,
         sessionStoreManager,
         sessionFamilyController: {
           acquireStop: (input) => executionManager.acquireSessionFamilyStop(input),
         },
+        cancelSessionToolBatch: (sessionId, projectRoot, reason) => (
+          cancelSessionBatchAndHitl(sessionId, projectRoot, reason)
+        ),
+        cancelGoalBudgetHitl: (hitlId, reason) => cancelGoalBudgetHitl(workspaceRoot, hitlId, reason),
       }),
       goalCommitted: ({ workspaceRoot, project, goal }) => {
         publishResourceChanged({
@@ -348,48 +402,6 @@ export async function createRuntime(
         onCreated: (goal) => queueGoalTitleGeneration(workspaceRoot, goal.id),
       }),
       createAutomation: (workspaceRoot, input) => createAutomation(workspaceRoot, input),
-      sessionStoreManager,
-      resumeCoordinatorFactory: ({ workspaceRoot, hitl, goalState }) => new ResumeCoordinator({
-        hitl,
-        adapters: {
-          session: new SessionHitlResumeAdapter({
-            workspaceRoot,
-            storeManager: sessionStoreManager,
-            toolRegistry,
-            projectContextResolver: contextResolver,
-            executionScopeValidator,
-            skillService,
-            getAgent: (agentWorkspaceRoot, sessionId) => sessionAgentManager.getOrCreate(agentWorkspaceRoot, sessionId),
-            startChildExecution: (childWorkspaceRoot, request) => executionManager.startChildExecution(childWorkspaceRoot, request),
-            cancelChildSession: (childWorkspaceRoot, parentSessionId, childSessionId) => executionManager.cancelChildSession(childWorkspaceRoot, parentSessionId, childSessionId),
-            resumeChildSession: (childWorkspaceRoot, request) => executionManager.resumeChildExecution(childWorkspaceRoot, request),
-            reserveSessionHitlResume: (childWorkspaceRoot, sessionId, rootSessionId, acquireOptions) => (
-              executionManager.reserveSessionHitlResume(childWorkspaceRoot, sessionId, rootSessionId, acquireOptions)
-            ),
-            updateChildSessionLinkForHitl: (childWorkspaceRoot, sessionId, status) => (
-              executionManager.updateChildSessionLinkForHitl(childWorkspaceRoot, sessionId, status)
-            ),
-            attachSessionEvents: (eventWorkspaceRoot, sessionId, store) => executionManager.attachSessionEvents(eventWorkspaceRoot, sessionId, store),
-            detachSessionEvents: (eventWorkspaceRoot, sessionId) => executionManager.detachSessionEvents(eventWorkspaceRoot, sessionId),
-          }),
-          goal: new GoalHitlResumeAdapter({
-            workspaceRoot,
-            goalStateManager: goalState,
-            hitlService: hitl,
-            goalCancellation: new GoalCancellationService({
-              workspaceRoot,
-              goalStateManager: goalState,
-              hitlService: hitl,
-              sessionStoreManager,
-              sessionFamilyController: {
-                acquireStop: (input) => executionManager.acquireSessionFamilyStop(input),
-              },
-            }),
-            onGoalStateChanged: (goalId) => notifyGoalStateChanged(workspaceRoot, goalId),
-          }),
-        },
-        logger: runtimeLogger.child({ module: "projects" }),
-      }),
       logger: runtimeLogger.child({ module: "projects" }),
     });
     executionScopeValidator = new SessionExecutionScopeValidator({ projectContextResolver: contextResolver });
@@ -436,8 +448,8 @@ export async function createRuntime(
       deleteSessionStore: (sessionId, workspaceRoot, deleteOptions) => sessionStoreManager.delete(sessionId, workspaceRoot, deleteOptions),
       resolveRootSessionId: (sessionId, workspaceRoot) => sessionStoreManager.resolveRootSessionId(sessionId, workspaceRoot),
       buildSessionTree: (workspaceRoot, rootSessionId) => sessionStoreManager.buildSessionTree(workspaceRoot, rootSessionId),
-      listSessionFamilyBlockedHitlIds: (workspaceRoot, rootSessionId) => (
-        sessionStoreManager.listSessionFamilyBlockedHitlIds(workspaceRoot, rootSessionId)
+      listSessionFamilyToolBatchHitlIds: (workspaceRoot, rootSessionId) => (
+        sessionStoreManager.listSessionFamilyToolBatchHitlIds(workspaceRoot, rootSessionId)
       ),
       trackSession,
       untrackSession,
@@ -446,14 +458,11 @@ export async function createRuntime(
         run: (ownerId, action) => withGoalExecutionClaimLock(ownerId, action),
       },
       goalDelegationAdmission: new RoleDrivenSessionGoalDelegationAdmission(contextResolver),
-      sessionHitlExecutionGate: {
-        assertAllowed: (workspaceRoot, sessionId) => (
-          assertSessionHitlJournalAllowsExecution(workspaceRoot, sessionId)
-        ),
-      },
-      deletionPreflight: new SessionLifecycleService({
+      deletionLifecycle: new SessionLifecycleService({
         storeManager: sessionStoreManager,
-        projectContextResolver: contextResolver,
+        cancelSessionToolBatch: (sessionId, workspaceRoot, reason) => (
+          cancelSessionBatchAndHitl(sessionId, workspaceRoot, reason)
+        ),
       }),
       logger,
     });
@@ -462,8 +471,8 @@ export async function createRuntime(
       sessionRuntime: {
         getSessionFile: (workspaceRoot, sessionId) => sessionStoreManager.getSessionFile(workspaceRoot, sessionId),
         getSessionFamilyActivity: (workspaceRoot, rootSessionId) => executionManager.getSessionFamilyActivity(workspaceRoot, rootSessionId),
-        listSessionFamilyBlockedHitlIds: (workspaceRoot, rootSessionId) => (
-          sessionStoreManager.listSessionFamilyBlockedHitlIds(workspaceRoot, rootSessionId)
+        listSessionFamilyToolBatchHitlIds: (workspaceRoot, rootSessionId) => (
+          sessionStoreManager.listSessionFamilyToolBatchHitlIds(workspaceRoot, rootSessionId)
         ),
         startCheckedExecutionWithinGoalClaim: (input) => executionManager.startCheckedExecutionWithinGoalClaim(input),
       },
@@ -472,15 +481,238 @@ export async function createRuntime(
     const continuationService = options.goalLeadContinuationFactory?.(continuationOptions)
       ?? new GoalLeadContinuationService(continuationOptions);
     goalLeadContinuation = continuationService;
+
+    async function dispatchAnsweredHitl(
+      workspaceRoot: string,
+      projectSlug: string,
+      accepted: HitlRecord,
+    ): Promise<HitlRecord> {
+      if (accepted.status !== "answered") return accepted;
+      if (accepted.response === undefined) throw new Error(`Answered HITL ${accepted.hitlId} has no response`);
+      const dispatchKey = scopedKey(workspaceRoot, accepted.hitlId);
+      const existing = hitlDispatches.get(dispatchKey);
+      if (existing !== undefined) return await existing;
+      const pending = deliverAnsweredHitl(workspaceRoot, projectSlug, accepted);
+      hitlDispatches.set(dispatchKey, pending);
+      try {
+        return await pending;
+      } finally {
+        if (hitlDispatches.get(dispatchKey) === pending) hitlDispatches.delete(dispatchKey);
+      }
+    }
+
+    async function deliverAnsweredHitl(
+      workspaceRoot: string,
+      projectSlug: string,
+      accepted: HitlRecord,
+    ): Promise<HitlRecord> {
+      const context = await contextResolver.resolve(workspaceRoot);
+      let current = accepted;
+
+      while ((current.delivery?.attempts ?? 0) < MAX_HITL_DELIVERY_ATTEMPTS) {
+        const dispatching = await context.hitl.resolve(current.hitlId, { type: "dispatching" });
+        try {
+          switch (dispatching.owner.type) {
+            case "session":
+              await applySessionToolBatchResponse({
+                storeManager: sessionStoreManager,
+                workspaceRoot,
+                sessionId: dispatching.owner.id,
+                hitlId: dispatching.hitlId,
+                requestKey: dispatching.requestKey,
+                response: dispatching.response!,
+              });
+              break;
+            case "goal":
+              await new GoalBudgetHandler({ goalStateManager: context.goalState }).apply(dispatching);
+              break;
+          }
+
+          const applied = await context.hitl.resolve(dispatching.hitlId, { type: "applied" });
+          if (applied.owner.type === "session") {
+            void executionManager.startSessionToolBatchExecution({
+              slug: projectSlug,
+              workspaceRoot,
+              sessionId: applied.owner.id,
+            }).catch((error) => {
+              runtimeLogger.warn("session.tool_batch.wake_failed", {
+                error,
+                context: { projectSlug, sessionId: applied.owner.id, hitlId: applied.hitlId },
+              });
+            });
+          } else {
+            void notifyGoalStateChanged(workspaceRoot, applied.owner.id);
+          }
+          return applied;
+        } catch (error) {
+          const attempts = dispatching.delivery?.attempts ?? 0;
+          current = await context.hitl.resolve(dispatching.hitlId, {
+            type: "delivery_failed",
+            error: errorMessage(error),
+            ...(attempts < MAX_HITL_DELIVERY_ATTEMPTS
+              ? { retryAt: new Date().toISOString() }
+              : {}),
+          });
+          runtimeLogger.warn("hitl.delivery.failed", {
+            error,
+            context: { projectSlug, hitlId: dispatching.hitlId, ownerType: dispatching.owner.type },
+            meta: { attempts },
+          });
+        }
+      }
+      return current;
+    }
+
+    async function respondToHitl(input: {
+      readonly slug: string;
+      readonly workspaceRoot: string;
+      readonly hitlId: string;
+      readonly response: Exclude<HitlResponse, { type: "cancel" }>;
+    }): Promise<HitlMutationResult> {
+      const context = await contextResolver.resolve(input.workspaceRoot);
+      if (context.project.slug !== input.slug) throw new Error(`HITL project scope mismatch: ${input.slug}`);
+      const pending = (await context.hitl.list({ statuses: ["pending"] }))
+        .find((record) => record.hitlId === input.hitlId);
+      if (
+        pending?.owner.type === "session"
+        && pending.source.type === "ask_user"
+        && input.response.type === "question_answer"
+      ) {
+        try {
+          await validateSessionToolBatchResponse({
+            storeManager: sessionStoreManager,
+            workspaceRoot: input.workspaceRoot,
+            sessionId: pending.owner.id,
+            hitlId: pending.hitlId,
+            requestKey: pending.requestKey,
+            response: input.response,
+          });
+        } catch (error) {
+          throw new HitlConflictError(input.hitlId, errorMessage(error));
+        }
+      }
+      const accepted = await context.hitl.respond(input.hitlId, input.response);
+      const record = await dispatchAnsweredHitl(input.workspaceRoot, input.slug, accepted);
+      return { hitlId: record.hitlId, status: record.status, view: toHitlView(record) };
+    }
+
+    async function cancelHitl(input: {
+      readonly slug: string;
+      readonly workspaceRoot: string;
+      readonly hitlId: string;
+      readonly reason: string;
+      readonly cancelledBy?: string;
+    }): Promise<HitlMutationResult> {
+      const context = await contextResolver.resolve(input.workspaceRoot);
+      if (context.project.slug !== input.slug) throw new Error(`HITL project scope mismatch: ${input.slug}`);
+      const accepted = await context.hitl.cancel(input.hitlId, {
+        type: "cancel",
+        reason: input.reason,
+        ...(input.cancelledBy === undefined ? {} : { cancelledBy: input.cancelledBy }),
+      });
+      const record = await dispatchAnsweredHitl(input.workspaceRoot, input.slug, accepted);
+      return { hitlId: record.hitlId, status: record.status, view: toHitlView(record) };
+    }
+
+    async function cancelSessionBatchAndHitl(
+      sessionId: string,
+      workspaceRoot: string,
+      reason: string,
+    ): Promise<void> {
+      const context = await contextResolver.resolve(workspaceRoot);
+      const projectSlug = context.project.slug;
+      const cancelled = await cancelSessionToolBatch({
+        storeManager: sessionStoreManager,
+        hitlQueue: context.hitl,
+        prepareHitlCancellation: async (hitlIds) => {
+          const records = (await context.hitl.list({ owner: { type: "session", id: sessionId } }))
+            .filter((record) => hitlIds.includes(record.hitlId));
+          for (const record of records) {
+            if (record.status === "resolved" || record.status === "cancelled") continue;
+            if (record.status === "answered") {
+              const applied = await dispatchAnsweredHitl(workspaceRoot, projectSlug, record);
+              if (applied.status === "answered") throw new Error(`Cannot apply answered HITL ${record.hitlId} before Session cancellation`);
+              continue;
+            }
+            const accepted = await context.hitl.cancel(record.hitlId, { type: "cancel", reason });
+            await context.hitl.resolve(accepted.hitlId, { type: "dispatching" });
+          }
+        },
+        sessionId,
+        workspaceRoot,
+        reason,
+      });
+      if (cancelled.hitlIds.length === 0) return;
+      const referenced = (await context.hitl.list({ owner: { type: "session", id: sessionId } }))
+        .filter((record) => cancelled.hitlIds.includes(record.hitlId));
+      for (const record of referenced) {
+        if (record.status === "resolved" || record.status === "cancelled") continue;
+        if (record.status !== "answered" || record.response?.type !== "cancel") {
+          throw new Error(`Session cancellation left HITL ${record.hitlId} in ${record.status}`);
+        }
+        await context.hitl.resolve(record.hitlId, { type: "applied" });
+      }
+    }
+
+    async function cancelGoalBudgetHitl(
+      workspaceRoot: string,
+      hitlId: string,
+      reason: string,
+    ): Promise<void> {
+      const context = await contextResolver.resolve(workspaceRoot);
+      const record = (await context.hitl.list()).find((candidate) => candidate.hitlId === hitlId);
+      if (record === undefined) throw new Error(`Goal budget HITL ${hitlId} was not found`);
+      if (record.status === "resolved" || record.status === "cancelled") return;
+      const accepted = record.status === "pending"
+        ? await context.hitl.cancel(hitlId, { type: "cancel", reason })
+        : record;
+      await dispatchAnsweredHitl(workspaceRoot, context.project.slug, accepted);
+    }
+
+    async function reconcileAnsweredHitl(workspaceRoot: string, projectSlug: string): Promise<void> {
+      const context = await contextResolver.resolve(workspaceRoot);
+      for (const record of await context.hitl.list({ statuses: ["answered"] })) {
+        if (record.delivery?.error !== undefined && record.delivery.retryAt === undefined) continue;
+        try {
+          await dispatchAnsweredHitl(workspaceRoot, projectSlug, record);
+        } catch (error) {
+          runtimeLogger.warn("hitl.delivery.reconcile_failed", {
+            error,
+            context: { projectSlug, hitlId: record.hitlId, ownerType: record.owner.type },
+          });
+        }
+      }
+    }
+
+    async function continueRunnableToolBatches(workspaceRoot: string, projectSlug: string): Promise<void> {
+      const summaries = await sessionStoreManager.listAllSessionSummaries(workspaceRoot);
+      for (const summary of summaries) {
+        const store = await sessionStoreManager.getOrLoad(summary.sessionId, workspaceRoot);
+        if (!hasRunnableSessionToolBatch(store.getState())) continue;
+        if (executionManager.getSessionFamilyActivity(workspaceRoot, summary.rootSessionId) !== "idle") continue;
+        try {
+          await executionManager.startSessionToolBatchExecution({
+            slug: projectSlug,
+            workspaceRoot,
+            sessionId: summary.sessionId,
+          });
+        } catch (error) {
+          runtimeLogger.warn("session.tool_batch.reconcile_failed", {
+            error,
+            context: { projectSlug, sessionId: summary.sessionId },
+          });
+        }
+      }
+    }
+
     const sessionFamilyStopService = new SessionFamilyStopService({
       sessionFamilyController: {
         acquireStop: (input) => executionManager.acquireSessionFamilyStop(input),
       },
       sessionStoreManager,
-      resolveHitlOwner: async (workspaceRoot) => {
-        const context = await contextResolver.resolve(workspaceRoot);
-        return { projectSlug: context.project.slug, hitl: context.hitl };
-      },
+      cancelSessionToolBatch: (sessionId, workspaceRoot, reason) => (
+        cancelSessionBatchAndHitl(sessionId, workspaceRoot, reason)
+      ),
     });
     executionManager.subscribeSessionRuntimeChanges((change) => {
       const projectSlug = projectSlugsByWorkspace.get(change.workspaceRoot);
@@ -509,13 +741,18 @@ export async function createRuntime(
         }
       }
       if (change.activity === "idle") {
-        void continuationService.onFamilyIdle(change.workspaceRoot, change.rootSessionId).catch((error) => {
-          runtimeLogger.warn("goal.continuation.idle.failed", {
-            error,
-            context: { rootSessionId: change.rootSessionId },
-            meta: { workspaceRoot: change.workspaceRoot },
+        void continueRunnableToolBatches(change.workspaceRoot, projectSlug)
+          .then(async () => {
+            if (executionManager.getSessionFamilyActivity(change.workspaceRoot, change.rootSessionId) !== "idle") return;
+            await continuationService.onFamilyIdle(change.workspaceRoot, change.rootSessionId);
+          })
+          .catch((error) => {
+            runtimeLogger.warn("session.idle.reconcile_failed", {
+              error,
+              context: { rootSessionId: change.rootSessionId },
+              meta: { workspaceRoot: change.workspaceRoot },
+            });
           });
-        });
         if (automationSchedulersStarted) {
           void getAutomationRuntimeServices(change.workspaceRoot)
             .then(({ scheduler }) => scheduler.tick())
@@ -763,6 +1000,8 @@ export async function createRuntime(
       try {
         projectSlugsByWorkspace.set(workspaceRoot, projectSlug);
         await (await contextResolver.resolve(workspaceRoot)).goalLifecycle.reconcile();
+        await reconcileAnsweredHitl(workspaceRoot, projectSlug);
+        await continueRunnableToolBatches(workspaceRoot, projectSlug);
         await continuationService.reconcileWorkspace(workspaceRoot);
         projectReconcileRetries.delete(key);
       } catch (error) {
@@ -818,7 +1057,9 @@ export async function createRuntime(
       }
       projectSlugsByWorkspace.set(workspaceRoot, projectSlug);
       const context = await contextResolver.resolve(workspaceRoot);
-      const projections = await context.hitl.list({ scope: "project", status: "active" });
+      const views = (await context.hitl.list({ statuses: ["pending", "answered"] }))
+        .filter((record) => record.status === "pending" || requiresInspection(record))
+        .map(toHitlView);
       const families = executionManager.listSessionFamilyActivities().flatMap((family) => (
         family.workspaceRoot === workspaceRoot
           ? [{ projectSlug, rootSessionId: family.rootSessionId, activity: family.activity }]
@@ -835,7 +1076,7 @@ export async function createRuntime(
         hitl: {
           type: "hitl.snapshot",
           projectSlugs: [projectSlug],
-          projections,
+          entries: views.map((view) => ({ projectSlug, view })),
           createdAt,
         },
       };
@@ -896,7 +1137,7 @@ export async function createRuntime(
             hitl: {
               type: "hitl.snapshot",
               projectSlugs: [removed.slug],
-              projections: [],
+              entries: [],
               createdAt,
             },
           },
@@ -910,6 +1151,8 @@ export async function createRuntime(
     const startupContinuationResults = await Promise.allSettled(
       startupProjects.map(async (project) => {
         await (await contextResolver.resolve(project.workspaceRoot)).goalLifecycle.reconcile();
+        await reconcileAnsweredHitl(project.workspaceRoot, project.slug);
+        await continueRunnableToolBatches(project.workspaceRoot, project.slug);
         await continuationService.reconcileWorkspace(project.workspaceRoot);
       }),
     );
@@ -931,18 +1174,22 @@ export async function createRuntime(
       contextResolver,
       listAgentDescriptors: () => defaultAgentDefinitions.map(({ name, displayName }) => ({ name, displayName })),
       removeProject,
-      recoverHitlResumes: async (workspaceRoot) => (await contextResolver.resolve(workspaceRoot)).hitlResumeCoordinator.recover(),
-      listPendingHitlEvents: async () => {
+      respondToHitl,
+      cancelHitl,
+      listHitlSnapshotEvents: async () => {
         const projects = await projectRegistry.list();
-        const projections: HitlProjection[] = [];
+        const entries: Array<{ projectSlug: string; view: HitlView }> = [];
         for (const project of projects) {
           const context = await contextResolver.resolve(project.workspaceRoot);
-          projections.push(...await context.hitl.list({ scope: "project", status: "active" }));
+          const views = (await context.hitl.list({ statuses: ["pending", "answered"] }))
+            .filter((record) => record.status === "pending" || requiresInspection(record))
+            .map(toHitlView);
+          entries.push(...views.map((view) => ({ projectSlug: project.slug, view })));
         }
         return [{
           type: "hitl.snapshot",
           projectSlugs: projects.map((project) => project.slug),
-          projections,
+          entries,
           createdAt: Date.now(),
         }];
       },

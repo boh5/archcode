@@ -10,11 +10,11 @@ import type {
   GlobalSSESessionRuntimeChangedEvent,
   GlobalSSESessionRuntimeSnapshotEvent,
   GlobalSSEShutdownEvent,
-  HitlRecord,
+  HitlView,
   McpServerStatus,
 } from "@archcode/protocol";
 import type { WebSessionStoreState } from "../store/session-store";
-import { hitlIdentityKey, hitlStore } from "../store/hitl-store";
+import { hitlStore, scopedHitlKey } from "../store/hitl-store";
 import { useMcpStatusStore } from "../store/mcp-status-store";
 import { runtimeFamilyKey, sessionRuntimeStore } from "../store/session-runtime-store";
 import {
@@ -288,7 +288,7 @@ describe("parseSSEEvent", () => {
     expect(parsed.createdAt).toBe(1700000000000);
   });
 
-  test("parses hitl.event with full projection", () => {
+  test("parses hitl.event with its canonical view", () => {
     const event = hitlRealtimeEvent({
       projectSlug: "proj",
       hitlId: "hitl-1",
@@ -322,11 +322,11 @@ describe("parseSSEEvent", () => {
   });
 
   test("parses authoritative hitl.snapshot reset events", () => {
-    const projection = hitlRealtimeEvent({ projectSlug: "proj", hitlId: "hitl-1" }).projection;
+    const view = hitlRealtimeEvent({ projectSlug: "proj", hitlId: "hitl-1" }).view;
     const event = {
       type: "hitl.snapshot" as const,
       projectSlugs: ["proj"],
-      projections: [projection],
+      entries: [{ projectSlug: "proj", view }],
       createdAt: 1700000000000,
     };
 
@@ -509,32 +509,11 @@ describe("handleSSEEvent", () => {
     ))).toBe(true);
   });
 
-  test("session-local HITL events only invalidate the owning session query", () => {
-    const envelope: GlobalSessionEventEnvelope = {
-      type: "event",
-      slug: "proj",
-      sessionId: "session-1",
-      eventId: 3,
-      createdAt: Date.now(),
-      payload: {
-        type: "hitl.resolved",
-        hitlId: "hitl-123",
-        status: "resolved",
-        response: { type: "permission_decision", decision: "approve_once", comment: "ok" },
-      },
-      agentName: "engineer",
-    };
-
-    handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
-
-    expect(mockApplyRemoteEnvelope).toHaveBeenCalledWith(envelope);
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({
-      queryKey: ["projects", "proj", "sessions", "session-1"],
-    });
-    expect(mockInvalidateQueries).toHaveBeenCalledTimes(1);
+  test("session-local HITL stream events are no longer accepted", () => {
+    expect(parseSSEEvent("event", JSON.stringify({ type: "event", payload: { type: "hitl.resolved" } }))).toBeNull();
   });
 
-  test("stores full hitl.event projection and invalidates related session query", () => {
+  test("stores the scoped hitl.event view without touching query caches", () => {
     const event = hitlRealtimeEvent({
       projectSlug: "proj",
       hitlId: "hitl-1",
@@ -542,9 +521,8 @@ describe("handleSSEEvent", () => {
 
     handleSSEEvent({ event: "hitl.event", data: JSON.stringify(event) }, deps);
 
-    expect(hitlStore.getState().projections[hitlIdentityKey(event.projection)]).toEqual(event.projection);
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "sessions", "session-1"] });
-    expect(mockInvalidateQueries).toHaveBeenCalledTimes(1);
+    expect(hitlStore.getState().views[scopedHitlKey("proj", event.view)]).toEqual({ projectSlug: "proj", view: event.view });
+    expect(mockInvalidateQueries).not.toHaveBeenCalled();
   });
 
   test("atomically applies the authoritative hitl.snapshot and marks projects initialized", () => {
@@ -557,15 +535,15 @@ describe("handleSSEEvent", () => {
       data: JSON.stringify({
         type: "hitl.snapshot",
         projectSlugs: ["proj"],
-        projections: [fresh.projection],
+        entries: [{ projectSlug: "proj", view: fresh.view }],
         createdAt: 1700000000001,
       }),
     }, deps);
 
-    expect(hitlStore.getState().projections[hitlIdentityKey(stale.projection)]).toBeUndefined();
-    expect(hitlStore.getState().projections[hitlIdentityKey(fresh.projection)]).toEqual(fresh.projection);
+    expect(hitlStore.getState().views[scopedHitlKey("proj", stale.view)]).toBeUndefined();
+    expect(hitlStore.getState().views[scopedHitlKey("proj", fresh.view)]).toEqual({ projectSlug: "proj", view: fresh.view });
     expect(hitlStore.getState().isProjectInitialized("proj")).toBe(true);
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj"], exact: false });
+    expect(mockInvalidateQueries).not.toHaveBeenCalled();
   });
 
 
@@ -686,7 +664,7 @@ describe("handleSSEEvent", () => {
     hitlStore.getState().applySnapshot({
       type: "hitl.snapshot",
       projectSlugs: ["proj"],
-      projections: [],
+      entries: [],
       createdAt: 1,
     });
     const laggedEvent: GlobalSSELaggedEvent = {
@@ -776,53 +754,17 @@ describe("handleSSEEvent", () => {
   });
 });
 
-function hitlRealtimeEvent(input: {
-  projectSlug: string;
-  hitlId: string;
-  owner?: GlobalSSEHitlRealtimeEvent["owner"];
-  source?: GlobalSSEHitlRealtimeEvent["projection"]["source"];
-  ancestry?: GlobalSSEHitlRealtimeEvent["projection"]["ancestry"];
-  status?: GlobalSSEHitlRealtimeEvent["projection"]["status"];
-  payloadType?: "hitl.request" | "hitl.resolved";
-}): GlobalSSEHitlRealtimeEvent {
-  const owner = input.owner ?? { projectSlug: input.projectSlug, ownerType: "session", ownerId: "session-1" };
-  const source = input.source ?? { type: "ask_user", sessionId: "session-1", toolCallId: "call-1" };
+function hitlRealtimeEvent(input: { projectSlug: string; hitlId: string; status?: HitlView["status"] }): GlobalSSEHitlRealtimeEvent {
   const status = input.status ?? "pending";
-  const record: HitlRecord = {
+  const view: HitlView = {
     hitlId: input.hitlId,
-    owner,
-    blockingKey: `${owner.ownerType}:${owner.ownerId}:hitl:${input.hitlId}`,
-    source,
+    owner: { type: "session", id: "session-1" },
+    source: { type: "ask_user", toolCallId: "call-1" },
     status,
-    displayPayload: {
-      title: "Need input",
-      questions: [{ header: "Q1", question: "Continue?", options: [], custom: true }],
-      redacted: true,
-    },
+    displayPayload: { title: "Need input", redacted: true },
+    allowedActions: status === "pending" ? ["answer", "cancel"] : [],
     createdAt: "2026-07-08T00:00:00.000Z",
     updatedAt: "2026-07-08T00:00:00.000Z",
   };
-  const projection: GlobalSSEHitlRealtimeEvent["projection"] = {
-    hitlId: record.hitlId,
-    project: { slug: input.projectSlug },
-    owner: record.owner,
-    ...(input.ancestry === undefined ? {} : { ancestry: input.ancestry }),
-    source: record.source,
-    status,
-    displayPayload: record.displayPayload,
-    allowedActions: status === "pending" ? ["answer", "cancel"] : [],
-    createdAt: record.createdAt,
-    updatedAt: record.updatedAt,
-  };
-  return {
-    type: "hitl.event",
-    projectSlug: input.projectSlug,
-    owner,
-    hitlId: input.hitlId,
-    createdAt: 1700000000000,
-    payload: input.payloadType === "hitl.resolved"
-      ? { type: "hitl.resolved" }
-      : { type: "hitl.request" },
-    projection,
-  };
+  return { type: "hitl.event", projectSlug: input.projectSlug, hitlId: input.hitlId, createdAt: 1700000000000, payload: { type: "hitl.request" }, view };
 }

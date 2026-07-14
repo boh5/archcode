@@ -9,7 +9,6 @@ export interface ExecutionEndEvent {
   error?: string;
   blockedByHitlIds?: string[];
   blockedToolCallId?: string;
-  blockedHitl?: SessionHitlBlocker;
 }
 
 /** Durable Session execution-directory transition. Session storage remains at the canonical project root. */
@@ -41,19 +40,6 @@ export interface SessionExecutionRecord {
   endedAt?: number;
   durationMs?: number;
   error?: string;
-}
-
-export interface SessionHitlBlocker {
-  hitlId: string;
-  blockingKey?: string;
-  source?: HitlSource;
-  toolCallId?: string;
-  toolName?: string;
-  step?: number;
-  assistantMessageId?: string;
-  displayInput?: unknown;
-  blockedAt: string;
-  reason?: string;
 }
 
 export type SessionTodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
@@ -420,8 +406,7 @@ export type StreamEvent =
   | LlmRecoveryEvent
   | LlmRecoveryFailedEvent
   | CompactEvent
-  | CompressionStreamEvent
-  | HitlStreamEvent;
+  | CompressionStreamEvent;
 
 export const MAX_EVENTS = 10000;
 
@@ -619,8 +604,8 @@ export interface GlobalSSESessionRuntimeChangedEvent extends SessionFamilyRuntim
 export interface GlobalSSEHitlSnapshotEvent {
   type: "hitl.snapshot";
   projectSlugs: string[];
-  /** Complete active HITL projection set for the listed projects. */
-  projections: HitlProjection[];
+  /** Complete active HITL view set for the listed projects. */
+  entries: Array<{ projectSlug: string; view: HitlView }>;
   createdAt: number;
 }
 
@@ -632,11 +617,10 @@ export type GlobalSSEHitlEventPayload =
 export interface GlobalSSEHitlRealtimeEvent {
   type: "hitl.event";
   projectSlug: string;
-  owner: HitlOwnerKey;
   hitlId: string;
   createdAt: number;
   payload: GlobalSSEHitlEventPayload;
-  projection: HitlProjection;
+  view: HitlView;
 }
 
 export type GlobalSSEResourceChangedEvent =
@@ -843,15 +827,11 @@ export interface SessionProjection {
   stats: SessionStats;
   executions: SessionExecutionRecord[];
   executionCount: number;
-  blockedHitl?: SessionHitlBlocker;
-  blockedByHitlIds?: string[];
   isRunning: boolean;
   isStreamingModel: boolean;
   currentExecutionId?: string;
   currentAssistantMessageId?: string;
   modelInfo?: SessionModelInfo | null;
-  /** Owner-local HITL records projected from hitl.request/hitl.resolved stream events. */
-  hitlRequests?: HitlRecord[];
   /** DCP-like dynamic compression state. Cleared when hard compact emits a compact event. */
   compression?: CompressionStateSnapshot;
   /** Projection-only compression block display parts. Canonical messages remain unchanged. */
@@ -950,8 +930,6 @@ export interface Session {
   eventCursor?: number;
   modelInfo: SessionModelInfo | null;
   agentName: string;
-  blockedHitl?: SessionHitlBlocker;
-  blockedByHitlIds?: string[];
 }
 
 export type DiffLineType = "context" | "add" | "delete";
@@ -1004,8 +982,6 @@ export type GoalStatus =
   | "failed"
   | "cancelled";
 
-export type GoalBlockerKind = "approval" | "question" | "budget" | "permission" | "tool_error";
-
 export type GoalEvidenceRefKind =
   | "session"
   | "message"
@@ -1040,11 +1016,9 @@ export interface GoalReviewReceipt {
   decidedAt: string;
 }
 
-export interface GoalBlocker {
-  kind: GoalBlockerKind;
-  summary: string;
+export interface GoalBudgetApproval {
   hitlId: string;
-  source?: string;
+  approvalPoint: string;
   createdAt: string;
 }
 
@@ -1074,16 +1048,13 @@ export interface GoalState {
   useWorktree: boolean;
   worktree?: GoalWorktree;
   status: GoalStatus;
-  blocker?: GoalBlocker;
+  budgetApproval?: GoalBudgetApproval;
   attempt: number;
   reviewGeneration: number;
   lastFailureSummary?: string;
   budget?: GoalBudgetSummary;
-  pendingHitlIds: string[];
-  /** Durable attachment refs. Every attached HITL contributes its hitlId; an external approval ref may also be present. */
-  approvalRefs: string[];
-  /** HITL ids whose Goal-side effect committed, even if owner-record terminalization is still pending. */
-  appliedHitlIds: string[];
+  /** Budget HITL ids whose Goal-side decision committed atomically. */
+  appliedBudgetHitlIds: string[];
   mainSessionId: string;
   childSessionIds: string[];
   review?: GoalReviewReceipt;
@@ -1106,25 +1077,14 @@ export type HitlAttentionStatus = "clear" | "waiting_for_human";
 
 export const HITL_RECENT_TERMINAL_LIMIT = 20;
 
-export type HitlOwnerType = "session" | "goal";
+export type HitlOwner =
+  | { type: "session"; id: string }
+  | { type: "goal"; id: string };
 
-export interface HitlOwnerKey {
-  projectSlug: string;
-  ownerType: HitlOwnerType;
-  ownerId: string;
-  workspaceRoot?: never;
-}
-
-export interface HitlIdentity {
-  owner: HitlOwnerKey;
-  hitlId: string;
-}
-
-export function hitlIdentityKey(identity: HitlIdentity): string {
+export function hitlIdentityKey(identity: { owner: HitlOwner; hitlId: string }): string {
   return JSON.stringify([
-    identity.owner.projectSlug,
-    identity.owner.ownerType,
-    identity.owner.ownerId,
+    identity.owner.type,
+    identity.owner.id,
     identity.hitlId,
   ]);
 }
@@ -1132,12 +1092,9 @@ export function hitlIdentityKey(identity: HitlIdentity): string {
 export type HitlStatus = "pending" | "answered" | "resolved" | "cancelled";
 
 export type HitlSource =
-  | { type: "ask_user"; sessionId: string; toolCallId?: string }
-  | { type: "tool_permission"; sessionId: string; toolCallId: string; toolName: string }
-  | { type: "goal_approval"; goalId: string; approvalPoint?: string }
-  | { type: "goal_review"; goalId: string; reviewGeneration: number; reviewerSessionId: string }
-  | { type: "goal_budget"; goalId: string; approvalPoint?: string }
-  | { type: "goal_question"; goalId: string; questionKey: string };
+  | { type: "ask_user"; toolCallId: string }
+  | { type: "tool_permission"; toolCallId: string; toolName: string }
+  | { type: "goal_budget"; approvalPoint: string };
 
 export interface HitlQuestionDisplayOption {
   label: string;
@@ -1160,80 +1117,26 @@ export interface HitlDisplayPayload {
   redacted: true;
 }
 
-export interface HitlDeliveryMetadata {
-  claimId: string;
-  claimedAt: string;
-  claimedBy?: string;
-  intent: "respond" | "cancel";
-  attempt: number;
-  lastError?: string;
-  failedAt?: string;
-  failureReason?: string;
-  nextAttemptAt?: string;
-}
-
 export type HitlResponse =
   | { type: "question_answer"; answers: string[]; comment?: string; answeredBy?: string }
   | { type: "permission_decision"; decision: "approve_once" | "approve_always" | "deny"; comment?: string; decidedBy?: string }
-  | { type: "approval_decision"; decision: "approved" | "denied"; comment?: string; decidedBy?: string }
-  | { type: "review_outcome"; outcome: GoalReviewVerdict; comment?: string; receipt: GoalReviewReceipt }
+  | { type: "budget_decision"; decision: "approved" | "denied"; comment?: string; decidedBy?: string }
   | { type: "cancel"; reason: string; cancelledBy?: string };
-
-export interface HitlRecord {
-  hitlId: string;
-  owner: HitlOwnerKey;
-  /** Canonical root identity required exactly when owner.ownerType is session. */
-  sessionRootId?: string;
-  blockingKey: string;
-  source: HitlSource;
-  status: HitlStatus;
-  displayPayload: HitlDisplayPayload;
-  response?: HitlResponse;
-  delivery?: HitlDeliveryMetadata;
-  createdAt: string;
-  updatedAt: string;
-  resolvedAt?: string;
-}
-
-export interface HitlFile {
-  owner: HitlOwnerKey;
-  pending: HitlRecord[];
-  recentTerminal: HitlRecord[];
-  updatedAt: string;
-}
 
 export type HitlAllowedAction = "answer" | "approve" | "deny" | "cancel";
 
-export interface HitlProjectionContext {
-  rootSessionId?: string;
-  parentSessionId?: string;
-  ancestorSessionIds?: string[];
-  goalId?: string;
-  projectionPath?: string[];
-}
-
-export interface HitlProjection {
+export interface HitlView {
   hitlId: string;
-  project: { slug: string; name?: string };
-  owner: HitlOwnerKey;
-  ancestry?: HitlProjectionContext;
+  owner: HitlOwner;
   source: HitlSource;
   status: HitlStatus;
   displayPayload: HitlDisplayPayload;
   allowedActions: HitlAllowedAction[];
-  /** Delivery stopped after the answer was accepted and requires owner-specific inspection. */
   requiresInspection?: true;
   createdAt: string;
   updatedAt: string;
   resolvedAt?: string;
 }
-
-// ─── HITL Stream Events ───
-
-export type HitlStreamEvent =
-  | { type: "hitl.request"; request: HitlRecord }
-  | { type: "hitl.updated"; record: HitlRecord }
-  | { type: "hitl.resolved"; hitlId: string; status: Extract<HitlStatus, "resolved" | "cancelled">; response?: HitlResponse };
 
 // ─── Automation Types ───
 

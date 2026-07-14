@@ -4,11 +4,11 @@ import { join } from "node:path";
 
 import type { SessionFile } from "../store/helpers";
 import { silentLogger } from "../logger";
-import { createTestProjectContext } from "../tools/test-project-context";
 import {
   GoalLeadContinuationService,
   buildGoalContinuationPrompt,
 } from "./goal-lead-continuation";
+import { GoalStateManager } from "./state";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-lead-continuation", crypto.randomUUID());
 
@@ -37,11 +37,15 @@ describe("GoalLeadContinuationService", () => {
     expect(fixture.starts[0]?.userMessage).toContain(`"reviewGeneration": ${fixture.goal.reviewGeneration}`);
   });
 
-  test("stops for pending HITL, blocked budget, terminal status, and wrong root identity", async () => {
+  test("stops for pending budget approval, blocked budget, terminal status, and wrong root identity", async () => {
     const pending = await createFixture("stop-pending");
-    await pending.context.goalState.attachHitlBlocker(pending.goal.id, {
-      blocker: { kind: "question", summary: "answer", hitlId: "hitl-1" },
-      approvalRef: "hitl-1",
+    await pending.context.goalState.updateBudgetSummary(pending.goal.id, {
+      status: "warning",
+      updatedAt: new Date().toISOString(),
+    });
+    await pending.context.goalState.attachBudgetApproval(pending.goal.id, {
+      hitlId: "hitl-1",
+      approvalPoint: "warning-1",
     });
     const budget = await createFixture("stop-budget");
     await budget.context.goalState.updateBudgetSummary(budget.goal.id, {
@@ -65,7 +69,7 @@ describe("GoalLeadContinuationService", () => {
     expect(await fixture.service.kick(fixture.workspaceRoot, fixture.goal.id)).toBe("ineligible");
     expect(fixture.starts).toHaveLength(0);
 
-    const raced = await createFixture("child-hitl-race", { startErrorOnce: namedError("SessionHitlBlockedError") });
+    const raced = await createFixture("child-hitl-race", { startErrorOnce: namedError("SessionToolBatchActiveError") });
     expect(await raced.service.kick(raced.workspaceRoot, raced.goal.id)).toBe("ineligible");
     expect(raced.starts).toHaveLength(0);
   });
@@ -192,7 +196,15 @@ async function createFixture(
 ) {
   const workspaceRoot = join(TMP_ROOT, name);
   await mkdir(workspaceRoot, { recursive: true });
-  const context = createTestProjectContext(workspaceRoot);
+  const context = {
+    project: {
+      slug: "test-project",
+      name: "Test Project",
+      workspaceRoot,
+      addedAt: new Date().toISOString(),
+    },
+    goalState: new GoalStateManager(workspaceRoot, silentLogger),
+  };
   const mainSessionId = crypto.randomUUID();
   const goal = await context.goalState.commit({
     id: crypto.randomUUID(),
@@ -216,7 +228,7 @@ async function createFixture(
   let startError = options.startErrorOnce;
   let getSessionError = options.getSessionErrorOnce;
   const service = new GoalLeadContinuationService({
-    projectContextResolver: { resolve: async () => context },
+    projectContextResolver: { resolve: async () => context as never },
     sessionRuntime: {
       getSessionFile: async (_workspaceRoot, sessionId) => {
         if (getSessionError !== undefined) {
@@ -229,7 +241,7 @@ async function createFixture(
         return found;
       },
       getSessionFamilyActivity: () => "idle",
-      listSessionFamilyBlockedHitlIds: async () => [...(options.familyBlockedHitlIds ?? [])],
+      listSessionFamilyToolBatchHitlIds: async () => [...(options.familyBlockedHitlIds ?? [])],
       startCheckedExecutionWithinGoalClaim: mock(async (input) => {
         if (startError !== undefined) {
           const error = startError;

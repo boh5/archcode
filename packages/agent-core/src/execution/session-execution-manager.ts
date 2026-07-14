@@ -16,13 +16,7 @@ import {
   DepthLimitError,
   SessionCwdTransitionConflictError,
   SessionCwdTransitionInProgressError,
-  SessionHitlBlockedError,
-  SessionHitlCancelOnlyLeaseError,
-  SessionHitlResumeIdentityMismatchError,
-  SessionHitlResumeConflictError,
-  SessionHitlResumeInProgressError,
-  SessionHitlResumeLeaseExpiredError,
-  SessionHitlResumeLeaseNotActivatedError,
+  SessionToolBatchActiveError,
 } from "../agents/errors";
 import type { AgentResult } from "../agents/types";
 import type { SlashCommandResult } from "../commands/types";
@@ -43,7 +37,7 @@ import {
 import { resolveSessionExecutionIdentity } from "./session-execution-identity";
 import {
   SessionDeleteInProgressError,
-  type SessionDeletionPreflight,
+  type SessionDeletionLifecycle,
 } from "./session-deletion";
 import {
   SessionFamilyActiveError,
@@ -69,7 +63,8 @@ const MAX_CWD_TRANSITIONS_PER_EXECUTION = 4;
 
 export type SessionExecutionOrigin =
   | "user_message"
-  | "tool_call";
+  | "tool_call"
+  | "tool_batch";
 
 export interface ActiveSessionExecution {
   readonly sessionId: string;
@@ -83,26 +78,6 @@ export interface ActiveSessionExecution {
   readonly startedAt: number;
   /** Durable id shared with the Session execution-start record. */
   readonly executionId?: string;
-}
-
-export interface SessionHitlResumeLease {
-  /** Unique in-process generation guarding stale releases. */
-  readonly generation: symbol;
-  readonly abortSignal: AbortSignal;
-  /** Validates the asynchronously loaded Session identity before replay. */
-  activate(): void;
-  /** The only cwd transition allowed while this resume generation is active. */
-  acquireSessionCwdTransition(workspaceRoot: string, sessionId: string): () => void;
-  release(): void;
-}
-
-export interface ReserveSessionHitlResumeOptions {
-  /**
-   * Serializes a durable acknowledgement without permitting replay. This mode
-   * may bypass stale child/root cwd alignment because the caller must not run
-   * tools, the model, or a cwd transition.
-   */
-  readonly mode?: "replay" | "cancel_only";
 }
 
 // Session execution lifecycle:
@@ -132,18 +107,6 @@ interface PendingSessionExecution extends Omit<ActiveSessionExecution, "promise"
 interface SessionCwdTransitionLeaseState {
   readonly token: symbol;
   readonly blockRootExecution: boolean;
-}
-
-interface SessionHitlResumeLeaseState {
-  readonly token: symbol;
-  readonly workspaceRoot: string;
-  readonly sessionId: string;
-  readonly rootSessionId: string;
-  readonly mode: "replay" | "cancel_only";
-  readonly abortController: AbortController;
-  readonly completed: Promise<void>;
-  readonly complete: () => void;
-  activated: boolean;
 }
 
 interface SessionDeletionLeaseState {
@@ -198,16 +161,13 @@ interface SessionExecutionManagerConfig {
   ) => boolean;
   readonly resolveRootSessionId: (sessionId: string, workspaceRoot: string) => Promise<string>;
   readonly buildSessionTree: (workspaceRoot: string, rootSessionId: string) => Promise<SessionTreeResponse>;
-  readonly listSessionFamilyBlockedHitlIds: (workspaceRoot: string, rootSessionId: string) => Promise<readonly string[]>;
+  readonly listSessionFamilyToolBatchHitlIds: (workspaceRoot: string, rootSessionId: string) => Promise<readonly string[]>;
   readonly trackSession: (workspaceRoot: string, sessionId: string) => void;
   readonly untrackSession: (workspaceRoot: string, sessionId: string) => void;
   readonly executionScopeValidator: Pick<SessionExecutionScopeValidator, "validate">;
   readonly executionClaimCoordinator?: SessionExecutionClaimCoordinator;
   readonly goalDelegationAdmission?: SessionGoalDelegationAdmission;
-  readonly sessionHitlExecutionGate?: {
-    assertAllowed(workspaceRoot: string, sessionId: string): Promise<void>;
-  };
-  readonly deletionPreflight?: SessionDeletionPreflight;
+  readonly deletionLifecycle?: SessionDeletionLifecycle;
   readonly sessionFamilyStopTimeoutMs?: number;
   readonly logger: Logger;
 }
@@ -220,7 +180,6 @@ export class SessionExecutionManager {
   readonly #active = new Map<string, ActiveSessionExecution | PendingSessionExecution>();
   readonly #childSlots = new Map<string, number>();
   readonly #cwdTransitions = new Map<string, SessionCwdTransitionLeaseState>();
-  readonly #hitlResumes = new Map<string, SessionHitlResumeLeaseState>();
   readonly #pendingChildLaunches = new Map<string, PendingChildLaunchFamilyState>();
   readonly #deletions = new Map<string, SessionDeletionLeaseState>();
   readonly #familyStops = new Map<string, SessionFamilyStopLeaseState>();
@@ -247,7 +206,7 @@ export class SessionExecutionManager {
     }
     const sessionState = this.#config.getSessionStore(input.sessionId, input.workspaceRoot)?.getState();
     if (sessionState === undefined) throw new SessionFamilyIdentityUnavailableError(input.sessionId);
-    this.#assertSessionStartAllowed(input.workspaceRoot, input.sessionId, sessionState);
+    this.#assertSessionStartAllowed(input.workspaceRoot, input.sessionId, sessionState, input.origin === "tool_batch");
     const rootSessionId = sessionState.rootSessionId;
     const previousFamilyActivity = this.getSessionFamilyActivity(input.workspaceRoot, rootSessionId);
 
@@ -298,6 +257,28 @@ export class SessionExecutionManager {
     return await this.#startCheckedExecution(input, true);
   }
 
+  /** Wakes an already-persisted batch through the ordinary execution claim and abort path. */
+  async startSessionToolBatchExecution(input: Omit<StartSessionExecutionInput, "userMessage" | "origin">): Promise<ActiveSessionExecution> {
+    const execution = await this.#startCheckedExecution({ ...input, userMessage: "", origin: "tool_batch" }, true);
+    await this.#updateChildSessionLinkForExecution(input.workspaceRoot, input.sessionId, "running");
+    void execution.promise.finally(async () => {
+      const store = await this.#config.loadSessionStore(input.sessionId, input.workspaceRoot);
+      const status = childTerminalStatus(store.getState().executions.at(-1), execution.abortController.signal);
+      await this.#updateChildSessionLinkForExecution(input.workspaceRoot, input.sessionId, status);
+    }).catch((error) => {
+      this.#logger.warn("session.tool_batch.child_link_update_failed", {
+        context: { sessionId: input.sessionId },
+        meta: { workspaceRoot: input.workspaceRoot },
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+    return execution;
+  }
+
+  async listSessionFamilyToolBatchHitlIds(workspaceRoot: string, rootSessionId: string): Promise<readonly string[]> {
+    return await this.#config.listSessionFamilyToolBatchHitlIds(workspaceRoot, rootSessionId);
+  }
+
   /** Checked Goal start for callers already holding the Goal execution claim lock. */
   async startCheckedExecutionWithinGoalClaim(input: StartSessionExecutionInput): Promise<ActiveSessionExecution> {
     return await this.#startCheckedExecution(input, false);
@@ -319,7 +300,6 @@ export class SessionExecutionManager {
       if (loadedState.parentSessionId !== undefined) {
         await this.#config.loadSessionStore(loadedState.rootSessionId, input.workspaceRoot);
       }
-      await this.#config.sessionHitlExecutionGate?.assertAllowed(input.workspaceRoot, input.sessionId);
       const claimedScope = executionScopeSnapshot(store.getState());
       const claimGoalId = claimedScope.goalId;
       const validateAndStart = async (): Promise<ActiveSessionExecution> => {
@@ -338,7 +318,6 @@ export class SessionExecutionManager {
             buildSessionTree: this.#config.buildSessionTree,
           },
         }),
-        entry: { kind: "user_message" },
       });
 
       const currentState = store.getState();
@@ -355,10 +334,10 @@ export class SessionExecutionManager {
       if (activity !== "idle") {
         throw new SessionFamilyActiveError(input.sessionId, currentState.rootSessionId, activity);
       }
-      if (currentState.goalId !== undefined) {
-        const blockedByHitlIds = await this.#config.listSessionFamilyBlockedHitlIds(input.workspaceRoot, currentState.rootSessionId);
-        if (blockedByHitlIds.length > 0) {
-          throw new SessionHitlBlockedError(input.sessionId, [...blockedByHitlIds]);
+      if (currentState.goalId !== undefined && input.origin !== "tool_batch") {
+        const toolBatchHitlIds = await this.#config.listSessionFamilyToolBatchHitlIds(input.workspaceRoot, currentState.rootSessionId);
+        if (toolBatchHitlIds.length > 0) {
+          throw new SessionToolBatchActiveError(input.sessionId, [...toolBatchHitlIds]);
         }
         const activityAfterBlockerRead = this.getSessionFamilyActivity(input.workspaceRoot, currentState.rootSessionId);
         if (activityAfterBlockerRead !== "idle") {
@@ -390,11 +369,9 @@ export class SessionExecutionManager {
 
   #cancelSessionSubtree(workspaceRoot: string, sessionId: string): boolean {
     const executions = this.#collectActiveCascade(workspaceRoot, sessionId);
-    const resumes = this.#collectHitlResumeCascade(workspaceRoot, sessionId);
-    if (executions.length === 0 && resumes.length === 0) return false;
+    if (executions.length === 0) return false;
 
     for (const execution of executions) this.#cancelExecution(execution, "Session cancelled");
-    for (const resume of resumes) resume.abortController.abort(new Error("Session cancelled"));
     return true;
   }
 
@@ -479,23 +456,14 @@ export class SessionExecutionManager {
 
   async abortAll(): Promise<void> {
     const executions = [...this.#active.values()];
-    const resumes = [...this.#hitlResumes.values()];
     for (const execution of executions) this.#cancelExecution(execution, "Session cancelled");
-    for (const resume of resumes) resume.abortController.abort(new Error("Session cancelled"));
-
-    await Promise.allSettled([
-      ...executions.map((execution) => execution.promise),
-      ...resumes.map((resume) => resume.completed),
-    ]);
+    await Promise.allSettled(executions.map((execution) => execution.promise));
   }
 
   getSessionFamilyActivity(workspaceRoot: string, rootSessionId: string): SessionFamilyActivity {
     const key = scopedKey(workspaceRoot, rootSessionId);
     if (this.#familyStops.has(key)) return "stopping";
     if ((this.#pendingChildLaunches.get(key)?.launches.size ?? 0) > 0) return "running";
-    for (const resume of this.#hitlResumes.values()) {
-      if (resume.workspaceRoot === workspaceRoot && resume.rootSessionId === rootSessionId) return "running";
-    }
     for (const execution of this.#active.values()) {
       if (execution.workspaceRoot === workspaceRoot && execution.rootSessionId === rootSessionId) return "running";
     }
@@ -511,10 +479,6 @@ export class SessionExecutionManager {
     for (const pending of this.#pendingChildLaunches.values()) {
       const key = scopedKey(pending.workspaceRoot, pending.rootSessionId);
       families.set(key, { workspaceRoot: pending.workspaceRoot, rootSessionId: pending.rootSessionId });
-    }
-    for (const resume of this.#hitlResumes.values()) {
-      const key = scopedKey(resume.workspaceRoot, resume.rootSessionId);
-      families.set(key, { workspaceRoot: resume.workspaceRoot, rootSessionId: resume.rootSessionId });
     }
     for (const stop of this.#familyStops.values()) {
       const key = scopedKey(stop.workspaceRoot, stop.rootSessionId);
@@ -590,116 +554,10 @@ export class SessionExecutionManager {
     };
   }
 
-  /**
-   * Claims exclusive ownership of one Session for durable HITL replay and
-   * continuation. Related Sessions may keep running; a root-scoped cwd
-   * transition is acquired separately only when the resumed tool needs it.
-   */
-  reserveSessionHitlResume(
-    workspaceRoot: string,
-    sessionId: string,
-    rootSessionId: string,
-    options: ReserveSessionHitlResumeOptions = {},
-  ): SessionHitlResumeLease {
-    this.#assertWorkspaceOpen(workspaceRoot);
-    const mode = options.mode ?? "replay";
-    const loadedState = this.#config.getSessionStore(sessionId, workspaceRoot)?.getState();
-    if (loadedState !== undefined && loadedState.rootSessionId !== rootSessionId) {
-      throw new SessionHitlResumeIdentityMismatchError(sessionId, rootSessionId, loadedState.rootSessionId);
-    }
-    const familyKey = scopedKey(workspaceRoot, rootSessionId);
-    const resumeKey = scopedKey(workspaceRoot, sessionId);
-    if (this.#familyStops.has(familyKey)) {
-      throw new SessionFamilyStopInProgressError(sessionId, rootSessionId);
-    }
-    if (this.#deletions.has(familyKey)) {
-      throw new SessionDeleteInProgressError(sessionId, rootSessionId);
-    }
-    if (this.#hitlResumes.has(resumeKey)) {
-      throw new SessionHitlResumeInProgressError(sessionId, rootSessionId);
-    }
-    if (this.#cwdTransitions.has(familyKey)) {
-      throw new SessionCwdTransitionInProgressError(sessionId, rootSessionId);
-    }
-
-    const conflictingSessionIds = new Set<string>();
-    if (this.#active.has(resumeKey)) conflictingSessionIds.add(sessionId);
-    for (const pendingSessionId of this.#pendingChildLaunches.get(familyKey)?.launches.values() ?? []) {
-      if (pendingSessionId === sessionId) conflictingSessionIds.add(sessionId);
-    }
-    if (conflictingSessionIds.size > 0) {
-      throw new SessionHitlResumeConflictError(sessionId, [...conflictingSessionIds].sort());
-    }
-
-    this.#config.sessionAgentManager.acquireSlot(workspaceRoot, sessionId);
-    const token = Symbol(`session-hitl-resume:${resumeKey}`);
-    const abortController = new AbortController();
-    let complete!: () => void;
-    const completed = new Promise<void>((resolve) => { complete = resolve; });
-    const previousFamilyActivity = this.getSessionFamilyActivity(workspaceRoot, rootSessionId);
-    this.#hitlResumes.set(resumeKey, {
-      token,
-      workspaceRoot,
-      sessionId,
-      rootSessionId,
-      mode,
-      abortController,
-      completed,
-      complete,
-      activated: false,
-    });
-    this.#publishSessionRuntimeChange(workspaceRoot, rootSessionId, previousFamilyActivity);
-    let released = false;
-    return {
-      generation: token,
-      abortSignal: abortController.signal,
-      activate: () => {
-        const current = this.#hitlResumes.get(resumeKey);
-        if (released || current?.token !== token) {
-          throw new SessionHitlResumeLeaseExpiredError(sessionId, rootSessionId);
-        }
-        abortController.signal.throwIfAborted();
-        const state = this.#config.getSessionStore(sessionId, workspaceRoot)?.getState();
-        if (state === undefined || state.rootSessionId !== rootSessionId) {
-          throw new SessionHitlResumeIdentityMismatchError(sessionId, rootSessionId, state?.rootSessionId);
-        }
-        if (mode !== "cancel_only") this.#assertSessionFamilyCwdAligned(workspaceRoot, sessionId, state);
-        current.activated = true;
-      },
-      acquireSessionCwdTransition: (nestedWorkspaceRoot, nestedSessionId) => {
-        if (released || this.#hitlResumes.get(resumeKey)?.token !== token) {
-          throw new SessionHitlResumeLeaseExpiredError(sessionId, rootSessionId);
-        }
-        if (this.#hitlResumes.get(resumeKey)?.activated !== true) {
-          throw new SessionHitlResumeLeaseNotActivatedError(sessionId, rootSessionId);
-        }
-        if (mode === "cancel_only") {
-          throw new SessionHitlCancelOnlyLeaseError(sessionId, rootSessionId);
-        }
-        if (nestedWorkspaceRoot !== workspaceRoot || nestedSessionId !== rootSessionId) {
-          throw new SessionHitlResumeInProgressError(nestedSessionId, rootSessionId);
-        }
-        return this.#acquireSessionCwdTransition(workspaceRoot, rootSessionId, false, token);
-      },
-      release: () => {
-        if (released) return;
-        released = true;
-        if (this.#hitlResumes.get(resumeKey)?.token === token) {
-          const activityBeforeRelease = this.getSessionFamilyActivity(workspaceRoot, rootSessionId);
-          this.#hitlResumes.delete(resumeKey);
-          this.#config.sessionAgentManager.releaseSlot(workspaceRoot, sessionId);
-          this.#publishSessionRuntimeChange(workspaceRoot, rootSessionId, activityBeforeRelease);
-        }
-        complete();
-      },
-    };
-  }
-
   #acquireSessionCwdTransition(
     workspaceRoot: string,
     sessionId: string,
     blockRootExecution: boolean,
-    hitlResumeToken?: symbol,
   ): () => void {
     const key = scopedKey(workspaceRoot, sessionId);
     if (this.#familyStops.has(key)) {
@@ -707,14 +565,6 @@ export class SessionExecutionManager {
     }
     if (this.#deletions.has(key)) {
       throw new SessionDeleteInProgressError(sessionId, sessionId);
-    }
-    const conflictingHitlResume = [...this.#hitlResumes.values()].find((resume) => (
-      resume.workspaceRoot === workspaceRoot
-      && resume.rootSessionId === sessionId
-      && resume.token !== hitlResumeToken
-    ));
-    if (conflictingHitlResume !== undefined) {
-      throw new SessionHitlResumeInProgressError(sessionId, conflictingHitlResume.rootSessionId);
     }
     if (this.#cwdTransitions.has(key)) {
       throw new SessionCwdTransitionInProgressError(sessionId, sessionId);
@@ -750,7 +600,7 @@ export class SessionExecutionManager {
     const parentState = request.parentStore.getState();
     const admission = this.#config.goalDelegationAdmission;
     const start = async (goalContext?: SessionGoalDelegationContext): Promise<ChildExecutionHandle> => {
-      await this.#assertGoalFamilyNotBlockedByHitl(workspaceRoot, parentState);
+      await this.#assertGoalFamilyToolBatchReady(workspaceRoot, parentState);
       return await this.#startChildExecution(workspaceRoot, request, goalContext);
     };
     if (admission !== undefined && parentState.goalId !== undefined) {
@@ -850,7 +700,7 @@ export class SessionExecutionManager {
         activeSkills,
       });
 
-      await this.#assertGoalFamilyNotBlockedByHitl(workspaceRoot, parentState);
+      await this.#assertGoalFamilyToolBatchReady(workspaceRoot, parentState);
       this.#config.sessionAgentManager.releaseSlot(workspaceRoot, request.parentSessionId);
       parentSlotReserved = false;
       assertGoalDelegationContext(parentState, goalContext);
@@ -916,12 +766,8 @@ export class SessionExecutionManager {
     };
   }
 
-  /**
-   * Projects a child-owned Session HITL continuation back onto the original
-   * delegate link. The child and its immediate parent are cold-loaded so a
-   * restart does not leave a durable `waiting_for_human` card stale.
-   */
-  async updateChildSessionLinkForHitl(
+  /** Keeps the original delegate link aligned with a cold-started batch execution. */
+  async #updateChildSessionLinkForExecution(
     workspaceRoot: string,
     childSessionId: string,
     status: ToolChildSessionLinkStatus,
@@ -936,7 +782,7 @@ export class SessionExecutionManager {
       .reverse()
       .find((link) => link.childSessionId === childSessionId);
     if (existing === undefined) {
-      this.#logger.warn("session.child_link.hitl_missing", {
+      this.#logger.warn("session.child_link.batch_missing", {
         context: { sessionId: childSessionId, parentSessionId },
         meta: { workspaceRoot, status },
       });
@@ -989,7 +835,7 @@ export class SessionExecutionManager {
     const parentState = request.parentStore.getState();
     const admission = this.#config.goalDelegationAdmission;
     const resume = async (goalContext?: SessionGoalDelegationContext): Promise<ChildExecutionHandle> => {
-      await this.#assertGoalFamilyNotBlockedByHitl(workspaceRoot, parentState);
+      await this.#assertGoalFamilyToolBatchReady(workspaceRoot, parentState);
       return await this.#resumeChildExecution(workspaceRoot, request, goalContext);
     };
     if (admission !== undefined && parentState.goalId !== undefined) {
@@ -1005,10 +851,10 @@ export class SessionExecutionManager {
     return await resume();
   }
 
-  async #assertGoalFamilyNotBlockedByHitl(workspaceRoot: string, state: SessionStoreState): Promise<void> {
+  async #assertGoalFamilyToolBatchReady(workspaceRoot: string, state: SessionStoreState): Promise<void> {
     if (state.goalId === undefined) return;
-    const blockedByHitlIds = await this.#config.listSessionFamilyBlockedHitlIds(workspaceRoot, state.rootSessionId);
-    if (blockedByHitlIds.length > 0) throw new SessionHitlBlockedError(state.sessionId, blockedByHitlIds);
+    const toolBatchHitlIds = await this.#config.listSessionFamilyToolBatchHitlIds(workspaceRoot, state.rootSessionId);
+    if (toolBatchHitlIds.length > 0) throw new SessionToolBatchActiveError(state.sessionId, toolBatchHitlIds);
   }
 
   async #resumeChildExecution(
@@ -1024,7 +870,7 @@ export class SessionExecutionManager {
       throw new ChildSessionNotFoundError(workspaceRoot, request.sessionId);
     }
     const childState = childStore.getState();
-    this.#assertSessionNotBlockedByHitl(request.sessionId, childState);
+    this.#assertSessionToolBatchReady(request.sessionId, childState);
     if (childState.agentName !== request.targetAgentName) {
       throw new ChildSessionAgentMismatchError(request.sessionId, request.targetAgentName, childState.agentName);
     }
@@ -1052,7 +898,7 @@ export class SessionExecutionManager {
     let execution: ActiveSessionExecution;
     try {
       await this.#config.sessionAgentManager.getOrCreate(workspaceRoot, request.sessionId);
-      await this.#assertGoalFamilyNotBlockedByHitl(workspaceRoot, parentState);
+      await this.#assertGoalFamilyToolBatchReady(workspaceRoot, parentState);
       assertGoalDelegationContext(parentState, goalContext);
       this.#appendResumeChildLinkStatus(workspaceRoot, request, existingLink, "running", resumeLinkCreatedAt);
       execution = this.startExecution({
@@ -1129,16 +975,14 @@ export class SessionExecutionManager {
         throw new Error(`Session "${sessionId}" was not found in tree rooted at "${rootSessionId}"`);
       }
 
-      await this.#config.deletionPreflight?.assertDeletable({ workspaceRoot, rootSessionId, sessionIds });
+      await this.#config.deletionLifecycle?.assertDeletable({ workspaceRoot, rootSessionId, sessionIds });
 
       const stuckSessionIds = await this.#cancelAndWaitForSessions(workspaceRoot, sessionIds);
       if (stuckSessionIds.length > 0) {
         throw new SessionDeleteConflictError(stuckSessionIds);
       }
 
-      // Tools already in flight at the first preflight may durably create HITL
-      // while quiescing. Revalidate only after every execution has stopped.
-      await this.#config.deletionPreflight?.assertDeletable({ workspaceRoot, rootSessionId, sessionIds });
+      await this.#config.deletionLifecycle?.prepareForDeletion({ workspaceRoot, rootSessionId, sessionIds });
 
       for (const id of sessionIds) {
         this.#config.sessionAgentManager.dispose(workspaceRoot, id);
@@ -1163,7 +1007,7 @@ export class SessionExecutionManager {
       let userMessage = input.userMessage;
       for (let transitionCount = 0; transitionCount <= MAX_CWD_TRANSITIONS_PER_EXECUTION; transitionCount += 1) {
         const agent = await this.#config.sessionAgentManager.getOrCreate(input.workspaceRoot, input.sessionId);
-        this.#assertSessionStartAllowed(input.workspaceRoot, input.sessionId, agent.store.getState());
+        this.#assertSessionStartAllowed(input.workspaceRoot, input.sessionId, agent.store.getState(), input.origin === "tool_batch");
         this.#eventBridge.attachSession(input.workspaceRoot, input.sessionId, agent.store);
         if (execution.abortController.signal.aborted) return;
 
@@ -1301,21 +1145,16 @@ export class SessionExecutionManager {
         return execution.rootSessionId === rootSessionId;
       });
       const executions = familyExecutions.filter((execution) => !deferredAncestorIds.has(execution.sessionId));
-      const resumes = [...this.#hitlResumes.values()].filter((resume) => (
-        resume.workspaceRoot === workspaceRoot && resume.rootSessionId === rootSessionId
-      ));
       const pendingChildSessionIds = [...(this.#pendingChildLaunches.get(key)?.launches.values() ?? [])];
 
       for (const execution of familyExecutions) this.#cancelExecution(execution, "Session family cancelled");
-      for (const resume of resumes) resume.abortController.abort(new Error("Session family stopped"));
 
-      if (executions.length === 0 && resumes.length === 0 && pendingChildSessionIds.length === 0) return;
+      if (executions.length === 0 && pendingChildSessionIds.length === 0) return;
 
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) {
         const stuckSessionIds = [...new Set([
           ...executions.map((execution) => execution.sessionId),
-          ...resumes.map((resume) => resume.sessionId),
           ...pendingChildSessionIds,
         ])].sort();
         throw new SessionFamilyStopConflictError(rootSessionId, stuckSessionIds);
@@ -1323,7 +1162,6 @@ export class SessionExecutionManager {
 
       const pendingPromises = [
         ...executions.flatMap((execution) => execution.promise === undefined ? [] : [execution.promise]),
-        ...resumes.map((resume) => resume.completed),
       ];
       if (pendingPromises.length === 0) {
         await Bun.sleep(Math.min(5, remainingMs));
@@ -1349,36 +1187,20 @@ export class SessionExecutionManager {
   }
 
   async #cancelAndWaitForSessions(workspaceRoot: string, sessionIds: readonly string[]): Promise<string[]> {
-    const sessionIdSet = new Set(sessionIds);
     const executions = sessionIds
       .map((sessionId) => this.#active.get(scopedKey(workspaceRoot, sessionId)))
       .filter((execution): execution is ActiveSessionExecution | PendingSessionExecution => execution !== undefined);
-    const resumes = [...this.#hitlResumes.values()].filter((resume) => (
-      resume.workspaceRoot === workspaceRoot
-      && (sessionIdSet.has(resume.sessionId) || sessionIdSet.has(resume.rootSessionId))
-    ));
 
     for (const execution of executions) this.#cancelExecution(execution, "Session cancelled");
-    for (const resume of resumes) resume.abortController.abort(new Error("Session cancelled"));
 
-    const settled = await Promise.all([
-      ...executions.map(async (execution) => {
+    const settled = await Promise.all(executions.map(async (execution) => {
         try {
           await waitForExecutionToStop(execution);
           return undefined;
         } catch {
           return execution.sessionId;
         }
-      }),
-      ...resumes.map(async (resume) => {
-        try {
-          await waitForHitlResumeToStop(resume);
-          return undefined;
-        } catch {
-          return resume.sessionId;
-        }
-      }),
-    ]);
+      }));
 
     return settled.filter((id): id is string => id !== undefined);
   }
@@ -1409,22 +1231,6 @@ export class SessionExecutionManager {
     return [direct];
   }
 
-  #collectHitlResumeCascade(
-    workspaceRoot: string,
-    sessionId: string,
-  ): SessionHitlResumeLeaseState[] {
-    const resumes: SessionHitlResumeLeaseState[] = [];
-    for (const resume of this.#hitlResumes.values()) {
-      if (resume.workspaceRoot !== workspaceRoot) continue;
-      if (resume.sessionId === sessionId || resume.rootSessionId === sessionId) {
-        resumes.push(resume);
-        continue;
-      }
-      if (this.#isDescendantOf(workspaceRoot, resume.sessionId, sessionId)) resumes.push(resume);
-    }
-    return resumes;
-  }
-
   #detachIfIdle(workspaceRoot: string, sessionId: string): void {
     if (this.#isDirectlyRunning(workspaceRoot, sessionId)) return;
     // The SSE subscription, not the execution generation, owns live delivery.
@@ -1434,11 +1240,7 @@ export class SessionExecutionManager {
   }
 
   #isDirectlyRunning(workspaceRoot: string, sessionId: string): boolean {
-    if (this.#active.has(scopedKey(workspaceRoot, sessionId))) return true;
-    for (const resume of this.#hitlResumes.values()) {
-      if (resume.workspaceRoot === workspaceRoot && resume.sessionId === sessionId) return true;
-    }
-    return false;
+    return this.#active.has(scopedKey(workspaceRoot, sessionId));
   }
 
   #countActiveChildren(workspaceRoot: string, parentSessionId: string): number {
@@ -1455,18 +1257,15 @@ export class SessionExecutionManager {
     workspaceRoot: string,
     sessionId: string,
     state: SessionStoreState,
+    allowBlockedToolBatch = false,
   ): void {
-    this.#assertSessionNotBlockedByHitl(sessionId, state);
+    if (!allowBlockedToolBatch) this.#assertSessionToolBatchReady(sessionId, state);
     const rootSessionId = state.rootSessionId;
     if (this.#familyStops.has(scopedKey(workspaceRoot, rootSessionId))) {
       throw new SessionFamilyStopInProgressError(sessionId, rootSessionId);
     }
     if (this.#deletions.has(scopedKey(workspaceRoot, rootSessionId))) {
       throw new SessionDeleteInProgressError(sessionId, rootSessionId);
-    }
-    const hitlResume = this.#hitlResumes.get(scopedKey(workspaceRoot, sessionId));
-    if (hitlResume !== undefined) {
-      throw new SessionHitlResumeInProgressError(sessionId, rootSessionId);
     }
     const directLease = this.#cwdTransitions.get(scopedKey(workspaceRoot, sessionId));
     if (directLease?.blockRootExecution === true) {
@@ -1478,16 +1277,16 @@ export class SessionExecutionManager {
     }
   }
 
-  #assertSessionNotBlockedByHitl(sessionId: string, state: SessionStoreState): void {
-    const hitlIds = new Set(state.blockedByHitlIds ?? []);
-    if (state.blockedHitl !== undefined) hitlIds.add(state.blockedHitl.hitlId);
-    if (hitlIds.size === 0) return;
-    throw new SessionHitlBlockedError(sessionId, [...hitlIds].sort());
+  #assertSessionToolBatchReady(sessionId: string, state: SessionStoreState): void {
+    const activeBatch = state.toolBatches.find((batch) => batch.archivedAt === undefined);
+    if (activeBatch === undefined) return;
+    const hitlIds = new Set(activeBatch?.calls.flatMap((call) => call.state === "blocked" && call.blocker?.hitlId !== undefined ? [call.blocker.hitlId] : []) ?? []);
+    throw new SessionToolBatchActiveError(sessionId, [...hitlIds].sort());
   }
 
   /**
    * A dormant child keeps the checkout it was created in. Once the root moves,
-   * neither a direct message nor a durable replay may revive that child in the
+   * neither a direct message nor a pending batch execution may revive that child in the
    * abandoned checkout. Callers load both identities before this synchronous
    * assertion so the check and the following ownership claim cannot interleave.
    */
@@ -1743,7 +1542,6 @@ export class SessionExecutionManager {
         },
         newChild: freshlyCreated,
       }),
-      entry: { kind: "user_message" },
     });
     const currentState = store.getState();
     const currentScope = executionScopeSnapshot(currentState);
@@ -1846,7 +1644,7 @@ function childTerminalStatus(run: SessionExecutionRecord | undefined, signal: Ab
 }
 
 function sessionExecutionOrigin(origin: SessionExecutionOrigin | undefined): SessionExecutionOrigin {
-  if (origin === "tool_call") return "tool_call";
+  if (origin === "tool_call" || origin === "tool_batch") return origin;
   return "user_message";
 }
 
@@ -1917,13 +1715,6 @@ async function waitForExecutionToStop(execution: ActiveSessionExecution | Pendin
     setTimeout(() => reject(new Error(`Timed out waiting for session "${execution.sessionId}" to abort`)), ABORT_AND_WAIT_TIMEOUT_MS);
   });
   await Promise.race([execution.promise ?? Promise.resolve(), timeout]);
-}
-
-async function waitForHitlResumeToStop(resume: SessionHitlResumeLeaseState): Promise<void> {
-  const timeout = new Promise<never>((_resolve, reject) => {
-    setTimeout(() => reject(new Error(`Timed out waiting for Session HITL resume "${resume.sessionId}" to abort`)), ABORT_AND_WAIT_TIMEOUT_MS);
-  });
-  await Promise.race([resume.completed, timeout]);
 }
 
 function assertGoalDelegationContext(

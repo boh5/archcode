@@ -4,638 +4,207 @@ import { mkdir, mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
-import type { GlobalSSESessionRuntimeChangedEvent, SessionHitlBlocker } from "@archcode/protocol";
+import type { GlobalSSESessionRuntimeChangedEvent } from "@archcode/protocol";
 import type { ResolvedMcpConfig } from "./config/mcp";
-import {
-  getSessionHitlJournalPath,
-  writeSessionHitlJournalEntry,
-} from "./execution/session-hitl-journal-store";
 import { redactMcpMessage, type McpDiscoveryResult, type McpManager, type McpWarning } from "./mcp/index";
-import { SessionStoreManager } from "./store/session-store-manager";
 import { storeManager } from "./store/store";
 import { defineTool, REDACTION_MARKER, type ToolExecutionContext } from "./tools/index";
 import type { AnyToolDescriptor } from "./tools/types";
 import { createRuntime as createProductionRuntime } from "./runtime";
+import { SessionStoreManager } from "./store/session-store-manager";
+import type { SessionToolBatch } from "./store/types";
 import { createTestProjectContext } from "./tools/test-project-context";
-import { createInMemoryLogger } from "./logger";
+import { createInMemoryLogger, silentLogger } from "./logger";
 import { ServerConfigService, resolveServerConfigPath } from "./config";
-const tmpRoots: string[] = [];
 
-afterAll(() => {
-  for (const root of tmpRoots) {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+const tmpRoots: string[] = [];
+afterAll(() => { for (const root of tmpRoots) rmSync(root, { recursive: true, force: true }); });
 
 function makeProviderConfig() {
-  return {
-    local: {
-      npm: "@ai-sdk/openai-compatible",
-      name: "Local LLM",
-      options: {
-        baseURL: "http://localhost:8090/v1",
-        apiKey: "test-key",
-      },
-      models: {
-        "test-model": {
-          name: "Test Model",
-          limit: { context: 128000, output: 8192 },
-          modalities: { input: ["text"], output: ["text"] },
-        },
-      },
-    },
-  };
+  return { local: { npm: "@ai-sdk/openai-compatible", name: "Local LLM", options: { baseURL: "http://localhost:8090/v1", apiKey: "test-key" }, models: { "test-model": { name: "Test Model", limit: { context: 128000, output: 8192 }, modalities: { input: ["text"], output: ["text"] } } } } };
 }
-
-async function writeConfig(config: Record<string, unknown>): Promise<ServerConfigService> {
-  const root = await makeTempRoot();
-  const configPath = resolveServerConfigPath(root);
-  await mkdir(join(root, ".archcode"), { recursive: true });
-  await Bun.write(configPath, JSON.stringify(config));
-  return new ServerConfigService({ homeDir: root });
-}
-
-async function makeTempRoot(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "archcode-main-"));
-  tmpRoots.push(root);
-  return root;
-}
-
-async function createRuntime(
-  options: Parameters<typeof createProductionRuntime>[0] = {},
-): ReturnType<typeof createProductionRuntime> {
-  const projectRegistryHomeDir = options.projectRegistryHomeDir ?? await makeTempRoot();
-  return createProductionRuntime({ ...options, projectRegistryHomeDir });
-}
-
+async function makeTempRoot(): Promise<string> { const root = await mkdtemp(join(tmpdir(), "archcode-main-")); tmpRoots.push(root); return root; }
+async function writeConfig(config: Record<string, unknown>): Promise<ServerConfigService> { const root = await makeTempRoot(); const path = resolveServerConfigPath(root); await mkdir(join(root, ".archcode"), { recursive: true }); await Bun.write(path, JSON.stringify(config)); return new ServerConfigService({ homeDir: root }); }
 function makeConfig(mcp?: Record<string, unknown>): Record<string, unknown> {
-  const config = {
-    provider: makeProviderConfig(),
-    agents: {
-      engineer: { model: "local:test-model" },
-      goal_lead: { model: "local:test-model" },
-      plan: { model: "local:test-model" },
-      build: { model: "local:test-model" },
-      reviewer: { model: "local:test-model" },
-      explore: { model: "local:test-model" },
-      librarian: { model: "local:test-model" },
-    },
-  };
-
-  return mcp === undefined
-    ? config
-    : { ...config, mcp };
+  const config = { provider: makeProviderConfig(), agents: Object.fromEntries(["engineer", "goal_lead", "plan", "build", "reviewer", "explore", "librarian"].map((name) => [name, { model: "local:test-model" }])) };
+  return mcp === undefined ? config : { ...config, mcp };
 }
-
-function makeMcpDescriptor(name = "mcp__context7__lookup"): AnyToolDescriptor {
-  return defineTool({
-    name,
-    description: "Fake MCP lookup tool",
-    inputSchema: z.object({}).catchall(z.unknown()),
-    traits: { readOnly: true, destructive: false, concurrencySafe: true },
-    execute: async () => "mcp output with sk_test_main_secret",
-  });
+function makeMcpDescriptor(name = "mcp__context7__lookup"): AnyToolDescriptor { return defineTool({ name, description: "Fake MCP lookup tool", inputSchema: z.object({}).catchall(z.unknown()), traits: { readOnly: true, destructive: false, concurrencySafe: true }, execute: async () => "mcp output with sk_test_main_secret" }); }
+function makeFakeMcpManager(result: McpDiscoveryResult | Error, secrets: readonly string[] = []): McpManager {
+  return { discover: mock(async () => { if (result instanceof Error) throw result; return result; }), closeAll: mock(async () => []), getStatus: mock(() => new Map()), onStatusChange: mock(() => () => {}), startBackgroundDiscovery: mock((onDescriptors: (d: AnyToolDescriptor[]) => void, onWarning: (w: McpWarning) => void) => { if (result instanceof Error) { onWarning({ message: redactMcpMessage(`Failed to discover MCP tools during startup: ${result.message}`, secrets) }); return; } for (const warning of result.warnings) onWarning(warning); if (result.descriptors.length) onDescriptors(result.descriptors); }) } as unknown as McpManager;
 }
-
-function makeFakeMcpManager(
-  result: McpDiscoveryResult | Error,
-  secrets: readonly string[] = [],
-): McpManager {
-  return {
-    discover: mock(async () => {
-      if (result instanceof Error) throw result;
-      return result;
-    }),
-    closeAll: mock(async () => []),
-    getStatus: mock(() => new Map<string, import("@archcode/protocol").McpServerStatus>()),
-    onStatusChange: mock(() => () => {}),
-    startBackgroundDiscovery: mock(
-      (
-        onDescriptors: (descriptors: AnyToolDescriptor[]) => void,
-        onWarning: (warning: McpWarning) => void,
-      ): void => {
-        if (result instanceof Error) {
-          onWarning({
-            message: redactMcpMessage(
-              `Failed to discover MCP tools during startup: ${result.message}`,
-              secrets,
-            ),
-          });
-          return;
-        }
-        for (const warning of result.warnings) {
-          onWarning(warning);
-        }
-        if (result.descriptors.length > 0) {
-          onDescriptors(result.descriptors);
-        }
-      },
-    ),
-  } as unknown as McpManager;
-}
-
-function makeContext(toolName: string, input: unknown): ToolExecutionContext {
-  const workspaceRoot = import.meta.dir;
-  return {
-    store: storeManager.create(`main-test-${crypto.randomUUID()}`, workspaceRoot, { agentName: "engineer" }),
-    storeManager,
-    toolName,
-    toolCallId: `${toolName}-call`,
-    input,
-    step: 0,
-    abort: new AbortController().signal,
-    startedAt: 0,
-    allowedTools: new Set([toolName]),
-    cwd: workspaceRoot,
-    projectContext: createTestProjectContext(workspaceRoot),
-  };
-}
-
-function sessionHitlBlocker(sessionId: string, hitlId: string): SessionHitlBlocker {
-  return {
-    hitlId,
-    blockingKey: `session:${sessionId}:bash-1`,
-    source: { type: "tool_permission", sessionId, toolCallId: "bash-1", toolName: "bash" },
-    toolCallId: "bash-1",
-    toolName: "bash",
-    step: 0,
-    displayInput: { command: "while true; do sleep 1; done" },
-    blockedAt: new Date().toISOString(),
-    reason: "Waiting for permission",
-  };
-}
-
-async function writeSessionPermissionEntry(input: {
-  readonly workspaceRoot: string;
-  readonly projectSlug: string;
-  readonly sessionId: string;
-  readonly hitlId: string;
-}): Promise<void> {
-  const createdAt = new Date().toISOString();
-  await writeSessionHitlJournalEntry({
-    phase: "paused",
-    phaseUpdatedAt: createdAt,
-    hitlId: input.hitlId,
-    blockingKey: `session:${input.sessionId}:bash-1`,
-    source: { type: "tool_permission", sessionId: input.sessionId, toolCallId: "bash-1", toolName: "bash" },
-    request: {
-      owner: { projectSlug: input.projectSlug, ownerType: "session", ownerId: input.sessionId },
-      displayPayload: { title: "Run command", summary: "Run a long command", redacted: true },
-      createdAt,
-    },
-    toolCallId: "bash-1",
-    toolName: "bash",
-    step: 0,
-    rawToolInput: { command: "while true; do sleep 1; done" },
-    displayInput: { command: "while true; do sleep 1; done" },
-    allowedTools: ["bash"],
-    agentSkills: [],
-    agentName: "engineer",
-    toolCalls: [{ toolCallId: "bash-1", toolName: "bash", input: { command: "while true; do sleep 1; done" } }],
-    completedToolResults: [],
-    pendingToolCalls: [{ toolCallId: "bash-1", toolName: "bash", input: { command: "while true; do sleep 1; done" } }],
-    blockedToolIndex: 0,
-    createdAt,
-    permission: { description: "Run a long command" },
-  }, input.workspaceRoot, input.sessionId);
-}
+function makeContext(toolName: string, input: unknown): ToolExecutionContext { const workspaceRoot = import.meta.dir; return { store: storeManager.create(`main-test-${crypto.randomUUID()}`, workspaceRoot, { agentName: "engineer" }), storeManager, toolName, toolCallId: `${toolName}-call`, input, step: 0, abort: new AbortController().signal, startedAt: 0, allowedTools: new Set([toolName]), cwd: workspaceRoot, projectContext: createTestProjectContext(workspaceRoot) }; }
+async function createRuntime(options: Parameters<typeof createProductionRuntime>[0] = {}) { return createProductionRuntime({ ...options, projectRegistryHomeDir: options.projectRegistryHomeDir ?? await makeTempRoot() }); }
 
 describe("createRuntime", () => {
-  test("constructs runtime without booting server concerns", async () => {
-    const configService = await writeConfig(makeConfig({ servers: {} }));
-    const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
-    const runtime = await createRuntime({
-      configService,
-      mcpManagerFactory: () => manager,
+  test("constructs runtime without booting server concerns", async () => { const runtime = await createRuntime({ configService: await writeConfig(makeConfig({ servers: {} })), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }) }); expect(runtime.toolRegistry).toBeDefined(); expect(runtime.startSessionExecution).toBeDefined(); });
+  test("keeps runtime providers on startup snapshot after settings save", async () => { const configService = await writeConfig(makeConfig({ servers: {} })); const runtime = await createRuntime({ configService, mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }) }); const snapshot = await runtime.configService.getSnapshot(); const update = structuredClone(snapshot.config) as any; update.provider.local.options.apiKey = { action: "preserve" }; update.provider.local.models["new-model"] = { name: "New", limit: { context: 128000, output: 8192 }, modalities: { input: ["text"], output: ["text"] } }; const saved = await runtime.configService.save({ expectedRevision: snapshot.revision, config: update }); expect(saved.restartRequired).toBe(true); expect(runtime.providerRegistry.modelIds).toEqual(["local:test-model"]); });
+  test("registers MCP descriptors before agent runs", async () => { const descriptor = makeMcpDescriptor(); const runtime = await createRuntime({ configService: await writeConfig(makeConfig({ servers: {} })), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [descriptor], warnings: [] }) }); expect(runtime.toolRegistry.get(descriptor.name)).toBe(descriptor); });
+  test("starts with no MCP config", async () => { let resolved: ResolvedMcpConfig | undefined; const runtime = await createRuntime({ configService: await writeConfig(makeConfig()), mcpManagerFactory: (config) => { resolved = config; return makeFakeMcpManager({ descriptors: [], warnings: [] }); } }); expect(resolved).toEqual({ servers: {} }); expect(runtime.warnings).toEqual([]); });
+  test("exposes project registry and shared context resolver", async () => { const runtime = await createRuntime({ configService: await writeConfig(makeConfig()), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }) }); expect(runtime.projectRegistry).toBeDefined(); expect(runtime.contextResolver).toBeDefined(); });
+  test("emits runtime snapshot without idle families", async () => { const workspaceRoot = await makeTempRoot(); const runtime = await createRuntime({ configService: await writeConfig(makeConfig()), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }) }); const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Runtime snapshot" }); const session = await runtime.createSession(workspaceRoot, { agentName: "engineer" }); const changes: GlobalSSESessionRuntimeChangedEvent[] = []; const unsubscribe = runtime.subscribeSessionRuntimeChanges((event) => changes.push(event)); const events = await runtime.listSessionRuntimeEvents(); expect(events[0]).toMatchObject({ type: "session.runtime.snapshot", projectSlugs: [project.slug], families: [] }); await expect(runtime.stopSessionFamily(workspaceRoot, session.sessionId)).resolves.toBeUndefined(); expect(changes.map(({ activity }) => activity)).toEqual(["stopping", "idle"]); unsubscribe(); });
+  test("redacts MCP discovery failures", async () => { const secret = "sk_test_main_secret"; const configService = await writeConfig(makeConfig({ servers: { private_docs: { url: "https://mcp.example.test", headers: { Authorization: secret } } } })); const { logger, entries } = createInMemoryLogger(); const runtime = await createRuntime({ configService, mcpManagerFactory: () => makeFakeMcpManager(new Error(`boom ${secret}`), [secret]), logger }); expect(runtime.warnings).toHaveLength(1); expect(entries.map((entry) => entry.event)).toContain("mcp.discovery.warning"); expect(runtime.warnings[0].message).toContain(REDACTION_MARKER); expect(runtime.warnings[0].message).not.toContain(secret); });
+  test("warns on duplicate MCP descriptors while retaining builtins", async () => { const runtime = await createRuntime({ configService: await writeConfig(makeConfig({ servers: {} })), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [makeMcpDescriptor("file_read")], warnings: [] }) }); expect(runtime.toolRegistry.get("file_read")).toBeDefined(); expect(runtime.warnings[0]?.toolName).toBe("file_read"); });
+  test("runs MCP tools through global after hooks", async () => { const descriptor = makeMcpDescriptor(); const runtime = await createRuntime({ configService: await writeConfig(makeConfig({ servers: {} })), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [descriptor], warnings: [] }) }); const result = await runtime.toolRegistry.execute({ toolName: descriptor.name, toolCallId: "mcp-call", input: {} }, makeContext(descriptor.name, {})); expect(result.isError).toBe(false); expect(result.output).toContain(REDACTION_MARKER); expect(result.output).not.toContain("sk_test_main_secret"); });
+
+  test("reconciles an answered Session HITL to its exact blocked call after restart", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const registryHome = await makeTempRoot();
+    const runtime1 = await createRuntime({
+      configService: await writeConfig(makeConfig()),
+      projectRegistryHomeDir: registryHome,
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
-
-    expect(runtime.toolRegistry).toBeDefined();
-    expect(runtime.startSessionExecution).toBeDefined();
-    expect(runtime.subscribeSessionEvents).toBeDefined();
-  });
-
-  test("keeps runtime providers on the startup snapshot after Settings saves", async () => {
-    const configService = await writeConfig(makeConfig({ servers: {} }));
-    const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
-    const runtime = await createRuntime({ configService, mcpManagerFactory: () => manager });
-    const snapshot = await runtime.configService.getSnapshot();
-    const update = structuredClone(snapshot.config) as any;
-    update.provider.local.options.apiKey = { action: "preserve" };
-    update.provider.local.models["new-model"] = {
-      name: "New model",
-      limit: { context: 128000, output: 8192 },
-      modalities: { input: ["text"], output: ["text"] },
+    const project = await runtime1.projectRegistry.add({ workspaceRoot, name: "HITL restart" });
+    const session = await runtime1.createSession(workspaceRoot, { agentName: "engineer" });
+    const context = await runtime1.contextResolver.resolve(workspaceRoot);
+    const first = (await context.hitl.create({
+      requestKey: `session:${session.sessionId}:batch:batch-1:tool:question-1`,
+      owner: { type: "session", id: session.sessionId },
+      source: { type: "ask_user", toolCallId: "question-1" },
+      displayPayload: { title: "First question", redacted: true },
+    })).record;
+    const second = (await context.hitl.create({
+      requestKey: `session:${session.sessionId}:batch:batch-1:tool:question-2`,
+      owner: { type: "session", id: session.sessionId },
+      source: { type: "ask_user", toolCallId: "question-2" },
+      displayPayload: { title: "Second question", redacted: true },
+    })).record;
+    const now = new Date().toISOString();
+    const questionInput = {
+      questions: [{
+        question: "Continue?",
+        header: "Continue",
+        options: [{ label: "Yes", description: "Continue" }],
+      }],
     };
-
-    const saved = await runtime.configService.save({ expectedRevision: snapshot.revision, config: update });
-
-    expect(saved.restartRequired).toBe(true);
-    expect(runtime.providerRegistry.modelIds).toEqual(["local:test-model"]);
-    expect(runtime.getMcpServerStatuses()).toEqual(new Map());
-  });
-
-  test("registers MCP descriptors before the agent run snapshot without calling run", async () => {
-    const configService = await writeConfig(makeConfig({ servers: {} }));
-    const mcpDescriptor = makeMcpDescriptor();
-    const manager = makeFakeMcpManager({ descriptors: [mcpDescriptor], warnings: [] });
-    const runtime = await createRuntime({
-      configService,
-      mcpManagerFactory: () => manager,
-    });
-
-    expect(runtime.toolRegistry.get(mcpDescriptor.name)).toBe(mcpDescriptor);
-    const namesAtRun = runtime.toolRegistry.getAll().map((descriptor) => descriptor.name);
-
-    expect(namesAtRun).toContain(mcpDescriptor.name);
-  });
-
-  test("starts with no mcp config", async () => {
-    const configService = await writeConfig(makeConfig());
-    let resolvedConfig: ResolvedMcpConfig | undefined;
-    const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
-
-    const runtime = await createRuntime({
-      configService,
-      mcpManagerFactory: (config) => {
-        resolvedConfig = config;
-        return manager;
-      },
-    });
-
-    expect(resolvedConfig).toEqual({ servers: {} });
-    expect(runtime.warnings).toEqual([]);
-  });
-
-  test("runtime exposes project registry and shared context resolver", async () => {
-    const configService = await writeConfig(makeConfig());
-    const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
-
-    const runtime = await createRuntime({
-      configService,
-      mcpManagerFactory: () => manager,
-    });
-
-    expect(runtime.projectRegistry).toBeDefined();
-    expect(runtime.contextResolver).toBeDefined();
-  });
-
-  test("runtime exposes core-owned agent job lifecycle APIs", async () => {
-    const configService = await writeConfig(makeConfig());
-    const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
-
-    const runtime = await createRuntime({
-      configService,
-      mcpManagerFactory: () => manager,
-    });
-
-    expect(runtime.getSessionFamilyActivity("/workspace", "missing")).toBe("idle");
-    expect(runtime.getSessionExecution("/workspace", "missing")).toBeUndefined();
-    await expect(runtime.stopSessionFamily("/workspace", "00000000-0000-4000-8000-000000000000")).rejects.toMatchObject({
-      name: "SessionFileNotFoundError",
-    });
-  });
-
-  test("runtime emits an authoritative snapshot that omits idle Session families", async () => {
-    const configService = await writeConfig(makeConfig());
-    const projectRegistryHomeDir = await makeTempRoot();
-    const workspaceRoot = await makeTempRoot();
-    const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
-    const runtime = await createRuntime({
-      configService,
-      projectRegistryHomeDir,
-      mcpManagerFactory: () => manager,
-    });
-    const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Runtime snapshot" });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "engineer" });
-    const changes: GlobalSSESessionRuntimeChangedEvent[] = [];
-    const unsubscribe = runtime.subscribeSessionRuntimeChanges((event) => changes.push(event));
-
-    const events = await runtime.listSessionRuntimeEvents();
-
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({
-      type: "session.runtime.snapshot",
-      projectSlugs: [project.slug],
-      families: [],
-    });
-    expect(typeof events[0]?.createdAt).toBe("number");
-    const projectSnapshot = await runtime.getProjectControlPlaneSnapshot(workspaceRoot, project.slug);
-    expect(projectSnapshot).toMatchObject({
-      sessionRuntime: {
-        type: "session.runtime.snapshot",
-        projectSlugs: [project.slug],
-        families: [],
-      },
-      hitl: {
-        type: "hitl.snapshot",
-        projectSlugs: [project.slug],
-        projections: [],
-      },
-    });
-    await expect(runtime.stopSessionFamily(workspaceRoot, session.sessionId)).resolves.toBeUndefined();
-    expect(changes.map(({ projectSlug, rootSessionId, activity }) => ({ projectSlug, rootSessionId, activity }))).toEqual([
-      { projectSlug: project.slug, rootSessionId: session.sessionId, activity: "stopping" },
-      { projectSlug: project.slug, rootSessionId: session.sessionId, activity: "idle" },
-    ]);
-    unsubscribe();
-  });
-
-  test("project removal re-adds a workspace only after its old runtime data is explicitly cleared", async () => {
-    const configService = await writeConfig(makeConfig());
-    const projectRegistryHomeDir = await makeTempRoot();
-    const workspaceRoot = await makeTempRoot();
-    const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
-    const runtime = await createRuntime({
-      configService,
-      projectRegistryHomeDir,
-      mcpManagerFactory: () => manager,
-    });
-    const originalProject = await runtime.projectRegistry.add({ workspaceRoot, name: "Original Project" });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "engineer" });
-    const originalContext = await runtime.contextResolver.resolve(workspaceRoot);
-    const record = await originalContext.hitl.create({
-      owner: { projectSlug: originalProject.slug, ownerType: "session", ownerId: session.sessionId },
-      sessionRootId: session.sessionId,
-      blockingKey: `session:${session.sessionId}:remove-project`,
-      source: { type: "ask_user", sessionId: session.sessionId, toolCallId: "remove-project" },
-      displayPayload: { title: "Continue?", redacted: true },
-    });
-    const realtimeProjectSlugs: string[] = [];
-    const unsubscribe = runtime.subscribeHitlEvents((event) => realtimeProjectSlugs.push(event.projectSlug));
-
-    const removed = await runtime.removeProject(originalProject.slug);
-    await originalContext.hitl.publishRequest(record);
-
-    expect(removed).toMatchObject({
-      project: originalProject,
-      snapshot: {
-        sessionRuntime: {
-          type: "session.runtime.snapshot",
-          projectSlugs: [originalProject.slug],
-          families: [],
+    const batch: SessionToolBatch = {
+      batchId: "batch-1",
+      executionId: "execution-1",
+      step: 0,
+      agentName: "engineer",
+      allowedTools: ["ask_user"],
+      agentSkills: [],
+      partitions: [{ type: "parallel", callIds: ["question-1", "question-2"] }],
+      calls: [first, second].map((record, ordinal) => ({
+        ordinal,
+        partitionIndex: 0,
+        toolCallId: record.source.type === "ask_user" ? record.source.toolCallId : "unreachable",
+        toolName: "ask_user",
+        input: questionInput,
+        traits: { readOnly: true, destructive: false, concurrencySafe: true },
+        state: "blocked" as const,
+        attempt: 1,
+        blocker: {
+          requestKey: record.requestKey,
+          hitlId: record.hitlId,
+          source: record.source as Extract<typeof record.source, { type: "ask_user" }>,
+          displayPayload: record.displayPayload,
         },
-        hitl: {
-          type: "hitl.snapshot",
-          projectSlugs: [originalProject.slug],
-          projections: [],
-        },
-      },
-    });
-    expect(await runtime.projectRegistry.get(originalProject.slug)).toBeUndefined();
-    expect(realtimeProjectSlugs).toEqual([]);
+      })),
+      createdAt: now,
+      updatedAt: now,
+    };
+    const seedStoreManager = new SessionStoreManager({ logger: silentLogger });
+    await seedStoreManager.getOrLoad(session.sessionId, workspaceRoot);
+    await seedStoreManager.updateToolBatches(session.sessionId, workspaceRoot, () => [batch]);
+    await context.hitl.respond(first.hitlId, { type: "question_answer", answers: ["Yes"] });
 
-    rmSync(join(workspaceRoot, ".archcode"), { recursive: true, force: true });
-    const readded = await runtime.projectRegistry.add({ workspaceRoot, name: "Fresh Project" });
-    const freshContext = await runtime.contextResolver.resolve(workspaceRoot);
-    const oldRecord = await freshContext.hitl.lookup({
-      owner: { projectSlug: readded.slug, ownerType: "session", ownerId: session.sessionId },
+    const runtime2 = await createRuntime({
+      configService: await writeConfig(makeConfig()),
+      projectRegistryHomeDir: registryHome,
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+
+    const recovered = await runtime2.getSessionFile(workspaceRoot, session.sessionId);
+    const recoveredCalls = recovered.toolBatches[0]?.calls;
+    expect(recoveredCalls?.[0]).toMatchObject({
+      toolCallId: "question-1",
+      state: "completed",
+      blocker: { hitlId: first.hitlId },
+    });
+    expect(typeof recoveredCalls?.[0]?.blocker?.responseAppliedAt).toBe("string");
+    expect(recoveredCalls?.[1]).toMatchObject({
+      toolCallId: "question-2",
+      state: "blocked",
+      blocker: { hitlId: second.hitlId },
+    });
+    expect(recoveredCalls?.[0]?.result?.output).toContain("Yes");
+    expect((await (await runtime2.contextResolver.resolve(workspaceRoot)).hitl.list()).find((record) => record.hitlId === first.hitlId)?.status).toBe("resolved");
+    await runtime2.abortAllSessionExecutions();
+  });
+
+  test("coalesces concurrent identical HITL responses into one delivery", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const registryHome = await makeTempRoot();
+    const runtime1 = await createRuntime({
+      configService: await writeConfig(makeConfig()),
+      projectRegistryHomeDir: registryHome,
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    const project = await runtime1.projectRegistry.add({ workspaceRoot, name: "Concurrent HITL" });
+    const session = await runtime1.createSession(workspaceRoot, { agentName: "engineer" });
+    const context1 = await runtime1.contextResolver.resolve(workspaceRoot);
+    const record = (await context1.hitl.create({
+      requestKey: `session:${session.sessionId}:batch:batch-concurrent:tool:question-concurrent`,
+      owner: { type: "session", id: session.sessionId },
+      source: { type: "ask_user", toolCallId: "question-concurrent" },
+      displayPayload: {
+        title: "Concurrent question",
+        questions: [{ question: "Continue?", header: "Continue", custom: true }],
+        redacted: true,
+      },
+    })).record;
+    const now = new Date().toISOString();
+    const batch: SessionToolBatch = {
+      batchId: "batch-concurrent",
+      executionId: "execution-concurrent",
+      step: 0,
+      agentName: "engineer",
+      allowedTools: ["ask_user"],
+      agentSkills: [],
+      partitions: [{ type: "serial", callIds: ["question-concurrent"] }],
+      calls: [{
+        ordinal: 0,
+        partitionIndex: 0,
+        toolCallId: "question-concurrent",
+        toolName: "ask_user",
+        input: { questions: [{ question: "Continue?", header: "Continue", custom: true }] },
+        traits: { readOnly: true, destructive: false, concurrencySafe: false },
+        state: "blocked",
+        attempt: 1,
+        blocker: {
+          requestKey: record.requestKey,
+          hitlId: record.hitlId,
+          source: { type: "ask_user", toolCallId: "question-concurrent" },
+          displayPayload: record.displayPayload,
+        },
+      }],
+      createdAt: now,
+      updatedAt: now,
+    };
+    const seedStoreManager = new SessionStoreManager({ logger: silentLogger });
+    await seedStoreManager.getOrLoad(session.sessionId, workspaceRoot);
+    await seedStoreManager.updateToolBatches(session.sessionId, workspaceRoot, () => [batch]);
+
+    const runtime2 = await createRuntime({
+      configService: await writeConfig(makeConfig()),
+      projectRegistryHomeDir: registryHome,
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+
+    const responses = await Promise.all(Array.from({ length: 4 }, () => runtime2.respondToHitl({
+      slug: project.slug,
+      workspaceRoot,
       hitlId: record.hitlId,
-    });
-    const runtimeSnapshots = await runtime.listSessionRuntimeEvents();
+      response: { type: "question_answer", answers: ["Yes"] },
+    })));
 
-    expect(readded.slug).toBe("fresh-project");
-    expect(freshContext).not.toBe(originalContext);
-    expect(oldRecord).toEqual({ status: "missing" });
-    expect(runtimeSnapshots[0]?.projectSlugs).toEqual([readded.slug]);
-    unsubscribe();
-  });
-
-  test("public family Stop cancels active Session HITL and clears every durable family blocker before becoming idle", async () => {
-    const configService = await writeConfig(makeConfig());
-    const projectRegistryHomeDir = await makeTempRoot();
-    const workspaceRoot = await makeTempRoot();
-    const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
-    const runtime = await createRuntime({
-      configService,
-      projectRegistryHomeDir,
-      mcpManagerFactory: () => manager,
-    });
-    const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Runtime Stop" });
-    const logger = createInMemoryLogger().logger;
-    const persistedSessions = new SessionStoreManager({ logger });
-    const rootSessionId = crypto.randomUUID();
-    const childSessionId = crypto.randomUUID();
-    const unrelatedSessionId = crypto.randomUUID();
-    const rootStore = persistedSessions.create(rootSessionId, workspaceRoot, { agentName: "engineer" });
-    const childStore = persistedSessions.create(childSessionId, workspaceRoot, {
-      rootSessionId,
-      parentSessionId: rootSessionId,
-      agentName: "build",
-      sessionRole: "build",
-    });
-    persistedSessions.create(unrelatedSessionId, workspaceRoot, { agentName: "engineer" });
-    await Promise.all([
-      persistedSessions.flushSession(rootSessionId, workspaceRoot),
-      persistedSessions.flushSession(childSessionId, workspaceRoot),
-      persistedSessions.flushSession(unrelatedSessionId, workspaceRoot),
-    ]);
-
-    const context = await runtime.contextResolver.resolve(workspaceRoot);
-    const rootHitlId = crypto.randomUUID();
-    const childHitlId = crypto.randomUUID();
-    const unrelatedHitlId = crypto.randomUUID();
-    const createPermission = (sessionId: string, sessionRootId: string, hitlId: string) => context.hitl.create({
-      owner: { projectSlug: project.slug, ownerType: "session" as const, ownerId: sessionId },
-      sessionRootId,
-      hitlId,
-      blockingKey: `session:${sessionId}:bash-1`,
-      source: { type: "tool_permission" as const, sessionId, toolCallId: "bash-1", toolName: "bash" },
-      displayPayload: { title: "Run command", summary: "Run a long command", redacted: true as const },
-    });
-    await Promise.all([
-      createPermission(rootSessionId, rootSessionId, rootHitlId),
-      createPermission(childSessionId, rootSessionId, childHitlId),
-      createPermission(unrelatedSessionId, unrelatedSessionId, unrelatedHitlId),
-    ]);
-
-    rootStore.getState().append({
-      type: "execution-end",
-      status: "waiting_for_human",
-      blockedByHitlIds: [rootHitlId],
-      blockedToolCallId: "bash-1",
-      blockedHitl: sessionHitlBlocker(rootSessionId, rootHitlId),
-    });
-    childStore.getState().append({
-      type: "execution-end",
-      status: "waiting_for_human",
-      blockedByHitlIds: [childHitlId],
-      blockedToolCallId: "bash-1",
-      blockedHitl: sessionHitlBlocker(childSessionId, childHitlId),
-    });
-    await Promise.all([
-      persistedSessions.flushSession(rootSessionId, workspaceRoot),
-      persistedSessions.flushSession(childSessionId, workspaceRoot),
-      writeSessionPermissionEntry({ workspaceRoot, projectSlug: project.slug, sessionId: rootSessionId, hitlId: rootHitlId }),
-      writeSessionPermissionEntry({ workspaceRoot, projectSlug: project.slug, sessionId: childSessionId, hitlId: childHitlId }),
-    ]);
-
-    const response = { type: "permission_decision" as const, decision: "approve_once" as const };
-    const claim = (sessionId: string, hitlId: string) => context.hitl.claim(
-      { owner: { projectSlug: project.slug, ownerType: "session", ownerId: sessionId }, hitlId },
-      response,
-      { claimId: crypto.randomUUID(), claimedAt: new Date().toISOString(), intent: "respond", attempt: 1 },
-    );
-    await Promise.all([
-      claim(rootSessionId, rootHitlId),
-      claim(childSessionId, childHitlId),
-    ]);
-
-    const activityAtCancellation: string[] = [];
-    const unsubscribeHitl = runtime.subscribeHitlEvents((event) => {
-      if (event.projection.status === "cancelled") {
-        activityAtCancellation.push(runtime.getSessionFamilyActivity(workspaceRoot, rootSessionId));
-      }
-    });
-    await runtime.stopSessionFamily(workspaceRoot, rootSessionId);
-    unsubscribeHitl();
-
-    expect(activityAtCancellation).toEqual(["stopping", "stopping"]);
-    expect(runtime.getSessionFamilyActivity(workspaceRoot, rootSessionId)).toBe("idle");
-    for (const [sessionId, hitlId] of [[rootSessionId, rootHitlId], [childSessionId, childHitlId]] as const) {
-      expect(await context.hitl.lookup({
-        owner: { projectSlug: project.slug, ownerType: "session", ownerId: sessionId },
-        hitlId,
-      })).toMatchObject({ status: "found", record: { status: "cancelled" } });
-      expect(await Bun.file(getSessionHitlJournalPath(workspaceRoot, sessionId)).exists()).toBe(false);
-    }
-    const coldSessions = new SessionStoreManager({ logger });
-    expect((await coldSessions.getOrLoad(rootSessionId, workspaceRoot)).getState()).toMatchObject({
-      blockedHitl: undefined,
-      blockedByHitlIds: undefined,
-    });
-    expect((await coldSessions.getOrLoad(childSessionId, workspaceRoot)).getState()).toMatchObject({
-      blockedHitl: undefined,
-      blockedByHitlIds: undefined,
-    });
-    expect(await context.hitl.lookup({
-      owner: { projectSlug: project.slug, ownerType: "session", ownerId: unrelatedSessionId },
-      hitlId: unrelatedHitlId,
-    })).toMatchObject({ status: "found", record: { status: "pending" } });
-  });
-
-  test("starts with mcp.servers as an empty object", async () => {
-    const configService = await writeConfig(makeConfig({ servers: {} }));
-    let resolvedConfig: ResolvedMcpConfig | undefined;
-    const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
-
-    const runtime = await createRuntime({
-      configService,
-      mcpManagerFactory: (config) => {
-        resolvedConfig = config;
-        return manager;
-      },
-    });
-
-    expect(resolvedConfig).toEqual({ servers: {} });
-    expect(runtime.warnings).toEqual([]);
-  });
-
-  test("records a redacted discovery failure warning and still constructs the agent", async () => {
-    const secret = "sk_test_main_secret";
-    const configService = await writeConfig(
-      makeConfig({
-        servers: {
-          private_docs: {
-            url: "https://mcp.example.test",
-            headers: { Authorization: secret },
-          },
-        },
-      }),
-    );
-    const { logger, entries } = createInMemoryLogger();
-    const manager = makeFakeMcpManager(new Error(`boom ${secret}`), [secret]);
-
-    const runtime = await createRuntime({
-      configService,
-      mcpManagerFactory: () => manager,
-      logger,
-    });
-
-    expect(runtime.warnings).toHaveLength(1);
-    expect(entries.map((entry) => entry.event)).toContain("mcp.discovery.warning");
-    expect(runtime.warnings[0].message).toContain(REDACTION_MARKER);
-    expect(runtime.warnings[0].message).not.toContain(secret);
-  });
-
-  test("public server URL without auth headers is not redacted in warnings", async () => {
-    const publicUrl = "https://public.example.test/mcp";
-    const configService = await writeConfig(
-      makeConfig({
-        servers: {
-          public: { url: publicUrl },
-        },
-      }),
-    );
-    const manager = makeFakeMcpManager(new Error(`connection refused: ${publicUrl}`));
-
-    const runtime = await createRuntime({
-      configService,
-      mcpManagerFactory: () => manager,
-    });
-
-    expect(runtime.warnings).toHaveLength(1);
-    expect(runtime.warnings[0].message).toContain(publicUrl);
-    expect(runtime.warnings[0].message).not.toContain(REDACTION_MARKER);
-  });
-
-  test("records a duplicate MCP descriptor warning and still constructs the agent", async () => {
-    const configService = await writeConfig(makeConfig({ servers: {} }));
-    const duplicateBuiltin = makeMcpDescriptor("file_read");
-    const manager = makeFakeMcpManager({
-      descriptors: [duplicateBuiltin],
-      warnings: [],
-    });
-
-    const runtime = await createRuntime({
-      configService,
-      mcpManagerFactory: () => manager,
-    });
-
-    expect(runtime.toolRegistry.get("file_read")).not.toBe(duplicateBuiltin);
-    expect(runtime.warnings).toEqual([
-      {
-        toolName: "file_read",
-        message: 'Duplicate MCP tool descriptor "file_read" skipped during startup',
-      },
-    ]);
-  });
-
-  test("keeps builtin tools registered alongside MCP tools", async () => {
-    const configService = await writeConfig(makeConfig({ servers: {} }));
-    const mcpDescriptor = makeMcpDescriptor();
-    const manager = makeFakeMcpManager({ descriptors: [mcpDescriptor], warnings: [] });
-
-    const runtime = await createRuntime({
-      configService,
-      mcpManagerFactory: () => manager,
-    });
-
-    expect(runtime.toolRegistry.get("file_read")).toBeDefined();
-    expect(runtime.toolRegistry.get("grep")).toBeDefined();
-    expect(runtime.toolRegistry.get("web_fetch")).toBeDefined();
-    expect(runtime.toolRegistry.get(mcpDescriptor.name)).toBeDefined();
-  });
-
-  test("runs MCP tools through registry global after-hooks", async () => {
-    const configService = await writeConfig(makeConfig({ servers: {} }));
-    const mcpDescriptor = makeMcpDescriptor();
-    const manager = makeFakeMcpManager({ descriptors: [mcpDescriptor], warnings: [] });
-
-    const runtime = await createRuntime({
-      configService,
-      mcpManagerFactory: () => manager,
-    });
-    const result = await runtime.toolRegistry.execute(
-      {
-        toolName: mcpDescriptor.name,
-        toolCallId: "mcp-call",
-        input: {},
-      },
-      makeContext(mcpDescriptor.name, {}),
-    );
-
-    expect(result.isError).toBe(false);
-    expect(result.output).toContain(REDACTION_MARKER);
-    expect(result.output).not.toContain("sk_test_main_secret");
+    expect(responses.map(({ status }) => status)).toEqual(["resolved", "resolved", "resolved", "resolved"]);
+    const context2 = await runtime2.contextResolver.resolve(workspaceRoot);
+    const resolved = (await context2.hitl.list()).find(({ hitlId }) => hitlId === record.hitlId);
+    expect(resolved?.status).toBe("resolved");
+    expect(resolved?.delivery).toBeUndefined();
+    await runtime2.abortAllSessionExecutions();
   });
 });

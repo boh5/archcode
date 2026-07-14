@@ -30,7 +30,6 @@ export function ChatInput({ slug, sessionId }: ChatInputProps) {
     slug,
     scope: "session",
     ownerId: sessionId,
-    includeChildren: true,
   });
   const hitlReady = useHitlProjectInitialized(slug);
   const modelInfo = useSessionStore(sessionId, (s) => s.modelInfo, slug);

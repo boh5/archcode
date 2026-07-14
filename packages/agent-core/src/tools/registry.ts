@@ -21,7 +21,6 @@ import {
   kindFromCode,
   normalizeToolErrorResult,
 } from "./errors";
-import { pauseForPermission, SessionHitlPause } from "../execution/session-hitl-pause";
 
 export class ToolRegistry {
   private _descriptors: Map<string, AnyToolDescriptor>;
@@ -166,6 +165,7 @@ export class ToolRegistry {
       ctx,
     );
     if (permissionResult) {
+      if (permissionResult.blocked !== undefined) return permissionResult;
       return this.runGlobalAfterHooks(permissionResult, ctx);
     }
 
@@ -223,7 +223,6 @@ export class ToolRegistry {
         const output = await descriptor.execute(currentInput, ctx);
         result = normalizeExecuteOutput(output);
       } catch (err) {
-        if (err instanceof SessionHitlPause) throw err;
         this._logger.warn("tool.execute.failed", {
             context: { tool: descriptor.name },
             error: String(err),
@@ -249,7 +248,6 @@ export class ToolRegistry {
           }
         }
       } catch (err) {
-        if (err instanceof SessionHitlPause) throw err;
         this._logger.warn("tool.pipeline.failed", {
           context: { tool: descriptor.name },
           error: String(err),
@@ -319,7 +317,21 @@ export class ToolRegistry {
 
     const confirmPermission = ctx.confirmPermission;
     if (!confirmPermission) {
-      await pauseForPermission(confirmationRequest, ctx);
+      return {
+        output: "",
+        isError: false,
+        blocked: {
+          source: { type: "tool_permission", toolCallId: ctx.toolCallId, toolName: ctx.toolName },
+          displayPayload: permissionDisplayPayload(confirmationRequest),
+          permission: {
+            description: confirmationRequest.description,
+            ...(confirmationRequest.reason === undefined ? {} : { reason: confirmationRequest.reason }),
+            ...(confirmationRequest.approval === undefined ? {} : { approval: confirmationRequest.approval }),
+            ...(confirmationRequest.decisionDisplay === undefined ? {} : { decisionDisplay: confirmationRequest.decisionDisplay }),
+            ...(confirmationRequest.ruleId === undefined ? {} : { ruleId: confirmationRequest.ruleId }),
+          },
+        },
+      };
     }
 
     if (ctx.abort.aborted) {
@@ -413,6 +425,29 @@ export class ToolRegistry {
       kind: inferToolErrorKindFromResult(result) ?? "execution",
     });
   }
+}
+
+function permissionDisplayPayload(request: {
+  toolName: string;
+  input: unknown;
+  description: string;
+  reason?: string;
+  decisionDisplay?: string;
+}) {
+  return {
+    title: safeDisplay(`Approve ${request.toolName}`),
+    summary: safeDisplay(request.reason ?? request.description),
+    fields: [
+      { label: "Tool", value: safeDisplay(request.toolName) },
+      { label: "Input", value: safeDisplay(JSON.stringify(redactValue(request.input))) },
+      ...(request.decisionDisplay === undefined ? [] : [{ label: "Decision", value: safeDisplay(request.decisionDisplay) }]),
+    ],
+    redacted: true as const,
+  };
+}
+
+function safeDisplay(value: string): string {
+  return redactString(value);
 }
 
 function normalizeExecuteOutput(output: string | ToolExecutionResult): ToolExecutionResult {

@@ -4,11 +4,13 @@ import { queryKeys } from "./queries";
 import {
   removeProjectControlPlane,
 } from "../store/control-plane-readiness";
+import { hitlStore } from "../store/hitl-store";
 import type {
   ApiCommandResult,
   GoalState,
-  HitlIdentity,
   HitlResponse,
+  HitlStatus,
+  HitlView,
   Project,
   Session,
   UpdateAutomationPayload,
@@ -166,59 +168,49 @@ export function useCancelGoal() {
 
 // ─── HITL Mutations ───
 
-export function useRespondHitl() {
-  const queryClient = useQueryClient();
+export interface HitlMutationResponse {
+  hitlId: string;
+  status: HitlStatus;
+  view: HitlView;
+}
 
+export function applyHitlMutationResult(projectSlug: string, result: HitlMutationResponse): void {
+  hitlStore.getState().applyScopedView(projectSlug, result.view);
+}
+
+export function useRespondHitl() {
   return useMutation({
     mutationFn: async ({
-      identity,
+      projectSlug,
+      hitlId,
       body,
     }: {
-      identity: HitlIdentity;
+      projectSlug: string;
+      hitlId: string;
       body: Exclude<HitlResponse, { type: "cancel" }>;
-    }) => apiFetch<{ ok: boolean; hitlId: string }>(hitlMutationUrl(identity, "respond"), {
+    }) => apiFetch<HitlMutationResponse>(hitlMutationUrl(projectSlug, hitlId, "respond"), {
       method: "POST",
       body,
     }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.hitl });
-      await queryClient.invalidateQueries({ queryKey: ["projects"], exact: false });
-    },
+    onSuccess: (result, variables) => applyHitlMutationResult(variables.projectSlug, result),
   });
 }
 
 export function useCancelHitl() {
-  const queryClient = useQueryClient();
-
   return useMutation({
-    mutationFn: async ({ identity, reason }: { identity: HitlIdentity; reason?: string }) =>
-      apiFetch<{ ok: boolean; hitlId: string }>(hitlMutationUrl(identity, "cancel"), {
+    mutationFn: async ({ projectSlug, hitlId, reason }: { projectSlug: string; hitlId: string; reason?: string }) =>
+      apiFetch<HitlMutationResponse>(hitlMutationUrl(projectSlug, hitlId, "cancel"), {
         method: "POST",
         body: reason ? { reason } : {},
       }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.hitl });
-      await queryClient.invalidateQueries({ queryKey: ["projects"], exact: false });
-    },
+    onSuccess: (result, variables) => applyHitlMutationResult(variables.projectSlug, result),
   });
 }
 
-function hitlMutationUrl(identity: HitlIdentity, action: "respond" | "cancel"): string {
-  const { owner, hitlId } = identity;
-  return `/api/projects/${encodeURIComponent(owner.projectSlug)}/hitl/${owner.ownerType}/${encodeURIComponent(owner.ownerId)}/${encodeURIComponent(hitlId)}/${action}`;
+function hitlMutationUrl(projectSlug: string, hitlId: string, action: "respond" | "cancel"): string {
+  return `/api/projects/${encodeURIComponent(projectSlug)}/hitl/${encodeURIComponent(hitlId)}/${action}`;
 }
 
-/** Invalidate all HITL query keys for a project slug (project + all owner scopes). */
-export function invalidateHitlForProject(
-  qc: { invalidateQueries: (opts: { queryKey: readonly unknown[]; exact?: boolean }) => Promise<void> },
-  slug: string,
-): Promise<void[]> {
-  return Promise.all([
-    qc.invalidateQueries({ queryKey: queryKeys.hitl }),
-    qc.invalidateQueries({ queryKey: queryKeys.projectHitl(slug) }),
-    qc.invalidateQueries({ queryKey: ["projects", slug, "hitl"], exact: false }),
-  ]);
-}
 
 // ─── Automation mutations ───
 

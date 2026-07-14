@@ -3,6 +3,7 @@ export type {
   MaybePromise,
   ToolTraits,
   ToolExecutionResult,
+  ToolBlockedRequest,
   ToolExecutionContext,
   ToolExecutionControl,
   BeforeHook,

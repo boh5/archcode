@@ -8,7 +8,6 @@ import { ToolRegistry } from "../../registry";
 import type { ToolExecutionContext, ToolExecutionResult } from "../../types";
 import { lspFindReferencesTool } from "./lsp-find-references";
 import { createDurableTestSessionContext, createTestProjectContext } from "../../test-project-context";
-import { SessionHitlPause } from "../../../execution/session-hitl-pause";
 
 const testDir = path.join(import.meta.dir, "__test_tmp__", "lsp-find-references", crypto.randomUUID());
 
@@ -35,11 +34,10 @@ describe("lspFindReferencesTool", () => {
     expect(lspFindReferencesTool.inputSchema.safeParse({ filePath: "src/main.ts", line: 1, character: 0, extra: true }).success).toBe(false);
   });
 
-  test("workspace permission asks for ../ traversal through registry and pauses for durable Session HITL", async () => {
+  test("workspace permission asks for ../ traversal through registry", async () => {
     const registry = new ToolRegistry();
     registry.register(lspFindReferencesTool);
-    const sessionId = crypto.randomUUID();
-    const durable = await createDurableTestSessionContext(testDir, sessionId);
+    const durable = await createDurableTestSessionContext(testDir, crypto.randomUUID());
     const ctx = makeCtx({
       toolName: "lsp_find_references",
       toolCallId: "call-1",
@@ -49,17 +47,11 @@ describe("lspFindReferencesTool", () => {
       ...durable,
     });
 
-    try {
-      await registry.execute(
+    const result = await registry.execute(
         { toolName: "lsp_find_references", toolCallId: "call-1", input: { filePath: "../outside.ts", line: 1, character: 0 } },
         ctx,
       );
-      throw new Error("Expected LSP traversal permission to pause for Session HITL");
-    } catch (error) {
-      expect(error).toBeInstanceOf(SessionHitlPause);
-      if (!(error instanceof SessionHitlPause)) throw error;
-      expect(error.record.source).toEqual({ type: "tool_permission", sessionId, toolCallId: "call-1", toolName: "lsp_find_references" });
-    }
+    expect(result.blocked?.source).toEqual({ type: "tool_permission", toolCallId: "call-1", toolName: "lsp_find_references" });
   });
 
   test("returns lsp-server-not-found for unsupported extension", async () => {

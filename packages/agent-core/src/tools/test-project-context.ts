@@ -4,8 +4,7 @@ import type { StoreApi } from "zustand";
 
 import { GoalStateManager } from "../goals/state";
 import { GoalLifecycleService } from "../goals/lifecycle-service";
-import { HitlService } from "../hitl/service";
-import { createPreparedHitlResume, ResumeCoordinator } from "../hitl/resume-coordinator";
+import { ProjectHitlQueue } from "../hitl";
 import { MemoryFileManager } from "../memory/file-manager";
 import { silentLogger } from "../logger";
 import type { ProjectContextResolverOptions } from "../projects/context-resolver";
@@ -25,7 +24,7 @@ export function createTestProjectContext(
     addedAt: new Date().toISOString(),
   };
   const goalState = new GoalStateManager(workspaceRoot);
-  const hitl = new HitlService({ workspaceRoot, project, sessions, goalState });
+  const hitl = new ProjectHitlQueue({ workspaceRoot });
   return {
     project,
     goalState,
@@ -33,7 +32,6 @@ export function createTestProjectContext(
     createAutomation: async () => { throw new Error("Automation creation is not configured for this test context"); },
     goalCancellation: createTestGoalCancellation(goalState),
     hitl,
-    hitlResumeCoordinator: createTestResumeCoordinator(hitl),
     memory: new MemoryFileManager({
       project: join(workspaceRoot, PROJECT_STATE_DIR_NAME, "memory"),
       user: join(workspaceRoot, PROJECT_STATE_DIR_NAME, "user-memory"),
@@ -57,8 +55,6 @@ export function createTestProjectContextResolverOptions(
       createTestGoalLifecycle(workspaceRoot, goalState, sessionStoreManager)
     ),
     createAutomation: async () => { throw new Error("Automation creation is not configured for this test resolver"); },
-    sessionStoreManager,
-    resumeCoordinatorFactory: ({ hitl }) => createTestResumeCoordinator(hitl),
   };
 }
 
@@ -100,16 +96,5 @@ export function createTestGoalLifecycle(
     readSourceSession: (root, sessionId) => sessions.getSessionFile(root, sessionId),
     ensureSessionFile: (root, sessionId, options) => sessions.ensureSessionFile(root, sessionId, options),
     startCheckedExecutionWithinGoalClaim: async () => ({}) as never,
-  });
-}
-
-function createTestResumeCoordinator(hitl: HitlService): ResumeCoordinator {
-  return new ResumeCoordinator({
-    hitl,
-    adapters: {
-      session: { prepare: async () => createPreparedHitlResume(async () => undefined) },
-      goal: { prepare: async () => createPreparedHitlResume(async () => undefined) },
-    },
-    logger: silentLogger,
   });
 }

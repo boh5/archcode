@@ -1,5 +1,6 @@
 import { Target, Loader2, CircleDot, RotateCcw } from "lucide-react";
-import { useActiveAutomations, useActiveGoals, useDashboardHitl } from "../api/queries";
+import { useActiveAutomations, useActiveGoals, useProjects } from "../api/queries";
+import { useRealtimeHitlEntries } from "../store/hitl-store";
 import { HitlInbox } from "../components/features/HitlCard";
 import type { DashboardAutomation, DashboardGoal, GoalStatus } from "../api/types";
 
@@ -15,9 +16,8 @@ const STATUS_BADGE: Partial<Record<GoalStatus, string>> = {
 export function Dashboard() {
   const { data: goals, isLoading: goalsLoading } = useActiveGoals();
   const { data: automations, isLoading: automationsLoading } = useActiveAutomations();
-  const { data: hitl, isLoading: hitlLoading } = useDashboardHitl();
-
-  const projections = hitl ?? [];
+  const { data: projects, isLoading: projectsLoading } = useProjects();
+  const entries = useRealtimeHitlEntries((projects ?? []).map((project) => project.slug));
 
   return (
     <div className="h-full overflow-y-auto bg-bg-base">
@@ -87,8 +87,8 @@ export function Dashboard() {
 
         <div id="approval-queue">
           <HitlInbox
-            projections={projections}
-            isLoading={hitlLoading}
+            entries={entries}
+            isLoading={projectsLoading}
             hideWhenEmpty
             testId="dashboard-approval-queue"
             className="gap-2.5"

@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { ModelInfo } from "../../provider/model";
 import { SkillService } from "../../skills";
 import { silentLogger } from "../../logger";
-import { createSessionStore, storeManager } from "../../store/store";
+import { storeManager } from "../../store/store";
 import type { SessionEventPayload, SessionStoreState, StoredMessage } from "../../store/types";
 import { createRegistry, defineTool } from "../../tools";
 import type { ToolExecutionContext } from "../../tools";
@@ -59,7 +59,7 @@ const testSkillService = new SkillService({ builtinSkills: {} });
 const inputSchema = z.object({ message: z.string().optional() }).strict();
 
 function createStore() {
-  return createSessionStore(crypto.randomUUID(), TEST_WORKSPACE_ROOT);
+  return storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, { agentName: "engineer" });
 }
 
 function wrappedMessage(ref: string, text: string): string {

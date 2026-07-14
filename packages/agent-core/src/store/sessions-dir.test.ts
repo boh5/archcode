@@ -5,7 +5,6 @@ import {
   __setSessionsDirForTest,
   assertSafeSessionId,
   getSessionDir,
-  getSessionHitlPath,
   getSessionPath,
 } from "./sessions-dir";
 
@@ -195,23 +194,14 @@ describe("owner-local session paths", () => {
     );
   });
 
-  test("getSessionHitlPath returns .archcode/sessions/{sessionId}/hitl.json", () => {
-    expect(getSessionHitlPath("/tmp/project", VALID_UUID)).toBe(
-      join("/tmp/project", ".archcode", "sessions", VALID_UUID, "hitl.json"),
-    );
-  });
-
   test("respects test override of sessions dir", () => {
     __setSessionsDirForTest(() => "/tmp/override-sessions");
     expect(getSessionDir("/any/root", VALID_UUID)).toBe(join("/tmp/override-sessions", VALID_UUID));
     expect(getSessionPath("/any/root", VALID_UUID)).toBe(join("/tmp/override-sessions", VALID_UUID, "session.json"));
-    expect(getSessionHitlPath("/any/root", VALID_UUID)).toBe(join("/tmp/override-sessions", VALID_UUID, "hitl.json"));
   });
 
   test("rejects traversal and malformed IDs for all owner-local paths", () => {
     expect(() => getSessionDir("/tmp/p", "../bad")).toThrow("Invalid session ID");
     expect(() => getSessionPath("/tmp/p", "../bad")).toThrow("Invalid session ID");
-    expect(() => getSessionHitlPath("/tmp/p", "../bad")).toThrow("Invalid session ID");
-    expect(() => getSessionHitlPath("/tmp/p", "")).toThrow("Invalid session ID");
   });
 });

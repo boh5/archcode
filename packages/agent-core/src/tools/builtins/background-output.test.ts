@@ -391,6 +391,7 @@ describe("background_output tool", () => {
       todos: [],
       reminders: [],
       childSessionLinks: [],
+      toolBatches: [],
     }, workspaceRoot);
 
     expect(ctx.storeManager.get(childId, workspaceRoot)).toBeUndefined();

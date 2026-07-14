@@ -8,19 +8,7 @@ import {
 } from "./guards";
 import type { SessionEventPayload } from "./types";
 
-const owner = { projectSlug: "project", ownerType: "session" as const, ownerId: "session-1" };
 const displayPayload = { title: "Question", redacted: true as const };
-const hitlRecord = {
-  hitlId: "hitl-1",
-  owner,
-  sessionRootId: "session-1",
-  blockingKey: "question:1",
-  source: { type: "ask_user" as const, sessionId: "session-1", toolCallId: "call-1" },
-  status: "pending" as const,
-  displayPayload,
-  createdAt: "2026-07-14T00:00:00.000Z",
-  updatedAt: "2026-07-14T00:00:00.000Z",
-};
 const refMap = {
   messageRefsById: { message: "m0001" as const },
   messageIdsByRef: { m0001: "message" },
@@ -61,7 +49,7 @@ const compressionState = {
 const validPayloads = [
   { type: "shutdown", reason: "restart" },
   { type: "execution-start", executionId: "execution-1" },
-  { type: "execution-end", status: "waiting_for_human", blockedByHitlIds: ["hitl-1"], blockedHitl: { hitlId: "hitl-1", blockedAt: "now", source: hitlRecord.source } },
+  { type: "execution-end", status: "waiting_for_human", blockedByHitlIds: ["hitl-1"] },
   { type: "session.cwd_changed", previousCwd: "/old", cwd: "/new" },
   { type: "user-message", content: "hello" },
   { type: "system-notice", message: "notice" },
@@ -90,9 +78,6 @@ const validPayloads = [
   { type: "compression.block_committed", block: compressionBlock, state: compressionState },
   { type: "compression.block_failed", failure: { id: "failure-1", reason: "overlap", failedAt: 1 }, state: compressionState },
   { type: "compression.ref_map_updated", refMap, updatedAt: 1 },
-  { type: "hitl.request", request: hitlRecord },
-  { type: "hitl.updated", record: hitlRecord },
-  { type: "hitl.resolved", hitlId: "hitl-1", status: "resolved", response: { type: "question_answer", answers: ["yes"] } },
 ] satisfies SessionEventPayload[];
 
 describe("protocol event guards", () => {
@@ -105,9 +90,6 @@ describe("protocol event guards", () => {
       "execution-end",
       "execution-error",
       "execution-start",
-      "hitl.request",
-      "hitl.resolved",
-      "hitl.updated",
       "llm-recovery",
       "llm-recovery-failed",
       "llm-retry",
@@ -149,7 +131,7 @@ describe("protocol event guards", () => {
     expect(isSessionEventPayload({ type: "text-delta", text: 1 })).toBe(false);
     expect(isSessionEventPayload({ type: "tool-child-session-link", link: { ...validPayloads[17]!.link, legacy: true } })).toBe(false);
     expect(isSessionEventPayload({ type: "compression.block_committed", block: { ...compressionBlock, range: { ...compressionBlock.range, endIndex: "0" } } })).toBe(false);
-    expect(isSessionEventPayload({ type: "hitl.request", request: { ...hitlRecord, source: { ...hitlRecord.source, legacy: true } } })).toBe(false);
+    expect(isSessionEventPayload({ type: "hitl.request" })).toBe(false);
     expect(isSessionEventPayload({})).toBe(false);
     expect(isSessionEventPayload(null)).toBe(false);
     expect(isSessionEventPayload("text-start")).toBe(false);
@@ -162,25 +144,23 @@ describe("protocol event guards", () => {
   });
 
   test("accepts only the current global HITL and resource change contracts", () => {
-    const projection = {
+    const view = {
       hitlId: "hitl-1",
-      project: { slug: "project" },
-      owner,
-      source: hitlRecord.source,
+      owner: { type: "session", id: "session-1" },
+      source: { type: "ask_user", toolCallId: "call-1" },
       status: "pending",
       displayPayload,
       allowedActions: ["answer", "cancel"],
-      createdAt: hitlRecord.createdAt,
-      updatedAt: hitlRecord.updatedAt,
+      createdAt: "2026-07-14T00:00:00.000Z",
+      updatedAt: "2026-07-14T00:00:00.000Z",
     };
     const hitlEvent = {
       type: "hitl.event",
       projectSlug: "project",
-      owner,
       hitlId: "hitl-1",
       createdAt: 1,
       payload: { type: "hitl.request" },
-      projection,
+      view,
     };
     const resourceEvent = {
       type: "resource.changed",

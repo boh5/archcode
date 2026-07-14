@@ -52,10 +52,6 @@ export interface SessionExecutionScopeSubject {
   readonly agentName?: AgentName;
 }
 
-export type SessionExecutionScopeEntry =
-  | { readonly kind: "user_message" }
-  | { readonly kind: "hitl_replay" };
-
 export interface SessionExecutionScopeValidatorOptions {
   readonly projectContextResolver: Pick<ProjectContextResolver, "resolve">;
   readonly worktreeServiceFactory?: (
@@ -66,13 +62,12 @@ export interface SessionExecutionScopeValidatorOptions {
 export interface SessionExecutionScopeValidationInput {
   readonly projectRoot: string;
   readonly subject: SessionExecutionScopeSubject;
-  readonly entry: SessionExecutionScopeEntry;
 }
 
 /**
  * Validates the persisted owner and execution domain of an existing Session.
  * Ordinary Sessions stay owner-free; Goal Sessions must prove their current
- * claim before a generic message or a persisted HITL replay can run.
+ * claim before the Session can run.
  */
 export class SessionExecutionScopeValidator {
   readonly #projectContextResolver: Pick<ProjectContextResolver, "resolve">;
@@ -87,7 +82,7 @@ export class SessionExecutionScopeValidator {
   }
 
   async validate(input: SessionExecutionScopeValidationInput): Promise<void> {
-    const { subject, entry } = input;
+    const { subject } = input;
     if (subject.goalId === undefined) {
       const worktree = await this.#assertRegisteredCwd(input.projectRoot, subject);
       this.#assertOrdinaryWorktreeOwner(subject, worktree);
@@ -120,7 +115,7 @@ export class SessionExecutionScopeValidator {
     }
 
     if (goal !== undefined) {
-      this.#assertGoalStatus(subject, goal, entry);
+      this.#assertGoalStatus(subject, goal);
       await this.#assertGoalCwd(input.projectRoot, subject, goal);
     }
   }
@@ -198,23 +193,22 @@ export class SessionExecutionScopeValidator {
   #assertGoalStatus(
     subject: SessionExecutionScopeSubject,
     goal: GoalState,
-    entry: SessionExecutionScopeEntry,
   ): void {
-    const decision = decideGoalSessionExecution({ goal, subject, entryKind: entry.kind });
+    const decision = decideGoalSessionExecution({ goal, subject });
     if (decision.allowed) return;
     if (decision.reason === "reviewer_required") {
       throw conflict(
         "SESSION_GOAL_REVIEWER_REQUIRED",
         subject,
         `Only a Reviewer Session can execute while Goal ${goal.id} is reviewing`,
-        { goalId: goal.id, status: goal.status, entryKind: entry.kind },
+        { goalId: goal.id, status: goal.status },
       );
     }
     throw conflict(
       "SESSION_GOAL_NOT_EXECUTABLE",
       subject,
       `Goal ${goal.id} cannot execute from status ${goal.status}`,
-      { goalId: goal.id, status: goal.status, entryKind: entry.kind },
+      { goalId: goal.id, status: goal.status },
     );
   }
 

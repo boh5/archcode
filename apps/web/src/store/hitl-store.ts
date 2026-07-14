@@ -1,21 +1,17 @@
 import { createStore } from "zustand/vanilla";
 import { useStore } from "zustand/react";
 import { useMemo } from "react";
-import {
-  hitlIdentityKey,
-  type GlobalSSEHitlRealtimeEvent,
-  type GlobalSSEHitlSnapshotEvent,
-  type HitlProjection,
-} from "@archcode/protocol";
+import { hitlIdentityKey, type GlobalSSEHitlRealtimeEvent, type GlobalSSEHitlSnapshotEvent, type HitlView } from "@archcode/protocol";
 
 export { hitlIdentityKey };
-
 export type HitlScope = "project" | "session" | "goal";
+export interface ScopedHitlView { projectSlug: string; view: HitlView }
 
 interface HitlStoreState {
-  projections: Record<string, HitlProjection>;
+  views: Record<string, ScopedHitlView>;
   initializedProjects: Record<string, true>;
   applyRealtimeEvent: (event: GlobalSSEHitlRealtimeEvent) => void;
+  applyScopedView: (projectSlug: string, view: HitlView) => void;
   applySnapshot: (event: GlobalSSEHitlSnapshotEvent) => void;
   removeProject: (projectSlug: string) => void;
   invalidateSnapshots: () => void;
@@ -24,112 +20,52 @@ interface HitlStoreState {
 }
 
 export const hitlStore = createStore<HitlStoreState>((set, get) => ({
-  projections: {},
-  initializedProjects: {},
-  applyRealtimeEvent: (event) => set((state) => {
-    const next = { ...state.projections };
-    const key = hitlIdentityKey(event.projection);
-    if (isVisibleHitlProjection(event.projection)) {
-      next[key] = event.projection;
-    } else {
-      delete next[key];
-    }
-    return { projections: next };
+  views: {}, initializedProjects: {},
+  applyRealtimeEvent: (event) => get().applyScopedView(event.projectSlug, event.view),
+  applyScopedView: (projectSlug, view) => set((state) => {
+    const views = { ...state.views }, key = scopedHitlKey(projectSlug, view);
+    if (isVisibleHitlView(view)) views[key] = { projectSlug, view }; else delete views[key];
+    return { views };
   }),
   applySnapshot: (event) => set((state) => {
-    if (event.projectSlugs.length === 0) {
-      return { projections: {}, initializedProjects: {} };
-    }
-
-    const snapshotProjects = new Set(event.projectSlugs);
-    const projections = Object.fromEntries(
-      Object.entries(state.projections).filter(([, projection]) => !snapshotProjects.has(projection.project.slug)),
-    );
-    for (const projection of event.projections) {
-      if (!snapshotProjects.has(projection.project.slug) || !isVisibleHitlProjection(projection)) continue;
-      projections[hitlIdentityKey(projection)] = projection;
-    }
-
-    const initializedProjects = { ...state.initializedProjects };
-    for (const projectSlug of event.projectSlugs) initializedProjects[projectSlug] = true;
-    return { projections, initializedProjects };
+    if (event.projectSlugs.length === 0) return { views: {}, initializedProjects: {} };
+    const projects = new Set(event.projectSlugs);
+    const views = Object.fromEntries(Object.entries(state.views).filter(([, entry]) => !projects.has(entry.projectSlug)));
+    for (const entry of event.entries) if (projects.has(entry.projectSlug) && isVisibleHitlView(entry.view)) views[scopedHitlKey(entry.projectSlug, entry.view)] = entry;
+    const initializedProjects = { ...state.initializedProjects }; for (const slug of event.projectSlugs) initializedProjects[slug] = true;
+    return { views, initializedProjects };
   }),
   removeProject: (projectSlug) => set((state) => {
-    const initializedProjects = { ...state.initializedProjects };
-    delete initializedProjects[projectSlug];
-    return {
-      initializedProjects,
-      projections: Object.fromEntries(
-        Object.entries(state.projections).filter(([, projection]) => projection.project.slug !== projectSlug),
-      ),
-    };
+    const initializedProjects = { ...state.initializedProjects }; delete initializedProjects[projectSlug];
+    return { initializedProjects, views: Object.fromEntries(Object.entries(state.views).filter(([, entry]) => entry.projectSlug !== projectSlug)) };
   }),
   invalidateSnapshots: () => set({ initializedProjects: {} }),
   isProjectInitialized: (projectSlug) => get().initializedProjects[projectSlug] === true,
-  reset: () => set({ projections: {}, initializedProjects: {} }),
+  reset: () => set({ views: {}, initializedProjects: {} }),
 }));
 
-export function useHitlProjectInitialized(projectSlug: string): boolean {
-  return useStore(hitlStore, (state) => state.initializedProjects[projectSlug] === true);
+export function useHitlProjectInitialized(projectSlug: string): boolean { return useStore(hitlStore, (state) => state.initializedProjects[projectSlug] === true); }
+
+export function useRealtimeHitl(input: { readonly slug: string; readonly scope: HitlScope; readonly ownerId?: string }): HitlView[] {
+  const views = useStore(hitlStore, (state) => state.views);
+  return useMemo(() => selectHitlViews(Object.values(views), input), [input.ownerId, input.scope, input.slug, views]);
 }
 
-export function useRealtimeHitl(input: {
-  readonly slug: string;
-  readonly scope: HitlScope;
-  readonly ownerId?: string;
-  readonly includeChildren?: boolean;
-}): HitlProjection[] {
-  const projectionsById = useStore(hitlStore, (state) => state.projections);
-  const { slug, scope, ownerId, includeChildren } = input;
-  return useMemo(
-    () => selectHitlProjections(Object.values(projectionsById), { slug, scope, ownerId, includeChildren }),
-    [includeChildren, ownerId, projectionsById, scope, slug],
-  );
+export function useRealtimeHitlProjects(projectSlugs: readonly string[]): HitlView[] {
+  const views = useStore(hitlStore, (state) => state.views);
+  return useMemo(() => { const allowed = new Set(projectSlugs); return Object.values(views).filter((entry) => allowed.has(entry.projectSlug) && isVisibleHitlView(entry.view)).map((entry) => entry.view).sort((a, b) => a.createdAt.localeCompare(b.createdAt)); }, [projectSlugs, views]);
+}
+export function useRealtimeHitlEntries(projectSlugs: readonly string[]): ScopedHitlView[] {
+  const views = useStore(hitlStore, (state) => state.views);
+  return useMemo(() => { const allowed = new Set(projectSlugs); return Object.values(views).filter((entry) => allowed.has(entry.projectSlug) && isVisibleHitlView(entry.view)); }, [projectSlugs, views]);
 }
 
-export function selectHitlProjections(
-  projections: readonly HitlProjection[],
-  input: {
-    readonly slug: string;
-    readonly scope: HitlScope;
-    readonly ownerId?: string;
-    readonly includeChildren?: boolean;
-  },
-): HitlProjection[] {
-  const ownerId = input.ownerId;
-  const selected = projections.filter((projection) => {
-    if (projection.project.slug !== input.slug) return false;
-    if (input.scope === "project") return true;
-    if (!ownerId) return false;
-    if (projection.owner.ownerType === input.scope && projection.owner.ownerId === ownerId) return true;
-    if (input.includeChildren !== true) return false;
-    return isDescendantProjection(projection, input.scope, ownerId);
-  });
-  return selected.sort((left, right) => left.createdAt.localeCompare(right.createdAt) || hitlIdentityKey(left).localeCompare(hitlIdentityKey(right)));
+export function selectHitlViews(entries: readonly ScopedHitlView[], input: { readonly slug: string; readonly scope: HitlScope; readonly ownerId?: string }): HitlView[] {
+  return entries.filter((entry) => entry.projectSlug === input.slug).filter((entry) => input.scope === "project" || (Boolean(input.ownerId) && entry.view.owner.type === input.scope && entry.view.owner.id === input.ownerId)).map((entry) => entry.view).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || hitlIdentityKey(a).localeCompare(hitlIdentityKey(b)));
 }
 
-export function isVisibleHitlProjection(projection: Pick<HitlProjection, "status" | "requiresInspection">): boolean {
-  return projection.status === "pending" || projection.requiresInspection === true;
-}
+export function isVisibleHitlView(view: Pick<HitlView, "status" | "requiresInspection">): boolean { return view.status === "pending" || view.requiresInspection === true; }
 
-function isDescendantProjection(projection: HitlProjection, scope: Exclude<HitlScope, "project">, ownerId: string): boolean {
-  const ancestry = projection.ancestry;
-  if (scope === "session") {
-    if (ancestry?.rootSessionId === ownerId || ancestry?.parentSessionId === ownerId) return true;
-    return ancestry?.ancestorSessionIds?.includes(ownerId) ?? false;
-  }
-  if (scope === "goal") return ancestry?.goalId === ownerId || sourceGoalId(projection) === ownerId;
-  return false;
-}
-
-function sourceGoalId(projection: HitlProjection): string | undefined {
-  switch (projection.source.type) {
-    case "goal_approval":
-    case "goal_review":
-    case "goal_budget":
-    case "goal_question":
-      return projection.source.goalId;
-    default:
-      return undefined;
-  }
+export function scopedHitlKey(projectSlug: string, view: Pick<HitlView, "owner" | "hitlId">): string {
+  return `${projectSlug}\0${hitlIdentityKey(view)}`;
 }

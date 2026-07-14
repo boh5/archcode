@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { AgentRunningError, ChildSessionCwdMismatchError, ProjectRegistry, SessionCwdTransitionInProgressError, SessionFamilyActiveError, SessionFamilyStopInProgressError, SessionHitlBlockedError, SessionHitlJournalBlockedError, SessionHitlResumeInProgressError, silentLogger } from "@archcode/agent-core";
+import { AgentRunningError, ChildSessionCwdMismatchError, ProjectRegistry, SessionCwdTransitionInProgressError, SessionFamilyActiveError, SessionFamilyStopInProgressError, SessionToolBatchActiveError, silentLogger } from "@archcode/agent-core";
 import type { ActiveSessionExecution, AgentRuntime } from "@archcode/agent-core";
 import { createServerApp } from "../app";
 import { globalEventBus } from "../events/global-event-bus";
@@ -276,27 +276,9 @@ describe("messages routes", () => {
     });
   });
 
-  test("POST message during durable HITL continuation returns stable 409", async () => {
-    const { app, project, runtime } = await createTestApp("hitl-resume-conflict");
-    const conflict = new SessionHitlResumeInProgressError("root-session", "root-session");
-    const start = runtime.startSessionMessageExecution as unknown as ReturnType<typeof mock>;
-    start.mockImplementation(async () => { throw conflict; });
-
-    const res = await app.request(`/api/projects/${project.slug}/sessions/root-session/messages`, {
-      method: "POST",
-      body: JSON.stringify({ text: "Do not interleave" }),
-      headers: { "content-type": "application/json" },
-    });
-
-    expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({
-      error: { code: "BAD_REQUEST", message: conflict.message },
-    });
-  });
-
   test("POST message while Session awaits HITL returns stable 409", async () => {
     const { app, project, runtime } = await createTestApp("hitl-blocked-conflict");
-    const conflict = new SessionHitlBlockedError("root-session", ["hitl-1"]);
+    const conflict = new SessionToolBatchActiveError("root-session", ["hitl-1"]);
     const start = runtime.startSessionMessageExecution as unknown as ReturnType<typeof mock>;
     start.mockImplementation(async () => { throw conflict; });
 
@@ -310,39 +292,6 @@ describe("messages routes", () => {
     expect(await res.json()).toEqual({
       error: { code: "BAD_REQUEST", message: conflict.message },
     });
-  });
-
-  test("POST message blocked only by the Session HITL journal returns safe stable 409 details", async () => {
-    const { app, project, runtime } = await createTestApp("hitl-journal-blocked-conflict");
-    const conflict = new SessionHitlJournalBlockedError(
-      "root-session",
-      ["hitl-prepared-1", "hitl-unknown-2"],
-      ["preparing", "manual_unknown"],
-    );
-    const start = runtime.startSessionMessageExecution as unknown as ReturnType<typeof mock>;
-    start.mockImplementation(async () => { throw conflict; });
-
-    const res = await app.request(`/api/projects/${project.slug}/sessions/root-session/messages`, {
-      method: "POST",
-      body: JSON.stringify({ text: "Do not overtake journal recovery" }),
-      headers: { "content-type": "application/json" },
-    });
-    const body = await res.json();
-
-    expect(res.status).toBe(409);
-    expect(body).toEqual({
-      error: {
-        code: "BAD_REQUEST",
-        message: conflict.message,
-        details: {
-          scopeCode: "SESSION_HITL_JOURNAL_BLOCKED",
-          sessionId: "root-session",
-          hitlIds: ["hitl-prepared-1", "hitl-unknown-2"],
-          phases: ["preparing", "manual_unknown"],
-        },
-      },
-    });
-    expect(JSON.stringify(body)).not.toContain(project.workspaceRoot);
   });
 
   test("POST message for a stale-cwd child returns stable 409", async () => {

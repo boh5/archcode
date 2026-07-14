@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { AgentRunningError, ChildSessionCwdMismatchError, ConcurrentSessionLimitError, SessionCwdTransitionInProgressError, SessionDeleteInProgressError, SessionExecutionScopeConflictError, SessionFamilyActiveError, SessionFamilyStopInProgressError, SessionHitlBlockedError, SessionHitlJournalBlockedError, SessionHitlResumeInProgressError } from "@archcode/agent-core";
+import { AgentRunningError, ChildSessionCwdMismatchError, ConcurrentSessionLimitError, SessionCwdTransitionInProgressError, SessionDeleteInProgressError, SessionExecutionScopeConflictError, SessionFamilyActiveError, SessionFamilyStopInProgressError, SessionToolBatchActiveError } from "@archcode/agent-core";
 import type { AgentRuntime } from "@archcode/agent-core";
 import { z } from "zod/v4";
 import {
@@ -53,16 +53,8 @@ export function createMessagesRoutes(runtime: AgentRuntime): Hono {
       if (error instanceof SessionCwdTransitionInProgressError) {
         throw new SessionCwdTransitionHttpError(error);
       }
-      if (error instanceof SessionHitlBlockedError || error instanceof SessionHitlResumeInProgressError || error instanceof ChildSessionCwdMismatchError) {
+      if (error instanceof SessionToolBatchActiveError || error instanceof ChildSessionCwdMismatchError) {
         throw new ServerError("BAD_REQUEST", error.message, 409);
-      }
-      if (error instanceof SessionHitlJournalBlockedError) {
-        throw new ServerError("BAD_REQUEST", error.message, 409, {
-          scopeCode: error.code,
-          sessionId: error.sessionId,
-          hitlIds: [...error.hitlIds],
-          phases: [...error.phases],
-        });
       }
       if (error instanceof SessionDeleteInProgressError) {
         throw new ServerError("BAD_REQUEST", error.message, 409, {

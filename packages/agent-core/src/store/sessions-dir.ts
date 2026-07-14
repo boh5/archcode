@@ -79,18 +79,6 @@ export function getSessionPath(workspaceRoot: string, sessionId: string): string
   return path;
 }
 
-/**
- * Returns the owner-local HITL file path for one session.
- * Pattern: `.archcode/sessions/{sessionId}/hitl.json`
- */
-export function getSessionHitlPath(workspaceRoot: string, sessionId: string): string {
-  assertSafeSessionId(sessionId);
-  const sessionDir = getSessionDir(workspaceRoot, sessionId);
-  const path = join(sessionDir, "hitl.json");
-  assertPathContained(path, sessionDir);
-  return path;
-}
-
 export function __setSessionsDirForTest(
   fn: ((workspaceRoot: string) => string) | undefined,
 ): void {

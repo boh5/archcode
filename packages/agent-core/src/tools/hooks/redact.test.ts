@@ -44,4 +44,30 @@ describe("redaction hook", () => {
     expect(JSON.stringify(result)).not.toContain(RAW_SECRET);
     expect(JSON.stringify(ctx.redactedInput)).not.toContain(RAW_SECRET);
   });
+
+  it("preserves and redacts durable HITL control data", async () => {
+    const hook = createRedactionHook();
+
+    const result = await hook({
+      output: "",
+      isError: false,
+      blocked: {
+        source: { type: "ask_user", toolCallId: "call-1" },
+        displayPayload: {
+          title: "Question",
+          summary: `Secret ${RAW_SECRET}`,
+          redacted: true,
+        },
+      },
+    }, makeCtx());
+
+    expect(result?.blocked).toEqual({
+      source: { type: "ask_user", toolCallId: "call-1" },
+      displayPayload: {
+        title: "Question",
+        summary: `Secret ${REDACTION_MARKER}`,
+        redacted: true,
+      },
+    });
+  });
 });

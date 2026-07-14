@@ -3,7 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createEmptySessionStats } from "@archcode/protocol";
 import type { Agent, AgentResult, AgentRunOptions } from "../agents/types";
-import { AgentRunningError, ConcurrentLimitError, ConcurrentSessionLimitError, DelegateTargetNotAllowedError, DepthLimitError, ChildSessionNotFoundError, ChildSessionAgentMismatchError, ChildSessionParentMismatchError, ChildSessionNotDescendantError, ChildSessionCwdMismatchError, SessionCwdTransitionConflictError, SessionCwdTransitionInProgressError, SessionHitlBlockedError, SessionHitlCancelOnlyLeaseError, SessionHitlResumeConflictError, SessionHitlResumeInProgressError, SessionHitlResumeLeaseExpiredError } from "../agents/errors";
+import { AgentRunningError, ConcurrentLimitError, ConcurrentSessionLimitError, DelegateTargetNotAllowedError, DepthLimitError, ChildSessionNotFoundError, ChildSessionAgentMismatchError, ChildSessionParentMismatchError, ChildSessionNotDescendantError, ChildSessionCwdMismatchError, SessionCwdTransitionConflictError, SessionCwdTransitionInProgressError, SessionToolBatchActiveError } from "../agents/errors";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
 import type { SlashCommandResult } from "../commands/types";
 import { NotRootSessionError, SessionDeleteConflictError } from "../store/errors";
@@ -16,7 +16,7 @@ import { SessionExecutionManager } from "./session-execution-manager";
 import { SessionExecutionScopeConflictError } from "./session-execution-scope-validator";
 import { SessionWorkspaceClosingError } from "./session-workspace-control";
 import { silentLogger } from "../logger";
-import type { SessionStoreState, ToolChildSessionLink } from "../store/types";
+import type { SessionStoreState, SessionToolBatch, ToolChildSessionLink } from "../store/types";
 import type { AgentFactory } from "../agents/factory";
 import type { AgentDefinition } from "../agents/factory-types";
 import { createEmptyCompressionState } from "../compression";
@@ -71,17 +71,6 @@ function getUserMessageTexts(state: SessionStoreState): string[] {
       .join(""));
 }
 
-function reserveActivatedHitlResume(
-  manager: SessionExecutionManager,
-  sessionId: string,
-  rootSessionId = sessionId,
-  options?: Parameters<SessionExecutionManager["reserveSessionHitlResume"]>[3],
-) {
-  const lease = manager.reserveSessionHitlResume(workspaceRoot, sessionId, rootSessionId, options);
-  lease.activate();
-  return lease;
-}
-
 class MockAgent implements Agent {
   readonly store;
   readonly cwd: string;
@@ -130,9 +119,9 @@ interface FakeManagerOptions {
   onReleaseAgent?: (sessionId: string) => void;
   executionScopeValidator?: ConstructorParameters<typeof SessionExecutionManager>[0]["executionScopeValidator"];
   goalDelegationAdmission?: ConstructorParameters<typeof SessionExecutionManager>[0]["goalDelegationAdmission"];
-  deletionPreflight?: ConstructorParameters<typeof SessionExecutionManager>[0]["deletionPreflight"];
+  deletionLifecycle?: ConstructorParameters<typeof SessionExecutionManager>[0]["deletionLifecycle"];
   flushSessionStore?: ConstructorParameters<typeof SessionExecutionManager>[0]["flushSessionStore"];
-  listSessionFamilyBlockedHitlIds?: ConstructorParameters<typeof SessionExecutionManager>[0]["listSessionFamilyBlockedHitlIds"];
+  listSessionFamilyToolBatchHitlIds?: ConstructorParameters<typeof SessionExecutionManager>[0]["listSessionFamilyToolBatchHitlIds"];
   sessionFamilyStopTimeoutMs?: number;
 }
 
@@ -142,7 +131,7 @@ type SessionExecutionManagerConfigForTest = ConstructorParameters<typeof Session
 
 function storeCallbacks(manager: SessionStoreManager): Pick<
   SessionExecutionManagerConfigForTest,
-  "createSessionStore" | "flushSessionStore" | "getSessionStore" | "loadSessionStore" | "deleteSessionStore" | "resolveRootSessionId" | "buildSessionTree" | "listSessionFamilyBlockedHitlIds"
+  "createSessionStore" | "flushSessionStore" | "getSessionStore" | "loadSessionStore" | "deleteSessionStore" | "resolveRootSessionId" | "buildSessionTree" | "listSessionFamilyToolBatchHitlIds"
 > {
   return {
     createSessionStore: (sessionId, root, createOptions) => manager.create(sessionId, root, createOptions),
@@ -152,7 +141,7 @@ function storeCallbacks(manager: SessionStoreManager): Pick<
     deleteSessionStore: (sessionId, root, deleteOptions) => manager.delete(sessionId, root, deleteOptions),
     resolveRootSessionId: (sessionId, root) => manager.resolveRootSessionId(sessionId, root),
     buildSessionTree: (root, rootSessionId) => manager.buildSessionTree(root, rootSessionId),
-    listSessionFamilyBlockedHitlIds: (root, rootSessionId) => manager.listSessionFamilyBlockedHitlIds(root, rootSessionId),
+    listSessionFamilyToolBatchHitlIds: (root, rootSessionId) => manager.listSessionFamilyToolBatchHitlIds(root, rootSessionId),
   };
 }
 
@@ -243,14 +232,14 @@ function createManager(agents: Record<string, MockAgent>, options: FakeManagerOp
     sessionAgentManager,
     ...storeCallbacks(executionStoreManager),
     ...(options.flushSessionStore === undefined ? {} : { flushSessionStore: options.flushSessionStore }),
-    ...(options.listSessionFamilyBlockedHitlIds === undefined ? {} : {
-      listSessionFamilyBlockedHitlIds: options.listSessionFamilyBlockedHitlIds,
+    ...(options.listSessionFamilyToolBatchHitlIds === undefined ? {} : {
+      listSessionFamilyToolBatchHitlIds: options.listSessionFamilyToolBatchHitlIds,
     }),
     trackSession,
     untrackSession,
     executionScopeValidator: options.executionScopeValidator ?? allowExecutionScope,
     ...(options.goalDelegationAdmission === undefined ? {} : { goalDelegationAdmission: options.goalDelegationAdmission }),
-    ...(options.deletionPreflight === undefined ? {} : { deletionPreflight: options.deletionPreflight }),
+    ...(options.deletionLifecycle === undefined ? {} : { deletionLifecycle: options.deletionLifecycle }),
     ...(options.sessionFamilyStopTimeoutMs === undefined ? {} : { sessionFamilyStopTimeoutMs: options.sessionFamilyStopTimeoutMs }),
     logger: silentLogger,
   });
@@ -285,7 +274,7 @@ async function writeSessionFile(input: {
   title?: string;
   executions?: SessionFile["executions"];
   childSessionLinks?: SessionFile["childSessionLinks"];
-  blockedByHitlIds?: SessionFile["blockedByHitlIds"];
+  toolBatches?: SessionFile["toolBatches"];
   goalId?: string;
 }): Promise<void> {
   const rootSessionId = input.rootSessionId ?? input.sessionId;
@@ -305,13 +294,45 @@ async function writeSessionFile(input: {
     todos: [],
     reminders: [],
     childSessionLinks: input.childSessionLinks ?? [],
+    toolBatches: input.toolBatches ?? [],
     rootSessionId,
     ...(input.goalId === undefined ? {} : { goalId: input.goalId }),
-    ...(input.blockedByHitlIds === undefined ? {} : { blockedByHitlIds: input.blockedByHitlIds }),
     ...(input.parentSessionId === undefined ? {} : { parentSessionId: input.parentSessionId }),
   };
   await mkdir(getSessionDir(workspaceRoot, input.sessionId), { recursive: true });
   await Bun.write(getSessionPath(workspaceRoot, input.sessionId), JSON.stringify(file, null, 2));
+}
+
+function blockedToolBatch(hitlId: string): SessionToolBatch {
+  const now = new Date().toISOString();
+  const toolCallId = `tool-${hitlId}`;
+  return {
+    batchId: `batch-${hitlId}`,
+    executionId: `execution-${hitlId}`,
+    step: 0,
+    agentName: "engineer",
+    allowedTools: ["ask_user"],
+    agentSkills: [],
+    partitions: [{ type: "serial", callIds: [toolCallId] }],
+    calls: [{
+      ordinal: 0,
+      partitionIndex: 0,
+      toolCallId,
+      toolName: "ask_user",
+      input: {},
+      traits: { readOnly: true, destructive: false, concurrencySafe: false },
+      state: "blocked",
+      attempt: 1,
+      blocker: {
+        requestKey: `request-${hitlId}`,
+        hitlId,
+        source: { type: "ask_user", toolCallId },
+        displayPayload: { title: "Question", redacted: true },
+      },
+    }],
+    createdAt: now,
+    updatedAt: now,
+  };
 }
 
 function makeChildLink(parentSessionId: string, childSessionId: string, childAgentName: string): ToolChildSessionLink {
@@ -1003,24 +1024,6 @@ describe("SessionExecutionManager", () => {
     expect(secondExecution.abortController.signal.aborted).toBe(true);
   });
 
-  test("stopSessionFamily reports a stuck HITL resume instead of silently timing out", async () => {
-    const rootId = crypto.randomUUID();
-    storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
-    const { manager } = createManager({}, { sessionFamilyStopTimeoutMs: 5 });
-    const resume = reserveActivatedHitlResume(manager, rootId);
-
-    let captured: unknown;
-    try {
-      await manager.stopSessionFamily(workspaceRoot, rootId);
-    } catch (error) {
-      captured = error;
-    }
-
-    expect(resume.abortSignal.aborted).toBe(true);
-    expect(captured).toBeInstanceOf(SessionFamilyStopConflictError);
-    expect(captured).toMatchObject({ rootSessionId: rootId, stuckSessionIds: [rootId] });
-    resume.release();
-  });
 
   test("family stop generation blocks every new owner and drains an already pending child launch", async () => {
     const rootId = crypto.randomUUID();
@@ -1061,7 +1064,6 @@ describe("SessionExecutionManager", () => {
       sessionId: rootId,
       userMessage: "must not start",
     })).toThrow(SessionFamilyStopInProgressError);
-    expect(() => manager.reserveSessionHitlResume(workspaceRoot, rootId, rootId)).toThrow(SessionFamilyStopInProgressError);
     expect(() => manager.acquireSessionCwdTransition(workspaceRoot, rootId)).toThrow(SessionFamilyStopInProgressError);
     await expect(manager.startChildExecution(workspaceRoot, {
       parentStore: rootStore,
@@ -1175,7 +1177,7 @@ describe("SessionExecutionManager", () => {
     const factory = makeFactory();
     const { manager, sessionAgentManager } = createManager({}, {
       factory,
-      listSessionFamilyBlockedHitlIds: async () => [],
+      listSessionFamilyToolBatchHitlIds: async () => [],
       goalDelegationAdmission: admitGoal(goalDelegationContext(goalId)),
     });
 
@@ -1224,7 +1226,7 @@ describe("SessionExecutionManager", () => {
     const { manager } = createManager({}, {
       factory: makeFactory(),
       goalDelegationAdmission: admitGoal(context),
-      listSessionFamilyBlockedHitlIds: async () => [],
+      listSessionFamilyToolBatchHitlIds: async () => [],
     });
 
     const child = await manager.startChildExecution(workspaceRoot, {
@@ -1277,7 +1279,7 @@ describe("SessionExecutionManager", () => {
     let childRunStarted = false;
     const { manager } = createManager({}, {
       factory: makeFactory(),
-      listSessionFamilyBlockedHitlIds: async () => [],
+      listSessionFamilyToolBatchHitlIds: async () => [],
       childRunStarted: () => { childRunStarted = true; },
     });
 
@@ -1301,7 +1303,7 @@ describe("SessionExecutionManager", () => {
     });
     const { manager, sessionAgentManager } = createManager({}, {
       factory: makeFactory(),
-      listSessionFamilyBlockedHitlIds: async () => ["sibling-hitl"],
+      listSessionFamilyToolBatchHitlIds: async () => ["sibling-hitl"],
     });
 
     await expect(manager.startChildExecution(workspaceRoot, {
@@ -1315,7 +1317,7 @@ describe("SessionExecutionManager", () => {
       background: false,
       currentDepth: 0,
       parentAbort: undefined,
-    })).rejects.toMatchObject({ name: "SessionHitlBlockedError", hitlIds: ["sibling-hitl"] });
+    })).rejects.toMatchObject({ name: "SessionToolBatchActiveError", hitlIds: ["sibling-hitl"] });
     expect(sessionAgentManager.createChildAgent).not.toHaveBeenCalled();
   });
 
@@ -1328,7 +1330,7 @@ describe("SessionExecutionManager", () => {
     let checks = 0;
     const { manager } = createManager({}, {
       factory: makeFactory(),
-      listSessionFamilyBlockedHitlIds: async () => (++checks === 1 ? [] : ["raced-hitl"]),
+      listSessionFamilyToolBatchHitlIds: async () => (++checks === 1 ? [] : ["raced-hitl"]),
     });
 
     await expect(manager.startChildExecution(workspaceRoot, {
@@ -1342,7 +1344,7 @@ describe("SessionExecutionManager", () => {
       background: false,
       currentDepth: 0,
       parentAbort: undefined,
-    })).rejects.toMatchObject({ name: "SessionHitlBlockedError", hitlIds: ["raced-hitl"] });
+    })).rejects.toMatchObject({ name: "SessionToolBatchActiveError", hitlIds: ["raced-hitl"] });
     expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({ status: "failed" });
   });
 
@@ -1388,7 +1390,7 @@ describe("SessionExecutionManager", () => {
     const { manager } = createManager({}, {
       factory,
       goalDelegationAdmission: admitGoal(goalDelegationContext(goalId)),
-      listSessionFamilyBlockedHitlIds: async () => [],
+      listSessionFamilyToolBatchHitlIds: async () => [],
     });
 
     const handle = await manager.startChildExecution(workspaceRoot, {
@@ -1418,7 +1420,7 @@ describe("SessionExecutionManager", () => {
     const { manager } = createManager({}, {
       factory: makeFactory(),
       goalDelegationAdmission: admitGoal(goalDelegationContext(goalId)),
-      listSessionFamilyBlockedHitlIds: async () => [],
+      listSessionFamilyToolBatchHitlIds: async () => [],
     });
 
     const handle = await manager.startChildExecution(workspaceRoot, {
@@ -1481,7 +1483,7 @@ describe("SessionExecutionManager", () => {
     const { manager } = createManager({}, {
       factory,
       goalDelegationAdmission: admitGoal(goalDelegationContext(goalId)),
-      listSessionFamilyBlockedHitlIds: async () => [],
+      listSessionFamilyToolBatchHitlIds: async () => [],
     });
 
     const handle = await manager.startChildExecution(workspaceRoot, {
@@ -1723,7 +1725,6 @@ describe("SessionExecutionManager", () => {
         childStore?.getState().append({
           type: "execution-end",
           status: "waiting_for_human",
-          blockedByHitlIds: ["permission-1"],
         });
       },
     });
@@ -1750,131 +1751,7 @@ describe("SessionExecutionManager", () => {
     expect(parentStore.getState().reminders).toEqual([]);
   });
 
-  test("keeps an idle root SSE subscription live for late child-link and HITL continuation updates", async () => {
-    const parentId = crypto.randomUUID();
-    const parentRun = deferred<AgentResult>();
-    const childRun = deferred<AgentResult>();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
-    const parentAgent = new MockAgent(parentId, parentRun.promise, workspaceRoot);
-    let childSessionId = "";
-    const { manager } = createManager({ [parentId]: parentAgent }, {
-      factory: makeFactory(),
-      childRun: childRun.promise,
-      childRunStarted: () => {
-        childSessionId = parentStore.getState().childSessionLinks.at(-1)?.childSessionId ?? "";
-      },
-    });
-    const received: Array<{ payload?: { type?: string; link?: ToolChildSessionLink } }> = [];
-    const unsubscribe = manager.subscribe({
-      slug: "project",
-      workspaceRoot,
-      sessionId: parentId,
-      onEvent: (event) => received.push(event as { payload?: { type?: string; link?: ToolChildSessionLink } }),
-    });
-    const parentExecution = manager.startExecution({
-      slug: "project",
-      workspaceRoot,
-      sessionId: parentId,
-      userMessage: "launch child",
-    });
-    const childHandle = await manager.startChildExecution(workspaceRoot, {
-      parentStore,
-      parentSessionId: parentId,
-      parentToolCallId: "late-hitl-child",
-      toolName: "delegate",
-      targetAgentName: "explore",
-      prompt: "wait for approval",
-      skills: [],
-      background: true,
-      currentDepth: 0,
-      parentAbort: undefined,
-    });
-    await waitFor(() => childSessionId === childHandle.sessionId);
 
-    parentRun.resolve({ text: "child started", steps: 1 });
-    await parentExecution.promise;
-    const childStore = storeManager.get(childSessionId, workspaceRoot);
-    if (childStore === undefined) throw new Error("Expected child store");
-    childStore.getState().append({
-      type: "execution-end",
-      status: "waiting_for_human",
-      blockedByHitlIds: ["permission-1"],
-    });
-    childRun.resolve({ text: "", steps: 1 });
-    await childHandle.result;
-    await manager.updateChildSessionLinkForHitl(workspaceRoot, childSessionId, "running");
-    await manager.updateChildSessionLinkForHitl(workspaceRoot, childSessionId, "completed");
-
-    expect(received
-      .filter((event) => event.payload?.type === "tool-child-session-link")
-      .map((event) => event.payload?.link?.status)).toEqual([
-        "linked",
-        "running",
-        "waiting_for_human",
-        "running",
-        "completed",
-      ]);
-    unsubscribe();
-  });
-
-  test("updates the same cold-loaded parent link through child HITL continuation", async () => {
-    const parentId = crypto.randomUUID();
-    const childId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
-    storeManager.create(childId, workspaceRoot, {
-      rootSessionId: parentId,
-      parentSessionId: parentId,
-      agentName: "explore",
-    });
-    parentStore.getState().append({
-      type: "tool-child-session-link",
-      link: {
-        ...makeChildLink(parentId, childId, "explore"),
-        parentToolCallId: "cold-hitl-child",
-        status: "waiting_for_human",
-        endedAt: Date.now(),
-        durationMs: 10,
-      },
-    });
-    await Promise.all([
-      storeManager.flushSession(parentId, workspaceRoot),
-      storeManager.flushSession(childId, workspaceRoot),
-    ]);
-    storeManager.clearAll();
-
-    const { manager } = createManager({}, { factory: makeFactory() });
-    await manager.updateChildSessionLinkForHitl(workspaceRoot, childId, "running");
-    let coldParent = await storeManager.getOrLoad(parentId, workspaceRoot);
-    expect(coldParent.getState().childSessionLinks).toEqual([
-      expect.objectContaining({
-        parentToolCallId: "cold-hitl-child",
-        childSessionId: childId,
-        status: "running",
-      }),
-    ]);
-    expect(coldParent.getState().childSessionLinks[0]).not.toHaveProperty("endedAt");
-    expect(coldParent.getState().childSessionLinks[0]).not.toHaveProperty("durationMs");
-
-    await manager.updateChildSessionLinkForHitl(workspaceRoot, childId, "completed");
-    coldParent = await storeManager.getOrLoad(parentId, workspaceRoot);
-    expect(coldParent.getState().childSessionLinks).toEqual([
-      expect.objectContaining({
-        parentToolCallId: "cold-hitl-child",
-        childSessionId: childId,
-        status: "completed",
-        endedAt: expect.any(Number),
-      }),
-    ]);
-    expect(coldParent.getState().reminders).toEqual([
-      expect.objectContaining({
-        sessionId: childId,
-        terminalState: "completed",
-        source: { type: "subagent_completed", sessionId: childId },
-      }),
-    ]);
-
-    await expect(manager.updateChildSessionLinkForHitl(workspaceRoot, parentId, "running")).resolves.toBeUndefined();
-  });
 
   test("startChildExecution marks failed and timed-out children with terminal link statuses", async () => {
     const failedParentId = crypto.randomUUID();
@@ -2073,7 +1950,7 @@ describe("SessionExecutionManager", () => {
     expect(untrackSession).toHaveBeenCalledTimes(3);
   });
 
-  test("deletion generation blocks execution, child launch, HITL resume, and cwd transition during preflight", async () => {
+  test("deletion generation blocks execution, child launch, and cwd transition during preflight", async () => {
     const rootId = crypto.randomUUID();
     const rootStore = storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
     await storeManager.flushSession(rootId, workspaceRoot);
@@ -2081,11 +1958,12 @@ describe("SessionExecutionManager", () => {
     const releasePreflight = deferred<void>();
     const { manager } = createManager({}, {
       factory: makeFactory(),
-      deletionPreflight: {
+      deletionLifecycle: {
         assertDeletable: async () => {
           preflightEntered.resolve(undefined);
           await releasePreflight.promise;
         },
+        prepareForDeletion: async () => undefined,
       },
     });
 
@@ -2107,14 +1985,13 @@ describe("SessionExecutionManager", () => {
       prompt: "race deletion",
       skills: [],
     })).rejects.toThrow(SessionDeleteInProgressError);
-    expect(() => manager.reserveSessionHitlResume(workspaceRoot, rootId, rootId)).toThrow(SessionDeleteInProgressError);
     expect(() => manager.acquireSessionCwdTransition(workspaceRoot, rootId)).toThrow(SessionDeleteInProgressError);
 
     releasePreflight.resolve(undefined);
     await deletion;
   });
 
-  test("delete performs a final owner preflight after an in-flight execution quiesces", async () => {
+  test("delete performs lifecycle preparation after an in-flight execution quiesces", async () => {
     const rootId = crypto.randomUUID();
     const store = storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
     await storeManager.flushSession(rootId, workspaceRoot);
@@ -2136,14 +2013,18 @@ describe("SessionExecutionManager", () => {
       dispose: mock(() => undefined),
     };
     let preflightCount = 0;
+    let preparationCount = 0;
     const { manager } = createManager({ [rootId]: agent as MockAgent }, {
-      deletionPreflight: {
+      deletionLifecycle: {
         assertDeletable: async () => {
           preflightCount += 1;
+        },
+        prepareForDeletion: async () => {
+          preparationCount += 1;
           if (ownerCreatedDuringAbort) {
             throw new SessionDeleteOwnerConflictError([{
               sessionId: rootId,
-              ownerType: "session_hitl_journal",
+              ownerType: "goal",
               ownerId: rootId,
             }]);
           }
@@ -2158,7 +2039,8 @@ describe("SessionExecutionManager", () => {
       sessionIds: [rootId],
     });
 
-    expect(preflightCount).toBe(2);
+    expect(preflightCount).toBe(1);
+    expect(preparationCount).toBe(1);
     expect(await Bun.file(getSessionPath(workspaceRoot, rootId)).exists()).toBe(true);
   });
 
@@ -2429,7 +2311,7 @@ describe("SessionExecutionManager", () => {
       goalDelegationAdmission: {
         run: async (_input, action) => await action(context),
       },
-      listSessionFamilyBlockedHitlIds: async () => [],
+      listSessionFamilyToolBatchHitlIds: async () => [],
       childRunMessage: (value) => { messages.push(value); },
     });
 
@@ -2689,343 +2571,16 @@ describe("SessionExecutionManager", () => {
     releaseAfter();
   });
 
-  test("family cwd transition aggregation treats an active HITL generation as busy", () => {
-    const firstRoot = "00000000-0000-4000-8000-000000000011";
-    const hitlRoot = "00000000-0000-4000-8000-000000000012";
-    storeManager.create(firstRoot, workspaceRoot, { agentName: "engineer" });
-    storeManager.create(hitlRoot, workspaceRoot, { agentName: "engineer" });
-    const { manager } = createManager({}, { factory: makeFactory() });
-    const hitlLease = reserveActivatedHitlResume(manager, hitlRoot);
 
-    expect(() => manager.acquireIdleSessionFamilyCwdTransitions(workspaceRoot, [hitlRoot, firstRoot]))
-      .toThrow(SessionHitlResumeInProgressError);
-    const releaseFirst = manager.acquireIdleSessionCwdTransition(workspaceRoot, firstRoot);
-    releaseFirst();
 
-    hitlLease.release();
-    const releaseFamilies = manager.acquireIdleSessionFamilyCwdTransitions(workspaceRoot, [hitlRoot, firstRoot]);
-    releaseFamilies();
-  });
 
-  test("holds a Session-scoped HITL generation across its optional cwd transition", async () => {
-    const rootId = crypto.randomUUID();
-    const childId = crypto.randomUUID();
-    const rootStore = storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
-    const childStore = storeManager.create(childId, workspaceRoot, {
-      rootSessionId: rootId,
-      parentSessionId: rootId,
-      agentName: "explore",
-    });
-    const { manager } = createManager({}, { factory: makeFactory() });
 
-    const lease = reserveActivatedHitlResume(manager, rootId);
-    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("running");
-    expect(() => manager.startExecution({
-      slug: "project",
-      workspaceRoot,
-      sessionId: rootId,
-      userMessage: "must wait",
-    })).toThrow(SessionHitlResumeInProgressError);
-    await expect(manager.startCheckedExecution({
-      slug: "project",
-      workspaceRoot,
-      sessionId: childId,
-      userMessage: "child must wait",
-    })).rejects.toThrow(SessionFamilyActiveError);
-    expect(() => manager.acquireSessionCwdTransition(workspaceRoot, rootId))
-      .toThrow(SessionHitlResumeInProgressError);
-    const releaseNestedTransition = lease.acquireSessionCwdTransition(workspaceRoot, rootId);
-    expect(() => lease.acquireSessionCwdTransition(workspaceRoot, rootId))
-      .toThrow(SessionCwdTransitionInProgressError);
-    releaseNestedTransition();
 
-    const aborted = manager.stopSessionFamily(workspaceRoot, rootId);
-    expect(lease.abortSignal.aborted).toBe(true);
-    let abortWaitSettled = false;
-    void aborted.then(() => { abortWaitSettled = true; });
-    await Promise.resolve();
-    expect(abortWaitSettled).toBe(false);
-    lease.release();
-    await aborted;
-    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("idle");
-    expect(childStore.getState().cwd).toBe(rootStore.getState().cwd);
-    const releaseTransition = manager.acquireSessionCwdTransition(workspaceRoot, rootId);
-    releaseTransition();
-  });
 
-  test("a child-owned HITL resume owns only that child Session", async () => {
-    const rootId = crypto.randomUUID();
-    const childId = crypto.randomUUID();
-    const siblingId = crypto.randomUUID();
-    const rootStore = storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
-    storeManager.create(childId, workspaceRoot, {
-      rootSessionId: rootId,
-      parentSessionId: rootId,
-      agentName: "explore",
-    });
-    storeManager.create(siblingId, workspaceRoot, {
-      rootSessionId: rootId,
-      parentSessionId: rootId,
-      agentName: "explore",
-    });
-    const { manager } = createManager({}, { factory: makeFactory() });
 
-    const lease = reserveActivatedHitlResume(manager, childId, rootId);
-    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("running");
-    expect(manager.getExecution(workspaceRoot, childId)).toBeUndefined();
-    expect(manager.getExecution(workspaceRoot, siblingId)).toBeUndefined();
-    expect(await manager.dispatchCommand(workspaceRoot, rootId, "compact")).toBeNull();
-    expect(() => manager.startExecution({
-      slug: "project",
-      workspaceRoot,
-      sessionId: childId,
-      userMessage: "same child must wait",
-    })).toThrow(SessionHitlResumeInProgressError);
-    const siblingLease = reserveActivatedHitlResume(manager, siblingId, rootId);
-    expect(() => manager.acquireSessionCwdTransition(workspaceRoot, rootId))
-      .toThrow(SessionHitlResumeInProgressError);
-    const launched = await manager.startChildExecution(workspaceRoot, {
-      parentStore: rootStore,
-      parentSessionId: rootId,
-      parentToolCallId: "delegate-during-child-resume",
-      toolName: "delegate",
-      targetAgentName: "explore",
-      prompt: "may launch",
-      skills: [],
-      currentDepth: 0,
-      parentAbort: undefined,
-    });
-    await launched.result;
 
-    const stopping = manager.stopSessionFamily(workspaceRoot, rootId);
-    expect(lease.abortSignal.aborted).toBe(true);
-    expect(siblingLease.abortSignal.aborted).toBe(true);
-    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("stopping");
-    lease.release();
-    siblingLease.release();
-    await stopping;
-    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("idle");
-  });
 
-  test("allows a child HITL continuation while its parent Session remains active", async () => {
-    const rootId = crypto.randomUUID();
-    const childId = crypto.randomUUID();
-    const rootRun = deferred<AgentResult>();
-    const rootAgent = new MockAgent(rootId, rootRun.promise, workspaceRoot);
-    rootAgent.store.setState({ rootSessionId: rootId });
-    storeManager.create(childId, workspaceRoot, {
-      rootSessionId: rootId,
-      parentSessionId: rootId,
-      agentName: "reviewer",
-    });
-    const { manager } = createManager({ [rootId]: rootAgent });
-    const rootExecution = manager.startExecution({
-      slug: "project",
-      workspaceRoot,
-      sessionId: rootId,
-      userMessage: "wait for the reviewer",
-    });
 
-    const lease = manager.reserveSessionHitlResume(workspaceRoot, childId, rootId);
-    expect(() => lease.activate()).not.toThrow();
-    expect(() => manager.reserveSessionHitlResume(workspaceRoot, childId, rootId))
-      .toThrow(SessionHitlResumeInProgressError);
-
-    lease.release();
-    rootRun.resolve({ text: "done", steps: 1 });
-    await rootExecution.promise;
-  });
-
-  test("counts HITL continuations against Session concurrency and releases their slot", () => {
-    const rootId = crypto.randomUUID();
-    const firstChildId = crypto.randomUUID();
-    const secondChildId = crypto.randomUUID();
-    storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
-    storeManager.create(firstChildId, workspaceRoot, {
-      rootSessionId: rootId,
-      parentSessionId: rootId,
-      agentName: "reviewer",
-    });
-    storeManager.create(secondChildId, workspaceRoot, {
-      rootSessionId: rootId,
-      parentSessionId: rootId,
-      agentName: "reviewer",
-    });
-    const { manager } = createManager({}, { maxConcurrentSessions: 1 });
-
-    const firstLease = reserveActivatedHitlResume(manager, firstChildId, rootId);
-    expect(() => manager.reserveSessionHitlResume(workspaceRoot, secondChildId, rootId))
-      .toThrow(ConcurrentSessionLimitError);
-
-    firstLease.release();
-    const secondLease = reserveActivatedHitlResume(manager, secondChildId, rootId);
-    secondLease.release();
-  });
-
-  test("rejects same-Session HITL ownership and serializes only cwd transitions", async () => {
-    const rootId = crypto.randomUUID();
-    const rootStore = storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
-    const childId = crypto.randomUUID();
-    storeManager.create(childId, workspaceRoot, {
-      rootSessionId: rootId,
-      parentSessionId: rootId,
-      agentName: "reviewer",
-    });
-    const rootRun = deferred<AgentResult>();
-    const rootAgent = new MockAgent(rootId, rootRun.promise, workspaceRoot);
-    const skillResolution = deferred<readonly []>();
-    let skillResolutionStarted = false;
-    const factory = makeFactory({
-      resolveDelegatedSkills: mock(async () => {
-        skillResolutionStarted = true;
-        return await skillResolution.promise;
-      }),
-    });
-    const { manager } = createManager({ [rootId]: rootAgent }, { factory });
-
-    const execution = manager.startExecution({
-      slug: "project",
-      workspaceRoot,
-      sessionId: rootId,
-      userMessage: "active",
-    });
-    expect(() => manager.reserveSessionHitlResume(workspaceRoot, rootId, rootId))
-      .toThrow(SessionHitlResumeConflictError);
-    const childLease = reserveActivatedHitlResume(manager, childId, rootId);
-    childLease.release();
-    rootRun.resolve({ text: "done", steps: 1 });
-    await execution.promise;
-
-    const releaseTransition = manager.acquireSessionCwdTransition(workspaceRoot, rootId);
-    expect(() => manager.reserveSessionHitlResume(workspaceRoot, rootId, rootId))
-      .toThrow(SessionCwdTransitionInProgressError);
-    releaseTransition();
-
-    const pendingChild = manager.startChildExecution(workspaceRoot, {
-      parentStore: rootStore,
-      parentSessionId: rootId,
-      parentToolCallId: "pending-child-before-hitl",
-      toolName: "delegate",
-      targetAgentName: "explore",
-      prompt: "resolve skills slowly",
-      skills: [],
-      currentDepth: 0,
-      parentAbort: undefined,
-    });
-    await waitFor(() => skillResolutionStarted);
-    const relatedLease = reserveActivatedHitlResume(manager, rootId, rootId);
-    relatedLease.release();
-    skillResolution.resolve([]);
-    const child = await pendingChild;
-    await child.result;
-  });
-
-  test("rejects a child HITL resume after its root moved to another cwd", () => {
-    const rootId = crypto.randomUUID();
-    const childId = crypto.randomUUID();
-    const nextCwd = join(workspaceRoot, ".worktrees", "next");
-    storeManager.create(rootId, workspaceRoot, { agentName: "engineer", cwd: nextCwd });
-    storeManager.create(childId, workspaceRoot, {
-      rootSessionId: rootId,
-      parentSessionId: rootId,
-      agentName: "explore",
-      cwd: workspaceRoot,
-    });
-    const { manager } = createManager({});
-
-    const staleLease = manager.reserveSessionHitlResume(workspaceRoot, childId, rootId);
-    expect(() => staleLease.activate()).toThrow(ChildSessionCwdMismatchError);
-    staleLease.release();
-    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("idle");
-  });
-
-  test("a cancel-only HITL resume lease cannot acquire a cwd transition", () => {
-    const rootId = crypto.randomUUID();
-    storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
-    const { manager } = createManager({});
-
-    const lease = reserveActivatedHitlResume(manager, rootId, rootId, { mode: "cancel_only" });
-    expect(() => lease.acquireSessionCwdTransition(workspaceRoot, rootId))
-      .toThrow(SessionHitlCancelOnlyLeaseError);
-    expect(() => manager.acquireSessionCwdTransition(workspaceRoot, rootId))
-      .toThrow(SessionHitlResumeInProgressError);
-
-    lease.release();
-    const releaseTransition = manager.acquireSessionCwdTransition(workspaceRoot, rootId);
-    releaseTransition();
-  });
-
-  test("abortAll signals every HITL resume and waits for generation release", async () => {
-    const firstId = crypto.randomUUID();
-    const secondId = crypto.randomUUID();
-    storeManager.create(firstId, workspaceRoot, { agentName: "engineer" });
-    storeManager.create(secondId, workspaceRoot, { agentName: "engineer" });
-    const { manager } = createManager({});
-    const first = reserveActivatedHitlResume(manager, firstId);
-    const second = reserveActivatedHitlResume(manager, secondId);
-
-    let settled = false;
-    const abortAll = manager.abortAll().then(() => { settled = true; });
-    await Promise.resolve();
-    expect(first.abortSignal.aborted).toBe(true);
-    expect(second.abortSignal.aborted).toBe(true);
-    expect(settled).toBe(false);
-
-    first.release();
-    await Promise.resolve();
-    expect(settled).toBe(false);
-    second.release();
-    await abortAll;
-    expect(settled).toBe(true);
-  });
-
-  test("root deletion aborts and waits for a descendant HITL resume before removing the family", async () => {
-    const rootId = crypto.randomUUID();
-    const childId = crypto.randomUUID();
-    await writeSessionFile({ sessionId: rootId });
-    await writeSessionFile({ sessionId: childId, rootSessionId: rootId, parentSessionId: rootId });
-    const coldStores = new SessionStoreManager({ logger: silentLogger });
-    await coldStores.getOrLoad(rootId, workspaceRoot);
-    await coldStores.getOrLoad(childId, workspaceRoot);
-    const { manager } = createManager({}, { storeManager: coldStores });
-    const lease = reserveActivatedHitlResume(manager, childId, rootId);
-
-    let deleted = false;
-    const deletion = manager.deleteSession(workspaceRoot, rootId).then(() => { deleted = true; });
-    await waitFor(() => lease.abortSignal.aborted);
-    expect(deleted).toBe(false);
-    expect(await Bun.file(getSessionPath(workspaceRoot, rootId)).exists()).toBe(true);
-    expect(await Bun.file(getSessionPath(workspaceRoot, childId)).exists()).toBe(true);
-
-    lease.release();
-    await deletion;
-    expect(deleted).toBe(true);
-    expect(await Bun.file(getSessionPath(workspaceRoot, rootId)).exists()).toBe(false);
-    expect(await Bun.file(getSessionPath(workspaceRoot, childId)).exists()).toBe(false);
-  });
-
-  test("a stale HITL resume release cannot clear a newer generation", () => {
-    const rootId = crypto.randomUUID();
-    storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
-    const { manager } = createManager({});
-
-    const first = reserveActivatedHitlResume(manager, rootId);
-    first.release();
-    expect(() => first.acquireSessionCwdTransition(workspaceRoot, rootId))
-      .toThrow(SessionHitlResumeLeaseExpiredError);
-    const second = reserveActivatedHitlResume(manager, rootId);
-    first.release();
-    expect(() => first.acquireSessionCwdTransition(workspaceRoot, rootId))
-      .toThrow(SessionHitlResumeLeaseExpiredError);
-
-    expect(() => manager.startExecution({
-      slug: "project",
-      workspaceRoot,
-      sessionId: rootId,
-      userMessage: "new generation still owns the session",
-    })).toThrow(SessionHitlResumeInProgressError);
-    second.release();
-  });
 
   test("cold-loads child and root before rejecting a direct message with stale child cwd", async () => {
     const coldRoot = join(workspaceRoot, "cold-next-worktree");
@@ -3059,9 +2614,9 @@ describe("SessionExecutionManager", () => {
     expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("idle");
   });
 
-  test("cold-loads a Session and rejects messages while its durable HITL blocker remains", async () => {
+  test("cold-loads a Session and rejects messages while its durable tool batch remains blocked", async () => {
     const sessionId = crypto.randomUUID();
-    await writeSessionFile({ sessionId, blockedByHitlIds: ["hitl-pending"] });
+    await writeSessionFile({ sessionId, toolBatches: [blockedToolBatch("hitl-pending")] });
     const coldStores = new SessionStoreManager({ logger: silentLogger });
     const { manager } = createManager({}, { storeManager: coldStores });
 
@@ -3071,14 +2626,14 @@ describe("SessionExecutionManager", () => {
       sessionId,
       userMessage: "must wait for the HITL response",
     })).rejects.toMatchObject({
-      name: "SessionHitlBlockedError",
+      name: "SessionToolBatchActiveError",
       sessionId,
       hitlIds: ["hitl-pending"],
     });
     expect(manager.getSessionFamilyActivity(workspaceRoot, sessionId)).toBe("idle");
   });
 
-  test("checked Goal start rejects a durable sibling HITL at the final family barrier", async () => {
+  test("checked Goal start rejects a blocked sibling tool batch at the final family barrier", async () => {
     const rootId = crypto.randomUUID();
     const childId = crypto.randomUUID();
     const siblingHitlId = crypto.randomUUID();
@@ -3087,7 +2642,7 @@ describe("SessionExecutionManager", () => {
       sessionId: childId,
       rootSessionId: rootId,
       parentSessionId: rootId,
-      blockedByHitlIds: [siblingHitlId],
+      toolBatches: [blockedToolBatch(siblingHitlId)],
     });
     const coldStores = new SessionStoreManager({ logger: silentLogger });
     const { manager } = createManager({}, { storeManager: coldStores });
@@ -3098,7 +2653,7 @@ describe("SessionExecutionManager", () => {
       sessionId: rootId,
       userMessage: "must not bypass child HITL",
     })).rejects.toMatchObject({
-      name: "SessionHitlBlockedError",
+      name: "SessionToolBatchActiveError",
       sessionId: rootId,
       hitlIds: [siblingHitlId],
     });
@@ -3213,44 +2768,6 @@ describe("SessionExecutionManager", () => {
     expect(manager.getSessionFamilyActivity(workspaceRoot, sessionId)).toBe("idle");
   });
 
-  test("re-checks the synchronous resume guard after async message preparation", async () => {
-    const rootId = crypto.randomUUID();
-    const childId = crypto.randomUUID();
-    storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
-    storeManager.create(childId, workspaceRoot, {
-      rootSessionId: rootId,
-      parentSessionId: rootId,
-      agentName: "explore",
-    });
-    const childLoad = deferred<ReturnType<SessionStoreManager["create"]>>();
-    const callbacks = storeCallbacks(storeManager);
-    const sessionAgentManager = createFakeManager({}, { factory: makeFactory() });
-    const manager = new SessionExecutionManager({
-      sessionAgentManager,
-      ...callbacks,
-      loadSessionStore: async (sessionId, root) => {
-        if (sessionId === childId) return await childLoad.promise;
-        return await storeManager.getOrLoad(sessionId, root);
-      },
-      trackSession: () => undefined,
-      untrackSession: () => undefined,
-      executionScopeValidator: allowExecutionScope,
-      logger: silentLogger,
-    });
-
-    const pendingMessage = manager.startCheckedExecution({
-      slug: "project",
-      workspaceRoot,
-      sessionId: childId,
-      userMessage: "race with durable resume",
-    });
-    const resumeLease = reserveActivatedHitlResume(manager, rootId);
-    childLoad.resolve(storeManager.get(childId, workspaceRoot)!);
-
-    await expect(pendingMessage).rejects.toThrow(SessionFamilyActiveError);
-    expect(manager.getExecution(workspaceRoot, childId)).toBeUndefined();
-    resumeLease.release();
-  });
 
   test("re-checks the synchronous cwd-transition guard after cold root loading", async () => {
     const rootId = crypto.randomUUID();
@@ -3398,7 +2915,7 @@ describe("SessionExecutionManager", () => {
     const { manager } = createManager({ [childSessionId]: childAgent }, {
       factory: makeFactory(),
       executionScopeValidator: allowExecutionScope,
-      listSessionFamilyBlockedHitlIds: async () => (++checks === 1 ? [] : ["raced-resume-hitl"]),
+      listSessionFamilyToolBatchHitlIds: async () => (++checks === 1 ? [] : ["raced-resume-hitl"]),
     });
 
     await expect(manager.resumeChildExecution(workspaceRoot, {
@@ -3411,7 +2928,7 @@ describe("SessionExecutionManager", () => {
       prompt: "must not resume",
       currentDepth: 0,
       parentAbort: undefined,
-    })).rejects.toMatchObject({ name: "SessionHitlBlockedError", hitlIds: ["raced-resume-hitl"] });
+    })).rejects.toMatchObject({ name: "SessionToolBatchActiveError", hitlIds: ["raced-resume-hitl"] });
     expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({ status: "completed" });
     expect(childAgent.runMock).not.toHaveBeenCalled();
   });
@@ -3537,7 +3054,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       agentName: "explore",
     });
-    childStore.setState({ blockedByHitlIds: ["hitl-child-pending"] });
+    childStore.setState({ toolBatches: [blockedToolBatch("hitl-child-pending")] });
     const { manager } = createManager({}, { factory: makeFactory() });
     const linksBefore = parentStore.getState().childSessionLinks.length;
 
@@ -3551,7 +3068,7 @@ describe("SessionExecutionManager", () => {
       prompt: "must wait for HITL",
       currentDepth: 0,
       parentAbort: undefined,
-    })).rejects.toThrow(SessionHitlBlockedError);
+    })).rejects.toThrow(SessionToolBatchActiveError);
 
     expect(parentStore.getState().childSessionLinks).toHaveLength(linksBefore);
     expect(manager.getExecution(workspaceRoot, childId)).toBeUndefined();

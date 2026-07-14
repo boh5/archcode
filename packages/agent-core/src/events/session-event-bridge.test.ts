@@ -26,6 +26,7 @@ function createTestStore(sessionId: string): StoreApi<SessionStoreState> {
     todos: [],
     reminders: [],
     childSessionLinks: [],
+    toolBatches: [],
     rootSessionId: sessionId,
     isRunning: false,
     isStreamingModel: false,

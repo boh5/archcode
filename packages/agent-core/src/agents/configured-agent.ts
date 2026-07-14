@@ -263,7 +263,7 @@ export class ConfiguredAgent implements Agent {
           currentUserMessage,
         );
 
-        if (this.store.getState().blockedByHitlIds?.length) {
+        if (this.store.getState().toolBatches.some((batch) => batch.archivedAt === undefined && batch.calls.some((call) => call.state === "blocked"))) {
           return result;
         }
 

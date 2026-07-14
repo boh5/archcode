@@ -40,14 +40,12 @@ describe("SessionExecutionScopeValidator", () => {
     await expect(validator.validate({
       projectRoot: join(TMP_ROOT, "ordinary"),
       subject: sessionSubject({ sessionId: "ordinary", cwd: join(TMP_ROOT, "ordinary") }),
-      entry: { kind: "user_message" },
     })).resolves.toBeUndefined();
 
     await expectConflict(
       validator.validate({
         projectRoot: join(TMP_ROOT, "ordinary"),
         subject: sessionSubject({ sessionId: "ordinary", cwd: join(TMP_ROOT, "outside") }),
-        entry: { kind: "user_message" },
       }),
       "SESSION_CWD_INVALID",
     );
@@ -60,7 +58,6 @@ describe("SessionExecutionScopeValidator", () => {
     await expect(fixture.validator.validate({
       projectRoot: fixture.projectRoot,
       subject: sessionSubject({ sessionId: "goal-main", cwd: fixture.projectRoot, goalId: goal.id, sessionRole: "main" }),
-      entry: { kind: "user_message" },
     })).resolves.toBeUndefined();
 
   });
@@ -78,7 +75,6 @@ describe("SessionExecutionScopeValidator", () => {
           goalId: goal.id,
           sessionRole: "main",
         }),
-        entry: { kind: "user_message" },
       }),
       "SESSION_GOAL_CWD_MISMATCH",
     );
@@ -101,12 +97,10 @@ describe("SessionExecutionScopeValidator", () => {
     await expect(fixture.validator.validate({
       projectRoot: fixture.projectRoot,
       subject: main,
-      entry: { kind: "user_message" },
     })).resolves.toBeUndefined();
     await expectConflict(fixture.validator.validate({
       projectRoot: fixture.projectRoot,
       subject: { ...main, agentName: "engineer" },
-      entry: { kind: "user_message" },
     }), "SESSION_GOAL_REVIEWER_REQUIRED");
     await fixture.context.goalState.addChildSession(goal.id, "review-child");
     await expect(fixture.validator.validate({
@@ -120,7 +114,6 @@ describe("SessionExecutionScopeValidator", () => {
         goalId: goal.id,
         sessionRole: "review",
       }),
-      entry: { kind: "user_message" },
     })).resolves.toBeUndefined();
 
   });
@@ -151,7 +144,6 @@ describe("SessionExecutionScopeValidator", () => {
     await expect(fixture.validator.validate({
       projectRoot: fixture.projectRoot,
       subject: main,
-      entry: { kind: "user_message" },
     })).resolves.toBeUndefined();
     await expectConflict(fixture.validator.validate({
       projectRoot: fixture.projectRoot,
@@ -164,7 +156,6 @@ describe("SessionExecutionScopeValidator", () => {
         goalId: goal.id,
         sessionRole: "review",
       }),
-      entry: { kind: "user_message" },
     }), "SESSION_GOAL_NOT_EXECUTABLE");
   });
 
@@ -181,7 +172,6 @@ describe("SessionExecutionScopeValidator", () => {
           goalId: goal.id,
           sessionRole: "main",
         }),
-        entry: { kind: "user_message" },
       }),
       "SESSION_GOAL_OWNER_MISMATCH",
     );
@@ -198,7 +188,6 @@ describe("SessionExecutionScopeValidator", () => {
           goalId: goal.id,
           sessionRole: "build",
         }),
-        entry: { kind: "user_message" },
       }),
       "SESSION_GOAL_OWNER_MISMATCH",
     );
@@ -211,7 +200,6 @@ describe("SessionExecutionScopeValidator", () => {
         goalId: goal.id,
         sessionRole: "main",
       }),
-      entry: { kind: "user_message" },
     })).resolves.toBeUndefined();
   });
 
@@ -231,7 +219,6 @@ describe("SessionExecutionScopeValidator", () => {
           goalId: goal.id,
           sessionRole: "build",
         }),
-        entry: { kind: "user_message" },
       }),
       "SESSION_GOAL_OWNER_MISMATCH",
     );
@@ -247,11 +234,10 @@ describe("SessionExecutionScopeValidator", () => {
         goalId: goal.id,
         sessionRole: "build",
       }),
-      entry: { kind: "user_message" },
     })).resolves.toBeUndefined();
   });
 
-  test("rejects stale Goal HITL after the Goal becomes terminal", async () => {
+  test("rejects a Goal Session after the Goal becomes terminal", async () => {
     const fixture = await createFixture("goal-terminal-hitl");
     const goal = await createRunningGoal(fixture, { mainSessionId: "goal-main" });
     await fixture.context.goalState.cancel(goal.id, "stop");
@@ -265,48 +251,11 @@ describe("SessionExecutionScopeValidator", () => {
           goalId: goal.id,
           sessionRole: "main",
         }),
-        entry: { kind: "hitl_replay" },
       }),
       "SESSION_GOAL_NOT_EXECUTABLE",
     );
   });
 
-  test("keeps Goal lifecycle running while its HITL gate denies Session execution", async () => {
-    const fixture = await createFixture("goal-blocked-hitl");
-    const goal = await createRunningGoal(fixture, { mainSessionId: "goal-main" });
-    await fixture.context.goalState.attachHitlBlocker(goal.id, {
-      blocker: {
-        kind: "question",
-        summary: "Need an answer",
-        hitlId: "hitl-1",
-      },
-      approvalRef: "hitl-1",
-    });
-    const subject = sessionSubject({
-      sessionId: "goal-main",
-      cwd: fixture.projectRoot,
-      goalId: goal.id,
-      sessionRole: "main",
-    });
-
-    expect((await fixture.context.goalState.read(goal.id)).status).toBe("running");
-    await expectConflict(
-      fixture.validator.validate({
-        projectRoot: fixture.projectRoot,
-        subject,
-        entry: { kind: "hitl_replay" },
-      }),
-      "SESSION_GOAL_NOT_EXECUTABLE",
-    );
-    await expectConflict(
-      fixture.validator.validate({
-        projectRoot: fixture.projectRoot,
-        subject,
-        entry: { kind: "user_message" },
-      }),
-      "SESSION_GOAL_NOT_EXECUTABLE",
-    );
-  });
 });
 
 async function createFixture(name: string) {

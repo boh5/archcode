@@ -9,9 +9,11 @@ export function createRedactionHook(): AfterHook {
     ctx.redactedInput = redactValue(ctx.redactedInput ?? ctx.input);
 
     return {
+      ...result,
       output: redactString(result.output),
       isError: result.isError,
       meta: result.meta ? redactValue(result.meta) : result.meta,
+      ...(result.blocked === undefined ? {} : { blocked: redactValue(result.blocked) }),
     };
   };
 }

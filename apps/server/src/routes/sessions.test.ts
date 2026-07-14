@@ -177,7 +177,6 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
       if (sessionId === "owned-session") {
         throw new SessionDeleteOwnerConflictError([
           { sessionId, ownerType: "goal", ownerId: "goal-1" },
-          { sessionId, ownerType: "session_hitl", ownerId: sessionId, hitlIds: ["hitl-1"] },
         ]);
       }
       const key = `${workspaceRoot}\0${sessionId}`;
@@ -595,7 +594,7 @@ describe("sessions routes", () => {
     });
   });
 
-  test("DELETE returns stable 409 owner details for managed or HITL-bound Sessions", async () => {
+  test("DELETE returns stable 409 owner details for managed Sessions", async () => {
     const { app, project } = await createTestApp("delete-owner-conflict");
 
     const res = await app.request(`/api/projects/${project.slug}/sessions/owned-session`, {
@@ -612,7 +611,6 @@ describe("sessions routes", () => {
           scopeCode: "SESSION_DELETE_OWNER_CONFLICT",
           owners: [
             { sessionId: "owned-session", ownerType: "goal", ownerId: "goal-1" },
-            { sessionId: "owned-session", ownerType: "session_hitl", ownerId: "owned-session", hitlIds: ["hitl-1"] },
           ],
         },
       },

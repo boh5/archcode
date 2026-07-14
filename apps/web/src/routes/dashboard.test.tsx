@@ -4,7 +4,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { JSDOM } from "jsdom";
-import type { DashboardGoal, HitlProjection } from "../api/types";
+import type { DashboardGoal, HitlView } from "../api/types";
+import { hitlStore } from "../store/hitl-store";
 import { Dashboard } from "./dashboard";
 
 // ─── Test helpers ───
@@ -156,9 +157,7 @@ function makeGoal(overrides: Partial<DashboardGoal> = {}): DashboardGoal {
     status: "running",
     attempt: 1,
     reviewGeneration: 0,
-    pendingHitlIds: [],
-    approvalRefs: [],
-    appliedHitlIds: [],
+    appliedBudgetHitlIds: [],
     childSessionIds: [],
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
@@ -171,12 +170,11 @@ function makeGoal(overrides: Partial<DashboardGoal> = {}): DashboardGoal {
   };
 }
 
-function makeHitlItem(overrides: Partial<HitlProjection> = {}): HitlProjection {
+function makeHitlItem(overrides: Partial<HitlView> = {}): HitlView {
   return {
     hitlId: "hitl-1",
-    project: { slug: "demo", name: "Demo Project" },
-    owner: { projectSlug: "demo", ownerType: "session", ownerId: "session-1" },
-    source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan"},
+    owner: { type: "session", id: "session-1" },
+    source: { type: "goal_budget", approvalPoint: "after_plan"},
     status: "pending",
     displayPayload: { title: "Approve?", summary: "Please approve", redacted: true },
     allowedActions: ["approve", "deny", "cancel"],
@@ -188,19 +186,18 @@ function makeHitlItem(overrides: Partial<HitlProjection> = {}): HitlProjection {
 
 function createDashboardHandler(input: {
   goals?: DashboardGoal[];
-  hitl?: HitlProjection[];
+  hitl?: HitlView[];
   projects?: Array<{ slug: string; name: string; workspaceRoot: string }>;
   delayGoals?: boolean;
   delayHitl?: boolean;
 }): (path: string) => Promise<Response> {
   const projects = input.projects ?? [{ slug: "demo", name: "Demo Project", workspaceRoot: "/demo" }];
-  const hitlBySlug = new Map<string, HitlProjection[]>();
-  for (const item of input.hitl ?? []) {
-    const slug = item.project.slug;
-    const list = hitlBySlug.get(slug) ?? [];
-    list.push(item);
-    hitlBySlug.set(slug, list);
-  }
+  hitlStore.getState().applySnapshot({
+    type: "hitl.snapshot",
+    projectSlugs: projects.map((project) => project.slug),
+    entries: (input.hitl ?? []).map((view) => ({ projectSlug: "demo", view })),
+    createdAt: Date.now(),
+  });
   return async (path: string) => {
     if (path === "/api/projects") {
       if (input.delayHitl) await new Promise((resolve) => setTimeout(resolve, 50));
@@ -213,20 +210,6 @@ function createDashboardHandler(input: {
     }
 
 
-    if (path.startsWith("/api/projects/") && path.includes("/hitl?scope=project")) {
-      if (input.delayHitl) await new Promise((resolve) => setTimeout(resolve, 50));
-      const slug = path.split("/")[3];
-      return Response.json({ hitl: hitlBySlug.get(slug) ?? [] });
-    }
-
-    if (path.startsWith("/api/projects/") && path.includes("/hitl/") && path.endsWith("/respond")) {
-      return Response.json({ ok: true, hitlId: path.split("/").slice(-2, -1)[0] });
-    }
-
-    if (path.startsWith("/api/projects/") && path.includes("/hitl/") && path.endsWith("/cancel")) {
-      return Response.json({ ok: true, hitlId: path.split("/").slice(-2, -1)[0] });
-    }
-
     return new Response("Not found", { status: 404 });
   };
 }
@@ -236,9 +219,11 @@ function createDashboardHandler(input: {
 describe("Dashboard", () => {
   beforeEach(() => {
     mock.restore();
+    hitlStore.getState().reset();
   });
 
   afterEach(() => {
+    hitlStore.getState().reset();
     restoreGlobals();
     mock.restore();
   });
@@ -298,8 +283,8 @@ describe("Dashboard", () => {
 
 
   test("renders HITL cards in approval queue", async () => {
-    const hitl1 = makeHitlItem({ hitlId: "h1", source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan"}, displayPayload: { title: "Deploy?", summary: "Confirm", redacted: true }, project: { slug: "demo", name: "Alpha Project" } });
-    const hitl2 = makeHitlItem({ hitlId: "h2", source: { type: "ask_user", sessionId: "session-1" }, displayPayload: { title: "Which option?", summary: "Pick one", redacted: true }, project: { slug: "demo", name: "Beta Project" }, allowedActions: ["answer", "cancel"] });
+    const hitl1 = makeHitlItem({ hitlId: "h1", source: { type: "goal_budget", approvalPoint: "after_plan"}, displayPayload: { title: "Deploy?", summary: "Confirm", redacted: true } });
+    const hitl2 = makeHitlItem({ hitlId: "h2", source: { type: "ask_user", toolCallId: "call-2" }, displayPayload: { title: "Which option?", summary: "Pick one", redacted: true }, allowedActions: ["answer", "cancel"] });
     const ctx = await setupDashboard(createDashboardHandler({ hitl: [hitl1, hitl2] }));
 
     try {
@@ -422,7 +407,7 @@ describe("Dashboard", () => {
   test("redacted HITL cards show [REDACTED] and never expose raw secrets", async () => {
     const redactedItem = makeHitlItem({
       hitlId: "h-redacted",
-      source: { type: "goal_approval", goalId: "goal-budget", approvalPoint: "after_plan"},
+      source: { type: "goal_budget", approvalPoint: "after_plan"},
       displayPayload: {
         title: "Approve budget [REDACTED]",
         summary: "Budget approval [REDACTED]",
@@ -455,7 +440,7 @@ describe("Dashboard", () => {
     const unsafeApiItem = {
       ...makeHitlItem({
         hitlId: "h-unsafe-payload",
-        source: { type: "goal_approval", goalId: "goal-budget", approvalPoint: "after_plan"},
+      source: { type: "goal_budget", approvalPoint: "after_plan"},
         displayPayload: {
           title: "Approve budget [REDACTED]",
           summary: "Budget warning [REDACTED]",
@@ -470,7 +455,7 @@ describe("Dashboard", () => {
         title: "RAW payload should never render sk-test-secret",
         context: { apiKey: "sk-test-secret-dashboard", connection: "apiKey=sk-test-secret-dashboard" },
       },
-    } as HitlProjection & { payload: unknown };
+    } as HitlView & { payload: unknown };
     const ctx = await setupDashboard(createDashboardHandler({ hitl: [unsafeApiItem] }));
 
     try {

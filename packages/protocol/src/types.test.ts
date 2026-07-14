@@ -9,11 +9,8 @@ import type {
   CompressionStateSnapshot,
   GoalState,
   GoalStatus,
-  HitlFile,
-  HitlProjection,
-  HitlRecord,
+  HitlView,
   HitlResponse,
-  HitlStreamEvent,
   GlobalSSEEvent,
   GlobalSSEResourceChangedEvent,
   GlobalSSEHeartbeatEvent,
@@ -217,17 +214,16 @@ describe("global SSE wire protocol types", () => {
       {
         type: "hitl.snapshot",
         projectSlugs: ["proj-a"],
-        projections: [],
+        entries: [],
         createdAt: 3,
       },
       {
         type: "hitl.event",
         projectSlug: "proj-a",
-        owner: { projectSlug: "proj-a", ownerType: "session", ownerId: "s1" },
         hitlId: "hitl-1",
         createdAt: 4,
         payload: { type: "hitl.request" },
-        projection: {} as HitlProjection,
+        view: {} as HitlView,
       },
     ];
 
@@ -378,9 +374,7 @@ describe("Goal types", () => {
         maxTokens: 5000,
         updatedAt: "2026-01-01T00:04:00.000Z",
       },
-      pendingHitlIds: [],
-      approvalRefs: ["hitl-approval-1"],
-      appliedHitlIds: ["hitl-approval-1"],
+      appliedBudgetHitlIds: ["hitl-approval-1"],
       mainSessionId: "session-main",
       childSessionIds: ["session-build", "session-review"],
       review: {
@@ -422,7 +416,7 @@ describe("Goal types", () => {
     expect(parsed.review?.evidenceRefs[0]?.summary).toContain("Targeted protocol tests");
   });
 
-  test("Goal blockers and NOT_DONE receipts round-trip", () => {
+  test("Goal budget approvals and NOT_DONE receipts round-trip", () => {
     const state: GoalState = {
       id: "goal-2",
       projectSlug: "my-project",
@@ -432,17 +426,18 @@ describe("Goal types", () => {
       acceptanceCriteria: "The bug no longer reproduces.",
       useWorktree: false,
       status: "running",
-      blocker: {
-        kind: "question",
-        summary: "Need user clarification on expected behavior.",
+      budget: {
+        status: "warning",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      },
+      budgetApproval: {
         hitlId: "hitl-1",
+        approvalPoint: "warning-1",
         createdAt: "2026-06-01T00:00:00.000Z",
       },
       attempt: 1,
       reviewGeneration: 1,
-      pendingHitlIds: ["hitl-1"],
-      approvalRefs: ["hitl-1"],
-      appliedHitlIds: [],
+      appliedBudgetHitlIds: [],
       mainSessionId: "session-main",
       childSessionIds: [],
       startedAt: "2026-06-01T00:00:00.000Z",
@@ -467,7 +462,7 @@ describe("Goal types", () => {
     const parsed = serializeRoundTrip(state);
 
     expect(parsed.status).toBe("running");
-    expect(parsed.blocker?.kind).toBe("question");
+    expect(parsed.budgetApproval?.approvalPoint).toBe("warning-1");
     expect(parsed.review?.verdict).toBe("NOT_DONE");
     expect(parsed.review?.unresolvedItems).toEqual(["Clarify expected behavior"]);
     expect(parsed.lastError?.name).toBe("QuestionBlockedError");
@@ -479,13 +474,13 @@ describe("HITL types", () => {
     expect(HITL_RECENT_TERMINAL_LIMIT).toBe(20);
   });
 
-  test("keys HITL identity by owner and owner-local id", () => {
+  test("keys HITL identity by owner and id", () => {
     const first = hitlIdentityKey({
-      owner: { projectSlug: "project", ownerType: "session", ownerId: "session-a" },
+      owner: { type: "session", id: "session-a" },
       hitlId: "shared-id",
     });
     const second = hitlIdentityKey({
-      owner: { projectSlug: "project", ownerType: "session", ownerId: "session-b" },
+      owner: { type: "session", id: "session-b" },
       hitlId: "shared-id",
     });
 
@@ -515,87 +510,23 @@ describe("HITL types", () => {
     expect(parsed.decision).toBe("approve_once");
   });
 
-  test("serializes HitlResponse review variant", () => {
+  test("serializes HitlResponse budget variant", () => {
     const response: HitlResponse = {
-      type: "review_outcome",
-      outcome: "NOT_DONE",
+      type: "budget_decision",
+      decision: "denied",
       comment: "Needs more tests",
-      receipt: {
-        reviewGeneration: 1,
-        verdict: "NOT_DONE",
-        summary: "Needs more tests",
-        evidenceRefs: [],
-        reviewerSessionId: "reviewer-session",
-        decidedAt: "2026-07-14T00:00:00.000Z",
-      },
     };
 
     const parsed = serializeRoundTrip(response);
     expect(parsed).toEqual(response);
-    expect(parsed.outcome).toBe("NOT_DONE");
+    expect(parsed.decision).toBe("denied");
   });
 
-  test("serializes owner-local HitlRecord with display-only payload", () => {
-    const record: HitlRecord = {
+  test("HitlView remains display-safe", () => {
+    const view: HitlView = {
       hitlId: "hitl-1",
-      owner: { projectSlug: "my-project", ownerType: "goal", ownerId: "goal-1" },
-      blockingKey: "goal-1:before-complete",
-      source: {
-        type: "goal_approval",
-        goalId: "goal-1",
-        approvalPoint: "before_complete",
-      },
-      status: "pending",
-      displayPayload: {
-        title: "Approve completion",
-        summary: "Tool input redacted for dashboard display.",
-        fields: [{ label: "Goal", value: "goal-1" }],
-        redacted: true,
-      },
-      createdAt: "2026-07-03T00:00:00.000Z",
-      updatedAt: "2026-07-03T00:00:00.000Z",
-    };
-
-    const parsed = serializeRoundTrip(record);
-    const serialized = JSON.stringify(parsed);
-
-    expect(parsed).toEqual(record);
-    expect(parsed.hitlId).toBe("hitl-1");
-    expect(parsed.status).toBe("pending");
-    expect(parsed.displayPayload.redacted).toBe(true);
-    expect(serialized).not.toContain("workspaceRoot");
-    expect(serialized).not.toContain("rawToolInput");
-    expect(serialized).not.toContain("resumeCheckpoint");
-  });
-
-  test("serializes HitlFile owner partitions", () => {
-    const pending: HitlRecord = {
-      hitlId: "hitl-1",
-      owner: { projectSlug: "my-project", ownerType: "session", ownerId: "session-1" },
-      blockingKey: "session:session-1:ask:hitl-1",
-      source: { type: "ask_user", sessionId: "session-1" },
-      status: "pending",
-      displayPayload: { title: "Choose", redacted: true },
-      createdAt: "2026-07-03T00:00:00.000Z",
-      updatedAt: "2026-07-03T00:00:00.000Z",
-    };
-    const file: HitlFile = {
-      owner: pending.owner,
-      pending: [pending],
-      recentTerminal: [{ ...pending, hitlId: "hitl-0", status: "resolved", response: { type: "question_answer", answers: ["A"] }, resolvedAt: "2026-07-03T00:01:00.000Z" }],
-      updatedAt: "2026-07-03T00:01:00.000Z",
-    };
-
-    expect(serializeRoundTrip(file)).toEqual(file);
-  });
-
-  test("HitlProjection remains display-safe", () => {
-    const projection: HitlProjection = {
-      hitlId: "hitl-1",
-      project: { slug: "my-project", name: "My Project" },
-      owner: { projectSlug: "my-project", ownerType: "goal", ownerId: "goal-1" },
-      ancestry: { rootSessionId: "session-root", goalId: "goal-1", projectionPath: ["goal", "goal-1"] },
-      source: { type: "goal_budget", goalId: "goal-1" },
+      owner: { type: "goal", id: "goal-1" },
+      source: { type: "goal_budget", approvalPoint: "before_complete" },
       status: "pending",
       displayPayload: { title: "Goal blocked", summary: "Budget warning", redacted: true },
       allowedActions: ["approve", "deny", "cancel"],
@@ -603,7 +534,7 @@ describe("HITL types", () => {
       updatedAt: "2026-07-03T00:00:00.000Z",
     };
 
-    const serialized = JSON.stringify(serializeRoundTrip(projection));
+    const serialized = JSON.stringify(serializeRoundTrip(view));
 
     expect(serialized).toContain("Goal blocked");
     expect(serialized).not.toContain("workspaceRoot");
@@ -611,69 +542,6 @@ describe("HITL types", () => {
     expect(serialized).not.toContain("rawCheckpoint");
   });
 
-  test("serializes resolved HitlRecord with response", () => {
-    const request: HitlRecord = {
-      hitlId: "hitl-2",
-      owner: { projectSlug: "my-project", ownerType: "session", ownerId: "session-1" },
-      blockingKey: "session:session-1:ask:hitl-2",
-      source: { type: "ask_user", sessionId: "session-1" },
-      status: "resolved",
-      displayPayload: { title: "Which approach?", redacted: true },
-      createdAt: "2026-06-01T00:00:00.000Z",
-      updatedAt: "2026-06-01T00:01:00.000Z",
-      resolvedAt: "2026-06-01T00:01:00.000Z",
-      response: { type: "question_answer", answers: ["A"] },
-    };
-
-    const parsed = serializeRoundTrip(request);
-    expect(parsed).toEqual(request);
-    expect(parsed.status).toBe("resolved");
-    expect(parsed.response).toEqual({ type: "question_answer", answers: ["A"] });
-  });
-});
-
-describe("HITL stream events", () => {
-  test("HitlStreamEvent types are serializable", () => {
-    const hitlRequestEvent: HitlStreamEvent = {
-      type: "hitl.request",
-      request: {
-        hitlId: "hitl-1",
-        owner: { projectSlug: "project-a", ownerType: "session", ownerId: "session-1" },
-        blockingKey: "session:session-1:ask:hitl-1",
-        source: { type: "ask_user", sessionId: "session-1" },
-        status: "pending",
-        displayPayload: { title: "Proceed?", redacted: true },
-        createdAt: "2026-06-01T00:00:00.000Z",
-        updatedAt: "2026-06-01T00:00:00.000Z",
-      },
-    };
-
-    const hitlResolvedEvent: HitlStreamEvent = {
-      type: "hitl.resolved",
-      hitlId: "hitl-1",
-      status: "resolved",
-      response: { type: "question_answer", answers: ["Yes"] },
-    };
-
-    const hitlUpdatedEvent: HitlStreamEvent = {
-      type: "hitl.updated",
-      record: {
-        ...hitlRequestEvent.request,
-        status: "answered",
-        response: { type: "question_answer", answers: ["continue"] },
-        delivery: {
-          claimId: "claim-1",
-          claimedAt: "2026-06-01T00:01:00.000Z",
-          intent: "respond",
-          attempt: 1,
-        },
-      },
-    };
-
-    expect(serializeRoundTrip(hitlRequestEvent)).toEqual(hitlRequestEvent);
-    expect(serializeRoundTrip(hitlUpdatedEvent)).toEqual(hitlUpdatedEvent);
-    expect(serializeRoundTrip(hitlResolvedEvent)).toEqual(hitlResolvedEvent);
-  });
 });
 
 describe("Automation types", () => {

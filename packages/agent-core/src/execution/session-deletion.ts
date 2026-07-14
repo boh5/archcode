@@ -4,20 +4,17 @@ export interface SessionDeletionPreflightInput {
   readonly sessionIds: readonly string[];
 }
 
-export interface SessionDeletionPreflight {
+export interface SessionDeletionLifecycle {
   assertDeletable(input: SessionDeletionPreflightInput): Promise<void>;
+  prepareForDeletion(input: SessionDeletionPreflightInput): Promise<void>;
 }
 
-export type SessionDeletionOwnerType =
-  | "goal"
-  | "session_hitl"
-  | "session_hitl_journal";
+export type SessionDeletionOwnerType = "goal";
 
 export interface SessionDeletionOwnerDetail {
   readonly sessionId: string;
   readonly ownerType: SessionDeletionOwnerType;
   readonly ownerId?: string;
-  readonly hitlIds?: readonly string[];
 }
 
 export class SessionDeleteOwnerConflictError extends Error {

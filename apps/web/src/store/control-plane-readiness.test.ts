@@ -35,7 +35,7 @@ describe("control-plane readiness lifecycle", () => {
     hitlStore.getState().applySnapshot({
       type: "hitl.snapshot",
       projectSlugs: ["proj"],
-      projections: [],
+      entries: [],
       createdAt: 1,
     });
 
@@ -56,7 +56,7 @@ describe("control-plane readiness lifecycle", () => {
     hitlStore.getState().applySnapshot({
       type: "hitl.snapshot",
       projectSlugs: ["proj"],
-      projections: [],
+      entries: [],
       createdAt: 1,
     });
 

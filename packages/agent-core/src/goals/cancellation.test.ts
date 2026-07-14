@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -10,23 +10,14 @@ import type {
   SessionFamilyStopLease,
 } from "../execution/session-family-control";
 import { SessionFamilyStopConflictError } from "../execution/session-family-control";
-import {
-  deleteSessionHitlJournalFile,
-  getSessionHitlJournalPath,
-  writeSessionHitlJournalEntry,
-} from "../execution/session-hitl-journal-store";
-import { HitlService } from "../hitl/service";
 import { silentLogger } from "../logger";
 import { SessionStoreManager } from "../store/session-store-manager";
-import type { SessionStoreState } from "../store/types";
 import {
   GoalCancellationCleanupError,
   GoalCancellationError,
   GoalCancellationService,
-  type GoalCancellationCleanupOperations,
 } from "./cancellation";
 import { GoalCancellationInProgressError, withGoalExecutionClaimLock } from "./execution-claim";
-import { GoalHitlResumeAdapter } from "./hitl-resume-adapter";
 import { GoalStateManager } from "./state";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-cancellation", crypto.randomUUID());
@@ -66,14 +57,6 @@ class FakeFamilyController implements SessionFamilyController {
   }
 }
 
-interface Fixture {
-  readonly goalState: GoalStateManager;
-  readonly sessions: SessionStoreManager;
-  readonly hitl: HitlService;
-  readonly families: FakeFamilyController;
-  readonly service: GoalCancellationService;
-}
-
 beforeEach(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });
   await mkdir(TMP_ROOT, { recursive: true });
@@ -83,29 +66,32 @@ afterAll(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });
 });
 
-async function createFixture(): Promise<Fixture> {
+async function createFixture() {
   const goalState = new GoalStateManager(TMP_ROOT, silentLogger);
   const sessions = new SessionStoreManager({ logger: silentLogger });
-  const hitl = new HitlService({
-    workspaceRoot: TMP_ROOT,
-    project: { slug: "project-a", name: "Project A" },
-    sessions,
-    goalState,
-    logger: silentLogger,
-  });
   const families = new FakeFamilyController();
+  const cancelSessionToolBatch = mock(async (_sessionId: string, _workspaceRoot: string, _reason: string) => undefined);
+  const cancelGoalBudgetHitl = mock(async (_hitlId: string, _reason: string) => undefined);
   const service = new GoalCancellationService({
     workspaceRoot: TMP_ROOT,
     goalStateManager: goalState,
-    hitlService: hitl,
     sessionStoreManager: sessions,
     sessionFamilyController: families,
+    cancelSessionToolBatch,
+    cancelGoalBudgetHitl,
   });
-  return { goalState, sessions, hitl, families, service };
+  return {
+    goalState,
+    sessions,
+    families,
+    cancelSessionToolBatch,
+    cancelGoalBudgetHitl,
+    service,
+  };
 }
 
 async function createRunningGoal(
-  fixture: Fixture,
+  fixture: Awaited<ReturnType<typeof createFixture>>,
   mainSessionId = crypto.randomUUID(),
 ): Promise<GoalState> {
   const goal = await fixture.goalState.commit({
@@ -113,48 +99,29 @@ async function createRunningGoal(
     projectSlug: "project-a",
     createdFromSessionId: crypto.randomUUID(),
     objective: "Cancel every durable execution owner safely.",
-    acceptanceCriteria: "All Session families stop and durable blockers are cleared.",
+    acceptanceCriteria: "All Session families stop before cleanup.",
     mainSessionId,
   });
   fixture.sessions.create(mainSessionId, TMP_ROOT, {
     goalId: goal.id,
     sessionRole: "main",
-    agentName: "engineer",
+    agentName: "goal_lead",
   });
   await fixture.sessions.flushSession(mainSessionId, TMP_ROOT);
   return goal;
 }
 
-function hitlInput(ownerId: string, ownerType: "session" | "goal", hitlId: string) {
-  return {
+async function attachBudgetApproval(fixture: Awaited<ReturnType<typeof createFixture>>, goalId: string, hitlId: string): Promise<void> {
+  await fixture.goalState.updateBudgetSummary(goalId, {
+    status: "warning",
+    usedTokens: 90,
+    maxTokens: 100,
+    updatedAt: new Date().toISOString(),
+  });
+  await fixture.goalState.attachBudgetApproval(goalId, {
     hitlId,
-    owner: { projectSlug: "project-a", ownerType, ownerId },
-    ...(ownerType === "session" ? { sessionRootId: ownerId } : {}),
-    blockingKey: `${ownerType}:${ownerId}:${hitlId}`,
-    source: ownerType === "session"
-      ? { type: "ask_user" as const, sessionId: ownerId, toolCallId: "ask-1" }
-      : { type: "goal_approval" as const, goalId: ownerId, approvalPoint: "cancel-test" as const },
-    displayPayload: {
-      title: "Pending approval",
-      summary: "Wait for a human decision.",
-      fields: [],
-      redacted: true as const,
-    },
-  };
-}
-
-function blockedHitl(hitlId: string): NonNullable<SessionStoreState["blockedHitl"]> {
-  return {
-    hitlId,
-    blockingKey: `session:blocked:${hitlId}`,
-    source: { type: "ask_user", sessionId: "main", toolCallId: "ask-1" },
-    toolCallId: "ask-1",
-    toolName: "ask_user",
-    step: 1,
-    displayInput: { question: "Continue?" },
-    blockedAt: new Date().toISOString(),
-    reason: "Waiting for user",
-  };
+    approvalPoint: "warning-1",
+  });
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {
@@ -166,7 +133,7 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 }
 
 describe("GoalCancellationService", () => {
-  test("stops all independent root families and durably clears Goal, Session, HITL, and entry blockers", async () => {
+  test("drains every owned family, settles the captured budget HITL, commits cancellation, then cleans Session batches", async () => {
     const fixture = await createFixture();
     const mainId = crypto.randomUUID();
     const childId = crypto.randomUUID();
@@ -190,96 +157,50 @@ describe("GoalCancellationService", () => {
     ]);
     goal = await fixture.goalState.addChildSession(goal.id, childId);
     goal = await fixture.goalState.addChildSession(goal.id, independentRootId);
+    const budgetHitlId = crypto.randomUUID();
+    await attachBudgetApproval(fixture, goal.id, budgetHitlId);
 
-    const sessionHitlId = crypto.randomUUID();
-    const goalHitlId = crypto.randomUUID();
-    const sessionRecord = await fixture.hitl.create(hitlInput(mainId, "session", sessionHitlId));
-    const goalRecord = await fixture.hitl.create(hitlInput(goal.id, "goal", goalHitlId));
-    await fixture.goalState.attachHitlBlocker(goal.id, {
-      blocker: {
-        kind: "approval",
-        summary: "Goal approval pending",
-        hitlId: goalHitlId,
-      },
-      approvalRef: goalHitlId,
+    fixture.cancelSessionToolBatch.mockImplementation(async () => {
+      expect((await fixture.goalState.read(goal.id)).status).toBe("cancelled");
     });
-    const mainStore = fixture.sessions.get(mainId, TMP_ROOT)!;
-    mainStore.getState().append({
-      type: "execution-end",
-      status: "waiting_for_human",
-      blockedByHitlIds: [sessionHitlId],
-      blockedToolCallId: "ask-1",
-      blockedHitl: blockedHitl(sessionHitlId),
+    fixture.cancelGoalBudgetHitl.mockImplementation(async () => {
+      expect((await fixture.goalState.read(goal.id)).status).toBe("running");
     });
-    await fixture.sessions.flushSession(mainId, TMP_ROOT);
-    const entryCreatedAt = new Date().toISOString();
-    await writeSessionHitlJournalEntry({
-      phase: "paused",
-      phaseUpdatedAt: entryCreatedAt,
-      hitlId: sessionHitlId,
-      blockingKey: `session:${mainId}:ask-1`,
-      source: { type: "ask_user", sessionId: mainId, toolCallId: "ask-1" },
-      request: {
-        owner: { projectSlug: "project-a", ownerType: "session", ownerId: mainId },
-        displayPayload: { title: "Pending approval", summary: "Wait for a human decision.", fields: [], redacted: true },
-        createdAt: entryCreatedAt,
-      },
-      toolCallId: "ask-1",
-      toolName: "ask_user",
-      step: 1,
-      rawToolInput: {},
-      displayInput: {},
-      allowedTools: ["ask_user"],
-      agentSkills: [],
-      agentName: "engineer",
-      toolCalls: [{ toolCallId: "ask-1", toolName: "ask_user", input: {} }],
-      completedToolResults: [],
-      pendingToolCalls: [{ toolCallId: "ask-1", toolName: "ask_user", input: {} }],
-      blockedToolIndex: 0,
-      createdAt: entryCreatedAt,
-    }, TMP_ROOT, mainId);
 
     const cancelled = await fixture.service.cancel(goal.id, { source: "http", reason: "user cancelled" });
 
-    const expectedRoots = [mainId, independentRootId].sort();
-    expect(fixture.families.acquired.map((input) => input.rootSessionId)).toEqual(expectedRoots);
-    expect([...fixture.families.stopped].sort()).toEqual(expectedRoots);
-    expect([...fixture.families.released].sort()).toEqual(expectedRoots);
-    expect(cancelled).toMatchObject({ status: "cancelled", pendingHitlIds: [] });
-    expect(cancelled.blocker).toBeUndefined();
-    expect(await Bun.file(getSessionHitlJournalPath(TMP_ROOT, mainId)).exists()).toBe(false);
-
-    const coldSessions = new SessionStoreManager({ logger: silentLogger });
-    const coldMain = await coldSessions.getOrLoad(mainId, TMP_ROOT);
-    expect(coldMain.getState().blockedByHitlIds).toBeUndefined();
-    expect(coldMain.getState().blockedHitl).toBeUndefined();
-    expect(await fixture.hitl.lookup({ owner: sessionRecord.owner, hitlId: sessionRecord.hitlId })).toMatchObject({
-      status: "found",
-      record: { status: "cancelled", response: { type: "cancel", reason: "goal_cancelled" } },
-    });
-    expect(await fixture.hitl.lookup({ owner: goalRecord.owner, hitlId: goalRecord.hitlId })).toMatchObject({
-      status: "found",
-      record: { status: "cancelled", response: { type: "cancel", reason: "goal_cancelled" } },
-    });
+    expect(cancelled).toMatchObject({ status: "cancelled", lastFailureSummary: "user cancelled" });
+    expect(cancelled.budgetApproval).toBeUndefined();
+    expect(fixture.families.acquired.map((input) => input.rootSessionId)).toEqual([mainId, independentRootId].sort());
+    expect([...fixture.families.stopped].sort()).toEqual([mainId, independentRootId].sort());
+    expect([...fixture.families.released].sort()).toEqual([mainId, independentRootId].sort());
+    expect(fixture.cancelSessionToolBatch.mock.calls).toEqual(
+      [mainId, childId, independentRootId].sort().map((sessionId) => [sessionId, TMP_ROOT, "goal_cancelled"]),
+    );
+    expect(fixture.cancelGoalBudgetHitl).toHaveBeenCalledTimes(1);
+    expect(fixture.cancelGoalBudgetHitl).toHaveBeenCalledWith(budgetHitlId, "goal_cancelled");
   });
 
-  test("does not commit cancellation when root self-cancel cannot stop a child", async () => {
+  test("does not scan or cancel Goal HITL when no pre-cancel budget approval exists", async () => {
     const fixture = await createFixture();
     const goal = await createRunningGoal(fixture);
-    const mainId = goal.mainSessionId!;
-    const childId = crypto.randomUUID();
+
+    await fixture.service.cancel(goal.id, { source: "http" });
+
+    expect(fixture.cancelSessionToolBatch).toHaveBeenCalledTimes(1);
+    expect(fixture.cancelGoalBudgetHitl).not.toHaveBeenCalled();
+  });
+
+  test("does not commit or clean up when a family cannot stop", async () => {
+    const fixture = await createFixture();
+    const goal = await createRunningGoal(fixture);
+    const mainId = goal.mainSessionId;
     fixture.families.stopByRoot.set(mainId, async () => {
-      throw new SessionFamilyStopConflictError(mainId, [childId]);
+      throw new SessionFamilyStopConflictError(mainId, ["stuck-child"]);
     });
 
-    await expect(fixture.service.cancel(goal.id, {
-      source: "agent",
-      selfSessionId: mainId,
-    })).rejects.toMatchObject({
-      name: "SessionFamilyStopConflictError",
-      rootSessionId: mainId,
-      stuckSessionIds: [childId],
-    });
+    await expect(fixture.service.cancel(goal.id, { source: "agent", selfSessionId: mainId }))
+      .rejects.toBeInstanceOf(SessionFamilyStopConflictError);
 
     expect(fixture.families.acquired).toEqual([{
       workspaceRoot: TMP_ROOT,
@@ -287,34 +208,29 @@ describe("GoalCancellationService", () => {
       exemptSessionId: mainId,
     }]);
     expect((await fixture.goalState.read(goal.id)).status).toBe("running");
+    expect(fixture.cancelSessionToolBatch).not.toHaveBeenCalled();
+    expect(fixture.cancelGoalBudgetHitl).not.toHaveBeenCalled();
   });
 
-  test("keeps every root stop generation held until all families settle after one failure", async () => {
+  test("holds every stop lease until all families settle", async () => {
     const fixture = await createFixture();
     const firstRootId = crypto.randomUUID();
     const secondRootId = crypto.randomUUID();
     let goal = await createRunningGoal(fixture, firstRootId);
-    fixture.sessions.create(secondRootId, TMP_ROOT, {
-      goalId: goal.id,
-      sessionRole: "build",
-      agentName: "build",
-    });
+    fixture.sessions.create(secondRootId, TMP_ROOT, { goalId: goal.id, sessionRole: "build", agentName: "build" });
     await fixture.sessions.flushSession(secondRootId, TMP_ROOT);
     goal = await fixture.goalState.addChildSession(goal.id, secondRootId);
     const orderedRoots = [firstRootId, secondRootId].sort();
-    const slowRootId = orderedRoots[1]!;
-    const failedRootId = orderedRoots[0]!;
     const slowStop = deferred<void>();
-    fixture.families.stopByRoot.set(failedRootId, async () => {
-      throw new SessionFamilyStopConflictError(failedRootId, [failedRootId]);
+    fixture.families.stopByRoot.set(orderedRoots[0]!, async () => {
+      throw new SessionFamilyStopConflictError(orderedRoots[0]!, [orderedRoots[0]!]);
     });
-    fixture.families.stopByRoot.set(slowRootId, async () => await slowStop.promise);
+    fixture.families.stopByRoot.set(orderedRoots[1]!, async () => await slowStop.promise);
 
     let settled = false;
     const cancellation = fixture.service.cancel(goal.id, { source: "http" }).finally(() => { settled = true; });
     void cancellation.catch(() => undefined);
     await waitFor(() => fixture.families.stopped.length === 2);
-    await Promise.resolve();
     expect(settled).toBe(false);
     expect(fixture.families.released).toHaveLength(0);
 
@@ -324,12 +240,31 @@ describe("GoalCancellationService", () => {
     expect((await fixture.goalState.read(goal.id)).status).toBe("running");
   });
 
+  test("keeps the cancelled tombstone when idempotent batch cleanup fails", async () => {
+    const fixture = await createFixture();
+    const goal = await createRunningGoal(fixture);
+    let failed = false;
+    fixture.cancelSessionToolBatch.mockImplementation(async () => {
+      if (!failed) {
+        failed = true;
+        throw new Error("injected batch cleanup failure");
+      }
+    });
+
+    await expect(fixture.service.cancel(goal.id, { source: "http" }))
+      .rejects.toBeInstanceOf(GoalCancellationCleanupError);
+    expect((await fixture.goalState.read(goal.id)).status).toBe("cancelled");
+
+    await expect(fixture.service.cancel(goal.id, { source: "agent" })).resolves.toMatchObject({ status: "cancelled" });
+    expect(fixture.cancelSessionToolBatch).toHaveBeenCalledTimes(2);
+  });
+
   test("cancellation intent wins atomically over Reviewer finalization", async () => {
     const fixture = await createFixture();
     let goal = await createRunningGoal(fixture);
     goal = await fixture.goalState.beginReview(goal.id);
     const stopGate = deferred<void>();
-    fixture.families.stopByRoot.set(goal.mainSessionId!, async () => await stopGate.promise);
+    fixture.families.stopByRoot.set(goal.mainSessionId, async () => await stopGate.promise);
 
     const cancellation = fixture.service.cancel(goal.id, { source: "http" });
     await waitFor(() => fixture.families.stopped.length === 1);
@@ -348,175 +283,28 @@ describe("GoalCancellationService", () => {
     }))).rejects.toBeInstanceOf(GoalCancellationInProgressError);
 
     stopGate.resolve(undefined);
-    const cancelled = await cancellation;
-    expect(cancelled.status).toBe("cancelled");
-    expect(cancelled.review).toBeUndefined();
+    expect((await cancellation).status).toBe("cancelled");
   });
 
-  test("Reviewer finalization that owns the claim first prevents cleanup and cancellation", async () => {
+  test("a completed Goal cannot trigger cleanup", async () => {
     const fixture = await createFixture();
     let goal = await createRunningGoal(fixture);
     goal = await fixture.goalState.beginReview(goal.id);
-    const hitlId = crypto.randomUUID();
-    const hitlRecord = await fixture.hitl.create(hitlInput(goal.id, "goal", hitlId));
-    const reviewEntered = deferred<void>();
-    const releaseReview = deferred<void>();
-    const finalize = withGoalExecutionClaimLock(goal.id, async () => {
-      reviewEntered.resolve(undefined);
-      await releaseReview.promise;
-      return await fixture.goalState.finalizeReview(goal.id, {
-        expectedReviewGeneration: goal.reviewGeneration,
-        verdict: "DONE",
-        summary: "Reviewer finished first",
-        evidenceRefs: [{ kind: "test_output", ref: "tests", summary: "Tests passed" }],
-        authorization: {
-          agentName: "reviewer",
-          sessionRole: "review",
-          sessionGoalId: goal.id,
-          reviewerSessionId: "review-session",
-        },
-      });
+    await fixture.goalState.finalizeReview(goal.id, {
+      expectedReviewGeneration: goal.reviewGeneration,
+      verdict: "DONE",
+      summary: "Complete",
+      evidenceRefs: [{ kind: "test_output", ref: "tests", summary: "Tests passed" }],
+      authorization: {
+        agentName: "reviewer",
+        sessionRole: "review",
+        sessionGoalId: goal.id,
+        reviewerSessionId: "review-session",
+      },
     });
-    await reviewEntered.promise;
-    const cancellation = fixture.service.cancel(goal.id, { source: "http" });
-    releaseReview.resolve(undefined);
 
-    expect((await finalize).status).toBe("done");
-    await expect(cancellation).rejects.toBeInstanceOf(GoalCancellationError);
+    await expect(fixture.service.cancel(goal.id, { source: "http" })).rejects.toBeInstanceOf(GoalCancellationError);
     expect(fixture.families.acquired).toHaveLength(0);
-    expect(await fixture.hitl.lookup({ owner: hitlRecord.owner, hitlId: hitlRecord.hitlId })).toMatchObject({
-      status: "found",
-      record: { status: "pending" },
-    });
+    expect(fixture.cancelSessionToolBatch).not.toHaveBeenCalled();
   });
-
-  for (const failurePhase of ["session_hitl", "entry", "session_blocker", "goal_hitl"] as const) {
-    test(`persists the cancelled tombstone before ${failurePhase} cleanup failure and reconciles idempotently`, async () => {
-      const fixture = await createFixture();
-      const goal = await createRunningGoal(fixture);
-      const mainId = goal.mainSessionId!;
-      const sessionHitlId = crypto.randomUUID();
-      const goalHitlId = crypto.randomUUID();
-      const sessionRecord = await fixture.hitl.create(hitlInput(mainId, "session", sessionHitlId));
-      const goalRecord = await fixture.hitl.create(hitlInput(goal.id, "goal", goalHitlId));
-      await fixture.goalState.attachHitlBlocker(goal.id, {
-        blocker: {
-          kind: "approval",
-          summary: "Goal approval pending",
-          hitlId: goalHitlId,
-        },
-        approvalRef: goalHitlId,
-      });
-      const mainStore = fixture.sessions.get(mainId, TMP_ROOT)!;
-      mainStore.getState().append({
-        type: "execution-end",
-        status: "waiting_for_human",
-        blockedByHitlIds: [sessionHitlId],
-        blockedToolCallId: "ask-1",
-        blockedHitl: blockedHitl(sessionHitlId),
-      });
-      await fixture.sessions.flushSession(mainId, TMP_ROOT);
-      const entryCreatedAt = new Date().toISOString();
-      await writeSessionHitlJournalEntry({
-        phase: "paused",
-        phaseUpdatedAt: entryCreatedAt,
-        hitlId: sessionHitlId,
-        blockingKey: `session:${mainId}:ask-1`,
-        source: { type: "ask_user", sessionId: mainId, toolCallId: "ask-1" },
-        request: {
-          owner: { projectSlug: "project-a", ownerType: "session", ownerId: mainId },
-          displayPayload: { title: "Pending approval", summary: "Wait for a human decision.", fields: [], redacted: true },
-          createdAt: entryCreatedAt,
-        },
-        toolCallId: "ask-1",
-        toolName: "ask_user",
-        step: 1,
-        rawToolInput: {},
-        displayInput: {},
-        allowedTools: ["ask_user"],
-        agentSkills: [],
-        agentName: "engineer",
-        toolCalls: [{ toolCallId: "ask-1", toolName: "ask_user", input: {} }],
-        completedToolResults: [],
-        pendingToolCalls: [{ toolCallId: "ask-1", toolName: "ask_user", input: {} }],
-        blockedToolIndex: 0,
-        createdAt: entryCreatedAt,
-      }, TMP_ROOT, mainId);
-
-      let injected = false;
-      const maybeFail = (phase: typeof failurePhase): void => {
-        if (!injected && failurePhase === phase) {
-          injected = true;
-          throw new Error(`injected ${phase} cleanup failure`);
-        }
-      };
-      const cleanupOperations: GoalCancellationCleanupOperations = {
-        cancelOwner: async (owner, reason) => {
-          maybeFail(owner.ownerType === "goal" ? "goal_hitl" : "session_hitl");
-          return await fixture.hitl.cancelOwner(owner, reason);
-        },
-        deleteSessionEntry: async (workspaceRoot, sessionId) => {
-          maybeFail("entry");
-          await deleteSessionHitlJournalFile(workspaceRoot, sessionId);
-        },
-        clearSessionHitlBlockers: async (sessionId, workspaceRoot) => {
-          maybeFail("session_blocker");
-          await fixture.sessions.clearHitlBlockers(sessionId, workspaceRoot);
-        },
-      };
-      const service = new GoalCancellationService({
-        workspaceRoot: TMP_ROOT,
-        goalStateManager: fixture.goalState,
-        hitlService: fixture.hitl,
-        sessionStoreManager: fixture.sessions,
-        sessionFamilyController: fixture.families,
-        cleanupOperations,
-      });
-
-      await expect(service.cancel(goal.id, { source: "http" }))
-        .rejects.toBeInstanceOf(GoalCancellationCleanupError);
-      const coldGoalState = new GoalStateManager(TMP_ROOT, silentLogger);
-      const committed = await coldGoalState.read(goal.id);
-      expect(committed).toMatchObject({ status: "cancelled", pendingHitlIds: [] });
-      expect(committed.blocker).toBeUndefined();
-      await expect(fixture.goalState.retry(goal.id)).rejects.toThrow();
-      const goalResumeAdapter = new GoalHitlResumeAdapter({
-        workspaceRoot: TMP_ROOT,
-        goalStateManager: fixture.goalState,
-        hitlService: fixture.hitl,
-        goalCancellation: service,
-      });
-      const goalResponse = {
-        type: "approval_decision",
-        decision: "approved",
-      } as const;
-      const preparedGoalResume = await goalResumeAdapter.prepare(goalRecord, goalResponse);
-      try {
-        await expect(preparedGoalResume.run(goalRecord, goalResponse)).rejects.toBeInstanceOf(GoalCancellationError);
-      } finally {
-        preparedGoalResume.release();
-      }
-
-      expect((await service.cancel(goal.id, {
-        source: "agent",
-        selfSessionId: mainId,
-      })).status).toBe("cancelled");
-      expect((await service.cancel(goal.id, { source: "hitl" })).status).toBe("cancelled");
-      expect((await service.cancel(goal.id, { source: "http" })).status).toBe("cancelled");
-
-      const coldSessions = new SessionStoreManager({ logger: silentLogger });
-      const coldMain = await coldSessions.getOrLoad(mainId, TMP_ROOT);
-      expect(coldMain.getState().blockedByHitlIds).toBeUndefined();
-      expect(coldMain.getState().blockedHitl).toBeUndefined();
-      expect(await Bun.file(getSessionHitlJournalPath(TMP_ROOT, mainId)).exists()).toBe(false);
-      expect(await fixture.hitl.lookup({ owner: sessionRecord.owner, hitlId: sessionRecord.hitlId })).toMatchObject({
-        status: "found",
-        record: { status: "cancelled" },
-      });
-      expect(await fixture.hitl.lookup({ owner: goalRecord.owner, hitlId: goalRecord.hitlId })).toMatchObject({
-        status: "found",
-        record: { status: "cancelled" },
-      });
-    });
-  }
 });

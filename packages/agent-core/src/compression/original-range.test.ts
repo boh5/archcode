@@ -83,6 +83,7 @@ function sessionFile(messages: StoredMessage[], compression = createEmptyCompres
     todos: [],
     reminders: [],
     childSessionLinks: [],
+    toolBatches: [],
     rootSessionId: "session-1",
   };
 }
@@ -105,6 +106,7 @@ function compressedSession(): SessionFile {
     todos: [],
     reminders: [],
     childSessionLinks: [],
+    toolBatches: [],
     rootSessionId: "session-1",
     executionCount: 0,
     isRunning: false,
@@ -156,6 +158,7 @@ function nestedCompressedSession(): SessionFile {
     todos: [],
     reminders: [],
     childSessionLinks: [],
+    toolBatches: [],
     rootSessionId: "session-1",
     executionCount: 0,
     isRunning: false,

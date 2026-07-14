@@ -41,7 +41,6 @@ describe("SessionExecutionScopeValidator worktrees", () => {
     await expect(fixture.validator.validate({
       projectRoot: fixture.projectRoot,
       subject: sessionSubject({ sessionId: "ordinary-root", cwd: own.worktreePath }),
-      entry: { kind: "user_message" },
     })).resolves.toBeUndefined();
     await expect(fixture.validator.validate({
       projectRoot: fixture.projectRoot,
@@ -51,7 +50,6 @@ describe("SessionExecutionScopeValidator worktrees", () => {
         parentSessionId: "ordinary-root",
         cwd: own.worktreePath,
       }),
-      entry: { kind: "user_message" },
     })).resolves.toBeUndefined();
 
     const other = await service.create({
@@ -62,7 +60,6 @@ describe("SessionExecutionScopeValidator worktrees", () => {
       fixture.validator.validate({
         projectRoot: fixture.projectRoot,
         subject: sessionSubject({ sessionId: "ordinary-root", cwd: other.worktreePath }),
-        entry: { kind: "user_message" },
       }),
       "SESSION_WORKTREE_OWNER_MISMATCH",
     );
@@ -72,7 +69,6 @@ describe("SessionExecutionScopeValidator worktrees", () => {
     await expect(fixture.validator.validate({
       projectRoot: fixture.projectRoot,
       subject: sessionSubject({ sessionId: "ordinary-root", cwd: ordinaryPath }),
-      entry: { kind: "user_message" },
     })).resolves.toBeUndefined();
   });
 
@@ -106,7 +102,6 @@ describe("SessionExecutionScopeValidator worktrees", () => {
         goalId: goal.id,
         sessionRole: "main",
       }),
-      entry: { kind: "user_message" },
     })).resolves.toBeUndefined();
   });
 
@@ -141,7 +136,6 @@ describe("SessionExecutionScopeValidator worktrees", () => {
           goalId: goal.id,
           sessionRole: "main",
         }),
-        entry: { kind: "user_message" },
       }),
       "SESSION_GOAL_WORKTREE_CLAIM_INVALID",
     );

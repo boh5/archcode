@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import type { AgentDescriptor, GoalState, HitlProjection, SessionSummary, SessionTreeResponse } from "@archcode/protocol";
+import type { AgentDescriptor, GoalState, SessionSummary, SessionTreeResponse } from "@archcode/protocol";
 import type { DashboardGoal } from "./types";
-import { activeGoalsQueryOptions, agentsQueryOptions, diffQueryOptions, focusedSessionQueryOptions, goalQueryOptions, goalsQueryOptions, projectHitlQueryOptions, queryKeys, sessionTreeQueryOptions, sessionsQueryOptions } from "./queries";
+import { activeGoalsQueryOptions, agentsQueryOptions, diffQueryOptions, focusedSessionQueryOptions, goalQueryOptions, goalsQueryOptions, queryKeys, sessionTreeQueryOptions, sessionsQueryOptions } from "./queries";
 
 const originalFetch = globalThis.fetch;
 const originalDocument = globalThis.document;
@@ -234,9 +234,7 @@ describe("web session query contracts", () => {
         status: "running",
         attempt: 1,
         reviewGeneration: 0,
-        pendingHitlIds: [],
-        approvalRefs: [],
-        appliedHitlIds: [],
+        appliedBudgetHitlIds: [],
         childSessionIds: [],
         mainSessionId: "session-main",
         startedAt: "2026-01-01T00:00:00Z",
@@ -271,9 +269,7 @@ describe("web session query contracts", () => {
       status: "running",
       attempt: 1,
       reviewGeneration: 0,
-      pendingHitlIds: [],
-      approvalRefs: [],
-      appliedHitlIds: [],
+      appliedBudgetHitlIds: [],
       childSessionIds: [],
       mainSessionId: "session-main",
       startedAt: "2026-01-01T00:00:00Z",
@@ -303,56 +299,6 @@ describe("web session query contracts", () => {
     ]);
   });
 
-  test("projectHitlQueryOptions fetches project-scoped HITL via canonical scoped endpoint", async () => {
-    globalThis.document = { cookie: "" } as Document;
-    const hitl: HitlProjection[] = [
-      {
-        hitlId: "hitl-2",
-        project: { slug: TEST_PROJECT_SLUG, name: TEST_PROJECT_NAME },
-        owner: { projectSlug: TEST_PROJECT_SLUG, ownerType: "goal", ownerId: "goal-1" },
-        source: { type: "goal_review", goalId: "goal-1", reviewGeneration: 1, reviewerSessionId: "reviewer-1" },
-        status: "pending",
-        displayPayload: { title: "Review artifacts", redacted: true },
-        allowedActions: ["approve", "deny", "cancel"],
-        createdAt: "2026-01-01T00:00:00Z",
-        updatedAt: "2026-01-01T00:00:00Z",
-      },
-    ];
-    const fetchMock = mock(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      expect(url).toBe(`/api/projects/${TEST_PROJECT_SLUG}/hitl?scope=project&status=pending`);
-      return jsonResponse({ hitl });
-    });
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
-
-    const opts = projectHitlQueryOptions(TEST_PROJECT_SLUG);
-    const result = await (opts as unknown as QueryOptionWithFn<HitlProjection[]>).queryFn();
-
-    expect([...opts.queryKey]).toEqual(["projects", TEST_PROJECT_SLUG, "hitl"]);
-    expect(result).toEqual(hitl);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  test("projectHitlQueryOptions never fetches global /api/hitl?status=pending", async () => {
-    globalThis.document = { cookie: "" } as Document;
-    const fetchMock = mock(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      expect(url).not.toBe("/api/hitl?status=pending");
-      expect(url).not.toMatch(/^\/api\/hitl\b/);
-      expect(url).toBe(`/api/projects/${TEST_PROJECT_SLUG}/hitl?scope=project&status=pending`);
-      return jsonResponse({ hitl: [] });
-    });
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
-
-    const opts = projectHitlQueryOptions(TEST_PROJECT_SLUG);
-    await (opts as unknown as QueryOptionWithFn<HitlProjection[]>).queryFn();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  test("queryKeys.projectHitl is keyed correctly", () => {
-    expect(queryKeys.projectHitl(TEST_PROJECT_SLUG)).toEqual(["projects", TEST_PROJECT_SLUG, "hitl"]);
-  });
-
   test("activeGoalsQueryOptions fetches global active goals with project metadata", async () => {
     globalThis.document = { cookie: "" } as Document;
     const goals: DashboardGoal[] = [
@@ -367,9 +313,7 @@ describe("web session query contracts", () => {
         status: "running",
         attempt: 1,
         reviewGeneration: 0,
-        pendingHitlIds: [],
-        approvalRefs: [],
-        appliedHitlIds: [],
+        appliedBudgetHitlIds: [],
         childSessionIds: [],
         mainSessionId: "session-main",
         startedAt: "2026-01-01T00:00:00Z",

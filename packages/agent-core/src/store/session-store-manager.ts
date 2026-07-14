@@ -7,7 +7,6 @@ import { collectSessionTreeIds } from "../execution/session-tree";
 import { createEmptyCompressionState, resolveCompressionOriginalRange, type CompressionOriginalRangeResult } from "../compression";
 import type {
   SessionModelInfo,
-  SessionHitlBlocker,
   SessionTreeNode,
   SessionTreeResponse,
 } from "@archcode/protocol";
@@ -33,6 +32,7 @@ import {
   type SessionEventPayload,
   type SessionRole,
   type SessionStoreState,
+  type SessionToolBatch,
   type TextPart,
   MAX_EVENTS,
 } from "./types";
@@ -143,9 +143,6 @@ export class SessionStoreManager {
         || event.type === "compact"
         || event.type === "tool-child-session-link"
         || event.type === "execution-error"
-        || event.type === "hitl.request"
-        || event.type === "hitl.updated"
-        || event.type === "hitl.resolved"
         || event.type === "compression.block_committed"
         || event.type === "compression.block_failed"
         || event.type === "compression.ref_map_updated"
@@ -169,13 +166,12 @@ export class SessionStoreManager {
       todos: [],
       reminders: [],
       childSessionLinks: [],
+      toolBatches: [],
       // Root/parent IDs are write-once session identity, not mutable tree state.
       rootSessionId,
       parentSessionId,
       goalId,
       sessionRole,
-      blockedHitl: undefined,
-      blockedByHitlIds: undefined,
       isRunning: false,
       isStreamingModel: false,
       readSnapshots: new Map(),
@@ -274,32 +270,20 @@ export class SessionStoreManager {
     }
   }
 
-  /** Clears durable Session HITL execution blockers with an awaited snapshot write. */
-  async clearHitlBlockers(sessionId: string, workspaceRoot: string): Promise<void> {
-    const store = await this.getOrLoad(sessionId, workspaceRoot);
-    store.setState({ blockedHitl: undefined, blockedByHitlIds: undefined });
-    await this.#enqueuePersist(this.key(sessionId, workspaceRoot), sessionId, workspaceRoot, store.getState());
-  }
-
-  /**
-   * Installs one fail-closed durable HITL blocker. `replacesHitlId` is used by
-   * journal repair when an existing owner blocking key wins the create race.
-   */
-  async setHitlBlocker(
+  /** Atomically mutates the canonical Session tool-batch checkpoint and awaits durability. */
+  async updateToolBatches(
     sessionId: string,
     workspaceRoot: string,
-    blocker: SessionHitlBlocker,
-    replacesHitlId?: string,
-  ): Promise<void> {
+    update: (batches: readonly SessionToolBatch[]) => SessionToolBatch[],
+  ): Promise<SessionToolBatch[]> {
     const store = await this.getOrLoad(sessionId, workspaceRoot);
-    const blockedByHitlIds = new Set(store.getState().blockedByHitlIds ?? []);
-    if (replacesHitlId !== undefined) blockedByHitlIds.delete(replacesHitlId);
-    blockedByHitlIds.add(blocker.hitlId);
-    store.setState({
-      blockedHitl: blocker,
-      blockedByHitlIds: [...blockedByHitlIds].sort(),
+    let updated: SessionToolBatch[] = [];
+    store.setState((state) => {
+      updated = update(state.toolBatches);
+      return { toolBatches: updated, updatedAt: Date.now() };
     });
     await this.#enqueuePersist(this.key(sessionId, workspaceRoot), sessionId, workspaceRoot, store.getState());
+    return updated;
   }
 
   /** Lists roots and descendants for project startup repair services. */
@@ -812,13 +796,14 @@ export class SessionStoreManager {
     return { root: rootNode, diagnostics: [] };
   }
 
-  async listSessionFamilyBlockedHitlIds(workspaceRoot: string, rootSessionId: string): Promise<string[]> {
+  async listSessionFamilyToolBatchHitlIds(workspaceRoot: string, rootSessionId: string): Promise<string[]> {
     const tree = await this.buildSessionTree(workspaceRoot, rootSessionId);
     const sessionIds = collectSessionTreeIds(tree.root);
     const blocked = new Set<string>();
     for (const sessionId of sessionIds) {
       const session = await this.getSessionFile(workspaceRoot, sessionId);
-      for (const hitlId of session.blockedByHitlIds ?? (session.blockedHitl === undefined ? [] : [session.blockedHitl.hitlId])) {
+      const activeBatch = session.toolBatches.find((batch) => batch.archivedAt === undefined);
+      for (const hitlId of activeBatch?.calls.flatMap((call) => call.state === "blocked" && call.blocker?.hitlId !== undefined ? [call.blocker.hitlId] : []) ?? []) {
         blocked.add(hitlId);
       }
     }
@@ -868,12 +853,11 @@ export class SessionStoreManager {
         todos: parsed.todos,
         reminders: parsed.reminders,
         childSessionLinks: parsed.childSessionLinks,
+        toolBatches: parsed.toolBatches,
         rootSessionId: parsed.rootSessionId,
         parentSessionId: parsed.parentSessionId,
         goalId: parsed.goalId,
         sessionRole: parsed.sessionRole,
-        blockedHitl: parsed.blockedHitl,
-        blockedByHitlIds: parsed.blockedByHitlIds,
         isRunning: false,
         isStreamingModel: false,
         currentExecutionId: undefined,

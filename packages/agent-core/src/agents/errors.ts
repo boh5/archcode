@@ -188,86 +188,15 @@ export class SessionCwdTransitionInProgressError extends Error {
   }
 }
 
-export class SessionHitlResumeInProgressError extends Error {
-  constructor(
-    public readonly sessionId: string,
-    public readonly rootSessionId: string,
-  ) {
-    super(
-      `Session "${sessionId}" cannot start or resume while its durable human-in-the-loop continuation is already running in root family "${rootSessionId}".`,
-    );
-    this.name = "SessionHitlResumeInProgressError";
-  }
-}
-
-export class SessionHitlBlockedError extends Error {
+export class SessionToolBatchActiveError extends Error {
   constructor(
     public readonly sessionId: string,
     public readonly hitlIds: readonly string[],
   ) {
-    super(
-      `Session "${sessionId}" is waiting for a human-in-the-loop response: ${hitlIds.join(", ")}. Respond to or cancel the pending request before sending another message.`,
-    );
-    this.name = "SessionHitlBlockedError";
-  }
-}
-
-export class SessionHitlResumeConflictError extends Error {
-  constructor(
-    public readonly sessionId: string,
-    public readonly conflictingSessionIds: readonly string[],
-  ) {
-    super(
-      `Session "${sessionId}" cannot continue a durable human-in-the-loop response while the same Session is starting or running.`,
-    );
-    this.name = "SessionHitlResumeConflictError";
-  }
-}
-
-export class SessionHitlResumeLeaseExpiredError extends Error {
-  constructor(
-    public readonly sessionId: string,
-    public readonly rootSessionId: string,
-  ) {
-    super(
-      `Durable human-in-the-loop continuation ownership for session "${sessionId}" is no longer active for root session "${rootSessionId}".`,
-    );
-    this.name = "SessionHitlResumeLeaseExpiredError";
-  }
-}
-
-export class SessionHitlResumeIdentityMismatchError extends Error {
-  constructor(
-    public readonly sessionId: string,
-    public readonly expectedRootSessionId: string,
-    public readonly actualRootSessionId: string | undefined,
-  ) {
-    super(
-      `Durable human-in-the-loop continuation for session "${sessionId}" belongs to root "${expectedRootSessionId}", but the loaded Session belongs to "${actualRootSessionId ?? "missing"}".`,
-    );
-    this.name = "SessionHitlResumeIdentityMismatchError";
-  }
-}
-
-export class SessionHitlResumeLeaseNotActivatedError extends Error {
-  constructor(
-    public readonly sessionId: string,
-    public readonly rootSessionId: string,
-  ) {
-    super(`Durable human-in-the-loop continuation for session "${sessionId}" has not validated root "${rootSessionId}" yet.`);
-    this.name = "SessionHitlResumeLeaseNotActivatedError";
-  }
-}
-
-export class SessionHitlCancelOnlyLeaseError extends Error {
-  constructor(
-    public readonly sessionId: string,
-    public readonly rootSessionId: string,
-  ) {
-    super(
-      `Cancel-only durable human-in-the-loop ownership for session "${sessionId}" cannot change the working directory of root session "${rootSessionId}".`,
-    );
-    this.name = "SessionHitlCancelOnlyLeaseError";
+    super(hitlIds.length > 0
+      ? `Session "${sessionId}" is waiting for a human-in-the-loop response: ${hitlIds.join(", ")}. Respond to or cancel the pending request before sending another message.`
+      : `Session "${sessionId}" has an unfinished tool batch. Wait for it to finish before sending another message.`);
+    this.name = "SessionToolBatchActiveError";
   }
 }
 

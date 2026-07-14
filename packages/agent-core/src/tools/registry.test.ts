@@ -27,7 +27,6 @@ import { TOOL_ERROR_META_KEY } from "./errors";
 import { ProjectApprovalManager } from "./permission";
 import type { PermissionApprovalScope } from "./permission";
 import { jsonSchema } from "ai";
-import { SessionHitlPause } from "../execution/session-hitl-pause";
 import { createTestProjectContext } from "./test-project-context";
 
 const TEST_TEMP_ROOT = join(import.meta.dir, "__test_tmp__", `registry-${crypto.randomUUID()}`);
@@ -1294,16 +1293,9 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
         projectContext: await makeLoadedProjectContext(workspaceRoot),
       });
 
-      try {
-        await registry.execute(makeToolCall(), ctx);
-        throw new Error("Expected permission ask to pause for Session HITL");
-      } catch (error) {
-        expect(error).toBeInstanceOf(SessionHitlPause);
-        if (!(error instanceof SessionHitlPause)) throw error;
-        expect(error.record.owner).toEqual({ projectSlug: "test-project", ownerType: "session", ownerId: sessionId });
-        expect(error.record.source).toEqual({ type: "tool_permission", sessionId, toolCallId: "call-1", toolName: "echo" });
-        expect(ctx.permissionOutcome).toBe("ask");
-      }
+      const result = await registry.execute(makeToolCall(), ctx);
+      expect(result.blocked?.source).toEqual({ type: "tool_permission", toolCallId: "call-1", toolName: "echo" });
+      expect(ctx.permissionOutcome).toBe("ask");
       await storeManager.flushSession(sessionId, workspaceRoot);
     });
 
@@ -1437,16 +1429,10 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
         projectContext: await makeLoadedProjectContext(workspaceRoot),
       });
 
-      try {
-        await registry.execute(makeToolCall({ toolName: "sensitiveReadTool" }), ctx);
-        throw new Error("Expected permission ask to pause for Session HITL");
-      } catch (error) {
-        expect(error).toBeInstanceOf(SessionHitlPause);
-        if (!(error instanceof SessionHitlPause)) throw error;
-        expect(error.record.source).toEqual({ type: "tool_permission", sessionId, toolCallId: "call-1", toolName: "sensitiveReadTool" });
-        expect(ctx.permissionOutcome).toBe("ask");
-        expect(desc.execute).not.toHaveBeenCalled();
-      }
+      const result = await registry.execute(makeToolCall({ toolName: "sensitiveReadTool" }), ctx);
+      expect(result.blocked?.source).toEqual({ type: "tool_permission", toolCallId: "call-1", toolName: "sensitiveReadTool" });
+      expect(ctx.permissionOutcome).toBe("ask");
+      expect(desc.execute).not.toHaveBeenCalled();
       await storeManager.flushSession(sessionId, workspaceRoot);
     });
 
@@ -2132,12 +2118,8 @@ describe("Permission API contract — registry", () => {
         store: storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" }),
         projectContext: await makeLoadedProjectContext(workspaceRoot),
       });
-      try {
-        await registry.execute(makeToolCall(), ctx);
-        throw new Error("Expected permission ask to pause for Session HITL");
-      } catch (error) {
-        expect(error).toBeInstanceOf(SessionHitlPause);
-      }
+      const result = await registry.execute(makeToolCall(), ctx);
+      expect(result.blocked?.source).toEqual({ type: "tool_permission", toolCallId: "call-1", toolName: "echo" });
 
       expect(ctx.permissionOutcome).toBe("ask");
       await storeManager.flushSession(sessionId, workspaceRoot);

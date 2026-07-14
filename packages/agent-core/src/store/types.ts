@@ -9,8 +9,9 @@ import type {
   SessionEventPayload,
   SessionStats,
   SessionExecutionRecord,
-  SessionHitlBlocker,
   ToolChildSessionLink,
+  HitlDisplayPayload,
+  HitlSource,
 } from "@archcode/protocol";
 import type { CompressionState } from "../compression";
 import type { AgentName } from "../agents/names";
@@ -61,7 +62,6 @@ export type {
   SessionTodo,
   SessionTodoStatus,
   SessionProjection,
-  SessionHitlBlocker,
   SessionEventEnvelope,
   SessionEventPayload,
   ShutdownEvent,
@@ -77,6 +77,79 @@ export type {
 export { MAX_EVENTS } from "@archcode/protocol";
 
 export type SessionRole = "main" | "plan" | "build" | "review" | "explore" | "librarian" | "standalone";
+
+export type SessionToolCallState =
+  | "queued"
+  | "running"
+  | "blocked"
+  | "completed"
+  | "failed"
+  | "manual_inspection_required";
+
+export interface SessionToolCallResult {
+  readonly output: string;
+  readonly isError: boolean;
+  readonly meta?: Record<string, unknown>;
+}
+
+export interface SessionToolCallBlocker {
+  readonly requestKey: string;
+  readonly hitlId?: string;
+  readonly source: Extract<HitlSource, { type: "ask_user" | "tool_permission" }>;
+  readonly displayPayload: HitlDisplayPayload;
+  readonly permission?: {
+    readonly description: string;
+    readonly reason?: string;
+    readonly approval?: unknown;
+    readonly decisionDisplay?: string;
+    readonly ruleId?: string;
+  };
+  readonly responseAppliedAt?: string;
+  readonly permissionDecision?: "approve_once" | "approve_always" | "deny";
+}
+
+export interface SessionToolBatchCall {
+  readonly ordinal: number;
+  readonly partitionIndex: number;
+  readonly toolCallId: string;
+  readonly toolName: string;
+  readonly input: unknown;
+  readonly traits: {
+    readonly readOnly: boolean;
+    readonly destructive: boolean;
+    readonly concurrencySafe: boolean;
+  };
+  readonly state: SessionToolCallState;
+  readonly attempt: number;
+  readonly result?: SessionToolCallResult;
+  readonly blocker?: SessionToolCallBlocker;
+  readonly recoveryFailure?: string;
+}
+
+export interface SessionToolBatchPartition {
+  readonly type: "parallel" | "serial";
+  readonly callIds: string[];
+}
+
+/** Canonical durable checkpoint for one model-produced tool-call batch. */
+export interface SessionToolBatch {
+  readonly batchId: string;
+  readonly executionId: string;
+  readonly assistantMessageId?: string;
+  readonly step: number;
+  readonly agentName: AgentName;
+  readonly allowedTools: string[];
+  readonly agentSkills: string[];
+  readonly currentDepth?: number;
+  readonly partitions: SessionToolBatchPartition[];
+  readonly calls: SessionToolBatchCall[];
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly continuationStartedAt?: string;
+  readonly continuationCompletedAt?: string;
+  readonly archivedAt?: string;
+  readonly manualInspectionReason?: string;
+}
 
 export interface SessionStoreState {
   sessionId: string;
@@ -99,14 +172,14 @@ export interface SessionStoreState {
   todos: SessionTodo[];
   reminders: Reminder[];
   childSessionLinks: ToolChildSessionLink[];
+  /** Complete tool-batch audit history; at most one entry may be active (no archivedAt). */
+  toolBatches: SessionToolBatch[];
   // Identity is assigned at creation/load and treated as immutable afterwards.
   // Descendant relationships are derived from child files, not parent-side caches.
   rootSessionId: string;
   parentSessionId?: string;
   goalId?: string;
   sessionRole?: SessionRole;
-  blockedHitl?: SessionHitlBlocker;
-  blockedByHitlIds?: string[];
 
   // Running state
   executionCount: number;

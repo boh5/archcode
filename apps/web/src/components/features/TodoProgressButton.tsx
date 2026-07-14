@@ -43,7 +43,7 @@ export function TodoProgressButton({ slug, sessionId }: { slug: string; sessionI
   const progress = deriveTodoProgress(todos, {
     isRunning,
     lastExecutionStatus: lastExecution?.status,
-    blockedByHitlIds,
+    blockedByHitlIds: Array.isArray(blockedByHitlIds) ? blockedByHitlIds.filter((id): id is string => typeof id === "string") : undefined,
   });
   const [previewOpen, setPreviewOpen] = useState(false);
   const [pinned, setPinned] = useState(false);

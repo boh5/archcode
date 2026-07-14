@@ -120,6 +120,22 @@ describe("createOutputTruncator", () => {
     expect(returned!.isError).toBe(true);
   });
 
+  it("preserves durable HITL control data when truncating output", async () => {
+    const hook = createOutputTruncator({ outputDir: OUTPUT_DIR, maxBytes: 5, maxLines: 2000 });
+    const blocked = {
+      source: { type: "ask_user" as const, toolCallId: "call-1" },
+      displayPayload: { title: "Question", redacted: true as const },
+    };
+
+    const returned = await hook({
+      output: "X".repeat(100),
+      isError: false,
+      blocked,
+    }, makeCtx());
+
+    expect(returned?.blocked).toEqual(blocked);
+  });
+
   it("creates output directory automatically when missing", async () => {
     await rm(OUTPUT_DIR, { recursive: true, force: true });
 

@@ -40,7 +40,7 @@ function createTestRuntime(
           hitl: {
             type: "hitl.snapshot",
             projectSlugs: [project.slug],
-            projections: [],
+            entries: [],
             createdAt,
           },
         },
@@ -52,10 +52,10 @@ function createTestRuntime(
       families: [],
       createdAt: Date.now(),
     }],
-    listPendingHitlEvents: async () => [{
+      listHitlSnapshotEvents: async () => [{
       type: "hitl.snapshot",
       projectSlugs: (await projectRegistry.list()).map((project) => project.slug),
-      projections: [],
+      entries: [],
       createdAt: Date.now(),
     }],
     getProjectControlPlaneSnapshot: async (workspaceRoot: string, projectSlug: string) => {
@@ -72,7 +72,7 @@ function createTestRuntime(
         hitl: {
           type: "hitl.snapshot",
           projectSlugs: [projectSlug],
-          projections: [],
+          entries: [],
           createdAt,
         },
       };
@@ -160,7 +160,7 @@ describe("projects routes", () => {
       listSessionRuntimeEvents: async () => {
         throw new Error("must not scan unrelated projects");
       },
-      listPendingHitlEvents: async () => {
+      listHitlSnapshotEvents: async () => {
         throw new Error("must not scan unrelated projects");
       },
       getProjectControlPlaneSnapshot: async () => ({
@@ -173,7 +173,7 @@ describe("projects routes", () => {
         hitl: {
           type: "hitl.snapshot",
           projectSlugs: ["alpha"],
-          projections: [],
+          entries: [],
           createdAt: 11,
         },
       }),
@@ -201,7 +201,7 @@ describe("projects routes", () => {
         {
           type: "hitl.snapshot",
           projectSlugs: ["alpha"],
-          projections: [],
+          entries: [],
           createdAt: 11,
         },
       ]);
@@ -229,7 +229,7 @@ describe("projects routes", () => {
         hitl: {
           type: "hitl.snapshot" as const,
           projectSlugs: ["racing"],
-          projections: [],
+          entries: [],
           createdAt,
         },
       };
@@ -383,7 +383,7 @@ describe("projects routes", () => {
     expect(await res.json()).toEqual({ ok: true });
     expect(events).toEqual([
       expect.objectContaining({ type: "session.runtime.snapshot", projectSlugs: [project.slug], families: [] }),
-      expect.objectContaining({ type: "hitl.snapshot", projectSlugs: [project.slug], projections: [] }),
+      expect.objectContaining({ type: "hitl.snapshot", projectSlugs: [project.slug], entries: [] }),
     ]);
   });
 

@@ -218,7 +218,7 @@ function createAgent(options: {
     toolRegistry,
     skillService: options.skillService ?? createTestSkillService(),
     activeSkills: options.activeSkills,
-    store: options.store ?? storeManager.create(`configured-agent-${crypto.randomUUID()}`, projectRoot, { cwd, agentName: "engineer" }),
+    store: options.store ?? storeManager.create(crypto.randomUUID(), projectRoot, { cwd, agentName: "engineer" }),
     storeManager,
     projectContextResolver: createTestProjectContextResolver(storeManager),
     projectRoot,
@@ -362,7 +362,6 @@ describe("ConfiguredAgent", () => {
     });
 
     await agent.run("capture skill context");
-
     expect(capturedContext?.agentSkills).toEqual(agentSkills);
     expect(capturedContext?.skillService).toBe(skillService);
   });

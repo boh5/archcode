@@ -16,24 +16,18 @@ export type {
   SessionTodo,
   GoalState,
   GoalStatus,
-  GoalBlockerKind,
   GoalEvidenceRefKind,
   GoalEvidenceRef,
   GoalReviewReceipt,
   GoalReviewVerdict,
-  GoalBlocker,
   GoalBudgetSummary,
-  HitlRecord,
   HitlResponse,
   HitlDisplayPayload,
   HitlQuestionDisplayItem,
   HitlSource,
-  HitlProjection,
-  HitlProjectionContext,
+  HitlView,
   HitlAllowedAction,
-  HitlOwnerKey,
-  HitlIdentity,
-  HitlOwnerType,
+  HitlOwner,
   HitlStatus,
   DiffLineType,
   DiffLine,
@@ -52,20 +46,7 @@ export type {
 // Server augments GoalState/HITL records with project metadata and exposes
 // redacted displayPayload (never raw payload) for HITL items.
 
-import type { Automation, AutomationAction, AutomationTrigger, GoalState, HitlProjection } from "@archcode/protocol";
-
-// ─── Unified HITL API types ───
-
-/** Scope filter for the canonical HITL list route. */
-export type HitlScope = "project" | "session" | "goal";
-
-/** Status filter for the canonical HITL list route. */
-export type HitlStatusFilter = "pending" | "recent" | "all";
-
-/** Response of GET /api/projects/:slug/hitl?scope=...&ownerId=...&includeChildren=...&status=... */
-export interface HitlListResponse {
-  hitl: HitlProjection[];
-}
+import type { Automation, AutomationAction, AutomationTrigger, GoalState, HitlView } from "@archcode/protocol";
 
 /** Goal with project metadata, returned by GET /api/goals?status=active. */
 export type DashboardGoal = GoalState & {

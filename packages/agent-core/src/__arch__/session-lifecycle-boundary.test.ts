@@ -7,7 +7,9 @@ describe("Session lifecycle architecture", () => {
     const source = readFileSync(resolve(import.meta.dir, "../execution/session-execution-manager.ts"), "utf8");
 
     expect(source).not.toMatch(/from\s+["']\.\.\/goals(?:\/|["'])/);
-    expect(source).toContain("deletionPreflight");
+    expect(source).toContain("deletionLifecycle");
+    expect(source).toContain("assertDeletable");
+    expect(source).toContain("prepareForDeletion");
     expect(source).toContain("executionClaimCoordinator");
   });
 });

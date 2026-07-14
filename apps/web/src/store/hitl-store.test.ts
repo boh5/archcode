@@ -1,172 +1,46 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import type { GlobalSSEHitlRealtimeEvent, HitlProjection } from "@archcode/protocol";
-import { hitlIdentityKey, hitlStore, selectHitlProjections } from "./hitl-store";
+import type { HitlView } from "@archcode/protocol";
+import { applyHitlMutationResult } from "../api/mutations";
+import { hitlStore, scopedHitlKey } from "./hitl-store";
 
-describe("hitlStore", () => {
-  beforeEach(() => {
-    hitlStore.getState().reset();
+describe("HITL store mutation reconciliation", () => {
+  beforeEach(() => hitlStore.getState().reset());
+
+  test("answered HTTP response removes the card before SSE and duplicate SSE is idempotent", () => {
+    const pending = view({ status: "pending" });
+    hitlStore.getState().applyScopedView("proj", pending);
+
+    const answered = view({ status: "answered" });
+    applyHitlMutationResult("proj", { hitlId: answered.hitlId, status: answered.status, view: answered });
+    expect(hitlStore.getState().views[scopedHitlKey("proj", answered)]).toBeUndefined();
+
+    hitlStore.getState().applyRealtimeEvent({ type: "hitl.event", projectSlug: "proj", hitlId: answered.hitlId, createdAt: 1, payload: { type: "hitl.updated" }, view: answered });
+    expect(hitlStore.getState().views[scopedHitlKey("proj", answered)]).toBeUndefined();
   });
 
-  test("upserts active realtime projections and removes terminal projections", () => {
-    const request = hitlEvent({ hitlId: "hitl-1" });
-    hitlStore.getState().applyRealtimeEvent(request);
-
-    expect(hitlStore.getState().projections[hitlIdentityKey(request.projection)]).toEqual(request.projection);
-
-    hitlStore.getState().applyRealtimeEvent(hitlEvent({ hitlId: "hitl-1", status: "resolved", payloadType: "hitl.resolved" }));
-
-    expect(hitlStore.getState().projections[hitlIdentityKey(request.projection)]).toBeUndefined();
+  test("answered views requiring inspection remain visible", () => {
+    const answered = view({ status: "answered", requiresInspection: true });
+    applyHitlMutationResult("proj", { hitlId: answered.hitlId, status: answered.status, view: answered });
+    expect(hitlStore.getState().views[scopedHitlKey("proj", answered)]?.view).toEqual(answered);
   });
 
-  test("removes answered projections from the visible realtime queue", () => {
-    const request = hitlEvent({ hitlId: "hitl-claimed" });
-    hitlStore.getState().applyRealtimeEvent(request);
-
-    hitlStore.getState().applyRealtimeEvent(hitlEvent({
-      hitlId: "hitl-claimed",
-      status: "answered",
-      payloadType: "hitl.updated",
-    }));
-
-    expect(hitlStore.getState().projections[hitlIdentityKey(request.projection)]).toBeUndefined();
+  test("snapshot retains answered entries requiring inspection", () => {
+    const answered = view({ status: "answered", requiresInspection: true });
+    hitlStore.getState().applySnapshot({ type: "hitl.snapshot", projectSlugs: ["proj"], entries: [{ projectSlug: "proj", view: answered }], createdAt: 1 });
+    expect(hitlStore.getState().views[scopedHitlKey("proj", answered)]?.view).toEqual(answered);
   });
-
-  test("keeps answered projections visible when manual inspection is required", () => {
-    const event = hitlEvent({
-      hitlId: "hitl-unknown",
-      status: "answered",
-      payloadType: "hitl.updated",
-      requiresInspection: true,
-    });
-
-    hitlStore.getState().applyRealtimeEvent(event);
-
-    expect(hitlStore.getState().projections[hitlIdentityKey(event.projection)]).toEqual(event.projection);
-  });
-
-  test("keeps the same hitlId under different owners as separate projections", () => {
-    const first = hitlEvent({ hitlId: "shared-id", ownerId: "session-1" });
-    const second = hitlEvent({ hitlId: "shared-id", ownerId: "session-2" });
-
-    hitlStore.getState().applyRealtimeEvent(first);
-    hitlStore.getState().applyRealtimeEvent(second);
-
-    expect(Object.values(hitlStore.getState().projections)).toEqual(expect.arrayContaining([
-      first.projection,
-      second.projection,
-    ]));
-    expect(Object.values(hitlStore.getState().projections)).toHaveLength(2);
-  });
-
-  test("authoritative snapshot atomically replaces listed projects and marks them initialized", () => {
-    const stale = projection({ hitlId: "stale", project: { slug: "proj" } });
-    const fresh = projection({ hitlId: "fresh", project: { slug: "proj" } });
-    const otherProject = projection({ hitlId: "other", project: { slug: "other" } });
-    hitlStore.setState({ projections: { stale, other: otherProject } });
-
-    hitlStore.getState().applySnapshot({
-      type: "hitl.snapshot",
-      projectSlugs: ["proj"],
-      projections: [fresh],
-      createdAt: 1,
-    });
-
-    expect(Object.values(hitlStore.getState().projections)).toEqual([otherProject, fresh]);
-    expect(hitlStore.getState().isProjectInitialized("proj")).toBe(true);
-    expect(hitlStore.getState().isProjectInitialized("other")).toBe(false);
-  });
-
-  test("global snapshot with no registered projects clears projections and readiness", () => {
-    hitlStore.setState({ projections: { stale: projection({ hitlId: "stale" }) } });
-
-    hitlStore.getState().applySnapshot({
-      type: "hitl.snapshot",
-      projectSlugs: [],
-      projections: [],
-      createdAt: 1,
-    });
-
-    expect(hitlStore.getState().projections).toEqual({});
-    expect(hitlStore.getState().initializedProjects).toEqual({});
-  });
-
-  test("disconnect invalidates readiness without pretending cached projections are current", () => {
-    const pending = projection({ hitlId: "pending" });
-    hitlStore.getState().applySnapshot({
-      type: "hitl.snapshot",
-      projectSlugs: ["proj"],
-      projections: [pending],
-      createdAt: 1,
-    });
-
-    hitlStore.getState().invalidateSnapshots();
-
-    expect(hitlStore.getState().isProjectInitialized("proj")).toBe(false);
-    expect(Object.values(hitlStore.getState().projections)).toEqual([pending]);
-  });
-
-  test("an early live projection cannot initialize a newly registered project without a snapshot", () => {
-    const early = hitlEvent({ hitlId: "early" });
-    hitlStore.getState().applyRealtimeEvent(early);
-
-    expect(hitlStore.getState().isProjectInitialized("proj")).toBe(false);
-    expect(hitlStore.getState().projections[hitlIdentityKey(early.projection)]).toEqual(early.projection);
-  });
-
-  test("selects session descendants using ancestry", () => {
-    const child = projection({
-      hitlId: "child-hitl",
-      owner: { projectSlug: "proj", ownerType: "session", ownerId: "child" },
-      ancestry: { rootSessionId: "root", parentSessionId: "root", ancestorSessionIds: ["root"], projectionPath: ["session", "root", "child"] },
-    });
-
-    expect(selectHitlProjections([child], { slug: "proj", scope: "session", ownerId: "root", includeChildren: true })).toEqual([child]);
-    expect(selectHitlProjections([child], { slug: "proj", scope: "session", ownerId: "root", includeChildren: false })).toEqual([]);
-  });
-
 });
 
-function hitlEvent(input: { hitlId: string; ownerId?: string; status?: HitlProjection["status"]; payloadType?: "hitl.request" | "hitl.updated" | "hitl.resolved"; requiresInspection?: true }): GlobalSSEHitlRealtimeEvent {
-  const eventProjection = projection({
-    hitlId: input.hitlId,
-    status: input.status ?? "pending",
-    ...(input.ownerId === undefined ? {} : {
-      owner: { projectSlug: "proj", ownerType: "session", ownerId: input.ownerId },
-    }),
-    ...(input.requiresInspection === undefined ? {} : { requiresInspection: input.requiresInspection }),
-  });
+function view(overrides: Partial<HitlView>): HitlView {
   return {
-    type: "hitl.event",
-    projectSlug: eventProjection.project.slug,
-    owner: eventProjection.owner,
-    hitlId: eventProjection.hitlId,
-    createdAt: 1,
-    payload: input.payloadType === "hitl.resolved"
-      ? { type: "hitl.resolved" }
-      : input.payloadType === "hitl.updated"
-        ? { type: "hitl.updated" }
-        : { type: "hitl.request" },
-    projection: eventProjection,
-  };
-}
-
-function projection(input: Partial<HitlProjection> & { hitlId: string }): HitlProjection {
-  const owner = input.owner ?? { projectSlug: "proj", ownerType: "session", ownerId: "session-1" };
-  return {
-    hitlId: input.hitlId,
-    project: input.project ?? { slug: "proj" },
-    owner,
-    source: input.source ?? { type: "ask_user", sessionId: owner.ownerId, toolCallId: "call-1" },
-    status: input.status ?? "pending",
-    displayPayload: input.displayPayload ?? {
-      title: "Need input",
-      questions: [{ header: "Q1", question: "Continue?", options: [], custom: true }],
-      redacted: true,
-    },
-    allowedActions: input.allowedActions ?? ["answer", "cancel"],
-    createdAt: input.createdAt ?? "2026-07-08T00:00:00.000Z",
-    updatedAt: input.updatedAt ?? "2026-07-08T00:00:00.000Z",
-    ...(input.ancestry === undefined ? {} : { ancestry: input.ancestry }),
-    ...(input.requiresInspection === undefined ? {} : { requiresInspection: input.requiresInspection }),
+    hitlId: "hitl-1",
+    owner: { type: "session", id: "session-1" },
+    source: { type: "ask_user", toolCallId: "call-1" },
+    status: "pending",
+    displayPayload: { title: "Need input", redacted: true },
+    allowedActions: ["answer", "cancel"],
+    createdAt: "2026-07-14T00:00:00.000Z",
+    updatedAt: "2026-07-14T00:00:00.000Z",
+    ...overrides,
   };
 }

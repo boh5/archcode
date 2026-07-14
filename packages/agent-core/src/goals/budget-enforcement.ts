@@ -2,10 +2,10 @@ import { normalizeUsage } from "@archcode/protocol";
 import type { GoalBudgetSummary } from "@archcode/protocol";
 
 import type { ModelCallOptions } from "../config/provider";
-import type { ProjectContext } from "../projects/types";
+import type { ProjectHitlQueue } from "../hitl/project-queue";
 import type { SessionStoreState } from "../store/types";
 import { withGoalExecutionClaimLock } from "./execution-claim";
-import type { GoalState } from "./state";
+import { GOAL_BUDGET_APPROVAL_PENDING_REASON, type GoalState, type GoalStateManager } from "./state";
 
 export const BUDGET_APPROVAL_POINT = "approval_budget_1";
 
@@ -17,8 +17,13 @@ export class GoalBudgetEnforcementStopError extends DOMException {
 
 export interface GoalBudgetEnforcementContext {
   readonly store: { getState(): SessionStoreState };
-  readonly projectContext?: ProjectContext;
+  readonly projectContext?: GoalBudgetProjectContext;
   readonly modelOptions?: ModelCallOptions;
+}
+
+export interface GoalBudgetProjectContext {
+  readonly goalState: GoalStateManager;
+  readonly hitl: Pick<ProjectHitlQueue, "create">;
 }
 
 export function createGoalBudgetEnforcementHooks() {
@@ -80,7 +85,7 @@ export async function enforceGoalBudgetAfterStepEnd(ctx: GoalBudgetEnforcementCo
 
 async function resolveGoalBudgetContext(ctx: GoalBudgetEnforcementContext): Promise<{
   goal: GoalState;
-  projectContext: ProjectContext;
+  projectContext: GoalBudgetProjectContext;
 } | undefined> {
   const projectContext = ctx.projectContext;
   if (projectContext === undefined) return undefined;
@@ -104,22 +109,21 @@ function isHardExceeded(budget: GoalBudgetSummary): boolean {
 
 function shouldRequestWarningApproval(budget: GoalBudgetSummary, estimatedNextCallTokens: number): boolean {
   if (budget.status !== "warning") return false;
-  if (budget.reason === "Budget warning approval is pending") return false;
+  if (budget.reason === GOAL_BUDGET_APPROVAL_PENDING_REASON) return false;
   return (budget.usedTokens ?? 0) + estimatedNextCallTokens >= (budget.usedTokens ?? 0);
 }
 
 async function requestBudgetApproval(
-  projectContext: ProjectContext,
+  projectContext: GoalBudgetProjectContext,
   goal: GoalState,
   budget: GoalBudgetSummary,
   estimatedNextCallTokens: number,
 ): Promise<never> {
-  const record = await projectContext.hitl.create({
-    owner: { projectSlug: projectContext.project.slug, ownerType: "goal", ownerId: goal.id },
-    blockingKey: `goal:${goal.id}:budget:${BUDGET_APPROVAL_POINT}`,
+  const { record } = await projectContext.hitl.create({
+    owner: { type: "goal", id: goal.id },
+    requestKey: `goal:${goal.id}:budget:${BUDGET_APPROVAL_POINT}`,
     source: {
       type: "goal_budget",
-      goalId: goal.id,
       approvalPoint: BUDGET_APPROVAL_POINT,
     },
     displayPayload: {
@@ -134,27 +138,15 @@ async function requestBudgetApproval(
       redacted: true,
     },
   });
-  await projectContext.goalState.updateBudgetSummary(goal.id, {
-    ...budget,
-    status: "warning",
-    reason: "Budget warning approval is pending",
-    updatedAt: new Date().toISOString(),
+  await projectContext.goalState.attachBudgetApproval(goal.id, {
+    hitlId: record.hitlId,
+    approvalPoint: BUDGET_APPROVAL_POINT,
   });
-  await projectContext.goalState.attachHitlBlocker(goal.id, {
-    blocker: {
-      kind: "budget",
-      summary: "Budget warning approval is pending",
-      hitlId: record.hitlId,
-      source: BUDGET_APPROVAL_POINT,
-    },
-    approvalRef: record.hitlId,
-  });
-  await projectContext.hitl.publishRequest(record);
   throw new GoalBudgetEnforcementStopError(goal.id, "Goal blocked: budget warning approval is pending");
 }
 
 async function blockForHardStop(
-  projectContext: ProjectContext,
+  projectContext: GoalBudgetProjectContext,
   goal: GoalState,
   budget: GoalBudgetSummary,
   reason: string,

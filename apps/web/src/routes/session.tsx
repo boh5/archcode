@@ -36,13 +36,11 @@ export function SessionRoute() {
     slug,
     scope: "session",
     ownerId: session?.rootSessionId,
-    includeChildren: true,
   });
   const focusedHitl = useRealtimeHitl({
     slug,
     scope: "session",
     ownerId: focusSessionId ?? undefined,
-    includeChildren: true,
   });
 
   // Initialize child session store from focused session snapshot
@@ -241,7 +239,8 @@ export function SessionRoute() {
           <>
             <ChatMessages slug={slug} sessionId={focusSessionId} agents={agents} />
             <HitlInbox
-              projections={focusedHitl}
+              views={focusedHitl}
+              projectSlug={slug}
               hideWhenEmpty
               className="gap-2 shrink-0 border-t border-border-subtle bg-bg-surface px-5 py-3"
             />
@@ -290,7 +289,8 @@ export function SessionRoute() {
         <>
           <ChatMessages slug={slug} sessionId={rootSessionId} agents={agents} />
           <HitlInbox
-            projections={sessionHitl}
+            views={sessionHitl}
+            projectSlug={slug}
             hideWhenEmpty
             className="gap-2 shrink-0 border-t border-border-subtle bg-bg-surface px-5 py-3"
           />

@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { JSDOM } from "jsdom";
 import { TOOL_DELEGATE, createEmptySessionStats } from "@archcode/protocol";
 import type { GlobalSSEHitlRealtimeEvent, ToolChildSessionLink } from "@archcode/protocol";
-import type { HitlProjection, Session } from "../api/types";
+import type { HitlView, Session } from "../api/types";
 import {
   __resetWebSessionStoresForTest,
   createWebSessionStore,
@@ -374,15 +374,14 @@ describe("SessionRoute focused view store behavior", () => {
       title: "Root Session",
       messages: [],
     });
-    const projection: HitlProjection = {
+    const view: HitlView = {
       hitlId: "hitl-session-padding",
-      project: { slug: "demo" },
-      owner: { projectSlug: "demo", ownerType: "session", ownerId: "root-session" },
-      source: { type: "ask_user", sessionId: "root-session", toolCallId: "call-1" },
+      owner: { type: "session", id: "root-session" },
+      source: { type: "ask_user", toolCallId: "call-1" },
       status: "pending",
       displayPayload: {
         title: "Need input",
-        questions: [{ header: "Scope", question: "Continue?", options: [], custom: true }],
+        questions: [{ header: "Scope", question: "Continue?", options: [{ label: "Yes", description: "Continue" }], custom: true }],
         redacted: true,
       },
       allowedActions: ["answer", "cancel"],
@@ -392,11 +391,10 @@ describe("SessionRoute focused view store behavior", () => {
     const event: GlobalSSEHitlRealtimeEvent = {
       type: "hitl.event",
       projectSlug: "demo",
-      owner: projection.owner,
-      hitlId: projection.hitlId,
+      hitlId: view.hitlId,
       createdAt: 1,
       payload: { type: "hitl.request" },
-      projection,
+      view,
     };
     hitlStore.getState().applyRealtimeEvent(event);
 
@@ -424,6 +422,9 @@ describe("SessionRoute focused view store behavior", () => {
         expect(inbox?.classList.contains("py-3")).toBe(true);
         expect(inbox?.classList.contains("border-t")).toBe(true);
         expect(container.textContent).toContain("Need input");
+        expect(container.querySelector('[data-testid="hitl-owner-link"]')?.getAttribute("href")).toBe("/projects/demo/sessions/root-session");
+        expect(container.querySelector('input[type="radio"]')).not.toBeNull();
+        expect(container.querySelector('input[aria-label="Scope custom answer"]')).not.toBeNull();
       });
     } finally {
       await act(async () => reactRoot.unmount());

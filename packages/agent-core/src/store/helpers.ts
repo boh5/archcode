@@ -61,33 +61,6 @@ const SessionExecutionRecordSchema = z.strictObject({
   error: z.string().optional(),
 });
 
-const HitlSourceSchema = z.discriminatedUnion("type", [
-  z.strictObject({ type: z.literal("ask_user"), sessionId: z.string(), toolCallId: z.string().optional() }),
-  z.strictObject({ type: z.literal("tool_permission"), sessionId: z.string(), toolCallId: z.string(), toolName: z.string() }),
-  z.strictObject({ type: z.literal("goal_approval"), goalId: z.string(), approvalPoint: z.string().optional() }),
-  z.strictObject({
-    type: z.literal("goal_review"),
-    goalId: z.string(),
-    reviewGeneration: z.number().int().nonnegative(),
-    reviewerSessionId: z.string().trim().min(1),
-  }),
-  z.strictObject({ type: z.literal("goal_budget"), goalId: z.string(), approvalPoint: z.string().optional() }),
-  z.strictObject({ type: z.literal("goal_question"), goalId: z.string(), questionKey: z.string() }),
-]);
-
-const SessionHitlBlockerSchema = z.strictObject({
-  hitlId: z.string().trim().min(1),
-  blockingKey: z.string().trim().min(1).optional(),
-  source: HitlSourceSchema.optional(),
-  toolCallId: z.string().optional(),
-  toolName: z.string().optional(),
-  step: z.number().optional(),
-  assistantMessageId: z.string().optional(),
-  displayInput: z.unknown().optional(),
-  blockedAt: z.string(),
-  reason: z.string().optional(),
-});
-
 const StoredTodoSchema = z.strictObject({
   id: z.string(),
   content: z.string(),
@@ -404,6 +377,108 @@ const SessionEventEnvelopeSchema = z.strictObject({
   payload: z.custom<SessionEventPayload>(isSessionEventPayload, "Expected a Session event payload with a current type"),
 }).transform((value) => value as SessionEventEnvelope);
 
+const SessionToolBatchHitlSourceSchema = z.discriminatedUnion("type", [
+  z.strictObject({ type: z.literal("ask_user"), toolCallId: z.string().trim().min(1) }),
+  z.strictObject({ type: z.literal("tool_permission"), toolCallId: z.string().trim().min(1), toolName: z.string().trim().min(1) }),
+]);
+
+const HitlDisplayPayloadSchema = z.strictObject({
+  title: z.string().trim().min(1),
+  summary: z.string().optional(),
+  fields: z.array(z.strictObject({ label: z.string(), value: z.string() })).optional(),
+  questions: z.array(z.strictObject({
+    question: z.string(),
+    header: z.string(),
+    options: z.array(z.strictObject({ label: z.string(), description: z.string() })).optional(),
+    multiple: z.boolean().optional(),
+    custom: z.boolean(),
+  })).optional(),
+  redacted: z.literal(true),
+});
+
+const SessionToolCallResultSchema = z.strictObject({
+  output: z.string(),
+  isError: z.boolean(),
+  meta: z.record(z.string(), z.unknown()).optional(),
+});
+
+const SessionToolCallBlockerSchema = z.strictObject({
+  requestKey: z.string().trim().min(1),
+  hitlId: z.string().trim().min(1).optional(),
+  source: SessionToolBatchHitlSourceSchema,
+  displayPayload: HitlDisplayPayloadSchema,
+  permission: z.strictObject({
+    description: z.string(),
+    reason: z.string().optional(),
+    approval: z.unknown().optional(),
+    decisionDisplay: z.string().optional(),
+    ruleId: z.string().optional(),
+  }).optional(),
+  responseAppliedAt: z.string().optional(),
+  permissionDecision: z.enum(["approve_once", "approve_always", "deny"]).optional(),
+});
+
+const SessionToolBatchCallSchema = z.strictObject({
+  ordinal: z.number().int().nonnegative(),
+  partitionIndex: z.number().int().nonnegative(),
+  toolCallId: z.string().trim().min(1),
+  toolName: z.string().trim().min(1),
+  input: z.unknown(),
+  traits: z.strictObject({
+    readOnly: z.boolean(),
+    destructive: z.boolean(),
+    concurrencySafe: z.boolean(),
+  }),
+  state: z.enum(["queued", "running", "blocked", "completed", "failed", "manual_inspection_required"]),
+  attempt: z.number().int().nonnegative(),
+  result: SessionToolCallResultSchema.optional(),
+  blocker: SessionToolCallBlockerSchema.optional(),
+  recoveryFailure: z.string().optional(),
+}).superRefine((call, ctx) => {
+  const terminalResult = call.state === "completed" || call.state === "failed";
+  if (terminalResult !== (call.result !== undefined)) {
+    ctx.addIssue({ code: "custom", path: ["result"], message: `${call.state} has invalid result presence` });
+  }
+  if ((call.state === "blocked") !== (call.blocker !== undefined && call.blocker.responseAppliedAt === undefined)) {
+    ctx.addIssue({ code: "custom", path: ["blocker"], message: `${call.state} has invalid active blocker` });
+  }
+});
+
+const SessionToolBatchSchema = z.strictObject({
+  batchId: z.string().trim().min(1),
+  executionId: z.string().trim().min(1),
+  assistantMessageId: z.string().optional(),
+  step: z.number().int().nonnegative(),
+  agentName: AgentNameSchema,
+  allowedTools: z.array(z.string()),
+  agentSkills: z.array(z.string()),
+  currentDepth: z.number().int().nonnegative().optional(),
+  partitions: z.array(z.strictObject({ type: z.enum(["parallel", "serial"]), callIds: z.array(z.string().trim().min(1)).min(1) })),
+  calls: z.array(SessionToolBatchCallSchema),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  continuationStartedAt: z.string().optional(),
+  continuationCompletedAt: z.string().optional(),
+  archivedAt: z.string().optional(),
+  manualInspectionReason: z.string().optional(),
+}).superRefine((batch, ctx) => {
+  const ids = batch.calls.map((call) => call.toolCallId);
+  if (new Set(ids).size !== ids.length) ctx.addIssue({ code: "custom", path: ["calls"], message: "Duplicate toolCallId in batch" });
+  const partitionIds = batch.partitions.flatMap((partition) => partition.callIds);
+  if (JSON.stringify(partitionIds) !== JSON.stringify(ids)) {
+    ctx.addIssue({ code: "custom", path: ["partitions"], message: "Partitions must cover calls exactly once in model order" });
+  }
+  batch.partitions.forEach((partition, partitionIndex) => {
+    if (partition.type === "serial" && partition.callIds.length !== 1) {
+      ctx.addIssue({ code: "custom", path: ["partitions", partitionIndex, "callIds"], message: "Serial partition must contain one call" });
+    }
+    for (const callId of partition.callIds) {
+      const call = batch.calls.find((candidate) => candidate.toolCallId === callId);
+      if (call?.partitionIndex !== partitionIndex) ctx.addIssue({ code: "custom", path: ["partitions", partitionIndex], message: "Call partitionIndex mismatch" });
+    }
+  });
+});
+
 export const SessionFileSchema = z.strictObject({
   sessionId: z.string(),
   createdAt: z.number(),
@@ -425,13 +500,16 @@ export const SessionFileSchema = z.strictObject({
     ),
   reminders: z.array(ReminderSchema),
   childSessionLinks: z.array(ToolChildSessionLinkSchema),
+  toolBatches: z.array(SessionToolBatchSchema).superRefine((batches, ctx) => {
+    if (batches.filter((batch) => batch.archivedAt === undefined).length > 1) {
+      ctx.addIssue({ code: "custom", message: "At most one tool batch may be active" });
+    }
+  }),
   // Tree edges are read from each child file; parent files intentionally keep no child cache.
   rootSessionId: z.string(),
   parentSessionId: z.string().optional(),
   goalId: z.string().uuid().optional(),
   sessionRole: SessionRoleSchema.optional(),
-  blockedHitl: SessionHitlBlockerSchema.optional(),
-  blockedByHitlIds: z.array(z.string().trim().min(1)).optional(),
   eventCursor: z.number().optional(),
 });
 
@@ -454,10 +532,10 @@ export interface SessionSummary {
 
 type PersistableSessionState = Pick<
   SessionStoreState,
-  "sessionId" | "createdAt" | "updatedAt" | "cwd" | "agentName" | "modelInfo" | "title" | "messages" | "steps" | "stats" | "executions" | "compression" | "todos" | "reminders" | "childSessionLinks" | "rootSessionId"
+  "sessionId" | "createdAt" | "updatedAt" | "cwd" | "agentName" | "modelInfo" | "title" | "messages" | "steps" | "stats" | "executions" | "compression" | "todos" | "reminders" | "childSessionLinks" | "toolBatches" | "rootSessionId"
 > & Partial<Pick<
   SessionStoreState,
-  "parentSessionId" | "goalId" | "sessionRole" | "blockedHitl" | "blockedByHitlIds" | "events"
+  "parentSessionId" | "goalId" | "sessionRole" | "events"
 >>;
 
 export function getAssistantText(messages: StoredMessage[]): string {
@@ -499,13 +577,12 @@ async function saveSessionTranscript(
     todos: state.todos,
     reminders: state.reminders,
     childSessionLinks: state.childSessionLinks,
+    toolBatches: state.toolBatches,
     rootSessionId: state.rootSessionId,
     ...((state.events?.length ?? 0) === 0 ? {} : { events: state.events }),
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
     ...(state.goalId === undefined ? {} : { goalId: state.goalId }),
     ...(state.sessionRole === undefined ? {} : { sessionRole: state.sessionRole }),
-    ...(state.blockedHitl === undefined ? {} : { blockedHitl: state.blockedHitl }),
-    ...(state.blockedByHitlIds === undefined ? {} : { blockedByHitlIds: state.blockedByHitlIds }),
   };
 
   const json = JSON.stringify(data, null, 2);
@@ -546,14 +623,13 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
     todos: state.todos,
     reminders: state.reminders,
     childSessionLinks: state.childSessionLinks,
+    toolBatches: state.toolBatches,
     rootSessionId: state.rootSessionId,
     eventCursor: state.nextEventId > 0 ? state.nextEventId - 1 : -1,
     ...((state.events?.length ?? 0) === 0 ? {} : { events: state.events }),
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
     ...(state.goalId === undefined ? {} : { goalId: state.goalId }),
     ...(state.sessionRole === undefined ? {} : { sessionRole: state.sessionRole }),
-    ...(state.blockedHitl === undefined ? {} : { blockedHitl: state.blockedHitl }),
-    ...(state.blockedByHitlIds === undefined ? {} : { blockedByHitlIds: state.blockedByHitlIds }),
   };
 }
 

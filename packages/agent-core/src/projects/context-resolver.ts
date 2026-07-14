@@ -4,13 +4,10 @@ import { PROJECT_STATE_DIR_NAME, USER_DATA_DIR_NAME } from "@archcode/protocol";
 
 import { GoalStateManager } from "../goals/state";
 import type { GoalCancellationCapability } from "../goals/cancellation";
-import { type ResumeCoordinator } from "../hitl/resume-coordinator";
-import { HitlService, type HitlServiceOptions } from "../hitl/service";
+import { ProjectHitlQueue, type ProjectHitlQueueOptions } from "../hitl";
 import { MemoryFileManager } from "../memory/file-manager";
 import { silentLogger } from "../logger";
 import type { Logger } from "../logger";
-import type { SessionStoreManager } from "../store/session-store-manager";
-import { recoverSessionHitlJournals } from "../execution/session-hitl-journal";
 import { ProjectApprovalManager } from "../tools/permission/project-approvals";
 import type { ProjectContext, ProjectInfo } from "./types";
 import type { Automation, AutomationAction, AutomationTrigger } from "@archcode/protocol";
@@ -35,7 +32,7 @@ export interface ProjectContextResolverOptions {
     workspaceRoot: string;
     project: ProjectInfo;
     goalState: GoalStateManager;
-    hitl: HitlService;
+    hitl: ProjectHitlQueue;
   }) => GoalCancellationCapability;
   /** Application-level Goal orchestration supplied by runtime composition. */
   goalLifecycleFactory: (input: {
@@ -50,12 +47,8 @@ export interface ProjectContextResolverOptions {
     readonly action: AutomationAction;
     readonly createdFromSessionId: string;
   }) => Promise<Automation>;
-  /** Factory primarily for testing alternate HitlService construction. */
-  hitlFactory?: (options: HitlServiceOptions) => HitlService;
-  /** Shared SessionStoreManager used for owner-local HITL lookup and aggregation. */
-  sessionStoreManager: SessionStoreManager;
-  /** Application-level ResumeCoordinator composition with all production adapters. */
-  resumeCoordinatorFactory: (input: { workspaceRoot: string; hitl: HitlService; goalState: GoalStateManager }) => ResumeCoordinator;
+  /** Factory primarily for testing alternate ProjectHitlQueue construction. */
+  hitlFactory?: (options: ProjectHitlQueueOptions) => ProjectHitlQueue;
   /** Factory primarily for testing alternate MemoryFileManager construction. */
   memoryFactory?: (workspaceRoot: string) => MemoryFileManager;
   /** Factory primarily for testing ProjectApprovalManager load behavior. */
@@ -72,9 +65,7 @@ export class ProjectContextResolver {
   readonly #goalCancellationFactory: ProjectContextResolverOptions["goalCancellationFactory"];
   readonly #goalLifecycleFactory: ProjectContextResolverOptions["goalLifecycleFactory"];
   readonly #createAutomation: ProjectContextResolverOptions["createAutomation"];
-  readonly #hitlFactory: (options: HitlServiceOptions) => HitlService;
-  readonly #sessionStoreManager: SessionStoreManager;
-  readonly #resumeCoordinatorFactory: ProjectContextResolverOptions["resumeCoordinatorFactory"];
+  readonly #hitlFactory: (options: ProjectHitlQueueOptions) => ProjectHitlQueue;
   readonly #memoryFactory: (workspaceRoot: string) => MemoryFileManager;
   readonly #approvalsFactory: () => ProjectApprovalManager;
 
@@ -88,9 +79,7 @@ export class ProjectContextResolver {
     this.#goalCancellationFactory = options.goalCancellationFactory;
     this.#goalLifecycleFactory = options.goalLifecycleFactory;
     this.#createAutomation = options.createAutomation;
-    this.#sessionStoreManager = options.sessionStoreManager;
-    this.#resumeCoordinatorFactory = options.resumeCoordinatorFactory;
-    this.#hitlFactory = options.hitlFactory ?? ((input) => new HitlService(input));
+    this.#hitlFactory = options.hitlFactory ?? ((input) => new ProjectHitlQueue(input));
     this.#memoryFactory = options.memoryFactory ?? ((workspaceRoot) => {
       return new MemoryFileManager({
         project: join(workspaceRoot, PROJECT_STATE_DIR_NAME, "memory"),
@@ -121,9 +110,7 @@ export class ProjectContextResolver {
     this.#contexts.delete(workspaceRoot);
     if (pending === undefined) return;
     try {
-      const context = await pending;
-      context.hitlResumeCoordinator.dispose();
-      context.hitl.shutdown();
+      await pending;
     } catch (error) {
       this.#logger.warn("projects.context.dispose_failed", { error, meta: { workspaceRoot } });
     }
@@ -137,18 +124,7 @@ export class ProjectContextResolver {
       workspaceRoot,
       (goal) => this.#goalCommitted({ workspaceRoot, project, goal }),
     );
-    const hitl = this.#hitlFactory({
-      workspaceRoot,
-      project,
-      sessions: this.#sessionStoreManager,
-      goalState,
-    });
-    await recoverSessionHitlJournals({
-      workspaceRoot,
-      sessions: this.#sessionStoreManager,
-      hitl,
-    });
-    const hitlResumeCoordinator = this.#resumeCoordinatorFactory({ workspaceRoot, hitl, goalState });
+    const hitl = this.#hitlFactory({ workspaceRoot });
     const context: ProjectContext = {
       project,
       goalState,
@@ -156,16 +132,9 @@ export class ProjectContextResolver {
       createAutomation: (input) => this.#createAutomation(workspaceRoot, input),
       goalCancellation: this.#goalCancellationFactory({ workspaceRoot, project, goalState, hitl }),
       hitl,
-      hitlResumeCoordinator,
       memory: this.#memoryFactory(workspaceRoot),
       approvals,
     };
-    // Journal repair and durable resume claims are fail-closed before this
-    // scan. recover() schedules claimed continuations without awaiting their
-    // potentially long Agent tails, so adapter re-entry can resolve this
-    // same context once this build promise publishes it.
-    await hitlResumeCoordinator.recover();
-
     return context;
   }
 }

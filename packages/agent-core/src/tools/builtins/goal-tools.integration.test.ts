@@ -4,8 +4,7 @@ import { join } from "node:path";
 import type { StoreApi } from "zustand";
 
 import type { GoalReviewReceipt, GoalState } from "@archcode/protocol";
-import { createPreparedHitlResume, ResumeCoordinator } from "../../hitl/resume-coordinator";
-import { HitlService } from "../../hitl/service";
+import { ProjectHitlQueue } from "../../hitl";
 import { silentLogger } from "../../logger";
 import { MemoryFileManager } from "../../memory/file-manager";
 import type { ProjectContext } from "../../projects/types";
@@ -73,10 +72,8 @@ function makeGoalState(goalId: string, worktree: GoalState["worktree"]): GoalSta
     status: "running",
     attempt: 1,
     reviewGeneration: 0,
+    appliedBudgetHitlIds: [],
     mainSessionId: "main-session",
-    pendingHitlIds: [],
-    approvalRefs: [],
-    appliedHitlIds: [],
     childSessionIds: [],
     createdAt: "2026-07-08T00:00:00.000Z",
     updatedAt: "2026-07-08T00:00:00.000Z",
@@ -110,7 +107,7 @@ function makeProjectContext(
     addedAt: new Date().toISOString(),
   };
   const goalState = manager as unknown as ProjectContext["goalState"];
-  const hitl = new HitlService({ workspaceRoot, project, sessions: storeManager, goalState });
+  const hitl = new ProjectHitlQueue({ workspaceRoot });
   return {
     project,
     goalState,
@@ -120,14 +117,6 @@ function makeProjectContext(
       cancel: async () => { throw new Error("unused goal cancellation"); },
     },
     hitl,
-    hitlResumeCoordinator: new ResumeCoordinator({
-      hitl,
-      adapters: {
-        session: { prepare: async () => createPreparedHitlResume(async () => undefined) },
-        goal: { prepare: async () => createPreparedHitlResume(async () => undefined) },
-      },
-      logger: silentLogger,
-    }),
     memory: new MemoryFileManager({
       project: join(workspaceRoot, ".archcode", "memory"),
       user: join(workspaceRoot, ".archcode", "user-memory"),

@@ -24,7 +24,6 @@ import type {
   GlobalSSEResourceChangedEvent,
   GlobalSSESessionRuntimeChangedEvent,
   GlobalSSESessionRuntimeSnapshotEvent,
-  SessionEventPayload,
 } from "@archcode/protocol";
 
 export type GlobalSSEConnectionState = "connecting" | "open" | "reconnecting" | "closed";
@@ -237,12 +236,6 @@ export function handleSSEEvent(
         });
       }
 
-      if (isHitlPayload(envelope.payload)) {
-        deps.invalidateQueries({
-          queryKey: queryKeys.session(envelope.slug, envelope.sessionId),
-        });
-      }
-
       if (envelope.payload.type === "execution-start") {
         deps.invalidateQueries({
           queryKey: queryKeys.session(envelope.slug, envelope.sessionId),
@@ -282,15 +275,11 @@ export function handleSSEEvent(
     case "hitl.snapshot": {
       const snapshot = parsed as GlobalSSEHitlSnapshotEvent;
       hitlStore.getState().applySnapshot(snapshot);
-      for (const projectSlug of snapshot.projectSlugs) {
-        deps.invalidateQueries({ queryKey: ["projects", projectSlug], exact: false });
-      }
       break;
     }
     case "hitl.event": {
       const hitlEvent = parsed as GlobalSSEHitlRealtimeEvent;
       hitlStore.getState().applyRealtimeEvent(hitlEvent);
-      invalidateHitlRelatedQueries(deps, hitlEvent);
       break;
     }
     case "resource.changed": {
@@ -319,33 +308,6 @@ function invalidateResourceQueries(deps: SSEEventHandlerDeps, event: GlobalSSERe
   }
 
   if (event.resourceType === "automation") invalidateAutomationQueries(deps, event.projectSlug, event.resourceId);
-}
-
-function invalidateHitlRelatedQueries(deps: SSEEventHandlerDeps, event: GlobalSSEHitlRealtimeEvent): void {
-  const sessionId = event.owner.ownerType === "session" ? event.owner.ownerId : sessionIdFromHitlEvent(event);
-  if (sessionId) deps.invalidateQueries({ queryKey: queryKeys.session(event.projectSlug, sessionId) });
-
-  const goalId = event.owner.ownerType === "goal" ? event.owner.ownerId : goalIdFromHitlEvent(event);
-  if (goalId) deps.invalidateQueries({ queryKey: queryKeys.goal(event.projectSlug, goalId) });
-
-}
-
-function sessionIdFromHitlEvent(event: GlobalSSEHitlRealtimeEvent): string | undefined {
-  const source = event.projection.source;
-  if (source.type === "ask_user" || source.type === "tool_permission") return source.sessionId;
-  return event.projection.ancestry?.rootSessionId;
-}
-
-function goalIdFromHitlEvent(event: GlobalSSEHitlRealtimeEvent): string | undefined {
-  const source = event.projection.source;
-  if (source.type === "goal_approval" || source.type === "goal_review" || source.type === "goal_budget" || source.type === "goal_question") return source.goalId;
-  return event.projection.ancestry?.goalId;
-}
-
-function isHitlPayload(
-  payload: SessionEventPayload,
-): payload is Extract<SessionEventPayload, { type: "hitl.request" | "hitl.updated" | "hitl.resolved" }> {
-  return payload.type === "hitl.request" || payload.type === "hitl.updated" || payload.type === "hitl.resolved";
 }
 
 function invalidateAutomationQueries(

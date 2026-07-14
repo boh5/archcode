@@ -4,8 +4,7 @@ import type { GoalStateManager } from "../goals/state";
 import type { Automation, AutomationAction, AutomationTrigger } from "@archcode/protocol";
 import type { GoalLifecycleService } from "../goals/lifecycle-service";
 import type { GoalCancellationCapability } from "../goals/cancellation";
-import type { HitlService } from "../hitl/service";
-import type { ResumeCoordinator } from "../hitl/resume-coordinator";
+import type { ProjectHitlQueue } from "../hitl";
 import type { MemoryFileManager } from "../memory/file-manager";
 import type { ProjectApprovalManager } from "../tools/permission/project-approvals";
 
@@ -34,8 +33,7 @@ export interface ProjectContext {
     readonly createdFromSessionId: string;
   }): Promise<Automation>;
   goalCancellation: GoalCancellationCapability;
-  hitl: HitlService;
-  hitlResumeCoordinator: ResumeCoordinator;
+  hitl: ProjectHitlQueue;
   memory: MemoryFileManager;
   approvals: ProjectApprovalManager;
 }

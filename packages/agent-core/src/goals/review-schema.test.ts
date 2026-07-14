@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { GoalReviewOutcomeResponseSchema, GoalReviewReceiptSchema } from "./review-schema";
+import { GoalReviewReceiptSchema } from "./review-schema";
 
 function receipt() {
   return {
@@ -20,19 +20,5 @@ describe("Goal review schemas", () => {
     expect(GoalReviewReceiptSchema.safeParse({ ...valid, legacy: true }).success).toBe(false);
     expect(GoalReviewReceiptSchema.safeParse({ ...valid, decidedAt: "not-a-date" }).success).toBe(false);
     expect(GoalReviewReceiptSchema.safeParse({ ...valid, evidenceRefs: [{ ...valid.evidenceRefs[0], url: "not-a-url" }] }).success).toBe(false);
-  });
-
-  test("requires a receipt and matching outcome before HITL persistence", () => {
-    expect(GoalReviewOutcomeResponseSchema.safeParse({ type: "review_outcome", outcome: "DONE" }).success).toBe(false);
-    expect(GoalReviewOutcomeResponseSchema.safeParse({
-      type: "review_outcome",
-      outcome: "NOT_DONE",
-      receipt: receipt(),
-    }).success).toBe(false);
-    expect(GoalReviewOutcomeResponseSchema.safeParse({
-      type: "review_outcome",
-      outcome: "DONE",
-      receipt: receipt(),
-    }).success).toBe(true);
   });
 });

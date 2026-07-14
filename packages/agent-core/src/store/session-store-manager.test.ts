@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { createEmptySessionStats, type CompressionBlockSnapshot, type HitlRecord, type SessionProjection } from "@archcode/protocol";
+import { createEmptySessionStats, type CompressionBlockSnapshot } from "@archcode/protocol";
 import { createEmptyCompressionState } from "../compression";
 import { SessionStoreManager } from "./session-store-manager";
 import { NotRootSessionError, SessionInitialPersistenceError, SessionTreeIntegrityError } from "./errors";
@@ -62,7 +62,8 @@ describe("SessionStoreManager", () => {
       compression: createEmptyCompressionState(),
       todos: [],
       reminders: [],
-      childSessionLinks: [],
+    childSessionLinks: [],
+    toolBatches: [],
       rootSessionId: id,
       ...overrides,
     };
@@ -436,39 +437,6 @@ describe("SessionStoreManager", () => {
 
     const compression = persisted.compression as { blocksByRef?: Record<string, { tokenEstimate?: { savedTokens?: number } }> };
     expect(compression.blocksByRef?.b1?.tokenEstimate?.savedTokens).toBe(75);
-  });
-
-  test("dotted protocol stream events reduce while server-only events stay out of reducer state", () => {
-    const manager = new SessionStoreManager({ logger: silentLogger });
-    const id = sessionId();
-    const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
-    const hitlRequest: HitlRecord = {
-      hitlId: "hitl-1",
-      owner: { projectSlug: "project-1", ownerType: "session", ownerId: id },
-      sessionRootId: id,
-      blockingKey: "ask-user:call-1",
-      source: { type: "ask_user", sessionId: id, toolCallId: "call-1" },
-      status: "pending",
-      displayPayload: { title: "Need input", redacted: true },
-      createdAt: "2026-07-07T00:00:00.000Z",
-      updatedAt: "2026-07-07T00:00:00.000Z",
-    };
-    store.getState().append({ type: "hitl.request", request: hitlRequest });
-    store.getState().append({
-      type: "hitl.resolved",
-      hitlId: "hitl-1",
-      status: "resolved",
-      response: { type: "question_answer", answers: ["yes"] },
-    });
-    const stateAfterDottedEvents = store.getState() as ReturnType<typeof store.getState> & Pick<SessionProjection, "hitlRequests">;
-    expect(stateAfterDottedEvents.hitlRequests).toMatchObject([
-      { hitlId: "hitl-1", status: "resolved", response: { type: "question_answer", answers: ["yes"] } },
-    ]);
-
-    store.getState().append({ type: "shutdown", reason: "test" });
-
-    const stateAfterServerOnlyEvents = store.getState() as ReturnType<typeof store.getState> & Pick<SessionProjection, "hitlRequests">;
-    expect(stateAfterServerOnlyEvents.hitlRequests).toEqual(stateAfterDottedEvents.hitlRequests);
   });
 
   test("get() returns undefined for unknown session", () => {
@@ -956,31 +924,6 @@ describe("SessionStoreManager", () => {
     expect(tree.root.session.title).toBe("root");
     expect(tree.root.session.agentName).toBe("engineer");
     expect(tree.root.children).toEqual([]);
-  });
-
-  test("listSessionFamilyBlockedHitlIds reads and deduplicates durable sibling blockers", async () => {
-    const manager = new SessionStoreManager({ logger: silentLogger });
-    const rootSessionId = sessionId();
-    const firstChildId = sessionId();
-    const secondChildId = sessionId();
-    const firstHitlId = crypto.randomUUID();
-    const secondHitlId = crypto.randomUUID();
-    await writeSessionFile({ sessionId: rootSessionId, title: "root", blockedByHitlIds: [secondHitlId] });
-    await writeSessionFile({
-      sessionId: firstChildId,
-      rootSessionId,
-      parentSessionId: rootSessionId,
-      blockedByHitlIds: [firstHitlId, secondHitlId],
-    });
-    await writeSessionFile({
-      sessionId: secondChildId,
-      rootSessionId,
-      parentSessionId: rootSessionId,
-      blockedByHitlIds: [firstHitlId],
-    });
-
-    expect(await manager.listSessionFamilyBlockedHitlIds(TMP_DIR, rootSessionId))
-      .toEqual([firstHitlId, secondHitlId].sort());
   });
 
   test("buildSessionTree() nests root, child, and grandchild", async () => {

@@ -1,24 +1,31 @@
-export { HitlService } from "./service";
-export { GoalApprovalGate } from "./goal-gates";
-export { HitlOwnerStore } from "./owner-store";
-export { createPreparedHitlResume, ResumeCoordinator } from "./resume-coordinator";
-export { resolveHitlOwnerPath } from "./owner-paths";
-export { aggregateHitlProjections } from "./aggregation";
-export type { ApprovalOutcome, GoalApprovalGateOptions, ReviewOutcome } from "./goal-gates";
+export {
+  HitlConflictError,
+  HitlNotFoundError,
+  MAX_HITL_DELIVERY_ATTEMPTS,
+  ProjectHitlQueue,
+  projectHitlQueuePath,
+  requiresInspection,
+  toHitlView,
+} from "./project-queue";
+
 export type {
-  CreateHitlRecordInput,
-  HitlLookupResult,
-  HitlServiceManagers,
-  HitlServiceOptions,
-} from "./service";
+  CreateHitlInput,
+  HitlDelivery,
+  HitlListFilter,
+  HitlRecord,
+  ProjectHitlQueueEvent,
+  ProjectHitlQueueOptions,
+  ResolveHitlOutcome,
+} from "./project-queue";
+
 export type {
-  GoalHitlResumeAdapter,
-  PreparedHitlResume,
-  ResumeCoordinatorAdapters,
-  ResumeCoordinatorOptions,
-  ResumeCoordinatorResult,
-  ResumeIntent,
-  ResumeRecoverySummary,
-  SessionHitlResumeAdapter,
-} from "./resume-coordinator";
-export type { HitlAggregationQuery, HitlAggregationScope } from "./aggregation";
+  HitlAllowedAction,
+  HitlDisplayPayload,
+  HitlOwner,
+  HitlQuestionDisplayItem,
+  HitlQuestionDisplayOption,
+  HitlResponse,
+  HitlSource,
+  HitlStatus,
+  HitlView,
+} from "@archcode/protocol";

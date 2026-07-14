@@ -2,8 +2,8 @@ import { z } from "zod";
 import { defineTool } from "../define-tool";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { createToolErrorResult } from "../errors";
-import { pauseForAskUser } from "../../execution/session-hitl-pause";
 import { createAskUserSuccessResult } from "./ask-user-format";
+import { redactString } from "../security/redaction";
 
 // ─── Input Schema ───
 
@@ -38,7 +38,28 @@ export async function executeAskUser(
 ): Promise<ToolExecutionResult> {
   const askUser = ctx.askUser;
   if (!askUser) {
-    await pauseForAskUser(input, ctx);
+    return {
+      output: "",
+      isError: false,
+      blocked: {
+        source: { type: "ask_user", toolCallId: ctx.toolCallId },
+        displayPayload: {
+          title: redactString(input.questions[0]?.header ?? "Question"),
+          summary: redactString(input.questions[0]?.question ?? "User input required"),
+          questions: input.questions.map((question) => ({
+            question: redactString(question.question),
+            header: redactString(question.header),
+            options: question.options.map((option) => ({
+              label: redactString(option.label),
+              description: redactString(option.description),
+            })),
+            ...(question.multiple === undefined ? {} : { multiple: question.multiple }),
+            custom: question.custom,
+          })),
+          redacted: true,
+        },
+      },
+    };
   }
 
   if (ctx.abort.aborted) {

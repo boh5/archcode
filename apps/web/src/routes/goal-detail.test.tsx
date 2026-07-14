@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { JSDOM } from "jsdom";
 import type { GlobalSSEHitlRealtimeEvent } from "@archcode/protocol";
-import type { GoalState, GoalEvidenceRef, HitlProjection } from "../api/types";
+import type { GoalState, GoalEvidenceRef, HitlView } from "../api/types";
 import { hitlStore } from "../store/hitl-store";
 import { GoalDetailRoute } from "./goal-detail";
 import { WorkbenchLayoutProvider } from "../context/workbench-layout";
@@ -118,9 +118,7 @@ function makeGoal(overrides: Partial<GoalState> = {}): GoalState {
     status: "running",
     attempt: 1,
     reviewGeneration: 0,
-    pendingHitlIds: [],
-    approvalRefs: [],
-    appliedHitlIds: [],
+    appliedBudgetHitlIds: [],
     createdFromSessionId: "origin",
     useWorktree: false,
     mainSessionId: "main-session",
@@ -132,12 +130,11 @@ function makeGoal(overrides: Partial<GoalState> = {}): GoalState {
   };
 }
 
-function makeHitlItem(overrides: Partial<HitlProjection> = {}): HitlProjection {
+function makeHitlItem(overrides: Partial<HitlView> = {}): HitlView {
   return {
     hitlId: "hitl-1",
-    project: { slug: "demo", name: "Demo Project" },
-    owner: { projectSlug: "demo", ownerType: "session", ownerId: "session-1" },
-    source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan"},
+    owner: { type: "goal", id: "goal-1" },
+    source: { type: "goal_budget", approvalPoint: "after_plan"},
     status: "pending",
     displayPayload: { title: "Approve?", summary: "Please approve", redacted: true },
     allowedActions: ["approve", "deny", "cancel"],
@@ -147,16 +144,15 @@ function makeHitlItem(overrides: Partial<HitlProjection> = {}): HitlProjection {
   };
 }
 
-function seedRealtimeHitl(...projections: HitlProjection[]): void {
+function seedRealtimeHitl(...projections: HitlView[]): void {
   for (const projection of projections) {
     const event: GlobalSSEHitlRealtimeEvent = {
       type: "hitl.event",
-      projectSlug: projection.project.slug,
-      owner: projection.owner,
+      projectSlug: "demo",
       hitlId: projection.hitlId,
       createdAt: Date.now(),
       payload: { type: "hitl.request" },
-      projection,
+      view: projection,
     };
     hitlStore.getState().applyRealtimeEvent(event);
   }
@@ -164,16 +160,23 @@ function seedRealtimeHitl(...projections: HitlProjection[]): void {
 
 function installGoalHitlFetchMock(opts: {
   goal: GoalState;
-  hitl: HitlProjection[];
 }): ReturnType<typeof mock> {
   const fetchMock = mock(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
     const url = typeof input === "string" ? input : new URL(input instanceof URL ? input.href : input.url).href;
 
-    if (url.includes("/api/projects/demo/hitl") && url.includes("scope=goal")) {
-      return Response.json({ hitl: opts.hitl });
-    }
     if (url.includes("/api/projects/demo/hitl/") && init?.method === "POST") {
-      return Response.json({ ok: true, hitlId: url.split("/").slice(-2, -1)[0] });
+      const hitlId = url.split("/").slice(-2, -1)[0]!;
+      return Response.json({
+        hitlId,
+        status: "cancelled",
+        view: makeHitlItem({
+          hitlId,
+          owner: { type: "goal", id: opts.goal.id },
+          status: "cancelled",
+          allowedActions: [],
+          resolvedAt: "2026-01-01T00:00:01.000Z",
+        }),
+      });
     }
     if (url.includes("/api/projects/demo/goals/goal-1") && !url.endsWith("/goals")) {
       return Response.json(opts.goal);
@@ -352,12 +355,6 @@ describe("GoalDetailRoute", () => {
 
     const goal = makeGoal({
       status: "running",
-      blocker: {
-        kind: "approval",
-        summary: "Waiting for budget approval",
-        hitlId: "hitl-budget",
-        createdAt: "2026-01-01T12:00:00.000Z",
-      },
       budget: {
         status: "warning",
         usedTokens: 80000,
@@ -652,11 +649,12 @@ describe("GoalDetailRoute", () => {
     const goal = makeGoal({ id: "goal-1", status: "running" });
     const matchingItem = makeHitlItem({
       hitlId: "hitl-goal-1",
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan"},
+      owner: { type: "goal", id: "goal-1" },
+      source: { type: "goal_budget", approvalPoint: "after_plan"},
       displayPayload: { title: "Approve budget?", summary: "Confirm spend", redacted: true },
     });
 
-    installGoalHitlFetchMock({ goal, hitl: [] });
+    installGoalHitlFetchMock({ goal });
     seedRealtimeHitl(matchingItem);
 
     const queryClient = new QueryClient({
@@ -677,7 +675,7 @@ describe("GoalDetailRoute", () => {
       expect(queue.textContent).toContain("Approve budget?");
       expect(queue.textContent).toContain("Confirm spend");
       expect(queue.querySelectorAll('[data-testid="hitl-card"]')).toHaveLength(1);
-      expect(queue.querySelector('[data-testid="hitl-owner-link"]')?.getAttribute("href")).toBe("/projects/demo/sessions/session-1");
+      expect(queue.querySelector('[data-testid="hitl-owner-link"]')?.getAttribute("href")).toBe("/projects/demo/goals/goal-1");
     } finally {
       await act(async () => {
         reactRoot.unmount();
@@ -695,16 +693,18 @@ describe("GoalDetailRoute", () => {
     const goal = makeGoal({ id: "goal-1", status: "running" });
     const ownItem = makeHitlItem({
       hitlId: "hitl-own",
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan"},
+      owner: { type: "goal", id: "goal-1" },
+      source: { type: "goal_budget", approvalPoint: "after_plan"},
       displayPayload: { title: "Own approval", redacted: true },
     });
 
-    installGoalHitlFetchMock({ goal, hitl: [] });
+    installGoalHitlFetchMock({ goal });
     seedRealtimeHitl(
       ownItem,
       makeHitlItem({
         hitlId: "hitl-other-goal",
-        source: { type: "goal_approval", goalId: "goal-other", approvalPoint: "after_plan"},
+        owner: { type: "goal", id: "goal-2" },
+        source: { type: "goal_budget", approvalPoint: "after_plan"},
         displayPayload: { title: "Other approval", redacted: true },
       }),
     );
@@ -734,6 +734,39 @@ describe("GoalDetailRoute", () => {
     }
   });
 
+  test("renders delivery inspection as read-only", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+
+    const goal = makeGoal({ id: "goal-1", status: "running" });
+    installGoalHitlFetchMock({ goal });
+    seedRealtimeHitl(makeHitlItem({
+      hitlId: "hitl-inspection",
+      owner: { type: "goal", id: goal.id },
+      status: "answered",
+      requiresInspection: true,
+      allowedActions: [],
+    }));
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderGoalDetailRoute(reactRoot, queryClient);
+
+      await waitFor(() => expect(container.textContent).toContain("Manual inspection is required"));
+      expect(container.querySelector('[data-testid="hitl-cancel-button"]')).toBeNull();
+      expect(container.textContent).not.toContain("Approve budget");
+    } finally {
+      await act(async () => reactRoot.unmount());
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
   test("goal approval queue shows empty state when no matching HITL", async () => {
     const dom = installDom();
     const container = document.getElementById("root");
@@ -741,7 +774,7 @@ describe("GoalDetailRoute", () => {
 
     const goal = makeGoal({ id: "goal-1", status: "running" });
 
-    installGoalHitlFetchMock({ goal, hitl: [] });
+    installGoalHitlFetchMock({ goal });
 
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
@@ -776,12 +809,12 @@ describe("GoalDetailRoute", () => {
     const goal = makeGoal({ id: "goal-1", status: "running" });
     const matchingItem = makeHitlItem({
       hitlId: "hitl-cancel-target",
-      owner: { projectSlug: "demo", ownerType: "goal", ownerId: "goal-1" },
-      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan"},
+      owner: { type: "goal", id: "goal-1" },
+      source: { type: "goal_budget", approvalPoint: "after_plan"},
       displayPayload: { title: "Approve?", redacted: true },
     });
 
-    const fetchMock = installGoalHitlFetchMock({ goal, hitl: [] });
+    const fetchMock = installGoalHitlFetchMock({ goal });
     seedRealtimeHitl(matchingItem);
 
     const queryClient = new QueryClient({
@@ -805,7 +838,7 @@ describe("GoalDetailRoute", () => {
 
       await waitFor(() => {
         expect(fetchMock).toHaveBeenCalledWith(
-          expect.stringContaining("/api/projects/demo/hitl/goal/goal-1/hitl-cancel-target/cancel"),
+          expect.stringContaining("/api/projects/demo/hitl/hitl-cancel-target/cancel"),
           expect.objectContaining({ method: "POST" }),
         );
       });
