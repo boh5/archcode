@@ -12,7 +12,6 @@ import { createRuntime, type AgentRuntime } from "./runtime";
 import { RuntimeSessionDispatchGateway } from "./automations/runtime-session-gateway";
 import type { AutomationSchedulerTimer, AutomationSchedulerTimerHandle } from "./automations/scheduler";
 import { SessionStoreManager } from "./store/session-store-manager";
-import { managedWorktreeNames, WorktreeService } from "./worktrees";
 
 const roots: string[] = [];
 const START = Date.parse("2026-07-13T00:00:00.000Z");
@@ -73,7 +72,7 @@ describe("RuntimeSessionDispatchGateway", () => {
 
 describe("AgentRuntime Automation wiring", () => {
   test("creates a normal Engineer Session with the preallocated dispatch identities", async () => {
-    const fixture = await runtimeFixture({ git: false });
+    const fixture = await runtimeFixture();
     const automation = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
       name: "check project",
       trigger: { kind: "interval", everyMs: 30_000 },
@@ -96,7 +95,7 @@ describe("AgentRuntime Automation wiring", () => {
   });
 
   test("routes send_message through the ordinary checked Session message entry point", async () => {
-    const fixture = await runtimeFixture({ git: false });
+    const fixture = await runtimeFixture();
     const session = await fixture.runtime.createSession(fixture.workspaceRoot, { agentName: "engineer" });
     const automation = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
       name: "continue session",
@@ -113,7 +112,7 @@ describe("AgentRuntime Automation wiring", () => {
   });
 
   test("uses the installed server Session message executor for Automation dispatch", async () => {
-    const fixture = await runtimeFixture({ git: false });
+    const fixture = await runtimeFixture();
     const automation = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
       name: "server events",
       trigger: { kind: "interval", everyMs: 30_000 },
@@ -134,29 +133,8 @@ describe("AgentRuntime Automation wiring", () => {
     await waitForInvocationExecution(fixture.runtime, fixture.workspaceRoot, invocation);
   });
 
-  test("creates worktree Sessions through the shared WorktreeService", async () => {
-    const fixture = await runtimeFixture({ git: true });
-    const automation = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
-      name: "isolated check",
-      trigger: { kind: "interval", everyMs: 30_000 },
-      action: { kind: "start_session", message: "Check in isolation", location: "worktree" },
-      createdFromSessionId: fixture.sourceSessionId,
-    });
-
-    const invocation = await fixture.runtime.runAutomationNow(fixture.workspaceRoot, automation.id);
-    const session = await fixture.runtime.getSessionFile(fixture.workspaceRoot, invocation.sessionId!);
-    const worktree = await new WorktreeService({ canonicalRoot: fixture.workspaceRoot }).validate(session.cwd);
-
-    expect(invocation.status).toBe("dispatched");
-    expect(worktree.isManaged).toBe(true);
-    expect(worktree.branchName).toBe(managedWorktreeNames({
-      owner: { type: "session", id: invocation.sessionId! },
-    }).branchName);
-    await waitForInvocationExecution(fixture.runtime, fixture.workspaceRoot, invocation);
-  });
-
   test("rejects worktree actions on non-Git projects during create and update", async () => {
-    const fixture = await runtimeFixture({ git: false });
+    const fixture = await runtimeFixture();
 
     await expect(fixture.runtime.createAutomation(fixture.workspaceRoot, {
       name: "isolated check",
@@ -179,7 +157,7 @@ describe("AgentRuntime Automation wiring", () => {
   });
 
   test("starts one project scheduler narrowly and all registered schedulers at boot", async () => {
-    const fixture = await runtimeFixture({ git: false, secondProject: true });
+    const fixture = await runtimeFixture({ secondProject: true });
     const first = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
       name: "first",
       trigger: { kind: "interval", everyMs: 30_000 },
@@ -218,7 +196,7 @@ describe("AgentRuntime Automation wiring", () => {
   });
 
   test("publishes Automation resource changes for CRUD and Invocation updates", async () => {
-    const fixture = await runtimeFixture({ git: false });
+    const fixture = await runtimeFixture();
     const events: unknown[] = [];
     const unsubscribe = fixture.runtime.subscribeResourceChanges?.((event) => { events.push(event); });
     const automation = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
@@ -242,7 +220,7 @@ describe("AgentRuntime Automation wiring", () => {
   });
 
   test("requires an ordinary root Engineer Session in the same project as creation source", async () => {
-    const fixture = await runtimeFixture({ git: false, secondProject: true });
+    const fixture = await runtimeFixture({ secondProject: true });
     const stores = new SessionStoreManager({ logger: silentLogger });
     const child = await stores.createSessionFile(fixture.workspaceRoot, {
       agentName: "explore",
@@ -285,7 +263,7 @@ describe("AgentRuntime Automation wiring", () => {
   });
 
   test("keeps Automation provenance after the source Session is deleted", async () => {
-    const fixture = await runtimeFixture({ git: false });
+    const fixture = await runtimeFixture();
     const automation = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
       name: "durable provenance",
       trigger: { kind: "interval", everyMs: 30_000 },
@@ -300,7 +278,7 @@ describe("AgentRuntime Automation wiring", () => {
   });
 });
 
-async function runtimeFixture(options: { git: boolean; secondProject?: boolean }): Promise<{
+async function runtimeFixture(options: { secondProject?: boolean } = {}): Promise<{
   runtime: AgentRuntime;
   workspaceRoot: string;
   sourceSessionId: string;
@@ -313,7 +291,6 @@ async function runtimeFixture(options: { git: boolean; secondProject?: boolean }
   const secondWorkspaceRoot = options.secondProject === true ? join(root, "workspace-two") : undefined;
   await mkdir(workspaceRoot, { recursive: true });
   if (secondWorkspaceRoot !== undefined) await mkdir(secondWorkspaceRoot, { recursive: true });
-  if (options.git) await initializeGitRepo(workspaceRoot);
   const configPath = resolveServerConfigPath(root);
   await mkdir(join(root, ".archcode"), { recursive: true });
   await writeFile(configPath, JSON.stringify(config()));
@@ -386,21 +363,6 @@ function mcpManager(): McpManager {
     onStatusChange: mock(() => () => {}),
     startBackgroundDiscovery: mock(() => {}),
   } as unknown as McpManager;
-}
-
-async function initializeGitRepo(cwd: string): Promise<void> {
-  await git(cwd, ["init", "--initial-branch=main"]);
-  await git(cwd, ["config", "user.email", "automation@example.com"]);
-  await git(cwd, ["config", "user.name", "Automation Test"]);
-  await writeFile(join(cwd, "README.md"), "# Automation\n");
-  await git(cwd, ["add", "README.md"]);
-  await git(cwd, ["commit", "-m", "initial"]);
-}
-
-async function git(cwd: string, args: string[]): Promise<void> {
-  const child = Bun.spawn(["git", ...args], { cwd, stdout: "ignore", stderr: "pipe" });
-  const [exitCode, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
-  if (exitCode !== 0) throw new Error(stderr);
 }
 
 async function waitFor(predicate: () => boolean | Promise<boolean>): Promise<void> {

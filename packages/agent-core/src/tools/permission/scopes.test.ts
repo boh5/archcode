@@ -3,7 +3,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { deriveApprovalScope } from "./scopes";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__", "permission-scopes");
+const TMP_DIR = join(import.meta.dir, "__test_tmp__", "permission-scopes", crypto.randomUUID());
 const WORKSPACE = join(TMP_DIR, "workspace");
 
 beforeEach(() => {

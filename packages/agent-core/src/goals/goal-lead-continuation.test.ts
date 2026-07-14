@@ -10,7 +10,7 @@ import {
   buildGoalContinuationPrompt,
 } from "./goal-lead-continuation";
 
-const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-lead-continuation");
+const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-lead-continuation", crypto.randomUUID());
 
 beforeEach(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });

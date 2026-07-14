@@ -1,12 +1,11 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { StoreApi } from "zustand";
 
 import { TOOL_GOAL_CREATE, TOOL_GOAL_MANAGE, type GoalReviewReceipt, type GoalState } from "@archcode/protocol";
 import { GoalStateManager } from "../../goals/state";
 import { GoalCancellationCleanupError } from "../../goals/cancellation";
-import { WorktreeService } from "../../worktrees";
 import { HitlService } from "../../hitl/service";
 import { createPreparedHitlResume, ResumeCoordinator } from "../../hitl/resume-coordinator";
 import { MemoryFileManager } from "../../memory/file-manager";
@@ -21,7 +20,7 @@ import { createToolExecutionContext, type ToolExecutionContext, type ToolExecuti
 import { silentLogger } from "../../logger";
 import { GoalCreateInputSchema, GoalManageInputSchema, goalCreateTool, goalManageTool } from "./goal-tools";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__", "goal-tools");
+const TMP_DIR = join(import.meta.dir, "__test_tmp__", "goal-tools", crypto.randomUUID());
 const testSkillService = new SkillService({ builtinSkills: {} });
 const DEFAULT_GOAL_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -286,32 +285,6 @@ function validEvidenceRef() {
     ref: "bun test packages/agent-core/src/tools/builtins/goal-tools.test.ts",
     summary: "Targeted goal tool tests passed.",
   };
-}
-
-async function initializeGitRepo(cwd: string): Promise<{ readonly firstSha: string; readonly baseSha: string }> {
-  await mkdir(cwd, { recursive: true });
-  await runGit(cwd, ["init", "--initial-branch=main"]);
-  await runGit(cwd, ["config", "user.email", "goal-tool@example.com"]);
-  await runGit(cwd, ["config", "user.name", "Goal Tool Test"]);
-  await writeFile(join(cwd, "README.md"), "# Goal tool claim\n");
-  await runGit(cwd, ["add", "README.md"]);
-  await runGit(cwd, ["commit", "-m", "initial commit"]);
-  const firstSha = await runGit(cwd, ["rev-parse", "HEAD"]);
-  await writeFile(join(cwd, "base.txt"), "Goal creation base\n");
-  await runGit(cwd, ["add", "base.txt"]);
-  await runGit(cwd, ["commit", "-m", "Goal creation base"]);
-  return { firstSha, baseSha: await runGit(cwd, ["rev-parse", "HEAD"]) };
-}
-
-async function runGit(cwd: string, args: readonly string[]): Promise<string> {
-  const process = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(process.stdout).text(),
-    new Response(process.stderr).text(),
-    process.exited,
-  ]);
-  if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${stderr}`);
-  return stdout.trim();
 }
 
 describe("goal_manage builtin tool", () => {
@@ -600,67 +573,6 @@ describe("goal_manage builtin tool", () => {
       expect(result.output).toContain(targetGoalId);
     }
     expect(goalState.calls).toEqual([]);
-  });
-
-  it("validates the persisted Goal branch claim before lifecycle actions", async () => {
-    const goalId = crypto.randomUUID();
-    const workspaceRoot = join(TMP_DIR, `claim-${crypto.randomUUID()}`);
-    const { firstSha } = await initializeGitRepo(workspaceRoot);
-    const created = await new WorktreeService({ canonicalRoot: workspaceRoot }).create({
-      owner: { type: "goal", id: goalId },
-    });
-    const isolated = makeGoalState({
-      id: goalId,
-      useWorktree: true,
-      worktree: {
-        path: created.worktreePath,
-        branchName: created.branchName,
-        baseSha: created.baseSha,
-        createdAt: "2026-07-08T00:00:00.000Z",
-      },
-    });
-    const manager = new SimplifiedGoalStateManagerMock(isolated);
-    const context = makeProjectContext(manager, workspaceRoot);
-
-    await writeFile(join(created.worktreePath, "descendant.txt"), "committed descendant\n");
-    await runGit(created.worktreePath, ["add", "descendant.txt"]);
-    await runGit(created.worktreePath, ["commit", "-m", "Goal descendant"]);
-    await writeFile(join(created.worktreePath, "dirty.txt"), "in-progress review state\n");
-    const finalizeInput = {
-      action: "finalize_review",
-      goalId,
-      expectedReviewGeneration: 1,
-      verdict: "DONE",
-      summary: "Validated descendant work.",
-      evidenceRefs: [validEvidenceRef()],
-    } as const;
-
-    const allowed = normalizeOutput(await goalManageTool.execute(
-      finalizeInput,
-      makeCtx(finalizeInput, reviewStore(goalId), context, created.worktreePath),
-    ));
-    expect(allowed.isError).toBe(false);
-    expect(manager.calls.map((call) => call.method)).toEqual(["finalizeReview"]);
-
-    await runGit(created.worktreePath, ["switch", "-c", "foreign-review-branch"]);
-    const wrongBranch = normalizeOutput(await goalManageTool.execute(
-      finalizeInput,
-      makeCtx(finalizeInput, reviewStore(goalId), context, created.worktreePath),
-    ));
-    expect(wrongBranch.isError).toBe(true);
-    expect(wrongBranch.output).toContain("GOAL_WORKTREE_CHANGED");
-    expect(manager.calls.map((call) => call.method)).toEqual(["finalizeReview"]);
-
-    await runGit(created.worktreePath, ["switch", created.branchName]);
-    await runGit(created.worktreePath, ["reset", "--hard", firstSha]);
-    const beginReviewInput = { action: "begin_review", goalId } as const;
-    const resetBehind = normalizeOutput(await goalManageTool.execute(
-      beginReviewInput,
-      makeCtx(beginReviewInput, mainStore({ goalId }), context, created.worktreePath),
-    ));
-    expect(resetBehind.isError).toBe(true);
-    expect(resetBehind.output).toContain("GOAL_WORKTREE_CHANGED");
-    expect(manager.calls.map((call) => call.method)).toEqual(["finalizeReview"]);
   });
 
   it("denies lifecycle actions for Reviewer sessions", async () => {

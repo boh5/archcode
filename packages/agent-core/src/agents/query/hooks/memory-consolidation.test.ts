@@ -1,17 +1,22 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { createMemoryConsolidationHook } from "./memory-consolidation";
 import { CONSOLIDATION_THRESHOLD } from "../../../memory/constants";
 import { storeManager } from "../../../store/store";
+import { createTestTempRoot } from "../../../testing/test-temp-root";
 
 const mockDispatch = mock(() => {});
 const mockBtm = { dispatch: mockDispatch };
 
-const tmpDir = resolve(import.meta.dir, "__test_tmp__");
+const testTemp = createTestTempRoot("memory-consolidation-hook");
+const tmpDir = testTemp.path;
+const sessionIds = new Set<string>();
 
 function makeStore() {
-  return storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "engineer" });
+  const sessionId = crypto.randomUUID();
+  sessionIds.add(sessionId);
+  return storeManager.create(sessionId, tmpDir, { agentName: "engineer" });
 }
 
 describe("createMemoryConsolidationHook", () => {
@@ -22,7 +27,10 @@ describe("createMemoryConsolidationHook", () => {
   });
 
   afterEach(async () => {
-    await rm(tmpDir, { recursive: true, force: true });
+    await Promise.all([...sessionIds].map((sessionId) => storeManager.flushSession(sessionId, tmpDir)));
+    for (const sessionId of sessionIds) storeManager.delete(sessionId, tmpDir);
+    sessionIds.clear();
+    await testTemp.cleanup();
   });
 
   test("dispatches memory-consolidation when index exceeds threshold", async () => {

@@ -17,7 +17,7 @@ import {
   GoalTransitionError,
 } from "./state";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__", "goal-state");
+const TMP_DIR = join(import.meta.dir, "__test_tmp__", "goal-state", crypto.randomUUID());
 const GOAL_ID = "550e8400-e29b-41d4-a716-446655440000";
 const SOURCE_SESSION_ID = "660e8400-e29b-41d4-a716-446655440001";
 const MAIN_SESSION_ID = "770e8400-e29b-41d4-a716-446655440002";

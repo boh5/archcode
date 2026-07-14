@@ -15,5 +15,8 @@ export async function runLlmText(input: LlmTextInput): Promise<LlmTextResult> {
       abortSignal: input.abortSignal,
     });
     return { text: result.text };
-  }, "LLM text generation", undefined, { abortSignal: input.abortSignal });
+  }, "LLM text generation", undefined, {
+    abortSignal: input.abortSignal,
+    retryScheduler: input.retryScheduler,
+  });
 }

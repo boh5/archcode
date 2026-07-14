@@ -9,7 +9,7 @@ import { SessionFileIdentityConflictError } from "./session-store-manager";
 import { sessionFileInternals } from "./helpers";
 import { silentLogger } from "../logger";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__", "session-store-manager");
+const TMP_DIR = join(import.meta.dir, "__test_tmp__", "session-store-manager", crypto.randomUUID());
 
 beforeEach(async () => {
   await mkdir(TMP_DIR, { recursive: true });

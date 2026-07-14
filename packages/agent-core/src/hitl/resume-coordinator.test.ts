@@ -9,7 +9,7 @@ import { SessionStoreManager } from "../store/session-store-manager";
 import { HitlService } from "./service";
 import { ResumeCoordinator, type SessionHitlResumeAdapter } from "./resume-coordinator";
 
-const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "resume-coordinator");
+const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "resume-coordinator", crypto.randomUUID());
 const WAIT_TIMEOUT_MS = 5_000;
 const WAIT_INTERVAL_MS = 5;
 
@@ -316,8 +316,9 @@ describe("ResumeCoordinator", () => {
   test("adapter failure leaves answered active and recovery can retry it", async () => {
     const fixture = await createFixture();
     const hitl = await fixture.createSessionHitl();
+    const retryScheduler = createFakeResumeRetryScheduler();
     const failing = new RecordingSessionAdapter({ failWith: new Error("adapter offline") });
-    const coordinator = new ResumeCoordinator({ hitl: fixture.service, adapters: { session: failing } });
+    const coordinator = new ResumeCoordinator({ hitl: fixture.service, adapters: { session: failing }, retryScheduler });
 
     const claimed = await coordinator.respond(identity(hitl), { type: "question_answer", answers: ["retry later"] });
     const failed = await waitForRecord(fixture.service, hitl, (record) => record.delivery?.lastError === "adapter offline");
@@ -332,9 +333,10 @@ describe("ResumeCoordinator", () => {
     coordinator.dispose();
     const recovering = new RecordingSessionAdapter();
     const reloaded = await createFixture(fixture.workspaceRoot, fixture.sessions, fixture.sessionId);
-    const recoveryCoordinator = new ResumeCoordinator({ hitl: reloaded.service, adapters: { session: recovering } });
+    const recoveryCoordinator = new ResumeCoordinator({ hitl: reloaded.service, adapters: { session: recovering }, retryScheduler });
 
     const summary = await recoveryCoordinator.recover();
+    await retryScheduler.advanceBy(1_000);
     const terminal = await waitForLookup(reloaded.service, hitl, "resolved");
 
     expect(summary.scheduled).toBe(1);
@@ -417,6 +419,31 @@ class RecordingSessionAdapter implements SessionHitlResumeAdapter {
       },
     };
   }
+}
+
+function createFakeResumeRetryScheduler(startAt = Date.parse("2026-07-14T00:00:00.000Z")) {
+  let now = startAt;
+  let nextId = 0;
+  const tasks = new Map<number, { readonly dueAt: number; readonly run: () => Promise<void> }>();
+
+  return {
+    now: () => now,
+    schedule(delayMs: number, run: () => Promise<void>) {
+      const id = nextId++;
+      tasks.set(id, { dueAt: now + delayMs, run });
+      return { cancel: () => tasks.delete(id) };
+    },
+    async advanceBy(delayMs: number): Promise<void> {
+      now += delayMs;
+      const due = [...tasks.entries()]
+        .filter(([, task]) => task.dueAt <= now)
+        .sort((left, right) => left[1].dueAt - right[1].dueAt || left[0] - right[0]);
+      for (const [id, task] of due) {
+        tasks.delete(id);
+        await task.run();
+      }
+    },
+  };
 }
 
 function resultRecord(result: Awaited<ReturnType<ResumeCoordinator["respond"]>>): HitlRecord {

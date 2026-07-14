@@ -6,7 +6,7 @@ import type { ToolExecutionContext } from "../types";
 import { createProtectedPathPermission } from "./protected-path";
 import { createTestProjectContext } from "../test-project-context";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__", "protected-path-permission");
+const TMP_DIR = join(import.meta.dir, "__test_tmp__", "protected-path-permission", crypto.randomUUID());
 const WORKSPACE = join(TMP_DIR, "workspace");
 const WORKTREE = join(TMP_DIR, "worktree");
 const SYMLINK_DIR = join(TMP_DIR, "symlinks");

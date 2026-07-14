@@ -7,7 +7,7 @@ import type { ToolExecutionContext } from "../types";
 import { createBuiltinToolDescriptors, waitForReminderTool, WaitForReminderInputSchema } from "./index";
 import { createTestProjectContext } from "../test-project-context";
 
-const testDir = join(import.meta.dir, "__test_tmp__", "wait-for-reminder");
+const testDir = join(import.meta.dir, "__test_tmp__", "wait-for-reminder", crypto.randomUUID());
 
 function makeStore(): StoreApi<SessionStoreState> {
   const store = storeManager.create(`wait-reminder-test-${crypto.randomUUID()}`, testDir, { agentName: "engineer" });

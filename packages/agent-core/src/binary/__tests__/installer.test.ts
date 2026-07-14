@@ -7,7 +7,7 @@ import { BinaryDownloadError, BinaryInstallError, type BinaryInstallParams } fro
 import { downloadBinaryArchive, installBinaryArchive, verifyBinarySha256 } from "../installer";
 import { getBinarySpec } from "../manifest";
 
-const tmpRoot = join(import.meta.dir, "..", "__test_tmp__", "installer");
+const tmpRoot = join(import.meta.dir, "..", "__test_tmp__", "installer", crypto.randomUUID());
 const encoder = new TextEncoder();
 
 describe("binary installer", () => {

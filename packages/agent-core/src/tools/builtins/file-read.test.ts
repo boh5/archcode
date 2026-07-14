@@ -20,7 +20,7 @@ import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../errors";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { createTestProjectContext } from "../test-project-context";
 
-const testDir = join(import.meta.dir, "__test_tmp__", "file-read");
+const testDir = join(import.meta.dir, "__test_tmp__", "file-read", crypto.randomUUID());
 
 function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   return { store: createMockStore(),

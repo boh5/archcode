@@ -946,7 +946,7 @@ describe("SessionExecutionManager", () => {
   });
 
   test("family stop is isolated by workspace root for identical session ids", async () => {
-    const otherWorkspaceRoot = join(import.meta.dir, "__test_tmp__", "session-execution-manager-other-workspace");
+    const otherWorkspaceRoot = join(import.meta.dir, "__test_tmp__", "session-execution-manager-other-workspace", crypto.randomUUID());
     await mkdir(otherWorkspaceRoot, { recursive: true });
     const runA = deferred<AgentResult>();
     const runB = deferred<AgentResult>();

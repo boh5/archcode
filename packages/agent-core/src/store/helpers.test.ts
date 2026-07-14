@@ -8,14 +8,18 @@ import { createEmptySessionStats, type SessionExecutionRecord, type SessionStats
 import type { CompactionPart, Reminder, SessionRole, SessionStoreState, StepInfo, StoredMessage, StoredPart, StoredTodo, SystemNoticePart } from "./types";
 import { createEmptyCompressionState, type CompressionState } from "../compression";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__", "helpers");
+const TMP_DIR = join(import.meta.dir, "__test_tmp__", "helpers", crypto.randomUUID());
+const sessionIds = new Set<string>();
 
 afterAll(async () => {
   __setSessionsDirForTest(undefined);
   await rm(TMP_DIR, { recursive: true, force: true });
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await Promise.all([...sessionIds].map((sessionId) => storeManager.flushSession(sessionId, TMP_DIR)));
+  sessionIds.clear();
+  storeManager.clearAll();
   __setSessionsDirForTest(undefined);
 });
 
@@ -28,7 +32,9 @@ beforeEach(async () => {
 
 function uniqueSessionId(label: string): string {
   void label;
-  return crypto.randomUUID();
+  const sessionId = crypto.randomUUID();
+  sessionIds.add(sessionId);
+  return sessionId;
 }
 
 function sessionFilePath(sessionId: string): string {

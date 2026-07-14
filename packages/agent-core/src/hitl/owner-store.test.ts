@@ -10,7 +10,7 @@ import {
   migrateHitlOwnerFileProjectSlug,
 } from "./owner-store";
 
-const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "owner-store");
+const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "owner-store", crypto.randomUUID());
 
 describe("HitlOwnerStore", () => {
   beforeEach(async () => {

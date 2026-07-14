@@ -12,7 +12,7 @@ import {
 import type { MemoryIndexEntry } from "./types";
 import type { MemoryFrontmatter } from "./schemas";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__", "file-manager");
+const TMP_DIR = join(import.meta.dir, "__test_tmp__", "file-manager", crypto.randomUUID());
 
 function makeManager(): MemoryFileManager {
   return new MemoryFileManager({

@@ -10,7 +10,7 @@ import { createTestProjectContextResolverOptions } from "../tools/test-project-c
 import { ProjectContextResolver } from "./context-resolver";
 import { SessionLifecycleService } from "./session-lifecycle-service";
 
-const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "session-lifecycle-service");
+const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "session-lifecycle-service", crypto.randomUUID());
 const ORDINARY_SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const GOAL_SESSION_ID = "22222222-2222-4222-8222-222222222222";
 const LOOP_SESSION_ID = "33333333-3333-4333-8333-333333333333";

@@ -25,8 +25,8 @@ import { silentLogger } from "../logger";
 import { GoalStateManager } from "../goals/state";
 import { createTestProjectContextResolver } from "./test-project-context-resolver";
 
-const tmpRoot = join(import.meta.dir, "__test_tmp__", "configured-agent");
-const worktreeRoot = join(import.meta.dir, "__test_tmp__", "configured-agent-worktree");
+const tmpRoot = join(import.meta.dir, "__test_tmp__", "configured-agent", crypto.randomUUID());
+const worktreeRoot = join(import.meta.dir, "__test_tmp__", "configured-agent-worktree", crypto.randomUUID());
 
 function createTestSkillService(): SkillService {
   return new SkillService({ builtinSkills: {} });

@@ -9,7 +9,7 @@ import {
   getCacheStats,
 } from "./tool-output-cache";
 
-const BASE_TMP_DIR = join(import.meta.dir, "__test_tmp__", "tool-output-cache");
+const BASE_TMP_DIR = join(import.meta.dir, "__test_tmp__", "tool-output-cache", crypto.randomUUID());
 let TMP_DIR: string;
 
 function delay(ms: number): Promise<void> {

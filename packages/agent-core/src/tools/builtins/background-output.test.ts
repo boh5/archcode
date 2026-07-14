@@ -11,7 +11,7 @@ import { BackgroundOutputInputSchema, executeBackgroundOutput } from "./backgrou
 import { createTestProjectContext } from "../test-project-context";
 import { createEmptyCompressionState } from "../../compression";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__", "background-output");
+const TMP_DIR = join(import.meta.dir, "__test_tmp__", "background-output", crypto.randomUUID());
 const workspaceRoot = join(TMP_DIR, "workspace");
 
 beforeEach(async () => {

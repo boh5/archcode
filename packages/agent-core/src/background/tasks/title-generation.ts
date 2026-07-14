@@ -29,6 +29,7 @@ export function createTitleGenerationTask(
           text,
           modelInfo: ctx.modelInfo,
           modelOptions: ctx.modelOptions,
+          retryScheduler: ctx.retryScheduler,
         });
         if (title !== null) store.getState().setTitle(title);
       } catch (err) {

@@ -8,7 +8,7 @@ import {
   SessionGoalDelegationDeniedError,
 } from "./session-goal-delegation-admission";
 
-const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-delegation-admission");
+const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-delegation-admission", crypto.randomUUID());
 
 beforeEach(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });

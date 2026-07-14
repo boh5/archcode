@@ -10,7 +10,7 @@ import { createToolExecutionContext, type ToolExecutionContext, type ToolExecuti
 import { createBuiltinToolDescriptors } from "./index";
 import { SkillReadInputSchema, skillReadTool } from "./skill-read";
 
-const tmpRoot = join(import.meta.dir, "__test_tmp__", "skill-read-tool");
+const tmpRoot = join(import.meta.dir, "__test_tmp__", "skill-read-tool", crypto.randomUUID());
 const projectRoot = join(tmpRoot, "project");
 const projectSkillsRoot = join(projectRoot, ".archcode", "skills");
 const executionCwd = join(tmpRoot, "project.worktrees", "session-skill");

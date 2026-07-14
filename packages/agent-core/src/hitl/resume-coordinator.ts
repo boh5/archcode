@@ -39,10 +39,29 @@ export interface ResumeCoordinatorAdapters {
   readonly goal?: GoalHitlResumeAdapter;
 }
 
+export interface ResumeRetryHandle {
+  cancel(): void;
+}
+
+export interface ResumeRetryScheduler {
+  now(): number;
+  schedule(delayMs: number, run: () => Promise<void>): ResumeRetryHandle;
+}
+
+const realResumeRetryScheduler: ResumeRetryScheduler = Object.freeze({
+  now: () => Date.now(),
+  schedule(delayMs: number, run: () => Promise<void>) {
+    const timer = setTimeout(() => void run(), Math.max(0, delayMs));
+    if (typeof timer === "object" && "unref" in timer) timer.unref();
+    return { cancel: () => clearTimeout(timer) };
+  },
+});
+
 export interface ResumeCoordinatorOptions {
   readonly hitl: HitlService;
   readonly adapters?: ResumeCoordinatorAdapters;
   readonly logger?: Logger;
+  readonly retryScheduler?: ResumeRetryScheduler;
 }
 
 export type ResumeIntent = "respond" | "cancel";
@@ -64,15 +83,17 @@ export class ResumeCoordinator {
   readonly #hitl: HitlService;
   readonly #adapters: ResumeCoordinatorAdapters;
   readonly #logger: Logger;
+  readonly #retryScheduler: ResumeRetryScheduler;
   readonly #locks = new Map<string, Promise<void>>();
   readonly #dispatchedClaims = new Set<string>();
-  readonly #retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  readonly #retryTimers = new Map<string, ResumeRetryHandle>();
   #disposed = false;
 
   constructor(options: ResumeCoordinatorOptions) {
     this.#hitl = options.hitl;
     this.#adapters = options.adapters ?? {};
     this.#logger = (options.logger ?? silentLogger).child({ module: "hitl.resume" });
+    this.#retryScheduler = options.retryScheduler ?? realResumeRetryScheduler;
   }
 
   async respond(identity: HitlIdentity, response: HitlResponse): Promise<ResumeCoordinatorResult> {
@@ -85,7 +106,7 @@ export class ResumeCoordinator {
 
   dispose(): void {
     this.#disposed = true;
-    for (const timer of this.#retryTimers.values()) clearTimeout(timer);
+    for (const timer of this.#retryTimers.values()) timer.cancel();
     this.#retryTimers.clear();
   }
 
@@ -157,7 +178,7 @@ export class ResumeCoordinator {
   ): Promise<{ readonly record: HitlRecord; readonly scheduled: boolean } | undefined> {
     const claimed = await this.#hitl.claim(identity, response, {
         claimId: crypto.randomUUID(),
-        claimedAt: new Date().toISOString(),
+        claimedAt: new Date(this.#retryScheduler.now()).toISOString(),
         intent,
         attempt: (current.delivery?.attempt ?? 0) + 1,
       });
@@ -169,8 +190,8 @@ export class ResumeCoordinator {
   async #scheduleAnsweredRecovery(record: HitlRecord): Promise<boolean> {
     const nextAttemptAt = record.delivery?.nextAttemptAt;
     if (record.delivery?.lastError !== undefined && nextAttemptAt === undefined) return false;
-    if (nextAttemptAt !== undefined && Date.parse(nextAttemptAt) > Date.now()) {
-      this.#scheduleRetry(record, Date.parse(nextAttemptAt) - Date.now());
+    if (nextAttemptAt !== undefined && Date.parse(nextAttemptAt) > this.#retryScheduler.now()) {
+      this.#scheduleRetry(record, Date.parse(nextAttemptAt) - this.#retryScheduler.now());
       return true;
     }
     if (record.delivery?.lastError === undefined) {
@@ -243,11 +264,11 @@ export class ResumeCoordinator {
       const attempt = current.record.delivery?.attempt ?? 1;
       const retryable = !isNonRetryableDeliveryError(error);
       const delayMs = Math.min(1000 * 2 ** Math.max(0, attempt - 1), 30_000);
-      const nextAttemptAt = retryable ? new Date(Date.now() + delayMs).toISOString() : undefined;
+      const nextAttemptAt = retryable ? new Date(this.#retryScheduler.now() + delayMs).toISOString() : undefined;
       return await this.#hitl.markDeliveryFailed(identity, message, nextAttemptAt);
     });
     if (failed?.delivery?.nextAttemptAt !== undefined) {
-      this.#scheduleRetry(failed, Math.max(0, Date.parse(failed.delivery?.nextAttemptAt ?? "") - Date.now()));
+      this.#scheduleRetry(failed, Math.max(0, Date.parse(failed.delivery.nextAttemptAt) - this.#retryScheduler.now()));
     }
   }
 
@@ -256,11 +277,11 @@ export class ResumeCoordinator {
     const identity = identityFromRecord(record);
     const key = hitlIdentityKey(identity);
     const existing = this.#retryTimers.get(key);
-    if (existing !== undefined) clearTimeout(existing);
-    const timer = setTimeout(() => {
+    existing?.cancel();
+    const timer = this.#retryScheduler.schedule(delayMs, async () => {
       this.#retryTimers.delete(key);
       if (this.#disposed) return;
-      void this.#withHitlLock(identity, async () => {
+      await this.#withHitlLock(identity, async () => {
         const current = await this.#lookupFound(identity);
         if (current?.record.status !== "answered" || current.record.response === undefined) return;
         await this.#prepareClaimAndSchedule(
@@ -270,8 +291,7 @@ export class ResumeCoordinator {
           current.record.delivery?.intent ?? (current.record.response.type === "cancel" ? "cancel" : "respond"),
         );
       }).catch((error: unknown) => this.#logDispatchFailure(record, error));
-    }, Math.max(0, delayMs));
-    if (typeof timer === "object" && "unref" in timer) timer.unref();
+    });
     this.#retryTimers.set(key, timer);
   }
 

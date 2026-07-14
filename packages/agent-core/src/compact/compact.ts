@@ -4,7 +4,7 @@ import type { ModelCallOptions } from "../config/provider";
 import type { Logger } from "../logger";
 import type { SessionStoreState, StoredMessage } from "../store/types";
 import { runLlmStream } from "../llm";
-import { withLlmRetry } from "../llm/retry";
+import { withLlmRetry, type RetryScheduler } from "../llm/retry";
 import { toModelMessagesFromStoredMessages } from "../store/projection";
 import { persistToolOutput } from "../tools/persist-output";
 import { COMPACT_MIN_NEW_MESSAGES } from "./token-estimation";
@@ -35,6 +35,7 @@ export interface CompactInput {
   sessionId: string;
   logger: Logger;
   toolOutputDir: string;
+  retryScheduler?: RetryScheduler;
 }
 
 export interface CompactResult {
@@ -236,6 +237,7 @@ async function summarizePrefix(
   modelOptions: ModelCallOptions | undefined,
   contextLimit: number,
   abort?: AbortSignal,
+  retryScheduler?: RetryScheduler,
 ): Promise<string> {
   const projected = toModelMessagesFromStoredMessages(clonedPrefix);
 
@@ -269,7 +271,7 @@ async function summarizePrefix(
     },
     "compact.summarize",
     undefined,
-    { abortSignal: abort },
+    { abortSignal: abort, retryScheduler },
   );
 
   return summary;
@@ -336,7 +338,7 @@ export async function compact(
   input: CompactInput,
   abort?: AbortSignal,
 ): Promise<CompactResult | null> {
-  const { messages, contextLimit, model, modelOptions, sessionId, logger, toolOutputDir } = input;
+  const { messages, contextLimit, model, modelOptions, sessionId, logger, toolOutputDir, retryScheduler } = input;
 
   if (abort?.aborted) {
     throw new DOMException("Compaction aborted", "AbortError");
@@ -362,7 +364,7 @@ export async function compact(
 
   let summary: string;
   try {
-    summary = await summarizePrefix(clonedPrefix, model, modelOptions, contextLimit, abort);
+    summary = await summarizePrefix(clonedPrefix, model, modelOptions, contextLimit, abort, retryScheduler);
   } catch (err) {
     if (abort?.aborted) {
       throw new DOMException("Compaction aborted", "AbortError");

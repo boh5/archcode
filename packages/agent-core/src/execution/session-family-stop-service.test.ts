@@ -12,7 +12,7 @@ import {
 } from "./session-hitl-checkpoint";
 import { SessionFamilyStopService } from "./session-family-stop-service";
 
-const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "session-family-stop-service");
+const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "session-family-stop-service", crypto.randomUUID());
 
 class FailingClearSessionStoreManager extends SessionStoreManager {
   override async clearHitlBlockers(): Promise<void> {

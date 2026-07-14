@@ -7,7 +7,7 @@ import type { HitlRecord, HitlResponse } from "@archcode/protocol";
 import { GoalStateManager } from "../goals/state";
 import { GoalApprovalGate, approvalOutcomeFromResponse, reviewOutcomeFromResponse } from "./goal-gates";
 
-const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-gates");
+const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-gates", crypto.randomUUID());
 
 let workspaceRoot = "";
 let goalStateManager: GoalStateManager;

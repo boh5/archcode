@@ -3,12 +3,22 @@ import { setLlmAdapterForTest } from "./adapter";
 import { runLlmText } from "./run-text";
 import { LlmMaxRetriesError } from "./errors";
 import type { LlmTextInput } from "./types";
+import { createFakeRetryScheduler } from "../testing/fake-retry-scheduler";
 
 const mockGenerateText = mock(async (input: Record<string, unknown>) => {
   void input;
   return { text: "ok", toolCalls: [] };
 });
 const dummyModel = {} as LlmTextInput["model"];
+
+function makeInput(overrides: Partial<LlmTextInput> = {}): LlmTextInput {
+  return {
+    model: dummyModel,
+    prompt: "x",
+    retryScheduler: createFakeRetryScheduler(),
+    ...overrides,
+  };
+}
 
 function generateTextCalls(): Array<[Record<string, unknown>]> {
   return mockGenerateText.mock.calls as unknown as Array<[Record<string, unknown>]>;
@@ -30,7 +40,7 @@ afterEach(() => {
 describe("runLlmText", () => {
   test("calls generateText with maxRetries 0 and returns exact text contract", async () => {
     mockGenerateText.mockResolvedValueOnce({ text: "hello", toolCalls: [] });
-    const result = await runLlmText({ model: dummyModel, prompt: "Say hi" });
+    const result = await runLlmText(makeInput({ prompt: "Say hi" }));
 
     expect(result).toEqual({ text: "hello" });
     expect(generateTextCalls()[0]![0]).toMatchObject({ prompt: "Say hi", maxRetries: 0 });
@@ -42,16 +52,18 @@ describe("runLlmText", () => {
       .mockImplementationOnce(async () => { throw Object.assign(new Error("rate limit"), { status: 429 }); })
       .mockImplementationOnce(async () => ({ text: "recovered", toolCalls: [] }));
 
-    const result = await runLlmText({ model: dummyModel, prompt: "x" });
+    const retryScheduler = createFakeRetryScheduler();
+    const result = await runLlmText(makeInput({ retryScheduler }));
     expect(result).toEqual({ text: "recovered" });
     expect(mockGenerateText).toHaveBeenCalledTimes(3);
+    expect(retryScheduler.sleeps).toHaveLength(2);
   });
 
   test("throws LlmMaxRetriesError on retry exhaustion", async () => {
     mockGenerateText.mockImplementation(async () => { throw Object.assign(new Error("server down"), { status: 500 }); });
 
     try {
-      await runLlmText({ model: dummyModel, prompt: "x" });
+      await runLlmText(makeInput());
       expect.unreachable("expected retry exhaustion");
     } catch (err) {
       expect(err).toBeInstanceOf(LlmMaxRetriesError);
@@ -65,7 +77,7 @@ describe("runLlmText", () => {
       .mockImplementationOnce(async () => { throw new Error("undocumented provider failure"); })
       .mockImplementationOnce(async () => ({ text: "recovered", toolCalls: [] }));
 
-    const result = await runLlmText({ model: dummyModel, prompt: "x" });
+    const result = await runLlmText(makeInput());
 
     expect(result).toEqual({ text: "recovered" });
     expect(mockGenerateText).toHaveBeenCalledTimes(2);
@@ -75,7 +87,7 @@ describe("runLlmText", () => {
     mockGenerateText.mockImplementation(async () => { throw Object.assign(new Error("Unauthorized"), { status: 401 }); });
 
     try {
-      await runLlmText({ model: dummyModel, prompt: "x" });
+      await runLlmText(makeInput());
       expect.unreachable("expected auth failure");
     } catch (err) {
       expect(err).toBeInstanceOf(LlmMaxRetriesError);

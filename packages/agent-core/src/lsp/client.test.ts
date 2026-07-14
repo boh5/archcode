@@ -1,32 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Disposable } from "vscode-jsonrpc";
-import { FakeLspServer, type FakeLspServerConfig } from "./fake-server";
 import { LspClient, LspError, createLspClient, setLspClientForTest } from "./client";
-import type { LspClientOptions } from "./client";
 import type { LspTransport } from "./transport";
 
 afterEach(() => {
   setLspClientForTest(undefined);
 });
-
-async function withServer(
-  config: Partial<FakeLspServerConfig> | undefined,
-  fn: (client: LspClient, server: FakeLspServer) => Promise<void>,
-  clientOptions?: Partial<LspClientOptions>,
-): Promise<void> {
-  const server = new FakeLspServer(config);
-  try {
-    const transport = await server.start();
-    const client = new LspClient({
-      transport,
-      workspaceRoot: import.meta.dir,
-      ...clientOptions,
-    });
-    await fn(client, server);
-  } finally {
-    await server.stop();
-  }
-}
 
 describe("LspClient", () => {
   test("initialize sends capabilities and receives server capabilities", async () => {
@@ -109,31 +88,6 @@ describe("LspClient", () => {
     expect(transport.disposed).toBe(true);
   });
 
-  test("sendRequest sends request and returns response", async () => {
-    await withServer(undefined, async (client) => {
-      await client.initialize(import.meta.dir);
-
-      const result = await client.sendRequest("test/echo", { message: "ping" });
-
-      expect(result).toEqual({ message: "ping" });
-    });
-  });
-
-  test("sendNotification sends notification without waiting", async () => {
-    await withServer(undefined, async (client) => {
-      await client.initialize(import.meta.dir);
-      const notification = new Promise<unknown>((resolve) => {
-        client.onNotification("test/notify-ack", resolve);
-      });
-
-      client.sendNotification("test/notify", { hello: "world" });
-
-      const result = await notification;
-
-      expect(result).toEqual({ hello: "world" });
-    });
-  });
-
   test("contentModified error triggers three retries with exponential backoff", async () => {
     const transport = new RecordingTransport({
       requestHandler(method) {
@@ -186,25 +140,6 @@ describe("LspClient", () => {
     expect(transport.requestCount).toBe(4);
   });
 
-  test("request timeout returns actionable LspError", async () => {
-    await withServer(
-      { delayMs: 100 },
-      async (client) => {
-        try {
-          await client.sendRequest("test/echo", { slow: true });
-          throw new Error("Expected request to time out");
-        } catch (error) {
-          expect(error).toBeInstanceOf(LspError);
-          expect((error as LspError).name).toBe("LspError");
-          expect((error as LspError).kind).toBe("lsp-timeout");
-          expect((error as Error).message).toContain("timed out");
-          expect((error as Error).message).toContain("language server is responsive");
-        }
-      },
-      { timeouts: { requestMs: 10 } },
-    );
-  });
-
   test("setLspClientForTest mock injection works", () => {
     const transport = new RecordingTransport();
     const injected = new LspClient({ transport, workspaceRoot: "/workspace" });
@@ -213,31 +148,6 @@ describe("LspClient", () => {
     const client = createLspClient({ transport, workspaceRoot: "/other" });
 
     expect(client).toBe(injected);
-  });
-
-  test("onNotification registers handler and receives push notifications", async () => {
-    await withServer({ autoDiagnostics: [{ message: "diagnostic", severity: 1 }] }, async (client) => {
-      await client.initialize(import.meta.dir);
-      const pushed = new Promise<unknown>((resolve) => {
-        client.onNotification("textDocument/publishDiagnostics", resolve);
-      });
-
-      client.sendNotification("textDocument/didOpen", {
-        textDocument: {
-          uri: "file:///test.ts",
-          languageId: "typescript",
-          version: 1,
-          text: "",
-        },
-      });
-
-      const result = await pushed;
-
-      expect(result).toEqual({
-        uri: "file:///test.ts",
-        diagnostics: [{ message: "diagnostic", severity: 1 }],
-      });
-    });
   });
 
   test("openTextDocument ref-counts handles and sends didClose after final release", () => {
@@ -319,6 +229,7 @@ class RecordingTransport implements LspTransport {
     this.disposed = true;
   }
 }
+
 
 function jsonRpcError(code: number, message: string): Error & { code: number; data?: unknown } {
   const error = new Error(message) as Error & { code: number; data?: unknown };

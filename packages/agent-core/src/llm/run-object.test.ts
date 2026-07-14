@@ -4,6 +4,7 @@ import { setLlmAdapterForTest } from "./adapter";
 import { runLlmObject } from "./run-object";
 import { LlmMaxRetriesError, LlmObjectError, LlmSchemaValidationError } from "./errors";
 import type { LlmObjectInput } from "./types";
+import { createFakeRetryScheduler } from "../testing/fake-retry-scheduler";
 
 const mockGenerateText = mock(async (input: Record<string, unknown>) => {
   void input;
@@ -29,7 +30,12 @@ afterEach(() => {
 });
 
 function makeInput<T>(overrides: Partial<LlmObjectInput<T>> & { schema: LlmObjectInput<T>["schema"] }): LlmObjectInput<T> {
-  return { model: dummyModel, prompt: "test prompt", ...overrides };
+  return {
+    model: dummyModel,
+    prompt: "test prompt",
+    retryScheduler: createFakeRetryScheduler(),
+    ...overrides,
+  };
 }
 
 describe("runLlmObject", () => {
@@ -84,14 +90,16 @@ describe("runLlmObject", () => {
 
   test("retries unknown provider failures before schema repair handling", async () => {
     const schema = z.strictObject({ name: z.string() });
+    const retryScheduler = createFakeRetryScheduler();
     mockGenerateText
       .mockImplementationOnce(async () => { throw new Error("undocumented provider failure"); })
       .mockImplementationOnce(async () => ({ text: "", toolCalls: [{ toolName: "result", input: { name: "Recovered" } as unknown }] }) as never);
 
-    const result = await runLlmObject(makeInput({ schema }));
+    const result = await runLlmObject(makeInput({ schema, retryScheduler }));
 
     expect(result).toEqual({ name: "Recovered" });
     expect(mockGenerateText).toHaveBeenCalledTimes(2);
+    expect(retryScheduler.sleeps).toHaveLength(1);
   });
 
   test("does not retry explicit non-retryable provider failures", async () => {

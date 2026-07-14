@@ -3,6 +3,7 @@ import type { ModelCallOptions } from "../config/provider";
 import type { SessionStoreState } from "../store/types";
 import type { ModelInfo } from "../provider/model";
 import type { Logger } from "../logger";
+import type { RetryScheduler } from "../llm/retry";
 
 export interface BackgroundTaskContext {
   store: StoreApi<SessionStoreState>;
@@ -11,6 +12,7 @@ export interface BackgroundTaskContext {
   modelOptions?: ModelCallOptions;
   workspaceRoot: string;
   abort?: AbortSignal;
+  retryScheduler?: RetryScheduler;
 }
 
 export interface BackgroundTask {

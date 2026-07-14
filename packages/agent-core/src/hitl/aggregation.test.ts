@@ -7,7 +7,7 @@ import { silentLogger } from "../logger";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { HitlService } from "./service";
 
-const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "aggregation");
+const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "aggregation", crypto.randomUUID());
 
 describe("HITL aggregation", () => {
   beforeEach(async () => {

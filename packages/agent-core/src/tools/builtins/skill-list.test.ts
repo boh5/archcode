@@ -9,7 +9,7 @@ import { createToolExecutionContext, type ToolExecutionContext } from "../types"
 import { createBuiltinToolDescriptors } from "./index";
 import { SkillListInputSchema, skillListTool } from "./skill-list";
 
-const tmpRoot = join(import.meta.dir, "__test_tmp__", "skill-list-tool");
+const tmpRoot = join(import.meta.dir, "__test_tmp__", "skill-list-tool", crypto.randomUUID());
 const projectRoot = join(tmpRoot, "project");
 const userSkillsRoot = join(tmpRoot, "user", ".archcode", "skills");
 

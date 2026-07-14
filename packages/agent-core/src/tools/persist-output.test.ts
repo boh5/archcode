@@ -9,7 +9,7 @@ import {
   TOOL_OUTPUT_DIR,
 } from "./persist-output";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__");
+const TMP_DIR = join(import.meta.dir, "__test_tmp__", crypto.randomUUID());
 const OUTPUT_DIR = join(TMP_DIR, "tool-output");
 
 function makeCompletedToolPart(

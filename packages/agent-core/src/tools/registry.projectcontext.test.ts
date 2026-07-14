@@ -14,7 +14,7 @@ import { createToolExecutionContext, type ToolDescriptor, type ToolExecutionCont
 import { z } from "zod";
 import { createTestProjectContext } from "./test-project-context";
 
-const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "registry-projectcontext");
+const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "registry-projectcontext", crypto.randomUUID());
 const testSkillService = new SkillService({ builtinSkills: {} });
 
 const APPROVAL_SCOPE: PermissionApprovalScope = {

@@ -1,13 +1,17 @@
-import { beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { classifyCommand } from "../bash-classifier";
 
-const workspaceRoot = join(tmpdir(), "archcode-bash-policy-tests");
+const workspaceRoot = join(tmpdir(), `archcode-bash-policy-tests-${crypto.randomUUID()}`);
 
 beforeAll(() => {
   mkdirSync(workspaceRoot, { recursive: true });
+});
+
+afterAll(() => {
+  rmSync(workspaceRoot, { recursive: true, force: true });
 });
 
 function classify(command: string) {

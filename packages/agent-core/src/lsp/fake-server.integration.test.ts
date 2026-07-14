@@ -5,7 +5,7 @@ import { FakeLspServer, DEFAULT_INITIALIZE_RESULT } from "./fake-server";
 import type { FakeLspServerConfig } from "./fake-server";
 import { setLspTransportForTest, type LspTransport } from "./transport";
 
-const TMP_DIR = path.join(import.meta.dir, "__test_tmp__");
+const TMP_DIR = path.join(import.meta.dir, "__test_tmp__", crypto.randomUUID());
 
 afterAll(async () => {
   setLspTransportForTest(undefined);
@@ -25,7 +25,7 @@ async function withServer(
   }
 }
 
-describe("FakeLspServer", () => {
+describe("FakeLspServer integration", () => {
   test("connects with default initialize result", async () => {
     await withServer(undefined, async (server) => {
       expect(server.initializeResult).toEqual(DEFAULT_INITIALIZE_RESULT);

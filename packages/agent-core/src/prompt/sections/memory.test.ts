@@ -9,7 +9,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import crypto from "node:crypto";
 
-const TEST_TMP = join(import.meta.dir, "__test_tmp__");
+const TEST_TMP = join(import.meta.dir, "__test_tmp__", crypto.randomUUID());
 
 function makeCtx(overrides?: Partial<PromptContext>): PromptContext {
   return { allowedTools: ["file_read", "file_write"],

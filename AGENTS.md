@@ -48,9 +48,14 @@ Per-package direct commands:
 bun run --cwd apps/server dev      # Server with hot reload (bun --hot apps/server/src/main.ts)
 bun run --cwd apps/web dev         # Vite dev server on :5173, proxies /api → :4096
 bun run --cwd apps/web build       # Vite production build → apps/web/dist/
+bun run --cwd packages/agent-core test:unit         # Unit tests, file-parallel with 4 isolated workers
+bun run --cwd packages/agent-core test:integration  # Real process/Git/LSP integration tests, isolated and serial
+bun run --cwd packages/agent-core test:arch         # Architecture contracts, isolated and serial
 ```
 
 Validation order: `typecheck` → `test` (enforced by Turborepo task graph).
+
+Agent Core test lanes are hard-separated by naming: `*.integration.test.ts` owns real subprocess, Git/worktree, and LSP process lifecycles; `src/__arch__/**/*.test.ts` owns architecture contracts; all remaining `*.test.ts` files are unit tests. Do not use `test.concurrent`, `--concurrent`, retry fallback, or the retired `*-integration.test.ts` suffix.
 
 ## Architecture
 

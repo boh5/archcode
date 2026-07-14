@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { ModelMessage } from "ai";
 import { z } from "zod";
 import type { ModelInfo } from "../../provider/model";
@@ -10,8 +10,16 @@ import { createRegistry, defineTool } from "../../tools";
 import type { ToolExecutionContext } from "../../tools";
 import { createTestProjectContext } from "../../tools/test-project-context";
 import { setLlmAdapterForTest } from "../../llm";
+import type { RetryScheduler } from "../../llm/retry";
 import type { QueryLoopOptions } from "./types";
 import { runQueryLoop } from "./loop";
+import { sessionFileInternals } from "../../store/helpers";
+import { createFakeRetryScheduler } from "../../testing/fake-retry-scheduler";
+import { createTestTempRoot } from "../../testing/test-temp-root";
+
+const testTempRoot = createTestTempRoot("query-recovery");
+const TEST_WORKSPACE_ROOT = testTempRoot.path;
+const realSaveSessionTranscript = sessionFileInternals.saveSessionTranscript;
 
 type StreamTextFn = typeof import("ai").streamText;
 
@@ -51,7 +59,7 @@ const testSkillService = new SkillService({ builtinSkills: {} });
 const inputSchema = z.object({ message: z.string().optional() }).strict();
 
 function createStore() {
-  return createSessionStore(crypto.randomUUID(), import.meta.dir);
+  return createSessionStore(crypto.randomUUID(), TEST_WORKSPACE_ROOT);
 }
 
 function wrappedMessage(ref: string, text: string): string {
@@ -59,7 +67,7 @@ function wrappedMessage(ref: string, text: string): string {
 }
 
 function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOptions {
-  const workspaceRoot = import.meta.dir;
+  const workspaceRoot = TEST_WORKSPACE_ROOT;
   return {
     modelInfo: dummyModelInfo,
     logger: silentLogger,
@@ -140,7 +148,19 @@ function textParts(store: ReturnType<typeof createStore>) {
 }
 
 beforeEach(() => {
+  sessionFileInternals.saveSessionTranscript = async () => {};
   setLlmAdapterForTest(undefined);
+});
+
+afterEach(async () => {
+  await Bun.sleep(0);
+  sessionFileInternals.saveSessionTranscript = realSaveSessionTranscript;
+  storeManager.clearAll();
+});
+
+afterAll(async () => {
+  sessionFileInternals.saveSessionTranscript = realSaveSessionTranscript;
+  await testTempRoot.cleanup();
 });
 
 describe("query loop LLM stream recovery", () => {
@@ -301,6 +321,7 @@ describe("query loop LLM stream recovery", () => {
   test("first-chunk EOF escalates after bounded zero-output retry and avoids duplicate assistant content", async () => {
     const store = createStore();
     const events = captureEvents(store);
+    const scheduler = createFakeRetryScheduler(1_000);
     const streamFn = createMockStreamText([
       { fullStreamError: retryableEof("eof-1") },
       { fullStreamError: retryableEof("eof-2") },
@@ -309,13 +330,14 @@ describe("query loop LLM stream recovery", () => {
       { text: "single final" },
     ]);
 
-    const result = await runQueryLoop(makeOptions({ store }), "Recover zero output");
+    const result = await runQueryLoop(makeOptions({ store }), "Recover zero output", scheduler);
 
     expect(result.text).toBe("single final");
     expect(streamFn).toHaveBeenCalledTimes(5);
     expect(events.filter((event) => event.type === "llm-retry" && event.visibility === "internal")).toHaveLength(3);
     expect(events).toContainEqual(expect.objectContaining({ type: "llm-retry", scope: "session", visibility: "session", profile: "zero-output-session", attempt: 1 }));
     expect(events).toContainEqual(expect.objectContaining({ type: "llm-recovery", scope: "session", visibility: "session", profile: "zero-output-session" }));
+    expect(scheduler.sleeps).toEqual([2_000]);
     expect(textParts(store).map((part) => part.text)).toEqual(["single final"]);
   });
 
@@ -438,15 +460,16 @@ describe("query loop LLM stream recovery", () => {
       { fullStreamError: retryableEof("eof-4") },
     ]);
 
-    const started = Date.now();
-    const run = runQueryLoop(makeOptions({ store, abort: abort.signal }), "Abort backoff");
-    while (!events.some((event) => event.type === "llm-retry" && event.scope === "session")) {
-      await new Promise((resolve) => setTimeout(resolve, 1));
-    }
-    abort.abort();
-    await run;
+    const retryScheduler: RetryScheduler = {
+      now: () => 1_000,
+      sleep: async () => {
+        abort.abort();
+        throw new DOMException("The operation was aborted.", "AbortError");
+      },
+    };
 
-    expect(Date.now() - started).toBeLessThan(1500);
+    await runQueryLoop(makeOptions({ store, abort: abort.signal }), "Abort backoff", retryScheduler);
+
     expect(store.getState().executions.at(-1)?.status).toBe("aborted");
     expect(events).toContainEqual(expect.objectContaining({
       type: "llm-recovery-failed",
@@ -460,19 +483,25 @@ describe("query loop LLM stream recovery", () => {
   test("continuous session retry is uncapped while delay is capped and next retry time is emitted", async () => {
     const store = createStore();
     const events = captureEvents(store);
+    const scheduler = createFakeRetryScheduler(1_000);
     const rounds: MockRound[] = Array.from({ length: 9 }, (_, index) => ({ fullStreamError: Object.assign(retryableEof(`eof-${index}`), { retryAfterMs: 0.001 }) }));
     rounds.push({ text: "eventually recovered" });
     createMockStreamText(rounds);
 
-    await runQueryLoop(makeOptions({ store }), "Long outage");
+    await runQueryLoop(makeOptions({ store }), "Long outage", scheduler);
 
     const sessionRetries = events.filter((event) => event.type === "llm-retry" && event.scope === "session");
     expect(sessionRetries).toHaveLength(6);
     expect(sessionRetries.map((event) => event.type === "llm-retry" ? event.attempt : 0)).toEqual([1, 2, 3, 4, 5, 6]);
-    for (const event of sessionRetries) {
-      expect(event.type).toBe("llm-retry");
-      expect((event as Extract<SessionEventPayload, { type: "llm-retry" }>).nextRetryAt).toBeGreaterThan(Date.now() - 1_000);
-    }
+    expect(scheduler.sleeps).toEqual([1, 1, 1, 1, 1, 1]);
+    expect(sessionRetries.map((event) => event.type === "llm-retry" ? event.nextRetryAt : 0)).toEqual([
+      1_001,
+      1_002,
+      1_003,
+      1_004,
+      1_005,
+      1_006,
+    ]);
   });
 
   test("todo continuation hooks do not advance during recovery attempts and run after recovered completion", async () => {

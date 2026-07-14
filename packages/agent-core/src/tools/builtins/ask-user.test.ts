@@ -10,7 +10,7 @@ import { createTestProjectContext } from "../test-project-context";
 import { SkillService } from "../../skills";
 import { SessionHitlPause } from "../../execution/session-hitl-pause";
 
-const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "ask-user");
+const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "ask-user", crypto.randomUUID());
 
 afterAll(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });

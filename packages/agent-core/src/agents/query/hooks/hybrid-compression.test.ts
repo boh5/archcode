@@ -8,7 +8,7 @@ import { silentLogger } from "../../../logger";
 import type { BeforeModelBuildContext, BeforeModelCallContext } from "../loop-hooks";
 import { createHybridCompressionHook } from "./hybrid-compression";
 
-const TEST_WORKSPACE_ROOT = "/tmp/archcode-agent-core-hybrid-compression";
+const TEST_WORKSPACE_ROOT = `/tmp/archcode-agent-core-hybrid-compression-${crypto.randomUUID()}`;
 
 const generateText = mock(async () => ({ text: "", toolCalls: [{ toolName: "compression_summary", input: summary() }] }));
 const streamText = mock(() => ({

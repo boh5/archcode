@@ -6,7 +6,7 @@ import type { ToolExecutionContext } from "../types";
 import { createMemoryIndexPermission } from "./memory-index";
 import { createTestProjectContext } from "../test-project-context";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__", "memory-index-permission");
+const TMP_DIR = join(import.meta.dir, "__test_tmp__", "memory-index-permission", crypto.randomUUID());
 const WORKSPACE = join(TMP_DIR, "workspace");
 const INDEX_PATH = join(WORKSPACE, ".archcode", "memory", "index.md");
 const SYMLINK_DIR = join(TMP_DIR, "symlinks");

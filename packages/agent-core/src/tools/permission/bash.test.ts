@@ -12,7 +12,7 @@ let testDir: string;
 let workspaceDir: string;
 
 beforeAll(() => {
-  testDir = join(tmpdir(), `bash-permission-${Date.now()}`);
+  testDir = join(tmpdir(), `bash-permission-${crypto.randomUUID()}`);
   workspaceDir = join(testDir, "workspace");
   mkdirSync(join(workspaceDir, "src"), { recursive: true });
   writeFileSync(join(workspaceDir, "src", "main.ts"), "export {};\n", "utf8");

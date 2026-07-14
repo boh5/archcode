@@ -10,7 +10,7 @@ import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { todoWriteTool, TodoWriteInputSchema } from "./todo-write";
 import { createTestProjectContext } from "../test-project-context";
 
-const testDir = join(import.meta.dir, "__test_tmp__", "todo-write");
+const testDir = join(import.meta.dir, "__test_tmp__", "todo-write", crypto.randomUUID());
 
 function makeStore(): StoreApi<SessionStoreState> {
   return storeManager.create(`todo-test-${crypto.randomUUID()}`, testDir, { agentName: "engineer" });

@@ -29,7 +29,7 @@ import { GoalCancellationInProgressError, withGoalExecutionClaimLock } from "./e
 import { GoalHitlResumeAdapter } from "./hitl-resume-adapter";
 import { GoalStateManager } from "./state";
 
-const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-cancellation");
+const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-cancellation", crypto.randomUUID());
 
 interface Deferred<T> {
   readonly promise: Promise<T>;

@@ -9,7 +9,7 @@ let workspaceDir: string;
 let outsideDir: string;
 
 beforeAll(() => {
-  testDir = join(tmpdir(), `bash-classifier-${Date.now()}`);
+  testDir = join(tmpdir(), `bash-classifier-${crypto.randomUUID()}`);
   workspaceDir = join(testDir, "workspace");
   outsideDir = join(testDir, "outside");
   mkdirSync(join(workspaceDir, "src"), { recursive: true });

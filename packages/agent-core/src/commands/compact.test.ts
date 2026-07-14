@@ -73,7 +73,7 @@ const modelInfo = {
   qualifiedId: "test:mock",
 } as unknown as ModelInfo;
 const skillService = new SkillService({ builtinSkills: {} });
-const TEST_WORKSPACE_ROOT = "/tmp/archcode-agent-core-compact-command";
+const TEST_WORKSPACE_ROOT = `/tmp/archcode-agent-core-compact-command-${crypto.randomUUID()}`;
 
 function commandContext(
   store: CommandContext["store"],

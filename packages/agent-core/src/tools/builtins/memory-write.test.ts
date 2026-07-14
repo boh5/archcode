@@ -10,7 +10,7 @@ import { createMockStore } from "../../store/test-helpers";
 import { createToolExecutionContext, type ToolExecutionContext, type ToolExecutionResult } from "../types";
 import { createTestProjectContext } from "../test-project-context";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__");
+const TMP_DIR = join(import.meta.dir, "__test_tmp__", crypto.randomUUID());
 const testSkillService = new SkillService({ builtinSkills: {} });
 
 function makeFileManager(): MemoryFileManager {

@@ -10,7 +10,7 @@ import { SessionStoreManager } from "../store/session-store-manager";
 import { GoalRunner } from "./runner";
 import { GoalStateManager } from "./state";
 
-const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-integration");
+const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-integration", crypto.randomUUID());
 const SOURCE_SESSION_ID = "11111111-1111-4111-8111-111111111111";
 
 let workspaceRoot = "";
@@ -48,7 +48,7 @@ async function readGoalFile(goalId: string): Promise<GoalState> {
   return JSON.parse(await Bun.file(join(workspaceRoot, PROJECT_STATE_DIR_NAME, "goals", goalId, "goal.json")).text()) as GoalState;
 }
 
-describe("Goal core integration", () => {
+describe("Goal core lifecycle", () => {
   test("persists committed creation through DONE without auxiliary artifacts", async () => {
     const runner = createRunner();
     const goal = await runner.create({

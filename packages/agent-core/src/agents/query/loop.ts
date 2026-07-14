@@ -9,7 +9,7 @@ import { partitionToolCalls } from "../../tools/concurrency/partition";
 import { DOOM_LOOP_MESSAGE, type NormalizedToolCall, type QueryLoopOptions, type QueryLoopResult } from "./types";
 import { redactValue } from "../../tools/security";
 import { classifyLlmError, runLlmStream } from "../../llm";
-import { parseRetryAfter, sleepAbortable } from "../../llm/retry";
+import { parseRetryAfter, realRetryScheduler, type RetryScheduler } from "../../llm/retry";
 import type { BeforeModelBuildContext, BeforeModelCallContext } from "./loop-hooks";
 import { SessionHitlPause } from "../../execution/session-hitl-pause";
 import { createToolErrorResult } from "../../tools/errors";
@@ -175,6 +175,7 @@ async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttem
 export async function runQueryLoop(
   options: QueryLoopOptions,
   userMessage: string,
+  retryScheduler: RetryScheduler = realRetryScheduler,
 ): Promise<QueryLoopResult> {
   const {
     modelInfo,
@@ -259,8 +260,8 @@ export async function runQueryLoop(
         if (attempt.hadDurableOutput) {
           zeroOutputShortAttempt = 0;
           sessionRetryAttempt = 0;
-          const delayMs = computeSessionRetryDelayMs(attempt.recoveryAttempt, attempt.error);
-          const nextRetryAt = Date.now() + delayMs;
+          const delayMs = computeSessionRetryDelayMs(attempt.recoveryAttempt, attempt.error, retryScheduler);
+          const nextRetryAt = retryScheduler.now() + delayMs;
           store.getState().append({
             type: "llm-retry",
             scope: "session",
@@ -272,7 +273,7 @@ export async function runQueryLoop(
             nextRetryAt,
             stepId: `step-${steps}`,
           });
-          await sleepAbortable(delayMs, abort);
+          await retryScheduler.sleep(delayMs, abort);
           continue;
         }
 
@@ -294,8 +295,8 @@ export async function runQueryLoop(
 
         sessionRetryAttempt++;
         lastRecoveryAttempt = sessionRetryAttempt;
-        const delayMs = computeSessionRetryDelayMs(sessionRetryAttempt, attempt.error);
-        const nextRetryAt = Date.now() + delayMs;
+        const delayMs = computeSessionRetryDelayMs(sessionRetryAttempt, attempt.error, retryScheduler);
+        const nextRetryAt = retryScheduler.now() + delayMs;
         store.getState().append({
           type: "llm-retry",
           scope: "session",
@@ -307,7 +308,7 @@ export async function runQueryLoop(
           nextRetryAt,
           stepId: `step-${steps}`,
         });
-        await sleepAbortable(delayMs, abort);
+        await retryScheduler.sleep(delayMs, abort);
         continue;
       }
 
@@ -861,8 +862,8 @@ function hasRecoveryAttempts(attempts: {
   return attempts.recoveredFromFailure || attempts.sessionRetryAttempt > 0 || attempts.zeroOutputShortAttempt > 0 || attempts.lastRecoveryAttempt > 0;
 }
 
-function computeSessionRetryDelayMs(attempt: number, error: unknown): number {
-  const retryAfterMs = parseRetryAfter(error);
+function computeSessionRetryDelayMs(attempt: number, error: unknown, retryScheduler: RetryScheduler): number {
+  const retryAfterMs = parseRetryAfter(error, retryScheduler);
   if (retryAfterMs !== undefined) return Math.min(retryAfterMs, SESSION_RETRY_MAX_DELAY_MS);
   const exponential = SESSION_RETRY_INITIAL_DELAY_MS * SESSION_RETRY_FACTOR ** Math.max(0, attempt - 1);
   return Math.min(exponential, SESSION_RETRY_MAX_DELAY_MS);

@@ -18,6 +18,7 @@ import { ModelInfo } from "../provider/model";
 import { SkillService } from "../skills";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { getSessionHitlPath } from "../store/sessions-dir";
+import { createTestTempRoot } from "../testing/test-temp-root";
 import { createRegistry } from "../tools";
 import { fileReadTool, worktreeEnterTool } from "../tools/builtins";
 import { ProjectApprovalManager } from "../tools/permission";
@@ -30,7 +31,8 @@ import { SessionExecutionScopeValidator } from "./session-execution-scope-valida
 import { SessionHitlResumeInProgressError } from "../agents/errors";
 import { SessionFamilyActiveError } from "./session-family-control";
 
-const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "session-worktree-hitl-integration");
+const testTempRoot = createTestTempRoot("session-worktree-hitl-integration");
+const TMP_ROOT = testTempRoot.path;
 const SKILL_NAME = "worktree-skill";
 
 function identity(record: Pick<HitlRecord, "owner" | "hitlId">) {
@@ -59,7 +61,7 @@ const testDefinition: AgentDefinition = {
 describe("durable Session worktree approval integration", () => {
   afterEach(async () => {
     setLlmAdapterForTest(undefined);
-    await rm(TMP_ROOT, { recursive: true, force: true });
+    await testTempRoot.cleanup();
   });
 
   test("rebuilds the Agent from worktree prompt, AGENTS, Skill, and file root", async () => {
@@ -210,6 +212,16 @@ describe("durable Session worktree approval integration", () => {
     await waitFor(async () => {
       const found = await hitl.lookup(identity(pending));
       return found.status === "found" && found.record.status === "resolved";
+    });
+    await waitFor(() => {
+      try {
+        const release = executionManager.acquireSessionCwdTransition(projectRoot, sessionId);
+        release();
+        return true;
+      } catch (error) {
+        if (error instanceof SessionHitlResumeInProgressError) return false;
+        throw error;
+      }
     });
 
     const rebuiltAgent = agents.get(projectRoot, sessionId);

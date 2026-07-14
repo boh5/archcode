@@ -11,7 +11,7 @@ import { managedWorktreeNames } from "../worktrees";
 import { GoalRunner, GoalSourceSessionError, type GoalRunnerOptions } from "./runner";
 import { GoalReviewFinalizationError, GoalReviewerAuthorizationError, GoalStateManager, GoalTransitionError } from "./state";
 
-const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-runner");
+const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-runner", crypto.randomUUID());
 const SOURCE_SESSION_ID = "11111111-1111-4111-8111-111111111111";
 
 let workspaceRoot = "";

@@ -3,7 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { SkillNotFoundError, SkillService, SkillValidationError } from "./service";
 
-const tmpRoot = join(import.meta.dir, "__test_tmp__", "skill-service");
+const tmpRoot = join(import.meta.dir, "__test_tmp__", "skill-service", crypto.randomUUID());
 
 function skillMarkdown(name: string, description = `${name} description`, body = `${name} body`, whenToUse = `Use when ${name} is needed.`): string {
   return `---

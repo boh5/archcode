@@ -7,9 +7,12 @@ import type { ToolExecutionContext } from "../types";
 import type { CompletedToolPart, ErrorToolPart, ToolPart, StoredPart } from "../../store/types";
 import { executeViewToolOutput as executeViewToolOutputWithOptions } from "./view-tool-output";
 import { createTestProjectContext } from "../test-project-context";
+import { createTestTempRoot } from "../../testing/test-temp-root";
 
+const testTempRoot = createTestTempRoot("view-tool-output");
+const TEST_WORKSPACE_ROOT = testTempRoot.path;
 const TEST_SESSION = `view-test-${randomUUID()}`;
-const TEST_OUTPUT_DIR = join(import.meta.dir, "__test_tmp__", `tool-output-${randomUUID()}`);
+const TEST_OUTPUT_DIR = join(TEST_WORKSPACE_ROOT, `tool-output-${randomUUID()}`);
 const TEST_DIR = join(TEST_OUTPUT_DIR, TEST_SESSION);
 const TEST_FILE_PATH = join(TEST_DIR, "file_read-test-call-full.txt");
 const TEST_FILE_CONTENT = "full output content on disk";
@@ -20,11 +23,13 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await rm(TEST_DIR, { recursive: true, force: true });
+  await Bun.sleep(0);
+  storeManager.clearAll();
+  await testTempRoot.cleanup();
 });
 
 function makeContext(): ToolExecutionContext {
-  const store = storeManager.create(`view-test-run-${randomUUID()}`, import.meta.dir, { agentName: "engineer" });
+  const store = storeManager.create(`view-test-run-${randomUUID()}`, TEST_WORKSPACE_ROOT, { agentName: "engineer" });
   return {
     store,
     storeManager,
@@ -35,8 +40,8 @@ function makeContext(): ToolExecutionContext {
     abort: new AbortController().signal,
     startedAt: 0,
     allowedTools: new Set(["view_tool_output"]),
-    cwd: import.meta.dir,
-    projectContext: createTestProjectContext(import.meta.dir),
+    cwd: TEST_WORKSPACE_ROOT,
+    projectContext: createTestProjectContext(TEST_WORKSPACE_ROOT),
   };
 }
 
@@ -91,32 +96,6 @@ function setMessages(ctx: ToolExecutionContext, parts: StoredPart[]): void {
 }
 
 describe("view_tool_output tool", () => {
-  it("imports when the tool output directory does not exist", async () => {
-    const freshHome = join(import.meta.dir, "__test_tmp__", `fresh-home-${randomUUID()}`);
-    await mkdir(freshHome, { recursive: true });
-
-    try {
-      const process = Bun.spawn(
-        ["bun", "-e", 'await import("./view-tool-output.ts")'],
-        {
-          cwd: import.meta.dir,
-          env: { ...Bun.env, HOME: freshHome },
-          stdout: "pipe",
-          stderr: "pipe",
-        },
-      );
-      const [exitCode, stderr] = await Promise.all([
-        process.exited,
-        new Response(process.stderr).text(),
-      ]);
-
-      expect(exitCode).toBe(0);
-      expect(stderr).toBe("");
-    } finally {
-      await rm(freshHome, { recursive: true, force: true });
-    }
-  });
-
   it("retrieves persisted output from disk via callId", async () => {
     const ctx = makeContext();
     setMessages(ctx, [

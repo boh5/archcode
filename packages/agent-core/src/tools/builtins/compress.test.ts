@@ -8,7 +8,7 @@ import { createTestProjectContext } from "../test-project-context";
 import { TOOL_COMPRESS } from "../names";
 import { compressTool } from "./compress";
 
-const workspaceRoot = "/tmp/archcode-compress-test";
+const workspaceRoot = `/tmp/archcode-compress-test-${crypto.randomUUID()}`;
 
 function makeStore(): StoreApi<SessionStoreState> {
   const store = storeManager.create(`compress-test-${crypto.randomUUID()}`, workspaceRoot, { agentName: "engineer" });

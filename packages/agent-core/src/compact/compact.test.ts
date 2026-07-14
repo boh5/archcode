@@ -6,6 +6,7 @@ import { silentLogger } from "../logger";
 import type { StoredMessage } from "../store/types";
 import { storeManager } from "../store/store";
 import { setLlmAdapterForTest } from "../llm";
+import { createFakeRetryScheduler } from "../testing/fake-retry-scheduler";
 import {
   CompactError,
   type CompactInput,
@@ -14,8 +15,8 @@ import {
   compact,
 } from "./compact";
 
-const TEST_WORKSPACE_ROOT = "/tmp/archcode-agent-core-compact";
-const TEST_TOOL_OUTPUT_DIR = join(import.meta.dir, "__test_tmp__", "compact-tool-output");
+const TEST_WORKSPACE_ROOT = `/tmp/archcode-agent-core-compact-${crypto.randomUUID()}`;
+const TEST_TOOL_OUTPUT_DIR = join(import.meta.dir, "__test_tmp__", "compact-tool-output", crypto.randomUUID());
 
 afterAll(async () => {
   await rm(TEST_TOOL_OUTPUT_DIR, { recursive: true, force: true });
@@ -188,6 +189,7 @@ function makeInput(messages: StoredMessage[], overrides?: Partial<CompactInput>)
   sessionId: "test-session",
   logger: silentLogger,
   toolOutputDir: TEST_TOOL_OUTPUT_DIR,
+  retryScheduler: createFakeRetryScheduler(),
   ...overrides,  };
 }
 
@@ -983,9 +985,10 @@ describe("compact", () => {
       makeAssistantMessage("a5", "Fifth response"),
       makeUserMessage("u6", "Sixth message (incomplete)"),
     ];
+    const retryScheduler = createFakeRetryScheduler();
 
     try {
-      await compact(makeInput(messages));
+      await compact(makeInput(messages, { retryScheduler }));
       expect.unreachable("Should have thrown CompactError");
     } catch (e) {
       expect(e).toBeInstanceOf(CompactError);
@@ -1012,15 +1015,17 @@ describe("compact", () => {
       makeAssistantMessage("a5", "Fifth response"),
       makeUserMessage("u6", "Sixth message (incomplete)"),
     ];
+    const retryScheduler = createFakeRetryScheduler();
 
     try {
-      await compact(makeInput(messages));
+      await compact(makeInput(messages, { retryScheduler }));
       expect.unreachable("Should have thrown CompactError after short retry exhaustion");
     } catch (e) {
       expect(e).toBeInstanceOf(CompactError);
       expect((e as CompactError).reason).toContain("compact.summarize failed after 3 attempts");
     }
     expect(streamText).toHaveBeenCalledTimes(3);
+    expect(retryScheduler.sleeps).toHaveLength(2);
   });
 
   // -------------------------------------------------------------------------

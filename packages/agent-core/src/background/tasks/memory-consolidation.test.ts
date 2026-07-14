@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdir, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
 import { createMemoryConsolidationTask } from "./memory-consolidation";
 import { setLlmAdapterForTest } from "../../llm";
 import type { ModelInfo } from "../../provider/model";
@@ -9,6 +9,8 @@ import { MemoryFileManager } from "../../memory/file-manager";
 import { createMockLogger } from "../../logger.test-helper";
 import { silentLogger } from "../../logger";
 import { storeManager } from "../../store/store";
+import { createTestTempRoot } from "../../testing/test-temp-root";
+import { createFakeRetryScheduler } from "../../testing/fake-retry-scheduler";
 
 type MockGenerateTextResult = { text: string; toolCalls: Array<{ type: string; toolCallId: string; toolName: string; input: unknown }> };
 
@@ -50,10 +52,12 @@ function makeTaskContext(overrides: Partial<BackgroundTaskContext> = {}): Backgr
   return { store: storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "engineer" }),
   modelInfo: makeModelInfo(),
   logger: silentLogger,
+  retryScheduler: createFakeRetryScheduler(),
   workspaceRoot: "/tmp", ...overrides,  };
 }
 
-const tmpDir = resolve(import.meta.dir, "__test_tmp__");
+const testTemp = createTestTempRoot("memory-consolidation-task");
+const tmpDir = testTemp.path;
 
 describe("createMemoryConsolidationTask", () => {
   beforeEach(async () => {
@@ -65,7 +69,7 @@ describe("createMemoryConsolidationTask", () => {
 
   afterEach(async () => {
     setLlmAdapterForTest(undefined);
-    await rm(tmpDir, { recursive: true, force: true });
+    await testTemp.cleanup();
   });
 
   test("skips when index is null (no index file)", async () => {
@@ -259,6 +263,7 @@ describe("createMemoryConsolidationTask", () => {
     mockGenerateText.mockRejectedValue(new Error("API error"));
 
     const logger = createMockLogger();
+    const retryScheduler = createFakeRetryScheduler();
 
     try {
       const task = createMemoryConsolidationTask({
@@ -266,10 +271,11 @@ describe("createMemoryConsolidationTask", () => {
         user: userRoot,
       });
 
-      await task.run(makeTaskContext({ logger }));
+      await task.run(makeTaskContext({ logger, retryScheduler }));
 
       const index = await fileManager.readIndex();
       expect(index).toContain("Original summary");
+      expect(retryScheduler.sleeps).toHaveLength(2);
       expect(logger.warn).toHaveBeenCalledWith("memory.consolidation.failed", expect.objectContaining({
         error: expect.any(Error),
       }));

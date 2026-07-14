@@ -18,7 +18,7 @@ import { silentLogger } from "../logger";
 import { ProjectApprovalManager } from "../tools/permission/project-approvals";
 import { ProjectContextResolver, type ProjectContextResolverOptions } from "./context-resolver";
 
-const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "context-resolver");
+const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "context-resolver", crypto.randomUUID());
 
 const TEST_SCOPE: PermissionApprovalScope = {
   kind: "tool-operation",

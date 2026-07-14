@@ -8,8 +8,9 @@ import { silentLogger } from "../../logger";
 import { createMockLogger } from "../../logger.test-helper";
 import { setLlmAdapterForTest } from "../../llm";
 import { __setSessionsDirForTest } from "../../store/sessions-dir";
+import { createFakeRetryScheduler } from "../../testing/fake-retry-scheduler";
 
-const TEST_TMP = join(import.meta.dir, "__test_tmp__", "title-generation");
+const TEST_TMP = join(import.meta.dir, "__test_tmp__", "title-generation", crypto.randomUUID());
 
 const mockGenerateText = mock(
   async () => ({ text: "Short test title" }),
@@ -38,6 +39,7 @@ function makeTaskContext(
   return { store,
   modelInfo: makeModelInfo(),
   logger: silentLogger,
+  retryScheduler: createFakeRetryScheduler(),
   workspaceRoot: "/tmp", ...overrides,  };
 }
 
@@ -136,7 +138,7 @@ describe("createTitleGenerationTask", () => {
   test("generated title persists and survives store reload without external save or flush", async () => {
     const now = Date.now();
     const sessionId = crypto.randomUUID();
-    const store = createSessionStore(sessionId, import.meta.dir);
+    const store = createSessionStore(sessionId, TEST_TMP);
     store.setState({
       messages: [
         {
@@ -314,10 +316,12 @@ describe("createTitleGenerationTask", () => {
       ],
     });
     const logger = createMockLogger();
+    const retryScheduler = createFakeRetryScheduler();
 
-    await createTitleGenerationTask(store).run(makeTaskContext(store, { logger }));
+    await createTitleGenerationTask(store).run(makeTaskContext(store, { logger, retryScheduler }));
 
     expect(mockGenerateText).toHaveBeenCalledTimes(3);
+    expect(retryScheduler.sleeps).toHaveLength(2);
     expect(store.getState().title).toBeNull();
     expect(store.getState().messages).toHaveLength(1);
     expect(JSON.stringify(store.getState().messages)).not.toContain("recovery-notice");

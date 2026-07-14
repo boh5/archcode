@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdir, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
 import { storeManager } from "../../store/store";
 import type { StoredMessage } from "../../store/types";
 import type { MemoryRoots } from "../../memory/types";
@@ -12,6 +12,8 @@ import type { ModelInfo } from "../../provider/model";
 import { createMockLogger } from "../../logger.test-helper";
 import { silentLogger } from "../../logger";
 import type { BackgroundTaskContext } from "../types";
+import { createTestTempRoot } from "../../testing/test-temp-root";
+import { createFakeRetryScheduler } from "../../testing/fake-retry-scheduler";
 
 function makeGenerateTextResult(input: unknown = { memories: [] }) {
   return {
@@ -29,7 +31,8 @@ function makeGenerateTextResult(input: unknown = { memories: [] }) {
 
 const mockGenerateText = mock(async (_opts: Record<string, unknown>) => makeGenerateTextResult());
 
-const tmpDir = resolve(import.meta.dir, "__test_tmp__");
+const testTemp = createTestTempRoot("memory-extraction-task");
+const tmpDir = testTemp.path;
 
 function makeModelInfo(): ModelInfo {
   return {
@@ -50,6 +53,7 @@ function makeTaskContext(
   return { store,
   modelInfo: makeModelInfo(),
   logger: silentLogger,
+  retryScheduler: createFakeRetryScheduler(),
   workspaceRoot: "/tmp", ...overrides,  };
 }
 
@@ -139,7 +143,7 @@ describe("createMemoryExtractionTask", () => {
 
   afterEach(async () => {
     setLlmAdapterForTest(undefined);
-    await rm(tmpDir, { recursive: true, force: true });
+    await testTemp.cleanup();
   });
 
   function makeMemoryRoots(testName: string): MemoryRoots {
@@ -311,13 +315,15 @@ describe("createMemoryExtractionTask", () => {
     await setupDirs(roots);
     mockGenerateText.mockRejectedValue(new Error("provider unavailable"));
     const logger = createMockLogger();
+    const retryScheduler = createFakeRetryScheduler();
     const now = Date.now();
     const store = storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "engineer" });
     store.setState({ messages: makeUserMessages(5, "A".repeat(300), now) });
 
-    await createMemoryExtractionTask(store, roots).run(makeTaskContext(store, { logger }));
+    await createMemoryExtractionTask(store, roots).run(makeTaskContext(store, { logger, retryScheduler }));
 
     expect(mockGenerateText).toHaveBeenCalledTimes(3);
+    expect(retryScheduler.sleeps).toHaveLength(2);
     expect(store.getState().messages).toHaveLength(5);
     expect(JSON.stringify(store.getState().messages)).not.toContain("recovery-notice");
     expect(await new MemoryFileManager(roots).listTopics()).toHaveLength(0);
@@ -1123,10 +1129,11 @@ describe("createMemoryExtractionTask", () => {
 });
 
 describe("buildMemoryManifest", () => {
-  const tmpDirManifest = resolve(import.meta.dir, "__test_tmp_manifest__");
+  const manifestTemp = createTestTempRoot("memory-manifest");
+  const tmpDirManifest = manifestTemp.path;
 
   afterEach(async () => {
-    await rm(tmpDirManifest, { recursive: true, force: true });
+    await manifestTemp.cleanup();
   });
 
   function makeMemoryRoots(testName: string): MemoryRoots {

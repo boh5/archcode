@@ -8,7 +8,7 @@ import {
   type ExecCommand,
 } from "./installer";
 
-const tmpDir = join(import.meta.dir, "__test_tmp__", "installer");
+const tmpDir = join(import.meta.dir, "__test_tmp__", "installer", crypto.randomUUID());
 
 interface CallRecord {
   command: string[];

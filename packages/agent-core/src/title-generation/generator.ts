@@ -1,6 +1,7 @@
 import type { ModelCallOptions } from "../config/provider";
 import type { ModelInfo } from "../provider/model";
 import { runLlmText } from "../llm";
+import type { RetryScheduler } from "../llm/retry";
 
 export type TitleGenerationKind = "session" | "goal";
 
@@ -9,6 +10,7 @@ export interface GenerateTitleInput {
   readonly text: string;
   readonly modelInfo: ModelInfo;
   readonly modelOptions?: ModelCallOptions;
+  readonly retryScheduler?: RetryScheduler;
 }
 
 const TITLE_MAX_LENGTH = 50;
@@ -21,6 +23,7 @@ export async function generateTitle(input: GenerateTitleInput): Promise<string |
     model: input.modelInfo.model,
     prompt: buildTitlePrompt(input.kind, source),
     modelOptions: input.modelOptions,
+    retryScheduler: input.retryScheduler,
   });
 
   const title = normalizeGeneratedTitle(result.text);

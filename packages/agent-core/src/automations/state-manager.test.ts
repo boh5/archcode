@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { AutomationStateManager } from "./state-manager";
 
-const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "state-manager");
+const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "state-manager", crypto.randomUUID());
 const NOW = Date.parse("2026-07-13T00:00:00.000Z");
 
 beforeEach(async () => {

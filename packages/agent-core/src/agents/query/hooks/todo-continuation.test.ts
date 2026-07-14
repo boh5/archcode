@@ -177,7 +177,7 @@ describe("createTodoContinuationHook - afterLoopEnd (loop continuation)", () => 
   });
 
   test("loop continuation no longer depends on workflow state in Goal-era project contexts", async () => {
-    const workspaceRoot = `${import.meta.dir}/__test_tmp__/todo-continuation-hook`;
+    const workspaceRoot = `${import.meta.dir}/__test_tmp__/todo-continuation-hook-${crypto.randomUUID()}`;
     const projectContext = createTestProjectContext(workspaceRoot);
     const store = createHookStore();
     seedTodos(store, [{ id: "todo-1", content: "continue", status: "pending" }]);

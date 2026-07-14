@@ -7,7 +7,7 @@ import { AutomationDispatcher, type SessionDispatchGateway } from "./dispatcher"
 import { AutomationScheduler } from "./scheduler";
 import { AutomationStateManager } from "./state-manager";
 
-const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "scheduler");
+const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "scheduler", crypto.randomUUID());
 const START = Date.parse("2026-07-13T00:00:00.000Z");
 
 beforeEach(async () => {

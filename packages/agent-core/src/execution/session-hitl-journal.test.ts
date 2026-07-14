@@ -23,7 +23,7 @@ import {
 } from "./session-hitl-journal";
 import { SessionExecutionManager } from "./session-execution-manager";
 
-const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "session-hitl-journal");
+const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "session-hitl-journal", crypto.randomUUID());
 
 describe("Session HITL journal", () => {
   beforeEach(async () => {

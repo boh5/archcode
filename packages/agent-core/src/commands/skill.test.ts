@@ -1,8 +1,18 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import type { ModelInfo } from "../provider/model";
 import { SkillService } from "../skills/service";
 import { storeManager } from "../store/store";
 import { createSkillCommand } from "./skill";
+import { createTestTempRoot } from "../testing/test-temp-root";
+
+const testTempRoot = createTestTempRoot("skill-command");
+const TEST_WORKSPACE_ROOT = testTempRoot.path;
+
+afterAll(async () => {
+  await Bun.sleep(0);
+  storeManager.clearAll();
+  await testTempRoot.cleanup();
+});
 
 const dummyModelInfo = {
   model: {},
@@ -24,9 +34,9 @@ function createCommand(agentSkills: readonly string[] = ["git-master"]) {
   return {
     command: createSkillCommand(),
     context: {
-      store: storeManager.create(crypto.randomUUID(), import.meta.dir, { agentName: "engineer" }),
+      store: storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, { agentName: "engineer" }),
       modelInfo: dummyModelInfo,
-      cwd: import.meta.dir,
+      cwd: TEST_WORKSPACE_ROOT,
       agentName: "test-agent",
       agentSkills,
       skillService,

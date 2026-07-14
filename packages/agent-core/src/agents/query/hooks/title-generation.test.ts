@@ -13,7 +13,7 @@ const mockDispatch = mock((_name: string, _task: () => Promise<void>) => {});
 const mockGenerateText = mock(async () => ({ text: "Hook title" }));
 
 const mockBtm = { dispatch: mockDispatch };
-const TEST_TMP = join(import.meta.dir, "__test_tmp__", "title-generation-hook");
+const TEST_TMP = join(import.meta.dir, "__test_tmp__", "title-generation-hook", crypto.randomUUID());
 const WORKSPACE_ROOT = join(TEST_TMP, "workspace");
 
 async function readPersistedTitle(sessionId: string): Promise<string | null> {

@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterAll, describe, expect, mock, test } from "bun:test";
 import { z } from "zod";
 import type { ArchCodeConfig } from "../config/schema";
 import { ModelInfo } from "../provider/model";
@@ -19,6 +19,16 @@ import type { AgentDefinition, AgentName } from "./factory-types";
 import type { ResolvedSkill } from "../skills/types";
 import { silentLogger } from "../logger";
 import { createTestProjectContextResolver } from "./test-project-context-resolver";
+import { createTestTempRoot } from "../testing/test-temp-root";
+
+const testTempRoot = createTestTempRoot("agent-factory");
+const TEST_WORKSPACE_ROOT = testTempRoot.path;
+
+afterAll(async () => {
+  await Bun.sleep(0);
+  storeManager.clearAll();
+  await testTempRoot.cleanup();
+});
 
 function makeTool(name: string): AnyToolDescriptor {
   return {
@@ -127,7 +137,7 @@ function makeFactory(
   skillService: options.skillService ?? createTestSkillService(),
   storeManager,
   projectContextResolver: createTestProjectContextResolver(storeManager),
-  workspaceRoot: import.meta.dir,
+  workspaceRoot: TEST_WORKSPACE_ROOT,
   config, logger: silentLogger });
 }
 
@@ -160,7 +170,7 @@ describe("createAgentFactory", () => {
 
   test("creates root agents through the factory API with a supplied store", () => {
     const factory = makeFactory();
-    const store = storeManager.create(`factory-root-${crypto.randomUUID()}`, import.meta.dir, { agentName: "engineer" });
+    const store = storeManager.create(`factory-root-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, { agentName: "engineer" });
 
     const agent = factory.createRootAgent("engineer", { store });
 
@@ -198,7 +208,7 @@ describe("createAgentFactory", () => {
     skillService,
     storeManager,
     projectContextResolver: createTestProjectContextResolver(storeManager),
-    workspaceRoot: import.meta.dir,
+    workspaceRoot: TEST_WORKSPACE_ROOT,
     config: {
       provider: {},
       agents: {
@@ -225,7 +235,7 @@ describe("createAgentFactory", () => {
     skillService: createTestSkillService(),
     storeManager,
     projectContextResolver: createTestProjectContextResolver(storeManager),
-    workspaceRoot: import.meta.dir,
+    workspaceRoot: TEST_WORKSPACE_ROOT,
     config: {
       provider: {},
       agents: {
@@ -251,7 +261,7 @@ describe("createAgentFactory", () => {
     skillService: createTestSkillService(),
     storeManager,
     projectContextResolver: createTestProjectContextResolver(storeManager),
-    workspaceRoot: import.meta.dir,
+    workspaceRoot: TEST_WORKSPACE_ROOT,
     config: {
       provider: {},
       agents: {},
@@ -284,7 +294,7 @@ describe("createAgentFactory", () => {
     skillService: createTestSkillService(),
     storeManager,
     projectContextResolver: createTestProjectContextResolver(storeManager),
-    workspaceRoot: import.meta.dir,
+    workspaceRoot: TEST_WORKSPACE_ROOT,
     config: {
       provider: {},
       agents: {
@@ -324,7 +334,7 @@ describe("createAgentFactory", () => {
     skillService: createTestSkillService(),
     storeManager,
     projectContextResolver: createTestProjectContextResolver(storeManager),
-    workspaceRoot: import.meta.dir,
+    workspaceRoot: TEST_WORKSPACE_ROOT,
     config: {
       provider: {},
       agents: {
@@ -347,7 +357,7 @@ describe("createAgentFactory", () => {
     skillService: createTestSkillService(),
     storeManager,
     projectContextResolver: createTestProjectContextResolver(storeManager),
-    workspaceRoot: import.meta.dir,
+    workspaceRoot: TEST_WORKSPACE_ROOT,
     config: {
       provider: {},
       agents: {
@@ -484,7 +494,7 @@ describe("factoryResolveAllowedTools with MCP tools", () => {
       skillService: createTestSkillService(),
       storeManager,
       projectContextResolver: createTestProjectContextResolver(storeManager),
-      workspaceRoot: import.meta.dir,
+      workspaceRoot: TEST_WORKSPACE_ROOT,
       config: {
         provider: {},
         agents: { [def.name]: { model: providerRegistry.modelIds[0]! } },
@@ -542,7 +552,7 @@ describe("factoryResolveAllowedTools with MCP tools", () => {
       skillService: createTestSkillService(),
       storeManager,
       projectContextResolver: createTestProjectContextResolver(storeManager),
-      workspaceRoot: import.meta.dir,
+      workspaceRoot: TEST_WORKSPACE_ROOT,
       config: {
         provider: {},
         agents: { [def.name]: { model: providerRegistry.modelIds[0]! } },

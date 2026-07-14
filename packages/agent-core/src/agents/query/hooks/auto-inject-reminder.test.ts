@@ -6,7 +6,7 @@ import type { Reminder } from "../../../store/types";
 import { silentLogger } from "../../../logger";
 import { createAutoInjectReminderHook } from "./auto-inject-reminder";
 
-const TEST_WORKSPACE_ROOT = "/tmp/archcode-agent-core-auto-inject-reminder";
+const TEST_WORKSPACE_ROOT = `/tmp/archcode-agent-core-auto-inject-reminder-${crypto.randomUUID()}`;
 
 function createReminder(overrides: Partial<Reminder> = {}): Reminder {
   const id = overrides.id ?? crypto.randomUUID();

@@ -1,9 +1,10 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { GoalStateManager } from "./state";
 import { GoalWorkspaceService } from "./workspace";
+import { createTestTempRoot } from "../testing/test-temp-root";
 import {
   managedWorktreeNames,
   WorktreeService,
@@ -11,15 +12,17 @@ import {
   type WorktreeCreateResult,
 } from "../worktrees";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__", "goal-workspace");
+const testTempRoot = createTestTempRoot("goal-workspace");
+let TMP_DIR = testTempRoot.path;
 
 beforeEach(async () => {
   await rm(TMP_DIR, { recursive: true, force: true });
-  await mkdir(TMP_DIR, { recursive: true });
+  await mkdir(testTempRoot.path, { recursive: true });
+  TMP_DIR = await realpath(testTempRoot.path);
 });
 
 afterAll(async () => {
-  await rm(TMP_DIR, { recursive: true, force: true });
+  await testTempRoot.cleanup();
 });
 
 async function commitGoal(

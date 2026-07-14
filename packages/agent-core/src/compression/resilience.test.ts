@@ -21,7 +21,7 @@ const modelInfo = {
   qualifiedId: "test:mock",
 } as ModelInfo;
 const skillService = new SkillService({ builtinSkills: {} });
-const TEST_WORKSPACE_ROOT = "/tmp/archcode-agent-core-compression-resilience";
+const TEST_WORKSPACE_ROOT = `/tmp/archcode-agent-core-compression-resilience-${crypto.randomUUID()}`;
 
 function commandContext(store: CommandContext["store"]): CommandContext {
   return {

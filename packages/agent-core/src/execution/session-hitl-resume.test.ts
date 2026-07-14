@@ -1,5 +1,5 @@
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 
@@ -37,11 +37,11 @@ import {
   transitionSessionHitlJournalPhase,
   writeSessionHitlCheckpoint,
 } from "./session-hitl-checkpoint";
-import { WorktreeService } from "../worktrees";
 
 type StreamTextFn = typeof import("ai").streamText;
 
-const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "session-hitl-resume");
+const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "session-hitl-resume", crypto.randomUUID());
+const activeCoordinators = new Set<ResumeCoordinator>();
 
 function identity(record: Pick<HitlRecord, "owner" | "hitlId">) {
   return { owner: record.owner, hitlId: record.hitlId };
@@ -61,6 +61,12 @@ describe("Session HITL resume", () => {
   beforeEach(async () => {
     await rm(TMP_ROOT, { recursive: true, force: true });
     await mkdir(TMP_ROOT, { recursive: true });
+  });
+
+  afterEach(async () => {
+    for (const coordinator of activeCoordinators) coordinator.dispose();
+    activeCoordinators.clear();
+    await rm(TMP_ROOT, { recursive: true, force: true });
   });
 
   afterAll(async () => {
@@ -387,43 +393,6 @@ describe("Session HITL resume", () => {
     expect(await readSessionHitlCheckpoint(fixture.workspaceRoot, fixture.sessionId, pending.hitlId)).toBeDefined();
     expect(fixture.store.getState().executions.at(-1)).toMatchObject({ status: "waiting_for_human" });
     expect(fixture.store.getState().blockedByHitlIds).toEqual([pending.hitlId]);
-  });
-
-  test("stores HITL checkpoints under the project root and resumes tools in Session cwd", async () => {
-    const fixture = await createFixture();
-    await initializeGitRepo(fixture.workspaceRoot);
-    const worktreeCwd = (await new WorktreeService({ canonicalRoot: fixture.workspaceRoot }).create({
-      owner: { type: "session", id: fixture.sessionId },
-    })).worktreePath;
-    await fixture.sessions.updateCwd(fixture.sessionId, fixture.workspaceRoot, worktreeCwd, fixture.workspaceRoot);
-    let resumedCwd: string | undefined;
-    const tool = defineTool({
-      name: "cwd_guarded",
-      description: "Capture resumed cwd",
-      inputSchema: z.object({}).strict(),
-      traits: { readOnly: false, destructive: true, concurrencySafe: false },
-      permissions: [async () => ({ outcome: "ask", reason: "Approve cwd capture" })],
-      execute: async (_input, ctx) => {
-        resumedCwd = ctx.cwd;
-        return "cwd captured";
-      },
-    });
-    const registry = createRegistry([tool]);
-    mockToolCallStream([{ toolCallId: "cwd-guarded-1", toolName: "cwd_guarded", input: {} }]);
-
-    await runQueryLoop(
-      { ...fixture.options(registry, ["cwd_guarded"]), cwd: worktreeCwd },
-      "capture cwd",
-    );
-    const pending = await singlePendingHitl(fixture);
-
-    expect(await Bun.file(join(worktreeCwd, ".archcode", "sessions", fixture.sessionId, "hitl-checkpoints.json")).exists()).toBe(false);
-    expect((await readSessionHitlCheckpointFile(fixture.workspaceRoot, fixture.sessionId)).checkpoints).toHaveLength(1);
-
-    await fixture.coordinator.respond(identity(pending), { type: "permission_decision", decision: "approve_once" });
-    await waitFor(() => resumedCwd !== undefined);
-
-    expect(resumedCwd).toBe(worktreeCwd);
   });
 
   test("fails closed before resuming a tool when persisted Session cwd is not a registered worktree", async () => {
@@ -1228,6 +1197,10 @@ describe("Session HITL resume", () => {
 
     await fixture.coordinator.respond(identity(pending), { type: "permission_decision", decision: "approve_once" });
     await waitFor(() => events.includes("execute:later"));
+    await waitFor(async () => {
+      const found = await fixture.hitl.lookup(identity(pending));
+      return found.status === "found" && found.record.status === "resolved";
+    });
 
     expect(events).toEqual(["execute:first", "execute:blocked", "execute:later"]);
     expect(latestToolPart(fixture.store.getState().messages, "tc-later")).toMatchObject({ state: "completed", output: "later ok" });
@@ -1280,7 +1253,7 @@ async function createFixture(options: {
     goalState,
     goalCancellation: { cancel: async (goalId, request) => await goalState.cancel(goalId, request.reason) },
     hitl,
-    hitlResumeCoordinator: new ResumeCoordinator({ hitl, adapters: {} }),
+    hitlResumeCoordinator: createTrackedResumeCoordinator({ hitl, adapters: {} }),
     memory: new MemoryFileManager({ project: join(workspaceRoot, ".archcode", "memory"), user: join(workspaceRoot, ".archcode", "user-memory") }),
     approvals,
   };
@@ -1305,7 +1278,7 @@ async function createFixture(options: {
     ...(options.detachSessionEvents === undefined ? {} : { detachSessionEvents: options.detachSessionEvents }),
   });
   let currentRegistry = createRegistry();
-  const coordinator = new ResumeCoordinator({
+  const coordinator = createTrackedResumeCoordinator({
     hitl,
     adapters: {
       session: {
@@ -1358,7 +1331,7 @@ async function recreateResumeRuntime(
     goalState,
     goalCancellation: { cancel: async (goalId, request) => await goalState.cancel(goalId, request.reason) },
     hitl,
-    hitlResumeCoordinator: new ResumeCoordinator({ hitl, adapters: {} }),
+    hitlResumeCoordinator: createTrackedResumeCoordinator({ hitl, adapters: {} }),
     memory: new MemoryFileManager({ project: join(fixture.workspaceRoot, ".archcode", "memory"), user: join(fixture.workspaceRoot, ".archcode", "user-memory") }),
     approvals,
   };
@@ -1376,7 +1349,7 @@ async function recreateResumeRuntime(
     getAgent: async (_workspaceRoot, sessionId) => noOpAgent(await sessions.getOrLoad(sessionId, fixture.workspaceRoot)),
     reserveSessionHitlResume: () => createTestResumeLease(),
   });
-  const coordinator = new ResumeCoordinator({ hitl, adapters: { session: adapter } });
+  const coordinator = createTrackedResumeCoordinator({ hitl, adapters: { session: adapter } });
   projectContext.hitlResumeCoordinator = coordinator;
   return { sessions, hitl, coordinator };
 }
@@ -1390,6 +1363,14 @@ function createTestResumeLease(): SessionHitlResumeLease {
     acquireSessionCwdTransition: () => () => undefined,
     release: () => undefined,
   };
+}
+
+function createTrackedResumeCoordinator(
+  options: ConstructorParameters<typeof ResumeCoordinator>[0],
+): ResumeCoordinator {
+  const coordinator = new ResumeCoordinator(options);
+  activeCoordinators.add(coordinator);
+  return coordinator;
 }
 
 function noOpAgent(store: ReturnType<SessionStoreManager["create"]>): Agent {
@@ -1562,19 +1543,4 @@ async function waitFor(predicate: () => boolean | Promise<boolean>): Promise<voi
     await Bun.sleep(5);
   }
   throw new Error("condition was not met");
-}
-
-async function initializeGitRepo(workspaceRoot: string): Promise<void> {
-  await git(workspaceRoot, ["init", "--initial-branch=main"]);
-  await git(workspaceRoot, ["config", "user.email", "session-hitl@example.com"]);
-  await git(workspaceRoot, ["config", "user.name", "Session HITL"]);
-  await writeFile(join(workspaceRoot, "README.md"), "# Session HITL\n");
-  await git(workspaceRoot, ["add", "README.md"]);
-  await git(workspaceRoot, ["commit", "-m", "initial commit"]);
-}
-
-async function git(cwd: string, args: readonly string[]): Promise<void> {
-  const process = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
-  const stderr = await new Response(process.stderr).text();
-  if (await process.exited !== 0) throw new Error(stderr);
 }

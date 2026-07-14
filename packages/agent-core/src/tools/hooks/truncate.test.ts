@@ -10,7 +10,7 @@ import { createOutputTruncator } from "./truncate";
 import { persistToolOutputValue, TOOL_OUTPUT_DIR } from "../persist-output";
 import { createTestProjectContext } from "../test-project-context";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__");
+const TMP_DIR = join(import.meta.dir, "__test_tmp__", crypto.randomUUID());
 const OUTPUT_DIR = join(TMP_DIR, "tool-output");
 
 const TEST_SESSION_ID = "test-session";

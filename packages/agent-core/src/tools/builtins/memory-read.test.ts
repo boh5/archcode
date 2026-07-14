@@ -27,7 +27,7 @@ import { createTestProjectContext } from "../test-project-context";
 // Test setup
 // ---------------------------------------------------------------------------
 
-const testDir = join(import.meta.dir, "__test_tmp__", "memory-read");
+const testDir = join(import.meta.dir, "__test_tmp__", "memory-read", crypto.randomUUID());
 const projectDir = join(testDir, "project");
 const userDir = join(testDir, "user");
 const knowledgeDir = join(projectDir, KNOWLEDGE_DIR_NAME);

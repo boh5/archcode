@@ -14,7 +14,7 @@ import { silentLogger } from "../logger";
 import { BUDGET_APPROVAL_POINT, GoalBudgetEnforcementStopError, enforceGoalBudgetAfterStepEnd, enforceGoalBudgetBeforeModelCall } from "./budget-enforcement";
 import type { GoalState } from "./state";
 
-const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-budget-enforcement");
+const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-budget-enforcement", crypto.randomUUID());
 
 let workspaceRoot = "";
 let projectContext: ProjectContext;

@@ -22,8 +22,9 @@ import { createProtectedPathPermission } from "./protected-path";
 import { ProjectApprovalLoadError, ProjectApprovalManager } from "./project-approvals";
 import type { PermissionApprovalScope } from "./policy-types";
 import { createTestProjectContext } from "../test-project-context";
+import { createMockStore } from "../../store/test-helpers";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__", "permission-regression");
+const TMP_DIR = join(import.meta.dir, "__test_tmp__", "permission-regression", crypto.randomUUID());
 const WORKSPACE = join(TMP_DIR, "workspace");
 const OUTSIDE = join(TMP_DIR, "outside");
 
@@ -86,7 +87,7 @@ function resetWorkspace(): void {
 }
 
 function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
-  return { store: storeManager.create(crypto.randomUUID(), WORKSPACE, { agentName: "engineer" }),
+  return { store: createMockStore(),
   toolName: "regression_tool",
   toolCallId: "call-1",
   input: {},

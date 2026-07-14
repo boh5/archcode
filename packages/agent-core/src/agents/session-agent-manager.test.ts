@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { z } from "zod";
 import type { ArchCodeConfig } from "../config/schema";
 import { ModelInfo } from "../provider/model";
@@ -11,10 +11,16 @@ import { ConcurrentSessionLimitError } from "./errors";
 import { engineerAgentDefinition } from "./definitions";
 import { SessionAgentManager } from "./session-agent-manager";
 import { silentLogger } from "../logger";
-import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getSessionPath } from "../store/sessions-dir";
 import { createTestProjectContextResolver } from "./test-project-context-resolver";
+
+const TEST_WORKSPACE_ROOT = join(import.meta.dir, "__test_tmp__", `session-agent-manager-${crypto.randomUUID()}`);
+
+afterAll(async () => {
+  await rm(TEST_WORKSPACE_ROOT, { recursive: true, force: true });
+});
 
 function makeTool(name: string): AnyToolDescriptor {
   return {
@@ -114,53 +120,9 @@ describe("SessionAgentManager", () => {
     await rm(workspaceRoot, { recursive: true, force: true });
   });
 
-  test("rejects a persisted Session cwd outside the project repository", async () => {
-    const root = join(import.meta.dir, "__test_tmp__", `invalid-cwd-${crypto.randomUUID()}`);
-    const projectRoot = join(root, "project");
-    const outside = join(root, "outside");
-    await mkdir(projectRoot, { recursive: true });
-    await mkdir(outside, { recursive: true });
-    const git = Bun.spawn(["git", "init", "--initial-branch=main"], { cwd: projectRoot, stdout: "pipe", stderr: "pipe" });
-    await git.exited;
-    const storeManager = new SessionStoreManager({ logger: silentLogger });
-    const sessionId = crypto.randomUUID();
-    storeManager.create(sessionId, projectRoot, { cwd: outside, agentName: "engineer" });
-    const manager = createManager(4, undefined, storeManager);
-
-    await expect(manager.getOrCreate(projectRoot, sessionId)).rejects.toMatchObject({
-      name: "InvalidSessionCwdError",
-      cwd: outside,
-    });
-    await rm(root, { recursive: true, force: true });
-  });
-
-  test("rejects the canonical checkout through a different persisted path spelling", async () => {
-    const root = join(import.meta.dir, "__test_tmp__", `canonical-cwd-alias-${crypto.randomUUID()}`);
-    const realProjectRoot = join(root, "project-real");
-    const projectRoot = join(root, "project-alias");
-    await mkdir(realProjectRoot, { recursive: true });
-    const git = Bun.spawn(["git", "init", "--initial-branch=main"], {
-      cwd: realProjectRoot,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    await git.exited;
-    await symlink(realProjectRoot, projectRoot, "dir");
-    const storeManager = new SessionStoreManager({ logger: silentLogger });
-    const sessionId = crypto.randomUUID();
-    storeManager.create(sessionId, projectRoot, { cwd: realProjectRoot, agentName: "engineer" });
-    const manager = createManager(4, undefined, storeManager);
-
-    await expect(manager.getOrCreate(projectRoot, sessionId)).rejects.toMatchObject({
-      name: "InvalidSessionCwdError",
-      cwd: realProjectRoot,
-    });
-    await rm(root, { recursive: true, force: true });
-  });
-
   test("enforces per-workspace concurrent session limit", () => {
     const manager = createManager(2);
-    const workspaceRoot = "/tmp/archcode-workspace";
+    const workspaceRoot = TEST_WORKSPACE_ROOT;
 
     manager.acquireSlot(workspaceRoot, "one");
     manager.acquireSlot(workspaceRoot, "two");
@@ -179,7 +141,7 @@ describe("SessionAgentManager", () => {
 
   test("releaseSlot frees capacity for the same workspace", () => {
     const manager = createManager(1);
-    const workspaceRoot = "/tmp/archcode-workspace";
+    const workspaceRoot = TEST_WORKSPACE_ROOT;
 
     manager.acquireSlot(workspaceRoot, "one");
     expect(() => manager.acquireSlot(workspaceRoot, "two")).toThrow(ConcurrentSessionLimitError);
@@ -191,7 +153,7 @@ describe("SessionAgentManager", () => {
 
   test("tombstoned sessions cannot be recreated", async () => {
     const manager = createManager();
-    const workspaceRoot = "/tmp/archcode-workspace";
+    const workspaceRoot = TEST_WORKSPACE_ROOT;
 
     manager.dispose(workspaceRoot, "deleted");
 
@@ -202,7 +164,7 @@ describe("SessionAgentManager", () => {
   test("concurrent getOrCreate returns the same agent instance", async () => {
     const storeManager = new SessionStoreManager({ logger: silentLogger });
     const manager = createManager(4, undefined, storeManager);
-    const workspaceRoot = "/tmp/archcode-workspace";
+    const workspaceRoot = TEST_WORKSPACE_ROOT;
     const sessionId = crypto.randomUUID();
     storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" });
 
@@ -218,7 +180,7 @@ describe("SessionAgentManager", () => {
   test("dispatchCommand waits for an already-pending Agent registration", async () => {
     const storeManager = new SessionStoreManager({ logger: silentLogger });
     const manager = createManager(4, undefined, storeManager);
-    const workspaceRoot = "/tmp/archcode-workspace";
+    const workspaceRoot = TEST_WORKSPACE_ROOT;
     const sessionId = crypto.randomUUID();
     storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" });
 
@@ -234,7 +196,7 @@ describe("SessionAgentManager", () => {
   test("tombstone expiry allows recreating a deleted session", async () => {
     const storeManager = new SessionStoreManager({ logger: silentLogger });
     const manager = createManager(4, 25, storeManager);
-    const workspaceRoot = "/tmp/archcode-workspace";
+    const workspaceRoot = TEST_WORKSPACE_ROOT;
     const sessionId = crypto.randomUUID();
     storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" });
     await storeManager.flushSession(sessionId, workspaceRoot);
@@ -251,7 +213,7 @@ describe("SessionAgentManager", () => {
   test("clearTombstone allows recreating a deleted session", async () => {
     const storeManager = new SessionStoreManager({ logger: silentLogger });
     const manager = createManager(4, undefined, storeManager);
-    const workspaceRoot = "/tmp/archcode-workspace";
+    const workspaceRoot = TEST_WORKSPACE_ROOT;
     const sessionId = crypto.randomUUID();
     storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" });
     await storeManager.flushSession(sessionId, workspaceRoot);

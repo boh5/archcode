@@ -10,7 +10,7 @@ import {
   ProjectApprovalPersistError,
 } from "./project-approvals";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__", "project-approvals");
+const TMP_DIR = join(import.meta.dir, "__test_tmp__", "project-approvals", crypto.randomUUID());
 const WORKSPACE = join(TMP_DIR, "workspace");
 const PERMISSIONS_PATH = join(WORKSPACE, ".archcode", "permissions.json");
 

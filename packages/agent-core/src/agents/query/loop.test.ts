@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { rm } from "node:fs/promises";
 import type { ModelMessage } from "ai";
 import type { StoreApi } from "zustand";
@@ -21,6 +21,13 @@ import { setLlmAdapterForTest } from "../../llm/adapter";
 import { maybeHandleCommand, runQueryLoop } from "./loop";
 import type { BeforeModelBuildContext } from "./loop-hooks";
 import { DOOM_LOOP_MESSAGE, type QueryLoopOptions } from "./types";
+import { sessionFileInternals } from "../../store/helpers";
+import { createFakeRetryScheduler } from "../../testing/fake-retry-scheduler";
+import { createTestTempRoot } from "../../testing/test-temp-root";
+
+const testTempRoot = createTestTempRoot("query-loop");
+const TEST_WORKSPACE_ROOT = testTempRoot.path;
+const realSaveSessionTranscript = sessionFileInternals.saveSessionTranscript;
 
 type StreamTextFn = typeof import("ai").streamText;
 
@@ -124,7 +131,7 @@ function createPermissionBranchRegistry(
 }
 
 function createStore(): StoreApi<SessionStoreState> {
-  return storeManager.create(crypto.randomUUID(), import.meta.dir, { agentName: "engineer" });
+  return storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, { agentName: "engineer" });
 }
 
 function captureEvents(store: StoreApi<SessionStoreState>): SessionEventPayload[] {
@@ -155,7 +162,7 @@ function autoInjectReminder(id = "reminder-1", createdAt = Date.now()): Reminder
 }
 
 function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOptions {
-  const workspaceRoot = import.meta.dir;
+  const workspaceRoot = TEST_WORKSPACE_ROOT;
   return { modelInfo: dummyModelInfo,
   logger: silentLogger,
   toolRegistry: createRegistry(),
@@ -252,7 +259,19 @@ function streamCallOptions(fn: ReturnType<typeof createMockStreamText>, callInde
 }
 
 beforeEach(() => {
+  sessionFileInternals.saveSessionTranscript = async () => {};
   createMockStreamText([{ text: "default" }]);
+});
+
+afterEach(async () => {
+  await Bun.sleep(0);
+  sessionFileInternals.saveSessionTranscript = realSaveSessionTranscript;
+  storeManager.clearAll();
+});
+
+afterAll(async () => {
+  sessionFileInternals.saveSessionTranscript = realSaveSessionTranscript;
+  await testTempRoot.cleanup();
 });
 
 describe("runQueryLoop store-source-of-truth behavior", () => {
@@ -778,7 +797,8 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
   });
 
   test("permission ask without legacy callback pauses for durable Session HITL", async () => {
-    const workspaceRoot = `${import.meta.dir}/__test_tmp__/durable-permission-${crypto.randomUUID()}`;
+    sessionFileInternals.saveSessionTranscript = realSaveSessionTranscript;
+    const workspaceRoot = `${TEST_WORKSPACE_ROOT}/durable-permission-${crypto.randomUUID()}`;
     const durable = await createDurableTestSessionContext(workspaceRoot);
     const { store, projectContext, storeManager: durableStoreManager } = durable;
     const events = captureEvents(store);
@@ -1938,10 +1958,9 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
   });
 
   test("partial-output recovery waits before retrying", async () => {
-    const callTimes: number[] = [];
+    const scheduler = createFakeRetryScheduler(1_000);
     const fn = mock((_: Parameters<StreamTextFn>[0]) => {
-      callTimes.push(Date.now());
-      const callIndex = callTimes.length;
+      const callIndex = fn.mock.calls.length;
       return {
         fullStream: (async function* () {
           if (callIndex === 1) {
@@ -1958,10 +1977,10 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     });
     setLlmAdapterForTest({ streamText: fn as unknown as StreamTextFn });
 
-    await runQueryLoop(makeOptions(), "Hi");
+    await runQueryLoop(makeOptions(), "Hi", scheduler);
 
     expect(fn).toHaveBeenCalledTimes(2);
-    expect(callTimes[1]! - callTimes[0]!).toBeGreaterThanOrEqual(20);
+    expect(scheduler.sleeps).toEqual([25]);
   });
 
   test("emits recovery-failed after non-retryable failure following recovery attempts", async () => {

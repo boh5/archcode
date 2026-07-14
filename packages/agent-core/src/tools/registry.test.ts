@@ -4,7 +4,7 @@ import { rmSync } from "node:fs";
 
 import { z } from "zod";
 import { SkillService } from "../skills";
-import { createSessionStore, storeManager } from "../store/store";
+import { storeManager } from "../store/store";
 import { createRegistry } from "./registry";
 import type { ToolRegistry } from "./registry";
 import { ResolvedToolSet } from "./registry";
@@ -30,6 +30,11 @@ import { jsonSchema } from "ai";
 import { SessionHitlPause } from "../execution/session-hitl-pause";
 import { createTestProjectContext } from "./test-project-context";
 
+const TEST_TEMP_ROOT = join(import.meta.dir, "__test_tmp__", `registry-${crypto.randomUUID()}`);
+
+afterAll(() => {
+  rmSync(TEST_TEMP_ROOT, { recursive: true, force: true });
+});
 
 // ─── Test helpers ───
 
@@ -1008,7 +1013,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
         operation: "danger",
       };
       const manager = new ProjectApprovalManager(silentLogger);
-      const workspaceRoot = join(import.meta.dir, "__test_tmp__", `approval-deny-${crypto.randomUUID()}`);
+      const workspaceRoot = join(TEST_TEMP_ROOT, `approval-deny-${crypto.randomUUID()}`);
       await manager.load(workspaceRoot);
       await manager.addApproval(scope, { display: "Existing approval", reason: "already trusted" });
       registry.register({
@@ -1040,7 +1045,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
         path: "notes.md",
         pathMode: "exact",
       };
-      const workspaceRoot = join(import.meta.dir, "__test_tmp__", `approval-prompt-${crypto.randomUUID()}`);
+      const workspaceRoot = join(TEST_TEMP_ROOT, `approval-prompt-${crypto.randomUUID()}`);
       const manager = new ProjectApprovalManager(silentLogger);
       await manager.load(workspaceRoot);
       registry.register({
@@ -1082,7 +1087,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
         normalized: "curl https://example.com?api_key=sk-1234567890",
         effects: ["network"],
       };
-      const workspaceRoot = join(import.meta.dir, "__test_tmp__", `approval-redaction-${crypto.randomUUID()}`);
+      const workspaceRoot = join(TEST_TEMP_ROOT, `approval-redaction-${crypto.randomUUID()}`);
       const manager = new ProjectApprovalManager(silentLogger);
       await manager.load(workspaceRoot);
       registry.register({
@@ -1123,7 +1128,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
         origin: "https://example.com",
       };
       const manager = new ProjectApprovalManager(silentLogger);
-      const workspaceRoot = join(import.meta.dir, "__test_tmp__", `approval-match-${crypto.randomUUID()}`);
+      const workspaceRoot = join(TEST_TEMP_ROOT, `approval-match-${crypto.randomUUID()}`);
       await manager.load(workspaceRoot);
       await manager.addApproval(scope, { display: "Fetch example.com", reason: "trusted origin" });
       const desc = makeSpiedDescriptor("echo");
@@ -1147,7 +1152,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
 
     test("ineligible ask passes no persistent scope and approve always is not persisted", async () => {
       const manager = new ProjectApprovalManager(silentLogger);
-      const workspaceRoot = join(import.meta.dir, "__test_tmp__", `approval-ineligible-${crypto.randomUUID()}`);
+      const workspaceRoot = join(TEST_TEMP_ROOT, `approval-ineligible-${crypto.randomUUID()}`);
       await manager.load(workspaceRoot);
       registry.register({
         ...makeDescriptor("echo"),
@@ -1183,7 +1188,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
         effects: ["execute-code"],
       };
       const manager = new ProjectApprovalManager(silentLogger);
-      const workspaceRoot = join(import.meta.dir, "__test_tmp__", `approval-persist-${crypto.randomUUID()}`);
+      const workspaceRoot = join(TEST_TEMP_ROOT, `approval-persist-${crypto.randomUUID()}`);
       await manager.load(workspaceRoot);
       registry.register({
         ...makeDescriptor("echo"),
@@ -1280,12 +1285,12 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
     test("ask decision without confirmation callback pauses for durable Session HITL", async () => {
       registry.register(makeDescriptor("echo"));
       registry.globalPermissions.push(async () => ({ outcome: "ask", reason: "confirm" }));
-      const workspaceRoot = join(import.meta.dir, "__test_tmp__", `permission-pause-${crypto.randomUUID()}`);
+      const workspaceRoot = join(TEST_TEMP_ROOT, `permission-pause-${crypto.randomUUID()}`);
       const sessionId = crypto.randomUUID();
       const ctx = makeContext({
         cwd: workspaceRoot,
         agentName: "engineer",
-        store: createSessionStore(sessionId, workspaceRoot),
+        store: storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" }),
         projectContext: await makeLoadedProjectContext(workspaceRoot),
       });
 
@@ -1299,6 +1304,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
         expect(error.record.source).toEqual({ type: "tool_permission", sessionId, toolCallId: "call-1", toolName: "echo" });
         expect(ctx.permissionOutcome).toBe("ask");
       }
+      await storeManager.flushSession(sessionId, workspaceRoot);
     });
 
     test("confirmation rejection returns failed permission result", async () => {
@@ -1420,14 +1426,14 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       const desc = makeSpiedDescriptor("sensitiveReadTool");
       desc.permissions = [async () => ({ outcome: "ask", reason: "confirm sensitive read" })];
       registry.register(desc);
-      const workspaceRoot = join(import.meta.dir, "__test_tmp__", `permission-sensitive-pause-${crypto.randomUUID()}`);
+      const workspaceRoot = join(TEST_TEMP_ROOT, `permission-sensitive-pause-${crypto.randomUUID()}`);
       const sessionId = crypto.randomUUID();
       const ctx = makeContext({
         toolName: "sensitiveReadTool",
         allowedTools: new Set(["sensitiveReadTool"]),
         cwd: workspaceRoot,
         agentName: "engineer",
-        store: createSessionStore(sessionId, workspaceRoot),
+        store: storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" }),
         projectContext: await makeLoadedProjectContext(workspaceRoot),
       });
 
@@ -1441,6 +1447,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
         expect(ctx.permissionOutcome).toBe("ask");
         expect(desc.execute).not.toHaveBeenCalled();
       }
+      await storeManager.flushSession(sessionId, workspaceRoot);
     });
 
     test("prepareInput failure returns TOOL_PREPARE_INPUT_FAILED and runs global after", async () => {
@@ -1737,7 +1744,7 @@ describe("createRegistry()", () => {
 // ─── Hook Integration with Registry ───
 
 describe("hook integration with registry", () => {
-  const tmpRoot = join(import.meta.dir, "__test_tmp__");
+  const tmpRoot = join(TEST_TEMP_ROOT, "redaction-order");
 
   afterAll(() => {
     rmSync(tmpRoot, { recursive: true, force: true });
@@ -2116,13 +2123,13 @@ describe("Permission API contract — registry", () => {
         },
       };
       registry.register(desc);
-      const workspaceRoot = join(import.meta.dir, "__test_tmp__", `permission-outcome-ask-${crypto.randomUUID()}`);
+      const workspaceRoot = join(TEST_TEMP_ROOT, `permission-outcome-ask-${crypto.randomUUID()}`);
       const sessionId = crypto.randomUUID();
 
       const ctx = makeContext({
         cwd: workspaceRoot,
         agentName: "engineer",
-        store: createSessionStore(sessionId, workspaceRoot),
+        store: storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" }),
         projectContext: await makeLoadedProjectContext(workspaceRoot),
       });
       try {
@@ -2133,6 +2140,7 @@ describe("Permission API contract — registry", () => {
       }
 
       expect(ctx.permissionOutcome).toBe("ask");
+      await storeManager.flushSession(sessionId, workspaceRoot);
     });
   });
 

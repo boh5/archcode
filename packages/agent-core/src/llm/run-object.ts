@@ -29,7 +29,10 @@ export async function runLlmObject<T>(input: LlmObjectInput<T>): Promise<T> {
       tools,
       toolChoice: { type: "tool", toolName },
       ...callOptions,
-    }), "LLM object generation", undefined, { abortSignal: input.abortSignal });
+    }), "LLM object generation", undefined, {
+      abortSignal: input.abortSignal,
+      retryScheduler: input.retryScheduler,
+    });
 
     try {
       return parseObjectResult(result.toolCalls, toolName, input.schema);

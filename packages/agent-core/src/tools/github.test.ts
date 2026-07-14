@@ -22,7 +22,7 @@ import { SkillService } from "../skills";
 import { silentLogger } from "../logger";
 import type { GitHubConnectorApi, GitHubResponse, GitHubWorkflowRunsPage } from "../integrations/github";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__", "github-tools");
+const TMP_DIR = join(import.meta.dir, "__test_tmp__", "github-tools", crypto.randomUUID());
 const storeManager = new SessionStoreManager({ logger: silentLogger });
 const CONNECTOR_COVERAGE_BRANCH = "feature/connector-coverage";
 

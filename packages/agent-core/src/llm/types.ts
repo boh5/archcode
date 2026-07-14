@@ -3,6 +3,7 @@ import type { LanguageModelV3 } from "@ai-sdk/provider";
 import type { ModelMessage, StreamTextResult, ToolSet } from "ai";
 import type { ModelCallOptions } from "../config/provider";
 import type { Logger } from "../logger";
+import type { RetryScheduler } from "./retry";
 
 export interface LlmStreamInput<TTools extends ToolSet = ToolSet> {
   model: LanguageModelV3;
@@ -23,6 +24,7 @@ export interface LlmTextInput {
   abortSignal?: AbortSignal;
   modelOptions?: ModelCallOptions;
   logger?: Logger;
+  retryScheduler?: RetryScheduler;
 }
 
 export interface LlmTextResult {
@@ -37,6 +39,7 @@ export interface LlmObjectInput<T> {
   abortSignal?: AbortSignal;
   modelOptions?: ModelCallOptions;
   logger?: Logger;
+  retryScheduler?: RetryScheduler;
   /** Schema name used in tool definition (defaults to "result") */
   schemaName?: string;
   /** Schema description used in tool definition */

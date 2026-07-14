@@ -3,7 +3,7 @@ import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { atomicWrite, isContained, resolveContainedPath } from "./safe-file";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__", "safe-file");
+const TMP_DIR = join(import.meta.dir, "__test_tmp__", "safe-file", crypto.randomUUID());
 
 beforeEach(async () => {
   await rm(TMP_DIR, { recursive: true, force: true }).catch(() => {});

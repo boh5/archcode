@@ -12,7 +12,7 @@ import { GoalHitlResumeAdapter } from "./hitl-resume-adapter";
 import { withGoalExecutionClaimLock } from "./execution-claim";
 import { GoalStateError, GoalStateManager } from "./state";
 
-const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-hitl-integration");
+const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-hitl-integration", crypto.randomUUID());
 
 let workspaceRoot = "";
 let manager: GoalStateManager;
@@ -115,7 +115,7 @@ async function waitForGoal(goalId: string, predicate: (goal: GoalState) => boole
   throw new Error("Timed out waiting for Goal state");
 }
 
-describe("Goal HITL resume integration", () => {
+describe("Goal HITL resume", () => {
   test("notifies continuation after an approved Goal blocker is durably applied", async () => {
     const hitlService = createHitlService();
     const onGoalStateChanged = mock(() => undefined);

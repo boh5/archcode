@@ -282,6 +282,10 @@ describe("monorepo package boundaries", () => {
       expectNoViolations(findViolations("packages/agent-core/src", agentCoreForbiddenPatterns));
     });
 
+    test("agent-core production code does not depend on test helpers", () => {
+      expectNoViolations(findViolations("packages/agent-core/src", [/^testing(\/|$)/, /packages\/agent-core\/src\/testing(\/|$)/]));
+    });
+
     test("server has no web/react dependencies", () => {
       expectNoViolations(findViolations("apps/server/src", serverForbiddenPatterns, serverAllowedExceptions));
     });

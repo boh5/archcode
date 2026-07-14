@@ -35,6 +35,20 @@ const hardCompactContractFiles = [
   "packages/protocol/src/types.ts",
 ] as const;
 
+const architectureProseRoots = [
+  "apps",
+  "packages",
+  "scripts",
+  "design",
+  "docs",
+] as const;
+
+const architectureProseRootFiles = [
+  "AGENTS.md",
+  "README.md",
+  "CONTRIBUTING.md",
+] as const;
+
 function findFiles(dir: string, predicate: (entry: string) => boolean): string[] {
   if (!existsSync(dir)) return [];
   const files: string[] = [];
@@ -115,7 +129,10 @@ describe("compression architecture terminology", () => {
 
   test("architecture prose avoids banned compression wording", () => {
     const docsAndSources = [
-      ...findFiles(projectRoot, (entry) => /\.(md|ts|tsx)$/.test(entry)),
+      ...architectureProseRootFiles.map((file) => join(projectRoot, file)),
+      ...architectureProseRoots.flatMap((root) => (
+        findFiles(join(projectRoot, root), (entry) => /\.(md|ts|tsx)$/.test(entry))
+      )),
     ].filter((file) => {
       const relative = relativeFile(file);
       if (relative === "packages/agent-core/src/__arch__/compression-terminology.test.ts") return false;

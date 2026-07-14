@@ -39,6 +39,7 @@ export function createMemoryConsolidationTask(
         const result = await runLlmObject({
           model: ctx.modelInfo.model,
           modelOptions: ctx.modelOptions,
+          retryScheduler: ctx.retryScheduler,
           schema: MemoryConsolidationResultSchema,
           prompt: `You are a memory consolidation system. Reorganize the following memory index to be more concise and remove duplicates.
 

@@ -1,4 +1,5 @@
-import { describe, it, expect, afterAll } from "bun:test";
+import { describe, it, expect, afterAll, beforeAll } from "bun:test";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import type { Disposable } from "vscode-jsonrpc";
 import {
@@ -7,6 +8,13 @@ import {
   createMessageConnection,
 } from "vscode-jsonrpc";
 import { DEFAULT_FAKE_LSP_CONFIG } from "./fake-server";
+import { createTestTempRoot } from "../testing/test-temp-root";
+
+const testTempRoot = createTestTempRoot("lsp-compat-spike");
+
+beforeAll(async () => {
+  await mkdir(testTempRoot.path, { recursive: true });
+});
 
 function adaptReader(stream: ReadableStream<Uint8Array>): RALReadable {
   const r = stream.getReader();
@@ -61,7 +69,7 @@ interface RALWritable {
 let child: ReturnType<typeof Bun.spawn> | undefined;
 let connection: ReturnType<typeof createMessageConnection> | undefined;
 
-afterAll(() => {
+afterAll(async () => {
   if (connection) {
     try { connection.end(); } catch {}
   }
@@ -69,12 +77,14 @@ afterAll(() => {
     child.kill();
     child = undefined;
   }
+  await testTempRoot.cleanup();
 });
 
 describe("vscode-jsonrpc compatibility spike", () => {
   it("can spawn fake server, send initialize, and receive response", async () => {
     const serverPath = path.join(import.meta.dir, "fake-server.ts");
     child = Bun.spawn(["bun", "run", serverPath], {
+      cwd: testTempRoot.path,
       stdin: "pipe",
       stdout: "pipe",
       stderr: "inherit",

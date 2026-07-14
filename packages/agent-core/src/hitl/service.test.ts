@@ -9,7 +9,7 @@ import { SessionStoreManager } from "../store/session-store-manager";
 import { getSessionHitlPath } from "../store/sessions-dir";
 import { HitlService, type HitlServiceOptions } from "./service";
 
-const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "service");
+const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "service", crypto.randomUUID());
 
 describe("HitlService owner-local storage", () => {
   beforeEach(async () => {

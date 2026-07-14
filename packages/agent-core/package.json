@@ -10,7 +10,10 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "bun test --max-concurrency=1"
+    "test": "bun run test:unit && bun run test:integration && bun run test:arch",
+    "test:unit": "bun test --parallel=4 --path-ignore-patterns='**/*.integration.test.ts' --path-ignore-patterns='**/__arch__/**'",
+    "test:integration": "bun test --isolate .integration.test.ts",
+    "test:arch": "bun test --isolate ./src/__arch__"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^2.0.45",

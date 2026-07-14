@@ -8,8 +8,12 @@ import { SessionStoreManager } from "./session-store-manager";
 import { silentLogger } from "../logger";
 import { __setSessionsDirForTest } from "./sessions-dir";
 import { COMPRESSION_SUMMARY_SECTION_NAMES } from "../compression";
+import { sessionFileInternals } from "./helpers";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__", "store");
+const TMP_DIR = join(import.meta.dir, "__test_tmp__", "store", crypto.randomUUID());
+const sessionIds = new Set<string>();
+const realSaveSessionTranscript = sessionFileInternals.saveSessionTranscript;
+let usesInMemoryPersistence = false;
 
 beforeEach(async () => {
   storeManager.clearAll();
@@ -17,21 +21,33 @@ beforeEach(async () => {
   await mkdir(TMP_DIR, { recursive: true });
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await Promise.all([...sessionIds].map((sessionId) => storeManager.flushSession(sessionId, TMP_DIR)));
+  if (usesInMemoryPersistence) {
+    sessionFileInternals.saveSessionTranscript = realSaveSessionTranscript;
+    usesInMemoryPersistence = false;
+  }
+  sessionIds.clear();
+  storeManager.clearAll();
   __setSessionsDirForTest(undefined);
 });
 
 afterAll(async () => {
+  sessionFileInternals.saveSessionTranscript = realSaveSessionTranscript;
   __setSessionsDirForTest(undefined);
   await rm(TMP_DIR, { recursive: true, force: true });
 });
 
 function uniqueSessionId(label: string): string {
   void label;
-  return crypto.randomUUID();
+  const sessionId = crypto.randomUUID();
+  sessionIds.add(sessionId);
+  return sessionId;
 }
 
 function createFreshStore(label: string) {
+  usesInMemoryPersistence = true;
+  sessionFileInternals.saveSessionTranscript = async () => {};
   return storeManager.create(uniqueSessionId(label), TMP_DIR, { agentName: "engineer" });
 }
 

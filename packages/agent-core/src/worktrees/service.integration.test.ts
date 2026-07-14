@@ -1,23 +1,24 @@
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { mkdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 import { createProcessRunner } from "../process/runner";
 import type { ProcessRunner, ProcessRunnerInput } from "../process/types";
+import { createTestTempRoot, type TestTempRoot } from "../testing/test-temp-root";
 import { managedWorktreeNames, WorktreeService } from "./service";
 
-// A full test run may overlap with another validation process in the shared
-// checkout. Keep this module instance isolated so its cleanup cannot delete a
-// repository while another process is running Git inside it.
-const TMP_DIR = join(import.meta.dir, "__test_tmp__", `worktree-service-${crypto.randomUUID()}`);
+const gitRunner = createProcessRunner();
+let testTempRoot: TestTempRoot;
+let TMP_DIR: string;
 
 beforeEach(async () => {
-  await rm(TMP_DIR, { recursive: true, force: true });
-  await mkdir(TMP_DIR, { recursive: true });
+  testTempRoot = createTestTempRoot("worktree-service");
+  await mkdir(testTempRoot.path, { recursive: true });
+  TMP_DIR = await realpath(testTempRoot.path);
 });
 
-afterAll(async () => {
-  await rm(TMP_DIR, { recursive: true, force: true });
+afterEach(async () => {
+  await testTempRoot.cleanup();
 });
 
 describe("WorktreeService", () => {
@@ -89,28 +90,6 @@ describe("WorktreeService", () => {
     await expect(service.validate(existingPath(otherRepo))).rejects.toMatchObject({
       name: "WorktreeServiceError",
       code: "DIFFERENT_REPOSITORY",
-    });
-  });
-
-  test("validates a persisted managed claim when HEAD descends from its recorded base", async () => {
-    const repo = await createGitRepo("validate-managed-claim");
-    const service = new WorktreeService({ canonicalRoot: repo });
-    const created = await service.create({ owner: { type: "goal", id: "goal-claim-descendant" } });
-    await writeFile(join(created.worktreePath, "committed.txt"), "descendant\n");
-    await git(created.worktreePath, ["add", "committed.txt"]);
-    await git(created.worktreePath, ["commit", "-m", "descendant commit"]);
-    await writeFile(join(created.worktreePath, "dirty.txt"), "dirty retry state\n");
-
-    await expect(service.validateManagedClaim({
-      path: created.worktreePath,
-      branchName: created.branchName,
-      mode: "persisted",
-      baseSha: created.baseSha,
-    })).resolves.toMatchObject({
-      worktree: { path: created.worktreePath, branchName: created.branchName, isManaged: true },
-      status: { dirty: true },
-      headSha: await git(created.worktreePath, ["rev-parse", "HEAD"]),
-      baseSha: created.baseSha,
     });
   });
 
@@ -620,29 +599,24 @@ async function createGitRepo(name: string): Promise<string> {
 }
 
 async function git(cwd: string, args: readonly string[]): Promise<string> {
-  const proc = Bun.spawn(["git", ...args], {
+  const result = await gitRunner.run({
+    argv: ["git", ...args],
     cwd,
-    stdout: "pipe",
-    stderr: "pipe",
     env: { ...Bun.env, GIT_TERMINAL_PROMPT: "0" },
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-  if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${stderr}`);
-  return stdout.trim();
+  if (result.kind !== "success") {
+    throw new Error(`git ${args.join(" ")} failed (${result.kind}): ${"output" in result ? result.output.stderr : result.error.message}`);
+  }
+  return result.output.stdout.trim();
 }
 
 async function gitExitCode(cwd: string, args: readonly string[]): Promise<number> {
-  const proc = Bun.spawn(["git", ...args], {
+  const result = await gitRunner.run({
+    argv: ["git", ...args],
     cwd,
-    stdout: "ignore",
-    stderr: "ignore",
     env: { ...Bun.env, GIT_TERMINAL_PROMPT: "0" },
   });
-  return await proc.exited;
+  return "exitCode" in result && typeof result.exitCode === "number" ? result.exitCode : -1;
 }
 
 function isGitInvocation(input: ProcessRunnerInput, ...args: string[]): boolean {

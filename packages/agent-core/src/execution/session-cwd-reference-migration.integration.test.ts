@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { silentLogger } from "../logger";
@@ -8,21 +8,27 @@ import type { ProcessRunner } from "../process/types";
 import { SessionCwdPathBarrierError, SessionCwdReferenceScanError } from "../store/errors";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { getSessionDir, getSessionPath } from "../store/sessions-dir";
+import { createTestTempRoot } from "../testing/test-temp-root";
 import { WorktreeService } from "../worktrees";
 import { SessionCwdReferenceMigrationService } from "./session-cwd-reference-migration";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__", "session-cwd-reference-migration");
-const PROJECT_ROOT = join(TMP_DIR, "project");
-const WORKTREE_ROOT = join(TMP_DIR, "project.worktrees", "loop-retry");
+const testTempRoot = createTestTempRoot("session-cwd-reference-migration");
+let TMP_DIR = testTempRoot.path;
+let PROJECT_ROOT = join(TMP_DIR, "project");
+let WORKTREE_ROOT = join(TMP_DIR, "project.worktrees", "loop-retry");
 
 beforeEach(async () => {
   await rm(TMP_DIR, { recursive: true, force: true }).catch(() => {});
+  await mkdir(testTempRoot.path, { recursive: true });
+  TMP_DIR = await realpath(testTempRoot.path);
+  PROJECT_ROOT = join(TMP_DIR, "project");
+  WORKTREE_ROOT = join(TMP_DIR, "project.worktrees", "loop-retry");
   await mkdir(PROJECT_ROOT, { recursive: true });
   await mkdir(WORKTREE_ROOT, { recursive: true });
 });
 
 afterAll(async () => {
-  await rm(TMP_DIR, { recursive: true, force: true }).catch(() => {});
+  await testTempRoot.cleanup().catch(() => {});
 });
 
 describe("SessionCwdReferenceMigrationService", () => {
