@@ -1,6 +1,7 @@
 import type { HitlResponse } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 
+import { toDurableToolInput } from "../store/durable-tool-input";
 import type { SessionStoreManager } from "../store/session-store-manager";
 import type {
   SessionStoreState,
@@ -91,7 +92,7 @@ export class SessionToolBatchScheduler {
           partitionIndex: partitionIndexByCall.get(call.toolCallId) ?? ordinal,
           toolCallId: call.toolCallId,
           toolName: call.toolName,
-          input: call.input,
+          input: toDurableToolInput(call.input),
           traits: descriptor?.traits ?? { readOnly: false, destructive: false, concurrencySafe: false },
           state: "queued" as const,
           attempt: 0,

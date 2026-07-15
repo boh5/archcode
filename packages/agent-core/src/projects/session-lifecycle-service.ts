@@ -10,16 +10,21 @@ import type { SessionStoreManager } from "../store/session-store-manager";
 export interface SessionLifecycleServiceOptions {
   readonly storeManager: SessionStoreManager;
   readonly cancelSessionToolBatch: CancelSessionToolBatch;
+  readonly findProjectTodoOwners: (
+    input: SessionDeletionPreflightInput,
+  ) => Promise<readonly SessionDeletionOwnerDetail[]>;
 }
 
 /** Session deletion policy kept outside the generic execution manager. */
 export class SessionLifecycleService implements SessionDeletionLifecycle {
   readonly #storeManager: SessionStoreManager;
   readonly #cancelSessionToolBatch: CancelSessionToolBatch;
+  readonly #findProjectTodoOwners: SessionLifecycleServiceOptions["findProjectTodoOwners"];
 
   constructor(options: SessionLifecycleServiceOptions) {
     this.#storeManager = options.storeManager;
     this.#cancelSessionToolBatch = options.cancelSessionToolBatch;
+    this.#findProjectTodoOwners = options.findProjectTodoOwners;
   }
 
   async assertDeletable(input: SessionDeletionPreflightInput): Promise<void> {
@@ -35,6 +40,11 @@ export class SessionLifecycleService implements SessionDeletionLifecycle {
         owners.push({ sessionId, ownerType: "goal", ownerId: state.goalId });
       }
     }
+
+    owners.push(...await this.#findProjectTodoOwners({
+      ...input,
+      sessionIds: [...new Set([input.rootSessionId, ...input.sessionIds])].sort(),
+    }));
 
     if (owners.length > 0) throw new SessionDeleteOwnerConflictError(owners);
   }

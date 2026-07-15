@@ -551,6 +551,7 @@ describe("archcodeConfigSchema with mcp", () => {
       reviewer: { model: "p:m" },
       explore: { model: "p:m" },
       librarian: { model: "p:m" },
+      shaper: { model: "p:m" },
     },
   };
 

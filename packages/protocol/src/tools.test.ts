@@ -21,6 +21,7 @@ import {
   TOOL_GITHUB_RERUN_WORKFLOW_RUN,
   TOOL_BASH,
   TOOL_TODO_WRITE,
+  TOOL_PROJECT_TODO_UPDATE,
   TOOL_ASK_USER,
   TOOL_LSP_DIAGNOSTICS,
   TOOL_LSP_GOTO_DEFINITION,
@@ -66,6 +67,7 @@ const ALL_BUILTIN_NAMES = [
   TOOL_GITHUB_RERUN_WORKFLOW_RUN,
   TOOL_BASH,
   TOOL_TODO_WRITE,
+  TOOL_PROJECT_TODO_UPDATE,
   TOOL_ASK_USER,
   TOOL_LSP_DIAGNOSTICS,
   TOOL_LSP_GOTO_DEFINITION,
@@ -109,6 +111,7 @@ describe("tool name constants", () => {
     expect(TOOL_GITHUB_RERUN_WORKFLOW_RUN).toBe("github_rerun_workflow_run");
     expect(TOOL_BASH).toBe("bash");
     expect(TOOL_TODO_WRITE).toBe("todo_write");
+    expect(TOOL_PROJECT_TODO_UPDATE).toBe("project_todo_update");
     expect(TOOL_ASK_USER).toBe("ask_user");
     expect(TOOL_LSP_DIAGNOSTICS).toBe("lsp_diagnostics");
     expect(TOOL_LSP_GOTO_DEFINITION).toBe("lsp_goto_definition");
@@ -167,6 +170,7 @@ describe("TOOL_CATEGORY_MAP", () => {
     expect(TOOL_CATEGORY_MAP[TOOL_GITHUB_CREATE_ISSUE_COMMENT]).toBe("git");
     expect(TOOL_CATEGORY_MAP[TOOL_GITHUB_RERUN_WORKFLOW_RUN]).toBe("git");
     expect(TOOL_CATEGORY_MAP[TOOL_BASH]).toBe("shell");
+    expect(TOOL_CATEGORY_MAP[TOOL_PROJECT_TODO_UPDATE]).toBe("interaction");
     expect(TOOL_CATEGORY_MAP[TOOL_WEB_FETCH]).toBe("web");
     expect(TOOL_CATEGORY_MAP[TOOL_SKILL_LIST]).toBe("skill");
     expect(TOOL_CATEGORY_MAP[TOOL_MEMORY_READ]).toBe("memory");

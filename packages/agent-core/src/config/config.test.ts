@@ -46,11 +46,12 @@ const VALID_CONFIG_WITH_AGENTS = {
     reviewer: { model: "xxx:gpt-5.2" },
     explore: { model: "xxx:gpt-5.2" },
     librarian: { model: "xxx:gpt-5.2" },
+    shaper: { model: "xxx:gpt-5.2" },
   },
 };
 
 describe("parseConfig", () => {
-  test("parses a valid config with all 7 required agents", () => {
+  test("parses a valid config with all 8 required agents", () => {
     const config = parseConfig(VALID_CONFIG_WITH_AGENTS);
     expect(config.provider).toBeDefined();
     expect(config.provider["xxx"].name).toBe("xxx");
@@ -63,6 +64,7 @@ describe("parseConfig", () => {
     expect(config.agents.reviewer.model).toBe("xxx:gpt-5.2");
     expect(config.agents.explore.model).toBe("xxx:gpt-5.2");
     expect(config.agents.librarian.model).toBe("xxx:gpt-5.2");
+    expect(config.agents.shaper.model).toBe("xxx:gpt-5.2");
   });
 
   test("rejects the removed $schema field", () => {
@@ -293,7 +295,7 @@ describe("parseConfig", () => {
     expect(() => parseConfig(agent)).toThrow(ConfigValidationError);
   });
 
-  test("parses config with all 7 agents and per-agent options", () => {
+  test("parses config with all 8 agents and per-agent options", () => {
     const config = {
       ...VALID_CONFIG_WITH_AGENTS,
       agents: {
@@ -311,6 +313,7 @@ describe("parseConfig", () => {
           options: { temperature: 0.5 },
         },
         librarian: { model: "xxx:gpt-5.2" },
+        shaper: { model: "xxx:gpt-5.2" },
       },
     };
     const parsed = parseConfig(config);
@@ -325,6 +328,7 @@ describe("parseConfig", () => {
     expect(parsed.agents.build.model).toBe("xxx:gpt-5.2");
     expect(parsed.agents.reviewer.model).toBe("xxx:gpt-5.2");
     expect(parsed.agents.librarian.model).toBe("xxx:gpt-5.2");
+    expect(parsed.agents.shaper.model).toBe("xxx:gpt-5.2");
   });
 
   test("memory config is optional", () => {
@@ -444,6 +448,7 @@ describe("parseConfig", () => {
         // reviewer is missing
         explore: { model: "xxx:gpt-5.2" },
         librarian: { model: "xxx:gpt-5.2" },
+        shaper: { model: "xxx:gpt-5.2" },
       },
     };
     try {
@@ -453,6 +458,18 @@ describe("parseConfig", () => {
       expect(error).toBeInstanceOf(ConfigValidationError);
       const message = (error as ConfigValidationError).message;
       expect(message).toContain("reviewer");
+    }
+  });
+
+  test("rejects config missing required shaper without a model fallback", () => {
+    const { shaper: _, ...agents } = VALID_CONFIG_WITH_AGENTS.agents;
+
+    try {
+      parseConfig({ ...VALID_CONFIG_WITH_AGENTS, agents });
+      throw new Error("Expected parseConfig to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConfigValidationError);
+      expect((error as ConfigValidationError).message).toContain("shaper");
     }
   });
 

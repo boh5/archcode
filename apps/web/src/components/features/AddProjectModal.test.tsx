@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { DirectoryEntry } from "../../api/types";
+import type { DirectoryEntry, Project } from "../../api/types";
 
 interface ElementLike {
   type?: unknown;
@@ -224,6 +224,26 @@ describe("AddProjectModal", () => {
 
     expect(addProjectMutate.mock.calls[0]?.[0]).toEqual({ path: "/workspace/archcode" });
     expect("name" in (addProjectMutate.mock.calls[0]?.[0] as Record<string, unknown>)).toBe(false);
+  });
+
+  test("redirects a successfully registered project to its Todos page", () => {
+    const tree = renderWithState(["", "", "/workspace/archcode", -1]);
+    const submit = findAll(
+      tree,
+      (element) => element.type === "button" && textContent(element).includes("Add Project"),
+    )[0];
+    (submit?.props?.onClick as () => void)();
+
+    const options = addProjectMutate.mock.calls[0]?.[1] as { onSuccess: (project: Project) => void };
+    options.onSuccess({
+      slug: "archcode",
+      name: "ArchCode",
+      workspaceRoot: "/workspace/archcode",
+      addedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    expect(navigate).toHaveBeenCalledWith("/projects/archcode/todos");
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   test("manages directory selection from click, input change, Enter, and Tab", () => {

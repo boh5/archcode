@@ -7,6 +7,7 @@ import type { GoalCancellationCapability } from "../goals/cancellation";
 import type { ProjectHitlQueue } from "../hitl";
 import type { MemoryFileManager } from "../memory/file-manager";
 import type { ProjectApprovalManager } from "../tools/permission/project-approvals";
+import type { ProjectTodoService } from "../todos";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -32,6 +33,7 @@ export interface ProjectContext {
     readonly action: AutomationAction;
     readonly createdFromSessionId: string;
   }): Promise<Automation>;
+  todos: ProjectTodoService;
   goalCancellation: GoalCancellationCapability;
   hitl: ProjectHitlQueue;
   memory: MemoryFileManager;

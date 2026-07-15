@@ -36,6 +36,7 @@ export const TOOL_BASH = "bash";
 
 // Interaction
 export const TOOL_TODO_WRITE = "todo_write";
+export const TOOL_PROJECT_TODO_UPDATE = "project_todo_update";
 export const TOOL_ASK_USER = "ask_user";
 
 // LSP
@@ -93,6 +94,7 @@ export type BuiltinToolName =
   | typeof TOOL_GITHUB_RERUN_WORKFLOW_RUN
   | typeof TOOL_BASH
   | typeof TOOL_TODO_WRITE
+  | typeof TOOL_PROJECT_TODO_UPDATE
   | typeof TOOL_ASK_USER
   | typeof TOOL_LSP_DIAGNOSTICS
   | typeof TOOL_LSP_GOTO_DEFINITION
@@ -154,6 +156,7 @@ export const TOOL_CATEGORY_MAP = {
   [TOOL_GITHUB_RERUN_WORKFLOW_RUN]: "git",
   [TOOL_BASH]: "shell",
   [TOOL_TODO_WRITE]: "interaction",
+  [TOOL_PROJECT_TODO_UPDATE]: "interaction",
   [TOOL_ASK_USER]: "interaction",
   [TOOL_LSP_DIAGNOSTICS]: "lsp",
   [TOOL_LSP_GOTO_DEFINITION]: "lsp",

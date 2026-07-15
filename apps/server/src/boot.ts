@@ -7,14 +7,14 @@ import { startServer } from "./listen";
 export async function bootServer(runtime: AgentRuntime): Promise<void> {
   const compiled = import.meta.url.startsWith("file:///$bunfs/");
   const dev = !compiled && !Bun.env[ENV_SERVER_PASSWORD];
-  const { app, runtime: serverRuntime } = createServerApp(runtime, {
+  const { app, forwardSessionExecution } = createServerApp(runtime, {
     dev,
     password: Bun.env[ENV_SERVER_PASSWORD],
   });
-  runtime.setAutomationSessionMessageExecutor((input) => (
-    serverRuntime.startSessionMessageExecution(input)
-  ));
+  runtime.setManagedSessionExecutionForwarder(forwardSessionExecution);
 
+  await runtime.recoverSessionContinuations();
+  await runtime.recoverProjectTodos();
   await runtime.startAutomationSchedulers();
   const { url, server } = await startServer(app, {
     port: parseInt(Bun.env[ENV_PORT] ?? "4096", 10) || undefined,

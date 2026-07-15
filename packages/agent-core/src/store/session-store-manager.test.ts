@@ -583,6 +583,75 @@ describe("SessionStoreManager", () => {
     });
   });
 
+  test("persists and reloads a cancelled partial tool input", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
+
+    store.getState().append({ type: "execution-start", executionId: "run-partial-input" });
+    store.getState().append({
+      type: "tool-input-start",
+      toolCallId: "call-partial",
+      toolName: "file_write",
+    });
+    store.getState().append({ type: "execution-end", status: "aborted" });
+
+    const filePath = canonicalSessionPath(id);
+    const raw = await waitForSessionJson(
+      filePath,
+      (json) => JSON.stringify(json).includes("Execution ended before tool result"),
+    );
+    const rawMessages = raw.messages as Array<{ parts: Array<Record<string, unknown>> }>;
+    expect(rawMessages[0]?.parts[0]).toMatchObject({
+      type: "tool",
+      state: "error",
+      input: null,
+      errorMessage: "Execution ended before tool result",
+    });
+
+    const restarted = new SessionStoreManager({ logger: silentLogger });
+    const loaded = await restarted.getOrLoad(id, TMP_DIR);
+    expect(loaded.getState().messages[0]?.parts[0]).toMatchObject({
+      type: "tool",
+      state: "error",
+      input: null,
+      errorMessage: "Execution ended before tool result",
+    });
+  });
+
+  test("canonicalizes undefined tool-call input in both messages and the durable event log", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
+
+    store.getState().append({ type: "execution-start", executionId: "run-undefined-input" });
+    store.getState().append({
+      type: "tool-call",
+      toolCallId: "call-undefined",
+      toolName: "file_write",
+      input: undefined,
+    });
+    store.getState().append({ type: "execution-end", status: "aborted" });
+
+    const filePath = canonicalSessionPath(id);
+    const raw = await waitForSessionJson(
+      filePath,
+      (json) => JSON.stringify(json).includes("call-undefined"),
+    );
+    const rawMessages = raw.messages as Array<{ parts: Array<Record<string, unknown>> }>;
+    const rawEvents = raw.events as Array<{ payload: Record<string, unknown> }>;
+    expect(rawMessages[0]?.parts[0]?.input).toBeNull();
+    expect(rawEvents.find((event) => event.payload.type === "tool-call")?.payload.input).toBeNull();
+
+    const restarted = new SessionStoreManager({ logger: silentLogger });
+    const loaded = await restarted.getOrLoad(id, TMP_DIR);
+    expect(loaded.getState().messages[0]?.parts[0]).toMatchObject({
+      type: "tool",
+      state: "error",
+      input: null,
+    });
+  });
+
   test("load reconciliation marks interrupted partial text visible but excluded from model context", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();

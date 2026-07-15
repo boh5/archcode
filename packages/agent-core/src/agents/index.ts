@@ -31,6 +31,7 @@ export {
   goalLeadAgentDefinition,
   planAgentDefinition,
   reviewerAgentDefinition,
+  shaperAgentDefinition,
 } from "./definitions";
 export { resolveAgentModel } from "./model-resolver";
 export {

@@ -5,12 +5,13 @@ import { join } from "node:path";
 import { SessionDeleteOwnerConflictError } from "../execution/session-deletion";
 import { silentLogger } from "../logger";
 import { SessionStoreManager } from "../store/session-store-manager";
-import { SessionLifecycleService } from "./session-lifecycle-service";
+import { SessionLifecycleService, type SessionLifecycleServiceOptions } from "./session-lifecycle-service";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "session-lifecycle-service", crypto.randomUUID());
 const ORDINARY_SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const GOAL_SESSION_ID = "22222222-2222-4222-8222-222222222222";
 const GOAL_OWNER_ID = "55555555-5555-4555-8555-555555555555";
+const TODO_OWNER_ID = "66666666-6666-4666-8666-666666666666";
 
 beforeEach(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });
@@ -22,7 +23,7 @@ afterAll(async () => {
 });
 
 describe("SessionLifecycleService", () => {
-  test("preflight only rejects Goal ownership", async () => {
+  test("preflight rejects Goal ownership", async () => {
     const fixture = createFixture();
     fixture.sessions.create(GOAL_SESSION_ID, TMP_ROOT, { goalId: GOAL_OWNER_ID, agentName: "goal_lead" });
     await fixture.sessions.flushSession(GOAL_SESSION_ID, TMP_ROOT);
@@ -40,6 +41,29 @@ describe("SessionLifecycleService", () => {
     expect(fixture.cancelSessionToolBatch).not.toHaveBeenCalled();
   });
 
+  test("preflight rejects ProjectTodo ownership without Session metadata", async () => {
+    const fixture = createFixture({
+      findProjectTodoOwners: mock(async () => [{
+        sessionId: ORDINARY_SESSION_ID,
+        ownerType: "project_todo" as const,
+        ownerId: TODO_OWNER_ID,
+      }]),
+    });
+    fixture.sessions.create(ORDINARY_SESSION_ID, TMP_ROOT, { agentName: "engineer" });
+    await fixture.sessions.flushSession(ORDINARY_SESSION_ID, TMP_ROOT);
+
+    await expect(fixture.service.assertDeletable({
+      workspaceRoot: TMP_ROOT,
+      rootSessionId: ORDINARY_SESSION_ID,
+      sessionIds: [ORDINARY_SESSION_ID],
+    })).rejects.toMatchObject({
+      name: "SessionDeleteOwnerConflictError",
+      code: "SESSION_DELETE_OWNER_CONFLICT",
+      sessionIds: [ORDINARY_SESSION_ID],
+      owners: [{ sessionId: ORDINARY_SESSION_ID, ownerType: "project_todo", ownerId: TODO_OWNER_ID }],
+    } satisfies Partial<SessionDeleteOwnerConflictError>);
+  });
+
   test("allows an ordinary Session without consulting HITL state", async () => {
     const fixture = createFixture();
     fixture.sessions.create(ORDINARY_SESSION_ID, TMP_ROOT, { agentName: "engineer" });
@@ -50,6 +74,11 @@ describe("SessionLifecycleService", () => {
       rootSessionId: ORDINARY_SESSION_ID,
       sessionIds: [ORDINARY_SESSION_ID],
     })).resolves.toBeUndefined();
+    expect(fixture.findProjectTodoOwners).toHaveBeenCalledWith({
+      workspaceRoot: TMP_ROOT,
+      rootSessionId: ORDINARY_SESSION_ID,
+      sessionIds: [ORDINARY_SESSION_ID],
+    });
     expect(fixture.cancelSessionToolBatch).not.toHaveBeenCalled();
   });
 
@@ -70,9 +99,14 @@ describe("SessionLifecycleService", () => {
   });
 });
 
-function createFixture() {
+function createFixture(overrides: Partial<SessionLifecycleServiceOptions> = {}) {
   const sessions = new SessionStoreManager({ logger: silentLogger });
   const cancelSessionToolBatch = mock(async (_sessionId: string, _workspaceRoot: string, _reason: string) => undefined);
-  const service = new SessionLifecycleService({ storeManager: sessions, cancelSessionToolBatch });
-  return { sessions, cancelSessionToolBatch, service };
+  const findProjectTodoOwners = overrides.findProjectTodoOwners ?? mock(async () => []);
+  const service = new SessionLifecycleService({
+    storeManager: sessions,
+    cancelSessionToolBatch,
+    findProjectTodoOwners,
+  });
+  return { sessions, cancelSessionToolBatch, findProjectTodoOwners, service };
 }

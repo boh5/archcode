@@ -164,7 +164,7 @@ function ModelEditor({ config, onChange, providerId, modelId, model, errors, onJ
 
 export function SettingsAgentsPanel({ config, onChange, errors, onJsonValidationChange, jsonResetVersion = 0 }: { config: ServerConfig; onChange: (config: ServerConfig) => void; errors: FieldErrors; onJsonValidationChange?: JsonValidationChange; jsonResetVersion?: number }) {
   const models = Object.entries(config.provider).flatMap(([provider, item]) => Object.keys(item.models).map((model) => `${provider}:${model}`));
-  return <section className="space-y-5 pb-1"><PanelHeader title="Agents" description="Each of the seven agents uses an existing configured model and optional variant." />
+  return <section className="space-y-5 pb-1"><PanelHeader title="Agents" description="Each of the eight agents uses an existing configured model and optional variant." />
     <div className="overflow-hidden rounded-md border border-border-default bg-bg-surface divide-y divide-border-subtle">
     {AGENT_NAMES.map((agent) => {
       const item = config.agents[agent];

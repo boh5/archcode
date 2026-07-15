@@ -40,6 +40,15 @@ describe("Automation architecture boundaries", () => {
     const dispatcher = readFileSync(join(automationRoot, "dispatcher.ts"), "utf8");
     const scheduler = readFileSync(join(automationRoot, "scheduler.ts"), "utf8");
     const boot = readFileSync(join(projectRoot, "apps/server/src/boot.ts"), "utf8");
+    const runtime = readFileSync(join(agentCoreRoot, "runtime.ts"), "utf8");
+    const sessionRecovery = runtime.slice(
+      runtime.indexOf("async function recoverSessionContinuations"),
+      runtime.indexOf("async function recoverProjectTodos"),
+    );
+    const todoRecovery = runtime.slice(
+      runtime.indexOf("async function recoverProjectTodos"),
+      runtime.indexOf("async function reconcileRegisteredProject"),
+    );
 
     expect(schedule).not.toMatch(/from\s+["']\.\/(?:state-manager|dispatcher|scheduler|runtime-session-gateway)["']/);
     expect(state).not.toMatch(/from\s+["']\.\/(?:dispatcher|scheduler|runtime-session-gateway)["']/);
@@ -47,8 +56,22 @@ describe("Automation architecture boundaries", () => {
     expect(scheduler).not.toContain("runtime-session-gateway");
     expect(sourceFiles(automationRoot).map((path) => readFileSync(path, "utf8")).join("\n"))
       .not.toContain("AutomationRunner");
-    expect(boot).toContain("setAutomationSessionMessageExecutor");
-    expect(boot).toContain("serverRuntime.startSessionMessageExecution");
+    expect(boot).toContain("setManagedSessionExecutionForwarder");
+    expect(boot).toContain("forwardSessionExecution");
+    expect(boot.indexOf("setManagedSessionExecutionForwarder")).toBeLessThan(boot.indexOf("recoverSessionContinuations"));
+    expect(boot.indexOf("recoverSessionContinuations")).toBeLessThan(boot.indexOf("recoverProjectTodos"));
+    expect(boot.indexOf("recoverProjectTodos")).toBeLessThan(boot.indexOf("startAutomationSchedulers"));
     expect(boot.indexOf("startAutomationSchedulers")).toBeLessThan(boot.indexOf("startServer(app"));
+    expect(sessionRecovery).toContain("reconcileAnsweredHitl");
+    expect(sessionRecovery).toContain("continueRunnableToolBatches");
+    expect(sessionRecovery).not.toContain("context.todos.reconcileAll()");
+    expect(todoRecovery).toContain("context.todos.reconcileAll()");
+    expect(todoRecovery).not.toContain("goalLifecycle");
+    expect(todoRecovery).not.toContain("reconcileAnsweredHitl");
+    expect(todoRecovery).not.toContain("continuationService");
+    expect(runtime).not.toContain("directSessionToolBatchExecutor");
+    expect(runtime).not.toContain("activeSessionToolBatchExecutor");
+    expect(runtime.match(/executionManager\.startCheckedExecutionWithinGoalClaim/g)).toHaveLength(1);
+    expect(runtime).not.toContain('input.origin === "goal_claim"');
   });
 });

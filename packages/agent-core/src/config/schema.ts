@@ -48,6 +48,7 @@ export const archcodeConfigSchema = z
       reviewer: agentConfigSchema,
       explore: agentConfigSchema,
       librarian: agentConfigSchema,
+      shaper: agentConfigSchema,
     }),
     memory: memoryExtractionConfigSchema,
   })

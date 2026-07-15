@@ -39,6 +39,38 @@ describe("createServerApp", () => {
     expect(await response.json()).toEqual({ agents: [{ name: "engineer", displayName: "Engineer" }] });
   });
 
+  test("mounts Project Todo routes through the shared Project context", async () => {
+    const todo = {
+      id: "11111111-1111-4111-8111-111111111111",
+      title: "Mounted Todo",
+      body: "",
+      status: "idea" as const,
+      revision: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const runtime = {
+      ...mockRuntime,
+      projectRegistry: {
+        get: mock(async () => ({
+          slug: "proj",
+          name: "Project",
+          workspaceRoot: "/tmp",
+          addedAt: new Date().toISOString(),
+        })),
+      },
+      contextResolver: {
+        resolve: mock(async () => ({ todos: { listTodos: mock(async () => [todo]) } })),
+      },
+    } as unknown as AgentRuntime;
+    const { app } = createServerApp(runtime, { dev: true });
+
+    const response = await app.request("/api/projects/proj/todos");
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ todos: [todo] });
+  });
+
   test("adds wildcard CORS headers in dev mode", async () => {
     const { app } = createServerApp(mockRuntime, { dev: true });
 
@@ -161,6 +193,46 @@ describe("createServerApp", () => {
     unsubscribeBus();
   });
 
+  test("forwards a cold managed tool-batch continuation without an earlier subscription", async () => {
+    const runtime = createRuntimeWithManualSubscriptions();
+    const { forwardSessionExecution } = createServerApp(runtime, { dev: true });
+    const observed: GlobalSSEEvent[] = [];
+    const unsubscribeBus = globalEventBus.subscribe((event) => observed.push(event));
+
+    const input = {
+      slug: "proj",
+      workspaceRoot: "/workspace",
+      sessionId: "root",
+      userMessage: "",
+      origin: "tool_batch" as const,
+    };
+    const execution = await forwardSessionExecution(
+      input,
+      () => runtime.startSessionMessageExecution(input),
+    );
+    expect(runtime.subscribedSessionIds()).toEqual(["root"]);
+
+    runtime.emitSession("root", {
+      type: "event",
+      slug: "proj",
+      sessionId: "root",
+      eventId: 0,
+      createdAt: 2,
+      payload: { type: "text-delta", text: "continued" },
+      agentName: "engineer",
+    });
+    expect(observed).toContainEqual(expect.objectContaining({
+      type: "event",
+      sessionId: "root",
+      payload: { type: "text-delta", text: "continued" },
+    }));
+
+    runtime.resolveExecution();
+    await execution.promise;
+    await runtime.waitForUnsubscribed();
+    unsubscribeBus();
+  });
+
   test("keeps forwarding Session events across a durable HITL continuation", async () => {
     const runtime = createRuntimeWithManualSubscriptions();
     const { runtime: serverRuntime } = createServerApp(runtime, { dev: true });
@@ -174,7 +246,7 @@ describe("createServerApp", () => {
       userMessage: "run",
     });
     runtime.setActiveToolBatch(true);
-    runtime.resolveExecution();
+    runtime.resolveExecution("waiting_for_human");
     await execution.promise;
     await Promise.resolve();
 
@@ -188,19 +260,43 @@ describe("createServerApp", () => {
       payload: { type: "tool-result", toolCallId: "call-1", toolName: "ask_user", output: "answered", isError: false },
       agentName: "engineer",
     });
+    runtime.setExecutionStatus("running");
     runtime.setActiveToolBatch(false);
+    const releaseChecksBeforeContinuation = runtime.sessionFileReadCount();
     runtime.emitSession("root", {
       type: "event",
       slug: "proj",
       sessionId: "root",
       eventId: 2,
       createdAt: 3,
+      payload: { type: "tool-call", toolCallId: "call-2", toolName: "file_read", input: { path: "README.md" } },
+      agentName: "engineer",
+    });
+    await runtime.waitForSessionFileReads(releaseChecksBeforeContinuation + 1);
+
+    expect(runtime.subscribedSessionIds()).toEqual(["root"]);
+    runtime.emitSession("root", {
+      type: "event",
+      slug: "proj",
+      sessionId: "root",
+      eventId: 3,
+      createdAt: 4,
+      payload: { type: "tool-result", toolCallId: "call-2", toolName: "file_read", output: "continued", isError: false },
+      agentName: "engineer",
+    });
+    runtime.setExecutionStatus("completed");
+    runtime.emitSession("root", {
+      type: "event",
+      slug: "proj",
+      sessionId: "root",
+      eventId: 4,
+      createdAt: 5,
       payload: { type: "execution-end", status: "completed" },
       agentName: "engineer",
     });
     await runtime.waitForUnsubscribed();
 
-    expect(observed.some((event) => event.type === "event" && event.eventId === 1)).toBe(true);
+    expect(observed.filter((event) => event.type === "event").map((event) => event.eventId)).toEqual([1, 2, 3, 4]);
     expect(runtime.subscribedSessionIds()).toEqual([]);
     unsubscribeBus();
   });
@@ -229,6 +325,9 @@ async function readSSEUntil(response: Response, expected: string): Promise<strin
 function createRuntimeWithManualSubscriptions() {
   const subscriptions = new Map<string, (event: GlobalSSEEvent) => void>();
   let activeToolBatch = false;
+  let executionStatus: "running" | "completed" | "waiting_for_human" = "running";
+  let sessionFileReads = 0;
+  const sessionFileReadWaiters: Array<{ minimum: number; resolve: () => void }> = [];
   let resolveExecution!: () => void;
   let resolveUnsubscribed!: () => void;
   const promise = new Promise<void>((resolve) => {
@@ -249,21 +348,41 @@ function createRuntimeWithManualSubscriptions() {
     subscribeHitlEvents: mock(() => () => undefined),
     subscribeSessionRuntimeChanges: mock(() => () => undefined),
     startSessionExecution: mock(() => ({ promise })),
-    getSessionFile: mock(async () => ({
-      toolBatches: activeToolBatch ? [{ batchId: "batch-1" }] : [],
-    })),
+    startSessionMessageExecution: mock(async () => ({ promise })),
+    getSessionFile: mock(async () => {
+      sessionFileReads += 1;
+      for (const waiter of sessionFileReadWaiters.splice(0)) {
+        if (sessionFileReads >= waiter.minimum) waiter.resolve();
+        else sessionFileReadWaiters.push(waiter);
+      }
+      return {
+        toolBatches: activeToolBatch ? [{ batchId: "batch-1" }] : [],
+        executions: [{ id: "execution-1", startedAt: 1, status: executionStatus }],
+      };
+    }),
     emitSession: (sessionId: string, event: GlobalSSEEvent) => subscriptions.get(sessionId)?.(event),
     subscribedSessionIds: () => [...subscriptions.keys()],
-    resolveExecution: () => resolveExecution(),
+    resolveExecution: (status: "completed" | "waiting_for_human" = "completed") => {
+      executionStatus = status;
+      resolveExecution();
+    },
+    setExecutionStatus: (status: "running" | "completed" | "waiting_for_human") => { executionStatus = status; },
     setActiveToolBatch: (active: boolean) => { activeToolBatch = active; },
+    sessionFileReadCount: () => sessionFileReads,
+    waitForSessionFileReads: (minimum: number) => sessionFileReads >= minimum
+      ? Promise.resolve()
+      : new Promise<void>((resolve) => { sessionFileReadWaiters.push({ minimum, resolve }); }),
     waitForUnsubscribed: () => unsubscribed,
   };
 
   return runtime as unknown as AgentRuntime & {
     emitSession: (sessionId: string, event: GlobalSSEEvent) => void;
     subscribedSessionIds: () => string[];
-    resolveExecution: () => void;
+    resolveExecution: (status?: "completed" | "waiting_for_human") => void;
+    setExecutionStatus: (status: "running" | "completed" | "waiting_for_human") => void;
     setActiveToolBatch: (active: boolean) => void;
+    sessionFileReadCount: () => number;
+    waitForSessionFileReads: (minimum: number) => Promise<void>;
     waitForUnsubscribed: () => Promise<void>;
   };
 }

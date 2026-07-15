@@ -503,6 +503,12 @@ export function Sidebar({
         </div>
         <div className="mt-2">
           <DashboardLinkButton
+            to={`/projects/${slug}/todos`}
+            label="Todos"
+            isActive={location.pathname === `/projects/${slug}/todos`}
+          />
+          <div className="h-1" />
+          <DashboardLinkButton
             to={`/projects/${slug}`}
             label="Project Dashboard"
             isActive={location.pathname === `/projects/${slug}`}
@@ -716,7 +722,7 @@ export function Sidebar({
             setClosingProject(null);
             const remaining = projects?.filter(p => p.slug !== slug) ?? [];
             if (remaining.length > 0) {
-              navigate(`/projects/${remaining[0].slug}`);
+              navigate(`/projects/${remaining[0].slug}/todos`);
             } else {
               navigate("/");
             }

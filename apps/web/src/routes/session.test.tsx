@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { JSDOM } from "jsdom";
 import { TOOL_DELEGATE, createEmptySessionStats } from "@archcode/protocol";
 import type { GlobalSSEHitlRealtimeEvent, ToolChildSessionLink } from "@archcode/protocol";
-import type { HitlView, Session } from "../api/types";
+import type { HitlView, ProjectTodo, Session } from "../api/types";
 import {
   __resetWebSessionStoresForTest,
   createWebSessionStore,
@@ -425,6 +425,90 @@ describe("SessionRoute focused view store behavior", () => {
         expect(container.querySelector('[data-testid="hitl-owner-link"]')?.getAttribute("href")).toBe("/projects/demo/sessions/root-session");
         expect(container.querySelector('input[type="radio"]')).not.toBeNull();
         expect(container.querySelector('input[aria-label="Scope custom answer"]')).not.toBeNull();
+      });
+    } finally {
+      await act(async () => reactRoot.unmount());
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
+  test("links a root Discussion Session back to its exact Project Todo", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+
+    const rootSession = createSession({
+      id: "root-session",
+      rootSessionId: "root-session",
+      title: "Shape offline mode",
+      messages: [],
+    });
+    const projectTodo: ProjectTodo = {
+      id: "todo-offline-mode",
+      title: "Add resilient offline mode",
+      body: "",
+      status: "ready",
+      revision: 3,
+      discussionSessionId: "root-session",
+      activation: {
+        kind: "goal",
+        sourceSessionId: "root-session",
+        todoRevision: 3,
+        snapshot: { title: "Add resilient offline mode", body: "" },
+      },
+      createdAt: 1,
+      updatedAt: 2,
+    };
+
+    const fetchMock = mock(async (input: Parameters<typeof fetch>[0]) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const path = new URL(url, "http://localhost").pathname;
+      if (path === "/api/projects") return Response.json({ projects: [] });
+      if (path === "/api/projects/demo/sessions/root-session") return Response.json(rootSession);
+      if (path === "/api/projects/demo/todos") return Response.json({ todos: [projectTodo] });
+      return new Response("Not found", { status: 404 });
+    });
+    Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await act(async () => {
+        reactRoot.render(
+          <WorkbenchLayoutProvider>
+            <QueryClientProvider client={queryClient}>
+              <MemoryRouter initialEntries={["/projects/demo/sessions/root-session"]}>
+                <Routes>
+                  <Route path="/projects/:slug/sessions/:sessionId" element={<SessionRoute />} />
+                  <Route path="/projects/:slug/todos" element={<LocationProbe />} />
+                </Routes>
+              </MemoryRouter>
+            </QueryClientProvider>
+          </WorkbenchLayoutProvider>,
+        );
+      });
+
+      await waitFor(() => {
+        const link = container.querySelector('[data-testid="project-todo-backlink"]');
+        expect(link?.textContent).toBe("Add resilient offline mode");
+        expect(link?.getAttribute("href")).toBe("/projects/demo/todos?todo=todo-offline-mode");
+        expect(container.textContent).toContain("Discussion Todo · Activation source");
+      });
+
+      const link = container.querySelector('[data-testid="project-todo-backlink"]');
+      if (!link) throw new Error("Missing Project Todo backlink");
+      await act(async () => {
+        link.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+      });
+
+      await waitFor(() => {
+        expect(container.querySelector('[data-testid="location"]')?.textContent).toBe(
+          "/projects/demo/todos?todo=todo-offline-mode|PUSH",
+        );
       });
     } finally {
       await act(async () => reactRoot.unmount());

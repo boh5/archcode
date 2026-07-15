@@ -584,6 +584,24 @@ describe("SessionExecutionManager", () => {
     expect(manager.getSessionFamilyActivity(workspaceRoot, "session-start")).toBe("idle");
   });
 
+  test("preserves the managed Goal claim execution origin", async () => {
+    const run = deferred<AgentResult>();
+    const agent = new MockAgent("goal-claim-origin", run.promise);
+    const { manager } = createManager({ "goal-claim-origin": agent });
+
+    const execution = manager.startExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: "goal-claim-origin",
+      userMessage: "continue goal",
+      origin: "goal_claim",
+    });
+
+    expect(execution.origin).toBe("goal_claim");
+    run.resolve({ text: "done", steps: 1 });
+    await execution.promise;
+  });
+
   test("durably flushes a caller-owned execution start before running the agent", async () => {
     const sessionId = "durable-execution-start";
     const flush = deferred<void>();

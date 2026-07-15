@@ -48,6 +48,7 @@ function config(): Record<string, unknown> {
       reviewer: agent,
       explore: agent,
       librarian: agent,
+      shaper: agent,
     },
     mcp: {
       servers: {

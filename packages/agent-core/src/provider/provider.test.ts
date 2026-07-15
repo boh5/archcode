@@ -61,6 +61,7 @@ const VALID_CONFIG = {
     reviewer: { model: "xxx:gpt-5.2" },
     explore: { model: "xxx:gpt-5.2" },
     librarian: { model: "xxx:gpt-5.2" },
+    shaper: { model: "xxx:gpt-5.2" },
   },
 };
 

@@ -12,6 +12,7 @@ export const AGENT_TYPES = [
   "reviewer",
   "explore",
   "librarian",
+  "shaper",
 ] as const;
 
 export type AgentType = (typeof AGENT_TYPES)[number];
@@ -24,6 +25,7 @@ export const AGENT_ICON_COLORS: Record<AgentType, string> = {
   reviewer: "bg-agent-reviewer/20 text-agent-reviewer",
   explore: "bg-agent-explore/20 text-agent-explore",
   librarian: "bg-agent-librarian/20 text-agent-librarian",
+  shaper: "bg-agent-shaper/20 text-agent-shaper",
 };
 
 export const AGENT_BADGE_COLORS: Record<AgentType, string> = AGENT_ICON_COLORS;
@@ -36,6 +38,7 @@ export const AGENT_DOT_CLASS: Record<AgentType, string> = {
   reviewer: "bg-agent-reviewer",
   explore: "bg-agent-explore",
   librarian: "bg-agent-librarian",
+  shaper: "bg-agent-shaper",
 };
 
 export const AGENT_NAME_CLASS: Record<AgentType, string> = {
@@ -46,6 +49,7 @@ export const AGENT_NAME_CLASS: Record<AgentType, string> = {
   reviewer: "text-agent-reviewer font-semibold",
   explore: "text-agent-explore font-semibold",
   librarian: "text-agent-librarian font-semibold",
+  shaper: "text-agent-shaper font-semibold",
 };
 
 export const AGENT_BORDER_CLASS: Record<AgentType, string> = {
@@ -56,6 +60,7 @@ export const AGENT_BORDER_CLASS: Record<AgentType, string> = {
   reviewer: "border-agent-reviewer",
   explore: "border-agent-explore",
   librarian: "border-agent-librarian",
+  shaper: "border-agent-shaper",
 };
 
 export function isValidAgentType(value: string): value is AgentType {

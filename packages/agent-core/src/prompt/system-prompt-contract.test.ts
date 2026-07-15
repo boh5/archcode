@@ -10,6 +10,7 @@ import {
   librarianAgentDefinition,
   planAgentDefinition,
   reviewerAgentDefinition,
+  shaperAgentDefinition,
 } from "../agents/definitions";
 
 const ENV: PromptContext["env"] = {
@@ -59,7 +60,7 @@ const STRUCTURAL_POLICY_EXAMPLES = {
 } as const;
 
 describe("full system prompt contracts", () => {
-  test("all seven agents receive the common execution contract without internal profile labels", async () => {
+  test("all eight agents receive the common execution contract without internal profile labels", async () => {
     for (const definition of agentDefinitions) {
       const prompt = await fullPrompt(definition);
       expect(prompt).toContain("## Execution Contract");
@@ -77,6 +78,7 @@ describe("full system prompt contracts", () => {
       planAgentDefinition,
       buildAgentDefinition,
       reviewerAgentDefinition,
+      shaperAgentDefinition,
     ]) {
       expect(await fullPrompt(definition)).toContain("## Delegation Protocol");
     }
@@ -116,7 +118,7 @@ describe("full system prompt contracts", () => {
   }
 
   test("non-orchestrating delegating roles reuse upstream evidence and never receive implementation-child instructions", async () => {
-    for (const definition of [planAgentDefinition, buildAgentDefinition, reviewerAgentDefinition]) {
+    for (const definition of [planAgentDefinition, buildAgentDefinition, reviewerAgentDefinition, shaperAgentDefinition]) {
       const prompt = await fullPrompt(definition);
       expect(prompt).toContain("Reuse sufficient upstream evidence");
       expect(prompt).toContain("Do not repeat research for ceremony");
@@ -143,6 +145,7 @@ describe("full system prompt contracts", () => {
     const reviewer = await fullPrompt(reviewerAgentDefinition);
     const explore = await fullPrompt(exploreAgentDefinition);
     const librarian = await fullPrompt(librarianAgentDefinition);
+    const shaper = await fullPrompt(shaperAgentDefinition);
 
     expect(engineer).toContain("goal_create");
     expect(engineer).toContain("explicit one-time or recurring time-triggered intent");
@@ -168,6 +171,13 @@ describe("full system prompt contracts", () => {
     expect(librarian).toContain("Conceptual, implementation, history, or comprehensive");
     expect(librarian).toContain("immutable commit permalink");
     expect(librarian).toContain("Source quality");
+    expect(shaper).toContain("project_todo_update");
+    expect(shaper).toContain("do not implement it");
+    expect(shaper).toContain("explicitly requests or confirms");
+    expect(shaper).toContain("Use keep_current for title/body corrections");
+    expect(shaper).toContain("never downgrade an existing Ready or Rejected Todo by default");
+    expect(shaper).toContain("Never use Bash to modify source");
+    expect(shaper).toContain("Recommend Idea, Ready, or Rejected");
   });
 
   test("read-only and Goal authority boundaries remain explicit", async () => {

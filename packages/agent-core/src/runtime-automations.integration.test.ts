@@ -97,6 +97,7 @@ async function runtimeFixture(): Promise<{
     automationSchedulerClock: clock,
     automationSchedulerTimer: new FakeTimer(clock),
   });
+  runtime.setManagedSessionExecutionForwarder((_input, start) => start());
   activeRuntime = runtime;
   const sourceSession = await runtime.createSession(workspaceRoot, { agentName: "engineer" });
   return { runtime, workspaceRoot, sourceSessionId: sourceSession.sessionId };
@@ -126,6 +127,7 @@ function config(): Record<string, unknown> {
       reviewer: { model: "local:test" },
       explore: { model: "local:test" },
       librarian: { model: "local:test" },
+      shaper: { model: "local:test" },
     },
     mcp: { servers: {} },
   };

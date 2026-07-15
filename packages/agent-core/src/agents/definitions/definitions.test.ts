@@ -13,16 +13,27 @@ import {
   librarianAgentDefinition,
   planAgentDefinition,
   reviewerAgentDefinition,
+  shaperAgentDefinition,
 } from "./index";
 import {
   TOOL_AST_GREP_REPLACE,
+  TOOL_AST_GREP_SEARCH,
   TOOL_ASK_USER,
   TOOL_BASH,
   TOOL_COMPRESS,
   TOOL_DELEGATE,
   TOOL_FILE_EDIT,
+  TOOL_FILE_READ,
   TOOL_FILE_WRITE,
   TOOL_GOAL_MANAGE,
+  TOOL_PROJECT_TODO_UPDATE,
+  TOOL_GLOB,
+  TOOL_GREP,
+  TOOL_LSP_DIAGNOSTICS,
+  TOOL_MEMORY_READ,
+  TOOL_MEMORY_WRITE,
+  TOOL_TODO_WRITE,
+  TOOL_WEB_FETCH,
 } from "../../tools/names";
 
 const REQUIRED_AGENT_NAMES = [
@@ -33,6 +44,7 @@ const REQUIRED_AGENT_NAMES = [
   "reviewer",
   "explore",
   "librarian",
+  "shaper",
 ] as const;
 
 const WORKFLOW_TOOLS = [
@@ -76,7 +88,7 @@ function expectNoTools(tools: readonly string[], forbidden: readonly string[]) {
 }
 
 describe("agentDefinitions", () => {
-  test("exports the closed seven-agent registry with stable display names", () => {
+  test("exports the closed eight-agent registry with stable display names", () => {
     expect(agentDefinitions.map((definition) => definition.name)).toEqual([...REQUIRED_AGENT_NAMES]);
     expect(agentDefinitions.map(({ name, displayName }) => ({ name, displayName }))).toEqual([
       { name: "engineer", displayName: "Engineer" },
@@ -86,6 +98,7 @@ describe("agentDefinitions", () => {
       { name: "reviewer", displayName: "Reviewer" },
       { name: "explore", displayName: "Explore" },
       { name: "librarian", displayName: "Librarian" },
+      { name: "shaper", displayName: "Shaper" },
     ]);
     expect(new Set(agentDefinitions.map((definition) => definition.name)).size).toBe(agentDefinitions.length);
   });
@@ -198,6 +211,40 @@ describe("agentDefinitions", () => {
     expect(reviewerAgentDefinition.tools.delegateTargets).toEqual(["explore", "librarian"]);
   });
 
+  test("Shaper owns Todo shaping without implementation or creation capabilities", () => {
+    const tools = shaperAgentDefinition.tools.tools;
+
+    for (const tool of [
+      TOOL_FILE_READ,
+      TOOL_GREP,
+      TOOL_GLOB,
+      TOOL_AST_GREP_SEARCH,
+      TOOL_LSP_DIAGNOSTICS,
+      TOOL_WEB_FETCH,
+      TOOL_BASH,
+      TOOL_ASK_USER,
+      TOOL_MEMORY_READ,
+      TOOL_MEMORY_WRITE,
+      TOOL_TODO_WRITE,
+      TOOL_PROJECT_TODO_UPDATE,
+    ] as const) expect(tools).toContain(tool);
+    expectNoTools(tools, [
+      TOOL_FILE_WRITE,
+      TOOL_FILE_EDIT,
+      TOOL_AST_GREP_REPLACE,
+      "goal_create",
+      "automation_create",
+      TOOL_GOAL_MANAGE,
+    ]);
+    expect(shaperAgentDefinition.tools.delegateTargets).toEqual(["explore", "librarian"]);
+    expect(shaperAgentDefinition.hooks.memoryExtraction).toBe(false);
+    expect(shaperAgentDefinition.hooks.memoryConsolidation).toBe(false);
+    expect(shaperAgentDefinition.rolePrompt).toContain("current Todo");
+    expect(shaperAgentDefinition.rolePrompt).toContain("explicitly requests or confirms");
+    expect(shaperAgentDefinition.rolePrompt).toContain("do not implement");
+    expect(shaperAgentDefinition.rolePrompt).toContain("without presenting an implementation plan");
+  });
+
   test("Goal lifecycle and evidence tools are limited to intended roles", () => {
     const goalManageAgents = agentDefinitions
       .filter((definition) => (definition.tools.tools as readonly string[]).includes(TOOL_GOAL_MANAGE))
@@ -230,6 +277,7 @@ describe("agentDefinitions", () => {
       reviewer: ["view_tool_output", "bash", "memory_read", "goal_manage", "delegate", "skill_list", "skill_read"],
       explore: ["skill_list", "skill_read"],
       librarian: ["memory_read", "skill_list", "skill_read"],
+      shaper: ["view_tool_output", "bash", "memory_read", "memory_write", "delegate", "skill_list", "skill_read"],
     } as const;
 
     for (const definition of agentDefinitions) {
@@ -256,8 +304,8 @@ describe("agentDefinitions", () => {
     expect(librarianAgentDefinition.mcpTools).toEqual(["context7", "grep.app", "exa"]);
   });
 
-  test("ask_user belongs only to the four interactive working roles", () => {
-    for (const definition of [engineerAgentDefinition, goalLeadAgentDefinition, planAgentDefinition, buildAgentDefinition]) {
+  test("ask_user belongs to interactive working and shaping roles", () => {
+    for (const definition of [engineerAgentDefinition, goalLeadAgentDefinition, planAgentDefinition, buildAgentDefinition, shaperAgentDefinition]) {
       expect(definition.tools.tools).toContain(TOOL_ASK_USER);
     }
 
@@ -275,6 +323,7 @@ describe("agentDefinitions", () => {
       buildAgentDefinition,
       reviewerAgentDefinition,
       librarianAgentDefinition,
+      shaperAgentDefinition,
     ]) {
       expect(definition.includeMemoryInPrompt).toBe(true);
     }
@@ -291,7 +340,7 @@ describe("agentDefinitions", () => {
       });
     }
 
-    for (const definition of [planAgentDefinition, buildAgentDefinition, reviewerAgentDefinition]) {
+    for (const definition of [planAgentDefinition, buildAgentDefinition, reviewerAgentDefinition, shaperAgentDefinition]) {
       expect(definition.childPolicy).toEqual({
         maxDepth: 2,
         maxConcurrent: MAX_CONCURRENT_SUB_AGENTS,
@@ -338,7 +387,7 @@ describe("agentDefinitions", () => {
       }
     });
 
-    test("allocation matrix matches the seven-agent architecture", () => {
+    test("allocation matrix matches the eight-agent architecture", () => {
       expect(engineerAgentDefinition.skills).toEqual([
         "git-master",
         "safe-refactor",
@@ -369,6 +418,7 @@ describe("agentDefinitions", () => {
       ]);
       expect(exploreAgentDefinition.skills).toEqual(["codemap"]);
       expect(librarianAgentDefinition.skills).toEqual(["codemap", "research-docs"]);
+      expect(shaperAgentDefinition.skills).toEqual(["codemap", "research-docs"]);
     });
   });
 });

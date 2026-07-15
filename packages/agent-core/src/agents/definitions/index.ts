@@ -5,6 +5,7 @@ export { buildAgentDefinition } from "./build";
 export { reviewerAgentDefinition } from "./reviewer";
 export { exploreAgentDefinition } from "./explore";
 export { librarianAgentDefinition } from "./librarian";
+export { shaperAgentDefinition } from "./shaper";
 
 import { engineerAgentDefinition } from "./engineer";
 import { goalLeadAgentDefinition } from "./goal-lead";
@@ -13,6 +14,7 @@ import { buildAgentDefinition } from "./build";
 import { reviewerAgentDefinition } from "./reviewer";
 import { exploreAgentDefinition } from "./explore";
 import { librarianAgentDefinition } from "./librarian";
+import { shaperAgentDefinition } from "./shaper";
 import type { AgentDefinition } from "../factory-types";
 
 export const agentDefinitions = [
@@ -23,6 +25,7 @@ export const agentDefinitions = [
   reviewerAgentDefinition,
   exploreAgentDefinition,
   librarianAgentDefinition,
+  shaperAgentDefinition,
 ] as const satisfies readonly AgentDefinition[];
 
 export const defaultAgentDefinitions = agentDefinitions;

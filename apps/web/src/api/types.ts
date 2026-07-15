@@ -40,6 +40,12 @@ export type {
   AutomationInvocationStatus,
   AutomationStatus,
   AutomationTrigger,
+  ProjectTodo,
+  ProjectTodoStatus,
+  ProjectTodoActivationKind,
+  ProjectTodoCreateInput,
+  ProjectTodoUpdateInput,
+  ProjectTodoMutationInput,
 } from "@archcode/protocol";
 
 // ─── Dashboard aggregate types ───

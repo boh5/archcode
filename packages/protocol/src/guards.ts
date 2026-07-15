@@ -129,7 +129,7 @@ export function isGlobalSSEResourceChangedEvent(value: unknown): value is Global
     && exact(event, ["type", "projectSlug", "resourceType", "resourceId", "createdAt"])
     && event.type === "resource.changed"
     && isString(event.projectSlug)
-    && oneOf(event.resourceType, ["goal", "automation"])
+    && oneOf(event.resourceType, ["goal", "automation", "todo"])
     && isString(event.resourceId)
     && isFiniteNumber(event.createdAt);
 }

@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { ArrowLeft } from "lucide-react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ChatMessages } from "../components/composite/ChatMessages";
 import { HitlInbox } from "../components/features/HitlCard";
 import { ChatHeader } from "../components/features/ChatHeader";
@@ -8,7 +8,7 @@ import { ChatInput } from "../components/features/ChatInput";
 import { DiffTab } from "../components/features/DiffTab";
 import { TodoProgressButton } from "../components/features/TodoProgressButton";
 import { InspectorToggleButton } from "../components/features/InspectorToggleButton";
-import { useAgents, useFocusedSession, useProjects, useSession } from "../api/queries";
+import { useAgents, useFocusedSession, useProjects, useProjectTodos, useSession } from "../api/queries";
 import { useRealtimeHitl } from "../store/hitl-store";
 import { getWebSessionStore, markSessionForeground } from "../store/session-store";
 import { useWorkbenchLayout } from "../context/workbench-layout";
@@ -26,10 +26,18 @@ export function SessionRoute() {
   const selectedFile = searchParams.get("file") ?? undefined;
 
   const { data: session, isLoading: isSessionLoading, error: sessionError } = useSession(slug, sessionId);
+  const { data: projectTodos = [] } = useProjectTodos(slug);
   const { data: agents = [] } = useAgents();
   const { data: projects = [] } = useProjects();
   const projectRoot = projects.find((project) => project.slug === slug)?.workspaceRoot;
   const rootSessionId = session?.rootSessionId ?? sessionId;
+  const linkedProjectTodo = projectTodos.find((todo) => todo.discussionSessionId === rootSessionId)
+    ?? projectTodos.find((todo) => todo.activation?.sourceSessionId === rootSessionId);
+  const linkedProjectTodoContext = linkedProjectTodo?.discussionSessionId === rootSessionId
+    ? linkedProjectTodo.activation?.sourceSessionId === rootSessionId
+      ? "Discussion Todo · Activation source"
+      : "Discussion Todo"
+    : "Activation source Todo";
   const focusSessionId = searchParams.get("focus");
   const { data: focusedSession, isLoading: isFocusedLoading, error: focusedError } = useFocusedSession(slug, focusSessionId);
   const sessionHitl = useRealtimeHitl({
@@ -260,6 +268,18 @@ export function SessionRoute() {
         onToggleInspector={toggleInspectorSurface}
         inspectorExpanded={layout.inspectorExpanded}
       />
+      {linkedProjectTodo && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle bg-bg-elevated px-4 py-2 text-xs">
+          <span className="text-text-tertiary">{linkedProjectTodoContext}</span>
+          <Link
+            className="min-w-0 truncate font-medium text-accent hover:underline"
+            data-testid="project-todo-backlink"
+            to={`/projects/${encodeURIComponent(slug)}/todos?todo=${encodeURIComponent(linkedProjectTodo.id)}`}
+          >
+            {linkedProjectTodo.title}
+          </Link>
+        </div>
+      )}
       {canvasView === "diff" ? (
         <div className="flex min-h-0 flex-1 flex-col" data-testid="session-diff-canvas">
           <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border-subtle bg-bg-surface px-4">

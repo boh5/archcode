@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback, createElement, type ReactNode } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { connectSSE } from "../lib/sse-client";
 import { createWebSessionStore, findWebSessionStore } from "../store/session-store";
 import { hitlStore } from "../store/hitl-store";
@@ -152,6 +152,22 @@ export function isSessionSnapshotQueryKey(queryKey: readonly unknown[]): boolean
     && queryKey[2] === "sessions";
 }
 
+export function isProjectTodoQueryKey(queryKey: readonly unknown[]): boolean {
+  return queryKey[0] === "projects"
+    && typeof queryKey[1] === "string"
+    && queryKey[2] === "todos"
+    && (queryKey.length === 3 || (queryKey.length === 4 && typeof queryKey[3] === "string"));
+}
+
+export function refreshProjectTodoQueriesAfterSSEOpen(
+  queryClient: Pick<QueryClient, "invalidateQueries">,
+): Promise<void> {
+  return queryClient.invalidateQueries({
+    predicate: (query) => isProjectTodoQueryKey(query.queryKey),
+    refetchType: "active",
+  });
+}
+
 const GlobalSSEContext = createContext<GlobalSSEContextValue | null>(null);
 
 export function parseSSEEvent(_event: string, data: string): GlobalSSEEvent | null {
@@ -240,6 +256,7 @@ export function handleSSEEvent(
         deps.invalidateQueries({
           queryKey: queryKeys.session(envelope.slug, envelope.sessionId),
         });
+        deps.invalidateQueries({ queryKey: queryKeys.sessions(envelope.slug) });
       }
 
       break;
@@ -307,7 +324,15 @@ function invalidateResourceQueries(deps: SSEEventHandlerDeps, event: GlobalSSERe
     return;
   }
 
-  if (event.resourceType === "automation") invalidateAutomationQueries(deps, event.projectSlug, event.resourceId);
+  if (event.resourceType === "automation") {
+    invalidateAutomationQueries(deps, event.projectSlug, event.resourceId);
+    return;
+  }
+
+  if (event.resourceType === "todo") {
+    deps.invalidateQueries({ queryKey: queryKeys.projectTodos(event.projectSlug) });
+    deps.invalidateQueries({ queryKey: queryKeys.projectTodo(event.projectSlug, event.resourceId) });
+  }
 }
 
 function invalidateAutomationQueries(
@@ -415,6 +440,7 @@ export function GlobalSSEProvider({ children }: { children: ReactNode }) {
         reconnectStateRef.current.requested = false;
         watchdogRef.current?.connectionOpened();
         refreshSessionSnapshots();
+        void refreshProjectTodoQueriesAfterSSEOpen(queryClient);
         setConnectionState("open");
       },
       onConnectionLost: () => {
@@ -431,7 +457,7 @@ export function GlobalSSEProvider({ children }: { children: ReactNode }) {
       abortRef.current = null;
       client.abort();
     };
-  }, [handleEvent, handleError, reconnectEpoch, refreshSessionSnapshots]);
+  }, [handleEvent, handleError, queryClient, reconnectEpoch, refreshSessionSnapshots]);
 
   useEffect(() => {
     refreshMcpStatus();

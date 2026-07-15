@@ -14,7 +14,7 @@ const snapshot: ServerConfigSnapshot = {
   revision: "r1", configPath: "/home/a/.archcode/config.json", restartRequired: false,
   config: {
     provider: { local: { npm: "@ai-sdk/openai-compatible", name: "Local", options: { baseURL: "http://localhost/v1", apiKey: { action: "preserve" }, headers: { Authorization: { action: "preserve" } } }, models: { demo: { name: "Demo", limit: { context: 1000, output: 500 }, modalities: { input: ["text"], output: ["text"] }, variants: { fast: { temperature: 0.1 } } } } } },
-    agents: { engineer: { model: "local:demo" }, goal_lead: { model: "local:demo" }, plan: { model: "local:demo" }, build: { model: "local:demo" }, reviewer: { model: "local:demo" }, explore: { model: "local:demo" }, librarian: { model: "local:demo" } },
+    agents: { engineer: { model: "local:demo" }, goal_lead: { model: "local:demo" }, plan: { model: "local:demo" }, build: { model: "local:demo" }, reviewer: { model: "local:demo" }, explore: { model: "local:demo" }, librarian: { model: "local:demo" }, shaper: { model: "local:demo" } },
     mcp: { servers: { custom: { url: "https://example.com/mcp", headers: { Authorization: { action: "preserve" } } } } },
   },
 };
@@ -82,7 +82,7 @@ describe("SettingsDialog interactions", () => {
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
     const sections: Array<[string, string]> = [
       ["Models", "Providers and their model profiles"],
-      ["Agents", "Each of the seven agents"],
+      ["Agents", "Each of the eight agents"],
       ["MCP", "MCP servers"],
       ["Memory", "Configure extraction thresholds"],
       ["GitHub", "Optional GitHub integration settings"],

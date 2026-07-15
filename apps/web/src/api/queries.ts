@@ -14,6 +14,7 @@ import type {
   Session,
   SessionSummary,
   SessionTreeResponse,
+  ProjectTodo,
 } from "./types";
 
 export const queryKeys = {
@@ -35,6 +36,8 @@ export const queryKeys = {
   automation: (slug: string, automationId: string) => ["projects", slug, "automations", automationId] as const,
   automationInvocations: (slug: string, automationId: string) => ["projects", slug, "automations", automationId, "invocations"] as const,
   activeAutomations: ["automations", "active"] as const,
+  projectTodos: (slug: string) => ["projects", slug, "todos"] as const,
+  projectTodo: (slug: string, todoId: string) => ["projects", slug, "todos", todoId] as const,
 };
 
 export function agentsQueryOptions() {
@@ -301,4 +304,35 @@ export function useAutomationInvocations(slug: string, automationId: string) {
 
 export function useActiveAutomations() {
   return useQuery(activeAutomationsQueryOptions());
+}
+
+export function projectTodosQueryOptions(slug: string) {
+  return queryOptions({
+    queryKey: queryKeys.projectTodos(slug),
+    queryFn: async () => {
+      const response = await apiFetch<{ todos: ProjectTodo[] }>(
+        `/api/projects/${encodeURIComponent(slug)}/todos`,
+      );
+      return response.todos;
+    },
+    enabled: slug.length > 0,
+  });
+}
+
+export function projectTodoQueryOptions(slug: string, todoId: string) {
+  return queryOptions({
+    queryKey: queryKeys.projectTodo(slug, todoId),
+    queryFn: async () => apiFetch<{ todo: ProjectTodo }>(
+      `/api/projects/${encodeURIComponent(slug)}/todos/${encodeURIComponent(todoId)}`,
+    ).then((response) => response.todo),
+    enabled: slug.length > 0 && todoId.length > 0,
+  });
+}
+
+export function useProjectTodos(slug: string) {
+  return useQuery(projectTodosQueryOptions(slug));
+}
+
+export function useProjectTodo(slug: string, todoId: string) {
+  return useQuery(projectTodoQueryOptions(slug, todoId));
 }

@@ -27,6 +27,7 @@ import {
   TOOL_ASK_USER,
   TOOL_BASH,
   TOOL_TODO_WRITE,
+  TOOL_PROJECT_TODO_UPDATE,
   TOOL_GITHUB_CREATE_ISSUE_COMMENT,
   TOOL_GITHUB_GET_PULL_REQUEST,
   TOOL_GITHUB_GET_PULL_REQUEST_CHECKS,
@@ -102,7 +103,7 @@ function makeLogger(): Logger & { debug: ReturnType<typeof mock> } {
 }
 
 describe("registerBuiltinTools", () => {
-  it("registers all 27 builtins including dynamic Session worktree transitions", () => {
+  it("registers all 28 builtins including Project Todo shaping and dynamic Session worktree transitions", () => {
     const descriptors = createBuiltinToolDescriptors();
     const names = descriptors.map((descriptor) => descriptor.name);
 
@@ -134,6 +135,7 @@ describe("registerBuiltinTools", () => {
       TOOL_COMPRESS,
       TOOL_WORKTREE_ENTER,
       TOOL_WORKTREE_EXIT,
+      TOOL_PROJECT_TODO_UPDATE,
     ]);
   });
 

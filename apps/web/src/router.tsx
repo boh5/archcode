@@ -2,6 +2,7 @@ import { createBrowserRouter, Outlet } from "react-router-dom";
 import { RootLayout } from "./routes/root-layout";
 import { Dashboard } from "./routes/dashboard";
 import { ProjectRoute } from "./routes/project";
+import { ProjectTodosRoute } from "./routes/project-todos";
 import { SessionRoute } from "./routes/session";
 import { GoalsRoute } from "./routes/goals";
 import { GoalDetailRoute } from "./routes/goal-detail";
@@ -26,6 +27,7 @@ export const router = createBrowserRouter([
         children: [
           { path: "/", element: <Dashboard /> },
           { path: "/projects/:slug", element: <ProjectRoute /> },
+          { path: "/projects/:slug/todos", element: <ProjectTodosRoute /> },
           { path: "/projects/:slug/goals", element: <GoalsRoute /> },
           { path: "/projects/:slug/goals/:goalId", element: <GoalDetailRoute /> },
           { path: "/projects/:slug/automations", element: <AutomationsRoute /> },

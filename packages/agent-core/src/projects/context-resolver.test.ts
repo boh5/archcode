@@ -9,6 +9,7 @@ import { MemoryFileManager } from "../memory/file-manager";
 import { SessionStoreManager } from "../store/session-store-manager";
 import type { PermissionApprovalScope } from "../tools/permission/policy-types";
 import { silentLogger } from "../logger";
+import { ProjectTodoService } from "../todos";
 import { ProjectApprovalManager } from "../tools/permission/project-approvals";
 import { ProjectContextResolver, type ProjectContextResolverOptions } from "./context-resolver";
 
@@ -52,6 +53,16 @@ function createResolver(overrides: Partial<ProjectContextResolverOptions> = {}):
       ensureSessionFile: (root, sessionId, options) => sessions.ensureSessionFile(root, sessionId, options),
       startCheckedExecutionWithinGoalClaim: async () => ({}) as never,
     })),
+    projectTodoFactory: overrides.projectTodoFactory ?? (({ workspaceRoot, project }) => new ProjectTodoService({
+      workspaceRoot,
+      projectSlug: project.slug,
+      sessions: {
+        ensureRootSession: async () => {},
+        ensureExecution: async () => {},
+        acquireIdleFamily: async () => ({ release: () => {} }),
+      },
+      provenance: { listResources: async () => [] },
+    })),
     createAutomation: overrides.createAutomation ?? (async () => {
       throw new Error("Automation creation is not configured for this test resolver");
     }),
@@ -90,6 +101,7 @@ describe("ProjectContextResolver", () => {
     expect(second.goalState).not.toBe(first.goalState);
     expect(second.hitl).not.toBe(first.hitl);
     expect(second.memory).not.toBe(first.memory);
+    expect(second.todos).not.toBe(first.todos);
     expect(second.approvals).not.toBe(first.approvals);
   });
 
@@ -119,6 +131,7 @@ describe("ProjectContextResolver", () => {
     expect(context.goalState).toBeInstanceOf(GoalStateManager);
     expect(context.hitl).toBeInstanceOf(ProjectHitlQueue);
     expect(context.memory).toBeInstanceOf(MemoryFileManager);
+    expect(context.todos).toBeInstanceOf(ProjectTodoService);
     expect(context.memory.projectRoot).toBe(join(workspace, ".archcode", "memory"));
     expect(record.goalArtifacts).toBeUndefined();
     expect(record.workflowState).toBeUndefined();

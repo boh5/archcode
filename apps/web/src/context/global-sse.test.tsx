@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import type { QueryClient } from "@tanstack/react-query";
 import type { StoreApi } from "zustand";
 import type {
   GlobalSessionEventEnvelope,
@@ -14,6 +15,7 @@ import type {
   McpServerStatus,
 } from "@archcode/protocol";
 import type { WebSessionStoreState } from "../store/session-store";
+import { queryKeys } from "../api/queries";
 import { hitlStore, scopedHitlKey } from "../store/hitl-store";
 import { useMcpStatusStore } from "../store/mcp-status-store";
 import { runtimeFamilyKey, sessionRuntimeStore } from "../store/session-runtime-store";
@@ -23,8 +25,10 @@ import {
   cancelSSEShutdownReconnect,
   createSSEWatchdog,
   handleSSEEvent,
+  isProjectTodoQueryKey,
   isSessionSnapshotQueryKey,
   parseSSEEvent,
+  refreshProjectTodoQueriesAfterSSEOpen,
   requestSSEReconnectOnce,
   requestSSEShutdownReconnectOnce,
   type SSEReconnectState,
@@ -182,6 +186,40 @@ describe("SSE liveness watchdog", () => {
     expect(isSessionSnapshotQueryKey(["projects", "demo", "sessions", "child-1", "focused"])).toBe(true);
     expect(isSessionSnapshotQueryKey(["projects", "demo", "goals", "goal-1"])).toBe(false);
     expect(isSessionSnapshotQueryKey(["sessions", "root-1"])).toBe(false);
+  });
+
+  test("selects and actively refreshes only project Todo list and detail queries after SSE opens", async () => {
+    const candidates = [
+      ["projects", "demo", "todos"],
+      ["projects", "demo", "todos", "todo-1"],
+      ["projects", "other", "todos"],
+      ["projects", "demo", "sessions"],
+      ["projects", "demo", "goals", "goal-1"],
+      ["projects", "demo", "todos", "todo-1", "history"],
+      ["todos", "demo"],
+    ] as const;
+    const refreshed: (readonly unknown[])[] = [];
+    const invalidateQueries = mock(async (filters: {
+      predicate?: (query: { queryKey: readonly unknown[] }) => boolean;
+      refetchType?: string;
+    }) => {
+      expect(filters.refetchType).toBe("active");
+      for (const queryKey of candidates) {
+        if (filters.predicate?.({ queryKey })) refreshed.push(queryKey);
+      }
+    });
+
+    await refreshProjectTodoQueriesAfterSSEOpen({
+      invalidateQueries,
+    } as unknown as Pick<QueryClient, "invalidateQueries">);
+
+    expect(refreshed).toEqual([
+      ["projects", "demo", "todos"],
+      ["projects", "demo", "todos", "todo-1"],
+      ["projects", "other", "todos"],
+    ]);
+    expect(isProjectTodoQueryKey(["projects", 1, "todos"])).toBe(false);
+    expect(invalidateQueries).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -430,6 +468,44 @@ describe("handleSSEEvent", () => {
     expect(mockFindWebSessionStore).toHaveBeenCalledWith("unknown-session", "my-project");
     expect(mockCreateWebSessionStore).toHaveBeenCalledWith("unknown-session", "my-project");
     expect(mockApplyRemoteEnvelope).toHaveBeenCalledWith(envelope);
+  });
+
+  test("waits for execution-start before refreshing Session topology after a Todo checkpoint", () => {
+    const store = createMockStore();
+    mockFindWebSessionStore.mockReturnValue(store);
+
+    handleSSEEvent({ event: "resource.changed", data: JSON.stringify({
+      type: "resource.changed",
+      projectSlug: "proj",
+      resourceType: "todo",
+      resourceId: "todo-1",
+      createdAt: 1,
+    }) }, deps);
+
+    expect(mockInvalidateQueries.mock.calls.map(([options]) => options.queryKey)).toEqual([
+      queryKeys.projectTodos("proj"),
+      queryKeys.projectTodo("proj", "todo-1"),
+    ]);
+    expect(mockInvalidateQueries).not.toHaveBeenCalledWith({ queryKey: queryKeys.sessions("proj") });
+
+    const executionStart: GlobalSessionEventEnvelope = {
+      type: "event",
+      slug: "proj",
+      sessionId: "source-session",
+      eventId: 1,
+      createdAt: 2,
+      payload: { type: "execution-start", executionId: "project-todo:todo-1:activation" },
+      agentName: "engineer",
+    };
+    handleSSEEvent({ event: "event", data: JSON.stringify(executionStart) }, deps);
+
+    expect(mockInvalidateQueries.mock.calls.map(([options]) => options.queryKey)).toEqual([
+      queryKeys.projectTodos("proj"),
+      queryKeys.projectTodo("proj", "todo-1"),
+      queryKeys.session("proj", "source-session"),
+      queryKeys.sessions("proj"),
+    ]);
+    expect(mockApplyRemoteEnvelope).toHaveBeenCalledWith(executionStart);
   });
 
   test("invalidates topology queries and preloads child metadata on child session link", () => {

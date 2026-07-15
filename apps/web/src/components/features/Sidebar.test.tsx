@@ -274,9 +274,11 @@ describe("Sidebar", () => {
     const tree = render();
 
     const dashboards = findAll(tree, (element) => typeName(element) === "DashboardLinkButton");
-    expect(dashboards).toHaveLength(3);
-    expect(dashboards[0]?.props?.to).toBe("/projects/archcode");
-    expect(dashboards[0]?.props?.label).toBe("Project Dashboard");
+    expect(dashboards).toHaveLength(4);
+    const projectDashboard = dashboards.find((entry) => entry.props?.label === "Project Dashboard");
+    const todosDashboard = dashboards.find((entry) => entry.props?.label === "Todos");
+    expect(projectDashboard?.props?.to).toBe("/projects/archcode");
+    expect(todosDashboard?.props?.to).toBe("/projects/archcode/todos");
     expect(textContent(tree)).not.toContain("Placeholder");
   });
 
@@ -298,8 +300,8 @@ describe("Sidebar", () => {
     const tree = render();
 
     const dashboards = findAll(tree, (element) => typeName(element) === "DashboardLinkButton");
-    expect(dashboards).toHaveLength(3);
-    expect(dashboards[0]?.props?.label).toBe("Project Dashboard");
+    expect(dashboards).toHaveLength(4);
+    expect(dashboards.find((entry) => entry.props?.label === "Project Dashboard")?.props?.label).toBe("Project Dashboard");
   });
 
 
@@ -676,8 +678,8 @@ describe("Sidebar", () => {
 
     const tree = render();
     const dashboards = findAll(tree, (element) => typeName(element) === "DashboardLinkButton");
-    expect(dashboards[1]?.props?.to).toBe("/projects/archcode/goals");
-    expect(dashboards[1]?.props?.isActive).toBe(true);
+    expect(dashboards.find((entry) => entry.props?.to === "/projects/archcode/goals")?.props?.to).toBe("/projects/archcode/goals");
+    expect(dashboards.find((entry) => entry.props?.to === "/projects/archcode/goals")?.props?.isActive).toBe(true);
   });
 
   test("clicking a goal item navigates to goal detail route", () => {

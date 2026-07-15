@@ -7,6 +7,7 @@ import {
   goalLeadAgentDefinition,
   planAgentDefinition,
   reviewerAgentDefinition,
+  shaperAgentDefinition,
 } from "./definitions";
 import { TOOL_COMPRESS } from "../tools/names";
 
@@ -20,6 +21,7 @@ describe("compress tool access matrix", () => {
       reviewerAgentDefinition,
       exploreAgentDefinition,
       librarianAgentDefinition,
+      shaperAgentDefinition,
     ]) {
       expect(definition.hooks.autoCompact).toBe(true);
       expect(definition.tools.tools).toContain(TOOL_COMPRESS);

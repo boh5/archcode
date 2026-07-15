@@ -15,12 +15,12 @@ import {
 describe("AGENT_TYPES", () => {
   test("contains all expected agent types", () => {
     expect(AGENT_TYPES).toEqual([
-      "engineer", "goal_lead", "plan", "build", "reviewer", "explore", "librarian",
+      "engineer", "goal_lead", "plan", "build", "reviewer", "explore", "librarian", "shaper",
     ]);
   });
 
   test("is a readonly tuple", () => {
-    expect(AGENT_TYPES.length).toBe(7);
+    expect(AGENT_TYPES.length).toBe(8);
   });
 });
 

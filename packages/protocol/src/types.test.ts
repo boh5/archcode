@@ -78,7 +78,7 @@ describe("current tool and config wire types", () => {
 });
 
 describe("global SSE wire protocol types", () => {
-  test("uses an unreasoned resource.changed contract for Goals and Automations", () => {
+  test("uses an unreasoned resource.changed contract for Goals, Automations, and Project Todos", () => {
     const events: GlobalSSEResourceChangedEvent[] = [{
       type: "resource.changed",
       projectSlug: "project-a",
@@ -91,6 +91,12 @@ describe("global SSE wire protocol types", () => {
       resourceType: "automation",
       resourceId: "automation-1",
       createdAt: 2,
+    }, {
+      type: "resource.changed",
+      projectSlug: "project-a",
+      resourceType: "todo",
+      resourceId: "todo-1",
+      createdAt: 3,
     }];
 
     expect(serializeRoundTrip(events)).toEqual(events);

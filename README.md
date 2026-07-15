@@ -9,7 +9,7 @@ Unlike a coding CLI that runs a task and exits, ArchCode keeps the engineering w
 ## What ArchCode gives you
 
 - **Always-on server runtime** — run ArchCode on a local machine or remote server and keep coding work moving even when your terminal is closed.
-- **Web workbench** — manage projects, sessions, goals, automations, approvals, and reviews from a browser.
+- **Web workbench** — capture project Todos, shape them with a dedicated Agent, and manage sessions, goals, automations, approvals, and reviews from a browser.
 - **AI engineering workflow** — describe a goal, let agents plan and build, then review evidence before accepting the result.
 - **Human-in-the-loop control** — approve sensitive actions, answer agent questions, and inspect what changed.
 - **Bring your own models** — configure OpenAI-compatible providers and choose models per agent role.
@@ -27,7 +27,7 @@ bun install
 
 ### 2. Configure models
 
-Create `~/.archcode/config.json`. ArchCode reads this single server-wide file for every registered project; project directories are never searched for configuration. This minimal example uses an OpenAI-compatible local provider and assigns the same model to all seven built-in agent roles:
+Create `~/.archcode/config.json`. ArchCode reads this single server-wide file for every registered project; project directories are never searched for configuration. This minimal example uses an OpenAI-compatible local provider and assigns the same model to all eight built-in agent roles:
 
 ```json
 {
@@ -55,7 +55,8 @@ Create `~/.archcode/config.json`. ArchCode reads this single server-wide file fo
     "build": { "model": "local:glm-5" },
     "reviewer": { "model": "local:glm-5" },
     "explore": { "model": "local:glm-5" },
-    "librarian": { "model": "local:glm-5" }
+    "librarian": { "model": "local:glm-5" },
+    "shaper": { "model": "local:glm-5" }
   }
 }
 ```
@@ -94,12 +95,13 @@ Then open the Web UI in your browser and add a project workspace.
 
 ## Using the workbench
 
-1. **Add a project** — register an existing workspace directory from the Web UI.
-2. **Start a session or goal** — describe the engineering work you want done.
-3. **Let agents work** — ArchCode coordinates planning, building, exploration, documentation lookup, and review.
-4. **Approve when needed** — sensitive actions can pause for human approval instead of running silently.
-5. **Review evidence** — inspect diffs, tool output, tests, reviewer summaries, and session history before accepting work.
-6. **Keep it running** — leave ArchCode online so long-running coding work can continue across sessions.
+1. **Add a project** — register an existing workspace directory; ArchCode opens its Todos board by default.
+2. **Capture and shape intent** — record an Idea, discuss it with Shaper, then mark it Ready or Rejected.
+3. **Start existing execution** — hand a Ready Todo to an ordinary Session, Goal, or Automation, or start those flows directly without a Todo.
+4. **Let agents work** — ArchCode coordinates planning, building, exploration, documentation lookup, and review.
+5. **Approve when needed** — sensitive actions can pause for human approval instead of running silently.
+6. **Review evidence** — inspect diffs, tool output, tests, reviewer summaries, and session history before accepting work.
+7. **Keep it running** — leave ArchCode online so long-running coding work can continue across sessions.
 
 ## Worktree isolation
 
@@ -127,7 +129,7 @@ access outside the worktree.
 
 ## Agent roles
 
-ArchCode ships with seven specialized roles:
+ArchCode ships with eight specialized roles:
 
 | Agent | Role |
 |---|---|
@@ -138,6 +140,7 @@ ArchCode ships with seven specialized roles:
 | Reviewer | Checks completed work and validates evidence |
 | Explore | Searches and reads the local codebase |
 | Librarian | Looks up documentation and external references |
+| Shaper | Discusses and refines a bound Project Todo without starting implementation |
 
 You configure the model for each role in `~/.archcode/config.json`.
 
@@ -190,7 +193,7 @@ Custom MCP servers use the current HTTP-only configuration shape without a trans
 
 - `~/.archcode/config.json` uses strict validation; unknown fields are rejected.
 - `$schema`, MCP `transport`, and GitHub `apiBaseUrl` are not configuration fields; HTTP and GitHub.com are fixed implementation choices.
-- The `agents` section must include `engineer`, `goal_lead`, `plan`, `build`, `reviewer`, `explore`, and `librarian`.
+- The `agents` section must include `engineer`, `goal_lead`, `plan`, `build`, `reviewer`, `explore`, `librarian`, and `shaper`. Shaper has no model fallback.
 - Model options use AI SDK-style camelCase names, such as `maxOutputTokens`, `temperature`, `topP`, `topK`, `timeout`, and `providerOptions`.
 - Settings edits model options, complete variant maps, and per-Agent overrides as validated JSON objects; provider-specific call settings belong under `providerOptions`.
 - `maxRetries` is not configurable. ArchCode owns LLM recovery and always disables AI SDK retries internally.

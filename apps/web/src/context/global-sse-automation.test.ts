@@ -20,4 +20,23 @@ describe("global SSE Automation invalidation", () => {
       queryKeys.activeAutomations,
     ]);
   });
+
+  test("invalidates only Todo caches for the checkpoint-time Todo resource change", () => {
+    const calls: unknown[] = [];
+    handleSSEEvent({ event: "resource.changed", data: JSON.stringify({
+      type: "resource.changed", projectSlug: "demo", resourceType: "todo", resourceId: "t1", createdAt: 1,
+    }) }, {
+      findStore: () => undefined,
+      createStore: (() => { throw new Error("not used"); }) as never,
+      invalidateQueries: async ({ queryKey }) => { calls.push(queryKey); },
+      onShutdown: () => {}, onHeartbeat: () => {}, refreshMcpStatus: () => {}, requestReconnect: () => {}, refreshSessionSnapshots: () => {},
+    });
+    expect(calls).toEqual([
+      queryKeys.projectTodos("demo"),
+      queryKeys.projectTodo("demo", "t1"),
+    ]);
+    expect(calls).not.toContainEqual(queryKeys.sessions("demo"));
+    expect(calls).not.toContainEqual(queryKeys.projectGoals("demo"));
+    expect(calls).not.toContainEqual(queryKeys.projectAutomations("demo"));
+  });
 });

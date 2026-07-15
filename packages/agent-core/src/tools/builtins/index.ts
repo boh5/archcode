@@ -24,6 +24,7 @@ export { astGrepSearchTool, astGrepReplaceTool } from "./ast-grep";
 export { compressTool, CompressInputSchema } from "./compress";
 export { worktreeEnterTool, worktreeExitTool, WorktreeEnterInputSchema, WorktreeExitInputSchema } from "./worktree";
 export { automationCreateTool } from "./automation-create";
+export { projectTodoUpdateTool, ProjectTodoUpdateInputSchema } from "./project-todo-update";
 
 import { fileReadTool } from "./file-read";
 import { fileWriteTool } from "./file-write";
@@ -47,6 +48,7 @@ import { skillListTool } from "./skill-list";
 import { skillReadTool } from "./skill-read";
 import { compressTool } from "./compress";
 import { worktreeEnterTool, worktreeExitTool } from "./worktree";
+import { projectTodoUpdateTool } from "./project-todo-update";
 
 export function createBuiltinToolDescriptors(): AnyToolDescriptor[] {
   return [
@@ -77,5 +79,6 @@ export function createBuiltinToolDescriptors(): AnyToolDescriptor[] {
     compressTool,
     worktreeEnterTool,
     worktreeExitTool,
+    projectTodoUpdateTool,
   ];
 }

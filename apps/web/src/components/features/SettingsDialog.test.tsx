@@ -63,7 +63,7 @@ const config: ServerConfig = {
     engineer: { model: "local:demo-model" }, goal_lead: { model: "local:demo-model" },
     plan: { model: "local:demo-model" }, build: { model: "local:demo-model" },
     reviewer: { model: "local:demo-model" }, explore: { model: "local:demo-model" },
-    librarian: { model: "local:demo-model" },
+    librarian: { model: "local:demo-model" }, shaper: { model: "local:demo-model" },
   },
   memory: { enabled: true, minMessages: 5, minContentLength: 1000, cooldownMs: 300000 },
 };

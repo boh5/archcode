@@ -29,7 +29,7 @@ export function ProjectBar({ onAddProject, onSettings }: ProjectBarProps) {
   const handleProjectClick = (slug: string, e?: React.MouseEvent) => {
     // Ctrl-click / Cmd-click should not navigate — context menu handles it
     if (e && (e.ctrlKey || e.metaKey)) return;
-    navigate(`/projects/${slug}`);
+    navigate(`/projects/${slug}/todos`);
   };
 
   const handleAddProject = () => {
@@ -45,7 +45,7 @@ export function ProjectBar({ onAddProject, onSettings }: ProjectBarProps) {
       if (project.slug === activeSlug) {
         const remaining = projects?.filter((p) => p.slug !== project.slug);
         if (remaining && remaining.length > 0) {
-          navigate(`/projects/${remaining[0].slug}`);
+          navigate(`/projects/${remaining[0].slug}/todos`);
         } else {
           navigate("/");
         }

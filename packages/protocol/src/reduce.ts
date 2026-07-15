@@ -264,7 +264,7 @@ export function reduceStreamEvent(
 
     case "tool-input-start": {
       const assistant = ensureCurrentAssistantMessage(state, timestamp, ctx);
-      const existing = findToolPartByCallId(
+      const existing = findCurrentToolPartByCallId(
         assistant.messages,
         assistant.currentAssistantMessageId,
         event.toolCallId,
@@ -293,7 +293,7 @@ export function reduceStreamEvent(
     }
 
     case "tool-call": {
-      const location = findToolPartByCallId(
+      const location = findCurrentToolPartByCallId(
         state.messages,
         state.currentAssistantMessageId,
         event.toolCallId,
@@ -324,7 +324,7 @@ export function reduceStreamEvent(
         state: "running",
         toolCallId: event.toolCallId,
         toolName: event.toolName,
-        input: event.input,
+        input: event.input === undefined ? null : event.input,
         createdAt: timestamp,
         startedAt: timestamp,
       };
@@ -341,9 +341,12 @@ export function reduceStreamEvent(
     }
 
     case "tool-input-resolved": {
-      const location = findToolPartByCallId(
+      const location = findCurrentToolPartByCallId(
         state.messages,
         state.currentAssistantMessageId,
+        event.toolCallId,
+      ) ?? findLatestIncompleteToolPartByCallId(
+        state.messages,
         event.toolCallId,
       );
 
@@ -357,15 +360,18 @@ export function reduceStreamEvent(
           state.messages,
           location.messageId,
           location.partId,
-          (part) => (part.type === "tool" ? { ...part, input: event.input } : part),
+          (part) => (part.type === "tool" ? { ...part, input: event.input === undefined ? null : event.input } : part),
         ),
       };
     }
 
     case "tool-attempt": {
-      const location = findToolPartByCallId(
+      const location = findCurrentToolPartByCallId(
         state.messages,
         state.currentAssistantMessageId,
+        event.toolCallId,
+      ) ?? findLatestIncompleteToolPartByCallId(
+        state.messages,
         event.toolCallId,
       );
 
@@ -385,9 +391,12 @@ export function reduceStreamEvent(
     }
 
     case "tool-result": {
-      const location = findToolPartByCallId(
+      const location = findCurrentToolPartByCallId(
         state.messages,
         state.currentAssistantMessageId,
+        event.toolCallId,
+      ) ?? findLatestIncompleteToolPartByCallId(
+        state.messages,
         event.toolCallId,
       );
 
@@ -1118,17 +1127,33 @@ function findLatestIncompletePartLocation(
   return undefined;
 }
 
-function findToolPartByCallId(
+function findCurrentToolPartByCallId(
   messages: SessionMessage[],
   messageId: string | undefined,
   toolCallId: string,
 ): PartLocation | undefined {
   if (!messageId) return undefined;
-
   const message = messages.find((item) => item.id === messageId);
   const part = message?.parts.find((item) => item.type === "tool" && item.toolCallId === toolCallId);
-
   return part ? { messageId, partId: part.id } : undefined;
+}
+
+function findLatestIncompleteToolPartByCallId(
+  messages: SessionMessage[],
+  toolCallId: string,
+): PartLocation | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]!;
+    const part = message.parts.find((item) => (
+      item.type === "tool"
+      && item.toolCallId === toolCallId
+      && item.state !== "completed"
+      && item.state !== "error"
+    ));
+    if (part) return { messageId: message.id, partId: part.id };
+  }
+
+  return undefined;
 }
 
 function getToolPartAtLocation(
@@ -1242,7 +1267,7 @@ function toRunningToolPart(
     state: "running",
     toolCallId: part.toolCallId,
     toolName: part.toolName,
-    input,
+    input: input === undefined ? null : input,
     createdAt: part.createdAt,
     startedAt: "startedAt" in part ? part.startedAt : timestamp,
     ...(part.attemptId !== undefined ? { attemptId: part.attemptId } : {}),

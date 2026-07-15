@@ -1,5 +1,5 @@
 export { closeMcpManagerBestEffort, createRuntime, ProjectRuntimeActiveError } from "./runtime";
-export type { AgentRuntime, AgentRuntimeOptions, CreateRuntimeSessionOptions, ProjectControlPlaneSnapshot, ProjectRemovalResult } from "./runtime";
+export type { AgentRuntime, AgentRuntimeOptions, CreateRuntimeSessionOptions, ManagedSessionExecutionForwarder, ProjectControlPlaneSnapshot, ProjectRemovalResult } from "./runtime";
 export * from "./automations";
 export type { CompressionOriginalRangeResult } from "./compression";
 export {
@@ -81,6 +81,7 @@ export type { ProjectRegistrationResult } from "./projects/registry";
 export { SessionLifecycleService } from "./projects/session-lifecycle-service";
 export type { SessionLifecycleServiceOptions } from "./projects/session-lifecycle-service";
 export type { ProjectContext, ProjectInfo } from "./projects/types";
+export * from "./todos";
 export {
   HitlConflictError,
   HitlNotFoundError,

@@ -387,7 +387,7 @@ describe("query loop LLM stream recovery", () => {
       { role: "user", content: wrappedMessage("m0001", "Use tool") },
       { role: "assistant", content: [
         { type: "text", text: '<message ref="m0002">' },
-        { type: "tool-call", toolCallId: "tc-pending", toolName: "echo", input: undefined },
+        { type: "tool-call", toolCallId: "tc-pending", toolName: "echo", input: null },
         { type: "text", text: "Recovered" },
         { type: "text", text: "</message>" },
       ] },

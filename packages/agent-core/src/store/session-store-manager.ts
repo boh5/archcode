@@ -25,6 +25,7 @@ import {
 import { SessionFileSchema, sessionFileInternals, type HydratedSessionFile, type SessionSummary } from "./helpers";
 import { projectModelMessagesFromStoredMessages } from "./projection";
 import { reduceStreamEvent } from "./reduce";
+import { toDurableSessionEvent, toDurableToolInput } from "./durable-tool-input";
 import { assertSafeSessionId, getSessionPath, getSessionsDir } from "./sessions-dir";
 import {
   type ReasoningPart,
@@ -188,11 +189,12 @@ export class SessionStoreManager {
       eventOffset: 0,
       nextEventId: 0,
       append: (event: SessionEventPayload) => {
+        const durableEvent = toDurableSessionEvent(event);
         set((state) => {
           const envelope: SessionEventEnvelope = {
             id: state.nextEventId,
             createdAt: Date.now(),
-            payload: event,
+            payload: durableEvent,
           };
 
           const events = [...state.events, envelope];
@@ -205,11 +207,11 @@ export class SessionStoreManager {
             eventOffset += dropCount;
           }
 
-          const partial = reduceStoreEvent(state, event as SessionEventPayload);
+          const partial = reduceStoreEvent(state, durableEvent);
 
           return { ...partial, events, eventOffset, nextEventId };
         });
-        persistForEvent(event);
+        persistForEvent(durableEvent);
       },
       setCwd: (nextCwd: string) => {
         const previousCwd = get().cwd;
@@ -1107,7 +1109,7 @@ function reconcileInterruptedSessionFile(file: HydratedSessionFile): HydratedSes
       return {
         ...part,
         state: "error" as const,
-        input: "input" in part ? part.input : undefined,
+        input: toDurableToolInput("input" in part ? part.input : undefined),
         startedAt: "startedAt" in part ? part.startedAt : now,
         endedAt: now,
         errorMessage: "Tool execution result unknown: execution was interrupted",

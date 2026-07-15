@@ -478,19 +478,22 @@ describe("Dashboard", () => {
   });
 
   test("Dashboard never fetches global /api/hitl?status=pending endpoint", async () => {
+    const requestedPaths: string[] = [];
+    const handler = createDashboardHandler({ hitl: [] });
     const ctx = await setupDashboard(async (path: string) => {
-      if (path === "/api/hitl?status=pending" || path.startsWith("/api/hitl/")) {
-        throw new Error(`Dashboard must not fetch global HITL endpoint: ${path}`);
-      }
-      return createDashboardHandler({ hitl: [] })(path);
+      requestedPaths.push(path);
+      return handler(path);
     });
 
     try {
       await renderDashboard(ctx.reactRoot, ctx.queryClient);
 
       await waitFor(() => {
-        expect(ctx.queryClient.isFetching()).toBe(0);
         expect(ctx.container.querySelector('[data-testid="dashboard-approval-queue"]')).toBeNull();
+        expect(requestedPaths).toContain("/api/projects");
+        expect(requestedPaths).toContain("/api/goals?status=active");
+        expect(requestedPaths).toContain("/api/automations?status=active");
+        expect(requestedPaths.some((path) => path === "/api/hitl?status=pending" || path.startsWith("/api/hitl/"))).toBeFalse();
       });
     } finally {
       await cleanupDashboard(ctx);

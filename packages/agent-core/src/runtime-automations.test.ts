@@ -12,6 +12,7 @@ import { createRuntime, type AgentRuntime } from "./runtime";
 import { RuntimeSessionDispatchGateway } from "./automations/runtime-session-gateway";
 import type { AutomationSchedulerTimer, AutomationSchedulerTimerHandle } from "./automations/scheduler";
 import { SessionStoreManager } from "./store/session-store-manager";
+import { ProjectTodoStateManager, discussionExecutionId } from "./todos";
 
 const roots: string[] = [];
 const START = Date.parse("2026-07-13T00:00:00.000Z");
@@ -76,6 +77,41 @@ describe("RuntimeSessionDispatchGateway", () => {
 });
 
 describe("AgentRuntime Automation wiring", () => {
+  test("routes Goal activation through the managed event executor", async () => {
+    const fixture = await runtimeFixture({ installManagedExecutor: false });
+    const managedInputs: Array<Parameters<AgentRuntime["startSessionMessageExecution"]>[0]> = [];
+    fixture.runtime.setManagedSessionExecutionForwarder(async (input) => {
+      managedInputs.push(input);
+      return {
+        sessionId: input.sessionId,
+        rootSessionId: input.sessionId,
+        workspaceRoot: input.workspaceRoot,
+        agentName: "goal_lead",
+        origin: input.origin ?? "user_message",
+        abortController: new AbortController(),
+        promise: Promise.resolve(),
+        executionToken: Symbol("managed-goal-test"),
+        startedAt: Date.now(),
+        ...(input.executionId === undefined ? {} : { executionId: input.executionId }),
+      };
+    });
+    const context = await fixture.runtime.contextResolver.resolve(fixture.workspaceRoot);
+
+    const goal = await context.goalLifecycle.create({
+      projectSlug: "automation-one",
+      createdFromSessionId: fixture.sourceSessionId,
+      objective: "Verify managed Goal activation.",
+      acceptanceCriteria: "The Goal start is forwarded with its existing claim.",
+    });
+
+    expect(managedInputs).toHaveLength(1);
+    expect(managedInputs[0]).toMatchObject({
+      sessionId: goal.mainSessionId,
+      executionId: `goal-initial:${goal.id}`,
+      origin: "goal_claim",
+    });
+  });
+
   test("publishes every Goal commit and schedules Goal title generation only on creation", async () => {
     const fixture = await runtimeFixture();
     const events: unknown[] = [];
@@ -150,7 +186,7 @@ describe("AgentRuntime Automation wiring", () => {
     await waitForInvocationExecution(fixture.runtime, fixture.workspaceRoot, invocation);
   });
 
-  test("uses the installed server Session message executor for Automation dispatch", async () => {
+  test("uses the installed managed Session message executor for Automation dispatch", async () => {
     const fixture = await runtimeFixture();
     const automation = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
       name: "server events",
@@ -158,11 +194,10 @@ describe("AgentRuntime Automation wiring", () => {
       action: { kind: "start_session", message: "Report status", location: "project" },
       createdFromSessionId: fixture.sourceSessionId,
     });
-    const ordinaryExecutor = fixture.runtime.startSessionMessageExecution;
     let wrappedExecutions = 0;
-    fixture.runtime.setAutomationSessionMessageExecutor(async (input) => {
+    fixture.runtime.setManagedSessionExecutionForwarder(async (_input, start) => {
       wrappedExecutions += 1;
-      return await ordinaryExecutor(input);
+      return await start();
     });
 
     const invocation = await fixture.runtime.runAutomationNow(fixture.workspaceRoot, automation.id);
@@ -170,6 +205,86 @@ describe("AgentRuntime Automation wiring", () => {
     expect(invocation.status).toBe("dispatched");
     expect(wrappedExecutions).toBe(1);
     await waitForInvocationExecution(fixture.runtime, fixture.workspaceRoot, invocation);
+  });
+
+  test("routes Project Todo starts through the managed executor and binds exact resources", async () => {
+    const fixture = await runtimeFixture();
+    const context = await fixture.runtime.contextResolver.resolve(fixture.workspaceRoot);
+    const managedInputs: Array<{ sessionId: string; executionId?: string }> = [];
+    fixture.runtime.setManagedSessionExecutionForwarder(async (input, start) => {
+      managedInputs.push({ sessionId: input.sessionId, executionId: input.executionId });
+      return await start();
+    });
+
+    const idea = await context.todos.createTodo({ title: "Shape through server events" });
+    const discussed = await context.todos.discussTodo(idea.id, idea.revision);
+    expect(managedInputs).toHaveLength(1);
+    expect(managedInputs[0]).toMatchObject({ sessionId: discussed.discussionSessionId });
+    expect((await fixture.runtime.getSessionFile(fixture.workspaceRoot, discussed.discussionSessionId!)).agentName).toBe("shaper");
+    await waitFor(() => fixture.runtime.getSessionFamilyActivity(fixture.workspaceRoot, discussed.discussionSessionId!) === "idle");
+
+    const automationIdea = await context.todos.createTodo({ title: "Automate exact resource binding" });
+    const ready = await context.todos.updateTodo(automationIdea.id, {
+      expectedRevision: automationIdea.revision,
+      patch: { status: "ready" },
+    });
+    const active = await context.todos.activateTodo(ready.id, {
+      expectedRevision: ready.revision,
+      kind: "automation",
+    });
+    expect(managedInputs).toHaveLength(2);
+    expect(managedInputs[1]).toMatchObject({ sessionId: active.activation?.sourceSessionId });
+
+    const automation = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
+      name: "Todo provenance",
+      trigger: { kind: "interval", everyMs: 30_000 },
+      action: { kind: "start_session", message: "Check", location: "project" },
+      createdFromSessionId: active.activation!.sourceSessionId,
+    });
+    expect((await context.todos.readTodo(active.id)).activation?.resourceId).toBe(automation.id);
+    await fixture.runtime.abortAllSessionExecutions();
+  });
+
+  test("recovers durable Project Todo checkpoints only after managed execution is installed", async () => {
+    let todoId = "";
+    let discussionSessionId = "";
+    const fixture = await runtimeFixture({
+      installManagedExecutor: false,
+      beforeRuntime: async ({ workspaceRoot, projectSlug }) => {
+        const state = new ProjectTodoStateManager(workspaceRoot);
+        const todo = await state.createTodo({ title: "Recover after restart" });
+        discussionSessionId = crypto.randomUUID();
+        todoId = todo.id;
+        await state.checkpointDiscussion(todo.id, todo.revision, discussionSessionId);
+      },
+    });
+
+    await expect(fixture.runtime.getSessionFile(fixture.workspaceRoot, discussionSessionId)).rejects.toThrow();
+    await expect(fixture.runtime.recoverProjectTodos()).rejects.toThrow(
+      "Managed Session execution forwarder must be installed before runtime-managed execution",
+    );
+    await expect(fixture.runtime.getSessionFile(fixture.workspaceRoot, discussionSessionId)).rejects.toThrow();
+
+    const managedInputs: Array<{ sessionId: string; executionId?: string }> = [];
+    fixture.runtime.setManagedSessionExecutionForwarder(async (input, start) => {
+      managedInputs.push({ sessionId: input.sessionId, executionId: input.executionId });
+      return await start();
+    });
+
+    await fixture.runtime.recoverProjectTodos();
+    expect(managedInputs).toEqual([{
+      sessionId: discussionSessionId,
+      executionId: discussionExecutionId(todoId),
+    }]);
+    await waitFor(async () => {
+      const session = await fixture.runtime.getSessionFile(fixture.workspaceRoot, discussionSessionId);
+      return session.executions.some((execution) => (
+        execution.id === discussionExecutionId(todoId) && execution.status !== "running"
+      ));
+    });
+
+    await fixture.runtime.recoverProjectTodos();
+    expect(managedInputs).toHaveLength(1);
   });
 
   test("rejects worktree actions on non-Git projects during create and update", async () => {
@@ -318,7 +433,11 @@ describe("AgentRuntime Automation wiring", () => {
   });
 });
 
-async function runtimeFixture(options: { secondProject?: boolean } = {}): Promise<{
+async function runtimeFixture(options: {
+  secondProject?: boolean;
+  installManagedExecutor?: boolean;
+  beforeRuntime?: (input: { workspaceRoot: string; projectSlug: string }) => Promise<void>;
+} = {}): Promise<{
   runtime: AgentRuntime;
   workspaceRoot: string;
   sourceSessionId: string;
@@ -335,8 +454,9 @@ async function runtimeFixture(options: { secondProject?: boolean } = {}): Promis
   await mkdir(join(root, ".archcode"), { recursive: true });
   await writeFile(configPath, JSON.stringify(config()));
   const registry = new ProjectRegistry({ homeDir: root, logger: silentLogger });
-  await registry.add({ workspaceRoot, name: "Automation One" });
+  const project = await registry.add({ workspaceRoot, name: "Automation One" });
   if (secondWorkspaceRoot !== undefined) await registry.add({ workspaceRoot: secondWorkspaceRoot, name: "Automation Two" });
+  await options.beforeRuntime?.({ workspaceRoot, projectSlug: project.slug });
   const clock = new FakeClock(START);
   const timer = new FakeTimer(clock);
   const runtime = await createRuntime({
@@ -346,6 +466,9 @@ async function runtimeFixture(options: { secondProject?: boolean } = {}): Promis
     automationSchedulerClock: clock,
     automationSchedulerTimer: timer,
   });
+  if (options.installManagedExecutor !== false) {
+    runtime.setManagedSessionExecutionForwarder((_input, start) => start());
+  }
   const sourceSession = await runtime.createSession(workspaceRoot, { agentName: "engineer" });
   const secondSourceSession = secondWorkspaceRoot === undefined
     ? undefined
@@ -390,6 +513,7 @@ function config(): Record<string, unknown> {
       reviewer: { model: "local:test" },
       explore: { model: "local:test" },
       librarian: { model: "local:test" },
+      shaper: { model: "local:test" },
     },
     mcp: { servers: {} },
   };

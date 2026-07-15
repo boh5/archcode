@@ -179,6 +179,11 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
           { sessionId, ownerType: "goal", ownerId: "goal-1" },
         ]);
       }
+      if (sessionId === "todo-owned-session") {
+        throw new SessionDeleteOwnerConflictError([
+          { sessionId, ownerType: "project_todo", ownerId: "11111111-1111-4111-8111-111111111111" },
+        ]);
+      }
       const key = `${workspaceRoot}\0${sessionId}`;
       if (!sessions.has(key)) throw new MissingSessionFileError();
       sessions.delete(key);
@@ -612,6 +617,29 @@ describe("sessions routes", () => {
           owners: [
             { sessionId: "owned-session", ownerType: "goal", ownerId: "goal-1" },
           ],
+        },
+      },
+    });
+  });
+
+  test("DELETE identifies the owning Project Todo", async () => {
+    const { app, project } = await createTestApp("delete-project-todo-owner-conflict");
+
+    const res = await app.request(`/api/projects/${project.slug}/sessions/todo-owned-session`, {
+      method: "DELETE",
+    });
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      error: {
+        code: "DELETE_CONFLICT",
+        details: {
+          scopeCode: "SESSION_DELETE_OWNER_CONFLICT",
+          owners: [{
+            sessionId: "todo-owned-session",
+            ownerType: "project_todo",
+            ownerId: "11111111-1111-4111-8111-111111111111",
+          }],
         },
       },
     });

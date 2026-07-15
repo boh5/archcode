@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import type { AgentRuntime, ProjectInfo } from "@archcode/agent-core";
+import type { AgentRuntime, ManagedSessionExecutionForwarder, ProjectInfo } from "@archcode/agent-core";
 import { isTerminalChildSessionStatus, type GlobalSSEEvent, type GlobalSessionEventEnvelope, type ToolChildSessionLinkEvent } from "@archcode/protocol";
 import { errorHandler } from "./error-handler";
 import { UnauthorizedError } from "./errors";
@@ -20,6 +20,7 @@ import { createMessagesRoutes } from "./routes/messages";
 import { createMcpRoutes } from "./routes/mcp";
 import { createProjectsRoutes } from "./routes/projects";
 import { createSessionsRoutes } from "./routes/sessions";
+import { createTodosRoutes } from "./routes/todos";
 import { createEmbeddedAssetHandler } from "./serve-web";
 import { globalEventBus } from "./events/global-event-bus";
 
@@ -31,9 +32,10 @@ export interface CreateServerAppOptions {
 export function createServerApp(
   runtime: AgentRuntime,
   options: CreateServerAppOptions = {},
-): { app: Hono; runtime: AgentRuntime } {
+): { app: Hono; runtime: AgentRuntime; forwardSessionExecution: ManagedSessionExecutionForwarder } {
   const app = new Hono();
   const serverRuntime = createServerEventRuntime(runtime);
+  const forwardSessionExecution = createManagedSessionExecutionForwarder(runtime);
 
   app.onError(errorHandler);
   app.use("*", requestLogger());
@@ -90,6 +92,7 @@ export function createServerApp(
   const goals = createGoalsRoutes(serverRuntime);
   const projectHitl = createHitlRoutes(serverRuntime);
   const automations = createAutomationsRoutes(serverRuntime);
+  const todos = createTodosRoutes(serverRuntime);
   const sessions = createSessionsRoutes(serverRuntime);
   const messages = createMessagesRoutes(serverRuntime);
   const globalEvents = createGlobalEventsRoutes(globalEventBus, {
@@ -113,6 +116,7 @@ export function createServerApp(
   app.route("/api/projects", projects);
   app.route("/api/projects", goals);
   app.route("/api/projects", automations);
+  app.route("/api/projects", todos);
   app.route("/api/projects", projectHitl);
   app.route("/api/projects/:slug/sessions", sessions);
   app.route("/api/projects/:slug/sessions/:sessionId", messages);
@@ -137,89 +141,14 @@ export function createServerApp(
   wireMcpStatusBridge(serverRuntime, globalEventBus);
   wireResourceChangeBridge(serverRuntime, globalEventBus);
 
-  return { app, runtime: serverRuntime };
+  return { app, runtime: serverRuntime, forwardSessionExecution };
 }
 
 export function createServerEventRuntime(runtime: AgentRuntime): AgentRuntime {
-  const prepareSessionForwarding = (input: Parameters<AgentRuntime["startSessionExecution"]>[0]) => {
-    const subscriptions = new Map<string, () => void>();
-    const terminalChildren = new Set<string>();
-    const rootKey = scopedSessionSubscriptionKey(input.slug, input.sessionId);
-    let rootCompleted = false;
-    let releaseCheck = Promise.resolve();
-
-    const unsubscribeSession = (slug: string, sessionId: string) => {
-      const key = scopedSessionSubscriptionKey(slug, sessionId);
-      if (key === rootKey) return;
-      subscriptions.get(key)?.();
-      subscriptions.delete(key);
-    };
-
-    const maybeReleaseRoot = () => {
-      if (!rootCompleted) return;
-      releaseCheck = releaseCheck.then(async () => {
-        const activeChildren = [...subscriptions.keys()].filter((key) => key !== rootKey && !terminalChildren.has(key));
-        if (activeChildren.length > 0) return;
-        try {
-          const session = await runtime.getSessionFile(input.workspaceRoot, input.sessionId);
-          if (session.toolBatches.some((batch) => batch.archivedAt === undefined)) return;
-        } catch {
-          // A deleted Session has no later events to forward.
-        }
-        for (const unsubscribe of subscriptions.values()) unsubscribe();
-        subscriptions.clear();
-      });
-    };
-
-    const subscribe = (sessionId: string) => {
-      const key = scopedSessionSubscriptionKey(input.slug, sessionId);
-      if (subscriptions.has(key)) return;
-      const unsubscribe = runtime.subscribeSessionEvents({
-        slug: input.slug,
-        workspaceRoot: input.workspaceRoot,
-        sessionId,
-        onEvent: (event) => {
-          globalEventBus.emit(event);
-          if (!isChildSessionLinkEvent(event)) {
-            maybeReleaseRoot();
-            return;
-          }
-
-          const childSessionId = event.payload.link.childSessionId;
-          const childKey = scopedSessionSubscriptionKey(input.slug, childSessionId);
-          if (isTerminalChildSessionStatus(event.payload.link.status)) {
-            terminalChildren.add(childKey);
-            unsubscribeSession(input.slug, childSessionId);
-            maybeReleaseRoot();
-            return;
-          }
-          subscribe(childSessionId);
-          maybeReleaseRoot();
-        },
-      });
-      subscriptions.set(key, unsubscribe);
-    };
-
-    subscribe(input.sessionId);
-    return {
-      attach(execution: ReturnType<AgentRuntime["startSessionExecution"]>) {
-        void execution.promise.finally(() => {
-          rootCompleted = true;
-          maybeReleaseRoot();
-        });
-        return execution;
-      },
-      dispose() {
-        for (const unsubscribe of subscriptions.values()) unsubscribe();
-        subscriptions.clear();
-      },
-    };
-  };
-
   return {
     ...runtime,
     startSessionExecution(input) {
-      const forwarding = prepareSessionForwarding(input);
+      const forwarding = prepareSessionForwarding(runtime, input);
       try {
         return forwarding.attach(runtime.startSessionExecution(input));
       } catch (error) {
@@ -228,13 +157,104 @@ export function createServerEventRuntime(runtime: AgentRuntime): AgentRuntime {
       }
     },
     async startSessionMessageExecution(input) {
-      const forwarding = prepareSessionForwarding(input);
+      const forwarding = prepareSessionForwarding(runtime, input);
       try {
         return forwarding.attach(await runtime.startSessionMessageExecution(input));
       } catch (error) {
         forwarding.dispose();
         throw error;
       }
+    },
+  };
+}
+
+function createManagedSessionExecutionForwarder(runtime: AgentRuntime): ManagedSessionExecutionForwarder {
+  return async (input, start) => {
+    const forwarding = prepareSessionForwarding(runtime, input);
+    try {
+      return forwarding.attach(await start());
+    } catch (error) {
+      forwarding.dispose();
+      throw error;
+    }
+  };
+}
+
+function prepareSessionForwarding(
+  runtime: AgentRuntime,
+  input: Parameters<AgentRuntime["startSessionExecution"]>[0],
+) {
+  const subscriptions = new Map<string, () => void>();
+  const terminalChildren = new Set<string>();
+  const rootKey = scopedSessionSubscriptionKey(input.slug, input.sessionId);
+  let rootCompleted = false;
+  let releaseCheck = Promise.resolve();
+
+  const unsubscribeSession = (slug: string, sessionId: string) => {
+    const key = scopedSessionSubscriptionKey(slug, sessionId);
+    if (key === rootKey) return;
+    subscriptions.get(key)?.();
+    subscriptions.delete(key);
+  };
+
+  const maybeReleaseRoot = () => {
+    if (!rootCompleted) return;
+    releaseCheck = releaseCheck.then(async () => {
+      const activeChildren = [...subscriptions.keys()].filter((key) => key !== rootKey && !terminalChildren.has(key));
+      if (activeChildren.length > 0) return;
+      try {
+        const session = await runtime.getSessionFile(input.workspaceRoot, input.sessionId);
+        if (session.executions.at(-1)?.status === "running") return;
+        if (session.toolBatches.some((batch) => batch.archivedAt === undefined)) return;
+      } catch {
+        // A deleted Session has no later events to forward.
+      }
+      for (const unsubscribe of subscriptions.values()) unsubscribe();
+      subscriptions.clear();
+    });
+  };
+
+  const subscribe = (sessionId: string) => {
+    const key = scopedSessionSubscriptionKey(input.slug, sessionId);
+    if (subscriptions.has(key)) return;
+    const unsubscribe = runtime.subscribeSessionEvents({
+      slug: input.slug,
+      workspaceRoot: input.workspaceRoot,
+      sessionId,
+      onEvent: (event) => {
+        globalEventBus.emit(event);
+        if (!isChildSessionLinkEvent(event)) {
+          maybeReleaseRoot();
+          return;
+        }
+
+        const childSessionId = event.payload.link.childSessionId;
+        const childKey = scopedSessionSubscriptionKey(input.slug, childSessionId);
+        if (isTerminalChildSessionStatus(event.payload.link.status)) {
+          terminalChildren.add(childKey);
+          unsubscribeSession(input.slug, childSessionId);
+          maybeReleaseRoot();
+          return;
+        }
+        subscribe(childSessionId);
+        maybeReleaseRoot();
+      },
+    });
+    subscriptions.set(key, unsubscribe);
+  };
+
+  subscribe(input.sessionId);
+  return {
+    attach(execution: ReturnType<AgentRuntime["startSessionExecution"]>) {
+      void execution.promise.finally(() => {
+        rootCompleted = true;
+        maybeReleaseRoot();
+      });
+      return execution;
+    },
+    dispose() {
+      for (const unsubscribe of subscriptions.values()) unsubscribe();
+      subscriptions.clear();
     },
   };
 }

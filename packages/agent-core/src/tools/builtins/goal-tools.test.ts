@@ -17,6 +17,7 @@ import { createToolErrorResult, inferToolErrorKindFromResult } from "../errors";
 import { ProjectApprovalManager } from "../permission/project-approvals";
 import { createToolExecutionContext, type ToolExecutionContext, type ToolExecutionResult } from "../types";
 import { silentLogger } from "../../logger";
+import { createTestProjectTodoService } from "../test-project-context";
 import { GoalCreateInputSchema, GoalManageInputSchema, goalCreateTool, goalManageTool } from "./goal-tools";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "goal-tools", crypto.randomUUID());
@@ -152,6 +153,7 @@ function makeProjectContext(
     goalState: resolvedGoalState,
     goalLifecycle: goalState as unknown as ProjectContext["goalLifecycle"],
     createAutomation: async () => { throw new Error("unused automation creator"); },
+    todos: createTestProjectTodoService(workspaceRoot, project.slug),
     goalCancellation: {
       cancel: (goalId, request) => goalState.cancel(goalId, request.reason),
     },

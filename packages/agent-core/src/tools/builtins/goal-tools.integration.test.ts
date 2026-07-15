@@ -17,6 +17,7 @@ import { WorktreeService } from "../../worktrees";
 import { ProjectApprovalManager } from "../permission/project-approvals";
 import { createToolExecutionContext, type ToolExecutionContext, type ToolExecutionResult } from "../types";
 import { goalManageTool } from "./goal-tools";
+import { createTestProjectTodoService } from "../test-project-context";
 
 const testSkillService = new SkillService({ builtinSkills: {} });
 
@@ -113,6 +114,7 @@ function makeProjectContext(
     goalState,
     goalLifecycle: manager as unknown as ProjectContext["goalLifecycle"],
     createAutomation: async () => { throw new Error("unused automation creator"); },
+    todos: createTestProjectTodoService(workspaceRoot, project.slug),
     goalCancellation: {
       cancel: async () => { throw new Error("unused goal cancellation"); },
     },

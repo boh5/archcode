@@ -35,7 +35,7 @@ describe("shared-code hard-cut architecture", () => {
     expect(constants).toContain("DELEGATION_CORE_TOOLS");
     expect(constants).not.toMatch(/\b(ENGINEER_TOOLS|BASE_AGENT_TOOLS|READ_ONLY_AGENT_TOOLS)\b/);
 
-    for (const name of ["engineer", "goal-lead", "plan", "build", "reviewer", "explore", "librarian"]) {
+    for (const name of ["engineer", "goal-lead", "plan", "build", "reviewer", "explore", "librarian", "shaper"]) {
       const source = readFileSync(join(projectRoot, `packages/agent-core/src/agents/definitions/${name}.ts`), "utf8");
       expect(source).toContain("tools: [");
     }

@@ -206,7 +206,7 @@ describe("ProjectBar", () => {
     expect(textContent(node)).toContain("de");
 
     node.props.onClick({ ctrlKey: false, metaKey: false });
-    expect(navigate).toHaveBeenCalledWith("/projects/demo-project");
+    expect(navigate).toHaveBeenCalledWith("/projects/demo-project/todos");
   });
 
   test("add project affordance is a native button", () => {

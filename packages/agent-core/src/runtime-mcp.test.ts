@@ -76,6 +76,7 @@ function makeConfig(mcp?: Record<string, unknown>): Record<string, unknown> {
       reviewer: { model: "local:test-model" },
       explore: { model: "local:test-model" },
       librarian: { model: "local:test-model" },
+      shaper: { model: "local:test-model" },
     },
   };
   return mcp === undefined ? config : { ...config, mcp };

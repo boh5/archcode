@@ -1,6 +1,7 @@
 import type { ModelMessage, StreamTextResult, ToolSet } from "ai";
 import type { StoreApi } from "zustand";
 import type { Logger } from "../../logger";
+import { toDurableToolInput } from "../../store/durable-tool-input";
 import type { ErrorToolPart, ExecutionEndEvent, SessionStoreState, StreamEvent } from "../../store/types";
 import { createToolExecutionContext } from "../../tools/index";
 import type { ToolExecutionControl } from "../../tools/index";
@@ -900,7 +901,7 @@ function settleUnfinalizedToolPartsForRecovery(store: StoreApi<SessionStoreState
           state: "error",
           toolCallId: part.toolCallId,
           toolName: part.toolName,
-          input: "input" in part ? part.input : undefined,
+          input: toDurableToolInput("input" in part ? part.input : undefined),
           errorMessage: hasAttempt
             ? "Tool execution result unknown: execution was interrupted"
             : "Execution ended before tool result",

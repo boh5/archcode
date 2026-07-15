@@ -534,6 +534,7 @@ export interface ServerConfigDocument<Secret> {
     reviewer: ConfigAgentSettings;
     explore: ConfigAgentSettings;
     librarian: ConfigAgentSettings;
+    shaper: ConfigAgentSettings;
   };
   mcp?: { servers: Record<string, ConfigMcpServerSettings<Secret>> };
   integrations?: { github?: ConfigGithubIntegrationSettings };
@@ -627,7 +628,7 @@ export type GlobalSSEResourceChangedEvent =
   {
     type: "resource.changed";
     projectSlug: string;
-    resourceType: "goal" | "automation";
+    resourceType: "goal" | "automation" | "todo";
     resourceId: string;
     createdAt: number;
   };

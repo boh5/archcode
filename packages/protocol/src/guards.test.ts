@@ -175,6 +175,7 @@ describe("protocol event guards", () => {
     expect(isGlobalSSEHitlRealtimeEvent({ ...hitlEvent, hitlId: "other" })).toBe(false);
     expect(isGlobalSSEHitlRealtimeEvent({ type: "hitl.event" })).toBe(false);
     expect(isGlobalSSEResourceChangedEvent(resourceEvent)).toBe(true);
+    expect(isGlobalSSEResourceChangedEvent({ ...resourceEvent, resourceType: "todo", resourceId: "todo-1" })).toBe(true);
     expect(isGlobalSSEResourceChangedEvent({ ...resourceEvent, reason: "created" })).toBe(false);
     expect(isGlobalSSEResourceChangedEvent({ type: "resource.changed" })).toBe(false);
   });

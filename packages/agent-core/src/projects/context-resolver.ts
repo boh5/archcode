@@ -12,6 +12,7 @@ import { ProjectApprovalManager } from "../tools/permission/project-approvals";
 import type { ProjectContext, ProjectInfo } from "./types";
 import type { Automation, AutomationAction, AutomationTrigger } from "@archcode/protocol";
 import type { GoalLifecycleService } from "../goals/lifecycle-service";
+import type { ProjectTodoService } from "../todos";
 
 export interface ProjectContextResolverOptions {
   /** Registry-backed ProjectInfo lookup. Missing projects must fail resolution. */
@@ -40,6 +41,12 @@ export interface ProjectContextResolverOptions {
     project: ProjectInfo;
     goalState: GoalStateManager;
   }) => GoalLifecycleService;
+  /** Project-owned Todo service composed with narrow runtime capabilities. */
+  projectTodoFactory: (input: {
+    workspaceRoot: string;
+    project: ProjectInfo;
+    goalState: GoalStateManager;
+  }) => ProjectTodoService;
   /** Runtime-owned Automation creation path used by the model-facing tool. */
   createAutomation: (workspaceRoot: string, input: {
     readonly name: string;
@@ -64,6 +71,7 @@ export class ProjectContextResolver {
   readonly #goalCommitted: NonNullable<ProjectContextResolverOptions["goalCommitted"]>;
   readonly #goalCancellationFactory: ProjectContextResolverOptions["goalCancellationFactory"];
   readonly #goalLifecycleFactory: ProjectContextResolverOptions["goalLifecycleFactory"];
+  readonly #projectTodoFactory: ProjectContextResolverOptions["projectTodoFactory"];
   readonly #createAutomation: ProjectContextResolverOptions["createAutomation"];
   readonly #hitlFactory: (options: ProjectHitlQueueOptions) => ProjectHitlQueue;
   readonly #memoryFactory: (workspaceRoot: string) => MemoryFileManager;
@@ -78,6 +86,7 @@ export class ProjectContextResolver {
     this.#goalCommitted = options.goalCommitted ?? (() => {});
     this.#goalCancellationFactory = options.goalCancellationFactory;
     this.#goalLifecycleFactory = options.goalLifecycleFactory;
+    this.#projectTodoFactory = options.projectTodoFactory;
     this.#createAutomation = options.createAutomation;
     this.#hitlFactory = options.hitlFactory ?? ((input) => new ProjectHitlQueue(input));
     this.#memoryFactory = options.memoryFactory ?? ((workspaceRoot) => {
@@ -125,11 +134,13 @@ export class ProjectContextResolver {
       (goal) => this.#goalCommitted({ workspaceRoot, project, goal }),
     );
     const hitl = this.#hitlFactory({ workspaceRoot });
+    const todos = this.#projectTodoFactory({ workspaceRoot, project, goalState });
     const context: ProjectContext = {
       project,
       goalState,
       goalLifecycle: this.#goalLifecycleFactory({ workspaceRoot, project, goalState }),
       createAutomation: (input) => this.#createAutomation(workspaceRoot, input),
+      todos,
       goalCancellation: this.#goalCancellationFactory({ workspaceRoot, project, goalState, hitl }),
       hitl,
       memory: this.#memoryFactory(workspaceRoot),

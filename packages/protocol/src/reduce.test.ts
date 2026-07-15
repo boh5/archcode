@@ -242,6 +242,73 @@ describe("reduceStreamEvent", () => {
     expect(state.stats.tools).toEqual({ calls: 1, completed: 1, failed: 0 });
   });
 
+  test("settles a persisted tool after transient message focus is cleared", () => {
+    const running = applyEvents(createProjection(), [
+      { type: "tool-call", toolCallId: "call-before-restart", toolName: "ask_user", input: { questions: [] } },
+    ]);
+    const reloaded = { ...running, currentAssistantMessageId: undefined };
+
+    const settled = applyEvents(reloaded, [{
+      type: "tool-result",
+      toolCallId: "call-before-restart",
+      toolName: "ask_user",
+      output: "answered after restart",
+      isError: false,
+    }]);
+
+    const tool = partOfType(onlyMessage(settled.messages), "tool");
+    expect(tool).toMatchObject({
+      state: "completed",
+      toolCallId: "call-before-restart",
+      output: "answered after restart",
+    });
+    expect(settled.stats.tools).toEqual({ calls: 1, completed: 1, failed: 0 });
+  });
+
+  test("allows a later assistant message to reuse a completed toolCallId", () => {
+    const state = applyEvents(createProjection(), [
+      { type: "tool-call", toolCallId: "reused-call", toolName: "read", input: { path: "first.ts" } },
+      { type: "tool-result", toolCallId: "reused-call", toolName: "read", output: "first", isError: false },
+      { type: "step-start", step: 1 },
+      { type: "tool-input-start", toolCallId: "reused-call", toolName: "read" },
+      { type: "tool-call", toolCallId: "reused-call", toolName: "read", input: { path: "second.ts" } },
+      { type: "tool-result", toolCallId: "reused-call", toolName: "read", output: "second", isError: false },
+    ]);
+
+    expect(state.messages).toHaveLength(2);
+    const first = partOfType(state.messages[0]!, "tool");
+    const second = partOfType(state.messages[1]!, "tool");
+    expect(first).toMatchObject({
+      state: "completed",
+      toolCallId: "reused-call",
+      input: { path: "first.ts" },
+      output: "first",
+    });
+    expect(second).toMatchObject({
+      state: "completed",
+      toolCallId: "reused-call",
+      input: { path: "second.ts" },
+      output: "second",
+    });
+    expect(state.stats.tools).toEqual({ calls: 2, completed: 2, failed: 0 });
+  });
+
+  test("ignores a duplicate result for a reused current call instead of settling older work", () => {
+    const state = applyEvents(createProjection(), [
+      { type: "tool-call", toolCallId: "reused-running", toolName: "read", input: { path: "old.ts" } },
+      { type: "step-start", step: 1 },
+      { type: "tool-call", toolCallId: "reused-running", toolName: "read", input: { path: "current.ts" } },
+      { type: "tool-result", toolCallId: "reused-running", toolName: "read", output: "current", isError: false },
+      { type: "tool-result", toolCallId: "reused-running", toolName: "read", output: "duplicate", isError: false },
+    ]);
+
+    const oldTool = partOfType(state.messages[0]!, "tool");
+    const currentTool = partOfType(state.messages[1]!, "tool");
+    expect(oldTool).toMatchObject({ state: "running", input: { path: "old.ts" } });
+    expect(currentTool).toMatchObject({ state: "completed", input: { path: "current.ts" }, output: "current" });
+    expect(state.stats.tools).toEqual({ calls: 2, completed: 1, failed: 0 });
+  });
+
   test("records effectful tool attempt metadata on running tool part", () => {
     const state = applyEvents(createProjection(), [
       { type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { path: "a.ts" } },
@@ -274,7 +341,7 @@ describe("reduceStreamEvent", () => {
         timestamp: 99,
         destructive: true,
       },
-      { type: "execution-end", status: "interrupted" },
+      { type: "execution-end", status: "aborted" },
     ]);
 
     const tool = partOfType(onlyMessage(state.messages), "tool");
@@ -283,6 +350,44 @@ describe("reduceStreamEvent", () => {
     expect(tool.errorMessage).toBe("Tool execution result unknown: execution was interrupted");
     expect(tool.meta).toEqual({ unknownResult: true });
     expect(tool.attemptId).toBe("attempt-1");
+  });
+
+  test("aborted partial tool input settles with a persistable null input", () => {
+    const state = applyEvents(createProjection(), [
+      { type: "execution-start", executionId: "run-partial-input" },
+      { type: "tool-input-start", toolCallId: "call-partial", toolName: "file_write" },
+      { type: "execution-end", status: "aborted" },
+    ]);
+
+    const tool = partOfType(onlyMessage(state.messages), "tool");
+    expect(tool.state).toBe("error");
+    if (tool.state !== "error") throw new Error("Expected error tool");
+    expect(tool.input).toBeNull();
+    expect(tool.errorMessage).toBe("Execution ended before tool result");
+    expect(JSON.parse(JSON.stringify(state)).messages[0].parts[0].input).toBeNull();
+  });
+
+  test("resolved undefined tool input is canonicalized to null", () => {
+    const state = applyEvents(createProjection(), [
+      { type: "tool-call", toolCallId: "call-undefined-resolved", toolName: "read", input: {} },
+      { type: "tool-input-resolved", toolCallId: "call-undefined-resolved", toolName: "read", input: undefined },
+    ]);
+
+    const tool = partOfType(onlyMessage(state.messages), "tool");
+    expect(tool.state).toBe("running");
+    if (tool.state !== "running") throw new Error("Expected running tool");
+    expect(tool.input).toBeNull();
+  });
+
+  test("direct undefined tool-call input is canonicalized to null", () => {
+    const state = applyEvents(createProjection(), [
+      { type: "tool-call", toolCallId: "call-direct-undefined", toolName: "read", input: undefined },
+    ]);
+
+    const tool = partOfType(onlyMessage(state.messages), "tool");
+    expect(tool.state).toBe("running");
+    if (tool.state !== "running") throw new Error("Expected running tool");
+    expect(tool.input).toBeNull();
   });
 
   test("late result after unknown-result settlement is ignored so side effects are not replayed", () => {

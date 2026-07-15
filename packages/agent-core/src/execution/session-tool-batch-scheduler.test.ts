@@ -85,6 +85,21 @@ function blockedCall(call: SessionToolBatchCall): SessionToolBatchCall {
 }
 
 describe("SessionToolBatchScheduler recovery", () => {
+  test("canonicalizes an undefined call input before persisting the batch", async () => {
+    const harness = createHarness();
+
+    const batch = await harness.scheduler.createBatch([{
+      toolCallId: "call-undefined",
+      toolName: "read_tool",
+      input: undefined,
+    }], 0);
+
+    expect(batch.calls[0]?.input).toBeNull();
+    await expect(harness.storeManager.flushSession(harness.sessionId, TMP_DIR)).resolves.toBeUndefined();
+    const restarted = new SessionStoreManager({ logger: silentLogger });
+    await expect(restarted.getOrLoad(harness.sessionId, TMP_DIR)).resolves.toBeDefined();
+  });
+
   test("repairs a crash before queue creation from the durable requestKey", async () => {
     const harness = createHarness();
     const batch = await harness.scheduler.createBatch([{

@@ -7,6 +7,7 @@ import { GoalLifecycleService } from "../goals/lifecycle-service";
 import { ProjectHitlQueue } from "../hitl";
 import { MemoryFileManager } from "../memory/file-manager";
 import { silentLogger } from "../logger";
+import { ProjectTodoService } from "../todos";
 import type { ProjectContextResolverOptions } from "../projects/context-resolver";
 import type { ProjectContext } from "../projects/types";
 import { SessionStoreManager } from "../store/session-store-manager";
@@ -25,11 +26,13 @@ export function createTestProjectContext(
   };
   const goalState = new GoalStateManager(workspaceRoot);
   const hitl = new ProjectHitlQueue({ workspaceRoot });
+  const todos = createTestProjectTodoService(workspaceRoot, project.slug);
   return {
     project,
     goalState,
     goalLifecycle: createTestGoalLifecycle(workspaceRoot, goalState, sessions),
     createAutomation: async () => { throw new Error("Automation creation is not configured for this test context"); },
+    todos,
     goalCancellation: createTestGoalCancellation(goalState),
     hitl,
     memory: new MemoryFileManager({
@@ -54,8 +57,22 @@ export function createTestProjectContextResolverOptions(
     goalLifecycleFactory: ({ workspaceRoot, goalState }) => (
       createTestGoalLifecycle(workspaceRoot, goalState, sessionStoreManager)
     ),
+    projectTodoFactory: ({ workspaceRoot, project }) => createTestProjectTodoService(workspaceRoot, project.slug),
     createAutomation: async () => { throw new Error("Automation creation is not configured for this test resolver"); },
   };
+}
+
+export function createTestProjectTodoService(workspaceRoot: string, projectSlug: string): ProjectTodoService {
+  return new ProjectTodoService({
+    workspaceRoot,
+    projectSlug,
+    sessions: {
+      ensureRootSession: async () => {},
+      ensureExecution: async () => {},
+      acquireIdleFamily: async () => ({ release: () => {} }),
+    },
+    provenance: { listResources: async () => [] },
+  });
 }
 
 export interface DurableTestSessionContext {

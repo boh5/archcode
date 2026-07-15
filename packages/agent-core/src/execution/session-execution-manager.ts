@@ -64,7 +64,8 @@ const MAX_CWD_TRANSITIONS_PER_EXECUTION = 4;
 export type SessionExecutionOrigin =
   | "user_message"
   | "tool_call"
-  | "tool_batch";
+  | "tool_batch"
+  | "goal_claim";
 
 export interface ActiveSessionExecution {
   readonly sessionId: string;
@@ -1644,7 +1645,7 @@ function childTerminalStatus(run: SessionExecutionRecord | undefined, signal: Ab
 }
 
 function sessionExecutionOrigin(origin: SessionExecutionOrigin | undefined): SessionExecutionOrigin {
-  if (origin === "tool_call" || origin === "tool_batch") return origin;
+  if (origin === "tool_call" || origin === "tool_batch" || origin === "goal_claim") return origin;
   return "user_message";
 }
 

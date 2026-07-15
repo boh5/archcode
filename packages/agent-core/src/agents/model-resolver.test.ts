@@ -47,6 +47,7 @@ const baseConfig: ArchCodeConfig = {
     reviewer: { model: "test:main" },
     explore: { model: "test:main" },
     librarian: { model: "test:main" },
+    shaper: { model: "test:main" },
   },
 };
 
@@ -354,6 +355,15 @@ describe("workflow agent model resolution", () => {
 
     const result = resolveAgentModel("librarian", config, makeRegistry(config));
 
+    expect(result.options).toBeUndefined();
+  });
+
+  test("resolves the required Shaper model independently", () => {
+    const config = configWithAgents({ shaper: { model: "test:bare" } });
+
+    const result = resolveAgentModel("shaper", config, makeRegistry(config));
+
+    expect(result.modelInfo.qualifiedId).toBe("test:bare");
     expect(result.options).toBeUndefined();
   });
 

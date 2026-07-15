@@ -1,5 +1,6 @@
 import { defaultAgentDefinitions } from "./agents";
 import type { AgentName } from "./agents";
+import { SessionCwdTransitionConflictError, SessionCwdTransitionInProgressError } from "./agents/errors";
 import { resolveAgentModel } from "./agents/model-resolver";
 import { SessionAgentManager } from "./agents/session-agent-manager";
 import { BackgroundTaskManager } from "./background/manager";
@@ -55,6 +56,8 @@ import {
   SessionExecutionScopeValidator,
   SessionFamilyStopService,
   RoleDrivenSessionGoalDelegationAdmission,
+  SessionDeleteInProgressError,
+  SessionFamilyStopInProgressError,
 } from "./execution";
 import type { ActiveSessionExecution, StartSessionExecutionInput, SubscribeSessionEventsInput } from "./execution";
 import { GoalBudgetHandler } from "./goals/budget-handler";
@@ -93,6 +96,15 @@ import type { SessionRole } from "./store/types";
 import { generateTitle } from "./title-generation";
 import type { GoalState } from "./goals/state";
 import { WorktreeService } from "./worktrees";
+import { ProjectTodoService, ProjectTodoStateManager } from "./todos";
+
+type SessionToolBatchExecutionInput = Omit<StartSessionExecutionInput, "userMessage" | "origin">;
+type SessionToolBatchExecutor = (input: SessionToolBatchExecutionInput) => Promise<ActiveSessionExecution>;
+
+export type ManagedSessionExecutionForwarder = (
+  input: StartSessionExecutionInput,
+  start: () => Promise<ActiveSessionExecution>,
+) => Promise<ActiveSessionExecution>;
 
 export interface AgentRuntimeOptions {
   /** Explicit dependency-injection seam for isolated tests. */
@@ -193,10 +205,8 @@ export interface AgentRuntime {
   startSessionExecution(input: StartSessionExecutionInput): ActiveSessionExecution;
   /** User-message entry point with cold Session/root cwd validation. */
   startSessionMessageExecution(input: StartSessionExecutionInput): Promise<ActiveSessionExecution>;
-  /** Installs the server transport wrapper used by Automation Session dispatch. */
-  setAutomationSessionMessageExecutor(
-    executor: (input: StartSessionExecutionInput) => Promise<ActiveSessionExecution>,
-  ): void;
+  /** Installs event forwarding around runtime-selected, capability-safe Session starts. */
+  setManagedSessionExecutionForwarder(forwarder: ManagedSessionExecutionForwarder): void;
   getSessionFamilyActivity(workspaceRoot: string, rootSessionId: string): SessionFamilyActivity;
   stopSessionFamily(workspaceRoot: string, rootSessionId: string): Promise<void>;
   abortAllSessionExecutions(): Promise<void>;
@@ -219,6 +229,10 @@ export interface AgentRuntime {
   listAutomationInvocations(workspaceRoot: string, automationId: string, limit?: number): Promise<AutomationInvocation[]>;
   startAutomationScheduler(workspaceRoot: string): Promise<void>;
   startAutomationSchedulers(): Promise<void>;
+  /** Recovers durable Goal, HITL, and Session continuations through the managed Session executor. */
+  recoverSessionContinuations(): Promise<void>;
+  /** Recovers durable Project Todo checkpoints after the managed Session executor is installed. */
+  recoverProjectTodos(): Promise<void>;
   reconcileRegisteredProject(workspaceRoot: string, projectSlug: string): Promise<void>;
   stopAutomationSchedulers(): Promise<void>;
   notifyRuntimeShutdown(reason: string): void;
@@ -388,6 +402,19 @@ export async function createRuntime(
           resourceId: goal.id,
           createdAt: Date.now(),
         });
+        void contextResolver.resolve(workspaceRoot)
+          .then((context) => context.todos.handleResourceCreated({
+            kind: "goal",
+            sourceSessionId: goal.createdFromSessionId,
+            resourceId: goal.id,
+          }))
+          .catch((error: unknown) => {
+            runtimeLogger.warn("todos.goal_resource_binding.failed", {
+              error,
+              context: { todoSourceSessionId: goal.createdFromSessionId, goalId: goal.id },
+              meta: { workspaceRoot },
+            });
+          });
       },
       goalLifecycleFactory: ({ workspaceRoot, goalState }) => new GoalLifecycleService({
         workspaceRoot,
@@ -397,9 +424,100 @@ export async function createRuntime(
           sessionStoreManager.ensureSessionFile(projectRoot, sessionId, createOptions)
         ),
         startCheckedExecutionWithinGoalClaim: (input) => (
-          executionManager.startCheckedExecutionWithinGoalClaim(input)
+          startManagedGoalExecutionWithinClaim(input)
         ),
         onCreated: (goal) => queueGoalTitleGeneration(workspaceRoot, goal.id),
+      }),
+      projectTodoFactory: ({ workspaceRoot, project, goalState }) => new ProjectTodoService({
+        workspaceRoot,
+        projectSlug: project.slug,
+        state: new ProjectTodoStateManager(workspaceRoot, {
+          logger: runtimeLogger.child({ module: "todos.state" }),
+          onCommitted: (todo) => {
+            publishResourceChanged({
+              type: "resource.changed",
+              projectSlug: project.slug,
+              resourceType: "todo",
+              resourceId: todo.id,
+              createdAt: Date.now(),
+            });
+          },
+        }),
+        sessions: {
+          ensureRootSession: async (input) => {
+            await sessionStoreManager.ensureSessionFile(input.workspaceRoot, input.sessionId, {
+              agentName: input.agentName,
+              title: input.title,
+              rootSessionId: input.sessionId,
+              sessionRole: "standalone",
+              cwd: input.workspaceRoot,
+            });
+          },
+          ensureExecution: async (input) => {
+            const active = executionManager.getExecution(input.workspaceRoot, input.sessionId);
+            if (active?.executionId === input.executionId) return;
+            const session = await sessionStoreManager.getSessionFile(input.workspaceRoot, input.sessionId);
+            if (session.executions.some((execution) => execution.id === input.executionId)) return;
+            const execution = await startManagedCheckedSessionExecution({
+              slug: project.slug,
+              workspaceRoot: input.workspaceRoot,
+              sessionId: input.sessionId,
+              userMessage: input.userMessage,
+              executionId: input.executionId,
+            });
+            void execution.promise.catch((error: unknown) => {
+              runtimeLogger.warn("todos.session_execution.failed", {
+                error,
+                context: { sessionId: input.sessionId, executionId: input.executionId },
+                meta: { workspaceRoot: input.workspaceRoot },
+              });
+            });
+          },
+          acquireIdleFamily: async (input) => {
+            if (executionManager.getSessionFamilyActivity(input.workspaceRoot, input.rootSessionId) !== "idle") {
+              return undefined;
+            }
+            try {
+              const release = executionManager.acquireIdleSessionCwdTransition(
+                input.workspaceRoot,
+                input.rootSessionId,
+              );
+              return { release };
+            } catch (error) {
+              if (
+                error instanceof SessionCwdTransitionConflictError
+                || error instanceof SessionCwdTransitionInProgressError
+                || error instanceof SessionDeleteInProgressError
+                || error instanceof SessionFamilyStopInProgressError
+              ) return undefined;
+              throw error;
+            }
+          },
+        },
+        provenance: {
+          listResources: async ({ kind, sourceSessionId }) => {
+            if (kind === "goal") {
+              return (await goalState.listGoals(project.slug))
+                .filter((goal) => goal.createdFromSessionId === sourceSessionId)
+                .map((goal) => ({
+                  kind: "goal" as const,
+                  id: goal.id,
+                  createdFromSessionId: goal.createdFromSessionId,
+                  createdAt: goal.createdAt,
+                  status: goal.status,
+                }));
+            }
+            return (await listAutomations(workspaceRoot))
+              .filter((automation) => automation.createdFromSessionId === sourceSessionId)
+              .map((automation) => ({
+                kind: "automation" as const,
+                id: automation.id,
+                createdFromSessionId: automation.createdFromSessionId,
+                createdAt: automation.createdAt,
+                status: automation.status,
+              }));
+          },
+        },
       }),
       createAutomation: (workspaceRoot, input) => createAutomation(workspaceRoot, input),
       logger: runtimeLogger.child({ module: "projects" }),
@@ -463,6 +581,10 @@ export async function createRuntime(
         cancelSessionToolBatch: (sessionId, workspaceRoot, reason) => (
           cancelSessionBatchAndHitl(sessionId, workspaceRoot, reason)
         ),
+        findProjectTodoOwners: async (input) => {
+          const context = await contextResolver.resolve(input.workspaceRoot);
+          return await context.todos.findSessionOwners(input.sessionIds);
+        },
       }),
       logger,
     });
@@ -474,13 +596,51 @@ export async function createRuntime(
         listSessionFamilyToolBatchHitlIds: (workspaceRoot, rootSessionId) => (
           sessionStoreManager.listSessionFamilyToolBatchHitlIds(workspaceRoot, rootSessionId)
         ),
-        startCheckedExecutionWithinGoalClaim: (input) => executionManager.startCheckedExecutionWithinGoalClaim(input),
+        startCheckedExecutionWithinGoalClaim: (input) => startManagedGoalExecutionWithinClaim(input),
       },
       logger: runtimeLogger.child({ module: "goals.continuation" }),
     };
     const continuationService = options.goalLeadContinuationFactory?.(continuationOptions)
       ?? new GoalLeadContinuationService(continuationOptions);
     goalLeadContinuation = continuationService;
+
+    let managedSessionExecutionForwarder: ManagedSessionExecutionForwarder | undefined;
+
+    function requireManagedSessionExecutionForwarder(): ManagedSessionExecutionForwarder {
+      if (managedSessionExecutionForwarder === undefined) {
+        throw new Error("Managed Session execution forwarder must be installed before runtime-managed execution");
+      }
+      return managedSessionExecutionForwarder;
+    }
+
+    const startManagedCheckedSessionExecution = (
+      input: StartSessionExecutionInput,
+    ): Promise<ActiveSessionExecution> => (
+      requireManagedSessionExecutionForwarder()(input, () => executionManager.startCheckedExecution(input))
+    );
+    const managedSessionToolBatchExecutor: SessionToolBatchExecutor = (input) => {
+      const forwardedInput: StartSessionExecutionInput = {
+        ...input,
+        userMessage: "",
+        origin: "tool_batch",
+      };
+      return requireManagedSessionExecutionForwarder()(
+        forwardedInput,
+        () => executionManager.startSessionToolBatchExecution(input),
+      );
+    };
+    const startManagedGoalExecutionWithinClaim = (
+      input: StartSessionExecutionInput,
+    ): Promise<ActiveSessionExecution> => {
+      const forwardedInput: StartSessionExecutionInput = {
+        ...input,
+        origin: "goal_claim",
+      };
+      return requireManagedSessionExecutionForwarder()(
+        forwardedInput,
+        () => executionManager.startCheckedExecutionWithinGoalClaim(forwardedInput),
+      );
+    };
 
     async function dispatchAnsweredHitl(
       workspaceRoot: string,
@@ -530,7 +690,7 @@ export async function createRuntime(
 
           const applied = await context.hitl.resolve(dispatching.hitlId, { type: "applied" });
           if (applied.owner.type === "session") {
-            void executionManager.startSessionToolBatchExecution({
+            void managedSessionToolBatchExecutor({
               slug: projectSlug,
               workspaceRoot,
               sessionId: applied.owner.id,
@@ -592,7 +752,11 @@ export async function createRuntime(
         }
       }
       const accepted = await context.hitl.respond(input.hitlId, input.response);
-      const record = await dispatchAnsweredHitl(input.workspaceRoot, input.slug, accepted);
+      const record = await dispatchAnsweredHitl(
+        input.workspaceRoot,
+        input.slug,
+        accepted,
+      );
       return { hitlId: record.hitlId, status: record.status, view: toHitlView(record) };
     }
 
@@ -610,7 +774,11 @@ export async function createRuntime(
         reason: input.reason,
         ...(input.cancelledBy === undefined ? {} : { cancelledBy: input.cancelledBy }),
       });
-      const record = await dispatchAnsweredHitl(input.workspaceRoot, input.slug, accepted);
+      const record = await dispatchAnsweredHitl(
+        input.workspaceRoot,
+        input.slug,
+        accepted,
+      );
       return { hitlId: record.hitlId, status: record.status, view: toHitlView(record) };
     }
 
@@ -630,7 +798,11 @@ export async function createRuntime(
           for (const record of records) {
             if (record.status === "resolved" || record.status === "cancelled") continue;
             if (record.status === "answered") {
-              const applied = await dispatchAnsweredHitl(workspaceRoot, projectSlug, record);
+              const applied = await dispatchAnsweredHitl(
+                workspaceRoot,
+                projectSlug,
+                record,
+              );
               if (applied.status === "answered") throw new Error(`Cannot apply answered HITL ${record.hitlId} before Session cancellation`);
               continue;
             }
@@ -666,10 +838,17 @@ export async function createRuntime(
       const accepted = record.status === "pending"
         ? await context.hitl.cancel(hitlId, { type: "cancel", reason })
         : record;
-      await dispatchAnsweredHitl(workspaceRoot, context.project.slug, accepted);
+      await dispatchAnsweredHitl(
+        workspaceRoot,
+        context.project.slug,
+        accepted,
+      );
     }
 
-    async function reconcileAnsweredHitl(workspaceRoot: string, projectSlug: string): Promise<void> {
+    async function reconcileAnsweredHitl(
+      workspaceRoot: string,
+      projectSlug: string,
+    ): Promise<void> {
       const context = await contextResolver.resolve(workspaceRoot);
       for (const record of await context.hitl.list({ statuses: ["answered"] })) {
         if (record.delivery?.error !== undefined && record.delivery.retryAt === undefined) continue;
@@ -684,14 +863,17 @@ export async function createRuntime(
       }
     }
 
-    async function continueRunnableToolBatches(workspaceRoot: string, projectSlug: string): Promise<void> {
+    async function continueRunnableToolBatches(
+      workspaceRoot: string,
+      projectSlug: string,
+    ): Promise<void> {
       const summaries = await sessionStoreManager.listAllSessionSummaries(workspaceRoot);
       for (const summary of summaries) {
         const store = await sessionStoreManager.getOrLoad(summary.sessionId, workspaceRoot);
         if (!hasRunnableSessionToolBatch(store.getState())) continue;
         if (executionManager.getSessionFamilyActivity(workspaceRoot, summary.rootSessionId) !== "idle") continue;
         try {
-          await executionManager.startSessionToolBatchExecution({
+          await managedSessionToolBatchExecutor({
             slug: projectSlug,
             workspaceRoot,
             sessionId: summary.sessionId,
@@ -741,7 +923,10 @@ export async function createRuntime(
         }
       }
       if (change.activity === "idle") {
-        void continueRunnableToolBatches(change.workspaceRoot, projectSlug)
+        void continueRunnableToolBatches(
+          change.workspaceRoot,
+          projectSlug,
+        )
           .then(async () => {
             if (executionManager.getSessionFamilyActivity(change.workspaceRoot, change.rootSessionId) !== "idle") return;
             await continuationService.onFamilyIdle(change.workspaceRoot, change.rootSessionId);
@@ -772,9 +957,6 @@ export async function createRuntime(
     };
     const automationRuntimeServices = new Map<string, Promise<AutomationRuntimeServices>>();
     let automationSchedulersStarted = false;
-    let automationSessionMessageExecutor = (input: StartSessionExecutionInput) => (
-      executionManager.startCheckedExecution(input)
-    );
 
     async function createAutomationRuntimeServices(workspaceRoot: string): Promise<AutomationRuntimeServices> {
       const project = await projectRegistry.getByWorkspace(workspaceRoot);
@@ -800,7 +982,7 @@ export async function createRuntime(
           getSessionFamilyActivity: (projectRoot, rootSessionId) => (
             executionManager.getSessionFamilyActivity(projectRoot, rootSessionId)
           ),
-          startSessionMessageExecution: (input) => automationSessionMessageExecutor(input),
+          startSessionMessageExecution: (input) => startManagedCheckedSessionExecution(input),
         },
         resolveProject: (projectSlug) => projectRegistry.get(projectSlug),
       });
@@ -922,10 +1104,27 @@ export async function createRuntime(
       if (project === undefined) throw new Error(`Project is not registered: ${workspaceRoot}`);
       await assertResourceCreationSource(workspaceRoot, input.createdFromSessionId);
       await assertAutomationWorktreeSupported(workspaceRoot, input.action);
-      return await (await getAutomationRuntimeServices(workspaceRoot)).scheduler.createAutomation({
+      const automation = await (await getAutomationRuntimeServices(workspaceRoot)).scheduler.createAutomation({
         ...input,
         projectSlug: project.slug,
       });
+      try {
+        const context = await contextResolver.resolve(workspaceRoot);
+        await context.todos.handleResourceCreated({
+          kind: "automation",
+          sourceSessionId: automation.createdFromSessionId,
+          resourceId: automation.id,
+        });
+      } catch (error) {
+        // Automation is already committed. Binding remains recoverable from
+        // createdFromSessionId and must never turn a retry into a duplicate.
+        runtimeLogger.warn("todos.automation_resource_binding.failed", {
+          error,
+          context: { todoSourceSessionId: automation.createdFromSessionId, automationId: automation.id },
+          meta: { workspaceRoot },
+        });
+      }
+      return automation;
     }
 
     async function assertResourceCreationSource(
@@ -987,7 +1186,38 @@ export async function createRuntime(
       }
     }
 
+    async function recoverSessionContinuations(): Promise<void> {
+      requireManagedSessionExecutionForwarder();
+      const projects = await projectRegistry.list();
+      const results = await Promise.allSettled(
+        projects.map(async (project) => {
+          projectSlugsByWorkspace.set(project.workspaceRoot, project.slug);
+          const context = await contextResolver.resolve(project.workspaceRoot);
+          await context.goalLifecycle.reconcile();
+          await reconcileAnsweredHitl(project.workspaceRoot, project.slug);
+          await continueRunnableToolBatches(project.workspaceRoot, project.slug);
+          await continuationService.reconcileWorkspace(project.workspaceRoot);
+        }),
+      );
+      results.forEach((result, index) => {
+        if (result.status === "rejected") runtimeLogger.warn("project.continuation.startup.failed", {
+          error: result.reason,
+          context: { projectSlug: projects[index]?.slug },
+        });
+      });
+    }
+
+    async function recoverProjectTodos(): Promise<void> {
+      requireManagedSessionExecutionForwarder();
+      for (const project of await projectRegistry.list()) {
+        projectSlugsByWorkspace.set(project.workspaceRoot, project.slug);
+        const context = await contextResolver.resolve(project.workspaceRoot);
+        await context.todos.reconcileAll();
+      }
+    }
+
     async function reconcileRegisteredProject(workspaceRoot: string, projectSlug: string): Promise<void> {
+      requireManagedSessionExecutionForwarder();
       const key = `${workspaceRoot}\0${projectSlug}`;
       const registered = await projectRegistry.get(projectSlug);
       if (registered?.workspaceRoot !== workspaceRoot) {
@@ -999,7 +1229,9 @@ export async function createRuntime(
       projectReconcileInFlight.add(key);
       try {
         projectSlugsByWorkspace.set(workspaceRoot, projectSlug);
-        await (await contextResolver.resolve(workspaceRoot)).goalLifecycle.reconcile();
+        const context = await contextResolver.resolve(workspaceRoot);
+        await context.todos.reconcileAll();
+        await context.goalLifecycle.reconcile();
         await reconcileAnsweredHitl(workspaceRoot, projectSlug);
         await continueRunnableToolBatches(workspaceRoot, projectSlug);
         await continuationService.reconcileWorkspace(workspaceRoot);
@@ -1147,22 +1379,6 @@ export async function createRuntime(
       }
     }
 
-    const startupProjects = await projectRegistry.list();
-    const startupContinuationResults = await Promise.allSettled(
-      startupProjects.map(async (project) => {
-        await (await contextResolver.resolve(project.workspaceRoot)).goalLifecycle.reconcile();
-        await reconcileAnsweredHitl(project.workspaceRoot, project.slug);
-        await continueRunnableToolBatches(project.workspaceRoot, project.slug);
-        await continuationService.reconcileWorkspace(project.workspaceRoot);
-      }),
-    );
-    startupContinuationResults.forEach((result, index) => {
-      if (result.status === "rejected") runtimeLogger.warn("goal.continuation.startup.failed", {
-        error: result.reason,
-        context: { projectSlug: startupProjects[index]?.slug },
-      });
-    });
-
     return {
       mcpManager,
       toolRegistry,
@@ -1255,10 +1471,13 @@ export async function createRuntime(
       },
       startSessionMessageExecution: (input) => {
         projectSlugsByWorkspace.set(input.workspaceRoot, input.slug);
+        if (input.origin !== undefined && input.origin !== "user_message") {
+          throw new Error("Session message execution accepts only the user_message origin");
+        }
         return executionManager.startCheckedExecution(input);
       },
-      setAutomationSessionMessageExecutor: (executor) => {
-        automationSessionMessageExecutor = executor;
+      setManagedSessionExecutionForwarder: (forwarder) => {
+        managedSessionExecutionForwarder = forwarder;
       },
       getSessionFamilyActivity: (workspaceRoot, rootSessionId) => executionManager.getSessionFamilyActivity(workspaceRoot, rootSessionId),
       stopSessionFamily: async (workspaceRoot, rootSessionId) => {
@@ -1306,6 +1525,8 @@ export async function createRuntime(
       },
       startAutomationScheduler,
       startAutomationSchedulers,
+      recoverSessionContinuations,
+      recoverProjectTodos,
       reconcileRegisteredProject,
       stopAutomationSchedulers,
       notifyRuntimeShutdown,
