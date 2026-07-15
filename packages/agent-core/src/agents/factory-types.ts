@@ -26,7 +26,6 @@ export interface AgentHookPolicy {
   readonly autoInjectReminder: boolean;
   readonly todoStepReminder: boolean;
   readonly todoQueryLoopContinuation: boolean;
-  readonly transcriptSave: boolean;
   readonly memoryExtraction: boolean;
   readonly memoryConsolidation: boolean;
   readonly titleGeneration: "enabled" | "disabled" | "unless-supplied";

@@ -105,6 +105,7 @@ describe("web session store registry", () => {
       toolName: "delegate",
       childSessionId: "child-1",
       childAgentName: "explore",
+      title: "Explore child",
       depth: 1,
       background: true,
       status: "linked" as const,

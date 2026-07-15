@@ -370,6 +370,7 @@ describe("background_output tool", () => {
       updatedAt: Date.now(),
       cwd: workspaceRoot,
       agentName: "explore",
+      activeSkillNames: [],
       modelInfo: null,
       title: null,
       messages: [

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import type { GoalState } from "@archcode/protocol";
-import type { AgentRuntime, ProjectContext, ProjectInfo } from "@archcode/agent-core";
+import type { ActiveSessionExecution, AgentRuntime, ProjectContext, ProjectInfo } from "@archcode/agent-core";
 
 import { errorHandler } from "../error-handler";
 import { createGoalsRoutes } from "./goals";
@@ -67,11 +67,12 @@ describe("Goal routes", () => {
 
     expect(response.status).toBe(200);
     expect(fixture.retry).toHaveBeenCalledWith(goal.id);
-    expect(fixture.startSessionExecution).toHaveBeenCalledWith(expect.objectContaining({
+    expect(fixture.startGoalSessionExecution).toHaveBeenCalledWith(expect.objectContaining({
       slug: fixture.project.slug,
       workspaceRoot,
       sessionId: goal.mainSessionId,
       userMessage: expect.stringContaining(goal.acceptanceCriteria),
+      origin: "goal_claim",
     }));
   });
 
@@ -142,7 +143,18 @@ function createFixture(goals: GoalState[], activity: "idle" | "running" = "idle"
     ...await read(goalId),
     status: "cancelled" as const,
   }));
-  const startSessionExecution = mock(() => undefined);
+  const startGoalSessionExecution = mock(async (input: Parameters<AgentRuntime["startGoalSessionExecution"]>[0]): Promise<ActiveSessionExecution> => ({
+    sessionId: input.sessionId,
+    rootSessionId: input.sessionId,
+    workspaceRoot: input.workspaceRoot,
+    agentName: "goal_lead",
+    origin: "goal_claim",
+    abortController: new AbortController(),
+    promise: Promise.resolve(),
+    executionToken: Symbol("goal-route-test-execution"),
+    startedAt: Date.now(),
+    executionId: input.executionId ?? "goal-route-test-execution",
+  }));
   const context = {
     project,
     goalState: {
@@ -158,13 +170,13 @@ function createFixture(goals: GoalState[], activity: "idle" | "running" = "idle"
     projectRegistry: { get: mock(async (slug: string) => slug === project.slug ? project : undefined) },
     contextResolver: { resolve: mock(async () => context) },
     getSessionFamilyActivity: mock(() => activity),
-    startSessionExecution,
+    startGoalSessionExecution,
     cancelGoal,
   } as unknown as AgentRuntime;
   const app = new Hono();
   app.onError(errorHandler);
   app.route("/api/projects", createGoalsRoutes(runtime));
-  return { app, project, goals, retry, startSessionExecution, cancelGoal };
+  return { app, project, goals, retry, startGoalSessionExecution, cancelGoal };
 }
 
 function makeGoal(overrides: Partial<GoalState> = {}): GoalState {

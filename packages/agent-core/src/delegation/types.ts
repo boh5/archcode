@@ -11,10 +11,9 @@ export interface ChildExecutionRequest {
   readonly prompt: string;
   readonly persona?: string;
   readonly skills: readonly string[];
-  readonly title?: string;
+  readonly title: string;
   readonly description?: string;
   readonly background?: boolean;
-  readonly currentDepth?: number;
   readonly parentAbort?: AbortSignal;
 }
 
@@ -29,8 +28,8 @@ export interface ChildExecutionHandle {
  * Request to resume an existing (already-created) child session.
  *
  * Unlike {@link ChildExecutionRequest}, this does NOT create a new session,
- * store, or agent. The session must already exist on disk and in the
- * session-agent cache. Resume re-runs the agent on the existing store and
+ * store, or identity. The session must already exist durably. Resume re-runs
+ * the agent on the existing store and
  * creates a parent child-session link for the current resume tool call.
  */
 export interface ResumeChildRequest {
@@ -39,9 +38,7 @@ export interface ResumeChildRequest {
   readonly parentToolCallId: string;
   readonly toolName: string;
   readonly sessionId: string;
-  readonly targetAgentName: string;
   readonly prompt: string;
   readonly background?: boolean;
-  readonly currentDepth?: number;
   readonly parentAbort?: AbortSignal;
 }

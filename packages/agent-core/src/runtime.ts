@@ -4,7 +4,6 @@ import { SessionCwdTransitionConflictError, SessionCwdTransitionInProgressError 
 import { resolveAgentModel } from "./agents/model-resolver";
 import { SessionAgentManager } from "./agents/session-agent-manager";
 import { BackgroundTaskManager } from "./background/manager";
-import type { SlashCommandResult } from "./commands/types";
 import { ServerConfigService } from "./config/server-config-service";
 import { configureDefaultLspClientPoolLogger } from "./lsp/client-pool";
 import { configureDefaultBinaryManagerLogger } from "./binary/manager";
@@ -202,9 +201,10 @@ export interface AgentRuntime {
   getSessionFile(workspaceRoot: string, sessionId: string): Promise<SessionFile>;
   resolveCompressionOriginalRange(workspaceRoot: string, sessionId: string, blockRef: string): Promise<CompressionOriginalRangeResult>;
   listSessions(workspaceRoot: string): Promise<SessionSummary[]>;
-  startSessionExecution(input: StartSessionExecutionInput): ActiveSessionExecution;
   /** User-message entry point with cold Session/root cwd validation. */
   startSessionMessageExecution(input: StartSessionExecutionInput): Promise<ActiveSessionExecution>;
+  /** Checked Goal retry entry point; acquires the Goal claim before the private live execution claim. */
+  startGoalSessionExecution(input: StartSessionExecutionInput): Promise<ActiveSessionExecution>;
   /** Installs event forwarding around runtime-selected, capability-safe Session starts. */
   setManagedSessionExecutionForwarder(forwarder: ManagedSessionExecutionForwarder): void;
   getSessionFamilyActivity(workspaceRoot: string, rootSessionId: string): SessionFamilyActivity;
@@ -217,7 +217,6 @@ export interface AgentRuntime {
   disposeSessionAgent(workspaceRoot: string, sessionId: string): void;
   disposeAllSessionAgents(): void;
   isSessionTombstoned(workspaceRoot: string, sessionId: string): boolean;
-  dispatchCommand(workspaceRoot: string, sessionId: string, name: string, args?: string): Promise<SlashCommandResult | null>;
   listAutomations(workspaceRoot: string): Promise<Automation[]>;
   readAutomation(workspaceRoot: string, automationId: string): Promise<Automation>;
   createAutomation(workspaceRoot: string, input: Omit<CreateAutomationInput, "projectSlug">): Promise<Automation>;
@@ -534,15 +533,6 @@ export async function createRuntime(
       logger,
     });
     const activeSessionKeys = new Map<string, { workspaceRoot: string; sessionId: string }>();
-    async function dispatchCommand(
-      workspaceRoot: string,
-      sessionId: string,
-      name: string,
-      args?: string,
-    ): Promise<SlashCommandResult | null> {
-      return await executionManager.dispatchCommand(workspaceRoot, sessionId, name, args);
-    }
-
     function notifyRuntimeShutdown(reason: string): void {
       goalLeadContinuation?.shutdown();
       shutdownGoalStateReconciliation();
@@ -565,6 +555,7 @@ export async function createRuntime(
       loadSessionStore: (sessionId, workspaceRoot) => sessionStoreManager.getOrLoad(sessionId, workspaceRoot),
       deleteSessionStore: (sessionId, workspaceRoot, deleteOptions) => sessionStoreManager.delete(sessionId, workspaceRoot, deleteOptions),
       resolveRootSessionId: (sessionId, workspaceRoot) => sessionStoreManager.resolveRootSessionId(sessionId, workspaceRoot),
+      resolveSessionDepth: (workspaceRoot, sessionId) => sessionStoreManager.resolveSessionDepth(workspaceRoot, sessionId),
       buildSessionTree: (workspaceRoot, rootSessionId) => sessionStoreManager.buildSessionTree(workspaceRoot, rootSessionId),
       listSessionFamilyToolBatchHitlIds: (workspaceRoot, rootSessionId) => (
         sessionStoreManager.listSessionFamilyToolBatchHitlIds(workspaceRoot, rootSessionId)
@@ -1465,16 +1456,19 @@ export async function createRuntime(
       getSessionFile: (workspaceRoot, sessionId) => sessionStoreManager.getSessionFile(workspaceRoot, sessionId),
       resolveCompressionOriginalRange: (workspaceRoot, sessionId, blockRef) => sessionStoreManager.resolveCompressionOriginalRange(workspaceRoot, sessionId, blockRef),
       listSessions: (workspaceRoot) => sessionStoreManager.listSessionSummaries(workspaceRoot),
-      startSessionExecution: (input) => {
-        projectSlugsByWorkspace.set(input.workspaceRoot, input.slug);
-        return executionManager.startExecution(input);
-      },
       startSessionMessageExecution: (input) => {
         projectSlugsByWorkspace.set(input.workspaceRoot, input.slug);
         if (input.origin !== undefined && input.origin !== "user_message") {
           throw new Error("Session message execution accepts only the user_message origin");
         }
         return executionManager.startCheckedExecution(input);
+      },
+      startGoalSessionExecution: (input) => {
+        projectSlugsByWorkspace.set(input.workspaceRoot, input.slug);
+        if (input.origin !== undefined && input.origin !== "goal_claim") {
+          throw new Error("Goal Session execution accepts only the goal_claim origin");
+        }
+        return startManagedCheckedSessionExecution({ ...input, origin: "goal_claim" });
       },
       setManagedSessionExecutionForwarder: (forwarder) => {
         managedSessionExecutionForwarder = forwarder;
@@ -1501,7 +1495,6 @@ export async function createRuntime(
       disposeSessionAgent: (workspaceRoot, sessionId) => sessionAgentManager.dispose(workspaceRoot, sessionId),
       disposeAllSessionAgents: () => sessionAgentManager.disposeAll(),
       isSessionTombstoned: (workspaceRoot, sessionId) => sessionAgentManager.isTombstoned(workspaceRoot, sessionId),
-      dispatchCommand,
       listAutomations,
       readAutomation,
       createAutomation,

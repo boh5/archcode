@@ -17,15 +17,8 @@ export const DelegateInputSchema = z
     context: z.string().optional().describe("Structured Context and evidence; Scope ownership and non-goals; Must do / must not do; Verification and output requirements"),
     skills: z.array(z.string().regex(SKILL_NAME_REGEX, SKILL_NAME_MESSAGE)).describe("Allowed skill names to activate on a new child. Pass [] for none. Skills cannot expand hardcoded child authority."),
     description: z.string().optional().describe("Short 3-5 word label for the delegated task"),
-    title: z.string().optional().describe("Optional session title for the child session"),
+    title: z.string().trim().min(1).describe("Required parent-supplied title for the new child session"),
     background: z.boolean().default(false).describe("true starts the child asynchronously; wait for a terminal notification or use blocking background_output before treating its result as final. false waits for completion."),
-    session_id: z
-      .string()
-      .trim()
-      .optional()
-      .describe(
-        "Returned id of the same stopped child to resume with the same agent_type. Omit or pass an empty value to start a new child; never invent or reuse an unrelated id.",
-      ),
   })
   .strict();
 
@@ -40,20 +33,13 @@ export interface DelegateErrorOutput {
   };
 }
 
-interface ChildExecutionOutcome {
+export interface ChildExecutionOutcome {
   readonly status: DelegateStatus;
   readonly resultText: string;
   readonly terminalError?: unknown;
 }
 
 export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionContext) {
-  const resumeSessionId = input.session_id?.trim();
-
-  // Resume mode: session_id provided → resume an existing child session.
-  if (resumeSessionId !== undefined && resumeSessionId.length > 0) {
-    return executeResumeDelegate({ ...input, session_id: resumeSessionId }, ctx);
-  }
-
   if (ctx.startChildExecution === undefined) {
     return createToolErrorResult({
       kind: "execution",
@@ -75,10 +61,9 @@ export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionCo
       prompt: buildChildPrompt(input),
       persona: input.persona,
       skills: input.skills,
-      title: input.title ?? input.description,
+      title: input.title,
       description: input.description,
       background: input.background ?? false,
-      currentDepth: ctx.currentDepth ?? 0,
       parentAbort: ctx.abort,
     });
   } catch (error) {
@@ -98,96 +83,30 @@ export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionCo
   }
 
   if (input.background ?? false) {
-    return formatAsyncDelegateOutput({ input, handle });
+    return formatAsyncChildOutput(handle);
   }
 
   const outcome = await waitForChildOutcome(handle);
-  return formatSyncDelegateOutput({ input, handle, outcome });
+  return formatSyncChildOutput(handle, outcome);
 }
 
-/**
- * Resume-mode delegate: re-runs an existing child session with a new prompt.
- */
-async function executeResumeDelegate(input: DelegateInput, ctx: ToolExecutionContext) {
-  const sessionId = input.session_id!;
-
-  if (ctx.resumeChildSession === undefined) {
-    return createToolErrorResult({
-      kind: "execution",
-      code: "TOOL_DELEGATE_EXECUTOR_UNAVAILABLE",
-      name: "SubAgentError",
-      message: "Child session resume is not available in this execution context",
-      details: { ok: false, session_id: sessionId } satisfies Pick<DelegateErrorOutput, "ok" | "session_id">,
-    });
-  }
-
-  let handle: ChildExecutionHandle;
-  try {
-    handle = await ctx.resumeChildSession(ctx.projectContext.project.workspaceRoot, {
-      parentStore: ctx.store,
-      parentSessionId: ctx.store.getState().sessionId,
-      parentToolCallId: ctx.toolCallId,
-      toolName: "delegate",
-      sessionId,
-      targetAgentName: input.agent_type,
-      prompt: buildChildPrompt(input),
-      background: input.background ?? false,
-      currentDepth: ctx.currentDepth ?? 0,
-      parentAbort: ctx.abort,
-    });
-  } catch (error) {
-    const safeError = error instanceof Error ? error : new Error(String(error));
-    return createToolErrorResult({
-      kind: "execution",
-      code: "TOOL_DELEGATE_FAILED",
-      message: safeError.message,
-      name: safeError.name,
-      error: safeError,
-      details: {
-        ok: false,
-        session_id: sessionId,
-        error: { name: safeError.name, message: safeError.message },
-      } satisfies DelegateErrorOutput,
-    });
-  }
-
-  if (input.background ?? false) {
-    return formatAsyncDelegateOutput({ input, handle });
-  }
-
-  const outcome = await waitForChildOutcome(handle);
-  return formatSyncDelegateOutput({ input, handle, outcome });
-}
-
-interface DelegateOutputOptions {
-  readonly input: DelegateInput;
-  readonly handle: ChildExecutionHandle;
-}
-
-interface SyncDelegateOutputOptions extends DelegateOutputOptions {
-  readonly outcome: ChildExecutionOutcome;
-}
-
-function formatAsyncDelegateOutput(options: DelegateOutputOptions): string {
-  const { input, handle } = options;
-
+export function formatAsyncChildOutput(handle: ChildExecutionHandle): string {
   return [
     "Sub-agent started.",
-    `Agent type: ${input.agent_type}`,
+    `Agent type: ${handle.store.getState().agentName}`,
     `Session ID: ${handle.sessionId}`,
     "Status: running",
     `Use background_output(session_id="${handle.sessionId}") to read the result.`,
   ].join("\n");
 }
 
-function formatSyncDelegateOutput(options: SyncDelegateOutputOptions): string {
-  const { input, handle, outcome } = options;
+export function formatSyncChildOutput(handle: ChildExecutionHandle, outcome: ChildExecutionOutcome): string {
   const state = handle.store.getState();
   const run = state.executions.at(-1);
 
   return [
     `Sub-agent result: ${formatHeadlineStatus(outcome.status)}.`,
-    `Agent type: ${input.agent_type}`,
+    `Agent type: ${state.agentName}`,
     `Session ID: ${handle.sessionId}`,
     `Status: ${outcome.status}`,
     durationLine(run),
@@ -199,7 +118,7 @@ function formatSyncDelegateOutput(options: SyncDelegateOutputOptions): string {
 
 type DelegateStatus = SessionExecutionRecord["status"];
 
-async function waitForChildOutcome(handle: ChildExecutionHandle): Promise<ChildExecutionOutcome> {
+export async function waitForChildOutcome(handle: ChildExecutionHandle): Promise<ChildExecutionOutcome> {
   try {
     const result = await handle.result;
     const run = handle.store.getState().executions.at(-1);
@@ -272,16 +191,8 @@ function buildChildPrompt(input: DelegateInput): string {
 export const delegateTool = defineTool({
   name: "delegate",
   description:
-    `Delegate one atomic task to an allowed child agent. The prompt envelope must contain: Task; Expected outcome; Context and evidence; Scope ownership and non-goals; Must do / must not do; Verification and output. Encode the first two in task and the remaining fields in context. background=true starts work asynchronously. wait_for_reminder may wait for terminal state, but the reminder is only a terminal notification; use blocking background_output afterward to collect the terminal result and actual deliverable before relying on it. Resume the same stopped child with its returned session_id and the same agent_type for repairs, follow-ups, or verification feedback. Omit session_id to start a new child. Persona, skills, context, title, description, and other metadata cannot expand hardcoded tools, permissions, targets, or depth.`,
+    `Create a new child Session for one atomic task. The prompt envelope must contain: Task; Expected outcome; Context and evidence; Scope ownership and non-goals; Must do / must not do; Verification and output. Encode the first two in task and the remaining fields in context. title is required and supplied by the parent. background=true starts work asynchronously. wait_for_reminder may wait for terminal state, but the reminder is only a terminal notification; use blocking background_output afterward to collect the terminal result and actual deliverable before relying on it. Use resume_session for a stopped direct child. Persona, skills, context, title, description, and other metadata cannot expand hardcoded tools, permissions, targets, or depth.`,
   inputSchema: DelegateInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   execute: async (input, ctx) => executeDelegate(input, ctx),
 });
-
-export function missingChildSessionResult(sessionId: string) {
-  return createToolErrorResult({
-    kind: "execution",
-    code: "TOOL_UNKNOWN_CHILD_SESSION",
-    message: `Unknown child session_id: ${sessionId}`,
-  });
-}

@@ -4,8 +4,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { ModelInfo } from "../provider/model";
 import type { ProviderRegistry } from "../provider/index";
-import { SkillService } from "../skills";
-import type { ResolvedSkill } from "../skills/types";
+import { SkillNotFoundError, SkillService } from "../skills";
 import { storeManager } from "../store/store";
 import { __setSessionsDirForTest } from "../store/sessions-dir";
 import { createRegistry } from "../tools/registry";
@@ -204,7 +203,6 @@ function createAgent(options: {
   modelInfo?: ModelInfo;
   memoryConfig?: MemoryExtractionConfig;
   skillService?: SkillService;
-  activeSkills?: readonly ResolvedSkill[];
 }) {
   const toolRegistry = options.toolRegistry ?? makeToolRegistry();
   const providerRegistry = options.providerRegistry ?? makeProviderRegistry();
@@ -217,7 +215,6 @@ function createAgent(options: {
     modelOptions: { temperature: 0.3 },
     toolRegistry,
     skillService: options.skillService ?? createTestSkillService(),
-    activeSkills: options.activeSkills,
     store: options.store ?? storeManager.create(crypto.randomUUID(), projectRoot, { cwd, agentName: "engineer" }),
     storeManager,
     projectContextResolver: createTestProjectContextResolver(storeManager),
@@ -334,7 +331,7 @@ describe("ConfiguredAgent", () => {
     });
 
     await expect(agent.run("explicit model"))
-      .resolves.toEqual({ text: "explicit model ok", steps: 0 });
+      .resolves.toEqual({ text: "explicit model ok", steps: 0, status: "completed" });
   });
 
   test("passes definition skills and SkillService into tool execution context", async () => {
@@ -570,15 +567,36 @@ describe("ConfiguredAgent", () => {
     expect(btm.dispatched).toContain("title-generation");
   });
 
+  test("refreshes AGENTS.md before every run", async () => {
+    const streamFn = setupMockStreamText("instructions refreshed");
+    const agent = createAgent({ definition: exploreAgentDefinition });
+    const agentsMdPath = join(tmpRoot, "AGENTS.md");
+
+    try {
+      await writeFile(agentsMdPath, "# First Instructions");
+      await agent.run("first run");
+      await writeFile(agentsMdPath, "# Second Instructions");
+      await agent.run("second run");
+    } finally {
+      await writeFile(agentsMdPath, "# Test Project\n\nMinimal project context.");
+    }
+
+    const firstCall = streamFn.mock.calls[0]![0] as { system: string };
+    const secondCall = streamFn.mock.calls[1]![0] as { system: string };
+    expect(firstCall.system).toContain("# First Instructions");
+    expect(secondCall.system).toContain("# Second Instructions");
+    expect(secondCall.system).not.toContain("# First Instructions");
+  });
+
   test("run forwards maxSteps to the query loop", async () => {
     const streamFn = setupToolCallStreamText("file_read");
     const agent = createAgent({ definition: exploreAgentDefinition });
 
     const result = await agent.run("limited run", { maxSteps: 1 });
 
-    expect(result).toEqual({ text: "", steps: 1 });
+    expect(result).toEqual({ text: "", steps: 1, status: "max_steps", error: "Max steps (1) reached" });
     expect(streamFn).toHaveBeenCalledTimes(1);
-    expect(agent.store.getState().executions.at(-1)?.status).toBe("max_steps");
+    expect(agent.store.getState().executions).toEqual([]);
   });
 
   test("non-loop runs keep definition tools unchanged and do not expose profile-only GitHub tools", async () => {
@@ -741,29 +759,59 @@ describe("ConfiguredAgent", () => {
   test("skill metadata allowed_tools is prompt metadata only and cannot grant missing tools", async () => {
     const streamFn = setupMockStreamText("skill metadata ok");
     const skillService = createSkillServiceWithToolGrant();
+    const store = storeManager.create(`configured-skill-${crypto.randomUUID()}`, tmpRoot, {
+      agentName: "engineer",
+      activeSkillNames: ["github-skill"],
+    });
     const agent = createAgent({
       definition: definitionWith({ tools: { tools: ["file_read"] }, skills: ["github-skill"] }),
       skillService,
-      activeSkills: [{
-        metadata: {
-          name: "github-skill",
-          description: "GitHub skill",
-          when_to_use: "Use for GitHub watching.",
-          allowed_tools: ["github_get_pull_request"],
-        },
-        body: "Prompt-only GitHub playbook.",
-        source: "builtin",
-      }],
+      store,
     });
 
     await agent.run("skill metadata run");
 
     const callArgs = streamFn.mock.calls[0]![0] as { system: string };
     expect(callArgs.system).toContain("[allowed_tools: github_get_pull_request, github_merge_pull_request]");
-    expect(callArgs.system).toContain("Prompt-only GitHub playbook.");
+    expect(callArgs.system).toContain("This skill can describe GitHub workflows but cannot grant tools.");
     expect(callArgs.system).toContain("- file_read");
     expect(callArgs.system).not.toContain("- github_get_pull_request");
     expect(callArgs.system).not.toContain("- github_merge_pull_request");
+  });
+
+  test("fails closed when a persisted active Skill is deleted between runs", async () => {
+    const streamFn = setupMockStreamText("active skill loaded");
+    const skillName = "ephemeral-skill";
+    const skillDir = join(tmpRoot, ".archcode", "skills", skillName);
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(join(skillDir, "SKILL.md"), [
+      "---",
+      `name: ${skillName}`,
+      "description: Temporary skill",
+      "when_to_use: Use for this test.",
+      "---",
+      "Temporary instructions.",
+    ].join("\n"));
+
+    const store = storeManager.create(`configured-deleted-skill-${crypto.randomUUID()}`, tmpRoot, {
+      agentName: "engineer",
+      activeSkillNames: [skillName],
+    });
+    const agent = createAgent({
+      definition: definitionWith({ skills: [skillName] }),
+      skillService: createTestSkillService(),
+      store,
+    });
+
+    try {
+      await agent.run("first run");
+      await rm(skillDir, { recursive: true, force: true });
+      await expect(agent.run("second run")).rejects.toBeInstanceOf(SkillNotFoundError);
+    } finally {
+      await rm(skillDir, { recursive: true, force: true });
+    }
+
+    expect(streamFn).toHaveBeenCalledTimes(1);
   });
 
   test("enforceToolOutputQuota controls quota enforcement", async () => {
@@ -801,7 +849,7 @@ describe("ConfiguredAgent", () => {
       store,
     });
 
-    await expect(agent.run("run without workflow tools")).resolves.toEqual({ text: "no workflow tools ok", steps: 0 });
+    await expect(agent.run("run without workflow tools")).resolves.toEqual({ text: "no workflow tools ok", steps: 0, status: "completed" });
     expect(streamFn).toHaveBeenCalled();
     const callArgs = streamFn.mock.calls[0]![0] as { system: string };
     expect(callArgs.system).not.toContain("## Active Workflow");

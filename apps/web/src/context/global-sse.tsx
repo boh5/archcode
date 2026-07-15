@@ -247,7 +247,7 @@ export function handleSSEEvent(
           rootSessionId: store.getState().rootSessionId,
           parentSessionId: link.parentSessionId,
           agentName: link.childAgentName,
-          title: link.title ?? link.description ?? null,
+          title: link.title ?? null,
           createdAt: link.createdAt,
         });
       }

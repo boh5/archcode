@@ -10,7 +10,6 @@ import type { SessionStoreState } from "../store/types";
 import type { Logger } from "../logger";
 import { SkillNotFoundError, type SkillService } from "../skills";
 import { assertSkillName } from "../skills/schema";
-import type { ResolvedSkill } from "../skills/types";
 import type { ToolRegistry } from "../tools/index";
 import { sanitizeMcpServerNameForRegistry } from "../mcp/naming";
 import { ConfiguredAgent } from "./configured-agent";
@@ -47,10 +46,6 @@ export interface AgentFactoryConfig {
 export interface CreateAgentOptions {
   readonly store?: StoreApi<SessionStoreState>;
   readonly depth?: number;
-  readonly parentSessionId?: string;
-  readonly title?: string;
-  readonly abortSignal?: AbortSignal;
-  readonly activeSkills?: readonly ResolvedSkill[];
 }
 
 export interface AgentFactory {
@@ -60,7 +55,7 @@ export interface AgentFactory {
   listAgentNames(): string[];
   resolveAllowedTools(definition: AgentDefinition, depth: number): string[];
   getDelegateTargetsFor(definition: AgentDefinition, depth: number): string[];
-  resolveDelegatedSkills(targetDefinition: AgentDefinition, requestedSkills: readonly string[], cwd: string): Promise<readonly ResolvedSkill[]>;
+  resolveDelegatedSkillNames(targetDefinition: AgentDefinition, requestedSkills: readonly string[], cwd: string): Promise<readonly string[]>;
 }
 
 export class DuplicateAgentDefinitionError extends Error {
@@ -74,6 +69,16 @@ export class UnknownAgentDefinitionError extends Error {
   constructor(public readonly agentName: string) {
     super(`Unknown agent definition: ${agentName}`);
     this.name = "UnknownAgentDefinitionError";
+  }
+}
+
+export class AgentStoreIdentityMismatchError extends Error {
+  constructor(
+    public readonly expectedAgentName: AgentName,
+    public readonly actualAgentName: AgentName,
+  ) {
+    super(`Agent definition "${expectedAgentName}" does not match Session identity "${actualAgentName}"`);
+    this.name = "AgentStoreIdentityMismatchError";
   }
 }
 
@@ -124,20 +129,20 @@ export function createAgentFactory(config: AgentFactoryConfig): AgentFactory {
       return [...(definition.tools.delegateTargets ?? [])];
     },
 
-    resolveDelegatedSkills(targetDefinition, requestedSkills, cwd) {
-      return resolveDelegatedSkills(agentConfig.skillService, cwd, targetDefinition, requestedSkills);
+    resolveDelegatedSkillNames(targetDefinition, requestedSkills, cwd) {
+      return resolveDelegatedSkillNames(agentConfig.skillService, cwd, targetDefinition, requestedSkills);
     },
   };
 
   return factory;
 }
 
-async function resolveDelegatedSkills(
+async function resolveDelegatedSkillNames(
   skillService: SkillService,
   workspaceRoot: string,
   targetDefinition: AgentDefinition,
   requestedSkills: readonly string[],
-): Promise<readonly ResolvedSkill[]> {
+): Promise<readonly string[]> {
   const dedupedNames: string[] = [];
   const seen = new Set<string>();
 
@@ -151,16 +156,14 @@ async function resolveDelegatedSkills(
     dedupedNames.push(skillName);
   }
 
-  const resolvedSkills: ResolvedSkill[] = [];
   for (const skillName of dedupedNames) {
     const skill = await skillService.readForAgent(workspaceRoot, skillName, targetDefinition.skills);
     if (skill === null) {
       throw new SkillNotFoundError(skillName);
     }
-    resolvedSkills.push(skill);
   }
 
-  return resolvedSkills;
+  return dedupedNames;
 }
 
 function createConfiguredAgent(
@@ -199,7 +202,6 @@ function createConfiguredAgent(
     cancelChildSession: config.cancelChildSession,
     resumeChildSession: config.resumeChildSession,
     acquireSessionCwdTransition: config.acquireSessionCwdTransition,
-    activeSkills: options.activeSkills,
   });
 }
 
@@ -235,13 +237,8 @@ function prepareStore(config: AgentFactoryConfig, definition: AgentDefinition, o
   const store = options.store ?? config.storeManager.create(crypto.randomUUID(), config.workspaceRoot, {
     agentName: definition.name,
   });
-
-  const state: Partial<SessionStoreState> = { agentName: definition.name };
-  if (options.title !== undefined) {
-    state.title = options.title;
-  }
-  if (Object.keys(state).length > 0) {
-    store.setState(state);
+  if (store.getState().agentName !== definition.name) {
+    throw new AgentStoreIdentityMismatchError(definition.name, store.getState().agentName);
   }
 
   return store;

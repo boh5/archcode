@@ -5,7 +5,6 @@ import type { StoreApi } from "zustand";
 import type { BackgroundTaskManager } from "../background/manager";
 import { BackgroundTaskManager as DefaultBackgroundTaskManager } from "../background/manager";
 import { CommandRegistry, createCompactCommand, createSkillCommand } from "../commands/index";
-import type { SlashCommandResult } from "../commands/types";
 import type { MemoryExtractionConfig, ModelCallOptions } from "../config/index";
 import type { MemoryRoots } from "../memory";
 import type { ProjectContextResolver } from "../projects/context-resolver";
@@ -13,7 +12,7 @@ import type { ProjectContext } from "../projects/types";
 import { createGoalBudgetEnforcementHooks } from "../goals/budget-enforcement";
 import type { ProviderRegistry } from "../provider/index";
 import type { ModelInfo } from "../provider/model";
-import type { SkillService } from "../skills";
+import { SkillNotFoundError, type SkillService } from "../skills";
 import type { ResolvedSkill } from "../skills/types";
 import { buildSystemPrompt, loadAgentsMd } from "../prompt/index";
 import type { PromptContext, PromptEnv } from "../prompt/index";
@@ -24,7 +23,6 @@ import type { Logger } from "../logger";
 import type { AskUserCallback, ToolConfirmationCallback, ToolRegistry } from "../tools/index";
 import { TOOL_OUTPUT_DIR, enforceQuota } from "../tools/index";
 import { TOOL_WORKTREE_ENTER, TOOL_WORKTREE_EXIT } from "../tools/names";
-import { AgentRunningError } from "./errors";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
 import type { AgentDefinition } from "./factory-types";
 import {
@@ -61,7 +59,6 @@ export interface ConfiguredAgentOptions {
   readonly toolRegistry: ToolRegistry;
   readonly skillService: SkillService;
   readonly storeManager: SessionStoreManager;
-  readonly activeSkills?: readonly ResolvedSkill[];
   readonly store: StoreApi<SessionStoreState>;
   readonly confirmPermission?: ToolConfirmationCallback;
   readonly askUser?: AskUserCallback;
@@ -95,7 +92,6 @@ function buildEnv(projectRoot: string, cwd: string): PromptEnv {
 
 export class ConfiguredAgent implements Agent {
   readonly store: StoreApi<SessionStoreState>;
-  readonly activeSkills: readonly ResolvedSkill[];
   private readonly definition: AgentDefinition;
   private readonly toolRegistry: ToolRegistry;
   private readonly skillService: SkillService;
@@ -122,8 +118,6 @@ export class ConfiguredAgent implements Agent {
   private readonly memoryConfig: MemoryExtractionConfig | undefined;
   private readonly logger: Logger;
   private agentsMd: string | undefined;
-  private agentsMdLoaded = false;
-  private running = false;
   private disposed = false;
 
   constructor(options: ConfiguredAgentOptions) {
@@ -136,7 +130,6 @@ export class ConfiguredAgent implements Agent {
     this.toolRegistry = options.toolRegistry;
     this.skillService = options.skillService;
     this.storeManager = options.storeManager;
-    this.activeSkills = options.activeSkills ?? [];
     this.modelInfo = options.modelInfo;
     this.modelOptions = options.modelOptions;
     this.confirmPermission = options.confirmPermission;
@@ -191,17 +184,12 @@ export class ConfiguredAgent implements Agent {
 
     const { abort, confirm, askUser, maxSteps, extraTools } = this.parseRunOptions(abortOrOptions, confirmPermission);
 
-    if (this.running) {
-      throw new AgentRunningError();
-    }
-
-    this.running = true;
     const btm = this.backgroundTaskManager;
     const shouldDrainBackgroundTasks = this.ownsBackgroundTaskManager || this.definition.enforceToolOutputQuota === true;
 
     try {
       await this.enforceToolOutputQuotaIfNeeded();
-      await this.ensureAgentsMd();
+      await this.refreshAgentsMd();
 
       const definitionAllowedTools = [
         ...this.resolveAllowedTools(this.definition, this.depth),
@@ -211,6 +199,7 @@ export class ConfiguredAgent implements Agent {
       const agentSkills = this.definition.skills;
       const projectContext: ProjectContext = await this.projectContextResolver.resolve(this.projectRoot);
       const availableSkills = await this.skillService.listForAgent(this.cwd, agentSkills);
+      const activeSkills = await this.resolveActiveSkills();
       const storeState = this.store.getState();
       const promptContext: PromptContext = {
         allowedTools,
@@ -219,7 +208,7 @@ export class ConfiguredAgent implements Agent {
         agentsMd: this.agentsMd,
         env: buildEnv(this.projectRoot, this.cwd),
         availableSkills,
-        ...(this.activeSkills.length > 0 ? { activeSkills: this.activeSkills } : {}),
+        ...(activeSkills.length > 0 ? { activeSkills } : {}),
         ...(this.definition.includeMemoryInPrompt
           ? {
             memoryRoots: this.memoryRoots,
@@ -289,36 +278,10 @@ export class ConfiguredAgent implements Agent {
       }
       throw error;
     } finally {
-      this.running = false;
       if (shouldDrainBackgroundTasks) {
         await btm.drain(60000);
       }
     }
-  }
-
-  async dispatchCommand(name: string, args?: string): Promise<SlashCommandResult> {
-    if (this.disposed) {
-      throw new Error("Agent has been disposed");
-    }
-
-    const descriptor = this.commandRegistry.get(name);
-    if (!descriptor) {
-      return { success: false, message: `Unknown command: ${name}` };
-    }
-
-    return descriptor.handler(
-      {
-        store: this.store,
-        modelInfo: this.modelInfo,
-        modelOptions: this.modelOptions,
-        abort: undefined,
-        cwd: this.cwd,
-        agentName: this.definition.name,
-        agentSkills: this.definition.skills,
-        skillService: this.skillService,
-      },
-      args,
-    );
   }
 
   dispose(): void {
@@ -369,10 +332,18 @@ export class ConfiguredAgent implements Agent {
     };
   }
 
-  private async ensureAgentsMd(): Promise<void> {
-    if (this.agentsMdLoaded) return;
+  private async refreshAgentsMd(): Promise<void> {
     this.agentsMd = (await loadAgentsMd(this.cwd)) ?? undefined;
-    this.agentsMdLoaded = true;
+  }
+
+  private async resolveActiveSkills(): Promise<readonly ResolvedSkill[]> {
+    const resolved: ResolvedSkill[] = [];
+    for (const name of this.store.getState().activeSkillNames) {
+      const skill = await this.skillService.readForAgent(this.cwd, name, this.definition.skills);
+      if (skill === null) throw new SkillNotFoundError(name);
+      resolved.push(skill);
+    }
+    return resolved;
   }
 
   private async enforceToolOutputQuotaIfNeeded(): Promise<void> {

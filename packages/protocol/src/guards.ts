@@ -154,14 +154,14 @@ function isToolChildSessionLink(value: unknown): boolean {
   return link !== undefined
     && exact(
       link,
-      ["parentSessionId", "parentToolCallId", "toolName", "childSessionId", "childAgentName", "depth", "background", "status", "createdAt"],
-      ["title", "description", "startedAt", "endedAt", "durationMs", "summary", "error"],
+      ["parentSessionId", "parentToolCallId", "toolName", "childSessionId", "childAgentName", "title", "depth", "background", "status", "createdAt"],
+      ["description", "startedAt", "endedAt", "durationMs", "summary", "error"],
     )
     && isString(link.parentSessionId) && isString(link.parentToolCallId) && isString(link.toolName)
     && isString(link.childSessionId) && isString(link.childAgentName)
     && isFiniteNumber(link.depth) && typeof link.background === "boolean"
     && oneOf(link.status, ["linked", "running", "waiting_for_human", "cancelling", "completed", "failed", "timed_out", "cancelled", "interrupted"])
-    && isFiniteNumber(link.createdAt) && optionalString(link.title) && optionalString(link.description)
+    && isFiniteNumber(link.createdAt) && isString(link.title) && optionalString(link.description)
     && optionalFiniteNumber(link.startedAt) && optionalFiniteNumber(link.endedAt)
     && optionalFiniteNumber(link.durationMs) && optionalString(link.summary) && optionalString(link.error);
 }

@@ -14,6 +14,7 @@ export { lspDiagnosticsTool, lspGotoDefinitionTool, lspFindReferencesTool, lspSy
 export { webFetchTool, WebFetchInputSchema, runWebFetch, validateUrl } from "./web-fetch";
 export { waitForReminderTool, WaitForReminderInputSchema, executeWaitForReminder } from "./wait-for-reminder";
 export { delegateTool, DelegateInputSchema, executeDelegate } from "./delegate";
+export { resumeSessionTool, ResumeSessionInputSchema, executeResumeSession } from "./resume-session";
 export { backgroundOutputTool, BackgroundOutputInputSchema, executeBackgroundOutput } from "./background-output";
 export { cancelSessionTool, CancelSessionInputSchema, executeCancelSession } from "./cancel-session";
 export { memoryWriteTool, MemoryWriteInputSchema } from "./memory-write";
@@ -40,6 +41,7 @@ import { lspDiagnosticsTool, lspGotoDefinitionTool, lspFindReferencesTool, lspSy
 import { webFetchTool } from "./web-fetch";
 import { waitForReminderTool } from "./wait-for-reminder";
 import { delegateTool } from "./delegate";
+import { resumeSessionTool } from "./resume-session";
 import { backgroundOutputTool } from "./background-output";
 import { cancelSessionTool } from "./cancel-session";
 import { viewToolOutputTool } from "./view-tool-output";
@@ -71,6 +73,7 @@ export function createBuiltinToolDescriptors(): AnyToolDescriptor[] {
     webFetchTool,
     waitForReminderTool,
     delegateTool,
+    resumeSessionTool,
     backgroundOutputTool,
     cancelSessionTool,
     skillListTool,

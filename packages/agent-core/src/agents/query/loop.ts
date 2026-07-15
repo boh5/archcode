@@ -202,6 +202,7 @@ export async function runQueryLoop(
   let lastText = "";
   let failed = false;
   let runEndStatus: ExecutionEndEvent["status"] = "completed";
+  let runEndError: string | undefined;
   let recoveredFromFailure = false;
   let zeroOutputShortAttempt = 0;
   let sessionRetryAttempt = 0;
@@ -217,7 +218,6 @@ export async function runQueryLoop(
     agentName: store.getState().agentName,
     allowedTools,
     agentSkills: options.agentSkills,
-    ...(currentDepth === undefined ? {} : { currentDepth }),
     async executeCall(toolCall, batchContext) {
       const batch = toolBatchScheduler.activeBatch();
       const ctx = createToolExecutionContext({
@@ -264,14 +264,10 @@ export async function runQueryLoop(
     },
   });
 
-  if (!store.getState().isRunning) {
-    store.getState().append({ type: "execution-start" });
-  }
-
   try {
     const commandResult = await maybeHandleCommand(options, userMessage, abort);
     if (commandResult.handled) {
-      return { text: "", steps: 0 };
+      return { text: "", steps: 0, status: "completed" };
     }
 
     const activeUserMessage = commandResult.userMessage ?? userMessage;
@@ -310,12 +306,13 @@ export async function runQueryLoop(
         if (!continuationClaimed) continuationClaimed = await toolBatchScheduler.claimContinuation();
         if (!continuationClaimed) {
           runEndStatus = "failed";
+          runEndError = `Tool batch ${activeBatch.batchId} already started its one allowed LLM continuation`;
           store.getState().append({
             type: "execution-error",
             step: steps,
-            error: `Tool batch ${activeBatch.batchId} already started its one allowed LLM continuation`,
+            error: runEndError,
           });
-          return { text: lastText, steps };
+          return { text: lastText, steps, status: runEndStatus, error: runEndError };
         }
       }
 
@@ -397,6 +394,7 @@ export async function runQueryLoop(
       if (attempt.outcome === "terminal") {
         if (attempt.finalizationKind) {
           appendPostStreamTerminalFailure(store, attempt.error, steps, attempt.finalizationKind);
+          settleUnfinalizedToolPartsForRecovery(store);
           markCurrentAssistantModelOutputDiscardedFromContext(store);
         } else {
           store.getState().append({
@@ -414,7 +412,8 @@ export async function runQueryLoop(
         }
         failed = true;
         runEndStatus = "failed";
-        return { text: lastText, steps };
+        runEndError = attempt.message;
+        return { text: lastText, steps, status: runEndStatus, error: runEndError };
       }
 
       const { finalized } = attempt;
@@ -475,6 +474,7 @@ export async function runQueryLoop(
         return {
           text: lastText,
           steps,
+          status: runEndStatus,
           cwdChanged: {
             previousCwd: executionCwd,
             cwd: store.getState().cwd,
@@ -483,34 +483,43 @@ export async function runQueryLoop(
       }
       if (toolExecution.executionControl !== undefined) {
         runEndStatus = executionEndStatusFromControl(toolExecution.executionControl);
-        return { text: lastText, steps, executionControl: toolExecution.executionControl };
+        return { text: lastText, steps, status: runEndStatus, executionControl: toolExecution.executionControl };
       }
       if (toolExecution.waitingForHuman) {
         runEndStatus = "waiting_for_human";
-        return { text: lastText, steps };
+        return { text: lastText, steps, status: runEndStatus };
       }
       if (toolExecution.manualInspectionReason !== undefined) {
         runEndStatus = "failed";
-        store.getState().append({ type: "execution-error", step: steps, error: toolExecution.manualInspectionReason });
-        return { text: lastText, steps };
+        runEndError = toolExecution.manualInspectionReason;
+        store.getState().append({ type: "execution-error", step: steps, error: runEndError });
+        return { text: lastText, steps, status: runEndStatus, error: runEndError };
       }
     }
 
     if (steps >= maxSteps) {
       runEndStatus = "max_steps";
+      runEndError = `Max steps (${maxSteps}) reached`;
       store.getState().append({
         type: "execution-error",
         step: steps,
-        error: `Max steps (${maxSteps}) reached`,
+        error: runEndError,
       });
     }
 
-    return { text: lastText, steps };
+    if (abort.aborted && runEndStatus === "completed") runEndStatus = "aborted";
+    return {
+      text: lastText,
+      steps,
+      status: runEndStatus,
+      ...(runEndError === undefined ? {} : { error: runEndError }),
+    };
   } catch (err) {
     failed = true;
     runEndStatus = abort.aborted ? "aborted" : "failed";
+    runEndError = errorMessage(err);
     logger.error("query.loop.fatal", {
-      error: errorMessage(err),
+      error: runEndError,
       context: { step: steps, sessionId, agentName },
     });
     store.getState().append({
@@ -518,27 +527,25 @@ export async function runQueryLoop(
       step: steps,
       error: errorMessage(err),
     });
-    const classification = classifyLlmError(err);
-    appendTerminalLlmFailureNotice(store, err, classification.kind, {
-      steps,
-      recoveredFromFailure,
-      sessionRetryAttempt,
-      zeroOutputShortAttempt,
-      lastRecoveryAttempt,
-    });
-    return { text: lastText, steps };
+    // Model-call failures are finalized inside runModelAttempt. Reaching this
+    // catch without an active recovery means an outer loop/tool failure, which
+    // must not be mislabeled as an LLM failure in the transcript.
+    if (abort.aborted || recoveredFromFailure) {
+      const classification = classifyLlmError(err);
+      appendTerminalLlmFailureNotice(store, err, classification.kind, {
+        steps,
+        recoveredFromFailure,
+        sessionRetryAttempt,
+        zeroOutputShortAttempt,
+        lastRecoveryAttempt,
+      });
+    }
+    return { text: lastText, steps, status: runEndStatus, error: runEndError };
   } finally {
     if (abort.aborted && !failed && runEndStatus === "completed") {
       runEndStatus = "aborted";
     }
 
-    if (store.getState().isRunning) {
-      store.getState().append({
-        type: "execution-end",
-        status: runEndStatus,
-        ...(failed ? { error: "Execution failed" } : {}),
-      });
-    }
     await runHooks("afterLoopEnd", afterLoopEnd, { store, modelInfo, logger, modelOptions: options.modelOptions, abort, loopEndStatus: runEndStatus, projectContext: options.projectContext }, logger, { sessionId, agentName });
   }
 }
@@ -980,22 +987,22 @@ function finishToolBatchAdvance(
 ): { runEndStatus: ExecutionEndEvent["status"]; result: QueryLoopResult } | undefined {
   if (result.status === "manual_inspection_required") {
     store.getState().append({ type: "execution-error", step: steps, error: result.reason });
-    return { runEndStatus: "failed", result: { text, steps } };
+    return { runEndStatus: "failed", result: { text, steps, status: "failed", error: result.reason } };
   }
   if (result.sessionCwdChanged) {
     return {
       runEndStatus: "completed",
-      result: { text, steps, cwdChanged: { previousCwd: executionCwd, cwd: store.getState().cwd } },
+      result: { text, steps, status: "completed", cwdChanged: { previousCwd: executionCwd, cwd: store.getState().cwd } },
     };
   }
   if (result.executionControl !== undefined) {
     return {
       runEndStatus: executionEndStatusFromControl(result.executionControl),
-      result: { text, steps, executionControl: result.executionControl },
+      result: { text, steps, status: executionEndStatusFromControl(result.executionControl), executionControl: result.executionControl },
     };
   }
   if (result.status === "waiting_for_human") {
-    return { runEndStatus: "waiting_for_human", result: { text, steps } };
+    return { runEndStatus: "waiting_for_human", result: { text, steps, status: "waiting_for_human" } };
   }
   return undefined;
 }

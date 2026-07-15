@@ -8,7 +8,7 @@ import { SkillService } from "../../skills";
 import { CommandRegistry } from "../../commands/registry";
 import { createSkillCommand } from "../../commands/skill";
 import { createSessionStore, storeManager } from "../../store/store";
-import type { Reminder, ExecutionEndEvent, SessionEventPayload, SessionStoreState, StoredMessage, StoredTodo } from "../../store/types";
+import type { Reminder, SessionEventPayload, SessionStoreState, StoredMessage, StoredTodo } from "../../store/types";
 import { createRegistry, defineTool } from "../../tools/index";
 import { REDACTION_MARKER } from "../../tools/index";
 import { createDurableTestSessionContext, createTestProjectContext } from "../../tools/test-project-context";
@@ -282,24 +282,16 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     return String(part.errorMessage);
   }
 
-  function lastExecutionEnd(events: SessionEventPayload[]): ExecutionEndEvent | undefined {
-    for (let index = events.length - 1; index >= 0; index -= 1) {
-      const event = events[index];
-      if (event?.type === "execution-end") return event;
-    }
-    return undefined;
-  }
-
-  test("returns only text and steps in result shape", async () => {
+  test("returns query output and terminal status without lifecycle state", async () => {
     createMockStreamText([{ text: "Hello" }]);
 
     const result = await runQueryLoop(makeOptions(), "Hi");
 
-    expect(result).toEqual({ text: "Hello", steps: 0 });
+    expect(result).toEqual({ text: "Hello", steps: 0, status: "completed" });
     expect("messages" in result).toBe(false);
   });
 
-  test("emits run lifecycle into store and ends not running", async () => {
+  test("does not own durable execution lifecycle", async () => {
     const store = createStore();
     createMockStreamText([{ text: "ok" }]);
 
@@ -308,9 +300,11 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     expect(store.getState().isRunning).toBe(false);
     expect(store.getState().isStreamingModel).toBe(false);
     expect(store.getState().currentExecutionId).toBeUndefined();
+    expect(store.getState().events.map((event) => event.payload.type)).not.toContain("execution-start");
+    expect(store.getState().events.map((event) => event.payload.type)).not.toContain("execution-end");
   });
 
-  test("sets running flags during streamText after execution-start and step-start", async () => {
+  test("sets model streaming state without claiming Session running state", async () => {
     const store = createStore();
     const snapshots: Array<Pick<SessionStoreState, "isRunning" | "isStreamingModel">> = [];
     const fn = mock((_: Parameters<StreamTextFn>[0]) => {
@@ -332,7 +326,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     await runQueryLoop(makeOptions({ store }), "Question");
 
-    expect(snapshots).toEqual([{ isRunning: true, isStreamingModel: true }]);
+    expect(snapshots).toEqual([{ isRunning: false, isStreamingModel: true }]);
   });
 
   test("records user and assistant messages in store", async () => {
@@ -776,7 +770,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
         { text: "Done" },
       ]);
 
-      await runQueryLoop(
+      const result = await runQueryLoop(
         makeOptions({
           store,
           toolRegistry: registry,
@@ -817,7 +811,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     ]);
 
     try {
-      await runQueryLoop(
+      const result = await runQueryLoop(
         makeOptions({
           store,
           storeManager: durableStoreManager,
@@ -836,8 +830,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
         toolCallId: "tc-durable-permission",
         toolName: "sensitiveReadTool",
       });
-      const executionEnd = lastExecutionEnd(events);
-      expect(executionEnd).toMatchObject({ status: "waiting_for_human" });
+      expect(result.status).toBe("waiting_for_human");
       expect(store.getState().toolBatches.find((batch) => batch.archivedAt === undefined)?.calls[0]).toMatchObject({
         state: "blocked",
         toolCallId: "tc-durable-permission",
@@ -934,7 +927,6 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       ...candidate,
       calls: candidate.calls.map((call) => ({ ...call, state: "running", attempt: 1 })),
     }));
-    const events = captureEvents(store);
     const streamText = createMockStreamText([{ text: "must not run" }]);
 
     const result = await runQueryLoop(
@@ -942,7 +934,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       "",
     );
 
-    expect(result).toEqual({ text: "", steps: 0 });
+    expect(result).toMatchObject({ text: "", steps: 0, status: "failed" });
     expect(streamText).not.toHaveBeenCalled();
     expect(executor).not.toHaveBeenCalled();
     expect(scheduler.activeBatch()).toBeUndefined();
@@ -951,7 +943,6 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       manualInspectionReason: expect.stringContaining("unknown outcome"),
       calls: [expect.objectContaining({ state: "manual_inspection_required", attempt: 1 })],
     });
-    expect(lastExecutionEnd(events)).toMatchObject({ status: "failed" });
   });
 
   test("throwing registry tool stores error message", async () => {
@@ -1004,7 +995,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       "Hi",
     );
 
-    expect(result).toEqual({ text: "Final", steps: 1 });
+    expect(result).toEqual({ text: "Final", steps: 1, status: "completed" });
     expect(streamFn).toHaveBeenCalledTimes(2);
   });
 
@@ -1200,7 +1191,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     expect(JSON.stringify(store.getState().messages)).not.toContain(DOOM_LOOP_MESSAGE);
   });
 
-  test("maxSteps emits execution-error but execution-end completed", async () => {
+  test("maxSteps emits execution-error and reports max_steps", async () => {
     const store = createStore();
     createMockStreamText([
       { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: {} }] },
@@ -1213,6 +1204,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     );
 
     expect(result.steps).toBe(2);
+    expect(result.status).toBe("max_steps");
     expect(store.getState().isRunning).toBe(false);
     expect(store.getState().steps.at(-1)).toMatchObject({
       step: 2,
@@ -1280,7 +1272,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
         "Hi",
       );
 
-      expect(result).toEqual({ text: "Still works", steps: 0 });
+      expect(result).toEqual({ text: "Still works", steps: 0, status: "completed" });
       expect(logger.warn).toHaveBeenCalledWith("query.loop.hook.failed", {
         error: expect.any(Error),
         context: { sessionId: store.getState().sessionId, agentName: "test-agent" },
@@ -1320,20 +1312,18 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       expect("messages" in (contexts[2] as Record<string, unknown>)).toBe(false);
     });
 
-    test("ExecutionEndEvent uses max_steps status when step limit is reached", async () => {
+    test("returns max_steps status when step limit is reached", async () => {
       const store = createStore();
-      const events = captureEvents(store);
       createMockStreamText([
         { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-limit", toolName: "echo", input: {} }] },
       ]);
 
-      await runQueryLoop(
+      const result = await runQueryLoop(
         makeOptions({ store, maxSteps: 1, toolRegistry: createTestRegistry(), allowedTools: ["echo"] }),
         "Hi",
       );
 
-      const runEnd = events.find((event): event is ExecutionEndEvent => event.type === "execution-end");
-      expect(runEnd?.status).toBe("max_steps");
+      expect(result.status).toBe("max_steps");
     });
 
     test("beforeModelCall receives mutable messages for the current model call only", async () => {
@@ -1400,7 +1390,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
         "Hi",
       );
 
-      expect(result).toEqual({ text: "", steps: 0 });
+      expect(result).toMatchObject({ text: "", steps: 0, status: "failed" });
       expect(statuses).toEqual([false]);
       expect(store.getState().steps.at(-1)).toMatchObject({ step: 0, error: "model failed" });
     });
@@ -1591,7 +1581,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
         "Hi",
       );
 
-      expect(result).toEqual({ text: "Still works", steps: 0 });
+      expect(result).toEqual({ text: "Still works", steps: 0, status: "completed" });
       expect(logger.warn).toHaveBeenCalledWith("query.loop.hook.failed", {
         error: expect.any(Error),
         context: { sessionId: store.getState().sessionId, agentName: "engineer" },
@@ -1624,7 +1614,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     });
   });
 
-  test("streamText throw emits failed execution-end state", async () => {
+  test("streamText throw returns failed query status", async () => {
     const store = createStore();
     const fn = mock(() => {
       throw Object.assign(new Error("model unavailable"), { status: 422 });
@@ -1633,7 +1623,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     const result = await runQueryLoop(makeOptions({ store }), "Hi");
 
-    expect(result).toEqual({ text: "", steps: 0 });
+    expect(result).toMatchObject({ text: "", steps: 0, status: "failed" });
     expect(store.getState().isRunning).toBe(false);
     expect(store.getState().steps.at(-1)).toMatchObject({ step: 0, error: "model unavailable" });
   });
@@ -1658,14 +1648,13 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     const result = await runQueryLoop(makeOptions({ store }), "Hi");
 
-    expect(result).toEqual({ text: "", steps: 0 });
+    expect(result).toMatchObject({ text: "", steps: 0, status: "failed" });
     expect(store.getState().steps[0]).toMatchObject({
       step: 0,
       finishReason: "error",
       error: "finish metadata unavailable",
       completedAt: expect.any(Number),
     });
-    expect(events.find((event): event is ExecutionEndEvent => event.type === "execution-end")?.status).toBe("failed");
     expect(events).toContainEqual(expect.objectContaining({
       type: "llm-recovery-failed",
       attempt: 0,
@@ -1700,7 +1689,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     const result = await runQueryLoop(makeOptions({ store }), "Hi");
 
-    expect(result).toEqual({ text: "", steps: 0 });
+    expect(result).toMatchObject({ text: "", steps: 0, status: "failed" });
     expect(events).toContainEqual(expect.objectContaining({
       type: "llm-recovery-failed",
       attempt: 0,
@@ -1732,14 +1721,13 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     const result = await runQueryLoop(makeOptions({ store }), "Hi");
 
-    expect(result).toEqual({ text: "", steps: 0 });
+    expect(result).toMatchObject({ text: "", steps: 0, status: "failed" });
     expect(store.getState().steps[0]).toMatchObject({
       step: 0,
       finishReason: "error",
       error: "usage failed",
       completedAt: expect.any(Number),
     });
-    expect(events.find((event): event is ExecutionEndEvent => event.type === "execution-end")?.status).toBe("failed");
     expect(events).toContainEqual(expect.objectContaining({
       type: "llm-recovery-failed",
       attempt: 0,
@@ -1767,8 +1755,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     const result = await runQueryLoop(makeOptions({ store }), "Hi");
 
-    expect(result).toEqual({ text: "", steps: 0 });
-    expect(events.find((event): event is ExecutionEndEvent => event.type === "execution-end")?.status).toBe("failed");
+    expect(result).toMatchObject({ text: "", steps: 0, status: "failed" });
     expect(events).toContainEqual(expect.objectContaining({
       type: "llm-recovery-failed",
       attempt: 0,
@@ -1804,7 +1791,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       "Hi",
     );
 
-    expect(result).toEqual({ text: "", steps: 0 });
+    expect(result).toMatchObject({ text: "", steps: 0, status: "failed" });
     expect(executor).not.toHaveBeenCalled();
     expect(events.filter((event) => event.type === "step-end")).toEqual([
       expect.objectContaining({ type: "step-end", step: 0, finishReason: "error" }),
@@ -1815,7 +1802,6 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       error: "toolCalls finalize failed",
       completedAt: expect.any(Number),
     });
-    expect(events.find((event): event is ExecutionEndEvent => event.type === "execution-end")?.status).toBe("failed");
     expect(events).toContainEqual(expect.objectContaining({
       type: "llm-recovery-failed",
       attempt: 0,
@@ -1851,7 +1837,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     const result = await runQueryLoop(makeOptions({ store }), "Hi");
 
-    expect(result).toEqual({ text: "recovered", steps: 0 });
+    expect(result).toEqual({ text: "recovered", steps: 0, status: "completed" });
     expect(streamFn).toHaveBeenCalledTimes(2);
     expect(events).toContainEqual(expect.objectContaining({
       type: "llm-retry",
@@ -1884,7 +1870,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     const result = await runQueryLoop(makeOptions({ store }), "Hi");
 
-    expect(result).toEqual({ text: "recovered from unknown finalizer", steps: 0 });
+    expect(result).toEqual({ text: "recovered from unknown finalizer", steps: 0, status: "completed" });
     expect(streamFn).toHaveBeenCalledTimes(2);
     expect(events).toContainEqual(expect.objectContaining({
       type: "llm-retry",
@@ -1914,7 +1900,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     const result = await runQueryLoop(makeOptions({ store }), "Hi");
 
-    expect(result).toEqual({ text: "final answer", steps: 0 });
+    expect(result).toEqual({ text: "final answer", steps: 0, status: "completed" });
     expect(streamFn).toHaveBeenCalledTimes(2);
     expect(events).toContainEqual(expect.objectContaining({
       type: "llm-retry",
@@ -1956,7 +1942,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       "Hi",
     );
 
-    expect(result).toEqual({ text: "recovered after tool finalization", steps: 0 });
+    expect(result).toEqual({ text: "recovered after tool finalization", steps: 0, status: "completed" });
     expect(streamFn).toHaveBeenCalledTimes(2);
     expect(executor).not.toHaveBeenCalled();
     expect(events).toContainEqual(expect.objectContaining({
@@ -2028,12 +2014,13 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     ]);
 
     const started = performance.now();
-    await runQueryLoop(makeOptions({ store, abort: abortController.signal }), "Hi");
+    const result = await runQueryLoop(makeOptions({ store, abort: abortController.signal }), "Hi");
 
     expect(performance.now() - started).toBeLessThan(100);
     expect(events.filter((event) => event.type === "llm-retry" && event.scope === "short")).toHaveLength(3);
     expect(events.some((event) => event.type === "llm-retry" && event.scope === "session" && event.visibility === "session")).toBe(true);
-    expect(events.filter((event) => event.type === "execution-end")).toHaveLength(1);
+    expect(result.status).toBe("aborted");
+    expect(events.filter((event) => event.type === "execution-end")).toHaveLength(0);
   });
 
   test("partial-output recovery marks interrupted text and continues without replay", async () => {
@@ -2140,8 +2127,8 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     await runQueryLoop(makeOptions({ store }), "Hi");
 
-    expect(snapshots).toEqual([{ isRunning: true, isStreamingModel: false }]);
-    expect(events.filter((event) => event.type === "execution-end")).toHaveLength(1);
+    expect(snapshots).toEqual([{ isRunning: false, isStreamingModel: false }]);
+    expect(events.filter((event) => event.type === "execution-end")).toHaveLength(0);
   });
 
   test("recovery attempts do not run afterStepEnd or afterLoopEnd until terminal recovery", async () => {
@@ -2561,7 +2548,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     expect(laterExecute).not.toHaveBeenCalled();
     expect(streamFn).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(assistantMessages(store)[0]?.parts)).toContain("SESSION_EXECUTION_STOPPED");
-    expect(store.getState().executions.at(-1)?.status).toBe("cancelled");
+    expect(result.status).toBe("cancelled");
   });
 
   test("skips later tool calls emitted from the stale context after Session cwd changes", async () => {
@@ -3016,7 +3003,7 @@ describe("runQueryLoop slash commands", () => {
 
     const result = await runQueryLoop(makeOptions({ store, commandRegistry }), "/skill use git-master");
 
-    expect(result).toEqual({ text: "continued answer", steps: 0 });
+    expect(result).toEqual({ text: "continued answer", steps: 0, status: "completed" });
     expect(streamCallMessages(streamFn, 0)).toEqual([
       { role: "user", content: wrappedMessage("m0002", "Use Skill git-master now") },
     ]);
@@ -3046,7 +3033,7 @@ describe("runQueryLoop slash commands", () => {
       "/skill use git-master do something",
     );
 
-    expect(result).toEqual({ text: "continued answer", steps: 0 });
+    expect(result).toEqual({ text: "continued answer", steps: 0, status: "completed" });
     expect(streamCallMessages(streamFn, 0)).toEqual([
       {
         role: "user",
@@ -3068,7 +3055,7 @@ describe("runQueryLoop slash commands", () => {
 
     const result = await runQueryLoop(makeOptions({ store, commandRegistry }), "/compact");
 
-    expect(result).toEqual({ text: "", steps: 0 });
+    expect(result).toEqual({ text: "", steps: 0, status: "completed" });
     expect(streamFn).not.toHaveBeenCalled();
     expect(store.getState().messages).toHaveLength(1);
     expect(store.getState().messages[0]!.parts[0]).toMatchObject({
@@ -3102,7 +3089,7 @@ describe("runQueryLoop slash commands", () => {
 
     const result = await runQueryLoop(makeOptions({ store, commandRegistry }), "/compact now");
 
-    expect(result).toEqual({ text: "normal answer", steps: 0 });
+    expect(result).toEqual({ text: "normal answer", steps: 0, status: "completed" });
     expect(handler).not.toHaveBeenCalled();
     expect(streamCallMessages(streamFn, 0)).toEqual([{ role: "user", content: wrappedMessage("m0001", "/compact now") }]);
   });
@@ -3114,7 +3101,7 @@ describe("runQueryLoop slash commands", () => {
 
     const result = await runQueryLoop(makeOptions({ store, commandRegistry }), "/unknown");
 
-    expect(result).toEqual({ text: "", steps: 0 });
+    expect(result).toEqual({ text: "", steps: 0, status: "completed" });
     expect(streamFn).not.toHaveBeenCalled();
     expect(store.getState().messages[0]!.parts[0]).toMatchObject({
       type: "system-notice",
@@ -3125,39 +3112,43 @@ describe("runQueryLoop slash commands", () => {
 });
 
 describe("runQueryLoop abort handling", () => {
-  test("abort before loop starts emits aborted execution-end", async () => {
+  test("abort before loop starts returns aborted", async () => {
     const abortController = new AbortController();
     abortController.abort();
     const store = createStore();
-    const events = captureEvents(store);
     createMockStreamText([{ text: "should not appear" }]);
 
     const result = await runQueryLoop(makeOptions({ store, abort: abortController.signal }), "Hi");
 
     expect(result.steps).toBe(0);
-    const runEnd = events.find((event): event is ExecutionEndEvent => event.type === "execution-end");
-    expect(runEnd?.status).toBe("aborted");
+    expect(result.status).toBe("aborted");
   });
 
-  test("abort during stream breaks out and emits aborted execution-end", async () => {
+  test("abort during stream breaks out and returns aborted", async () => {
     const abortController = new AbortController();
     const store = createStore();
-    const events = captureEvents(store);
-    createMockStreamText([{ text: "partial" }]);
-
-    setTimeout(() => abortController.abort(), 0);
+    setLlmAdapterForTest({
+      streamText: (() => ({
+        fullStream: (async function* () {
+          abortController.abort();
+          yield { type: "text-delta", text: "partial" };
+        })(),
+        finishReason: Promise.resolve("stop"),
+        usage: Promise.resolve({ totalTokens: 1 }),
+        text: Promise.resolve("partial"),
+        toolCalls: Promise.resolve([]),
+      })) as unknown as StreamTextFn,
+    });
 
     const result = await runQueryLoop(makeOptions({ store, abort: abortController.signal }), "Hi");
 
     expect(result.steps).toBeLessThanOrEqual(1);
-    const runEnd = events.find((event): event is ExecutionEndEvent => event.type === "execution-end");
-    expect(runEnd).toBeDefined();
+    expect(result.status).toBe("aborted");
   });
 
   test("abort after tool calls emits Aborted result for remaining tools", async () => {
     const abortController = new AbortController();
     const store = createStore();
-    const events = captureEvents(store);
     const registry = createTestRegistry(async () => "ok");
     createMockStreamText([
       {
@@ -3178,14 +3169,12 @@ describe("runQueryLoop abort handling", () => {
     );
 
     expect(result.steps).toBeLessThanOrEqual(1);
-    const runEnd = events.find((event): event is ExecutionEndEvent => event.type === "execution-end");
-    expect(runEnd?.status).toBe("aborted");
+    expect(result.status).toBe("aborted");
   });
 
-  test("abort between stream end and tool execution emits aborted execution-end", async () => {
+  test("abort between stream end and tool execution returns aborted", async () => {
     const abortController = new AbortController();
     const store = createStore();
-    const events = captureEvents(store);
     const registry = createTestRegistry(async () => "ok");
     createMockStreamText([
       {
@@ -3197,13 +3186,12 @@ describe("runQueryLoop abort handling", () => {
 
     abortController.abort();
 
-    await runQueryLoop(
+    const result = await runQueryLoop(
       makeOptions({ store, toolRegistry: registry, allowedTools: ["echo"], abort: abortController.signal }),
       "Hi",
     );
 
-    const runEnd = events.find((event): event is ExecutionEndEvent => event.type === "execution-end");
-    expect(runEnd?.status).toBe("aborted");
+    expect(result.status).toBe("aborted");
   });
 });
 

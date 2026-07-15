@@ -173,7 +173,7 @@ describe("query loop LLM stream recovery", () => {
 
     const result = await runQueryLoop(makeOptions({ store }), "Auth failure");
 
-    expect(result).toEqual({ text: "", steps: 0 });
+    expect(result).toMatchObject({ text: "", steps: 0, status: "failed" });
     expect(streamFn).toHaveBeenCalledTimes(1);
     expect(events).toContainEqual(expect.objectContaining({
       type: "llm-recovery-failed",
@@ -185,7 +185,7 @@ describe("query loop LLM stream recovery", () => {
       statusCode: 401,
       message: expect.stringContaining("Model call failed: Unauthorized"),
     }));
-    expect(store.getState().executions.at(-1)).toMatchObject({ status: "failed", error: "Execution failed" });
+    expect(result).toMatchObject({ status: "failed", error: "Unauthorized" });
   });
 
   test("terminal failure notice includes statusCode from classification", async () => {
@@ -211,7 +211,7 @@ describe("query loop LLM stream recovery", () => {
     const events = captureEvents(store);
     abort.abort(new DOMException("User cancelled", "AbortError"));
 
-    await runQueryLoop(makeOptions({ store, abort: abort.signal }), "Abort immediately");
+    const result = await runQueryLoop(makeOptions({ store, abort: abort.signal }), "Abort immediately");
 
     expect(events).not.toContainEqual(expect.objectContaining({
       type: "llm-recovery-failed",
@@ -219,7 +219,7 @@ describe("query loop LLM stream recovery", () => {
       message: expect.stringContaining("Model call failed:"),
     }));
     expect(events.filter((event) => event.type === "llm-recovery-failed")).toHaveLength(0);
-    expect(store.getState().executions.at(-1)?.status).toBe("aborted");
+    expect(result.status).toBe("aborted");
   });
 
   test("generic outer-catch failures are not labeled as model-call failures", async () => {
@@ -241,13 +241,13 @@ describe("query loop LLM stream recovery", () => {
       { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-explode", toolName: "explode", input: {} }] },
     ]);
 
-    await runQueryLoop(makeOptions({ store, toolRegistry: registry, allowedTools: ["explode"] }), "Use tool");
+    const result = await runQueryLoop(makeOptions({ store, toolRegistry: registry, allowedTools: ["explode"] }), "Use tool");
 
     expect(events).toContainEqual(expect.objectContaining({
       type: "execution-error",
       error: "tool executor escaped",
     }));
-    expect(store.getState().executions.at(-1)).toMatchObject({ status: "failed", error: "Execution failed" });
+    expect(result).toMatchObject({ status: "failed", error: "tool executor escaped" });
     expect(events).not.toContainEqual(expect.objectContaining({
       type: "llm-recovery-failed",
       attempt: 0,
@@ -305,7 +305,7 @@ describe("query loop LLM stream recovery", () => {
 
     const result = await runQueryLoop(makeOptions({ store, toolRegistry: registry }), "Hi");
 
-    expect(result).toEqual({ text: "", steps: 0 });
+    expect(result).toMatchObject({ text: "", steps: 0, status: "failed" });
     expect(streamFn).not.toHaveBeenCalled();
     expect(events).toContainEqual(expect.objectContaining({
       type: "execution-error",
@@ -468,9 +468,9 @@ describe("query loop LLM stream recovery", () => {
       },
     };
 
-    await runQueryLoop(makeOptions({ store, abort: abort.signal }), "Abort backoff", retryScheduler);
+    const result = await runQueryLoop(makeOptions({ store, abort: abort.signal }), "Abort backoff", retryScheduler);
 
-    expect(store.getState().executions.at(-1)?.status).toBe("aborted");
+    expect(result.status).toBe("aborted");
     expect(events).toContainEqual(expect.objectContaining({
       type: "llm-recovery-failed",
       scope: "session",

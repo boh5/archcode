@@ -44,6 +44,8 @@ export interface SessionStoreManagerOptions {
 
 export interface CreateSessionOptions {
   readonly agentName: AgentName;
+  /** Canonical Skill identity. New root Sessions use an empty list. */
+  readonly activeSkillNames?: readonly string[];
   readonly cwd?: string;
   readonly rootSessionId?: string;
   readonly parentSessionId?: string;
@@ -134,6 +136,7 @@ export class SessionStoreManager {
     const persistForEvent = (event: SessionEventPayload) => {
       if (
         event.type === "user-message"
+        || event.type === "execution-start"
         || event.type === "execution-end"
         || event.type === "tool-attempt"
         || event.type === "tool-result"
@@ -157,6 +160,7 @@ export class SessionStoreManager {
       updatedAt: createdAt,
       cwd,
       agentName: options.agentName,
+      activeSkillNames: [...new Set(options.activeSkillNames ?? [])],
       modelInfo: options.modelInfo ?? null,
       title: options.title ?? null,
       messages: [],
@@ -361,6 +365,7 @@ export class SessionStoreManager {
       goalId: options.goalId,
       sessionRole: options.sessionRole,
       agentName: options.agentName,
+      activeSkillNames: [...new Set(options.activeSkillNames ?? [])],
       cwd: options.cwd ?? workspaceRoot,
     } as const;
     const actual = {
@@ -370,12 +375,15 @@ export class SessionStoreManager {
       goalId: session.goalId,
       sessionRole: session.sessionRole,
       agentName: session.agentName,
+      activeSkillNames: session.activeSkillNames,
       cwd: session.cwd,
     } as const;
 
     for (const field of Object.keys(expected) as Array<keyof typeof expected>) {
       const matches = field === "cwd"
         ? sameResolvedPath(String(expected[field]), String(actual[field]))
+        : field === "activeSkillNames"
+          ? JSON.stringify(expected.activeSkillNames) === JSON.stringify(actual.activeSkillNames)
         : expected[field] === actual[field];
       if (!matches) {
         throw new SessionFileIdentityConflictError(sessionId, field, expected[field], actual[field]);
@@ -689,6 +697,69 @@ export class SessionStoreManager {
     return await sessionFileInternals.listSessionSummaries(workspaceRoot);
   }
 
+  /**
+   * Resolves authoritative delegation depth from the persisted parent chain.
+   * This intentionally ignores child-link and tool-batch display metadata.
+   */
+  async resolveSessionDepth(workspaceRoot: string, sessionId: string): Promise<number> {
+    let current = reconcileInterruptedSessionFile(
+      await sessionFileInternals.readSessionFile(sessionId, workspaceRoot),
+    );
+    const rootSessionId = current.rootSessionId;
+    const seen = new Set<string>();
+    let depth = 0;
+
+    while (true) {
+      if (seen.has(current.sessionId)) {
+        throw new SessionTreeIntegrityError(
+          "cycle",
+          current.sessionId,
+          getSessionPath(workspaceRoot, current.sessionId),
+          `Cycle detected in parent chain for Session "${sessionId}"`,
+        );
+      }
+      seen.add(current.sessionId);
+
+      if (current.rootSessionId !== rootSessionId) {
+        throw new SessionTreeIntegrityError(
+          "root_mismatch",
+          current.sessionId,
+          getSessionPath(workspaceRoot, current.sessionId),
+          `Session "${current.sessionId}" belongs to root "${current.rootSessionId}", expected "${rootSessionId}"`,
+        );
+      }
+
+      const parentSessionId = current.parentSessionId;
+      if (parentSessionId === undefined) {
+        if (current.sessionId !== rootSessionId) {
+          throw new SessionTreeIntegrityError(
+            "missing_parent",
+            current.sessionId,
+            getSessionPath(workspaceRoot, current.sessionId),
+            `Parent chain for Session "${sessionId}" ended at "${current.sessionId}" instead of root "${rootSessionId}"`,
+          );
+        }
+        return depth;
+      }
+
+      try {
+        current = reconcileInterruptedSessionFile(
+          await sessionFileInternals.readSessionFile(parentSessionId, workspaceRoot),
+        );
+      } catch (error) {
+        if (!(error instanceof SessionFileNotFoundError) && !isMissingFileError(error)) throw error;
+        throw new SessionTreeIntegrityError(
+          "missing_parent",
+          current.sessionId,
+          getSessionPath(workspaceRoot, current.sessionId),
+          `Parent Session "${parentSessionId}" for "${current.sessionId}" was not found`,
+          error,
+        );
+      }
+      depth += 1;
+    }
+  }
+
   async buildSessionTree(workspaceRoot: string, rootSessionId: string): Promise<SessionTreeResponse> {
     const rootFile = reconcileInterruptedSessionFile(await sessionFileInternals.readSessionFile(rootSessionId, workspaceRoot, rootSessionId));
     const rootFilePath = getSessionPath(workspaceRoot, rootSessionId);
@@ -835,6 +906,7 @@ export class SessionStoreManager {
         goalId: parsed.goalId,
         sessionRole: parsed.sessionRole,
         agentName: parsed.agentName,
+        activeSkillNames: parsed.activeSkillNames,
         modelInfo: parsed.modelInfo,
         ...(parsed.title === null ? {} : { title: parsed.title }),
       });
@@ -844,6 +916,7 @@ export class SessionStoreManager {
         updatedAt: parsed.updatedAt,
         cwd: parsed.cwd,
         agentName: parsed.agentName,
+        activeSkillNames: parsed.activeSkillNames,
         modelInfo: parsed.modelInfo,
         title: parsed.title,
         messages: parsed.messages,
@@ -1037,6 +1110,7 @@ function toSessionSummary(file: HydratedSessionFile): SessionSummary {
     ...(file.goalId === undefined ? {} : { goalId: file.goalId }),
     ...(file.sessionRole === undefined ? {} : { sessionRole: file.sessionRole }),
     agentName: file.agentName,
+    activeSkillNames: file.activeSkillNames,
     modelInfo: file.modelInfo,
     title: file.title,
     createdAt: file.createdAt,

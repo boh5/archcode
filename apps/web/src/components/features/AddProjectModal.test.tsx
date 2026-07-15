@@ -127,7 +127,6 @@ mock.module("../../api/mutations", () => ({
   useUpdateProjectName: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
   useDeleteProject: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
   useCreateSession: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
-  usePostCommand: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
 }));
 
 mock.module("../../api/queries", () => ({

@@ -22,9 +22,6 @@ function createTestRuntime(statuses: Map<string, McpServerStatus>): AgentRuntime
     createSession: async () => ({ sessionId: "session", title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] }),
     getSessionFile: async (_workspaceRoot: string, sessionId: string) => ({ sessionId, title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] }),
     listSessions: async () => [],
-    startSessionExecution: () => {
-      throw new Error("not implemented");
-    },
     stopSessionFamily: async () => undefined,
     abortAllSessionExecutions: async () => undefined,
     getSessionFamilyActivity: () => "idle" as const,
@@ -34,7 +31,6 @@ function createTestRuntime(statuses: Map<string, McpServerStatus>): AgentRuntime
     disposeSessionAgent: () => undefined,
     disposeAllSessionAgents: () => undefined,
     isSessionTombstoned: () => false,
-    dispatchCommand: async () => null,
     notifyRuntimeShutdown: () => undefined,
   } as unknown as AgentRuntime;
 }

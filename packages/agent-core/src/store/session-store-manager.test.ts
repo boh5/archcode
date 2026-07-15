@@ -53,6 +53,7 @@ describe("SessionStoreManager", () => {
       updatedAt: 1000,
       cwd: TMP_DIR,
       agentName: "engineer",
+      activeSkillNames: [],
       modelInfo: null,
       title: null,
       messages: [],
@@ -198,6 +199,7 @@ describe("SessionStoreManager", () => {
     parentSessionId?: string;
     title?: string | null;
     createdAt?: number;
+    activeSkillNames?: string[];
     blockedByHitlIds?: string[];
   }): Promise<void> {
     await sessionFileInternals.saveSessionTranscript(
@@ -205,6 +207,7 @@ describe("SessionStoreManager", () => {
         createdAt: input.createdAt ?? 1000,
         updatedAt: input.createdAt ?? 1000,
         agentName: input.parentSessionId === undefined ? "engineer" : "explore",
+        activeSkillNames: input.activeSkillNames ?? [],
         title: input.title ?? null,
         rootSessionId: input.rootSessionId ?? input.sessionId,
         ...(input.blockedByHitlIds === undefined ? {} : { blockedByHitlIds: input.blockedByHitlIds }),
@@ -294,6 +297,22 @@ describe("SessionStoreManager", () => {
 
     expect(second.updatedAt).toBeGreaterThan(first.updatedAt as number);
     expect(store.getState().updatedAt).toBe(second.updatedAt as number);
+  });
+
+  test("flushSession makes an execution-start record durable", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
+    await manager.flushSession(id, TMP_DIR);
+
+    store.getState().append({ type: "execution-start", executionId: "execution-1" });
+    await manager.flushSession(id, TMP_DIR);
+
+    const persisted = await readSessionJson(canonicalSessionPath(id));
+    expect((persisted.executions as Array<{ id: string; status: string }>).at(-1)).toMatchObject({
+      id: "execution-1",
+      status: "running",
+    });
   });
 
   test("persists an execution cwd independently from the canonical session directory", async () => {
@@ -1222,5 +1241,49 @@ describe("SessionStoreManager", () => {
     }));
     await expect(childAsRootManager.getSessionFile(TMP_DIR, childSessionId)).resolves.toMatchObject({ rootSessionId });
     await expect(childAsRootManager.buildSessionTree(TMP_DIR, childSessionId)).rejects.toThrow(NotRootSessionError);
+  });
+
+  test("persists canonical Skill names and derives depth from the parent chain after restart", async () => {
+    const rootSessionId = sessionId();
+    const childSessionId = sessionId();
+    const grandchildSessionId = sessionId();
+    await writeSessionFile({ sessionId: rootSessionId });
+    await writeSessionFile({
+      sessionId: childSessionId,
+      rootSessionId,
+      parentSessionId: rootSessionId,
+      activeSkillNames: ["codemap"],
+    });
+    await writeSessionFile({
+      sessionId: grandchildSessionId,
+      rootSessionId,
+      parentSessionId: childSessionId,
+      activeSkillNames: ["git-master"],
+    });
+    const restarted = new SessionStoreManager({ logger: silentLogger });
+    expect((await restarted.getSessionFile(TMP_DIR, childSessionId)).activeSkillNames).toEqual(["codemap"]);
+    const invalidSiblingId = sessionId();
+    await writeRawSessionFile(invalidSiblingId, JSON.stringify({ sessionId: invalidSiblingId }));
+    expect(await restarted.resolveSessionDepth(TMP_DIR, rootSessionId)).toBe(0);
+    expect(await restarted.resolveSessionDepth(TMP_DIR, childSessionId)).toBe(1);
+    expect(await restarted.resolveSessionDepth(TMP_DIR, grandchildSessionId)).toBe(2);
+  });
+
+  test("resolveSessionDepth fails closed on a cycle in the requested ancestor chain", async () => {
+    const rootSessionId = sessionId();
+    const childSessionId = sessionId();
+    await writeSessionFile({
+      sessionId: rootSessionId,
+      rootSessionId,
+      parentSessionId: childSessionId,
+    });
+    await writeSessionFile({
+      sessionId: childSessionId,
+      rootSessionId,
+      parentSessionId: rootSessionId,
+    });
+
+    const restarted = new SessionStoreManager({ logger: silentLogger });
+    await expect(restarted.resolveSessionDepth(TMP_DIR, childSessionId)).rejects.toThrow(SessionTreeIntegrityError);
   });
 });

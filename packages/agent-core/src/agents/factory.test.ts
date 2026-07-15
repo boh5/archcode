@@ -10,13 +10,13 @@ import type { AnyToolDescriptor } from "../tools/types";
 import { DELEGATION_CORE_TOOLS } from "./constants";
 import { MissingAgentModelConfigError, NoModelsConfiguredError } from "./errors";
 import {
+  AgentStoreIdentityMismatchError,
   DuplicateAgentDefinitionError,
   UnknownAgentDefinitionError,
   createAgentFactory,
 } from "./factory";
 import { ConfiguredAgent } from "./configured-agent";
 import type { AgentDefinition, AgentName } from "./factory-types";
-import type { ResolvedSkill } from "../skills/types";
 import { silentLogger } from "../logger";
 import { createTestProjectContextResolver } from "./test-project-context-resolver";
 import { createTestTempRoot } from "../testing/test-temp-root";
@@ -103,7 +103,6 @@ function definition(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     autoInjectReminder: true,
     todoStepReminder: true,
     todoQueryLoopContinuation: true,
-    transcriptSave: true,
     memoryExtraction: true,
     memoryConsolidation: true,
     titleGeneration: "enabled",
@@ -179,25 +178,29 @@ describe("createAgentFactory", () => {
     expect(typeof agent.run).toBe("function");
   });
 
+  test("rejects an Agent definition that conflicts with persisted Session identity", () => {
+    const factory = makeFactory([
+      definition(),
+      definition({ name: "explore", promptProfileId: "explorer", tools: { tools: nonDelegatingExplorerTools } }),
+    ]);
+    const store = storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, { agentName: "explore" });
+
+    expect(() => factory.createAgent("engineer", { store })).toThrow(AgentStoreIdentityMismatchError);
+    expect(store.getState().agentName).toBe("explore");
+  });
+
   test("root agents default to no active skills", () => {
     const factory = makeFactory();
 
     const agent = factory.createRootAgent("engineer");
 
     expect(agent).toBeInstanceOf(ConfiguredAgent);
-    expect((agent as ConfiguredAgent).activeSkills).toEqual([]);
+    expect(agent.store.getState().activeSkillNames).toEqual([]);
   });
 
-  test("threads SkillService and explicit active skills through factory creation", () => {
+  test("keeps active Skill identity on the supplied Session store", () => {
     const skillService = createTestSkillService();
     const providerRegistry = makeProviderRegistry();
-    const activeSkills: readonly ResolvedSkill[] = [
-      {
-        metadata: { name: "git-master", description: "Git helper", when_to_use: "Use for git operations." },
-        body: "Use git carefully.",
-        source: "builtin",
-      },
-    ];
     const factory = createAgentFactory({ definitions: [definition()],
     providerRegistry,
     toolRegistry: createRegistry([
@@ -216,10 +219,14 @@ describe("createAgentFactory", () => {
       },
     } as unknown as ArchCodeConfig, logger: silentLogger });
 
-    const agent = factory.createAgent("engineer", { activeSkills });
+    const store = storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, {
+      agentName: "engineer",
+      activeSkillNames: ["git-master"],
+    });
+    const agent = factory.createAgent("engineer", { store });
 
     expect(agent).toBeInstanceOf(ConfiguredAgent);
-    expect((agent as ConfiguredAgent).activeSkills).toBe(activeSkills);
+    expect(agent.store.getState().activeSkillNames).toEqual(["git-master"]);
     expect((agent as unknown as { skillService: SkillService }).skillService).toBe(skillService);
   });
 
@@ -377,27 +384,29 @@ describe("createAgentFactory", () => {
     }
   });
 
-  test("assigns title to root and child stores", () => {
+  test("preserves the canonical title from the supplied Session store", () => {
     const factory = makeFactory([
       definition(),
       definition({ name: "explore", promptProfileId: "explorer", tools: { tools: nonDelegatingExplorerTools } }),
     ]);
 
-    const root = factory.createRootAgent("engineer", { title: "Root Title" });
-    const child = factory.createAgent("explore", { title: "Child Title" });
+    const rootStore = storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, { agentName: "engineer", title: "Root Title" });
+    const childStore = storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, { agentName: "explore", title: "Child Title" });
+    const root = factory.createRootAgent("engineer", { store: rootStore });
+    const child = factory.createAgent("explore", { store: childStore });
 
     expect(root.store.getState().title).toBe("Root Title");
     expect(child.store.getState().title).toBe("Child Title");
   });
 
-  test("assigns parent session id via CreateSessionOptions at store creation time", () => {
+  test("preserves parent session id from canonical store identity", () => {
     const factory = makeFactory([
       definition(),
       definition({ name: "explore", promptProfileId: "explorer", tools: { tools: nonDelegatingExplorerTools } }),
     ]);
 
     const parentSessionId = "parent-session";
-    const store = storeManager.create(crypto.randomUUID(), "/test", { parentSessionId, agentName: "engineer" });
+    const store = storeManager.create(crypto.randomUUID(), "/test", { parentSessionId, agentName: "explore" });
     const child = factory.createAgent("explore", { store });
 
     expect(child.store.getState().parentSessionId).toBe(parentSessionId);
@@ -468,14 +477,14 @@ describe("createAgentFactory", () => {
     expect(factory.getDelegateTargetsFor(explicitWithoutDelegate, 0)).toEqual([]);
   });
 
-  test("resolves delegated skills with target allow-list validation and dedupe", async () => {
+  test("validates and deduplicates delegated Skill names before persistence", async () => {
     const target = definition({ name: "explore", promptProfileId: "explorer", tools: { tools: nonDelegatingExplorerTools }, skills: ["codemap", "git-master"] });
     const factory = makeFactory([definition(), target], { skillService: createSkillServiceWithBuiltins() });
 
-    const skills = await factory.resolveDelegatedSkills(target, ["codemap", "git-master", "codemap"], import.meta.dir);
+    const skillNames = await factory.resolveDelegatedSkillNames(target, ["codemap", "git-master", "codemap"], import.meta.dir);
 
-    expect(skills.map((skill) => skill.metadata.name)).toEqual(["codemap", "git-master"]);
-    await expect(factory.resolveDelegatedSkills(target, ["research-docs"], import.meta.dir)).rejects.toThrow("Skill \"research-docs\" is not allowed");
+    expect(skillNames).toEqual(["codemap", "git-master"]);
+    await expect(factory.resolveDelegatedSkillNames(target, ["research-docs"], import.meta.dir)).rejects.toThrow("Skill \"research-docs\" is not allowed");
   });
 });
 

@@ -58,6 +58,7 @@ function session(sessionId: string): SessionSummary {
     cwd: "/workspace/demo",
     rootSessionId: sessionId,
     agentName: "engineer",
+    activeSkillNames: [],
     modelInfo: null,
     title: "Session",
     createdAt: 1,

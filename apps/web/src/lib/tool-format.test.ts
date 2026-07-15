@@ -86,16 +86,23 @@ describe("getToolSummary", () => {
     expect(result.primary).toBe("TODO");
   });
 
-  test("delegate shows agent_type: prompt summary", () => {
-    const result = getToolSummary("delegate", { agent_type: "explore", prompt: "Explore the codebase" });
+  test("delegate shows agent_type: title summary with task secondary", () => {
+    const result = getToolSummary("delegate", { agent_type: "explore", title: "Explore codebase", task: "Inspect the source" });
     expect(result.icon).toBe(Handshake);
-    expect(result.primary).toBe("explore: Explore the codebase");
+    expect(result.primary).toBe("explore: Explore codebase");
+    expect(result.secondary).toBe("Inspect the source");
   });
 
   test("background_output shows session_id", () => {
     const result = getToolSummary("background_output", { session_id: "ses_abc123" });
     expect(result.icon).toBe(Handshake);
     expect(result.primary).toBe("ses_abc123");
+  });
+
+  test("resume_session shows session_id with task secondary", () => {
+    const result = getToolSummary("resume_session", { session_id: "ses_abc123", task: "Continue the investigation" });
+    expect(result.primary).toBe("ses_abc123");
+    expect(result.secondary).toBe("Continue the investigation");
   });
 
   test("MCP tool renders as server/tool with primary value", () => {
@@ -394,13 +401,23 @@ describe("getToolInvalidInputMessage", () => {
   });
 
   test("delegate missing agent_type returns message", () => {
-    const result = getToolInvalidInputMessage("delegate", { prompt: "Explore" });
+    const result = getToolInvalidInputMessage("delegate", { title: "Explore", task: "Explore" });
     expect(result).toBe("Invalid delegate input: missing required agent_type");
   });
 
-  test("delegate missing prompt returns message", () => {
-    const result = getToolInvalidInputMessage("delegate", { agent_type: "explore" });
-    expect(result).toBe("Invalid delegate input: missing required prompt");
+  test("delegate missing title returns message", () => {
+    const result = getToolInvalidInputMessage("delegate", { agent_type: "explore", task: "Explore" });
+    expect(result).toBe("Invalid delegate input: missing required title");
+  });
+
+  test("delegate missing task returns message", () => {
+    const result = getToolInvalidInputMessage("delegate", { agent_type: "explore", title: "Explore" });
+    expect(result).toBe("Invalid delegate input: missing required task");
+  });
+
+  test("resume_session validates session_id and task", () => {
+    expect(getToolInvalidInputMessage("resume_session", { task: "Continue" })).toBe("Invalid resume_session input: missing required session_id");
+    expect(getToolInvalidInputMessage("resume_session", { session_id: "ses_abc123" })).toBe("Invalid resume_session input: missing required task");
   });
 
   test("null input returns message", () => {

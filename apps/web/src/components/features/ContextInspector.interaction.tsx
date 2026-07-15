@@ -96,7 +96,7 @@ describe("ContextInspector interactions", () => {
     const dom = installDom("/projects/demo/sessions/root");
     const session: Session = {
       sessionId: "root", rootSessionId: "root", cwd: "/workspace/demo", title: "Root execution",
-      createdAt: 1, updatedAt: 2, agentName: "engineer", modelInfo: null, messages: [], steps: [], todos: [], reminders: [], childSessionLinks: [], executions: [], stats: createEmptySessionStats(),
+      createdAt: 1, updatedAt: 2, agentName: "engineer", activeSkillNames: [], modelInfo: null, messages: [], steps: [], todos: [], reminders: [], childSessionLinks: [], executions: [], stats: createEmptySessionStats(),
     };
     const childSession: Session = {
       ...session,
@@ -141,9 +141,9 @@ describe("ContextInspector interactions", () => {
       nextFireAt: "2026-07-13T01:00:00.000Z",
     };
     const tree: SessionTreeResponse = {
-      root: { session: { sessionId: "root", rootSessionId: "root", cwd: session.cwd, title: session.title, createdAt: 1, updatedAt: 2, agentName: "engineer", modelInfo: null }, children: [
-        { session: { sessionId: "child", rootSessionId: "root", parentSessionId: "root", cwd: session.cwd, title: "Build agent", createdAt: 1, updatedAt: 2, agentName: "build", modelInfo: null }, children: [
-          { session: { sessionId: "custom", rootSessionId: "root", parentSessionId: "child", cwd: session.cwd, title: "Custom agent", createdAt: 1, updatedAt: 2, agentName: "custom_agent", modelInfo: null }, children: [] },
+      root: { session: { sessionId: "root", rootSessionId: "root", cwd: session.cwd, title: session.title, createdAt: 1, updatedAt: 2, agentName: "engineer", activeSkillNames: [], modelInfo: null }, children: [
+        { session: { sessionId: "child", rootSessionId: "root", parentSessionId: "root", cwd: session.cwd, title: "Build agent", createdAt: 1, updatedAt: 2, agentName: "build", activeSkillNames: [], modelInfo: null }, children: [
+          { session: { sessionId: "custom", rootSessionId: "root", parentSessionId: "child", cwd: session.cwd, title: "Custom agent", createdAt: 1, updatedAt: 2, agentName: "custom_agent", activeSkillNames: [], modelInfo: null }, children: [] },
         ] },
       ] }, diagnostics: [],
     };

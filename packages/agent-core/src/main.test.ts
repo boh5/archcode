@@ -37,7 +37,7 @@ function makeContext(toolName: string, input: unknown): ToolExecutionContext { c
 async function createRuntime(options: Parameters<typeof createProductionRuntime>[0] = {}) { return createProductionRuntime({ ...options, projectRegistryHomeDir: options.projectRegistryHomeDir ?? await makeTempRoot() }); }
 
 describe("createRuntime", () => {
-  test("constructs runtime without booting server concerns", async () => { const runtime = await createRuntime({ configService: await writeConfig(makeConfig({ servers: {} })), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }) }); expect(runtime.toolRegistry).toBeDefined(); expect(runtime.startSessionExecution).toBeDefined(); });
+  test("constructs runtime without booting server concerns", async () => { const runtime = await createRuntime({ configService: await writeConfig(makeConfig({ servers: {} })), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }) }); expect(runtime.toolRegistry).toBeDefined(); expect(runtime.startSessionMessageExecution).toBeDefined(); expect(runtime.startGoalSessionExecution).toBeDefined(); });
   test("rejects internal execution origins at the public Session message entry", async () => {
     const runtime = await createRuntime({
       configService: await writeConfig(makeConfig({ servers: {} })),

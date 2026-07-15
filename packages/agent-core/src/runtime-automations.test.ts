@@ -92,7 +92,7 @@ describe("AgentRuntime Automation wiring", () => {
         promise: Promise.resolve(),
         executionToken: Symbol("managed-goal-test"),
         startedAt: Date.now(),
-        ...(input.executionId === undefined ? {} : { executionId: input.executionId }),
+        executionId: input.executionId ?? `managed:${input.sessionId}`,
       };
     });
     const context = await fixture.runtime.contextResolver.resolve(fixture.workspaceRoot);

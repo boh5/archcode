@@ -110,7 +110,6 @@ mock.module("../../api/mutations", () => ({
   useAddProject: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
   useUpdateProjectName: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
   useCreateSession: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
-  usePostCommand: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
 }));
 
 ({ CloseProjectDialog } = await import("./CloseProjectDialog"));

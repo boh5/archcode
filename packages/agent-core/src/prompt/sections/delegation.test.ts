@@ -68,7 +68,8 @@ describe("buildDelegationSection", () => {
   test("defines stopped-child resume, terminal collection, and parent verification", () => {
     const result = buildDelegationSection(makeCtx(["delegate"]));
 
-    expect(result).toContain("same agent type");
+    expect(result).toContain("use resume_session");
+    expect(result).toContain("persisted agent type, title, Skills, and depth");
     expect(result).toContain("stopped child");
     expect(result).toContain("child claim is not evidence");
     expect(result).toContain("terminal result");

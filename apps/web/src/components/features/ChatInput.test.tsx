@@ -40,8 +40,9 @@ const jsxDEV = mock((type: unknown, props: Record<string, unknown> | null, key?:
 }));
 
 const setState = mock((_value: unknown) => {});
+let hookCursor = 0;
+const stateValues: unknown[] = [];
 const postMessageMutate = mock((_variables: unknown, _options?: unknown) => {});
-const postCommandMutate = mock((_variables: unknown, _options?: unknown) => {});
 const stopSessionMutate = mock((_variables: unknown) => {});
 let activity: SessionFamilyActivity | undefined;
 let pendingHitlCount = 0;
@@ -53,17 +54,26 @@ mock.module("react", () => ({
   useCallback: <T extends (...args: never[]) => unknown>(callback: T) => callback,
   useEffect: (_callback: () => void | (() => void), _deps?: unknown[]) => {},
   useRef: <T,>(initial: T) => ({ current: initial }),
-  useState: <T,>(initial: T): [T, (value: T | ((previous: T) => T)) => void] => [
-    initial,
-    setState as (value: T | ((previous: T) => T)) => void,
-  ],
+  useState: <T,>(initial: T): [T, (value: T | ((previous: T) => T)) => void] => {
+    const index = hookCursor++;
+    if (!(index in stateValues)) stateValues[index] = initial;
+    return [
+      stateValues[index] as T,
+      (value: T | ((previous: T) => T)) => {
+        const previous = stateValues[index] as T;
+        stateValues[index] = typeof value === "function"
+          ? (value as (previous: T) => T)(previous)
+          : value;
+        setState(value);
+      },
+    ];
+  },
 }));
 
 mock.module("react/jsx-dev-runtime", () => ({ Fragment, jsxDEV, jsx: jsxDEV, jsxs: jsxDEV }));
 
 mock.module("../../api/mutations", () => ({
   usePostMessage: () => ({ mutate: postMessageMutate, isPending: false }),
-  usePostCommand: () => ({ mutate: postCommandMutate, isPending: false }),
   useStopSessionFamily: () => ({ mutate: stopSessionMutate, isPending: stopPending }),
 }));
 
@@ -89,9 +99,10 @@ describe("ChatInput runtime controls", () => {
     pendingHitlCount = 0;
     hitlReady = false;
     stopPending = false;
+    hookCursor = 0;
+    stateValues.length = 0;
     setState.mockClear();
     postMessageMutate.mockClear();
-    postCommandMutate.mockClear();
     stopSessionMutate.mockClear();
   });
 
@@ -170,5 +181,29 @@ describe("ChatInput runtime controls", () => {
     expect(textarea?.props?.disabled).toBe(true);
     expect(textarea?.props?.placeholder).toBe("Syncing pending requests…");
     expect(send?.props?.disabled).toBe(true);
+  });
+
+  test("submits slash commands as ordinary Session messages", () => {
+    activity = "idle";
+    hitlReady = true;
+
+    let tree = ChatInput({ slug: "proj", sessionId: "root-1" });
+    const textarea = findAll(tree, (element) => element.type === "textarea")[0];
+    (textarea?.props?.onChange as (event: unknown) => void)({ target: { value: "/compact" } });
+
+    hookCursor = 0;
+    tree = ChatInput({ slug: "proj", sessionId: "root-1" });
+    const updatedTextarea = findAll(tree, (element) => element.type === "textarea")[0];
+    (updatedTextarea?.props?.onKeyDown as (event: unknown) => void)({
+      key: "Enter",
+      shiftKey: false,
+      nativeEvent: { isComposing: false },
+      preventDefault: mock(() => {}),
+    });
+
+    expect(postMessageMutate).toHaveBeenCalledWith(
+      { slug: "proj", sessionId: "root-1", content: "/compact" },
+      expect.any(Object),
+    );
   });
 });

@@ -1,11 +1,16 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import type { AgentRuntime, ManagedSessionExecutionForwarder, ProjectInfo } from "@archcode/agent-core";
+import type {
+  ActiveSessionExecution,
+  AgentRuntime,
+  ManagedSessionExecutionForwarder,
+  ProjectInfo,
+  StartSessionExecutionInput,
+} from "@archcode/agent-core";
 import { isTerminalChildSessionStatus, type GlobalSSEEvent, type GlobalSessionEventEnvelope, type ToolChildSessionLinkEvent } from "@archcode/protocol";
 import { errorHandler } from "./error-handler";
 import { UnauthorizedError } from "./errors";
 import { requestLogger } from "./logger";
-import { createCommandsRoutes } from "./routes/commands";
 import { createConfigRoutes } from "./routes/config";
 import { createAgentsRoutes } from "./routes/agents";
 import { createCompressionRoutes } from "./routes/compression";
@@ -104,7 +109,6 @@ export function createServerApp(
       return [...sessionRuntimeEvents, ...hitlEvents];
     },
   });
-  const commands = createCommandsRoutes(serverRuntime);
   const compression = createCompressionRoutes(serverRuntime);
   const agents = createAgentsRoutes(serverRuntime);
   const files = createFilesRoutes(serverRuntime);
@@ -122,12 +126,10 @@ export function createServerApp(
   app.route("/api/projects/:slug/sessions/:sessionId", messages);
   app.route("/api/projects/:slug/sessions/:sessionId/compression", compression);
   app.route("/api/events", globalEvents);
-  app.route("/api/projects/:slug/sessions/:sessionId/commands", commands);
   app.route("/api/projects", files);
   app.route("/api/mcp", mcp);
   app.route("/api/config", config);
   app.route("/api/sessions", new Hono());
-  app.route("/api/commands", new Hono());
   app.route("/api/agents", agents);
   app.route("/api/files", new Hono());
   app.route("/api/directories", directories);
@@ -147,15 +149,6 @@ export function createServerApp(
 export function createServerEventRuntime(runtime: AgentRuntime): AgentRuntime {
   return {
     ...runtime,
-    startSessionExecution(input) {
-      const forwarding = prepareSessionForwarding(runtime, input);
-      try {
-        return forwarding.attach(runtime.startSessionExecution(input));
-      } catch (error) {
-        forwarding.dispose();
-        throw error;
-      }
-    },
     async startSessionMessageExecution(input) {
       const forwarding = prepareSessionForwarding(runtime, input);
       try {
@@ -182,7 +175,7 @@ function createManagedSessionExecutionForwarder(runtime: AgentRuntime): ManagedS
 
 function prepareSessionForwarding(
   runtime: AgentRuntime,
-  input: Parameters<AgentRuntime["startSessionExecution"]>[0],
+  input: StartSessionExecutionInput,
 ) {
   const subscriptions = new Map<string, () => void>();
   const terminalChildren = new Set<string>();
@@ -245,7 +238,7 @@ function prepareSessionForwarding(
 
   subscribe(input.sessionId);
   return {
-    attach(execution: ReturnType<AgentRuntime["startSessionExecution"]>) {
+    attach(execution: ActiveSessionExecution) {
       void execution.promise.finally(() => {
         rootCompleted = true;
         maybeReleaseRoot();

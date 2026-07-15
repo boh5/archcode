@@ -8,6 +8,7 @@ export {
 } from "./constants";
 export type { AgentType } from "./constants";
 export {
+  AgentStoreIdentityMismatchError,
   DuplicateAgentDefinitionError,
   UnknownAgentDefinitionError,
   createAgentFactory,

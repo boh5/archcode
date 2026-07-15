@@ -16,7 +16,7 @@ function makePart(overrides: Partial<ToolPart> = {}): ToolPart {
     state: "running",
     toolCallId: "call-1",
     toolName: "delegate",
-    input: { agent_type: "explore", description: "Inspect the source" },
+    input: { agent_type: "explore", title: "Inspect source", task: "Inspect the source" },
     createdAt: 100,
     startedAt: 120,
     ...overrides,
@@ -30,6 +30,7 @@ function makeLink(overrides: Partial<ToolChildSessionLink> = {}): ToolChildSessi
     toolName: "delegate",
     childSessionId: "child-1",
     childAgentName: "explore",
+    title: "Child title",
     depth: 2,
     background: false,
     status: "running",
@@ -41,7 +42,7 @@ function makeLink(overrides: Partial<ToolChildSessionLink> = {}): ToolChildSessi
 
 describe("delegation card view-model", () => {
   test("normalizes input and maps every link status", () => {
-    expect(parseDelegationInput({ agent_type: "explore", prompt: "test" })).toEqual({ agent_type: "explore", prompt: "test" });
+    expect(parseDelegationInput({ agent_type: "explore", title: "Inspect source", task: "test" })).toEqual({ agent_type: "explore", title: "Inspect source", task: "test" });
     expect(parseDelegationInput(JSON.stringify({ agent_type: "explore" }))).toEqual({ agent_type: "explore" });
     expect(parseDelegationInput(null)).toBeNull();
     expect(parseDelegationInput(undefined)).toBeNull();
@@ -101,7 +102,7 @@ describe("delegation card view-model", () => {
     expect(model).toMatchObject({
       sessionId: "",
       agentType: "explore",
-      taskTitle: "Inspect the source",
+      taskTitle: "Inspect source",
       summary: "Inspect the source",
       status: "error",
       depth: 1,

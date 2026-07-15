@@ -33,7 +33,6 @@ export type {
   DiffLine,
   DiffHunk,
   DiffFile,
-  ApiCommandResult,
   Automation,
   AutomationAction,
   AutomationInvocation,

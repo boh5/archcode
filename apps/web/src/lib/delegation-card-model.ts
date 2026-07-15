@@ -71,14 +71,11 @@ export function buildDelegationCardViewModel({
   const sessionId = link?.childSessionId ?? "";
   const agentType = link?.childAgentName ?? (parsedInput?.agent_type as string) ?? "unknown";
   const agentDisplayName = resolveAgentDisplayName(agentType, agentDescriptors);
-  const taskTitle = link?.title
-    ?? link?.description
-    ?? (parsedInput?.title as string)
-    ?? (parsedInput?.description as string);
+  const taskTitle = link?.title ?? (parsedInput?.title as string);
   const summary = link?.summary
-    ?? link?.description
-    ?? (parsedInput?.description as string)
-    ?? "";
+    ?? [parsedInput?.task, parsedInput?.context]
+      .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      .join("\n\n");
   const status: BadgeStatus = link
     ? mapDelegationLinkStatusToBadge(link.status)
     : part.state === "error" ? "error" : "running";

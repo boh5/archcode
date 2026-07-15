@@ -3,10 +3,17 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createEmptySessionStats } from "@archcode/protocol";
 import type { Agent, AgentResult, AgentRunOptions } from "../agents/types";
-import { AgentRunningError, ConcurrentLimitError, ConcurrentSessionLimitError, DelegateTargetNotAllowedError, DepthLimitError, ChildSessionNotFoundError, ChildSessionAgentMismatchError, ChildSessionParentMismatchError, ChildSessionNotDescendantError, ChildSessionCwdMismatchError, SessionCwdTransitionConflictError, SessionCwdTransitionInProgressError, SessionToolBatchActiveError } from "../agents/errors";
+import { ConfiguredAgent } from "../agents/configured-agent";
+import { engineerAgentDefinition } from "../agents/definitions";
+import type { ProviderRegistry } from "../provider";
+import { ModelInfo } from "../provider/model";
+import { SkillService } from "../skills";
+import { createTestProjectContextResolver } from "../agents/test-project-context-resolver";
+import { createRegistry } from "../tools";
+import { setLlmAdapterForTest } from "../llm/adapter";
+import { AgentRunningError, ConcurrentLimitError, ConcurrentSessionLimitError, DelegateTargetNotAllowedError, DepthLimitError, ChildSessionNotFoundError, ChildSessionParentMismatchError, ChildSessionNotDescendantError, ChildSessionCwdMismatchError, SessionCwdTransitionConflictError, SessionCwdTransitionInProgressError, SessionToolBatchActiveError } from "../agents/errors";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
-import type { SlashCommandResult } from "../commands/types";
-import { NotRootSessionError, SessionDeleteConflictError } from "../store/errors";
+import { NotRootSessionError, SessionDeleteConflictError, SessionFileNotFoundError } from "../store/errors";
 import { SessionDeleteInProgressError, SessionDeleteOwnerConflictError } from "./session-deletion";
 import { SessionFamilyActiveError, SessionFamilyIdentityUnavailableError, SessionFamilyStopConflictError, SessionFamilyStopInProgressError } from "./session-family-control";
 import type { SessionFile } from "../store/helpers";
@@ -71,6 +78,8 @@ function getUserMessageTexts(state: SessionStoreState): string[] {
       .join(""));
 }
 
+type MockAgentResult = Partial<AgentResult> & Pick<AgentResult, "text" | "steps">;
+
 class MockAgent implements Agent {
   readonly store;
   readonly cwd: string;
@@ -80,13 +89,12 @@ class MockAgent implements Agent {
     this.store.getState().append({ type: "text-start" });
     this.store.getState().append({ type: "text-delta", text: result.text });
     this.store.getState().append({ type: "text-end" });
-    return result;
+    return { ...result, status: result.status ?? "completed" };
   });
-  dispatchCommandMock?: (name: string, args?: string) => Promise<SlashCommandResult>;
 
   constructor(
     readonly sessionId: string,
-    readonly result: Promise<AgentResult>,
+    readonly result: Promise<MockAgentResult>,
     readonly workspaceRoot: string = defaultAgentWorkspaceRoot,
   ) {
     this.store = storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" });
@@ -99,11 +107,6 @@ class MockAgent implements Agent {
     return this.runMock(userMessage, options);
   }
 
-  async dispatchCommand(name: string, args?: string): Promise<SlashCommandResult> {
-    if (!this.dispatchCommandMock) return { success: false, message: "missing" };
-    return await this.dispatchCommandMock(name, args);
-  }
-
   dispose(): void {}
 }
 
@@ -111,7 +114,7 @@ interface FakeManagerOptions {
   maxConcurrentSessions?: number;
   storeManager?: SessionStoreManager;
   factory?: AgentFactory;
-  childRun?: Promise<AgentResult>;
+  childRun?: Promise<MockAgentResult>;
   childRunStarted?: () => void;
   childRunMessage?: (message: string) => void;
   childRunOptions?: (options: AgentRunOptions | AbortSignal | undefined) => void;
@@ -131,7 +134,7 @@ type SessionExecutionManagerConfigForTest = ConstructorParameters<typeof Session
 
 function storeCallbacks(manager: SessionStoreManager): Pick<
   SessionExecutionManagerConfigForTest,
-  "createSessionStore" | "flushSessionStore" | "getSessionStore" | "loadSessionStore" | "deleteSessionStore" | "resolveRootSessionId" | "buildSessionTree" | "listSessionFamilyToolBatchHitlIds"
+  "createSessionStore" | "flushSessionStore" | "getSessionStore" | "loadSessionStore" | "deleteSessionStore" | "resolveRootSessionId" | "resolveSessionDepth" | "buildSessionTree" | "listSessionFamilyToolBatchHitlIds"
 > {
   return {
     createSessionStore: (sessionId, root, createOptions) => manager.create(sessionId, root, createOptions),
@@ -140,33 +143,27 @@ function storeCallbacks(manager: SessionStoreManager): Pick<
     loadSessionStore: (sessionId, root) => manager.getOrLoad(sessionId, root),
     deleteSessionStore: (sessionId, root, deleteOptions) => manager.delete(sessionId, root, deleteOptions),
     resolveRootSessionId: (sessionId, root) => manager.resolveRootSessionId(sessionId, root),
+    resolveSessionDepth: async (root, sessionId) => {
+      let depth = 0;
+      let state = (manager.get(sessionId, root) ?? await manager.getOrLoad(sessionId, root)).getState();
+      const visited = new Set<string>([sessionId]);
+      while (state.parentSessionId !== undefined) {
+        if (visited.has(state.parentSessionId)) throw new Error("Session parent cycle");
+        visited.add(state.parentSessionId);
+        depth += 1;
+        state = (manager.get(state.parentSessionId, root) ?? await manager.getOrLoad(state.parentSessionId, root)).getState();
+      }
+      return depth;
+    },
     buildSessionTree: (root, rootSessionId) => manager.buildSessionTree(root, rootSessionId),
     listSessionFamilyToolBatchHitlIds: (root, rootSessionId) => manager.listSessionFamilyToolBatchHitlIds(root, rootSessionId),
   };
 }
 
 function createFakeManager(agents: Record<string, MockAgent>, options: FakeManagerOptions = {}): SessionAgentManager {
-  const activeByWorkspace = new Map<string, Set<string>>();
-  const max = options.maxConcurrentSessions ?? 4;
   return {
     getOrCreate: mock(async (_root: string, sessionId: string) => options.getAgent?.(sessionId) ?? agents[sessionId]!),
     get: mock((_root: string, sessionId: string) => agents[sessionId]),
-    dispatchCommand: mock(async (_root: string, sessionId: string, name: string, args?: string) => {
-      const agent = agents[sessionId];
-      return await agent?.dispatchCommand(name, args) ?? null;
-    }),
-    acquireSlot: mock((root: string, sessionId: string) => {
-      const active = activeByWorkspace.get(root) ?? new Set<string>();
-      if (!active.has(sessionId) && active.size >= max) {
-        throw new ConcurrentSessionLimitError(root, active.size, max);
-      }
-      active.add(sessionId);
-      activeByWorkspace.set(root, active);
-    }),
-    releaseSlot: mock((root: string, sessionId: string) => {
-      const active = activeByWorkspace.get(root);
-      active?.delete(sessionId);
-    }),
     getFactory: mock(() => options.factory),
     createChildAgent: mock((input: { workspaceRoot: string; sessionId: string; store: MockAgent["store"] }) => {
       const childAgent = {
@@ -177,13 +174,13 @@ function createFakeManager(agents: Record<string, MockAgent>, options: FakeManag
           options.childRunOptions?.(runOptions);
           options.childRunStarted?.();
           signal?.throwIfAborted();
-          const result = options.childRun
+          const result: MockAgentResult = options.childRun
             ? await withAbort(options.childRun, signal)
             : { text: "child result", steps: 1 };
           input.store.getState().append({ type: "text-start" });
           input.store.getState().append({ type: "text-delta", text: result.text });
           input.store.getState().append({ type: "text-end" });
-          return result;
+          return { ...result, status: result.status ?? "completed" };
         }),
         dispose: mock(() => undefined),
       } as unknown as MockAgent;
@@ -201,7 +198,7 @@ function makeFactory(overrides: Partial<AgentFactory> = {}): AgentFactory {
     displayName: "Engineer",
     promptProfileId: "default",
     tools: { tools: ["delegate"], delegateTargets: ["explore"] },
-    hooks: { autoCompact: false, autoInjectReminder: false, todoStepReminder: false, todoQueryLoopContinuation: false, transcriptSave: false, memoryExtraction: false, memoryConsolidation: false, titleGeneration: "disabled" },
+    hooks: { autoCompact: false, autoInjectReminder: false, todoStepReminder: false, todoQueryLoopContinuation: false, memoryExtraction: false, memoryConsolidation: false, titleGeneration: "disabled" },
     childPolicy: { maxDepth: 2, maxConcurrent: 1, timeoutMs: 0, abortCascade: true, terminalReminders: true },
     includeMemoryInPrompt: false,
     skills: [],
@@ -218,9 +215,23 @@ function makeFactory(overrides: Partial<AgentFactory> = {}): AgentFactory {
     listAgentNames: mock(() => ["engineer", "explore"]),
     resolveAllowedTools: mock((definition: AgentDefinition) => definition.tools.tools),
     getDelegateTargetsFor: mock((definition: AgentDefinition) => definition.tools.delegateTargets ?? []),
-    resolveDelegatedSkills: mock(async () => []),
+    resolveDelegatedSkillNames: mock(async () => []),
     ...overrides,
   } as AgentFactory;
+}
+
+function makeFactoryWithChildPolicy(
+  policy: Partial<NonNullable<AgentDefinition["childPolicy"]>>,
+): AgentFactory {
+  const base = makeFactory();
+  return makeFactory({
+    getDefinition: mock((name: string) => {
+      const definition = base.getDefinition(name);
+      return name === "engineer"
+        ? { ...definition, childPolicy: { ...definition.childPolicy!, ...policy } }
+        : definition;
+    }),
+  });
 }
 
 function createManager(agents: Record<string, MockAgent>, options: FakeManagerOptions = {}) {
@@ -231,7 +242,7 @@ function createManager(agents: Record<string, MockAgent>, options: FakeManagerOp
   const manager = new SessionExecutionManager({
     sessionAgentManager,
     ...storeCallbacks(executionStoreManager),
-    ...(options.flushSessionStore === undefined ? {} : { flushSessionStore: options.flushSessionStore }),
+    flushSessionStore: options.flushSessionStore ?? (async () => undefined),
     ...(options.listSessionFamilyToolBatchHitlIds === undefined ? {} : {
       listSessionFamilyToolBatchHitlIds: options.listSessionFamilyToolBatchHitlIds,
     }),
@@ -241,6 +252,7 @@ function createManager(agents: Record<string, MockAgent>, options: FakeManagerOp
     ...(options.goalDelegationAdmission === undefined ? {} : { goalDelegationAdmission: options.goalDelegationAdmission }),
     ...(options.deletionLifecycle === undefined ? {} : { deletionLifecycle: options.deletionLifecycle }),
     ...(options.sessionFamilyStopTimeoutMs === undefined ? {} : { sessionFamilyStopTimeoutMs: options.sessionFamilyStopTimeoutMs }),
+    ...(options.maxConcurrentSessions === undefined ? {} : { maxConcurrentSessions: options.maxConcurrentSessions }),
     logger: silentLogger,
   });
   return { manager, sessionAgentManager, trackSession, untrackSession };
@@ -284,6 +296,7 @@ async function writeSessionFile(input: {
     updatedAt: Date.now(),
     cwd: input.cwd ?? workspaceRoot,
     agentName: input.parentSessionId === undefined ? "engineer" : "explore",
+    activeSkillNames: [],
     modelInfo: null,
     title: input.title ?? null,
     messages: [],
@@ -342,6 +355,7 @@ function makeChildLink(parentSessionId: string, childSessionId: string, childAge
     toolName: "delegate",
     childSessionId,
     childAgentName,
+    title: "Delegated child",
     depth: 1,
     background: true,
     status: "running",
@@ -361,65 +375,10 @@ describe("SessionExecutionManager", () => {
     await rm(testRoot, { recursive: true, force: true });
   });
 
-  test("projects root-family activity from live ownership and publishes only transitions", async () => {
-    const rootId = crypto.randomUUID();
-    const childId = crypto.randomUUID();
-    const rootRun = deferred<AgentResult>();
-    const childRun = deferred<AgentResult>();
-    storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
-    storeManager.create(childId, workspaceRoot, {
-      rootSessionId: rootId,
-      parentSessionId: rootId,
-      agentName: "explore",
-    });
-    const rootAgent = new MockAgent(rootId, rootRun.promise, workspaceRoot);
-    const childAgent = new MockAgent(childId, childRun.promise, workspaceRoot);
-    const { manager } = createManager({ [rootId]: rootAgent, [childId]: childAgent });
-    const changes: Array<{ rootSessionId: string; activity: string }> = [];
-    const unsubscribe = manager.subscribeSessionRuntimeChanges((change) => {
-      changes.push({ rootSessionId: change.rootSessionId, activity: change.activity });
-    });
-
-    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("idle");
-    const rootExecution = manager.startExecution({
-      slug: "project",
-      workspaceRoot,
-      sessionId: rootId,
-      userMessage: "root",
-    });
-    const childExecution = manager.startExecution({
-      slug: "project",
-      workspaceRoot,
-      sessionId: childId,
-      userMessage: "child",
-      origin: "tool_call",
-    });
-    expect(rootExecution.rootSessionId).toBe(rootId);
-    expect(childExecution.rootSessionId).toBe(rootId);
-    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("running");
-
-    rootRun.resolve({ text: "root done", steps: 1 });
-    await rootExecution.promise;
-    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("running");
-    expect(manager.listSessionFamilyActivities()).toEqual([
-      { workspaceRoot, rootSessionId: rootId, activity: "running" },
-    ]);
-
-    childRun.resolve({ text: "child done", steps: 1 });
-    await childExecution.promise;
-    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("idle");
-    expect(manager.listSessionFamilyActivities()).toEqual([]);
-    expect(changes).toEqual([
-      { rootSessionId: rootId, activity: "running" },
-      { rootSessionId: rootId, activity: "idle" },
-    ]);
-    unsubscribe();
-  });
-
   test("strong family stop exposes stopping until every descendant releases ownership", async () => {
     const rootId = crypto.randomUUID();
     const childId = crypto.randomUUID();
-    const childRun = deferred<AgentResult>();
+    const childRun = deferred<MockAgentResult>();
     storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
     storeManager.create(childId, workspaceRoot, {
       rootSessionId: rootId,
@@ -430,7 +389,7 @@ describe("SessionExecutionManager", () => {
     const { manager } = createManager({ [childId]: childAgent });
     const activities: string[] = [];
     manager.subscribeSessionRuntimeChanges((change) => activities.push(change.activity));
-    const childExecution = manager.startExecution({
+    const childExecution = await manager.startCheckedExecution({
       slug: "project",
       workspaceRoot,
       sessionId: childId,
@@ -450,7 +409,7 @@ describe("SessionExecutionManager", () => {
   test("rejects a new root user message while a descendant owns the family", async () => {
     const rootId = crypto.randomUUID();
     const childId = crypto.randomUUID();
-    const childRun = deferred<AgentResult>();
+    const childRun = deferred<MockAgentResult>();
     const rootStore = storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
     storeManager.create(childId, workspaceRoot, {
       rootSessionId: rootId,
@@ -460,7 +419,7 @@ describe("SessionExecutionManager", () => {
     const rootAgent = new MockAgent(rootId, Promise.resolve({ text: "must not run", steps: 1 }), workspaceRoot);
     const childAgent = new MockAgent(childId, childRun.promise, workspaceRoot);
     const { manager } = createManager({ [rootId]: rootAgent, [childId]: childAgent });
-    const childExecution = manager.startExecution({
+    const childExecution = await manager.startCheckedExecution({
       slug: "project",
       workspaceRoot,
       sessionId: childId,
@@ -489,7 +448,7 @@ describe("SessionExecutionManager", () => {
     const rootId = crypto.randomUUID();
     const childId = crypto.randomUUID();
     const siblingId = crypto.randomUUID();
-    const siblingRun = deferred<AgentResult>();
+    const siblingRun = deferred<MockAgentResult>();
     storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
     const childStore = storeManager.create(childId, workspaceRoot, {
       rootSessionId: rootId,
@@ -504,7 +463,7 @@ describe("SessionExecutionManager", () => {
     const childAgent = new MockAgent(childId, Promise.resolve({ text: "must not run", steps: 1 }), workspaceRoot);
     const siblingAgent = new MockAgent(siblingId, siblingRun.promise, workspaceRoot);
     const { manager } = createManager({ [childId]: childAgent, [siblingId]: siblingAgent });
-    const siblingExecution = manager.startExecution({
+    const siblingExecution = await manager.startCheckedExecution({
       slug: "project",
       workspaceRoot,
       sessionId: siblingId,
@@ -550,30 +509,31 @@ describe("SessionExecutionManager", () => {
     ]);
   });
 
-  test("fails closed when execution identity has not been loaded", () => {
+  test("fails closed when execution identity has not been loaded", async () => {
     const { manager } = createManager({});
+    const missingSessionId = crypto.randomUUID();
 
-    expect(() => manager.startExecution({
+    await expect(manager.startCheckedExecution({
       slug: "project",
       workspaceRoot,
-      sessionId: "unloaded-session",
+      sessionId: missingSessionId,
       userMessage: "must not guess family identity",
-    })).toThrow(SessionFamilyIdentityUnavailableError);
+    })).rejects.toThrow(SessionFileNotFoundError);
   });
 
-  test("startExecution starts an execution and rejects duplicate same-session starts", async () => {
-    const run = deferred<AgentResult>();
+  test("checked execution starts once and rejects duplicate same-session starts", async () => {
+    const run = deferred<MockAgentResult>();
     const agent = new MockAgent("session-start", run.promise);
     const { manager } = createManager({ "session-start": agent });
 
-    const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "session-start", userMessage: "hello" });
+    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "session-start", userMessage: "hello" });
 
     expect(execution.sessionId).toBe("session-start");
     expect(execution.agentName).toBe("engineer");
     expect(execution.origin).toBe("user_message");
     expect(typeof execution.executionToken).toBe("symbol");
     expect(manager.getSessionFamilyActivity(workspaceRoot, "session-start")).toBe("running");
-    expect(() => manager.startExecution({ slug: "project", workspaceRoot, sessionId: "session-start", userMessage: "again" })).toThrow(AgentRunningError);
+    await expect(manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "session-start", userMessage: "again" })).rejects.toThrow(SessionFamilyActiveError);
     await Promise.resolve();
     expect(agent.runMock).toHaveBeenCalledWith("hello", expect.objectContaining({ abort: execution.abortController.signal }));
     const options = agent.runMock.mock.calls[0]?.[1];
@@ -585,11 +545,11 @@ describe("SessionExecutionManager", () => {
   });
 
   test("preserves the managed Goal claim execution origin", async () => {
-    const run = deferred<AgentResult>();
+    const run = deferred<MockAgentResult>();
     const agent = new MockAgent("goal-claim-origin", run.promise);
     const { manager } = createManager({ "goal-claim-origin": agent });
 
-    const execution = manager.startExecution({
+    const execution = await manager.startCheckedExecution({
       slug: "project",
       workspaceRoot,
       sessionId: "goal-claim-origin",
@@ -614,7 +574,7 @@ describe("SessionExecutionManager", () => {
       },
     });
 
-    const execution = manager.startExecution({
+    const execution = await manager.startCheckedExecution({
       slug: "project",
       workspaceRoot,
       sessionId,
@@ -645,20 +605,116 @@ describe("SessionExecutionManager", () => {
       },
     });
 
-    const execution = manager.startExecution({
+    const execution = await manager.startCheckedExecution({
       slug: "project",
       workspaceRoot,
       sessionId,
       userMessage: "continue durable Loop turn",
       executionId: "loop-attempt-2",
     });
-    await execution.promise;
+    await expect(execution.promise).rejects.toThrow("durable execution-start flush failed");
 
     expect(agent.runMock).not.toHaveBeenCalled();
     expect(agent.store.getState().isRunning).toBe(false);
     expect(agent.store.getState().events.at(-1)).toMatchObject({
       payload: { type: "execution-end", status: "failed", error: "durable execution-start flush failed" },
     });
+  });
+
+  test("keeps Todo query-loop continuations inside one durable execution", async () => {
+    const sessionId = "todo-continuation-single-execution";
+    const store = storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" });
+    store.setState({
+      todos: [{ id: "todo-1", content: "finish the task", status: "pending" }],
+    });
+
+    const definition = {
+      ...engineerAgentDefinition,
+      tools: { tools: [] },
+      skills: [],
+      hooks: {
+        ...engineerAgentDefinition.hooks,
+        autoCompact: false,
+        autoInjectReminder: true,
+        todoStepReminder: false,
+        memoryExtraction: false,
+        memoryConsolidation: false,
+        titleGeneration: "disabled" as const,
+      },
+    };
+    const modelInfo = new ModelInfo({
+      model: { modelId: "todo-test", provider: "todo-test" } as never,
+      config: {
+        name: "Todo test model",
+        limit: { context: 16_000, output: 2_000 },
+        modalities: { input: ["text"], output: ["text"] },
+      },
+      providerId: "todo-test",
+      modelId: "todo-test",
+    });
+    let modelRound = 0;
+    const realNow = Date.now;
+    let now = realNow();
+    Date.now = () => now;
+    setLlmAdapterForTest({
+      streamText: mock(() => {
+        modelRound += 1;
+        now += 60_001;
+        if (modelRound === 2) store.setState({ todos: [{ id: "todo-1", content: "finish the task", status: "completed" }] });
+        return {
+          fullStream: (async function* () {
+            yield { type: "text-delta", text: modelRound === 1 ? "started" : "finished" };
+          })(),
+          finishReason: Promise.resolve("stop"),
+          text: Promise.resolve(modelRound === 1 ? "started" : "finished"),
+          toolCalls: Promise.resolve([]),
+          usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+        };
+      }) as unknown as typeof import("ai").streamText,
+    });
+
+    const configuredAgent = new ConfiguredAgent({
+      definition,
+      providerRegistry: {} as ProviderRegistry,
+      modelInfo,
+      toolRegistry: createRegistry([]),
+      skillService: new SkillService({ builtinSkills: {} }),
+      storeManager,
+      store,
+      projectRoot: workspaceRoot,
+      cwd: workspaceRoot,
+      projectContextResolver: createTestProjectContextResolver(storeManager),
+      resolveAllowedTools: (agentDefinition) => agentDefinition.tools.tools,
+      logger: silentLogger,
+    });
+    const { manager } = createManager({ [sessionId]: configuredAgent as unknown as MockAgent });
+
+    try {
+      const execution = await manager.startCheckedExecution({
+        slug: "project",
+        workspaceRoot,
+        sessionId,
+        userMessage: "start the Todo",
+      });
+      await execution.promise;
+
+      const lifecycleEvents = store.getState().events
+        .map((event) => event.payload)
+        .filter((payload) => payload.type === "execution-start" || payload.type === "execution-end");
+      expect(modelRound).toBe(2);
+      expect(store.getState().todos[0]?.status).toBe("completed");
+      expect(lifecycleEvents).toEqual([
+        { type: "execution-start", executionId: execution.executionId },
+        { type: "execution-end", status: "completed" },
+      ]);
+      expect(store.getState().executions).toEqual([
+        expect.objectContaining({ id: execution.executionId, status: "completed" }),
+      ]);
+    } finally {
+      Date.now = realNow;
+      setLlmAdapterForTest(undefined);
+      configuredAgent.dispose();
+    }
   });
 
   test("rebuilds the Agent and continues the same Session after cwd changes", async () => {
@@ -675,29 +731,96 @@ describe("SessionExecutionManager", () => {
       onReleaseAgent: () => { released = true; },
     });
 
-    const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId, userMessage: "switch and continue" });
+    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId, userMessage: "switch and continue" });
     await execution.promise;
 
     expect(first.runMock).toHaveBeenCalledWith("switch and continue", expect.anything());
     expect(sessionAgentManager.releaseAgent).toHaveBeenCalledWith(workspaceRoot, sessionId);
     expect(second.runMock).toHaveBeenCalledWith("", expect.anything());
+    expect(first.store.getState().executions).toHaveLength(1);
+    expect(first.store.getState().executions[0]).toMatchObject({ id: execution.executionId, status: "completed" });
   });
 
-  test("startExecution forwards maxSteps to agent.run", async () => {
+  test("persists every Agent terminal status through one manager-owned lifecycle", async () => {
+    const statuses: AgentResult["status"][] = [
+      "completed", "max_steps", "failed", "aborted", "cancelled", "timed_out", "interrupted", "waiting_for_human",
+    ];
+    for (const status of statuses) {
+      const sessionId = crypto.randomUUID();
+      const agent = new MockAgent(sessionId, Promise.resolve({
+        text: status,
+        steps: 1,
+        status,
+        ...(status === "failed" ? { error: "expected failure" } : {}),
+      }), workspaceRoot);
+      const { manager } = createManager({ [sessionId]: agent });
+      const execution = await manager.startCheckedExecution({
+        slug: "project",
+        workspaceRoot,
+        sessionId,
+        userMessage: status,
+      });
+      await execution.promise;
+      expect(agent.store.getState().executions).toEqual([
+        expect.objectContaining({
+          id: execution.executionId,
+          status,
+          ...(status === "failed" ? { error: "expected failure" } : {}),
+        }),
+      ]);
+    }
+  });
+
+  test("HITL ends one execution and tool_batch resumes with a new execution id", async () => {
+    const sessionId = crypto.randomUUID();
+    const store = storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" });
+    let invocation = 0;
+    const agent = {
+      store,
+      cwd: workspaceRoot,
+      run: mock(async (): Promise<AgentResult> => {
+        invocation += 1;
+        if (invocation === 1) {
+          store.setState({ toolBatches: [blockedToolBatch("resume-after-hitl")] });
+          return { text: "waiting", steps: 1, status: "waiting_for_human" };
+        }
+        return { text: "resumed", steps: 1, status: "completed" };
+      }),
+      dispose: mock(() => undefined),
+    } as Agent;
+    const { manager } = createManager({ [sessionId]: agent as MockAgent });
+
+    const waiting = await manager.startCheckedExecution({
+      slug: "project", workspaceRoot, sessionId, userMessage: "ask",
+    });
+    await waiting.promise;
+    const resumed = await manager.startSessionToolBatchExecution({
+      slug: "project", workspaceRoot, sessionId,
+    });
+    await resumed.promise;
+
+    expect(waiting.executionId).not.toBe(resumed.executionId);
+    expect(store.getState().executions.map(({ id, status }) => ({ id, status }))).toEqual([
+      { id: waiting.executionId, status: "waiting_for_human" },
+      { id: resumed.executionId, status: "completed" },
+    ]);
+  });
+
+  test("checked execution forwards maxSteps to agent.run", async () => {
     const agent = new MockAgent("limited-session", Promise.resolve({ text: "done", steps: 1 }));
     const { manager } = createManager({ "limited-session": agent });
 
-    const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "limited-session", userMessage: "work", maxSteps: 1 });
+    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "limited-session", userMessage: "work", maxSteps: 1 });
     await execution.promise;
 
     expect(agent.runMock).toHaveBeenCalledWith("work", expect.objectContaining({ maxSteps: 1 }));
   });
 
-  test("startExecution forwards extraTools to agent.run", async () => {
+  test("checked execution forwards extraTools to agent.run", async () => {
     const agent = new MockAgent("extra-tools-session", Promise.resolve({ text: "done", steps: 1 }));
     const { manager } = createManager({ "extra-tools-session": agent });
 
-    const execution = manager.startExecution({
+    const execution = await manager.startCheckedExecution({
       slug: "project",
       workspaceRoot,
       sessionId: "extra-tools-session",
@@ -709,29 +832,30 @@ describe("SessionExecutionManager", () => {
     expect(agent.runMock).toHaveBeenCalledWith("work", expect.objectContaining({ extraTools: ["github_get_pull_request"] }));
   });
 
-  test("startExecution uses the persisted Session agent identity", async () => {
+  test("checked execution uses the persisted Session agent identity", async () => {
     const agent = new MockAgent("engineer-session", Promise.resolve({ text: "done", steps: 1 }));
     const { manager, sessionAgentManager } = createManager({ "engineer-session": agent });
 
-    const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "engineer-session", userMessage: "work" });
+    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "engineer-session", userMessage: "work" });
     await execution.promise;
 
     expect(execution.agentName).toBe("engineer");
     expect(sessionAgentManager.getOrCreate).toHaveBeenCalledWith(workspaceRoot, "engineer-session");
   });
 
-  test("enforces concurrent session limit with ConcurrentSessionLimitError", () => {
+  test("enforces concurrent session limit with ConcurrentSessionLimitError", async () => {
     const agentOne = new MockAgent("one", new Promise(() => undefined));
     const agentTwo = new MockAgent("two", new Promise(() => undefined));
     const { manager } = createManager({ one: agentOne, two: agentTwo }, { maxConcurrentSessions: 1 });
 
-    manager.startExecution({ slug: "project", workspaceRoot, sessionId: "one", userMessage: "one" });
+    await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "one", userMessage: "one" });
 
-    expect(() => manager.startExecution({ slug: "project", workspaceRoot, sessionId: "two", userMessage: "two" })).toThrow(ConcurrentSessionLimitError);
+    await expect(manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "two", userMessage: "two" })).rejects.toThrow(ConcurrentSessionLimitError);
   });
 
-  test("atomically rejects duplicate starts while agent creation is pending", () => {
-    storeManager.create("pending-create", workspaceRoot, { agentName: "engineer" });
+  test("atomically rejects duplicate starts while agent creation is pending", async () => {
+    const sessionId = crypto.randomUUID();
+    storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" });
     const sessionAgentManager = createFakeManager({});
     const pendingManager = new SessionExecutionManager({
       sessionAgentManager: {
@@ -745,17 +869,17 @@ describe("SessionExecutionManager", () => {
       logger: silentLogger,
     });
 
-    pendingManager.startExecution({ slug: "project", workspaceRoot, sessionId: "pending-create", userMessage: "one" });
+    await pendingManager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId, userMessage: "one" });
 
-    expect(() => pendingManager.startExecution({ slug: "project", workspaceRoot, sessionId: "pending-create", userMessage: "two" })).toThrow(AgentRunningError);
+    await expect(pendingManager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId, userMessage: "two" })).rejects.toThrow(SessionFamilyActiveError);
   });
 
   test("family stop cancels execution and ignores late tool result after current execution is settled", async () => {
-    const run = deferred<AgentResult>();
+    const run = deferred<MockAgentResult>();
     const agent = new MockAgent("stale", run.promise, workspaceRoot);
     const { manager } = createManager({ stale: agent });
 
-    const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "stale", userMessage: "work" });
+    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "stale", userMessage: "work" });
     await Promise.resolve();
     agent.store.getState().append({ type: "tool-input-start", toolCallId: "late-tool", toolName: "bash" });
     agent.store.getState().append({ type: "tool-call", toolCallId: "late-tool", toolName: "bash", input: {} });
@@ -773,19 +897,20 @@ describe("SessionExecutionManager", () => {
   });
 
   test("session runs do not inject legacy deferred permission or question callbacks", async () => {
-    const run = deferred<AgentResult>();
+    const run = deferred<MockAgentResult>();
     let runOptions: AgentRunOptions | AbortSignal | undefined;
     const agent = {
       store: storeManager.create("deferred-cancel", workspaceRoot, { agentName: "engineer" }),
       run: mock(async (_message: string, options?: AgentRunOptions | AbortSignal): Promise<AgentResult> => {
         runOptions = options;
-        return await withAbort(run.promise, options instanceof AbortSignal ? options : options?.abort);
+        const result = await withAbort(run.promise, options instanceof AbortSignal ? options : options?.abort);
+        return { ...result, status: result.status ?? "completed" };
       }),
       dispose: mock(() => undefined),
     } as unknown as MockAgent;
     const { manager } = createManager({ "deferred-cancel": agent });
 
-    const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "deferred-cancel", userMessage: "work" });
+    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "deferred-cancel", userMessage: "work" });
     await new Promise((resolve) => setTimeout(resolve, 0));
     if (!runOptions || runOptions instanceof AbortSignal) throw new Error("Expected AgentRunOptions");
     expect(runOptions.confirmPermission).toBeUndefined();
@@ -798,208 +923,16 @@ describe("SessionExecutionManager", () => {
     expect(agent.store.getState().executions.at(-1)?.status).toBe("cancelled");
   });
 
-  test("cancelChildSession cascades to active descendant sessions", async () => {
-    const rootId = crypto.randomUUID();
-    const childId = crypto.randomUUID();
-    const grandchildId = crypto.randomUUID();
-    const siblingId = crypto.randomUUID();
-    storeManager.create(childId, workspaceRoot, { rootSessionId: rootId, parentSessionId: rootId, agentName: "explore" });
-    storeManager.create(grandchildId, workspaceRoot, { rootSessionId: rootId, parentSessionId: childId, agentName: "explore" });
-    storeManager.create(siblingId, workspaceRoot, { rootSessionId: rootId, parentSessionId: rootId, agentName: "explore" });
-    const rootRun = deferred<AgentResult>();
-    const siblingRun = deferred<AgentResult>();
-    const rootAgent = new MockAgent(rootId, rootRun.promise);
-    const childRun = deferred<AgentResult>();
-    const grandchildRun = deferred<AgentResult>();
-    const childAgent = new MockAgent(childId, childRun.promise);
-    const grandchildAgent = new MockAgent(grandchildId, grandchildRun.promise);
-    const siblingAgent = new MockAgent(siblingId, siblingRun.promise);
-    rootAgent.store.getState().append({
-      type: "tool-child-session-link",
-      link: makeChildLink(rootId, childId, "explore"),
-    });
-    rootAgent.store.getState().append({
-      type: "tool-child-session-link",
-      link: makeChildLink(rootId, siblingId, "explore"),
-    });
-    childAgent.store.getState().append({
-      type: "tool-child-session-link",
-      link: makeChildLink(childId, grandchildId, "explore"),
-    });
-    const { manager } = createManager({ [rootId]: rootAgent, [childId]: childAgent, [grandchildId]: grandchildAgent, [siblingId]: siblingAgent });
-    const rootExecution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: rootId, userMessage: "root" });
-    const childExecution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: childId, userMessage: "child", origin: "tool_call" });
-    const grandchildExecution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: grandchildId, userMessage: "grandchild", origin: "tool_call" });
-    const siblingExecution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: siblingId, userMessage: "sibling", origin: "tool_call" });
-    await Promise.resolve();
-
-    expect(manager.cancelChildSession(workspaceRoot, rootId, childId)).toBe(true);
-    childRun.resolve({ text: "done", steps: 1 });
-    grandchildRun.resolve({ text: "done", steps: 1 });
-    await Promise.all([childExecution.promise, grandchildExecution.promise]);
-
-    expect(rootExecution.abortController.signal.aborted).toBe(false);
-    expect(childExecution.abortController.signal.aborted).toBe(true);
-    expect(grandchildExecution.abortController.signal.aborted).toBe(true);
-    expect(siblingExecution.abortController.signal.aborted).toBe(false);
-    rootRun.resolve({ text: "done", steps: 1 });
-    siblingRun.resolve({ text: "done", steps: 1 });
-    await Promise.all([rootExecution.promise, siblingExecution.promise]);
-  });
-
-  test("execution-control stop cancels active descendants after goal_manage self-cancel", async () => {
-    const rootId = crypto.randomUUID();
-    const childId = crypto.randomUUID();
-    const childRun = deferred<AgentResult>();
-    const rootAgent = new MockAgent(rootId, Promise.resolve({
-      text: "Goal cancelled",
-      steps: 1,
-      executionControl: { action: "stop_session_family", reason: "goal_cancelled" },
-    }), workspaceRoot);
-    const childAgent = new MockAgent(childId, childRun.promise, workspaceRoot);
-    rootAgent.store.setState({ rootSessionId: rootId });
-    childAgent.store.setState({ rootSessionId: rootId, parentSessionId: rootId });
-    const { manager } = createManager({ [rootId]: rootAgent, [childId]: childAgent });
-    const childExecution = manager.startExecution({
-      slug: "project",
-      workspaceRoot,
-      sessionId: childId,
-      userMessage: "child work",
-      origin: "tool_call",
-    });
-
-    const rootExecution = manager.startExecution({
-      slug: "project",
-      workspaceRoot,
-      sessionId: rootId,
-      userMessage: "cancel Goal",
-    });
-    await rootExecution.promise;
-
-    expect(childExecution.abortController.signal.aborted).toBe(true);
-    childRun.resolve({ text: "late", steps: 1 });
-    await childExecution.promise;
-  });
-
-  test("execution-control stop owns the family until an already pending child launch drains", async () => {
-    const rootId = crypto.randomUUID();
-    const rootRun = deferred<AgentResult>();
-    const skillResolution = deferred<readonly []>();
-    let resolvingSkills = false;
-    const rootAgent = new MockAgent(rootId, rootRun.promise, workspaceRoot);
-    const factory = makeFactory({
-      resolveDelegatedSkills: mock(async () => {
-        resolvingSkills = true;
-        return await skillResolution.promise;
-      }),
-    });
-    const { manager } = createManager({ [rootId]: rootAgent }, { factory });
-    const activities: string[] = [];
-    manager.subscribeSessionRuntimeChanges((change) => activities.push(change.activity));
-
-    const pendingChild = manager.startChildExecution(workspaceRoot, {
-      parentStore: rootAgent.store,
-      parentSessionId: rootId,
-      parentToolCallId: "pending-before-self-stop",
-      toolName: "delegate",
-      targetAgentName: "explore",
-      prompt: "resolve slowly",
-      skills: [],
-    });
-    await waitFor(() => resolvingSkills);
-    const rootExecution = manager.startExecution({
-      slug: "project",
-      workspaceRoot,
-      sessionId: rootId,
-      userMessage: "cancel Goal",
-    });
-
-    rootRun.resolve({
-      text: "Goal cancelled",
-      steps: 1,
-      executionControl: { action: "stop_session_family", reason: "goal_cancelled" },
-    });
-    await waitFor(() => manager.getSessionFamilyActivity(workspaceRoot, rootId) === "stopping");
-    let rootSettled = false;
-    void rootExecution.promise.then(() => { rootSettled = true; });
-    await Promise.resolve();
-    expect(rootSettled).toBe(false);
-
-    skillResolution.resolve([]);
-    await expect(pendingChild).rejects.toThrow(SessionFamilyStopInProgressError);
-    await rootExecution.promise;
-
-    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("idle");
-    expect(activities).toEqual(["running", "stopping", "idle"]);
-  });
-
-  test("child execution-control stop retains stopping until its aborted ancestor actually drains", async () => {
-    const rootId = crypto.randomUUID();
-    const childId = crypto.randomUUID();
-    const rootResult = deferred<AgentResult>();
-    let rootStarted = false;
-    const rootStore = storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
-    const rootAgent = {
-      store: rootStore,
-      cwd: workspaceRoot,
-      run: mock(async () => {
-        rootStarted = true;
-        // Deliberately ignores abort to expose the ancestor-drain handoff race.
-        return await rootResult.promise;
-      }),
-      dispose: mock(() => undefined),
-    } as Agent;
-    const childAgent = new MockAgent(childId, Promise.resolve({
-      text: "cancel family",
-      steps: 1,
-      executionControl: { action: "stop_session_family", reason: "goal_cancelled" },
-    }), workspaceRoot);
-    childAgent.store.setState({
-      rootSessionId: rootId,
-      parentSessionId: rootId,
-    });
-    const { manager } = createManager({
-      [rootId]: rootAgent as MockAgent,
-      [childId]: childAgent,
-    });
-    const activities: string[] = [];
-    manager.subscribeSessionRuntimeChanges((change) => activities.push(change.activity));
-
-    const rootExecution = manager.startExecution({
-      slug: "project",
-      workspaceRoot,
-      sessionId: rootId,
-      userMessage: "wait for child",
-    });
-    await waitFor(() => rootStarted);
-    const childExecution = manager.startExecution({
-      slug: "project",
-      workspaceRoot,
-      sessionId: childId,
-      userMessage: "cancel from child",
-      origin: "tool_call",
-    });
-
-    await childExecution.promise;
-    expect(rootExecution.abortController.signal.aborted).toBe(true);
-    expect(manager.getExecution(workspaceRoot, rootId)).toBeDefined();
-    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("stopping");
-
-    rootResult.resolve({ text: "late ancestor completion", steps: 1 });
-    await rootExecution.promise;
-    await waitFor(() => manager.getSessionFamilyActivity(workspaceRoot, rootId) === "idle");
-    expect(activities).toEqual(["running", "stopping", "idle"]);
-  });
-
   test("family stop is isolated by workspace root for identical session ids", async () => {
+    const sessionId = crypto.randomUUID();
     const otherWorkspaceRoot = join(import.meta.dir, "__test_tmp__", "session-execution-manager-other-workspace", crypto.randomUUID());
     await mkdir(otherWorkspaceRoot, { recursive: true });
-    const runA = deferred<AgentResult>();
-    const runB = deferred<AgentResult>();
-    const agentA = new MockAgent("same-session", runA.promise, workspaceRoot);
-    const agentB = new MockAgent("same-session", runB.promise, otherWorkspaceRoot);
-    const { manager } = createManager({ "same-session": agentA });
-    const sessionAgentManager = createFakeManager({ "same-session": agentB });
+    const runA = deferred<MockAgentResult>();
+    const runB = deferred<MockAgentResult>();
+    const agentA = new MockAgent(sessionId, runA.promise, workspaceRoot);
+    const agentB = new MockAgent(sessionId, runB.promise, otherWorkspaceRoot);
+    const { manager } = createManager({ [sessionId]: agentA });
+    const sessionAgentManager = createFakeManager({ [sessionId]: agentB });
     const managerB = new SessionExecutionManager({
       sessionAgentManager,
       ...storeCallbacks(storeManager),
@@ -1008,10 +941,10 @@ describe("SessionExecutionManager", () => {
       executionScopeValidator: allowExecutionScope,
       logger: silentLogger,
     });
-    const executionA = manager.startExecution({ slug: "project-a", workspaceRoot, sessionId: "same-session", userMessage: "a" });
-    const executionB = managerB.startExecution({ slug: "project-b", workspaceRoot: otherWorkspaceRoot, sessionId: "same-session", userMessage: "b" });
+    const executionA = await manager.startCheckedExecution({ slug: "project-a", workspaceRoot, sessionId, userMessage: "a" });
+    const executionB = await managerB.startCheckedExecution({ slug: "project-b", workspaceRoot: otherWorkspaceRoot, sessionId, userMessage: "b" });
 
-    const stopping = manager.stopSessionFamily(workspaceRoot, "same-session");
+    const stopping = manager.stopSessionFamily(workspaceRoot, sessionId);
     runA.resolve({ text: "done", steps: 1 });
     await executionA.promise;
     await stopping;
@@ -1027,7 +960,7 @@ describe("SessionExecutionManager", () => {
     const agent = new MockAgent("abort", new Promise(() => undefined));
     const { manager } = createManager({ abort: agent });
 
-    const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "abort", userMessage: "stop" });
+    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "abort", userMessage: "stop" });
     const stopping = manager.stopSessionFamily(workspaceRoot, "abort");
     await execution.promise;
     await stopping;
@@ -1036,7 +969,7 @@ describe("SessionExecutionManager", () => {
 
     const agentTwo = new MockAgent("abort-wait", new Promise(() => undefined));
     const second = createManager({ "abort-wait": agentTwo });
-    const secondExecution = second.manager.startExecution({ slug: "project", workspaceRoot, sessionId: "abort-wait", userMessage: "stop" });
+    const secondExecution = await second.manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "abort-wait", userMessage: "stop" });
     await second.manager.stopSessionFamily(workspaceRoot, "abort-wait");
     await secondExecution.promise;
     expect(secondExecution.abortController.signal.aborted).toBe(true);
@@ -1049,7 +982,7 @@ describe("SessionExecutionManager", () => {
     const skillResolution = deferred<readonly []>();
     let resolvingSkills = false;
     const factory = makeFactory({
-      resolveDelegatedSkills: mock(async () => {
+      resolveDelegatedSkillNames: mock(async () => {
         resolvingSkills = true;
         return await skillResolution.promise;
       }),
@@ -1061,6 +994,7 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "pending-before-stop",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "resolve slowly",
       skills: [],
     });
@@ -1076,12 +1010,12 @@ describe("SessionExecutionManager", () => {
     const stopping = stop.stopAndWait().then(() => { stopped = true; });
     await Promise.resolve();
     expect(stopped).toBe(false);
-    expect(() => manager.startExecution({
+    await expect(manager.startCheckedExecution({
       slug: "project",
       workspaceRoot,
       sessionId: rootId,
       userMessage: "must not start",
-    })).toThrow(SessionFamilyStopInProgressError);
+    })).rejects.toThrow(SessionFamilyStopInProgressError);
     expect(() => manager.acquireSessionCwdTransition(workspaceRoot, rootId)).toThrow(SessionFamilyStopInProgressError);
     await expect(manager.startChildExecution(workspaceRoot, {
       parentStore: rootStore,
@@ -1089,6 +1023,7 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "new-after-stop",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "must not launch",
       skills: [],
     })).rejects.toThrow(SessionFamilyStopInProgressError);
@@ -1101,71 +1036,12 @@ describe("SessionExecutionManager", () => {
     expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("idle");
   });
 
-  test("root self-stop still waits for a stuck child while child self-stop defers only its ancestor", async () => {
-    const rootId = crypto.randomUUID();
-    const childId = crypto.randomUUID();
-    const siblingId = crypto.randomUUID();
-    storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
-    storeManager.create(childId, workspaceRoot, {
-      rootSessionId: rootId,
-      parentSessionId: rootId,
-      agentName: "explore",
-    });
-    storeManager.create(siblingId, workspaceRoot, {
-      rootSessionId: rootId,
-      parentSessionId: rootId,
-      agentName: "explore",
-    });
-
-    const never = new Promise<AgentResult>(() => undefined);
-    const started = new Set<string>();
-    const uncooperative = (sessionId: string): Agent => ({
-      store: storeManager.get(sessionId, workspaceRoot)!,
-      cwd: workspaceRoot,
-      run: mock(async () => {
-        started.add(sessionId);
-        return await never;
-      }),
-      dispose: mock(() => undefined),
-    });
-    const rootAgent = uncooperative(rootId);
-    const siblingAgent = uncooperative(siblingId);
-    const { manager } = createManager({ [rootId]: rootAgent as MockAgent, [siblingId]: siblingAgent as MockAgent }, {
-      sessionFamilyStopTimeoutMs: 5,
-    });
-    manager.startExecution({ slug: "project", workspaceRoot, sessionId: rootId, userMessage: "ancestor" });
-    manager.startExecution({ slug: "project", workspaceRoot, sessionId: siblingId, userMessage: "sibling" });
-    await waitFor(() => started.has(rootId) && started.has(siblingId));
-
-    const rootStop = manager.acquireSessionFamilyStop({
-      workspaceRoot,
-      rootSessionId: rootId,
-      exemptSessionId: rootId,
-    });
-    await expect(rootStop.stopAndWait()).rejects.toMatchObject({
-      name: "SessionFamilyStopConflictError",
-      stuckSessionIds: [siblingId],
-    });
-    rootStop.release();
-
-    const childStop = manager.acquireSessionFamilyStop({
-      workspaceRoot,
-      rootSessionId: rootId,
-      exemptSessionId: childId,
-    });
-    await expect(childStop.stopAndWait()).rejects.toMatchObject({
-      name: "SessionFamilyStopConflictError",
-      stuckSessionIds: [siblingId],
-    });
-    childStop.release();
-  });
-
   test("abortAll cancels every active execution", async () => {
     const firstAgent = new MockAgent("abort-all-one", new Promise(() => undefined));
     const secondAgent = new MockAgent("abort-all-two", new Promise(() => undefined));
     const { manager } = createManager({ "abort-all-one": firstAgent, "abort-all-two": secondAgent });
-    const first = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "abort-all-one", userMessage: "one" });
-    const second = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "abort-all-two", userMessage: "two" });
+    const first = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "abort-all-one", userMessage: "one" });
+    const second = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "abort-all-two", userMessage: "two" });
 
     await manager.abortAll();
 
@@ -1175,11 +1051,11 @@ describe("SessionExecutionManager", () => {
     expect(manager.getSessionFamilyActivity(workspaceRoot, "abort-all-two")).toBe("idle");
   });
 
-  test("startExecution omits legacy permission and question service callbacks", async () => {
+  test("checked execution omits legacy permission and question service callbacks", async () => {
     const agent = new MockAgent("callbacks", Promise.resolve({ text: "done", steps: 1 }));
     const { manager } = createManager({ callbacks: agent });
 
-    const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "callbacks", userMessage: "work" });
+    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "callbacks", userMessage: "work" });
     await execution.promise;
     const options = agent.runMock.mock.calls[0]?.[1];
     if (!options || options instanceof AbortSignal) throw new Error("Expected AgentRunOptions");
@@ -1205,11 +1081,11 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "tool-call",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "inspect",
       skills: [],
       description: "Inspect files",
       background: false,
-      currentDepth: 0,
       parentAbort: undefined,
     });
 
@@ -1253,6 +1129,7 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "goal-delegate",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "Inspect the implementation",
       skills: [],
     });
@@ -1281,6 +1158,7 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "ordinary-delegate",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "Keep this prompt byte-for-byte",
       skills: [],
     });
@@ -1307,6 +1185,7 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "missing-goal-admission",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "Must not run without Goal context",
       skills: [],
     })).rejects.toThrow(`Goal ${goalId} delegation requires its latest admitted snapshot`);
@@ -1330,10 +1209,10 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "blocked-delegate",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "must not start",
       skills: [],
       background: false,
-      currentDepth: 0,
       parentAbort: undefined,
     })).rejects.toMatchObject({ name: "SessionToolBatchActiveError", hitlIds: ["sibling-hitl"] });
     expect(sessionAgentManager.createChildAgent).not.toHaveBeenCalled();
@@ -1357,10 +1236,10 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "raced-delegate",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "must not start",
       skills: [],
       background: false,
-      currentDepth: 0,
       parentAbort: undefined,
     })).rejects.toMatchObject({ name: "SessionToolBatchActiveError", hitlIds: ["raced-hitl"] });
     expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({ status: "failed" });
@@ -1374,6 +1253,14 @@ describe("SessionExecutionManager", () => {
       goalId,
       sessionRole: "main",
     });
+    const resumableChildId = crypto.randomUUID();
+    storeManager.create(resumableChildId, workspaceRoot, {
+      rootSessionId: parentSessionId,
+      parentSessionId,
+      agentName: "explore",
+      goalId,
+      title: "Delegated child",
+    });
     const denied = new Error("phase denied");
     const run = mock(async () => { throw denied; });
     const { manager } = createManager({}, {
@@ -1386,11 +1273,12 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "call-1",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "inspect",
     } as const;
 
     await expect(manager.startChildExecution(workspaceRoot, { ...base, skills: [] })).rejects.toBe(denied);
-    await expect(manager.resumeChildExecution(workspaceRoot, { ...base, sessionId: crypto.randomUUID() })).rejects.toBe(denied);
+    await expect(manager.resumeChildExecution(workspaceRoot, { ...base, sessionId: resumableChildId })).rejects.toBe(denied);
     expect(run).toHaveBeenCalledTimes(2);
   });
 
@@ -1417,10 +1305,10 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "tool-call",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "inspect files",
       skills: [],
       background: false,
-      currentDepth: 0,
       parentAbort: undefined,
     });
     await handle.result;
@@ -1447,10 +1335,10 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "tool-call",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "inspect without workflow tools",
       skills: [],
       background: false,
-      currentDepth: 0,
       parentAbort: undefined,
     });
     await handle.result;
@@ -1466,6 +1354,10 @@ describe("SessionExecutionManager", () => {
     const rootSessionId = crypto.randomUUID();
     const parentId = crypto.randomUUID();
     const goalId = crypto.randomUUID();
+    storeManager.create(rootSessionId, workspaceRoot, {
+      agentName: "engineer",
+      goalId,
+    });
     const parentStore = storeManager.create(parentId, workspaceRoot, {
       rootSessionId,
       parentSessionId: rootSessionId,
@@ -1477,7 +1369,7 @@ describe("SessionExecutionManager", () => {
       displayName: "Explore",
       promptProfileId: "explore",
       tools: { tools: ["delegate", "file_read"], delegateTargets: ["explore"] },
-      hooks: { autoCompact: false, autoInjectReminder: false, todoStepReminder: false, todoQueryLoopContinuation: false, transcriptSave: false, memoryExtraction: false, memoryConsolidation: false, titleGeneration: "disabled" },
+      hooks: { autoCompact: false, autoInjectReminder: false, todoStepReminder: false, todoQueryLoopContinuation: false, memoryExtraction: false, memoryConsolidation: false, titleGeneration: "disabled" },
       childPolicy: { maxDepth: 2, maxConcurrent: 1, timeoutMs: 0, abortCascade: true, terminalReminders: true },
       includeMemoryInPrompt: false,
       skills: [],
@@ -1510,10 +1402,10 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "grandchild-call",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "grandchild inspect",
       skills: [],
       background: false,
-      currentDepth: 1,
       parentAbort: undefined,
     });
     await handle.result;
@@ -1539,21 +1431,33 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "tool-call",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "inspect",
       skills: [],
       background: false,
-      currentDepth: 0,
       parentAbort: undefined,
     })).rejects.toThrow("link write failed");
 
     expect(sessionAgentManager.createChildAgent).not.toHaveBeenCalled();
-    expect(() => sessionAgentManager.acquireSlot(workspaceRoot, "after-failure")).not.toThrow();
-    sessionAgentManager.releaseSlot(workspaceRoot, "after-failure");
   });
 
   test("depth limit is checked before child session creation", async () => {
+    const rootId = crypto.randomUUID();
+    const middleId = crypto.randomUUID();
     const parentId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
+    storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
+    storeManager.create(middleId, workspaceRoot, {
+      rootSessionId: rootId,
+      parentSessionId: rootId,
+      agentName: "engineer",
+      title: "Middle child",
+    });
+    const parentStore = storeManager.create(parentId, workspaceRoot, {
+      rootSessionId: rootId,
+      parentSessionId: middleId,
+      agentName: "engineer",
+      title: "Deep parent",
+    });
     const factory = makeFactory();
     const { manager, sessionAgentManager } = createManager({}, { factory });
 
@@ -1563,10 +1467,10 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "too-deep",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "inspect",
       skills: [],
       background: false,
-      currentDepth: 2,
       parentAbort: undefined,
     })).rejects.toThrow(DepthLimitError);
 
@@ -1601,10 +1505,10 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "tool-call",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "inspect",
       skills: [],
       background: false,
-      currentDepth: 0,
       parentAbort: undefined,
     });
     const unsubscribe = manager.subscribe({ slug: "project", workspaceRoot, sessionId: handle.sessionId, onEvent: (event) => received.push(event) });
@@ -1643,10 +1547,10 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "durable-child",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "inspect",
       skills: [],
       background: false,
-      currentDepth: 0,
       parentAbort: undefined,
     });
     await waitFor(() => flushedChildSessionId !== undefined);
@@ -1671,7 +1575,7 @@ describe("SessionExecutionManager", () => {
   test("sync child execution exposes live parent link and bridged child events before resolving", async () => {
     const parentId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
-    const childRun = deferred<AgentResult>();
+    const childRun = deferred<MockAgentResult>();
     const received: unknown[] = [];
     let childSessionId = "";
     let linkWhileRunning: ToolChildSessionLink | undefined;
@@ -1696,10 +1600,10 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "sync-tool-call",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "inspect",
       skills: [],
       background: false,
-      currentDepth: 0,
       parentAbort: undefined,
     });
     handle.result.then(() => { resultResolved = true; });
@@ -1722,7 +1626,7 @@ describe("SessionExecutionManager", () => {
     childRun.resolve({ text: "live child done", steps: 1 });
     const result = await handle.result;
 
-    expect(result).toEqual({ text: "live child done", steps: 0 });
+    expect(result).toEqual({ text: "live child done", steps: 0, status: "completed" });
     expect(resultResolved).toBe(true);
     expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({
       childSessionId: handle.sessionId,
@@ -1753,10 +1657,10 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "hitl-child",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "wait for approval",
       skills: [],
       background: true,
-      currentDepth: 0,
       parentAbort: undefined,
     });
     await handle.result;
@@ -1785,10 +1689,10 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "failed-call",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "inspect",
       skills: [],
       background: false,
-      currentDepth: 0,
       parentAbort: undefined,
     });
     await failedHandle.result;
@@ -1813,10 +1717,10 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "timed-call",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "inspect",
       skills: [],
       background: false,
-      currentDepth: 0,
       parentAbort: undefined,
     });
     await timedHandle.result;
@@ -1836,10 +1740,10 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "bad-target",
       toolName: "delegate",
       targetAgentName: "writer",
+      title: "Delegated child",
       prompt: "inspect",
       skills: [],
       background: false,
-      currentDepth: 0,
       parentAbort: undefined,
     })).rejects.toThrow(DelegateTargetNotAllowedError);
 
@@ -1849,10 +1753,10 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "first",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "inspect",
       skills: [],
       background: true,
-      currentDepth: 0,
       parentAbort: undefined,
     });
 
@@ -1862,10 +1766,10 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "second",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "inspect",
       skills: [],
       background: true,
-      currentDepth: 0,
       parentAbort: undefined,
     })).rejects.toThrow(ConcurrentLimitError);
     first.abort();
@@ -1884,10 +1788,10 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "first",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "inspect",
       skills: [],
       background: true,
-      currentDepth: 0,
       parentAbort: undefined,
     });
 
@@ -1897,31 +1801,16 @@ describe("SessionExecutionManager", () => {
       .filter((event) => event.payload.type === "tool-child-session-link")
       .map((event) => (event.payload as { link: ToolChildSessionLink }).link.status)).toContain("cancelling");
     expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({ status: "cancelled" });
-    expect(() => sessionAgentManager.acquireSlot(workspaceRoot, "after-cancel")).not.toThrow();
-    sessionAgentManager.releaseSlot(workspaceRoot, "after-cancel");
-  });
-
-  test("dispatchCommand only dispatches for active executions", async () => {
-    const run = deferred<AgentResult>();
-    const agent = new MockAgent("commands", run.promise);
-    agent.dispatchCommandMock = mock(async (name, args) => ({ success: true, message: `${name}:${args}` }));
-    const { manager } = createManager({ commands: agent });
-
-    await expect(manager.dispatchCommand(workspaceRoot, "commands", "compact", "now")).resolves.toBeNull();
-    const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "commands", userMessage: "work" });
-    await expect(manager.dispatchCommand(workspaceRoot, "commands", "compact", "now")).resolves.toEqual({ success: true, message: "compact:now" });
-    run.resolve({ text: "done", steps: 1 });
-    await execution.promise;
   });
 
   test("subscribes session events without exposing stores", async () => {
-    const run = deferred<AgentResult>();
+    const run = deferred<MockAgentResult>();
     const agent = new MockAgent("events", run.promise);
     const { manager } = createManager({ events: agent });
     const received: unknown[] = [];
     const unsubscribe = manager.subscribe({ slug: "project", workspaceRoot, sessionId: "events", onEvent: (event) => received.push(event) });
 
-    const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "events", userMessage: "work" });
+    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "events", userMessage: "work" });
     await Promise.resolve();
     agent.store.getState().append({ type: "system-notice", message: "hello" });
 
@@ -1940,7 +1829,7 @@ describe("SessionExecutionManager", () => {
     const received: unknown[] = [];
 
     const unsubscribe = manager.subscribe({ slug: "project", workspaceRoot, sessionId: "child-events", onEvent: (event) => received.push(event) });
-    const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "child-events", userMessage: "work" });
+    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "child-events", userMessage: "work" });
     await Promise.resolve();
     child.store.getState().append({ type: "system-notice", message: "child" });
 
@@ -1988,18 +1877,19 @@ describe("SessionExecutionManager", () => {
     const deletion = manager.deleteSession(workspaceRoot, rootId);
     await preflightEntered.promise;
 
-    expect(() => manager.startExecution({
+    await expect(manager.startCheckedExecution({
       slug: "project",
       workspaceRoot,
       sessionId: rootId,
       userMessage: "race deletion",
-    })).toThrow(SessionDeleteInProgressError);
+    })).rejects.toThrow(SessionDeleteInProgressError);
     await expect(manager.startChildExecution(workspaceRoot, {
       parentStore: rootStore,
       parentSessionId: rootId,
       parentToolCallId: "delete-race-child",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "race deletion",
       skills: [],
     })).rejects.toThrow(SessionDeleteInProgressError);
@@ -2049,7 +1939,7 @@ describe("SessionExecutionManager", () => {
         },
       },
     });
-    manager.startExecution({ slug: "project", workspaceRoot, sessionId: rootId, userMessage: "create owner while stopping" });
+    await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: rootId, userMessage: "create owner while stopping" });
     await waitFor(() => runStarted);
 
     await expect(manager.deleteSession(workspaceRoot, rootId)).rejects.toMatchObject({
@@ -2148,6 +2038,7 @@ describe("SessionExecutionManager", () => {
         toolName: "delegate",
         childSessionId: childId,
         childAgentName: "explore",
+        title: "Delegated child",
         depth: 1,
         background: true,
         status: "cancelling",
@@ -2165,46 +2056,6 @@ describe("SessionExecutionManager", () => {
     expect(file.childSessionLinks.at(-1)?.status).toBe("interrupted");
   });
 
-  test("running subtree delete aborts every running subtree session before removal", async () => {
-    const rootId = crypto.randomUUID();
-    const childId = crypto.randomUUID();
-    const grandchildId = crypto.randomUUID();
-    const siblingId = crypto.randomUUID();
-    await writeSessionFile({ sessionId: rootId });
-    await writeSessionFile({ sessionId: childId, rootSessionId: rootId, parentSessionId: rootId });
-    await writeSessionFile({ sessionId: grandchildId, rootSessionId: rootId, parentSessionId: childId });
-    await writeSessionFile({ sessionId: siblingId, rootSessionId: rootId, parentSessionId: rootId });
-    await Promise.all([
-      storeManager.getOrLoad(rootId, workspaceRoot),
-      storeManager.getOrLoad(childId, workspaceRoot),
-      storeManager.getOrLoad(grandchildId, workspaceRoot),
-      storeManager.getOrLoad(siblingId, workspaceRoot),
-    ]);
-    const childAgent = new MockAgent(childId, new Promise(() => undefined));
-    const grandchildAgent = new MockAgent(grandchildId, new Promise(() => undefined));
-    const siblingAgent = new MockAgent(siblingId, new Promise(() => undefined));
-    childAgent.store.setState({ rootSessionId: rootId, parentSessionId: rootId });
-    grandchildAgent.store.setState({ rootSessionId: rootId, parentSessionId: childId });
-    siblingAgent.store.setState({ rootSessionId: rootId, parentSessionId: rootId });
-    const { manager } = createManager({ [childId]: childAgent, [grandchildId]: grandchildAgent, [siblingId]: siblingAgent });
-    const childExecution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: childId, userMessage: "child" });
-    const grandchildExecution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: grandchildId, userMessage: "grandchild" });
-    const siblingExecution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: siblingId, userMessage: "sibling" });
-
-    await manager.deleteSession(workspaceRoot, childId);
-    await Promise.all([childExecution.promise, grandchildExecution.promise]);
-
-    expect(childExecution.abortController.signal.aborted).toBe(true);
-    expect(grandchildExecution.abortController.signal.aborted).toBe(true);
-    expect(siblingExecution.abortController.signal.aborted).toBe(false);
-    expect(manager.getExecution(workspaceRoot, childId)).toBeUndefined();
-    expect(manager.getExecution(workspaceRoot, grandchildId)).toBeUndefined();
-    expect(manager.getExecution(workspaceRoot, siblingId)).toBeDefined();
-    const stopping = manager.stopSessionFamily(workspaceRoot, rootId);
-    await siblingExecution.promise;
-    await stopping;
-  });
-
   test("abort timeout throws SessionDeleteConflictError and preserves target files", async () => {
     const rootId = crypto.randomUUID();
     const childId = crypto.randomUUID();
@@ -2220,7 +2071,7 @@ describe("SessionExecutionManager", () => {
       dispose: mock(() => undefined),
     } as unknown as MockAgent;
     const { manager, sessionAgentManager } = createManager({ [childId]: childAgent });
-    const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: childId, userMessage: "child" });
+    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: childId, userMessage: "child" });
     const originalSetTimeout = globalThis.setTimeout;
     globalThis.setTimeout = ((handler: Parameters<typeof setTimeout>[0], timeout?: number, ...args: unknown[]) => {
       if (timeout === 10000 && typeof handler === "function") {
@@ -2276,10 +2127,10 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "initial-tool-call",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "first round",
       skills: [],
       background: false,
-      currentDepth: 0,
       parentAbort: undefined,
     });
     await first.result;
@@ -2294,9 +2145,7 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "resume-tool-call",
       toolName: "delegate",
       sessionId: childSessionId,
-      targetAgentName: "explore",
       prompt: "second round",
-      currentDepth: 0,
       parentAbort: undefined,
     });
     await resumed.result;
@@ -2339,6 +2188,7 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "initial-goal-delegate",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "Initial work",
       skills: [],
     });
@@ -2355,7 +2205,6 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "resume-goal-delegate",
       toolName: "delegate",
       sessionId: first.sessionId,
-      targetAgentName: "explore",
       prompt: "Address the review",
     });
     await resumed.result;
@@ -2370,7 +2219,7 @@ describe("SessionExecutionManager", () => {
   test("blocks cwd transitions for active descendants and never resumes an old child across checkouts", async () => {
     const parentId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
-    const childRun = deferred<AgentResult>();
+    const childRun = deferred<MockAgentResult>();
     let childRunCount = 0;
     const { manager } = createManager({}, {
       factory: makeFactory(),
@@ -2384,10 +2233,10 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "background-child",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "keep working in the original checkout",
       skills: [],
       background: true,
-      currentDepth: 0,
       parentAbort: undefined,
     });
     await waitFor(() => childRunCount === 1);
@@ -2421,9 +2270,7 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "resume-old-child",
       toolName: "delegate",
       sessionId: child.sessionId,
-      targetAgentName: "explore",
       prompt: "write in the new checkout",
-      currentDepth: 0,
       parentAbort: undefined,
     })).rejects.toThrow(ChildSessionCwdMismatchError);
 
@@ -2439,7 +2286,7 @@ describe("SessionExecutionManager", () => {
     let skillResolutionStarted = 0;
     let childRunCount = 0;
     const factory = makeFactory({
-      resolveDelegatedSkills: mock(async () => {
+      resolveDelegatedSkillNames: mock(async () => {
         skillResolutionStarted += 1;
         return await skillResolution.promise;
       }),
@@ -2455,10 +2302,10 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "pending-child-launch",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "launch while skills resolve",
       skills: [],
       background: false,
-      currentDepth: 0,
       parentAbort: undefined,
     });
     await waitFor(() => skillResolutionStarted === 1);
@@ -2479,10 +2326,10 @@ describe("SessionExecutionManager", () => {
         parentToolCallId: "start-during-transition",
         toolName: "delegate",
         targetAgentName: "explore",
+      title: "Delegated child",
         prompt: "must not start",
         skills: [],
         background: false,
-        currentDepth: 0,
         parentAbort: undefined,
       })).rejects.toThrow(SessionCwdTransitionInProgressError);
 
@@ -2492,9 +2339,7 @@ describe("SessionExecutionManager", () => {
         parentToolCallId: "resume-during-transition",
         toolName: "delegate",
         sessionId: child.sessionId,
-        targetAgentName: "explore",
         prompt: "must not resume",
-        currentDepth: 0,
         parentAbort: undefined,
       })).rejects.toThrow(SessionCwdTransitionInProgressError);
       expect(childRunCount).toBe(1);
@@ -2509,9 +2354,7 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "resume-after-transition",
       toolName: "delegate",
       sessionId: child.sessionId,
-      targetAgentName: "explore",
       prompt: "resume after lease release",
-      currentDepth: 0,
       parentAbort: undefined,
     });
     await resumed.result;
@@ -2520,10 +2363,10 @@ describe("SessionExecutionManager", () => {
 
   test("idle cwd transition leases reject an active root and block new root executions", async () => {
     const sessionId = crypto.randomUUID();
-    const run = deferred<AgentResult>();
+    const run = deferred<MockAgentResult>();
     const agent = new MockAgent(sessionId, run.promise, workspaceRoot);
     const { manager } = createManager({ [sessionId]: agent });
-    const execution = manager.startExecution({
+    const execution = await manager.startCheckedExecution({
       slug: "project",
       workspaceRoot,
       sessionId,
@@ -2537,17 +2380,17 @@ describe("SessionExecutionManager", () => {
     await execution.promise;
     const releaseTransition = manager.acquireIdleSessionCwdTransition(workspaceRoot, sessionId);
     try {
-      expect(() => manager.startExecution({
+      await expect(manager.startCheckedExecution({
         slug: "project",
         workspaceRoot,
         sessionId,
         userMessage: "must wait for cleanup",
-      })).toThrow(SessionCwdTransitionInProgressError);
+      })).rejects.toThrow(SessionCwdTransitionInProgressError);
     } finally {
       releaseTransition();
     }
 
-    const afterCleanup = manager.startExecution({
+    const afterCleanup = await manager.startCheckedExecution({
       slug: "project",
       workspaceRoot,
       sessionId,
@@ -2561,10 +2404,10 @@ describe("SessionExecutionManager", () => {
     const firstRoot = "00000000-0000-4000-8000-000000000001";
     const activeRoot = "00000000-0000-4000-8000-000000000002";
     const firstAgent = new MockAgent(firstRoot, Promise.resolve({ text: "idle", steps: 1 }), workspaceRoot);
-    const activeRun = deferred<AgentResult>();
+    const activeRun = deferred<MockAgentResult>();
     const activeAgent = new MockAgent(activeRoot, activeRun.promise, workspaceRoot);
     const { manager } = createManager({ [firstRoot]: firstAgent, [activeRoot]: activeAgent });
-    const execution = manager.startExecution({
+    const execution = await manager.startCheckedExecution({
       slug: "project",
       workspaceRoot,
       sessionId: activeRoot,
@@ -2859,7 +2702,7 @@ describe("SessionExecutionManager", () => {
       },
     });
     const factory = makeFactory();
-    const resumedRun = deferred<AgentResult>();
+    const resumedRun = deferred<MockAgentResult>();
     const childAgent = new MockAgent(childSessionId, resumedRun.promise, workspaceRoot);
     childStore.setState({ append: childAgent.store.getState().append });
     childAgent.store.setState({
@@ -2876,9 +2719,7 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "resume-tool-call",
       toolName: "delegate",
       sessionId: childSessionId,
-      targetAgentName: "explore",
       prompt: "second round",
-      currentDepth: 0,
       parentAbort: undefined,
     });
 
@@ -2900,6 +2741,244 @@ describe("SessionExecutionManager", () => {
     });
   });
 
+  test("resumeChildExecution uses the canonical child title instead of a stale link title", async () => {
+    const parentId = crypto.randomUUID();
+    const childId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
+    const childStore = storeManager.create(childId, workspaceRoot, {
+      rootSessionId: parentId,
+      parentSessionId: parentId,
+      agentName: "explore",
+      title: "Canonical title",
+    });
+    parentStore.getState().append({
+      type: "tool-child-session-link",
+      link: { ...makeChildLink(parentId, childId, "explore"), title: "Stale link title", status: "completed" },
+    });
+    const childAgent = new MockAgent(childId, Promise.resolve({ text: "done", steps: 1 }), workspaceRoot);
+    childAgent.store.setState(childStore.getState());
+    const { manager } = createManager({ [childId]: childAgent }, { factory: makeFactory() });
+
+    const resumed = await manager.resumeChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "canonical-title-resume",
+      toolName: "delegate",
+      sessionId: childId,
+      prompt: "resume",
+    });
+    await resumed.result;
+
+    expect(parentStore.getState().childSessionLinks.find((link) => link.parentToolCallId === "canonical-title-resume"))
+      .toMatchObject({ title: "Canonical title", status: "completed" });
+  });
+
+  test("resumeChildExecution rejects a child without a canonical title", async () => {
+    const parentId = crypto.randomUUID();
+    const childId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
+    storeManager.create(childId, workspaceRoot, {
+      rootSessionId: parentId,
+      parentSessionId: parentId,
+      agentName: "explore",
+    });
+    const { manager } = createManager({}, { factory: makeFactory() });
+
+    await expect(manager.resumeChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "missing-title-resume",
+      toolName: "delegate",
+      sessionId: childId,
+      prompt: "resume",
+    })).rejects.toThrow(`Child Session "${childId}" has no canonical title`);
+    expect(parentStore.getState().childSessionLinks).toEqual([]);
+  });
+
+  test("resumeChildExecution rejects a child whose canonical root differs from its parent", async () => {
+    const parentId = crypto.randomUUID();
+    const foreignRootId = crypto.randomUUID();
+    const childId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
+    storeManager.create(childId, workspaceRoot, {
+      rootSessionId: foreignRootId,
+      parentSessionId: parentId,
+      agentName: "explore",
+      title: "Corrupted child",
+    });
+    const { manager } = createManager({}, { factory: makeFactory() });
+
+    await expect(manager.resumeChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "foreign-root-resume",
+      toolName: "delegate",
+      sessionId: childId,
+      prompt: "resume",
+    })).rejects.toThrow(`belongs to root "${foreignRootId}", not "${parentId}"`);
+    expect(parentStore.getState().childSessionLinks).toEqual([]);
+  });
+
+  test("resumeChildExecution re-enforces canonical maxDepth", async () => {
+    const rootId = crypto.randomUUID();
+    const middleId = crypto.randomUUID();
+    const parentId = crypto.randomUUID();
+    const childId = crypto.randomUUID();
+    storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
+    storeManager.create(middleId, workspaceRoot, {
+      rootSessionId: rootId,
+      parentSessionId: rootId,
+      agentName: "engineer",
+      title: "Middle",
+    });
+    const parentStore = storeManager.create(parentId, workspaceRoot, {
+      rootSessionId: rootId,
+      parentSessionId: middleId,
+      agentName: "engineer",
+      title: "Deep parent",
+    });
+    storeManager.create(childId, workspaceRoot, {
+      rootSessionId: rootId,
+      parentSessionId: parentId,
+      agentName: "explore",
+      title: "Too deep child",
+    });
+    const { manager } = createManager({}, { factory: makeFactory() });
+
+    await expect(manager.resumeChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "too-deep-resume",
+      toolName: "delegate",
+      sessionId: childId,
+      prompt: "resume",
+    })).rejects.toThrow(DepthLimitError);
+  });
+
+  test("resumeChildExecution re-enforces maxConcurrent", async () => {
+    const parentId = crypto.randomUUID();
+    const firstChildId = crypto.randomUUID();
+    const secondChildId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
+    const firstStore = storeManager.create(firstChildId, workspaceRoot, {
+      rootSessionId: parentId,
+      parentSessionId: parentId,
+      agentName: "explore",
+      title: "First child",
+    });
+    const secondStore = storeManager.create(secondChildId, workspaceRoot, {
+      rootSessionId: parentId,
+      parentSessionId: parentId,
+      agentName: "explore",
+      title: "Second child",
+    });
+    const firstRun = deferred<MockAgentResult>();
+    const firstAgent = new MockAgent(firstChildId, firstRun.promise, workspaceRoot);
+    firstAgent.store.setState(firstStore.getState());
+    const secondAgent = new MockAgent(secondChildId, Promise.resolve({ text: "must not run", steps: 1 }), workspaceRoot);
+    secondAgent.store.setState(secondStore.getState());
+    const { manager } = createManager({ [firstChildId]: firstAgent, [secondChildId]: secondAgent }, { factory: makeFactory() });
+
+    const first = await manager.resumeChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "first-resume",
+      toolName: "delegate",
+      sessionId: firstChildId,
+      prompt: "resume",
+    });
+    await expect(manager.resumeChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "second-resume",
+      toolName: "delegate",
+      sessionId: secondChildId,
+      prompt: "resume",
+    })).rejects.toThrow(ConcurrentLimitError);
+    firstRun.resolve({ text: "done", steps: 1 });
+    await first.result;
+  });
+
+  test("resumeChildExecution reapplies timeout and abortCascade policy", async () => {
+    const parentId = crypto.randomUUID();
+    const timedChildId = crypto.randomUUID();
+    const uncascadedChildId = crypto.randomUUID();
+    const cascadedChildId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
+    const timedStore = storeManager.create(timedChildId, workspaceRoot, {
+      rootSessionId: parentId, parentSessionId: parentId, agentName: "explore", title: "Timed child",
+    });
+    const uncascadedStore = storeManager.create(uncascadedChildId, workspaceRoot, {
+      rootSessionId: parentId, parentSessionId: parentId, agentName: "explore", title: "Uncascaded child",
+    });
+    const cascadedStore = storeManager.create(cascadedChildId, workspaceRoot, {
+      rootSessionId: parentId, parentSessionId: parentId, agentName: "explore", title: "Cascaded child",
+    });
+    const timedAgent = new MockAgent(timedChildId, new Promise(() => undefined), workspaceRoot);
+    timedAgent.store.setState(timedStore.getState());
+    const timedManager = createManager({ [timedChildId]: timedAgent }, {
+      factory: makeFactoryWithChildPolicy({ timeoutMs: 1 }),
+    }).manager;
+    const timed = await timedManager.resumeChildExecution(workspaceRoot, {
+      parentStore, parentSessionId: parentId, parentToolCallId: "timed-resume", toolName: "delegate",
+      sessionId: timedChildId, prompt: "resume",
+    });
+    expect((await timed.result).status).toBe("timed_out");
+
+    const uncascadedRun = deferred<MockAgentResult>();
+    const uncascadedAgent = new MockAgent(uncascadedChildId, uncascadedRun.promise, workspaceRoot);
+    uncascadedAgent.store.setState(uncascadedStore.getState());
+    const uncascadedManager = createManager({ [uncascadedChildId]: uncascadedAgent }, {
+      factory: makeFactoryWithChildPolicy({ abortCascade: false }),
+    }).manager;
+    const parentAbort = new AbortController();
+    const uncascaded = await uncascadedManager.resumeChildExecution(workspaceRoot, {
+      parentStore, parentSessionId: parentId, parentToolCallId: "uncascaded-resume", toolName: "delegate",
+      sessionId: uncascadedChildId, prompt: "resume", parentAbort: parentAbort.signal,
+    });
+    parentAbort.abort();
+    expect(uncascadedManager.getExecution(workspaceRoot, uncascadedChildId)?.abortController.signal.aborted).toBe(false);
+    uncascadedRun.resolve({ text: "done", steps: 1 });
+    await uncascaded.result;
+
+    const cascadedAgent = new MockAgent(cascadedChildId, new Promise(() => undefined), workspaceRoot);
+    cascadedAgent.store.setState(cascadedStore.getState());
+    const cascadedManager = createManager({ [cascadedChildId]: cascadedAgent }, {
+      factory: makeFactoryWithChildPolicy({ abortCascade: true }),
+    }).manager;
+    const cascadingAbort = new AbortController();
+    const cascaded = await cascadedManager.resumeChildExecution(workspaceRoot, {
+      parentStore, parentSessionId: parentId, parentToolCallId: "cascaded-resume", toolName: "delegate",
+      sessionId: cascadedChildId, prompt: "resume", parentAbort: cascadingAbort.signal,
+    });
+    cascadingAbort.abort();
+    expect((await cascaded.result).status).toBe("cancelled");
+  });
+
+  test("resumeChildExecution does not publish a running link when execution claim fails", async () => {
+    const blockerId = crypto.randomUUID();
+    const parentId = crypto.randomUUID();
+    const childId = crypto.randomUUID();
+    const blocker = new MockAgent(blockerId, new Promise(() => undefined), workspaceRoot);
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
+    const childStore = storeManager.create(childId, workspaceRoot, {
+      rootSessionId: parentId, parentSessionId: parentId, agentName: "explore", title: "Blocked child",
+    });
+    const childAgent = new MockAgent(childId, Promise.resolve({ text: "must not run", steps: 1 }), workspaceRoot);
+    childAgent.store.setState(childStore.getState());
+    const { manager } = createManager({ [blockerId]: blocker, [childId]: childAgent }, {
+      factory: makeFactory(),
+      maxConcurrentSessions: 1,
+    });
+    await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: blockerId, userMessage: "block" });
+
+    await expect(manager.resumeChildExecution(workspaceRoot, {
+      parentStore, parentSessionId: parentId, parentToolCallId: "failed-claim-resume", toolName: "delegate",
+      sessionId: childId, prompt: "resume",
+    })).rejects.toThrow(ConcurrentSessionLimitError);
+    expect(parentStore.getState().childSessionLinks.some((link) => link.parentToolCallId === "failed-claim-resume")).toBe(false);
+  });
+
   test("rechecks Goal family HITL immediately before a child resume starts", async () => {
     const parentId = crypto.randomUUID();
     const childSessionId = crypto.randomUUID();
@@ -2910,6 +2989,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       agentName: "explore",
       goalId,
+      title: "Delegated child",
     });
     parentStore.getState().append({
       type: "tool-child-session-link",
@@ -2919,6 +2999,7 @@ describe("SessionExecutionManager", () => {
         toolName: "delegate",
         childSessionId,
         childAgentName: "explore",
+        title: "Delegated child",
         depth: 1,
         background: false,
         status: "completed",
@@ -2942,9 +3023,7 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "resume-call",
       toolName: "delegate",
       sessionId: childSessionId,
-      targetAgentName: "explore",
       prompt: "must not resume",
-      currentDepth: 0,
       parentAbort: undefined,
     })).rejects.toMatchObject({ name: "SessionToolBatchActiveError", hitlIds: ["raced-resume-hitl"] });
     expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({ status: "completed" });
@@ -2980,7 +3059,7 @@ describe("SessionExecutionManager", () => {
       },
     });
     const factory = makeFactory();
-    const resumedRun = deferred<AgentResult>();
+    const resumedRun = deferred<MockAgentResult>();
     const childAgent = new MockAgent(childSessionId, resumedRun.promise, workspaceRoot);
     childStore.setState({ append: childAgent.store.getState().append });
     childAgent.store.setState({
@@ -2997,10 +3076,8 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "resume-background-tool-call",
       toolName: "delegate",
       sessionId: childSessionId,
-      targetAgentName: "explore",
       prompt: "second round",
       background: true,
-      currentDepth: 0,
       parentAbort: undefined,
     });
 
@@ -3030,7 +3107,7 @@ describe("SessionExecutionManager", () => {
   test("resumeChildExecution on running session throws AgentRunningError", async () => {
     const parentId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
-    const childRun = deferred<AgentResult>();
+    const childRun = deferred<MockAgentResult>();
     const { manager } = createManager({}, { factory: makeFactory(), childRun: childRun.promise });
 
     const first = await manager.startChildExecution(workspaceRoot, {
@@ -3039,10 +3116,10 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "running-tool-call",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "first round",
       skills: [],
       background: false,
-      currentDepth: 0,
       parentAbort: undefined,
     });
 
@@ -3052,9 +3129,7 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "running-tool-call",
       toolName: "delegate",
       sessionId: first.sessionId,
-      targetAgentName: "explore",
       prompt: "second round",
-      currentDepth: 0,
       parentAbort: undefined,
     })).rejects.toThrow(AgentRunningError);
 
@@ -3082,9 +3157,7 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "resume-blocked-child",
       toolName: "delegate",
       sessionId: childId,
-      targetAgentName: "explore",
       prompt: "must wait for HITL",
-      currentDepth: 0,
       parentAbort: undefined,
     })).rejects.toThrow(SessionToolBatchActiveError);
 
@@ -3102,44 +3175,10 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       parentToolCallId: "missing-tool-call",
       toolName: "delegate",
-      sessionId: "nonexistent-session-id",
-      targetAgentName: "explore",
+      sessionId: crypto.randomUUID(),
       prompt: "resume",
-      currentDepth: 0,
       parentAbort: undefined,
     })).rejects.toThrow(ChildSessionNotFoundError);
-  });
-
-  test("resumeChildExecution with mismatched agent name throws ChildSessionAgentMismatchError", async () => {
-    const parentId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
-    const { manager } = createManager({}, { factory: makeFactory() });
-
-    const first = await manager.startChildExecution(workspaceRoot, {
-      parentStore,
-      parentSessionId: parentId,
-      parentToolCallId: "mismatch-tool-call",
-      toolName: "delegate",
-      targetAgentName: "explore",
-      prompt: "first round",
-      skills: [],
-      background: false,
-      currentDepth: 0,
-      parentAbort: undefined,
-    });
-    await first.result;
-
-    await expect(manager.resumeChildExecution(workspaceRoot, {
-      parentStore,
-      parentSessionId: parentId,
-      parentToolCallId: "mismatch-tool-call",
-      toolName: "delegate",
-      sessionId: first.sessionId,
-      targetAgentName: "engineer",
-      prompt: "second round",
-      currentDepth: 0,
-      parentAbort: undefined,
-    })).rejects.toThrow(ChildSessionAgentMismatchError);
   });
 
   test("resumeChildExecution with wrong parent throws ChildSessionParentMismatchError", async () => {
@@ -3155,10 +3194,10 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "parent-tool-call",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "first round",
       skills: [],
       background: false,
-      currentDepth: 0,
       parentAbort: undefined,
     });
     await first.result;
@@ -3169,9 +3208,7 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "parent-tool-call",
       toolName: "delegate",
       sessionId: first.sessionId,
-      targetAgentName: "explore",
       prompt: "second round",
-      currentDepth: 0,
       parentAbort: undefined,
     })).rejects.toThrow(ChildSessionParentMismatchError);
   });
@@ -3179,7 +3216,7 @@ describe("SessionExecutionManager", () => {
   test("cancelChildSession on running descendant aborts, marks link cancelled, appends reminder", async () => {
     const parentId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
-    const childRun = deferred<AgentResult>();
+    const childRun = deferred<MockAgentResult>();
     const { manager } = createManager({}, { factory: makeFactory(), childRun: childRun.promise });
 
     const child = await manager.startChildExecution(workspaceRoot, {
@@ -3188,10 +3225,10 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "cancel-tool-call",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "running",
       skills: [],
       background: true,
-      currentDepth: 0,
       parentAbort: undefined,
     });
 
@@ -3217,33 +3254,6 @@ describe("SessionExecutionManager", () => {
     expect(() => manager.cancelChildSession(workspaceRoot, parentId, strangerId)).toThrow(ChildSessionNotDescendantError);
   });
 
-  test("cancelChildSession cascades to grandchildren", async () => {
-    const rootId = crypto.randomUUID();
-    const childId = crypto.randomUUID();
-    const grandchildId = crypto.randomUUID();
-    const rootStore = storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
-    const childStore = storeManager.create(childId, workspaceRoot, { rootSessionId: rootId, parentSessionId: rootId, agentName: "explore" });
-    const grandchildStore = storeManager.create(grandchildId, workspaceRoot, { rootSessionId: rootId, parentSessionId: childId, agentName: "explore" });
-    rootStore.getState().append({ type: "tool-child-session-link", link: makeChildLink(rootId, childId, "explore") });
-    childStore.getState().append({ type: "tool-child-session-link", link: makeChildLink(childId, grandchildId, "explore") });
-    const childRun = deferred<AgentResult>();
-    const grandchildRun = deferred<AgentResult>();
-    const childAgent = new MockAgent(childId, childRun.promise);
-    const grandchildAgent = new MockAgent(grandchildId, grandchildRun.promise);
-    const { manager } = createManager({ [childId]: childAgent, [grandchildId]: grandchildAgent });
-    const childExecution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: childId, userMessage: "child", origin: "tool_call" });
-    const grandchildExecution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: grandchildId, userMessage: "grandchild", origin: "tool_call" });
-    await Promise.resolve();
-
-    expect(manager.cancelChildSession(workspaceRoot, rootId, childId)).toBe(true);
-    childRun.resolve({ text: "done", steps: 1 });
-    grandchildRun.resolve({ text: "done", steps: 1 });
-    await Promise.all([childExecution.promise, grandchildExecution.promise]);
-
-    expect(childExecution.abortController.signal.aborted).toBe(true);
-    expect(grandchildExecution.abortController.signal.aborted).toBe(true);
-  });
-
   test("cancelChildSession on non-running session returns false", async () => {
     const parentId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
@@ -3255,10 +3265,10 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "completed-tool-call",
       toolName: "delegate",
       targetAgentName: "explore",
+      title: "Delegated child",
       prompt: "done",
       skills: [],
       background: false,
-      currentDepth: 0,
       parentAbort: undefined,
     });
     await child.result;

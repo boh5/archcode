@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { usePostMessage, usePostCommand, useStopSessionFamily } from "../../api/mutations";
+import { usePostMessage, useStopSessionFamily } from "../../api/mutations";
 import { useHitlProjectInitialized, useRealtimeHitl } from "../../store/hitl-store";
 import { useSessionFamilyActivity } from "../../store/session-runtime-store";
 import { useSessionStore } from "../../store/session-store";
@@ -34,10 +34,9 @@ export function ChatInput({ slug, sessionId }: ChatInputProps) {
   const hitlReady = useHitlProjectInitialized(slug);
   const modelInfo = useSessionStore(sessionId, (s) => s.modelInfo, slug);
   const postMessage = usePostMessage();
-  const postCommand = usePostCommand();
   const stopSession = useStopSessionFamily();
 
-  const isPending = postMessage.isPending || postCommand.isPending || stopSession.isPending;
+  const isPending = postMessage.isPending || stopSession.isPending;
   const isRunning = activity === "running";
   const isStopping = activity === "stopping";
   const runtimeReady = activity !== undefined;
@@ -82,34 +81,23 @@ useEffect(() => {
     const trimmed = value.trim();
     if (!trimmed || !canCompose) return;
 
-    if (trimmed.startsWith("/")) {
-      const parts = trimmed.split(/\s+/);
-      const commandName = parts[0].slice(1);
-      const commandArgs = parts.slice(1).join(" ") || undefined;
-
-      postCommand.mutate(
-        { slug, sessionId, name: commandName, args: commandArgs },
-        { onSettled: () => setValue("") },
-      );
-    } else {
-      postMessage.mutate(
-        { slug, sessionId, content: trimmed },
-        { onSettled: () => setValue("") },
-      );
-    }
+    postMessage.mutate(
+      { slug, sessionId, content: trimmed },
+      { onSettled: () => setValue("") },
+    );
 
     requestAnimationFrame(() => {
       if (textareaRef.current) {
         textareaRef.current.style.height = "auto";
       }
     });
-  }, [value, canCompose, slug, sessionId, postMessage, postCommand]);
+  }, [value, canCompose, slug, sessionId, postMessage]);
 
   const selectSlashCommand = useCallback(
     (cmd: SlashCommand) => {
       if (!canCompose) return;
-      postCommand.mutate(
-        { slug, sessionId, name: cmd.name.slice(1) },
+      postMessage.mutate(
+        { slug, sessionId, content: cmd.name },
         { onSettled: () => setValue("") },
       );
       setShowSlashMenu(false);
@@ -117,7 +105,7 @@ useEffect(() => {
       setSlashActiveIndex(0);
       textareaRef.current?.focus();
     },
-    [canCompose, slug, sessionId, postCommand],
+    [canCompose, slug, sessionId, postMessage],
   );
 
   const handleKeyDown = useCallback(

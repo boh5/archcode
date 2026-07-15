@@ -254,6 +254,48 @@ describe("createTitleGenerationTask", () => {
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
+  test("skips command notices and titles the first textual user message", async () => {
+    const now = Date.now();
+    const store = storeManager.create(crypto.randomUUID(), TEST_TMP, { agentName: "engineer" });
+    store.setState({
+      messages: [
+        {
+          id: crypto.randomUUID(),
+          role: "user",
+          parts: [{
+            type: "system-notice",
+            id: crypto.randomUUID(),
+            notice: "No safe range to compact",
+            createdAt: now,
+            completedAt: now,
+          }],
+          createdAt: now,
+          completedAt: now,
+        },
+        {
+          id: crypto.randomUUID(),
+          role: "user",
+          parts: [{
+            type: "text",
+            id: crypto.randomUUID(),
+            text: "Verify session persistence in the browser",
+            createdAt: now,
+            completedAt: now,
+          }],
+          createdAt: now,
+          completedAt: now,
+        },
+      ],
+    });
+
+    await createTitleGenerationTask(store).run(makeTaskContext(store));
+
+    expect(store.getState().title).toBe("Short test title");
+    expect(mockGenerateText).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: expect.stringContaining("Verify session persistence") }),
+    );
+  });
+
   test("handles generateText failure gracefully", async () => {
     mockGenerateText.mockRejectedValue(new Error("API error"));
 

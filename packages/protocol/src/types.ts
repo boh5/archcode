@@ -183,8 +183,9 @@ export interface ToolChildSessionLink {
   toolName: string;
   childSessionId: string;
   childAgentName: string;
-  title?: string;
+  title: string;
   description?: string;
+  /** Display-only projection derived from the child's persisted parent chain. */
   depth: number;
   background: boolean;
   status: ToolChildSessionLinkStatus;
@@ -876,6 +877,8 @@ export interface SessionSummary {
   rootSessionId: string;
   parentSessionId?: string;
   agentName: string;
+  /** Persisted Skill identity; execution resolves these names against current policy. */
+  activeSkillNames: string[];
   modelInfo: SessionModelInfo | null;
   title: string | null;
   /** Goal this session belongs to. */
@@ -931,6 +934,7 @@ export interface Session {
   eventCursor?: number;
   modelInfo: SessionModelInfo | null;
   agentName: string;
+  activeSkillNames: string[];
 }
 
 export type DiffLineType = "context" | "add" | "delete";
@@ -1179,9 +1183,4 @@ export interface Automation {
   createdAt: string;
   updatedAt: string;
   nextFireAt?: string;
-}
-
-export interface ApiCommandResult {
-  success: boolean;
-  message: string;
 }

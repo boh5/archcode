@@ -74,7 +74,6 @@ function createManager(storeManager: SessionStoreManager): SessionAgentManager {
       agents: { engineer: { model: providerRegistry.modelIds[0]! } },
     } as unknown as ArchCodeConfig,
     logger: silentLogger,
-    maxConcurrentSessions: 4,
   });
 }
 

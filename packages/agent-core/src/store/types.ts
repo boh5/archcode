@@ -140,7 +140,6 @@ export interface SessionToolBatch {
   readonly agentName: AgentName;
   readonly allowedTools: string[];
   readonly agentSkills: string[];
-  readonly currentDepth?: number;
   readonly partitions: SessionToolBatchPartition[];
   readonly calls: SessionToolBatchCall[];
   readonly createdAt: string;
@@ -160,6 +159,8 @@ export interface SessionStoreState {
   /** Current execution directory. Session files remain owned by the canonical project root. */
   cwd: string;
   agentName: AgentName;
+  /** Canonical Skill identity. Resolved afresh for each execution. */
+  activeSkillNames: string[];
   modelInfo: SessionModelInfo | null;
   title: string | null;
   messages: SessionMessage[];

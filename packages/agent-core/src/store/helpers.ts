@@ -115,7 +115,7 @@ const ToolChildSessionLinkSchema = z.strictObject({
   toolName: z.string(),
   childSessionId: z.string(),
   childAgentName: z.string(),
-  title: z.string().optional(),
+  title: z.string().trim().min(1),
   description: z.string().optional(),
   depth: z.number(),
   background: z.boolean(),
@@ -452,7 +452,6 @@ const SessionToolBatchSchema = z.strictObject({
   agentName: AgentNameSchema,
   allowedTools: z.array(z.string()),
   agentSkills: z.array(z.string()),
-  currentDepth: z.number().int().nonnegative().optional(),
   partitions: z.array(z.strictObject({ type: z.enum(["parallel", "serial"]), callIds: z.array(z.string().trim().min(1)).min(1) })),
   calls: z.array(SessionToolBatchCallSchema),
   createdAt: z.string(),
@@ -485,6 +484,10 @@ export const SessionFileSchema = z.strictObject({
   updatedAt: z.number(),
   cwd: z.string(),
   agentName: AgentNameSchema,
+  activeSkillNames: z.array(z.string().trim().min(1)).refine(
+    (names) => new Set(names).size === names.length,
+    "activeSkillNames must not contain duplicates",
+  ),
   modelInfo: SessionModelInfoSchema.nullable(),
   title: z.string().nullable(),
   messages: z.array(StoredMessageSchema),
@@ -524,6 +527,7 @@ export interface SessionSummary {
   goalId?: string;
   sessionRole?: SessionRole;
   agentName: string;
+  activeSkillNames: string[];
   modelInfo: SessionModelInfo | null;
   title: string | null;
   createdAt: number;
@@ -532,7 +536,7 @@ export interface SessionSummary {
 
 type PersistableSessionState = Pick<
   SessionStoreState,
-  "sessionId" | "createdAt" | "updatedAt" | "cwd" | "agentName" | "modelInfo" | "title" | "messages" | "steps" | "stats" | "executions" | "compression" | "todos" | "reminders" | "childSessionLinks" | "toolBatches" | "rootSessionId"
+  "sessionId" | "createdAt" | "updatedAt" | "cwd" | "agentName" | "activeSkillNames" | "modelInfo" | "title" | "messages" | "steps" | "stats" | "executions" | "compression" | "todos" | "reminders" | "childSessionLinks" | "toolBatches" | "rootSessionId"
 > & Partial<Pick<
   SessionStoreState,
   "parentSessionId" | "goalId" | "sessionRole" | "events"
@@ -567,6 +571,7 @@ async function saveSessionTranscript(
     updatedAt: state.updatedAt,
     cwd: state.cwd,
     agentName: state.agentName,
+    activeSkillNames: state.activeSkillNames,
     modelInfo: state.modelInfo,
     title: state.title,
     messages: state.messages,
@@ -613,6 +618,7 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
     updatedAt: state.updatedAt,
     cwd: state.cwd,
     agentName: state.agentName,
+    activeSkillNames: state.activeSkillNames,
     modelInfo: state.modelInfo,
     title: state.title,
     messages: state.messages,
@@ -650,6 +656,7 @@ async function listSessionSummaries(workspaceRoot: string): Promise<SessionSumma
         ...(parsed.goalId === undefined ? {} : { goalId: parsed.goalId }),
         ...(parsed.sessionRole === undefined ? {} : { sessionRole: parsed.sessionRole }),
         agentName: parsed.agentName,
+        activeSkillNames: parsed.activeSkillNames,
         modelInfo: parsed.modelInfo,
         title: parsed.title,
         createdAt: parsed.createdAt,
@@ -702,6 +709,7 @@ async function scanAllSessionSummaries(workspaceRoot: string): Promise<SessionSu
       ...(parsed.goalId === undefined ? {} : { goalId: parsed.goalId }),
       ...(parsed.sessionRole === undefined ? {} : { sessionRole: parsed.sessionRole }),
       agentName: parsed.agentName,
+      activeSkillNames: parsed.activeSkillNames,
       modelInfo: parsed.modelInfo,
       title: parsed.title,
       createdAt: parsed.createdAt,

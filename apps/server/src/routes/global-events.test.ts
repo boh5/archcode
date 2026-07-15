@@ -314,7 +314,7 @@ describe("global events route", () => {
     const serverRuntime = createServerEventRuntime(runtime);
     const response = await createApp(globalEventBus).request("/api/events");
 
-    const execution = serverRuntime.startSessionExecution({
+    const execution = await serverRuntime.startSessionMessageExecution({
       slug: "proj",
       workspaceRoot: "/workspace",
       sessionId: "session-1",
@@ -361,7 +361,22 @@ function createRuntimeWithManualSubscriptions() {
       subscriptions.set(input.sessionId, input.onEvent);
       return () => subscriptions.delete(input.sessionId);
     }),
-    startSessionExecution: mock(() => ({ promise })),
+    startSessionMessageExecution: mock(async (input: {
+      sessionId: string;
+      workspaceRoot: string;
+      executionId?: string;
+    }) => ({
+      sessionId: input.sessionId,
+      rootSessionId: input.sessionId,
+      workspaceRoot: input.workspaceRoot,
+      agentName: "engineer" as const,
+      origin: "user_message" as const,
+      abortController: new AbortController(),
+      promise,
+      executionToken: Symbol("global-events-test-execution"),
+      startedAt: Date.now(),
+      executionId: input.executionId ?? "execution-1",
+    })),
     emitSession: (sessionId: string, event: GlobalSSEEvent) => subscriptions.get(sessionId)?.(event),
     resolveExecution: () => resolveExecution(),
   };

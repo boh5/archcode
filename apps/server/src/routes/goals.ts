@@ -65,11 +65,12 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
 
       const retried = await context.goalLifecycle.retry(goalId);
       try {
-        runtime.startSessionExecution({
+        await runtime.startGoalSessionExecution({
           slug: project.slug,
           workspaceRoot: project.workspaceRoot,
           sessionId: retried.mainSessionId,
           userMessage: buildGoalRetryUserMessage(retried),
+          origin: "goal_claim",
         });
       } catch (error) {
         if (!hasErrorName(error, "AgentRunningError")) {

@@ -52,8 +52,17 @@ function ReasoningBlock({ part }: { part: ReasoningPart }) {
   );
 }
 
-function MsgUser({ message }: { message: SessionMessage }) {
+export function MsgUser({ message }: { message: SessionMessage }) {
   const textParts = message.parts.filter((p): p is TextPart => p.type === "text");
+  const systemNoticeParts = message.parts.filter((p): p is SystemNoticePart => p.type === "system-notice");
+
+  if (textParts.length === 0 && systemNoticeParts.length > 0) {
+    return (
+      <div className="w-full">
+        {systemNoticeParts.map((part) => <SystemNoticeBlock key={part.id} part={part} />)}
+      </div>
+    );
+  }
 
   return (
     <div className="flex gap-2.5 items-start justify-end">

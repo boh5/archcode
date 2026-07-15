@@ -163,7 +163,7 @@ describe("createServerApp", () => {
     const observed: GlobalSSEEvent[] = [];
     const unsubscribeBus = globalEventBus.subscribe((event) => observed.push(event));
 
-    const execution = serverRuntime.startSessionExecution({
+    const execution = await serverRuntime.startSessionMessageExecution({
       slug: "proj",
       workspaceRoot: "/workspace",
       sessionId: "root",
@@ -239,7 +239,7 @@ describe("createServerApp", () => {
     const observed: GlobalSSEEvent[] = [];
     const unsubscribeBus = globalEventBus.subscribe((event) => observed.push(event));
 
-    const execution = serverRuntime.startSessionExecution({
+    const execution = await serverRuntime.startSessionMessageExecution({
       slug: "proj",
       workspaceRoot: "/workspace",
       sessionId: "root",
@@ -347,8 +347,30 @@ function createRuntimeWithManualSubscriptions() {
     }),
     subscribeHitlEvents: mock(() => () => undefined),
     subscribeSessionRuntimeChanges: mock(() => () => undefined),
-    startSessionExecution: mock(() => ({ promise })),
-    startSessionMessageExecution: mock(async () => ({ promise })),
+    startSessionMessageExecution: mock(async (input: { sessionId: string; workspaceRoot: string; origin?: "user_message"; executionId?: string }) => ({
+      sessionId: input.sessionId,
+      rootSessionId: input.sessionId,
+      workspaceRoot: input.workspaceRoot,
+      agentName: "engineer" as const,
+      origin: "user_message" as const,
+      abortController: new AbortController(),
+      promise,
+      executionToken: Symbol("app-test-execution"),
+      startedAt: Date.now(),
+      executionId: input.executionId ?? "execution-1",
+    })),
+    startGoalSessionExecution: mock(async (input: { sessionId: string; workspaceRoot: string; origin?: "goal_claim"; executionId?: string }) => ({
+      sessionId: input.sessionId,
+      rootSessionId: input.sessionId,
+      workspaceRoot: input.workspaceRoot,
+      agentName: "goal_lead" as const,
+      origin: "goal_claim" as const,
+      abortController: new AbortController(),
+      promise,
+      executionToken: Symbol("app-test-goal-execution"),
+      startedAt: Date.now(),
+      executionId: input.executionId ?? "goal-execution-1",
+    })),
     getSessionFile: mock(async () => {
       sessionFileReads += 1;
       for (const waiter of sessionFileReadWaiters.splice(0)) {
@@ -542,6 +564,7 @@ function childLinkEvent(parentSessionId: string, childSessionId: string, status:
         toolName: "delegate",
         childSessionId,
         childAgentName: "explore",
+        title: "Explore child",
         depth: 1,
         background: true,
         status,

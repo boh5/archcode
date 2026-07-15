@@ -325,6 +325,123 @@ function findMemoryReadOwnershipViolations(): Violation[] {
     .map((pattern) => ({ file: relativeFile(file), importPath: `source-pattern:${pattern.source}` }));
 }
 
+function findAgentRunOwnershipViolations(): Violation[] {
+  const owner = normalize(join("execution", "session-execution-manager.ts"));
+  const allowedNonAgentReceivers = new Map<string, ReadonlySet<string>>([
+    [normalize(join("binary", "installer.ts")), new Set(["input.runner", "runner"])],
+    [normalize(join("binary", "manager.ts")), new Set(["runner"])],
+    [normalize(join("worktrees", "service.ts")), new Set(["this.#git"])],
+    [normalize(join("lsp", "installer.ts")), new Set(["createProcessRunner()"])],
+    [normalize(join("tools", "builtins", "git-status.ts")), new Set(["createProcessRunner()"])],
+    [normalize(join("tools", "builtins", "grep.ts")), new Set(["runner"])],
+    [normalize(join("tools", "builtins", "glob.ts")), new Set(["runner"])],
+    [normalize(join("tools", "builtins", "git-diff.ts")), new Set(["createProcessRunner()"])],
+    [normalize(join("tools", "builtins", "bash.ts")), new Set(["createProcessRunner()"])],
+    [normalize(join("tools", "builtins", "ast-grep", "search.ts")), new Set(["createProcessRunner()"])],
+    [normalize(join("tools", "builtins", "ast-grep", "replace.ts")), new Set(["runner"])],
+    [normalize(join("agents", "query", "hooks", "title-generation.ts")), new Set(["task"])],
+    [normalize(join("agents", "query", "hooks", "memory-extraction.ts")), new Set(["task"])],
+    [normalize(join("agents", "query", "hooks", "memory-consolidation.ts")), new Set(["task"])],
+  ]);
+  const violations: Violation[] = [];
+  for (const file of findTsFiles(srcRoot)) {
+    const relativeToSrc = normalize(relative(srcRoot, file));
+    if (relativeToSrc === owner) continue;
+    const source = readFileSync(file, "utf8");
+    const allowedReceivers = allowedNonAgentReceivers.get(relativeToSrc) ?? new Set<string>();
+    for (const match of source.matchAll(/\b((?:this|[A-Za-z_$][\w$]*)(?:\.(?:#[A-Za-z_$][\w$]*|[A-Za-z_$][\w$]*))*(?:\(\))?)\.run\s*\(/g)) {
+      const receiver = match[1];
+      if (receiver !== undefined && !allowedReceivers.has(receiver)) {
+        violations.push({
+          file: relativeFile(file),
+          importPath: `source-pattern:unclassified run capability ${receiver}.run outside SessionExecutionManager`,
+        });
+      }
+    }
+  }
+  return violations;
+}
+
+function findExecutionLifecycleWriteViolations(): Violation[] {
+  const allowedLifecycleReaders = new Set([
+    normalize(join("execution", "session-execution-manager.ts")),
+    normalize(join("store", "reduce.ts")),
+    normalize(join("store", "session-store-manager.ts")),
+  ]);
+  const violations: Violation[] = [];
+  for (const file of findTsFiles(srcRoot)) {
+    const relativeToSrc = normalize(relative(srcRoot, file));
+    if (allowedLifecycleReaders.has(relativeToSrc)) continue;
+    const source = readFileSync(file, "utf8");
+    if (/["'`]execution-(?:start|end)["'`]/.test(source)) {
+      violations.push({
+        file: relativeFile(file),
+        importPath: "source-pattern:execution lifecycle event construction outside owner or reducer",
+      });
+    }
+  }
+  return violations;
+}
+
+function findExecutionManagerLayerViolations(): Violation[] {
+  const file = join(srcRoot, "execution/session-execution-manager.ts");
+  return extractImports(file)
+    .filter(({ importPath }) => (
+      importPath.includes("apps/server")
+      || importPath.includes("apps/web")
+      || importPath.startsWith("@archcode/server")
+      || importPath.startsWith("@archcode/web")
+    ))
+    .map(({ importPath }) => ({ file: relativeFile(file), importPath }));
+}
+
+function findSessionAgentManagerOwnershipViolations(): Violation[] {
+  const file = join(srcRoot, "agents/session-agent-manager.ts");
+  const source = readFileSync(file, "utf8");
+  const forbiddenPatterns = [
+    /\bactiveJobsByWorkspace\b/,
+    /\bactiveSessionsByWorkspace\b/,
+    /\bmaxConcurrentSessions\b/,
+    /\bConcurrentSessionLimitError\b/,
+    /\bacquireWorkspaceSlot\b/,
+    /\breleaseWorkspaceSlot\b/,
+    /\bdispatchCommand\b/,
+  ];
+  return forbiddenPatterns
+    .filter((pattern) => pattern.test(source))
+    .map((pattern) => ({ file: relativeFile(file), importPath: `source-pattern:${pattern.source}` }));
+}
+
+function findToolBatchDomainForwardingViolations(): Violation[] {
+  const file = join(srcRoot, "execution/session-tool-batch-scheduler.ts");
+  const source = readFileSync(file, "utf8");
+  const violations = extractImports(file)
+    .filter(({ importPath }) => /(?:^|\/)(?:goals|automations|hitl|events)(?:\/|$)/.test(importPath))
+    .map(({ importPath }) => ({ file: relativeFile(file), importPath }));
+  for (const pattern of [/\bGoalLifecycleService\b/, /\bglobalEventBus\b/, /\bemitGlobalEvent\b/]) {
+    if (pattern.test(source)) {
+      violations.push({ file: relativeFile(file), importPath: `source-pattern:${pattern.source}` });
+    }
+  }
+  return violations;
+}
+
+function findDomainQueryReverseImportViolations(): Violation[] {
+  const domainRoots = ["goals", "automations", "hitl", "todos", "projects"]
+    .map((name) => join(srcRoot, name));
+  const violations: Violation[] = [];
+  for (const root of domainRoots) {
+    for (const file of findTsFiles(root)) {
+      for (const { importPath } of extractImports(file)) {
+        if (/(?:^|\/)agents\/query(?:\/|$)/.test(importPath)) {
+          violations.push({ file: relativeFile(file), importPath });
+        }
+      }
+    }
+  }
+  return violations;
+}
+
 describe("module migration boundary contracts", () => {
   describe("public API surface", () => {
     test("package indexes do not re-export private migration internals", () => {
@@ -368,6 +485,32 @@ describe("module migration boundary contracts", () => {
   describe("memory owner boundary", () => {
     test("memory_read delegates memory file access and parsing to the memory module", () => {
       expectNoViolations(findMemoryReadOwnershipViolations());
+    });
+  });
+
+  describe("execution ownership", () => {
+    test("production Agent.run calls are owned by SessionExecutionManager", () => {
+      expectNoViolations(findAgentRunOwnershipViolations());
+    });
+
+    test("production durable execution lifecycle writes are manager-owned", () => {
+      expectNoViolations(findExecutionLifecycleWriteViolations());
+    });
+
+    test("SessionExecutionManager does not import Server or Web layers", () => {
+      expectNoViolations(findExecutionManagerLayerViolations());
+    });
+
+    test("SessionAgentManager does not own live execution concurrency", () => {
+      expectNoViolations(findSessionAgentManagerOwnershipViolations());
+    });
+
+    test("SessionToolBatchScheduler does not forward domain lifecycle events", () => {
+      expectNoViolations(findToolBatchDomainForwardingViolations());
+    });
+
+    test("domain services do not reverse-import the Agent query loop", () => {
+      expectNoViolations(findDomainQueryReverseImportViolations());
     });
   });
 });

@@ -64,7 +64,7 @@ const validPayloads = [
   { type: "tool-input-resolved", toolCallId: "call-1", toolName: "file_read", input: { path: "README.md" } },
   { type: "tool-attempt", toolCallId: "call-1", toolName: "file_write", attemptId: "attempt-1", timestamp: 1, destructive: false },
   { type: "tool-result", toolCallId: "call-1", toolName: "file_read", output: "ok", isError: false, meta: {} },
-  { type: "tool-child-session-link", link: { parentSessionId: "parent", parentToolCallId: "call", toolName: "delegate", childSessionId: "child", childAgentName: "explore", depth: 1, background: false, status: "completed", createdAt: 1 } },
+  { type: "tool-child-session-link", link: { parentSessionId: "parent", parentToolCallId: "call", toolName: "delegate", childSessionId: "child", childAgentName: "explore", title: "Explore child", depth: 1, background: false, status: "completed", createdAt: 1 } },
   { type: "todo-write", todos: [{ id: "todo-1", content: "work", status: "in_progress" }] },
   { type: "reminder", reminder: { id: "reminder-1", source: { type: "subagent_completed", sessionId: "child" }, delivery: "auto_inject", content: "done", createdAt: 1, consumedAt: null } },
   { type: "reminder-consumed", reminderIds: ["reminder-1"] },

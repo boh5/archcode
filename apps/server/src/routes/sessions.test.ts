@@ -139,9 +139,6 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
         diagnostics: [],
       };
     },
-    startSessionExecution: () => {
-      throw new Error("not implemented");
-    },
     stopSessionFamily: async (workspaceRoot: string, rootSessionId: string) => {
       const session = sessions.get(`${workspaceRoot}\0${rootSessionId}`);
       if (session === undefined) throw new MissingSessionFileError();

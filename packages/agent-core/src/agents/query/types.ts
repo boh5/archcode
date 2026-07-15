@@ -3,7 +3,7 @@ import type { ModelCallOptions } from "../../config/provider";
 import type { ModelInfo } from "../../provider/model";
 import type { CommandRegistry } from "../../commands/registry";
 import type { SessionStoreManager } from "../../store/session-store-manager";
-import type { SessionStoreState } from "../../store/types";
+import type { ExecutionEndEvent, SessionStoreState } from "../../store/types";
 import type { AskUserCallback, ToolConfirmationCallback, ToolExecutionControl } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
 import type { ProjectContext } from "../../projects/types";
@@ -45,6 +45,8 @@ export interface QueryLoopOptions {
 export interface QueryLoopResult {
   text: string;
   steps: number;
+  status: ExecutionEndEvent["status"];
+  error?: string;
   executionControl?: ToolExecutionControl;
   cwdChanged?: {
     previousCwd: string;

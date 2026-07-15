@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
-import type { CompressionBlockPart, CompressionBlockSnapshot, CompactionPart, ToolChildSessionLink, RecoveryNoticePart, TextPart, ReasoningPart } from "@archcode/protocol";
-import { parseToolOutput, PartRenderer } from "./ChatMessages";
+import type { CompressionBlockPart, CompressionBlockSnapshot, CompactionPart, ToolChildSessionLink, RecoveryNoticePart, SessionMessage, TextPart, ReasoningPart } from "@archcode/protocol";
+import { MsgUser, parseToolOutput, PartRenderer } from "./ChatMessages";
 import { CompressionBlock } from "./CompressionBlock";
 import type { CompressionOriginalRangeSuccess } from "../../api/compression";
 
@@ -179,6 +179,26 @@ describe("PartRenderer", () => {
     const text = textContent(el);
     expect(text).toContain("Recovery failed");
     expect(text).toContain("context_overflow");
+  });
+});
+
+describe("MsgUser", () => {
+  test("renders a command system notice instead of an empty user bubble", () => {
+    const message: SessionMessage = {
+      id: "command-result",
+      role: "user",
+      parts: [{
+        type: "system-notice",
+        id: "notice-1",
+        notice: "No safe range to compact",
+        createdAt: Date.now(),
+        completedAt: Date.now(),
+      }],
+      createdAt: Date.now(),
+      completedAt: Date.now(),
+    };
+
+    expect(textContent(MsgUser({ message }))).toContain("No safe range to compact");
   });
 });
 
@@ -623,7 +643,7 @@ describe("CompressionBlock", () => {
                 state: "completed",
                 toolCallId: "tc-delegate-1",
                 toolName: "delegate",
-                input: { agent_type: "explore", description: "Explore codebase" },
+                input: { agent_type: "explore", title: "Explore codebase", task: "Explore codebase" },
                 output: JSON.stringify({ sessionId: "child-sess-1", text: "Done" }),
                 createdAt: 1,
                 startedAt: 1,

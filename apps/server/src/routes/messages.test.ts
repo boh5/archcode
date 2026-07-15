@@ -19,6 +19,7 @@ function makeExecution(sessionId: string, workspaceRoot: string): ActiveSessionE
     promise: new Promise(() => undefined),
     executionToken: Symbol("test-execution"),
     startedAt: Date.now(),
+    executionId: crypto.randomUUID(),
   };
 }
 
@@ -36,11 +37,6 @@ function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
     createSession: mock(async () => ({ sessionId: crypto.randomUUID(), title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] })),
     getSessionFile: mock(async (_workspaceRoot: string, sessionId: string) => ({ sessionId, title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] })),
     listSessions: mock(async () => []),
-    startSessionExecution: mock((input) => {
-      if (running.has(input.sessionId)) throw new AgentRunningError();
-      running.add(input.sessionId);
-      return makeExecution(input.sessionId, input.workspaceRoot);
-    }),
     startSessionMessageExecution: mock(async (input) => {
       if (running.has(input.sessionId)) throw new AgentRunningError();
       running.add(input.sessionId);
@@ -59,7 +55,6 @@ function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
     disposeSessionAgent: mock(() => undefined),
     disposeAllSessionAgents: mock(() => undefined),
     isSessionTombstoned: mock(() => false),
-    dispatchCommand: mock(async () => null),
     notifyRuntimeShutdown: mock(() => undefined),
   } as unknown as AgentRuntime;
 }

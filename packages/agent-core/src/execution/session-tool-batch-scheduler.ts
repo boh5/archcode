@@ -40,7 +40,6 @@ export interface SessionToolBatchSchedulerOptions {
   readonly agentName: SessionStoreState["agentName"];
   readonly allowedTools: readonly string[];
   readonly agentSkills: readonly string[];
-  readonly currentDepth?: number;
   readonly executeCall: (call: ToolCallLike, context: SessionToolBatchExecuteContext) => Promise<ToolExecutionResult>;
 }
 
@@ -80,7 +79,6 @@ export class SessionToolBatchScheduler {
       agentName: this.#options.agentName,
       allowedTools: [...this.#options.allowedTools],
       agentSkills: [...this.#options.agentSkills],
-      ...(this.#options.currentDepth === undefined ? {} : { currentDepth: this.#options.currentDepth }),
       partitions: partitions.map((partition) => ({
         type: partition.type,
         callIds: (partition.type === "parallel" ? partition.calls : [partition.call]).map((call) => call.toolCallId),

@@ -103,7 +103,7 @@ function makeLogger(): Logger & { debug: ReturnType<typeof mock> } {
 }
 
 describe("registerBuiltinTools", () => {
-  it("registers all 28 builtins including Project Todo shaping and dynamic Session worktree transitions", () => {
+  it("registers all 29 builtins including Session resume and dynamic worktree transitions", () => {
     const descriptors = createBuiltinToolDescriptors();
     const names = descriptors.map((descriptor) => descriptor.name);
 
@@ -127,6 +127,7 @@ describe("registerBuiltinTools", () => {
       "web_fetch",
       "wait_for_reminder",
       "delegate",
+      "resume_session",
       "background_output",
       "cancel_session",
       "skill_list",
@@ -666,9 +667,10 @@ describe("registerBuiltinTools", () => {
   });
 
   describe("DELEGATION_CORE_TOOLS", () => {
-    it("includes exactly delegate, background_output, wait_for_reminder", () => {
+    it("includes exactly delegate, resume_session, background_output, wait_for_reminder", () => {
       expect(DELEGATION_CORE_TOOLS).toEqual([
         "delegate",
+        "resume_session",
         "background_output",
         "wait_for_reminder",
       ]);

@@ -82,9 +82,6 @@ function createTestRuntime(
     createSession: async () => ({ sessionId: "session", title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] }),
     getSessionFile: async (_workspaceRoot: string, sessionId: string) => ({ sessionId, title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] }),
     listSessions: async () => [],
-    startSessionExecution: () => {
-      throw new Error("not implemented");
-    },
     stopSessionFamily: async () => undefined,
     abortAllSessionExecutions: async () => undefined,
     getSessionFamilyActivity: () => "idle",
@@ -94,7 +91,6 @@ function createTestRuntime(
     disposeSessionAgent: () => undefined,
     disposeAllSessionAgents: () => undefined,
     isSessionTombstoned: () => false,
-    dispatchCommand: async () => null,
     notifyRuntimeShutdown: () => undefined,
     ...overrides,
   } as unknown as AgentRuntime;

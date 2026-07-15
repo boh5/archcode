@@ -12,14 +12,14 @@ export function createTitleGenerationTask(
     run: async (ctx: BackgroundTaskContext) => {
       const state = store.getState();
 
-      const firstUserMessage = state.messages.find((m) => m.role === "user");
-      if (!firstUserMessage) return;
-
-      const text = firstUserMessage.parts
-        .filter((p): p is TextPart => p.type === "text")
-        .map((p) => p.text)
-        .join(" ")
-        .trim();
+      const text = state.messages
+        .filter((message) => message.role === "user")
+        .map((message) => message.parts
+          .filter((part): part is TextPart => part.type === "text")
+          .map((part) => part.text)
+          .join(" ")
+          .trim())
+        .find((messageText) => messageText.length > 0);
 
       if (!text) return;
 

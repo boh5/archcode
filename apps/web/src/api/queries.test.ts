@@ -95,6 +95,7 @@ describe("web session query contracts", () => {
       cwd: "/workspace",
       rootSessionId: "root-session",
       agentName: "goal_lead",
+      activeSkillNames: [],
       modelInfo: null,
       goalId: "goal-root",
       title: "Root",
@@ -107,6 +108,7 @@ describe("web session query contracts", () => {
       rootSessionId: "root-session",
       parentSessionId: "root-session",
       agentName: "explore",
+      activeSkillNames: [],
       modelInfo: null,
       title: "Child",
       createdAt: 1_500,
@@ -127,6 +129,7 @@ describe("web session query contracts", () => {
         rootSessionId: "root-session",
         parentSessionId: undefined,
         agentName: "goal_lead",
+        activeSkillNames: [],
         modelInfo: null,
         goalId: "goal-root",
         title: "Root",
@@ -139,6 +142,7 @@ describe("web session query contracts", () => {
         rootSessionId: "root-session",
         parentSessionId: "root-session",
         agentName: "explore",
+        activeSkillNames: [],
         modelInfo: null,
         title: "Child",
         createdAt: 1_500,
@@ -184,7 +188,7 @@ describe("web session query contracts", () => {
     globalThis.document = { cookie: "" } as Document;
     const tree: SessionTreeResponse = {
       root: {
-        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", agentName: "engineer", modelInfo: null, title: "Root", createdAt: 1_000, updatedAt: 1_000 },
+        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", agentName: "engineer", activeSkillNames: [], modelInfo: null, title: "Root", createdAt: 1_000, updatedAt: 1_000 },
         children: [
           {
             session: {
@@ -193,6 +197,7 @@ describe("web session query contracts", () => {
               rootSessionId: "root-session",
               parentSessionId: "root-session",
               agentName: "explore",
+              activeSkillNames: [],
               modelInfo: null,
               title: "Child",
               createdAt: 2_000,

@@ -83,7 +83,6 @@ Output contract:
     autoInjectReminder: true,
     todoStepReminder: true,
     todoQueryLoopContinuation: true,
-    transcriptSave: true,
     memoryExtraction: false,
     memoryConsolidation: false,
     titleGeneration: "unless-supplied",

@@ -6,7 +6,6 @@ import {
 } from "../store/control-plane-readiness";
 import { hitlStore } from "../store/hitl-store";
 import type {
-  ApiCommandResult,
   GoalState,
   HitlResponse,
   HitlStatus,
@@ -95,28 +94,6 @@ export function usePostMessage() {
       {
         method: "POST",
         body: { text: content },
-      },
-    ),
-  });
-}
-
-export function usePostCommand() {
-  return useMutation({
-    mutationFn: async ({
-      slug,
-      sessionId,
-      name,
-      args,
-    }: {
-      slug: string;
-      sessionId: string;
-      name: string;
-      args?: string;
-    }) => apiFetch<ApiCommandResult>(
-      `/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(sessionId)}/commands`,
-      {
-        method: "POST",
-        body: args === undefined ? { name } : { name, args },
       },
     ),
   });

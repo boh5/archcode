@@ -147,6 +147,6 @@ function buildLinksByChild(files: readonly SessionFile[]): Map<string, ToolChild
 
 function isMaintenanceSession(file: SessionFile, parentLinks: readonly ToolChildSessionLink[]): boolean {
   const values = [file.agentName, file.title ?? "", file.sessionRole ?? ""];
-  for (const link of parentLinks) values.push(link.toolName, link.childAgentName, link.title ?? "", link.description ?? "");
+  for (const link of parentLinks) values.push(link.toolName, link.childAgentName, link.title, link.description ?? "");
   return values.some((value) => MAINTENANCE_NAMES.has(value.trim().toLowerCase()));
 }

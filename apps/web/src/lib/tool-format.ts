@@ -25,6 +25,7 @@ import {
   TOOL_AST_GREP_REPLACE,
   TOOL_WAIT_FOR_REMINDER,
   TOOL_BACKGROUND_OUTPUT,
+  TOOL_RESUME_SESSION,
   TOOL_VIEW_TOOL_OUTPUT,
   TOOL_SKILL_LIST,
   TOOL_SKILL_READ,
@@ -189,15 +190,15 @@ export function getToolSummary(toolName: string, input: unknown): ToolSummary {
     return { icon, primary: cwd ?? "—" };
   }
 
-  // Delegate: agent_type: prompt summary
+  // Delegate: agent_type: title summary
   if (toolName === TOOL_DELEGATE) {
     const agentType = typeof obj.agent_type === "string" ? obj.agent_type : undefined;
-    const prompt = typeof obj.prompt === "string" ? obj.prompt : undefined;
-    const description = typeof obj.description === "string" ? obj.description : undefined;
-    if (agentType && prompt) {
-      return { icon, primary: `${agentType}: ${truncate(prompt, INLINE_VALUE_MAX_CHARS)}` };
+    const title = typeof obj.title === "string" ? obj.title : undefined;
+    const task = typeof obj.task === "string" ? obj.task : undefined;
+    if (agentType && title) {
+      return { icon, primary: `${agentType}: ${truncate(title, INLINE_VALUE_MAX_CHARS)}`, secondary: task ? truncate(task, INLINE_VALUE_MAX_CHARS) : undefined };
     }
-    return { icon, primary: truncate(prompt ?? description ?? agentType ?? "—", INLINE_VALUE_MAX_CHARS) };
+    return { icon, primary: truncate(title ?? agentType ?? "—", INLINE_VALUE_MAX_CHARS), secondary: task ? truncate(task, INLINE_VALUE_MAX_CHARS) : undefined };
   }
 
   // Web fetch: url
@@ -228,6 +229,11 @@ export function getToolSummary(toolName: string, input: unknown): ToolSummary {
   if (toolName === TOOL_BACKGROUND_OUTPUT) {
     const sessionId = typeof obj.session_id === "string" ? obj.session_id : undefined;
     return { icon, primary: sessionId ?? "—" };
+  }
+  if (toolName === TOOL_RESUME_SESSION) {
+    const sessionId = typeof obj.session_id === "string" ? obj.session_id : undefined;
+    const task = typeof obj.task === "string" ? obj.task : undefined;
+    return { icon, primary: sessionId ?? "—", secondary: task ? truncate(task, INLINE_VALUE_MAX_CHARS) : undefined };
   }
   if (toolName === TOOL_WAIT_FOR_REMINDER || toolName === TOOL_VIEW_TOOL_OUTPUT) {
     return { icon, primary: "—" };
@@ -275,7 +281,7 @@ const DETAIL_FIELDS_BY_TOOL: Partial<Record<BuiltinToolName, string[]>> = {
   [TOOL_LSP_GOTO_DEFINITION]: ["filePath", "path", "line", "character"],
   [TOOL_LSP_FIND_REFERENCES]: ["filePath", "path", "line", "character"],
   [TOOL_LSP_SYMBOLS]: ["filePath", "query", "scope"],
-  [TOOL_DELEGATE]: ["agent_type", "prompt", "skills", "description", "title", "background"],
+  [TOOL_DELEGATE]: ["agent_type", "persona", "task", "context", "skills", "title", "background"],
   [TOOL_TODO_WRITE]: [],
   [TOOL_ASK_USER]: ["question"],
   [TOOL_MEMORY_READ]: ["topic", "path"],
@@ -284,6 +290,7 @@ const DETAIL_FIELDS_BY_TOOL: Partial<Record<BuiltinToolName, string[]>> = {
   [TOOL_SKILL_READ]: ["name"],
   [TOOL_WAIT_FOR_REMINDER]: [],
   [TOOL_BACKGROUND_OUTPUT]: ["session_id", "block", "timeout_ms", "full_session", "message_limit", "since_message_id", "include_tool_results", "include_reasoning"],
+  [TOOL_RESUME_SESSION]: ["session_id", "task", "context", "background"],
   [TOOL_VIEW_TOOL_OUTPUT]: ["taskId"],
 };
 
@@ -486,8 +493,20 @@ export function getToolInvalidInputMessage(toolName: string, input: unknown): st
     if (!obj.agent_type || typeof obj.agent_type !== "string") {
       return `Invalid delegate input: missing required agent_type`;
     }
-    if (!obj.prompt || typeof obj.prompt !== "string") {
-      return `Invalid delegate input: missing required prompt`;
+    if (!obj.title || typeof obj.title !== "string") {
+      return `Invalid delegate input: missing required title`;
+    }
+    if (!obj.task || typeof obj.task !== "string") {
+      return `Invalid delegate input: missing required task`;
+    }
+  }
+
+  if (toolName === TOOL_RESUME_SESSION) {
+    if (!obj.session_id || typeof obj.session_id !== "string") {
+      return `Invalid resume_session input: missing required session_id`;
+    }
+    if (!obj.task || typeof obj.task !== "string") {
+      return `Invalid resume_session input: missing required task`;
     }
   }
 

@@ -84,7 +84,6 @@ Output:
     autoInjectReminder: true,
     todoStepReminder: true,
     todoQueryLoopContinuation: false,
-    transcriptSave: true,
     memoryExtraction: true,
     memoryConsolidation: true,
     titleGeneration: "enabled",

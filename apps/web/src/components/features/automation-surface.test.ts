@@ -37,9 +37,6 @@ describe("Automation navigation and detail actions", () => {
     expect(goals).toContain("usePostMessage");
     expect(automations).toContain("usePostMessage");
     expect(sidebar).toContain("usePostMessage");
-    expect(goals).not.toContain("usePostCommand");
-    expect(automations).not.toContain("usePostCommand");
-    expect(sidebar).not.toContain("usePostCommand");
     expect(goals).not.toContain("CreateGoalDialog");
     expect(automations).not.toContain("AutomationDialog");
   });

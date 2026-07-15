@@ -186,6 +186,7 @@ type PersistedSessionState = Pick<
   | "updatedAt"
   | "cwd"
   | "agentName"
+  | "activeSkillNames"
   | "modelInfo"
   | "title"
   | "messages"
@@ -224,6 +225,7 @@ function persistedState(
     updatedAt: 99,
     cwd: TMP_DIR,
     agentName: "engineer",
+    activeSkillNames: [],
     modelInfo: null,
     title: null,
     messages,
@@ -380,6 +382,25 @@ describe("session transcript serialization", () => {
     const { agentName: _agentName, ...stateWithoutAgentName } = persistedState(sessionId);
 
     await writeSessionFile(sessionId, stateWithoutAgentName);
+
+    await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
+  });
+
+  test("load rejects files without canonical activeSkillNames", async () => {
+    const sessionId = uniqueSessionId("missing-active-skills");
+    const { activeSkillNames: _activeSkillNames, ...stateWithoutActiveSkills } = persistedState(sessionId);
+
+    await writeSessionFile(sessionId, stateWithoutActiveSkills);
+
+    await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
+  });
+
+  test("load rejects duplicate canonical activeSkillNames", async () => {
+    const sessionId = uniqueSessionId("duplicate-active-skills");
+    await writeSessionFile(sessionId, {
+      ...persistedState(sessionId),
+      activeSkillNames: ["codemap", "codemap"],
+    });
 
     await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
   });
@@ -982,6 +1003,7 @@ describe("session transcript serialization", () => {
     const parsed: Record<string, unknown> = JSON.parse(raw);
 
     expect(Object.keys(parsed).sort()).toEqual([
+      "activeSkillNames",
       "agentName",
       "childSessionLinks",
       "compression",
