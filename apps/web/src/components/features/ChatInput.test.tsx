@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { SessionFamilyActivity } from "@archcode/protocol";
 
+globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+  callback(0);
+  return 1;
+}) as typeof requestAnimationFrame;
+
 interface ElementLike {
   type?: unknown;
   props?: Record<string, unknown> | null;
@@ -44,6 +49,9 @@ let hookCursor = 0;
 const stateValues: unknown[] = [];
 const postMessageMutate = mock((_variables: unknown, _options?: unknown) => {});
 const stopSessionMutate = mock((_variables: unknown) => {});
+const addLocalSendingMessage = mock((_input: unknown) => {});
+const removeLocalSendingMessage = mock((_clientRequestId: string) => {});
+const setLocalSendingMessageStatus = mock((_clientRequestId: string, _status: string) => {});
 let activity: SessionFamilyActivity | undefined;
 let pendingHitlCount = 0;
 let hitlReady = false;
@@ -78,6 +86,9 @@ mock.module("../../api/mutations", () => ({
 }));
 
 mock.module("../../store/session-store", () => ({
+  getWebSessionStore: () => ({
+    getState: () => ({ addLocalSendingMessage, removeLocalSendingMessage, setLocalSendingMessageStatus }),
+  }),
   useSessionStore: (_sessionId: string, selector: (state: { modelInfo: { displayName: string } }) => unknown) =>
     selector({ modelInfo: { displayName: "Test Model" } }),
 }));
@@ -104,16 +115,18 @@ describe("ChatInput runtime controls", () => {
     setState.mockClear();
     postMessageMutate.mockClear();
     stopSessionMutate.mockClear();
+    addLocalSendingMessage.mockClear();
+    removeLocalSendingMessage.mockClear();
+    setLocalSendingMessageStatus.mockClear();
   });
 
   test("disables controls until the runtime snapshot initializes", () => {
     const tree = ChatInput({ slug: "proj", sessionId: "root-1" });
     const textarea = findAll(tree, (element) => element.type === "textarea")[0];
-    const send = findAll(tree, (element) => element.props?.title === "Send message")[0];
 
     expect(textarea?.props?.disabled).toBe(true);
     expect(textarea?.props?.placeholder).toBe("Connecting to runtime…");
-    expect(send?.props?.disabled).toBe(true);
+    expect(findAll(tree, (element) => element.props?.title === "Send message")).toHaveLength(0);
     expect(findAll(tree, (element) => element.props?.title === "Stop")).toHaveLength(0);
   });
 
@@ -126,6 +139,17 @@ describe("ChatInput runtime controls", () => {
     expect(stop?.props?.disabled).not.toBe(true);
     (stop?.props?.onClick as () => void)();
     expect(stopSessionMutate).toHaveBeenCalledWith({ slug: "proj", rootSessionId: "root-1" });
+  });
+
+  test("running family keeps the composer enabled for queued sends", () => {
+    activity = "running";
+    hitlReady = true;
+    const tree = ChatInput({ slug: "proj", sessionId: "root-1" });
+    const textarea = findAll(tree, (element) => element.type === "textarea")[0];
+
+    expect(textarea?.props?.disabled).toBe(false);
+    expect(textarea?.props?.placeholder).toBe("Queue a message…");
+    expect(findAll(tree, (element) => element.props?.title === "Send message")).toHaveLength(0);
   });
 
   test("stopping family renders a disabled Stopping control", () => {
@@ -155,7 +179,7 @@ describe("ChatInput runtime controls", () => {
     expect(stopSessionMutate).not.toHaveBeenCalled();
   });
 
-  test("idle family enables composition but pending HITL blocks a new turn independently", () => {
+  test("pending HITL keeps ordinary Queue composition enabled", () => {
     activity = "idle";
     hitlReady = true;
     let tree = ChatInput({ slug: "proj", sessionId: "root-1" });
@@ -165,8 +189,8 @@ describe("ChatInput runtime controls", () => {
     pendingHitlCount = 1;
     tree = ChatInput({ slug: "proj", sessionId: "root-1" });
     textarea = findAll(tree, (element) => element.type === "textarea")[0];
-    expect(textarea?.props?.disabled).toBe(true);
-    expect(textarea?.props?.placeholder).toBe("Answer the pending request to continue…");
+    expect(textarea?.props?.disabled).toBe(false);
+    expect(textarea?.props?.placeholder).toBe("Queue a message…");
     expect(findAll(tree, (element) => element.props?.title === "Stop")).toHaveLength(0);
   });
 
@@ -176,11 +200,10 @@ describe("ChatInput runtime controls", () => {
 
     const tree = ChatInput({ slug: "proj", sessionId: "root-1" });
     const textarea = findAll(tree, (element) => element.type === "textarea")[0];
-    const send = findAll(tree, (element) => element.props?.title === "Send message")[0];
 
     expect(textarea?.props?.disabled).toBe(true);
     expect(textarea?.props?.placeholder).toBe("Syncing pending requests…");
-    expect(send?.props?.disabled).toBe(true);
+    expect(findAll(tree, (element) => element.props?.title === "Send message")).toHaveLength(0);
   });
 
   test("submits slash commands as ordinary Session messages", () => {
@@ -202,8 +225,75 @@ describe("ChatInput runtime controls", () => {
     });
 
     expect(postMessageMutate).toHaveBeenCalledWith(
-      { slug: "proj", sessionId: "root-1", content: "/compact" },
+      expect.objectContaining({
+        slug: "proj",
+        sessionId: "root-1",
+        content: "/compact",
+        clientRequestId: expect.any(String),
+      }),
       expect.any(Object),
     );
+    expect(addLocalSendingMessage).toHaveBeenCalledWith(expect.objectContaining({
+      content: "/compact",
+      clientRequestId: expect.any(String),
+    }));
+  });
+
+  test("command acceptance removes its optimistic bubble without waiting for a message event", () => {
+    activity = "idle";
+    hitlReady = true;
+
+    let tree = ChatInput({ slug: "proj", sessionId: "root-1" });
+    const textarea = findAll(tree, (element) => element.type === "textarea")[0];
+    (textarea?.props?.onChange as (event: unknown) => void)({ target: { value: "/compact" } });
+
+    hookCursor = 0;
+    tree = ChatInput({ slug: "proj", sessionId: "root-1" });
+    const updatedTextarea = findAll(tree, (element) => element.type === "textarea")[0];
+    (updatedTextarea?.props?.onKeyDown as (event: unknown) => void)({
+      key: "Enter",
+      shiftKey: false,
+      nativeEvent: { isComposing: false },
+      preventDefault: mock(() => {}),
+    });
+
+    const [variables, options] = postMessageMutate.mock.calls[0] as unknown as [
+      { clientRequestId: string },
+      { onSuccess: (acceptance: { clientRequestId: string; messageId: string; status: "command" }) => void },
+    ];
+    options.onSuccess({
+      clientRequestId: variables.clientRequestId,
+      messageId: variables.clientRequestId,
+      status: "command",
+    });
+
+    expect(removeLocalSendingMessage).toHaveBeenCalledWith(variables.clientRequestId);
+  });
+
+  test("an unknown POST outcome keeps the same request identity and exposes retry", () => {
+    activity = "idle";
+    hitlReady = true;
+
+    let tree = ChatInput({ slug: "proj", sessionId: "root-1" });
+    const textarea = findAll(tree, (element) => element.type === "textarea")[0];
+    (textarea?.props?.onChange as (event: unknown) => void)({ target: { value: "Keep this identity" } });
+    hookCursor = 0;
+    tree = ChatInput({ slug: "proj", sessionId: "root-1" });
+    const updatedTextarea = findAll(tree, (element) => element.type === "textarea")[0];
+    (updatedTextarea?.props?.onKeyDown as (event: unknown) => void)({
+      key: "Enter",
+      shiftKey: false,
+      nativeEvent: { isComposing: false },
+      preventDefault: mock(() => {}),
+    });
+
+    const [variables, options] = postMessageMutate.mock.calls[0] as unknown as [
+      { clientRequestId: string },
+      { onError: (error: Error) => void },
+    ];
+    options.onError(new Error("network outcome unknown"));
+
+    expect(removeLocalSendingMessage).not.toHaveBeenCalled();
+    expect(setLocalSendingMessageStatus).toHaveBeenCalledWith(variables.clientRequestId, "retryable");
   });
 });

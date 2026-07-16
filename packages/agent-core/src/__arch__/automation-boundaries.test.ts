@@ -56,9 +56,8 @@ describe("Automation architecture boundaries", () => {
     expect(scheduler).not.toContain("runtime-session-gateway");
     expect(sourceFiles(automationRoot).map((path) => readFileSync(path, "utf8")).join("\n"))
       .not.toContain("AutomationRunner");
-    expect(boot).toContain("setManagedSessionExecutionForwarder");
-    expect(boot).toContain("forwardSessionExecution");
-    expect(boot.indexOf("setManagedSessionExecutionForwarder")).toBeLessThan(boot.indexOf("recoverSessionContinuations"));
+    expect(boot).not.toContain("setManagedSessionExecutionForwarder");
+    expect(boot).not.toContain("forwardSessionExecution");
     expect(boot.indexOf("recoverSessionContinuations")).toBeLessThan(boot.indexOf("recoverProjectTodos"));
     expect(boot.indexOf("recoverProjectTodos")).toBeLessThan(boot.indexOf("startAutomationSchedulers"));
     expect(boot.indexOf("startAutomationSchedulers")).toBeLessThan(boot.indexOf("startServer(app"));

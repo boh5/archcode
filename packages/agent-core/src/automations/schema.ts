@@ -62,7 +62,6 @@ export const AutomationInvocationSchema = z.strictObject({
   automationId: z.uuid(),
   dueAt: IsoDateTimeSchema,
   status: z.enum(["pending", "dispatched", "failed", "cancelled", "missed"]),
-  executionId: z.uuid(),
   sessionId: z.uuid().optional(),
   createdAt: IsoDateTimeSchema,
   dispatchedAt: IsoDateTimeSchema.optional(),

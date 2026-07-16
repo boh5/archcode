@@ -365,6 +365,8 @@ function findAgentRunOwnershipViolations(): Violation[] {
 function findExecutionLifecycleWriteViolations(): Violation[] {
   const allowedLifecycleReaders = new Set([
     normalize(join("execution", "session-execution-manager.ts")),
+    // Session Input commits canonical input and its execution-start record atomically.
+    normalize(join("session-input", "service.ts")),
     normalize(join("store", "reduce.ts")),
     normalize(join("store", "session-store-manager.ts")),
   ]);
@@ -442,6 +444,33 @@ function findDomainQueryReverseImportViolations(): Violation[] {
   return violations;
 }
 
+function findSessionInputBoundaryViolations(): Violation[] {
+  const root = join(srcRoot, "session-input");
+  const violations: Violation[] = [];
+  for (const file of findTsFiles(root)) {
+    for (const { importPath } of extractImports(file)) {
+      if (/(?:^|\/)(?:execution|agents\/query|automations|server|web)(?:\/|$)/.test(importPath)
+        || importPath === "../runtime") {
+        violations.push({ file: relativeFile(file), importPath });
+      }
+    }
+  }
+  for (const file of findTsFiles(srcRoot)) {
+    const relativePath = normalize(relative(srcRoot, file));
+    if (relativePath.startsWith(`session-input${normalize("/")}`)
+      || relativePath.startsWith(`store${normalize("/")}`)) continue;
+    const source = readFileSync(file, "utf8");
+    if (source.includes("inputRequestReceipts")) {
+      violations.push({ file: relativeFile(file), importPath: "source-pattern:inputRequestReceipts" });
+    }
+    if (relativePath !== normalize(join("execution", "session-execution-manager.ts"))
+      && source.includes("queueDispatchBarrierAt")) {
+      violations.push({ file: relativeFile(file), importPath: "source-pattern:queueDispatchBarrierAt" });
+    }
+  }
+  return violations;
+}
+
 describe("module migration boundary contracts", () => {
   describe("public API surface", () => {
     test("package indexes do not re-export private migration internals", () => {
@@ -511,6 +540,10 @@ describe("module migration boundary contracts", () => {
 
     test("domain services do not reverse-import the Agent query loop", () => {
       expectNoViolations(findDomainQueryReverseImportViolations());
+    });
+
+    test("Session Input owns receipts and Queue barriers without reverse-importing runtime or execution", () => {
+      expectNoViolations(findSessionInputBoundaryViolations());
     });
   });
 });

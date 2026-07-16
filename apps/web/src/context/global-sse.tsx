@@ -259,6 +259,21 @@ export function handleSSEEvent(
         deps.invalidateQueries({ queryKey: queryKeys.sessions(envelope.slug) });
       }
 
+      if (
+        envelope.payload.type === "session.message_accepted"
+        || envelope.payload.type === "session.message_edited"
+        || envelope.payload.type === "session.message_deleted"
+        || envelope.payload.type === "session.message_steer_claimed"
+        || envelope.payload.type === "session.message_steer_rolled_back"
+        || envelope.payload.type === "session.messages_committed"
+      ) {
+        // The event reducer updates the live projection. Invalidate the REST
+        // snapshot as a recovery path for a reconnect or an older event ring.
+        deps.invalidateQueries({
+          queryKey: queryKeys.session(envelope.slug, envelope.sessionId),
+        });
+      }
+
       break;
     }
     case "heartbeat": {

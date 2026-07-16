@@ -79,23 +79,82 @@ export function useCreateSession() {
   });
 }
 
+export interface PostMessageInput {
+  slug: string;
+  sessionId: string;
+  content: string;
+  clientRequestId?: string;
+}
+
+export interface MessageAcceptance {
+  clientRequestId: string;
+  messageId: string;
+  status?: "queued" | "canonical" | "command";
+}
+
+export function postMessage({ slug, sessionId, content, clientRequestId }: PostMessageInput): Promise<MessageAcceptance> {
+  const requestId = clientRequestId ?? crypto.randomUUID();
+  return apiFetch<MessageAcceptance>(
+    `/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(sessionId)}/messages`,
+    {
+      method: "POST",
+      body: { text: content, clientRequestId: requestId },
+    },
+  );
+}
+
 export function usePostMessage() {
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({
-      slug,
-      sessionId,
-      content,
-    }: {
-      slug: string;
-      sessionId: string;
-      content: string;
-    }) => apiFetch<void>(
-      `/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(sessionId)}/messages`,
-      {
-        method: "POST",
-        body: { text: content },
-      },
-    ),
+    mutationFn: postMessage,
+    onSuccess: async (_acceptance, variables) => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.session(variables.slug, variables.sessionId) });
+    },
+  });
+}
+
+export interface PendingMessageMutationInput {
+  slug: string;
+  sessionId: string;
+  messageId: string;
+  expectedRevision: number;
+}
+
+export interface PendingMessageMutationResult {
+  messageId: string;
+  status: "queued" | "steering" | "canonical" | "deleted";
+  revision?: number;
+  content?: string;
+  clientRequestId?: string;
+}
+
+export function useEditPendingMessage() {
+  return useMutation({
+    mutationFn: async ({ slug, sessionId, messageId, expectedRevision, content }: PendingMessageMutationInput & { content: string }) =>
+      apiFetch<PendingMessageMutationResult>(
+        `/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`,
+        { method: "PATCH", body: { text: content, expectedRevision } },
+      ),
+  });
+}
+
+export function useDeletePendingMessage() {
+  return useMutation({
+    mutationFn: async ({ slug, sessionId, messageId, expectedRevision }: PendingMessageMutationInput) =>
+      apiFetch<PendingMessageMutationResult>(
+        `/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`,
+        { method: "DELETE", body: { expectedRevision } },
+      ),
+  });
+}
+
+export function useSteerPendingMessage() {
+  return useMutation({
+    mutationFn: async ({ slug, sessionId, messageId, expectedRevision, expectedExecutionId }: PendingMessageMutationInput & { expectedExecutionId: string }) =>
+      apiFetch<PendingMessageMutationResult>(
+        `/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/steer`,
+        { method: "POST", body: { expectedRevision, expectedExecutionId } },
+      ),
   });
 }
 

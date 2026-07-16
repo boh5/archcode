@@ -1,124 +1,63 @@
-import type { GlobalSSEEvent, GlobalSessionEventEnvelope } from "@archcode/protocol";
-import type { StoreApi } from "zustand";
-import { scopedKey } from "../store/key";
-import type { SessionEventEnvelope, SessionStoreState } from "../store/types";
+import type { GlobalSessionEventEnvelope, SessionEventEnvelope } from "@archcode/protocol";
 
-export interface SubscribeSessionEventsInput {
-  readonly slug: string;
+export interface SessionEventSourceEvent {
   readonly workspaceRoot: string;
   readonly sessionId: string;
-  readonly startEventId?: number;
-  readonly onEvent: (event: GlobalSSEEvent) => void;
+  readonly agentName: string;
+  readonly envelope: SessionEventEnvelope;
+}
+
+export interface SessionEventSource {
+  subscribeToSessionEvents(listener: (event: SessionEventSourceEvent) => void): () => void;
 }
 
 export interface SessionEventBridgeOptions {
-  readonly getStore?: (workspaceRoot: string, sessionId: string) => StoreApi<SessionStoreState> | undefined;
+  readonly source: SessionEventSource;
+  readonly resolveProjectSlug: (workspaceRoot: string) => string | undefined;
 }
 
-interface SubscriptionRegistration extends SubscribeSessionEventsInput {
-  lastForwardedNextEventId: number;
-  unsubscribeStore?: () => void;
-}
+export type SessionEventListener = (event: GlobalSessionEventEnvelope) => void;
 
+/**
+ * Maps durable StoreManager events onto the global SSE wire shape.
+ * Its lifetime is independent of any Execution; Queue mutations while idle use the same path.
+ */
 export class SessionEventBridge {
-  readonly #subscriptions = new Map<string, Set<SubscriptionRegistration>>();
-  readonly #attachedStores = new Map<string, StoreApi<SessionStoreState>>();
-  readonly #getStore?: (workspaceRoot: string, sessionId: string) => StoreApi<SessionStoreState> | undefined;
+  readonly #listeners = new Set<SessionEventListener>();
+  readonly #resolveProjectSlug: SessionEventBridgeOptions["resolveProjectSlug"];
+  readonly #unsubscribeSource: () => void;
 
-  constructor(options: SessionEventBridgeOptions = {}) {
-    this.#getStore = options.getStore;
+  constructor(options: SessionEventBridgeOptions) {
+    this.#resolveProjectSlug = options.resolveProjectSlug;
+    this.#unsubscribeSource = options.source.subscribeToSessionEvents(
+      (event) => this.#forward(event),
+    );
   }
 
-  subscribe(input: SubscribeSessionEventsInput): () => void {
-    const key = scopedKey(input.workspaceRoot, input.sessionId);
-    const registration: SubscriptionRegistration = {
-      ...input,
-      lastForwardedNextEventId: input.startEventId ?? 0,
-    };
-    const registrations = this.#subscriptions.get(key) ?? new Set<SubscriptionRegistration>();
-    registrations.add(registration);
-    this.#subscriptions.set(key, registrations);
-
-    const store = this.#attachedStores.get(key) ?? this.#getStore?.(input.workspaceRoot, input.sessionId);
-    if (store) this.#attachSubscription(registration, store);
-
+  subscribe(listener: SessionEventListener): () => void {
+    this.#listeners.add(listener);
     return () => {
-      registration.unsubscribeStore?.();
-      registrations.delete(registration);
-      if (registrations.size === 0) {
-        this.#subscriptions.delete(key);
-        this.#attachedStores.delete(key);
-      }
+      this.#listeners.delete(listener);
     };
   }
 
-  hasSubscriptions(workspaceRoot: string, sessionId: string): boolean {
-    return (this.#subscriptions.get(scopedKey(workspaceRoot, sessionId))?.size ?? 0) > 0;
+  close(): void {
+    this.#listeners.clear();
+    this.#unsubscribeSource();
   }
 
-  attachSession(
-    workspaceRoot: string,
-    sessionId: string,
-    store: StoreApi<SessionStoreState>,
-  ): void {
-    const key = scopedKey(workspaceRoot, sessionId);
-    this.#attachedStores.set(key, store);
-    const registrations = this.#subscriptions.get(key);
-    if (!registrations) return;
-    for (const registration of registrations) {
-      this.#attachSubscription(registration, store);
-    }
-  }
-
-  detachSession(workspaceRoot: string, sessionId: string): void {
-    const key = scopedKey(workspaceRoot, sessionId);
-    this.#attachedStores.delete(key);
-    const registrations = this.#subscriptions.get(key);
-    if (!registrations) return;
-    for (const registration of registrations) {
-      registration.unsubscribeStore?.();
-      registration.unsubscribeStore = undefined;
-    }
-    this.#subscriptions.delete(key);
-  }
-
-  #attachSubscription(
-    registration: SubscriptionRegistration,
-    store: StoreApi<SessionStoreState>,
-  ): void {
-    registration.unsubscribeStore?.();
-    registration.unsubscribeStore = store.subscribe((current) => this.#forwardCurrent(registration, current));
-    this.#forwardCurrent(registration, store.getState());
-  }
-
-  #forwardCurrent(registration: SubscriptionRegistration, current: SessionStoreState): void {
-    if (current.nextEventId <= registration.lastForwardedNextEventId) return;
-
-    if (registration.lastForwardedNextEventId < current.eventOffset) {
-      registration.lastForwardedNextEventId = current.nextEventId;
-      registration.onEvent({
-        type: "reset",
-        slug: registration.slug,
-        sessionId: registration.sessionId,
-        reason: "lagged",
-      });
-      return;
-    }
-
-    const start = registration.lastForwardedNextEventId - current.eventOffset;
-    const envelopes: SessionEventEnvelope[] = current.events.slice(start);
-    registration.lastForwardedNextEventId = current.nextEventId;
-    for (const envelope of envelopes) {
-      const event: GlobalSessionEventEnvelope = {
-        type: "event",
-        slug: registration.slug,
-        sessionId: registration.sessionId,
-        eventId: envelope.id,
-        createdAt: envelope.createdAt,
-        payload: envelope.payload,
-        agentName: current.agentName,
-      };
-      registration.onEvent(event);
-    }
+  #forward(sourceEvent: SessionEventSourceEvent): void {
+    const slug = this.#resolveProjectSlug(sourceEvent.workspaceRoot);
+    if (slug === undefined) return;
+    const event: GlobalSessionEventEnvelope = {
+      type: "event",
+      slug,
+      sessionId: sourceEvent.sessionId,
+      eventId: sourceEvent.envelope.id,
+      createdAt: sourceEvent.envelope.createdAt,
+      payload: sourceEvent.envelope.payload,
+      agentName: sourceEvent.agentName,
+    };
+    for (const listener of this.#listeners) listener(event);
   }
 }

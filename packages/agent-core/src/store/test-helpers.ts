@@ -16,6 +16,8 @@ export function createMockStore(
     modelInfo: null,
     title: null,
     messages: [],
+    pendingMessages: [],
+    inputRequestReceipts: [],
     steps: [],
     stats: createEmptySessionStats(),
     executions: [],
@@ -40,6 +42,7 @@ export function createMockStore(
     events: [],
     eventOffset: 0,
     nextEventId: 0,
+    publishableNextEventId: 0,
     append: (event) => {
       state.events = [...state.events, {
         id: state.nextEventId,

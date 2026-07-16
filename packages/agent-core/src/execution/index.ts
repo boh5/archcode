@@ -1,4 +1,4 @@
-export { SessionExecutionManager } from "./session-execution-manager";
+export { SessionExecutionManager, SessionSteerUnavailableError } from "./session-execution-manager";
 export {
   SessionExecutionScopeConflictError,
   SessionExecutionScopeValidator,
@@ -34,6 +34,7 @@ export type {
   ActiveSessionExecution,
   SessionExecutionClaimCoordinator,
   SessionExecutionOrigin,
+  SessionExecutionInput,
   SessionRuntimeChange,
   SessionRuntimeChangeListener,
   StartSessionExecutionInput,
@@ -55,7 +56,6 @@ export type {
   SessionCwdRemovalLifecycle,
   SessionCwdRemovalResult,
 } from "./session-cwd-reference-migration";
-export type { SubscribeSessionEventsInput } from "../events/session-event-bridge";
 export type {
   SessionGoalDelegationAdmission,
   SessionGoalDelegationAdmissionInput,

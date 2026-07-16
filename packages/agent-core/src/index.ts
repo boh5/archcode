@@ -1,5 +1,5 @@
-export { closeMcpManagerBestEffort, createRuntime, ProjectRuntimeActiveError } from "./runtime";
-export type { AgentRuntime, AgentRuntimeOptions, CreateRuntimeSessionOptions, ManagedSessionExecutionForwarder, ProjectControlPlaneSnapshot, ProjectRemovalResult } from "./runtime";
+export { closeMcpManagerBestEffort, createRuntime, ProjectRuntimeActiveError, SessionCommandConflictError, SessionCommandOutcomeError } from "./runtime";
+export type { AcceptSessionMessageInput, AgentRuntime, AgentRuntimeOptions, CreateRuntimeSessionOptions, ProjectControlPlaneSnapshot, ProjectRemovalResult, SessionMessageAcceptance } from "./runtime";
 export * from "./automations";
 export type { CompressionOriginalRangeResult } from "./compression";
 export {
@@ -14,8 +14,8 @@ export type { ServerConfigServiceOptions } from "./config";
 export { createProcessRunner } from "./process/runner";
 export type { ProcessRunner, ProcessRunnerInput, ProcessRunnerResult } from "./process/types";
 
-export type { Agent, AgentResult, AgentRunOptions } from "./agents/types";
-export { AgentRunningError, ChildSessionCwdMismatchError, ConcurrentSessionLimitError, SessionCwdTransitionInProgressError, SessionToolBatchActiveError } from "./agents/errors";
+export type { Agent, AgentCommand, AgentCommandResult, AgentResult, AgentRunOptions } from "./agents/types";
+export { AgentRunningError, ChildSessionCwdMismatchError, SessionCwdTransitionInProgressError, SessionToolBatchActiveError } from "./agents/errors";
 
 export type { SlashCommandResult } from "./commands/types";
 export {
@@ -28,6 +28,7 @@ export {
   SessionFamilyStopInProgressError,
   SessionWorkspaceClosingError,
   SessionExecutionManager,
+  SessionSteerUnavailableError,
   SessionExecutionScopeConflictError,
   SessionExecutionScopeValidator,
   SessionToolBatchScheduler,
@@ -48,6 +49,7 @@ export type {
   SessionDeletionLifecycle,
   SessionDeletionPreflightInput,
   SessionExecutionClaimCoordinator,
+  SessionExecutionInput,
   AcquireSessionFamilyStopInput,
   SessionFamilyController,
   SessionFamilyStopLease,
@@ -60,10 +62,14 @@ export type {
   SessionRuntimeChange,
   SessionRuntimeChangeListener,
   StartSessionExecutionInput,
-  SubscribeSessionEventsInput,
 } from "./execution";
 export { SessionEventBridge } from "./events";
-export type { SessionEventBridgeOptions } from "./events";
+export type {
+  SessionEventBridgeOptions,
+  SessionEventListener,
+  SessionEventSource,
+  SessionEventSourceEvent,
+} from "./events";
 
 export type { McpDiscoveryResult, McpManager, McpWarning } from "./mcp/index";
 
@@ -158,6 +164,14 @@ export {
   SessionTreeIntegrityError,
 } from "./store/errors";
 export type { SessionTreeIntegrityReason } from "./store/errors";
+export { SessionInputConflictError, SessionInputService, nextSessionTimestamp } from "./session-input/service";
+export type {
+  BeginSessionInputResult,
+  MessageAcceptance,
+  SessionInputConflictReason,
+  SessionInputDurableMutation,
+  SessionInputStorePort,
+} from "./session-input/service";
 export { reduceStreamEvent } from "./store/reduce";
 export { assertValidSessionCwd, resolveValidSessionCwd } from "./store/session-cwd";
 export type {

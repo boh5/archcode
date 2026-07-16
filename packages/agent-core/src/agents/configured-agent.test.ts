@@ -23,6 +23,7 @@ import type { MemoryExtractionConfig } from "../config";
 import { silentLogger } from "../logger";
 import { GoalStateManager } from "../goals/state";
 import { createTestProjectContextResolver } from "./test-project-context-resolver";
+import type { AgentRunOptions } from "./types";
 
 const tmpRoot = join(import.meta.dir, "__test_tmp__", "configured-agent", crypto.randomUUID());
 const worktreeRoot = join(import.meta.dir, "__test_tmp__", "configured-agent-worktree", crypto.randomUUID());
@@ -235,6 +236,29 @@ function createAgent(options: {
   });
 }
 
+async function runAgent(
+  agent: ConfiguredAgent,
+  message: string,
+  options: AgentRunOptions = {},
+) {
+  const id = crypto.randomUUID();
+  const executionId = `test-${id}`;
+  agent.store.getState().append({
+    type: "session.messages_committed",
+    executionId,
+    messages: [{
+      id,
+      role: "user",
+      parts: [{ type: "text", id: `${id}:text`, text: message, createdAt: 1, completedAt: 1 }],
+      createdAt: 1,
+      completedAt: 1,
+      executionId,
+      clientRequestId: `request-${id}`,
+    }],
+  });
+  return agent.run(options);
+}
+
 describe("ConfiguredAgent", () => {
   beforeAll(async () => {
     await rm(tmpRoot, { recursive: true, force: true });
@@ -254,6 +278,76 @@ describe("ConfiguredAgent", () => {
     __setSessionsDirForTest(undefined);
     await rm(tmpRoot, { recursive: true, force: true });
     await rm(worktreeRoot, { recursive: true, force: true });
+  });
+
+  test("classifies slash commands without treating command arguments as model input", () => {
+    const agent = createAgent({ definition: engineerAgentDefinition });
+
+    expect(agent.classifyCommand("ordinary message")).toBeNull();
+    expect(agent.classifyCommand("/compact now")).toBeNull();
+    expect(agent.classifyCommand("/compact  ")).toEqual({ name: "compact", args: "" });
+    expect(agent.classifyCommand("/unknown value")).toEqual({ name: "unknown", args: "value" });
+  });
+
+  test("executes commands before admission and returns continuation as ordinary text", async () => {
+    const skillService = new SkillService({
+      builtinSkills: {
+        "git-master": [
+          "---",
+          "name: git-master",
+          "description: Git expertise",
+          "when_to_use: Use for git work.",
+          "---",
+          "Full body",
+        ].join("\n"),
+      },
+    });
+    const agent = createAgent({ definition: engineerAgentDefinition, skillService });
+    const command = agent.classifyCommand("/skill use git-master commit changes");
+
+    expect(command).not.toBeNull();
+    const result = await agent.executeCommand(command!);
+
+    expect(result.kind).toBe("message");
+    if (result.kind === "message") {
+      expect(result.content).toContain("skill_read");
+      expect(result.content).toContain("commit changes");
+    }
+    expect(agent.store.getState().messages).toHaveLength(1);
+    expect(agent.store.getState().messages[0]!.parts[0]).toMatchObject({
+      type: "system-notice",
+      notice: expect.stringContaining("git-master"),
+    });
+  });
+
+  test("does not append a command notice or continuation after Stop wins during the handler", async () => {
+    const abortController = new AbortController();
+    const skillService = {
+      readForAgent: mock(async () => {
+        abortController.abort(new Error("Session family cancelled"));
+        return { name: "git-master" };
+      }),
+    } as unknown as SkillService;
+    const agent = createAgent({ definition: engineerAgentDefinition, skillService });
+    const command = agent.classifyCommand("/skill use git-master commit changes");
+
+    expect(command).not.toBeNull();
+    await expect(agent.executeCommand(command!, { abort: abortController.signal }))
+      .rejects.toThrow("Session family cancelled");
+    expect(agent.store.getState().messages).toEqual([]);
+  });
+
+  test("handles unknown commands without admitting a model message", async () => {
+    const agent = createAgent({ definition: engineerAgentDefinition });
+    const command = agent.classifyCommand("/unknown");
+
+    expect(command).not.toBeNull();
+    await expect(agent.executeCommand(command!)).resolves.toEqual({ kind: "handled" });
+    expect(agent.store.getState().toModelMessages()).toEqual([]);
+    expect(agent.store.getState().messages[0]!.parts[0]).toMatchObject({
+      type: "system-notice",
+      notice: "Unknown command: /unknown",
+    });
   });
 
   test("engineer definition produces all configured lifecycle hooks", async () => {
@@ -284,7 +378,7 @@ describe("ConfiguredAgent", () => {
     });
 
     const agent = createAgent({ definition: engineerAgentDefinition, store, btm });
-    await agent.run("root run");
+    await runAgent(agent, "root run");
 
     const callArgs = streamFn.mock.calls[0]![0] as { messages: unknown[] };
     expect(JSON.stringify(callArgs.messages)).toContain("remember this");
@@ -299,7 +393,7 @@ describe("ConfiguredAgent", () => {
     store.setState({ todos: [{ id: "todo-1", content: "finish goal", status: "pending" }] });
 
     const agent = createAgent({ definition: goalLeadAgentDefinition, store });
-    await agent.run("continue goal");
+    await runAgent(agent, "continue goal");
 
     expect(agent.store.getState().reminders.some((reminder) => reminder.source.type === "todo_loop_continuation")).toBe(false);
   });
@@ -330,7 +424,7 @@ describe("ConfiguredAgent", () => {
       modelInfo: makeModelInfo(),
     });
 
-    await expect(agent.run("explicit model"))
+    await expect(runAgent(agent, "explicit model"))
       .resolves.toEqual({ text: "explicit model ok", steps: 0, status: "completed" });
   });
 
@@ -358,7 +452,7 @@ describe("ConfiguredAgent", () => {
       skillService,
     });
 
-    await agent.run("capture skill context");
+    await runAgent(agent, "capture skill context");
     expect(capturedContext?.agentSkills).toEqual(agentSkills);
     expect(capturedContext?.skillService).toBe(skillService);
   });
@@ -386,7 +480,7 @@ describe("ConfiguredAgent", () => {
       cwd: worktreeRoot,
     });
 
-    await agent.run("capture workspace context");
+    await runAgent(agent, "capture workspace context");
 
     expect(capturedContext).toEqual({ cwd: worktreeRoot, projectRoot: tmpRoot });
     const system = (streamFn.mock.calls[0]![0] as { system: string }).system;
@@ -415,7 +509,7 @@ describe("ConfiguredAgent", () => {
     });
 
     const agent = createAgent({ definition: exploreAgentDefinition, store, btm: new RecordingBackgroundTaskManager() });
-    await agent.run("explore run");
+    await runAgent(agent, "explore run");
 
     const callArgs = streamFn.mock.calls[0]![0] as { messages: unknown[] };
     expect(JSON.stringify(callArgs.messages)).toContain("explorer reminder");
@@ -454,7 +548,7 @@ describe("ConfiguredAgent", () => {
     await writeFile(join(tmpRoot, ".archcode", "memory", "index.md"), `${Array.from({ length: 251 }, (_, index) => `topic-${index}`).join("\n")}\n`);
 
     const agent = createAgent({ definition: engineerAgentDefinition, store, btm });
-    await agent.run("root run");
+    await runAgent(agent, "root run");
 
     expect(btm.dispatched).toContain("memory-extraction");
     expect(btm.dispatched).toContain("memory-consolidation");
@@ -490,7 +584,7 @@ describe("ConfiguredAgent", () => {
       btm,
       memoryConfig: { enabled: false, minMessages: 1, minContentLength: 100, cooldownMs: 0 },
     });
-    await agent.run("root run");
+    await runAgent(agent, "root run");
 
     expect(btm.dispatched).not.toContain("memory-extraction");
     expect(btm.dispatched).not.toContain("memory-consolidation");
@@ -518,7 +612,7 @@ describe("ConfiguredAgent", () => {
       btm,
       memoryConfig: { enabled: true, minMessages: 1, minContentLength: 100, cooldownMs: 0 },
     });
-    await agent.run("root run");
+    await runAgent(agent, "root run");
 
     expect(btm.dispatched).toContain("memory-extraction");
   });
@@ -540,7 +634,7 @@ describe("ConfiguredAgent", () => {
     });
 
     const agent = createAgent({ definition: engineerAgentDefinition, store, btm });
-    await agent.run("root run");
+    await runAgent(agent, "root run");
 
     expect(btm.dispatched).not.toContain("memory-extraction");
   });
@@ -552,7 +646,7 @@ describe("ConfiguredAgent", () => {
     store.setState({ title: "Supplied Title" });
 
     const agent = createAgent({ definition: exploreAgentDefinition, store, btm });
-    await agent.run("explore run");
+    await runAgent(agent, "explore run");
 
     expect(btm.dispatched).not.toContain("title-generation");
   });
@@ -562,7 +656,7 @@ describe("ConfiguredAgent", () => {
     const btm = new RecordingBackgroundTaskManager();
 
     const agent = createAgent({ definition: exploreAgentDefinition, btm });
-    await agent.run("explore run");
+    await runAgent(agent, "explore run");
 
     expect(btm.dispatched).toContain("title-generation");
   });
@@ -574,9 +668,9 @@ describe("ConfiguredAgent", () => {
 
     try {
       await writeFile(agentsMdPath, "# First Instructions");
-      await agent.run("first run");
+      await runAgent(agent, "first run");
       await writeFile(agentsMdPath, "# Second Instructions");
-      await agent.run("second run");
+      await runAgent(agent, "second run");
     } finally {
       await writeFile(agentsMdPath, "# Test Project\n\nMinimal project context.");
     }
@@ -592,7 +686,7 @@ describe("ConfiguredAgent", () => {
     const streamFn = setupToolCallStreamText("file_read");
     const agent = createAgent({ definition: exploreAgentDefinition });
 
-    const result = await agent.run("limited run", { maxSteps: 1 });
+    const result = await runAgent(agent, "limited run", { maxSteps: 1 });
 
     expect(result).toEqual({ text: "", steps: 1, status: "max_steps", error: "Max steps (1) reached" });
     expect(streamFn).toHaveBeenCalledTimes(1);
@@ -604,7 +698,7 @@ describe("ConfiguredAgent", () => {
     const toolRegistry = createRegistry(engineerAgentDefinition.tools.tools.map(makeTool));
     const agent = createAgent({ definition: engineerAgentDefinition, toolRegistry });
 
-    await agent.run("default run");
+    await runAgent(agent, "default run");
 
     const callArgs = streamFn.mock.calls[0]![0] as { system: string };
     expect(callArgs.system).toContain("- file_read");
@@ -622,23 +716,23 @@ describe("ConfiguredAgent", () => {
     ]);
 
     const rootStream = setupMockStreamText("root tools");
-    await createAgent({
+    await runAgent(createAgent({
       definition: engineerAgentDefinition,
       toolRegistry,
       projectRoot: tmpRoot,
       cwd: tmpRoot,
-    }).run("show root tools");
+    }), "show root tools");
     const rootSystem = (rootStream.mock.calls[0]![0] as { system: string }).system;
     expect(rootSystem).toContain("- worktree_enter");
     expect(rootSystem).not.toContain("- worktree_exit");
 
     const worktreeStream = setupMockStreamText("worktree tools");
-    await createAgent({
+    await runAgent(createAgent({
       definition: engineerAgentDefinition,
       toolRegistry,
       projectRoot: tmpRoot,
       cwd: worktreeRoot,
-    }).run("show worktree tools");
+    }), "show worktree tools");
     const worktreeSystem = (worktreeStream.mock.calls[0]![0] as { system: string }).system;
     expect(worktreeSystem).not.toContain("- worktree_enter");
     expect(worktreeSystem).toContain("- worktree_exit");
@@ -654,13 +748,13 @@ describe("ConfiguredAgent", () => {
     const store = storeManager.create(`configured-goal-worktree-${crypto.randomUUID()}`, tmpRoot, {
       goalId: crypto.randomUUID(), agentName: "goal_lead"
     });
-    await createAgent({
+    await runAgent(createAgent({
       definition: engineerAgentDefinition,
       toolRegistry,
       store,
       projectRoot: tmpRoot,
       cwd: tmpRoot,
-    }).run("show goal tools");
+    }), "show goal tools");
 
     const system = (streamFn.mock.calls[0]![0] as { system: string }).system;
     expect(system).not.toContain("- worktree_enter");
@@ -685,7 +779,7 @@ describe("ConfiguredAgent", () => {
       cwd: tmpRoot,
     });
 
-    await expect(agent.run("enter a worktree", {
+    await expect(runAgent(agent, "enter a worktree", {
       extraTools: ["worktree_enter"],
     })).rejects.toThrow(IneligibleSessionWorktreeToolError);
     expect(streamFn).not.toHaveBeenCalled();
@@ -700,7 +794,7 @@ describe("ConfiguredAgent", () => {
     ]);
     const agent = createAgent({ definition: engineerAgentDefinition, toolRegistry });
 
-    await agent.run("extra tools run", {
+    await runAgent(agent, "extra tools run", {
       extraTools: ["github_get_pull_request", "github_create_issue_comment", "github_get_pull_request"],
     });
 
@@ -736,7 +830,7 @@ describe("ConfiguredAgent", () => {
     await storeManager.flushSession(store.getState().sessionId, tmpRoot);
     const agent = createAgent({ definition: engineerAgentDefinition, toolRegistry, store });
 
-    await agent.run("comment on PR", {
+    await runAgent(agent, "comment on PR", {
       maxSteps: 1,
       confirmPermission: async () => "approve",
       extraTools: ["github_create_issue_comment"],
@@ -752,7 +846,7 @@ describe("ConfiguredAgent", () => {
     const streamFn = setupMockStreamText("should not run");
     const agent = createAgent({ definition: engineerAgentDefinition });
 
-    await expect(agent.run("unknown extra", { extraTools: ["missing_extra_tool"] })).rejects.toThrow(UnknownExtraToolError);
+    await expect(runAgent(agent, "unknown extra", { extraTools: ["missing_extra_tool"] })).rejects.toThrow(UnknownExtraToolError);
     expect(streamFn).not.toHaveBeenCalled();
   });
 
@@ -769,7 +863,7 @@ describe("ConfiguredAgent", () => {
       store,
     });
 
-    await agent.run("skill metadata run");
+    await runAgent(agent, "skill metadata run");
 
     const callArgs = streamFn.mock.calls[0]![0] as { system: string };
     expect(callArgs.system).toContain("[allowed_tools: github_get_pull_request, github_merge_pull_request]");
@@ -804,9 +898,9 @@ describe("ConfiguredAgent", () => {
     });
 
     try {
-      await agent.run("first run");
+      await runAgent(agent, "first run");
       await rm(skillDir, { recursive: true, force: true });
-      await expect(agent.run("second run")).rejects.toBeInstanceOf(SkillNotFoundError);
+      await expect(runAgent(agent, "second run")).rejects.toBeInstanceOf(SkillNotFoundError);
     } finally {
       await rm(skillDir, { recursive: true, force: true });
     }
@@ -818,24 +912,24 @@ describe("ConfiguredAgent", () => {
     setupMockStreamText("quota ok");
     const quotaEnforcer = mock(async (_directory: string) => {});
 
-    await createAgent({ definition: engineerAgentDefinition, quotaEnforcer }).run("root run");
+    await runAgent(createAgent({ definition: engineerAgentDefinition, quotaEnforcer }), "root run");
     expect(quotaEnforcer).toHaveBeenCalledTimes(1);
 
-    await createAgent({ definition: exploreAgentDefinition, quotaEnforcer }).run("explore run");
+    await runAgent(createAgent({ definition: exploreAgentDefinition, quotaEnforcer }), "explore run");
     expect(quotaEnforcer).toHaveBeenCalledTimes(1);
 
-    await createAgent({ definition: definitionWith({ enforceToolOutputQuota: false }), quotaEnforcer }).run("no quota");
+    await runAgent(createAgent({ definition: definitionWith({ enforceToolOutputQuota: false }), quotaEnforcer }), "no quota");
     expect(quotaEnforcer).toHaveBeenCalledTimes(1);
   });
 
   test("includeMemoryInPrompt controls memory roots in prompt context", async () => {
     const withMemoryStreamFn = setupMockStreamText("memory ok");
-    await createAgent({ definition: engineerAgentDefinition }).run("with memory");
+    await runAgent(createAgent({ definition: engineerAgentDefinition }), "with memory");
     const withMemory = withMemoryStreamFn.mock.calls[0]![0] as { system: string };
     expect(withMemory.system).toContain("<archcode-memory-context>");
 
     const withoutMemoryStreamFn = setupMockStreamText("memory off ok");
-    await createAgent({ definition: exploreAgentDefinition }).run("without memory");
+    await runAgent(createAgent({ definition: exploreAgentDefinition }), "without memory");
     const withoutMemory = withoutMemoryStreamFn.mock.calls[0]![0] as { system: string };
     expect(withoutMemory.system).not.toContain("<archcode-memory-context>");
   });
@@ -849,7 +943,7 @@ describe("ConfiguredAgent", () => {
       store,
     });
 
-    await expect(agent.run("run without workflow tools")).resolves.toEqual({ text: "no workflow tools ok", steps: 0, status: "completed" });
+    await expect(runAgent(agent, "run without workflow tools")).resolves.toEqual({ text: "no workflow tools ok", steps: 0, status: "completed" });
     expect(streamFn).toHaveBeenCalled();
     const callArgs = streamFn.mock.calls[0]![0] as { system: string };
     expect(callArgs.system).not.toContain("## Active Workflow");
@@ -872,7 +966,7 @@ describe("ConfiguredAgent", () => {
       sessionRole: "main", agentName: "goal_lead"
     });
 
-    await createAgent({ definition: engineerAgentDefinition, store }).run("retry goal");
+    await runAgent(createAgent({ definition: engineerAgentDefinition, store }), "retry goal");
 
     const callArgs = streamFn.mock.calls[0]![0] as { system: string };
     expect(callArgs.system).not.toContain("## Operator Repair Context");
@@ -895,10 +989,10 @@ describe("ConfiguredAgent", () => {
       },
     });
 
-    await createAgent({
+    await runAgent(createAgent({
       definition: { ...engineerAgentDefinition, tools: { tools: ["capture_context"] } },
       toolRegistry,
-    }).run("root context");
+    }), "root context");
 
     expect(capturedAgentName).toBe("engineer");
     expect(capturedDepth).toBe(0);
@@ -921,11 +1015,11 @@ describe("ConfiguredAgent", () => {
       },
     });
 
-    await createAgent({
+    await runAgent(createAgent({
       definition: { ...exploreAgentDefinition, tools: { tools: ["capture_context"] } },
       depth: 1,
       toolRegistry,
-    }).run("explorer context");
+    }), "explorer context");
 
     expect(capturedAgentName).toBe("explore");
     expect(capturedDepth).toBe(1);

@@ -96,7 +96,7 @@ describe("ContextInspector interactions", () => {
     const dom = installDom("/projects/demo/sessions/root");
     const session: Session = {
       sessionId: "root", rootSessionId: "root", cwd: "/workspace/demo", title: "Root execution",
-      createdAt: 1, updatedAt: 2, agentName: "engineer", activeSkillNames: [], modelInfo: null, messages: [], steps: [], todos: [], reminders: [], childSessionLinks: [], executions: [], stats: createEmptySessionStats(),
+      createdAt: 1, updatedAt: 2, agentName: "engineer", activeSkillNames: [], modelInfo: null, messages: [], pendingMessages: [], steps: [], todos: [], reminders: [], childSessionLinks: [], executions: [], stats: createEmptySessionStats(),
     };
     const childSession: Session = {
       ...session,

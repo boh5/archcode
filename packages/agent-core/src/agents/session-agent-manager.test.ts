@@ -292,7 +292,22 @@ describe("SessionAgentManager", () => {
       const agent = await activeManager.getOrCreate(workspaceRoot, sessionId);
       const contextCount = activeContexts.length;
       const promptCount = streamText.mock.calls.length;
-      await agent.run("probe child identity", { maxSteps: 1 });
+      const messageId = crypto.randomUUID();
+      const executionId = `test-${messageId}`;
+      agent.store.getState().append({
+        type: "session.messages_committed",
+        executionId,
+        messages: [{
+          id: messageId,
+          role: "user",
+          parts: [{ type: "text", id: `${messageId}:text`, text: "probe child identity", createdAt: 1, completedAt: 1 }],
+          createdAt: 1,
+          completedAt: 1,
+          executionId,
+          clientRequestId: `request-${messageId}`,
+        }],
+      });
+      await agent.run({ maxSteps: 1 });
       const context = activeContexts[contextCount]!;
       const prompt = (streamText.mock.calls[promptCount]![0] as { system: string }).system;
       const depth = context.currentDepth!;

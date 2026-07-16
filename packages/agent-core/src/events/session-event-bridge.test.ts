@@ -1,196 +1,121 @@
-import { beforeEach, describe, expect, test } from "bun:test";
-import type { StoreApi } from "zustand";
-import { createStore } from "zustand/vanilla";
-import { createEmptySessionStats, MAX_EVENTS } from "@archcode/protocol";
-import type { SessionStoreState } from "../store/types";
+import { describe, expect, test } from "bun:test";
+import type { SessionEventSourceEvent } from "./session-event-bridge";
 import { SessionEventBridge } from "./session-event-bridge";
-import { createEmptyCompressionState } from "../compression";
 
 const workspaceRoot = "/workspace";
 
-function createTestStore(sessionId: string): StoreApi<SessionStoreState> {
-  let store: StoreApi<SessionStoreState>;
-  store = createStore<SessionStoreState>((set, get) => ({
-    sessionId,
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-    cwd: workspaceRoot,
-    agentName: "engineer",
-    activeSkillNames: [],
-    modelInfo: null,
-    title: null,
-    messages: [],
-    steps: [],
-    stats: createEmptySessionStats(),
-    executions: [],
-    compression: createEmptyCompressionState(),
-    todos: [],
-    reminders: [],
-    childSessionLinks: [],
-    toolBatches: [],
-    rootSessionId: sessionId,
-    isRunning: false,
-    isStreamingModel: false,
-    readSnapshots: new Map(),
-    executionCount: 0,
-    lastTodoWriteStepIndex: null,
-    lastTodoReminderStepIndex: null,
-    todoStepReminderCount: 0,
-    todoLoopContinuationCount: 0,
-    todoContinuationStagnationCount: 0,
-    lastTodoContinuationPendingCount: null,
-    lastExtractionIndex: 0,
-    lastExtractionTime: 0,
-    events: [],
-    eventOffset: 0,
-    nextEventId: 0,
-    append: (event) => {
-      set((state) => {
-        const envelope = {
-          id: state.nextEventId,
-          createdAt: Date.now(),
-          payload: event,
-        };
-        const events = [...state.events, envelope];
-        let eventOffset = state.eventOffset;
-        const nextEventId = state.nextEventId + 1;
-        if (events.length > MAX_EVENTS) {
-          const dropCount = events.length - MAX_EVENTS;
-          events.splice(0, dropCount);
-          eventOffset += dropCount;
-        }
-        return { events, eventOffset, nextEventId };
-      });
-    },
-    setCwd: (cwd) => set({ cwd, readSnapshots: new Map() }),
-    setTitle: (title) => set({ title }),
-    setParentSessionId: (parentSessionId) => {
-      if (get().parentSessionId !== undefined) return;
-      set({ parentSessionId });
-    },
-    setGoalId: (goalId) => set({ goalId }),
-    setSessionRole: (sessionRole) => set({ sessionRole }),
-    toModelMessages: () => [],
-  }));
-  return store;
+class FakeSessionEventSource {
+  readonly listeners = new Set<(event: SessionEventSourceEvent) => void>();
+
+  subscribeToSessionEvents(listener: (event: SessionEventSourceEvent) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  emit(input: {
+    sessionId: string;
+    eventId: number;
+    payload?: SessionEventSourceEvent["envelope"]["payload"];
+    workspace?: string;
+  }): void {
+    const event: SessionEventSourceEvent = {
+      workspaceRoot: input.workspace ?? workspaceRoot,
+      sessionId: input.sessionId,
+      agentName: "engineer",
+      envelope: {
+        id: input.eventId,
+        createdAt: 10 + input.eventId,
+        payload: input.payload ?? { type: "system-notice", message: `event-${input.eventId}` },
+      },
+    };
+    for (const listener of this.listeners) listener(event);
+  }
 }
 
 describe("SessionEventBridge", () => {
-  let bridge: SessionEventBridge;
-
-  beforeEach(() => {
-    bridge = new SessionEventBridge();
-  });
-
-  test("forwards existing root subscription events with the global SSE wire shape", () => {
-    const store = createTestStore("root");
-    bridge.attachSession(workspaceRoot, "root", store);
-    const received: unknown[] = [];
-
-    const unsubscribe = bridge.subscribe({
-      slug: "project",
-      workspaceRoot,
-      sessionId: "root",
-      onEvent: (event) => received.push(event),
+  test("forwards a durable source event with the global SSE wire shape", () => {
+    const source = new FakeSessionEventSource();
+    const bridge = new SessionEventBridge({
+      source,
+      resolveProjectSlug: (workspace) => workspace === workspaceRoot ? "project" : undefined,
     });
-    store.getState().append({ type: "system-notice", message: "hello" });
+    const received: unknown[] = [];
+    bridge.subscribe((event) => received.push(event));
 
-    expect(received).toHaveLength(1);
-    expect(received[0]).toMatchObject({
+    source.emit({
+      sessionId: "root",
+      eventId: 7,
+      payload: { type: "session.message_accepted", message: {
+        id: "message-1",
+        clientRequestId: "request-1",
+        content: "queued while idle",
+        source: "user",
+        state: "queued",
+        revision: 0,
+        acceptedAt: 10,
+        updatedAt: 10,
+      } },
+    });
+
+    expect(received).toEqual([{
       type: "event",
       slug: "project",
       sessionId: "root",
-      eventId: 0,
-      payload: { type: "system-notice", message: "hello" },
-    });
-    unsubscribe();
+      eventId: 7,
+      createdAt: 17,
+      agentName: "engineer",
+      payload: expect.objectContaining({ type: "session.message_accepted" }),
+    }]);
   });
 
-  test("forwards Session cwd transitions as first-class realtime events", () => {
-    const store = createTestStore("root");
-    bridge.attachSession(workspaceRoot, "root", store);
+  test("forwards every Session in a registered workspace without Execution attachment", () => {
+    const source = new FakeSessionEventSource();
+    const bridge = new SessionEventBridge({
+      source,
+      resolveProjectSlug: (workspace) => workspace === workspaceRoot ? "project" : undefined,
+    });
     const received: unknown[] = [];
-    bridge.subscribe({
-      slug: "project",
-      workspaceRoot,
-      sessionId: "root",
-      onEvent: (event) => received.push(event),
-    });
+    bridge.subscribe((event) => received.push(event));
 
-    store.getState().append({
-      type: "session.cwd_changed",
-      previousCwd: workspaceRoot,
-      cwd: "/workspace-worktree",
-    });
+    source.emit({ sessionId: "other", eventId: 0 });
+    source.emit({ sessionId: "root", eventId: 0, workspace: "/other-workspace" });
+    source.emit({ sessionId: "root", eventId: 0 });
 
     expect(received).toEqual([
-      expect.objectContaining({
-        type: "event",
-        payload: {
-          type: "session.cwd_changed",
-          previousCwd: workspaceRoot,
-          cwd: "/workspace-worktree",
-        },
-      }),
+      expect.objectContaining({ slug: "project", sessionId: "other" }),
+      expect.objectContaining({ slug: "project", sessionId: "root" }),
     ]);
   });
 
-  test("attaches a child store after a subscription already exists", () => {
+  test("projects the current workspace slug at publication time", () => {
+    const source = new FakeSessionEventSource();
+    let slug = "project-a";
+    const bridge = new SessionEventBridge({ source, resolveProjectSlug: () => slug });
     const received: unknown[] = [];
-    const unsubscribe = bridge.subscribe({
-      slug: "project",
-      workspaceRoot,
-      sessionId: "child",
-      onEvent: (event) => received.push(event),
-    });
-    const childStore = createTestStore("child");
+    bridge.subscribe((event) => received.push(event));
 
-    bridge.attachSession(workspaceRoot, "child", childStore);
-    childStore.getState().append({ type: "system-notice", message: "child-ready" });
+    source.emit({ sessionId: "root", eventId: 0 });
+    slug = "project-b";
+    source.emit({ sessionId: "root", eventId: 1 });
 
-    expect(received).toMatchObject([
-      { type: "event", slug: "project", sessionId: "child" },
+    expect(received).toEqual([
+      expect.objectContaining({ slug: "project-a", eventId: 0 }),
+      expect.objectContaining({ slug: "project-b", eventId: 1 }),
     ]);
+  });
+
+  test("unsubscribe and close release their respective listeners", () => {
+    const source = new FakeSessionEventSource();
+    const bridge = new SessionEventBridge({ source, resolveProjectSlug: () => "project" });
+    const received: unknown[] = [];
+    const unsubscribe = bridge.subscribe((event) => received.push(event));
+
     unsubscribe();
-  });
-
-  test("emits lagged reset when a subscriber cursor predates the store event offset", () => {
-    const store = createTestStore("lagged");
-    store.setState({
-      eventOffset: 3,
-      nextEventId: 5,
-      events: [
-        { id: 3, createdAt: 10, payload: { type: "system-notice", message: "three" } },
-        { id: 4, createdAt: 11, payload: { type: "system-notice", message: "four" } },
-      ],
-    });
-    const received: unknown[] = [];
-
-    bridge.attachSession(workspaceRoot, "lagged", store);
-    bridge.subscribe({
-      slug: "project",
-      workspaceRoot,
-      sessionId: "lagged",
-      onEvent: (event) => received.push(event),
-    });
-
-    expect(received).toEqual([{ type: "reset", slug: "project", sessionId: "lagged", reason: "lagged" }]);
-  });
-
-  test("detachSession removes store forwarding and subscriptions", () => {
-    const store = createTestStore("detach");
-    const received: unknown[] = [];
-    bridge.attachSession(workspaceRoot, "detach", store);
-    bridge.subscribe({
-      slug: "project",
-      workspaceRoot,
-      sessionId: "detach",
-      onEvent: (event) => received.push(event),
-    });
-
-    bridge.detachSession(workspaceRoot, "detach");
-    store.getState().append({ type: "system-notice", message: "after-detach" });
-
+    source.emit({ sessionId: "root", eventId: 0 });
     expect(received).toEqual([]);
+
+    expect(source.listeners.size).toBe(1);
+    bridge.close();
+    expect(source.listeners.size).toBe(0);
   });
 });

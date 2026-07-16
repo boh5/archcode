@@ -7,11 +7,10 @@ import { startServer } from "./listen";
 export async function bootServer(runtime: AgentRuntime): Promise<void> {
   const compiled = import.meta.url.startsWith("file:///$bunfs/");
   const dev = !compiled && !Bun.env[ENV_SERVER_PASSWORD];
-  const { app, forwardSessionExecution } = createServerApp(runtime, {
+  const { app } = createServerApp(runtime, {
     dev,
     password: Bun.env[ENV_SERVER_PASSWORD],
   });
-  runtime.setManagedSessionExecutionForwarder(forwardSessionExecution);
 
   await runtime.recoverSessionContinuations();
   await runtime.recoverProjectTodos();

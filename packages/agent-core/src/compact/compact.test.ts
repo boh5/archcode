@@ -566,7 +566,21 @@ describe("compact", () => {
     const store = storeManager.create("test-commit-session", TEST_WORKSPACE_ROOT, { agentName: "engineer" });
 
     // Add some messages first
-    store.getState().append({ type: "user-message", content: "Hello" });
+    const messageId = crypto.randomUUID();
+    const executionId = `test-${messageId}`;
+    store.getState().append({
+      type: "session.messages_committed",
+      executionId,
+      messages: [{
+        id: messageId,
+        role: "user",
+        parts: [{ type: "text", id: `${messageId}:text`, text: "Hello", createdAt: 1, completedAt: 1 }],
+        createdAt: 1,
+        completedAt: 1,
+        executionId,
+        clientRequestId: `request-${messageId}`,
+      }],
+    });
     store.getState().append({ type: "text-start" });
     store.getState().append({ type: "text-delta", text: "Hi" });
     store.getState().append({ type: "text-end" });

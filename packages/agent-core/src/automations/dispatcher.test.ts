@@ -18,7 +18,7 @@ afterAll(async () => {
 });
 
 describe("AutomationDispatcher", () => {
-  test("dispatches through the ordinary Session gateway with preallocated ids", async () => {
+  test("dispatches through the ordinary Session gateway with the Invocation id as clientRequestId", async () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     const automation = await manager.createAutomation({
       projectSlug: "project-a",
@@ -30,8 +30,7 @@ describe("AutomationDispatcher", () => {
     const invocation = await manager.enqueueInvocation(automation.id, new Date(NOW).toISOString());
     const calls: unknown[] = [];
     const gateway: SessionDispatchGateway = {
-      inspectExecution: async () => "missing",
-      dispatch: async (input) => { calls.push(input); return { accepted: true }; },
+      dispatch: async (input) => { calls.push(input); },
     };
 
     const result = await new AutomationDispatcher({ stateManager: manager, gateway }).dispatchInvocation(invocation.id);
@@ -41,34 +40,13 @@ describe("AutomationDispatcher", () => {
       workspaceRoot: TMP_ROOT,
       projectSlug: "project-a",
       sessionId: invocation.sessionId,
-      executionId: invocation.executionId,
+      clientRequestId: invocation.id,
       message: "/skill use reviewer",
       location: "project",
     }]);
   });
 
-  test("recovers an accepted dispatch without sending it twice", async () => {
-    const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
-    const automation = await manager.createAutomation({
-      projectSlug: "project-a",
-      createdFromSessionId: crypto.randomUUID(),
-      name: "run",
-      trigger: { kind: "interval", everyMs: 30_000 },
-      action: { kind: "send_message", sessionId: crypto.randomUUID(), message: "Continue" },
-    });
-    const invocation = await manager.enqueueInvocation(automation.id, new Date(NOW).toISOString());
-    let dispatches = 0;
-    const gateway: SessionDispatchGateway = {
-      inspectExecution: async () => "accepted",
-      dispatch: async () => { dispatches += 1; return { accepted: true }; },
-    };
-
-    const result = await new AutomationDispatcher({ stateManager: manager, gateway }).dispatchInvocation(invocation.id);
-    expect(result.status).toBe("dispatched");
-    expect(dispatches).toBe(0);
-  });
-
-  test("leaves an accepted execution recoverable when the dispatched checkpoint fails", async () => {
+  test("leaves an accepted message recoverable under the same idempotency key when the dispatched checkpoint fails", async () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     const automation = await manager.createAutomation({
       projectSlug: "project-a",
@@ -78,36 +56,17 @@ describe("AutomationDispatcher", () => {
       action: { kind: "start_session", message: "Continue", location: "project" },
     });
     const invocation = await manager.enqueueInvocation(automation.id, new Date(NOW).toISOString());
+    const clientRequestIds: string[] = [];
     const gateway: SessionDispatchGateway = {
-      inspectExecution: async () => "missing",
-      dispatch: async () => ({ accepted: true }),
+      dispatch: async (input) => { clientRequestIds.push(input.clientRequestId); },
     };
     const update = spyOn(manager, "updateInvocation").mockRejectedValueOnce(new Error("disk unavailable"));
 
     await expect(new AutomationDispatcher({ stateManager: manager, gateway }).dispatchInvocation(invocation.id)).rejects.toThrow("disk unavailable");
     update.mockRestore();
     expect((await manager.readInvocation(invocation.id)).status).toBe("pending");
-  });
-
-  test("keeps one coalesced pending invocation while the previous execution is active", async () => {
-    const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
-    const automation = await manager.createAutomation({
-      projectSlug: "project-a",
-      createdFromSessionId: crypto.randomUUID(),
-      name: "run",
-      trigger: { kind: "interval", everyMs: 30_000 },
-      action: { kind: "start_session", message: "Continue", location: "project" },
-    });
-    const active = await manager.enqueueInvocation(automation.id, new Date(NOW).toISOString());
-    await manager.updateInvocation(active.id, { status: "dispatched", dispatchedAt: new Date(NOW).toISOString() });
-    const pending = await manager.enqueueInvocation(automation.id, "2026-07-13T00:00:30.000Z");
-    const gateway: SessionDispatchGateway = {
-      inspectExecution: async (input) => input.executionId === active.executionId ? "active" : "missing",
-      dispatch: async () => { throw new Error("must not dispatch"); },
-    };
-
-    const result = await new AutomationDispatcher({ stateManager: manager, gateway }).dispatchInvocation(pending.id);
-    expect(result.status).toBe("pending");
+    expect((await new AutomationDispatcher({ stateManager: manager, gateway }).dispatchInvocation(invocation.id)).status).toBe("dispatched");
+    expect(clientRequestIds).toEqual([invocation.id, invocation.id]);
   });
 
   test("serializes concurrent dispatch attempts for the same Invocation", async () => {
@@ -124,11 +83,9 @@ describe("AutomationDispatcher", () => {
     let releaseDispatch!: () => void;
     const dispatchGate = new Promise<void>((resolve) => { releaseDispatch = resolve; });
     const gateway: SessionDispatchGateway = {
-      inspectExecution: async () => "missing",
       dispatch: async () => {
         dispatches += 1;
         await dispatchGate;
-        return { accepted: true };
       },
     };
     const dispatcher = new AutomationDispatcher({ stateManager: manager, gateway });
@@ -155,7 +112,6 @@ describe("AutomationDispatcher", () => {
     const invocation = await manager.enqueueInvocation(automation.id, new Date(NOW).toISOString());
     const changes: unknown[] = [];
     const gateway: SessionDispatchGateway = {
-      inspectExecution: async () => "missing",
       dispatch: async () => { throw new Error("Session unavailable"); },
     };
 

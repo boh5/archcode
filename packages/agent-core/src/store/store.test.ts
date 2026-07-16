@@ -117,6 +117,28 @@ function onlyMessage(messages: StoredMessage[]): StoredMessage {
   return messages[0]!;
 }
 
+function appendUserMessage(
+  store: ReturnType<typeof createFreshStore>,
+  content: string,
+): void {
+  const sequence = store.getState().messages.length;
+  const id = `user-${sequence}-${crypto.randomUUID()}`;
+  const executionId = store.getState().currentExecutionId ?? `direct-${id}`;
+  store.getState().append({
+    type: "session.messages_committed",
+    executionId,
+    messages: [{
+      id,
+      role: "user",
+      parts: [{ type: "text", id: `${id}:text`, text: content, createdAt: 1, completedAt: 1 }],
+      createdAt: 1,
+      completedAt: 1,
+      executionId,
+      clientRequestId: `request-${id}`,
+    }],
+  });
+}
+
 function textPart(message: StoredMessage, index = 0): TextPart {
   const part = message.parts[index];
   expect(part?.type).toBe("text");
@@ -240,11 +262,11 @@ describe("SessionStoreManager", () => {
     expect(persisted.parentSessionId).toBeUndefined();
   });
 
-  test("user-message append persists before execution-end", async () => {
+  test("canonical message commit persists before execution-end", async () => {
     __setSessionsDirForTest(() => TMP_DIR);
-    const sessionId = uniqueSessionId("persist-user-message");
+    const sessionId = uniqueSessionId("persist-canonical-message");
     const store = createSessionStore(sessionId, TMP_DIR);
-    store.getState().append({ type: "user-message", content: "hello before execution-end" });
+    appendUserMessage(store, "hello before execution-end");
 
     const persisted = await waitForPersistedSession(sessionId, (session) => {
       const messages = session.messages;
@@ -294,7 +316,7 @@ describe("SessionStoreManager", () => {
     const state = store.getState();
 
     state.append({ type: "execution-start", executionId: "run-one" });
-    state.append({ type: "user-message", content: "collect stats" });
+    appendUserMessage(store, "collect stats");
     state.append({ type: "step-start", step: 0 });
     state.append({ type: "tool-call", toolCallId: "tool-ok", toolName: "read", input: { path: "a.ts" } });
     state.append({ type: "tool-result", toolCallId: "tool-ok", toolName: "read", output: "ok", isError: false });
@@ -392,7 +414,7 @@ describe("SessionStoreManager", () => {
 describe("events log", () => {
   test("append creates envelope with correct structure and updates structured state", () => {
     const store = createFreshStore("events-envelope");
-    store.getState().append({ type: "user-message", content: "hello" });
+    appendUserMessage(store, "hello");
 
     const state = store.getState();
     expect(state.events).toHaveLength(1);
@@ -400,17 +422,17 @@ describe("events log", () => {
     const envelope = state.events[0]!;
     expect(envelope.id).toBe(0);
     expect(envelope.createdAt).toBeGreaterThan(0);
-    expect(envelope.payload.type).toBe("user-message");
-    expect(envelope.payload).toEqual({ type: "user-message", content: "hello" });
+    expect(envelope.payload.type).toBe("session.messages_committed");
+    expect(envelope.payload).toMatchObject({ type: "session.messages_committed" });
     expect(state.messages).toHaveLength(1);
     expect(state.messages[0]!.role).toBe("user");
   });
 
   test("envelope id monotonicity increments nextEventId", () => {
     const store = createFreshStore("events-monotonic");
-    store.getState().append({ type: "user-message", content: "first" });
-    store.getState().append({ type: "user-message", content: "second" });
-    store.getState().append({ type: "user-message", content: "third" });
+    appendUserMessage(store, "first");
+    appendUserMessage(store, "second");
+    appendUserMessage(store, "third");
 
     const state = store.getState();
     expect(state.events).toHaveLength(3);
@@ -426,7 +448,7 @@ describe("events log", () => {
 
     // Append MAX_EVENTS (10000) + 1 events to trigger overflow
     for (let i = 0; i < 10001; i++) {
-      store.getState().append({ type: "user-message", content: `event-${i}` });
+      store.getState().append({ type: "reminder-consumed", reminderIds: [`missing-${i}`] });
     }
 
     const state = store.getState();
@@ -620,7 +642,7 @@ describe("todo-write events", () => {
       type: "todo-write",
       todos: [{ id: "todo-1", content: "hidden from projection", status: "in_progress" }],
     });
-    store.getState().append({ type: "user-message", content: "hello" });
+    appendUserMessage(store, "hello");
 
     const projected = store.getState().toModelMessages();
     expect(projected).toHaveLength(1);
@@ -684,7 +706,7 @@ describe("execution lifecycle", () => {
   test("execution-end failed performs the same cleanup and preserves messages", () => {
     const store = createFreshStore("execution-end-failure");
     store.getState().append({ type: "execution-start", executionId: "run" });
-    store.getState().append({ type: "user-message", content: "keep me" });
+    appendUserMessage(store, "keep me");
     const messages = store.getState().messages;
     store.getState().append({ type: "execution-end", status: "failed", error: "boom" });
 
@@ -724,10 +746,10 @@ describe("execution lifecycle", () => {
 });
 
 describe("user messages", () => {
-  test("user-message creates a completed user message with a completed text part and executionId", () => {
-    const store = createFreshStore("user-message");
+  test("canonical message commit creates a completed user message with an executionId", () => {
+    const store = createFreshStore("canonical-message");
     store.getState().append({ type: "execution-start", executionId: "run-user" });
-    store.getState().append({ type: "user-message", content: "hello" });
+    appendUserMessage(store, "hello");
 
     const message = onlyMessage(store.getState().messages);
     expect(message.role).toBe("user");
@@ -738,10 +760,10 @@ describe("user messages", () => {
     expect(part.completedAt).toBeGreaterThan(0);
   });
 
-  test("multiple user-messages are appended in order", () => {
+  test("multiple canonical user messages are appended in order", () => {
     const store = createFreshStore("multi-user");
-    store.getState().append({ type: "user-message", content: "first" });
-    store.getState().append({ type: "user-message", content: "second" });
+    appendUserMessage(store, "first");
+    appendUserMessage(store, "second");
 
     expect(store.getState().messages.map((message) => textPart(message).text)).toEqual(["first", "second"]);
   });
@@ -1058,7 +1080,7 @@ describe("Zustand integration and immutability", () => {
       calls += 1;
     });
 
-    store.getState().append({ type: "user-message", content: "notify" });
+    appendUserMessage(store, "notify");
     unsubscribe();
     // One notification carries the reduced event and one carries the
     // canonical updatedAt advanced by the scheduled durable snapshot.
@@ -1068,13 +1090,13 @@ describe("Zustand integration and immutability", () => {
   test("messages array reference changes after append", () => {
     const store = createFreshStore("immutability");
     const before = store.getState().messages;
-    store.getState().append({ type: "user-message", content: "immutable" });
+    appendUserMessage(store, "immutable");
     expect(store.getState().messages).not.toBe(before);
   });
 
   test("toModelMessages delegates projection over stored messages", () => {
     const store = createFreshStore("projection");
-    store.getState().append({ type: "user-message", content: "hello" });
+    appendUserMessage(store, "hello");
     expect(store.getState().toModelMessages()).toEqual([
       { role: "user", content: "<message ref=\"m0001\">\nhello\n</message>" },
     ]);
@@ -1082,7 +1104,7 @@ describe("Zustand integration and immutability", () => {
 
   test("toModelMessages materializes stable compression message refs", () => {
     const store = createFreshStore("projection-ref-map");
-    store.getState().append({ type: "user-message", content: "first" });
+    appendUserMessage(store, "first");
 
     store.getState().toModelMessages();
     const firstRefMap = store.getState().compression!.refMap;
@@ -1092,7 +1114,7 @@ describe("Zustand integration and immutability", () => {
     expect(firstRefMap.messageIdsByRef.m0001).toBe(firstMessageId);
     expect(firstRefMap.nextMessageIndex).toBe(2);
 
-    store.getState().append({ type: "user-message", content: "second" });
+    appendUserMessage(store, "second");
     const rendered = JSON.stringify(store.getState().toModelMessages());
     const secondRefMap = store.getState().compression!.refMap;
     const secondMessageId = store.getState().messages[1]!.id;
@@ -1109,7 +1131,7 @@ describe("Oracle regression tests", () => {
   test("multi-step tool call creates separate assistant messages", () => {
     const store = createFreshStore("multi-step");
     store.getState().append({ type: "execution-start" });
-    store.getState().append({ type: "user-message", content: "run tool" });
+    appendUserMessage(store, "run tool");
 
     // Step 0: assistant calls a tool
     store.getState().append({ type: "step-start", step: 0 });
@@ -1152,7 +1174,7 @@ describe("Oracle regression tests", () => {
 
     // Execution 1
     store.getState().append({ type: "execution-start" });
-    store.getState().append({ type: "user-message", content: "first" });
+    appendUserMessage(store, "first");
     store.getState().append({ type: "step-start", step: 0 });
     store.getState().append({ type: "text-start" });
     store.getState().append({ type: "text-delta", text: "first response" });
@@ -1162,7 +1184,7 @@ describe("Oracle regression tests", () => {
 
     // Execution 2 with same step number
     store.getState().append({ type: "execution-start" });
-    store.getState().append({ type: "user-message", content: "second" });
+    appendUserMessage(store, "second");
     store.getState().append({ type: "step-start", step: 0 });
     store.getState().append({ type: "step-end", step: 0, finishReason: "stop" });
     store.getState().append({ type: "execution-end", status: "completed" });
@@ -1176,7 +1198,7 @@ describe("Oracle regression tests", () => {
   test("partial text preserved when stream errors after text-delta", () => {
     const store = createFreshStore("stream-error-text");
     store.getState().append({ type: "execution-start" });
-    store.getState().append({ type: "user-message", content: "prompt" });
+    appendUserMessage(store, "prompt");
     store.getState().append({ type: "step-start", step: 0 });
 
     // Start text streaming, then simulate error (execution-end handles cleanup)
@@ -1201,7 +1223,7 @@ describe("Oracle regression tests", () => {
   test("duplicate text-start flushes previous text part", () => {
     const store = createFreshStore("dup-text-start");
     store.getState().append({ type: "execution-start" });
-    store.getState().append({ type: "user-message", content: "prompt" });
+    appendUserMessage(store, "prompt");
     store.getState().append({ type: "step-start", step: 0 });
 
     // First text section
@@ -1224,7 +1246,7 @@ describe("Oracle regression tests", () => {
   test("failed execution settles pending/running tools as error", () => {
     const store = createFreshStore("failed-execution-tools");
     store.getState().append({ type: "execution-start" });
-    store.getState().append({ type: "user-message", content: "use tool" });
+    appendUserMessage(store, "use tool");
     store.getState().append({ type: "step-start", step: 0 });
 
     store.getState().append({ type: "tool-input-start", toolCallId: "tc-1", toolName: "bash" });
@@ -1303,9 +1325,9 @@ describe("meta propagation through tool-result event", () => {
 describe("compact event", () => {
   test("compact event marks prefix messages as compacted and inserts synthetic message", () => {
     const store = createFreshStore("compact-basic");
-    store.getState().append({ type: "user-message", content: "old question" });
+    appendUserMessage(store, "old question");
     store.getState().append({ type: "execution-start" });
-    store.getState().append({ type: "user-message", content: "new question" });
+    appendUserMessage(store, "new question");
 
     const messages = store.getState().messages;
     const tailId = messages[1]!.id;
@@ -1333,8 +1355,8 @@ describe("compact event", () => {
 
   test("compact event with unknown tailStartId compacts all messages", () => {
     const store = createFreshStore("compact-unknown-tail");
-    store.getState().append({ type: "user-message", content: "message 1" });
-    store.getState().append({ type: "user-message", content: "message 2" });
+    appendUserMessage(store, "message 1");
+    appendUserMessage(store, "message 2");
 
     store.getState().append({
       type: "compact",
@@ -1349,9 +1371,9 @@ describe("compact event", () => {
 
   test("second compact event replaces existing compaction part", () => {
     const store = createFreshStore("compact-replace");
-    store.getState().append({ type: "user-message", content: "very old" });
-    store.getState().append({ type: "user-message", content: "old" });
-    store.getState().append({ type: "user-message", content: "recent" });
+    appendUserMessage(store, "very old");
+    appendUserMessage(store, "old");
+    appendUserMessage(store, "recent");
 
     const messages = store.getState().messages;
     const firstTailId = messages[1]!.id;
@@ -1385,8 +1407,8 @@ describe("compact event", () => {
 
   test("synthetic compaction message is not marked compacted", () => {
     const store = createFreshStore("compact-not-compacted");
-    store.getState().append({ type: "user-message", content: "old" });
-    store.getState().append({ type: "user-message", content: "new" });
+    appendUserMessage(store, "old");
+    appendUserMessage(store, "new");
 
     const tailId = store.getState().messages[1]!.id;
 
@@ -1407,8 +1429,8 @@ describe("compact event", () => {
 describe("compression events", () => {
   test("compression.block_committed updates durable compression state without compacted flags", () => {
     const store = createFreshStore("compression-commit");
-    store.getState().append({ type: "user-message", content: "old" });
-    store.getState().append({ type: "user-message", content: "tail" });
+    appendUserMessage(store, "old");
+    appendUserMessage(store, "tail");
 
     store.getState().append({ type: "compression.block_committed", block: compressionBlockSnapshot() });
 
@@ -1425,8 +1447,8 @@ describe("compression events", () => {
 
   test("compression.block_committed preserves rendered structured summaries without fallback sections", () => {
     const store = createFreshStore("compression-structured-summary");
-    store.getState().append({ type: "user-message", content: "old" });
-    store.getState().append({ type: "user-message", content: "tail" });
+    appendUserMessage(store, "old");
+    appendUserMessage(store, "tail");
 
     store.getState().append({
       type: "compression.block_committed",
@@ -1445,8 +1467,8 @@ describe("compression events", () => {
 
   test("compact event clears dynamic compression state before model projection", () => {
     const store = createFreshStore("compact-clears-dynamic-compression");
-    store.getState().append({ type: "user-message", content: "old" });
-    store.getState().append({ type: "user-message", content: "tail" });
+    appendUserMessage(store, "old");
+    appendUserMessage(store, "tail");
     store.getState().append({ type: "compression.block_committed", block: compressionBlockSnapshot() });
 
     expect(store.getState().compression?.activeBlockRefs).toEqual(["b1"]);

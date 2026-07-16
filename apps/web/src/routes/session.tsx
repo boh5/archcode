@@ -57,6 +57,7 @@ export function SessionRoute() {
       const childStore = getWebSessionStore(focusSessionId, slug);
       const {
         messages,
+        pendingMessages,
         steps,
         todos,
         title,
@@ -73,6 +74,7 @@ export function SessionRoute() {
       } = focusedSession;
       childStore.getState().initializeFromSnapshot({
         messages,
+        pendingMessages,
         steps,
         todos,
         title,
@@ -103,6 +105,7 @@ export function SessionRoute() {
       const store = getWebSessionStore(sessionId, slug);
       const {
         messages,
+        pendingMessages,
         steps,
         todos,
         title,
@@ -119,6 +122,7 @@ export function SessionRoute() {
       } = session;
       store.getState().initializeFromSnapshot({
         messages,
+        pendingMessages,
         steps,
         todos,
         title,

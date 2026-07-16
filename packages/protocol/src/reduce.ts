@@ -92,24 +92,45 @@ export function reduceStreamEvent(
     case "session.cwd_changed":
       return { cwd: event.cwd };
 
-    case "user-message": {
-      const part: TextPart = {
-        type: "text",
-        id: ctx.generateId(),
-        text: event.content,
-        createdAt: timestamp,
-        completedAt: timestamp,
-      };
-      const message: SessionMessage = {
-        id: ctx.generateId(),
-        role: "user",
-        parts: [part],
-        createdAt: timestamp,
-        completedAt: timestamp,
-        executionId: state.currentExecutionId,
+    case "session.message_accepted":
+      return { pendingMessages: [...state.pendingMessages, event.message] };
+
+    case "session.message_edited":
+    case "session.message_steer_claimed":
+    case "session.message_steer_rolled_back":
+      return {
+        pendingMessages: state.pendingMessages.map((message) =>
+          message.id === event.message.id ? event.message : message
+        ),
       };
 
-      return { messages: [...state.messages, message], stats: incrementUserMessages(state.stats) };
+    case "session.message_deleted":
+      return {
+        pendingMessages: state.pendingMessages.filter((message) => message.id !== event.messageId),
+      };
+
+    case "session.messages_committed": {
+      const committedIds = new Set(event.messages.map((message) => message.id));
+      const existingIds = new Set(state.messages.map((message) => message.id));
+      const newMessages = event.messages.filter((message) => !existingIds.has(message.id));
+      return {
+        pendingMessages: state.pendingMessages.filter((message) => !committedIds.has(message.id)),
+        messages: [...state.messages, ...newMessages],
+        stats: incrementUserMessagesBy(state.stats, newMessages.length),
+      };
+    }
+
+    case "execution-stop-requested": {
+      let changed = false;
+      const executions = state.executions.map((execution) => {
+        if (execution.id !== event.executionId) return execution;
+        changed = true;
+        return {
+          ...execution,
+          stopRequestedAt: Math.max(execution.stopRequestedAt ?? 0, event.timestamp),
+        };
+      });
+      return changed ? { executions } : {};
     }
 
     case "system-notice": {
@@ -835,12 +856,17 @@ function isSubAgentReminder(reminder: { source: { type: string } }): boolean {
 }
 
 function incrementUserMessages(stats: SessionStats): SessionStats {
+  return incrementUserMessagesBy(stats, 1);
+}
+
+function incrementUserMessagesBy(stats: SessionStats, count: number): SessionStats {
+  if (count <= 0) return stats;
   return {
     ...stats,
     messages: {
-      user: stats.messages.user + 1,
+      user: stats.messages.user + count,
       assistant: stats.messages.assistant,
-      total: stats.messages.total + 1,
+      total: stats.messages.total + count,
     },
   };
 }

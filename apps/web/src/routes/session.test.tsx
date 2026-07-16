@@ -40,6 +40,7 @@ function createSession(input: {
     activeSkillNames: [],
     modelInfo: null,
     messages: input.messages,
+    pendingMessages: [],
     steps: [],
     todos: [],
     reminders: [],

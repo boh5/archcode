@@ -255,14 +255,12 @@ describe("GoalLifecycleService committed creation", () => {
     expect(shouldNotReplay).not.toHaveBeenCalled();
   });
 
-  test("leaves capacity and busy failures recoverable but marks deterministic identity conflicts failed", async () => {
-    for (const name of ["SessionFamilyActiveError", "ConcurrentSessionLimitError"]) {
-      const failure = Object.assign(new Error(name), { name });
-      const lifecycle = new GoalLifecycleService(lifecycleOptions({
-        startCheckedExecutionWithinGoalClaim: mock(async () => { throw failure; }),
-      }));
-      expect((await lifecycle.create(createInput())).status).toBe("running");
-    }
+  test("leaves busy failures recoverable but marks deterministic identity conflicts failed", async () => {
+    const busy = Object.assign(new Error("SessionFamilyActiveError"), { name: "SessionFamilyActiveError" });
+    const lifecycle = new GoalLifecycleService(lifecycleOptions({
+      startCheckedExecutionWithinGoalClaim: mock(async () => { throw busy; }),
+    }));
+    expect((await lifecycle.create(createInput())).status).toBe("running");
 
     const conflicting = new GoalLifecycleService(lifecycleOptions({
       ensureSessionFile: async (root, id, options) => {

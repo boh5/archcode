@@ -3,33 +3,30 @@ import type { AutomationInvocation } from "@archcode/protocol";
 import { AutomationCoordinator } from "./coordinator";
 import { AutomationStateManager } from "./state-manager";
 
-export type SessionExecutionDispatchState = "missing" | "ready" | "active" | "accepted" | "unavailable";
-
-export interface SessionExecutionIdentity {
+export interface SessionMessageDispatchIdentity {
   readonly workspaceRoot: string;
   readonly projectSlug: string;
   readonly sessionId: string;
-  readonly executionId: string;
+  readonly clientRequestId: string;
 }
 
 export type SessionDispatchInput =
-  | (SessionExecutionIdentity & {
+  | (SessionMessageDispatchIdentity & {
     readonly kind: "start_session";
     readonly message: string;
     readonly location: "project" | "worktree";
   })
-  | (SessionExecutionIdentity & {
+  | (SessionMessageDispatchIdentity & {
     readonly kind: "send_message";
     readonly message: string;
   });
 
 /**
  * The only Automation-to-Session boundary. Implementations must route through
- * the ordinary Session execution API and make executionId acceptance idempotent.
+ * the ordinary Session message API and make clientRequestId acceptance idempotent.
  */
 export interface SessionDispatchGateway {
-  inspectExecution(identity: SessionExecutionIdentity): Promise<SessionExecutionDispatchState>;
-  dispatch(input: SessionDispatchInput): Promise<{ readonly accepted: boolean }>;
+  dispatch(input: SessionDispatchInput): Promise<void>;
 }
 
 export interface AutomationChangeNotification {
@@ -81,7 +78,7 @@ export class AutomationDispatcher {
     return await this.coordinator.runExclusive(automationId, async () => {
       const pending = (await this.#stateManager.listInvocations(automationId))
         .find((invocation) => invocation.status === "pending");
-      if (pending !== undefined) await this.#recoverAcceptedInvocation(pending);
+      if (pending !== undefined) await this.#dispatchClaimedInvocation(pending.id);
       return await mutation();
     });
   }
@@ -98,15 +95,10 @@ export class AutomationDispatcher {
     if (invocation.status !== "pending") return invocation;
     const automation = await this.#stateManager.readAutomation(invocation.automationId);
     const identity = invocationIdentity(this.#stateManager.workspaceRoot, automation.projectSlug, invocation);
-    const recovered = await this.#recoverAcceptedInvocation(invocation, identity);
-    if (recovered.status !== "pending") return recovered;
-    const recoveredState = await this.#gateway.inspectExecution(identity);
-    if (recoveredState === "unavailable") return invocation;
-    if (await this.#hasActivePreviousInvocation(invocation)) return invocation;
 
     let dispatchError: unknown;
     try {
-      const result = await this.#gateway.dispatch(automation.action.kind === "start_session"
+      await this.#gateway.dispatch(automation.action.kind === "start_session"
         ? {
           ...identity,
           kind: "start_session",
@@ -118,7 +110,6 @@ export class AutomationDispatcher {
           kind: "send_message",
           message: automation.action.message,
         });
-      if (!result.accepted) throw new Error("Session gateway did not accept the execution");
     } catch (error) {
       dispatchError = error;
     }
@@ -133,27 +124,9 @@ export class AutomationDispatcher {
       return failed;
     }
     // Deliberately outside the dispatch catch: if this write fails after the
-    // Session accepted, the durable record remains pending and recovery probes
-    // the same preallocated identities instead of misclassifying it as failed.
+    // Session accepted, the durable record remains pending and a retry submits
+    // the same clientRequestId to the idempotent Session message boundary.
     return this.#markDispatched(invocation.id);
-  }
-
-  async #recoverAcceptedInvocation(
-    invocation: AutomationInvocation,
-    knownIdentity?: SessionExecutionIdentity,
-  ): Promise<AutomationInvocation> {
-    const automation = knownIdentity === undefined
-      ? await this.#stateManager.readAutomation(invocation.automationId)
-      : undefined;
-    const identity = knownIdentity ?? invocationIdentity(
-      this.#stateManager.workspaceRoot,
-      automation!.projectSlug,
-      invocation,
-    );
-    const recoveredState = await this.#gateway.inspectExecution(identity);
-    return recoveredState === "accepted" || recoveredState === "active"
-      ? await this.#markDispatched(invocation.id)
-      : invocation;
   }
 
   async dispatchPending(): Promise<AutomationInvocation[]> {
@@ -163,20 +136,6 @@ export class AutomationDispatcher {
       if (pending) results.push(await this.dispatchInvocation(pending.id));
     }
     return results;
-  }
-
-  async #hasActivePreviousInvocation(invocation: AutomationInvocation): Promise<boolean> {
-    const history = await this.#stateManager.listInvocations(invocation.automationId);
-    const previous = [...history].reverse().find((item) => item.id !== invocation.id && item.status === "dispatched" && item.sessionId !== undefined);
-    if (!previous?.sessionId) return false;
-    const automation = await this.#stateManager.readAutomation(invocation.automationId);
-    const state = await this.#gateway.inspectExecution({
-      workspaceRoot: this.#stateManager.workspaceRoot,
-      projectSlug: automation.projectSlug,
-      sessionId: previous.sessionId,
-      executionId: previous.executionId,
-    });
-    return state === "active" || state === "unavailable";
   }
 
   async #markDispatched(invocationId: string): Promise<AutomationInvocation> {
@@ -204,11 +163,11 @@ function invocationIdentity(
   workspaceRoot: string,
   projectSlug: string,
   invocation: AutomationInvocation,
-): SessionExecutionIdentity {
+): SessionMessageDispatchIdentity {
   return {
     workspaceRoot,
     projectSlug,
     sessionId: requiredSessionId(invocation),
-    executionId: invocation.executionId,
+    clientRequestId: invocation.id,
   };
 }

@@ -1,8 +1,8 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { AgentRuntime } from "@archcode/agent-core";
-import type { CompressionBlockCommittedEvent, GlobalSSEEvent, HitlView } from "@archcode/protocol";
+import type { GlobalSSEEvent, HitlView } from "@archcode/protocol";
 import { Hono } from "hono";
-import { createServerApp, createServerEventRuntime } from "../app";
+import { createServerApp } from "../app";
 import { errorHandler } from "../error-handler";
 import { GlobalEventBus, globalEventBus, type GlobalEventBusListener } from "../events/global-event-bus";
 import { createGlobalEventsRoutes } from "./global-events";
@@ -35,6 +35,7 @@ function createGlobalServerRuntime(): AgentRuntime {
       createdAt: 0,
     }]),
     listHitlSnapshotEvents: mock(async () => []),
+    subscribeSessionEvents: mock(() => () => undefined),
     subscribeSessionRuntimeChanges: mock(() => () => undefined),
   } as unknown as AgentRuntime;
 }
@@ -309,37 +310,6 @@ describe("global events route", () => {
     expect(text).toContain("id: shared:singleton:1");
   });
 
-  test("bridges compression block commits through existing global SSE consumers", async () => {
-    const runtime = createRuntimeWithManualSubscriptions();
-    const serverRuntime = createServerEventRuntime(runtime);
-    const response = await createApp(globalEventBus).request("/api/events");
-
-    const execution = await serverRuntime.startSessionMessageExecution({
-      slug: "proj",
-      workspaceRoot: "/workspace",
-      sessionId: "session-1",
-      userMessage: "compress context",
-    });
-    runtime.emitSession("session-1", {
-      type: "event",
-      slug: "proj",
-      sessionId: "session-1",
-      eventId: 12,
-      createdAt: 1700000000001,
-      payload: compressionBlockCommittedEvent(),
-      agentName: "engineer",
-    });
-
-    const text = await readUntil(response, (chunk) => chunk.includes("compression.block_committed"));
-    expect(text).toContain("event: event");
-    expect(text).toContain("id: proj:session-1:12");
-    expect(text).toContain('"block":{"id":"block-1","ref":"b1"');
-    expect(text).not.toContain("original messages");
-
-    runtime.resolveExecution();
-    await execution.promise;
-  });
-
   test("server app no longer registers the old per-session SSE endpoint", async () => {
     const { app } = createServerApp(createGlobalServerRuntime(), { dev: true });
 
@@ -348,67 +318,3 @@ describe("global events route", () => {
     expect(response.status).toBe(404);
   });
 });
-
-function createRuntimeWithManualSubscriptions() {
-  const subscriptions = new Map<string, (event: GlobalSSEEvent) => void>();
-  let resolveExecution!: () => void;
-  const promise = new Promise<void>((resolve) => {
-    resolveExecution = resolve;
-  });
-
-  const runtime = {
-    subscribeSessionEvents: mock((input: { sessionId: string; onEvent: (event: GlobalSSEEvent) => void }) => {
-      subscriptions.set(input.sessionId, input.onEvent);
-      return () => subscriptions.delete(input.sessionId);
-    }),
-    startSessionMessageExecution: mock(async (input: {
-      sessionId: string;
-      workspaceRoot: string;
-      executionId?: string;
-    }) => ({
-      sessionId: input.sessionId,
-      rootSessionId: input.sessionId,
-      workspaceRoot: input.workspaceRoot,
-      agentName: "engineer" as const,
-      origin: "user_message" as const,
-      abortController: new AbortController(),
-      promise,
-      executionToken: Symbol("global-events-test-execution"),
-      startedAt: Date.now(),
-      executionId: input.executionId ?? "execution-1",
-    })),
-    emitSession: (sessionId: string, event: GlobalSSEEvent) => subscriptions.get(sessionId)?.(event),
-    resolveExecution: () => resolveExecution(),
-  };
-
-  return runtime as unknown as AgentRuntime & {
-    emitSession: (sessionId: string, event: GlobalSSEEvent) => void;
-    resolveExecution: () => void;
-  };
-}
-
-function compressionBlockCommittedEvent(): CompressionBlockCommittedEvent {
-  return {
-    type: "compression.block_committed",
-    block: {
-      id: "block-1",
-      ref: "b1",
-      status: "active",
-      strategy: "dynamic-range",
-      trigger: "model_tool_call",
-      range: {
-        startMessageId: "msg-1",
-        endMessageId: "msg-2",
-        startRef: "m0001",
-        endRef: "m0002",
-        startIndex: 0,
-        endIndex: 1,
-      },
-      summary: "compressed summary",
-      childBlockRefs: [],
-      protectedRefs: [],
-      createdAt: 100,
-      updatedAt: 100,
-    },
-  };
-}

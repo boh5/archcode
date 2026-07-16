@@ -65,7 +65,7 @@ describe("AutomationStateManager", () => {
     expect((await manager.readAutomation(automation.id)).action.message).toBe("Check");
   });
 
-  test("preallocates stable dispatch identities and coalesces pending work", async () => {
+  test("preallocates a stable Session id and coalesces pending work", async () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     const automation = await manager.createAutomation({
       projectSlug: "project-a",
@@ -78,7 +78,6 @@ describe("AutomationStateManager", () => {
     const coalesced = await manager.enqueueInvocation(automation.id, "2026-07-13T00:01:00.000Z");
 
     expect(coalesced.id).toBe(first.id);
-    expect(coalesced.executionId).toBe(first.executionId);
     expect(coalesced.sessionId).toBe(first.sessionId);
     expect(coalesced.dueAt).toBe("2026-07-13T00:01:00.000Z");
     expect((await manager.listInvocations(automation.id))).toHaveLength(1);

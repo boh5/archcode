@@ -12,6 +12,7 @@ export type {
   SessionTreeDiagnosticType,
   SessionPart,
   SessionMessage,
+  PendingSessionMessage,
   SessionStep,
   SessionTodo,
   GoalState,

@@ -1,4 +1,4 @@
-export type { Agent, AgentResult, AgentRunOptions } from "./types";
+export type { Agent, AgentCommand, AgentCommandResult, AgentResult, AgentRunOptions } from "./types";
 export {
   DEFAULT_SUB_AGENT_TIMEOUT_MS,
   DELEGATION_CORE_TOOLS,
@@ -38,7 +38,6 @@ export { resolveAgentModel } from "./model-resolver";
 export {
   AgentRunningError,
   ConcurrentLimitError,
-  ConcurrentSessionLimitError,
   DepthLimitError,
   MissingAgentModelConfigError,
   NoModelsConfiguredError,

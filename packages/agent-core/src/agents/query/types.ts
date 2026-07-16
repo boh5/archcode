@@ -1,7 +1,6 @@
 import type { StoreApi } from "zustand";
 import type { ModelCallOptions } from "../../config/provider";
 import type { ModelInfo } from "../../provider/model";
-import type { CommandRegistry } from "../../commands/registry";
 import type { SessionStoreManager } from "../../store/session-store-manager";
 import type { ExecutionEndEvent, SessionStoreState } from "../../store/types";
 import type { AskUserCallback, ToolConfirmationCallback, ToolExecutionControl } from "../../tools/index";
@@ -32,7 +31,8 @@ export interface QueryLoopOptions {
   systemPrompt?: string;
   maxSteps?: number;
   store: StoreApi<SessionStoreState>;
-  commandRegistry?: CommandRegistry;
+  /** Moves this Execution's accepted steer snapshots into the canonical transcript. */
+  consumeSteers?: () => Promise<void>;
   startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
   cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
   resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;

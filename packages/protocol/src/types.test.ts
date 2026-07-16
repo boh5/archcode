@@ -575,7 +575,6 @@ describe("Automation types", () => {
       automationId: automation.id,
       dueAt: "2026-07-14T01:00:00.000Z",
       status: "pending",
-      executionId: "execution-1",
       createdAt: "2026-07-14T01:00:00.000Z",
     };
 

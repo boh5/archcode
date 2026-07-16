@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { usePostMessage, useStopSessionFamily } from "../../api/mutations";
 import { useHitlProjectInitialized, useRealtimeHitl } from "../../store/hitl-store";
 import { useSessionFamilyActivity } from "../../store/session-runtime-store";
-import { useSessionStore } from "../../store/session-store";
+import { getWebSessionStore, useSessionStore } from "../../store/session-store";
+import { ApiError } from "../../api/client";
 
 const SLASH_COMMANDS = [
   { name: "/compact", description: "Compact conversation context" },
@@ -41,9 +42,9 @@ export function ChatInput({ slug, sessionId }: ChatInputProps) {
   const isStopping = activity === "stopping";
   const runtimeReady = activity !== undefined;
   const hasPendingHitl = pendingHitl.length > 0;
-  const canCompose = runtimeReady && hitlReady && activity === "idle" && !hasPendingHitl && !isPending;
-  const canSend = value.trim().length > 0 && canCompose;
-
+  // Sending while running is the normal Queue path. Stopping remains the only
+  // runtime state that blocks the composer.
+  const canCompose = runtimeReady && hitlReady && activity !== "stopping" && !isPending;
   const filteredCommands = SLASH_COMMANDS.filter((cmd) =>
     cmd.name.startsWith(`/ ${slashFilter}`.replace(/\s/g, "")),
   );
@@ -77,35 +78,63 @@ useEffect(() => {
     }
   }, [showSlashMenu]);
 
-  const sendMessage = useCallback(() => {
-    const trimmed = value.trim();
-    if (!trimmed || !canCompose) return;
+  const submitMessage = useCallback((content: string) => {
+    const clientRequestId = crypto.randomUUID();
+    getWebSessionStore(sessionId, slug).getState().addLocalSendingMessage({
+      clientRequestId,
+      content,
+    });
 
     postMessage.mutate(
-      { slug, sessionId, content: trimmed },
-      { onSettled: () => setValue("") },
+      { slug, sessionId, content, clientRequestId },
+      {
+        onSuccess: (acceptance) => {
+          // Slash commands are control inputs and intentionally produce no
+          // queued/canonical message event to take over the optimistic bubble.
+          if (acceptance.status === "command") {
+            getWebSessionStore(sessionId, slug).getState().removeLocalSendingMessage(clientRequestId);
+          }
+        },
+        // The optimistic bubble stays until the durable Session event arrives.
+        // A definitive 4xx means the server rejected the message and the draft
+        // is safe to restore. A timeout/disconnect is ambiguous: keep this ID
+        // so a later reconcile/retry cannot create a duplicate message.
+        onError: (error) => {
+          const store = getWebSessionStore(sessionId, slug).getState();
+          if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+            store.removeLocalSendingMessage(clientRequestId);
+            setValue(content);
+            return;
+          }
+          store.setLocalSendingMessageStatus(clientRequestId, "retryable");
+        },
+      },
     );
+    setValue("");
 
     requestAnimationFrame(() => {
       if (textareaRef.current) {
         textareaRef.current.style.height = "auto";
       }
     });
-  }, [value, canCompose, slug, sessionId, postMessage]);
+  }, [slug, sessionId, postMessage]);
+
+  const sendMessage = useCallback(() => {
+    const trimmed = value.trim();
+    if (!trimmed || !canCompose) return;
+    submitMessage(trimmed);
+  }, [value, canCompose, submitMessage]);
 
   const selectSlashCommand = useCallback(
     (cmd: SlashCommand) => {
-      if (!canCompose) return;
-      postMessage.mutate(
-        { slug, sessionId, content: cmd.name },
-        { onSettled: () => setValue("") },
-      );
+      if (!canCompose || isRunning || hasPendingHitl) return;
+      submitMessage(cmd.name);
       setShowSlashMenu(false);
       setSlashFilter("");
       setSlashActiveIndex(0);
       textareaRef.current?.focus();
     },
-    [canCompose, slug, sessionId, postMessage],
+    [canCompose, isRunning, hasPendingHitl, submitMessage],
   );
 
   const handleKeyDown = useCallback(
@@ -183,7 +212,7 @@ useEffect(() => {
 
   return (
     <div className="border-t border-border-subtle bg-bg-surface px-5 py-3 flex flex-col gap-2 shrink-0 relative">
-      {showSlashMenu && filteredCommands.length > 0 && canCompose && (
+      {showSlashMenu && filteredCommands.length > 0 && canCompose && !isRunning && !hasPendingHitl && (
         <div
           ref={slashMenuRef}
           className="absolute bottom-full left-5 right-5 bg-bg-elevated border border-border-default rounded-md shadow-lg max-h-[200px] overflow-y-auto z-10"
@@ -249,9 +278,9 @@ useEffect(() => {
                 : !hitlReady
                   ? "Syncing pending requests…"
                 : hasPendingHitl
-                  ? "Answer the pending request to continue…"
+                  ? "Queue a message…"
                   : isRunning
-                    ? "Running…"
+                    ? "Queue a message…"
                     : isStopping
                       ? "Stopping…"
                       : "Send a message…"
@@ -295,24 +324,7 @@ useEffect(() => {
           >
             <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-text-muted border-t-transparent" />
           </button>
-        ) : (
-          <button
-            type="button"
-            className="w-9 h-9 rounded-sm bg-accent text-bg-base flex items-center justify-center cursor-pointer shrink-0 transition-opacity duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
-            disabled={!canSend}
-            onClick={sendMessage}
-            title="Send message"
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 16 16"
-              fill="currentColor"
-            >
-              <path d="M2.5 2L14 8L2.5 14L5 8L2.5 2Z" />
-            </svg>
-          </button>
-        )}
+        ) : null}
       </div>
 
       <div className="flex items-center justify-between text-[11px] text-text-tertiary px-1">
@@ -322,7 +334,9 @@ useEffect(() => {
         ) : !hitlReady ? (
           <span className="text-text-secondary select-none">Syncing pending requests…</span>
         ) : isRunning ? (
-          <span className="text-text-secondary select-none">Running…</span>
+          <span className="text-text-secondary select-none">
+            <kbd className="text-text-muted">Enter</kbd> queue · <kbd className="text-text-muted">Esc</kbd> stop
+          </span>
         ) : isStopping ? (
           <span className="text-text-secondary select-none">Stopping…</span>
         ) : hasPendingHitl ? (

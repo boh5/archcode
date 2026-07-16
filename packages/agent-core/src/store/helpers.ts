@@ -59,7 +59,53 @@ const SessionExecutionRecordSchema = z.strictObject({
   endedAt: z.number().optional(),
   durationMs: z.number().optional(),
   error: z.string().optional(),
+  stopRequestedAt: z.number().optional(),
 });
+
+const PendingSessionMessageSchema = z.strictObject({
+  id: z.string().trim().min(1),
+  clientRequestId: z.string().trim().min(1),
+  content: z.string(),
+  source: z.enum(["user", "automation"]),
+  state: z.enum(["queued", "steering"]),
+  revision: z.number().int().nonnegative(),
+  acceptedAt: z.number(),
+  updatedAt: z.number(),
+  targetExecutionId: z.string().trim().min(1).optional(),
+}).superRefine((message, ctx) => {
+  if ((message.state === "steering") !== (message.targetExecutionId !== undefined)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["targetExecutionId"],
+      message: "targetExecutionId must exist exactly when state is steering",
+    });
+  }
+});
+
+const SessionInputReceiptSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("message"),
+    clientRequestId: z.string().trim().min(1),
+    messageId: z.string().trim().min(1),
+    requestFingerprint: z.string(),
+    status: z.enum(["pending", "canonical", "deleted"]),
+  }),
+  z.strictObject({
+    kind: z.literal("command"),
+    clientRequestId: z.string().trim().min(1),
+    requestFingerprint: z.string(),
+    status: z.enum(["executing", "completed", "failed", "indeterminate"]),
+    error: z.string().optional(),
+  }).superRefine((receipt, ctx) => {
+    if ((receipt.status === "failed" || receipt.status === "indeterminate") !== (receipt.error !== undefined)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["error"],
+        message: "error must exist exactly when command status is failed or indeterminate",
+      });
+    }
+  }),
+]);
 
 const StoredTodoSchema = z.strictObject({
   id: z.string(),
@@ -270,6 +316,7 @@ const StoredMessageSchema = z.strictObject({
   createdAt: z.number(),
   completedAt: z.number().optional(),
   executionId: z.string().optional(),
+  clientRequestId: z.string().optional(),
   compacted: z.boolean().optional(),
 });
 
@@ -491,6 +538,23 @@ export const SessionFileSchema = z.strictObject({
   modelInfo: SessionModelInfoSchema.nullable(),
   title: z.string().nullable(),
   messages: z.array(StoredMessageSchema),
+  pendingMessages: z.array(PendingSessionMessageSchema).superRefine((messages, ctx) => {
+    const ids = messages.map((message) => message.id);
+    if (new Set(ids).size !== ids.length) {
+      ctx.addIssue({ code: "custom", message: "pendingMessages must have unique message ids" });
+    }
+    const requestIds = messages.map((message) => message.clientRequestId);
+    if (new Set(requestIds).size !== requestIds.length) {
+      ctx.addIssue({ code: "custom", message: "pendingMessages must have unique clientRequestIds" });
+    }
+  }),
+  queueDispatchBarrierAt: z.number().optional(),
+  inputRequestReceipts: z.array(SessionInputReceiptSchema).superRefine((receipts, ctx) => {
+    const requestIds = receipts.map((receipt) => receipt.clientRequestId);
+    if (new Set(requestIds).size !== requestIds.length) {
+      ctx.addIssue({ code: "custom", message: "inputRequestReceipts must have unique clientRequestIds" });
+    }
+  }),
   steps: z.array(StepInfoSchema),
   stats: SessionStatsSchema,
   executions: z.array(SessionExecutionRecordSchema),
@@ -514,6 +578,37 @@ export const SessionFileSchema = z.strictObject({
   goalId: z.string().uuid().optional(),
   sessionRole: SessionRoleSchema.optional(),
   eventCursor: z.number().optional(),
+}).superRefine((session, ctx) => {
+  const canonicalById = new Map(session.messages.map((message) => [message.id, message]));
+  const pendingById = new Map(session.pendingMessages.map((message) => [message.id, message]));
+  const messageReceipts = session.inputRequestReceipts.filter((receipt) => receipt.kind === "message");
+  const receiptsByMessageId = new Map(messageReceipts.map((receipt) => [receipt.messageId, receipt]));
+
+  for (const pending of session.pendingMessages) {
+    if (canonicalById.has(pending.id)) {
+      ctx.addIssue({ code: "custom", path: ["pendingMessages"], message: `Message ${pending.id} is both pending and canonical` });
+    }
+    const receipt = receiptsByMessageId.get(pending.id);
+    if (receipt?.status !== "pending" || receipt.clientRequestId !== pending.clientRequestId) {
+      ctx.addIssue({ code: "custom", path: ["inputRequestReceipts"], message: `Pending message ${pending.id} has no matching pending receipt` });
+    }
+  }
+
+  for (const receipt of session.inputRequestReceipts) {
+    if (receipt.kind === "command") continue;
+    const pending = pendingById.get(receipt.messageId);
+    const canonical = canonicalById.get(receipt.messageId);
+    if (receipt.status === "pending" && pending === undefined) {
+      ctx.addIssue({ code: "custom", path: ["inputRequestReceipts"], message: `Pending receipt ${receipt.clientRequestId} has no message` });
+    }
+    if (receipt.status === "canonical"
+      && (canonical === undefined || canonical.clientRequestId !== receipt.clientRequestId)) {
+      ctx.addIssue({ code: "custom", path: ["inputRequestReceipts"], message: `Canonical receipt ${receipt.clientRequestId} has no matching message` });
+    }
+    if (receipt.status === "deleted" && (pending !== undefined || canonical !== undefined)) {
+      ctx.addIssue({ code: "custom", path: ["inputRequestReceipts"], message: `Deleted receipt ${receipt.clientRequestId} still has a message` });
+    }
+  }
 });
 
 export type HydratedSessionFile = z.output<typeof SessionFileSchema>;
@@ -536,10 +631,10 @@ export interface SessionSummary {
 
 type PersistableSessionState = Pick<
   SessionStoreState,
-  "sessionId" | "createdAt" | "updatedAt" | "cwd" | "agentName" | "activeSkillNames" | "modelInfo" | "title" | "messages" | "steps" | "stats" | "executions" | "compression" | "todos" | "reminders" | "childSessionLinks" | "toolBatches" | "rootSessionId"
+  "sessionId" | "createdAt" | "updatedAt" | "cwd" | "agentName" | "activeSkillNames" | "modelInfo" | "title" | "messages" | "pendingMessages" | "inputRequestReceipts" | "steps" | "stats" | "executions" | "compression" | "todos" | "reminders" | "childSessionLinks" | "toolBatches" | "rootSessionId"
 > & Partial<Pick<
   SessionStoreState,
-  "parentSessionId" | "goalId" | "sessionRole" | "events"
+  "parentSessionId" | "goalId" | "sessionRole" | "events" | "queueDispatchBarrierAt"
 >>;
 
 export function getAssistantText(messages: StoredMessage[]): string {
@@ -575,6 +670,11 @@ async function saveSessionTranscript(
     modelInfo: state.modelInfo,
     title: state.title,
     messages: state.messages,
+    pendingMessages: state.pendingMessages,
+    ...(state.queueDispatchBarrierAt === undefined ? {} : {
+      queueDispatchBarrierAt: state.queueDispatchBarrierAt,
+    }),
+    inputRequestReceipts: state.inputRequestReceipts,
     steps: state.steps,
     stats: state.stats,
     executions: state.executions,
@@ -622,6 +722,11 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
     modelInfo: state.modelInfo,
     title: state.title,
     messages: state.messages,
+    pendingMessages: state.pendingMessages,
+    ...(state.queueDispatchBarrierAt === undefined ? {} : {
+      queueDispatchBarrierAt: state.queueDispatchBarrierAt,
+    }),
+    inputRequestReceipts: state.inputRequestReceipts,
     steps: state.steps,
     stats: state.stats,
     executions: state.executions,

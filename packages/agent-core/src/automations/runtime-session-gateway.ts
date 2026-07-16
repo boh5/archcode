@@ -1,7 +1,5 @@
 import { resolve } from "node:path";
-import type { SessionFamilyActivity } from "@archcode/protocol";
 
-import type { ActiveSessionExecution, StartSessionExecutionInput } from "../execution";
 import type { ProjectInfo } from "../projects/types";
 import { SessionFileNotFoundError } from "../store/errors";
 import type { HydratedSessionFile } from "../store/helpers";
@@ -14,14 +12,17 @@ import {
 import type {
   SessionDispatchGateway,
   SessionDispatchInput,
-  SessionExecutionDispatchState,
-  SessionExecutionIdentity,
 } from "./dispatcher";
 
 export interface AutomationSessionRuntime {
-  getSessionExecution(workspaceRoot: string, sessionId: string): ActiveSessionExecution | undefined;
-  getSessionFamilyActivity(workspaceRoot: string, rootSessionId: string): SessionFamilyActivity;
-  startSessionMessageExecution(input: StartSessionExecutionInput): Promise<ActiveSessionExecution>;
+  acceptSessionMessage(input: {
+    readonly slug: string;
+    readonly workspaceRoot: string;
+    readonly sessionId: string;
+    readonly text: string;
+    readonly clientRequestId: string;
+    readonly source: "automation";
+  }): Promise<{ readonly clientRequestId: string; readonly messageId: string }>;
 }
 
 export interface RuntimeSessionDispatchGatewayOptions {
@@ -53,7 +54,7 @@ export class RuntimeSessionDispatchGateway implements SessionDispatchGateway {
   readonly #runtime: AutomationSessionRuntime;
   readonly #resolveProject: RuntimeSessionDispatchGatewayOptions["resolveProject"];
   readonly #worktreeServiceFactory: NonNullable<RuntimeSessionDispatchGatewayOptions["worktreeServiceFactory"]>;
-  readonly #dispatches = new Map<string, Promise<{ readonly accepted: boolean }>>();
+  readonly #dispatches = new Map<string, Promise<void>>();
 
   constructor(options: RuntimeSessionDispatchGatewayOptions) {
     this.#sessions = options.sessionStoreManager;
@@ -63,25 +64,8 @@ export class RuntimeSessionDispatchGateway implements SessionDispatchGateway {
       ?? ((workspaceRoot) => new WorktreeService({ canonicalRoot: workspaceRoot }));
   }
 
-  async inspectExecution(identity: SessionExecutionIdentity): Promise<SessionExecutionDispatchState> {
-    const live = this.#runtime.getSessionExecution(identity.workspaceRoot, identity.sessionId);
-    if (live !== undefined) return live.executionId === identity.executionId ? "active" : "unavailable";
-
-    const session = await this.#readSession(identity.workspaceRoot, identity.sessionId);
-    if (session === undefined) return "missing";
-    const execution = session.executions.find((item) => item.id === identity.executionId);
-    if (execution !== undefined) {
-      return execution.status === "running" || execution.status === "waiting_for_human"
-        ? "active"
-        : "accepted";
-    }
-    return this.#runtime.getSessionFamilyActivity(identity.workspaceRoot, session.rootSessionId) === "idle"
-      ? "ready"
-      : "unavailable";
-  }
-
-  async dispatch(input: SessionDispatchInput): Promise<{ readonly accepted: boolean }> {
-    const key = `${input.workspaceRoot}\0${input.executionId}`;
+  async dispatch(input: SessionDispatchInput): Promise<void> {
+    const key = `${input.workspaceRoot}\0${input.clientRequestId}`;
     const existing = this.#dispatches.get(key);
     if (existing !== undefined) return await existing;
     const pending = this.#dispatch(input).finally(() => {
@@ -91,11 +75,7 @@ export class RuntimeSessionDispatchGateway implements SessionDispatchGateway {
     return await pending;
   }
 
-  async #dispatch(input: SessionDispatchInput): Promise<{ readonly accepted: boolean }> {
-    const state = await this.inspectExecution(input);
-    if (state === "active" || state === "accepted") return { accepted: true };
-    if (state === "unavailable") return { accepted: false };
-
+  async #dispatch(input: SessionDispatchInput): Promise<void> {
     const project = await this.#resolveProject(input.projectSlug);
     if (project === undefined || project.workspaceRoot !== input.workspaceRoot || project.slug !== input.projectSlug) {
       throw new Error(`Automation project scope is unavailable: ${input.projectSlug}`);
@@ -114,19 +94,20 @@ export class RuntimeSessionDispatchGateway implements SessionDispatchGateway {
         );
       }
       await this.#assertStartSessionIdentity(session, input.location, input.workspaceRoot);
-    } else if (await this.#readSession(input.workspaceRoot, input.sessionId) === undefined) {
-      throw new SessionFileNotFoundError(input.sessionId);
+    } else {
+      const session = await this.#readSession(input.workspaceRoot, input.sessionId);
+      if (session === undefined) throw new SessionFileNotFoundError(input.sessionId);
+      this.#assertRootSessionIdentity(session);
     }
 
-    await this.#runtime.startSessionMessageExecution({
+    await this.#runtime.acceptSessionMessage({
       slug: project.slug,
       workspaceRoot: input.workspaceRoot,
       sessionId: input.sessionId,
-      userMessage: input.message,
-      origin: "user_message",
-      executionId: input.executionId,
+      text: input.message,
+      clientRequestId: input.clientRequestId,
+      source: "automation",
     });
-    return { accepted: true };
   }
 
   async #prepareWorktree(workspaceRoot: string, sessionId: string): Promise<string> {
@@ -177,6 +158,15 @@ export class RuntimeSessionDispatchGateway implements SessionDispatchGateway {
       throw new AutomationSessionIdentityError(
         session.sessionId,
         `Preallocated Automation Session ${session.sessionId} does not own its worktree`,
+      );
+    }
+  }
+
+  #assertRootSessionIdentity(session: HydratedSessionFile): void {
+    if (session.rootSessionId !== session.sessionId || session.parentSessionId !== undefined) {
+      throw new AutomationSessionIdentityError(
+        session.sessionId,
+        `Automation messages can target only a root Session: ${session.sessionId}`,
       );
     }
   }

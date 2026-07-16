@@ -11,6 +11,7 @@ import type {
   SessionEventEnvelope,
   SessionEventPayload,
   SessionMessage,
+  PendingSessionMessage,
   SessionModelInfo,
   SessionProjection,
   SessionExecutionRecord,
@@ -25,6 +26,13 @@ const MAX_PENDING_REMOTE_EVENTS = 1000;
 export interface WebSessionStoreState extends Omit<SessionProjection, "cwd" | "agentName"> {
   [key: string]: unknown;
   hydrationStatus: "pending" | "hydrated";
+  /** Source-window-only optimistic projection. It is replaced by durable message events. */
+  localSendingMessages: Array<{
+    clientRequestId: string;
+    content: string;
+    createdAt: number;
+    status: "sending" | "retryable";
+  }>;
   createdAt: number;
   cwd: string | null;
   rootSessionId: string;
@@ -42,10 +50,15 @@ export interface WebSessionStoreState extends Omit<SessionProjection, "cwd" | "a
   nextEventId: number;
   setFocusSessionId: (id: string | null) => void;
   append: (event: SessionEventPayload) => void;
+  addLocalSendingMessage: (input: { clientRequestId: string; content: string; createdAt?: number }) => void;
+  setLocalSendingMessageStatus: (clientRequestId: string, status: "sending" | "retryable") => void;
+  removeLocalSendingMessage: (clientRequestId: string) => void;
+  reconcileLocalSendingMessage: (clientRequestId: string) => void;
   applyRemoteEnvelope: (envelope: GlobalSessionEventEnvelope) => void;
   resetTransientState: () => void;
   initializeFromSnapshot: (data: {
     messages?: SessionMessage[];
+    pendingMessages?: PendingSessionMessage[];
     steps?: SessionStep[];
     todos?: SessionTodo[];
     reminders?: Reminder[];
@@ -117,7 +130,23 @@ function appendEnvelopeToState(
     generateId: () => crypto.randomUUID(),
   });
 
-  return { ...partial, events, eventOffset, nextEventId };
+  // A durable queued/canonical message carries the same clientRequestId as the
+  // source-window optimistic bubble. Reconcile it here instead of rendering a
+  // second copy. The protocol owns the field; this cast keeps the web package
+  // buildable while the hard-cut protocol change lands.
+  const durableMessages = (partial.messages ?? state.messages) as Array<SessionMessage & { clientRequestId?: string }>;
+  const durableRequestIds = new Set(
+    durableMessages
+      .map((message) => message.clientRequestId)
+      .filter((id): id is string => typeof id === "string"),
+  );
+  const durablePendingMessages = (partial.pendingMessages ?? state.pendingMessages) as PendingSessionMessage[];
+  for (const message of durablePendingMessages) durableRequestIds.add(message.clientRequestId);
+  const localSendingMessages = state.localSendingMessages.filter(
+    (message) => !durableRequestIds.has(message.clientRequestId),
+  );
+
+  return { ...partial, localSendingMessages, events, eventOffset, nextEventId };
 }
 
 function toLocalEnvelope(envelope: GlobalSessionEventEnvelope): SessionEventEnvelope {
@@ -204,6 +233,8 @@ export function createWebSessionStore(
     modelInfo: null,
     agentName: null,
     messages: [],
+    pendingMessages: [],
+    localSendingMessages: [],
     steps: [],
     stats: createEmptySessionStats(),
     executions: [],
@@ -241,6 +272,29 @@ export function createWebSessionStore(
       });
       touchRegistryEntry(key);
     },
+    addLocalSendingMessage: ({ clientRequestId, content, createdAt = Date.now() }) => {
+      set((state) => state.localSendingMessages.some((item) => item.clientRequestId === clientRequestId)
+        ? {}
+        : { localSendingMessages: [...state.localSendingMessages, { clientRequestId, content, createdAt, status: "sending" }] });
+      touchRegistryEntry(key);
+    },
+    setLocalSendingMessageStatus: (clientRequestId, status) => {
+      set((state) => ({
+        localSendingMessages: state.localSendingMessages.map((item) => (
+          item.clientRequestId === clientRequestId ? { ...item, status } : item
+        )),
+      }));
+    },
+    removeLocalSendingMessage: (clientRequestId) => {
+      set((state) => ({
+        localSendingMessages: state.localSendingMessages.filter((item) => item.clientRequestId !== clientRequestId),
+      }));
+    },
+    reconcileLocalSendingMessage: (clientRequestId) => {
+      set((state) => ({
+        localSendingMessages: state.localSendingMessages.filter((item) => item.clientRequestId !== clientRequestId),
+      }));
+    },
     applyRemoteEnvelope: (envelope: GlobalSessionEventEnvelope) => {
       if (envelope.slug !== slug || envelope.sessionId !== sessionId) return;
       set((state) => {
@@ -274,6 +328,9 @@ export function createWebSessionStore(
         const updates: Partial<WebSessionStoreState> = {};
         if (data.messages !== undefined && !stale) {
           updates.messages = data.messages as SessionMessage[];
+        }
+        if (data.pendingMessages !== undefined && !stale) {
+          updates.pendingMessages = data.pendingMessages as PendingSessionMessage[];
         }
         if (data.steps !== undefined && !stale) {
           updates.steps = data.steps as SessionStep[];
@@ -330,6 +387,18 @@ export function createWebSessionStore(
           updates.events = [];
           updates.nextEventId = nextEventId;
           updates.eventOffset = Math.max(0, nextEventId - state.events.length);
+        }
+        if (!stale && (data.messages !== undefined || data.pendingMessages !== undefined)) {
+          const durableRequestIds = new Set<string>();
+          for (const message of data.messages ?? state.messages) {
+            if (message.clientRequestId) durableRequestIds.add(message.clientRequestId);
+          }
+          for (const message of data.pendingMessages ?? state.pendingMessages) {
+            durableRequestIds.add(message.clientRequestId);
+          }
+          updates.localSendingMessages = state.localSendingMessages.filter(
+            (message) => !durableRequestIds.has(message.clientRequestId),
+          );
         }
         return updates;
       });

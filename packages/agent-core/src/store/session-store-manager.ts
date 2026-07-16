@@ -42,6 +42,21 @@ export interface SessionStoreManagerOptions {
   readonly logger: Logger;
 }
 
+export interface DurableSessionMutation<T> {
+  readonly result: T;
+  readonly patch?: Partial<SessionStoreState>;
+  readonly events?: readonly SessionEventPayload[];
+}
+
+export interface PublishableSessionEvent {
+  readonly workspaceRoot: string;
+  readonly sessionId: string;
+  readonly agentName: AgentName;
+  readonly envelope: SessionEventEnvelope;
+}
+
+export type SessionEventSourceListener = (event: PublishableSessionEvent) => void;
+
 export interface CreateSessionOptions {
   readonly agentName: AgentName;
   /** Canonical Skill identity. New root Sessions use an empty list. */
@@ -84,6 +99,9 @@ export class SessionStoreManager {
   #pendingLoads = new Map<string, Promise<StoreApi<SessionStoreState>>>();
   #pendingPersists = new Map<string, Promise<void>>();
   #persistFailures = new Map<string, unknown>();
+  /** targetNextEventId -> first event id withheld by that durable transaction. */
+  #publicationBarriers = new Map<string, Map<number, number>>();
+  #eventSourceListeners = new Set<SessionEventSourceListener>();
   #hydrating = new Set<string>();
   // Disposable acceleration for child lookups; source of truth stays on disk.
   #rootIdIndex = new Map<string, string>();
@@ -130,13 +148,12 @@ export class SessionStoreManager {
 
     const persist = () => {
       const state = store.getState();
-      void this.#enqueuePersist(key, sessionId, workspaceRoot, state);
+      return this.#enqueuePersist(key, sessionId, workspaceRoot, state);
     };
 
     const persistForEvent = (event: SessionEventPayload) => {
       if (
-        event.type === "user-message"
-        || event.type === "execution-start"
+        event.type === "execution-start"
         || event.type === "execution-end"
         || event.type === "tool-attempt"
         || event.type === "tool-result"
@@ -150,7 +167,8 @@ export class SessionStoreManager {
         || event.type === "compression.block_committed"
         || event.type === "compression.block_failed"
         || event.type === "compression.ref_map_updated"
-      ) persist();
+      ) return persist();
+      return undefined;
     };
 
     const createdAt = Date.now();
@@ -164,6 +182,8 @@ export class SessionStoreManager {
       modelInfo: options.modelInfo ?? null,
       title: options.title ?? null,
       messages: [],
+      pendingMessages: [],
+      inputRequestReceipts: [],
       steps: [],
       stats: createEmptySessionStats(),
       executions: [],
@@ -192,9 +212,17 @@ export class SessionStoreManager {
       events: [],
       eventOffset: 0,
       nextEventId: 0,
+      publishableNextEventId: 0,
       append: (event: SessionEventPayload) => {
         const durableEvent = toDurableSessionEvent(event);
+        const durablePublication = isDurableControlEvent(durableEvent);
+        let startNextEventId = 0;
+        let targetNextEventId = 0;
+        let previousPublishableNextEventId = 0;
+        let nextPublishableNextEventId = 0;
         set((state) => {
+          previousPublishableNextEventId = state.publishableNextEventId;
+          startNextEventId = state.nextEventId;
           const envelope: SessionEventEnvelope = {
             id: state.nextEventId,
             createdAt: Date.now(),
@@ -206,16 +234,41 @@ export class SessionStoreManager {
           const nextEventId = state.nextEventId + 1;
 
           if (events.length > MAX_EVENTS) {
-            const dropCount = events.length - MAX_EVENTS;
+            const dropCount = Math.min(
+              events.length - MAX_EVENTS,
+              Math.max(0, state.publishableNextEventId - state.eventOffset),
+            );
             events.splice(0, dropCount);
             eventOffset += dropCount;
           }
 
           const partial = reduceStoreEvent(state, durableEvent);
+          targetNextEventId = nextEventId;
+          const publishableNextEventId = durablePublication || this.#hasPublicationBarrier(key)
+            ? state.publishableNextEventId
+            : nextEventId;
+          nextPublishableNextEventId = publishableNextEventId;
 
-          return { ...partial, events, eventOffset, nextEventId };
+          return { ...partial, events, eventOffset, nextEventId, publishableNextEventId };
         });
-        persistForEvent(durableEvent);
+        if (!durablePublication) {
+          this.#emitPublishableRange(
+            workspaceRoot,
+            sessionId,
+            store,
+            previousPublishableNextEventId,
+            nextPublishableNextEventId,
+          );
+        }
+        const persistence = persistForEvent(durableEvent);
+        if (durablePublication) {
+          this.#trackPublicationBarrier(key, startNextEventId, targetNextEventId);
+          const operation = persistence ?? persist();
+          void operation.then(
+            () => this.#resolvePublicationBarrier(key, workspaceRoot, sessionId, store, targetNextEventId),
+            () => undefined,
+          );
+        }
       },
       setCwd: (nextCwd: string) => {
         const previousCwd = get().cwd;
@@ -274,6 +327,52 @@ export class SessionStoreManager {
       }
       await pending;
     }
+  }
+
+  /**
+   * Applies one synchronous domain mutation, persists its complete snapshot, then publishes
+   * its ordered control events. The callback must not perform I/O or retain the state object.
+   */
+  async commitDurableSessionMutation<T>(
+    sessionId: string,
+    workspaceRoot: string,
+    mutate: (state: Readonly<SessionStoreState>) => DurableSessionMutation<T>,
+  ): Promise<T> {
+    const store = await this.getOrLoad(sessionId, workspaceRoot);
+    const key = this.key(sessionId, workspaceRoot);
+    const priorFailure = this.#persistFailures.get(key);
+    if (priorFailure !== undefined) throw priorFailure;
+
+    let outcome: DurableSessionMutation<T> | undefined;
+    const startNextEventId = store.getState().nextEventId;
+    let targetNextEventId = startNextEventId;
+    store.setState((state) => {
+      outcome = mutate(state);
+      let nextState = { ...state, ...(outcome.patch ?? {}) };
+      for (const rawEvent of outcome.events ?? []) {
+        const event = toDurableSessionEvent(rawEvent);
+        nextState = appendEventToState(nextState, event, false);
+      }
+      targetNextEventId = nextState.nextEventId;
+      return nextState;
+    }, true);
+
+    if (outcome === undefined) throw new Error("Durable Session mutation did not produce an outcome");
+    const hasEvents = targetNextEventId > startNextEventId;
+    if (hasEvents) this.#trackPublicationBarrier(key, startNextEventId, targetNextEventId);
+
+    const operation = this.#enqueuePersist(key, sessionId, workspaceRoot, store.getState());
+    await operation;
+    if (hasEvents) {
+      this.#resolvePublicationBarrier(key, workspaceRoot, sessionId, store, targetNextEventId);
+    }
+    return outcome.result;
+  }
+
+  /** Emits every newly publishable raw Session event, independent of Execution lifetime. */
+  subscribeToSessionEvents(listener: SessionEventSourceListener): () => void {
+    this.#eventSourceListeners.add(listener);
+    return () => this.#eventSourceListeners.delete(listener);
   }
 
   /** Atomically mutates the canonical Session tool-batch checkpoint and awaits durability. */
@@ -668,6 +767,86 @@ export class SessionStoreManager {
     return operation;
   }
 
+  #hasPublicationBarrier(key: string): boolean {
+    return (this.#publicationBarriers.get(key)?.size ?? 0) > 0;
+  }
+
+  #trackPublicationBarrier(
+    key: string,
+    startNextEventId: number,
+    targetNextEventId: number,
+  ): void {
+    const barriers = this.#publicationBarriers.get(key) ?? new Map<number, number>();
+    barriers.set(targetNextEventId, startNextEventId);
+    this.#publicationBarriers.set(key, barriers);
+  }
+
+  #resolvePublicationBarrier(
+    key: string,
+    workspaceRoot: string,
+    sessionId: string,
+    store: StoreApi<SessionStoreState>,
+    targetNextEventId: number,
+  ): void {
+    const barriers = this.#publicationBarriers.get(key);
+    barriers?.delete(targetNextEventId);
+    if (barriers?.size === 0) this.#publicationBarriers.delete(key);
+
+    const state = store.getState();
+    const nextBarrierStart = barriers === undefined || barriers.size === 0
+      ? undefined
+      : Math.min(...barriers.values());
+    const publishableNextEventId = Math.max(
+      state.publishableNextEventId,
+      nextBarrierStart === undefined ? state.nextEventId : nextBarrierStart,
+    );
+    if (publishableNextEventId === state.publishableNextEventId) return;
+
+    const previous = state.publishableNextEventId;
+    store.setState({ publishableNextEventId });
+    this.#emitPublishableRange(workspaceRoot, sessionId, store, previous, publishableNextEventId);
+    const published = store.getState();
+    if (published.events.length > MAX_EVENTS) {
+      const dropCount = published.events.length - MAX_EVENTS;
+      store.setState({
+        events: published.events.slice(dropCount),
+        eventOffset: published.eventOffset + dropCount,
+      });
+    }
+  }
+
+  #emitPublishableRange(
+    workspaceRoot: string,
+    sessionId: string,
+    store: StoreApi<SessionStoreState>,
+    startNextEventId: number,
+    endNextEventId: number,
+  ): void {
+    if (endNextEventId <= startNextEventId || this.#eventSourceListeners.size === 0) return;
+    const state = store.getState();
+    const start = Math.max(startNextEventId, state.eventOffset) - state.eventOffset;
+    const end = Math.max(endNextEventId, state.eventOffset) - state.eventOffset;
+    for (const envelope of state.events.slice(start, end)) {
+      const event: PublishableSessionEvent = {
+        workspaceRoot,
+        sessionId,
+        agentName: state.agentName,
+        envelope,
+      };
+      for (const listener of this.#eventSourceListeners) {
+        try {
+          listener(event);
+        } catch (error) {
+          this.#logger.warn("session.event_listener.failed", {
+            error,
+            context: { sessionId },
+            meta: { workspaceRoot, eventId: envelope.id },
+          });
+        }
+      }
+    }
+  }
+
   appendSessionEvent(sessionId: string, event: SessionEventPayload, workspaceRoot: string): boolean {
     const store = this.get(sessionId, workspaceRoot);
     if (store === undefined) return false;
@@ -920,6 +1099,9 @@ export class SessionStoreManager {
         modelInfo: parsed.modelInfo,
         title: parsed.title,
         messages: parsed.messages,
+        pendingMessages: parsed.pendingMessages,
+        queueDispatchBarrierAt: parsed.queueDispatchBarrierAt,
+        inputRequestReceipts: parsed.inputRequestReceipts,
         steps: parsed.steps,
         stats: parsed.stats,
         executions: parsed.executions,
@@ -939,8 +1121,9 @@ export class SessionStoreManager {
         currentAssistantMessageId: undefined,
         readSnapshots: new Map(),
         events: parsed.events ?? [],
-        eventOffset: 0,
+        eventOffset: eventOffsetFromEvents(parsed.events ?? []),
         nextEventId: nextEventIdFromEvents(parsed.events ?? []),
+        publishableNextEventId: nextEventIdFromEvents(parsed.events ?? []),
       });
       this.#registerRootSessionId(parsed.sessionId, workspaceRoot, parsed.rootSessionId);
 
@@ -959,6 +1142,7 @@ export class SessionStoreManager {
     const removed = this.#registry.delete(key);
     this.#pendingPersists.delete(key);
     this.#persistFailures.delete(key);
+    this.#publicationBarriers.delete(key);
     if (options.forgetWorkspaceIndex === true) this.#forgetWorkspaceIndex(workspaceRoot);
     else this.#forgetSessionIndex(sessionId, workspaceRoot);
     return removed;
@@ -978,6 +1162,9 @@ export class SessionStoreManager {
     for (const key of [...this.#persistFailures.keys()]) {
       if (key.startsWith(prefix)) this.#persistFailures.delete(key);
     }
+    for (const key of [...this.#publicationBarriers.keys()]) {
+      if (key.startsWith(prefix)) this.#publicationBarriers.delete(key);
+    }
     this.#forgetWorkspaceIndex(workspaceRoot);
     this.#scanPromiseByWorkspace.delete(workspaceRoot);
   }
@@ -987,6 +1174,7 @@ export class SessionStoreManager {
     this.#pendingLoads.clear();
     this.#pendingPersists.clear();
     this.#persistFailures.clear();
+    this.#publicationBarriers.clear();
     this.#rootIdIndex.clear();
     this.#scanPromiseByWorkspace.clear();
   }
@@ -1034,9 +1222,56 @@ function reduceStoreEvent(
   return {};
 }
 
+function appendEventToState(
+  state: SessionStoreState,
+  event: SessionEventPayload,
+  publishImmediately: boolean,
+): SessionStoreState {
+  const envelope: SessionEventEnvelope = {
+    id: state.nextEventId,
+    createdAt: Date.now(),
+    payload: event,
+  };
+  const events = [...state.events, envelope];
+  let eventOffset = state.eventOffset;
+  const nextEventId = state.nextEventId + 1;
+  if (events.length > MAX_EVENTS) {
+    const dropCount = Math.min(
+      events.length - MAX_EVENTS,
+      Math.max(0, state.publishableNextEventId - state.eventOffset),
+    );
+    events.splice(0, dropCount);
+    eventOffset += dropCount;
+  }
+  return {
+    ...state,
+    ...reduceStoreEvent(state, event),
+    events,
+    eventOffset,
+    nextEventId,
+    publishableNextEventId: publishImmediately ? nextEventId : state.publishableNextEventId,
+  };
+}
+
+function isDurableControlEvent(event: SessionEventPayload): boolean {
+  return event.type === "session.message_accepted"
+    || event.type === "session.message_edited"
+    || event.type === "session.message_deleted"
+    || event.type === "session.message_steer_claimed"
+    || event.type === "session.message_steer_rolled_back"
+    || event.type === "session.messages_committed"
+    || event.type === "execution-start"
+    || event.type === "execution-stop-requested"
+    || event.type === "execution-end";
+}
+
 function nextEventIdFromEvents(events: readonly SessionEventEnvelope[]): number {
   const latest = events.at(-1);
   return latest === undefined ? 0 : latest.id + 1;
+}
+
+function eventOffsetFromEvents(events: readonly SessionEventEnvelope[]): number {
+  return events.at(0)?.id ?? 0;
 }
 
 function isMissingFileError(error: unknown): boolean {
@@ -1193,7 +1428,16 @@ function reconcileInterruptedSessionFile(file: HydratedSessionFile): HydratedSes
 
     return messageChanged ? { ...message, parts, completedAt: message.completedAt ?? now } : message;
   });
-  return changed ? { ...file, executions, childSessionLinks, messages } : file;
+  const inputRequestReceipts = file.inputRequestReceipts.map((receipt) => {
+    if (receipt.kind !== "command" || receipt.status !== "executing") return receipt;
+    changed = true;
+    return {
+      ...receipt,
+      status: "indeterminate" as const,
+      error: "Command outcome is unknown because execution was interrupted by restart",
+    };
+  });
+  return changed ? { ...file, executions, childSessionLinks, messages, inputRequestReceipts } : file;
 }
 
 function findParentCycle(

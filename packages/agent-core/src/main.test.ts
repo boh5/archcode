@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
 import { rmSync } from "node:fs";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
@@ -16,9 +16,11 @@ import type { SessionToolBatch } from "./store/types";
 import { createTestProjectContext } from "./tools/test-project-context";
 import { createInMemoryLogger, silentLogger } from "./logger";
 import { ServerConfigService, resolveServerConfigPath } from "./config";
+import { setLlmAdapterForTest } from "./llm";
 
 const tmpRoots: string[] = [];
 afterAll(() => { for (const root of tmpRoots) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => setLlmAdapterForTest(undefined));
 
 function makeProviderConfig() {
   return { local: { npm: "@ai-sdk/openai-compatible", name: "Local LLM", options: { baseURL: "http://localhost:8090/v1", apiKey: "test-key" }, models: { "test-model": { name: "Test Model", limit: { context: 128000, output: 8192 }, modalities: { input: ["text"], output: ["text"] } } } } };
@@ -37,21 +39,103 @@ function makeContext(toolName: string, input: unknown): ToolExecutionContext { c
 async function createRuntime(options: Parameters<typeof createProductionRuntime>[0] = {}) { return createProductionRuntime({ ...options, projectRegistryHomeDir: options.projectRegistryHomeDir ?? await makeTempRoot() }); }
 
 describe("createRuntime", () => {
-  test("constructs runtime without booting server concerns", async () => { const runtime = await createRuntime({ configService: await writeConfig(makeConfig({ servers: {} })), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }) }); expect(runtime.toolRegistry).toBeDefined(); expect(runtime.startSessionMessageExecution).toBeDefined(); expect(runtime.startGoalSessionExecution).toBeDefined(); });
-  test("rejects internal execution origins at the public Session message entry", async () => {
+  test("constructs runtime without booting server concerns", async () => { const runtime = await createRuntime({ configService: await writeConfig(makeConfig({ servers: {} })), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }) }); expect(runtime.toolRegistry).toBeDefined(); expect(runtime.acceptSessionMessage).toBeDefined(); expect(runtime.startGoalSessionExecution).toBeDefined(); });
+  test("accepts ordinary root Session messages through the durable queue boundary", async () => {
+    const workspaceRoot = await makeTempRoot();
     const runtime = await createRuntime({
       configService: await writeConfig(makeConfig({ servers: {} })),
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
-    for (const origin of ["tool_batch", "goal_claim"] as const) {
-      expect(() => runtime.startSessionMessageExecution({
-        slug: "project",
-        workspaceRoot: import.meta.dir,
-        sessionId: "forged-internal-origin",
-        userMessage: "forged",
-        origin,
-      })).toThrow("accepts only the user_message origin");
+    const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Queued input" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "engineer", title: "Queued input" });
+    const clientRequestId = crypto.randomUUID();
+    installTestLlmAdapter();
+    try {
+      const accepted = await runtime.acceptSessionMessage({
+        slug: project.slug,
+        workspaceRoot,
+        sessionId: session.sessionId,
+        text: "Inspect the project",
+        clientRequestId,
+        source: "user",
+      });
+      expect(accepted).toMatchObject({ clientRequestId });
+      expect(["pending", "canonical"]).toContain(accepted.status);
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const current = await runtime.getSessionFile(workspaceRoot, session.sessionId);
+        const receipt = current.inputRequestReceipts.find((candidate) => candidate.clientRequestId === clientRequestId);
+        if (receipt?.status === "canonical" && runtime.getSessionFamilyActivity(workspaceRoot, session.sessionId) === "idle") break;
+        await Bun.sleep(5);
+      }
+      expect((await runtime.getSessionFile(workspaceRoot, session.sessionId)).inputRequestReceipts)
+        .toContainEqual(expect.objectContaining({ clientRequestId, status: "canonical" }));
+    } finally {
+      await runtime.abortAllSessionExecutions();
+      setLlmAdapterForTest(undefined);
     }
+  });
+  test("does not execute a handled command twice when the same request is retried", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const runtime = await createRuntime({
+      configService: await writeConfig(makeConfig({ servers: {} })),
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Command retry" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "engineer" });
+    const clientRequestId = crypto.randomUUID();
+    const input = {
+      slug: project.slug,
+      workspaceRoot,
+      sessionId: session.sessionId,
+      text: "/unknown-command",
+      clientRequestId,
+      source: "user" as const,
+    };
+
+    await expect(runtime.acceptSessionMessage(input)).resolves.toEqual({ clientRequestId, status: "command" });
+    await expect(runtime.acceptSessionMessage(input)).resolves.toEqual({ clientRequestId, status: "command" });
+
+    const file = await runtime.getSessionFile(workspaceRoot, session.sessionId);
+    expect(file.inputRequestReceipts).toEqual([
+      expect.objectContaining({ kind: "command", clientRequestId, status: "completed" }),
+    ]);
+    expect(file.messages.flatMap((message) => message.parts)
+      .filter((part) => part.type === "system-notice" && part.notice.includes("Unknown command")))
+      .toHaveLength(1);
+  });
+  test("coalesces concurrent retries before the command receipt is durable", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const runtime = await createRuntime({
+      configService: await writeConfig(makeConfig({ servers: {} })),
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Concurrent command retry" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "engineer" });
+    const clientRequestId = crypto.randomUUID();
+    const input = {
+      slug: project.slug,
+      workspaceRoot,
+      sessionId: session.sessionId,
+      text: "/unknown-command",
+      clientRequestId,
+      source: "user" as const,
+    };
+
+    await expect(Promise.all([
+      runtime.acceptSessionMessage(input),
+      runtime.acceptSessionMessage(input),
+    ])).resolves.toEqual([
+      { clientRequestId, status: "command" },
+      { clientRequestId, status: "command" },
+    ]);
+
+    const file = await runtime.getSessionFile(workspaceRoot, session.sessionId);
+    expect(file.inputRequestReceipts).toEqual([
+      expect.objectContaining({ kind: "command", clientRequestId, status: "completed" }),
+    ]);
+    expect(file.messages.flatMap((message) => message.parts)
+      .filter((part) => part.type === "system-notice" && part.notice.includes("Unknown command")))
+      .toHaveLength(1);
   });
   test("keeps runtime providers on startup snapshot after settings save", async () => { const configService = await writeConfig(makeConfig({ servers: {} })); const runtime = await createRuntime({ configService, mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }) }); const snapshot = await runtime.configService.getSnapshot(); const update = structuredClone(snapshot.config) as any; update.provider.local.options.apiKey = { action: "preserve" }; update.provider.local.models["new-model"] = { name: "New", limit: { context: 128000, output: 8192 }, modalities: { input: ["text"], output: ["text"] } }; const saved = await runtime.configService.save({ expectedRevision: snapshot.revision, config: update }); expect(saved.restartRequired).toBe(true); expect(runtime.providerRegistry.modelIds).toEqual(["local:test-model"]); });
   test("registers MCP descriptors before agent runs", async () => { const descriptor = makeMcpDescriptor(); const runtime = await createRuntime({ configService: await writeConfig(makeConfig({ servers: {} })), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [descriptor], warnings: [] }) }); expect(runtime.toolRegistry.get(descriptor.name)).toBe(descriptor); });
@@ -132,14 +216,6 @@ describe("createRuntime", () => {
     });
     expect((await runtime2.getSessionFile(workspaceRoot, session.sessionId)).toolBatches[0]?.calls[0]?.state).toBe("blocked");
     expect((await (await runtime2.contextResolver.resolve(workspaceRoot)).hitl.list()).find((record) => record.hitlId === first.hitlId)?.status).toBe("answered");
-    await expect(runtime2.recoverSessionContinuations()).rejects.toThrow(
-      "Managed Session execution forwarder must be installed",
-    );
-    const managedInputs: Array<{ sessionId: string; origin?: string }> = [];
-    runtime2.setManagedSessionExecutionForwarder(async (input, start) => {
-      managedInputs.push({ sessionId: input.sessionId, origin: input.origin });
-      return await start();
-    });
     await runtime2.recoverSessionContinuations();
 
     const recovered = await runtime2.getSessionFile(workspaceRoot, session.sessionId);
@@ -157,7 +233,6 @@ describe("createRuntime", () => {
     });
     expect(recoveredCalls?.[0]?.result?.output).toContain("Yes");
     expect((await (await runtime2.contextResolver.resolve(workspaceRoot)).hitl.list()).find((record) => record.hitlId === first.hitlId)?.status).toBe("resolved");
-    expect(managedInputs).toEqual([{ sessionId: session.sessionId, origin: "tool_batch" }]);
     await runtime2.abortAllSessionExecutions();
   });
 
@@ -219,12 +294,7 @@ describe("createRuntime", () => {
       projectRegistryHomeDir: registryHome,
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
-    const managedInputs: Array<{ sessionId: string; origin?: string }> = [];
-    runtime2.setManagedSessionExecutionForwarder(async (input, start) => {
-      managedInputs.push({ sessionId: input.sessionId, origin: input.origin });
-      return await start();
-    });
-
+    installTestLlmAdapter();
     const responses = await Promise.all(Array.from({ length: 4 }, () => runtime2.respondToHitl({
       slug: project.slug,
       workspaceRoot,
@@ -237,7 +307,19 @@ describe("createRuntime", () => {
     const resolved = (await context2.hitl.list()).find(({ hitlId }) => hitlId === record.hitlId);
     expect(resolved?.status).toBe("resolved");
     expect(resolved?.delivery).toBeUndefined();
-    expect(managedInputs).toEqual([{ sessionId: session.sessionId, origin: "tool_batch" }]);
     await runtime2.abortAllSessionExecutions();
   });
 });
+
+function installTestLlmAdapter(): void {
+  setLlmAdapterForTest({
+    streamText: mock(() => ({
+      fullStream: (async function* () { yield { type: "text-delta", text: "Done." }; })(),
+      finishReason: Promise.resolve("stop"),
+      usage: Promise.resolve({ totalTokens: 1 }),
+      text: Promise.resolve("Done."),
+      toolCalls: Promise.resolve([]),
+    })) as never,
+    generateText: mock(async () => ({ text: "Queued input" })) as never,
+  });
+}

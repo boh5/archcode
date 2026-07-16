@@ -26,8 +26,20 @@ function event(eventId: number, payload: SessionEventPayload): GlobalSessionEven
   };
 }
 
-function userMessage(content: string): SessionEventPayload {
-  return { type: "user-message", content };
+function committedMessage(content: string, suffix: string): SessionEventPayload {
+  return {
+    type: "session.messages_committed",
+    executionId: `execution-${suffix}`,
+    messages: [{
+      id: `message-${suffix}`,
+      clientRequestId: `request-${suffix}`,
+      role: "user",
+      parts: [{ type: "text", id: `part-${suffix}`, text: content, createdAt: 1, completedAt: 1 }],
+      createdAt: 1,
+      completedAt: 1,
+      executionId: `execution-${suffix}`,
+    }],
+  };
 }
 
 describe("web session store registry", () => {
@@ -176,7 +188,7 @@ describe("applyRemoteEnvelope", () => {
   test("drops envelopes for other sessions without changing the store", () => {
     const store = createWebSessionStore("known", "demo");
 
-    store.getState().applyRemoteEnvelope({ ...event(0, userMessage("wrong")), sessionId: "unknown" });
+    store.getState().applyRemoteEnvelope({ ...event(0, committedMessage("wrong", "wrong")), sessionId: "unknown" });
 
     expect(store.getState().nextEventId).toBe(0);
     expect(store.getState().events).toEqual([]);
@@ -184,7 +196,7 @@ describe("applyRemoteEnvelope", () => {
 
   test("dedupes stale and duplicate remote envelopes by server event id", () => {
     const store = createWebSessionStore("dedupe", "demo");
-    const first = { ...event(0, userMessage("hello")), sessionId: "dedupe" };
+    const first = { ...event(0, committedMessage("hello", "first")), sessionId: "dedupe" };
 
     store.getState().applyRemoteEnvelope(first);
     store.getState().applyRemoteEnvelope(first);
@@ -197,11 +209,11 @@ describe("applyRemoteEnvelope", () => {
   test("buffers gaps and drains only contiguous remote envelopes", () => {
     const store = createWebSessionStore("gap", "demo");
 
-    store.getState().applyRemoteEnvelope({ ...event(1, userMessage("second")), sessionId: "gap" });
+    store.getState().applyRemoteEnvelope({ ...event(1, committedMessage("second", "second")), sessionId: "gap" });
     expect(store.getState().events).toEqual([]);
     expect(store.getState().nextEventId).toBe(0);
 
-    store.getState().applyRemoteEnvelope({ ...event(0, userMessage("first")), sessionId: "gap" });
+    store.getState().applyRemoteEnvelope({ ...event(0, committedMessage("first", "first")), sessionId: "gap" });
 
     expect(store.getState().events.map((item) => item.id)).toEqual([0, 1]);
     expect(store.getState().messages.map((message) => message.parts[0]?.type === "text" ? message.parts[0].text : "")).toEqual([
@@ -211,6 +223,96 @@ describe("applyRemoteEnvelope", () => {
     expect(store.getState().nextEventId).toBe(2);
   });
 
+  test("keeps one optimistic sending bubble until its durable client request arrives", () => {
+    const store = createWebSessionStore("optimistic", "demo");
+    store.getState().addLocalSendingMessage({
+      clientRequestId: "request-1",
+      content: "hello",
+      createdAt: 42,
+    });
+    expect(store.getState().localSendingMessages).toEqual([{
+      clientRequestId: "request-1",
+      content: "hello",
+      createdAt: 42,
+      status: "sending",
+    }]);
+    store.getState().setLocalSendingMessageStatus("request-1", "retryable");
+    expect(store.getState().localSendingMessages[0]?.status).toBe("retryable");
+
+    store.getState().applyRemoteEnvelope({
+      ...event(0, {
+        type: "session.message_accepted",
+        message: {
+          id: "message-1",
+          clientRequestId: "request-1",
+          content: "hello",
+          source: "user",
+          state: "queued",
+          revision: 1,
+          acceptedAt: 43,
+          updatedAt: 43,
+        },
+      }),
+      sessionId: "optimistic",
+    });
+
+    expect(store.getState().localSendingMessages).toEqual([]);
+    expect(store.getState().pendingMessages).toHaveLength(1);
+  });
+
+  test("projects edit, steer, rollback, delete, and commit events in the ordinary timeline", () => {
+    const store = createWebSessionStore("queue-lifecycle", "demo");
+    const queued = {
+      id: "message-1",
+      clientRequestId: "request-1",
+      content: "first",
+      source: "user" as const,
+      state: "queued" as const,
+      revision: 1,
+      acceptedAt: 10,
+      updatedAt: 10,
+    };
+
+    const apply = (eventId: number, payload: SessionEventPayload) => store.getState().applyRemoteEnvelope({
+      ...event(eventId, payload),
+      sessionId: "queue-lifecycle",
+    });
+
+    apply(0, { type: "session.message_accepted", message: queued });
+    apply(1, { type: "session.message_edited", message: { ...queued, content: "edited", revision: 2, updatedAt: 11 } });
+    apply(2, {
+      type: "session.message_steer_claimed",
+      message: { ...queued, content: "edited", state: "steering", revision: 3, updatedAt: 12, targetExecutionId: "execution-1" },
+    });
+    expect(store.getState().pendingMessages[0]).toMatchObject({ state: "steering", targetExecutionId: "execution-1" });
+
+    apply(3, {
+      type: "session.message_steer_rolled_back",
+      message: { ...queued, content: "edited", revision: 4, updatedAt: 13 },
+    });
+    expect(store.getState().pendingMessages[0]).toMatchObject({ state: "queued", revision: 4 });
+
+    apply(4, {
+      type: "session.messages_committed",
+      executionId: "execution-2",
+      messages: [{
+        id: "message-1",
+        clientRequestId: "request-1",
+        role: "user",
+        parts: [{ type: "text", id: "part-1", text: "edited", createdAt: 14, completedAt: 14 }],
+        createdAt: 14,
+        completedAt: 14,
+        executionId: "execution-2",
+      }],
+    });
+    expect(store.getState().pendingMessages).toEqual([]);
+    expect(store.getState().messages[0]).toMatchObject({ id: "message-1", clientRequestId: "request-1" });
+
+    apply(5, { type: "session.message_accepted", message: { ...queued, id: "message-2", clientRequestId: "request-2" } });
+    apply(6, { type: "session.message_deleted", messageId: "message-2", clientRequestId: "request-2", revision: 2, deletedAt: 15 });
+    expect(store.getState().pendingMessages).toEqual([]);
+  });
+
 });
 
 describe("initializeFromSnapshot", () => {
@@ -218,10 +320,32 @@ describe("initializeFromSnapshot", () => {
     __resetWebSessionStoresForTest();
   });
 
+  test("durable snapshot takes over an optimistic bubble by clientRequestId", () => {
+    const store = createWebSessionStore("snapshot-optimistic", "demo");
+    store.getState().addLocalSendingMessage({ clientRequestId: "request-1", content: "hello", createdAt: 1 });
+
+    store.getState().initializeFromSnapshot({
+      pendingMessages: [{
+        id: "message-1",
+        clientRequestId: "request-1",
+        content: "hello",
+        source: "user",
+        state: "queued",
+        revision: 1,
+        acceptedAt: 2,
+        updatedAt: 2,
+      }],
+      eventCursor: -1,
+    });
+
+    expect(store.getState().localSendingMessages).toEqual([]);
+    expect(store.getState().pendingMessages).toHaveLength(1);
+  });
+
   test("authoritatively overwrites fields with empty arrays, null title, and event cursor", () => {
     const store = createWebSessionStore("snapshot", "demo");
 
-    store.getState().applyRemoteEnvelope({ ...event(0, userMessage("old")), sessionId: "snapshot" });
+    store.getState().applyRemoteEnvelope({ ...event(0, committedMessage("old", "old")), sessionId: "snapshot" });
     store.getState().initializeFromSnapshot({
       title: "Existing",
       todos: [{ id: "todo-1", content: "todo", status: "pending" }],
@@ -256,8 +380,8 @@ describe("initializeFromSnapshot", () => {
   test("replays contiguous buffered remote events after snapshot cursor", () => {
     const store = createWebSessionStore("snapshot-buffer", "demo");
 
-    store.getState().applyRemoteEnvelope({ ...event(6, userMessage("six")), sessionId: "snapshot-buffer" });
-    store.getState().applyRemoteEnvelope({ ...event(8, userMessage("eight")), sessionId: "snapshot-buffer" });
+    store.getState().applyRemoteEnvelope({ ...event(6, committedMessage("six", "six")), sessionId: "snapshot-buffer" });
+    store.getState().applyRemoteEnvelope({ ...event(8, committedMessage("eight", "eight")), sessionId: "snapshot-buffer" });
     store.getState().initializeFromSnapshot({ messages: [], eventCursor: 5 });
 
     expect(store.getState().events.map((item) => item.id)).toEqual([6]);
@@ -268,9 +392,9 @@ describe("initializeFromSnapshot", () => {
     const store = createWebSessionStore("stale-guard", "demo");
 
     // Simulate SSE processing events up to event 5
-    store.getState().applyRemoteEnvelope({ ...event(0, userMessage("hello")), sessionId: "stale-guard" });
+    store.getState().applyRemoteEnvelope({ ...event(0, committedMessage("hello", "stale-hello")), sessionId: "stale-guard" });
     store.getState().applyRemoteEnvelope({ ...event(1, { type: "execution-start", executionId: "run-1" } as SessionEventPayload), sessionId: "stale-guard" });
-    store.getState().applyRemoteEnvelope({ ...event(2, userMessage("world")), sessionId: "stale-guard" });
+    store.getState().applyRemoteEnvelope({ ...event(2, committedMessage("world", "stale-world")), sessionId: "stale-guard" });
     store.getState().applyRemoteEnvelope({ ...event(3, { type: "execution-end", executionId: "run-1", status: "completed" } as SessionEventPayload), sessionId: "stale-guard" });
     store.getState().applyRemoteEnvelope({ ...event(4, { type: "execution-start", executionId: "run-2" } as SessionEventPayload), sessionId: "stale-guard" });
 
@@ -301,7 +425,7 @@ describe("initializeFromSnapshot", () => {
     const store = createWebSessionStore("fresh-snapshot", "demo");
 
     // Local state has only processed 2 events
-    store.getState().applyRemoteEnvelope({ ...event(0, userMessage("hello")), sessionId: "fresh-snapshot" });
+    store.getState().applyRemoteEnvelope({ ...event(0, committedMessage("hello", "fresh-hello")), sessionId: "fresh-snapshot" });
     store.getState().applyRemoteEnvelope({ ...event(1, { type: "execution-start", executionId: "run-1" } as SessionEventPayload), sessionId: "fresh-snapshot" });
     expect(store.getState().nextEventId).toBe(2);
 
@@ -322,7 +446,7 @@ describe("initializeFromSnapshot", () => {
   test("always updates scalar metadata fields even with stale snapshot", () => {
     const store = createWebSessionStore("stale-metadata", "demo");
 
-    store.getState().applyRemoteEnvelope({ ...event(0, userMessage("hello")), sessionId: "stale-metadata" });
+    store.getState().applyRemoteEnvelope({ ...event(0, committedMessage("hello", "metadata-hello")), sessionId: "stale-metadata" });
     store.getState().applyRemoteEnvelope({ ...event(1, { type: "execution-start", executionId: "run-1" } as SessionEventPayload), sessionId: "stale-metadata" });
 
     store.getState().initializeFromSnapshot({
@@ -547,7 +671,7 @@ describe("compression events and snapshot hydration", () => {
       sessionId: "compress-stale",
     });
     store.getState().applyRemoteEnvelope({
-      ...event(1, userMessage("after")),
+      ...event(1, committedMessage("after", "compression-after")),
       sessionId: "compress-stale",
     });
 

@@ -254,7 +254,6 @@ export class AutomationStateManager {
       automationId: automation.id,
       dueAt: normalizeIso(dueAt, "dueAt"),
       status,
-      executionId: crypto.randomUUID(),
       sessionId: automation.action.kind === "start_session" ? crypto.randomUUID() : automation.action.sessionId,
       createdAt,
       ...(status === "missed" ? { completedAt: createdAt } : {}),

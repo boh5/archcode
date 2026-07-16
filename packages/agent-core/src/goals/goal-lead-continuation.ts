@@ -5,10 +5,11 @@ import type { ActiveSessionExecution, StartSessionExecutionInput } from "../exec
 import type { ProjectContextResolver } from "../projects/context-resolver";
 import type { SessionFile } from "../store/helpers";
 import type { Logger } from "../logger";
+import { SessionInputConflictError } from "../session-input/service";
 import { withGoalExecutionClaimLock } from "./execution-claim";
 
 export type GoalLeadContinuationTrigger = "family_idle" | "startup" | "kick";
-export type GoalLeadContinuationOutcome = "started" | "ineligible" | "busy" | "capacity" | "backoff" | "shutdown" | "deduplicated";
+export type GoalLeadContinuationOutcome = "started" | "ineligible" | "busy" | "backoff" | "shutdown" | "deduplicated";
 
 export interface GoalLeadContinuationSessionRuntime {
   getSessionFile(workspaceRoot: string, sessionId: string): Promise<SessionFile>;
@@ -35,7 +36,6 @@ export interface GoalLeadContinuationCoordinator {
 /** Thin idle-to-next-turn bridge for direct Goal Lead Sessions. */
 export class GoalLeadContinuationService implements GoalLeadContinuationCoordinator {
   readonly #inFlight = new Set<string>();
-  readonly #capacityWaiters: string[] = [];
   readonly #failureBackoff = new Map<string, { executionId: string; attempt: number; dueAt: number; timer?: ReturnType<typeof setTimeout> }>();
   readonly #reconcileBackoff = new Map<string, { attempt: number; timer?: ReturnType<typeof setTimeout> }>();
   #shuttingDown = false;
@@ -56,7 +56,6 @@ export class GoalLeadContinuationService implements GoalLeadContinuationCoordina
     this.#failureBackoff.clear();
     for (const state of this.#reconcileBackoff.values()) if (state.timer !== undefined) clearTimeout(state.timer);
     this.#reconcileBackoff.clear();
-    this.#capacityWaiters.splice(0);
   }
 
   releaseWorkspace(workspaceRoot: string): void {
@@ -71,24 +70,14 @@ export class GoalLeadContinuationService implements GoalLeadContinuationCoordina
       if (state.timer !== undefined) clearTimeout(state.timer);
       this.#reconcileBackoff.delete(key);
     }
-    for (let index = this.#capacityWaiters.length - 1; index >= 0; index -= 1) {
-      if (this.#capacityWaiters[index]!.startsWith(prefix)) this.#capacityWaiters.splice(index, 1);
-    }
   }
 
   async #reconcile(workspaceRoot: string, trigger: GoalLeadContinuationTrigger, idleRootSessionId?: string): Promise<void> {
     if (this.#shuttingDown) return;
     const context = await this.options.projectContextResolver.resolve(workspaceRoot);
-    const goals = (await context.goalState.listGoals(context.project.slug)).sort((left, right) => {
-      const leftWaiter = this.#capacityWaiters.indexOf(goalKey(workspaceRoot, left.id));
-      const rightWaiter = this.#capacityWaiters.indexOf(goalKey(workspaceRoot, right.id));
-      if (leftWaiter >= 0 || rightWaiter >= 0) {
-        if (leftWaiter < 0) return 1;
-        if (rightWaiter < 0) return -1;
-        return leftWaiter - rightWaiter;
-      }
-      return Number(right.mainSessionId === idleRootSessionId) - Number(left.mainSessionId === idleRootSessionId);
-    });
+    const goals = (await context.goalState.listGoals(context.project.slug)).sort(
+      (left, right) => Number(right.mainSessionId === idleRootSessionId) - Number(left.mainSessionId === idleRootSessionId),
+    );
     for (const goal of goals) {
       try {
         await this.#evaluate(workspaceRoot, goal.id, trigger);
@@ -124,48 +113,30 @@ export class GoalLeadContinuationService implements GoalLeadContinuationCoordina
         const candidate = await this.#eligibleSession(workspaceRoot, goal);
         if (candidate === undefined) {
           this.#clearFailureBackoff(key);
-          this.#removeCapacityWaiter(key);
           return "ineligible";
         }
         if (this.#shuttingDown) return "shutdown";
         const outcomeGate = this.#executionOutcomeGate(workspaceRoot, goalId, candidate.session, trigger);
-        if (outcomeGate !== undefined) {
-          this.#removeCapacityWaiter(key);
-          return outcomeGate;
-        }
+        if (outcomeGate !== undefined) return outcomeGate;
         if (this.options.sessionRuntime.getSessionFamilyActivity(workspaceRoot, candidate.sessionId) !== "idle") {
-          this.#removeCapacityWaiter(key);
           return "busy";
         }
         if ((await this.options.sessionRuntime.listSessionFamilyToolBatchHitlIds(workspaceRoot, candidate.sessionId)).length > 0) {
-          this.#removeCapacityWaiter(key);
           return "ineligible";
         }
-        if (this.#shuttingDown) {
-          this.#removeCapacityWaiter(key);
-          return "shutdown";
-        }
+        if (this.#shuttingDown) return "shutdown";
         await this.options.sessionRuntime.startCheckedExecutionWithinGoalClaim({
           slug: candidate.projectSlug,
           workspaceRoot,
           sessionId: candidate.sessionId,
-          userMessage: buildGoalContinuationPrompt(candidate.goal),
+          origin: "goal_claim",
+          input: { kind: "direct", text: buildGoalContinuationPrompt(candidate.goal) },
         });
-        this.#removeCapacityWaiter(key);
         return "started";
       }).catch((error: unknown) => {
-        if (error instanceof AgentRunningError || isFamilyBusyError(error)) {
-          this.#removeCapacityWaiter(key);
-          return "busy";
-        }
-        if (isCapacityError(error)) {
-          this.#enqueueCapacityWaiter(key);
-          return "capacity";
-        }
-        if (isToolBatchBlockedError(error)) {
-          this.#removeCapacityWaiter(key);
-          return "ineligible";
-        }
+        if (error instanceof AgentRunningError || isFamilyBusyError(error)) return "busy";
+        if (isToolBatchBlockedError(error)) return "ineligible";
+        if (error instanceof SessionInputConflictError && error.reason === "state") return "ineligible";
         throw error;
       });
     } finally {
@@ -192,6 +163,7 @@ export class GoalLeadContinuationService implements GoalLeadContinuationCoordina
       || session.goalId !== goal.id
       || session.sessionRole !== "main"
       || session.agentName !== "goal_lead"
+      || session.pendingMessages.length > 0
     ) return undefined;
     return { sessionId: session.sessionId, projectSlug: goal.projectSlug, goal, session };
   }
@@ -205,7 +177,10 @@ export class GoalLeadContinuationService implements GoalLeadContinuationCoordina
     if (trigger === "kick") return undefined;
     const execution = session.executions.at(-1);
     if (execution === undefined) return undefined;
-    if (trigger === "family_idle" && ["aborted", "cancelled", "interrupted"].includes(execution.status)) {
+    if (
+      execution.stopRequestedAt !== undefined
+      || ["aborted", "cancelled", "interrupted"].includes(execution.status)
+    ) {
       return "ineligible";
     }
     const key = `${workspaceRoot}\0${goalId}`;
@@ -277,14 +252,6 @@ export class GoalLeadContinuationService implements GoalLeadContinuationCoordina
     this.#reconcileBackoff.delete(key);
   }
 
-  #enqueueCapacityWaiter(key: string): void {
-    if (!this.#capacityWaiters.includes(key)) this.#capacityWaiters.push(key);
-  }
-
-  #removeCapacityWaiter(key: string): void {
-    const index = this.#capacityWaiters.indexOf(key);
-    if (index >= 0) this.#capacityWaiters.splice(index, 1);
-  }
 }
 
 function goalKey(workspaceRoot: string, goalId: string): string {
@@ -317,10 +284,6 @@ function isContinuableStatus(status: GoalState["status"]): boolean {
 
 function isFamilyBusyError(error: unknown): boolean {
   return error instanceof Error && error.name === "SessionFamilyActiveError";
-}
-
-function isCapacityError(error: unknown): boolean {
-  return error instanceof Error && error.name === "ConcurrentSessionLimitError";
 }
 
 function isToolBatchBlockedError(error: unknown): boolean {

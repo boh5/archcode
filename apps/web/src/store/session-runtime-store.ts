@@ -57,6 +57,9 @@ export const sessionRuntimeStore = createStore<SessionRuntimeStoreState>((set, g
         projectSlug: event.projectSlug,
         rootSessionId: event.rootSessionId,
         activity: event.activity,
+        ...(event.steerTargetExecutionId
+          ? { steerTargetExecutionId: event.steerTargetExecutionId }
+          : {}),
       };
     }
     return { families };
@@ -97,5 +100,15 @@ export function useSessionFamilyActivity(
   return useStore(sessionRuntimeStore, (state) => {
     if (state.initializedProjects[projectSlug] !== true) return undefined;
     return state.families[runtimeFamilyKey(projectSlug, rootSessionId)]?.activity ?? "idle";
+  });
+}
+
+export function useSessionFamilySteerTargetExecutionId(
+  projectSlug: string,
+  rootSessionId: string,
+): string | undefined {
+  return useStore(sessionRuntimeStore, (state) => {
+    if (state.initializedProjects[projectSlug] !== true) return undefined;
+    return state.families[runtimeFamilyKey(projectSlug, rootSessionId)]?.steerTargetExecutionId;
   });
 }

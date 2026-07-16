@@ -33,10 +33,8 @@ describe("AutomationScheduler", () => {
     const seenPersistedStatuses: string[] = [];
     const changes: unknown[] = [];
     const gateway: SessionDispatchGateway = {
-      inspectExecution: async () => "missing",
       dispatch: async () => {
         seenPersistedStatuses.push((await manager.listInvocations(automation.id))[0]?.status ?? "missing");
-        return { accepted: true };
       },
     };
     const scheduler = new AutomationScheduler({
@@ -68,8 +66,7 @@ describe("AutomationScheduler", () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => START });
     const changes: unknown[] = [];
     const gateway: SessionDispatchGateway = {
-      inspectExecution: async () => "missing",
-      dispatch: async () => ({ accepted: true }),
+      dispatch: async () => {},
     };
     const onChange = (change: unknown): void => { changes.push(change); };
     const scheduler = new AutomationScheduler({
@@ -117,8 +114,7 @@ describe("AutomationScheduler", () => {
     now += 10 * 60_000;
     const dispatched: string[] = [];
     const gateway: SessionDispatchGateway = {
-      inspectExecution: async () => "missing",
-      dispatch: async (input) => { dispatched.push(input.executionId); return { accepted: true }; },
+      dispatch: async (input) => { dispatched.push(input.clientRequestId); },
     };
     const scheduler = new AutomationScheduler({
       stateManager: manager,
@@ -129,7 +125,7 @@ describe("AutomationScheduler", () => {
 
     await scheduler.start();
 
-    expect(dispatched).toEqual([pending.executionId]);
+    expect(dispatched).toEqual([pending.id]);
     expect((await manager.readAutomation(automation.id)).nextFireAt).toBe("2026-07-13T00:10:30.000Z");
     expect(await manager.listInvocations(automation.id)).toHaveLength(1);
     scheduler.dispose();
@@ -145,8 +141,7 @@ describe("AutomationScheduler", () => {
       action: { kind: "start_session", message: "Check", location: "project" },
     });
     const gateway: SessionDispatchGateway = {
-      inspectExecution: async () => "missing",
-      dispatch: async () => ({ accepted: true }),
+      dispatch: async () => {},
     };
     const scheduler = new AutomationScheduler({
       stateManager: manager,
@@ -177,11 +172,9 @@ describe("AutomationScheduler", () => {
     const dispatchEntered = new Promise<void>((resolve) => { enteredDispatch = resolve; });
     const dispatchGate = new Promise<void>((resolve) => { releaseDispatch = resolve; });
     const gateway: SessionDispatchGateway = {
-      inspectExecution: async () => "missing",
       dispatch: async () => {
         enteredDispatch();
         await dispatchGate;
-        return { accepted: true };
       },
     };
     const dispatcher = new AutomationDispatcher({ stateManager: manager, gateway, coordinator });
@@ -208,7 +201,7 @@ describe("AutomationScheduler", () => {
     expect((await manager.readInvocation(invocation.id)).status).toBe("dispatched");
   });
 
-  test("reconciles an accepted dispatch before pause cancels pending work", async () => {
+  test("retries an accepted message with the same idempotency key before pause cancels pending work", async () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => START });
     const automation = await manager.createAutomation({
       projectSlug: "project-a",
@@ -218,14 +211,10 @@ describe("AutomationScheduler", () => {
       action: { kind: "start_session", message: "Check", location: "project" },
     });
     const invocation = await manager.enqueueInvocation(automation.id, new Date(START).toISOString());
-    let accepted = false;
-    let dispatches = 0;
+    const submittedIds: string[] = [];
     const gateway: SessionDispatchGateway = {
-      inspectExecution: async () => accepted ? "accepted" : "missing",
-      dispatch: async () => {
-        dispatches += 1;
-        accepted = true;
-        return { accepted: true };
+      dispatch: async (input) => {
+        submittedIds.push(input.clientRequestId);
       },
     };
     const dispatcher = new AutomationDispatcher({ stateManager: manager, gateway });
@@ -243,6 +232,6 @@ describe("AutomationScheduler", () => {
 
     expect((await scheduler.pauseAutomation(automation.id)).status).toBe("paused");
     expect((await manager.readInvocation(invocation.id)).status).toBe("dispatched");
-    expect(dispatches).toBe(1);
+    expect(submittedIds).toEqual([invocation.id, invocation.id]);
   });
 });

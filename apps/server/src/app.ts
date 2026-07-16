@@ -1,13 +1,10 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type {
-  ActiveSessionExecution,
   AgentRuntime,
-  ManagedSessionExecutionForwarder,
   ProjectInfo,
-  StartSessionExecutionInput,
 } from "@archcode/agent-core";
-import { isTerminalChildSessionStatus, type GlobalSSEEvent, type GlobalSessionEventEnvelope, type ToolChildSessionLinkEvent } from "@archcode/protocol";
+import type { GlobalSSEEvent } from "@archcode/protocol";
 import { errorHandler } from "./error-handler";
 import { UnauthorizedError } from "./errors";
 import { requestLogger } from "./logger";
@@ -37,10 +34,9 @@ export interface CreateServerAppOptions {
 export function createServerApp(
   runtime: AgentRuntime,
   options: CreateServerAppOptions = {},
-): { app: Hono; runtime: AgentRuntime; forwardSessionExecution: ManagedSessionExecutionForwarder } {
+): { app: Hono; runtime: AgentRuntime } {
   const app = new Hono();
-  const serverRuntime = createServerEventRuntime(runtime);
-  const forwardSessionExecution = createManagedSessionExecutionForwarder(runtime);
+  const serverRuntime = runtime;
 
   app.onError(errorHandler);
   app.use("*", requestLogger());
@@ -139,130 +135,24 @@ export function createServerApp(
   }
 
   wireHitlRealtimeBridge(serverRuntime, globalEventBus);
+  wireSessionEventBridge(serverRuntime, globalEventBus);
   wireSessionRuntimeBridge(serverRuntime, globalEventBus);
   wireMcpStatusBridge(serverRuntime, globalEventBus);
   wireResourceChangeBridge(serverRuntime, globalEventBus);
 
-  return { app, runtime: serverRuntime, forwardSessionExecution };
-}
-
-export function createServerEventRuntime(runtime: AgentRuntime): AgentRuntime {
-  return {
-    ...runtime,
-    async startSessionMessageExecution(input) {
-      const forwarding = prepareSessionForwarding(runtime, input);
-      try {
-        return forwarding.attach(await runtime.startSessionMessageExecution(input));
-      } catch (error) {
-        forwarding.dispose();
-        throw error;
-      }
-    },
-  };
-}
-
-function createManagedSessionExecutionForwarder(runtime: AgentRuntime): ManagedSessionExecutionForwarder {
-  return async (input, start) => {
-    const forwarding = prepareSessionForwarding(runtime, input);
-    try {
-      return forwarding.attach(await start());
-    } catch (error) {
-      forwarding.dispose();
-      throw error;
-    }
-  };
-}
-
-function prepareSessionForwarding(
-  runtime: AgentRuntime,
-  input: StartSessionExecutionInput,
-) {
-  const subscriptions = new Map<string, () => void>();
-  const terminalChildren = new Set<string>();
-  const rootKey = scopedSessionSubscriptionKey(input.slug, input.sessionId);
-  let rootCompleted = false;
-  let releaseCheck = Promise.resolve();
-
-  const unsubscribeSession = (slug: string, sessionId: string) => {
-    const key = scopedSessionSubscriptionKey(slug, sessionId);
-    if (key === rootKey) return;
-    subscriptions.get(key)?.();
-    subscriptions.delete(key);
-  };
-
-  const maybeReleaseRoot = () => {
-    if (!rootCompleted) return;
-    releaseCheck = releaseCheck.then(async () => {
-      const activeChildren = [...subscriptions.keys()].filter((key) => key !== rootKey && !terminalChildren.has(key));
-      if (activeChildren.length > 0) return;
-      try {
-        const session = await runtime.getSessionFile(input.workspaceRoot, input.sessionId);
-        if (session.executions.at(-1)?.status === "running") return;
-        if (session.toolBatches.some((batch) => batch.archivedAt === undefined)) return;
-      } catch {
-        // A deleted Session has no later events to forward.
-      }
-      for (const unsubscribe of subscriptions.values()) unsubscribe();
-      subscriptions.clear();
-    });
-  };
-
-  const subscribe = (sessionId: string) => {
-    const key = scopedSessionSubscriptionKey(input.slug, sessionId);
-    if (subscriptions.has(key)) return;
-    const unsubscribe = runtime.subscribeSessionEvents({
-      slug: input.slug,
-      workspaceRoot: input.workspaceRoot,
-      sessionId,
-      onEvent: (event) => {
-        globalEventBus.emit(event);
-        if (!isChildSessionLinkEvent(event)) {
-          maybeReleaseRoot();
-          return;
-        }
-
-        const childSessionId = event.payload.link.childSessionId;
-        const childKey = scopedSessionSubscriptionKey(input.slug, childSessionId);
-        if (isTerminalChildSessionStatus(event.payload.link.status)) {
-          terminalChildren.add(childKey);
-          unsubscribeSession(input.slug, childSessionId);
-          maybeReleaseRoot();
-          return;
-        }
-        subscribe(childSessionId);
-        maybeReleaseRoot();
-      },
-    });
-    subscriptions.set(key, unsubscribe);
-  };
-
-  subscribe(input.sessionId);
-  return {
-    attach(execution: ActiveSessionExecution) {
-      void execution.promise.finally(() => {
-        rootCompleted = true;
-        maybeReleaseRoot();
-      });
-      return execution;
-    },
-    dispose() {
-      for (const unsubscribe of subscriptions.values()) unsubscribe();
-      subscriptions.clear();
-    },
-  };
-}
-
-function scopedSessionSubscriptionKey(slug: string, sessionId: string): string {
-  return `${slug}\0${sessionId}`;
-}
-
-function isChildSessionLinkEvent(event: GlobalSSEEvent): event is GlobalSessionEventEnvelope<ToolChildSessionLinkEvent> {
-  return event.type === "event" && event.payload.type === "tool-child-session-link";
+  return { app, runtime: serverRuntime };
 }
 
 function wireHitlRealtimeBridge(runtime: AgentRuntime, bus: typeof globalEventBus): void {
   if (typeof runtime.subscribeHitlEvents !== "function") return;
   runtime.subscribeHitlEvents((event) => bus.emit(event));
+}
+
+function wireSessionEventBridge(
+  runtime: AgentRuntime,
+  bus: { emit(event: GlobalSSEEvent): void },
+): void {
+  runtime.subscribeSessionEvents((event) => bus.emit(event));
 }
 
 function wireSessionRuntimeBridge(

@@ -12,7 +12,7 @@ import { createRuntime, type AgentRuntime } from "./runtime";
 import { RuntimeSessionDispatchGateway } from "./automations/runtime-session-gateway";
 import type { AutomationSchedulerTimer, AutomationSchedulerTimerHandle } from "./automations/scheduler";
 import { SessionStoreManager } from "./store/session-store-manager";
-import { ProjectTodoStateManager, discussionExecutionId } from "./todos";
+import { ProjectTodoStateManager, activationExecutionId, discussionExecutionId } from "./todos";
 
 const roots: string[] = [];
 const START = Date.parse("2026-07-13T00:00:00.000Z");
@@ -46,55 +46,48 @@ afterAll(async () => {
 });
 
 describe("RuntimeSessionDispatchGateway", () => {
-  test("treats a durable waiting_for_human execution as active", async () => {
+  test("dispatches through message acceptance with the caller's client request identity", async () => {
     const workspaceRoot = await tempDir("archcode-automation-gateway-");
     const sessionId = crypto.randomUUID();
-    const executionId = crypto.randomUUID();
     const stores = new SessionStoreManager({ logger: silentLogger });
     await stores.createSessionFile(workspaceRoot, { agentName: "engineer" }, sessionId);
-    const store = await stores.getOrLoad(sessionId, workspaceRoot);
-    store.getState().append({ type: "execution-start", executionId });
-    store.getState().append({ type: "execution-end", status: "waiting_for_human" });
-    await stores.flushSession(sessionId, workspaceRoot);
+    const accepted: unknown[] = [];
 
     const gateway = new RuntimeSessionDispatchGateway({
       sessionStoreManager: stores,
       sessionRuntime: {
-        getSessionExecution: () => undefined,
-        getSessionFamilyActivity: () => "idle",
-        startSessionMessageExecution: async () => { throw new Error("must not start"); },
+        acceptSessionMessage: async (input) => {
+          accepted.push(input);
+          return { clientRequestId: input.clientRequestId, messageId: crypto.randomUUID() };
+        },
       },
       resolveProject: async () => ({ slug: "project-a", workspaceRoot }),
     });
 
-    await expect(gateway.inspectExecution({
+    const clientRequestId = crypto.randomUUID();
+    await gateway.dispatch({
+      kind: "send_message",
       workspaceRoot,
       projectSlug: "project-a",
       sessionId,
-      executionId,
-    })).resolves.toBe("active");
+      clientRequestId,
+      message: "Run the automation",
+    });
+
+    expect(accepted).toEqual([{
+      slug: "project-a",
+      workspaceRoot,
+      sessionId,
+      text: "Run the automation",
+      clientRequestId,
+      source: "automation",
+    }]);
   });
 });
 
 describe("AgentRuntime Automation wiring", () => {
-  test("routes Goal activation through the managed event executor", async () => {
-    const fixture = await runtimeFixture({ installManagedExecutor: false });
-    const managedInputs: Array<Parameters<AgentRuntime["startSessionMessageExecution"]>[0]> = [];
-    fixture.runtime.setManagedSessionExecutionForwarder(async (input) => {
-      managedInputs.push(input);
-      return {
-        sessionId: input.sessionId,
-        rootSessionId: input.sessionId,
-        workspaceRoot: input.workspaceRoot,
-        agentName: "goal_lead",
-        origin: input.origin ?? "user_message",
-        abortController: new AbortController(),
-        promise: Promise.resolve(),
-        executionToken: Symbol("managed-goal-test"),
-        startedAt: Date.now(),
-        executionId: input.executionId ?? `managed:${input.sessionId}`,
-      };
-    });
+  test("routes Goal activation through its typed execution path", async () => {
+    const fixture = await runtimeFixture();
     const context = await fixture.runtime.contextResolver.resolve(fixture.workspaceRoot);
 
     const goal = await context.goalLifecycle.create({
@@ -104,12 +97,11 @@ describe("AgentRuntime Automation wiring", () => {
       acceptanceCriteria: "The Goal start is forwarded with its existing claim.",
     });
 
-    expect(managedInputs).toHaveLength(1);
-    expect(managedInputs[0]).toMatchObject({
-      sessionId: goal.mainSessionId,
-      executionId: `goal-initial:${goal.id}`,
-      origin: "goal_claim",
+    await waitFor(async () => {
+      const session = await fixture.runtime.getSessionFile(fixture.workspaceRoot, goal.mainSessionId);
+      return session.executions.some((execution) => execution.id === `goal-initial:${goal.id}`);
     });
+    await fixture.runtime.abortAllSessionExecutions();
   });
 
   test("publishes every Goal commit and schedules Goal title generation only on creation", async () => {
@@ -186,7 +178,7 @@ describe("AgentRuntime Automation wiring", () => {
     await waitForInvocationExecution(fixture.runtime, fixture.workspaceRoot, invocation);
   });
 
-  test("uses the installed managed Session message executor for Automation dispatch", async () => {
+  test("uses the Invocation id as the Automation message client request identity", async () => {
     const fixture = await runtimeFixture();
     const automation = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
       name: "server events",
@@ -194,33 +186,28 @@ describe("AgentRuntime Automation wiring", () => {
       action: { kind: "start_session", message: "Report status", location: "project" },
       createdFromSessionId: fixture.sourceSessionId,
     });
-    let wrappedExecutions = 0;
-    fixture.runtime.setManagedSessionExecutionForwarder(async (_input, start) => {
-      wrappedExecutions += 1;
-      return await start();
-    });
-
     const invocation = await fixture.runtime.runAutomationNow(fixture.workspaceRoot, automation.id);
 
     expect(invocation.status).toBe("dispatched");
-    expect(wrappedExecutions).toBe(1);
     await waitForInvocationExecution(fixture.runtime, fixture.workspaceRoot, invocation);
+    const session = await fixture.runtime.getSessionFile(fixture.workspaceRoot, invocation.sessionId!);
+    expect(session.inputRequestReceipts).toContainEqual(expect.objectContaining({
+      clientRequestId: invocation.id,
+      status: "canonical",
+    }));
   });
 
-  test("routes Project Todo starts through the managed executor and binds exact resources", async () => {
+  test("routes Project Todo starts through typed execution paths and binds exact resources", async () => {
     const fixture = await runtimeFixture();
     const context = await fixture.runtime.contextResolver.resolve(fixture.workspaceRoot);
-    const managedInputs: Array<{ sessionId: string; executionId?: string }> = [];
-    fixture.runtime.setManagedSessionExecutionForwarder(async (input, start) => {
-      managedInputs.push({ sessionId: input.sessionId, executionId: input.executionId });
-      return await start();
-    });
 
     const idea = await context.todos.createTodo({ title: "Shape through server events" });
     const discussed = await context.todos.discussTodo(idea.id, idea.revision);
-    expect(managedInputs).toHaveLength(1);
-    expect(managedInputs[0]).toMatchObject({ sessionId: discussed.discussionSessionId });
-    expect((await fixture.runtime.getSessionFile(fixture.workspaceRoot, discussed.discussionSessionId!)).agentName).toBe("shaper");
+    const discussionSession = await fixture.runtime.getSessionFile(fixture.workspaceRoot, discussed.discussionSessionId!);
+    expect(discussionSession.agentName).toBe("shaper");
+    expect(discussionSession.executions).toContainEqual(expect.objectContaining({
+      id: discussionExecutionId(idea.id),
+    }));
     await waitFor(() => fixture.runtime.getSessionFamilyActivity(fixture.workspaceRoot, discussed.discussionSessionId!) === "idle");
 
     const automationIdea = await context.todos.createTodo({ title: "Automate exact resource binding" });
@@ -232,8 +219,10 @@ describe("AgentRuntime Automation wiring", () => {
       expectedRevision: ready.revision,
       kind: "automation",
     });
-    expect(managedInputs).toHaveLength(2);
-    expect(managedInputs[1]).toMatchObject({ sessionId: active.activation?.sourceSessionId });
+    const activationSession = await fixture.runtime.getSessionFile(fixture.workspaceRoot, active.activation!.sourceSessionId);
+    expect(activationSession.executions).toContainEqual(expect.objectContaining({
+      id: activationExecutionId(active.id),
+    }));
 
     const automation = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
       name: "Todo provenance",
@@ -245,12 +234,11 @@ describe("AgentRuntime Automation wiring", () => {
     await fixture.runtime.abortAllSessionExecutions();
   });
 
-  test("recovers durable Project Todo checkpoints only after managed execution is installed", async () => {
+  test("recovers durable Project Todo checkpoints through its typed execution path", async () => {
     let todoId = "";
     let discussionSessionId = "";
     const fixture = await runtimeFixture({
-      installManagedExecutor: false,
-      beforeRuntime: async ({ workspaceRoot, projectSlug }) => {
+      beforeRuntime: async ({ workspaceRoot }) => {
         const state = new ProjectTodoStateManager(workspaceRoot);
         const todo = await state.createTodo({ title: "Recover after restart" });
         discussionSessionId = crypto.randomUUID();
@@ -259,23 +247,7 @@ describe("AgentRuntime Automation wiring", () => {
       },
     });
 
-    await expect(fixture.runtime.getSessionFile(fixture.workspaceRoot, discussionSessionId)).rejects.toThrow();
-    await expect(fixture.runtime.recoverProjectTodos()).rejects.toThrow(
-      "Managed Session execution forwarder must be installed before runtime-managed execution",
-    );
-    await expect(fixture.runtime.getSessionFile(fixture.workspaceRoot, discussionSessionId)).rejects.toThrow();
-
-    const managedInputs: Array<{ sessionId: string; executionId?: string }> = [];
-    fixture.runtime.setManagedSessionExecutionForwarder(async (input, start) => {
-      managedInputs.push({ sessionId: input.sessionId, executionId: input.executionId });
-      return await start();
-    });
-
     await fixture.runtime.recoverProjectTodos();
-    expect(managedInputs).toEqual([{
-      sessionId: discussionSessionId,
-      executionId: discussionExecutionId(todoId),
-    }]);
     await waitFor(async () => {
       const session = await fixture.runtime.getSessionFile(fixture.workspaceRoot, discussionSessionId);
       return session.executions.some((execution) => (
@@ -284,7 +256,8 @@ describe("AgentRuntime Automation wiring", () => {
     });
 
     await fixture.runtime.recoverProjectTodos();
-    expect(managedInputs).toHaveLength(1);
+    const recovered = await fixture.runtime.getSessionFile(fixture.workspaceRoot, discussionSessionId);
+    expect(recovered.executions.filter((execution) => execution.id === discussionExecutionId(todoId))).toHaveLength(1);
   });
 
   test("rejects worktree actions on non-Git projects during create and update", async () => {
@@ -339,7 +312,7 @@ describe("AgentRuntime Automation wiring", () => {
     const invocations = [
       ...await fixture.runtime.listAutomationInvocations(fixture.workspaceRoot, first.id),
       ...await fixture.runtime.listAutomationInvocations(fixture.secondWorkspaceRoot!, second.id),
-    ].filter((invocation) => invocation.executionId !== firstInvocation.executionId);
+    ].filter((invocation) => invocation.id !== firstInvocation.id);
     await Promise.all(invocations.map(async (invocation) => {
       const workspaceRoot = invocation.automationId === first.id
         ? fixture.workspaceRoot
@@ -435,7 +408,6 @@ describe("AgentRuntime Automation wiring", () => {
 
 async function runtimeFixture(options: {
   secondProject?: boolean;
-  installManagedExecutor?: boolean;
   beforeRuntime?: (input: { workspaceRoot: string; projectSlug: string }) => Promise<void>;
 } = {}): Promise<{
   runtime: AgentRuntime;
@@ -466,9 +438,6 @@ async function runtimeFixture(options: {
     automationSchedulerClock: clock,
     automationSchedulerTimer: timer,
   });
-  if (options.installManagedExecutor !== false) {
-    runtime.setManagedSessionExecutionForwarder((_input, start) => start());
-  }
   const sourceSession = await runtime.createSession(workspaceRoot, { agentName: "engineer" });
   const secondSourceSession = secondWorkspaceRoot === undefined
     ? undefined
@@ -540,12 +509,12 @@ async function waitFor(predicate: () => boolean | Promise<boolean>): Promise<voi
 async function waitForInvocationExecution(
   runtime: AgentRuntime,
   workspaceRoot: string,
-  invocation: { readonly automationId: string; readonly executionId: string; readonly sessionId?: string },
+  invocation: { readonly id: string; readonly automationId: string; readonly sessionId?: string },
 ): Promise<void> {
   let dispatched = invocation;
   await waitFor(async () => {
     const current = (await runtime.listAutomationInvocations(workspaceRoot, invocation.automationId))
-      .find((candidate) => candidate.executionId === invocation.executionId);
+      .find((candidate) => candidate.id === invocation.id);
     if (current?.status === "failed") throw new Error(current.error ?? "Automation Invocation failed");
     if (current?.status !== "dispatched") return false;
     dispatched = current;
@@ -554,10 +523,11 @@ async function waitForInvocationExecution(
   if (dispatched.sessionId === undefined) throw new Error("Invocation did not allocate a Session");
   await waitFor(async () => {
     const session = await runtime.getSessionFile(workspaceRoot, dispatched.sessionId!);
-    return session.executions.some((execution) => (
-      execution.id === invocation.executionId && execution.status !== "running"
+    return session.inputRequestReceipts.some((receipt) => (
+      receipt.clientRequestId === invocation.id && receipt.status === "canonical"
     ));
   });
+  await waitFor(() => runtime.getSessionFamilyActivity(workspaceRoot, dispatched.sessionId!) === "idle");
 }
 
 class FakeClock {

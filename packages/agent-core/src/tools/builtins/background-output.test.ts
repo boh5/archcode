@@ -62,6 +62,24 @@ function appendAssistantText(ctx: ToolExecutionContext, text: string): void {
   ctx.store.getState().append({ type: "execution-end", status: "completed" });
 }
 
+function appendUserText(store: ReturnType<typeof linkChild>, text: string): void {
+  const messageId = crypto.randomUUID();
+  const executionId = `test-${messageId}`;
+  store.getState().append({
+    type: "session.messages_committed",
+    executionId,
+    messages: [{
+      id: messageId,
+      role: "user",
+      parts: [{ type: "text", id: `${messageId}:text`, text, createdAt: 1, completedAt: 1 }],
+      createdAt: 1,
+      completedAt: 1,
+      executionId,
+      clientRequestId: `request-${messageId}`,
+    }],
+  });
+}
+
 describe("BackgroundOutputInputSchema", () => {
   it("accepts canonical parameters and applies defaults", () => {
     const result = BackgroundOutputInputSchema.parse({ session_id: "child-1" });
@@ -279,11 +297,11 @@ describe("background_output tool", () => {
   it("renders full-session messages in stored order with exclusive cursor and limit", async () => {
     const ctx = makeContext();
     const childStore = linkChild(ctx);
-    childStore.getState().append({ type: "user-message", content: "question one" });
+    appendUserText(childStore, "question one");
     const firstMessageId = childStore.getState().messages[0]!.id;
     appendAssistantText({ ...ctx, store: childStore }, "answer one");
-    childStore.getState().append({ type: "user-message", content: "question two" });
-    childStore.getState().append({ type: "user-message", content: "question three" });
+    appendUserText(childStore, "question two");
+    appendUserText(childStore, "question three");
 
     const result = await executeBackgroundOutput({
       session_id: childStore.getState().sessionId,
@@ -382,6 +400,8 @@ describe("background_output tool", () => {
           parts: [{ type: "text", id: "disk-part-1", text: "loaded from disk", createdAt: Date.now(), completedAt: Date.now() }],
         },
       ],
+      pendingMessages: [],
+      inputRequestReceipts: [],
       steps: [],
       stats: {
         ...createEmptySessionStats(),

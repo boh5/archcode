@@ -69,6 +69,22 @@ describe("sessionRuntimeStore", () => {
     expect(sessionRuntimeStore.getState().activityFor("proj", "root-1")).toBe("idle");
   });
 
+  test("realtime changes retain the root steer target", () => {
+    sessionRuntimeStore.getState().applySnapshot(snapshot({ projectSlugs: ["proj"], families: [] }));
+
+    sessionRuntimeStore.getState().applyChange(change({
+      activity: "running",
+      steerTargetExecutionId: "execution-1",
+    }));
+
+    expect(sessionRuntimeStore.getState().families[runtimeFamilyKey("proj", "root-1")]).toEqual({
+      projectSlug: "proj",
+      rootSessionId: "root-1",
+      activity: "running",
+      steerTargetExecutionId: "execution-1",
+    });
+  });
+
   test("change before snapshot is retained but does not initialize controls", () => {
     sessionRuntimeStore.getState().applyChange(change({ activity: "running" }));
 
@@ -122,7 +138,7 @@ function snapshot(input: Pick<GlobalSSESessionRuntimeSnapshotEvent, "projectSlug
   return { type: "session.runtime.snapshot", createdAt: 1, ...input };
 }
 
-function change(input: Pick<GlobalSSESessionRuntimeChangedEvent, "activity">): GlobalSSESessionRuntimeChangedEvent {
+function change(input: Pick<GlobalSSESessionRuntimeChangedEvent, "activity"> & Partial<Pick<GlobalSSESessionRuntimeChangedEvent, "steerTargetExecutionId">>): GlobalSSESessionRuntimeChangedEvent {
   return {
     type: "session.runtime_changed",
     projectSlug: "proj",

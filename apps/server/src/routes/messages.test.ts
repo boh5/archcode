@@ -1,78 +1,38 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { AgentRunningError, ChildSessionCwdMismatchError, ProjectRegistry, SessionCwdTransitionInProgressError, SessionFamilyActiveError, SessionFamilyStopInProgressError, SessionToolBatchActiveError, silentLogger } from "@archcode/agent-core";
-import type { ActiveSessionExecution, AgentRuntime } from "@archcode/agent-core";
+import { ProjectRegistry, SessionCommandOutcomeError, SessionInputConflictError, SessionSteerUnavailableError, silentLogger } from "@archcode/agent-core";
+import type { AgentRuntime } from "@archcode/agent-core";
 import { createServerApp } from "../app";
-import { globalEventBus } from "../events/global-event-bus";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "messages-routes");
 
-function makeExecution(sessionId: string, workspaceRoot: string): ActiveSessionExecution {
-  return {
-    sessionId,
-    rootSessionId: sessionId,
-    workspaceRoot,
-    agentName: "engineer",
-    origin: "user_message",
-    abortController: new AbortController(),
-    promise: new Promise(() => undefined),
-    executionToken: Symbol("test-execution"),
-    startedAt: Date.now(),
-    executionId: crypto.randomUUID(),
-  };
-}
-
 function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
-  const running = new Set<string>();
+  const pending = { id: "message-1", clientRequestId: "request-1", content: "Hello", state: "queued" as const, revision: 0 };
   return {
     projectRegistry,
-    warnings: [],
-    mcpManager: undefined,
-    toolRegistry: undefined,
-    providerRegistry: undefined,
-    skillService: undefined,
     contextResolver: undefined,
-    subscribeSessionRuntimeChanges: mock(() => () => undefined),
-    createSession: mock(async () => ({ sessionId: crypto.randomUUID(), title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] })),
-    getSessionFile: mock(async (_workspaceRoot: string, sessionId: string) => ({ sessionId, title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] })),
-    listSessions: mock(async () => []),
-    startSessionMessageExecution: mock(async (input) => {
-      if (running.has(input.sessionId)) throw new AgentRunningError();
-      running.add(input.sessionId);
-      return makeExecution(input.sessionId, input.workspaceRoot);
-    }),
-    stopSessionFamily: mock(async (_workspaceRoot: string, sessionId: string) => {
-      running.delete(sessionId);
-    }),
-    abortAllSessionExecutions: mock(async () => running.clear()),
-    getSessionFamilyActivity: mock((_workspaceRoot: string, sessionId: string) => running.has(sessionId) ? "running" : "idle"),
-    getSessionExecution: mock(() => undefined),
+    configService: { getSnapshot: mock(async () => ({ config: { provider: {}, agents: {} }, revision: "test", configPath: "/test", restartRequired: false })) },
+    listAgentDescriptors: mock(() => []),
     subscribeSessionEvents: mock(() => () => undefined),
-    deleteSession: mock(async (_workspaceRoot: string, sessionId: string) => {
-      running.delete(sessionId);
-    }),
-    disposeSessionAgent: mock(() => undefined),
-    disposeAllSessionAgents: mock(() => undefined),
-    isSessionTombstoned: mock(() => false),
-    notifyRuntimeShutdown: mock(() => undefined),
+    subscribeHitlEvents: mock(() => () => undefined),
+    subscribeSessionRuntimeChanges: mock(() => () => undefined),
+    subscribeMcpStatusChanges: mock(() => () => undefined),
+    getMcpServerStatuses: mock(() => new Map()),
+    acceptSessionMessage: mock(async () => ({ clientRequestId: pending.clientRequestId, messageId: pending.id, status: "pending" as const, message: pending })),
+    editPendingSessionMessage: mock(async () => ({ ...pending, content: "Edited", revision: 1 })),
+    deletePendingSessionMessage: mock(async () => ({ messageId: pending.id, clientRequestId: pending.clientRequestId, revision: 2 })),
+    steerPendingSessionMessage: mock(async () => ({ ...pending, state: "steering" as const, revision: 2 })),
   } as unknown as AgentRuntime;
 }
 
 async function createTestApp(testName: string) {
-  const homeDir = join(tempRoot, "homes", testName);
   const workspaceRoot = join(tempRoot, "workspaces", testName);
-  await mkdir(homeDir, { recursive: true });
   await mkdir(workspaceRoot, { recursive: true });
-  const projectRegistry = new ProjectRegistry({ homeDir, logger: silentLogger });
+  const projectRegistry = new ProjectRegistry({ homeDir: join(tempRoot, "homes", testName), logger: silentLogger });
   const project = await projectRegistry.add({ workspaceRoot, name: testName });
   const runtime = createTestRuntime(projectRegistry);
-
-  return {
-    app: createServerApp(runtime, { dev: true }).app,
-    project,
-    runtime,
-  };
+  return { app: createServerApp(runtime, { dev: true }).app, project, runtime };
 }
 
 describe("messages routes", () => {
@@ -80,236 +40,119 @@ describe("messages routes", () => {
     await rm(tempRoot, { recursive: true, force: true });
     await mkdir(tempRoot, { recursive: true });
   });
+  afterAll(async () => await rm(tempRoot, { recursive: true, force: true }));
 
-  afterAll(async () => {
-    await rm(tempRoot, { recursive: true, force: true });
-  });
-
-  test("POST message with valid text returns 202", async () => {
-    const { app, project } = await createTestApp("valid-message");
-
-    const res = await app.request(`/api/projects/${project.slug}/sessions/session-valid/messages`, {
+  test("POST accepts a durable Session message", async () => {
+    const { app, project, runtime } = await createTestApp("accept");
+    const response = await app.request(`/api/projects/${project.slug}/sessions/session-1/messages`, {
       method: "POST",
-      body: JSON.stringify({ text: "Hello" }),
+      body: JSON.stringify({ text: "Hello", clientRequestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }),
       headers: { "content-type": "application/json" },
     });
-    const body = (await res.json()) as { ok: boolean };
-
-    expect(res.status).toBe(202);
-    expect(body).toEqual({ ok: true });
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ status: "queued", messageId: "message-1" });
+    expect(runtime.acceptSessionMessage).toHaveBeenCalledWith(expect.objectContaining({ source: "user", sessionId: "session-1" }));
   });
 
-  test("does not expose the removed per-execution abort route", async () => {
-    const { app, project } = await createTestApp("removed-abort-route");
-
-    const res = await app.request(`/api/projects/${project.slug}/sessions/session-valid/abort`, {
-      method: "POST",
-    });
-
-    expect(res.status).toBe(404);
+  test("POST requires text and clientRequestId", async () => {
+    const { app, project } = await createTestApp("validation");
+    const response = await app.request(`/api/projects/${project.slug}/sessions/session-1/messages`, { method: "POST", body: "{}", headers: { "content-type": "application/json" } });
+    expect(response.status).toBe(400);
   });
 
-  test("POST message rejects unknown body fields", async () => {
-    const { app, project } = await createTestApp("message-unknown-field");
-
-    const res = await app.request(`/api/projects/${project.slug}/sessions/session-valid/messages`, {
-      method: "POST",
-      body: JSON.stringify({ text: "Hello", unexpected: true }),
-      headers: { "content-type": "application/json" },
+  test("PATCH edits a pending message", async () => {
+    const { app, project, runtime } = await createTestApp("edit");
+    const response = await app.request(`/api/projects/${project.slug}/sessions/session-1/messages/message-1`, {
+      method: "PATCH", body: JSON.stringify({ text: "Edited", expectedRevision: 0 }), headers: { "content-type": "application/json" },
     });
-
-    expect(res.status).toBe(400);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ messageId: "message-1", content: "Edited", revision: 1 });
+    expect(runtime.editPendingSessionMessage).toHaveBeenCalledWith(expect.objectContaining({ expectedRevision: 0 }));
   });
 
-  test("POST message wires runtime session events into global event bus", async () => {
-    const { app, project, runtime } = await createTestApp("session-events");
-    const received: unknown[] = [];
-    const unsubscribe = globalEventBus.subscribe((event) => received.push(event));
-
-    const res = await app.request(`/api/projects/${project.slug}/sessions/session-events/messages`, {
-      method: "POST",
-      body: JSON.stringify({ text: "Hello" }),
-      headers: { "content-type": "application/json" },
+  test("DELETE removes a pending message", async () => {
+    const { app, project, runtime } = await createTestApp("delete");
+    const response = await app.request(`/api/projects/${project.slug}/sessions/session-1/messages/message-1`, {
+      method: "DELETE", body: JSON.stringify({ expectedRevision: 0 }), headers: { "content-type": "application/json" },
     });
-
-    expect(res.status).toBe(202);
-    expect(runtime.subscribeSessionEvents).toHaveBeenCalledWith({
-      slug: project.slug,
-      workspaceRoot: project.workspaceRoot,
-      sessionId: "session-events",
-      onEvent: expect.any(Function),
-    });
-
-    const subscribeMock = runtime.subscribeSessionEvents as unknown as {
-      mock: { calls: Array<[{ onEvent: (event: { type: "shutdown"; reason: string }) => void }]> };
-    };
-    subscribeMock.mock.calls[0]?.[0]?.onEvent({ type: "shutdown", reason: "test" });
-    unsubscribe();
-
-    expect(received).toContainEqual({ type: "shutdown", reason: "test" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ messageId: "message-1", clientRequestId: "request-1", revision: 2, status: "deleted" });
+    expect(runtime.deletePendingSessionMessage).toHaveBeenCalledTimes(1);
   });
 
-  test("POST message with missing text returns 400", async () => {
-    const { app, project } = await createTestApp("missing-text");
-
-    const res = await app.request(`/api/projects/${project.slug}/sessions/session-missing/messages`, {
-      method: "POST",
-      body: JSON.stringify({}),
-      headers: { "content-type": "application/json" },
+  test("POST steer claims a pending message", async () => {
+    const { app, project, runtime } = await createTestApp("steer");
+    const response = await app.request(`/api/projects/${project.slug}/sessions/session-1/messages/message-1/steer`, {
+      method: "POST", body: JSON.stringify({ expectedRevision: 0, expectedExecutionId: "execution-1" }), headers: { "content-type": "application/json" },
     });
-
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({
-      error: { code: "BAD_REQUEST", message: "text is required" },
-    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ messageId: "message-1", status: "steering" });
+    expect(runtime.steerPendingSessionMessage).toHaveBeenCalledWith(expect.objectContaining({ expectedExecutionId: "execution-1" }));
   });
 
-  test("POST message for non-existent project returns 404", async () => {
-    const { app } = await createTestApp("missing-project");
-
-    const res = await app.request("/api/projects/missing/sessions/session-project/messages", {
-      method: "POST",
-      body: JSON.stringify({ text: "Hello" }),
-      headers: { "content-type": "application/json" },
+  test("maps mutation conflicts to 409", async () => {
+    const { app, project, runtime } = await createTestApp("conflict");
+    (runtime.editPendingSessionMessage as unknown as ReturnType<typeof mock>).mockImplementation(async () => {
+      throw new SessionInputConflictError("state", "already canonical", {
+        messageId: "message-1",
+        clientRequestId: "request-1",
+        status: "canonical",
+        content: "Hello",
+        executionId: "execution-1",
+      });
     });
-
-    expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({
-      error: { code: "PROJECT_NOT_FOUND", message: "Project not found: missing" },
+    const response = await app.request(`/api/projects/${project.slug}/sessions/session-1/messages/message-1`, {
+      method: "PATCH", body: JSON.stringify({ text: "Edited", expectedRevision: 0 }), headers: { "content-type": "application/json" },
     });
-  });
-
-  test("POST message while agent running returns 409", async () => {
-    const { app, project } = await createTestApp("running-conflict");
-    const path = `/api/projects/${project.slug}/sessions/session-conflict/messages`;
-
-    await app.request(path, {
-      method: "POST",
-      body: JSON.stringify({ text: "First" }),
-      headers: { "content-type": "application/json" },
-    });
-    const res = await app.request(path, {
-      method: "POST",
-      body: JSON.stringify({ text: "Second" }),
-      headers: { "content-type": "application/json" },
-    });
-
-    expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({
-      error: { code: "BAD_REQUEST", message: new AgentRunningError().message },
-    });
-  });
-
-  test("POST message for a child blocked by a root cwd transition returns 409", async () => {
-    const { app, project, runtime } = await createTestApp("cwd-transition-conflict");
-    const conflict = new SessionCwdTransitionInProgressError("child-session", "root-session");
-    const start = runtime.startSessionMessageExecution as unknown as ReturnType<typeof mock>;
-    start.mockImplementation(() => { throw conflict; });
-
-    const res = await app.request(`/api/projects/${project.slug}/sessions/child-session/messages`, {
-      method: "POST",
-      body: JSON.stringify({ text: "Continue" }),
-      headers: { "content-type": "application/json" },
-    });
-
-    expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({
-      error: { code: "BAD_REQUEST", message: conflict.message },
-    });
-  });
-
-  test("POST message while Goal cancellation stops the Session family returns stable 409", async () => {
-    const { app, project, runtime } = await createTestApp("family-stop-conflict");
-    const conflict = new SessionFamilyStopInProgressError("child-session", "root-session");
-    const start = runtime.startSessionMessageExecution as unknown as ReturnType<typeof mock>;
-    start.mockImplementation(() => { throw conflict; });
-
-    const res = await app.request(`/api/projects/${project.slug}/sessions/child-session/messages`, {
-      method: "POST",
-      body: JSON.stringify({ text: "Do not race cancellation" }),
-      headers: { "content-type": "application/json" },
-    });
-
-    expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({
-      error: {
-        code: "BAD_REQUEST",
-        message: conflict.message,
-        details: {
-          scopeCode: "SESSION_FAMILY_STOP_IN_PROGRESS",
-          sessionId: "child-session",
-          rootSessionId: "root-session",
-        },
+    expect(response.status).toBe(409);
+    expect((await response.json()).error.details).toEqual({
+      scopeCode: "SESSION_INPUT_CONFLICT",
+      reason: "state",
+      current: {
+        messageId: "message-1",
+        clientRequestId: "request-1",
+        status: "canonical",
+        content: "Hello",
+        executionId: "execution-1",
       },
     });
   });
 
-  test("POST root message while a descendant is active returns the family conflict", async () => {
-    const { app, project, runtime } = await createTestApp("family-active-conflict");
-    const conflict = new SessionFamilyActiveError("root-session", "root-session", "running");
-    const start = runtime.startSessionMessageExecution as unknown as ReturnType<typeof mock>;
-    start.mockImplementation(() => { throw conflict; });
+  test("maps steer-unavailable conflicts to 409", async () => {
+    const { app, project, runtime } = await createTestApp("steer-conflict");
+    (runtime.steerPendingSessionMessage as unknown as ReturnType<typeof mock>).mockImplementation(async () => { throw new SessionSteerUnavailableError("session-1", "execution-1"); });
+    const response = await app.request(`/api/projects/${project.slug}/sessions/session-1/messages/message-1/steer`, {
+      method: "POST", body: JSON.stringify({ expectedRevision: 0, expectedExecutionId: "execution-1" }), headers: { "content-type": "application/json" },
+    });
+    expect(response.status).toBe(409);
+  });
 
-    const res = await app.request(`/api/projects/${project.slug}/sessions/root-session/messages`, {
+  test("returns a stable indeterminate command outcome without authorizing replay", async () => {
+    const { app, project, runtime } = await createTestApp("command-indeterminate");
+    (runtime.acceptSessionMessage as unknown as ReturnType<typeof mock>).mockImplementation(async () => {
+      throw new SessionCommandOutcomeError(
+        "session-1",
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "indeterminate",
+        "Command outcome is unknown because execution was interrupted by restart",
+      );
+    });
+    const response = await app.request(`/api/projects/${project.slug}/sessions/session-1/messages`, {
       method: "POST",
-      body: JSON.stringify({ text: "Do not overlap the child" }),
+      body: JSON.stringify({ text: "/compact", clientRequestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }),
       headers: { "content-type": "application/json" },
     });
 
-    expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({
-      error: {
-        code: "BAD_REQUEST",
-        message: conflict.message,
-        details: {
-          scopeCode: "SESSION_FAMILY_ACTIVE",
-          sessionId: "root-session",
-          rootSessionId: "root-session",
-          activity: "running",
-        },
-      },
+    expect(response.status).toBe(409);
+    expect((await response.json()).error.details).toMatchObject({
+      scopeCode: "SESSION_COMMAND_OUTCOME_INDETERMINATE",
+      status: "indeterminate",
     });
+    expect(runtime.acceptSessionMessage).toHaveBeenCalledTimes(1);
   });
 
-  test("POST message while Session awaits HITL returns stable 409", async () => {
-    const { app, project, runtime } = await createTestApp("hitl-blocked-conflict");
-    const conflict = new SessionToolBatchActiveError("root-session", ["hitl-1"]);
-    const start = runtime.startSessionMessageExecution as unknown as ReturnType<typeof mock>;
-    start.mockImplementation(async () => { throw conflict; });
-
-    const res = await app.request(`/api/projects/${project.slug}/sessions/root-session/messages`, {
-      method: "POST",
-      body: JSON.stringify({ text: "Do not reorder the transcript" }),
-      headers: { "content-type": "application/json" },
-    });
-
-    expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({
-      error: { code: "BAD_REQUEST", message: conflict.message },
-    });
+  test("does not expose the removed abort route", async () => {
+    const { app, project } = await createTestApp("abort");
+    expect((await app.request(`/api/projects/${project.slug}/sessions/session-1/abort`, { method: "POST" })).status).toBe(404);
   });
-
-  test("POST message for a stale-cwd child returns stable 409", async () => {
-    const { app, project, runtime } = await createTestApp("child-cwd-conflict");
-    const conflict = new ChildSessionCwdMismatchError(
-      "child-session",
-      "root-session",
-      "/project.worktrees/new",
-      "/project",
-    );
-    const start = runtime.startSessionMessageExecution as unknown as ReturnType<typeof mock>;
-    start.mockImplementation(async () => { throw conflict; });
-
-    const res = await app.request(`/api/projects/${project.slug}/sessions/child-session/messages`, {
-      method: "POST",
-      body: JSON.stringify({ text: "Do not use stale cwd" }),
-      headers: { "content-type": "application/json" },
-    });
-
-    expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({
-      error: { code: "BAD_REQUEST", message: conflict.message },
-    });
-  });
-
 });

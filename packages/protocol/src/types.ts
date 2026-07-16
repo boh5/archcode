@@ -40,7 +40,42 @@ export interface SessionExecutionRecord {
   endedAt?: number;
   durationMs?: number;
   error?: string;
+  /** User-requested Stop fact for this execution. This is not a Session pause state. */
+  stopRequestedAt?: number;
 }
+
+export type SessionMessageSource = "user" | "automation";
+
+export interface PendingSessionMessage {
+  id: string;
+  clientRequestId: string;
+  content: string;
+  source: SessionMessageSource;
+  state: "queued" | "steering";
+  revision: number;
+  acceptedAt: number;
+  updatedAt: number;
+  targetExecutionId?: string;
+}
+
+export interface SessionMessageInputReceipt {
+  kind: "message";
+  clientRequestId: string;
+  messageId: string;
+  requestFingerprint: string;
+  status: "pending" | "canonical" | "deleted";
+}
+
+export interface SessionCommandInputReceipt {
+  kind: "command";
+  clientRequestId: string;
+  requestFingerprint: string;
+  status: "executing" | "completed" | "failed" | "indeterminate";
+  error?: string;
+}
+
+/** Durable idempotency index for every client-submitted Session input. */
+export type SessionInputReceipt = SessionMessageInputReceipt | SessionCommandInputReceipt;
 
 export type SessionTodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
 
@@ -91,9 +126,44 @@ export interface Reminder {
   targetSessionId?: string;
 }
 
-export interface UserMessageEvent {
-  type: "user-message";
-  content: string;
+export interface SessionMessageAcceptedEvent {
+  type: "session.message_accepted";
+  message: PendingSessionMessage;
+}
+
+export interface SessionMessageEditedEvent {
+  type: "session.message_edited";
+  message: PendingSessionMessage;
+}
+
+export interface SessionMessageDeletedEvent {
+  type: "session.message_deleted";
+  messageId: string;
+  clientRequestId: string;
+  revision: number;
+  deletedAt: number;
+}
+
+export interface SessionMessageSteerClaimedEvent {
+  type: "session.message_steer_claimed";
+  message: PendingSessionMessage;
+}
+
+export interface SessionMessageSteerRolledBackEvent {
+  type: "session.message_steer_rolled_back";
+  message: PendingSessionMessage;
+}
+
+export interface SessionMessagesCommittedEvent {
+  type: "session.messages_committed";
+  executionId: string;
+  messages: SessionMessage[];
+}
+
+export interface ExecutionStopRequestedEvent {
+  type: "execution-stop-requested";
+  executionId: string;
+  timestamp: number;
 }
 
 export interface SystemNoticeEvent {
@@ -383,7 +453,13 @@ export type StreamEvent =
   | ExecutionStartEvent
   | ExecutionEndEvent
   | SessionCwdChangedEvent
-  | UserMessageEvent
+  | SessionMessageAcceptedEvent
+  | SessionMessageEditedEvent
+  | SessionMessageDeletedEvent
+  | SessionMessageSteerClaimedEvent
+  | SessionMessageSteerRolledBackEvent
+  | SessionMessagesCommittedEvent
+  | ExecutionStopRequestedEvent
   | SystemNoticeEvent
   | TextStartEvent
   | TextDeltaEvent
@@ -587,6 +663,8 @@ export interface SessionFamilyRuntimeProjection {
   projectSlug: string;
   rootSessionId: string;
   activity: SessionFamilyActivity;
+  /** Present only while the current root Execution accepts Steer. */
+  steerTargetExecutionId?: string;
 }
 
 /** Authoritative reset for every project listed in projectSlugs. */
@@ -793,6 +871,8 @@ export interface SessionMessage {
   createdAt: number;
   completedAt?: number;
   executionId?: string;
+  /** Correlates a canonical user message with Queue admission and optimistic UI. */
+  clientRequestId?: string;
   compacted?: boolean;
 }
 
@@ -822,6 +902,7 @@ export interface SessionProjection {
   parentSessionId?: string;
   title: string | null;
   messages: SessionMessage[];
+  pendingMessages: PendingSessionMessage[];
   steps: SessionStep[];
   todos: SessionTodo[];
   reminders: Reminder[];
@@ -923,6 +1004,7 @@ export interface Session {
   createdAt: number;
   updatedAt: number;
   messages: SessionMessage[];
+  pendingMessages: PendingSessionMessage[];
   steps: SessionStep[];
   todos: SessionTodo[];
   reminders: Reminder[];
@@ -1163,7 +1245,6 @@ export interface AutomationInvocation {
   automationId: string;
   dueAt: string;
   status: AutomationInvocationStatus;
-  executionId: string;
   sessionId?: string;
   createdAt: string;
   dispatchedAt?: string;

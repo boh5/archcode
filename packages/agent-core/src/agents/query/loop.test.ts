@@ -5,8 +5,6 @@ import type { StoreApi } from "zustand";
 import { z } from "zod";
 import type { ModelInfo } from "../../provider/model";
 import { SkillService } from "../../skills";
-import { CommandRegistry } from "../../commands/registry";
-import { createSkillCommand } from "../../commands/skill";
 import { createSessionStore, storeManager } from "../../store/store";
 import type { Reminder, SessionEventPayload, SessionStoreState, StoredMessage, StoredTodo } from "../../store/types";
 import { createRegistry, defineTool } from "../../tools/index";
@@ -18,11 +16,12 @@ import { silentLogger } from "../../logger";
 import { createMockLogger } from "../../logger.test-helper";
 import { createAutoInjectReminderHook } from "./hooks/auto-inject-reminder";
 import { setLlmAdapterForTest } from "../../llm/adapter";
-import { maybeHandleCommand, runQueryLoop } from "./loop";
+import { runQueryLoop as runCanonicalQueryLoop } from "./loop";
 import type { BeforeModelBuildContext } from "./loop-hooks";
 import { DOOM_LOOP_MESSAGE, type QueryLoopOptions } from "./types";
 import { sessionFileInternals } from "../../store/helpers";
 import { createFakeRetryScheduler } from "../../testing/fake-retry-scheduler";
+import type { RetryScheduler } from "../../llm/retry";
 import { createTestTempRoot } from "../../testing/test-temp-root";
 import { SessionToolBatchScheduler } from "../../execution/session-tool-batch-scheduler";
 
@@ -178,6 +177,36 @@ function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOption
   ...overrides,  };
 }
 
+function appendCanonicalUserMessage(store: StoreApi<SessionStoreState>, content: string): void {
+  const id = crypto.randomUUID();
+  const executionId = `test-${id}`;
+  store.getState().append({
+    type: "session.messages_committed",
+    executionId,
+    messages: [{
+      id,
+      role: "user",
+      parts: [{ type: "text", id: `${id}:text`, text: content, createdAt: 1, completedAt: 1 }],
+      createdAt: 1,
+      completedAt: 1,
+      executionId,
+      clientRequestId: `request-${id}`,
+    }],
+  });
+}
+
+/** Test adapter: production callers must canonicalize input before entering QueryLoop. */
+async function runQueryLoop(
+  options: QueryLoopOptions,
+  message: string,
+  retryScheduler?: RetryScheduler,
+) {
+  if (message.length > 0) appendCanonicalUserMessage(options.store, message);
+  return retryScheduler === undefined
+    ? runCanonicalQueryLoop(options)
+    : runCanonicalQueryLoop(options, retryScheduler);
+}
+
 function createMockStreamText(rounds: MockRound[]) {
   let index = 0;
 
@@ -281,6 +310,33 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     if (!("errorMessage" in part)) throw new Error("Expected error tool part");
     return String(part.errorMessage);
   }
+
+  test("commits steers before beforeModelBuild and canonical projection", async () => {
+    const store = createStore();
+    appendCanonicalUserMessage(store, "Initial input");
+    const order: string[] = [];
+    const streamFn = createMockStreamText([{ text: "ok" }]);
+
+    await runCanonicalQueryLoop(makeOptions({
+      store,
+      consumeSteers: async () => {
+        order.push("consumeSteers");
+        appendCanonicalUserMessage(store, "Steered input");
+      },
+      hooks: {
+        beforeModelBuild: [async () => {
+          order.push("beforeModelBuild");
+          expect(store.getState().messages).toHaveLength(2);
+        }],
+      },
+    }));
+
+    expect(order).toEqual(["consumeSteers", "beforeModelBuild"]);
+    expect(streamCallMessages(streamFn, 0)).toEqual([
+      { role: "user", content: wrappedMessage("m0001", "Initial input") },
+      { role: "user", content: wrappedMessage("m0002", "Steered input") },
+    ]);
+  });
 
   test("returns query output and terminal status without lifecycle state", async () => {
     createMockStreamText([{ text: "Hello" }]);
@@ -1416,7 +1472,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     test("beforeModelBuild can modify store state and changes are reflected in projected messages", async () => {
       const store = createStore();
-      store.getState().append({ type: "user-message", content: "original" });
+      appendCanonicalUserMessage(store, "original");
       store.getState().append({ type: "execution-end", status: "completed" });
 
       const streamFn = createMockStreamText([{ text: "ok" }]);
@@ -2936,179 +2992,6 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     expect(result.text).toBe("custom");
   });
 
-});
-
-describe("runQueryLoop slash commands", () => {
-  test("maybeHandleCommand returns rewritten user message for command continuation", async () => {
-    const store = createStore();
-    const commandRegistry = new CommandRegistry();
-    commandRegistry.register({
-      name: "skill",
-      description: "Skill continuation",
-      handler: mock(async () => ({
-        success: true,
-        message: "Activating skill",
-        continueAsMessage: "Use Skill continuation",
-      })),
-    });
-
-    const result = await maybeHandleCommand(
-      makeOptions({ store, commandRegistry }),
-      "/skill use git-master commit changes",
-      new AbortController().signal,
-    );
-
-    expect(result).toEqual({ handled: false, userMessage: "Use Skill continuation" });
-    expect(store.getState().messages[0]!.parts[0]).toMatchObject({
-      type: "system-notice",
-      notice: "Activating skill",
-    });
-  });
-
-  test("maybeHandleCommand rewrites real /skill use command to require skill_read", async () => {
-    const store = createStore();
-    const commandRegistry = new CommandRegistry();
-    const skillService = new SkillService({
-      builtinSkills: {
-        "git-master": "---\nname: git-master\ndescription: Git operations expertise\nwhen_to_use: Use for git operations.\n---\n\nFull git body",
-      },
-    });
-    commandRegistry.register(createSkillCommand());
-
-    const result = await maybeHandleCommand(
-      makeOptions({ store, commandRegistry, skillService, agentName: "engineer", agentSkills: ["git-master"] }),
-      "/skill use git-master do something",
-      new AbortController().signal,
-    );
-
-    expect(result.handled).toBe(false);
-    expect(result.userMessage).toContain("skill_read");
-    expect(result.userMessage).toContain('{"name":"git-master"}');
-    expect(result.userMessage).toContain("do something");
-  });
-
-  test("command continuation is appended as user message and sent to model", async () => {
-    const streamFn = createMockStreamText([{ text: "continued answer" }]);
-    const store = createStore();
-    const commandRegistry = new CommandRegistry();
-    commandRegistry.register({
-      name: "skill",
-      description: "Skill continuation",
-      handler: mock(async () => ({
-        success: true,
-        message: "Activating skill",
-        continueAsMessage: "Use Skill git-master now",
-      })),
-    });
-
-    const result = await runQueryLoop(makeOptions({ store, commandRegistry }), "/skill use git-master");
-
-    expect(result).toEqual({ text: "continued answer", steps: 0, status: "completed" });
-    expect(streamCallMessages(streamFn, 0)).toEqual([
-      { role: "user", content: wrappedMessage("m0002", "Use Skill git-master now") },
-    ]);
-    expect(store.getState().messages[0]!.parts[0]).toMatchObject({
-      type: "system-notice",
-      notice: "Activating skill",
-    });
-    expect(store.getState().messages[1]!.parts[0]).toMatchObject({
-      type: "text",
-      text: "Use Skill git-master now",
-    });
-  });
-
-  test("real /skill use continuation is appended through query loop and sent to model", async () => {
-    const streamFn = createMockStreamText([{ text: "continued answer" }]);
-    const store = createStore();
-    const commandRegistry = new CommandRegistry();
-    const skillService = new SkillService({
-      builtinSkills: {
-        "git-master": "---\nname: git-master\ndescription: Git operations expertise\nwhen_to_use: Use for git operations.\n---\n\nFull git body",
-      },
-    });
-    commandRegistry.register(createSkillCommand());
-
-    const result = await runQueryLoop(
-      makeOptions({ store, commandRegistry, skillService, agentName: "engineer", agentSkills: ["git-master"] }),
-      "/skill use git-master do something",
-    );
-
-    expect(result).toEqual({ text: "continued answer", steps: 0, status: "completed" });
-    expect(streamCallMessages(streamFn, 0)).toEqual([
-      {
-        role: "user",
-        content: expect.stringContaining("skill_read"),
-      },
-    ]);
-    expect(streamCallMessages(streamFn, 0)[0]!.content).toContain("do something");
-  });
-
-  test("exact /compact handles command, stores system notice, and skips model call", async () => {
-    const streamFn = createMockStreamText([{ text: "should not run" }]);
-    const store = createStore();
-    const commandRegistry = new CommandRegistry();
-    commandRegistry.register({
-      name: "compact",
-      description: "Compact context",
-      handler: mock(async () => ({ success: true, message: "Context compacted" })),
-    });
-
-    const result = await runQueryLoop(makeOptions({ store, commandRegistry }), "/compact");
-
-    expect(result).toEqual({ text: "", steps: 0, status: "completed" });
-    expect(streamFn).not.toHaveBeenCalled();
-    expect(store.getState().messages).toHaveLength(1);
-    expect(store.getState().messages[0]!.parts[0]).toMatchObject({
-      type: "system-notice",
-      notice: "Context compacted",
-    });
-    expect(store.getState().toModelMessages()).toEqual([]);
-  });
-
-  test("/compact with trailing whitespace still triggers command", async () => {
-    const store = createStore();
-    const handler = mock(async () => ({ success: true, message: "trimmed compact" }));
-    const commandRegistry = new CommandRegistry();
-    commandRegistry.register({ name: "compact", description: "Compact context", handler });
-
-    await runQueryLoop(makeOptions({ store, commandRegistry }), "/compact  ");
-
-    expect(handler).toHaveBeenCalledTimes(1);
-    expect(store.getState().messages[0]!.parts[0]).toMatchObject({
-      type: "system-notice",
-      notice: "trimmed compact",
-    });
-  });
-
-  test("/compact with args is normal user input and is sent to model", async () => {
-    const streamFn = createMockStreamText([{ text: "normal answer" }]);
-    const store = createStore();
-    const handler = mock(async () => ({ success: true, message: "should not run" }));
-    const commandRegistry = new CommandRegistry();
-    commandRegistry.register({ name: "compact", description: "Compact context", handler });
-
-    const result = await runQueryLoop(makeOptions({ store, commandRegistry }), "/compact now");
-
-    expect(result).toEqual({ text: "normal answer", steps: 0, status: "completed" });
-    expect(handler).not.toHaveBeenCalled();
-    expect(streamCallMessages(streamFn, 0)).toEqual([{ role: "user", content: wrappedMessage("m0001", "/compact now") }]);
-  });
-
-  test("unknown slash command stores system notice and skips model call", async () => {
-    const streamFn = createMockStreamText([{ text: "should not run" }]);
-    const store = createStore();
-    const commandRegistry = new CommandRegistry();
-
-    const result = await runQueryLoop(makeOptions({ store, commandRegistry }), "/unknown");
-
-    expect(result).toEqual({ text: "", steps: 0, status: "completed" });
-    expect(streamFn).not.toHaveBeenCalled();
-    expect(store.getState().messages[0]!.parts[0]).toMatchObject({
-      type: "system-notice",
-      notice: "Unknown command: /unknown",
-    });
-    expect(store.getState().toModelMessages()).toEqual([]);
-  });
 });
 
 describe("runQueryLoop abort handling", () => {

@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { ModelMessage } from "ai";
+import type { StoreApi } from "zustand";
 import { z } from "zod";
 import type { ModelInfo } from "../../provider/model";
 import { SkillService } from "../../skills";
@@ -12,7 +13,7 @@ import { createTestProjectContext } from "../../tools/test-project-context";
 import { setLlmAdapterForTest } from "../../llm";
 import type { RetryScheduler } from "../../llm/retry";
 import type { QueryLoopOptions } from "./types";
-import { runQueryLoop } from "./loop";
+import { runQueryLoop as runCanonicalQueryLoop } from "./loop";
 import { sessionFileInternals } from "../../store/helpers";
 import { createFakeRetryScheduler } from "../../testing/fake-retry-scheduler";
 import { createTestTempRoot } from "../../testing/test-temp-root";
@@ -82,6 +83,36 @@ function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOption
     agentName: "engineer",
     ...overrides,
   };
+}
+
+function appendCanonicalUserMessage(store: StoreApi<SessionStoreState>, content: string): void {
+  const id = crypto.randomUUID();
+  const executionId = `test-${id}`;
+  store.getState().append({
+    type: "session.messages_committed",
+    executionId,
+    messages: [{
+      id,
+      role: "user",
+      parts: [{ type: "text", id: `${id}:text`, text: content, createdAt: 1, completedAt: 1 }],
+      createdAt: 1,
+      completedAt: 1,
+      executionId,
+      clientRequestId: `request-${id}`,
+    }],
+  });
+}
+
+/** Test adapter: production callers must canonicalize input before entering QueryLoop. */
+async function runQueryLoop(
+  options: QueryLoopOptions,
+  message: string,
+  retryScheduler?: RetryScheduler,
+) {
+  if (message.length > 0) appendCanonicalUserMessage(options.store, message);
+  return retryScheduler === undefined
+    ? runCanonicalQueryLoop(options)
+    : runCanonicalQueryLoop(options, retryScheduler);
 }
 
 function captureEvents(store: ReturnType<typeof createStore>): SessionEventPayload[] {

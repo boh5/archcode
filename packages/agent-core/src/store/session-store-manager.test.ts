@@ -57,6 +57,8 @@ describe("SessionStoreManager", () => {
       modelInfo: null,
       title: null,
       messages: [],
+      pendingMessages: [],
+      inputRequestReceipts: [],
       steps: [],
       stats: createEmptySessionStats(),
       executions: [],
@@ -96,6 +98,98 @@ describe("SessionStoreManager", () => {
     } finally {
       releaseSave();
       sessionFileInternals.saveSessionTranscript = originalSave;
+    }
+  });
+
+  test("publishes durable mutation events only after persistence and then releases later events in order", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    await manager.createSessionFile(TMP_DIR, { agentName: "engineer" }, id);
+    const store = manager.get(id, TMP_DIR)!;
+    const received: string[] = [];
+    manager.subscribeToSessionEvents(({ envelope }) => received.push(envelope.payload.type));
+
+    const originalSave = sessionFileInternals.saveSessionTranscript;
+    let releaseSave!: () => void;
+    const saveReleased = new Promise<void>((resolve) => { releaseSave = resolve; });
+    let markSaveStarted!: () => void;
+    const saveStarted = new Promise<void>((resolve) => { markSaveStarted = resolve; });
+    sessionFileInternals.saveSessionTranscript = async (state, workspaceRoot) => {
+      markSaveStarted();
+      await saveReleased;
+      await originalSave(state, workspaceRoot);
+    };
+
+    try {
+      const mutation = manager.commitDurableSessionMutation(id, TMP_DIR, () => ({
+        result: undefined,
+        events: [{ type: "system-notice", message: "accepted" }],
+      }));
+      await saveStarted;
+      store.getState().append({ type: "text-delta", text: "later" });
+
+      expect(received).toEqual([]);
+      expect(store.getState().publishableNextEventId).toBe(0);
+
+      releaseSave();
+      await mutation;
+      expect(received).toEqual(["system-notice", "text-delta"]);
+      expect(store.getState().publishableNextEventId).toBe(2);
+    } finally {
+      sessionFileInternals.saveSessionTranscript = originalSave;
+      releaseSave();
+    }
+  });
+
+  test("a later multi-event transaction remains entirely behind its own persistence barrier", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    await manager.createSessionFile(TMP_DIR, { agentName: "engineer" }, id);
+    const received: string[] = [];
+    manager.subscribeToSessionEvents(({ envelope }) => received.push(envelope.payload.type));
+
+    const originalSave = sessionFileInternals.saveSessionTranscript;
+    const releases: Array<() => void> = [];
+    const starts: Array<() => void> = [];
+    const started = [
+      new Promise<void>((resolve) => starts.push(resolve)),
+      new Promise<void>((resolve) => starts.push(resolve)),
+    ];
+    let saveIndex = 0;
+    sessionFileInternals.saveSessionTranscript = async (state, workspaceRoot) => {
+      const index = saveIndex++;
+      starts[index]?.();
+      await new Promise<void>((resolve) => releases[index] = resolve);
+      await originalSave(state, workspaceRoot);
+    };
+
+    try {
+      const first = manager.commitDurableSessionMutation(id, TMP_DIR, () => ({
+        result: undefined,
+        events: [{ type: "system-notice", message: "first" }],
+      }));
+      await started[0];
+      const second = manager.commitDurableSessionMutation(id, TMP_DIR, () => ({
+        result: undefined,
+        events: [
+          { type: "execution-start", executionId: "execution-2" },
+          { type: "system-notice", message: "second" },
+        ],
+      }));
+      await Promise.resolve();
+
+      releases[0]!();
+      await first;
+      await started[1];
+      expect(received).toEqual(["system-notice"]);
+      expect(manager.get(id, TMP_DIR)!.getState().publishableNextEventId).toBe(1);
+
+      releases[1]!();
+      await second;
+      expect(received).toEqual(["system-notice", "execution-start", "system-notice"]);
+    } finally {
+      sessionFileInternals.saveSessionTranscript = originalSave;
+      for (const release of releases) release?.();
     }
   });
 
@@ -727,6 +821,28 @@ describe("SessionStoreManager", () => {
       endedAt: 2000,
       durationMs: 1000,
     });
+  });
+
+  test("load reconciliation makes an unfinished command outcome indeterminate", async () => {
+    const id = sessionId();
+    await sessionFileInternals.saveSessionTranscript(persistedSession(id, {
+      inputRequestReceipts: [{
+        kind: "command",
+        clientRequestId: "interrupted-command",
+        requestFingerprint: "user-command",
+        status: "executing",
+      }],
+    }), TMP_DIR);
+
+    const restarted = new SessionStoreManager({ logger: silentLogger });
+    expect((await restarted.getSessionFile(TMP_DIR, id)).inputRequestReceipts).toEqual([
+      expect.objectContaining({
+        kind: "command",
+        clientRequestId: "interrupted-command",
+        status: "indeterminate",
+        error: expect.stringContaining("unknown"),
+      }),
+    ]);
   });
 
   test("persists completed tool results and does not downgrade them on restart", async () => {

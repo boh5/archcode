@@ -50,7 +50,7 @@ export interface GoalLifecycleFinalizeInput {
   readonly authorization: GoalReviewerAuthorization;
 }
 
-export type GoalActivationOutcome = "started" | "already_started" | "busy" | "capacity" | "pending" | "failed" | "ineligible";
+export type GoalActivationOutcome = "started" | "already_started" | "busy" | "pending" | "failed" | "ineligible";
 
 export class GoalLifecycleServiceError extends Error {
   constructor(
@@ -132,13 +132,12 @@ export class GoalLifecycleService {
           slug: goal.projectSlug,
           workspaceRoot: this.#workspaceRoot,
           sessionId: goal.mainSessionId,
-          userMessage: buildGoalContinuationPrompt(goal),
+          input: { kind: "direct", text: buildGoalContinuationPrompt(goal) },
           executionId,
         });
         return "started";
       } catch (error) {
         if (isBusyError(error)) return "busy";
-        if (isCapacityError(error)) return "capacity";
         if (!isPermanentActivationError(error)) return "pending";
         await this.#goalStateManager.fail(goal.id, error instanceof Error ? error : String(error));
         return "failed";
@@ -223,10 +222,6 @@ function initialExecutionId(goalId: string): string {
 
 function isBusyError(error: unknown): boolean {
   return error instanceof Error && ["AgentRunningError", "SessionFamilyActiveError"].includes(error.name);
-}
-
-function isCapacityError(error: unknown): boolean {
-  return error instanceof Error && ["ConcurrentLimitError", "ConcurrentSessionLimitError"].includes(error.name);
 }
 
 function isPermanentActivationError(error: unknown): boolean {

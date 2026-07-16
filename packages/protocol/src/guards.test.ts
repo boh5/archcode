@@ -45,13 +45,44 @@ const compressionState = {
   supersededBlockRefs: [],
   failures: [],
 };
+const pendingMessage = {
+  id: "message-queued",
+  clientRequestId: "request-queued",
+  content: "queued",
+  source: "user" as const,
+  state: "queued" as const,
+  revision: 0,
+  acceptedAt: 1,
+  updatedAt: 1,
+};
+const steeringMessage = {
+  ...pendingMessage,
+  state: "steering" as const,
+  revision: 1,
+  targetExecutionId: "execution-1",
+};
+const canonicalMessage = {
+  id: pendingMessage.id,
+  role: "user" as const,
+  parts: [{ type: "text" as const, id: "part-1", text: "queued", createdAt: 1, completedAt: 2 }],
+  createdAt: 1,
+  completedAt: 2,
+  executionId: "execution-1",
+  clientRequestId: pendingMessage.clientRequestId,
+};
 
 const validPayloads = [
   { type: "shutdown", reason: "restart" },
   { type: "execution-start", executionId: "execution-1" },
   { type: "execution-end", status: "waiting_for_human", blockedByHitlIds: ["hitl-1"] },
   { type: "session.cwd_changed", previousCwd: "/old", cwd: "/new" },
-  { type: "user-message", content: "hello" },
+  { type: "session.message_accepted", message: pendingMessage },
+  { type: "session.message_edited", message: { ...pendingMessage, content: "edited", revision: 1 } },
+  { type: "session.message_deleted", messageId: pendingMessage.id, clientRequestId: pendingMessage.clientRequestId, revision: 1, deletedAt: 2 },
+  { type: "session.message_steer_claimed", message: steeringMessage },
+  { type: "session.message_steer_rolled_back", message: { ...pendingMessage, revision: 2 } },
+  { type: "session.messages_committed", executionId: "execution-1", messages: [canonicalMessage] },
+  { type: "execution-stop-requested", executionId: "execution-1", timestamp: 2 },
   { type: "system-notice", message: "notice" },
   { type: "text-start" },
   { type: "text-delta", text: "hello" },
@@ -90,6 +121,7 @@ describe("protocol event guards", () => {
       "execution-end",
       "execution-error",
       "execution-start",
+      "execution-stop-requested",
       "llm-recovery",
       "llm-recovery-failed",
       "llm-retry",
@@ -99,6 +131,12 @@ describe("protocol event guards", () => {
       "reminder",
       "reminder-consumed",
       "session.cwd_changed",
+      "session.message_accepted",
+      "session.message_deleted",
+      "session.message_edited",
+      "session.message_steer_claimed",
+      "session.message_steer_rolled_back",
+      "session.messages_committed",
       "shutdown",
       "step-end",
       "step-start",
@@ -113,7 +151,6 @@ describe("protocol event guards", () => {
       "tool-input-resolved",
       "tool-input-start",
       "tool-result",
-      "user-message",
     ]);
   });
 
@@ -129,7 +166,7 @@ describe("protocol event guards", () => {
     }
     expect(isSessionEventPayload({ type: "text-delta" })).toBe(false);
     expect(isSessionEventPayload({ type: "text-delta", text: 1 })).toBe(false);
-    expect(isSessionEventPayload({ type: "tool-child-session-link", link: { ...validPayloads[17]!.link, legacy: true } })).toBe(false);
+    expect(isSessionEventPayload({ type: "tool-child-session-link", link: { ...validPayloads[23]!.link, legacy: true } })).toBe(false);
     expect(isSessionEventPayload({ type: "compression.block_committed", block: { ...compressionBlock, range: { ...compressionBlock.range, endIndex: "0" } } })).toBe(false);
     expect(isSessionEventPayload({ type: "hitl.request" })).toBe(false);
     expect(isSessionEventPayload({})).toBe(false);

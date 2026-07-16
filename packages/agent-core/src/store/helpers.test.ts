@@ -190,6 +190,8 @@ type PersistedSessionState = Pick<
   | "modelInfo"
   | "title"
   | "messages"
+  | "pendingMessages"
+  | "inputRequestReceipts"
   | "steps"
   | "stats"
   | "executions"
@@ -229,6 +231,8 @@ function persistedState(
     modelInfo: null,
     title: null,
     messages,
+    pendingMessages: [],
+    inputRequestReceipts: [],
     steps,
     stats,
     executions,
@@ -242,6 +246,24 @@ function persistedState(
     goalId,
     sessionRole,
   };
+}
+
+function appendCanonicalUserMessage(store: { getState(): SessionStoreState }, content: string): void {
+  const id = crypto.randomUUID();
+  const executionId = store.getState().currentExecutionId ?? `direct-${id}`;
+  store.getState().append({
+    type: "session.messages_committed",
+    executionId,
+    messages: [{
+      id,
+      role: "user",
+      parts: [{ type: "text", id: `${id}:text`, text: content, createdAt: 1, completedAt: 1 }],
+      createdAt: 1,
+      completedAt: 1,
+      executionId,
+      clientRequestId: `request-${id}`,
+    }],
+  });
 }
 
 function compressionSummary(childBlockRefs: CompressionState["activeBlockRefs"] = []) {
@@ -654,7 +676,14 @@ describe("session transcript serialization", () => {
   });
 
   test("load rejects missing required snapshot collections", async () => {
-    for (const field of ["compression", "todos", "reminders", "childSessionLinks"] as const) {
+    for (const field of [
+      "compression",
+      "pendingMessages",
+      "inputRequestReceipts",
+      "todos",
+      "reminders",
+      "childSessionLinks",
+    ] as const) {
       const sessionId = uniqueSessionId(`missing-${field}`);
       const state = { ...persistedState(sessionId) } as Record<string, unknown>;
       delete state[field];
@@ -812,7 +841,7 @@ describe("session transcript serialization", () => {
     await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, [], []), TMP_DIR);
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
     loaded.getState().append({ type: "execution-start", executionId: "run-after-load" });
-    loaded.getState().append({ type: "user-message", content: "after load" });
+    appendCanonicalUserMessage(loaded, "after load");
 
     const state = loaded.getState();
     expect(state.messages).toHaveLength(1);
@@ -1010,8 +1039,10 @@ describe("session transcript serialization", () => {
       "createdAt",
       "cwd",
       "executions",
+      "inputRequestReceipts",
       "messages",
       "modelInfo",
+      "pendingMessages",
       "reminders",
       "rootSessionId",
       "sessionId",
@@ -1124,7 +1155,7 @@ describe("session transcript serialization", () => {
     await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, [], []), TMP_DIR);
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
     loaded.getState().append({ type: "execution-start", executionId: "append-work-run" });
-    loaded.getState().append({ type: "user-message", content: "appended after load" });
+    appendCanonicalUserMessage(loaded, "appended after load");
 
     const state = loaded.getState();
     expect(state.messages).toHaveLength(1);
@@ -1176,7 +1207,7 @@ describe("session transcript serialization", () => {
     expect(loaded.getState().events).toHaveLength(1);
     expect(loaded.getState().events[0]?.id).toBe(0);
 
-    loaded.getState().append({ type: "user-message", content: "second event" });
+    appendCanonicalUserMessage(loaded, "second event");
     expect(loaded.getState().nextEventId).toBe(2);
     expect(loaded.getState().events).toHaveLength(2);
     expect(loaded.getState().events[1]?.id).toBe(1);

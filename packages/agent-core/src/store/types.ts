@@ -9,6 +9,8 @@ import type {
   SessionEventPayload,
   SessionStats,
   SessionExecutionRecord,
+  PendingSessionMessage,
+  SessionInputReceipt,
   ToolChildSessionLink,
   HitlDisplayPayload,
   HitlSource,
@@ -20,7 +22,13 @@ export type {
   StreamEvent,
   ExecutionStartEvent,
   ExecutionEndEvent,
-  UserMessageEvent,
+  SessionMessageAcceptedEvent,
+  SessionMessageEditedEvent,
+  SessionMessageDeletedEvent,
+  SessionMessageSteerClaimedEvent,
+  SessionMessageSteerRolledBackEvent,
+  SessionMessagesCommittedEvent,
+  ExecutionStopRequestedEvent,
   SystemNoticeEvent,
   TextStartEvent,
   TextDeltaEvent,
@@ -61,6 +69,9 @@ export type {
   SessionStep,
   SessionTodo,
   SessionTodoStatus,
+  PendingSessionMessage,
+  SessionInputReceipt,
+  SessionMessageSource,
   SessionProjection,
   SessionEventEnvelope,
   SessionEventPayload,
@@ -164,6 +175,11 @@ export interface SessionStoreState {
   modelInfo: SessionModelInfo | null;
   title: string | null;
   messages: SessionMessage[];
+  pendingMessages: PendingSessionMessage[];
+  /** Stop cutoff used only when no active root Execution exists; never a paused/held mode. */
+  queueDispatchBarrierAt?: number;
+  /** Internal durable idempotency index for messages and commands; excluded from public Session DTOs. */
+  inputRequestReceipts: SessionInputReceipt[];
   steps: SessionStep[];
   stats: SessionStats;
   executions: SessionExecutionRecord[];
@@ -207,6 +223,8 @@ export interface SessionStoreState {
   events: SessionEventEnvelope[];
   eventOffset: number;
   nextEventId: number;
+  /** Exclusive event cursor that subscribers may observe. Never exceeds nextEventId. */
+  publishableNextEventId: number;
 
   // Methods
   append: (event: SessionEventPayload) => void;

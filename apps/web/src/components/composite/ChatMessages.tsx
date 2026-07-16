@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { User, Ellipsis, ChevronRight, Sparkles, Info, TriangleAlert } from "lucide-react";
-import { useSessionStore } from "../../store/session-store";
+import { getWebSessionStore, useSessionStore } from "../../store/session-store";
+import { useSessionFamilySteerTargetExecutionId } from "../../store/session-runtime-store";
+import { useDeletePendingMessage, useEditPendingMessage, usePostMessage, useSteerPendingMessage } from "../../api/mutations";
+import { ApiError } from "../../api/client";
 import { MarkdownContent } from "../primitives/MarkdownContent";
 import { ToolCard } from "./ToolCard";
 import { DelegationCard } from "./DelegationCard";
@@ -13,6 +16,7 @@ import { buildDelegationCardViewModel } from "../../lib/delegation-card-model";
 import type {
   AgentDescriptor,
   SessionMessage,
+  PendingSessionMessage,
   SessionPart,
   SystemNoticePart,
   ReasoningPart,
@@ -73,6 +77,112 @@ export function MsgUser({ message }: { message: SessionMessage }) {
           </div>
         ))}
         <span className="text-[11px] text-text-muted">{formatRelativeTime(message.createdAt)}</span>
+      </div>
+      <div className="w-9 h-9 rounded-full bg-accent text-white flex items-center justify-center shrink-0">
+        <User size={18} />
+      </div>
+    </div>
+  );
+}
+
+function PendingMessageBubble({
+  message,
+  projectSlug,
+  sessionId,
+  steerTargetExecutionId,
+}: {
+  message: PendingSessionMessage;
+  projectSlug: string;
+  sessionId: string;
+  steerTargetExecutionId?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(message.content);
+  const editMessage = useEditPendingMessage();
+  const deleteMessage = useDeletePendingMessage();
+  const steerMessage = useSteerPendingMessage();
+  const canSteer = message.state === "queued"
+    && typeof steerTargetExecutionId === "string"
+    && steerTargetExecutionId.length > 0;
+
+  const saveEdit = () => {
+    const content = draft.trim();
+    if (!content || content === message.content || editMessage.isPending) return;
+    editMessage.mutate({
+      slug: projectSlug,
+      sessionId,
+      messageId: message.id,
+      expectedRevision: message.revision,
+      content,
+    }, { onSuccess: () => setEditing(false) });
+  };
+
+  return (
+    <div className="flex gap-2.5 items-start justify-end" data-testid={`pending-message-${message.id}`}>
+      <div className="flex flex-col items-end gap-1 max-w-[80%]">
+        {editing ? (
+          <div className="flex flex-col gap-2 rounded-2xl rounded-br-sm border border-accent bg-bg-overlay p-2.5">
+            <textarea
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              className="min-w-[220px] resize-y rounded-md border border-border-default bg-bg-base px-2.5 py-2 text-[13.5px] leading-relaxed text-text-primary outline-none focus:border-accent"
+              rows={Math.min(8, Math.max(2, draft.split("\n").length))}
+              autoFocus
+            />
+            <div className="flex justify-end gap-1.5">
+              <button type="button" className="rounded px-2 py-1 text-[11px] text-text-tertiary hover:bg-bg-hover" onClick={() => { setDraft(message.content); setEditing(false); }}>Cancel</button>
+              <button type="button" className="rounded bg-accent px-2 py-1 text-[11px] text-bg-base disabled:opacity-40" disabled={!draft.trim() || editMessage.isPending} onClick={saveEdit}>Save</button>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-bg-overlay border border-border-subtle rounded-2xl rounded-br-sm px-3.5 py-2 text-[13.5px] leading-relaxed text-text-primary whitespace-pre-wrap break-words">
+            {message.content}
+          </div>
+        )}
+        <div className="flex items-center gap-2 text-[11px] text-text-muted">
+          <span>{message.state === "steering" ? "Steering…" : "Queued"}</span>
+          {message.state === "queued" && (
+            <>
+              {canSteer && (
+                <button
+                  type="button"
+                  className="text-accent hover:underline disabled:opacity-40"
+                  disabled={steerMessage.isPending}
+                  onClick={() => steerMessage.mutate({
+                    slug: projectSlug,
+                    sessionId,
+                    messageId: message.id,
+                    expectedRevision: message.revision,
+                    expectedExecutionId: steerTargetExecutionId!,
+                  })}
+                >
+                  Steer
+                </button>
+              )}
+              <button
+                type="button"
+                className="hover:text-text-primary disabled:opacity-40"
+                disabled={editMessage.isPending || deleteMessage.isPending}
+                onClick={() => setEditing(true)}
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                className="text-error hover:underline disabled:opacity-40"
+                disabled={editMessage.isPending || deleteMessage.isPending}
+                onClick={() => deleteMessage.mutate({
+                  slug: projectSlug,
+                  sessionId,
+                  messageId: message.id,
+                  expectedRevision: message.revision,
+                })}
+              >
+                Delete
+              </button>
+            </>
+          )}
+        </div>
       </div>
       <div className="w-9 h-9 rounded-full bg-accent text-white flex items-center justify-center shrink-0">
         <User size={18} />
@@ -229,8 +339,86 @@ interface ChatMessagesProps {
   agents: readonly AgentDescriptor[];
 }
 
+interface LocalSendingMessage {
+  readonly clientRequestId: string;
+  readonly content: string;
+  readonly createdAt: number;
+  readonly status: "sending" | "retryable";
+}
+
+function LocalSendingMessageBubble({
+  message,
+  slug,
+  sessionId,
+}: {
+  message: LocalSendingMessage;
+  slug: string;
+  sessionId: string;
+}) {
+  const retry = usePostMessage();
+  const retryMessage = useCallback(() => {
+    const store = getWebSessionStore(sessionId, slug).getState();
+    store.setLocalSendingMessageStatus(message.clientRequestId, "sending");
+    retry.mutate(
+      {
+        slug,
+        sessionId,
+        content: message.content,
+        clientRequestId: message.clientRequestId,
+      },
+      {
+        onSuccess: (acceptance) => {
+          if (acceptance.status === "command") {
+            getWebSessionStore(sessionId, slug).getState().removeLocalSendingMessage(message.clientRequestId);
+          }
+        },
+        onError: (error) => {
+          const current = getWebSessionStore(sessionId, slug).getState();
+          if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+            current.removeLocalSendingMessage(message.clientRequestId);
+            return;
+          }
+          current.setLocalSendingMessageStatus(message.clientRequestId, "retryable");
+        },
+      },
+    );
+  }, [message, retry, sessionId, slug]);
+
+  const retryable = message.status === "retryable" && !retry.isPending;
+  return (
+    <div className="flex gap-2.5 items-start justify-end" data-testid={`sending-message-${message.clientRequestId}`}>
+      <div className="flex flex-col items-end gap-1 max-w-[80%]">
+        <div className="bg-bg-overlay border border-border-subtle rounded-2xl rounded-br-sm px-3.5 py-2 text-[13.5px] leading-relaxed text-text-primary whitespace-pre-wrap break-words opacity-75">
+          {message.content}
+        </div>
+        <div className="flex items-center gap-2 text-[11px] text-text-muted">
+          <span>{retryable ? "Send status unknown" : "Sending…"}</span>
+          {retryable && (
+            <button
+              type="button"
+              className="text-accent hover:underline"
+              onClick={retryMessage}
+              aria-label="Retry sending message"
+            >
+              Retry
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="w-9 h-9 rounded-full bg-accent text-white flex items-center justify-center shrink-0">
+        <User size={18} />
+      </div>
+    </div>
+  );
+}
+
 export function ChatMessages({ slug, sessionId, agents }: ChatMessagesProps) {
   const messages = useSessionStore(sessionId, (s) => s.messages, slug);
+  const pendingMessages = useSessionStore(sessionId, (s) => s.pendingMessages, slug);
+  const localSendingMessages = useSessionStore(sessionId, (s) => s.localSendingMessages, slug);
+  const rootSessionId = useSessionStore(sessionId, (s) => s.rootSessionId, slug);
+  const isRootSession = sessionId === rootSessionId;
+  const steerTargetExecutionId = useSessionFamilySteerTargetExecutionId(slug, sessionId);
   const focusStoreSessionId = useSessionStore(sessionId, (s) => s.rootSessionId, slug);
   const childSessionLinks = useSessionStore(sessionId, (s) => s.childSessionLinks, slug);
   const agentName = useSessionStore(sessionId, (s) => s.agentName, slug);
@@ -252,9 +440,12 @@ export function ChatMessages({ slug, sessionId, agents }: ChatMessagesProps) {
     if (isNearBottom && sentinelRef.current) {
       sentinelRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
     }
-  }, [messages, compressionBlocks, isNearBottom]);
+  }, [messages, pendingMessages, localSendingMessages, compressionBlocks, isNearBottom]);
 
-  if (messages.length === 0 && compressionBlocks.length === 0) {
+  const visiblePendingMessages = isRootSession ? pendingMessages : [];
+  const visibleLocalSendingMessages = isRootSession ? localSendingMessages : [];
+
+  if (messages.length === 0 && visiblePendingMessages.length === 0 && visibleLocalSendingMessages.length === 0 && compressionBlocks.length === 0) {
     return (
       <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-5 max-w-3xl mx-auto w-full items-center justify-center text-text-muted text-sm">
         No messages yet
@@ -264,20 +455,51 @@ export function ChatMessages({ slug, sessionId, agents }: ChatMessagesProps) {
 
   type StreamEntry =
     | { kind: "message"; message: SessionMessage }
+    | { kind: "pending"; message: PendingSessionMessage }
+    | { kind: "sending"; message: LocalSendingMessage }
     | { kind: "compression"; block: CompressionBlockPart };
 
-  const entries: StreamEntry[] = [];
+  const transcriptEntries: Array<{ entry: StreamEntry; time: number; order: number }> = [];
+  let lastCanonicalTime = Number.NEGATIVE_INFINITY;
   for (const message of messages) {
-    entries.push({ kind: "message", message });
+    lastCanonicalTime = Math.max(lastCanonicalTime, message.createdAt);
+    transcriptEntries.push({
+      entry: { kind: "message", message },
+      time: lastCanonicalTime,
+      order: transcriptEntries.length,
+    });
   }
   for (const block of compressionBlocks) {
-    entries.push({ kind: "compression", block });
+    transcriptEntries.push({
+      entry: { kind: "compression", block },
+      time: block.committedAt,
+      order: transcriptEntries.length,
+    });
   }
-  entries.sort((a, b) => {
-    const aTime = a.kind === "message" ? a.message.createdAt : a.block.committedAt;
-    const bTime = b.kind === "message" ? b.message.createdAt : b.block.committedAt;
-    return aTime - bTime;
-  });
+  transcriptEntries.sort((left, right) => left.time - right.time || left.order - right.order);
+
+  const pendingEntries: Array<{ entry: StreamEntry; time: number; order: number }> = [];
+  const durableRequestIds = new Set(visiblePendingMessages.map((message) => message.clientRequestId));
+  for (const message of visiblePendingMessages) {
+    pendingEntries.push({
+      entry: { kind: "pending", message },
+      time: message.acceptedAt,
+      order: pendingEntries.length,
+    });
+  }
+  for (const message of visibleLocalSendingMessages) {
+    if (durableRequestIds.has(message.clientRequestId)) continue;
+    pendingEntries.push({
+      entry: { kind: "sending", message },
+      time: message.createdAt,
+      order: pendingEntries.length,
+    });
+  }
+  pendingEntries.sort((left, right) => left.time - right.time || left.order - right.order);
+  const entries = [
+    ...transcriptEntries.map(({ entry }) => entry),
+    ...pendingEntries.map(({ entry }) => entry),
+  ];
 
   return (
     <div
@@ -297,6 +519,27 @@ export function ChatMessages({ slug, sessionId, agents }: ChatMessagesProps) {
               snapshot={compression?.blocksByRef[entry.block.blockRef]}
               childSessionLinks={childSessionLinks}
               agentDescriptors={agents}
+            />
+          );
+        }
+        if (entry.kind === "pending") {
+          return (
+            <PendingMessageBubble
+              key={`pending-${entry.message.id}`}
+              message={entry.message}
+              projectSlug={slug}
+              sessionId={sessionId}
+              steerTargetExecutionId={steerTargetExecutionId}
+            />
+          );
+        }
+        if (entry.kind === "sending") {
+          return (
+            <LocalSendingMessageBubble
+              key={`sending-${entry.message.clientRequestId}`}
+              message={entry.message}
+              slug={slug}
+              sessionId={sessionId}
             />
           );
         }

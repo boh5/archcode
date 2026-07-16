@@ -97,7 +97,6 @@ async function runtimeFixture(): Promise<{
     automationSchedulerClock: clock,
     automationSchedulerTimer: new FakeTimer(clock),
   });
-  runtime.setManagedSessionExecutionForwarder((_input, start) => start());
   activeRuntime = runtime;
   const sourceSession = await runtime.createSession(workspaceRoot, { agentName: "engineer" });
   return { runtime, workspaceRoot, sourceSessionId: sourceSession.sessionId };
@@ -169,24 +168,19 @@ async function waitFor(predicate: () => boolean | Promise<boolean>): Promise<voi
 async function waitForInvocationExecution(
   runtime: AgentRuntime,
   workspaceRoot: string,
-  invocation: { readonly automationId: string; readonly executionId: string; readonly sessionId?: string },
+  invocation: { readonly id: string; readonly automationId: string; readonly sessionId?: string },
 ): Promise<void> {
   let dispatched = invocation;
   await waitFor(async () => {
     const current = (await runtime.listAutomationInvocations(workspaceRoot, invocation.automationId))
-      .find((candidate) => candidate.executionId === invocation.executionId);
+      .find((candidate) => candidate.id === invocation.id);
     if (current?.status === "failed") throw new Error(current.error ?? "Automation Invocation failed");
     if (current?.status !== "dispatched") return false;
     dispatched = current;
     return true;
   });
   if (dispatched.sessionId === undefined) throw new Error("Invocation did not allocate a Session");
-  await waitFor(async () => {
-    const session = await runtime.getSessionFile(workspaceRoot, dispatched.sessionId!);
-    return session.executions.some((execution) => (
-      execution.id === invocation.executionId && execution.status !== "running"
-    ));
-  });
+  await waitFor(() => runtime.getSessionFamilyActivity(workspaceRoot, dispatched.sessionId!) === "idle");
 }
 
 async function waitForPersistedTitle(workspaceRoot: string, sessionId: string): Promise<void> {

@@ -32,9 +32,9 @@ describe("GoalLeadContinuationService", () => {
       sessionId: fixture.mainSessionId,
       workspaceRoot: fixture.workspaceRoot,
     });
-    expect(fixture.starts[0]?.userMessage).toContain(fixture.goal.objective);
-    expect(fixture.starts[0]?.userMessage).toContain(fixture.goal.acceptanceCriteria);
-    expect(fixture.starts[0]?.userMessage).toContain(`"reviewGeneration": ${fixture.goal.reviewGeneration}`);
+    expect(fixture.starts[0]?.text).toContain(fixture.goal.objective);
+    expect(fixture.starts[0]?.text).toContain(fixture.goal.acceptanceCriteria);
+    expect(fixture.starts[0]?.text).toContain(`"reviewGeneration": ${fixture.goal.reviewGeneration}`);
   });
 
   test("stops for pending budget approval, blocked budget, terminal status, and wrong root identity", async () => {
@@ -100,6 +100,19 @@ describe("GoalLeadContinuationService", () => {
     expect(idle.starts).toHaveLength(2);
   });
 
+  test("startup does not cross an explicit Stop or bypass pending Session input", async () => {
+    const stopped = await createFixture("startup-stopped", {
+      executionStatus: "cancelled",
+      stopRequestedAt: 20,
+    });
+    await stopped.service.reconcileWorkspace(stopped.workspaceRoot);
+    expect(stopped.starts).toHaveLength(0);
+
+    const queued = await createFixture("startup-queued", { pendingMessage: true });
+    await queued.service.reconcileWorkspace(queued.workspaceRoot);
+    expect(queued.starts).toHaveLength(0);
+  });
+
   test("retries a transient per-Goal reconciliation failure without another external trigger", async () => {
     const fixture = await createFixture("transient-reconcile", {
       getSessionErrorOnce: new Error("transient Session read failure"),
@@ -111,16 +124,11 @@ describe("GoalLeadContinuationService", () => {
     await waitFor(() => fixture.starts.length === 1);
   });
 
-  test("backs off failed turns, rescans after capacity frees, and stops before shutdown aborts", async () => {
+  test("backs off failed turns and stops before shutdown aborts", async () => {
     const failed = await createFixture("failed", { executionStatus: "failed", retryBaseDelayMs: 5 });
     await failed.service.onFamilyIdle(failed.workspaceRoot, failed.mainSessionId);
     expect(failed.starts).toHaveLength(0);
     await waitFor(() => failed.starts.length === 1);
-
-    const capacity = await createFixture("capacity", { startErrorOnce: namedError("ConcurrentSessionLimitError") });
-    expect(await capacity.service.kick(capacity.workspaceRoot, capacity.goal.id)).toBe("capacity");
-    await capacity.service.onFamilyIdle(capacity.workspaceRoot, "some-other-family");
-    expect(capacity.starts).toHaveLength(1);
 
     const shutdown = await createFixture("shutdown");
     shutdown.service.shutdown();
@@ -133,40 +141,6 @@ describe("GoalLeadContinuationService", () => {
     removed.service.releaseWorkspace(removed.workspaceRoot);
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(removed.starts).toHaveLength(0);
-  });
-
-  test("serves capacity waiters FIFO instead of restarting the just-idled Goal forever", async () => {
-    let slotBusy = false;
-    const fixture = await createFixture("capacity-fairness", {
-      onStart: () => {
-        if (slotBusy) throw namedError("ConcurrentSessionLimitError");
-        slotBusy = true;
-      },
-    });
-    const secondMainSessionId = crypto.randomUUID();
-    const secondGoal = await fixture.context.goalState.commit({
-      id: crypto.randomUUID(),
-      projectSlug: fixture.context.project.slug,
-      createdFromSessionId: crypto.randomUUID(),
-      objective: "Run the second Goal fairly",
-      acceptanceCriteria: "The capacity waiter starts next",
-      mainSessionId: secondMainSessionId,
-    });
-    fixture.sessions.set(secondMainSessionId, {
-      ...fixture.sessions.get(fixture.mainSessionId)!,
-      sessionId: secondMainSessionId,
-      rootSessionId: secondMainSessionId,
-      goalId: secondGoal.id,
-    });
-
-    await fixture.service.reconcileWorkspace(fixture.workspaceRoot);
-    expect(fixture.starts).toHaveLength(1);
-    const firstSessionId = fixture.starts[0]!.sessionId;
-    slotBusy = false;
-    await fixture.service.onFamilyIdle(fixture.workspaceRoot, firstSessionId);
-
-    expect(fixture.starts).toHaveLength(2);
-    expect(fixture.starts[1]!.sessionId).not.toBe(firstSessionId);
   });
 
   test("not_done prompt requires retry before Plan or Build delegation", async () => {
@@ -186,7 +160,9 @@ async function createFixture(
   options: {
     readonly rootSessionId?: string;
     readonly startGate?: Promise<void>;
-    readonly executionStatus?: "failed" | "timed_out";
+    readonly executionStatus?: "failed" | "timed_out" | "cancelled";
+    readonly stopRequestedAt?: number;
+    readonly pendingMessage?: boolean;
     readonly retryBaseDelayMs?: number;
     readonly startErrorOnce?: Error;
     readonly getSessionErrorOnce?: Error;
@@ -214,7 +190,7 @@ async function createFixture(
     acceptanceCriteria: "One checked continuation starts",
     mainSessionId,
   });
-  const starts: Array<{ sessionId: string; workspaceRoot: string; userMessage: string }> = [];
+  const starts: Array<{ sessionId: string; workspaceRoot: string; text: string }> = [];
   const session = {
     sessionId: mainSessionId,
     rootSessionId: options.rootSessionId ?? mainSessionId,
@@ -222,7 +198,23 @@ async function createFixture(
     agentName: "goal_lead",
     goalId: goal.id,
     sessionRole: "main",
-    executions: options.executionStatus === undefined ? [] : [{ id: "execution-1", status: options.executionStatus }],
+    pendingMessages: options.pendingMessage === true ? [{
+      id: "message-1",
+      clientRequestId: crypto.randomUUID(),
+      content: "queued input",
+      source: "user",
+      state: "queued",
+      revision: 0,
+      acceptedAt: 10,
+      updatedAt: 10,
+    }] : [],
+    executions: options.executionStatus === undefined ? [] : [{
+      id: "execution-1",
+      status: options.executionStatus,
+      startedAt: 1,
+      endedAt: 2,
+      ...(options.stopRequestedAt === undefined ? {} : { stopRequestedAt: options.stopRequestedAt }),
+    }],
   } as unknown as SessionFile;
   const sessions = new Map<string, SessionFile>([[mainSessionId, session]]);
   let startError = options.startErrorOnce;
@@ -249,7 +241,9 @@ async function createFixture(
           throw error;
         }
         await options.onStart?.(input.sessionId);
-        starts.push({ sessionId: input.sessionId, workspaceRoot: input.workspaceRoot, userMessage: input.userMessage });
+        if (input.input.kind !== "direct") throw new Error("Expected direct Goal continuation input");
+        if (input.origin !== "goal_claim") throw new Error("Expected Goal claim origin");
+        starts.push({ sessionId: input.sessionId, workspaceRoot: input.workspaceRoot, text: input.input.text });
         await options.startGate;
         return { promise: Promise.resolve() } as never;
       }),

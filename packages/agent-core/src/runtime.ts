@@ -37,6 +37,7 @@ import type {
   GlobalSSEHitlRealtimeEvent,
   GlobalSSEHitlSnapshotEvent,
   GlobalSSEResourceChangedEvent,
+  GlobalSessionEventEnvelope,
   GlobalSSESessionRuntimeChangedEvent,
   GlobalSSESessionRuntimeSnapshotEvent,
   HitlResponse,
@@ -57,8 +58,10 @@ import {
   RoleDrivenSessionGoalDelegationAdmission,
   SessionDeleteInProgressError,
   SessionFamilyStopInProgressError,
+  SessionFamilyActiveError,
 } from "./execution";
-import type { ActiveSessionExecution, StartSessionExecutionInput, SubscribeSessionEventsInput } from "./execution";
+import type { ActiveSessionExecution, StartSessionExecutionInput } from "./execution";
+import { SessionEventBridge } from "./events";
 import { GoalBudgetHandler } from "./goals/budget-handler";
 import {
   GoalLeadContinuationService,
@@ -91,19 +94,54 @@ import { RuntimeSessionDispatchGateway } from "./automations/runtime-session-gat
 import { scopedKey } from "./store/key";
 import { Logger, createConsoleLogger } from "./logger";
 import { SessionStoreManager } from "./store/session-store-manager";
+import { SessionInputService, type CommandRequestReplay, type MessageAcceptance } from "./session-input/service";
 import type { SessionRole } from "./store/types";
 import { generateTitle } from "./title-generation";
 import type { GoalState } from "./goals/state";
 import { WorktreeService } from "./worktrees";
 import { ProjectTodoService, ProjectTodoStateManager } from "./todos";
 
-type SessionToolBatchExecutionInput = Omit<StartSessionExecutionInput, "userMessage" | "origin">;
+type SessionToolBatchExecutionInput = Omit<StartSessionExecutionInput, "input" | "origin">;
 type SessionToolBatchExecutor = (input: SessionToolBatchExecutionInput) => Promise<ActiveSessionExecution>;
 
-export type ManagedSessionExecutionForwarder = (
-  input: StartSessionExecutionInput,
-  start: () => Promise<ActiveSessionExecution>,
-) => Promise<ActiveSessionExecution>;
+export interface AcceptSessionMessageInput {
+  readonly slug: string;
+  readonly workspaceRoot: string;
+  readonly sessionId: string;
+  readonly text: string;
+  readonly clientRequestId: string;
+  readonly source: "user" | "automation";
+}
+
+export type SessionMessageAcceptance =
+  | (MessageAcceptance & { readonly status: "pending" | "canonical" | "deleted" })
+  | { readonly clientRequestId: string; readonly status: "command" };
+
+export class SessionCommandConflictError extends Error {
+  readonly code = "SESSION_COMMAND_CONFLICT";
+
+  constructor(public readonly sessionId: string) {
+    super(`Session "${sessionId}" commands require an idle root Session with an empty Queue and no pending HITL`);
+    this.name = "SessionCommandConflictError";
+  }
+}
+
+export class SessionCommandOutcomeError extends Error {
+  readonly code: "SESSION_COMMAND_FAILED" | "SESSION_COMMAND_OUTCOME_INDETERMINATE";
+
+  constructor(
+    public readonly sessionId: string,
+    public readonly clientRequestId: string,
+    public readonly status: "failed" | "indeterminate",
+    message: string,
+  ) {
+    super(message);
+    this.name = "SessionCommandOutcomeError";
+    this.code = status === "failed"
+      ? "SESSION_COMMAND_FAILED"
+      : "SESSION_COMMAND_OUTCOME_INDETERMINATE";
+  }
+}
 
 export interface AgentRuntimeOptions {
   /** Explicit dependency-injection seam for isolated tests. */
@@ -201,17 +239,35 @@ export interface AgentRuntime {
   getSessionFile(workspaceRoot: string, sessionId: string): Promise<SessionFile>;
   resolveCompressionOriginalRange(workspaceRoot: string, sessionId: string, blockRef: string): Promise<CompressionOriginalRangeResult>;
   listSessions(workspaceRoot: string): Promise<SessionSummary[]>;
-  /** User-message entry point with cold Session/root cwd validation. */
-  startSessionMessageExecution(input: StartSessionExecutionInput): Promise<ActiveSessionExecution>;
+  /** Durably accepts a root Session message; execution dispatch is a separate best-effort consequence. */
+  acceptSessionMessage(input: AcceptSessionMessageInput): Promise<SessionMessageAcceptance>;
+  editPendingSessionMessage(input: {
+    readonly workspaceRoot: string;
+    readonly sessionId: string;
+    readonly messageId: string;
+    readonly expectedRevision: number;
+    readonly text: string;
+  }): ReturnType<SessionInputService["editMessage"]>;
+  deletePendingSessionMessage(input: {
+    readonly workspaceRoot: string;
+    readonly sessionId: string;
+    readonly messageId: string;
+    readonly expectedRevision: number;
+  }): ReturnType<SessionInputService["deleteMessage"]>;
+  steerPendingSessionMessage(input: {
+    readonly workspaceRoot: string;
+    readonly sessionId: string;
+    readonly messageId: string;
+    readonly expectedRevision: number;
+    readonly expectedExecutionId: string;
+  }): ReturnType<SessionExecutionManager["steerQueuedMessage"]>;
   /** Checked Goal retry entry point; acquires the Goal claim before the private live execution claim. */
   startGoalSessionExecution(input: StartSessionExecutionInput): Promise<ActiveSessionExecution>;
-  /** Installs event forwarding around runtime-selected, capability-safe Session starts. */
-  setManagedSessionExecutionForwarder(forwarder: ManagedSessionExecutionForwarder): void;
   getSessionFamilyActivity(workspaceRoot: string, rootSessionId: string): SessionFamilyActivity;
   stopSessionFamily(workspaceRoot: string, rootSessionId: string): Promise<void>;
   abortAllSessionExecutions(): Promise<void>;
   getSessionExecution(workspaceRoot: string, sessionId: string): ActiveSessionExecution | undefined;
-  subscribeSessionEvents(input: SubscribeSessionEventsInput): () => void;
+  subscribeSessionEvents(listener: (event: GlobalSessionEventEnvelope) => void): () => void;
   deleteSession(workspaceRoot: string, sessionId: string): Promise<void>;
   listSessionTree(workspaceRoot: string, rootSessionId: string): Promise<SessionTreeResponse>;
   disposeSessionAgent(workspaceRoot: string, sessionId: string): void;
@@ -316,6 +372,11 @@ export async function createRuntime(
       if (project !== undefined) projectSlugsByWorkspace.set(project.workspaceRoot, project.slug);
     };
     const sessionStoreManager = new SessionStoreManager({ logger });
+    const sessionInputService = new SessionInputService(sessionStoreManager);
+    const sessionEventBridge = new SessionEventBridge({
+      source: sessionStoreManager,
+      resolveProjectSlug: (workspaceRoot) => projectSlugsByWorkspace.get(workspaceRoot),
+    });
     const hitlListeners = new Set<(event: GlobalSSEHitlRealtimeEvent) => void>();
     const sessionRuntimeListeners = new Set<(event: GlobalSSESessionRuntimeChangedEvent) => void>();
     const resourceChangeListeners = new Set<(event: GlobalSSEResourceChangedEvent) => void>();
@@ -423,7 +484,7 @@ export async function createRuntime(
           sessionStoreManager.ensureSessionFile(projectRoot, sessionId, createOptions)
         ),
         startCheckedExecutionWithinGoalClaim: (input) => (
-          startManagedGoalExecutionWithinClaim(input)
+          startGoalExecutionWithinClaim(input)
         ),
         onCreated: (goal) => queueGoalTitleGeneration(workspaceRoot, goal.id),
       }),
@@ -457,11 +518,11 @@ export async function createRuntime(
             if (active?.executionId === input.executionId) return;
             const session = await sessionStoreManager.getSessionFile(input.workspaceRoot, input.sessionId);
             if (session.executions.some((execution) => execution.id === input.executionId)) return;
-            const execution = await startManagedCheckedSessionExecution({
+            const execution = await startCheckedSessionExecution({
               slug: project.slug,
               workspaceRoot: input.workspaceRoot,
               sessionId: input.sessionId,
-              userMessage: input.userMessage,
+              input: { kind: "direct", text: input.userMessage },
               executionId: input.executionId,
             });
             void execution.promise.catch((error: unknown) => {
@@ -560,6 +621,7 @@ export async function createRuntime(
       listSessionFamilyToolBatchHitlIds: (workspaceRoot, rootSessionId) => (
         sessionStoreManager.listSessionFamilyToolBatchHitlIds(workspaceRoot, rootSessionId)
       ),
+      sessionInputService,
       trackSession,
       untrackSession,
       executionScopeValidator,
@@ -587,7 +649,7 @@ export async function createRuntime(
         listSessionFamilyToolBatchHitlIds: (workspaceRoot, rootSessionId) => (
           sessionStoreManager.listSessionFamilyToolBatchHitlIds(workspaceRoot, rootSessionId)
         ),
-        startCheckedExecutionWithinGoalClaim: (input) => startManagedGoalExecutionWithinClaim(input),
+        startCheckedExecutionWithinGoalClaim: (input) => startGoalExecutionWithinClaim(input),
       },
       logger: runtimeLogger.child({ module: "goals.continuation" }),
     };
@@ -595,43 +657,18 @@ export async function createRuntime(
       ?? new GoalLeadContinuationService(continuationOptions);
     goalLeadContinuation = continuationService;
 
-    let managedSessionExecutionForwarder: ManagedSessionExecutionForwarder | undefined;
-
-    function requireManagedSessionExecutionForwarder(): ManagedSessionExecutionForwarder {
-      if (managedSessionExecutionForwarder === undefined) {
-        throw new Error("Managed Session execution forwarder must be installed before runtime-managed execution");
-      }
-      return managedSessionExecutionForwarder;
-    }
-
-    const startManagedCheckedSessionExecution = (
+    const startCheckedSessionExecution = (
       input: StartSessionExecutionInput,
-    ): Promise<ActiveSessionExecution> => (
-      requireManagedSessionExecutionForwarder()(input, () => executionManager.startCheckedExecution(input))
+    ): Promise<ActiveSessionExecution> => executionManager.startCheckedExecution(input);
+    const sessionToolBatchExecutor: SessionToolBatchExecutor = (input) => (
+      executionManager.startSessionToolBatchExecution(input)
     );
-    const managedSessionToolBatchExecutor: SessionToolBatchExecutor = (input) => {
-      const forwardedInput: StartSessionExecutionInput = {
-        ...input,
-        userMessage: "",
-        origin: "tool_batch",
-      };
-      return requireManagedSessionExecutionForwarder()(
-        forwardedInput,
-        () => executionManager.startSessionToolBatchExecution(input),
-      );
-    };
-    const startManagedGoalExecutionWithinClaim = (
+    const startGoalExecutionWithinClaim = (
       input: StartSessionExecutionInput,
-    ): Promise<ActiveSessionExecution> => {
-      const forwardedInput: StartSessionExecutionInput = {
-        ...input,
-        origin: "goal_claim",
-      };
-      return requireManagedSessionExecutionForwarder()(
-        forwardedInput,
-        () => executionManager.startCheckedExecutionWithinGoalClaim(forwardedInput),
-      );
-    };
+    ): Promise<ActiveSessionExecution> => executionManager.startCheckedExecutionWithinGoalClaim({
+      ...input,
+      origin: "goal_claim",
+    });
 
     async function dispatchAnsweredHitl(
       workspaceRoot: string,
@@ -681,7 +718,7 @@ export async function createRuntime(
 
           const applied = await context.hitl.resolve(dispatching.hitlId, { type: "applied" });
           if (applied.owner.type === "session") {
-            void managedSessionToolBatchExecutor({
+            void sessionToolBatchExecutor({
               slug: projectSlug,
               workspaceRoot,
               sessionId: applied.owner.id,
@@ -864,7 +901,7 @@ export async function createRuntime(
         if (!hasRunnableSessionToolBatch(store.getState())) continue;
         if (executionManager.getSessionFamilyActivity(workspaceRoot, summary.rootSessionId) !== "idle") continue;
         try {
-          await managedSessionToolBatchExecutor({
+          await sessionToolBatchExecutor({
             slug: projectSlug,
             workspaceRoot,
             sessionId: summary.sessionId,
@@ -876,6 +913,156 @@ export async function createRuntime(
           });
         }
       }
+    }
+
+    async function acceptSessionMessage(input: AcceptSessionMessageInput): Promise<SessionMessageAcceptance> {
+      return await executionManager.runSessionInputMutation({
+        workspaceRoot: input.workspaceRoot,
+        rootSessionId: input.sessionId,
+      }, async () => {
+        projectSlugsByWorkspace.set(input.workspaceRoot, input.slug);
+        const store = await sessionStoreManager.getOrLoad(input.sessionId, input.workspaceRoot);
+        const state = store.getState();
+        if (state.parentSessionId !== undefined || state.rootSessionId !== input.sessionId) {
+          throw new NotRootSessionError(input.sessionId, state.parentSessionId ?? state.rootSessionId);
+        }
+        const triggerQueuedExecution = () => {
+          void executionManager.tryStartQueuedExecution({
+            slug: input.slug,
+            workspaceRoot: input.workspaceRoot,
+            sessionId: input.sessionId,
+          }).catch((error) => {
+            runtimeLogger.warn("session.queue.start_failed", {
+              error,
+              context: { projectSlug: input.slug, sessionId: input.sessionId },
+              meta: { workspaceRoot: input.workspaceRoot },
+            });
+          });
+        };
+
+        let accepted: MessageAcceptance | undefined;
+        if (input.source === "user") {
+          const agent = await sessionAgentManager.getOrCreate(input.workspaceRoot, input.sessionId);
+          const command = agent.classifyCommand(input.text);
+          if (command !== null) {
+            const replayInput = {
+              sessionId: input.sessionId,
+              workspaceRoot: input.workspaceRoot,
+              text: input.text,
+              clientRequestId: input.clientRequestId,
+              source: input.source,
+            } as const;
+            const settledAcceptance = (replay: CommandRequestReplay | undefined): SessionMessageAcceptance => {
+              if (replay === undefined || (replay.kind === "command" && replay.status === "executing")) {
+                throw new SessionCommandOutcomeError(
+                  input.sessionId,
+                  input.clientRequestId,
+                  "indeterminate",
+                  "Command outcome is unknown and cannot be replayed safely",
+                );
+              }
+              if (replay.kind === "message") return replay.acceptance;
+              if (replay.kind === "error") {
+                throw new SessionCommandOutcomeError(
+                  input.sessionId,
+                  replay.clientRequestId,
+                  replay.status,
+                  replay.error,
+                );
+              }
+              return { clientRequestId: replay.clientRequestId, status: "command" as const };
+            };
+            const existingReplay = await sessionInputService.getCommandReplay(replayInput);
+            if (existingReplay !== undefined
+              && !(existingReplay.kind === "command" && existingReplay.status === "executing")) {
+              const replayAcceptance = settledAcceptance(existingReplay);
+              if (replayAcceptance.status === "command") {
+                triggerQueuedExecution();
+                return replayAcceptance;
+              }
+              accepted = replayAcceptance;
+            } else {
+              let commandRun;
+              try {
+                commandRun = await executionManager.runSessionCommand({
+                  workspaceRoot: input.workspaceRoot,
+                  sessionId: input.sessionId,
+                  clientRequestId: input.clientRequestId,
+                }, async (signal): Promise<SessionMessageAcceptance> => {
+                  if ((await sessionStoreManager.listSessionFamilyToolBatchHitlIds(
+                    input.workspaceRoot,
+                    input.sessionId,
+                  )).length > 0) {
+                    throw new SessionCommandConflictError(input.sessionId);
+                  }
+                  const claim = await sessionInputService.claimCommand(replayInput);
+                  if (claim.kind !== "claimed") return settledAcceptance(claim);
+                  let result;
+                  try {
+                    signal.throwIfAborted();
+                    result = await agent.executeCommand(command, { abort: signal });
+                    signal.throwIfAborted();
+                  } catch (error) {
+                    await sessionInputService.failCommand({
+                      sessionId: input.sessionId,
+                      workspaceRoot: input.workspaceRoot,
+                      clientRequestId: input.clientRequestId,
+                      error: "Command execution failed before a durable result was recorded",
+                    });
+                    throw error;
+                  }
+                  if (result.kind === "handled") {
+                    await sessionInputService.completeCommand({
+                      sessionId: input.sessionId,
+                      workspaceRoot: input.workspaceRoot,
+                      clientRequestId: input.clientRequestId,
+                    });
+                    return { clientRequestId: input.clientRequestId, status: "command" };
+                  }
+                  return await sessionInputService.completeCommandAsMessage({
+                    sessionId: input.sessionId,
+                    workspaceRoot: input.workspaceRoot,
+                    clientRequestId: input.clientRequestId,
+                    text: result.content,
+                    source: input.source,
+                  });
+                });
+              } catch (error) {
+                if (error instanceof SessionFamilyActiveError
+                  || error instanceof SessionFamilyStopInProgressError
+                  || error instanceof SessionDeleteInProgressError) {
+                  throw new SessionCommandConflictError(input.sessionId);
+                }
+                throw error;
+              }
+              const joinedReplay = commandRun.kind === "joined"
+                ? await sessionInputService.getCommandReplay(replayInput)
+                : undefined;
+              if (commandRun.kind === "joined" && joinedReplay === undefined && commandRun.error !== undefined) {
+                throw commandRun.error;
+              }
+              const commandAcceptance = commandRun.kind === "joined"
+                ? settledAcceptance(joinedReplay)
+                : commandRun.result;
+              if (commandAcceptance.status === "command") {
+                triggerQueuedExecution();
+                return commandAcceptance;
+              }
+              accepted = commandAcceptance;
+            }
+          }
+        }
+
+        accepted ??= await sessionInputService.acceptMessage({
+          sessionId: input.sessionId,
+          workspaceRoot: input.workspaceRoot,
+          text: input.text,
+          clientRequestId: input.clientRequestId,
+          source: input.source,
+        });
+        triggerQueuedExecution();
+        return accepted;
+      });
     }
 
     const sessionFamilyStopService = new SessionFamilyStopService({
@@ -901,6 +1088,9 @@ export async function createRuntime(
         projectSlug,
         rootSessionId: change.rootSessionId,
         activity: change.activity,
+        ...(change.steerTargetExecutionId === undefined ? {} : {
+          steerTargetExecutionId: change.steerTargetExecutionId,
+        }),
         createdAt: Date.now(),
       };
       for (const listener of sessionRuntimeListeners) {
@@ -919,6 +1109,13 @@ export async function createRuntime(
           projectSlug,
         )
           .then(async () => {
+            if (executionManager.getSessionFamilyActivity(change.workspaceRoot, change.rootSessionId) !== "idle") return;
+            const queued = await executionManager.tryStartQueuedExecution({
+              slug: projectSlug,
+              workspaceRoot: change.workspaceRoot,
+              sessionId: change.rootSessionId,
+            });
+            if (queued !== undefined) return;
             if (executionManager.getSessionFamilyActivity(change.workspaceRoot, change.rootSessionId) !== "idle") return;
             await continuationService.onFamilyIdle(change.workspaceRoot, change.rootSessionId);
           })
@@ -969,11 +1166,16 @@ export async function createRuntime(
       const gateway = new RuntimeSessionDispatchGateway({
         sessionStoreManager,
         sessionRuntime: {
-          getSessionExecution: (projectRoot, sessionId) => executionManager.getExecution(projectRoot, sessionId),
-          getSessionFamilyActivity: (projectRoot, rootSessionId) => (
-            executionManager.getSessionFamilyActivity(projectRoot, rootSessionId)
-          ),
-          startSessionMessageExecution: (input) => startManagedCheckedSessionExecution(input),
+          acceptSessionMessage: async (input) => {
+            const accepted = await acceptSessionMessage(input);
+            if (accepted.status === "command") {
+              throw new Error("Automation messages cannot execute Session commands");
+            }
+            return {
+              clientRequestId: accepted.clientRequestId,
+              messageId: accepted.messageId,
+            };
+          },
         },
         resolveProject: (projectSlug) => projectRegistry.get(projectSlug),
       });
@@ -1177,16 +1379,30 @@ export async function createRuntime(
       }
     }
 
+    async function recoverQueuedSessionInputs(workspaceRoot: string, projectSlug: string): Promise<void> {
+      const summaries = await sessionStoreManager.listAllSessionSummaries(workspaceRoot);
+      for (const summary of summaries) {
+        if (summary.sessionId !== summary.rootSessionId) continue;
+        await sessionInputService.recoverOrphanedSteers(summary.sessionId, workspaceRoot);
+        if (executionManager.getSessionFamilyActivity(workspaceRoot, summary.sessionId) !== "idle") continue;
+        await executionManager.tryStartQueuedExecution({
+          slug: projectSlug,
+          workspaceRoot,
+          sessionId: summary.sessionId,
+        });
+      }
+    }
+
     async function recoverSessionContinuations(): Promise<void> {
-      requireManagedSessionExecutionForwarder();
       const projects = await projectRegistry.list();
       const results = await Promise.allSettled(
         projects.map(async (project) => {
           projectSlugsByWorkspace.set(project.workspaceRoot, project.slug);
           const context = await contextResolver.resolve(project.workspaceRoot);
-          await context.goalLifecycle.reconcile();
           await reconcileAnsweredHitl(project.workspaceRoot, project.slug);
           await continueRunnableToolBatches(project.workspaceRoot, project.slug);
+          await recoverQueuedSessionInputs(project.workspaceRoot, project.slug);
+          await context.goalLifecycle.reconcile();
           await continuationService.reconcileWorkspace(project.workspaceRoot);
         }),
       );
@@ -1199,7 +1415,6 @@ export async function createRuntime(
     }
 
     async function recoverProjectTodos(): Promise<void> {
-      requireManagedSessionExecutionForwarder();
       for (const project of await projectRegistry.list()) {
         projectSlugsByWorkspace.set(project.workspaceRoot, project.slug);
         const context = await contextResolver.resolve(project.workspaceRoot);
@@ -1208,7 +1423,6 @@ export async function createRuntime(
     }
 
     async function reconcileRegisteredProject(workspaceRoot: string, projectSlug: string): Promise<void> {
-      requireManagedSessionExecutionForwarder();
       const key = `${workspaceRoot}\0${projectSlug}`;
       const registered = await projectRegistry.get(projectSlug);
       if (registered?.workspaceRoot !== workspaceRoot) {
@@ -1222,9 +1436,10 @@ export async function createRuntime(
         projectSlugsByWorkspace.set(workspaceRoot, projectSlug);
         const context = await contextResolver.resolve(workspaceRoot);
         await context.todos.reconcileAll();
-        await context.goalLifecycle.reconcile();
         await reconcileAnsweredHitl(workspaceRoot, projectSlug);
         await continueRunnableToolBatches(workspaceRoot, projectSlug);
+        await recoverQueuedSessionInputs(workspaceRoot, projectSlug);
+        await context.goalLifecycle.reconcile();
         await continuationService.reconcileWorkspace(workspaceRoot);
         projectReconcileRetries.delete(key);
       } catch (error) {
@@ -1285,7 +1500,14 @@ export async function createRuntime(
         .map(toHitlView);
       const families = executionManager.listSessionFamilyActivities().flatMap((family) => (
         family.workspaceRoot === workspaceRoot
-          ? [{ projectSlug, rootSessionId: family.rootSessionId, activity: family.activity }]
+          ? [{
+            projectSlug,
+            rootSessionId: family.rootSessionId,
+            activity: family.activity,
+            ...(family.steerTargetExecutionId === undefined ? {} : {
+              steerTargetExecutionId: family.steerTargetExecutionId,
+            }),
+          }]
           : []
       ));
       const createdAt = Date.now();
@@ -1323,6 +1545,11 @@ export async function createRuntime(
           if (activeIds.has(pending.sessionId)) continue;
           activeIds.add(pending.sessionId);
           activeFamilies.push({ rootSessionId: pending.sessionId, activity: "running" });
+        }
+        for (const pending of executionManager.listPendingSessionInputMutations(project.workspaceRoot)) {
+          if (activeIds.has(pending.rootSessionId)) continue;
+          activeIds.add(pending.rootSessionId);
+          activeFamilies.push({ rootSessionId: pending.rootSessionId, activity: "running" });
         }
         if (activeFamilies.length > 0) {
           throw new ProjectRuntimeActiveError(project.slug, activeFamilies);
@@ -1416,6 +1643,9 @@ export async function createRuntime(
             projectSlug,
             rootSessionId: family.rootSessionId,
             activity: family.activity,
+            ...(family.steerTargetExecutionId === undefined ? {} : {
+              steerTargetExecutionId: family.steerTargetExecutionId,
+            }),
           }];
         });
         return [{
@@ -1453,25 +1683,28 @@ export async function createRuntime(
         assertRuntimeSessionAgentScope(createOptions);
         return sessionStoreManager.createSessionFile(workspaceRoot, createOptions);
       },
-      getSessionFile: (workspaceRoot, sessionId) => sessionStoreManager.getSessionFile(workspaceRoot, sessionId),
+      getSessionFile: async (workspaceRoot, sessionId) => {
+        await sessionStoreManager.flushSession(sessionId, workspaceRoot);
+        return await sessionStoreManager.getSessionFile(workspaceRoot, sessionId);
+      },
       resolveCompressionOriginalRange: (workspaceRoot, sessionId, blockRef) => sessionStoreManager.resolveCompressionOriginalRange(workspaceRoot, sessionId, blockRef),
       listSessions: (workspaceRoot) => sessionStoreManager.listSessionSummaries(workspaceRoot),
-      startSessionMessageExecution: (input) => {
-        projectSlugsByWorkspace.set(input.workspaceRoot, input.slug);
-        if (input.origin !== undefined && input.origin !== "user_message") {
-          throw new Error("Session message execution accepts only the user_message origin");
-        }
-        return executionManager.startCheckedExecution(input);
-      },
+      acceptSessionMessage,
+      editPendingSessionMessage: (input) => executionManager.runSessionInputMutation({
+        workspaceRoot: input.workspaceRoot,
+        rootSessionId: input.sessionId,
+      }, () => sessionInputService.editMessage(input)),
+      deletePendingSessionMessage: (input) => executionManager.runSessionInputMutation({
+        workspaceRoot: input.workspaceRoot,
+        rootSessionId: input.sessionId,
+      }, () => sessionInputService.deleteMessage(input)),
+      steerPendingSessionMessage: (input) => executionManager.steerQueuedMessage(input),
       startGoalSessionExecution: (input) => {
         projectSlugsByWorkspace.set(input.workspaceRoot, input.slug);
         if (input.origin !== undefined && input.origin !== "goal_claim") {
           throw new Error("Goal Session execution accepts only the goal_claim origin");
         }
-        return startManagedCheckedSessionExecution({ ...input, origin: "goal_claim" });
-      },
-      setManagedSessionExecutionForwarder: (forwarder) => {
-        managedSessionExecutionForwarder = forwarder;
+        return startCheckedSessionExecution({ ...input, origin: "goal_claim" });
       },
       getSessionFamilyActivity: (workspaceRoot, rootSessionId) => executionManager.getSessionFamilyActivity(workspaceRoot, rootSessionId),
       stopSessionFamily: async (workspaceRoot, rootSessionId) => {
@@ -1489,7 +1722,7 @@ export async function createRuntime(
         return executionManager.abortAll();
       },
       getSessionExecution: (workspaceRoot, sessionId) => executionManager.getExecution(workspaceRoot, sessionId),
-      subscribeSessionEvents: (input) => executionManager.subscribe(input),
+      subscribeSessionEvents: (listener) => sessionEventBridge.subscribe(listener),
       deleteSession: (workspaceRoot, sessionId) => executionManager.deleteSession(workspaceRoot, sessionId),
       listSessionTree: (workspaceRoot, rootSessionId) => sessionStoreManager.buildSessionTree(workspaceRoot, rootSessionId),
       disposeSessionAgent: (workspaceRoot, sessionId) => sessionAgentManager.dispose(workspaceRoot, sessionId),

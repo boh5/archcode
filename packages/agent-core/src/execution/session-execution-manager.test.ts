@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createEmptySessionStats } from "@archcode/protocol";
-import type { Agent, AgentResult, AgentRunOptions } from "../agents/types";
+import type { Agent, AgentCommand, AgentCommandResult, AgentResult, AgentRunOptions } from "../agents/types";
 import { ConfiguredAgent } from "../agents/configured-agent";
 import { engineerAgentDefinition } from "../agents/definitions";
 import type { ProviderRegistry } from "../provider";
@@ -11,7 +11,7 @@ import { SkillService } from "../skills";
 import { createTestProjectContextResolver } from "../agents/test-project-context-resolver";
 import { createRegistry } from "../tools";
 import { setLlmAdapterForTest } from "../llm/adapter";
-import { AgentRunningError, ConcurrentLimitError, ConcurrentSessionLimitError, DelegateTargetNotAllowedError, DepthLimitError, ChildSessionNotFoundError, ChildSessionParentMismatchError, ChildSessionNotDescendantError, ChildSessionCwdMismatchError, SessionCwdTransitionConflictError, SessionCwdTransitionInProgressError, SessionToolBatchActiveError } from "../agents/errors";
+import { AgentRunningError, ConcurrentLimitError, DelegateTargetNotAllowedError, DepthLimitError, ChildSessionNotFoundError, ChildSessionParentMismatchError, ChildSessionNotDescendantError, ChildSessionCwdMismatchError, SessionCwdTransitionConflictError, SessionCwdTransitionInProgressError, SessionToolBatchActiveError } from "../agents/errors";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
 import { NotRootSessionError, SessionDeleteConflictError, SessionFileNotFoundError } from "../store/errors";
 import { SessionDeleteInProgressError, SessionDeleteOwnerConflictError } from "./session-deletion";
@@ -28,6 +28,7 @@ import type { AgentFactory } from "../agents/factory";
 import type { AgentDefinition } from "../agents/factory-types";
 import { createEmptyCompressionState } from "../compression";
 import type { SessionGoalDelegationContext } from "./session-goal-delegation-context";
+import { SessionInputConflictError, SessionInputService } from "../session-input/service";
 
 const testRoot = join(
   import.meta.dir,
@@ -83,8 +84,8 @@ type MockAgentResult = Partial<AgentResult> & Pick<AgentResult, "text" | "steps"
 class MockAgent implements Agent {
   readonly store;
   readonly cwd: string;
-  readonly runMock = mock(async (_message: string, options?: AgentRunOptions | AbortSignal): Promise<AgentResult> => {
-    const signal = options instanceof AbortSignal ? options : options?.abort;
+  readonly runMock = mock(async (options: AgentRunOptions = {}): Promise<AgentResult> => {
+    const signal = options.abort;
     const result = await withAbort(this.result, signal);
     this.store.getState().append({ type: "text-start" });
     this.store.getState().append({ type: "text-delta", text: result.text });
@@ -96,28 +97,34 @@ class MockAgent implements Agent {
     readonly sessionId: string,
     readonly result: Promise<MockAgentResult>,
     readonly workspaceRoot: string = defaultAgentWorkspaceRoot,
+    sessionStores: SessionStoreManager = storeManager,
   ) {
-    this.store = storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" });
+    this.store = sessionStores.create(sessionId, workspaceRoot, { agentName: "engineer" });
     this.cwd = this.store.getState().cwd;
   }
 
-  run(userMessage: string, abort?: AbortSignal): Promise<AgentResult>;
-  run(userMessage: string, options?: AgentRunOptions): Promise<AgentResult>;
-  run(userMessage: string, options?: AgentRunOptions | AbortSignal): Promise<AgentResult> {
-    return this.runMock(userMessage, options);
+  classifyCommand(_input: string): AgentCommand | null {
+    return null;
+  }
+
+  async executeCommand(_command: AgentCommand): Promise<AgentCommandResult> {
+    return { kind: "handled" };
+  }
+
+  run(options?: AgentRunOptions): Promise<AgentResult> {
+    return this.runMock(options);
   }
 
   dispose(): void {}
 }
 
 interface FakeManagerOptions {
-  maxConcurrentSessions?: number;
   storeManager?: SessionStoreManager;
   factory?: AgentFactory;
   childRun?: Promise<MockAgentResult>;
   childRunStarted?: () => void;
-  childRunMessage?: (message: string) => void;
-  childRunOptions?: (options: AgentRunOptions | AbortSignal | undefined) => void;
+  childCanonicalMessage?: (message: string) => void;
+  childRunOptions?: (options: AgentRunOptions | undefined) => void;
   getAgent?: (sessionId: string) => Agent;
   onReleaseAgent?: (sessionId: string) => void;
   executionScopeValidator?: ConstructorParameters<typeof SessionExecutionManager>[0]["executionScopeValidator"];
@@ -125,6 +132,7 @@ interface FakeManagerOptions {
   deletionLifecycle?: ConstructorParameters<typeof SessionExecutionManager>[0]["deletionLifecycle"];
   flushSessionStore?: ConstructorParameters<typeof SessionExecutionManager>[0]["flushSessionStore"];
   listSessionFamilyToolBatchHitlIds?: ConstructorParameters<typeof SessionExecutionManager>[0]["listSessionFamilyToolBatchHitlIds"];
+  sessionInputService?: ConstructorParameters<typeof SessionExecutionManager>[0]["sessionInputService"];
   sessionFamilyStopTimeoutMs?: number;
 }
 
@@ -168,9 +176,11 @@ function createFakeManager(agents: Record<string, MockAgent>, options: FakeManag
     createChildAgent: mock((input: { workspaceRoot: string; sessionId: string; store: MockAgent["store"] }) => {
       const childAgent = {
         store: input.store,
-        run: mock(async (message: string, runOptions?: AgentRunOptions | AbortSignal): Promise<AgentResult> => {
-          const signal = runOptions instanceof AbortSignal ? runOptions : runOptions?.abort;
-          options.childRunMessage?.(message);
+        classifyCommand: mock((_input: string) => null),
+        executeCommand: mock(async (_command: AgentCommand): Promise<AgentCommandResult> => ({ kind: "handled" })),
+        run: mock(async (runOptions?: AgentRunOptions): Promise<AgentResult> => {
+          const signal = runOptions?.abort;
+          options.childCanonicalMessage?.(getUserMessageTexts(input.store.getState()).at(-1) ?? "");
           options.childRunOptions?.(runOptions);
           options.childRunStarted?.();
           signal?.throwIfAborted();
@@ -249,13 +259,25 @@ function createManager(agents: Record<string, MockAgent>, options: FakeManagerOp
     trackSession,
     untrackSession,
     executionScopeValidator: options.executionScopeValidator ?? allowExecutionScope,
+    sessionInputService: options.sessionInputService ?? new SessionInputService(executionStoreManager),
     ...(options.goalDelegationAdmission === undefined ? {} : { goalDelegationAdmission: options.goalDelegationAdmission }),
     ...(options.deletionLifecycle === undefined ? {} : { deletionLifecycle: options.deletionLifecycle }),
     ...(options.sessionFamilyStopTimeoutMs === undefined ? {} : { sessionFamilyStopTimeoutMs: options.sessionFamilyStopTimeoutMs }),
-    ...(options.maxConcurrentSessions === undefined ? {} : { maxConcurrentSessions: options.maxConcurrentSessions }),
     logger: silentLogger,
   });
   return { manager, sessionAgentManager, trackSession, untrackSession };
+}
+
+function inputServicePort(service: SessionInputService): NonNullable<FakeManagerOptions["sessionInputService"]> {
+  return {
+    beginQueueExecution: (input) => service.beginQueueExecution(input),
+    beginDirectExecution: (input) => service.beginDirectExecution(input),
+    claimSteer: (input) => service.claimSteer(input),
+    commitSteers: (input) => service.commitSteers(input),
+    rollbackSteers: (input) => service.rollbackSteers(input),
+    getPendingMessages: (sessionId, root) => service.getPendingMessages(sessionId, root),
+    recordQueueDispatchBarrier: (input) => service.recordQueueDispatchBarrier(input),
+  };
 }
 
 function goalDelegationContext(
@@ -300,6 +322,8 @@ async function writeSessionFile(input: {
     modelInfo: null,
     title: input.title ?? null,
     messages: [],
+    pendingMessages: [],
+    inputRequestReceipts: [],
     steps: [],
     stats: createEmptySessionStats(),
     executions: input.executions ?? [],
@@ -375,6 +399,156 @@ describe("SessionExecutionManager", () => {
     await rm(testRoot, { recursive: true, force: true });
   });
 
+  test("commands share family admission, coalesce identical requests, and fence Queue execution", async () => {
+    const rootId = crypto.randomUUID();
+    const commandGate = deferred<void>();
+    const rootAgent = new MockAgent(rootId, Promise.resolve({ text: "queued result", steps: 1 }), workspaceRoot);
+    const { manager } = createManager({ [rootId]: rootAgent });
+    const service = new SessionInputService(storeManager);
+    let commandCalls = 0;
+
+    const first = manager.runSessionCommand({
+      workspaceRoot,
+      sessionId: rootId,
+      clientRequestId: "command-1",
+    }, async (signal) => {
+      commandCalls += 1;
+      await withAbort(commandGate.promise, signal);
+      return "done";
+    });
+    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("running");
+
+    const joined = manager.runSessionCommand({
+      workspaceRoot,
+      sessionId: rootId,
+      clientRequestId: "command-1",
+    }, async () => {
+      commandCalls += 1;
+      return "must not run";
+    });
+    await expect(manager.runSessionCommand({
+      workspaceRoot,
+      sessionId: rootId,
+      clientRequestId: "command-2",
+    }, async () => "must not run")).rejects.toBeInstanceOf(SessionFamilyActiveError);
+
+    await service.acceptMessage({
+      sessionId: rootId,
+      workspaceRoot,
+      text: "queued during command",
+      clientRequestId: "queued-during-command",
+      source: "user",
+    });
+    expect(await manager.tryStartQueuedExecution({ slug: "project", workspaceRoot, sessionId: rootId })).toBeUndefined();
+    expect(rootAgent.runMock).not.toHaveBeenCalled();
+
+    commandGate.resolve(undefined);
+    await expect(first).resolves.toEqual({ kind: "executed", result: "done" });
+    await expect(joined).resolves.toEqual({ kind: "joined" });
+    expect(commandCalls).toBe(1);
+    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("idle");
+
+    const execution = await manager.tryStartQueuedExecution({ slug: "project", workspaceRoot, sessionId: rootId });
+    expect(execution).toBeDefined();
+    await execution!.started;
+    await execution!.promise;
+    expect(rootAgent.runMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("same command join preserves a failure that happened before a durable receipt", async () => {
+    const rootId = crypto.randomUUID();
+    storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
+    const { manager } = createManager({});
+    const failGate = deferred<void>();
+    const failure = new SessionInputConflictError("state", "blocked before command claim");
+
+    const first = manager.runSessionCommand({
+      workspaceRoot,
+      sessionId: rootId,
+      clientRequestId: "command-pre-claim-failure",
+    }, async () => {
+      await failGate.promise;
+      throw failure;
+    });
+    const joined = manager.runSessionCommand({
+      workspaceRoot,
+      sessionId: rootId,
+      clientRequestId: "command-pre-claim-failure",
+    }, async () => "must not run");
+
+    failGate.resolve(undefined);
+    await expect(first).rejects.toBe(failure);
+    await expect(joined).resolves.toEqual({ kind: "joined", error: failure });
+  });
+
+  test("Stop aborts an active command, barriers old Queue, and writes no unrelated execution fact", async () => {
+    const rootId = crypto.randomUUID();
+    const store = storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
+    const rootAgent = new MockAgent(rootId, Promise.resolve({ text: "queued result", steps: 1 }), workspaceRoot);
+    const { manager } = createManager({ [rootId]: rootAgent });
+    const service = new SessionInputService(storeManager);
+    let commandSignal: AbortSignal | undefined;
+    const command = manager.runSessionCommand({
+      workspaceRoot,
+      sessionId: rootId,
+      clientRequestId: "command-stop",
+    }, async (signal) => {
+      commandSignal = signal;
+      await withAbort(new Promise<never>(() => undefined), signal);
+    });
+    const commandOutcome = command.then(
+      () => ({ kind: "resolved" as const }),
+      (error: unknown) => ({ kind: "rejected" as const, error }),
+    );
+    await waitFor(() => commandSignal !== undefined);
+    await service.acceptMessage({
+      sessionId: rootId,
+      workspaceRoot,
+      text: "B before Stop",
+      clientRequestId: "queued-before-command-stop",
+      source: "user",
+    });
+
+    await manager.stopSessionFamily(workspaceRoot, rootId);
+    expect(await commandOutcome).toMatchObject({ kind: "rejected", error: { name: "AbortError" } });
+    expect(commandSignal!.aborted).toBe(true);
+    expect(store.getState().executions).toEqual([]);
+    expect(store.getState().queueDispatchBarrierAt).toEqual(expect.any(Number));
+    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("idle");
+    expect(await manager.tryStartQueuedExecution({ slug: "project", workspaceRoot, sessionId: rootId }))
+      .toBeUndefined();
+
+    const coldStores = new SessionStoreManager({ logger: silentLogger });
+    await coldStores.getOrLoad(rootId, workspaceRoot);
+    const coldAgent = new MockAgent(
+      rootId,
+      Promise.resolve({ text: "queued result", steps: 1 }),
+      workspaceRoot,
+      coldStores,
+    );
+    const { manager: coldManager } = createManager({ [rootId]: coldAgent }, { storeManager: coldStores });
+    const coldService = new SessionInputService(coldStores);
+    expect(await coldManager.tryStartQueuedExecution({ slug: "project", workspaceRoot, sessionId: rootId }))
+      .toBeUndefined();
+
+    await coldService.acceptMessage({
+      sessionId: rootId,
+      workspaceRoot,
+      text: "D after Stop",
+      clientRequestId: "queued-after-command-stop",
+      source: "user",
+    });
+    const restarted = await coldManager.tryStartQueuedExecution({ slug: "project", workspaceRoot, sessionId: rootId });
+    if (restarted === undefined) throw new Error("Expected a post-Stop Queue execution");
+    await restarted.promise;
+    expect(coldAgent.store.getState().messages.filter((message) => (
+      message.executionId === restarted.executionId && message.role === "user"
+    ))
+      .flatMap((message) => message.parts.filter((part) => part.type === "text").map((part) => part.text)))
+      .toEqual(["B before Stop", "D after Stop"]);
+    expect(coldAgent.store.getState().queueDispatchBarrierAt).toBeUndefined();
+  });
+
   test("strong family stop exposes stopping until every descendant releases ownership", async () => {
     const rootId = crypto.randomUUID();
     const childId = crypto.randomUUID();
@@ -385,16 +559,26 @@ describe("SessionExecutionManager", () => {
       parentSessionId: rootId,
       agentName: "explore",
     });
+    const rootAgent = new MockAgent(rootId, Promise.resolve({ text: "queued result", steps: 1 }), workspaceRoot);
     const childAgent = new MockAgent(childId, childRun.promise, workspaceRoot);
-    const { manager } = createManager({ [childId]: childAgent });
+    const { manager } = createManager({ [rootId]: rootAgent, [childId]: childAgent });
+    const service = new SessionInputService(storeManager);
     const activities: string[] = [];
     manager.subscribeSessionRuntimeChanges((change) => activities.push(change.activity));
     const childExecution = await manager.startCheckedExecution({
       slug: "project",
       workspaceRoot,
       sessionId: childId,
-      userMessage: "child",
+      input: { kind: "direct", text: "child" },
       origin: "tool_call",
+    });
+    await childExecution.started;
+    await service.acceptMessage({
+      sessionId: rootId,
+      workspaceRoot,
+      text: "queued before descendant-only Stop",
+      clientRequestId: "queued-before-descendant-stop",
+      source: "user",
     });
 
     const stopping = manager.stopSessionFamily(workspaceRoot, rootId);
@@ -404,6 +588,10 @@ describe("SessionExecutionManager", () => {
 
     expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("idle");
     expect(activities).toEqual(["running", "stopping", "idle"]);
+    expect(storeManager.get(rootId, workspaceRoot)?.getState().queueDispatchBarrierAt)
+      .toEqual(expect.any(Number));
+    expect(await manager.tryStartQueuedExecution({ slug: "project", workspaceRoot, sessionId: rootId }))
+      .toBeUndefined();
   });
 
   test("rejects a new root user message while a descendant owns the family", async () => {
@@ -423,7 +611,7 @@ describe("SessionExecutionManager", () => {
       slug: "project",
       workspaceRoot,
       sessionId: childId,
-      userMessage: "child",
+      input: { kind: "direct", text: "child" },
       origin: "tool_call",
     });
 
@@ -431,7 +619,7 @@ describe("SessionExecutionManager", () => {
       slug: "project",
       workspaceRoot,
       sessionId: rootId,
-      userMessage: "new root message",
+      input: { kind: "direct", text: "new root message" },
     })).rejects.toEqual(expect.objectContaining({
       name: "SessionFamilyActiveError",
       sessionId: rootId,
@@ -467,7 +655,7 @@ describe("SessionExecutionManager", () => {
       slug: "project",
       workspaceRoot,
       sessionId: siblingId,
-      userMessage: "sibling",
+      input: { kind: "direct", text: "sibling" },
       origin: "tool_call",
     });
 
@@ -475,7 +663,7 @@ describe("SessionExecutionManager", () => {
       slug: "project",
       workspaceRoot,
       sessionId: childId,
-      userMessage: "direct child message",
+      input: { kind: "direct", text: "direct child message" },
     })).rejects.toBeInstanceOf(SessionFamilyActiveError);
     expect(childStore.getState().isRunning).toBe(false);
 
@@ -495,6 +683,7 @@ describe("SessionExecutionManager", () => {
 
   test("stops a canonical cold root without guessing a member identity", async () => {
     const rootId = crypto.randomUUID();
+    await writeSessionFile({ sessionId: rootId });
     const coldStores = new SessionStoreManager({ logger: silentLogger });
     const { manager } = createManager({}, { storeManager: coldStores });
     const changes: string[] = [];
@@ -517,43 +706,440 @@ describe("SessionExecutionManager", () => {
       slug: "project",
       workspaceRoot,
       sessionId: missingSessionId,
-      userMessage: "must not guess family identity",
+      input: { kind: "direct", text: "must not guess family identity" },
     })).rejects.toThrow(SessionFileNotFoundError);
   });
 
   test("checked execution starts once and rejects duplicate same-session starts", async () => {
     const run = deferred<MockAgentResult>();
-    const agent = new MockAgent("session-start", run.promise);
-    const { manager } = createManager({ "session-start": agent });
+    const sessionId = crypto.randomUUID();
+    const agent = new MockAgent(sessionId, run.promise);
+    const { manager } = createManager({ [sessionId]: agent });
 
-    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "session-start", userMessage: "hello" });
+    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId, input: { kind: "direct", text: "hello" } });
 
-    expect(execution.sessionId).toBe("session-start");
+    expect(execution.sessionId).toBe(sessionId);
     expect(execution.agentName).toBe("engineer");
     expect(execution.origin).toBe("user_message");
     expect(typeof execution.executionToken).toBe("symbol");
-    expect(manager.getSessionFamilyActivity(workspaceRoot, "session-start")).toBe("running");
-    await expect(manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "session-start", userMessage: "again" })).rejects.toThrow(SessionFamilyActiveError);
-    await Promise.resolve();
-    expect(agent.runMock).toHaveBeenCalledWith("hello", expect.objectContaining({ abort: execution.abortController.signal }));
-    const options = agent.runMock.mock.calls[0]?.[1];
-    if (!options || options instanceof AbortSignal) throw new Error("Expected AgentRunOptions");
+    expect(manager.getSessionFamilyActivity(workspaceRoot, sessionId)).toBe("running");
+    await expect(manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId, input: { kind: "direct", text: "again" } })).rejects.toThrow(SessionFamilyActiveError);
+    await waitFor(() => agent.runMock.mock.calls.length === 1);
+    expect(agent.runMock).toHaveBeenCalledWith(expect.objectContaining({ abort: execution.abortController.signal }));
+    expect(getUserMessageTexts(agent.store.getState())).toEqual(["hello"]);
+    const options = agent.runMock.mock.calls[0]?.[0];
+    if (!options) throw new Error("Expected AgentRunOptions");
     expect("maxSteps" in options).toBe(false);
     run.resolve({ text: "done", steps: 1 });
     await execution.promise;
-    expect(manager.getSessionFamilyActivity(workspaceRoot, "session-start")).toBe("idle");
+    expect(manager.getSessionFamilyActivity(workspaceRoot, sessionId)).toBe("idle");
   });
 
-  test("preserves the managed Goal claim execution origin", async () => {
-    const run = deferred<MockAgentResult>();
-    const agent = new MockAgent("goal-claim-origin", run.promise);
-    const { manager } = createManager({ "goal-claim-origin": agent });
+  test("commits every queued message at the cutoff into one next execution", async () => {
+    const firstRun = deferred<MockAgentResult>();
+    const sessionId = crypto.randomUUID();
+    const agent = new MockAgent(sessionId, firstRun.promise);
+    const { manager } = createManager({ [sessionId]: agent });
+    const inputs = new SessionInputService(storeManager);
+
+    const first = await manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId,
+      input: { kind: "direct", text: "A" },
+    });
+    await first.started;
+    const acceptedB = await inputs.acceptMessage({
+      sessionId,
+      workspaceRoot,
+      text: "B",
+      clientRequestId: crypto.randomUUID(),
+      source: "user",
+    });
+    const acceptedC = await inputs.acceptMessage({
+      sessionId,
+      workspaceRoot,
+      text: "C",
+      clientRequestId: crypto.randomUUID(),
+      source: "user",
+    });
+
+    expect(await manager.tryStartQueuedExecution({ slug: "project", workspaceRoot, sessionId })).toBeUndefined();
+    firstRun.resolve({ text: "first done", steps: 1 });
+    await first.promise;
+
+    const second = await manager.tryStartQueuedExecution({ slug: "project", workspaceRoot, sessionId });
+    if (second === undefined) throw new Error("Expected queued execution");
+    await second.promise;
+
+    const state = agent.store.getState();
+    const queuedBatch = state.messages.filter((message) => (
+      message.id === acceptedB.messageId || message.id === acceptedC.messageId
+    ));
+    expect(queuedBatch.flatMap((message) => (
+      message.parts.filter((part) => part.type === "text").map((part) => part.text)
+    ))).toEqual(["B", "C"]);
+    expect(queuedBatch.map((message) => message.executionId)).toEqual([
+      second.executionId,
+      second.executionId,
+    ]);
+    expect(state.pendingMessages).toEqual([]);
+    expect(state.executions).toHaveLength(2);
+  });
+
+  test("keeps queued messages on Stop and batches them with the next accepted message", async () => {
+    const firstRun = deferred<MockAgentResult>();
+    const sessionId = crypto.randomUUID();
+    const agent = new MockAgent(sessionId, firstRun.promise);
+    const { manager } = createManager({ [sessionId]: agent });
+    const inputs = new SessionInputService(storeManager);
+
+    const first = await manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId,
+      input: { kind: "direct", text: "A" },
+    });
+    await first.started;
+    for (const text of ["B", "C"]) {
+      await inputs.acceptMessage({
+        sessionId,
+        workspaceRoot,
+        text,
+        clientRequestId: crypto.randomUUID(),
+        source: "user",
+      });
+    }
+
+    await manager.stopSessionFamily(workspaceRoot, sessionId);
+    firstRun.resolve({ text: "late", steps: 1 });
+    expect(agent.store.getState().executions[0]).toMatchObject({
+      id: first.executionId,
+      status: "cancelled",
+    });
+    expect(typeof agent.store.getState().executions[0]?.stopRequestedAt).toBe("number");
+    expect(agent.store.getState().pendingMessages.map((message) => message.content)).toEqual(["B", "C"]);
+
+    await inputs.acceptMessage({
+      sessionId,
+      workspaceRoot,
+      text: "D",
+      clientRequestId: crypto.randomUUID(),
+      source: "user",
+    });
+    const second = await manager.tryStartQueuedExecution({ slug: "project", workspaceRoot, sessionId });
+    if (second === undefined) throw new Error("Expected post-Stop queued execution");
+    await second.promise;
+
+    const messages = agent.store.getState().messages.filter((message) => (
+      message.executionId === second.executionId && message.role === "user"
+    ));
+    expect(messages.flatMap((message) => message.parts.filter((part) => part.type === "text").map((part) => part.text)))
+      .toEqual(["B", "C", "D"]);
+    expect(agent.store.getState().pendingMessages).toEqual([]);
+  });
+
+  test("Stop before Queue canonicalization preserves the entire claimed batch", async () => {
+    const sessionId = crypto.randomUUID();
+    const agent = new MockAgent(sessionId, Promise.resolve({ text: "must not run", steps: 1 }));
+    const inputs = new SessionInputService(storeManager);
+    const beginEntered = deferred<void>();
+    const releaseBegin = deferred<void>();
+    const port = inputServicePort(inputs);
+    const { manager } = createManager({ [sessionId]: agent }, {
+      sessionInputService: {
+        ...port,
+        beginQueueExecution: async (input) => {
+          beginEntered.resolve(undefined);
+          await releaseBegin.promise;
+          return await inputs.beginQueueExecution(input);
+        },
+      },
+    });
+    for (const text of ["B", "C"]) {
+      await inputs.acceptMessage({
+        sessionId,
+        workspaceRoot,
+        text,
+        clientRequestId: crypto.randomUUID(),
+        source: "user",
+      });
+    }
+
+    const starting = manager.tryStartQueuedExecution({ slug: "project", workspaceRoot, sessionId });
+    await beginEntered.promise;
+    const execution = await starting;
+    if (execution === undefined) throw new Error("Expected provisional Queue execution");
+    const stopping = manager.stopSessionFamily(workspaceRoot, sessionId);
+    releaseBegin.resolve(undefined);
+    await Promise.all([execution.promise, stopping]);
+
+    const state = agent.store.getState();
+    expect(state.pendingMessages.map((message) => message.content)).toEqual(["B", "C"]);
+    expect(state.messages).toEqual([]);
+    expect(state.executions).toEqual([
+      expect.objectContaining({
+        id: execution.executionId,
+        status: "cancelled",
+        stopRequestedAt: expect.any(Number),
+      }),
+    ]);
+    expect(agent.runMock).toHaveBeenCalledTimes(0);
+  });
+
+  test("captures the Queue cutoff at the final synchronous claim", async () => {
+    const sessionId = crypto.randomUUID();
+    const agent = new MockAgent(sessionId, Promise.resolve({ text: "done", steps: 1 }));
+    const inputs = new SessionInputService(storeManager);
+    const validationEntered = deferred<void>();
+    const releaseValidation = deferred<void>();
+    const beginEntered = deferred<void>();
+    const releaseBegin = deferred<void>();
+    let claimedCutoff: number | undefined;
+    let committedAtBegin: string[] = [];
+    const port = inputServicePort(inputs);
+    const { manager } = createManager({ [sessionId]: agent }, {
+      executionScopeValidator: {
+        validate: async () => {
+          validationEntered.resolve(undefined);
+          await releaseValidation.promise;
+        },
+      },
+      sessionInputService: {
+        ...port,
+        beginQueueExecution: async (input) => {
+          claimedCutoff = input.cutoffAcceptedAt;
+          beginEntered.resolve(undefined);
+          await releaseBegin.promise;
+          const result = await inputs.beginQueueExecution(input);
+          committedAtBegin = result.messages.map((message) => message.id);
+          return result;
+        },
+      },
+    });
+    const acceptedB = await inputs.acceptMessage({
+      sessionId,
+      workspaceRoot,
+      text: "B",
+      clientRequestId: crypto.randomUUID(),
+      source: "user",
+    });
+
+    const starting = manager.tryStartQueuedExecution({ slug: "project", workspaceRoot, sessionId });
+    await validationEntered.promise;
+    const acceptedC = await inputs.acceptMessage({
+      sessionId,
+      workspaceRoot,
+      text: "C",
+      clientRequestId: crypto.randomUUID(),
+      source: "user",
+    });
+    releaseValidation.resolve(undefined);
+    await beginEntered.promise;
+    const acceptedD = await inputs.acceptMessage({
+      sessionId,
+      workspaceRoot,
+      text: "D",
+      clientRequestId: crypto.randomUUID(),
+      source: "user",
+    });
+    expect(claimedCutoff).toBe(acceptedC.message?.acceptedAt);
+    expect(acceptedD.message!.acceptedAt).toBeGreaterThan(claimedCutoff!);
+    releaseBegin.resolve(undefined);
+    const execution = await starting;
+    if (execution === undefined) throw new Error("Expected Queue execution");
+    await execution.promise;
+
+    const state = agent.store.getState();
+    expect(committedAtBegin).toEqual([acceptedB.messageId, acceptedC.messageId]);
+    expect(state.messages.filter((message) => (
+      message.executionId === execution.executionId && message.role === "user"
+    )).map((message) => message.id))
+      .toEqual([acceptedB.messageId, acceptedC.messageId]);
+    expect(state.pendingMessages.map((message) => message.id)).toEqual([acceptedD.messageId]);
+  });
+
+  test("commits a claimed Steer at the next safe point and publishes its execution fence", async () => {
+    const sessionId = crypto.randomUUID();
+    const store = storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" });
+    const enteredRun = deferred<void>();
+    const releaseSafePoint = deferred<void>();
+    const agent: Agent = {
+      store,
+      cwd: workspaceRoot,
+      classifyCommand: () => null,
+      executeCommand: async () => ({ kind: "handled" }),
+      run: async (options) => {
+        enteredRun.resolve(undefined);
+        await releaseSafePoint.promise;
+        await options?.consumeSteers?.();
+        return { text: "done", steps: 1, status: "completed" };
+      },
+      dispose: () => undefined,
+    };
+    const { manager } = createManager({ [sessionId]: agent as unknown as MockAgent }, {
+      getAgent: () => agent,
+    });
+    const inputs = new SessionInputService(storeManager);
 
     const execution = await manager.startCheckedExecution({
       slug: "project",
       workspaceRoot,
-      sessionId: "goal-claim-origin",
-      userMessage: "continue goal",
+      sessionId,
+      input: { kind: "direct", text: "A" },
+    });
+    await enteredRun.promise;
+    expect(manager.listSessionFamilyActivities()).toEqual([{
+      workspaceRoot,
+      rootSessionId: sessionId,
+      activity: "running",
+      steerTargetExecutionId: execution.executionId,
+    }]);
+    const accepted = await inputs.acceptMessage({
+      sessionId,
+      workspaceRoot,
+      text: "B",
+      clientRequestId: crypto.randomUUID(),
+      source: "user",
+    });
+    const steered = await manager.steerQueuedMessage({
+      workspaceRoot,
+      sessionId,
+      messageId: accepted.messageId,
+      expectedRevision: 0,
+      expectedExecutionId: execution.executionId,
+    });
+    expect(steered).toMatchObject({ state: "steering", targetExecutionId: execution.executionId });
+
+    releaseSafePoint.resolve(undefined);
+    await execution.promise;
+
+    const canonical = store.getState().messages.find((message) => message.id === accepted.messageId);
+    expect(canonical).toMatchObject({ executionId: execution.executionId });
+    expect(store.getState().pendingMessages).toEqual([]);
+  });
+
+  test("rolls an unconsumed Steer back to Queue when Stop closes the gate", async () => {
+    const run = deferred<MockAgentResult>();
+    const sessionId = crypto.randomUUID();
+    const agent = new MockAgent(sessionId, run.promise);
+    const { manager } = createManager({ [sessionId]: agent });
+    const inputs = new SessionInputService(storeManager);
+    const execution = await manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId,
+      input: { kind: "direct", text: "A" },
+    });
+    await execution.started;
+    const accepted = await inputs.acceptMessage({
+      sessionId,
+      workspaceRoot,
+      text: "B",
+      clientRequestId: crypto.randomUUID(),
+      source: "user",
+    });
+    await manager.steerQueuedMessage({
+      workspaceRoot,
+      sessionId,
+      messageId: accepted.messageId,
+      expectedRevision: 0,
+      expectedExecutionId: execution.executionId,
+    });
+
+    await manager.stopSessionFamily(workspaceRoot, sessionId);
+    run.resolve({ text: "late", steps: 1 });
+
+    expect(agent.store.getState().pendingMessages).toEqual([
+      expect.objectContaining({
+        id: accepted.messageId,
+        content: "B",
+        state: "queued",
+        revision: 2,
+      }),
+    ]);
+    expect(agent.store.getState().pendingMessages[0]).not.toHaveProperty("targetExecutionId");
+  });
+
+  test("Stop invalidates an in-flight Steer commit before its durable CAS", async () => {
+    const sessionId = crypto.randomUUID();
+    const store = storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" });
+    const enteredRun = deferred<void>();
+    const releaseSafePoint = deferred<void>();
+    const commitEntered = deferred<void>();
+    const releaseCommit = deferred<void>();
+    const inputs = new SessionInputService(storeManager);
+    const port = inputServicePort(inputs);
+    const agent: Agent = {
+      store,
+      cwd: workspaceRoot,
+      classifyCommand: () => null,
+      executeCommand: async () => ({ kind: "handled" }),
+      run: async (options) => {
+        enteredRun.resolve(undefined);
+        await releaseSafePoint.promise;
+        await options?.consumeSteers?.();
+        return { text: "done", steps: 1, status: "completed" };
+      },
+      dispose: () => undefined,
+    };
+    const { manager } = createManager({ [sessionId]: agent as unknown as MockAgent }, {
+      getAgent: () => agent,
+      sessionInputService: {
+        ...port,
+        commitSteers: async (input) => {
+          commitEntered.resolve(undefined);
+          await releaseCommit.promise;
+          return await inputs.commitSteers(input);
+        },
+      },
+    });
+    const execution = await manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId,
+      input: { kind: "direct", text: "A" },
+    });
+    await enteredRun.promise;
+    const accepted = await inputs.acceptMessage({
+      sessionId,
+      workspaceRoot,
+      text: "B",
+      clientRequestId: crypto.randomUUID(),
+      source: "user",
+    });
+    await manager.steerQueuedMessage({
+      workspaceRoot,
+      sessionId,
+      messageId: accepted.messageId,
+      expectedRevision: 0,
+      expectedExecutionId: execution.executionId,
+    });
+    releaseSafePoint.resolve(undefined);
+    await commitEntered.promise;
+
+    const stopping = manager.stopSessionFamily(workspaceRoot, sessionId);
+    releaseCommit.resolve(undefined);
+    await Promise.all([execution.promise, stopping]);
+
+    expect(store.getState().messages.some((message) => message.id === accepted.messageId)).toBe(false);
+    expect(store.getState().pendingMessages).toEqual([
+      expect.objectContaining({ id: accepted.messageId, state: "queued" }),
+    ]);
+    expect(store.getState().pendingMessages[0]).not.toHaveProperty("targetExecutionId");
+  });
+
+  test("preserves the managed Goal claim execution origin", async () => {
+    const run = deferred<MockAgentResult>();
+    const sessionId = crypto.randomUUID();
+    const agent = new MockAgent(sessionId, run.promise);
+    const { manager } = createManager({ [sessionId]: agent });
+
+    const execution = await manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId,
+      input: { kind: "direct", text: "continue goal" },
       origin: "goal_claim",
     });
 
@@ -562,67 +1148,46 @@ describe("SessionExecutionManager", () => {
     await execution.promise;
   });
 
-  test("durably flushes a caller-owned execution start before running the agent", async () => {
-    const sessionId = "durable-execution-start";
-    const flush = deferred<void>();
-    const agent = new MockAgent(sessionId, Promise.resolve({ text: "done", steps: 1 }));
-    const flushedSessionIds: string[] = [];
-    const { manager } = createManager({ [sessionId]: agent }, {
-      flushSessionStore: async (flushedSessionId) => {
-        flushedSessionIds.push(flushedSessionId);
-        await flush.promise;
-      },
-    });
-
-    const execution = await manager.startCheckedExecution({
-      slug: "project",
-      workspaceRoot,
-      sessionId,
-      userMessage: "continue durable Loop turn",
-      executionId: "loop-attempt-1",
-    });
-    await waitFor(() => flushedSessionIds.length > 0);
-
-    expect(flushedSessionIds).toEqual([sessionId]);
-    expect(agent.store.getState().events.some((event) => (
-      event.payload.type === "execution-start"
-      && (event.payload as { executionId?: string }).executionId === "loop-attempt-1"
-    ))).toBe(true);
-    expect(agent.runMock).not.toHaveBeenCalled();
-
-    flush.resolve(undefined);
-    await execution.promise;
-
-    expect(agent.runMock).toHaveBeenCalledTimes(1);
-  });
-
-  test("does not run the agent when a caller-owned execution start cannot be flushed", async () => {
-    const sessionId = "failed-durable-execution-start";
+  test("a Goal claim yields when Queue input arrives during async validation", async () => {
+    const sessionId = crypto.randomUUID();
     const agent = new MockAgent(sessionId, Promise.resolve({ text: "must not run", steps: 1 }));
+    const validationEntered = deferred<void>();
+    const releaseValidation = deferred<void>();
     const { manager } = createManager({ [sessionId]: agent }, {
-      flushSessionStore: async () => {
-        throw new Error("durable execution-start flush failed");
+      executionScopeValidator: {
+        validate: async () => {
+          validationEntered.resolve(undefined);
+          await releaseValidation.promise;
+        },
       },
     });
-
-    const execution = await manager.startCheckedExecution({
+    const inputs = new SessionInputService(storeManager);
+    const starting = manager.startCheckedExecution({
       slug: "project",
       workspaceRoot,
       sessionId,
-      userMessage: "continue durable Loop turn",
-      executionId: "loop-attempt-2",
+      input: { kind: "direct", text: "continue goal" },
+      origin: "goal_claim",
     });
-    await expect(execution.promise).rejects.toThrow("durable execution-start flush failed");
+    await validationEntered.promise;
+    await inputs.acceptMessage({
+      sessionId,
+      workspaceRoot,
+      text: "user wins",
+      clientRequestId: crypto.randomUUID(),
+      source: "user",
+    });
+    releaseValidation.resolve(undefined);
 
-    expect(agent.runMock).not.toHaveBeenCalled();
-    expect(agent.store.getState().isRunning).toBe(false);
-    expect(agent.store.getState().events.at(-1)).toMatchObject({
-      payload: { type: "execution-end", status: "failed", error: "durable execution-start flush failed" },
+    await expect(starting).rejects.toMatchObject({
+      name: "SessionInputConflictError",
+      reason: "state",
     });
+    expect(agent.runMock).toHaveBeenCalledTimes(0);
   });
 
   test("keeps Todo query-loop continuations inside one durable execution", async () => {
-    const sessionId = "todo-continuation-single-execution";
+    const sessionId = crypto.randomUUID();
     const store = storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" });
     store.setState({
       todos: [{ id: "todo-1", content: "finish the task", status: "pending" }],
@@ -694,7 +1259,7 @@ describe("SessionExecutionManager", () => {
         slug: "project",
         workspaceRoot,
         sessionId,
-        userMessage: "start the Todo",
+        input: { kind: "direct", text: "start the Todo" },
       });
       await execution.promise;
 
@@ -718,7 +1283,7 @@ describe("SessionExecutionManager", () => {
   });
 
   test("rebuilds the Agent and continues the same Session after cwd changes", async () => {
-    const sessionId = "cwd-transition-session";
+    const sessionId = crypto.randomUUID();
     const first = new MockAgent(sessionId, Promise.resolve({
       text: "",
       steps: 1,
@@ -731,12 +1296,13 @@ describe("SessionExecutionManager", () => {
       onReleaseAgent: () => { released = true; },
     });
 
-    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId, userMessage: "switch and continue" });
+    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId, input: { kind: "direct", text: "switch and continue" } });
     await execution.promise;
 
-    expect(first.runMock).toHaveBeenCalledWith("switch and continue", expect.anything());
+    expect(first.runMock).toHaveBeenCalledWith(expect.anything());
     expect(sessionAgentManager.releaseAgent).toHaveBeenCalledWith(workspaceRoot, sessionId);
-    expect(second.runMock).toHaveBeenCalledWith("", expect.anything());
+    expect(second.runMock).toHaveBeenCalledWith(expect.anything());
+    expect(getUserMessageTexts(second.store.getState())).toEqual(["switch and continue"]);
     expect(first.store.getState().executions).toHaveLength(1);
     expect(first.store.getState().executions[0]).toMatchObject({ id: execution.executionId, status: "completed" });
   });
@@ -758,7 +1324,7 @@ describe("SessionExecutionManager", () => {
         slug: "project",
         workspaceRoot,
         sessionId,
-        userMessage: status,
+        input: { kind: "direct", text: status },
       });
       await execution.promise;
       expect(agent.store.getState().executions).toEqual([
@@ -778,6 +1344,8 @@ describe("SessionExecutionManager", () => {
     const agent = {
       store,
       cwd: workspaceRoot,
+      classifyCommand: mock((_input: string) => null),
+      executeCommand: mock(async (_command: AgentCommand): Promise<AgentCommandResult> => ({ kind: "handled" })),
       run: mock(async (): Promise<AgentResult> => {
         invocation += 1;
         if (invocation === 1) {
@@ -791,7 +1359,7 @@ describe("SessionExecutionManager", () => {
     const { manager } = createManager({ [sessionId]: agent as MockAgent });
 
     const waiting = await manager.startCheckedExecution({
-      slug: "project", workspaceRoot, sessionId, userMessage: "ask",
+      slug: "project", workspaceRoot, sessionId, input: { kind: "direct", text: "ask" },
     });
     await waiting.promise;
     const resumed = await manager.startSessionToolBatchExecution({
@@ -807,50 +1375,43 @@ describe("SessionExecutionManager", () => {
   });
 
   test("checked execution forwards maxSteps to agent.run", async () => {
-    const agent = new MockAgent("limited-session", Promise.resolve({ text: "done", steps: 1 }));
-    const { manager } = createManager({ "limited-session": agent });
+    const sessionId = crypto.randomUUID();
+    const agent = new MockAgent(sessionId, Promise.resolve({ text: "done", steps: 1 }));
+    const { manager } = createManager({ [sessionId]: agent });
 
-    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "limited-session", userMessage: "work", maxSteps: 1 });
+    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId, input: { kind: "direct", text: "work" }, maxSteps: 1 });
     await execution.promise;
 
-    expect(agent.runMock).toHaveBeenCalledWith("work", expect.objectContaining({ maxSteps: 1 }));
+    expect(agent.runMock).toHaveBeenCalledWith(expect.objectContaining({ maxSteps: 1 }));
   });
 
   test("checked execution forwards extraTools to agent.run", async () => {
-    const agent = new MockAgent("extra-tools-session", Promise.resolve({ text: "done", steps: 1 }));
-    const { manager } = createManager({ "extra-tools-session": agent });
+    const sessionId = crypto.randomUUID();
+    const agent = new MockAgent(sessionId, Promise.resolve({ text: "done", steps: 1 }));
+    const { manager } = createManager({ [sessionId]: agent });
 
     const execution = await manager.startCheckedExecution({
       slug: "project",
       workspaceRoot,
-      sessionId: "extra-tools-session",
-      userMessage: "work",
+      sessionId,
+      input: { kind: "direct", text: "work" },
       extraTools: ["github_get_pull_request"],
     });
     await execution.promise;
 
-    expect(agent.runMock).toHaveBeenCalledWith("work", expect.objectContaining({ extraTools: ["github_get_pull_request"] }));
+    expect(agent.runMock).toHaveBeenCalledWith(expect.objectContaining({ extraTools: ["github_get_pull_request"] }));
   });
 
   test("checked execution uses the persisted Session agent identity", async () => {
-    const agent = new MockAgent("engineer-session", Promise.resolve({ text: "done", steps: 1 }));
-    const { manager, sessionAgentManager } = createManager({ "engineer-session": agent });
+    const sessionId = crypto.randomUUID();
+    const agent = new MockAgent(sessionId, Promise.resolve({ text: "done", steps: 1 }));
+    const { manager, sessionAgentManager } = createManager({ [sessionId]: agent });
 
-    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "engineer-session", userMessage: "work" });
+    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId, input: { kind: "direct", text: "work" } });
     await execution.promise;
 
     expect(execution.agentName).toBe("engineer");
-    expect(sessionAgentManager.getOrCreate).toHaveBeenCalledWith(workspaceRoot, "engineer-session");
-  });
-
-  test("enforces concurrent session limit with ConcurrentSessionLimitError", async () => {
-    const agentOne = new MockAgent("one", new Promise(() => undefined));
-    const agentTwo = new MockAgent("two", new Promise(() => undefined));
-    const { manager } = createManager({ one: agentOne, two: agentTwo }, { maxConcurrentSessions: 1 });
-
-    await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "one", userMessage: "one" });
-
-    await expect(manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "two", userMessage: "two" })).rejects.toThrow(ConcurrentSessionLimitError);
+    expect(sessionAgentManager.getOrCreate).toHaveBeenCalledWith(workspaceRoot, sessionId);
   });
 
   test("atomically rejects duplicate starts while agent creation is pending", async () => {
@@ -863,27 +1424,29 @@ describe("SessionExecutionManager", () => {
         getOrCreate: mock(async () => await new Promise<Agent>(() => undefined)),
       } as unknown as SessionAgentManager,
       ...storeCallbacks(storeManager),
+      sessionInputService: new SessionInputService(storeManager),
       trackSession: mock(() => undefined),
       untrackSession: mock(() => undefined),
       executionScopeValidator: allowExecutionScope,
       logger: silentLogger,
     });
 
-    await pendingManager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId, userMessage: "one" });
+    await pendingManager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId, input: { kind: "direct", text: "one" } });
 
-    await expect(pendingManager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId, userMessage: "two" })).rejects.toThrow(SessionFamilyActiveError);
+    await expect(pendingManager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId, input: { kind: "direct", text: "two" } })).rejects.toThrow(SessionFamilyActiveError);
   });
 
   test("family stop cancels execution and ignores late tool result after current execution is settled", async () => {
     const run = deferred<MockAgentResult>();
-    const agent = new MockAgent("stale", run.promise, workspaceRoot);
-    const { manager } = createManager({ stale: agent });
+    const sessionId = crypto.randomUUID();
+    const agent = new MockAgent(sessionId, run.promise, workspaceRoot);
+    const { manager } = createManager({ [sessionId]: agent });
 
-    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "stale", userMessage: "work" });
+    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId, input: { kind: "direct", text: "work" } });
     await Promise.resolve();
     agent.store.getState().append({ type: "tool-input-start", toolCallId: "late-tool", toolName: "bash" });
     agent.store.getState().append({ type: "tool-call", toolCallId: "late-tool", toolName: "bash", input: {} });
-    const stopping = manager.stopSessionFamily(workspaceRoot, "stale");
+    const stopping = manager.stopSessionFamily(workspaceRoot, sessionId);
     run.resolve({ text: "done", steps: 1 });
     await execution.promise;
     await stopping;
@@ -898,24 +1461,27 @@ describe("SessionExecutionManager", () => {
 
   test("session runs do not inject legacy deferred permission or question callbacks", async () => {
     const run = deferred<MockAgentResult>();
-    let runOptions: AgentRunOptions | AbortSignal | undefined;
+    const sessionId = crypto.randomUUID();
+    let runOptions: AgentRunOptions | undefined;
     const agent = {
-      store: storeManager.create("deferred-cancel", workspaceRoot, { agentName: "engineer" }),
-      run: mock(async (_message: string, options?: AgentRunOptions | AbortSignal): Promise<AgentResult> => {
+      store: storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" }),
+      classifyCommand: mock((_input: string) => null),
+      executeCommand: mock(async (_command: AgentCommand): Promise<AgentCommandResult> => ({ kind: "handled" })),
+      run: mock(async (options?: AgentRunOptions): Promise<AgentResult> => {
         runOptions = options;
-        const result = await withAbort(run.promise, options instanceof AbortSignal ? options : options?.abort);
+        const result = await withAbort(run.promise, options?.abort);
         return { ...result, status: result.status ?? "completed" };
       }),
       dispose: mock(() => undefined),
     } as unknown as MockAgent;
-    const { manager } = createManager({ "deferred-cancel": agent });
+    const { manager } = createManager({ [sessionId]: agent });
 
-    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "deferred-cancel", userMessage: "work" });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    if (!runOptions || runOptions instanceof AbortSignal) throw new Error("Expected AgentRunOptions");
+    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId, input: { kind: "direct", text: "work" } });
+    await waitFor(() => runOptions !== undefined);
+    if (!runOptions) throw new Error("Expected AgentRunOptions");
     expect(runOptions.confirmPermission).toBeUndefined();
     expect(runOptions.askUser).toBeUndefined();
-    const stopping = manager.stopSessionFamily(workspaceRoot, "deferred-cancel");
+    const stopping = manager.stopSessionFamily(workspaceRoot, sessionId);
     run.resolve({ text: "done", steps: 1 });
     await execution.promise;
     await stopping;
@@ -936,13 +1502,14 @@ describe("SessionExecutionManager", () => {
     const managerB = new SessionExecutionManager({
       sessionAgentManager,
       ...storeCallbacks(storeManager),
+      sessionInputService: new SessionInputService(storeManager),
       trackSession: mock(() => undefined),
       untrackSession: mock(() => undefined),
       executionScopeValidator: allowExecutionScope,
       logger: silentLogger,
     });
-    const executionA = await manager.startCheckedExecution({ slug: "project-a", workspaceRoot, sessionId, userMessage: "a" });
-    const executionB = await managerB.startCheckedExecution({ slug: "project-b", workspaceRoot: otherWorkspaceRoot, sessionId, userMessage: "b" });
+    const executionA = await manager.startCheckedExecution({ slug: "project-a", workspaceRoot, sessionId, input: { kind: "direct", text: "a" } });
+    const executionB = await managerB.startCheckedExecution({ slug: "project-b", workspaceRoot: otherWorkspaceRoot, sessionId, input: { kind: "direct", text: "b" } });
 
     const stopping = manager.stopSessionFamily(workspaceRoot, sessionId);
     runA.resolve({ text: "done", steps: 1 });
@@ -957,20 +1524,22 @@ describe("SessionExecutionManager", () => {
   });
 
   test("stopSessionFamily cancels running executions and waits for quiescence", async () => {
-    const agent = new MockAgent("abort", new Promise(() => undefined));
-    const { manager } = createManager({ abort: agent });
+    const sessionId = crypto.randomUUID();
+    const agent = new MockAgent(sessionId, new Promise(() => undefined));
+    const { manager } = createManager({ [sessionId]: agent });
 
-    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "abort", userMessage: "stop" });
-    const stopping = manager.stopSessionFamily(workspaceRoot, "abort");
+    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId, input: { kind: "direct", text: "stop" } });
+    const stopping = manager.stopSessionFamily(workspaceRoot, sessionId);
     await execution.promise;
     await stopping;
     expect(execution.abortController.signal.aborted).toBe(true);
-    expect(manager.getSessionFamilyActivity(workspaceRoot, "abort")).toBe("idle");
+    expect(manager.getSessionFamilyActivity(workspaceRoot, sessionId)).toBe("idle");
 
-    const agentTwo = new MockAgent("abort-wait", new Promise(() => undefined));
-    const second = createManager({ "abort-wait": agentTwo });
-    const secondExecution = await second.manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "abort-wait", userMessage: "stop" });
-    await second.manager.stopSessionFamily(workspaceRoot, "abort-wait");
+    const secondSessionId = crypto.randomUUID();
+    const agentTwo = new MockAgent(secondSessionId, new Promise(() => undefined));
+    const second = createManager({ [secondSessionId]: agentTwo });
+    const secondExecution = await second.manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: secondSessionId, input: { kind: "direct", text: "stop" } });
+    await second.manager.stopSessionFamily(workspaceRoot, secondSessionId);
     await secondExecution.promise;
     expect(secondExecution.abortController.signal.aborted).toBe(true);
   });
@@ -1014,7 +1583,7 @@ describe("SessionExecutionManager", () => {
       slug: "project",
       workspaceRoot,
       sessionId: rootId,
-      userMessage: "must not start",
+      input: { kind: "direct", text: "must not start" },
     })).rejects.toThrow(SessionFamilyStopInProgressError);
     expect(() => manager.acquireSessionCwdTransition(workspaceRoot, rootId)).toThrow(SessionFamilyStopInProgressError);
     await expect(manager.startChildExecution(workspaceRoot, {
@@ -1037,28 +1606,31 @@ describe("SessionExecutionManager", () => {
   });
 
   test("abortAll cancels every active execution", async () => {
-    const firstAgent = new MockAgent("abort-all-one", new Promise(() => undefined));
-    const secondAgent = new MockAgent("abort-all-two", new Promise(() => undefined));
-    const { manager } = createManager({ "abort-all-one": firstAgent, "abort-all-two": secondAgent });
-    const first = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "abort-all-one", userMessage: "one" });
-    const second = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "abort-all-two", userMessage: "two" });
+    const firstSessionId = crypto.randomUUID();
+    const secondSessionId = crypto.randomUUID();
+    const firstAgent = new MockAgent(firstSessionId, new Promise(() => undefined));
+    const secondAgent = new MockAgent(secondSessionId, new Promise(() => undefined));
+    const { manager } = createManager({ [firstSessionId]: firstAgent, [secondSessionId]: secondAgent });
+    const first = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: firstSessionId, input: { kind: "direct", text: "one" } });
+    const second = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: secondSessionId, input: { kind: "direct", text: "two" } });
 
     await manager.abortAll();
 
     expect(first.abortController.signal.aborted).toBe(true);
     expect(second.abortController.signal.aborted).toBe(true);
-    expect(manager.getSessionFamilyActivity(workspaceRoot, "abort-all-one")).toBe("idle");
-    expect(manager.getSessionFamilyActivity(workspaceRoot, "abort-all-two")).toBe("idle");
+    expect(manager.getSessionFamilyActivity(workspaceRoot, firstSessionId)).toBe("idle");
+    expect(manager.getSessionFamilyActivity(workspaceRoot, secondSessionId)).toBe("idle");
   });
 
   test("checked execution omits legacy permission and question service callbacks", async () => {
-    const agent = new MockAgent("callbacks", Promise.resolve({ text: "done", steps: 1 }));
-    const { manager } = createManager({ callbacks: agent });
+    const sessionId = crypto.randomUUID();
+    const agent = new MockAgent(sessionId, Promise.resolve({ text: "done", steps: 1 }));
+    const { manager } = createManager({ [sessionId]: agent });
 
-    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "callbacks", userMessage: "work" });
+    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId, input: { kind: "direct", text: "work" } });
     await execution.promise;
-    const options = agent.runMock.mock.calls[0]?.[1];
-    if (!options || options instanceof AbortSignal) throw new Error("Expected AgentRunOptions");
+    const options = agent.runMock.mock.calls[0]?.[0];
+    if (!options) throw new Error("Expected AgentRunOptions");
     expect(options.confirmPermission).toBeUndefined();
     expect(options.askUser).toBeUndefined();
   });
@@ -1098,7 +1670,7 @@ describe("SessionExecutionManager", () => {
     expect(handle.store.getState().agentName).toBe("explore");
     expect(parentStore.getState().events
       .filter((event) => event.payload.type === "tool-child-session-link")
-      .map((event) => (event.payload as { link: ToolChildSessionLink }).link.status)).toEqual(["linked", "running", "completed"]);
+      .map((event) => (event.payload as { link: ToolChildSessionLink }).link.status)).toEqual(["running", "completed"]);
     expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({
       parentSessionId: parentId,
       parentToolCallId: "tool-call",
@@ -1242,7 +1814,7 @@ describe("SessionExecutionManager", () => {
       background: false,
       parentAbort: undefined,
     })).rejects.toMatchObject({ name: "SessionToolBatchActiveError", hitlIds: ["raced-hitl"] });
-    expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({ status: "failed" });
+    expect(parentStore.getState().childSessionLinks).toEqual([]);
   });
 
   test("applies Goal phase admission to both new delegation and stale child resume", async () => {
@@ -1416,14 +1988,18 @@ describe("SessionExecutionManager", () => {
     expect(childPrompt).not.toContain("## Active Workflow");
   });
 
-  test("link write failure prevents child creation/start and releases reserved slot", async () => {
+  test("running-link write failure prevents child run and releases reserved slot", async () => {
     const parentId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
     parentStore.setState({
       append: mock(() => { throw new Error("link write failed"); }),
     } as Partial<SessionStoreState>);
     const factory = makeFactory();
-    const { manager, sessionAgentManager } = createManager({}, { factory, maxConcurrentSessions: 1 });
+    let childRunStarted = false;
+    const { manager, sessionAgentManager } = createManager({}, {
+      factory,
+      childRunStarted: () => { childRunStarted = true; },
+    });
 
     await expect(manager.startChildExecution(workspaceRoot, {
       parentStore,
@@ -1438,7 +2014,8 @@ describe("SessionExecutionManager", () => {
       parentAbort: undefined,
     })).rejects.toThrow("link write failed");
 
-    expect(sessionAgentManager.createChildAgent).not.toHaveBeenCalled();
+    expect(sessionAgentManager.createChildAgent).toHaveBeenCalledTimes(1);
+    expect(childRunStarted).toBe(false);
   });
 
   test("depth limit is checked before child session creation", async () => {
@@ -1478,17 +2055,16 @@ describe("SessionExecutionManager", () => {
     expect(parentStore.getState().childSessionLinks).toEqual([]);
   });
 
-  test("startChildExecution appends link before child run and bridges child store before model execution", async () => {
+  test("startChildExecution appends link and canonical prompt before model execution", async () => {
     const parentId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
     const factory = makeFactory();
-    const received: unknown[] = [];
     let linkStatusesAtRunStart: string[] = [];
     let promptsAtRunStart: string[] = [];
-    let childRunMessage: string | undefined;
+    let childCanonicalMessage: string | undefined;
     const { manager } = createManager({}, {
       factory,
-      childRunMessage: (message) => { childRunMessage = message; },
+      childCanonicalMessage: (message) => { childCanonicalMessage = message; },
       childRunStarted: () => {
         linkStatusesAtRunStart = parentStore.getState().events
           .filter((event) => event.payload.type === "tool-child-session-link")
@@ -1511,19 +2087,14 @@ describe("SessionExecutionManager", () => {
       background: false,
       parentAbort: undefined,
     });
-    const unsubscribe = manager.subscribe({ slug: "project", workspaceRoot, sessionId: handle.sessionId, onEvent: (event) => received.push(event) });
     await handle.result;
-    unsubscribe();
 
-    expect(linkStatusesAtRunStart).toEqual(["linked", "running"]);
+    expect(linkStatusesAtRunStart).toEqual(["running"]);
     expect(promptsAtRunStart).toEqual(["inspect"]);
-    expect(childRunMessage).toBe("");
-    expect(received.some((event) => "payload" in (event as { payload?: unknown }) && (event as { payload: { type: unknown } }).payload.type === "user-message")).toBe(true);
-    expect(received.some((event) => "payload" in (event as { payload?: unknown }) && (event as { payload: { type: unknown } }).payload.type === "execution-start")).toBe(true);
-    expect(received.some((event) => "payload" in (event as { payload?: unknown }) && (event as { payload: { type: unknown } }).payload.type === "text-delta")).toBe(true);
+    expect(childCanonicalMessage).toBe("inspect");
   });
 
-  test("startChildExecution persists child identity and prompt before exposing its parent link or running it", async () => {
+  test("startChildExecution persists child identity before exposing its parent link or running it", async () => {
     const parentId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
     const flush = deferred<void>();
@@ -1555,7 +2126,7 @@ describe("SessionExecutionManager", () => {
     });
     await waitFor(() => flushedChildSessionId !== undefined);
 
-    expect(promptsAtFlush).toEqual(["inspect"]);
+    expect(promptsAtFlush).toEqual([]);
     expect(parentStore.getState().childSessionLinks).toEqual([]);
     expect(sessionAgentManager.createChildAgent).not.toHaveBeenCalled();
     expect(childRunStarted).toBe(false);
@@ -1572,25 +2143,19 @@ describe("SessionExecutionManager", () => {
     expect(childRunStarted).toBe(true);
   });
 
-  test("sync child execution exposes live parent link and bridged child events before resolving", async () => {
+  test("sync child execution exposes live parent link and canonical prompt before resolving", async () => {
     const parentId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
     const childRun = deferred<MockAgentResult>();
-    const received: unknown[] = [];
-    let childSessionId = "";
     let linkWhileRunning: ToolChildSessionLink | undefined;
     let resultResolved = false;
-    let childRunMessage: string | undefined;
+    let childCanonicalMessage: string | undefined;
     const { manager } = createManager({}, {
       factory: makeFactory(),
       childRun: childRun.promise,
-      childRunMessage: (message) => { childRunMessage = message; },
+      childCanonicalMessage: (message) => { childCanonicalMessage = message; },
       childRunStarted: () => {
         linkWhileRunning = parentStore.getState().childSessionLinks.at(-1);
-        childSessionId = linkWhileRunning?.childSessionId ?? "";
-        if (childSessionId.length > 0) {
-          manager.subscribe({ slug: "project", workspaceRoot, sessionId: childSessionId, onEvent: (event) => received.push(event) });
-        }
       },
     });
 
@@ -1617,11 +2182,9 @@ describe("SessionExecutionManager", () => {
       status: "running",
       background: false,
     });
-    expect(childRunMessage).toBe("");
+    expect(childCanonicalMessage).toBe("inspect");
     expect(getUserMessageTexts(handle.store.getState())).toEqual(["inspect"]);
     expect(handle.store.getState().messages.some((message) => message.role === "assistant")).toBe(false);
-    expect(received.some((event) => "payload" in (event as { payload?: unknown }) && (event as { payload: { type: unknown } }).payload.type === "user-message")).toBe(true);
-    expect(received.some((event) => "payload" in (event as { payload?: unknown }) && (event as { payload: { type: unknown } }).payload.type === "execution-start")).toBe(true);
 
     childRun.resolve({ text: "live child done", steps: 1 });
     const result = await handle.result;
@@ -1632,7 +2195,6 @@ describe("SessionExecutionManager", () => {
       childSessionId: handle.sessionId,
       status: "completed",
     });
-    expect(received.some((event) => "payload" in (event as { payload?: unknown }) && (event as { payload: { type: unknown } }).payload.type === "text-delta")).toBe(true);
   });
 
   test("child HITL pause remains non-terminal and emits no failed reminder", async () => {
@@ -1803,44 +2365,6 @@ describe("SessionExecutionManager", () => {
     expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({ status: "cancelled" });
   });
 
-  test("subscribes session events without exposing stores", async () => {
-    const run = deferred<MockAgentResult>();
-    const agent = new MockAgent("events", run.promise);
-    const { manager } = createManager({ events: agent });
-    const received: unknown[] = [];
-    const unsubscribe = manager.subscribe({ slug: "project", workspaceRoot, sessionId: "events", onEvent: (event) => received.push(event) });
-
-    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "events", userMessage: "work" });
-    await Promise.resolve();
-    agent.store.getState().append({ type: "system-notice", message: "hello" });
-
-    expect(received.filter((event) => {
-      const candidate = event as { type?: unknown; payload?: { type?: unknown } };
-      return candidate.type === "event" && candidate.payload?.type === "system-notice";
-    })).toMatchObject([{ type: "event", slug: "project", sessionId: "events", payload: { type: "system-notice" } }]);
-    unsubscribe();
-    run.resolve({ text: "done", steps: 1 });
-    await execution.promise;
-  });
-
-  test("subscribes child session events when the child store attaches after subscription", async () => {
-    const child = new MockAgent("child-events", Promise.resolve({ text: "done", steps: 1 }));
-    const { manager } = createManager({ "child-events": child });
-    const received: unknown[] = [];
-
-    const unsubscribe = manager.subscribe({ slug: "project", workspaceRoot, sessionId: "child-events", onEvent: (event) => received.push(event) });
-    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: "child-events", userMessage: "work" });
-    await Promise.resolve();
-    child.store.getState().append({ type: "system-notice", message: "child" });
-
-    expect(received.filter((event) => {
-      const candidate = event as { type?: unknown; payload?: { type?: unknown } };
-      return candidate.type === "event" && candidate.payload?.type === "system-notice";
-    })).toMatchObject([{ type: "event", slug: "project", sessionId: "child-events", payload: { type: "system-notice" } }]);
-    unsubscribe();
-    await execution.promise;
-  });
-
   test("root delete removes root file and descendant directory", async () => {
     const rootId = crypto.randomUUID();
     const childId = crypto.randomUUID();
@@ -1881,7 +2405,7 @@ describe("SessionExecutionManager", () => {
       slug: "project",
       workspaceRoot,
       sessionId: rootId,
-      userMessage: "race deletion",
+      input: { kind: "direct", text: "race deletion" },
     })).rejects.toThrow(SessionDeleteInProgressError);
     await expect(manager.startChildExecution(workspaceRoot, {
       parentStore: rootStore,
@@ -1894,9 +2418,49 @@ describe("SessionExecutionManager", () => {
       skills: [],
     })).rejects.toThrow(SessionDeleteInProgressError);
     expect(() => manager.acquireSessionCwdTransition(workspaceRoot, rootId)).toThrow(SessionDeleteInProgressError);
+    await expect(manager.runSessionInputMutation({
+      workspaceRoot,
+      rootSessionId: rootId,
+    }, async () => undefined)).rejects.toThrow(SessionDeleteInProgressError);
 
     releasePreflight.resolve(undefined);
     await deletion;
+  });
+
+  test("input mutation admission blocks deletion and remains visible to workspace close", async () => {
+    const rootId = crypto.randomUUID();
+    storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
+    await storeManager.flushSession(rootId, workspaceRoot);
+    const mutationEntered = deferred<void>();
+    const releaseMutation = deferred<void>();
+    const { manager } = createManager({});
+
+    const mutation = manager.runSessionInputMutation({
+      workspaceRoot,
+      rootSessionId: rootId,
+    }, async () => {
+      mutationEntered.resolve(undefined);
+      await releaseMutation.promise;
+    });
+    await mutationEntered.promise;
+
+    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("idle");
+    expect(manager.listPendingSessionInputMutations(workspaceRoot)).toEqual([{ rootSessionId: rootId }]);
+    await expect(manager.deleteSession(workspaceRoot, rootId)).rejects.toMatchObject({
+      name: "SessionDeleteConflictError",
+      sessionIds: [rootId],
+    });
+
+    const closeLease = manager.acquireWorkspaceClose(workspaceRoot);
+    await expect(manager.runSessionInputMutation({
+      workspaceRoot,
+      rootSessionId: crypto.randomUUID(),
+    }, async () => undefined)).rejects.toBeInstanceOf(SessionWorkspaceClosingError);
+    closeLease.release();
+
+    releaseMutation.resolve(undefined);
+    await mutation;
+    expect(manager.listPendingSessionInputMutations(workspaceRoot)).toEqual([]);
   });
 
   test("delete performs lifecycle preparation after an in-flight execution quiesces", async () => {
@@ -1908,9 +2472,11 @@ describe("SessionExecutionManager", () => {
     const agent: Agent = {
       store,
       cwd: store.getState().cwd,
-      run: mock(async (_message: string, options?: AgentRunOptions | AbortSignal) => {
+      classifyCommand: mock((_input: string) => null),
+      executeCommand: mock(async (_command: AgentCommand): Promise<AgentCommandResult> => ({ kind: "handled" })),
+      run: mock(async (options?: AgentRunOptions) => {
         runStarted = true;
-        const signal = options instanceof AbortSignal ? options : options?.abort;
+        const signal = options?.abort;
         return await new Promise<AgentResult>((_resolve, reject) => {
           signal?.addEventListener("abort", () => {
             ownerCreatedDuringAbort = true;
@@ -1939,7 +2505,7 @@ describe("SessionExecutionManager", () => {
         },
       },
     });
-    await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: rootId, userMessage: "create owner while stopping" });
+    await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: rootId, input: { kind: "direct", text: "create owner while stopping" } });
     await waitFor(() => runStarted);
 
     await expect(manager.deleteSession(workspaceRoot, rootId)).rejects.toMatchObject({
@@ -2061,17 +2627,21 @@ describe("SessionExecutionManager", () => {
     const childId = crypto.randomUUID();
     await writeSessionFile({ sessionId: rootId });
     await writeSessionFile({ sessionId: childId, rootSessionId: rootId, parentSessionId: rootId });
+    const childRun = mock(async (): Promise<AgentResult> => await new Promise(() => undefined));
     const childAgent = {
       store: storeManager.create(childId, workspaceRoot, {
         rootSessionId: rootId,
         parentSessionId: rootId, agentName: "engineer"
       }),
       cwd: workspaceRoot,
-      run: mock(async (): Promise<AgentResult> => await new Promise(() => undefined)),
+      classifyCommand: mock((_input: string) => null),
+      executeCommand: mock(async (_command: AgentCommand): Promise<AgentCommandResult> => ({ kind: "handled" })),
+      run: childRun,
       dispose: mock(() => undefined),
     } as unknown as MockAgent;
     const { manager, sessionAgentManager } = createManager({ [childId]: childAgent });
-    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: childId, userMessage: "child" });
+    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: childId, input: { kind: "direct", text: "child" } });
+    await waitFor(() => childRun.mock.calls.length === 1);
     const originalSetTimeout = globalThis.setTimeout;
     globalThis.setTimeout = ((handler: Parameters<typeof setTimeout>[0], timeout?: number, ...args: unknown[]) => {
       if (timeout === 10000 && typeof handler === "function") {
@@ -2179,7 +2749,7 @@ describe("SessionExecutionManager", () => {
         run: async (_input, action) => await action(context),
       },
       listSessionFamilyToolBatchHitlIds: async () => [],
-      childRunMessage: (value) => { messages.push(value); },
+      childCanonicalMessage: (value) => { messages.push(value); },
     });
 
     const first = await manager.startChildExecution(workspaceRoot, {
@@ -2370,7 +2940,7 @@ describe("SessionExecutionManager", () => {
       slug: "project",
       workspaceRoot,
       sessionId,
-      userMessage: "finish the loop run",
+      input: { kind: "direct", text: "finish the loop run" },
     });
 
     expect(() => manager.acquireIdleSessionCwdTransition(workspaceRoot, sessionId))
@@ -2384,7 +2954,7 @@ describe("SessionExecutionManager", () => {
         slug: "project",
         workspaceRoot,
         sessionId,
-        userMessage: "must wait for cleanup",
+        input: { kind: "direct", text: "must wait for cleanup" },
       })).rejects.toThrow(SessionCwdTransitionInProgressError);
     } finally {
       releaseTransition();
@@ -2394,10 +2964,32 @@ describe("SessionExecutionManager", () => {
       slug: "project",
       workspaceRoot,
       sessionId,
-      userMessage: "cleanup finished",
+      input: { kind: "direct", text: "cleanup finished" },
     });
     await afterCleanup.promise;
     expect(manager.getSessionFamilyActivity(workspaceRoot, sessionId)).toBe("idle");
+  });
+
+  test("idle cwd transition leases reject an active root command", async () => {
+    const sessionId = crypto.randomUUID();
+    const commandGate = deferred<void>();
+    storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" });
+    const { manager } = createManager({});
+    const command = manager.runSessionCommand({
+      workspaceRoot,
+      sessionId,
+      clientRequestId: "command-during-cwd-transition",
+    }, async (signal) => {
+      await withAbort(commandGate.promise, signal);
+    });
+
+    expect(() => manager.acquireIdleSessionCwdTransition(workspaceRoot, sessionId))
+      .toThrow(SessionCwdTransitionConflictError);
+
+    commandGate.resolve(undefined);
+    await command;
+    const release = manager.acquireIdleSessionCwdTransition(workspaceRoot, sessionId);
+    release();
   });
 
   test("family cwd transition aggregation releases earlier roots when a later root is busy", async () => {
@@ -2411,7 +3003,7 @@ describe("SessionExecutionManager", () => {
       slug: "project",
       workspaceRoot,
       sessionId: activeRoot,
-      userMessage: "keep the second family busy",
+      input: { kind: "direct", text: "keep the second family busy" },
     });
 
     expect(() => manager.acquireIdleSessionFamilyCwdTransitions(
@@ -2461,7 +3053,7 @@ describe("SessionExecutionManager", () => {
       slug: "project",
       workspaceRoot,
       sessionId: childId,
-      userMessage: "do not run in the stale checkout",
+      input: { kind: "direct", text: "do not run in the stale checkout" },
     })).rejects.toMatchObject({
       name: "ChildSessionCwdMismatchError",
       sessionId: childId,
@@ -2485,7 +3077,7 @@ describe("SessionExecutionManager", () => {
       slug: "project",
       workspaceRoot,
       sessionId,
-      userMessage: "must wait for the HITL response",
+      input: { kind: "direct", text: "must wait for the HITL response" },
     })).rejects.toMatchObject({
       name: "SessionToolBatchActiveError",
       sessionId,
@@ -2512,7 +3104,7 @@ describe("SessionExecutionManager", () => {
       slug: "project",
       workspaceRoot,
       sessionId: rootId,
-      userMessage: "must not bypass child HITL",
+      input: { kind: "direct", text: "must not bypass child HITL" },
     })).rejects.toMatchObject({
       name: "SessionToolBatchActiveError",
       sessionId: rootId,
@@ -2539,7 +3131,7 @@ describe("SessionExecutionManager", () => {
       slug: "project",
       workspaceRoot,
       sessionId,
-      userMessage: "continue",
+      input: { kind: "direct", text: "continue" },
     });
     await validationStarted.promise;
     store.getState().setCwd(join(workspaceRoot, "changed-during-validation"));
@@ -2570,7 +3162,7 @@ describe("SessionExecutionManager", () => {
       slug: "project",
       workspaceRoot,
       sessionId,
-      userMessage: "continue",
+      input: { kind: "direct", text: "continue" },
     });
     await validationStarted.promise;
 
@@ -2580,7 +3172,7 @@ describe("SessionExecutionManager", () => {
       slug: "project",
       workspaceRoot,
       sessionId: crypto.randomUUID(),
-      userMessage: "must not start while closing",
+      input: { kind: "direct", text: "must not start while closing" },
     })).rejects.toBeInstanceOf(SessionWorkspaceClosingError);
     closeLease.release();
     allowValidation.resolve();
@@ -2607,7 +3199,7 @@ describe("SessionExecutionManager", () => {
       slug: "project",
       workspaceRoot,
       sessionId,
-      userMessage: "continue",
+      input: { kind: "direct", text: "continue" },
     });
     await validationStarted.promise;
     store.setState({
@@ -2645,6 +3237,7 @@ describe("SessionExecutionManager", () => {
     const manager = new SessionExecutionManager({
       sessionAgentManager: createFakeManager({}, { factory: makeFactory() }),
       ...callbacks,
+      sessionInputService: new SessionInputService(storeManager),
       loadSessionStore: async (sessionId, root) => {
         if (sessionId === rootId) {
           rootLoadStarted = true;
@@ -2662,7 +3255,7 @@ describe("SessionExecutionManager", () => {
       slug: "project",
       workspaceRoot,
       sessionId: childId,
-      userMessage: "race with cwd transition",
+      input: { kind: "direct", text: "race with cwd transition" },
     });
     await waitFor(() => rootLoadStarted);
     const releaseTransition = manager.acquireSessionCwdTransition(workspaceRoot, rootId);
@@ -2953,30 +3546,6 @@ describe("SessionExecutionManager", () => {
     });
     cascadingAbort.abort();
     expect((await cascaded.result).status).toBe("cancelled");
-  });
-
-  test("resumeChildExecution does not publish a running link when execution claim fails", async () => {
-    const blockerId = crypto.randomUUID();
-    const parentId = crypto.randomUUID();
-    const childId = crypto.randomUUID();
-    const blocker = new MockAgent(blockerId, new Promise(() => undefined), workspaceRoot);
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
-    const childStore = storeManager.create(childId, workspaceRoot, {
-      rootSessionId: parentId, parentSessionId: parentId, agentName: "explore", title: "Blocked child",
-    });
-    const childAgent = new MockAgent(childId, Promise.resolve({ text: "must not run", steps: 1 }), workspaceRoot);
-    childAgent.store.setState(childStore.getState());
-    const { manager } = createManager({ [blockerId]: blocker, [childId]: childAgent }, {
-      factory: makeFactory(),
-      maxConcurrentSessions: 1,
-    });
-    await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: blockerId, userMessage: "block" });
-
-    await expect(manager.resumeChildExecution(workspaceRoot, {
-      parentStore, parentSessionId: parentId, parentToolCallId: "failed-claim-resume", toolName: "delegate",
-      sessionId: childId, prompt: "resume",
-    })).rejects.toThrow(ConcurrentSessionLimitError);
-    expect(parentStore.getState().childSessionLinks.some((link) => link.parentToolCallId === "failed-claim-resume")).toBe(false);
   });
 
   test("rechecks Goal family HITL immediately before a child resume starts", async () => {

@@ -279,6 +279,8 @@ function stateWith(overrides: Partial<SessionStoreState>): SessionStoreState {
   activeSkillNames: [],
   title: null,
   messages: [],
+  pendingMessages: [],
+  inputRequestReceipts: [],
   steps: [],
   stats: createEmptySessionStats(),
   executions: [],
@@ -312,6 +314,7 @@ function stateWith(overrides: Partial<SessionStoreState>): SessionStoreState {
   updatedAt: overrides.updatedAt ?? 1,
   modelInfo: overrides.modelInfo ?? null,
   compression: overrides.compression ?? createEmptyCompressionState(),
+  publishableNextEventId: overrides.publishableNextEventId ?? 0,
   };
 }
 

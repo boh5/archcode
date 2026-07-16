@@ -35,8 +35,28 @@ export function isSessionEventPayload(value: unknown): value is SessionEventPayl
     case "session.cwd_changed":
       return exact(event, ["type", "previousCwd", "cwd"])
         && isString(event.previousCwd) && isString(event.cwd);
-    case "user-message":
-      return exact(event, ["type", "content"]) && isString(event.content);
+    case "session.message_accepted":
+    case "session.message_edited":
+    case "session.message_steer_claimed":
+    case "session.message_steer_rolled_back":
+      return exact(event, ["type", "message"]) && isPendingSessionMessage(event.message);
+    case "session.message_deleted":
+      return exact(event, ["type", "messageId", "clientRequestId", "revision", "deletedAt"])
+        && isString(event.messageId)
+        && isString(event.clientRequestId)
+        && isNonNegativeInteger(event.revision)
+        && isFiniteNumber(event.deletedAt);
+    case "session.messages_committed":
+      return exact(event, ["type", "executionId", "messages"])
+        && isString(event.executionId)
+        && arrayOf(
+          event.messages,
+          (message) => isCommittedUserMessage(message, event.executionId as string),
+        );
+    case "execution-stop-requested":
+      return exact(event, ["type", "executionId", "timestamp"])
+        && isString(event.executionId)
+        && isFiniteNumber(event.timestamp);
     case "system-notice":
       return exact(event, ["type", "message"]) && isString(event.message);
     case "text-start":
@@ -102,6 +122,62 @@ export function isSessionEventPayload(value: unknown): value is SessionEventPayl
     default:
       return false;
   }
+}
+
+function isPendingSessionMessage(value: unknown): boolean {
+  const message = record(value);
+  if (message === undefined
+    || !exact(
+      message,
+      ["id", "clientRequestId", "content", "source", "state", "revision", "acceptedAt", "updatedAt"],
+      ["targetExecutionId"],
+    )
+    || !isString(message.id)
+    || !isString(message.clientRequestId)
+    || !isString(message.content)
+    || !oneOf(message.source, ["user", "automation"])
+    || !oneOf(message.state, ["queued", "steering"])
+    || !isNonNegativeInteger(message.revision)
+    || !isFiniteNumber(message.acceptedAt)
+    || !isFiniteNumber(message.updatedAt)
+    || !optionalString(message.targetExecutionId)) return false;
+
+  return message.state === "steering"
+    ? typeof message.targetExecutionId === "string"
+    : message.targetExecutionId === undefined;
+}
+
+function isCommittedUserMessage(value: unknown, executionId: string): boolean {
+  const message = record(value);
+  const parts = message?.parts;
+  return message !== undefined
+    && exact(
+      message,
+      ["id", "role", "parts", "createdAt"],
+      ["completedAt", "executionId", "clientRequestId", "compacted"],
+    )
+    && isString(message.id)
+    && message.role === "user"
+    && Array.isArray(parts)
+    && arrayOf(parts, isCommittedUserTextPart)
+    && parts.length > 0
+    && isFiniteNumber(message.createdAt)
+    && optionalFiniteNumber(message.completedAt)
+    && message.executionId === executionId
+    && optionalString(message.clientRequestId)
+    && (message.compacted === undefined || typeof message.compacted === "boolean");
+}
+
+function isCommittedUserTextPart(value: unknown): boolean {
+  const part = record(value);
+  return part !== undefined
+    && exact(part, ["type", "id", "text", "createdAt"], ["completedAt", "meta"])
+    && part.type === "text"
+    && isString(part.id)
+    && isString(part.text)
+    && isFiniteNumber(part.createdAt)
+    && optionalFiniteNumber(part.completedAt)
+    && (part.meta === undefined || record(part.meta) !== undefined);
 }
 
 export function isStreamEvent(event: unknown): event is StreamEvent {
@@ -443,6 +519,10 @@ function optionalString(value: unknown): boolean {
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return isFiniteNumber(value) && Number.isInteger(value) && value >= 0;
 }
 
 function optionalFiniteNumber(value: unknown): boolean {

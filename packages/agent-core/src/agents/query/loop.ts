@@ -41,6 +41,7 @@ interface ModelAttemptOptions {
   projectContext: QueryLoopOptions["projectContext"];
   beforeModelBuild: HookList<BeforeModelBuildContext>;
   beforeModelCall: HookList<BeforeModelCallContext>;
+  consumeSteers?: () => Promise<void>;
 }
 
 type ModelAttemptResult =
@@ -129,6 +130,7 @@ async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttem
     projectContext,
     beforeModelBuild,
     beforeModelCall,
+    consumeSteers,
   } = options;
 
   store.getState().append({ type: "step-start", step });
@@ -137,6 +139,7 @@ async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttem
   let tools: ToolSet | undefined;
 
   try {
+    await consumeSteers?.();
     await runHooks("beforeModelBuild", beforeModelBuild, { store, modelInfo, logger, modelOptions, abort, systemPrompt }, logger, { sessionId, agentName });
     messages = store.getState().toModelMessages();
     await runHooks("beforeModelCall", beforeModelCall, { store, modelInfo, logger, modelOptions, abort, messages, projectContext }, logger, { sessionId, agentName });
@@ -175,7 +178,6 @@ async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttem
 
 export async function runQueryLoop(
   options: QueryLoopOptions,
-  userMessage: string,
   retryScheduler: RetryScheduler = realRetryScheduler,
 ): Promise<QueryLoopResult> {
   const {
@@ -265,17 +267,6 @@ export async function runQueryLoop(
   });
 
   try {
-    const commandResult = await maybeHandleCommand(options, userMessage, abort);
-    if (commandResult.handled) {
-      return { text: "", steps: 0, status: "completed" };
-    }
-
-    const activeUserMessage = commandResult.userMessage ?? userMessage;
-
-    if (activeUserMessage) {
-      store.getState().append({ type: "user-message", content: activeUserMessage });
-    }
-
     if (toolBatchScheduler.activeBatch() !== undefined) {
       const startupBatch = await toolBatchScheduler.recoverInterruptedBatch();
       if (startupBatch === undefined) throw new Error("Active tool batch disappeared during recovery");
@@ -331,6 +322,7 @@ export async function runQueryLoop(
         projectContext: options.projectContext,
         beforeModelBuild,
         beforeModelCall,
+        consumeSteers: options.consumeSteers,
       });
 
       if (attempt.outcome === "retry") {
@@ -548,46 +540,6 @@ export async function runQueryLoop(
 
     await runHooks("afterLoopEnd", afterLoopEnd, { store, modelInfo, logger, modelOptions: options.modelOptions, abort, loopEndStatus: runEndStatus, projectContext: options.projectContext }, logger, { sessionId, agentName });
   }
-}
-
-export async function maybeHandleCommand(
-  options: QueryLoopOptions,
-  userMessage: string,
-  abort: AbortSignal,
-): Promise<{ handled: boolean; userMessage?: string }> {
-  const { commandRegistry, store, modelInfo, modelOptions } = options;
-  const parsed = commandRegistry?.parse(userMessage);
-  if (!parsed) return { handled: false };
-
-  const descriptor = commandRegistry?.get(parsed.command);
-  if (!descriptor) {
-    store.getState().append({
-      type: "system-notice",
-      message: `Unknown command: /${parsed.command}`,
-    });
-    return { handled: true };
-  }
-
-  if (parsed.command === "compact" && parsed.args.trim() !== "") {
-    return { handled: false };
-  }
-
-  const result = await descriptor.handler({
-    store,
-    modelInfo,
-    logger: options.logger,
-    modelOptions,
-    abort,
-    cwd: options.cwd,
-    agentName: options.agentName,
-    agentSkills: options.agentSkills,
-    skillService: options.skillService,
-  }, parsed.args);
-  store.getState().append({ type: "system-notice", message: result.message });
-  if (result.continueAsMessage) {
-    return { handled: false, userMessage: result.continueAsMessage };
-  }
-  return { handled: true };
 }
 
 async function runHooks<T>(

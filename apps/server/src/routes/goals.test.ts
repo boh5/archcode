@@ -71,7 +71,7 @@ describe("Goal routes", () => {
       slug: fixture.project.slug,
       workspaceRoot,
       sessionId: goal.mainSessionId,
-      userMessage: expect.stringContaining(goal.acceptanceCriteria),
+      input: { kind: "direct", text: expect.stringContaining(goal.acceptanceCriteria) },
       origin: "goal_claim",
     }));
   });
@@ -151,6 +151,7 @@ function createFixture(goals: GoalState[], activity: "idle" | "running" = "idle"
     origin: "goal_claim",
     abortController: new AbortController(),
     promise: Promise.resolve(),
+    started: Promise.resolve(),
     executionToken: Symbol("goal-route-test-execution"),
     startedAt: Date.now(),
     executionId: input.executionId ?? "goal-route-test-execution",

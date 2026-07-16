@@ -3,7 +3,7 @@ import type { GoalState, GoalStatus } from "@archcode/protocol";
 import type { AgentRuntime } from "@archcode/agent-core";
 import { z } from "zod/v4";
 
-import { BadRequestError, ConcurrentSessionLimitHttpError, ServerError } from "../errors";
+import { BadRequestError, ServerError } from "../errors";
 import { resolveProject } from "../resolve";
 import { zValidator } from "../validation";
 
@@ -69,7 +69,7 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
           slug: project.slug,
           workspaceRoot: project.workspaceRoot,
           sessionId: retried.mainSessionId,
-          userMessage: buildGoalRetryUserMessage(retried),
+          input: { kind: "direct", text: buildGoalRetryUserMessage(retried) },
           origin: "goal_claim",
         });
       } catch (error) {
@@ -122,9 +122,6 @@ function toPublicGoal(goal: GoalState): GoalState {
 }
 
 function mapExecutionOrGoalError(error: unknown): Error {
-  if (isConcurrentSessionLimitError(error)) {
-    return new ConcurrentSessionLimitHttpError(error.current, error.max);
-  }
   return mapGoalError(error);
 }
 
@@ -159,12 +156,6 @@ function mapGoalError(error: unknown): Error {
 
 function hasErrorName(error: unknown, name: string): error is Error {
   return error instanceof Error && error.name === name;
-}
-
-function isConcurrentSessionLimitError(error: unknown): error is Error & { current: number; max: number } {
-  return hasErrorName(error, "ConcurrentSessionLimitError")
-    && typeof (error as { current?: unknown }).current === "number"
-    && typeof (error as { max?: unknown }).max === "number";
 }
 
 function errorMessage(error: unknown): string {

@@ -1,5 +1,5 @@
 import { rm } from "node:fs/promises";
-import { isTerminalChildSessionStatus, type ExecutionEndEvent, type SessionExecutionRecord, type SessionFamilyActivity, type SessionTreeNode, type SessionTreeResponse, type ToolChildSessionLink, type ToolChildSessionLinkStatus } from "@archcode/protocol";
+import { isTerminalChildSessionStatus, type ExecutionEndEvent, type PendingSessionMessage, type SessionExecutionRecord, type SessionFamilyActivity, type SessionMessageSource, type SessionTreeNode, type SessionTreeResponse, type ToolChildSessionLink, type ToolChildSessionLinkStatus } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
 import {
@@ -9,7 +9,6 @@ import {
   ChildSessionNotFoundError,
   ChildSessionNotDescendantError,
   ChildSessionParentMismatchError,
-  ConcurrentSessionLimitError,
   ConcurrentLimitError,
   DelegateTargetNotAllowedError,
   DelegationToolNotAllowedError,
@@ -20,8 +19,6 @@ import {
 } from "../agents/errors";
 import type { AgentResult } from "../agents/types";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
-import { SessionEventBridge } from "../events/session-event-bridge";
-import type { SubscribeSessionEventsInput } from "../events/session-event-bridge";
 import { getSessionDir } from "../store/sessions-dir";
 import { NotRootSessionError, SessionDeleteConflictError } from "../store/errors";
 import { scopedKey } from "../store/key";
@@ -29,6 +26,7 @@ import type { Reminder, SessionRole, SessionStoreState } from "../store/types";
 import type { StoredMessage } from "../store/types";
 import type { AgentName } from "../agents/names";
 import type { Logger } from "../logger";
+import { nextSessionTimestamp, SessionInputConflictError, type SessionInputService } from "../session-input/service";
 import {
   SessionExecutionScopeConflictError,
   type SessionExecutionScopeValidator,
@@ -78,6 +76,8 @@ export interface ActiveSessionExecution {
   readonly startedAt: number;
   /** Durable id shared with the Session execution-start record. */
   readonly executionId: string;
+  /** Settles once input plus execution-start are durable, before model work. */
+  readonly started: Promise<void>;
 }
 
 // Session execution lifecycle:
@@ -87,11 +87,22 @@ export interface ActiveSessionExecution {
 // stale promises may resolve after abort/restart, but must not write terminal execution
 // events, child links, reminders, or deferred-request cleanup for a newer generation.
 
+export type SessionExecutionInput =
+  | { readonly kind: "queue" }
+  | {
+    readonly kind: "direct";
+    readonly text: string;
+    readonly source?: SessionMessageSource;
+    readonly messageId?: string;
+    readonly clientRequestId?: string;
+  }
+  | { readonly kind: "continuation" };
+
 export interface StartSessionExecutionInput {
   readonly slug: string;
   readonly workspaceRoot: string;
   readonly sessionId: string;
-  readonly userMessage: string;
+  readonly input: SessionExecutionInput;
   readonly origin?: SessionExecutionOrigin;
   readonly maxSteps?: number;
   readonly extraTools?: readonly string[];
@@ -102,7 +113,27 @@ export interface StartSessionExecutionInput {
 interface PendingSessionExecution extends Omit<ActiveSessionExecution, "promise"> {
   promise?: Promise<void>;
   familyStopLease?: SessionFamilyStopLease;
+  queueCutoffAcceptedAt?: number;
+  ready: boolean;
+  steerGateOpen: boolean;
+  readonly steerMailbox: PendingSessionMessage[];
+  readonly steerOperations: Set<Promise<void>>;
+  resolveStarted(): void;
+  rejectStarted(error: unknown): void;
 }
+
+interface ActiveSessionCommand {
+  readonly workspaceRoot: string;
+  readonly rootSessionId: string;
+  readonly clientRequestId: string;
+  readonly token: symbol;
+  readonly abortController: AbortController;
+  readonly completion: Promise<void>;
+}
+
+export type SessionCommandRunResult<T> =
+  | { readonly kind: "executed"; readonly result: T }
+  | { readonly kind: "joined"; readonly error?: unknown };
 
 interface SessionCwdTransitionLeaseState {
   readonly token: symbol;
@@ -127,10 +158,17 @@ interface PendingChildLaunchFamilyState {
   readonly launches: Map<symbol, string>;
 }
 
+interface PendingSessionInputMutationFamilyState {
+  readonly workspaceRoot: string;
+  readonly rootSessionId: string;
+  readonly mutations: Set<symbol>;
+}
+
 export interface SessionRuntimeChange {
   readonly workspaceRoot: string;
   readonly rootSessionId: string;
   readonly activity: SessionFamilyActivity;
+  readonly steerTargetExecutionId?: string;
 }
 
 export type SessionRuntimeChangeListener = (change: SessionRuntimeChange) => void;
@@ -164,6 +202,10 @@ interface SessionExecutionManagerConfig {
   readonly resolveSessionDepth: (workspaceRoot: string, sessionId: string) => Promise<number>;
   readonly buildSessionTree: (workspaceRoot: string, rootSessionId: string) => Promise<SessionTreeResponse>;
   readonly listSessionFamilyToolBatchHitlIds: (workspaceRoot: string, rootSessionId: string) => Promise<readonly string[]>;
+  readonly sessionInputService: Pick<
+    SessionInputService,
+    "beginQueueExecution" | "beginDirectExecution" | "claimSteer" | "commitSteers" | "rollbackSteers" | "getPendingMessages" | "recordQueueDispatchBarrier"
+  >;
   readonly trackSession: (workspaceRoot: string, sessionId: string) => void;
   readonly untrackSession: (workspaceRoot: string, sessionId: string) => void;
   readonly executionScopeValidator: Pick<SessionExecutionScopeValidator, "validate">;
@@ -171,7 +213,6 @@ interface SessionExecutionManagerConfig {
   readonly goalDelegationAdmission?: SessionGoalDelegationAdmission;
   readonly deletionLifecycle?: SessionDeletionLifecycle;
   readonly sessionFamilyStopTimeoutMs?: number;
-  readonly maxConcurrentSessions?: number;
   readonly logger: Logger;
 }
 
@@ -179,9 +220,21 @@ export interface SessionExecutionClaimCoordinator {
   run<T>(ownerId: string, action: () => Promise<T>): Promise<T>;
 }
 
+export class SessionSteerUnavailableError extends Error {
+  readonly code = "SESSION_STEER_UNAVAILABLE";
+
+  constructor(
+    public readonly sessionId: string,
+    public readonly expectedExecutionId: string,
+  ) {
+    super(`Session "${sessionId}" is not accepting Steer for execution "${expectedExecutionId}"`);
+    this.name = "SessionSteerUnavailableError";
+  }
+}
+
 export class SessionExecutionManager {
-  readonly #active = new Map<string, ActiveSessionExecution | PendingSessionExecution>();
-  readonly #activeSessionsByWorkspace = new Map<string, Set<string>>();
+  readonly #active = new Map<string, PendingSessionExecution>();
+  readonly #activeCommands = new Map<string, ActiveSessionCommand>();
   readonly #childSlots = new Map<string, number>();
   readonly #cwdTransitions = new Map<string, SessionCwdTransitionLeaseState>();
   readonly #pendingChildLaunches = new Map<string, PendingChildLaunchFamilyState>();
@@ -189,17 +242,15 @@ export class SessionExecutionManager {
   readonly #familyStops = new Map<string, SessionFamilyStopLeaseState>();
   readonly #workspaceClosures = new Map<string, symbol>();
   readonly #pendingCheckedStarts = new Map<symbol, { workspaceRoot: string; sessionId: string }>();
+  readonly #pendingSessionInputMutations = new Map<string, PendingSessionInputMutationFamilyState>();
   readonly #runtimeChangeListeners = new Set<SessionRuntimeChangeListener>();
-  readonly #eventBridge: SessionEventBridge;
+  readonly #publishedRuntime = new Map<string, Pick<SessionRuntimeChange, "activity" | "steerTargetExecutionId">>();
   readonly #config: SessionExecutionManagerConfig;
   readonly #logger: Logger;
 
   constructor(config: SessionExecutionManagerConfig) {
     this.#config = config;
     this.#logger = config.logger;
-    this.#eventBridge = new SessionEventBridge({
-      getStore: (workspaceRoot, sessionId) => this.#config.getSessionStore(sessionId, workspaceRoot),
-    });
   }
 
   #claimExecution(input: StartSessionExecutionInput): ActiveSessionExecution {
@@ -211,11 +262,23 @@ export class SessionExecutionManager {
     const sessionState = this.#config.getSessionStore(input.sessionId, input.workspaceRoot)?.getState();
     if (sessionState === undefined) throw new SessionFamilyIdentityUnavailableError(input.sessionId);
     this.#assertSessionStartAllowed(input.workspaceRoot, input.sessionId, sessionState, input.origin === "tool_batch");
+    this.#assertExecutionOriginReady(input, sessionState);
+    const queuedAtClaim = input.input.kind === "queue"
+      ? sessionState.pendingMessages.filter((message) => message.state === "queued")
+      : [];
+    if (input.input.kind === "queue" && queuedAtClaim.length === 0) {
+      throw new SessionInputConflictError("empty_queue", `Session ${sessionState.sessionId} has no queued input`);
+    }
     const rootSessionId = sessionState.rootSessionId;
-    const previousFamilyActivity = this.getSessionFamilyActivity(input.workspaceRoot, rootSessionId);
-
     const abortController = new AbortController();
     const executionToken = Symbol(`session-execution:${key}`);
+    let resolveStarted!: () => void;
+    let rejectStarted!: (error: unknown) => void;
+    const started = new Promise<void>((resolve, reject) => {
+      resolveStarted = resolve;
+      rejectStarted = reject;
+    });
+    void started.catch(() => undefined);
     const pending: PendingSessionExecution = {
       sessionId: input.sessionId,
       rootSessionId,
@@ -226,29 +289,24 @@ export class SessionExecutionManager {
       executionToken,
       startedAt: Date.now(),
       executionId: input.executionId ?? crypto.randomUUID(),
+      ...(input.input.kind === "queue"
+        ? { queueCutoffAcceptedAt: Math.max(...queuedAtClaim.map((message) => message.acceptedAt)) }
+        : {}),
+      started,
+      ready: false,
+      steerGateOpen: false,
+      steerMailbox: [],
+      steerOperations: new Set(),
+      resolveStarted,
+      rejectStarted,
     };
 
-    let slotAcquired = false;
-    try {
-      this.#acquireWorkspaceSlot(input.workspaceRoot, input.sessionId);
-      slotAcquired = true;
-      this.#active.set(key, pending);
-      this.#publishSessionRuntimeChange(input.workspaceRoot, rootSessionId, previousFamilyActivity);
-      this.#config.trackSession(input.workspaceRoot, input.sessionId);
-
-      const promise = this.#runExecution(input, pending).finally(() => {
-        this.#finalizeExecution(key, pending, slotAcquired);
-      });
-      const execution: ActiveSessionExecution = { ...pending, promise };
-      this.#active.set(key, execution);
-      return execution;
-    } catch (error) {
-      if (slotAcquired) this.#releaseWorkspaceSlot(input.workspaceRoot, input.sessionId);
-      const activityBeforeRollback = this.getSessionFamilyActivity(input.workspaceRoot, rootSessionId);
-      this.#active.delete(key);
-      this.#publishSessionRuntimeChange(input.workspaceRoot, rootSessionId, activityBeforeRollback);
-      throw error;
-    }
+    this.#active.set(key, pending);
+    this.#config.trackSession(input.workspaceRoot, input.sessionId);
+    pending.promise = this.#runExecution(input, pending).finally(() => {
+      this.#finalizeExecution(key, pending);
+    });
+    return pending as ActiveSessionExecution;
   }
 
   /**
@@ -260,9 +318,119 @@ export class SessionExecutionManager {
     return await this.#startCheckedExecution(input, true);
   }
 
+  /** Attempts one FIFO batch start. Busy/ineligible roots simply retain their durable Queue. */
+  async tryStartQueuedExecution(input: {
+    readonly slug: string;
+    readonly workspaceRoot: string;
+    readonly sessionId: string;
+  }): Promise<ActiveSessionExecution | undefined> {
+    try {
+      const store = await this.#config.loadSessionStore(input.sessionId, input.workspaceRoot);
+      const state = store.getState();
+      if (state.sessionId !== state.rootSessionId || state.parentSessionId !== undefined) return undefined;
+      if (this.getSessionFamilyActivity(input.workspaceRoot, state.rootSessionId) !== "idle") return undefined;
+      if ((await this.#config.listSessionFamilyToolBatchHitlIds(input.workspaceRoot, state.rootSessionId)).length > 0) return undefined;
+      const pending = state.pendingMessages.filter((message) => message.state === "queued");
+      if (pending.length === 0 || !queueDispatchEligible(
+        state.executions.at(-1),
+        pending,
+        state.queueDispatchBarrierAt,
+      )) return undefined;
+      return await this.#startCheckedExecution({
+        ...input,
+        origin: "user_message",
+        input: { kind: "queue" },
+      }, true);
+    } catch (error) {
+      if (
+        error instanceof AgentRunningError
+        || error instanceof SessionFamilyActiveError
+        || error instanceof SessionFamilyStopInProgressError
+        || error instanceof SessionDeleteInProgressError
+        || (error instanceof SessionInputConflictError && error.reason === "empty_queue")
+      ) return undefined;
+      throw error;
+    }
+  }
+
+  /**
+   * Runs a root Session command under the same family admission owner as model
+   * executions. Commands do not create Execution records, but they block model,
+   * Goal, and sibling command starts and participate in Stop cancellation.
+   */
+  async runSessionCommand<T>(input: {
+    readonly workspaceRoot: string;
+    readonly sessionId: string;
+    readonly clientRequestId: string;
+  }, execute: (signal: AbortSignal) => Promise<T>): Promise<SessionCommandRunResult<T>> {
+    this.#assertWorkspaceOpen(input.workspaceRoot);
+    const state = this.#config.getSessionStore(input.sessionId, input.workspaceRoot)?.getState();
+    if (state === undefined) throw new SessionFamilyIdentityUnavailableError(input.sessionId);
+    if (state.parentSessionId !== undefined || state.rootSessionId !== input.sessionId) {
+      throw new NotRootSessionError(input.sessionId, state.parentSessionId ?? state.rootSessionId);
+    }
+    const familyKey = scopedKey(input.workspaceRoot, state.rootSessionId);
+    const existingCommand = this.#activeCommands.get(familyKey);
+    if (existingCommand?.clientRequestId === input.clientRequestId) {
+      try {
+        await existingCommand.completion;
+        return { kind: "joined" };
+      } catch (error) {
+        return { kind: "joined", error };
+      }
+    }
+    const activity = this.getSessionFamilyActivity(input.workspaceRoot, state.rootSessionId);
+    if (activity === "stopping") {
+      throw new SessionFamilyStopInProgressError(input.sessionId, state.rootSessionId);
+    }
+    if (activity === "running") {
+      throw new SessionFamilyActiveError(input.sessionId, state.rootSessionId, activity);
+    }
+    this.#assertSessionStartAllowed(input.workspaceRoot, input.sessionId, state);
+    if (state.pendingMessages.length > 0) {
+      throw new SessionInputConflictError(
+        "state",
+        `Session ${input.sessionId} command cannot bypass ${state.pendingMessages.length} queued message(s)`,
+      );
+    }
+
+    const token = Symbol(`session-command:${familyKey}`);
+    const abortController = new AbortController();
+    let resolveCompletion!: () => void;
+    let rejectCompletion!: (error: unknown) => void;
+    const completion = new Promise<void>((resolve, reject) => {
+      resolveCompletion = resolve;
+      rejectCompletion = reject;
+    });
+    void completion.catch(() => undefined);
+    const command: ActiveSessionCommand = {
+      workspaceRoot: input.workspaceRoot,
+      rootSessionId: state.rootSessionId,
+      clientRequestId: input.clientRequestId,
+      token,
+      abortController,
+      completion,
+    };
+    this.#activeCommands.set(familyKey, command);
+    this.#publishSessionRuntimeChange(input.workspaceRoot, state.rootSessionId);
+    try {
+      const result = await execute(abortController.signal);
+      resolveCompletion();
+      return { kind: "executed", result };
+    } catch (error) {
+      rejectCompletion(error);
+      throw error;
+    } finally {
+      if (this.#activeCommands.get(familyKey)?.token === token) {
+        this.#activeCommands.delete(familyKey);
+        this.#publishSessionRuntimeChange(input.workspaceRoot, state.rootSessionId);
+      }
+    }
+  }
+
   /** Wakes an already-persisted batch through the ordinary execution claim and abort path. */
-  async startSessionToolBatchExecution(input: Omit<StartSessionExecutionInput, "userMessage" | "origin">): Promise<ActiveSessionExecution> {
-    const execution = await this.#startCheckedExecution({ ...input, userMessage: "", origin: "tool_batch" }, true);
+  async startSessionToolBatchExecution(input: Omit<StartSessionExecutionInput, "input" | "origin">): Promise<ActiveSessionExecution> {
+    const execution = await this.#startCheckedExecution({ ...input, input: { kind: "continuation" }, origin: "tool_batch" }, true);
     await this.#updateChildSessionLinkForExecution(input.workspaceRoot, input.sessionId, "running");
     void execution.promise.finally(async () => {
       const store = await this.#config.loadSessionStore(input.sessionId, input.workspaceRoot);
@@ -408,14 +576,22 @@ export class SessionExecutionManager {
     }
 
     const token = Symbol(`session-family-stop:${key}`);
-    const previousFamilyActivity = this.getSessionFamilyActivity(input.workspaceRoot, input.rootSessionId);
+    const hadActiveFamily = this.getSessionFamilyActivity(input.workspaceRoot, input.rootSessionId) !== "idle";
+    const hadActiveRootExecution = this.#active.has(key);
+    const rootState = this.#config.getSessionStore(input.rootSessionId, input.workspaceRoot)?.getState();
+    const queueDispatchBarrierAt = input.exemptSessionId === undefined
+      && hadActiveFamily
+      && !hadActiveRootExecution
+      && rootState !== undefined
+      ? nextSessionTimestamp(rootState)
+      : undefined;
     this.#familyStops.set(key, {
       token,
       workspaceRoot: input.workspaceRoot,
       rootSessionId: input.rootSessionId,
       ...(input.exemptSessionId === undefined ? {} : { exemptSessionId: input.exemptSessionId }),
     });
-    this.#publishSessionRuntimeChange(input.workspaceRoot, input.rootSessionId, previousFamilyActivity);
+    this.#publishSessionRuntimeChange(input.workspaceRoot, input.rootSessionId);
     let released = false;
     return {
       rootSessionId: input.rootSessionId,
@@ -423,15 +599,35 @@ export class SessionExecutionManager {
         if (released || this.#familyStops.get(key)?.token !== token) {
           throw new SessionFamilyStopInProgressError(input.exemptSessionId ?? input.rootSessionId, input.rootSessionId);
         }
-        await this.#stopSessionFamily(input.workspaceRoot, input.rootSessionId, input.exemptSessionId);
+        const stopFactPersistence = input.exemptSessionId === undefined && hadActiveFamily && hadActiveRootExecution
+          ? this.#recordUserStop(input.workspaceRoot, input.rootSessionId)
+          : undefined;
+        const queueBarrierPersistence = queueDispatchBarrierAt === undefined
+          ? undefined
+          : this.#config.sessionInputService.recordQueueDispatchBarrier({
+            sessionId: input.rootSessionId,
+            workspaceRoot: input.workspaceRoot,
+            timestamp: queueDispatchBarrierAt,
+          });
+        const stopping = this.#stopSessionFamily(input.workspaceRoot, input.rootSessionId, input.exemptSessionId);
+        await Promise.all([
+          stopping,
+          ...(stopFactPersistence === undefined ? [] : [stopFactPersistence]),
+          ...(queueBarrierPersistence === undefined ? [] : [queueBarrierPersistence]),
+        ]);
+        if (input.exemptSessionId === undefined) {
+          await this.#config.sessionInputService.rollbackSteers({
+            sessionId: input.rootSessionId,
+            workspaceRoot: input.workspaceRoot,
+          });
+        }
       },
       release: () => {
         if (released) return;
         released = true;
         if (this.#familyStops.get(key)?.token === token) {
-          const activityBeforeRelease = this.getSessionFamilyActivity(input.workspaceRoot, input.rootSessionId);
           this.#familyStops.delete(key);
-          this.#publishSessionRuntimeChange(input.workspaceRoot, input.rootSessionId, activityBeforeRelease);
+          this.#publishSessionRuntimeChange(input.workspaceRoot, input.rootSessionId);
         }
       },
     };
@@ -461,16 +657,39 @@ export class SessionExecutionManager {
     this.#assertWorkspaceOpen(workspaceRoot);
   }
 
+  /**
+   * Keeps a durable root-Session input mutation from crossing Session deletion
+   * or workspace teardown. It is deliberately not Session runtime activity:
+   * Queue admission must not make an idle family appear to be executing.
+   */
+  async runSessionInputMutation<T>(input: {
+    readonly workspaceRoot: string;
+    readonly rootSessionId: string;
+  }, mutate: () => Promise<T>): Promise<T> {
+    const release = this.#acquireSessionInputMutation(input.workspaceRoot, input.rootSessionId);
+    try {
+      return await mutate();
+    } finally {
+      release();
+    }
+  }
+
   async abortAll(): Promise<void> {
     const executions = [...this.#active.values()];
+    const commands = [...this.#activeCommands.values()];
     for (const execution of executions) this.#cancelExecution(execution, "Session cancelled");
-    await Promise.allSettled(executions.map((execution) => execution.promise));
+    for (const command of commands) command.abortController.abort(new Error("Session cancelled"));
+    await Promise.allSettled([
+      ...executions.map((execution) => execution.promise),
+      ...commands.map((command) => command.completion),
+    ]);
   }
 
   getSessionFamilyActivity(workspaceRoot: string, rootSessionId: string): SessionFamilyActivity {
     const key = scopedKey(workspaceRoot, rootSessionId);
     if (this.#familyStops.has(key)) return "stopping";
     if ((this.#pendingChildLaunches.get(key)?.launches.size ?? 0) > 0) return "running";
+    if (this.#activeCommands.has(key)) return "running";
     for (const execution of this.#active.values()) {
       if (execution.workspaceRoot === workspaceRoot && execution.rootSessionId === rootSessionId) return "running";
     }
@@ -480,12 +699,17 @@ export class SessionExecutionManager {
   listSessionFamilyActivities(): readonly SessionRuntimeChange[] {
     const families = new Map<string, { workspaceRoot: string; rootSessionId: string }>();
     for (const execution of this.#active.values()) {
+      if (!execution.ready) continue;
       const key = scopedKey(execution.workspaceRoot, execution.rootSessionId);
       families.set(key, { workspaceRoot: execution.workspaceRoot, rootSessionId: execution.rootSessionId });
     }
     for (const pending of this.#pendingChildLaunches.values()) {
       const key = scopedKey(pending.workspaceRoot, pending.rootSessionId);
       families.set(key, { workspaceRoot: pending.workspaceRoot, rootSessionId: pending.rootSessionId });
+    }
+    for (const command of this.#activeCommands.values()) {
+      const key = scopedKey(command.workspaceRoot, command.rootSessionId);
+      families.set(key, { workspaceRoot: command.workspaceRoot, rootSessionId: command.rootSessionId });
     }
     for (const stop of this.#familyStops.values()) {
       const key = scopedKey(stop.workspaceRoot, stop.rootSessionId);
@@ -496,6 +720,9 @@ export class SessionExecutionManager {
         workspaceRoot,
         rootSessionId,
         activity: this.getSessionFamilyActivity(workspaceRoot, rootSessionId),
+        ...(this.getSteerTargetExecutionId(workspaceRoot, rootSessionId) === undefined ? {} : {
+          steerTargetExecutionId: this.getSteerTargetExecutionId(workspaceRoot, rootSessionId),
+        }),
       }))
       .filter((family) => family.activity !== "idle")
       .sort((left, right) => left.workspaceRoot.localeCompare(right.workspaceRoot)
@@ -508,6 +735,12 @@ export class SessionExecutionManager {
       .map(({ sessionId }) => ({ sessionId }));
   }
 
+  listPendingSessionInputMutations(workspaceRoot: string): readonly { rootSessionId: string }[] {
+    return [...this.#pendingSessionInputMutations.values()]
+      .filter((pending) => pending.workspaceRoot === workspaceRoot && pending.mutations.size > 0)
+      .map(({ rootSessionId }) => ({ rootSessionId }));
+  }
+
   subscribeSessionRuntimeChanges(listener: SessionRuntimeChangeListener): () => void {
     this.#runtimeChangeListeners.add(listener);
     return () => {
@@ -518,6 +751,58 @@ export class SessionExecutionManager {
   getExecution(workspaceRoot: string, sessionId: string): ActiveSessionExecution | undefined {
     const execution = this.#active.get(scopedKey(workspaceRoot, sessionId));
     return execution?.promise ? execution as ActiveSessionExecution : undefined;
+  }
+
+  getSteerTargetExecutionId(workspaceRoot: string, rootSessionId: string): string | undefined {
+    if (this.#familyStops.has(scopedKey(workspaceRoot, rootSessionId))) return undefined;
+    const execution = this.#active.get(scopedKey(workspaceRoot, rootSessionId));
+    return execution?.ready === true && execution.steerGateOpen
+      ? execution.executionId
+      : undefined;
+  }
+
+  async steerQueuedMessage(input: {
+    readonly workspaceRoot: string;
+    readonly sessionId: string;
+    readonly messageId: string;
+    readonly expectedRevision: number;
+    readonly expectedExecutionId: string;
+  }): Promise<PendingSessionMessage> {
+    const key = scopedKey(input.workspaceRoot, input.sessionId);
+    const execution = this.#active.get(key);
+    if (
+      execution === undefined
+      || execution.rootSessionId !== input.sessionId
+      || execution.executionId !== input.expectedExecutionId
+      || !execution.ready
+      || !execution.steerGateOpen
+    ) throw new SessionSteerUnavailableError(input.sessionId, input.expectedExecutionId);
+
+    let operation!: Promise<void>;
+    let claimed: PendingSessionMessage | undefined;
+    operation = (async () => {
+      claimed = await this.#config.sessionInputService.claimSteer(input);
+      const current = this.#active.get(key);
+      if (
+        current?.executionToken !== execution.executionToken
+        || !current.ready
+        || !current.steerGateOpen
+      ) {
+        await this.#config.sessionInputService.rollbackSteers({
+          sessionId: input.sessionId,
+          workspaceRoot: input.workspaceRoot,
+          executionId: input.expectedExecutionId,
+          messageIds: [claimed.id],
+        });
+        throw new SessionSteerUnavailableError(input.sessionId, input.expectedExecutionId);
+      }
+      current.steerMailbox.push(claimed);
+    })().finally(() => {
+      execution.steerOperations.delete(operation);
+    });
+    execution.steerOperations.add(operation);
+    await operation;
+    return claimed!;
   }
 
   /**
@@ -578,6 +863,9 @@ export class SessionExecutionManager {
     }
 
     const conflictingSessionIds = new Set(this.#pendingChildLaunches.get(key)?.launches.values() ?? []);
+    if (blockRootExecution && this.#activeCommands.has(key)) {
+      conflictingSessionIds.add(sessionId);
+    }
     for (const execution of this.#active.values()) {
       if (execution.workspaceRoot !== workspaceRoot) continue;
       if (execution.sessionId === sessionId) {
@@ -668,7 +956,7 @@ export class SessionExecutionManager {
     const createdAt = Date.now();
     let childStore: StoreApi<SessionStoreState> | undefined;
     let childLinked = false;
-    let execution: ActiveSessionExecution;
+    let execution: ActiveSessionExecution | undefined;
 
     try {
       const activeSkillNames = await factory.resolveDelegatedSkillNames(targetDefinition, request.skills, parentState.cwd);
@@ -684,15 +972,8 @@ export class SessionExecutionManager {
         title: childTitle,
         activeSkillNames,
       });
-      // Publishing the parent link makes the child immediately navigable. Its
-      // durable snapshot must therefore already contain both identity and the
-      // delegated prompt, even when the child model has not produced output.
-      childStore.getState().append({ type: "user-message", content: childPrompt });
       await this.#config.flushSessionStore(childSessionId, workspaceRoot);
       await this.#validateChildExecutionScope(workspaceRoot, childStore, true);
-      this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, "linked", childTitle, createdAt, background);
-      childLinked = true;
-      this.#eventBridge.attachSession(workspaceRoot, childSessionId, childStore);
 
       this.#config.sessionAgentManager.createChildAgent({
         workspaceRoot,
@@ -707,19 +988,22 @@ export class SessionExecutionManager {
         slug: "",
         workspaceRoot,
         sessionId: childSessionId,
-        // The initial delegated prompt was durably seeded before publishing the
-        // child link. Run from that transcript without appending it a second time.
-        userMessage: "",
+        input: { kind: "direct", text: childPrompt },
         origin: "tool_call",
       });
+      await execution.started;
       this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, "running", childTitle, createdAt, background);
+      childLinked = true;
       releaseChildLaunch();
       childLaunchReserved = false;
     } catch (error) {
+      if (execution !== undefined) {
+        this.#cancelExecution(execution, "Child Session link failed");
+        await execution.promise.catch(() => undefined);
+      }
       if (childLaunchReserved) releaseChildLaunch();
       if (childSlotReserved) this.#releaseChildSlot(workspaceRoot, request.parentSessionId);
       if (childStore !== undefined) {
-        this.#eventBridge.detachSession(workspaceRoot, childSessionId);
         if (childLinked) {
           this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, "failed", childTitle, createdAt, background);
           await this.#config.flushSessionStore(request.parentSessionId, workspaceRoot);
@@ -730,6 +1014,8 @@ export class SessionExecutionManager {
       }
       throw error;
     }
+
+    if (execution === undefined) throw new Error(`Child Session "${childSessionId}" did not claim execution`);
 
     const timeout = childPolicy.timeoutMs > 0
       ? setTimeout(() => execution.abortController.abort(new Error("Sub-agent timed out")), childPolicy.timeoutMs)
@@ -952,9 +1238,13 @@ export class SessionExecutionManager {
         slug: "",
         workspaceRoot,
         sessionId: request.sessionId,
-        userMessage: prependSessionGoalDelegationContext(request.prompt, goalContext),
+        input: {
+          kind: "direct",
+          text: prependSessionGoalDelegationContext(request.prompt, goalContext),
+        },
         origin: "tool_call",
       });
+      await execution.started;
       this.#appendResumeChildLinkStatus(
         workspaceRoot,
         request,
@@ -1015,19 +1305,6 @@ export class SessionExecutionManager {
     };
   }
 
-  subscribe(input: SubscribeSessionEventsInput): () => void {
-    return this.#eventBridge.subscribe(input);
-  }
-
-  attachSessionEvents(workspaceRoot: string, sessionId: string, store: StoreApi<SessionStoreState>): void {
-    this.#eventBridge.attachSession(workspaceRoot, sessionId, store);
-  }
-
-  detachSessionEvents(workspaceRoot: string, sessionId: string): void {
-    if (this.#eventBridge.hasSubscriptions(workspaceRoot, sessionId)) return;
-    this.#eventBridge.detachSession(workspaceRoot, sessionId);
-  }
-
   async deleteSession(workspaceRoot: string, sessionId: string): Promise<void> {
     const rootSessionId = await this.#config.resolveRootSessionId(sessionId, workspaceRoot);
     const releaseDeletion = this.#acquireSessionDeletion(workspaceRoot, rootSessionId, sessionId);
@@ -1051,7 +1328,6 @@ export class SessionExecutionManager {
       for (const id of sessionIds) {
         this.#config.sessionAgentManager.dispose(workspaceRoot, id);
         this.#config.untrackSession(workspaceRoot, id);
-        this.#eventBridge.detachSession(workspaceRoot, id);
       }
 
       for (const id of sessionIds) {
@@ -1073,15 +1349,42 @@ export class SessionExecutionManager {
     let terminalError: string | undefined;
     try {
       if (store === undefined) throw new SessionFamilyIdentityUnavailableError(input.sessionId);
-      store.getState().append({ type: "execution-start", executionId: execution.executionId });
-      await this.#config.flushSessionStore(input.sessionId, input.workspaceRoot);
+      if (input.input.kind === "queue") {
+        if (execution.queueCutoffAcceptedAt === undefined) {
+          throw new Error(`Queue execution ${execution.executionId} has no claim cutoff`);
+        }
+        await this.#config.sessionInputService.beginQueueExecution({
+          sessionId: input.sessionId,
+          workspaceRoot: input.workspaceRoot,
+          executionId: execution.executionId,
+          cutoffAcceptedAt: execution.queueCutoffAcceptedAt,
+          signal: execution.abortController.signal,
+        });
+      } else if (input.input.kind === "direct") {
+        await this.#config.sessionInputService.beginDirectExecution({
+          sessionId: input.sessionId,
+          workspaceRoot: input.workspaceRoot,
+          executionId: execution.executionId,
+          text: input.input.text,
+          ...(input.input.source === undefined ? {} : { source: input.input.source }),
+          ...(input.input.messageId === undefined ? {} : { messageId: input.input.messageId }),
+          ...(input.input.clientRequestId === undefined ? {} : { clientRequestId: input.input.clientRequestId }),
+          signal: execution.abortController.signal,
+        });
+      } else {
+        store.getState().append({ type: "execution-start", executionId: execution.executionId });
+        await this.#config.flushSessionStore(input.sessionId, input.workspaceRoot);
+      }
 
-      let userMessage = input.userMessage;
+      execution.ready = true;
+      execution.steerGateOpen = store.getState().rootSessionId === store.getState().sessionId;
+      execution.resolveStarted();
+      this.#publishSessionRuntimeChange(input.workspaceRoot, execution.rootSessionId);
+
       for (let transitionCount = 0; transitionCount <= MAX_CWD_TRANSITIONS_PER_EXECUTION; transitionCount += 1) {
         const agent = await this.#config.sessionAgentManager.getOrCreate(input.workspaceRoot, input.sessionId);
         store = agent.store;
         this.#assertSessionStartAllowed(input.workspaceRoot, input.sessionId, agent.store.getState(), input.origin === "tool_batch");
-        this.#eventBridge.attachSession(input.workspaceRoot, input.sessionId, agent.store);
         if (execution.abortController.signal.aborted) {
           terminalStatus = abortExecutionStatus(execution.abortController.signal);
           return;
@@ -1090,10 +1393,11 @@ export class SessionExecutionManager {
         const current = this.#active.get(key);
         if (current?.executionToken !== execution.executionToken) return;
 
-        const result = await agent.run(userMessage, {
+        const result = await agent.run({
           abort: execution.abortController.signal,
           ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
           ...(input.extraTools === undefined ? {} : { extraTools: input.extraTools }),
+          consumeSteers: async () => await this.#consumeSteers(execution),
         });
         if (result.executionControl?.action === "stop_session_family") {
           terminalStatus = result.status;
@@ -1119,9 +1423,9 @@ export class SessionExecutionManager {
           throw new Error(`Session cwd changed more than ${MAX_CWD_TRANSITIONS_PER_EXECUTION} times in one execution`);
         }
         this.#config.sessionAgentManager.releaseAgent(input.workspaceRoot, input.sessionId);
-        userMessage = "";
       }
     } catch (error) {
+      if (!execution.ready) execution.rejectStarted(error);
       terminalStatus = execution.abortController.signal.aborted
         ? abortExecutionStatus(execution.abortController.signal)
         : "failed";
@@ -1136,6 +1440,8 @@ export class SessionExecutionManager {
         });
       }
     } finally {
+      this.#closeSteerGate(execution);
+      await this.#settleAndRollbackSteers(execution);
       const current = this.#active.get(key);
       if (current?.executionToken === execution.executionToken) {
         store = this.#config.getSessionStore(input.sessionId, input.workspaceRoot) ?? store;
@@ -1151,20 +1457,58 @@ export class SessionExecutionManager {
     }
   }
 
-  #finalizeExecution(key: string, execution: PendingSessionExecution, slotAcquired: boolean): void {
+  async #consumeSteers(execution: PendingSessionExecution): Promise<void> {
+    const current = this.#active.get(scopedKey(execution.workspaceRoot, execution.sessionId));
+    if (
+      current?.executionToken !== execution.executionToken
+      || !execution.ready
+      || !execution.steerGateOpen
+      || execution.steerMailbox.length === 0
+    ) return;
+    const messages = execution.steerMailbox.splice(0, execution.steerMailbox.length);
+    let operation!: Promise<void>;
+    operation = this.#config.sessionInputService.commitSteers({
+      sessionId: execution.sessionId,
+      workspaceRoot: execution.workspaceRoot,
+      executionId: execution.executionId,
+      messages,
+      signal: execution.abortController.signal,
+    }).then(() => undefined).finally(() => {
+      execution.steerOperations.delete(operation);
+    });
+    execution.steerOperations.add(operation);
+    await operation;
+  }
+
+  #closeSteerGate(execution: PendingSessionExecution): void {
+    if (!execution.steerGateOpen) return;
+    execution.steerGateOpen = false;
+    this.#publishSessionRuntimeChange(execution.workspaceRoot, execution.rootSessionId);
+  }
+
+  async #settleAndRollbackSteers(execution: PendingSessionExecution): Promise<void> {
+    if (execution.sessionId !== execution.rootSessionId) return;
+    while (execution.steerOperations.size > 0) {
+      await Promise.allSettled([...execution.steerOperations]);
+    }
+    execution.steerMailbox.splice(0);
+    await this.#config.sessionInputService.rollbackSteers({
+      sessionId: execution.sessionId,
+      workspaceRoot: execution.workspaceRoot,
+      executionId: execution.executionId,
+    });
+  }
+
+  #finalizeExecution(key: string, execution: PendingSessionExecution): void {
     const ownedFamilyStopLease = execution.familyStopLease;
     execution.familyStopLease = undefined;
     const current = this.#active.get(key);
     const isCurrentExecution = current?.executionToken === execution.executionToken;
     if (isCurrentExecution) {
-      const previousFamilyActivity = this.getSessionFamilyActivity(execution.workspaceRoot, execution.rootSessionId);
       this.#active.delete(key);
-      this.#publishSessionRuntimeChange(execution.workspaceRoot, execution.rootSessionId, previousFamilyActivity);
-    }
-
-    if (isCurrentExecution) {
-      if (slotAcquired) this.#releaseWorkspaceSlot(execution.workspaceRoot, execution.sessionId);
-      this.#detachIfIdle(execution.workspaceRoot, execution.sessionId);
+      if (execution.ready) {
+        this.#publishSessionRuntimeChange(execution.workspaceRoot, execution.rootSessionId);
+      }
     }
 
     if (ownedFamilyStopLease !== undefined) {
@@ -1201,7 +1545,27 @@ export class SessionExecutionManager {
     if (current?.executionToken !== execution.executionToken) return;
 
     this.#markParentLinkCancelling(execution.workspaceRoot, execution.sessionId);
+    this.#closeSteerGate(execution as PendingSessionExecution);
     execution.abortController.abort(new Error(reason));
+  }
+
+  #recordUserStop(workspaceRoot: string, rootSessionId: string): Promise<void> | undefined {
+    const active = this.#active.get(scopedKey(workspaceRoot, rootSessionId));
+    if (active !== undefined) this.#closeSteerGate(active as PendingSessionExecution);
+    const store = this.#config.getSessionStore(rootSessionId, workspaceRoot);
+    const state = store?.getState();
+    const executionId = active?.executionId ?? state?.executions.at(-1)?.id;
+    if (store === undefined || state === undefined || executionId === undefined) return undefined;
+    if (!state.executions.some((execution) => execution.id === executionId)) {
+      store.getState().append({ type: "execution-start", executionId });
+    }
+    const stopState = store.getState();
+    store.getState().append({
+      type: "execution-stop-requested",
+      executionId,
+      timestamp: nextSessionTimestamp(stopState),
+    });
+    return this.#config.flushSessionStore(rootSessionId, workspaceRoot);
   }
 
   async #stopSessionFamily(
@@ -1220,22 +1584,29 @@ export class SessionExecutionManager {
       });
       const executions = familyExecutions.filter((execution) => !deferredAncestorIds.has(execution.sessionId));
       const pendingChildSessionIds = [...(this.#pendingChildLaunches.get(key)?.launches.values() ?? [])];
+      const command = inputCommandForStop(
+        this.#activeCommands.get(key),
+        exemptSessionId,
+      );
 
       for (const execution of familyExecutions) this.#cancelExecution(execution, "Session family cancelled");
+      command?.abortController.abort(new Error("Session family cancelled"));
 
-      if (executions.length === 0 && pendingChildSessionIds.length === 0) return;
+      if (executions.length === 0 && pendingChildSessionIds.length === 0 && command === undefined) return;
 
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) {
         const stuckSessionIds = [...new Set([
           ...executions.map((execution) => execution.sessionId),
           ...pendingChildSessionIds,
+          ...(command === undefined ? [] : [command.rootSessionId]),
         ])].sort();
         throw new SessionFamilyStopConflictError(rootSessionId, stuckSessionIds);
       }
 
       const pendingPromises = [
         ...executions.flatMap((execution) => execution.promise === undefined ? [] : [execution.promise]),
+        ...(command === undefined ? [] : [command.completion]),
       ];
       if (pendingPromises.length === 0) {
         await Bun.sleep(Math.min(5, remainingMs));
@@ -1263,9 +1634,14 @@ export class SessionExecutionManager {
   async #cancelAndWaitForSessions(workspaceRoot: string, sessionIds: readonly string[]): Promise<string[]> {
     const executions = sessionIds
       .map((sessionId) => this.#active.get(scopedKey(workspaceRoot, sessionId)))
-      .filter((execution): execution is ActiveSessionExecution | PendingSessionExecution => execution !== undefined);
+      .filter((execution): execution is PendingSessionExecution => execution !== undefined);
 
     for (const execution of executions) this.#cancelExecution(execution, "Session cancelled");
+    const sessionIdSet = new Set(sessionIds);
+    const commands = [...this.#activeCommands.values()].filter((command) => (
+      command.workspaceRoot === workspaceRoot && sessionIdSet.has(command.rootSessionId)
+    ));
+    for (const command of commands) command.abortController.abort(new Error("Session cancelled"));
 
     const settled = await Promise.all(executions.map(async (execution) => {
         try {
@@ -1276,7 +1652,16 @@ export class SessionExecutionManager {
         }
       }));
 
-    return settled.filter((id): id is string => id !== undefined);
+    const stuckCommands = await Promise.all(commands.map(async (command) => {
+      try {
+        await waitForCommandToStop(command);
+        return undefined;
+      } catch {
+        return command.rootSessionId;
+      }
+    }));
+
+    return [...settled, ...stuckCommands].filter((id): id is string => id !== undefined);
   }
 
   #collectActiveCascade(workspaceRoot: string, sessionId: string): Array<ActiveSessionExecution | PendingSessionExecution> {
@@ -1300,38 +1685,13 @@ export class SessionExecutionManager {
 
     const executions = [...sessionIds]
       .map((id) => this.#active.get(scopedKey(workspaceRoot, id)))
-      .filter((execution): execution is ActiveSessionExecution | PendingSessionExecution => execution !== undefined);
+      .filter((execution): execution is PendingSessionExecution => execution !== undefined);
     if (executions.length > 0 || direct === undefined) return executions;
     return [direct];
   }
 
-  #detachIfIdle(workspaceRoot: string, sessionId: string): void {
-    if (this.#isDirectlyRunning(workspaceRoot, sessionId)) return;
-    // The SSE subscription, not the execution generation, owns live delivery.
-    // Parent links and HITL continuations may append after the root goes idle.
-    if (this.#eventBridge.hasSubscriptions(workspaceRoot, sessionId)) return;
-    this.#eventBridge.detachSession(workspaceRoot, sessionId);
-  }
-
   #isDirectlyRunning(workspaceRoot: string, sessionId: string): boolean {
     return this.#active.has(scopedKey(workspaceRoot, sessionId));
-  }
-
-  #acquireWorkspaceSlot(workspaceRoot: string, sessionId: string): void {
-    const active = this.#activeSessionsByWorkspace.get(workspaceRoot) ?? new Set<string>();
-    const max = this.#config.maxConcurrentSessions ?? 4;
-    if (!active.has(sessionId) && active.size >= max) {
-      throw new ConcurrentSessionLimitError(workspaceRoot, active.size, max);
-    }
-    active.add(sessionId);
-    this.#activeSessionsByWorkspace.set(workspaceRoot, active);
-  }
-
-  #releaseWorkspaceSlot(workspaceRoot: string, sessionId: string): void {
-    const active = this.#activeSessionsByWorkspace.get(workspaceRoot);
-    if (active === undefined) return;
-    active.delete(sessionId);
-    if (active.size === 0) this.#activeSessionsByWorkspace.delete(workspaceRoot);
   }
 
   #countActiveChildren(workspaceRoot: string, parentSessionId: string): number {
@@ -1376,6 +1736,12 @@ export class SessionExecutionManager {
   }
 
   #assertExecutionOriginReady(input: StartSessionExecutionInput, state: SessionStoreState): void {
+    if (input.origin === "goal_claim" && state.pendingMessages.length > 0) {
+      throw new SessionInputConflictError(
+        "state",
+        `Goal continuation cannot bypass ${state.pendingMessages.length} pending Session input message(s)`,
+      );
+    }
     if (input.origin !== "tool_batch") return;
     const activeBatch = state.toolBatches.find((batch) => batch.archivedAt === undefined);
     if (activeBatch === undefined) {
@@ -1429,7 +1795,6 @@ export class SessionExecutionManager {
     }
 
     const token = Symbol(`child-launch:${childSessionId}`);
-    const previousFamilyActivity = this.getSessionFamilyActivity(workspaceRoot, rootSessionId);
     const family = this.#pendingChildLaunches.get(key) ?? {
       workspaceRoot,
       rootSessionId,
@@ -1437,27 +1802,41 @@ export class SessionExecutionManager {
     };
     family.launches.set(token, childSessionId);
     this.#pendingChildLaunches.set(key, family);
-    this.#publishSessionRuntimeChange(workspaceRoot, rootSessionId, previousFamilyActivity);
+    this.#publishSessionRuntimeChange(workspaceRoot, rootSessionId);
     let released = false;
     return () => {
       if (released) return;
       released = true;
       const current = this.#pendingChildLaunches.get(key);
-      const activityBeforeRelease = this.getSessionFamilyActivity(workspaceRoot, rootSessionId);
       current?.launches.delete(token);
       if (current?.launches.size === 0) this.#pendingChildLaunches.delete(key);
-      this.#publishSessionRuntimeChange(workspaceRoot, rootSessionId, activityBeforeRelease);
+      this.#publishSessionRuntimeChange(workspaceRoot, rootSessionId);
     };
   }
 
   #publishSessionRuntimeChange(
     workspaceRoot: string,
     rootSessionId: string,
-    previousActivity: SessionFamilyActivity,
   ): void {
     const activity = this.getSessionFamilyActivity(workspaceRoot, rootSessionId);
-    if (activity === previousActivity) return;
-    const change: SessionRuntimeChange = { workspaceRoot, rootSessionId, activity };
+    const steerTargetExecutionId = this.getSteerTargetExecutionId(workspaceRoot, rootSessionId);
+    const key = scopedKey(workspaceRoot, rootSessionId);
+    const previous = this.#publishedRuntime.get(key) ?? { activity: "idle" as const };
+    if (
+      activity === previous.activity
+      && steerTargetExecutionId === previous.steerTargetExecutionId
+    ) return;
+    if (activity === "idle" && steerTargetExecutionId === undefined) this.#publishedRuntime.delete(key);
+    else this.#publishedRuntime.set(key, {
+      activity,
+      ...(steerTargetExecutionId === undefined ? {} : { steerTargetExecutionId }),
+    });
+    const change: SessionRuntimeChange = {
+      workspaceRoot,
+      rootSessionId,
+      activity,
+      ...(steerTargetExecutionId === undefined ? {} : { steerTargetExecutionId }),
+    };
     for (const listener of this.#runtimeChangeListeners) {
       try {
         listener(change);
@@ -1489,6 +1868,9 @@ export class SessionExecutionManager {
     if (pendingChildSessionIds.length > 0) {
       throw new SessionDeleteConflictError(pendingChildSessionIds.sort());
     }
+    if ((this.#pendingSessionInputMutations.get(key)?.mutations.size ?? 0) > 0) {
+      throw new SessionDeleteConflictError([rootSessionId]);
+    }
 
     const token = Symbol(`session-delete:${key}`);
     this.#deletions.set(key, { token, rootSessionId });
@@ -1497,6 +1879,32 @@ export class SessionExecutionManager {
       if (released) return;
       released = true;
       if (this.#deletions.get(key)?.token === token) this.#deletions.delete(key);
+    };
+  }
+
+  #acquireSessionInputMutation(workspaceRoot: string, rootSessionId: string): () => void {
+    this.#assertWorkspaceOpen(workspaceRoot);
+    const key = scopedKey(workspaceRoot, rootSessionId);
+    if (this.#deletions.has(key)) {
+      throw new SessionDeleteInProgressError(rootSessionId, rootSessionId);
+    }
+
+    const token = Symbol(`session-input-mutation:${key}`);
+    const pending = this.#pendingSessionInputMutations.get(key) ?? {
+      workspaceRoot,
+      rootSessionId,
+      mutations: new Set<symbol>(),
+    };
+    pending.mutations.add(token);
+    this.#pendingSessionInputMutations.set(key, pending);
+
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const current = this.#pendingSessionInputMutations.get(key);
+      current?.mutations.delete(token);
+      if (current?.mutations.size === 0) this.#pendingSessionInputMutations.delete(key);
     };
   }
 
@@ -1755,6 +2163,25 @@ function sessionExecutionOrigin(origin: SessionExecutionOrigin | undefined): Ses
   return "user_message";
 }
 
+function queueDispatchEligible(
+  lastExecution: SessionExecutionRecord | undefined,
+  pendingMessages: readonly PendingSessionMessage[],
+  queueDispatchBarrierAt: number | undefined,
+): boolean {
+  if (queueDispatchBarrierAt !== undefined
+    && (lastExecution === undefined || lastExecution.startedAt <= queueDispatchBarrierAt)) {
+    return pendingMessages.some((message) => message.acceptedAt > queueDispatchBarrierAt);
+  }
+  if (lastExecution === undefined) return true;
+  if (lastExecution.status === "running" || lastExecution.status === "waiting_for_human") return false;
+  if (lastExecution.status === "completed" && lastExecution.stopRequestedAt === undefined) return true;
+  const dispatchBarrier = Math.max(
+    lastExecution.endedAt ?? lastExecution.startedAt,
+    lastExecution.stopRequestedAt ?? 0,
+  );
+  return pendingMessages.some((message) => message.acceptedAt > dispatchBarrier);
+}
+
 function sessionRoleForAgent(agentName: AgentName): SessionRole | undefined {
   if (agentName === "plan" || agentName === "build" || agentName === "explore" || agentName === "librarian") return agentName;
   if (agentName === "reviewer") return "review";
@@ -1832,6 +2259,20 @@ async function waitForExecutionToStop(execution: ActiveSessionExecution | Pendin
     setTimeout(() => reject(new Error(`Timed out waiting for session "${execution.sessionId}" to abort`)), ABORT_AND_WAIT_TIMEOUT_MS);
   });
   await Promise.race([execution.promise ?? Promise.resolve(), timeout]);
+}
+
+function inputCommandForStop(
+  command: ActiveSessionCommand | undefined,
+  exemptSessionId: string | undefined,
+): ActiveSessionCommand | undefined {
+  return command?.rootSessionId === exemptSessionId ? undefined : command;
+}
+
+async function waitForCommandToStop(command: ActiveSessionCommand): Promise<void> {
+  const timeout = new Promise<never>((_resolve, reject) => {
+    setTimeout(() => reject(new Error(`Timed out waiting for session command "${command.clientRequestId}" to abort`)), ABORT_AND_WAIT_TIMEOUT_MS);
+  });
+  await Promise.race([Promise.allSettled([command.completion]).then(() => undefined), timeout]);
 }
 
 function assertGoalDelegationContext(

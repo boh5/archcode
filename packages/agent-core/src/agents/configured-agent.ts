@@ -35,7 +35,7 @@ import {
 } from "./query/hooks";
 import type { QueryLoopHooks } from "./query/loop-hooks";
 import { runQueryLoop } from "./query/loop";
-import type { Agent, AgentResult, AgentRunOptions } from "./types";
+import type { Agent, AgentCommand, AgentCommandResult, AgentResult, AgentRunOptions } from "./types";
 
 export class UnknownExtraToolError extends Error {
   constructor(public readonly toolName: string) {
@@ -173,16 +173,66 @@ export class ConfiguredAgent implements Agent {
     );
   }
 
-  async run(
-    userMessage: string,
-    abortOrOptions?: AbortSignal | AgentRunOptions,
-    confirmPermission?: ToolConfirmationCallback,
-  ): Promise<AgentResult> {
+  classifyCommand(input: string): AgentCommand | null {
+    const parsed = this.commandRegistry.parse(input);
+    if (parsed === null) return null;
+    // /compact accepts no arguments. Inputs such as `/compact this` remain
+    // ordinary model messages rather than being partially interpreted.
+    if (parsed.command === "compact" && parsed.args.trim() !== "") return null;
+    return { name: parsed.command, args: parsed.args };
+  }
+
+  async executeCommand(
+    command: AgentCommand,
+    options: Pick<AgentRunOptions, "abort"> = {},
+  ): Promise<AgentCommandResult> {
+    if (this.disposed) throw new Error("Agent has been disposed");
+    options.abort?.throwIfAborted();
+
+    const descriptor = this.commandRegistry.get(command.name);
+    if (descriptor === undefined) {
+      this.store.getState().append({
+        type: "system-notice",
+        message: `Unknown command: /${command.name}`,
+      });
+      await this.storeManager.flushSession(this.store.getState().sessionId, this.projectRoot);
+      return { kind: "handled" };
+    }
+
+    const result = await descriptor.handler({
+      store: this.store,
+      modelInfo: this.modelInfo,
+      logger: this.logger,
+      modelOptions: this.modelOptions,
+      abort: options.abort,
+      cwd: this.cwd,
+      agentName: this.definition.name,
+      agentSkills: this.definition.skills,
+      skillService: this.skillService,
+    }, command.args);
+    options.abort?.throwIfAborted();
+    this.store.getState().append({ type: "system-notice", message: result.message });
+    await this.storeManager.flushSession(this.store.getState().sessionId, this.projectRoot);
+    return result.continueAsMessage === undefined
+      ? { kind: "handled" }
+      : { kind: "message", content: result.continueAsMessage };
+  }
+
+  async run(options: AgentRunOptions = {}): Promise<AgentResult> {
     if (this.disposed) {
       throw new Error("Agent has been disposed");
     }
 
-    const { abort, confirm, askUser, maxSteps, extraTools } = this.parseRunOptions(abortOrOptions, confirmPermission);
+    const {
+      abort,
+      confirmPermission,
+      askUser: requestedAskUser,
+      maxSteps,
+      extraTools,
+      consumeSteers,
+    } = options;
+    const confirm = confirmPermission ?? this.confirmPermission;
+    const askUser = requestedAskUser ?? this.askUserDefault;
 
     const btm = this.backgroundTaskManager;
     const shouldDrainBackgroundTasks = this.ownsBackgroundTaskManager || this.definition.enforceToolOutputQuota === true;
@@ -219,8 +269,6 @@ export class ConfiguredAgent implements Agent {
       };
       const systemPrompt = await buildSystemPrompt(promptContext);
       const hooks = this.buildHooks(btm);
-      let currentUserMessage = userMessage;
-
       while (true) {
         const result = await runQueryLoop(
           {
@@ -239,7 +287,7 @@ export class ConfiguredAgent implements Agent {
             abort,
             systemPrompt,
             store: this.store,
-            commandRegistry: this.commandRegistry,
+            consumeSteers,
             startChildExecution: this.startChildExecution,
             cancelChildSession: this.cancelChildSession,
             resumeChildSession: this.resumeChildSession,
@@ -249,7 +297,6 @@ export class ConfiguredAgent implements Agent {
             hooks,
             ...(maxSteps === undefined ? {} : { maxSteps }),
           },
-          currentUserMessage,
         );
 
         if (this.store.getState().toolBatches.some((batch) => batch.archivedAt === undefined && batch.calls.some((call) => call.state === "blocked"))) {
@@ -262,8 +309,6 @@ export class ConfiguredAgent implements Agent {
         if (!this.hasUnconsumedTodoContinuation() || abort?.aborted) {
           return result;
         }
-
-        currentUserMessage = "";
       }
     } catch (error) {
       if (!(error instanceof BusyError)) {
@@ -290,46 +335,6 @@ export class ConfiguredAgent implements Agent {
     if (this.ownsBackgroundTaskManager) {
       this.backgroundTaskManager.cancelAll();
     }
-  }
-
-  private parseRunOptions(
-    abortOrOptions: AbortSignal | AgentRunOptions | undefined,
-    confirmPermission: ToolConfirmationCallback | undefined,
-  ): {
-    abort: AbortSignal | undefined;
-    confirm: ToolConfirmationCallback | undefined;
-    askUser: AskUserCallback | undefined;
-    maxSteps: number | undefined;
-    extraTools: readonly string[] | undefined;
-  } {
-    if (abortOrOptions && typeof abortOrOptions === "object" && abortOrOptions instanceof AbortSignal) {
-      return {
-        abort: abortOrOptions,
-        confirm: confirmPermission ?? this.confirmPermission,
-        askUser: this.askUserDefault,
-        maxSteps: undefined,
-        extraTools: undefined,
-      };
-    }
-
-    if (abortOrOptions && typeof abortOrOptions === "object") {
-      const opts = abortOrOptions as AgentRunOptions;
-      return {
-        abort: opts.abort,
-        confirm: opts.confirmPermission ?? this.confirmPermission,
-        askUser: opts.askUser ?? this.askUserDefault,
-        maxSteps: opts.maxSteps,
-        extraTools: opts.extraTools,
-      };
-    }
-
-    return {
-      abort: undefined,
-      confirm: confirmPermission ?? this.confirmPermission,
-      askUser: this.askUserDefault,
-      maxSteps: undefined,
-      extraTools: undefined,
-    };
   }
 
   private async refreshAgentsMd(): Promise<void> {

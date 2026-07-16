@@ -23,6 +23,7 @@ function createProjection(overrides: Partial<SessionProjection> = {}): SessionPr
     rootSessionId: "session-test",
     title: null,
     messages: [],
+    pendingMessages: [],
     steps: [],
     todos: [],
     reminders: [],
@@ -85,6 +86,23 @@ function makeReminder(overrides: Partial<Reminder> = {}): Reminder {
     createdAt: Date.now(),
     consumedAt: 123,
     ...overrides,
+  };
+}
+
+function committedUserEvent(content: string, executionId = "run-user"): StreamEvent {
+  const id = `user-${content.replaceAll(/\W+/g, "-")}`;
+  return {
+    type: "session.messages_committed",
+    executionId,
+    messages: [{
+      id,
+      role: "user",
+      parts: [{ type: "text", id: `${id}:text`, text: content, createdAt: 1, completedAt: 1 }],
+      createdAt: 1,
+      completedAt: 1,
+      executionId,
+      clientRequestId: `request-${id}`,
+    }],
   };
 }
 
@@ -181,8 +199,8 @@ describe("reduceStreamEvent", () => {
 
   test("produces identical projections with the same events and deterministic context", () => {
     const events: StreamEvent[] = [
-      { type: "execution-start" },
-      { type: "user-message", content: "hello" },
+      { type: "execution-start", executionId: "run-identical" },
+      committedUserEvent("hello", "run-identical"),
       { type: "step-start", step: 0 },
       { type: "text-start" },
       { type: "text-delta", text: "hi" },
@@ -722,7 +740,7 @@ describe("reduceStreamEvent", () => {
 
   test("stats remain unchanged after a compact event", () => {
     const before = applyEvents(createProjection(), [
-      { type: "user-message", content: "hello" },
+      committedUserEvent("hello"),
       { type: "text-start" },
       { type: "text-delta", text: "hi" },
       { type: "text-end" },
@@ -818,7 +836,7 @@ describe("reduceStreamEvent", () => {
 
   test("user, assistant, and total message counts update exactly without compaction double-counting", () => {
     const state = applyEvents(createProjection(), [
-      { type: "user-message", content: "first" },
+      committedUserEvent("first"),
       { type: "text-start" },
       { type: "text-delta", text: "reply" },
       { type: "text-end" },
@@ -925,8 +943,8 @@ describe("reduceStreamEvent", () => {
 
   test("computed execution id aligns executions, current execution, messages, and steps", () => {
     const state = applyEvents(createProjection(), [
-      { type: "execution-start" },
-      { type: "user-message", content: "hello" },
+      { type: "execution-start", executionId: "run-computed" },
+      committedUserEvent("hello", "run-computed"),
       { type: "step-start", step: 0 },
     ]);
     const executionId = state.executions[0]!.id;
@@ -975,7 +993,7 @@ describe("reduceStreamEvent", () => {
 
   test("compaction summary updates do not mutate existing stats", () => {
     const before = applyEvents(createProjection(), [
-      { type: "user-message", content: "old" },
+      committedUserEvent("old"),
       { type: "step-start", step: 0 },
       { type: "tool-call", toolCallId: "call-1", toolName: "read", input: {} },
       { type: "tool-result", toolCallId: "call-1", toolName: "read", output: "ok", isError: false },
@@ -1009,7 +1027,7 @@ describe("reduceStreamEvent", () => {
 
   test("creates user messages", () => {
     const state = applyEvents(createProjection({ currentExecutionId: "run-user" }), [
-      { type: "user-message", content: "hello" },
+      committedUserEvent("hello", "run-user"),
     ]);
 
     const message = onlyMessage(state.messages);
@@ -1018,6 +1036,50 @@ describe("reduceStreamEvent", () => {
     expect(message.completedAt).toBeGreaterThan(0);
     expect(partOfType(message, "text").text).toBe("hello");
     expect(state.stats.messages).toEqual({ user: 1, assistant: 0, total: 1 });
+  });
+
+  test("projects Queue transitions, canonical commit, and Stop fact without a pause state", () => {
+    const queued = {
+      id: "message-b",
+      clientRequestId: "request-b",
+      content: "B",
+      source: "user" as const,
+      state: "queued" as const,
+      revision: 0,
+      acceptedAt: 10,
+      updatedAt: 10,
+    };
+    const steering = {
+      ...queued,
+      state: "steering" as const,
+      revision: 1,
+      updatedAt: 11,
+      targetExecutionId: "execution-a",
+    };
+    const canonical = {
+      id: queued.id,
+      role: "user" as const,
+      parts: [{ type: "text" as const, id: "message-b:text", text: "B", createdAt: 10, completedAt: 12 }],
+      createdAt: 10,
+      completedAt: 12,
+      executionId: "execution-a",
+      clientRequestId: queued.clientRequestId,
+    };
+    const state = applyEvents(createProjection(), [
+      { type: "execution-start", executionId: "execution-a" },
+      { type: "session.message_accepted", message: queued },
+      { type: "session.message_steer_claimed", message: steering },
+      { type: "session.messages_committed", executionId: "execution-a", messages: [canonical] },
+      { type: "execution-stop-requested", executionId: "execution-a", timestamp: 13 },
+    ]);
+
+    expect(state.pendingMessages).toEqual([]);
+    expect(state.messages).toEqual([canonical]);
+    expect(state.stats.messages).toEqual({ user: 1, assistant: 0, total: 1 });
+    expect(state.executions).toEqual([
+      expect.objectContaining({ id: "execution-a", status: "running", stopRequestedAt: 13 }),
+    ]);
+    expect(state).not.toHaveProperty("autoDispatchPaused");
   });
 
   test("records execution errors on matching or synthetic steps", () => {
