@@ -23,6 +23,7 @@ import type { AgentDefinition, AgentName } from "./factory-types";
 import { DELEGATION_CORE_TOOLS, MAX_SUB_AGENT_DEPTH } from "./constants";
 import type { Agent } from "./types";
 import { resolveAgentModel } from "./model-resolver";
+import { detectVersionControl, type VersionControlDetector } from "../version-control/detector";
 
 export type { ChildExecutionHandle, ChildExecutionRequest } from "./factory-types";
 
@@ -36,6 +37,7 @@ export interface AgentFactoryConfig {
   readonly config?: ArchCodeConfig;
   readonly backgroundTaskManager?: BackgroundTaskManager;
   readonly projectContextResolver: ProjectContextResolver;
+  readonly versionControlDetector?: VersionControlDetector;
   readonly startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
   readonly cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
   readonly resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
@@ -196,6 +198,7 @@ function createConfiguredAgent(
     backgroundTaskManager: config.backgroundTaskManager,
     memoryConfig: resolvedConfig.memory,
     projectContextResolver: config.projectContextResolver,
+    resolveVersionControl: config.versionControlDetector ?? detectVersionControl,
     logger: config.logger,
     resolveAllowedTools: (agentDefinition, depth) => factoryResolveAllowedTools(config, agentDefinition, depth),
     startChildExecution: config.startChildExecution,

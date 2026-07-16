@@ -18,6 +18,7 @@ import {
 } from "./configured-agent";
 import { exploreAgentDefinition, engineerAgentDefinition, goalLeadAgentDefinition } from "./definitions";
 import type { AgentDefinition } from "./factory-types";
+import type { VersionControl } from "../version-control/detector";
 import { setLlmAdapterForTest } from "../llm/adapter";
 import type { MemoryExtractionConfig } from "../config";
 import { silentLogger } from "../logger";
@@ -204,6 +205,7 @@ function createAgent(options: {
   modelInfo?: ModelInfo;
   memoryConfig?: MemoryExtractionConfig;
   skillService?: SkillService;
+  versionControl?: VersionControl;
 }) {
   const toolRegistry = options.toolRegistry ?? makeToolRegistry();
   const providerRegistry = options.providerRegistry ?? makeProviderRegistry();
@@ -219,6 +221,7 @@ function createAgent(options: {
     store: options.store ?? storeManager.create(crypto.randomUUID(), projectRoot, { cwd, agentName: "engineer" }),
     storeManager,
     projectContextResolver: createTestProjectContextResolver(storeManager),
+    resolveVersionControl: async () => options.versionControl ?? "git",
     projectRoot,
     cwd,
     depth: options.depth,
@@ -487,8 +490,25 @@ describe("ConfiguredAgent", () => {
     expect(system).toContain(`Project root: ${tmpRoot}`);
     expect(system).toContain(`Working directory: ${worktreeRoot}`);
     expect(system).toContain("Execution mode: worktree");
+    expect(system).toContain("Version control: git");
+    expect(system).toContain("A Git repository is detected");
     expect(system).toContain("Use the worktree checkout.");
     expect(system).not.toContain("Minimal project context.");
+  });
+
+  test("injects the resolved non-Git capability into the prompt", async () => {
+    const streamFn = setupMockStreamText("done");
+    const agent = createAgent({
+      definition: exploreAgentDefinition,
+      versionControl: "none",
+    });
+
+    await runAgent(agent, "inspect the project");
+
+    const system = (streamFn.mock.calls[0]![0] as { system: string }).system;
+    expect(system).toContain("Version control: none");
+    expect(system).toContain("No Git repository is detected");
+    expect(system).toContain("Do not call git_status, git_diff, Session worktree tools, or Git commands");
   });
 
   test("explorer definition produces auto-compact, auto-inject, and todo-continuation hooks", async () => {

@@ -13,6 +13,8 @@ export type { ServerConfigServiceOptions } from "./config";
 
 export { createProcessRunner } from "./process/runner";
 export type { ProcessRunner, ProcessRunnerInput, ProcessRunnerResult } from "./process/types";
+export { createVersionControlDetector, detectVersionControl } from "./version-control/detector";
+export type { VersionControl, VersionControlDetector } from "./version-control/detector";
 
 export type { Agent, AgentCommand, AgentCommandResult, AgentResult, AgentRunOptions } from "./agents/types";
 export { AgentRunningError, ChildSessionCwdMismatchError, SessionCwdTransitionInProgressError, SessionToolBatchActiveError } from "./agents/errors";

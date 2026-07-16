@@ -16,7 +16,7 @@ export function buildGuidelinesSection(): string {
 - Use pragmatic TDD: prefer tests first for bugs, state machines, protocols, and core logic; documentation, simple configuration, and mechanical refactors may be changed first and then verified.
 
 ### Completion and communication
-- Start with the narrowest meaningful verification and expand according to risk. Inspect the final diff when source changed and report any unverified risk.
+- Start with the narrowest meaningful verification and expand according to risk. Inspect the final diff after source changes. Report any unverified risk.
 - Do not claim completion while background work that can affect the conclusion is still running or while requested work remains incomplete.
 - Stop only when the requested outcome is evidenced, or when a genuine blocker requires new user authority, external coordination, or a material product decision. Report errors and skipped verification honestly.
 - Ask the user only when investigation cannot resolve a material decision. If ask_user is unavailable, return the exact decision required to the delegating agent.`;

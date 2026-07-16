@@ -1249,6 +1249,7 @@ describe("SessionExecutionManager", () => {
       projectRoot: workspaceRoot,
       cwd: workspaceRoot,
       projectContextResolver: createTestProjectContextResolver(storeManager),
+      resolveVersionControl: async () => "git",
       resolveAllowedTools: (agentDefinition) => agentDefinition.tools.tools,
       logger: silentLogger,
     });

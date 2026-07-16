@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { resolve } from "node:path";
 import {
   createProcessRunner,
+  detectVersionControl,
   InvalidSessionCwdError,
   resolveValidSessionCwd,
   SessionFileNotFoundError,
@@ -52,7 +53,7 @@ export function createFilesRoutes(runtime: AgentRuntime): Hono {
     const project = await resolveProject(runtime, slug);
     const cwd = await resolveDiffCwd(runtime, project.workspaceRoot, sessionId);
 
-    if (!(await isGitRepository(cwd))) {
+    if (await detectVersionControl(cwd) !== "git") {
       return c.json({ files: [] });
     }
 
@@ -196,11 +197,6 @@ export function parseUnifiedDiff(raw: string): DiffFile[] {
   }
 
   return files.filter((file) => file.path.length > 0);
-}
-
-async function isGitRepository(workspaceRoot: string): Promise<boolean> {
-  const result = await processRunner.run(runGitInput(workspaceRoot, ["rev-parse", "--is-inside-work-tree"]));
-  return result.kind === "success" && result.exitCode === 0;
 }
 
 async function runGit(workspaceRoot: string, args: string[]): Promise<string> {

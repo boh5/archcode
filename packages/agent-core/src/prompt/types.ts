@@ -1,6 +1,7 @@
 import type { MemoryRoots } from "../memory";
 import type { ResolvedSkill, SkillIndexEntry } from "../skills/types";
 import type { SessionRole } from "../store/types";
+import type { VersionControl } from "../version-control/detector";
 
 /**
  * Context provided to the system prompt builder.
@@ -54,6 +55,9 @@ export interface PromptEnv {
 
   /** Current working directory */
   readonly cwd: string;
+
+  /** Version-control capability detected for the current working directory. */
+  readonly versionControl: VersionControl;
 
   /** ISO 8601 date string (e.g. "2025-01-15") */
   readonly date: string;

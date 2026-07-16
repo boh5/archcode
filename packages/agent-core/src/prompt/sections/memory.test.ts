@@ -20,6 +20,7 @@ function makeCtx(overrides?: Partial<PromptContext>): PromptContext {
     locale: "en-US",
     projectRoot: "/home/user/project",
     cwd: "/home/user/project",
+    versionControl: "git",
     date: "2025-01-15",
   }, ...overrides,  };
 }

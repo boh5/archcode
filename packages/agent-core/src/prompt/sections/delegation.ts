@@ -38,5 +38,5 @@ Use only this role's allowed targets. Persona, skills, context, title, descripti
 ### Continuity and parent acceptance
 - For failure repair, a follow-up question, or verification feedback, use resume_session with the same stopped child's returned session_id. Its persisted agent type, title, Skills, and depth are reused automatically; never restate or override them, and never invent or reuse an unrelated session id.
 - Collect a terminal result and the actual deliverable for every child that can affect the conclusion. When needed, use wait_for_reminder to wait for terminal state, but the reminder is only a terminal notification; then use blocking background_output to read the deliverable. A running snapshot is not a final result.
-- A child claim is not evidence. The parent must inspect the deliverable, scope, constraints, diff, diagnostics, and test output, reconcile conflicting findings, and send concrete failures back to the same child before re-verifying.`;
+- A child claim is not evidence. The parent must inspect the deliverable, scope, constraints, diagnostics, test output, and diff. Reconcile conflicting findings and send concrete failures back to the same child before re-verifying.`;
 }

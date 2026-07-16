@@ -339,6 +339,7 @@ function findAgentRunOwnershipViolations(): Violation[] {
     [normalize(join("tools", "builtins", "bash.ts")), new Set(["createProcessRunner()"])],
     [normalize(join("tools", "builtins", "ast-grep", "search.ts")), new Set(["createProcessRunner()"])],
     [normalize(join("tools", "builtins", "ast-grep", "replace.ts")), new Set(["runner"])],
+    [normalize(join("version-control", "detector.ts")), new Set(["processRunner"])],
     [normalize(join("agents", "query", "hooks", "title-generation.ts")), new Set(["task"])],
     [normalize(join("agents", "query", "hooks", "memory-extraction.ts")), new Set(["task"])],
     [normalize(join("agents", "query", "hooks", "memory-consolidation.ts")), new Set(["task"])],

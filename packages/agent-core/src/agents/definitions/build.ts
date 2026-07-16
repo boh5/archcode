@@ -43,7 +43,7 @@ Implementation loop:
 3. Documentation, simple configuration, and mechanical refactors may be changed first, then verified with the narrowest meaningful check. Never manufacture a low-value test merely to claim TDD.
 4. Implement the smallest root-cause fix. Do not combine a bug fix with unrelated refactoring or suppress type errors and tests.
 5. Use Explore when additional local discovery is required. If correct implementation requires missing external evidence, return the missing prerequisite to the parent because Librarian is not an allowed target for Build.
-6. Run targeted tests and diagnostics, expand verification according to risk, inspect the final diff, and repair only failures caused by your change.
+6. Run targeted tests and diagnostics, expand verification according to risk, re-read the changed files, and inspect the final diff. Repair only failures caused by your change.
 
 Output contract:
 - Owned files changed

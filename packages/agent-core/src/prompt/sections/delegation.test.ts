@@ -12,6 +12,7 @@ function makeCtx(allowedTools: readonly string[]): PromptContext {
       locale: "zh-CN",
       projectRoot: "/workspace",
       cwd: "/workspace",
+      versionControl: "git",
       date: "2026-07-12",
     },
   };
@@ -72,6 +73,7 @@ describe("buildDelegationSection", () => {
     expect(result).toContain("persisted agent type, title, Skills, and depth");
     expect(result).toContain("stopped child");
     expect(result).toContain("child claim is not evidence");
+    expect(result).toContain("test output, and diff");
     expect(result).toContain("terminal result");
     expect(result).toContain("reminder is only a terminal notification");
     expect(result).toContain("blocking background_output");

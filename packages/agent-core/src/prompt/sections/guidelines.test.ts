@@ -22,6 +22,7 @@ describe("buildGuidelinesSection", () => {
     expect(result).toContain("verify the result");
     expect(result).toContain("unrelated failures");
     expect(result).toContain("narrowest meaningful verification");
+    expect(result).toContain("Inspect the final diff after source changes");
     expect(result).toContain("genuine blocker");
     expect(result).toContain("background work that can affect the conclusion");
   });

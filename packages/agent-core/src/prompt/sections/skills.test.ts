@@ -14,6 +14,7 @@ function makeCtx(
     locale: "en-US",
     projectRoot: "/workspace",
     cwd: "/workspace",
+    versionControl: "git",
     date: "2026-05-25",
   }, ...overrides,  };
 }

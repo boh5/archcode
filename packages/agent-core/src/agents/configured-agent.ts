@@ -24,6 +24,7 @@ import type { AskUserCallback, ToolConfirmationCallback, ToolRegistry } from "..
 import { TOOL_OUTPUT_DIR, enforceQuota } from "../tools/index";
 import { TOOL_WORKTREE_ENTER, TOOL_WORKTREE_EXIT } from "../tools/names";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
+import type { VersionControl, VersionControlDetector } from "../version-control/detector";
 import type { AgentDefinition } from "./factory-types";
 import {
   createAutoInjectReminderHook,
@@ -69,6 +70,7 @@ export interface ConfiguredAgentOptions {
   readonly depth?: number;
   readonly backgroundTaskManager?: BackgroundTaskManager;
   readonly projectContextResolver: ProjectContextResolver;
+  readonly resolveVersionControl: VersionControlDetector;
   readonly resolveAllowedTools: (definition: AgentDefinition, depth: number) => readonly string[];
   readonly startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
   readonly cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
@@ -79,13 +81,14 @@ export interface ConfiguredAgentOptions {
   readonly logger: Logger;
 }
 
-function buildEnv(projectRoot: string, cwd: string): PromptEnv {
+function buildEnv(projectRoot: string, cwd: string, versionControl: VersionControl): PromptEnv {
   return {
     platform: process.platform,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     locale: Intl.DateTimeFormat().resolvedOptions().locale,
     projectRoot,
     cwd,
+    versionControl,
     date: new Date().toISOString().slice(0, 10),
   };
 }
@@ -103,6 +106,7 @@ export class ConfiguredAgent implements Agent {
   private readonly projectRoot: string;
   readonly cwd: string;
   private readonly projectContextResolver: ProjectContextResolver;
+  private readonly resolveVersionControl: VersionControlDetector;
   private readonly depth: number;
   private readonly memoryRoots: MemoryRoots;
   private readonly commandRegistry: CommandRegistry;
@@ -139,6 +143,7 @@ export class ConfiguredAgent implements Agent {
     this.projectRoot = options.projectRoot;
     this.cwd = options.cwd;
     this.projectContextResolver = options.projectContextResolver;
+    this.resolveVersionControl = options.resolveVersionControl;
     this.depth = options.depth ?? 0;
     this.backgroundTaskManager = options.backgroundTaskManager ?? new DefaultBackgroundTaskManager({
       logger: this.logger.child({ module: "background.manager" }),
@@ -256,7 +261,11 @@ export class ConfiguredAgent implements Agent {
         promptProfileId: this.definition.promptProfileId,
         rolePrompt: this.definition.rolePrompt,
         agentsMd: this.agentsMd,
-        env: buildEnv(this.projectRoot, this.cwd),
+        env: buildEnv(
+          this.projectRoot,
+          this.cwd,
+          await this.resolveVersionControl(this.cwd, abort),
+        ),
         availableSkills,
         ...(activeSkills.length > 0 ? { activeSkills } : {}),
         ...(this.definition.includeMemoryInPrompt

@@ -19,6 +19,7 @@ const ENV: PromptContext["env"] = {
   locale: "zh-CN",
   projectRoot: "/workspace",
   cwd: "/workspace",
+  versionControl: "git",
   date: "2026-07-12",
 };
 
@@ -84,6 +85,17 @@ describe("full system prompt contracts", () => {
     }
     for (const definition of [exploreAgentDefinition, librarianAgentDefinition]) {
       expect(await fullPrompt(definition)).not.toContain("## Delegation Protocol");
+    }
+  });
+
+  test("centralizes the version-control condition in the Environment section", async () => {
+    const invariant = "Git-specific instructions elsewhere in this prompt apply only when Version control is git";
+
+    for (const definition of agentDefinitions) {
+      const prompt = await fullPrompt(definition);
+      expect(prompt).toContain(invariant);
+      expect(prompt.split(invariant)).toHaveLength(2);
+      expect(definition.rolePrompt ?? "").not.toMatch(/version control is available/i);
     }
   });
 
