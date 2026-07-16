@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { ChatMessages } from "../components/composite/ChatMessages";
 import { HitlInbox } from "../components/features/HitlCard";
 import { ChatHeader } from "../components/features/ChatHeader";
-import { ChatInput } from "../components/features/ChatInput";
+import { SessionComposerDock } from "../components/features/SessionComposerDock";
 import { DiffTab } from "../components/features/DiffTab";
 import { TodoProgressButton } from "../components/features/TodoProgressButton";
 import { InspectorToggleButton } from "../components/features/InspectorToggleButton";
@@ -14,7 +14,7 @@ import { getWebSessionStore, markSessionForeground } from "../store/session-stor
 import { useWorkbenchLayout } from "../context/workbench-layout";
 import { ConversationRail } from "../components/primitives/ConversationRail";
 
-function SessionHitlSurface({
+function FocusedSessionHitlSurface({
   views,
   projectSlug,
 }: {
@@ -24,14 +24,18 @@ function SessionHitlSurface({
   if (!views || views.length === 0) return null;
 
   return (
-    <div className="shrink-0 border-t border-border-subtle bg-bg-surface" data-testid="conversation-hitl-surface">
-      <ConversationRail className="py-[12px]" data-testid="conversation-hitl-rail">
-        <HitlInbox
-          views={views}
-          projectSlug={projectSlug}
-          hideWhenEmpty
-          className="gap-[8px]"
-        />
+    <div className="shrink-0 bg-bg-base" data-testid="conversation-hitl-surface">
+      <ConversationRail className="pb-[12px] pt-[8px]" data-testid="conversation-hitl-rail">
+        <div className="rounded-[14px] border border-border-subtle bg-bg-surface p-[10px] shadow-sm">
+          <HitlInbox
+            views={views}
+            projectSlug={projectSlug}
+            hideWhenEmpty
+            className="gap-[8px]"
+            title="Needs attention"
+            showOwnerLink={false}
+          />
+        </div>
       </ConversationRail>
     </div>
   );
@@ -64,11 +68,6 @@ export function SessionRoute() {
     : "Activation source Todo";
   const focusSessionId = searchParams.get("focus");
   const { data: focusedSession, isLoading: isFocusedLoading, error: focusedError } = useFocusedSession(slug, focusSessionId);
-  const sessionHitl = useRealtimeHitl({
-    slug,
-    scope: "session",
-    ownerId: session?.rootSessionId,
-  });
   const focusedHitl = useRealtimeHitl({
     slug,
     scope: "session",
@@ -274,7 +273,7 @@ export function SessionRoute() {
         ) : (
           <>
             <ChatMessages slug={slug} sessionId={focusSessionId} agents={agents} />
-            <SessionHitlSurface views={focusedHitl} projectSlug={slug} />
+            <FocusedSessionHitlSurface views={focusedHitl} projectSlug={slug} />
           </>
         )}
       </div>
@@ -331,8 +330,7 @@ export function SessionRoute() {
       ) : (
         <>
           <ChatMessages slug={slug} sessionId={rootSessionId} agents={agents} />
-          <SessionHitlSurface views={sessionHitl} projectSlug={slug} />
-          <ChatInput slug={slug} sessionId={rootSessionId} />
+          <SessionComposerDock slug={slug} sessionId={rootSessionId} />
         </>
       )}
     </div>

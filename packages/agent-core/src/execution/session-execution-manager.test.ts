@@ -1019,6 +1019,149 @@ describe("SessionExecutionManager", () => {
     expect(store.getState().pendingMessages).toEqual([]);
   });
 
+  test("commits an accepted Steer before yielding to a HITL tool-batch continuation", async () => {
+    const sessionId = crypto.randomUUID();
+    const store = storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" });
+    const enteredRun = deferred<void>();
+    const releaseHitlBoundary = deferred<void>();
+    let invocation = 0;
+    let resumedUserMessages: string[] = [];
+    const agent: Agent = {
+      store,
+      cwd: workspaceRoot,
+      classifyCommand: () => null,
+      executeCommand: async () => ({ kind: "handled" }),
+      run: async () => {
+        invocation += 1;
+        if (invocation > 1) {
+          resumedUserMessages = getUserMessageTexts(store.getState());
+          return { text: "resumed", steps: 1, status: "completed" };
+        }
+        enteredRun.resolve(undefined);
+        await releaseHitlBoundary.promise;
+        store.setState({ toolBatches: [blockedToolBatch("steer-before-hitl")] });
+        return { text: "waiting", steps: 1, status: "waiting_for_human" };
+      },
+      dispose: () => undefined,
+    };
+    const { manager } = createManager({ [sessionId]: agent as unknown as MockAgent }, {
+      getAgent: () => agent,
+    });
+    const inputs = new SessionInputService(storeManager);
+
+    const execution = await manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId,
+      input: { kind: "direct", text: "A" },
+    });
+    await enteredRun.promise;
+    const accepted = await inputs.acceptMessage({
+      sessionId,
+      workspaceRoot,
+      text: "B",
+      clientRequestId: crypto.randomUUID(),
+      source: "user",
+    });
+    await manager.steerQueuedMessage({
+      workspaceRoot,
+      sessionId,
+      messageId: accepted.messageId,
+      expectedRevision: 0,
+      expectedExecutionId: execution.executionId,
+    });
+
+    releaseHitlBoundary.resolve(undefined);
+    await execution.promise;
+
+    expect(store.getState().messages.find((message) => message.id === accepted.messageId)).toMatchObject({
+      executionId: execution.executionId,
+    });
+    expect(store.getState().pendingMessages).toEqual([]);
+    expect(store.getState().executions.at(-1)).toMatchObject({
+      id: execution.executionId,
+      status: "waiting_for_human",
+    });
+
+    const resumed = await manager.startSessionToolBatchExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId,
+    });
+    await resumed.promise;
+
+    expect(resumed.executionId).not.toBe(execution.executionId);
+    expect(resumedUserMessages).toEqual(["A", "B"]);
+  });
+
+  test("Stop still rolls back a HITL-boundary Steer before its durable commit", async () => {
+    const sessionId = crypto.randomUUID();
+    const store = storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" });
+    const enteredRun = deferred<void>();
+    const releaseHitlBoundary = deferred<void>();
+    const commitEntered = deferred<void>();
+    const releaseCommit = deferred<void>();
+    const inputs = new SessionInputService(storeManager);
+    const port = inputServicePort(inputs);
+    const agent: Agent = {
+      store,
+      cwd: workspaceRoot,
+      classifyCommand: () => null,
+      executeCommand: async () => ({ kind: "handled" }),
+      run: async () => {
+        enteredRun.resolve(undefined);
+        await releaseHitlBoundary.promise;
+        store.setState({ toolBatches: [blockedToolBatch("stopped-steer-before-hitl")] });
+        return { text: "waiting", steps: 1, status: "waiting_for_human" };
+      },
+      dispose: () => undefined,
+    };
+    const { manager } = createManager({ [sessionId]: agent as unknown as MockAgent }, {
+      getAgent: () => agent,
+      sessionInputService: {
+        ...port,
+        commitSteers: async (input) => {
+          commitEntered.resolve(undefined);
+          await releaseCommit.promise;
+          return await inputs.commitSteers(input);
+        },
+      },
+    });
+
+    const execution = await manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId,
+      input: { kind: "direct", text: "A" },
+    });
+    await enteredRun.promise;
+    const accepted = await inputs.acceptMessage({
+      sessionId,
+      workspaceRoot,
+      text: "B",
+      clientRequestId: crypto.randomUUID(),
+      source: "user",
+    });
+    await manager.steerQueuedMessage({
+      workspaceRoot,
+      sessionId,
+      messageId: accepted.messageId,
+      expectedRevision: 0,
+      expectedExecutionId: execution.executionId,
+    });
+
+    releaseHitlBoundary.resolve(undefined);
+    await commitEntered.promise;
+    const stopping = manager.stopSessionFamily(workspaceRoot, sessionId);
+    releaseCommit.resolve(undefined);
+    await Promise.all([execution.promise, stopping]);
+
+    expect(store.getState().messages.some((message) => message.id === accepted.messageId)).toBe(false);
+    expect(store.getState().pendingMessages).toEqual([
+      expect.objectContaining({ id: accepted.messageId, state: "queued" }),
+    ]);
+  });
+
   test("rolls an unconsumed Steer back to Queue when Stop closes the gate", async () => {
     const run = deferred<MockAgentResult>();
     const sessionId = crypto.randomUUID();

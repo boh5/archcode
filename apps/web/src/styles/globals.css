@@ -233,20 +233,6 @@
   to { transform: translateX(0); opacity: 1; }
 }
 
-@keyframes spin-conic {
-  to { transform: rotate(360deg); }
-}
-
-@property --border-angle {
-  syntax: '<angle>';
-  initial-value: 0deg;
-  inherits: false;
-}
-
-@keyframes thinking-border {
-  to { --border-angle: 360deg; }
-}
-
 /* Session conversation density is intentionally local. Streamdown is also used
  * outside this surface, so none of these rhythm overrides may be global. */
 .conversation-surface .msg-parts {

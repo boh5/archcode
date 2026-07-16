@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { usePostMessage, useStopSessionFamily } from "../../api/mutations";
-import { useHitlProjectInitialized, useRealtimeHitl } from "../../store/hitl-store";
-import { useSessionFamilyActivity } from "../../store/session-runtime-store";
-import { getWebSessionStore, useSessionStore } from "../../store/session-store";
+import { ArrowUp, Loader2, Square } from "lucide-react";
+import type { SessionFamilyActivity } from "@archcode/protocol";
 import { ApiError } from "../../api/client";
-import { ConversationRail } from "../primitives/ConversationRail";
+import { usePostMessage, useStopSessionFamily } from "../../api/mutations";
+import { getWebSessionStore, useSessionStore } from "../../store/session-store";
 
 const SLASH_COMMANDS = [
   { name: "/compact", description: "Compact conversation context" },
@@ -12,29 +11,42 @@ const SLASH_COMMANDS = [
 
 type SlashCommand = (typeof SLASH_COMMANDS)[number];
 
-interface ChatInputProps {
+export interface ChatInputProps {
   slug: string;
   sessionId: string;
+  activity: SessionFamilyActivity | undefined;
+  hitlReady: boolean;
+  hasPendingHitl: boolean;
 }
 
-export function ChatInput({ slug, sessionId }: ChatInputProps) {
+function composerStatus(
+  activity: SessionFamilyActivity | undefined,
+  hitlReady: boolean,
+  hasPendingHitl: boolean,
+): { label: string; dotClass: string } {
+  if (activity === undefined) return { label: "Connecting", dotClass: "bg-text-muted" };
+  if (!hitlReady) return { label: "Syncing", dotClass: "bg-text-muted" };
+  if (activity === "stopping") return { label: "Stopping", dotClass: "bg-warning" };
+  if (hasPendingHitl) return { label: "Waiting for input", dotClass: "bg-warning" };
+  if (activity === "running") return { label: "Running", dotClass: "bg-accent" };
+  return { label: "Ready", dotClass: "bg-success" };
+}
+
+export function ChatInput({
+  slug,
+  sessionId,
+  activity,
+  hitlReady,
+  hasPendingHitl,
+}: ChatInputProps) {
   const [value, setValue] = useState("");
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
-  const [attachTooltip, setAttachTooltip] = useState(false);
-
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const slashMenuRef = useRef<HTMLDivElement>(null);
 
-  const activity = useSessionFamilyActivity(slug, sessionId);
-  const pendingHitl = useRealtimeHitl({
-    slug,
-    scope: "session",
-    ownerId: sessionId,
-  });
-  const hitlReady = useHitlProjectInitialized(slug);
-  const modelInfo = useSessionStore(sessionId, (s) => s.modelInfo, slug);
+  const modelInfo = useSessionStore(sessionId, (state) => state.modelInfo, slug);
   const postMessage = usePostMessage();
   const stopSession = useStopSessionFamily();
 
@@ -42,41 +54,39 @@ export function ChatInput({ slug, sessionId }: ChatInputProps) {
   const isRunning = activity === "running";
   const isStopping = activity === "stopping";
   const runtimeReady = activity !== undefined;
-  const hasPendingHitl = pendingHitl.length > 0;
-  // Sending while running is the normal Queue path. Stopping remains the only
-  // runtime state that blocks the composer.
-  const canCompose = runtimeReady && hitlReady && activity !== "stopping" && !isPending;
-  const filteredCommands = SLASH_COMMANDS.filter((cmd) =>
-    cmd.name.startsWith(`/ ${slashFilter}`.replace(/\s/g, "")),
+  const canCompose = runtimeReady && hitlReady && !isStopping && !isPending;
+  const canSubmit = canCompose && value.trim().length > 0;
+  const status = composerStatus(activity, hitlReady, hasPendingHitl);
+  const filteredCommands = SLASH_COMMANDS.filter((command) =>
+    command.name.startsWith(`/ ${slashFilter}`.replace(/\s/g, "")),
   );
 
   const adjustHeight = useCallback(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    const maxHeight = 200;
-    el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
+    const element = textareaRef.current;
+    if (!element) return;
+    element.style.height = "auto";
+    element.style.height = `${Math.min(element.scrollHeight, 200)}px`;
   }, []);
 
   useEffect(() => {
     adjustHeight();
   }, [value, adjustHeight]);
 
-useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
       if (
-        slashMenuRef.current &&
-        !slashMenuRef.current.contains(e.target as Node) &&
-        textareaRef.current &&
-        !textareaRef.current.contains(e.target as Node)
+        slashMenuRef.current
+        && !slashMenuRef.current.contains(event.target as Node)
+        && textareaRef.current
+        && !textareaRef.current.contains(event.target as Node)
       ) {
         setShowSlashMenu(false);
       }
     }
-    if (showSlashMenu) {
-      document.addEventListener("mousedown", handleClickOutside);
-      return () => document.removeEventListener("mousedown", handleClickOutside);
-    }
+
+    if (!showSlashMenu) return;
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [showSlashMenu]);
 
   const submitMessage = useCallback((content: string) => {
@@ -90,17 +100,14 @@ useEffect(() => {
       { slug, sessionId, content, clientRequestId },
       {
         onSuccess: (acceptance) => {
-          // Slash commands are control inputs and intentionally produce no
-          // queued/canonical message event to take over the optimistic bubble.
+          // Commands have no canonical message event to replace this optimistic record.
           if (acceptance.status === "command") {
             getWebSessionStore(sessionId, slug).getState().removeLocalSendingMessage(clientRequestId);
           }
         },
-        // The optimistic bubble stays until the durable Session event arrives.
-        // A definitive 4xx means the server rejected the message and the draft
-        // is safe to restore. A timeout/disconnect is ambiguous: keep this ID
-        // so a later reconcile/retry cannot create a duplicate message.
         onError: (error) => {
+          // Restore a definitively rejected draft. Ambiguous network outcomes
+          // stay in the Dock so Retry can reuse this exact clientRequestId.
           const store = getWebSessionStore(sessionId, slug).getState();
           if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
             store.removeLocalSendingMessage(clientRequestId);
@@ -114,245 +121,176 @@ useEffect(() => {
     setValue("");
 
     requestAnimationFrame(() => {
-      if (textareaRef.current) {
-        textareaRef.current.style.height = "auto";
-      }
+      if (textareaRef.current) textareaRef.current.style.height = "auto";
     });
-  }, [slug, sessionId, postMessage]);
+  }, [postMessage, sessionId, slug]);
 
   const sendMessage = useCallback(() => {
-    const trimmed = value.trim();
-    if (!trimmed || !canCompose) return;
-    submitMessage(trimmed);
-  }, [value, canCompose, submitMessage]);
+    const content = value.trim();
+    if (!content || !canCompose) return;
+    submitMessage(content);
+  }, [canCompose, submitMessage, value]);
 
-  const selectSlashCommand = useCallback(
-    (cmd: SlashCommand) => {
-      if (!canCompose || isRunning || hasPendingHitl) return;
-      submitMessage(cmd.name);
-      setShowSlashMenu(false);
-      setSlashFilter("");
-      setSlashActiveIndex(0);
-      textareaRef.current?.focus();
-    },
-    [canCompose, isRunning, hasPendingHitl, submitMessage],
-  );
+  const selectSlashCommand = useCallback((command: SlashCommand) => {
+    if (!canCompose || isRunning || hasPendingHitl) return;
+    submitMessage(command.name);
+    setShowSlashMenu(false);
+    setSlashFilter("");
+    setSlashActiveIndex(0);
+    textareaRef.current?.focus();
+  }, [canCompose, hasPendingHitl, isRunning, submitMessage]);
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (showSlashMenu && filteredCommands.length > 0) {
-        if (e.key === "ArrowUp") {
-          e.preventDefault();
-          setSlashActiveIndex((i) =>
-            i <= 0 ? filteredCommands.length - 1 : i - 1,
-          );
-          return;
-        }
-        if (e.key === "ArrowDown") {
-          e.preventDefault();
-          setSlashActiveIndex((i) =>
-            i >= filteredCommands.length - 1 ? 0 : i + 1,
-          );
-          return;
-        }
-        if ((e.key === "Enter" || e.key === "Tab") && !e.nativeEvent.isComposing) {
-          e.preventDefault();
-          selectSlashCommand(filteredCommands[slashActiveIndex]);
-          return;
-        }
-        if (e.key === "Escape") {
-          e.preventDefault();
-          setShowSlashMenu(false);
-          setSlashFilter("");
-          setSlashActiveIndex(0);
-          return;
-        }
-      }
-
-      if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-        e.preventDefault();
-        sendMessage();
+  const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (showSlashMenu && filteredCommands.length > 0) {
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setSlashActiveIndex((index) => index <= 0 ? filteredCommands.length - 1 : index - 1);
         return;
       }
-
-      if (e.key === "Escape" && isRunning && !stopSession.isPending) {
-        e.preventDefault();
-        stopSession.mutate({ slug, rootSessionId: sessionId });
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setSlashActiveIndex((index) => index >= filteredCommands.length - 1 ? 0 : index + 1);
         return;
       }
-    },
-    [
-      showSlashMenu,
-      filteredCommands,
-      slashActiveIndex,
-      selectSlashCommand,
-      sendMessage,
-      isRunning,
-      slug,
-      sessionId,
-      stopSession,
-    ],
-  );
-
-  const handleChange = useCallback(
-    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-      const newValue = e.target.value;
-      setValue(newValue);
-
-      if (newValue.startsWith("/")) {
-        setShowSlashMenu(true);
-        setSlashFilter(newValue.slice(1));
-        setSlashActiveIndex(0);
-      } else {
+      if ((event.key === "Enter" || event.key === "Tab") && !event.nativeEvent.isComposing) {
+        event.preventDefault();
+        selectSlashCommand(filteredCommands[slashActiveIndex]);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
         setShowSlashMenu(false);
         setSlashFilter("");
+        setSlashActiveIndex(0);
+        return;
       }
-    },
-    [],
-  );
+    }
+
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      sendMessage();
+      return;
+    }
+
+    if (event.key === "Escape" && isRunning && !stopSession.isPending) {
+      event.preventDefault();
+      stopSession.mutate({ slug, rootSessionId: sessionId });
+    }
+  }, [
+    filteredCommands,
+    isRunning,
+    selectSlashCommand,
+    sendMessage,
+    sessionId,
+    showSlashMenu,
+    slashActiveIndex,
+    slug,
+    stopSession,
+  ]);
+
+  const handleChange = useCallback((event: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const nextValue = event.target.value;
+    setValue(nextValue);
+    if (nextValue.startsWith("/")) {
+      setShowSlashMenu(true);
+      setSlashFilter(nextValue.slice(1));
+      setSlashActiveIndex(0);
+      return;
+    }
+    setShowSlashMenu(false);
+    setSlashFilter("");
+  }, []);
 
   return (
-    <div className="shrink-0 border-t border-border-subtle bg-bg-surface" data-testid="conversation-composer-surface">
-      <ConversationRail className="py-[12px]" data-testid="conversation-composer-rail">
-        <div className="relative flex flex-col gap-[8px]">
-          {showSlashMenu && filteredCommands.length > 0 && canCompose && !isRunning && !hasPendingHitl && (
-            <div
-              ref={slashMenuRef}
-              className="absolute bottom-full left-0 right-0 bg-bg-elevated border border-border-default rounded-md shadow-lg max-h-[200px] overflow-y-auto z-10"
+    <div className="relative" data-testid="conversation-composer">
+      {showSlashMenu && filteredCommands.length > 0 && canCompose && !isRunning && !hasPendingHitl && (
+        <div
+          ref={slashMenuRef}
+          className="absolute bottom-[calc(100%+8px)] left-0 right-0 z-20 max-h-[200px] overflow-y-auto rounded-[12px] border border-border-default bg-bg-elevated p-1 shadow-lg"
+          data-testid="composer-slash-menu"
+        >
+          {filteredCommands.map((command, index) => (
+            <button
+              type="button"
+              key={command.name}
+              className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] transition-colors duration-100 ${
+                index === slashActiveIndex ? "bg-bg-hover" : "hover:bg-bg-hover"
+              }`}
+              onClick={() => selectSlashCommand(command)}
+              onMouseEnter={() => setSlashActiveIndex(index)}
             >
-              {filteredCommands.map((cmd, i) => (
-                <div
-                  key={cmd.name}
-                  className={`flex items-center gap-2 px-3.5 py-2 cursor-pointer text-[13px] transition-colors duration-100 ${
-                    i === slashActiveIndex
-                      ? "bg-bg-hover"
-                      : "hover:bg-bg-hover"
-                  }`}
-                  onClick={() => selectSlashCommand(cmd)}
-                  onMouseEnter={() => setSlashActiveIndex(i)}
-                >
-                  <span className="font-mono text-accent">{cmd.name}</span>
-                  <span className="text-text-muted text-xs">{cmd.description}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className="flex items-end gap-2">
-        <div className="relative">
-          <button
-            type="button"
-            className="w-9 h-9 rounded-sm border border-border-default bg-transparent text-text-tertiary cursor-pointer flex items-center justify-center text-sm transition-all duration-150 hover:bg-bg-hover hover:text-text-primary hover:border-border-strong shrink-0 disabled:opacity-30 disabled:cursor-not-allowed"
-            disabled={!canCompose}
-            onClick={() => setAttachTooltip((v) => !v)}
-            onBlur={() => setAttachTooltip(false)}
-            title="Attach file"
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M9.5 3.5L4.5 8.5C3.67 9.33 3.67 10.67 4.5 11.5C5.33 12.33 6.67 12.33 7.5 11.5L12.5 6.5C13.88 5.12 13.88 2.88 12.5 1.5C11.12 0.12 8.88 0.12 7.5 1.5L2.5 6.5C0.73 8.27 0.73 11.23 2.5 13C4.27 14.77 7.23 14.77 9 13L13.5 8.5" />
-            </svg>
-          </button>
-          {attachTooltip && (
-            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2.5 py-1.5 bg-bg-elevated border border-border-default rounded-md shadow-md text-xs text-text-secondary whitespace-nowrap z-20">
-              Coming soon
-            </div>
-          )}
+              <span className="font-mono text-accent">{command.name}</span>
+              <span className="text-xs text-text-muted">{command.description}</span>
+            </button>
+          ))}
         </div>
+      )}
 
-        <div className="relative flex-1">
-          <textarea
-            ref={textareaRef}
-            value={value}
-            onChange={handleChange}
-            onKeyDown={handleKeyDown}
-            disabled={!canCompose}
-            placeholder={
-              !runtimeReady
-                ? "Connecting to runtime…"
-                : !hitlReady
-                  ? "Syncing pending requests…"
-                : hasPendingHitl
+      <div
+        className="overflow-hidden rounded-[16px] border border-border-default bg-bg-elevated shadow-md transition-[border-color,box-shadow] duration-150 focus-within:border-accent focus-within:shadow-[0_0_0_3px_var(--accent-subtle),var(--shadow-md)]"
+        data-testid="composer-card"
+      >
+        <textarea
+          ref={textareaRef}
+          value={value}
+          onChange={handleChange}
+          onKeyDown={handleKeyDown}
+          disabled={!canCompose}
+          placeholder={
+            !runtimeReady
+              ? "Connecting to runtime…"
+              : !hitlReady
+                ? "Syncing pending requests…"
+                : hasPendingHitl || isRunning
                   ? "Queue a message…"
-                  : isRunning
-                    ? "Queue a message…"
-                    : isStopping
-                      ? "Stopping…"
-                      : "Send a message…"
-            }
-            rows={1}
-            style={
-              isRunning
-                ? {
-                    border: "1.5px solid transparent",
-                    background: `linear-gradient(var(--bg-base), var(--bg-base)) padding-box, conic-gradient(from var(--border-angle, 0deg), transparent 0%, var(--accent) 25%, transparent 50%) border-box`,
-                    animation: "thinking-border 1.5s linear infinite",
-                  }
-                : undefined
-            }
-            className={`w-full resize-none rounded-lg px-3.5 py-2.5 text-text-primary text-[13.5px] leading-[1.55] min-h-[42px] max-h-[200px] overflow-y-auto font-sans outline-none transition-all duration-200 placeholder:text-text-tertiary disabled:text-text-tertiary disabled:cursor-not-allowed ${
-              isRunning
-                ? "bg-transparent"
-                : "border border-border-default bg-bg-base focus:border-accent"
-            }`}
-          />
-        </div>
+                  : isStopping
+                    ? "Stopping…"
+                    : "Send a message…"
+          }
+          rows={1}
+          className="block min-h-[48px] max-h-[200px] w-full resize-none overflow-y-auto border-0 bg-transparent px-[14px] pb-[8px] pt-[12px] font-sans text-[13.5px] leading-[1.55] text-text-primary outline-none placeholder:text-text-tertiary disabled:cursor-not-allowed disabled:text-text-tertiary"
+        />
 
-        {isRunning ? (
-          <button
-            type="button"
-            className="w-9 h-9 rounded-sm border border-border-default bg-transparent text-text-tertiary flex items-center justify-center cursor-pointer shrink-0 transition-all duration-150 hover:bg-error-muted hover:border-error hover:text-error"
-            disabled={stopSession.isPending}
-            onClick={() => stopSession.mutate({ slug, rootSessionId: sessionId })}
-            title="Stop"
-          >
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
-              <rect width="10" height="10" rx="1.5" />
-            </svg>
-          </button>
-        ) : isStopping ? (
-          <button
-            type="button"
-            className="w-9 h-9 rounded-sm border border-border-default bg-transparent text-text-tertiary flex items-center justify-center shrink-0 disabled:cursor-wait"
-            disabled
-            title="Stopping"
-          >
-            <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-text-muted border-t-transparent" />
-          </button>
-        ) : null}
+        <div className="flex min-h-[38px] items-center justify-between gap-3 px-[10px] pb-[9px]">
+          <div className="flex min-w-0 items-center gap-2 text-[11px] text-text-tertiary">
+            <span className="max-w-[180px] truncate" data-testid="composer-model">
+              {modelInfo?.displayName ?? "Unknown model"}
+            </span>
+            <span className="h-3 w-px shrink-0 bg-border-default" aria-hidden="true" />
+            <span className="flex shrink-0 items-center gap-1.5" aria-live="polite">
+              <span className={`h-1.5 w-1.5 rounded-full ${status.dotClass}`} aria-hidden="true" />
+              {status.label}
+            </span>
           </div>
 
-          <div className="flex items-center justify-between text-[11px] text-text-tertiary px-1">
-        <span>{modelInfo?.displayName ?? "Unknown"}</span>
-        {!runtimeReady ? (
-          <span className="text-text-secondary select-none">Connecting…</span>
-        ) : !hitlReady ? (
-          <span className="text-text-secondary select-none">Syncing pending requests…</span>
-        ) : isRunning ? (
-          <span className="text-text-secondary select-none">
-            <kbd className="text-text-muted">Enter</kbd> queue · <kbd className="text-text-muted">Esc</kbd> stop
-          </span>
-        ) : isStopping ? (
-          <span className="text-text-secondary select-none">Stopping…</span>
-        ) : hasPendingHitl ? (
-          <span className="text-warning select-none">Waiting for input…</span>
-        ) : (
-          <span>
-            <kbd className="text-text-muted">Enter</kbd> send ·{" "}
-            <kbd className="text-text-muted">Shift+Enter</kbd> newline
-          </span>
-        )}
+          <div className="flex shrink-0 items-center gap-1.5">
+            <span className="mr-1 text-[10.5px] text-text-muted max-[720px]:hidden">
+              {isRunning ? "Enter to queue" : "Shift+Enter for newline"}
+            </span>
+            <button
+              type="button"
+              className={`flex h-8 w-8 items-center justify-center rounded-lg shadow-sm transition-[background-color,color,transform] active:scale-95 disabled:cursor-not-allowed disabled:bg-bg-active disabled:text-text-muted disabled:shadow-none ${isRunning
+                ? "bg-text-primary text-bg-base hover:bg-error hover:text-white"
+                : "bg-text-primary text-bg-base hover:bg-accent-hover hover:text-white"
+              }`}
+              disabled={isRunning ? stopSession.isPending : !canSubmit}
+              onClick={isRunning
+                ? () => stopSession.mutate({ slug, rootSessionId: sessionId })
+                : sendMessage}
+              title={isRunning ? "Stop" : hasPendingHitl ? "Queue message" : "Send message"}
+              aria-label={isRunning ? "Stop session" : hasPendingHitl ? "Queue message" : "Send message"}
+            >
+              {isRunning
+                ? stopSession.isPending
+                  ? <Loader2 size={14} className="animate-spin" />
+                  : <Square size={11} fill="currentColor" />
+                : isStopping || isPending
+                  ? <Loader2 size={14} className="animate-spin" />
+                  : <ArrowUp size={16} strokeWidth={2} />}
+            </button>
           </div>
         </div>
-      </ConversationRail>
+      </div>
     </div>
   );
 }

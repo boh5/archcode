@@ -56,8 +56,8 @@ afterEach(() => {
   dom.window.close();
 });
 
-describe("ChatMessages optimistic retry", () => {
-  test("shares one rail and removes repeated user and Agent identity chrome", async () => {
+describe("ChatMessages transcript ownership", () => {
+  test("renders queued states as ordinary user bubbles without repeated identity chrome", async () => {
     const store = createWebSessionStore("session-1", "project-1");
     store.getState().initializeFromSnapshot({
       rootSessionId: "session-1",
@@ -116,11 +116,24 @@ describe("ChatMessages optimistic retry", () => {
     expect(rail?.className).toContain("max-w-[880px]");
     expect(rail?.className).toContain("gap-[16px]");
 
-    for (const kind of ["canonical-user", "queued-user", "sending-user", "failed-user"]) {
-      const message = container.querySelector(`[data-message-kind="${kind}"]`);
-      expect(message).not.toBeNull();
-      expect(message?.querySelector("svg")).toBeNull();
-    }
+    const canonicalUser = container.querySelector('[data-message-kind="canonical-user"]');
+    expect(canonicalUser).not.toBeNull();
+    expect(canonicalUser?.querySelector("svg")).toBeNull();
+    const queuedUser = container.querySelector('[data-message-kind="queued-user"]');
+    const sendingUser = container.querySelector('[data-message-kind="sending-user"]');
+    const failedUser = container.querySelector('[data-message-kind="failed-user"]');
+    expect(queuedUser).not.toBeNull();
+    expect(sendingUser).not.toBeNull();
+    expect(failedUser).not.toBeNull();
+    expect(rail?.contains(queuedUser)).toBe(true);
+    expect(rail?.contains(sendingUser)).toBe(true);
+    expect(rail?.contains(failedUser)).toBe(true);
+    expect(queuedUser?.className).toContain("justify-end");
+    expect(queuedUser?.textContent).toContain("Queued request");
+    expect(queuedUser?.textContent).toContain("Queued");
+    expect(sendingUser?.textContent).toContain("Sending…");
+    expect(failedUser?.textContent).toContain("Send status unknown");
+    expect(container.querySelector('[data-testid="composer-pending-messages"]')).toBeNull();
 
     const agent = container.querySelector('[data-message-kind="agent"]');
     expect(agent).not.toBeNull();
@@ -136,7 +149,7 @@ describe("ChatMessages optimistic retry", () => {
     expect(agent?.querySelector('button[aria-label="More actions"]')).toBeNull();
   });
 
-  test("keeps canonical transcript order when a queued message has an earlier acceptance time", async () => {
+  test("keeps canonical history stable and appends queued messages after it", async () => {
     const store = createWebSessionStore("session-1", "project-1");
     store.getState().initializeFromSnapshot({
       rootSessionId: "session-1",
@@ -165,6 +178,16 @@ describe("ChatMessages optimistic retry", () => {
           completedAt: 11,
         },
       ],
+      pendingMessages: [{
+        id: "pending-b",
+        clientRequestId: "pending-request-b",
+        content: "Still queued",
+        source: "user",
+        state: "queued",
+        revision: 1,
+        acceptedAt: 0,
+        updatedAt: 0,
+      }],
     });
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -182,6 +205,7 @@ describe("ChatMessages optimistic retry", () => {
     const text = container.textContent ?? "";
     expect(text.indexOf("First request")).toBeLessThan(text.indexOf("First answer"));
     expect(text.indexOf("First answer")).toBeLessThan(text.indexOf("Queued follow-up"));
+    expect(text.indexOf("Queued follow-up")).toBeLessThan(text.indexOf("Still queued"));
   });
 
   test("retries an unknown POST outcome with the exact same clientRequestId", async () => {
@@ -221,4 +245,5 @@ describe("ChatMessages optimistic retry", () => {
       clientRequestId: "request-retry",
     });
   });
+
 });

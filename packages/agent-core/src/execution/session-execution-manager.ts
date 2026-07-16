@@ -1441,7 +1441,10 @@ export class SessionExecutionManager {
       }
     } finally {
       this.#closeSteerGate(execution);
-      await this.#settleAndRollbackSteers(execution);
+      await this.#settleSteers(execution, terminalStatus === "waiting_for_human");
+      if (execution.abortController.signal.aborted) {
+        terminalStatus = abortExecutionStatus(execution.abortController.signal);
+      }
       const current = this.#active.get(key);
       if (current?.executionToken === execution.executionToken) {
         store = this.#config.getSessionStore(input.sessionId, input.workspaceRoot) ?? store;
@@ -1465,6 +1468,11 @@ export class SessionExecutionManager {
       || !execution.steerGateOpen
       || execution.steerMailbox.length === 0
     ) return;
+    await this.#commitSteerMailbox(execution);
+  }
+
+  async #commitSteerMailbox(execution: PendingSessionExecution): Promise<void> {
+    if (execution.steerMailbox.length === 0) return;
     const messages = execution.steerMailbox.splice(0, execution.steerMailbox.length);
     let operation!: Promise<void>;
     operation = this.#config.sessionInputService.commitSteers({
@@ -1486,17 +1494,25 @@ export class SessionExecutionManager {
     this.#publishSessionRuntimeChange(execution.workspaceRoot, execution.rootSessionId);
   }
 
-  async #settleAndRollbackSteers(execution: PendingSessionExecution): Promise<void> {
+  async #settleSteers(execution: PendingSessionExecution, commitForToolBatchContinuation: boolean): Promise<void> {
     if (execution.sessionId !== execution.rootSessionId) return;
     while (execution.steerOperations.size > 0) {
       await Promise.allSettled([...execution.steerOperations]);
     }
-    execution.steerMailbox.splice(0);
-    await this.#config.sessionInputService.rollbackSteers({
-      sessionId: execution.sessionId,
-      workspaceRoot: execution.workspaceRoot,
-      executionId: execution.executionId,
-    });
+    try {
+      if (commitForToolBatchContinuation && !execution.abortController.signal.aborted) {
+        await this.#commitSteerMailbox(execution);
+      }
+    } catch (error) {
+      if (!execution.abortController.signal.aborted) throw error;
+    } finally {
+      execution.steerMailbox.splice(0);
+      await this.#config.sessionInputService.rollbackSteers({
+        sessionId: execution.sessionId,
+        workspaceRoot: execution.workspaceRoot,
+        executionId: execution.executionId,
+      });
+    }
   }
 
   #finalizeExecution(key: string, execution: PendingSessionExecution): void {

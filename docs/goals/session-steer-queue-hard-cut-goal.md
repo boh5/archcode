@@ -220,6 +220,8 @@ Stop 之后的下一次普通消息、Automation message 或其他合法显式 d
 
 “不自动启动”不是暂停状态。之后任何合法的新 dispatch 都会带入全部 Queue。
 
+若 Steer 已在当前 Execution 的 gate 开放期间成功 accepted，但当前工具随后进入 `waiting_for_human`，Execution 必须在关闭 gate 后等待所有已进入的 Steer claim，并在结束本次 Execution 前把 mailbox 中的消息提交为 canonical。批准后新的 Tool Batch continuation 必须读到该消息；不得把已接受的 Steer 回滚为 Queue。HITL 已经处于 pending 后才发送的普通消息仍保持 Queue，不能越过 Tool Batch continuation。
+
 若 root 已 `completed`，但当时仍有 descendant/HITL blocker，则先保留 Queue；最后一个 blocker 收敛时再次调用同一个 `tryStartQueuedExecution`。这是 terminal callback，不新增 waiter、scheduler 或 drain queue。
 
 ### 5.7 重启恢复无需新增暂停字段
@@ -823,7 +825,7 @@ queued 气泡操作：
 - **AC-04**：Stop 后 B、C 保留；发送 D 后 B、C、D 一次进入新 Execution。
 - **AC-05**：不存在 Session pause、`autoDispatchPaused`、`auto|held` 或消息级 Resume；有 active root Execution 时，Stop 事实只写入被停止 Execution 的 `stopRequestedAt`。仅当 family 活跃但没有 active root Execution 时，持久化一次性 `queueDispatchBarrierAt`，并在下一批 Queue 启动时原子清除。
 - **AC-06**：queued 气泡提供 Steer/Edit/Delete，没有 Queue panel 或消息级 Send。
-- **AC-07**：Steer 使用 expectedExecutionId + revision fence，并在下一模型调用前生效。
+- **AC-07**：Steer 使用 expectedExecutionId + revision fence，并在下一模型调用前生效；若其间进入 HITL，已接受的 Steer 必须在 `waiting_for_human` 边界提交，并被批准后的 Tool Batch continuation 读取，不得回退为 Queue。
 - **AC-08**：Steer miss/Stop/crash 返回 Queue，不丢失、不复制、不串到新 Execution。
 - **AC-09**：QueryLoop 不读取 pending Queue，不通过 ID 回查正文。
 - **AC-10**：Queue batch 在 `Agent.run(options)` 前成为 canonical messages；QueryLoop 沿用 `toModelMessages()`。

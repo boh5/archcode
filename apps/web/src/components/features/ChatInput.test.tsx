@@ -80,6 +80,9 @@ mock.module("react", () => ({
 
 mock.module("react/jsx-dev-runtime", () => ({ Fragment, jsxDEV, jsx: jsxDEV, jsxs: jsxDEV }));
 
+const Icon = (props: Record<string, unknown>) => jsxDEV("svg", props);
+mock.module("lucide-react", () => ({ ArrowUp: Icon, Loader2: Icon, Square: Icon }));
+
 mock.module("../../api/mutations", () => ({
   usePostMessage: () => ({ mutate: postMessageMutate, isPending: false }),
   useStopSessionFamily: () => ({ mutate: stopSessionMutate, isPending: stopPending }),
@@ -93,16 +96,17 @@ mock.module("../../store/session-store", () => ({
     selector({ modelInfo: { displayName: "Test Model" } }),
 }));
 
-mock.module("../../store/session-runtime-store", () => ({
-  useSessionFamilyActivity: () => activity,
-}));
-
-mock.module("../../store/hitl-store", () => ({
-  useRealtimeHitl: () => Array.from({ length: pendingHitlCount }, (_, index) => ({ hitlId: `hitl-${index}` })),
-  useHitlProjectInitialized: () => hitlReady,
-}));
-
 const { ChatInput } = await import("./ChatInput");
+
+function renderChatInput() {
+  return ChatInput({
+    slug: "proj",
+    sessionId: "root-1",
+    activity,
+    hitlReady,
+    hasPendingHitl: pendingHitlCount > 0,
+  });
+}
 
 describe("ChatInput runtime controls", () => {
   beforeEach(() => {
@@ -120,62 +124,88 @@ describe("ChatInput runtime controls", () => {
     setLocalSendingMessageStatus.mockClear();
   });
 
-  test("places the composer inside the shared conversation rail", () => {
-    const tree = ChatInput({ slug: "proj", sessionId: "root-1" });
-    const surface = findAll(tree, (element) => element.props?.["data-testid"] === "conversation-composer-surface");
-    const rail = findAll(tree, (element) => element.props?.["data-testid"] === "conversation-composer-rail");
+  test("renders one unified composer card without a fake attachment control", () => {
+    const tree = renderChatInput();
+    const card = findAll(tree, (element) => element.props?.["data-testid"] === "composer-card")[0];
+    const textarea = findAll(tree, (element) => element.type === "textarea")[0];
 
-    expect(surface).toHaveLength(1);
-    expect(rail).toHaveLength(1);
-    expect(surface[0]?.props?.className).not.toContain("px-5");
+    expect(card?.props?.className).toContain("rounded-[16px]");
+    expect(card?.props?.className).toContain("focus-within:border-accent");
+    expect(textarea?.props?.className).toContain("border-0");
+    expect(textarea?.props?.className).toContain("bg-transparent");
+    expect(findAll(tree, (element) => element.props?.title === "Attach file")).toHaveLength(0);
+    expect(findAll(tree, (element) => element.props?.title === "Send message")).toHaveLength(1);
   });
 
   test("disables controls until the runtime snapshot initializes", () => {
-    const tree = ChatInput({ slug: "proj", sessionId: "root-1" });
+    const tree = renderChatInput();
     const textarea = findAll(tree, (element) => element.type === "textarea")[0];
 
     expect(textarea?.props?.disabled).toBe(true);
     expect(textarea?.props?.placeholder).toBe("Connecting to runtime…");
-    expect(findAll(tree, (element) => element.props?.title === "Send message")).toHaveLength(0);
+    expect(findAll(tree, (element) => element.props?.title === "Send message")[0]?.props?.disabled).toBe(true);
     expect(findAll(tree, (element) => element.props?.title === "Stop")).toHaveLength(0);
   });
 
-  test("running family shows Stop and stops the entire root family", () => {
+  test("running family replaces Send with one Stop action for the entire root family", () => {
     activity = "running";
-    const tree = ChatInput({ slug: "proj", sessionId: "root-1" });
+    const tree = renderChatInput();
     const stop = findAll(tree, (element) => element.props?.title === "Stop")[0];
 
     expect(stop).toBeDefined();
+    expect(findAll(tree, (element) => element.props?.title === "Queue message")).toHaveLength(0);
+    expect(findAll(tree, (element) => element.props?.title === "Send message")).toHaveLength(0);
     expect(stop?.props?.disabled).not.toBe(true);
     (stop?.props?.onClick as () => void)();
     expect(stopSessionMutate).toHaveBeenCalledWith({ slug: "proj", rootSessionId: "root-1" });
   });
 
-  test("running family keeps the composer enabled for queued sends", () => {
+  test("running family keeps Enter enabled for queued sends while the button remains Stop", () => {
     activity = "running";
     hitlReady = true;
-    const tree = ChatInput({ slug: "proj", sessionId: "root-1" });
-    const textarea = findAll(tree, (element) => element.type === "textarea")[0];
+    let tree = renderChatInput();
+    let textarea = findAll(tree, (element) => element.type === "textarea")[0];
 
     expect(textarea?.props?.disabled).toBe(false);
     expect(textarea?.props?.placeholder).toBe("Queue a message…");
-    expect(findAll(tree, (element) => element.props?.title === "Send message")).toHaveLength(0);
+    expect(findAll(tree, (element) => element.props?.title === "Stop")).toHaveLength(1);
+
+    (textarea?.props?.onChange as (event: unknown) => void)({ target: { value: "Queue while running" } });
+    hookCursor = 0;
+    tree = renderChatInput();
+    textarea = findAll(tree, (element) => element.type === "textarea")[0];
+    (textarea?.props?.onKeyDown as (event: unknown) => void)({
+      key: "Enter",
+      shiftKey: false,
+      nativeEvent: { isComposing: false },
+      preventDefault: mock(() => {}),
+    });
+
+    expect(postMessageMutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        slug: "proj",
+        sessionId: "root-1",
+        content: "Queue while running",
+        clientRequestId: expect.any(String),
+      }),
+      expect.any(Object),
+    );
   });
 
-  test("stopping family renders a disabled Stopping control", () => {
+  test("stopping family disables the integrated submit control", () => {
     activity = "stopping";
-    const tree = ChatInput({ slug: "proj", sessionId: "root-1" });
-    const stopping = findAll(tree, (element) => element.props?.title === "Stopping")[0];
+    hitlReady = true;
+    const tree = renderChatInput();
+    const submit = findAll(tree, (element) => element.props?.title === "Send message")[0];
 
-    expect(stopping).toBeDefined();
-    expect(stopping?.props?.disabled).toBe(true);
+    expect(submit?.props?.disabled).toBe(true);
     expect(findAll(tree, (element) => element.props?.title === "Stop")).toHaveLength(0);
   });
 
   test("pending family stop disables duplicate Stop requests including Escape", () => {
     activity = "running";
     stopPending = true;
-    const tree = ChatInput({ slug: "proj", sessionId: "root-1" });
+    const tree = renderChatInput();
     const stop = findAll(tree, (element) => element.props?.title === "Stop")[0];
     const textarea = findAll(tree, (element) => element.type === "textarea")[0];
 
@@ -192,40 +222,41 @@ describe("ChatInput runtime controls", () => {
   test("pending HITL keeps ordinary Queue composition enabled", () => {
     activity = "idle";
     hitlReady = true;
-    let tree = ChatInput({ slug: "proj", sessionId: "root-1" });
+    let tree = renderChatInput();
     let textarea = findAll(tree, (element) => element.type === "textarea")[0];
     expect(textarea?.props?.disabled).toBe(false);
 
     pendingHitlCount = 1;
-    tree = ChatInput({ slug: "proj", sessionId: "root-1" });
+    tree = renderChatInput();
     textarea = findAll(tree, (element) => element.type === "textarea")[0];
     expect(textarea?.props?.disabled).toBe(false);
     expect(textarea?.props?.placeholder).toBe("Queue a message…");
     expect(findAll(tree, (element) => element.props?.title === "Stop")).toHaveLength(0);
+    expect(findAll(tree, (element) => element.props?.title === "Queue message")).toHaveLength(1);
   });
 
   test("idle runtime remains non-composable until the HITL snapshot initializes", () => {
     activity = "idle";
     hitlReady = false;
 
-    const tree = ChatInput({ slug: "proj", sessionId: "root-1" });
+    const tree = renderChatInput();
     const textarea = findAll(tree, (element) => element.type === "textarea")[0];
 
     expect(textarea?.props?.disabled).toBe(true);
     expect(textarea?.props?.placeholder).toBe("Syncing pending requests…");
-    expect(findAll(tree, (element) => element.props?.title === "Send message")).toHaveLength(0);
+    expect(findAll(tree, (element) => element.props?.title === "Send message")[0]?.props?.disabled).toBe(true);
   });
 
   test("submits slash commands as ordinary Session messages", () => {
     activity = "idle";
     hitlReady = true;
 
-    let tree = ChatInput({ slug: "proj", sessionId: "root-1" });
+    let tree = renderChatInput();
     const textarea = findAll(tree, (element) => element.type === "textarea")[0];
     (textarea?.props?.onChange as (event: unknown) => void)({ target: { value: "/compact" } });
 
     hookCursor = 0;
-    tree = ChatInput({ slug: "proj", sessionId: "root-1" });
+    tree = renderChatInput();
     const updatedTextarea = findAll(tree, (element) => element.type === "textarea")[0];
     (updatedTextarea?.props?.onKeyDown as (event: unknown) => void)({
       key: "Enter",
@@ -253,12 +284,12 @@ describe("ChatInput runtime controls", () => {
     activity = "idle";
     hitlReady = true;
 
-    let tree = ChatInput({ slug: "proj", sessionId: "root-1" });
+    let tree = renderChatInput();
     const textarea = findAll(tree, (element) => element.type === "textarea")[0];
     (textarea?.props?.onChange as (event: unknown) => void)({ target: { value: "/compact" } });
 
     hookCursor = 0;
-    tree = ChatInput({ slug: "proj", sessionId: "root-1" });
+    tree = renderChatInput();
     const updatedTextarea = findAll(tree, (element) => element.type === "textarea")[0];
     (updatedTextarea?.props?.onKeyDown as (event: unknown) => void)({
       key: "Enter",
@@ -284,11 +315,11 @@ describe("ChatInput runtime controls", () => {
     activity = "idle";
     hitlReady = true;
 
-    let tree = ChatInput({ slug: "proj", sessionId: "root-1" });
+    let tree = renderChatInput();
     const textarea = findAll(tree, (element) => element.type === "textarea")[0];
     (textarea?.props?.onChange as (event: unknown) => void)({ target: { value: "Keep this identity" } });
     hookCursor = 0;
-    tree = ChatInput({ slug: "proj", sessionId: "root-1" });
+    tree = renderChatInput();
     const updatedTextarea = findAll(tree, (element) => element.type === "textarea")[0];
     (updatedTextarea?.props?.onKeyDown as (event: unknown) => void)({
       key: "Enter",

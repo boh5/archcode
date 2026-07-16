@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "test": "bun test && bun run test:interaction",
-    "test:interaction": "bun test ./src/context/workbench-layout.interaction.tsx ./src/components/features/ResizeHandle.interaction.tsx ./src/components/features/TodoProgressButton.interaction.tsx ./src/components/features/DiffTab.interaction.tsx ./src/components/features/ContextInspector.interaction.tsx ./src/components/features/InspectorToggleButton.interaction.tsx ./src/components/features/SettingsDialog.interaction.tsx ./src/components/features/EditAutomationDialog.interaction.tsx ./src/components/composite/ChatMessages.interaction.tsx ./src/components/composite/ToolCard.interaction.tsx"
+    "test:interaction": "bun test ./src/context/workbench-layout.interaction.tsx ./src/components/features/ResizeHandle.interaction.tsx ./src/components/features/TodoProgressButton.interaction.tsx ./src/components/features/DiffTab.interaction.tsx ./src/components/features/ContextInspector.interaction.tsx ./src/components/features/InspectorToggleButton.interaction.tsx ./src/components/features/SettingsDialog.interaction.tsx ./src/components/features/EditAutomationDialog.interaction.tsx ./src/components/features/SessionComposerDock.interaction.tsx ./src/components/composite/ChatMessages.interaction.tsx ./src/components/composite/ToolCard.interaction.tsx"
   },
   "dependencies": {
     "@radix-ui/react-context-menu": "^2.2.16",

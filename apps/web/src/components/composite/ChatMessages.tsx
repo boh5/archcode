@@ -114,10 +114,11 @@ function PendingMessageBubble({
 
   return (
     <div className="flex items-start justify-end" data-message-kind="queued-user" data-testid={`pending-message-${message.id}`}>
-      <div className="flex flex-col items-end gap-1 max-w-[80%]">
+      <div className="flex max-w-[80%] flex-col items-end gap-1">
         {editing ? (
           <div className="flex flex-col gap-2 rounded-2xl rounded-br-sm border border-accent bg-bg-overlay p-2.5">
             <textarea
+              aria-label="Edit queued message"
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               className="min-w-[220px] resize-y rounded-md border border-border-default bg-bg-base px-2.5 py-2 text-[13.5px] leading-relaxed text-text-primary outline-none focus:border-accent"
@@ -126,11 +127,11 @@ function PendingMessageBubble({
             />
             <div className="flex justify-end gap-1.5">
               <button type="button" className="rounded px-2 py-1 text-[11px] text-text-tertiary hover:bg-bg-hover" onClick={() => { setDraft(message.content); setEditing(false); }}>Cancel</button>
-              <button type="button" className="rounded bg-accent px-2 py-1 text-[11px] text-bg-base disabled:opacity-40" disabled={!draft.trim() || editMessage.isPending} onClick={saveEdit}>Save</button>
+              <button type="button" className="rounded bg-accent px-2 py-1 text-[11px] text-bg-base disabled:opacity-40" disabled={!draft.trim() || draft.trim() === message.content || editMessage.isPending} onClick={saveEdit}>Save</button>
             </div>
           </div>
         ) : (
-          <div className="bg-bg-overlay border border-border-subtle rounded-2xl rounded-br-sm px-3.5 py-2 text-[13.5px] leading-relaxed text-text-primary whitespace-pre-wrap break-words">
+          <div className="whitespace-pre-wrap break-words rounded-2xl rounded-br-sm border border-border-subtle bg-bg-overlay px-3.5 py-2 text-[13.5px] leading-relaxed text-text-primary">
             {message.content}
           </div>
         )}
@@ -148,7 +149,7 @@ function PendingMessageBubble({
                     sessionId,
                     messageId: message.id,
                     expectedRevision: message.revision,
-                    expectedExecutionId: steerTargetExecutionId!,
+                    expectedExecutionId: steerTargetExecutionId,
                   })}
                 >
                   Steer
@@ -377,8 +378,8 @@ function LocalSendingMessageBubble({
   const retryable = message.status === "retryable" && !retry.isPending;
   return (
     <div className="flex items-start justify-end" data-message-kind={retryable ? "failed-user" : "sending-user"} data-testid={`sending-message-${message.clientRequestId}`}>
-      <div className="flex flex-col items-end gap-1 max-w-[80%]">
-        <div className="bg-bg-overlay border border-border-subtle rounded-2xl rounded-br-sm px-3.5 py-2 text-[13.5px] leading-relaxed text-text-primary whitespace-pre-wrap break-words opacity-75">
+      <div className="flex max-w-[80%] flex-col items-end gap-1">
+        <div className="whitespace-pre-wrap break-words rounded-2xl rounded-br-sm border border-border-subtle bg-bg-overlay px-3.5 py-2 text-[13.5px] leading-relaxed text-text-primary opacity-75">
           {message.content}
         </div>
         <div className="flex items-center gap-2 text-[11px] text-text-muted">

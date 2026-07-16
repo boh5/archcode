@@ -41,6 +41,7 @@
 - Web timeline 把 canonical `messages` 数组作为消息顺序权威；时间戳只用于在不重排 canonical 消息的前提下安置 compression block，pending/optimistic 气泡始终位于 canonical transcript 之后。
 - HITL 等待期间恢复普通 Queue composition；只保留 command/HITL 自身的既有执行约束，不再用 `hasPendingHitl` 禁用整个 Composer。
 - 增加回归测试：input mutation 对删除/项目关闭的双向 fence、digest-only receipt、非单调 canonical 时间戳的渲染顺序，以及 HITL pending 时 Composer 可输入。
+- 修复 Steer 与 HITL 的交界竞态：Execution 进入 `waiting_for_human` 时先关闭 gate、收敛已进入的 claim，再将 mailbox 中已接受的 Steer 提交为 canonical；批准后的新 Tool Batch Execution 能读取该消息。HITL pending 后新发送的普通消息仍留在 Queue，Stop 的未提交 Steer rollback 语义不变。
 
 ## Verification
 
@@ -56,3 +57,4 @@
 - 最终文档一致性审计修正了 Goal 中残留的旧描述：无 active root Execution 的 command/descendant Stop 使用一次性 `queueDispatchBarrierAt`，不会回写 completed Execution；command receipt 明确为判别联合与 fail-closed at-most-once。这些是实现已证明的契约纠正，不是新增产品状态或扩展范围。
 - Post-review 修复后再次通过 `bun run test`（8/8 tasks，含 Agent Core 架构测试 100/100）、`bun run build`、定向 114 tests、Web interaction 49/49 与 `git diff --check`。
 - Post-review 真实浏览器 QA：构造 canonical 时间戳回退场景后，页面仍按 `First request → First answer → Queued follow-up → later message` 显示；构造 pending HITL 后，Composer 显示 `Queue a message…` 且为 enabled；浏览器 console 无 error。
+- Steer/HITL 竞态修复后通过 ExecutionManager 95/95、完整 `bun run typecheck`、`bun run test`、`bun run build` 与 `git diff --check`。真实浏览器中，权限弹窗出现前已接受的消息从 `Steering…` 提交为 canonical；批准后 Agent 明确读取该消息，最终页面 `Queued=0`、`Steering=0`。

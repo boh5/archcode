@@ -365,7 +365,7 @@ describe("SessionRoute focused view store behavior", () => {
     }
   });
 
-  test("renders a pending approval queue as a padded session panel", async () => {
+  test("renders a pending approval inside the unified composer attention stack", async () => {
     const dom = installDom();
     const container = document.getElementById("root");
     if (!container) throw new Error("Missing test root");
@@ -418,17 +418,19 @@ describe("SessionRoute focused view store behavior", () => {
       await renderSessionRoute(reactRoot, queryClient);
 
       await waitFor(() => {
-        const surface = container.querySelector('[data-testid="conversation-hitl-surface"]');
-        const rail = container.querySelector('[data-testid="conversation-hitl-rail"]');
+        const surface = container.querySelector('[data-testid="session-composer-dock"]');
+        const rail = container.querySelector('[data-testid="conversation-composer-rail"]');
+        const attention = container.querySelector('[data-testid="composer-attention-stack"]');
         const inbox = container.querySelector('[data-testid="hitl-inbox"]');
         expect(inbox).not.toBeNull();
-        expect(surface?.classList.contains("border-t")).toBe(true);
+        expect(surface?.classList.contains("border-t")).toBe(false);
         expect(surface?.classList.contains("px-5")).toBe(false);
         expect(rail?.className).toContain("max-w-[880px]");
         expect(rail?.className).toContain("px-[16px]");
         expect(rail?.className).toContain("sm:px-[20px]");
+        expect(attention?.className).toContain("rounded-[14px]");
         expect(container.textContent).toContain("Need input");
-        expect(container.querySelector('[data-testid="hitl-owner-link"]')?.getAttribute("href")).toBe("/projects/demo/sessions/root-session");
+        expect(container.querySelector('[data-testid="hitl-owner-link"]')).toBeNull();
         expect(container.querySelector('input[type="radio"]')).not.toBeNull();
         expect(container.querySelector('input[aria-label="Scope custom answer"]')).not.toBeNull();
       });
