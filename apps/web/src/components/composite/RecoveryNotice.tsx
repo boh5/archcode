@@ -81,7 +81,7 @@ export function RecoveryNotice({ part }: RecoveryNoticeProps) {
   const countdown = useCountdown(part.status === "scheduled" ? part.nextRetryAt : undefined);
 
   return (
-    <div className="bg-bg-overlay border border-border-subtle rounded-md overflow-hidden my-1.5 shrink-0">
+    <div className="bg-bg-overlay border border-border-subtle rounded-md overflow-hidden shrink-0">
       <div className="flex items-center gap-2 px-2.5 py-1.5">
         <span
           className={`w-[18px] h-[18px] rounded flex items-center justify-center shrink-0 ${config.bgClass} ${config.textClass}`}

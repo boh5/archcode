@@ -42,6 +42,7 @@
   --agent-reviewer: #ec4899;
   --agent-explore: #64748b;
   --agent-librarian: #8b5cf6;
+  --agent-shaper: #10b981;
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
@@ -163,6 +164,7 @@
   --color-agent-reviewer: var(--agent-reviewer);
   --color-agent-explore: var(--agent-explore);
   --color-agent-librarian: var(--agent-librarian);
+  --color-agent-shaper: var(--agent-shaper);
 
   /* Shadows */
   --shadow-sm: var(--shadow-sm);
@@ -243,4 +245,65 @@
 
 @keyframes thinking-border {
   to { --border-angle: 360deg; }
+}
+
+/* Session conversation density is intentionally local. Streamdown is also used
+ * outside this surface, so none of these rhythm overrides may be global. */
+.conversation-surface .msg-parts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.conversation-surface .conversation-part > * {
+  margin-block: 0 !important;
+}
+
+.conversation-surface .conversation-part[data-conversation-part="tool"]
+  + .conversation-part[data-conversation-part="tool"] {
+  margin-top: -4px;
+}
+
+.conversation-markdown-body > :not(:last-child) {
+  margin-block-end: 8px !important;
+}
+
+.conversation-markdown-body :where(
+  p,
+  [data-streamdown="ordered-list"],
+  [data-streamdown="unordered-list"],
+  [data-streamdown="blockquote"],
+  [data-streamdown="code-block"],
+  [data-streamdown="mermaid-block"]
+) {
+  margin-block: 0 !important;
+}
+
+.conversation-markdown-body :where(
+  [data-streamdown="heading-1"],
+  [data-streamdown="heading-2"],
+  [data-streamdown="heading-3"],
+  [data-streamdown="heading-4"],
+  [data-streamdown="heading-5"],
+  [data-streamdown="heading-6"]
+) {
+  margin-block: 8px 4px !important;
+}
+
+.conversation-markdown-body :where(
+  p,
+  [data-streamdown="ordered-list"],
+  [data-streamdown="unordered-list"],
+  [data-streamdown="blockquote"],
+  [data-streamdown="code-block"],
+  [data-streamdown="mermaid-block"]
+) + :where(
+  p,
+  [data-streamdown="ordered-list"],
+  [data-streamdown="unordered-list"],
+  [data-streamdown="blockquote"],
+  [data-streamdown="code-block"],
+  [data-streamdown="mermaid-block"]
+) {
+  margin-top: 8px !important;
 }

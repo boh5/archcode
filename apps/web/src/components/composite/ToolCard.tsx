@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useState } from "react";
 import type { ToolPart, DiffFile } from "@archcode/protocol";
 import { TOOL_ASK_USER } from "@archcode/protocol";
 import {
@@ -15,6 +15,7 @@ import {
   formatToolInputDetails,
   getToolDiffMetadata,
   getToolInvalidInputMessage,
+  summarizeToolDiffMetadata,
 } from "../../lib/tool-format";
 import { DiffView } from "../diff/DiffView";
 
@@ -123,8 +124,6 @@ function AskUserResult({ exchanges }: { exchanges: AskUserExchange[] }) {
 
 export function ToolCard({ part }: ToolCardProps) {
   const [expanded, setExpanded] = useState(false);
-  const [isLong, setIsLong] = useState(false);
-  const contentRef = useRef<HTMLPreElement>(null);
 
   const isUnknownResult = part.state === "error" && (part.meta as Record<string, unknown> | undefined)?.unknownResult === true;
   const config = isUnknownResult
@@ -146,6 +145,7 @@ export function ToolCard({ part }: ToolCardProps) {
       ? getToolDiffMetadata((part as { meta?: Record<string, unknown> }).meta?.diffs)
       : undefined;
   const diffFiles: DiffFile[] | undefined = diffMeta?.files;
+  const diffSummary = diffMeta ? summarizeToolDiffMetadata(diffMeta) : undefined;
 
   const inputDetails =
     "input" in part ? formatToolInputDetails(part.toolName, part.input) : null;
@@ -157,57 +157,27 @@ export function ToolCard({ part }: ToolCardProps) {
   const StatusIcon = config.icon;
   const ToolIcon = summary.icon;
 
-  // ─── Long-output detection ───
-
-  useLayoutEffect(() => {
-    const el = contentRef.current;
-    if (!el || !outputText) {
-      setIsLong(false);
-      setExpanded(false);
-      return;
-    }
-    const style = getComputedStyle(el);
-    const parsedLh = parseFloat(style.lineHeight);
-    const fontSize = parseFloat(style.fontSize);
-    const lh =
-      Number.isFinite(parsedLh) && parsedLh > 0
-        ? parsedLh
-        : Number.isFinite(fontSize) && fontSize > 0
-          ? fontSize * 1.625
-          : 0;
-    if (lh <= 0) {
-      setIsLong(false);
-      setExpanded(false);
-      return;
-    }
-    const paddingTop = parseFloat(style.paddingTop) || 0;
-    const paddingBottom = parseFloat(style.paddingBottom) || 0;
-    const threshold = Math.ceil(lh * 5 + paddingTop + paddingBottom);
-    const nextIsLong = el.scrollHeight > threshold;
-    setIsLong(nextIsLong);
-    if (!nextIsLong) setExpanded(false);
-  }, [outputText]);
-
-  useLayoutEffect(() => {
-    if (expanded || !isLong) return;
-    const el = contentRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [expanded, isLong, outputText]);
+  const hasDetails = inputDetails !== null
+    || invalidMessage !== null
+    || isUnknownResult
+    || (diffFiles !== undefined && diffFiles.length > 0)
+    || (askUserExchanges !== undefined && askUserExchanges.length > 0)
+    || (outputText !== null && outputText.length > 0 && askUserExchanges === undefined);
 
   // ─── Render ───
 
   return (
-    <div className="bg-bg-overlay border border-border-default rounded-md overflow-hidden my-1.5 shrink-0">
+    <div className="bg-bg-overlay border border-border-default rounded-md overflow-hidden shrink-0">
       {/* icon + summary + status */}
       <button
         type="button"
-        disabled={!isLong}
-        aria-expanded={isLong ? expanded : undefined}
+        disabled={!hasDetails}
+        aria-expanded={hasDetails ? expanded : undefined}
         className={`flex items-center gap-2 px-2.5 py-1.5 select-none transition-colors duration-150 w-full text-left ${
-          isLong ? "cursor-pointer hover:bg-bg-hover" : "cursor-default disabled:opacity-100"
+          hasDetails ? "cursor-pointer hover:bg-bg-hover" : "cursor-default disabled:opacity-100"
         }`}
         onClick={() => {
-          if (isLong) setExpanded((v) => !v);
+          if (hasDetails) setExpanded((value) => !value);
         }}
       >
         <span
@@ -223,8 +193,16 @@ export function ToolCard({ part }: ToolCardProps) {
         {summary.secondary && (
           <span className="text-[11px] text-text-muted truncate hidden sm:inline">{summary.secondary}</span>
         )}
+        {diffSummary && (
+          <span className="text-[11px] text-text-muted whitespace-nowrap">
+            {diffSummary.fileCount} {diffSummary.fileCount === 1 ? "file" : "files"}
+            {diffSummary.additions !== undefined && diffSummary.deletions !== undefined
+              ? ` · +${diffSummary.additions} −${diffSummary.deletions}`
+              : null}
+          </span>
+        )}
         <span className="ml-auto text-[11px] text-text-muted">{statusLabel}</span>
-        {isLong && (
+        {hasDetails && (
           <ChevronRight
             size={10}
             className={`text-text-muted transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}
@@ -233,7 +211,7 @@ export function ToolCard({ part }: ToolCardProps) {
         )}
       </button>
 
-      {inputDetails && askUserExchanges === undefined && (
+      {expanded && inputDetails && askUserExchanges === undefined && (
         <div className="border-t border-border-subtle px-2.5 py-1.5">
           <div className="flex flex-col gap-0.5">
             {Object.entries(inputDetails).map(([key, value]) => (
@@ -246,13 +224,13 @@ export function ToolCard({ part }: ToolCardProps) {
         </div>
       )}
 
-      {invalidMessage && (
+      {expanded && invalidMessage && (
         <div className="border-t border-border-subtle px-2.5 py-1.5">
           <span className="text-[11px] text-warning">{invalidMessage}</span>
         </div>
       )}
 
-      {isUnknownResult && (
+      {expanded && isUnknownResult && (
         <div className="border-t border-border-subtle px-2.5 py-1.5">
           <span className="text-[11px] text-warning inline-flex items-center gap-1">
             <TriangleAlert size={11} className="inline" aria-hidden="true" />
@@ -261,26 +239,22 @@ export function ToolCard({ part }: ToolCardProps) {
         </div>
       )}
 
-      {diffFiles && diffFiles.length > 0 && (
+      {expanded && diffFiles && diffFiles.length > 0 && (
         <div className="border-t border-border-subtle">
           <DiffView files={diffFiles} defaultExpanded={false} />
         </div>
       )}
 
-      {askUserExchanges !== undefined && askUserExchanges.length > 0 && (
+      {expanded && askUserExchanges !== undefined && askUserExchanges.length > 0 && (
         <AskUserResult exchanges={askUserExchanges} />
       )}
 
-      {outputText && askUserExchanges === undefined && (
+      {expanded && outputText && askUserExchanges === undefined && (
         <div className="border-t border-border-subtle px-2.5 py-2">
           <pre
-            ref={contentRef}
             className={`font-mono text-[11.5px] leading-relaxed bg-bg-elevated p-1.5 rounded-sm border border-border-subtle whitespace-pre-wrap break-all overflow-x-auto ${
-              isLong && !expanded ? "overflow-y-auto" : ""
-            } ${
               isUnknownResult ? "text-warning" : part.state === "completed" ? "text-success" : part.state === "error" ? "text-error" : "text-text-secondary"
             }`}
-            style={isLong && !expanded ? { maxHeight: "calc(8.125em + 0.75rem + 2px)" } : undefined}
           >
             {outputText}
           </pre>

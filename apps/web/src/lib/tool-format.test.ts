@@ -4,6 +4,7 @@ import {
   getToolSummary,
   formatToolInputDetails,
   getToolDiffMetadata,
+  summarizeToolDiffMetadata,
   getToolInvalidInputMessage,
   INLINE_VALUE_MAX_CHARS,
   INLINE_VALUE_MAX_LINES,
@@ -366,6 +367,28 @@ describe("getToolDiffMetadata", () => {
         }],
       }],
     })).toBeUndefined();
+  });
+});
+
+describe("summarizeToolDiffMetadata", () => {
+  test("sums additions and deletions only when every file has both finite counts", () => {
+    expect(summarizeToolDiffMetadata({
+      files: [
+        { path: "a.ts", additions: 2, deletions: 1, hunks: [] },
+        { path: "b.ts", additions: 4, deletions: 3, hunks: [] },
+      ],
+    })).toEqual({ fileCount: 2, additions: 6, deletions: 4 });
+
+    expect(summarizeToolDiffMetadata({
+      files: [
+        { path: "a.ts", additions: 2, deletions: 1, hunks: [] },
+        { path: "b.ts", additions: 4, hunks: [] },
+      ],
+    })).toEqual({ fileCount: 2 });
+  });
+
+  test("empty valid metadata reports only its file count", () => {
+    expect(summarizeToolDiffMetadata({ files: [] })).toEqual({ fileCount: 0 });
   });
 });
 

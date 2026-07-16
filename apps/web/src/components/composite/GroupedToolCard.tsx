@@ -50,7 +50,7 @@ export function GroupedToolCard({ tools }: { tools: ToolPart[] }) {
   }
 
   return (
-    <div className="mb-1.5 shrink-0">
+    <div className="shrink-0">
       <button
         type="button"
         className="flex items-center gap-2 w-full px-2.5 py-1.5 text-xs text-text-secondary rounded-md border border-border-subtle bg-bg-overlay hover:bg-bg-hover transition-colors"
@@ -69,7 +69,7 @@ export function GroupedToolCard({ tools }: { tools: ToolPart[] }) {
         </span>
       </button>
       {expanded && (
-        <div className="mt-1 ml-2 border-l border-border-subtle pl-2 flex flex-col gap-1.5">
+        <div className="mt-1 ml-2 border-l border-border-subtle pl-2 flex flex-col gap-1">
           {tools.map((tool) => (
             <ToolCard key={tool.id} part={tool} />
           ))}

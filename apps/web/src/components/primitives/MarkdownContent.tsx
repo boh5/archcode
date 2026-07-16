@@ -11,6 +11,7 @@ export function MarkdownContent({ children, isStreaming }: MarkdownContentProps)
   return (
     <Streamdown
       animated={{ animation: "blurIn" }}
+      className="conversation-markdown-body"
       isAnimating={!!isStreaming}
       plugins={{ code }}
       shikiTheme={["github-light", "github-dark"]}

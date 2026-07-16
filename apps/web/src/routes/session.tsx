@@ -12,6 +12,30 @@ import { useAgents, useFocusedSession, useProjects, useProjectTodos, useSession 
 import { useRealtimeHitl } from "../store/hitl-store";
 import { getWebSessionStore, markSessionForeground } from "../store/session-store";
 import { useWorkbenchLayout } from "../context/workbench-layout";
+import { ConversationRail } from "../components/primitives/ConversationRail";
+
+function SessionHitlSurface({
+  views,
+  projectSlug,
+}: {
+  views: Parameters<typeof HitlInbox>[0]["views"];
+  projectSlug: string;
+}) {
+  if (!views || views.length === 0) return null;
+
+  return (
+    <div className="shrink-0 border-t border-border-subtle bg-bg-surface" data-testid="conversation-hitl-surface">
+      <ConversationRail className="py-[12px]" data-testid="conversation-hitl-rail">
+        <HitlInbox
+          views={views}
+          projectSlug={projectSlug}
+          hideWhenEmpty
+          className="gap-[8px]"
+        />
+      </ConversationRail>
+    </div>
+  );
+}
 
 export function SessionRoute() {
   const { slug = "", sessionId = "" } = useParams<{
@@ -250,12 +274,7 @@ export function SessionRoute() {
         ) : (
           <>
             <ChatMessages slug={slug} sessionId={focusSessionId} agents={agents} />
-            <HitlInbox
-              views={focusedHitl}
-              projectSlug={slug}
-              hideWhenEmpty
-              className="gap-2 shrink-0 border-t border-border-subtle bg-bg-surface px-5 py-3"
-            />
+            <SessionHitlSurface views={focusedHitl} projectSlug={slug} />
           </>
         )}
       </div>
@@ -312,12 +331,7 @@ export function SessionRoute() {
       ) : (
         <>
           <ChatMessages slug={slug} sessionId={rootSessionId} agents={agents} />
-          <HitlInbox
-            views={sessionHitl}
-            projectSlug={slug}
-            hideWhenEmpty
-            className="gap-2 shrink-0 border-t border-border-subtle bg-bg-surface px-5 py-3"
-          />
+          <SessionHitlSurface views={sessionHitl} projectSlug={slug} />
           <ChatInput slug={slug} sessionId={rootSessionId} />
         </>
       )}

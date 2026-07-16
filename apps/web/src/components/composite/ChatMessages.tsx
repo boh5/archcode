@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { User, Ellipsis, ChevronRight, Sparkles, Info, TriangleAlert } from "lucide-react";
+import { ChevronRight, Sparkles, Info, TriangleAlert } from "lucide-react";
 import { getWebSessionStore, useSessionStore } from "../../store/session-store";
 import { useSessionFamilySteerTargetExecutionId } from "../../store/session-runtime-store";
 import { useDeletePendingMessage, useEditPendingMessage, usePostMessage, useSteerPendingMessage } from "../../api/mutations";
@@ -8,10 +8,7 @@ import { MarkdownContent } from "../primitives/MarkdownContent";
 import { ToolCard } from "./ToolCard";
 import { DelegationCard } from "./DelegationCard";
 import { CompressionBlock } from "./CompressionBlock";
-import {
-  resolveAgentAppearance,
-  resolveAgentDisplayName,
-} from "../../lib/agent-constants";
+import { resolveAgentAppearance } from "../../lib/agent-constants";
 import { buildDelegationCardViewModel } from "../../lib/delegation-card-model";
 import type {
   AgentDescriptor,
@@ -30,13 +27,14 @@ import { RecoveryNotice } from "./RecoveryNotice";
 import { GroupedToolCard } from "./GroupedToolCard";
 import { groupReadOnlyToolParts } from "../../lib/group-tools";
 import { formatRelativeTime } from "../../lib/time-format";
+import { ConversationRail } from "../primitives/ConversationRail";
 
 function ReasoningBlock({ part }: { part: ReasoningPart }) {
   const [expanded, setExpanded] = useState(false);
   const streaming = !part.completedAt;
 
   return (
-    <div className="bg-bg-overlay border border-border-subtle rounded-md overflow-hidden mb-2 shrink-0">
+    <div className="bg-bg-overlay border border-border-subtle rounded-md overflow-hidden shrink-0">
       <button
         type="button"
         className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-text-tertiary cursor-pointer select-none hover:bg-bg-hover w-full text-left"
@@ -69,7 +67,7 @@ export function MsgUser({ message }: { message: SessionMessage }) {
   }
 
   return (
-    <div className="flex gap-2.5 items-start justify-end">
+    <div className="flex items-start justify-end" data-message-kind="canonical-user">
       <div className="flex flex-col items-end gap-1 max-w-[80%]">
         {textParts.map((part) => (
           <div key={part.id} className="bg-bg-overlay border border-border-subtle rounded-2xl rounded-br-sm px-3.5 py-2 text-[13.5px] leading-relaxed text-text-primary whitespace-pre-wrap break-words">
@@ -77,9 +75,6 @@ export function MsgUser({ message }: { message: SessionMessage }) {
           </div>
         ))}
         <span className="text-[11px] text-text-muted">{formatRelativeTime(message.createdAt)}</span>
-      </div>
-      <div className="w-9 h-9 rounded-full bg-accent text-white flex items-center justify-center shrink-0">
-        <User size={18} />
       </div>
     </div>
   );
@@ -118,7 +113,7 @@ function PendingMessageBubble({
   };
 
   return (
-    <div className="flex gap-2.5 items-start justify-end" data-testid={`pending-message-${message.id}`}>
+    <div className="flex items-start justify-end" data-message-kind="queued-user" data-testid={`pending-message-${message.id}`}>
       <div className="flex flex-col items-end gap-1 max-w-[80%]">
         {editing ? (
           <div className="flex flex-col gap-2 rounded-2xl rounded-br-sm border border-accent bg-bg-overlay p-2.5">
@@ -184,14 +179,11 @@ function PendingMessageBubble({
           )}
         </div>
       </div>
-      <div className="w-9 h-9 rounded-full bg-accent text-white flex items-center justify-center shrink-0">
-        <User size={18} />
-      </div>
     </div>
   );
 }
 
-function MsgAgent({
+export function MsgAgent({
   message,
   agentName,
   projectSlug,
@@ -206,30 +198,28 @@ function MsgAgent({
   childSessionLinks: ToolChildSessionLink[];
   agents: readonly AgentDescriptor[];
 }) {
-  const displayName = resolveAgentDisplayName(agentName, agents);
-  const appearance = resolveAgentAppearance(agentName, displayName);
+  const appearance = resolveAgentAppearance(agentName);
 
   return (
-    <div className="group flex flex-col gap-1.5 max-w-full">
-      <div className="flex items-center gap-2 mb-0.5">
-        <span className={`w-2 h-2 rounded-full ${appearance.dotClass}`} />
-        <span className={`text-[13px] ${appearance.nameClass}`}>{displayName}</span>
-        <span className="text-[11px] text-text-muted">{formatRelativeTime(message.createdAt)}</span>
-        <button type="button" className="opacity-0 group-hover:opacity-100 transition-opacity text-text-muted hover:text-text-primary ml-auto p-1" aria-label="More actions">
-          <Ellipsis size={14} />
-        </button>
-      </div>
+    <div className="group relative flex max-w-full flex-col" data-message-kind="agent">
       <div className={`border-l-2 pl-3 bg-bg-surface/30 rounded-r-lg py-1.5 pr-3 ${appearance.borderClass}`}>
         <div className="msg-parts">
           {groupReadOnlyToolParts(message.parts).map((entry) => {
+            const partKind = entry.type === "grouped-tools" || entry.type === "tool" ? "tool" : "content";
             if (entry.type === "grouped-tools") {
-              return <GroupedToolCard key={entry.id} tools={entry.tools} />;
+              return <div key={entry.id} className="conversation-part" data-conversation-part={partKind}><GroupedToolCard tools={entry.tools} /></div>;
             }
             const part = entry as SessionPart;
-            return <PartRenderer key={part.id} part={part} projectSlug={projectSlug} focusStoreSessionId={focusStoreSessionId} childSessionLinks={childSessionLinks} agentDescriptors={agents} />;
+            return <div key={part.id} className="conversation-part" data-conversation-part={partKind}><PartRenderer part={part} projectSlug={projectSlug} focusStoreSessionId={focusStoreSessionId} childSessionLinks={childSessionLinks} agentDescriptors={agents} /></div>;
           })}
         </div>
       </div>
+      <time
+        className="pointer-events-none absolute right-0 top-full h-[16px] text-[11px] leading-[16px] text-text-muted opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+        dateTime={new Date(message.createdAt).toISOString()}
+      >
+        <span className="sr-only">Sent </span>{formatRelativeTime(message.createdAt)}
+      </time>
     </div>
   );
 }
@@ -247,7 +237,7 @@ function SystemNoticeBlock({ part }: { part: SystemNoticePart }) {
 
 function CompactionBlock({ part }: { part: { type: "compaction"; summary: string; tailStartId: string; compactedAt: number } }) {
   return (
-    <div className="bg-bg-surface border border-border-subtle rounded-lg overflow-hidden my-2.5 shrink-0">
+    <div className="bg-bg-surface border border-border-subtle rounded-lg overflow-hidden shrink-0">
       <div className="flex items-center gap-2 px-3 py-1.5 bg-bg-elevated border-b border-border-subtle">
         <Info size={12} className="text-text-muted shrink-0" />
         <span className="text-[11px] text-text-muted font-medium">Hard context compaction</span>
@@ -386,7 +376,7 @@ function LocalSendingMessageBubble({
 
   const retryable = message.status === "retryable" && !retry.isPending;
   return (
-    <div className="flex gap-2.5 items-start justify-end" data-testid={`sending-message-${message.clientRequestId}`}>
+    <div className="flex items-start justify-end" data-message-kind={retryable ? "failed-user" : "sending-user"} data-testid={`sending-message-${message.clientRequestId}`}>
       <div className="flex flex-col items-end gap-1 max-w-[80%]">
         <div className="bg-bg-overlay border border-border-subtle rounded-2xl rounded-br-sm px-3.5 py-2 text-[13.5px] leading-relaxed text-text-primary whitespace-pre-wrap break-words opacity-75">
           {message.content}
@@ -404,9 +394,6 @@ function LocalSendingMessageBubble({
             </button>
           )}
         </div>
-      </div>
-      <div className="w-9 h-9 rounded-full bg-accent text-white flex items-center justify-center shrink-0">
-        <User size={18} />
       </div>
     </div>
   );
@@ -447,8 +434,10 @@ export function ChatMessages({ slug, sessionId, agents }: ChatMessagesProps) {
 
   if (messages.length === 0 && visiblePendingMessages.length === 0 && visibleLocalSendingMessages.length === 0 && compressionBlocks.length === 0) {
     return (
-      <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-5 max-w-3xl mx-auto w-full items-center justify-center text-text-muted text-sm">
-        No messages yet
+      <div className="conversation-scroller flex-1 min-h-0 w-full overflow-y-auto" data-testid="conversation-scroller">
+        <ConversationRail className="conversation-surface conversation-transcript flex min-h-full flex-col items-center justify-center py-[20px] text-sm text-text-muted" data-testid="conversation-transcript-rail">
+          No messages yet
+        </ConversationRail>
       </div>
     );
   }
@@ -505,9 +494,11 @@ export function ChatMessages({ slug, sessionId, agents }: ChatMessagesProps) {
     <div
       ref={scrollRef}
       onScroll={handleScroll}
-      className="flex-1 overflow-y-auto p-5 flex flex-col gap-5 max-w-3xl mx-auto w-full"
+      className="conversation-scroller flex-1 min-h-0 w-full overflow-y-auto"
+      data-testid="conversation-scroller"
     >
-      {entries.map((entry) => {
+      <ConversationRail className="conversation-surface conversation-transcript flex min-h-full flex-col gap-[16px] py-[20px]" data-testid="conversation-transcript-rail">
+        {entries.map((entry) => {
         if (entry.kind === "compression") {
           return (
             <CompressionBlock
@@ -548,8 +539,9 @@ export function ChatMessages({ slug, sessionId, agents }: ChatMessagesProps) {
           return <MsgUser key={msg.id} message={msg} />;
         }
         return <MsgAgent key={msg.id} message={msg} agentName={agentName} projectSlug={slug} focusStoreSessionId={focusStoreSessionId} childSessionLinks={childSessionLinks} agents={agents} />;
-      })}
-      <div ref={sentinelRef} />
+        })}
+        <div ref={sentinelRef} />
+      </ConversationRail>
     </div>
   );
 }

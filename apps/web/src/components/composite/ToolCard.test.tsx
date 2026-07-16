@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { DiffFile, PendingToolPart, RunningToolPart, CompletedToolPart, ErrorToolPart } from "@archcode/protocol";
 import { Clock, LoaderCircle, Check, X, TriangleAlert, Plug } from "lucide-react";
 
@@ -72,11 +72,15 @@ const jsxDEV = mock((type: unknown, props: Record<string, unknown> | null, key?:
 });
 
 const setState = mock(<T,>(_value: T | ((previous: T) => T)) => {});
+let mockedBooleanState = true;
 const useState = mock(<T,>(initialOrInitializer: T | (() => T)): [T, (value: T | ((previous: T) => T)) => void] => {
   const initial = typeof initialOrInitializer === "function"
     ? (initialOrInitializer as () => T)()
     : initialOrInitializer;
-  return [initial, setState as (value: T | ((previous: T) => T)) => void];
+  return [
+    (typeof initial === "boolean" ? mockedBooleanState : initial) as T,
+    setState as (value: T | ((previous: T) => T)) => void,
+  ];
 });
 
 mock.module("react", () => ({
@@ -84,8 +88,6 @@ mock.module("react", () => ({
   useState,
   useCallback: <T extends (...args: never[]) => unknown>(callback: T) => callback,
   useEffect: (_callback: () => void | (() => void), _deps?: unknown[]) => {},
-  useLayoutEffect: (_callback: () => void | (() => void), _deps?: unknown[]) => {},
-  useRef: <T,>(initial: T) => ({ current: initial }),
   useMemo: <T,>(factory: () => T) => factory(),
 }));
 
@@ -97,6 +99,11 @@ mock.module("react/jsx-dev-runtime", () => ({
 }));
 
 const { ToolCard } = await import("./ToolCard");
+
+beforeEach(() => {
+  mockedBooleanState = true;
+  setState.mockClear();
+});
 
 // ─── Factory helpers ───
 
@@ -161,6 +168,121 @@ function makeError(overrides: Partial<ErrorToolPart> = {}): ErrorToolPart {
 // ─── Tests ───
 
 describe("ToolCard", () => {
+  test("collapsed card contains only its summary row and expands through one disclosure control", () => {
+    mockedBooleanState = false;
+    const part = makeError({
+      toolName: "bash",
+      input: { description: "Fail safely", command: "exit 1" },
+      errorMessage: "private failure detail",
+    });
+
+    const el = ToolCard({ part });
+    const text = textContent(el);
+    const buttons = findAllWithType(el, "button");
+
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]?.props?.["aria-expanded"]).toBe(false);
+    expect(text).toContain("Fail safely");
+    expect(text).not.toContain("command:");
+    expect(text).not.toContain("private failure detail");
+
+    (buttons[0]?.props?.onClick as (() => void))();
+    expect(setState).toHaveBeenCalledTimes(1);
+  });
+
+  test("collapsed ask_user omits question/answer details while keeping the question summary", () => {
+    mockedBooleanState = false;
+    const part = makeCompleted({
+      toolName: "ask_user",
+      input: {
+        questions: [{ header: "File", question: "Which file?", options: [], custom: true }],
+      },
+      output: "model-facing result",
+      meta: { askUser: { answers: [["src/main.ts"]] } },
+    });
+
+    const text = textContent(ToolCard({ part }));
+    expect(text).toContain("Which file?");
+    expect(text).not.toContain("Question");
+    expect(text).not.toContain("Answer");
+    expect(text).not.toContain("src/main.ts");
+  });
+
+  test("collapsed invalid and unknown-result cards omit their detail messages", () => {
+    mockedBooleanState = false;
+    const invalidText = textContent(ToolCard({ part: makeRunning({ toolName: "bash", input: { command: "pwd" } }) }));
+    const unknownText = textContent(ToolCard({
+      part: makeError({
+        errorMessage: "Tool execution result unknown: execution was interrupted",
+        meta: { unknownResult: true },
+      }),
+    }));
+
+    expect(invalidText).not.toContain("Invalid bash input");
+    expect(unknownText).toContain("unknown");
+    expect(unknownText).not.toContain("Result unknown");
+    expect(unknownText).not.toContain("execution was interrupted before completion");
+  });
+
+  test("diff summary always shows files and shows totals only for complete finite counts", () => {
+    mockedBooleanState = false;
+    const complete = makeCompleted({
+      toolName: "file_edit",
+      input: { filePath: "/target.ts" },
+      meta: {
+        diffs: {
+          files: [
+            { path: "a.ts", additions: 3, deletions: 1, hunks: [] },
+            { path: "b.ts", additions: 2, deletions: 4, hunks: [] },
+          ],
+        },
+      },
+    });
+    const partial = makeCompleted({
+      toolName: "file_edit",
+      input: { filePath: "/target.ts" },
+      meta: {
+        diffs: {
+          files: [
+            { path: "a.ts", additions: 3, deletions: 1, hunks: [] },
+            { path: "b.ts", additions: 2, hunks: [] },
+          ],
+        },
+      },
+    });
+
+    const completeText = textContent(ToolCard({ part: complete }));
+    const partialText = textContent(ToolCard({ part: partial }));
+    expect(completeText).toContain("2 files · +5 −5");
+    expect(completeText).not.toContain("a.ts");
+    expect(partialText).toContain("2 files");
+    expect(partialText).not.toContain("+5");
+    expect(partialText).not.toContain("−");
+  });
+
+  test("malformed diff metadata contributes no summary or collapsed diff detail", () => {
+    mockedBooleanState = false;
+    const part = makeCompleted({
+      toolName: "file_edit",
+      input: { filePath: "/target.ts" },
+      meta: { diffs: { files: [{ path: "malformed.ts" }] } },
+    });
+
+    const text = textContent(ToolCard({ part }));
+    expect(text).not.toContain("files");
+    expect(text).not.toContain("malformed.ts");
+  });
+
+  test("empty output without other details has no disclosure affordance", () => {
+    mockedBooleanState = false;
+    const part = makeCompleted({ toolName: "custom_tool", input: {}, output: "" });
+    const el = ToolCard({ part });
+    const button = findAllWithType(el, "button")[0];
+
+    expect(button?.props?.disabled).toBe(true);
+    expect(button?.props?.["aria-expanded"]).toBeUndefined();
+  });
+
   test("pending state renders status icon and tool name without input", () => {
     const part = makePending({ toolName: "bash", toolCallId: "call-pending" });
     const el = ToolCard({ part });

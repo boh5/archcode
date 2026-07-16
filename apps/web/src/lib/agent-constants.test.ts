@@ -3,6 +3,7 @@ import {
   AGENT_TYPES,
   AGENT_ICON_COLORS,
   AGENT_BADGE_COLORS,
+  AGENT_BORDER_CLASS,
   BADGE_CLASSES,
   BADGE_LABELS,
   resolveAgentAppearance,
@@ -60,6 +61,30 @@ describe("AGENT_BADGE_COLORS", () => {
   test("is the same as AGENT_ICON_COLORS", () => {
     for (const type of AGENT_TYPES) {
       expect(AGENT_BADGE_COLORS[type]).toBe(AGENT_ICON_COLORS[type]);
+    }
+  });
+});
+
+describe("AGENT_BORDER_CLASS", () => {
+  test("preserves the semantic border token for every built-in Agent", () => {
+    expect(AGENT_BORDER_CLASS).toEqual({
+      engineer: "border-agent-engineer",
+      goal_lead: "border-agent-goal-lead",
+      plan: "border-agent-plan",
+      build: "border-agent-build",
+      reviewer: "border-agent-reviewer",
+      explore: "border-agent-explore",
+      librarian: "border-agent-librarian",
+      shaper: "border-agent-shaper",
+    });
+  });
+
+  test("appearance retains identity icons and borders without message-header fields", () => {
+    for (const type of AGENT_TYPES) {
+      const appearance = resolveAgentAppearance(type, type);
+      expect(appearance.borderClass).toBe(AGENT_BORDER_CLASS[type]);
+      expect(appearance).not.toHaveProperty("dotClass");
+      expect(appearance).not.toHaveProperty("nameClass");
     }
   });
 });

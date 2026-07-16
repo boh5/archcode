@@ -120,6 +120,16 @@ describe("ChatInput runtime controls", () => {
     setLocalSendingMessageStatus.mockClear();
   });
 
+  test("places the composer inside the shared conversation rail", () => {
+    const tree = ChatInput({ slug: "proj", sessionId: "root-1" });
+    const surface = findAll(tree, (element) => element.props?.["data-testid"] === "conversation-composer-surface");
+    const rail = findAll(tree, (element) => element.props?.["data-testid"] === "conversation-composer-rail");
+
+    expect(surface).toHaveLength(1);
+    expect(rail).toHaveLength(1);
+    expect(surface[0]?.props?.className).not.toContain("px-5");
+  });
+
   test("disables controls until the runtime snapshot initializes", () => {
     const tree = ChatInput({ slug: "proj", sessionId: "root-1" });
     const textarea = findAll(tree, (element) => element.type === "textarea")[0];

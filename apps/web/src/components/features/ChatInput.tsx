@@ -4,6 +4,7 @@ import { useHitlProjectInitialized, useRealtimeHitl } from "../../store/hitl-sto
 import { useSessionFamilyActivity } from "../../store/session-runtime-store";
 import { getWebSessionStore, useSessionStore } from "../../store/session-store";
 import { ApiError } from "../../api/client";
+import { ConversationRail } from "../primitives/ConversationRail";
 
 const SLASH_COMMANDS = [
   { name: "/compact", description: "Compact conversation context" },
@@ -211,31 +212,33 @@ useEffect(() => {
   );
 
   return (
-    <div className="border-t border-border-subtle bg-bg-surface px-5 py-3 flex flex-col gap-2 shrink-0 relative">
-      {showSlashMenu && filteredCommands.length > 0 && canCompose && !isRunning && !hasPendingHitl && (
-        <div
-          ref={slashMenuRef}
-          className="absolute bottom-full left-5 right-5 bg-bg-elevated border border-border-default rounded-md shadow-lg max-h-[200px] overflow-y-auto z-10"
-        >
-          {filteredCommands.map((cmd, i) => (
+    <div className="shrink-0 border-t border-border-subtle bg-bg-surface" data-testid="conversation-composer-surface">
+      <ConversationRail className="py-[12px]" data-testid="conversation-composer-rail">
+        <div className="relative flex flex-col gap-[8px]">
+          {showSlashMenu && filteredCommands.length > 0 && canCompose && !isRunning && !hasPendingHitl && (
             <div
-              key={cmd.name}
-              className={`flex items-center gap-2 px-3.5 py-2 cursor-pointer text-[13px] transition-colors duration-100 ${
-                i === slashActiveIndex
-                  ? "bg-bg-hover"
-                  : "hover:bg-bg-hover"
-              }`}
-              onClick={() => selectSlashCommand(cmd)}
-              onMouseEnter={() => setSlashActiveIndex(i)}
+              ref={slashMenuRef}
+              className="absolute bottom-full left-0 right-0 bg-bg-elevated border border-border-default rounded-md shadow-lg max-h-[200px] overflow-y-auto z-10"
             >
-              <span className="font-mono text-accent">{cmd.name}</span>
-              <span className="text-text-muted text-xs">{cmd.description}</span>
+              {filteredCommands.map((cmd, i) => (
+                <div
+                  key={cmd.name}
+                  className={`flex items-center gap-2 px-3.5 py-2 cursor-pointer text-[13px] transition-colors duration-100 ${
+                    i === slashActiveIndex
+                      ? "bg-bg-hover"
+                      : "hover:bg-bg-hover"
+                  }`}
+                  onClick={() => selectSlashCommand(cmd)}
+                  onMouseEnter={() => setSlashActiveIndex(i)}
+                >
+                  <span className="font-mono text-accent">{cmd.name}</span>
+                  <span className="text-text-muted text-xs">{cmd.description}</span>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-      )}
+          )}
 
-      <div className="flex items-end gap-2">
+          <div className="flex items-end gap-2">
         <div className="relative">
           <button
             type="button"
@@ -325,9 +328,9 @@ useEffect(() => {
             <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-text-muted border-t-transparent" />
           </button>
         ) : null}
-      </div>
+          </div>
 
-      <div className="flex items-center justify-between text-[11px] text-text-tertiary px-1">
+          <div className="flex items-center justify-between text-[11px] text-text-tertiary px-1">
         <span>{modelInfo?.displayName ?? "Unknown"}</span>
         {!runtimeReady ? (
           <span className="text-text-secondary select-none">Connecting…</span>
@@ -347,7 +350,9 @@ useEffect(() => {
             <kbd className="text-text-muted">Shift+Enter</kbd> newline
           </span>
         )}
-      </div>
+          </div>
+        </div>
+      </ConversationRail>
     </div>
   );
 }

@@ -97,7 +97,7 @@ export function CompressionBlock({ part, projectSlug, sessionId, focusStoreSessi
   const protectedCount = snapshot?.protectedRefs?.length;
 
   return (
-    <div className="bg-bg-surface border border-border-default rounded-lg overflow-hidden my-2.5 shrink-0 transition-colors duration-150 hover:border-border-strong">
+    <div className="bg-bg-surface border border-border-default rounded-lg overflow-hidden shrink-0 transition-colors duration-150 hover:border-border-strong">
       <div className="flex items-center gap-2 px-3 py-2 bg-bg-elevated border-b border-border-subtle w-full text-left select-none">
         <ChevronRight size={14} className={`text-text-muted transition-transform duration-150 ${expanded ? "rotate-90" : ""}`} />
         <Layers size={14} className="text-text-secondary shrink-0" />

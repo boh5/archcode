@@ -30,28 +30,6 @@ export const AGENT_ICON_COLORS: Record<AgentType, string> = {
 
 export const AGENT_BADGE_COLORS: Record<AgentType, string> = AGENT_ICON_COLORS;
 
-export const AGENT_DOT_CLASS: Record<AgentType, string> = {
-  engineer: "bg-agent-engineer",
-  goal_lead: "bg-agent-goal-lead",
-  plan: "bg-agent-plan",
-  build: "bg-agent-build",
-  reviewer: "bg-agent-reviewer",
-  explore: "bg-agent-explore",
-  librarian: "bg-agent-librarian",
-  shaper: "bg-agent-shaper",
-};
-
-export const AGENT_NAME_CLASS: Record<AgentType, string> = {
-  engineer: "text-agent-engineer font-semibold",
-  goal_lead: "text-agent-goal-lead font-semibold",
-  plan: "text-agent-plan font-semibold",
-  build: "text-agent-build font-semibold",
-  reviewer: "text-agent-reviewer font-semibold",
-  explore: "text-agent-explore font-semibold",
-  librarian: "text-agent-librarian font-semibold",
-  shaper: "text-agent-shaper font-semibold",
-};
-
 export const AGENT_BORDER_CLASS: Record<AgentType, string> = {
   engineer: "border-agent-engineer",
   goal_lead: "border-agent-goal-lead",
@@ -70,15 +48,11 @@ export function isValidAgentType(value: string): value is AgentType {
 export interface AgentAppearance {
   initial: string;
   iconClass: string;
-  dotClass: string;
-  nameClass: string;
   borderClass: string;
 }
 
 const UNKNOWN_AGENT_APPEARANCE = {
   iconClass: "bg-bg-active text-text-muted",
-  dotClass: "bg-text-muted",
-  nameClass: "text-text-secondary font-semibold",
   borderClass: "border-border-default",
 } as const;
 
@@ -94,8 +68,6 @@ export function resolveAgentAppearance(
     return {
       initial: resolveAgentInitial(displayName),
       iconClass: AGENT_ICON_COLORS[agentName],
-      dotClass: AGENT_DOT_CLASS[agentName],
-      nameClass: AGENT_NAME_CLASS[agentName],
       borderClass: AGENT_BORDER_CLASS[agentName],
     };
   }

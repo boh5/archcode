@@ -89,6 +89,12 @@ export interface ToolSummary {
   secondary?: string;
 }
 
+export interface ToolDiffSummary {
+  fileCount: number;
+  additions?: number;
+  deletions?: number;
+}
+
 
 
 function extractPath(input: Record<string, unknown>): string | undefined {
@@ -452,6 +458,19 @@ export function getToolDiffMetadata(meta: unknown): ToolDiffMetadata | undefined
     && meta.unsupportedReason !== "no_change"
     && meta.unsupportedReason !== "diff_error") return undefined;
   return meta as unknown as ToolDiffMetadata;
+}
+
+export function summarizeToolDiffMetadata(metadata: ToolDiffMetadata): ToolDiffSummary {
+  const hasCompleteCounts = metadata.files.length > 0
+    && metadata.files.every((file) => Number.isFinite(file.additions) && Number.isFinite(file.deletions));
+
+  if (!hasCompleteCounts) return { fileCount: metadata.files.length };
+
+  return {
+    fileCount: metadata.files.length,
+    additions: metadata.files.reduce((total, file) => total + (file.additions as number), 0),
+    deletions: metadata.files.reduce((total, file) => total + (file.deletions as number), 0),
+  };
 }
 
 // ─── Invalid input messages ───

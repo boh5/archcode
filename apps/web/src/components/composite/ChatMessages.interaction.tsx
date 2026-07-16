@@ -57,6 +57,85 @@ afterEach(() => {
 });
 
 describe("ChatMessages optimistic retry", () => {
+  test("shares one rail and removes repeated user and Agent identity chrome", async () => {
+    const store = createWebSessionStore("session-1", "project-1");
+    store.getState().initializeFromSnapshot({
+      rootSessionId: "session-1",
+      agentName: "engineer",
+      eventCursor: -1,
+      messages: [
+        {
+          id: "canonical-user",
+          role: "user",
+          parts: [{ type: "text", id: "canonical-text", text: "Canonical request", createdAt: 1, completedAt: 1 }],
+          createdAt: 1,
+          completedAt: 1,
+        },
+        {
+          id: "agent-answer",
+          role: "assistant",
+          parts: [{ type: "text", id: "agent-text", text: "Agent answer", createdAt: 2, completedAt: 2 }],
+          createdAt: 2,
+          completedAt: 2,
+        },
+      ],
+      pendingMessages: [{
+        id: "queued-user",
+        clientRequestId: "queued-request",
+        content: "Queued request",
+        source: "user",
+        state: "queued",
+        revision: 1,
+        acceptedAt: 3,
+        updatedAt: 3,
+      }],
+    });
+    store.getState().addLocalSendingMessage({ clientRequestId: "sending-request", content: "Sending request", createdAt: 4 });
+    store.getState().addLocalSendingMessage({ clientRequestId: "failed-request", content: "Failed request", createdAt: 5 });
+    store.getState().setLocalSendingMessageStatus("failed-request", "retryable");
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <ChatMessages
+            slug="project-1"
+            sessionId="session-1"
+            agents={[{ name: "engineer", displayName: "Engineer" }]}
+          />
+        </QueryClientProvider>,
+      );
+      await Promise.resolve();
+    });
+
+    const scroller = container.querySelector('[data-testid="conversation-scroller"]');
+    const rail = container.querySelector('[data-testid="conversation-transcript-rail"]');
+    expect(scroller?.className).not.toContain("max-w");
+    expect(rail?.className).toContain("max-w-[880px]");
+    expect(rail?.className).toContain("gap-[16px]");
+
+    for (const kind of ["canonical-user", "queued-user", "sending-user", "failed-user"]) {
+      const message = container.querySelector(`[data-message-kind="${kind}"]`);
+      expect(message).not.toBeNull();
+      expect(message?.querySelector("svg")).toBeNull();
+    }
+
+    const agent = container.querySelector('[data-message-kind="agent"]');
+    expect(agent).not.toBeNull();
+    expect(agent?.textContent).not.toContain("Engineer");
+    expect(agent?.querySelector(".border-agent-engineer")).not.toBeNull();
+    expect(agent?.getAttribute("tabindex")).toBeNull();
+    const timestamp = agent?.querySelector("time");
+    expect(timestamp).not.toBeNull();
+    expect(timestamp?.className).toContain("opacity-0");
+    expect(timestamp?.className).toContain("group-hover:opacity-100");
+    expect(timestamp?.className).toContain("group-focus-within:opacity-100");
+    expect(timestamp?.textContent).toContain("Sent");
+    expect(agent?.querySelector('button[aria-label="More actions"]')).toBeNull();
+  });
+
   test("keeps canonical transcript order when a queued message has an earlier acceptance time", async () => {
     const store = createWebSessionStore("session-1", "project-1");
     store.getState().initializeFromSnapshot({

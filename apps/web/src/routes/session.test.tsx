@@ -418,11 +418,15 @@ describe("SessionRoute focused view store behavior", () => {
       await renderSessionRoute(reactRoot, queryClient);
 
       await waitFor(() => {
+        const surface = container.querySelector('[data-testid="conversation-hitl-surface"]');
+        const rail = container.querySelector('[data-testid="conversation-hitl-rail"]');
         const inbox = container.querySelector('[data-testid="hitl-inbox"]');
         expect(inbox).not.toBeNull();
-        expect(inbox?.classList.contains("px-5")).toBe(true);
-        expect(inbox?.classList.contains("py-3")).toBe(true);
-        expect(inbox?.classList.contains("border-t")).toBe(true);
+        expect(surface?.classList.contains("border-t")).toBe(true);
+        expect(surface?.classList.contains("px-5")).toBe(false);
+        expect(rail?.className).toContain("max-w-[880px]");
+        expect(rail?.className).toContain("px-[16px]");
+        expect(rail?.className).toContain("sm:px-[20px]");
         expect(container.textContent).toContain("Need input");
         expect(container.querySelector('[data-testid="hitl-owner-link"]')?.getAttribute("href")).toBe("/projects/demo/sessions/root-session");
         expect(container.querySelector('input[type="radio"]')).not.toBeNull();
