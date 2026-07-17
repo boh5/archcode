@@ -102,10 +102,10 @@ packages/agent-core/src/
 ├── tools/registry.ts           # register/registerAll/execute, globalGuards, globalHooks
 ├── tools/builtins/             # Base, delegation/resume, memory, Goal, and worktree tools
 ├── tools/github.ts             # Generic GitHub connector descriptors; not default agent tools
-├── tools/hooks/                # Guards: workspace, read-snapshot, sensitive-file, bash-classifier; After: edit-error-recovery, redact, truncate, audit, logger
+├── tools/hooks/                # File/workspace guards and after hooks: edit recovery, redact, truncate, audit, logger
+├── tools/permission/           # Tool access policy; Bash owns finite analysis -> deny/ask/default allow
 ├── tools/concurrency/          # partitionToolCalls(): groups concurrencySafe calls into parallel batches
-├── tools/permission/           # Permission handling (15 files for tool access control)
-├── tools/security/             # Secret detection patterns + bash classifier
+├── tools/security/             # Secret detection plus finite Bash syntax/path analysis facts
 ├── tools/riipgrep/             # Ripgrep wrapper for search tools
 ├── core/                       # register-tools.ts: wires base + memory + Goal + GitHub tools and global after-hooks
 ├── store/                      # Zustand vanilla store: createSessionStore, StreamEvent reducer, ModelMessage projection, persist/load
@@ -190,7 +190,7 @@ Delegation: delegate creates a titled child; resume_session restarts a persisted
 **Tool execution pipeline:**
 ```
 partitionToolCalls → global permissions
-  → tool guards (workspace, read-snapshot, sensitive-file, bash-classifier)
+  → tool permissions (workspace, protected/sensitive path, finite Bash policy)
   → before hooks → execute → after hooks (edit-error-recovery)
   → global after (redact → truncate → audit → logger)
 ```
@@ -346,7 +346,7 @@ beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-in
 | File I/O | file_read✅, file_write❌, file_edit❌ | Guards: workspace, sensitive-file, read-before-edit (edit), file-exists (write). After: read-snapshot (read), edit-error-recovery (edit) |
 | Search / AST | grep✅, glob✅, ast_grep_search✅, ast_grep_replace❌ | Search tools are workspace-scoped. `ast_grep_replace` is destructive and preview-first. |
 | Git / GitHub | git_status✅, git_diff✅, github_get_pull_request✅, github_list_pull_requests✅, github_get_pull_request_checks✅, github_list_issue_comments✅, github_create_issue_comment❌, github_list_workflow_runs✅, github_get_workflow_run✅, github_rerun_workflow_run❌ | GitHub connectors are registered globally but are not default agent tools. |
-| Shell | bash❌✅destructive | Guard: bash-classifier |
+| Shell | bash❌✅destructive | Permission: finite path-aware Bash analysis, deterministic deny/ask, default allow |
 | Interaction | ask_user✅❌not-concurrent, todo_write❌, project_todo_update❌ | ask_user serializes (interactive); `project_todo_update` derives its Todo from the current root Shaper Session and requires `expectedRevision` |
 | Web | web_fetch✅ | — |
 | LSP | lsp_diagnostics✅, lsp_goto_definition✅, lsp_find_references✅, lsp_symbols✅ | Guard: workspace |

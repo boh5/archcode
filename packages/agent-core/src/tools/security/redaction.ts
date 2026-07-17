@@ -5,13 +5,9 @@ export const REDACTION_MARKER = "[REDACTED:SECRET]";
 export function redactString(value: string): string {
   // First replace assignment patterns (key=value where key contains sensitive words)
   let result = value.replace(ASSIGNMENT_PATTERN, `$1${REDACTION_MARKER}`);
-  // Then replace token patterns, but skip segments that look like file paths
-  // (containing / which is rare in actual tokens but common in paths)
-  result = result.replace(TOKEN_PATTERN, (match, offset) => {
-    // If the match contains a / it's likely a file path segment, not a token
-    if (match.includes("/")) return match;
-    return REDACTION_MARKER;
-  });
+  // TOKEN_PATTERN is also the authoritative token detector. Every match must
+  // be masked so a detector-positive value can never survive display redaction.
+  result = result.replace(TOKEN_PATTERN, REDACTION_MARKER);
   return result;
 }
 

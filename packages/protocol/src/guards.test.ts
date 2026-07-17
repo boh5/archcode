@@ -187,6 +187,7 @@ describe("protocol event guards", () => {
       source: { type: "ask_user", toolCallId: "call-1" },
       status: "pending",
       displayPayload,
+      persistentApprovalEligible: false,
       allowedActions: ["answer", "cancel"],
       createdAt: "2026-07-14T00:00:00.000Z",
       updatedAt: "2026-07-14T00:00:00.000Z",

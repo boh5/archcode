@@ -25,6 +25,7 @@ import { createRedactionHook } from "./hooks/redact";
 import { createOutputTruncator } from "./hooks/truncate";
 import { TOOL_ERROR_META_KEY } from "./errors";
 import { ProjectApprovalManager } from "./permission";
+import { approvalFingerprint } from "./permission/approval-fingerprint";
 import type { PermissionApprovalScope } from "./permission";
 import { jsonSchema } from "ai";
 import { createTestProjectContext } from "./test-project-context";
@@ -987,13 +988,15 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       };
       registry.register(desc);
       const confirmPermission = mock(async (request) => {
-        expect(request).toEqual({
+        expect(request).toMatchObject({
           toolName: "echo",
           toolCallId: "call-1",
           input: { msg: "hello" },
           description: "Tool: echo",
           reason: "needs approval",
         });
+        expect(request.permissionFingerprint).toMatch(/^[a-f0-9]{64}$/);
+        expect(request.persistentApprovalEligible).toBe(false);
         order.push("confirm");
         return "approve" as const;
       });
@@ -1083,8 +1086,9 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
     test("redacts approval display and reason while preserving scope", async () => {
       const scope: PermissionApprovalScope = {
         kind: "bash-exact",
-        normalized: "curl https://example.com?api_key=sk-1234567890",
-        effects: ["network"],
+        command: "curl https://example.com?api_key=sk-1234567890",
+        cwd: "/workspace",
+        accesses: [],
       };
       const workspaceRoot = join(TEST_TEMP_ROOT, `approval-redaction-${crypto.randomUUID()}`);
       const manager = new ProjectApprovalManager(silentLogger);
@@ -1149,7 +1153,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       expect(confirmPermission).not.toHaveBeenCalled();
     });
 
-    test("ineligible ask passes no persistent scope and approve always is not persisted", async () => {
+    test("ineligible ask rejects approve always and is not persisted", async () => {
       const manager = new ProjectApprovalManager(silentLogger);
       const workspaceRoot = join(TEST_TEMP_ROOT, `approval-ineligible-${crypto.randomUUID()}`);
       await manager.load(workspaceRoot);
@@ -1157,15 +1161,15 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
         ...makeDescriptor("echo"),
         permissions: [async () => ({
           outcome: "ask",
-          reason: "parser uncertain",
-          approval: { eligible: false, display: "Parser uncertain", reason: "cannot persist uncertainty" },
+          reason: "dynamic request",
+          approval: { eligible: false, display: "Dynamic request", reason: "dynamic requests cannot persist" },
         })],
       });
       const confirmPermission = mock(async (request) => {
         expect(request.approval).toEqual({
           eligible: false,
-          display: "Parser uncertain",
-          reason: "cannot persist uncertainty",
+          display: "Dynamic request",
+          reason: "dynamic requests cannot persist",
         });
         expect(request.approval?.scope).toBeUndefined();
         return "approve_always" as const;
@@ -1176,15 +1180,94 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
         makeContext({ projectContext: makeProjectContext(workspaceRoot, manager), confirmPermission }),
       );
 
-      expect(result.isError).toBe(false);
+      expect(result.isError).toBe(true);
+      expect(result.meta?.permissionErrorCode).toBe("TOOL_PERMISSION_CONFIRMATION_DENIED");
       expect(manager.listApprovals()).toEqual([]);
+    });
+
+    test("durable permission response is consumed only for the same freshly evaluated fingerprint", async () => {
+      let scope: PermissionApprovalScope = {
+        kind: "bash-exact",
+        command: "cat /tmp/a",
+        cwd: "/workspace",
+        accesses: [{ operation: "read", path: "/tmp/a" }],
+      };
+      const execute = mock(async () => "executed");
+      registry.register({
+        ...makeDescriptor("echo"),
+        execute,
+        permissions: [async () => ({
+          outcome: "ask",
+          reason: "outside workspace",
+          approval: { eligible: true, scope, display: "Read external file", reason: "outside workspace" },
+        })],
+      });
+
+      const initial = await registry.execute(makeToolCall(), makeContext());
+      expect(initial.blocked).toMatchObject({
+        persistentApprovalEligible: true,
+        permission: { description: "Tool: echo" },
+      });
+      expect(initial.blocked?.permissionFingerprint).toMatch(/^[a-f0-9]{64}$/);
+      expect(initial.blocked?.permission).not.toHaveProperty("approval");
+      const initialFingerprint = initial.blocked!.permissionFingerprint!;
+      expect(initialFingerprint).toBe(approvalFingerprint(scope));
+
+      scope = {
+        kind: "bash-exact",
+        command: "cat /tmp/b",
+        cwd: "/workspace",
+        accesses: [{ operation: "read", path: "/tmp/b" }],
+      };
+      const changed = await registry.execute(makeToolCall(), makeContext({
+        deferredPermissionResponse: { decision: "approve_once", fingerprint: initialFingerprint },
+      }));
+      expect(changed.blocked?.permissionFingerprint).not.toBe(initialFingerprint);
+      expect(execute).not.toHaveBeenCalled();
+
+      scope = {
+        kind: "bash-exact",
+        command: "cat /tmp/a",
+        cwd: "/workspace",
+        accesses: [{ operation: "read", path: "/tmp/a" }],
+      };
+      const resumed = await registry.execute(makeToolCall(), makeContext({
+        deferredPermissionResponse: { decision: "approve_once", fingerprint: initialFingerprint },
+      }));
+      expect(resumed).toEqual({ output: "executed", isError: false });
+      expect(execute).toHaveBeenCalledTimes(1);
+    });
+
+    test("fresh allow or deny ignores a stale durable permission answer", async () => {
+      let outcome: "allow" | "deny" | "ask" = "ask";
+      const execute = mock(async () => "executed");
+      registry.register({
+        ...makeDescriptor("echo"),
+        execute,
+        permissions: [async () => ({ outcome, reason: "current policy" })],
+      });
+      const initial = await registry.execute(makeToolCall(), makeContext());
+      const deferredPermissionResponse = {
+        decision: "approve_once" as const,
+        fingerprint: initial.blocked!.permissionFingerprint!,
+      };
+
+      outcome = "deny";
+      const denied = await registry.execute(makeToolCall(), makeContext({ deferredPermissionResponse }));
+      expect(denied.isError).toBe(true);
+      expect(execute).not.toHaveBeenCalled();
+
+      outcome = "allow";
+      const allowed = await registry.execute(makeToolCall(), makeContext({ deferredPermissionResponse }));
+      expect(allowed).toEqual({ output: "executed", isError: false });
     });
 
     test("allow always persists exactly the structured approval scope", async () => {
       const scope: PermissionApprovalScope = {
         kind: "bash-exact",
-        normalized: "bun test src/tools/registry.test.ts",
-        effects: ["execute-code"],
+        command: "bun test src/tools/registry.test.ts",
+        cwd: "/workspace",
+        accesses: [],
       };
       const manager = new ProjectApprovalManager(silentLogger);
       const workspaceRoot = join(TEST_TEMP_ROOT, `approval-persist-${crypto.randomUUID()}`);
@@ -1981,6 +2064,27 @@ describe("hook integration with registry", () => {
     const result = await denyRegistry.execute(makeToolCall(), makeContext());
     expect(result.output).toContain(`blocked secret=${REDACTION_MARKER}`);
     expect(result.output).not.toContain(rawSecret);
+  });
+
+  test("detector-positive slash token is absent from a durable blocked permission display", async () => {
+    const registry = createRegistry();
+    const rawToken = "AAAAAAAAAAAAAAA/AAAAAAAAAAAAAAAA";
+    registry.register(makeDescriptor("echo"));
+    registry.globalPermissions.push(async () => ({ outcome: "ask", reason: "Review command" }));
+
+    const blocked = await registry.execute(
+      makeToolCall({ input: { msg: `sudo echo ${rawToken}` } }),
+      makeContext({ input: { msg: `sudo echo ${rawToken}` } }),
+    );
+
+    expect(blocked.blocked).toBeDefined();
+    const display = JSON.stringify(blocked.blocked?.displayPayload);
+    expect(display).not.toContain(rawToken);
+    expect(display).toContain(REDACTION_MARKER);
+    expect(blocked.blocked?.displayPayload.fields).toContainEqual({
+      label: "Input",
+      value: `{"msg":"sudo echo ${REDACTION_MARKER}"}`,
+    });
   });
 });
 

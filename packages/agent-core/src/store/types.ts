@@ -108,10 +108,11 @@ export interface SessionToolCallBlocker {
   readonly hitlId?: string;
   readonly source: Extract<HitlSource, { type: "ask_user" | "tool_permission" }>;
   readonly displayPayload: HitlDisplayPayload;
+  readonly permissionFingerprint?: string;
+  readonly persistentApprovalEligible?: boolean;
   readonly permission?: {
     readonly description: string;
     readonly reason?: string;
-    readonly approval?: unknown;
     readonly decisionDisplay?: string;
     readonly ruleId?: string;
   };

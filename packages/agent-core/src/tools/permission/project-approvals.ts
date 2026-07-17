@@ -3,22 +3,9 @@ import { PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
 import { z } from "zod";
 import type { Logger } from "../../logger";
 import { atomicWrite } from "../../utils/safe-file";
-import type { PermissionApprovalScope, ShellEffectKind } from "./policy-types";
+import type { PermissionApprovalScope } from "./policy-types";
 
 const PERMISSIONS_FILE = "permissions.json";
-
-const ShellEffectKindSchema = z.enum([
-  "read",
-  "write",
-  "delete",
-  "network",
-  "remote-exec",
-  "credential-exfil",
-  "system-mutation",
-  "protected-path",
-  "parser-uncertain",
-  "execute-code",
-] satisfies [ShellEffectKind, ...ShellEffectKind[]]);
 
 export const PermissionApprovalScopeSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -34,16 +21,13 @@ export const PermissionApprovalScopeSchema = z.discriminatedUnion("kind", [
     pathMode: z.enum(["exact", "subtree"]),
   }).strict(),
   z.object({
-    kind: z.literal("bash-command"),
-    command: z.string(),
-    subcommands: z.array(z.string()),
-    argumentMode: z.enum(["exact", "any"]),
-    effects: z.array(ShellEffectKindSchema),
-  }).strict(),
-  z.object({
     kind: z.literal("bash-exact"),
-    normalized: z.string(),
-    effects: z.array(ShellEffectKindSchema),
+    command: z.string(),
+    cwd: z.string(),
+    accesses: z.array(z.object({
+      operation: z.enum(["read", "write", "delete", "execute"]),
+      path: z.string(),
+    }).strict()),
   }).strict(),
   z.object({
     kind: z.literal("web-origin"),
@@ -80,7 +64,7 @@ export class ProjectApprovalLoadError extends Error {
     public readonly path: string,
     cause: unknown,
   ) {
-    super(`Failed to load project approvals from "${path}"`, { cause });
+    super(`Failed to load project approvals from "${path}": ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
     this.name = "ProjectApprovalLoadError";
   }
 }
@@ -132,7 +116,9 @@ export class ProjectApprovalManager {
 
     const fileMtime = file.lastModified;
     try {
-      const parsed = PermissionApprovalFileSchema.parse(JSON.parse(await file.text()));
+      const raw = JSON.parse(await file.text());
+      assertNoLegacyBashApprovals(raw, filePath);
+      const parsed = PermissionApprovalFileSchema.parse(raw);
       this.#workspaceRoot = workspaceRoot;
       this.#approvalFile = parsed;
     } catch (error) {
@@ -208,5 +194,25 @@ export class ProjectApprovalManager {
 
   listApprovals(): ProjectApproval[] {
     return cloneApprovalFile(this.#approvalFile).approvals;
+  }
+}
+
+function assertNoLegacyBashApprovals(value: unknown, filePath: string): void {
+  if (value === null || typeof value !== "object") return;
+  const approvals = (value as { approvals?: unknown }).approvals;
+  if (!Array.isArray(approvals)) return;
+  const legacy = approvals.some((approval) => {
+    if (approval === null || typeof approval !== "object") return false;
+    const scope = (approval as { scope?: unknown }).scope;
+    if (scope === null || typeof scope !== "object") return false;
+    const record = scope as Record<string, unknown>;
+    return record.kind === "bash-command"
+      || (record.kind === "bash-exact" && (
+        !("command" in record) || !("cwd" in record) || !("accesses" in record)
+        || "normalized" in record || "effects" in record
+      ));
+  });
+  if (legacy) {
+    throw new Error(`Legacy Bash approvals are not supported in ${filePath}. Remove every bash-command or old-shape bash-exact entry, or delete the file explicitly, then retry.`);
   }
 }

@@ -531,10 +531,11 @@ describe("HITL types", () => {
   test("HitlView remains display-safe", () => {
     const view: HitlView = {
       hitlId: "hitl-1",
-      owner: { type: "goal", id: "goal-1" },
-      source: { type: "goal_budget", approvalPoint: "before_complete" },
+      owner: { type: "session", id: "session-1" },
+      source: { type: "tool_permission", toolCallId: "call-1", toolName: "bash" },
       status: "pending",
       displayPayload: { title: "Goal blocked", summary: "Budget warning", redacted: true },
+      persistentApprovalEligible: false,
       allowedActions: ["approve", "deny", "cancel"],
       createdAt: "2026-07-03T00:00:00.000Z",
       updatedAt: "2026-07-03T00:00:00.000Z",
@@ -543,6 +544,7 @@ describe("HITL types", () => {
     const serialized = JSON.stringify(serializeRoundTrip(view));
 
     expect(serialized).toContain("Goal blocked");
+    expect(serialized).toContain('"persistentApprovalEligible":false');
     expect(serialized).not.toContain("workspaceRoot");
     expect(serialized).not.toContain("rawToolInput");
     expect(serialized).not.toContain("rawCheckpoint");

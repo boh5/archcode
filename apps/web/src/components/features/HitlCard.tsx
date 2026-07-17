@@ -267,7 +267,7 @@ export function HitlCard({ view, projectSlug, showOwnerLink = true }: { view: Hi
         <div className="flex flex-wrap gap-2">
           {view.source.type === "tool_permission" && <>
             <button disabled={busy} onClick={() => submit("approve_once")} className={PRIMARY_ACTION_CLASS}>Allow once</button>
-            <button disabled={busy} onClick={() => submit("approve_always")} className={SECONDARY_ACTION_CLASS}>Always allow</button>
+            {view.persistentApprovalEligible === true && <button disabled={busy} onClick={() => submit("approve_always")} className={SECONDARY_ACTION_CLASS}>Always allow</button>}
             <button disabled={busy} onClick={() => submit("deny")} className={SECONDARY_ACTION_CLASS}>Deny</button>
           </>}
           {view.source.type === "goal_budget" && <>

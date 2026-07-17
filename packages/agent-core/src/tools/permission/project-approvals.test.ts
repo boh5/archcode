@@ -46,7 +46,7 @@ afterEach(() => {
 });
 
 describe("ProjectApprovalManager", () => {
-  test("missing permissions file loads empty approvals without error", async () => {
+  test("missing permissions file stays absent until the first persistent approval", async () => {
     const manager = makeManager();
 
     await manager.load(WORKSPACE);
@@ -54,6 +54,9 @@ describe("ProjectApprovalManager", () => {
     expect(manager.listApprovals()).toEqual([]);
     expect(manager.hasApproval(FILE_SCOPE)).toBe(false);
     expect(existsSync(PERMISSIONS_PATH)).toBe(false);
+
+    await manager.addApproval(FILE_SCOPE, { display: "Write file", reason: "Persist first approval" });
+    expect(existsSync(PERMISSIONS_PATH)).toBe(true);
   });
 
   test("malformed permissions file fails closed with a typed load error", async () => {
@@ -207,8 +210,9 @@ describe("ProjectApprovalManager", () => {
     await manager.load(WORKSPACE);
     const bashScope: PermissionApprovalScope = {
       kind: "bash-exact",
-      normalized: "bun test",
-      effects: ["execute-code"],
+      command: "bun test",
+      cwd: WORKSPACE,
+      accesses: [],
     };
 
     await Promise.all([
@@ -228,5 +232,47 @@ describe("ProjectApprovalManager", () => {
     expect(reloaded.hasApproval(FILE_SCOPE)).toBe(true);
     expect(reloaded.hasApproval(bashScope)).toBe(true);
     expect(reloaded.listApprovals()).toHaveLength(2);
+  });
+
+  test.each([
+    { kind: "bash-command", command: "bun", subcommands: ["test"], argumentMode: "any", effects: ["execute-code"] },
+    { kind: "bash-exact", normalized: "bun test", effects: ["execute-code"] },
+  ])("rejects a file containing legacy Bash scope $kind with cleanup guidance", async (scope) => {
+    mkdirSync(join(WORKSPACE, ".archcode"), { recursive: true });
+    writeFileSync(PERMISSIONS_PATH, JSON.stringify({
+      approvals: [{
+        id: crypto.randomUUID(),
+        scope,
+        display: "Legacy Bash approval",
+        reason: "Legacy",
+        grantedAt: new Date().toISOString(),
+      }],
+    }));
+
+    await expect(makeManager().load(WORKSPACE)).rejects.toThrow(/Remove every bash-command or old-shape bash-exact entry/);
+  });
+
+  test("rejects a mixed valid non-Bash and legacy Bash file with its path and cleanup guidance", async () => {
+    mkdirSync(join(WORKSPACE, ".archcode"), { recursive: true });
+    writeFileSync(PERMISSIONS_PATH, JSON.stringify({
+      approvals: [
+        {
+          id: crypto.randomUUID(), scope: FILE_SCOPE, display: "Write file", reason: "Valid non-Bash approval", grantedAt: new Date().toISOString(),
+        },
+        {
+          id: crypto.randomUUID(), scope: { kind: "bash-command", command: "bun" }, display: "Legacy Bash", reason: "Legacy", grantedAt: new Date().toISOString(),
+        },
+      ],
+    }));
+
+    let failure: unknown;
+    try {
+      await makeManager().load(WORKSPACE);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(ProjectApprovalLoadError);
+    expect(String(failure)).toContain(PERMISSIONS_PATH);
+    expect(String(failure)).toContain("Remove every bash-command or old-shape bash-exact entry");
   });
 });

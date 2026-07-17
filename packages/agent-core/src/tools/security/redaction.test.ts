@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { REDACTION_MARKER, redactString, redactValue } from "./redaction";
+import { containsSecretPattern } from "../../security/patterns";
 
 const RAW_SECRET = "sk_test_1234567890abcdef";
 
@@ -12,6 +13,12 @@ describe("redaction primitives", () => {
     expect(redactString(`token=${RAW_SECRET}`)).toBe(`token=${REDACTION_MARKER}`);
   });
 
+  it("redacts slash-containing tokens whenever the detector matches", () => {
+    const detectedToken = "AAAAAAAAAAAAAAA/AAAAAAAAAAAAAAAA";
+    expect(containsSecretPattern(detectedToken)).toEqual({ found: true, patterns: ["token"] });
+    expect(redactString(`sudo echo ${detectedToken}`)).toBe(`sudo echo ${REDACTION_MARKER}`);
+  });
+
   it("redacts sensitive object keys via redactValue", () => {
     expect(redactValue({ token: RAW_SECRET, nested: { command: `echo ${RAW_SECRET}` } })).toEqual({
       token: REDACTION_MARKER,
@@ -19,13 +26,14 @@ describe("redaction primitives", () => {
     });
   });
 
-  it("does not redact file paths that resemble base64 tokens", () => {
+  it("redacts detector-positive path-like text while preserving ordinary paths", () => {
+    const detectorPositivePath =
+      "Symbols: Interface Agent (/Users/bo/Developer/AI/archcode/src/agents/engineer-agent.ts:19:1)";
+    expect(containsSecretPattern(detectorPositivePath).found).toBe(true);
     expect(
-      redactString(
-        "Symbols: Interface Agent (/Users/bo/Developer/AI/archcode/src/agents/engineer-agent.ts:19:1)",
-      ),
+      redactString(detectorPositivePath),
     ).toBe(
-      "Symbols: Interface Agent (/Users/bo/Developer/AI/archcode/src/agents/engineer-agent.ts:19:1)",
+      `Symbols: Interface Agent (/${REDACTION_MARKER}-agent.ts:19:1)`,
     );
 
     expect(redactString("path=/home/user/project/src/secret-handler.ts:42:5")).toBe(

@@ -68,4 +68,20 @@ describe("HITL routes", () => {
       error: { code: "BAD_REQUEST", message: "Cannot replace an accepted HITL response" },
     });
   });
+
+  test("maps forged approve always for an ineligible request to 409", async () => {
+    const respondToHitl = mock(async () => {
+      throw new HitlConflictError("hitl-1", "This permission request is not eligible for persistent approval");
+    });
+    const app = createApp({ respondToHitl });
+
+    const response = await app.request("/api/projects/demo/hitl/hitl-1/respond", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type: "permission_decision", decision: "approve_always" }),
+    });
+
+    expect(response.status).toBe(409);
+    expect(respondToHitl).toHaveBeenCalledTimes(1);
+  });
 });

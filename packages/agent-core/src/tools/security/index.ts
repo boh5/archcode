@@ -1,7 +1,15 @@
 // ─── Security barrel ───
 // Re-exports all low-level security primitives.
 
-export { classifyCommand } from "./bash-classifier";
+export { analyzeBash } from "./bash";
+export type {
+  AnalyzeBashOptions,
+  BashAccess,
+  BashAccessOperation,
+  BashAnalysis,
+  BashInvocation,
+  BashSeparator,
+} from "./bash";
 export {
   PathValidator,
   createPathValidator,

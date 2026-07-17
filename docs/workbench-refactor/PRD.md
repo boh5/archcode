@@ -88,7 +88,7 @@
 架构师描述"给 auth 模块加 refresh token 轮转",设定 验收条件(`tests pass` + `typecheck passes` + `spec compliance`),审批门在 plan 完成后。ArchCode 自主分解 plan→build→review,架构师在 plan 完成时审查方向,合上笔记本,回来看到 Reviewer 的机检证据,决定 merge。
 
 **场景 B:重复性维护(Loop)**
-架构师创建 daily-triage Loop,设定 schedule(每天 9:00)、budget(每日 100k tokens)、approvalPoints(破坏性操作必须人审)。Loop 每天扫 CI/issue/commit,报告高优先级项,小 fix 自动提 PR(人审后 merge),大问题 escalate。架构师每天看 5 分钟报告,不用盯。
+架构师创建 daily-triage Loop,设定 schedule(每天 9:00)、budget(每日 100k tokens)、approvalPoints(完成前必须人审)。Loop 每天扫 CI/issue/commit,报告高优先级项,小 fix 自动提 PR(人审后 merge),大问题 escalate。架构师每天看 5 分钟报告,不用盯。
 
 **场景 C:随手问(Session)**
 架构师开一个顶层独立 Session(不归属任何 Goal/Loop),问"这个函数怎么用"或"帮我 grep 一下 X 在哪用",AI 回答。轻量,无仪式。
@@ -114,7 +114,7 @@
 - Goal 分三个 phase:`plan` → `build` → `review`
 - phase 字段持久化,可测试、可恢复、UI 可可视化进度
 - `approvalPoints` 是 **phase 转换门**:Goal 状态机在 phase 切换时检查 → 命中则调 HITL `approval` → 等用户决策 → 放行或拒绝 phase 切换
-- `after_plan` = plan→build 门;`before_complete` = review→completed 门;`on_destructive_op` = build phase 内破坏性操作的工具 guard(详见 §4.3)
+- `after_plan` = plan→build 门;`before_complete` = review→completed 门。单次工具调用另走 tool permission，不是 Goal approvalPoint
 - **这不是 Workflow 的 8-stage FSM**——只有 3 个 phase,且 phase 是 Goal runner 内部进度,不是顶层状态机节点。Goal 顶层状态机仍是 draft→locked→running→verifying→reviewed→completed/failed/escalated
 
 **Session 层级**:Goal 下有一个主 session(goal_lead,架构师对话在这里),主 session 下有子 session(plan/build/review/explore/librarian,各自独立 store)。简单任务直接用顶层独立 Session,不需要 Goal。
@@ -129,7 +129,7 @@
 - `command succeeds` —— **万能逃生口**(任何条件都能用一条 shell 命令表达)
 - `user confirmation` —— HITL 审批(**唯一非机器 check**,走 HITL `approval` kind)
 
-**验收条件谁生成**:AI(goal_lead/plan)可生成所有 kind 包括 `command succeeds`,但**用户 `lock` 确认后才生效**。安全由三层保证:(1) 用户 lock 确认 (2) Reviewer 独立验证(Reviewer ≠ 生成 acceptanceCriteria 的 agent) (3) `command succeeds` 的 bash guard(限制破坏性命令)。`goal.json` 记录 `author`(生成者)和 `lockedBy`(锁定者)。竞品先例:Factory Missions 的 AI goal_lead 生成 Validation Contract,用户审批计划,独立 fresh validator 验证;Castor 的 AI goal_lead 生成 done_conditions,自动验证器执行。
+**验收条件谁生成**:AI(goal_lead/plan)可生成所有 kind 包括 `command succeeds`,但**用户 `lock` 确认后才生效**。完成质量由用户 lock 确认和独立 Reviewer 验证共同约束；`command succeeds` 仍经过有限的 Bash permission UX guardrail，但它不是安全边界。`goal.json` 记录 `author`(生成者)和 `lockedBy`(锁定者)。竞品先例:Factory Missions 的 AI goal_lead 生成 Validation Contract,用户审批计划,独立 fresh validator 验证;Castor 的 AI goal_lead 生成 done_conditions,自动验证器执行。
 
 **Layer 2:AI 判断(可选)** —— 1 种:
 - `spec compliance` —— Reviewer 读 spec + 代码 + 跑工具,判断实现是否匹配 spec。复杂 Goal 用,简单 Goal 不用。
@@ -157,28 +157,22 @@
 | 门控层 | 触发时机 | 谁判断"要不要问" | 谁执行 | 现有/新增 |
 |---|---|---|---|---|
 | **Goal approvalPoints** | Goal phase 切换(plan→build, review→completed) | Goal runner 的 phase transition guard | Goal runner 拦截 phase 切换 → 调 HITL `approval` → 拿决策 → 放行/拒绝 phase 切换 | **新增**,Goal 系统的一部分 |
-| **Tool permission** | 单次工具调用(file_write/bash 等) | tool guard(workspace/sensitive-file/bash-classifier/read-before-edit)返回 `outcome:"ask"` | permission 模块调 HITL `approval` → 拿决策 → 放行/拒绝工具执行/approve_always 持久化 | **现有,不变** |
+| **Tool permission** | 单次工具调用(file_write/bash 等) | tool permission（workspace/protected/sensitive path 或 Bash finite policy）返回 `outcome:"ask"` | permission 模块调 HITL `approval` → 拿决策 → 放行/拒绝工具执行/approve_always 持久化 | **现有,不变** |
 
-**HITL 架构:不合并现有 service**。保留 `PermissionService`(tool permission 安全边界)+ `AskUserService`(已有 ask_user)不动。新增 `HitlService` 只管 Goal approvalPoints 和 review kind 的 queue + respond + cancel。`HitlService` 复用现有 deferred Promise + SSE 推送 + 超时/abort 安全 resolve 模式,但是独立 service。
+**HITL 架构:不合并现有 service**。保留 `PermissionService`(tool permission 的 UX guardrail,不是安全边界)+ `AskUserService`(已有 ask_user)不动。新增 `HitlService` 只管 Goal approvalPoints 和 review kind 的 queue + respond + cancel。`HitlService` 复用现有 deferred Promise + SSE 推送 + 超时/abort 安全 resolve 模式,但是独立 service。
 
 **HITL 持久化:Phase 2 durable project-scoped queue**。pending/resolved/cancelled/timeout approval records 持久化到项目工作区,server restart 后 pending records 仍可见。旧进程内 Promise 不恢复;runner recovery 会暂停受影响 Goal 或通过 deterministic approval key 复用 existing pending record。Dashboard/Web 只展示 redacted `displayPayload`,不展示 raw payload。
 
 **approvalPoints 是 Goal 系统的产品规则**:
 - 架构师在 Goal 配置里声明 `after_plan` / `before_complete`
 - Goal runner 在 phase 切换时检查这些点 → 命中则调 HITL `approval` → 等用户决策 → 放行或拒绝 phase 切换
-- **`on_destructive_op` 不是 approvalPoint**——它是 tool guard 的默认配置,在 build phase 内单次工具调用时触发(见下文)
+- **Tool permission 不是 approvalPoint**——它在单次工具调用时按有限的 workspace/path/Bash 规则独立决策
 - **这不是 tool permission**——tool permission 管的是"这次工具调用能不能跑",approvalPoints 管的是"这个 phase 能不能过"
 
-**`on_destructive_op`:tool guard,不是 approvalPoint**:
-- `file_write` 覆盖现有文件、`bash` 执行 rm/git push --force 等,tool guard 判断破坏性 → 返回 `outcome:"ask"` → permission 模块调 HITL `approval`
-- **Path denylist**(借鉴 loop-engineering `safety.md`,Goal/Loop 必须 NEVER 自动编辑,必须人审):
-  ```
-  .env / .env.* / /secrets/ / /credentials/ / /*_key / /*_secret
-  .terraform/ / k8s/production/ / /migrations/(除非显式 migration loop)
-  auth/ / payments/ / billing/
-  ```
-- 自动 merge 策略:默认禁止。允许时——注释/文档 typo OK,行为变更 NOT OK,依赖升级 NOT OK
-- 这些在 tool guard 配置里声明,permission 模块强制拦截,不靠模型自觉
+**Tool permission 是窄 UX guardrail,不是 approvalPoint 或安全边界**:
+- Bash 默认允许；不按未知命令、一般删除、Git push/merge/rebase/reset 或业务后果制造审批。
+- 只对字面量 workspace 外路径、凭证、提权、固定系统修改/凭证外传形状询问；只对 ArchCode 控制面和可机械确认的灾难操作拒绝。
+- 动态 shell、package script、自定义二进制等可绕过有限静态分析；需要强安全隔离时必须依赖部署环境，而不是 permission guard。
 
 **agent 运行时主动请求 —— 软约束,prompt 鼓励**:agent 遇到不确定时调 HITL `question` kind 问用户。
 
@@ -274,7 +268,7 @@
 - Reviewer 默认拒绝 + 5 点检查清单
 - Goal 状态机:draft→locked→running→verifying→reviewed→completed/failed/escalated + 显式 phases(plan→build→review)
 - Goal 执行:lock → goal_lead 自主分解 → 委派 plan/build/reviewer → reviewer 用 `Reviewer evidence flow` 逐条 check_done → reviewer 用 `goal_manage.finalize_review` 给出 DONE/NOT_DONE → retry(fresh session)
-- approvalPoints:`after_plan` / `before_complete`(Goal phase 转换门);`on_destructive_op` 是 tool guard(不是 approvalPoint)
+- approvalPoints:`after_plan` / `before_complete`(Goal phase 转换门);单次工具调用另走 tool permission
 - `goal_create` 创建 draft Goal；`goal_manage` 管理已绑定 Goal(block/resume/begin_review/retry/cancel/finalize_review)，启动由 Web/API 或 Loop Runner 完成
 - AI 可生成 验收条件(包括 `command succeeds`),用户 lock 确认后生效;`goal.json` 记录 author + lockedBy
 - Workflow 删除(code 一次性删,用户数据 `.archcode/workflows/` 保留只读)
@@ -425,7 +419,7 @@
 - ❌ 不做 Workflow 渐进迁移(全删无 fallback)
 - ❌ 不做 state.md 双向同步(state.json 是 source of truth,state.md 只读视图)
 - ❌ 不做 AI merge/rebase/approve/force-push PR。PR Babysitter 只 watch/status/comment,可选交给 fix Goal。
-- ❌ 不做 AI `git push` / `git merge` / `git rebase` / `git reset --hard`(bash guard 拦截,人审)
+- ❌ 默认 Agent 工作流不主动做 AI `git push` / `git merge` / `git rebase` / `git reset --hard`；这是角色/工作流约束，Bash permission 不把这些普通 Git 命令作为审批或拒绝规则。
 - ❌ Phase 4 不支持 GitHub Enterprise、GitLab、Bitbucket、CircleCI、Jenkins、OAuth、GitHub App 或浏览器安装授权。
 - ❌ 不引入 Mission 原语(保持 Session/Goal/Loop 三层,后续视需要评估)
 
@@ -508,7 +502,7 @@
 6. **Goal phases 承认** —— Goal 有显式 phases(plan→build→review),持久化到 goal.json,approvalPoints 是 phase 转换门(决策 2026-06)
 7. **Reviewer day-one 强制** —— Phase 1 起 Reviewer 强制,不分阶段(决策 2026-06)
 8. **HITL 不合并** —— 保留 PermissionService + AskUserService 不动,新增 HitlService。Phase 2 使用 durable project-scoped queue;旧 live Promise 不恢复,但 pending record 可通过 deterministic key 复用(Phase 2 实现更新,2026-07)
-9. **command succeeds AI 可生成** —— AI 可生成所有 Done kind(含 command succeeds),用户 lock 确认后生效。安全由"用户 lock + Reviewer 独立验证 + bash guard"三层保证。goal.json 记录 author + lockedBy(决策 2026-06)
+9. **command succeeds AI 可生成** —— AI 可生成所有 Done kind(含 command succeeds),用户 lock 确认后生效。可靠性由"用户 lock + Reviewer 独立验证 + Bash UX guardrail"共同降低误操作风险；它们不构成安全边界。goal.json 记录 author + lockedBy(决策 2026-06)
 10. **Dashboard 留 Phase 1** —— 遍历 ProjectRegistry.list() + 各项目 .archcode/goals/ 文件聚合,REST 初始快照 + SSE 增量,不需新存储(决策 2026-06)
 11. **Phase 3 Loop 允许 action loop** —— 允许 Loop 跑 Goal(可改代码),靠 Reviewer 强制 + approvalPoints + 基础 budget 兜底。Phase 4 补完整护栏(throttle/hardStop/stagnation/kill switch)后才真正可无人看(决策 2026-07)
 12. **Phase 5 边界确认** —— Phase 5 交付完整 5a:cron、`triggers[]`、跨 loop 协调、持久队列、同分支节流、`maxConcurrent`、worktree 隔离;再交付安全 cleanup 子集。readiness scoring/gates 和用户自定义 pattern 仍排除,只保留占位(决策更新 2026-07-06)
@@ -516,5 +510,5 @@
 14. **不引入 Mission,但留占位** —— 保持 Session/Goal/Loop 三层。TDD 留"未来扩展点:Mission 原语"占位节,后续单个 Goal 不够大功能场景再评估(决策 2026-07)
 15. **Workflow 硬切迁移** —— Phase 1 同步删 code + 7-agent 立即 required。用户数据 `.archcode/workflows/` 保留只读。ProjectContext refactor 是高风险区,需扎实 acceptance test(决策 2026-07)
 16. **Budget pricing 边界** —— 当前不维护 provider model pricing，也不做 USD budget enforcement；token/iteration 护栏仍可用（决策 2026-07）。
-17. **AI 自治边界** —— AI 可 commit 到本地,人 push + 开 PR。AI 永不 merge/rebase/approve/force-push。bash guard 拦截 git push/merge/rebase/reset --hard。Phase 4 connector 只做 GitHub.com/GitHub Actions 的状态、评论和可选 fix Goal handoff(决策 2026-07,Phase 4 文档更新 2026-07)
+17. **AI 自治边界** —— AI 可 commit 到本地；默认工作流由人 push + 开 PR，AI 不主动 merge/rebase/approve/force-push。该边界由角色和工作流合同表达，Bash permission 对普通 Git 命令默认允许。Phase 4 connector 只做 GitHub.com/GitHub Actions 的状态、评论和可选 fix Goal handoff(决策 2026-07,Phase 4 文档更新 2026-07)
 18. **self-hosted 不加 headless 模式** —— 用户自行部署到 always-on 主机,ArchCode 不做 headless/daemon 模式,文档指引即可(决策 2026-07)

@@ -614,7 +614,7 @@ describe("registerBuiltinTools", () => {
   });
 
   describe("protected .archcode mutation permissions", () => {
-    it("bash denies commands that reference .archcode paths", async () => {
+    it("bash denies explicit writes to .archcode paths", async () => {
       const workspaceRoot = await createTmpRoot("bash-archcode-deny");
       const registry = new ToolRegistry();
       registerBuiltinTools(registry, silentLogger);
@@ -625,22 +625,21 @@ describe("registerBuiltinTools", () => {
           toolName: "bash",
           toolCallId: "bash-archcode-deny",
           input: {
-            description: "Attempt scripted write to .archcode",
-            command: "python3 -c \"open('.archcode/goals/goal_test/goal.json','w').write('---')\"",
+            description: "Attempt direct write to .archcode",
+            command: "mkdir .archcode/tmp",
           },
         },
         makeContext("bash", ["bash"], workspaceRoot, {
           toolCallId: "bash-archcode-deny",
           input: {
-            description: "Attempt scripted write to .archcode",
-            command: "python3 -c \"open('.archcode/goals/goal_test/goal.json','w').write('---')\"",
+            description: "Attempt direct write to .archcode",
+            command: "mkdir .archcode/tmp",
           },
-          confirmPermission: async () => "approve" as const,
         }),
       );
 
       expect(result.isError).toBe(true);
-      expect(result.output).toContain("PROTECTED_PATH_WRITE_DENIED");
+      expect(result.meta?.permissionErrorCode).toBe("TOOL_PERMISSION_DENIED");
     });
   });
 

@@ -22,13 +22,17 @@ export interface SessionToolBatchQueue {
     owner: { type: "session"; id: string };
     source: ToolBlockedRequest["source"];
     displayPayload: ToolBlockedRequest["displayPayload"];
+    persistentApprovalEligible?: boolean;
   }): Promise<{ record: { hitlId: string } }>;
   cancel(hitlId: string, response: Extract<HitlResponse, { type: "cancel" }>): Promise<unknown>;
   resolve(hitlId: string, outcome: { readonly type: "dispatching" } | { readonly type: "applied" }): Promise<unknown>;
 }
 
 export interface SessionToolBatchExecuteContext {
-  readonly permissionDecision?: "approve_once" | "approve_always";
+  readonly deferredPermissionResponse?: {
+    readonly decision: "approve_once" | "approve_always";
+    readonly fingerprint: string;
+  };
 }
 
 export interface SessionToolBatchSchedulerOptions {
@@ -234,12 +238,15 @@ export class SessionToolBatchScheduler {
     }));
     call = requiredCall(this.#requireActiveBatch(), toolCallId);
     const permissionDecision = call.blocker?.permissionDecision;
+    const permissionFingerprint = call.blocker?.permissionFingerprint;
     const result = await this.#options.executeCall({
       toolCallId: call.toolCallId,
       toolName: call.toolName,
       input: call.input,
     }, {
-      ...(permissionDecision === "approve_once" || permissionDecision === "approve_always" ? { permissionDecision } : {}),
+      ...(permissionFingerprint !== undefined && (permissionDecision === "approve_once" || permissionDecision === "approve_always")
+        ? { deferredPermissionResponse: { decision: permissionDecision, fingerprint: permissionFingerprint } }
+        : {}),
     });
     if (result.blocked !== undefined) {
       await this.#blockCall(batchId, call, result.blocked);
@@ -260,7 +267,8 @@ export class SessionToolBatchScheduler {
   }
 
   async #blockCall(batchId: string, call: SessionToolBatchCall, blocked: ToolBlockedRequest): Promise<void> {
-    const requestKey = `session:${this.#options.store.getState().sessionId}:batch:${batchId}:tool:${call.toolCallId}`;
+    const requestKey = `session:${this.#options.store.getState().sessionId}:batch:${batchId}:tool:${call.toolCallId}:attempt:${call.attempt}`
+      + (blocked.permissionFingerprint === undefined ? "" : `:permission:${blocked.permissionFingerprint}`);
     await this.#updateBatch(batchId, (batch) => ({
       ...batch,
       calls: batch.calls.map((candidate) => candidate.toolCallId === call.toolCallId ? {
@@ -270,6 +278,8 @@ export class SessionToolBatchScheduler {
           requestKey,
           source: blocked.source,
           displayPayload: blocked.displayPayload,
+          ...(blocked.permissionFingerprint === undefined ? {} : { permissionFingerprint: blocked.permissionFingerprint }),
+          ...(blocked.persistentApprovalEligible === undefined ? {} : { persistentApprovalEligible: blocked.persistentApprovalEligible }),
           ...(blocked.permission === undefined ? {} : { permission: blocked.permission }),
         },
       } : candidate),
@@ -279,6 +289,7 @@ export class SessionToolBatchScheduler {
       owner: { type: "session", id: this.#options.store.getState().sessionId },
       source: blocked.source,
       displayPayload: blocked.displayPayload,
+      ...(blocked.persistentApprovalEligible === undefined ? {} : { persistentApprovalEligible: blocked.persistentApprovalEligible }),
     });
     await this.#updateBatch(batchId, (batch) => ({
       ...batch,
@@ -298,6 +309,7 @@ export class SessionToolBatchScheduler {
         owner: { type: "session", id: this.#options.store.getState().sessionId },
         source: blocker.source,
         displayPayload: blocker.displayPayload,
+        ...(blocker.persistentApprovalEligible === undefined ? {} : { persistentApprovalEligible: blocker.persistentApprovalEligible }),
       });
       await this.#updateBatch(batchId, (current) => ({
         ...current,
@@ -530,6 +542,7 @@ export async function cancelSessionToolBatch(input: {
       owner: { type: "session", id: input.sessionId },
       source: blocker.source,
       displayPayload: blocker.displayPayload,
+      ...(blocker.persistentApprovalEligible === undefined ? {} : { persistentApprovalEligible: blocker.persistentApprovalEligible }),
     });
     await input.storeManager.updateToolBatches(input.sessionId, input.workspaceRoot, (batches) => batches.map((candidate) => candidate.batchId !== batch!.batchId ? candidate : {
       ...candidate,
@@ -609,6 +622,9 @@ function responseForCall(call: SessionToolBatchCall, response: HitlResponse): {
     return { state: "completed", result: createAskUserSuccessResult(response.answers.map((answer) => [answer]), input.questions) };
   }
   if (call.blocker.source.type === "tool_permission" && response.type === "permission_decision") {
+    if (response.decision === "approve_always" && call.blocker.persistentApprovalEligible !== true) {
+      throw new Error(`HITL permission for ${call.toolName} is not eligible for persistent approval`);
+    }
     if (response.decision === "deny") {
       return {
         state: "failed",

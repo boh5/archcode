@@ -7,6 +7,7 @@ import {
   MAX_HITL_DELIVERY_ATTEMPTS,
   ProjectHitlQueue,
   projectHitlQueuePath,
+  toHitlView,
   type CreateHitlInput,
   type ProjectHitlQueueEvent,
 } from "./project-queue";
@@ -70,6 +71,25 @@ describe("ProjectHitlQueue", () => {
       ...budgetInput("wrong-budget-owner"),
       owner: { type: "session", id: "session-1" },
     })).rejects.toThrow("does not belong");
+  });
+
+  test("persists redacted persistent-approval eligibility and rejects forged approve always", async () => {
+    const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT });
+    const eligible = await queue.create({ ...permissionInput("eligible"), persistentApprovalEligible: true });
+    const ineligible = await queue.create({ ...permissionInput("ineligible"), persistentApprovalEligible: false });
+
+    const listedById = new Map((await queue.list()).map((record) => [record.hitlId, record]));
+    expect(listedById.get(eligible.record.hitlId)?.persistentApprovalEligible).toBe(true);
+    expect(listedById.get(ineligible.record.hitlId)?.persistentApprovalEligible).toBe(false);
+    expect(toHitlView(eligible.record).persistentApprovalEligible).toBe(true);
+    await expect(queue.respond(ineligible.record.hitlId, {
+      type: "permission_decision",
+      decision: "approve_always",
+    })).rejects.toThrow("not eligible for persistent approval");
+    await expect(queue.respond(ineligible.record.hitlId, {
+      type: "permission_decision",
+      decision: "approve_once",
+    })).resolves.toMatchObject({ status: "answered" });
   });
 
   test("accepts one immutable response under a race", async () => {

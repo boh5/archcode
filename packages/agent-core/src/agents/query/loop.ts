@@ -237,9 +237,10 @@ export async function runQueryLoop(
         agentSkills: options.agentSkills,
         skillService: options.skillService,
         storeManager: options.storeManager,
-        ...(batchContext.permissionDecision === undefined
-          ? (confirmPermission === undefined ? {} : { confirmPermission })
-          : { confirmPermission: async () => batchContext.permissionDecision! }),
+        ...(confirmPermission === undefined ? {} : { confirmPermission }),
+        ...(batchContext.deferredPermissionResponse === undefined
+          ? {}
+          : { deferredPermissionResponse: batchContext.deferredPermissionResponse }),
         ...(options.askUser === undefined ? {} : { askUser: options.askUser }),
         ...(options.startChildExecution === undefined ? {} : { startChildExecution: options.startChildExecution }),
         ...(options.cancelChildSession === undefined ? {} : { cancelChildSession: options.cancelChildSession }),

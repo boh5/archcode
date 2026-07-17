@@ -339,18 +339,125 @@ describe("SessionToolBatchScheduler recovery", () => {
 });
 
 describe("SessionToolBatchScheduler partition barriers", () => {
+  test("F1 to F2 to F1 creates three distinct answerable permission HITLs", async () => {
+    const firstFingerprint = "1".repeat(64);
+    const secondFingerprint = "2".repeat(64);
+    let execution = 0;
+    const harness = createHarness({
+      executeCall: async (call) => {
+        execution += 1;
+        if (execution === 4) return { output: "approved", isError: false };
+        const permissionFingerprint = execution === 2 ? secondFingerprint : firstFingerprint;
+        return {
+          output: "",
+          isError: false,
+          blocked: {
+            source: { type: "tool_permission", toolCallId: call.toolCallId, toolName: call.toolName },
+            displayPayload: { title: `Approve generation ${execution}`, redacted: true },
+            permissionFingerprint,
+            persistentApprovalEligible: true,
+          },
+        };
+      },
+    });
+    await harness.scheduler.createBatch([{ toolCallId: "oscillating", toolName: "read_tool", input: {} }], 0);
+    const hitlIds: string[] = [];
+    const requestKeys: string[] = [];
+
+    for (let generation = 1; generation <= 3; generation += 1) {
+      const waiting = await harness.scheduler.advance();
+      if (waiting.status !== "waiting_for_human") throw new Error(`Expected blocker generation ${generation}`);
+      const blocker = harness.scheduler.activeBatch()!.calls[0]!.blocker!;
+      hitlIds.push(waiting.hitlIds[0]!);
+      requestKeys.push(blocker.requestKey);
+      await validateSessionToolBatchResponse({
+        storeManager: harness.storeManager,
+        sessionId: harness.sessionId,
+        workspaceRoot: TMP_DIR,
+        hitlId: waiting.hitlIds[0]!,
+        requestKey: blocker.requestKey,
+        response: { type: "permission_decision", decision: "approve_once" },
+      });
+      await applySessionToolBatchResponse({
+        storeManager: harness.storeManager,
+        sessionId: harness.sessionId,
+        workspaceRoot: TMP_DIR,
+        hitlId: waiting.hitlIds[0]!,
+        requestKey: blocker.requestKey,
+        response: { type: "permission_decision", decision: "approve_once" },
+      });
+    }
+
+    expect(new Set(hitlIds).size).toBe(3);
+    expect(new Set(requestKeys).size).toBe(3);
+    expect(requestKeys).toEqual([
+      expect.stringContaining(":attempt:1:permission:"),
+      expect.stringContaining(":attempt:2:permission:"),
+      expect.stringContaining(":attempt:3:permission:"),
+    ]);
+    expect(await harness.scheduler.advance()).toMatchObject({ status: "ready_for_continuation" });
+    expect(harness.scheduler.activeBatch()!.calls[0]).toMatchObject({
+      state: "completed",
+      attempt: 4,
+      result: { output: "approved", isError: false },
+    });
+  });
+
+  test("changed permission fingerprint reblocks with a new HITL instead of consuming the old answer", async () => {
+    const firstFingerprint = "a".repeat(64);
+    const secondFingerprint = "b".repeat(64);
+    const harness = createHarness({
+      executeCall: async (call, context) => ({
+        output: "",
+        isError: false,
+        blocked: {
+          source: { type: "tool_permission", toolCallId: call.toolCallId, toolName: call.toolName },
+          displayPayload: { title: "Approve changed scope", redacted: true },
+          permissionFingerprint: context.deferredPermissionResponse === undefined ? firstFingerprint : secondFingerprint,
+          persistentApprovalEligible: true,
+        },
+      }),
+    });
+    await harness.scheduler.createBatch([{ toolCallId: "changed", toolName: "read_tool", input: {} }], 0);
+    const initial = await harness.scheduler.advance();
+    if (initial.status !== "waiting_for_human") throw new Error("Expected initial blocker");
+    const oldHitlId = initial.hitlIds[0]!;
+    const blocker = harness.scheduler.activeBatch()!.calls[0]!.blocker!;
+
+    await applySessionToolBatchResponse({
+      storeManager: harness.storeManager,
+      sessionId: harness.sessionId,
+      workspaceRoot: TMP_DIR,
+      hitlId: oldHitlId,
+      requestKey: blocker.requestKey,
+      response: { type: "permission_decision", decision: "approve_once" },
+    });
+    const resumed = await harness.scheduler.advance();
+
+    expect(resumed.status).toBe("waiting_for_human");
+    if (resumed.status !== "waiting_for_human") throw new Error("Expected changed scope blocker");
+    expect(resumed.hitlIds[0]).not.toBe(oldHitlId);
+    expect(harness.scheduler.activeBatch()!.calls[0]).toMatchObject({
+      state: "blocked",
+      blocker: { permissionFingerprint: secondFingerprint, persistentApprovalEligible: true },
+    });
+    expect(harness.creates()).toBe(2);
+  });
+
   test("answering one of two parallel blockers resumes only that call", async () => {
     const executions: string[] = [];
     const harness = createHarness({
       executeCall: async (call, context) => {
-        executions.push(`${call.toolCallId}:${context.permissionDecision ?? "blocked"}`);
-        if (context.permissionDecision !== undefined) return { output: `${call.toolCallId} approved`, isError: false };
+        executions.push(`${call.toolCallId}:${context.deferredPermissionResponse?.decision ?? "blocked"}`);
+        if (context.deferredPermissionResponse !== undefined) return { output: `${call.toolCallId} approved`, isError: false };
         return {
           output: "",
           isError: false,
           blocked: {
             source: { type: "tool_permission", toolCallId: call.toolCallId, toolName: call.toolName },
             displayPayload: { title: `Approve ${call.toolCallId}`, redacted: true },
+            permissionFingerprint: "a".repeat(64),
+            persistentApprovalEligible: true,
           },
         };
       },

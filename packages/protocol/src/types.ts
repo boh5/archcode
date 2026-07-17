@@ -1218,6 +1218,8 @@ export interface HitlView {
   source: HitlSource;
   status: HitlStatus;
   displayPayload: HitlDisplayPayload;
+  /** Redacted permission capability. Absent for non-permission HITL. */
+  persistentApprovalEligible?: boolean;
   allowedActions: HitlAllowedAction[];
   requiresInspection?: true;
   createdAt: string;

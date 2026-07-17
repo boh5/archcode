@@ -454,10 +454,11 @@ const SessionToolCallBlockerSchema = z.strictObject({
   hitlId: z.string().trim().min(1).optional(),
   source: SessionToolBatchHitlSourceSchema,
   displayPayload: HitlDisplayPayloadSchema,
+  permissionFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  persistentApprovalEligible: z.boolean().optional(),
   permission: z.strictObject({
     description: z.string(),
     reason: z.string().optional(),
-    approval: z.unknown().optional(),
     decisionDisplay: z.string().optional(),
     ruleId: z.string().optional(),
   }).optional(),

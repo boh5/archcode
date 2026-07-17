@@ -29,10 +29,12 @@ export interface ToolExecutionResult {
 export interface ToolBlockedRequest {
   readonly source: Extract<HitlSource, { type: "ask_user" | "tool_permission" }>;
   readonly displayPayload: HitlDisplayPayload;
+  /** SHA-256 identity of the exact permission request; never a raw scope preimage. */
+  readonly permissionFingerprint?: string;
+  readonly persistentApprovalEligible?: boolean;
   readonly permission?: {
     readonly description: string;
     readonly reason?: string;
-    readonly approval?: PermissionApprovalRequest;
     readonly decisionDisplay?: string;
     readonly ruleId?: string;
   };
@@ -74,6 +76,11 @@ export interface ToolExecutionContext {
   /** Current Session execution directory. This may be a worktree and is independent of the canonical project context. */
   readonly cwd: string;
   confirmPermission?: ToolConfirmationCallback;
+  /** A durable answer awaiting comparison with this attempt's freshly evaluated permission scope. */
+  deferredPermissionResponse?: {
+    readonly decision: "approve_once" | "approve_always";
+    readonly fingerprint: string;
+  };
   askUser?: AskUserCallback;
   startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
   cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
@@ -134,6 +141,8 @@ export interface ToolConfirmationRequest {
   currentDepth?: number;
   decisionDisplay?: string;
   ruleId?: string;
+  permissionFingerprint?: string;
+  persistentApprovalEligible?: boolean;
 }
 
 export type ToolConfirmationResult =

@@ -13,6 +13,7 @@ import type { Logger } from "../logger";
 import { silentLogger } from "../logger";
 import { DuplicateToolError, DestructiveToolPermissionError } from "./types";
 import { createPermissionErrorResult } from "./permission";
+import { approvalFingerprint } from "./permission/approval-fingerprint";
 import { redactString, redactValue } from "./security/redaction";
 import {
   createToolErrorResult,
@@ -315,24 +316,39 @@ export class ToolRegistry {
       ...(unsatisfiedAsk.ruleId ? { ruleId: unsatisfiedAsk.ruleId } : {}),
     };
 
-    const confirmPermission = ctx.confirmPermission;
-    if (!confirmPermission) {
-      return {
-        output: "",
-        isError: false,
-        blocked: {
-          source: { type: "tool_permission", toolCallId: ctx.toolCallId, toolName: ctx.toolName },
-          displayPayload: permissionDisplayPayload(confirmationRequest),
-          permission: {
-            description: confirmationRequest.description,
-            ...(confirmationRequest.reason === undefined ? {} : { reason: confirmationRequest.reason }),
-            ...(confirmationRequest.approval === undefined ? {} : { approval: confirmationRequest.approval }),
-            ...(confirmationRequest.decisionDisplay === undefined ? {} : { decisionDisplay: confirmationRequest.decisionDisplay }),
-            ...(confirmationRequest.ruleId === undefined ? {} : { ruleId: confirmationRequest.ruleId }),
-          },
+    const fingerprint = unsatisfiedAsk.approval?.scope !== undefined
+      ? approvalFingerprint(unsatisfiedAsk.approval.scope)
+      : unsatisfiedAsk.approval?.fingerprint ?? approvalFingerprint({
+        toolName: confirmationRequest.toolName,
+        input: confirmationRequest.input,
+        description: confirmationRequest.description,
+        reason: confirmationRequest.reason,
+        decisionDisplay: confirmationRequest.decisionDisplay,
+        ruleId: confirmationRequest.ruleId,
+      });
+    const persistentApprovalEligible = unsatisfiedAsk.approval?.eligible === true
+      && unsatisfiedAsk.approval.scope !== undefined;
+    const blockForPermission = (): ToolExecutionResult => ({
+      output: "",
+      isError: false,
+      blocked: {
+        source: { type: "tool_permission", toolCallId: ctx.toolCallId, toolName: ctx.toolName },
+        displayPayload: permissionDisplayPayload(confirmationRequest),
+        permissionFingerprint: fingerprint,
+        persistentApprovalEligible,
+        permission: {
+          description: confirmationRequest.description,
+          ...(confirmationRequest.reason === undefined ? {} : { reason: confirmationRequest.reason }),
+          ...(confirmationRequest.decisionDisplay === undefined ? {} : { decisionDisplay: confirmationRequest.decisionDisplay }),
+          ...(confirmationRequest.ruleId === undefined ? {} : { ruleId: confirmationRequest.ruleId }),
         },
-      };
-    }
+      },
+    });
+
+    const confirmPermission = ctx.confirmPermission;
+    const deferred = ctx.deferredPermissionResponse;
+    if (deferred !== undefined && deferred.fingerprint !== fingerprint) return blockForPermission();
+    if (deferred === undefined && !confirmPermission) return blockForPermission();
 
     if (ctx.abort.aborted) {
       return createPermissionErrorResult(
@@ -342,7 +358,11 @@ export class ToolRegistry {
     }
 
     try {
-      const confirmation = await confirmPermission!(confirmationRequest, ctx.abort);
+      const confirmation = deferred?.decision ?? await confirmPermission!({
+        ...confirmationRequest,
+        permissionFingerprint: fingerprint,
+        persistentApprovalEligible,
+      }, ctx.abort);
 
       if (ctx.abort.aborted || confirmation === "timeout") {
         return createPermissionErrorResult(
@@ -357,7 +377,13 @@ export class ToolRegistry {
 
       if (confirmation === "approve_always") {
         const approval = unsatisfiedAsk.approval;
-        if (approval?.eligible === true && approval.scope) {
+        if (!persistentApprovalEligible || approval?.scope === undefined) {
+          return createPermissionErrorResult(
+            "TOOL_PERMISSION_CONFIRMATION_DENIED",
+            `Tool "${ctx.toolName}" is not eligible for persistent approval`,
+          );
+        }
+        if (approval.eligible === true) {
           await ctx.projectContext.approvals.addApproval(approval.scope, {
             display: approval.display,
             reason: approval.reason,

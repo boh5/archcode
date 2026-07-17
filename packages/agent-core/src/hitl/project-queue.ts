@@ -30,6 +30,7 @@ export interface HitlRecord {
   readonly source: HitlSource;
   readonly status: HitlStatus;
   readonly displayPayload: HitlDisplayPayload;
+  readonly persistentApprovalEligible?: boolean;
   readonly response?: HitlResponse;
   readonly delivery?: HitlDelivery;
   readonly createdAt: string;
@@ -49,6 +50,7 @@ export interface CreateHitlInput {
   readonly owner: HitlOwner;
   readonly source: HitlSource;
   readonly displayPayload: HitlDisplayPayload;
+  readonly persistentApprovalEligible?: boolean;
   readonly hitlId?: string;
   readonly createdAt?: string;
 }
@@ -140,6 +142,7 @@ const HitlRecordSchema: z.ZodType<HitlRecord> = z.strictObject({
   source: HitlSourceSchema,
   status: z.enum(["pending", "answered", "resolved", "cancelled"]),
   displayPayload: HitlDisplayPayloadSchema,
+  persistentApprovalEligible: z.boolean().optional(),
   response: HitlResponseSchema.optional(),
   delivery: HitlDeliverySchema.optional(),
   createdAt: NonEmptyStringSchema,
@@ -149,6 +152,9 @@ const HitlRecordSchema: z.ZodType<HitlRecord> = z.strictObject({
   const sessionSource = record.source.type === "ask_user" || record.source.type === "tool_permission";
   if ((record.owner.type === "session") !== sessionSource) {
     ctx.addIssue({ code: "custom", path: ["source"], message: `${record.source.type} does not belong to ${record.owner.type}` });
+  }
+  if (record.persistentApprovalEligible !== undefined && record.source.type !== "tool_permission") {
+    ctx.addIssue({ code: "custom", path: ["persistentApprovalEligible"], message: "Persistent approval eligibility belongs only to tool_permission HITL" });
   }
   const hasAcceptedResponse = record.status !== "pending";
   if (hasAcceptedResponse !== (record.response !== undefined)) {
@@ -230,6 +236,7 @@ export class ProjectHitlQueue {
         source: parsedInput.source,
         status: "pending",
         displayPayload: parsedInput.displayPayload,
+        persistentApprovalEligible: parsedInput.persistentApprovalEligible,
         createdAt: now,
         updatedAt: now,
       });
@@ -324,6 +331,11 @@ export class ProjectHitlQueue {
     return await this.#mutate((file) => {
       const { index, record } = findRecord(file, hitlId);
       assertResponseMatchesSource(record.source, parsedResponse, hitlId);
+      if (parsedResponse.type === "permission_decision"
+        && parsedResponse.decision === "approve_always"
+        && record.persistentApprovalEligible !== true) {
+        throw new HitlConflictError(hitlId, "This permission request is not eligible for persistent approval");
+      }
       if (record.response !== undefined) {
         if (stableJson(record.response) === stableJson(parsedResponse)) return { file, result: cloneRecord(record) };
         throw new HitlConflictError(hitlId, "Cannot replace an accepted HITL response");
@@ -393,6 +405,7 @@ export function toHitlView(record: HitlRecord): HitlView {
     source: structuredClone(record.source),
     status: record.status,
     displayPayload: structuredClone(record.displayPayload),
+    persistentApprovalEligible: record.persistentApprovalEligible,
     allowedActions: allowedActions(record),
     ...(requiresInspection(record) ? { requiresInspection: true as const } : {}),
     createdAt: record.createdAt,
@@ -422,12 +435,16 @@ function parseCreateInput(input: CreateHitlInput): CreateHitlInput {
     owner: HitlOwnerSchema,
     source: HitlSourceSchema,
     displayPayload: HitlDisplayPayloadSchema,
+    persistentApprovalEligible: z.boolean().optional(),
     hitlId: NonEmptyStringSchema.optional(),
     createdAt: NonEmptyStringSchema.optional(),
   }).superRefine((value, ctx) => {
     const sessionSource = value.source.type === "ask_user" || value.source.type === "tool_permission";
     if ((value.owner.type === "session") !== sessionSource) {
       ctx.addIssue({ code: "custom", path: ["source"], message: `${value.source.type} does not belong to ${value.owner.type}` });
+    }
+    if (value.persistentApprovalEligible !== undefined && value.source.type !== "tool_permission") {
+      ctx.addIssue({ code: "custom", path: ["persistentApprovalEligible"], message: "Persistent approval eligibility belongs only to tool_permission HITL" });
     }
   }).parse(input) as CreateHitlInput;
 }
@@ -441,8 +458,8 @@ function assertResponseMatchesSource(source: HitlSource, response: HitlResponse,
 }
 
 function sameCreateIntent(record: HitlRecord, input: CreateHitlInput): boolean {
-  return stableJson({ owner: record.owner, source: record.source, displayPayload: record.displayPayload })
-    === stableJson({ owner: input.owner, source: input.source, displayPayload: input.displayPayload });
+  return stableJson({ owner: record.owner, source: record.source, displayPayload: record.displayPayload, persistentApprovalEligible: record.persistentApprovalEligible })
+    === stableJson({ owner: input.owner, source: input.source, displayPayload: input.displayPayload, persistentApprovalEligible: input.persistentApprovalEligible });
 }
 
 function findRecord(file: ProjectHitlFile, hitlId: string): { index: number; record: HitlRecord } {

@@ -370,13 +370,14 @@ function isHitlView(value: unknown): boolean {
     && exact(
       view,
       ["hitlId", "owner", "source", "status", "displayPayload", "allowedActions", "createdAt", "updatedAt"],
-      ["requiresInspection", "resolvedAt"],
+      ["persistentApprovalEligible", "requiresInspection", "resolvedAt"],
     )
     && isString(view.hitlId)
     && isHitlOwner(view.owner)
     && isHitlSource(view.source)
     && oneOf(view.status, ["pending", "answered", "resolved", "cancelled"])
     && isHitlDisplayPayload(view.displayPayload)
+    && (view.persistentApprovalEligible === undefined || typeof view.persistentApprovalEligible === "boolean")
     && arrayOf(view.allowedActions, (action) => oneOf(action, ["answer", "approve", "deny", "cancel"]))
     && (view.requiresInspection === undefined || view.requiresInspection === true)
     && isString(view.createdAt)

@@ -3,15 +3,8 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
 import type { PermissionDecision, ToolPermission, ToolExecutionContext } from "../types";
 import type { ToolErrorKind } from "../errors";
-import { parseShellRequest } from "../security/bash/parse";
 
 const PROJECT_DIR_SUFFIX = join(PROJECT_STATE_DIR_NAME);
-const PROJECT_DIR_REFERENCE_PATTERN = escapeRegExp(PROJECT_STATE_DIR_NAME);
-const PROJECT_DIR_REFERENCE_RE = new RegExp(`(^|[^A-Za-z0-9._-])(?:\\./)?${PROJECT_DIR_REFERENCE_PATTERN}(?=$|[^A-Za-z0-9._-])`);
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 /**
  * Resolve a file path to its real path, handling symlinks and traversing
@@ -28,10 +21,9 @@ function resolveRealPath(filePath: string): string {
 }
 
 export function isProtectedProjectPath(filePath: string, workspaceRoot: string): boolean {
-  return isResolvedProjectStatePath(
-    resolveRealPath(resolve(workspaceRoot, filePath)),
-    workspaceRoot,
-  );
+  const lexicalInput = resolve(workspaceRoot, filePath);
+  return isLexicalProjectStatePath(lexicalInput, workspaceRoot)
+    || isResolvedProjectStatePath(resolveRealPath(lexicalInput), workspaceRoot);
 }
 
 /**
@@ -44,6 +36,27 @@ export function isProtectedToolWritePath(
   ctx: Pick<ToolExecutionContext, "cwd" | "projectContext">,
 ): boolean {
   return isProtectedToolWritePathFrom(filePath, ctx.cwd, ctx);
+}
+
+/** Checks an already operation-aware canonical Bash access without following its leaf again. */
+export function isProtectedCanonicalWritePath(
+  effectiveCanonicalPath: string,
+  ctx: Pick<ToolExecutionContext, "cwd" | "projectContext">,
+): boolean {
+  for (const root of new Set([ctx.cwd, ctx.projectContext.project.workspaceRoot])) {
+    const lexicalRoot = resolve(root);
+    const resolvedRoot = resolveRealPath(lexicalRoot);
+    const lexicalGit = resolve(lexicalRoot, ".git");
+    const resolvedGit = resolveRealPath(lexicalGit);
+    if (
+      isLexicalProjectStatePath(effectiveCanonicalPath, root)
+      || isResolvedProjectStatePath(effectiveCanonicalPath, root)
+      || isAtOrBelow(effectiveCanonicalPath, lexicalGit)
+      || isAtOrBelow(effectiveCanonicalPath, resolvedGit)
+      || hasPathComponentWithin(effectiveCanonicalPath, resolvedRoot, ".git")
+    ) return true;
+  }
+  return false;
 }
 
 function isProtectedToolWritePathFrom(
@@ -60,7 +73,8 @@ function isProtectedToolWritePathFrom(
 
   for (const root of protectedRoots) {
     if (
-      isResolvedProjectStatePath(resolvedInput, root)
+      isLexicalProjectStatePath(lexicalInput, root)
+      || isResolvedProjectStatePath(resolvedInput, root)
       || isGitMetadataPath(lexicalInput, resolvedInput, root)
     ) return true;
   }
@@ -102,10 +116,17 @@ function isResolvedProjectStatePath(resolvedInput: string, projectRoot: string):
   return resolvedInput.startsWith(resolvedProjectDir + sep) || resolvedInput === resolvedProjectDir;
 }
 
+function isLexicalProjectStatePath(input: string, projectRoot: string): boolean {
+  const lexicalRoot = resolve(projectRoot);
+  const resolvedRoot = resolveRealPath(lexicalRoot);
+  return isAtOrBelow(input, resolve(lexicalRoot, PROJECT_DIR_SUFFIX))
+    || isAtOrBelow(input, resolve(resolvedRoot, PROJECT_DIR_SUFFIX));
+}
+
 /**
  * Creates a permission guard that denies direct mutation of project state and
  * Git metadata. This protects both system-managed trees from ordinary file
- * mutation tools (file_write, file_edit) and parsed Bash path effects while
+ * mutation tools (file_write, file_edit) while
  * keeping lifecycle managers and normal Git CLI operations on their dedicated
  * paths.
  *
@@ -114,35 +135,13 @@ function isResolvedProjectStatePath(resolvedInput: string, projectRoot: string):
  */
 export function createProtectedPathPermission(): ToolPermission {
   return (input: unknown, ctx: ToolExecutionContext): PermissionDecision => {
-    const data = input as { path?: unknown; paths?: unknown; cwd?: unknown; command?: unknown };
+    const data = input as { path?: unknown; paths?: unknown; cwd?: unknown };
     const paths = protectedPathReferences(data);
 
     for (const path of paths) {
       if (isProtectedToolWritePath(path, ctx)) {
         return denyProtectedPathMutation();
       }
-    }
-
-    if (typeof data.command === "string") {
-      const parsed = parseShellRequest(data.command, {
-        workspaceRoot: ctx.cwd,
-        ...(typeof data.cwd === "string" ? { cwd: data.cwd } : {}),
-      });
-      if ("invocations" in parsed) {
-        for (const invocation of parsed.invocations) {
-          for (const path of invocation.paths) {
-            if (
-              path.operation !== "read"
-              && path.operation !== "execute"
-              && isProtectedToolWritePathFrom(path.path, invocation.cwd, ctx)
-            ) {
-              return denyProtectedPathMutation();
-            }
-          }
-        }
-      }
-
-      if (PROJECT_DIR_REFERENCE_RE.test(data.command)) return denyProtectedPathMutation();
     }
 
     return { outcome: "allow" };

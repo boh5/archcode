@@ -282,7 +282,7 @@ describe("bashTool", () => {
     expect(spawn).toHaveBeenCalledTimes(3);
   });
 
-  test("denied commands do not call ProcessRunner", async () => {
+  test("commands that require approval block before calling ProcessRunner", async () => {
     const registry = createRegistry([bashTool]);
     const spawnMock = mock(() => mockSpawnResult(""));
     setProcessRunnerForTest(spawnMock as any);
@@ -292,8 +292,9 @@ describe("bashTool", () => {
       mockCtx(testWorkspaceRoot),
     );
 
-    expect(result.isError).toBe(true);
-    expect(result.output).toContain("Privilege escalation");
+    expect(result.isError).toBe(false);
+    expect(result.blocked?.source).toEqual({ type: "tool_permission", toolCallId: "denied", toolName: "bash" });
+    expect(result.blocked?.persistentApprovalEligible).toBe(true);
     expect(spawnMock).toHaveBeenCalledTimes(0);
   });
 
@@ -323,7 +324,7 @@ describe("bashTool", () => {
       );
 
       expect(result.isError).toBe(true);
-      expect(result.output).toContain("PROTECTED_PATH_WRITE_DENIED");
+      expect(result.meta?.permissionErrorCode).toBe("TOOL_PERMISSION_DENIED");
       expect(spawnMock).toHaveBeenCalledTimes(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
