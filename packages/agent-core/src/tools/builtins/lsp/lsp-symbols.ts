@@ -19,7 +19,7 @@ interface RangeLike {
 
 export const lspSymbolsTool = defineTool({
   name: "lsp_symbols",
-  description: "Get document or workspace symbols from a language server.",
+  description: "Discover document or workspace symbols by semantic name. A typical code-intelligence chain is lsp_symbols -> lsp_goto_definition or lsp_find_references -> file_read. Symbol output reports 1-based line and column values; pass line through unchanged, but pass character=column-1 to goto-definition or find-references because their character input is 0-based. Document scope selects a server from filePath; workspace scope uses ArchCode's built-in workspace server. If no suitable server is available, the call returns an error; fall back to grep/glob for textual discovery.",
   inputSchema: LspSymbolsInputSchema,
   traits: {
     readOnly: true,

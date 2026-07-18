@@ -28,4 +28,13 @@ describe("buildToolSection", () => {
     expect(result).toContain("- bash");
     expect(result).toContain("- glob");
   });
+
+  test("tells the model to batch only independent non-interactive lookups", () => {
+    const result = buildToolSection(makeCtx(["grep", "glob", "bash"]));
+
+    expect(result).toContain("issue them together in one model turn");
+    expect(result).toContain("parallelizes concurrency-safe calls and serializes the rest");
+    expect(result).toContain("do not batch interactive or mutating operations");
+  });
+
 });

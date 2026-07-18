@@ -14,14 +14,27 @@ import { validateCronTrigger } from "./trigger-validation";
 
 const IsoDateTimeSchema = z.string().datetime({ offset: true });
 const NonEmptyTextSchema = z.string().trim().min(1);
-export const AutomationNameSchema = NonEmptyTextSchema.max(AUTOMATION_NAME_MAX_LENGTH);
+export const AutomationNameSchema = NonEmptyTextSchema.max(AUTOMATION_NAME_MAX_LENGTH)
+  .describe("Confirmed display name for the Automation. Non-empty; max 200 characters.");
 export const AutomationMessageSchema = NonEmptyTextSchema.max(AUTOMATION_MESSAGE_MAX_LENGTH);
-export const AutomationTimezoneSchema = NonEmptyTextSchema.max(AUTOMATION_TIMEZONE_MAX_LENGTH);
+export const AutomationTimezoneSchema = NonEmptyTextSchema.max(AUTOMATION_TIMEZONE_MAX_LENGTH)
+  .describe("IANA timezone used to evaluate the cron expression, for example Asia/Shanghai.");
 
 export const AutomationTriggerSchema = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("once"), at: IsoDateTimeSchema }),
-  z.strictObject({ kind: z.literal("interval"), everyMs: z.number().int().min(MIN_AUTOMATION_INTERVAL_MS) }),
-  z.strictObject({ kind: z.literal("cron"), expression: NonEmptyTextSchema, timezone: AutomationTimezoneSchema }),
+  z.strictObject({
+    kind: z.literal("once").describe("Select a one-time trigger."),
+    at: IsoDateTimeSchema.describe("ISO 8601 date-time with an explicit UTC offset for the one-time fire."),
+  }),
+  z.strictObject({
+    kind: z.literal("interval").describe("Select a recurring fixed interval trigger."),
+    everyMs: z.number().int().min(MIN_AUTOMATION_INTERVAL_MS)
+      .describe("Interval in milliseconds between fires; integer >= 30000."),
+  }),
+  z.strictObject({
+    kind: z.literal("cron").describe("Select a recurring cron trigger."),
+    expression: NonEmptyTextSchema.describe("Exactly 5 cron fields: minute hour day-of-month month day-of-week."),
+    timezone: AutomationTimezoneSchema,
+  }),
 ]).superRefine((trigger, context) => {
   if (trigger.kind !== "cron") return;
   try {
@@ -29,20 +42,20 @@ export const AutomationTriggerSchema = z.discriminatedUnion("kind", [
   } catch (error) {
     context.addIssue({ code: "custom", message: error instanceof Error ? error.message : "Trigger is invalid" });
   }
-}) satisfies z.ZodType<AutomationTrigger>;
+}).describe("Exactly one trigger: once, interval, or cron.") satisfies z.ZodType<AutomationTrigger>;
 
 export const AutomationActionSchema = z.discriminatedUnion("kind", [
   z.strictObject({
-    kind: z.literal("start_session"),
-    message: AutomationMessageSchema,
-    location: z.enum(["project", "worktree"]),
+    kind: z.literal("start_session").describe("Start a new ordinary Engineer Session when the trigger fires."),
+    message: AutomationMessageSchema.describe("Initial user message for the new Engineer Session. Max 10000 characters."),
+    location: z.enum(["project", "worktree"]).describe("project uses the project workspace; worktree uses a managed worktree."),
   }),
   z.strictObject({
-    kind: z.literal("send_message"),
-    sessionId: z.uuid(),
-    message: AutomationMessageSchema,
+    kind: z.literal("send_message").describe("Send a message to an existing Session when the trigger fires."),
+    sessionId: z.uuid().describe("UUID of the target existing Session."),
+    message: AutomationMessageSchema.describe("Message to enqueue in the target Session. Max 10000 characters."),
   }),
-]) satisfies z.ZodType<AutomationAction>;
+]).describe("Exactly one action: start a new Engineer Session or send a message to an existing Session.") satisfies z.ZodType<AutomationAction>;
 
 export const AutomationSchema = z.strictObject({
   id: z.uuid(),

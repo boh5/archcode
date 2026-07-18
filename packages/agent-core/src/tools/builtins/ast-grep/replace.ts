@@ -15,12 +15,12 @@ import type { PermissionDecision, ToolExecutionContext, ToolExecutionResult, Too
 
 export const AstGrepReplaceInputSchema = z
   .object({
-    pattern: z.string().min(1).describe("ast-grep pattern with meta-variables ($VAR, $$$) to match. Must be a complete AST node."),
-    rewrite: z.string().min(1).describe("Replacement pattern. Use $VAR from the pattern to preserve matched content. Can use literal text."),
-    lang: z.string().min(1).optional().describe("Target language. See ast_grep_search lang param for supported values."),
-    paths: z.array(z.string().min(1)).optional().describe("Directories or files to search in (absolute or relative to the current Session cwd). Defaults to the current Session cwd."),
-    globs: z.array(z.string().min(1)).optional().describe("Include/exclude glob patterns. Prefix ! to exclude."),
-    dryRun: z.boolean().default(true).describe("true = preview only, no files written. false = apply changes to disk. Default true."),
+    pattern: z.string().min(1).describe("Parseable ast-grep code pattern to match. `$VAR` captures one AST node and `$$$` captures zero or more nodes."),
+    rewrite: z.string().min(1).describe("Replacement code pattern. Reuse captured `$VAR` or `$$$` values to preserve matched content."),
+    lang: z.string().min(1).optional().describe("Target language for parsing the pattern, rewrite, and files. See ast_grep_search lang for supported values."),
+    paths: z.array(z.string().min(1)).optional().describe("Files or directories to preview or rewrite, absolute or relative to the current Session cwd. Keep identical between preview and apply."),
+    globs: z.array(z.string().min(1)).optional().describe("Include/exclude file globs. Prefix exclusions with `!`; keep identical between preview and apply."),
+    dryRun: z.boolean().default(true).describe("`true` previews matches without writing and is the default. After reviewing that preview, repeat the same call with `false` to apply."),
   })
   .strict();
 
@@ -105,7 +105,7 @@ export class AstGrepReplaceToolError extends Error {
 export const astGrepReplaceTool = defineTool({
   name: "ast_grep_replace",
   description:
-    "Preview or apply structural code rewrites using ast-grep. Defaults to dryRun preview; set dryRun false to apply changes.",
+    "Preview or apply an AST-structural rewrite. First call with `dryRun: true` and inspect the returned matches. Apply only after the preview is correct by calling again with the same pattern, rewrite, language, paths, and globs and `dryRun: false`. Applying requires current read snapshots for every matched file and rechecks protected paths.",
   inputSchema: AstGrepReplaceInputSchema,
   traits: {
     readOnly: false,

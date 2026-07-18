@@ -65,19 +65,19 @@ describe("buildSystemPrompt", () => {
 
     expect(result.indexOf("ArchCode")).toBeLessThan(result.indexOf("## Role: Build"));
     expect(result.indexOf("## Role: Build")).toBeLessThan(result.indexOf("## Execution Contract"));
-    expect(result.indexOf("## Execution Contract")).toBeLessThan(result.indexOf("## Delegation Protocol"));
-    expect(result.indexOf("## Delegation Protocol")).toBeLessThan(result.indexOf("## Skills"));
+    expect(result.indexOf("## Execution Contract")).toBeLessThan(result.indexOf("## Delegation Policy"));
+    expect(result.indexOf("## Delegation Policy")).toBeLessThan(result.indexOf("## Skills"));
     expect(result.indexOf("## Skills")).toBeLessThan(result.indexOf("## Tools"));
     expect(result.indexOf("## Tools")).toBeLessThan(result.indexOf("## Environment"));
     expect(result.indexOf("## Environment")).toBeLessThan(result.indexOf("## Project Context"));
   });
 
-  test("injects delegation protocol only when delegate is allowed", async () => {
+  test("injects delegation policy only when delegate is allowed", async () => {
     const withoutDelegate = await buildSystemPrompt(makeCtx({ allowedTools: ["file_read"] }));
     const withDelegate = await buildSystemPrompt(makeCtx({ allowedTools: ["file_read", "delegate"] }));
 
-    expect(withoutDelegate).not.toContain("## Delegation Protocol");
-    expect(withDelegate).toContain("## Delegation Protocol");
+    expect(withoutDelegate).not.toContain("## Delegation Policy");
+    expect(withDelegate).toContain("## Delegation Policy");
   });
 
   test("includes compression protocol instructions when compress is allowed", async () => {

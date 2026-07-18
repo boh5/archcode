@@ -1,5 +1,6 @@
 import { describe, expect, it, mock } from "bun:test";
 import type { ChildExecutionHandle, ChildExecutionRequest } from "../../delegation/types";
+import { SkillNotAllowedError } from "../../agents/errors";
 import { storeManager } from "../../store/store";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { createTestProjectContext } from "../test-project-context";
@@ -104,6 +105,60 @@ describe("delegate tool hard cut", () => {
     }, makeContext()) as ToolExecutionResult;
     expect(result.isError).toBe(true);
     expect(JSON.parse(result.output).code).toBe("TOOL_DELEGATE_EXECUTOR_UNAVAILABLE");
+  });
+
+  it("returns the target Agent Skill allow-list when delegation rejects a Skill", async () => {
+    const result = await executeDelegate({
+      agent_type: "explore",
+      task: "inspect",
+      skills: ["research-docs"],
+      title: "Inspect ownership",
+      background: false,
+    }, makeContext({
+      startChildExecution: async () => {
+        throw new SkillNotAllowedError("explore", "research-docs", ["codemap"]);
+      },
+    })) as ToolExecutionResult;
+
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.output)).toMatchObject({
+      code: "TOOL_DELEGATE_FAILED",
+      name: "SkillNotAllowedError",
+      details: {
+        target_agent: "explore",
+        rejected_skill: "research-docs",
+        allowed_skills: ["codemap"],
+      },
+      hint: expect.stringContaining("details.allowed_skills"),
+    });
+  });
+
+  it("omits Skill recovery fields for unrelated child execution errors", async () => {
+    const result = await executeDelegate({
+      agent_type: "explore",
+      task: "inspect",
+      skills: [],
+      title: "Inspect ownership",
+      background: false,
+    }, makeContext({
+      startChildExecution: async () => {
+        throw new Error("launch failed");
+      },
+    })) as ToolExecutionResult;
+    const parsed = JSON.parse(result.output) as {
+      code: string;
+      name: string;
+      details: Record<string, unknown>;
+      hint: string;
+    };
+
+    expect(result.isError).toBe(true);
+    expect(parsed.code).toBe("TOOL_DELEGATE_FAILED");
+    expect(parsed.name).toBe("Error");
+    expect("target_agent" in parsed.details).toBe(false);
+    expect("rejected_skill" in parsed.details).toBe(false);
+    expect("allowed_skills" in parsed.details).toBe(false);
+    expect(parsed.hint).not.toContain("details.allowed_skills");
   });
 
   it("returns launch guidance for background children", async () => {

@@ -10,10 +10,10 @@ import { resolveAndValidatePath } from "../../security";
 
 export const AstGrepSearchInputSchema = z
   .object({
-    pattern: z.string().min(1).describe("ast-grep pattern with meta-variables ($VAR, $$$). Must be a complete AST node, not a fragment. See ast-grep docs for syntax."),
-    lang: z.string().min(1).optional().describe("Target language for the pattern. One of: bash, c, cpp, csharp, css, elixir, go, haskell, html, java, javascript, json, kotlin, lua, nix, php, python, ruby, rust, scala, solidity, swift, typescript, tsx, yaml."),
-    paths: z.array(z.string().min(1)).optional().describe("Directories or files to search in (absolute or relative to the current Session cwd). Defaults to the current Session cwd."),
-    globs: z.array(z.string().min(1)).optional().describe("Include/exclude glob patterns. Prefix ! to exclude (e.g. [\"*.ts\", \"!*.test.ts\"])."),
+    pattern: z.string().min(1).describe("Parseable ast-grep code pattern, not a regular expression. `$VAR` matches one AST node and `$$$` matches zero or more nodes; provide a complete code node rather than a fragment."),
+    lang: z.string().min(1).optional().describe("Target language used to parse the pattern and files. One of: bash, c, cpp, csharp, css, elixir, go, haskell, html, java, javascript, json, kotlin, lua, nix, php, python, ruby, rust, scala, solidity, swift, typescript, tsx, yaml. Omit only when file extensions can determine it reliably."),
+    paths: z.array(z.string().min(1)).optional().describe("Files or directories to search, absolute or relative to the current Session cwd. Defaults to the Session cwd."),
+    globs: z.array(z.string().min(1)).optional().describe("File include/exclude globs; prefix an exclusion with `!`, for example [`*.ts`, `!*.test.ts`]."),
   })
   .strict();
 
@@ -101,7 +101,7 @@ export class AstGrepToolError extends Error {
 
 export const astGrepSearchTool = defineTool({
   name: "ast_grep_search",
-  description: "Search code using ast-grep structural patterns and return normalized JSON matches.",
+  description: "Search parsed code by AST structure, not text regex. Use grep for comments, string contents, file names, or byte-oriented regex. The pattern must be a parseable code node: `$VAR` captures one AST node and `$$$` captures zero or more nodes. Returns normalized JSON matches.",
   inputSchema: AstGrepSearchInputSchema,
   traits: {
     readOnly: true,

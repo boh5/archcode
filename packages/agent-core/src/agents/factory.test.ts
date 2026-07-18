@@ -8,7 +8,7 @@ import { storeManager } from "../store/store";
 import { createRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
 import { DELEGATION_CORE_TOOLS } from "./constants";
-import { MissingAgentModelConfigError, NoModelsConfiguredError } from "./errors";
+import { MissingAgentModelConfigError, NoModelsConfiguredError, SkillNotAllowedError } from "./errors";
 import {
   AgentStoreIdentityMismatchError,
   DuplicateAgentDefinitionError,
@@ -484,7 +484,17 @@ describe("createAgentFactory", () => {
     const skillNames = await factory.resolveDelegatedSkillNames(target, ["codemap", "git-master", "codemap"], import.meta.dir);
 
     expect(skillNames).toEqual(["codemap", "git-master"]);
-    await expect(factory.resolveDelegatedSkillNames(target, ["research-docs"], import.meta.dir)).rejects.toThrow("Skill \"research-docs\" is not allowed");
+    try {
+      await factory.resolveDelegatedSkillNames(target, ["research-docs"], import.meta.dir);
+      throw new Error("Expected delegated Skill validation to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(SkillNotAllowedError);
+      expect(error).toMatchObject({
+        targetAgentName: "explore",
+        skillName: "research-docs",
+        allowedSkills: ["codemap", "git-master"],
+      });
+    }
   });
 });
 

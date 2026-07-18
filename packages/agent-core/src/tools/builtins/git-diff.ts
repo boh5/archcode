@@ -9,7 +9,7 @@ import type { ProcessRunnerResult } from "../../process/types";
 
 const GitDiffInputSchema = z
   .object({
-    staged: z.boolean().optional().default(false).describe("true = show staged (cached) changes, false = show unstaged working-directory changes. Default false."),
+    staged: z.boolean().optional().default(false).describe("false shows unstaged working-directory changes and is the default; true shows staged/cached changes. Call both views before a commit or final Git review."),
   })
   .strict();
 
@@ -65,8 +65,11 @@ function formatGitDiffResult(result: ProcessRunnerResult): string | ToolExecutio
 
 export const gitDiffTool = defineTool({
   name: "git_diff",
-  description:
-    "Shows changes in the working directory (unstaged) or staging area (staged). Returns unified diff output.",
+  description: [
+    "Review tracked-file changes as a no-color unified diff with three context lines and no rename detection. staged=false shows unstaged working-directory changes; staged=true shows the staging area. Call both views before a commit or final Git review.",
+    "",
+    "git_diff does not show the contents of untracked files. Start with git_status to find them and use file_read when they are in scope. Use file_read for more surrounding context when a three-line diff hunk is insufficient.",
+  ].join("\n"),
   inputSchema: GitDiffInputSchema,
   traits: { readOnly: true, destructive: false, concurrencySafe: true },
   execute: async (input, ctx): Promise<string | ToolExecutionResult> => {

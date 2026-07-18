@@ -14,12 +14,12 @@ export const TodoWriteInputSchema = z
     todos: z.array(
       z
         .object({
-          id: z.string().optional().describe("Stable identifier. If omitted, one is generated automatically."),
-          content: z.string().describe("Brief description of the task"),
-          status: z.enum(TODO_STATUSES).describe("Current state: pending | in_progress | completed | cancelled"),
+          id: z.string().optional().describe("Stable item identifier. Provide one on the first call for any item you expect to update later, then preserve it on every replacement call. If omitted, one is generated for the current update but is not returned to the model."),
+          content: z.string().describe("Specific, actionable task outcome. Preserve user-provided commands, flags, arguments, and ordering verbatim when they are part of the requirement."),
+          status: z.enum(TODO_STATUSES).describe("`pending` not started; `in_progress` actively being worked; `completed` fully finished and verified; `cancelled` no longer needed."),
         })
         .strict(),
-    ).describe("Full replacement list of todo items. Each: { id?, content, status }"),
+    ).describe("Full replacement list. Omitting an existing item removes it, so include every item that should remain."),
   })
   .strict();
 
@@ -65,8 +65,19 @@ function buildTodoSummary(
 
 export const todoWriteTool = defineTool({
   name: "todo_write",
-  description:
-    "Replaces the full todo list with the given items. Each todo has content, status, and an optional id. If no id is provided, one is generated automatically.",
+  description: [
+    "Create and replace the Session's complete todo list for non-trivial work.",
+    "",
+    "Use it when the request has at least three distinct conceptual steps, multiple user-visible deliverables, an unclear scope that must be resolved in stages, or new instructions that materially extend existing work. Do not use it for a single localized edit, one command followed by a report, a simple answer, or other work where tracking adds no value.",
+    "",
+    "Workflow rules:",
+    "- Send every current item on each call because the input replaces the whole list. Preserve existing ids and preserve exact user-provided commands or flags inside the relevant item.",
+    "- Give each continuing item an explicit, stable id on the initial call; generated ids are not returned in the tool result and therefore cannot be reused reliably.",
+    "- Keep exactly one item `in_progress` while work remains. Update status when work state changes rather than batching completions at the end.",
+    "- If work is blocked or only partially done, keep it `in_progress` and add or update a specific blocker item. Mark `completed` only after the outcome and required verification are actually finished.",
+    "",
+    "Example initial call: `todo_write({\"todos\":[{\"id\":\"inspect-contract\",\"content\":\"Inspect the current contract and competitor evidence\",\"status\":\"in_progress\"},{\"id\":\"implement-contract\",\"content\":\"Implement the verified contract changes\",\"status\":\"pending\"},{\"id\":\"verify-contract\",\"content\":\"Run typecheck and targeted tests\",\"status\":\"pending\"}]})`. On later calls, resend all three items with these same ids and updated statuses.",
+  ].join("\n"),
   inputSchema: TodoWriteInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: true },
   execute: (input, ctx): string | ToolExecutionResult => {

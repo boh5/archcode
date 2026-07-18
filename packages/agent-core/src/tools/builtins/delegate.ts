@@ -4,6 +4,7 @@ import { createToolErrorResult } from "../errors";
 import type { ToolExecutionContext } from "../types";
 import type { StoredMessage } from "../../store/types";
 import { SKILL_NAME_REGEX } from "../../skills/schema";
+import { SkillNotAllowedError } from "../../agents/errors";
 import type { ChildExecutionHandle } from "../../delegation/types";
 import type { SessionExecutionRecord } from "@archcode/protocol";
 
@@ -11,14 +12,14 @@ const SKILL_NAME_MESSAGE = "Skill name must match pattern ^[a-z0-9][a-z0-9-]*$";
 
 export const DelegateInputSchema = z
   .object({
-    agent_type: z.string().min(1).describe("Allowed target agent type (for example plan, build, reviewer, explore, or librarian)"),
+    agent_type: z.string().min(1).describe("Allowed target agent type for the current parent. Engineer roles include plan for design, build for an owned code change, reviewer for independent verification, explore for local source investigation, and librarian for external evidence; other parents may allow only a subset."),
     persona: z.string().trim().min(1).optional().describe("Optional perspective only; it cannot expand the child tool set, permissions, targets, or depth"),
-    task: z.string().min(1).describe("Atomic Task plus its concrete Expected outcome and child-level success criteria"),
-    context: z.string().optional().describe("Structured Context and evidence; Scope ownership and non-goals; Must do / must not do; Verification and output requirements"),
-    skills: z.array(z.string().regex(SKILL_NAME_REGEX, SKILL_NAME_MESSAGE)).describe("Allowed skill names to activate on a new child. Pass [] for none. Skills cannot expand hardcoded child authority."),
-    description: z.string().optional().describe("Short 3-5 word label for the delegated task"),
+    task: z.string().min(1).describe("One atomic Task stated as an autonomous instruction, with the concrete expected outcome and child-level success criteria. Say explicitly whether to research, plan, edit, or review."),
+    context: z.string().optional().describe("All context the fresh child needs: current evidence and starting files; scope ownership and non-goals; must do / must not do; verification commands; and required output format."),
+    skills: z.array(z.string().regex(SKILL_NAME_REGEX, SKILL_NAME_MESSAGE)).describe("Allowed Skill names to activate on the new child. Pass [] for none. Skills cannot expand hardcoded child authority. If a Skill is rejected, the error's details.allowed_skills contains the exact names allowed for that target Agent."),
+    description: z.string().optional().describe("Optional 3-5 word display label for the delegated task, for example `Trace request path`"),
     title: z.string().trim().min(1).describe("Required parent-supplied title for the new child session"),
-    background: z.boolean().default(false).describe("true starts the child asynchronously; wait for a terminal notification or use blocking background_output before treating its result as final. false waits for completion."),
+    background: z.boolean().default(false).describe("true starts the child asynchronously; wait for a terminal notification or use blocking background_output before treating its result as final. false waits for completion and is the default."),
   })
   .strict();
 
@@ -31,6 +32,9 @@ export interface DelegateErrorOutput {
     name: string;
     message: string;
   };
+  target_agent?: string;
+  rejected_skill?: string;
+  allowed_skills?: readonly string[];
 }
 
 export interface ChildExecutionOutcome {
@@ -68,6 +72,13 @@ export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionCo
     });
   } catch (error) {
     const safeError = error instanceof Error ? error : new Error(String(error));
+    const skillRecovery = safeError instanceof SkillNotAllowedError
+      ? {
+          target_agent: safeError.targetAgentName,
+          rejected_skill: safeError.skillName,
+          allowed_skills: [...safeError.allowedSkills],
+        }
+      : {};
     return createToolErrorResult({
       kind: "execution",
       code: "TOOL_DELEGATE_FAILED",
@@ -78,7 +89,11 @@ export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionCo
         ok: false,
         session_id: "",
         error: { name: safeError.name, message: safeError.message },
+        ...skillRecovery,
       } satisfies DelegateErrorOutput,
+      ...(safeError instanceof SkillNotAllowedError
+        ? { hint: "Retry delegate with skills selected from details.allowed_skills, or pass an empty skills array when no Skill is needed." }
+        : {}),
     });
   }
 
@@ -190,8 +205,19 @@ function buildChildPrompt(input: DelegateInput): string {
 
 export const delegateTool = defineTool({
   name: "delegate",
-  description:
-    `Create a new child Session for one atomic task. The prompt envelope must contain: Task; Expected outcome; Context and evidence; Scope ownership and non-goals; Must do / must not do; Verification and output. Encode the first two in task and the remaining fields in context. title is required and supplied by the parent. background=true starts work asynchronously. wait_for_reminder may wait for terminal state, but the reminder is only a terminal notification; use blocking background_output afterward to collect the terminal result and actual deliverable before relying on it. Use resume_session for a stopped direct child. Persona, skills, context, title, description, and other metadata cannot expand hardcoded tools, permissions, targets, or depth.`,
+  description: [
+    "Create a new direct child Session for one concrete, self-contained task.",
+    "",
+    "Use it for an independently owned implementation, plan, review, or research question: Plan designs implementation; Build owns a disjoint code change; Reviewer independently verifies; Explore investigates local source read-only; Librarian researches external documentation or source. The current parent may allow only a subset. Do not delegate a known single-file read, an exact symbol search, a small localized change the current role can perform directly, or work with no fitting target Agent.",
+    "",
+    "Every new child starts with fresh context and does not inherit the parent's conversation history. The brief must therefore stand alone: state whether to research, plan, edit, or review; give the expected outcome and success criteria; pass starting evidence/files; define owned scope and non-goals; include must-do/must-not-do constraints, verification, and output format. Example: `delegate({\"agent_type\":\"explore\",\"title\":\"Trace request path\",\"description\":\"Trace request path\",\"task\":\"Trace request validation from the route to the owning service and return the exact files and symbols. Research only; do not edit.\",\"context\":\"Start at apps/server/src/routes. Exclude UI code. Return an ordered call path with file references and unresolved gaps.\",\"skills\":[],\"background\":true})`.",
+    "",
+    "Do not duplicate delegated work. For several independent background children, launch them before waiting so their executions can overlap, and never give children overlapping file ownership.",
+    "",
+    "background=false is the default: it waits and returns terminal status plus the result in this call. background=true returns a Session ID immediately and later emits a terminal reminder. The background workflow is `delegate(..., background=true)` -> one `wait_for_reminder({\"session_ids\":[\"<session-id>\"],\"condition\":\"all\",\"timeout_ms\":1800000})` -> `background_output({\"session_id\":\"<session-id>\",\"block\":true,\"timeout_ms\":1800000})` for the actual deliverable. Do not poll between those steps.",
+    "",
+    "Use resume_session, not a new delegate, to continue a stopped direct child. Persona, Skills, title, context, and other metadata cannot expand hardcoded targets, tools, permissions, or depth.",
+  ].join("\n"),
   inputSchema: DelegateInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   execute: async (input, ctx) => executeDelegate(input, ctx),

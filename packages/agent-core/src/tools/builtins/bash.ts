@@ -10,10 +10,10 @@ import type { ProcessRunnerResult } from "../../process/types";
 
 export const BashInputSchema = z
   .object({
-    description: z.string().min(1).describe("Brief summary of what the command does"),
-    command: z.string().min(1).describe("The bash command(s) to execute. Can be chained with && or ;"),
-    cwd: z.string().optional().describe("Working directory for the command (absolute or relative to the current Session cwd). Defaults to the current Session cwd."),
-    timeoutMs: z.number().int().positive().optional().describe("Command timeout in milliseconds. Command is killed if it exceeds this."),
+    description: z.string().min(1).describe("One concise sentence explaining the observable purpose, for example `Run the agent-core unit tests`."),
+    command: z.string().min(1).describe("Bash command to execute, for example `bun run test:unit`. Use `&&` when later commands require earlier success; use `;` only when they may continue after failure."),
+    cwd: z.string().optional().describe("Per-call working directory, absolute or relative to the current Session cwd, for example `packages/agent-core`. It must resolve inside the workspace and defaults to the Session cwd."),
+    timeoutMs: z.number().int().positive().optional().describe("Optional wrapper timeout in milliseconds, for example 600000 for ten minutes. The process is killed when it expires; omitting it means no ArchCode wrapper timeout."),
   })
   .strict();
 
@@ -114,8 +114,17 @@ function formatProcessRunnerResult(
 
 export const bashTool = defineTool({
   name: "bash",
-  description:
-    "Executes a non-persistent bash command inside the workspace with guarded permissions, minimal environment, closed stdin, and optional timeout.",
+  description: [
+    "Run one foreground `bash -c` process for terminal work such as builds, tests, package managers, Git, or project CLIs. Do not use it to read, write, edit, search, or find files when file_read, file_write, file_edit, grep, or glob can express the operation directly.",
+    "",
+    "Example: `bash({\"description\":\"Run the agent-core unit tests\",\"command\":\"bun run test:unit\",\"cwd\":\"packages/agent-core\",\"timeoutMs\":600000})`. Put dependent commands in one call with `&&`; use separate calls when their outputs must be interpreted before choosing the next command.",
+    "",
+    "Each call starts a fresh shell: cwd and environment changes do not persist across calls, stdin is closed, and only the allowlisted environment is inherited. Prefer the cwd argument over a leading `cd` for one working directory. timeoutMs is milliseconds; when omitted, ArchCode adds no wrapper timeout.",
+    "",
+    "For commits, rebases, branch management, history investigation, or PR preparation, read the git-master Skill first when it is available. Do not commit, amend, push, force-push, or rewrite history unless the user requested that effect. Before a Git write, inspect git_status, both relevant git_diff views, and recent history; preserve unrelated changes and never stage secrets.",
+    "",
+    "Completed exits return labeled STDOUT, STDERR, and EXIT_CODE. A nonzero exit is a failed result: inspect its stderr and exit code, correct the cause, and re-run only when the correction justifies it. Timeout, abort, signal, and spawn failures return their own typed error results and may not include that triplet.",
+  ].join("\n"),
   inputSchema: BashInputSchema,
   traits: { readOnly: false, destructive: true, concurrencySafe: false },
   prepareInput: (raw, ctx) => {

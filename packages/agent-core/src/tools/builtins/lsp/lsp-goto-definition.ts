@@ -29,7 +29,7 @@ interface LspRawLocationLink {
 
 export const lspGotoDefinitionTool = defineTool({
   name: "lsp_goto_definition",
-  description: "Get definition location(s) for a symbol at a file position using the language server.",
+  description: "Resolve a symbol at a known source position to its definition location(s). Use lsp_symbols to discover semantic symbols when the position is unknown, then use file_read on the returned definition. Requires a language mapping and an available language server for the source file; otherwise the call returns an error.",
   inputSchema: LspGotoDefinitionInputSchema,
   traits: {
     readOnly: true,
@@ -174,4 +174,3 @@ function locationFromUriAndRange(uri: string, range: unknown): LspLocation | und
     column: position.character + 1,
   };
 }
-

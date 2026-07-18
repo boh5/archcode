@@ -8,21 +8,21 @@ import { redactString } from "../security/redaction";
 // ─── Input Schema ───
 
 const AskUserQuestionOptionSchema = z.object({
-  label: z.string().describe("Short display text (1-5 words)"),
-  description: z.string().describe("Explanation of what this choice entails"),
+  label: z.string().describe("Concise option text, 1-5 words."),
+  description: z.string().describe("What selecting this option means or changes."),
 }).strict();
 
 const AskUserQuestionSchema = z.object({
-  question: z.string().min(1).describe("The full question text"),
-  header: z.string().min(1).max(30).describe("Very short label (max 30 chars) shown as the question heading"),
-  options: z.array(AskUserQuestionOptionSchema).optional().default([]).describe("Available choices. Each option: { label, description }. Omit when custom=true for free-text only. If recommending an option, list it first with \"(Recommended)\" suffix."),
-  multiple: z.boolean().optional().describe("Allow selecting more than one answer"),
-  custom: z.boolean().optional().default(true).describe("When true (default), adds a 'Type your own answer' option automatically. Set false to force choosing from provided options only."),
+  question: z.string().min(1).describe("Clear, specific full question whose answer changes the execution direction."),
+  header: z.string().min(1).max(30).describe("Very short display heading, at most 30 characters."),
+  options: z.array(AskUserQuestionOptionSchema).optional().default([]).describe("Available choices. Do not add an `Other` option when custom is enabled. Put a recommended choice first and suffix its label with `(Recommended)`."),
+  multiple: z.boolean().optional().describe("Set true only when more than one choice may be selected."),
+  custom: z.boolean().optional().default(true).describe("When true (default), adds a free-text answer choice automatically. Set false only when the user must choose from the supplied options."),
 }).strict();
 
 export const AskUserInputSchema = z
   .object({
-    questions: z.array(AskUserQuestionSchema).min(1).describe("Array of questions to ask. Each: { question, header, options?, multiple?, custom? }"),
+    questions: z.array(AskUserQuestionSchema).min(1).describe("One or more independent user decisions to ask in this interaction."),
   })
   .strict();
 
@@ -137,8 +137,13 @@ function rejectOnAbort(signal: AbortSignal): { promise: Promise<never>; cleanup:
 
 export const askUserTool = defineTool({
   name: "ask_user",
-  description:
-    "Ask the user questions during execution. Use to gather preferences, clarify ambiguous instructions, or offer choices. When `custom` is enabled (default), a free-text answer option is added automatically.",
+  description: [
+    "Ask for one or more unresolved preferences, requirements, or implementation choices that genuinely belong to the user and would change the execution direction.",
+    "",
+    "Investigate first. Do not ask for facts available from the request, repository, tool output, or a sensible reversible default. Do not use this tool merely to report progress or to ask permission for an ordinary in-scope next step. A good question presents the concrete tradeoff discovered by investigation; a bad question asks which file to edit before searching the code.",
+    "",
+    "Example: `ask_user({\"questions\":[{\"header\":\"Storage\",\"question\":\"Which persistence boundary should this feature use?\",\"options\":[{\"label\":\"Project file (Recommended)\",\"description\":\"Keeps state portable with the workspace.\"},{\"label\":\"User database\",\"description\":\"Shares state across projects.\"}],\"multiple\":false,\"custom\":true}]})`. Put a recommended option first and suffix its label with `(Recommended)`. With custom enabled, the UI adds the free-text choice automatically; do not add an `Other` option yourself.",
+  ].join("\n"),
   inputSchema: AskUserInputSchema,
   traits: { readOnly: true, destructive: false, concurrencySafe: false },
   execute: async (input: AskUserInput, ctx: ToolExecutionContext) => {

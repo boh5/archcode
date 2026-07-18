@@ -10,8 +10,11 @@ type SkillListInput = z.infer<typeof SkillListInputSchema>;
 export function createSkillListTool(): AnyToolDescriptor {
   return defineTool({
     name: "skill_list",
-    description:
-      "List Skills available to the current agent. Returns JSON entries with name, description, when_to_use, source, and optional allowed_tools only; full Skill bodies are omitted.",
+    description: [
+      "Discover the Skills currently allowed for this Agent. The System Prompt normally already lists the same allowed metadata; call skill_list only when you need a fresh machine-readable copy, and call skill_read directly when an exact matching Skill is already visible.",
+      "",
+      "Call `skill_list({})`, inspect each returned name, description, and usage guidance, choose only an exact returned name, then call `skill_read({\"name\":\"<exact-returned-name>\"})` before doing the governed work. Never guess or invent a Skill name. The result is metadata-only JSON with source and optional allowed-tools declarations; Skill bodies are omitted. An empty list means no Skill is available to this Agent.",
+    ].join("\n"),
     inputSchema: SkillListInputSchema,
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
     execute: async (

@@ -13,11 +13,11 @@ import type { ToolExecutionResult } from "../types";
 
 export const GrepInputSchema = z
   .object({
-    pattern: z.string().describe("Regular expression pattern to search for in file contents"),
-    path: z.string().optional().describe("Directory to search in (absolute or relative to the current Session cwd). Defaults to the current Session cwd."),
-    include: z.string().optional().describe("File name glob to filter by (e.g. \"*.ts\"). Defaults to all files."),
-    output_mode: z.enum(["content", "files_with_matches", "count"]).optional().describe("Output format: \"content\" shows matching lines, \"files_with_matches\" lists file paths only, \"count\" shows match counts per file. Default \"content\"."),
-    context: z.number().optional().describe("Number of context lines to show around each match"),
+    pattern: z.string().describe("Ripgrep regular expression to search for in file contents, for example `defineTool\\(` or `class\\s+ToolRegistry`."),
+    path: z.string().optional().describe("File or directory to search, absolute or relative to the current Session cwd. Defaults to the Session cwd."),
+    include: z.string().optional().describe("File-name glob used to filter searched files, for example `*.ts` or `*.{ts,tsx}`."),
+    output_mode: z.enum(["content", "files_with_matches", "count"]).optional().describe("`content` returns matching lines, `files_with_matches` returns paths only, and `count` returns per-file counts. Default `content`. At most 100 entries are returned."),
+    context: z.number().optional().describe("Number of lines before and after each match. Used only with output_mode `content`."),
   })
   .strict();
 
@@ -33,7 +33,13 @@ export function setRipgrepService(service: RipgrepService): void {
 
 export const grepTool = defineTool({
   name: "grep",
-  description: "Search file contents using ripgrep",
+  description: [
+    "Search file contents with ripgrep regular expressions. Prefer this tool to `rg` or `grep` through bash. Use glob when searching for file names rather than contents.",
+    "",
+    "Typical workflow: locate candidate content with `grep({\"pattern\":\"defineTool\\\\(\",\"path\":\"packages/agent-core/src\",\"include\":\"*.ts\",\"output_mode\":\"content\",\"context\":2})`, then use file_read on the returned paths and line ranges. Use `files_with_matches` to obtain only paths and `count` for per-file counts. Results are limited to the first 100 entries, so narrow path/include/pattern and retry when the result is truncated.",
+    "",
+    "If the investigation is open-ended across unknown modules and will require repeated rounds of searching, delegate one concrete research question to Explore when delegate is available instead of manually reproducing the same exploration loop.",
+  ].join("\n"),
   inputSchema: GrepInputSchema,
   traits: {
     readOnly: true,

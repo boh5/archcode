@@ -14,15 +14,15 @@ import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 
 const FileEditInputSchema = z
   .object({
-    path: z.string().describe("Absolute or workspace-relative path of the file to edit"),
+    path: z.string().describe("Absolute or current-Session-cwd-relative path of the existing file to edit, for example `src/config.ts`."),
     edits: z.array(
       z
         .object({
-          oldString: z.string().min(1, "oldString cannot be empty").describe("Exact text to find in the file. Must be unique within the file — include surrounding context if needed."),
-          newString: z.string().describe("Text to replace oldString with"),
+          oldString: z.string().min(1, "oldString cannot be empty").describe("Exact existing text to replace, copied without file_read line-number prefixes. Preserve leading indentation. It must resolve to exactly one location; re-read after no match or add surrounding context after multiple matches."),
+          newString: z.string().describe("Complete replacement text, including the intended indentation and line breaks. Must differ from oldString."),
         })
         .strict(),
-    ).min(1, "edits array must not be empty").describe("Array of text replacements to apply in order. Each entry: { oldString, newString }"),
+    ).min(1, "edits array must not be empty").describe("Non-empty array of non-overlapping replacements. Every oldString is matched against the same pre-edit file; the complete group is validated before one atomic write."),
   })
   .strict();
 
@@ -317,8 +317,17 @@ function applyEdits(content: string, matches: EditMatch[]): string {
 
 export const fileEditTool = defineTool({
   name: "file_edit",
-  description:
-    "Applies targeted text replacements to an existing file. The file must be read first with file_read. Each edit replaces oldString with newString.",
+  description: [
+    "Apply one or more targeted replacements to an existing file. Use file_write only for a genuinely new file.",
+    "",
+    "Required workflow:",
+    "1. Read the file first. Copy oldString from the file content without the `N: ` line-number prefix and preserve exact indentation.",
+    "2. Call with one or more non-overlapping edits. Example: `file_edit({\"path\":\"src/config.ts\",\"edits\":[{\"oldString\":\"  const mode = \\\"dev\\\";\",\"newString\":\"  const mode = \\\"prod\\\";\"}]})`.",
+    "3. If no match is found, re-read because the file may have changed. If multiple matches are found, add surrounding context until oldString is unique. Do not guess or retry the same stale text.",
+    "4. After success, inspect the change and use lsp_diagnostics plus the relevant test/build command when appropriate; use git_diff as an additional review surface in a Git workspace.",
+    "",
+    "All edits are matched against the same pre-edit file, the entire group is validated before writing, and the non-overlapping replacements are committed in one atomic write.",
+  ].join("\n"),
   inputSchema: FileEditInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   prepareInput: prepareEditInput,

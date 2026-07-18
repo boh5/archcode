@@ -30,12 +30,12 @@ const CHROME_USER_AGENT =
 
 export const WebFetchInputSchema = z
   .object({
-    url: z.string().describe("The URL to fetch"),
+    url: z.string().describe("Fully formed HTTP or HTTPS URL. Embedded credentials are rejected."),
     format: z
       .enum(["markdown", "text", "html"])
       .default("markdown")
       .describe(
-        "Output format. 'markdown' extracts article content as MD. 'text' returns plain text. 'html' returns raw HTML.",
+        "Output format: `markdown` extracts readable content and converts it to Markdown; `text` extracts plain text; `html` returns raw HTML. Default `markdown`.",
       ),
     maxLength: z
       .number()
@@ -43,7 +43,7 @@ export const WebFetchInputSchema = z
       .min(1000)
       .max(500_000)
       .default(50_000)
-      .describe("Maximum characters to return. Content beyond this is truncated with a marker."),
+      .describe("Maximum returned characters after fetching and extraction, from 1,000 to 500,000. Default 50,000; excess returned content is truncated with a marker."),
   })
   .strict();
 
@@ -455,7 +455,7 @@ function formatResult(result: FetchResult): ToolExecutionResult {
 export const webFetchTool = defineTool({
   name: "web_fetch",
   description:
-    "Fetch content from a URL and return in markdown, text, or html format. Supports up to 5 redirects and a 5MB response size limit.",
+    "Fetch an unauthenticated HTTP(S) URL and return markdown, text, or HTML. Prefer a specialized MCP tool for authenticated, private, or task-specific resources; this tool does not use browser cookies or login state. Response headers and all redirects share a fixed 30-second deadline; reading the response body is not covered by that timer. Initial HTTP URLs are upgraded to HTTPS, up to 5 redirects are followed, and response bodies over 5MB are rejected. HTML may be extracted and converted, and returned content beyond maxLength is truncated with a marker.",
   inputSchema: WebFetchInputSchema,
   traits: { readOnly: true, destructive: false, concurrencySafe: true },
   execute: async (input: WebFetchInput, ctx: ToolExecutionContext) => {

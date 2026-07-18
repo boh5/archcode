@@ -6,8 +6,8 @@ import { createToolErrorResult } from "../errors";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { getLastAssistantText } from "./delegate";
 
-const DEFAULT_TIMEOUT_MS = 60_000;
-const MAX_TIMEOUT_MS = 600_000;
+const DEFAULT_TIMEOUT_MS = 1_800_000;
+const MAX_TIMEOUT_MS = 1_800_000;
 const DEFAULT_MESSAGE_LIMIT = 20;
 const MAX_MESSAGE_LIMIT = 100;
 const TOOL_RESULT_PART_CAP = 2_000;
@@ -16,14 +16,14 @@ const GLOBAL_OUTPUT_CAP = 8_000;
 
 export const BackgroundOutputInputSchema = z
   .object({
-    session_id: z.string().describe("Child session id — must be a direct child of the current session"),
-    block: z.boolean().default(false).describe("Wait for the child to finish before returning. Default false."),
-    timeout_ms: z.number().int().min(0).max(MAX_TIMEOUT_MS).default(DEFAULT_TIMEOUT_MS).describe("Max wait time in ms when blocking. Default 60000."),
-    full_session: z.boolean().default(false).describe("Return full message history instead of latest output only. Default false."),
-    message_limit: z.number().int().min(1).max(MAX_MESSAGE_LIMIT).default(DEFAULT_MESSAGE_LIMIT).describe("Max messages to return in full_session mode. Default 20."),
-    since_message_id: z.string().optional().describe("Exclusive cursor — return only messages after this id (for incremental reads)"),
-    include_tool_results: z.boolean().default(false).describe("Include tool call results in output (hidden by default)"),
-    include_reasoning: z.boolean().default(false).describe("Include assistant reasoning content in output (hidden by default)"),
+    session_id: z.string().describe("Persisted Session ID copied from delegate, resume_session, a terminal reminder, or a prior child result; must not be the current Session ID."),
+    block: z.boolean().default(false).describe("true waits while the Session is running; false returns an immediate snapshot. Default false."),
+    timeout_ms: z.number().int().min(0).max(MAX_TIMEOUT_MS).default(DEFAULT_TIMEOUT_MS).describe("Max wait time in ms when blocking, from 0 to 1800000. Default 1800000 (30 minutes)."),
+    full_session: z.boolean().default(false).describe("Return filtered stored messages instead of only the latest assistant output. Use when the final answer alone lacks needed evidence or intermediate context. Default false."),
+    message_limit: z.number().int().min(1).max(MAX_MESSAGE_LIMIT).default(DEFAULT_MESSAGE_LIMIT).describe("Maximum messages returned from the beginning of the selected range in full_session mode. Default 20; max 100."),
+    since_message_id: z.string().optional().describe("Exclusive cursor for full_session mode. Return messages after this id; when omitted, selection starts at the first stored message."),
+    include_tool_results: z.boolean().default(false).describe("Include tool call results in full_session output. Hidden by default; effective only with full_session=true."),
+    include_reasoning: z.boolean().default(false).describe("Include assistant reasoning in full_session output. Hidden by default; effective only with full_session=true."),
   })
   .strict();
 
@@ -255,8 +255,13 @@ function truncateOutput(value: string): string {
 
 export const backgroundOutputTool = defineTool({
   name: "background_output",
-  description:
-    `Read output from a direct child background sub-agent session.`,
+  description: [
+    "Read status and output for a persisted Session in the current project, normally with the Session ID returned by delegate or resume_session. The current Session itself is rejected.",
+    "",
+    "For a final child result, normally wait for its terminal reminder and then call `background_output({\"session_id\":\"<session-id>\",\"block\":true,\"timeout_ms\":1800000})`. This returns status plus the latest assistant text. A timeout or parent abort returns the latest available snapshot; if status is still running, that snapshot is not a final deliverable and must not be treated as one.",
+    "",
+    "Use block=false only for an explicitly requested immediate snapshot. Use full_session=true when the latest answer lacks needed evidence or intermediate context, for example `background_output({\"session_id\":\"<session-id>\",\"block\":false,\"full_session\":true,\"message_limit\":20,\"include_tool_results\":false,\"include_reasoning\":false})`. since_message_id is an exclusive forward cursor. Reasoning and tool results remain hidden unless explicitly included. Output may be truncated.",
+  ].join("\n"),
   inputSchema: BackgroundOutputInputSchema,
   traits: { readOnly: true, destructive: false, concurrencySafe: true },
   execute: executeBackgroundOutput,

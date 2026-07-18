@@ -12,8 +12,8 @@ import type { ToolExecutionResult } from "../types";
 
 export const GlobInputSchema = z
   .object({
-    pattern: z.string().describe("Glob pattern to match files against (e.g. \"**/*.ts\", \"src/**/*.json\")"),
-    path: z.string().optional().describe("Directory to search in (absolute or relative to the current Session cwd). Defaults to the current Session cwd."),
+    pattern: z.string().describe("Glob pattern for file paths, for example `**/*.ts` or `src/**/*.json`."),
+    path: z.string().optional().describe("Directory to search, absolute or relative to the current Session cwd. Defaults to the Session cwd."),
   })
   .strict();
 
@@ -29,8 +29,13 @@ export function setRipgrepService(service: RipgrepService): void {
 
 export const globTool = defineTool({
   name: "glob",
-  description:
-    "List files matching a glob pattern, sorted by modification time (newest first).",
+  description: [
+    "Find files by file-name or path glob pattern, not by file contents. Use grep for content searches.",
+    "",
+    "Example: `glob({\"pattern\":\"**/*.test.ts\",\"path\":\"packages/agent-core\"})`. A common discovery chain is glob for candidate paths -> grep for matching content -> file_read for exact context. Results are sorted by modification time, newest first, and limited to 100 paths; narrow the pattern or path after truncation.",
+    "",
+    "If the search is open-ended and needs repeated glob/grep/read rounds across unknown modules, delegate one concrete question to Explore when delegate is available.",
+  ].join("\n"),
   inputSchema: GlobInputSchema,
   traits: {
     readOnly: true,

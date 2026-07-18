@@ -56,7 +56,7 @@ describe("WaitForReminderInputSchema", () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.condition).toBe("any");
-      expect(result.data.timeout_ms).toBe(120000);
+      expect(result.data.timeout_ms).toBe(1_800_000);
     }
   });
 
@@ -68,7 +68,7 @@ describe("WaitForReminderInputSchema", () => {
   test("rejects unknown fields and out-of-range timeout", () => {
     expect(WaitForReminderInputSchema.safeParse({ session_ids: ["a"], extra: true }).success).toBe(false);
     expect(WaitForReminderInputSchema.safeParse({ session_ids: ["a"], timeout_ms: 999 }).success).toBe(false);
-    expect(WaitForReminderInputSchema.safeParse({ session_ids: ["a"], timeout_ms: 600001 }).success).toBe(false);
+    expect(WaitForReminderInputSchema.safeParse({ session_ids: ["a"], timeout_ms: 1_800_001 }).success).toBe(false);
   });
 
   test("rejects invalid count", () => {
@@ -140,19 +140,23 @@ describe("waitForReminderTool", () => {
     expect(store.getState().reminders.every((reminder) => reminder.consumedAt !== null)).toBe(true);
   });
 
-  test("waits until count condition is met", async () => {
+  test("count condition uses distinct sessions because terminal reminders are deduped by session", async () => {
     const store = makeStore();
     const promise = waitForReminderTool.execute(
-      { session_ids: ["child-1", "child-2", "child-3"], condition: { count: 2 }, timeout_ms: 1000 },
+      { session_ids: ["child-1", "child-2"], condition: { count: 2 }, timeout_ms: 1000 },
       makeCtx(store),
     );
 
     store.getState().append({ type: "reminder", reminder: makeReminder({ id: "rem-1", sessionId: "child-1" }) });
+    store.getState().append({ type: "reminder", reminder: makeReminder({ id: "duplicate", sessionId: "child-1" }) });
+    expect(store.getState().reminders.map((reminder) => reminder.id)).toEqual(["rem-1"]);
+
     store.getState().append({ type: "reminder", reminder: makeReminder({ id: "rem-2", sessionId: "child-2" }) });
     const result = parseResult(await promise);
 
     expect(result.status).toBe("success");
     expect(result.consumed_ids).toEqual(["rem-1", "rem-2"]);
+    expect(store.getState().reminders.every((reminder) => reminder.consumedAt !== null)).toBe(true);
   });
 
   test("returns timeout with pending session IDs", async () => {

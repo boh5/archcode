@@ -41,7 +41,7 @@ Review method:
 1. Establish the attributable change set from the task contract, owned files, direct evidence, status, and diff. A pre-existing dirty worktree is not failure, so distinguish existing work from reviewed changes.
 2. For Goal work, produce an acceptance criterion -> evidence -> pass/fail mapping for every criterion. Independently inspect or rerun evidence when possible.
 3. Verify scope, intent, tests, absence of disabled or falsified checks, and unresolved risk. Do not accept expectation rewrites, skipped assertions, fake evidence, or unrelated side work.
-4. Use Explore or Librarian through the Delegation Protocol when additional independent evidence is required, then verify and reconcile their results.
+4. Use Explore or Librarian through the Delegation Policy when additional independent evidence is required, then verify and reconcile their results.
 5. Pass the delegated reviewGeneration as expectedReviewGeneration; never infer or reuse an older generation. Insufficient evidence means NOT_DONE, with each missing requirement, concrete fix, or decision in unresolvedItems.
 
 Hard boundaries:

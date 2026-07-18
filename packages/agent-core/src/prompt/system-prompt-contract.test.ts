@@ -50,7 +50,7 @@ const STRUCTURAL_POLICY_EXAMPLES = {
   },
   "background-overlap": {
     scenario: "Implement two independent modules with disjoint files.",
-    requiredClauses: ["disjoint file or module ownership", "background=true"],
+    requiredClauses: ["disjoint file or module ownership", "start independent Build units concurrently before waiting"],
     guardClauses: ["Do not overlap shared interfaces"],
   },
   sequential: {
@@ -72,7 +72,7 @@ describe("full system prompt contracts", () => {
     }
   });
 
-  test("delegating agents receive the protocol while terminal agents do not", async () => {
+  test("delegating agents receive the policy while terminal agents do not", async () => {
     for (const definition of [
       engineerAgentDefinition,
       goalLeadAgentDefinition,
@@ -81,10 +81,10 @@ describe("full system prompt contracts", () => {
       reviewerAgentDefinition,
       shaperAgentDefinition,
     ]) {
-      expect(await fullPrompt(definition)).toContain("## Delegation Protocol");
+      expect(await fullPrompt(definition)).toContain("## Delegation Policy");
     }
     for (const definition of [exploreAgentDefinition, librarianAgentDefinition]) {
-      expect(await fullPrompt(definition)).not.toContain("## Delegation Protocol");
+      expect(await fullPrompt(definition)).not.toContain("## Delegation Policy");
     }
   });
 
@@ -137,14 +137,14 @@ describe("full system prompt contracts", () => {
       expect(prompt).toContain("Research delegation never grants implementation authority");
       expect(prompt).toContain("Only Engineer and Goal Lead may delegate source changes to Build");
       expect(prompt).not.toContain("2-4 distinct research children");
-      expect(prompt).not.toContain("start independent Build units with background=true");
+      expect(prompt).not.toContain("start independent Build units concurrently before waiting");
     }
   });
 
   test("only Engineer and Goal Lead orchestrate concurrent Build children", async () => {
     for (const definition of [engineerAgentDefinition, goalLeadAgentDefinition]) {
       const prompt = await fullPrompt(definition);
-      expect(prompt).toContain("start independent Build units with background=true");
+      expect(prompt).toContain("start independent Build units concurrently before waiting");
       expect(prompt).toContain("Do not overlap shared interfaces");
     }
   });

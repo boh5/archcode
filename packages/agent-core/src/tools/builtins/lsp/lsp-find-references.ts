@@ -22,7 +22,7 @@ interface LspReferenceLocation {
 
 export const lspFindReferencesTool = defineTool({
   name: "lsp_find_references",
-  description: "Find references for a symbol at a source position using the language server.",
+  description: "Find semantic references for a symbol at a known source position. Use it before renaming or changing a public symbol to identify affected call sites, then read the returned locations; use grep as a text-search fallback, not as proof of symbol identity. Requires a language mapping and an available language server for the source file; otherwise the call returns an error.",
   inputSchema: LspFindReferencesInputSchema,
   traits: {
     readOnly: true,
@@ -145,4 +145,3 @@ function isReferenceLocation(value: unknown): value is Required<LspReferenceLoca
   if (!isRecord(value.range) || !isRecord(value.range.start)) return false;
   return typeof value.range.start.line === "number" && typeof value.range.start.character === "number";
 }
-

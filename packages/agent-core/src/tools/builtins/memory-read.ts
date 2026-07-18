@@ -18,7 +18,7 @@ import {
 
 const MemoryReadInputSchema = z
   .object({
-    name: z.string().optional().describe("Name of the memory to read. Omit for combined context. Special: \"preferences\" = user preferences, \"index\" = memory index. Otherwise a project knowledge topic name (letters/numbers/underscores)."),
+    name: z.string().optional().describe("Omit for combined truncated context. Use \"preferences\" for full user preferences, \"index\" for the full project index, or an exact project topic matching /^[a-zA-Z0-9_]+$/. No scope parameter is accepted."),
   })
   .strict();
 
@@ -118,10 +118,10 @@ export function createMemoryReadTool(): AnyToolDescriptor {
   return defineTool({
     name: "memory_read",
     description:
-      "Reads structured memory context. " +
-      "When called without a name, returns a combined context of user preferences and project index. " +
-      'Special names: "preferences" reads user preferences, "index" reads the memory index. ' +
-      "Otherwise, name identifies a project knowledge topic (letters, numbers, underscores only).",
+      "Read persisted Memory when prior work, existing decisions, user preferences, project conventions, an unfamiliar module, or context lost after compaction may matter. " +
+      "Omit name to receive truncated user preferences plus the project memory index. " +
+      'Use "preferences" for the full user preference file, "index" for the full project index, or an exact project knowledge topic name. ' +
+      "This tool reads known entries and does not perform semantic search; read the index first when the topic name is unknown.",
     inputSchema: MemoryReadInputSchema,
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
     execute: async (

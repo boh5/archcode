@@ -100,12 +100,84 @@ describe("fileReadTool", () => {
     expect(output).toBe("2: two\n3: three\n");
   });
 
+  test("applies offset before the 50KB source window", async () => {
+    const lines = Array.from(
+      { length: 7_000 },
+      (_, index) => `line-${index + 1}-${"x".repeat(12)}`,
+    );
+    await writeWorkspaceFile("large-lines.txt", `${lines.join("\n")}\n`);
+
+    const output = await fileReadTool.execute(
+      { path: "large-lines.txt", offset: 6_000, limit: 2 },
+      makeCtx(),
+    );
+
+    expect(output).toBe(
+      `6000: ${lines[5_999]}\n6001: ${lines[6_000]}\n`,
+    );
+  });
+
+  test("only reports truncation when the selected line range exceeds 50KB", async () => {
+    const lines = Array.from(
+      { length: 1_200 },
+      (_, index) => `line-${index + 1}-${"y".repeat(80)}`,
+    );
+    await writeWorkspaceFile("truncated.txt", `${lines.join("\n")}\n`);
+
+    const limited = await fileReadTool.execute(
+      { path: "truncated.txt", offset: 1_000, limit: 2 },
+      makeCtx(),
+    );
+    const truncated = await fileReadTool.execute(
+      { path: "truncated.txt", offset: 100 },
+      makeCtx(),
+    );
+
+    expect(limited).toBe(`1000: ${lines[999]}\n1001: ${lines[1_000]}\n`);
+    expect(truncated).toStartWith(`100: ${lines[99]}\n`);
+    expect(truncated).toContain("[Output truncated:");
+    expect(truncated).toContain("51200-byte source window");
+  });
+
+  test("does not emit a replacement character when 50KB splits UTF-8", async () => {
+    await writeWorkspaceFile(
+      "utf8-boundary.txt",
+      `${"a".repeat(50 * 1024 - 1)}你-after-boundary\n`,
+    );
+
+    const output = await fileReadTool.execute(
+      { path: "utf8-boundary.txt" },
+      makeCtx(),
+    );
+
+    expect(output).toContain("[Output truncated:");
+    expect(output).not.toContain("�");
+    expect(output).not.toContain("你");
+  });
+
   test("detects binary files and returns an appropriate message", async () => {
     await writeWorkspaceFile("binary.bin", new Uint8Array([65, 0, 66]));
 
     const output = await fileReadTool.execute({ path: "binary.bin" }, makeCtx());
 
     expect(output).toBe("Binary file, cannot display");
+  });
+
+  test("hard-rejects files larger than 10MB without suggesting pagination", async () => {
+    await writeWorkspaceFile(
+      "too-large.txt",
+      new Uint8Array(10 * 1024 * 1024 + 1).fill(65),
+    );
+
+    const result = (await fileReadTool.execute(
+      { path: "too-large.txt", offset: 2, limit: 1 },
+      makeCtx(),
+    )) as ToolExecutionResult;
+
+    expect(result.isError).toBe(true);
+    expect(inferToolErrorKindFromResult(result)).toBe("file-too-large");
+    expect(result.output).toContain("hard file-size limit is 10 MB");
+    expect(result.output).not.toMatch(/use offset|read in chunks/i);
   });
 
   test("returns error for non-existent files", async () => {
@@ -174,10 +246,14 @@ describe("fileReadTool", () => {
   });
 
   test("read-snapshot after hook records mtime after successful read", async () => {
-    const filePath = await writeWorkspaceFile("snapshot.txt", "snapshot\n");
+    const lines = Array.from({ length: 7_000 }, (_, index) => `snapshot-${index + 1}`);
+    const filePath = await writeWorkspaceFile("snapshot.txt", `${lines.join("\n")}\n`);
     const store = createMockStore();
-    const ctx = makeCtx({ store, input: { path: "snapshot.txt" } });
-    const output = await fileReadTool.execute({ path: "snapshot.txt" }, ctx);
+    const input = { path: "snapshot.txt", offset: 6_000, limit: 1 };
+    const ctx = makeCtx({ store, input });
+    const output = await fileReadTool.execute(input, ctx);
+
+    expect(output).toBe("6000: snapshot-6000\n");
 
     await runAfterHooks({ output: output as string, isError: false }, ctx);
 

@@ -76,8 +76,11 @@ function formatGitStatusResult(result: ProcessRunnerResult): GitStatusResult {
 
 export const gitStatusTool = defineTool({
   name: "git_status",
-  description:
-    "Shows the working tree status. Returns a list of changed files with status indicators (M=modified, A=added, D=deleted, ??=untracked).",
+  description: [
+    "Inventory the Git working tree before editing, staging, committing, or reviewing a change. It returns porcelain status with all untracked paths and no rename detection; common indicators include M=modified, A=added, D=deleted, and ??=untracked. Empty output means the working tree is clean.",
+    "",
+    "Typical review workflow: git_status -> git_diff with staged=false -> git_diff with staged=true. git_status reports untracked paths but not their contents, so use file_read for any untracked file that may be in scope. For commits, history rewrites, branch operations, or PR preparation, read the git-master Skill first when available.",
+  ].join("\n"),
   inputSchema: GitStatusInputSchema,
   traits: { readOnly: true, destructive: false, concurrencySafe: true },
   execute: async (_input, ctx): Promise<string | ToolExecutionResult> => {

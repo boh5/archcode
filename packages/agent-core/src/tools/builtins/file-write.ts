@@ -14,8 +14,8 @@ import type { ToolExecutionResult } from "../types";
 
 const FileWriteInputSchema = z
   .object({
-    path: z.string().describe("Absolute or workspace-relative path where the new file will be created"),
-    content: z.string().describe("Full text content to write to the file"),
+    path: z.string().describe("Absolute or current-Session-cwd-relative path for the new file, for example `src/new-module.ts`. Missing parent directories are created automatically."),
+    content: z.string().describe("Complete text content for the new file. Do not use placeholders, ellipses, or omit required sections."),
   })
   .strict();
 
@@ -23,8 +23,11 @@ const FileWriteInputSchema = z
 
 export const fileWriteTool = defineTool({
   name: "file_write",
-  description:
-    "Creates a new file at the specified path. Fails if the file already exists. Use file_edit to modify existing files.",
+  description: [
+    "Create one new text file and any missing parent directories. Use it only when the requested file does not exist; prefer file_edit for every existing file.",
+    "",
+    "Provide the complete final content in one call, without placeholders or omitted sections. Example: `file_write({\"path\":\"src/new-module.ts\",\"content\":\"export const enabled = true;\\n\"})`. The call fails rather than overwriting an existing path; after that error, read the existing file and use file_edit instead.",
+  ].join("\n"),
   inputSchema: FileWriteInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   permissions: [createWorkspacePermission(), createFileExistsPermission(), createSensitiveFilePermission(), createProtectedPathPermission()],

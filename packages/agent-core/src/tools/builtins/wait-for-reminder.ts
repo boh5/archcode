@@ -5,14 +5,14 @@ import type { ToolExecutionContext } from "../types";
 
 const WaitForReminderConditionSchema = z
   .enum(["all", "any"])
-  .or(z.object({ count: z.number().int().min(1) }).strict())
-  .describe("How many sessions must produce reminders before returning. \"all\" = every session, \"any\" = at least one, { count: N } = exactly N sessions");
+  .or(z.object({ count: z.number().int().min(1).describe("Positive number of distinct requested Sessions whose terminal reminders must arrive. Do not exceed the number of distinct session_ids.") }).strict())
+  .describe("Return after any one requested Session, every distinct requested Session, or the first N distinct requested Sessions produce terminal reminders.");
 
 export const WaitForReminderInputSchema = z
   .object({
-    session_ids: z.array(z.string()).describe("Child session ids to wait for reminders from"),
-    condition: WaitForReminderConditionSchema.default("any").describe("How many sessions must produce reminders before returning. \"all\" = every session, \"any\" = at least one, { count: N } = exactly N sessions. Default \"any\"."),
-    timeout_ms: z.number().int().min(1000).max(600000).default(120000).describe("Max wait time in ms. Default 120000."),
+    session_ids: z.array(z.string()).describe("Non-empty child Session IDs copied from background delegate or resume_session results. Pass all independent children you intend to wait for in one call."),
+    condition: WaitForReminderConditionSchema.default("any").describe("`any` returns after one requested Session, `all` after every distinct requested Session, and `{ count: N }` after the first N distinct requested Sessions produce terminal reminders. Default `any`."),
+    timeout_ms: z.number().int().min(1000).max(1_800_000).default(1_800_000).describe("Max wait time in ms, from 1000 to 1800000. Default 1800000 (30 minutes)."),
   })
   .strict();
 
@@ -178,8 +178,13 @@ function waitForMatch(
 
 export const waitForReminderTool = defineTool({
   name: "wait_for_reminder",
-  description:
-    "Blocks until on-demand reminders arrive for child session IDs, then consumes the matching reminders.",
+  description: [
+    "Wait once for unconsumed on-demand terminal reminders already queued or arriving for specified background child Session IDs. Use it after launching all independent background children, not as a polling loop.",
+    "",
+    "Example: `wait_for_reminder({\"session_ids\":[\"<session-a>\",\"<session-b>\"],\"condition\":\"all\",\"timeout_ms\":1800000})`. Use `any` when the first completed child unblocks work, `all` when every child is required, or `{\"count\":2}` for the first two distinct Sessions.",
+    "",
+    "The call consumes only the reminders used to satisfy the condition and returns reminder plus terminal-status metadata, not the children's final deliverables. After success, call background_output with block=true for every returned Session ID whose result matters. Timeout or abort returns status without consuming reminders; do not repeatedly call wait_for_reminder merely to check progress.",
+  ].join("\n"),
   inputSchema: WaitForReminderInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: true },
   execute: executeWaitForReminder,

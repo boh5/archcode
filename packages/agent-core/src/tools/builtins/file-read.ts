@@ -11,14 +11,15 @@ import { resolveAndValidatePath } from "../security";
 
 const BINARY_DETECTION_BYTES = 8 * 1024;
 const MAX_READ_BYTES = 50 * 1024;
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
 // ─── Input Schema ───
 
 const FileReadInputSchema = z
   .object({
-    path: z.string().describe("Absolute or workspace-relative path of the file to read"),
-    offset: z.number().int().positive().optional().describe("1-based line number to start reading from (default 1)"),
-    limit: z.number().int().positive().optional().describe("Maximum number of lines to return"),
+    path: z.string().describe("Absolute or workspace-relative text-file path, for example `packages/agent-core/src/runtime.ts`. Relative paths resolve from the current Session cwd; reading outside the workspace may require approval."),
+    offset: z.number().int().positive().optional().describe("1-based line number to start reading from, for example 120. Defaults to 1 and is applied before the 50KB source window."),
+    limit: z.number().int().positive().optional().describe("Maximum number of lines to return from offset, for example 160. The 50KB source window may return fewer lines."),
   })
   .strict();
 
@@ -30,18 +31,69 @@ function containsNullByte(buffer: Uint8Array): boolean {
   return buffer.includes(0);
 }
 
-function formatLines(content: string, input: FileReadInput): string {
+function createFileTooLargeResult(size: number): ToolExecutionResult {
+  return createToolErrorResult({
+    kind: "file-too-large",
+    code: "TOOL_FILE_TOO_LARGE",
+    message: `File is too large to display (${(size / 1024 / 1024).toFixed(1)} MB). The hard file-size limit is 10 MB.`,
+    hint: "Use a search or shell tool designed for large files; file_read cannot read this file.",
+  });
+}
+
+function findLineStart(buffer: Uint8Array, lineNumber: number): number {
+  if (lineNumber === 1) return 0;
+
+  let currentLine = 1;
+  for (let index = 0; index < buffer.length; index += 1) {
+    if (buffer[index] !== 0x0a) continue;
+    currentLine += 1;
+    if (currentLine === lineNumber) return index + 1;
+  }
+
+  return buffer.length;
+}
+
+function findLineRangeEnd(
+  buffer: Uint8Array,
+  startByte: number,
+  limit: number | undefined,
+): number {
+  if (limit === undefined) return buffer.length;
+
+  let remainingLines = limit;
+  for (let index = startByte; index < buffer.length; index += 1) {
+    if (buffer[index] !== 0x0a) continue;
+    remainingLines -= 1;
+    if (remainingLines === 0) return index + 1;
+  }
+
+  return buffer.length;
+}
+
+function clampToUtf8Boundary(
+  buffer: Uint8Array,
+  startByte: number,
+  endByte: number,
+): number {
+  if (endByte >= buffer.length || (buffer[endByte] & 0xc0) !== 0x80) {
+    return endByte;
+  }
+
+  let leadingByte = endByte - 1;
+  while (leadingByte > startByte && (buffer[leadingByte] & 0xc0) === 0x80) {
+    leadingByte -= 1;
+  }
+
+  return leadingByte;
+}
+
+function formatLines(content: string, startLine: number): string {
   const lines = content.split("\n");
   if (lines.at(-1) === "") {
     lines.pop();
   }
 
-  const startLine = input.offset ?? 1;
-  const startIndex = startLine - 1;
-  const endIndex = input.limit === undefined ? undefined : startIndex + input.limit;
-
   return lines
-    .slice(startIndex, endIndex)
     .map((line, index) => `${startLine + index}: ${line}\n`)
     .join("");
 }
@@ -50,8 +102,13 @@ function formatLines(content: string, input: FileReadInput): string {
 
 export const fileReadTool = defineTool({
   name: "file_read",
-  description:
-    "Reads a file from the filesystem and returns line-numbered text. Relative paths resolve from the current Session cwd.",
+  description: [
+    "Read a UTF-8 text file and return `N: content` line-numbered output.",
+    "",
+    "Use it when the file path is known. If the path is unknown, find it with glob; if the relevant lines are unknown, locate them with grep; then read a bounded range. Example workflow: `glob({\"pattern\":\"**/*.ts\"})` -> `grep({\"pattern\":\"createRuntime\",\"include\":\"*.ts\"})` -> `file_read({\"path\":\"packages/agent-core/src/runtime.ts\",\"offset\":120,\"limit\":160})`. When several known files are independent, issue their file_read calls together.",
+    "",
+    "offset is 1-based. The selected offset/limit range is chosen before the 50KB source window. Avoid tiny repeated slices when one larger bounded range would provide the needed context. Files larger than 10MB are rejected, and binary files are not displayed. If a selected range exceeds 50KB, the result is truncated with a notice; because offset is line-based, it cannot continue within a single line longer than 50KB. Relative paths resolve from the current Session cwd, and paths outside the workspace may require approval.",
+  ].join("\n"),
   inputSchema: FileReadInputSchema,
   traits: { readOnly: true, destructive: false, concurrencySafe: true },
   permissions: [createWorkspacePermission(), createSensitiveFilePermission()],
@@ -68,25 +125,33 @@ export const fileReadTool = defineTool({
     try {
       const file = Bun.file(resolved);
       const size = file.size;
-      if (size > 10 * 1024 * 1024) {
-        return createToolErrorResult({
-          kind: "file-too-large",
-          code: "TOOL_FILE_TOO_LARGE",
-          message: `File is too large to display (${(size / 1024 / 1024).toFixed(1)} MB). Use offset and limit to read in chunks.`,
-        });
+      if (size > MAX_FILE_BYTES) {
+        return createFileTooLargeResult(size);
       }
 
       const buffer = await file.bytes();
+      if (buffer.length > MAX_FILE_BYTES) {
+        return createFileTooLargeResult(buffer.length);
+      }
       if (containsNullByte(buffer.subarray(0, Math.min(buffer.length, BINARY_DETECTION_BYTES)))) {
         return "Binary file, cannot display";
       }
 
-      const contentBuffer = buffer.subarray(0, MAX_READ_BYTES);
+      const startLine = input.offset ?? 1;
+      const startByte = findLineStart(buffer, startLine);
+      const requestedEndByte = findLineRangeEnd(buffer, startByte, input.limit);
+      const rawEndByte = Math.min(requestedEndByte, startByte + MAX_READ_BYTES);
+      const endByte = rawEndByte < requestedEndByte
+        ? clampToUtf8Boundary(buffer, startByte, rawEndByte)
+        : rawEndByte;
+      const contentBuffer = buffer.subarray(startByte, endByte);
       const content = new TextDecoder().decode(contentBuffer);
-      const formatted = formatLines(content, input);
+      const formatted = formatLines(content, startLine);
 
-      if (buffer.length > MAX_READ_BYTES) {
-        return formatted + `\n[Output truncated: showing first ${MAX_READ_BYTES} bytes of ${buffer.length} total]`;
+      if (endByte < requestedEndByte) {
+        return formatted +
+          `\n[Output truncated: the selected line range exceeds the ${MAX_READ_BYTES}-byte source window. ` +
+          "Use a later offset for following lines; a single line longer than the window cannot be continued with line-based offset.]";
       }
 
       return formatted;

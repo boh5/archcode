@@ -87,7 +87,7 @@ describe("BackgroundOutputInputSchema", () => {
     expect(result).toEqual({
       session_id: "child-1",
       block: false,
-      timeout_ms: 60_000,
+      timeout_ms: 1_800_000,
       full_session: false,
       message_limit: 20,
       include_tool_results: false,
@@ -97,7 +97,7 @@ describe("BackgroundOutputInputSchema", () => {
     expect(BackgroundOutputInputSchema.parse({
       session_id: "child-1",
       block: true,
-      timeout_ms: 600_000,
+      timeout_ms: 1_800_000,
       full_session: true,
       message_limit: 100,
       since_message_id: "message-1",
@@ -111,7 +111,7 @@ describe("BackgroundOutputInputSchema", () => {
       expect(BackgroundOutputInputSchema.safeParse({ session_id: "child-1", [alias]: true }).success).toBe(false);
     }
 
-    expect(BackgroundOutputInputSchema.safeParse({ session_id: "child-1", timeout_ms: 600_001 }).success).toBe(false);
+    expect(BackgroundOutputInputSchema.safeParse({ session_id: "child-1", timeout_ms: 1_800_001 }).success).toBe(false);
     expect(BackgroundOutputInputSchema.safeParse({ session_id: "child-1", message_limit: 101 }).success).toBe(false);
   });
 

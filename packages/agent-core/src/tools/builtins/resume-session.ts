@@ -10,10 +10,10 @@ import {
 } from "./delegate";
 
 export const ResumeSessionInputSchema = z.strictObject({
-  session_id: z.string().trim().min(1).describe("Persisted id of an existing direct child Session"),
-  task: z.string().trim().min(1).describe("Follow-up task for the existing child Session"),
-  context: z.string().optional().describe("Optional context and verification requirements for the follow-up"),
-  background: z.boolean().default(false).describe("true resumes asynchronously; false waits for the child result"),
+  session_id: z.string().trim().min(1).describe("Persisted id of an existing stopped direct child Session, copied from delegate, resume_session, or the child result"),
+  task: z.string().trim().min(1).describe("Concrete follow-up task for the existing child, such as addressing one finding or answering one new question, based on its preserved context"),
+  context: z.string().optional().describe("New evidence, changed constraints, and verification requirements for this follow-up; do not repeat the child's already-preserved history"),
+  background: z.boolean().default(false).describe("true resumes asynchronously and later emits a terminal reminder; false waits for the child result and is the default"),
 });
 
 export type ResumeSessionInput = z.infer<typeof ResumeSessionInputSchema>;
@@ -71,8 +71,13 @@ function buildResumePrompt(input: ResumeSessionInput): string {
 
 export const resumeSessionTool = defineTool({
   name: "resume_session",
-  description:
-    "Resume an existing persisted direct child Session with a follow-up task. The child's agent type, title, active Skills, depth, cwd, Goal identity, and permissions are derived from durable Session state and cannot be overridden.",
+  description: [
+    "Continue a stopped persisted direct child Session with one concrete follow-up while preserving its existing conversation and tool history. Use this instead of a new delegate when the follow-up depends on what that child already inspected, changed, or concluded.",
+    "",
+    "Example: `resume_session({\"session_id\":\"<session-id>\",\"task\":\"Address the review finding about timeout recovery and re-run the focused tests.\",\"context\":\"Keep the public schema unchanged and report the final test command and result.\",\"background\":false})`. Pass only new evidence or changed constraints in context; the existing history is already retained.",
+    "",
+    "The child's agent type, title, active Skills, depth, cwd, Goal identity, root family, and permissions come from durable Session state and cannot be overridden or widened. background=false waits for the next result. background=true returns immediately and uses the same reminder -> blocking background_output collection chain as delegate. A running child cannot be resumed.",
+  ].join("\n"),
   inputSchema: ResumeSessionInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   execute: executeResumeSession,

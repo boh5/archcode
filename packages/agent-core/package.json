@@ -13,7 +13,8 @@
     "test": "bun run test:unit && bun run test:integration && bun run test:arch",
     "test:unit": "bun test --parallel=4 --path-ignore-patterns='**/*.integration.test.ts' --path-ignore-patterns='**/__arch__/**'",
     "test:integration": "bun test --isolate .integration.test.ts",
-    "test:arch": "bun test --isolate ./src/__arch__"
+    "test:arch": "bun test --isolate ./src/__arch__",
+    "tool-contract:measure": "bun run scripts/tool-contract-measure.ts"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^2.0.45",
@@ -39,6 +40,7 @@
     "@types/bun": "^1.3.13",
     "@types/jsdom": "^28.0.1",
     "@types/turndown": "^5.0.6",
+    "js-tiktoken": "1.0.21",
     "typescript": "^6.0.3"
   }
 }

@@ -9,5 +9,9 @@ export function buildToolSection(ctx: PromptContext): string {
     .map((name) => `- ${name}`)
     .join("\n");
 
-  return `## Tools\n\nAvailable tools:\n${toolList}`;
+  const usageRules = [
+    "- When independent, non-interactive lookups are already known, issue them together in one model turn. ArchCode parallelizes concurrency-safe calls and serializes the rest; do not batch interactive or mutating operations.",
+  ];
+
+  return `## Tools\n\nAvailable tools:\n${toolList}\n\nUsage:\n${usageRules.join("\n")}`;
 }

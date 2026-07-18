@@ -37,7 +37,7 @@ interface SupportedFileEntry {
 
 export const lspDiagnosticsTool = defineTool({
   name: "lsp_diagnostics",
-  description: "Get language-server diagnostics for a file or directory path.",
+  description: "Get language-server diagnostics for a source file or directory, optionally filtered to error, warning, information, or hint. Use it after file_edit/file_write for fast static feedback on changed source, then run the relevant test, build, CLI, API, or UI verification. A clean diagnostic result proves neither functional behavior nor test success.",
   inputSchema: LspDiagnosticsInputSchema,
   traits: {
     readOnly: true,

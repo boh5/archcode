@@ -19,14 +19,14 @@ function makeCtx(allowedTools: readonly string[]): PromptContext {
 }
 
 describe("buildDelegationSection", () => {
-  test("omits the protocol when delegate is unavailable", () => {
+  test("omits the policy when delegate is unavailable", () => {
     expect(buildDelegationSection(makeCtx(["file_read"]))).toBeNull();
   });
 
   test("defines the strict simple-task gate and gap-driven evidence reuse", () => {
     const result = buildDelegationSection(makeCtx(["delegate", "background_output", "wait_for_reminder"]));
 
-    expect(result).toContain("## Delegation Protocol");
+    expect(result).toContain("## Delegation Policy");
     expect(result).toContain("all six conditions");
     expect(result).toContain("current, direct, scope-complete, and verifiable");
     expect(result).toContain("Reuse sufficient upstream evidence");
@@ -34,26 +34,18 @@ describe("buildDelegationSection", () => {
     expect(result).toContain("concrete evidence gap");
     expect(result).toContain("Explore child");
     expect(result).toContain("Librarian");
-    expect(result).toContain("background=true");
-    expect(result).toContain("before waiting for any result");
+    expect(result).toContain("Start independent children before waiting");
     expect(result).not.toContain("For every non-trivial task, launch 2-4");
   });
 
-  test("defines the six-part delegation envelope and immutable authority", () => {
+  test("keeps immutable authority while leaving field instructions to the tool contract", () => {
     const result = buildDelegationSection(makeCtx(["delegate"]));
 
-    for (const field of [
-      "Task",
-      "Expected outcome",
-      "Context and evidence",
-      "Scope ownership and non-goals",
-      "Must do / must not do",
-      "Verification and output",
-    ]) {
-      expect(result).toContain(field);
-    }
     expect(result).toContain("allowed targets");
-    expect(result).toContain("cannot expand hardcoded tools, permissions, targets, or depth");
+    expect(result).toContain("never expands hardcoded tools, permissions, targets, or depth");
+    expect(result).not.toContain("Encode all six fields");
+    expect(result).not.toContain("Expected outcome —");
+    expect(result).not.toContain("background=true");
   });
 
   test("does not assign implementation orchestration to every delegating role", () => {
@@ -66,16 +58,16 @@ describe("buildDelegationSection", () => {
     expect(result).not.toContain("start them as background children");
   });
 
-  test("defines stopped-child resume, terminal collection, and parent verification", () => {
+  test("requires parent acceptance without duplicating lifecycle tool manuals", () => {
     const result = buildDelegationSection(makeCtx(["delegate"]));
 
-    expect(result).toContain("use resume_session");
-    expect(result).toContain("persisted agent type, title, Skills, and depth");
-    expect(result).toContain("stopped child");
     expect(result).toContain("child claim is not evidence");
     expect(result).toContain("test output, and diff");
-    expect(result).toContain("terminal result");
-    expect(result).toContain("reminder is only a terminal notification");
-    expect(result).toContain("blocking background_output");
+    expect(result).toContain("terminal deliverable");
+    expect(result).toContain("completion notification is not evidence");
+    expect(result).not.toContain("resume_session");
+    expect(result).not.toContain("wait_for_reminder");
+    expect(result).not.toContain("background_output");
+    expect(result).not.toContain("session_id");
   });
 });

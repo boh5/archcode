@@ -9,7 +9,7 @@ const SKILL_NAME_MESSAGE = "Skill name must match pattern ^[a-z0-9][a-z0-9-]*$";
 
 export const SkillReadInputSchema = z
   .object({
-    name: z.string().regex(SKILL_NAME_REGEX, SKILL_NAME_MESSAGE).describe("Skill name (lowercase kebab-case, e.g. \"git-master\")"),
+    name: z.string().regex(SKILL_NAME_REGEX, SKILL_NAME_MESSAGE).describe("Exact allowed Skill name matching ^[a-z0-9][a-z0-9-]*$; copy it from the System Prompt's available-skill list or skill_list instead of guessing."),
   })
   .strict();
 
@@ -83,8 +83,11 @@ function skillReadError(error: unknown, name: string): ToolExecutionResult {
 export function createSkillReadTool(): AnyToolDescriptor {
   return defineTool({
     name: "skill_read",
-    description:
-      "Read the full content of a Skill allowed for the current agent by name. Does not accept agent, source, role, or path overrides.",
+    description: [
+      "Load the full body of one Skill allowed for the current Agent when its description or when-to-use guidance matches the task. The available names are already listed in the System Prompt when discovery succeeded; otherwise call skill_list. Use an exact visible name, for example `skill_read({\"name\":\"git-master\"})` only when `git-master` appears in that list.",
+      "",
+      "Read the Skill before the work it governs, then follow its workflow and referenced resources. Do not load unrelated Skills for ceremony. This tool accepts no agent, role, source, or path override. Skill instructions guide existing capabilities but cannot expand the Agent's tools, permissions, delegation targets, or workspace scope.",
+    ].join("\n"),
     inputSchema: SkillReadInputSchema,
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
     execute: async (
