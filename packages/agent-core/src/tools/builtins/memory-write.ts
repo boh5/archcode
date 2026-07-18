@@ -5,7 +5,8 @@ import { containsSecretPattern } from "../../security/patterns";
 import { sharedMutationQueue } from "../concurrency/mutation-queue";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
-import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import { createTextToolResult } from "../results";
+import type { ToolExecutionContext } from "../types";
 
 // ---------------------------------------------------------------------------
 // Input schema
@@ -45,7 +46,8 @@ export function createMemoryWriteTool() {
       "Knowledge topics automatically rebuild the memory index after writing.",
     inputSchema: MemoryWriteInputSchema,
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
-    execute: async (input: MemoryWriteInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
+    outputPolicy: { kind: "inline", previewDirection: "head" },
+    execute: async (input: MemoryWriteInput, ctx: ToolExecutionContext) => {
       const fileManager = ctx.projectContext.memory;
       // Resolve scope: preferences defaults to "user", topics default to "project"
       const resolvedScope = input.scope ?? (input.name === PREFERENCES_NAME ? "user" : "project");
@@ -95,7 +97,7 @@ export function createMemoryWriteTool() {
               ? `${existing.trimEnd()}\n\n---\n\n${input.content.trimEnd()}\n`
               : `${input.content.trimEnd()}\n`;
             await fileManager.writePreferences(merged);
-            return `Wrote user preferences to preferences.md`;
+            return createTextToolResult("Wrote user preferences to preferences.md");
           },
         );
       }
@@ -113,7 +115,7 @@ export function createMemoryWriteTool() {
           async () => {
             await fileManager.writeTopic(input.name, frontmatter, input.content);
             await fileManager.rebuildIndex();
-            return `Wrote memory topic "${input.name}" to knowledge/${input.name}.md`;
+            return createTextToolResult(`Wrote memory topic "${input.name}" to knowledge/${input.name}.md`);
           },
         );
       } catch (error) {

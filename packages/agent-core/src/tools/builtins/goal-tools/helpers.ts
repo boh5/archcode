@@ -10,8 +10,9 @@ import {
   GoalTransitionError,
 } from "../../../goals/state";
 import { createToolErrorResult } from "../../errors";
+import { createTextToolResult } from "../../results";
 import type { ToolErrorKind } from "../../errors";
-import type { ToolExecutionContext, ToolExecutionResult } from "../../types";
+import type { RawToolResult, ToolExecutionContext, ToolExecutionSidecar } from "../../types";
 import type { SessionRole } from "../../../store/types";
 
 export type GoalManageAction =
@@ -58,8 +59,11 @@ export class GoalToolAuthorizationError extends Error {
   }
 }
 
-export function formatGoalToolResult(value: GoalState): string {
-  return JSON.stringify(value, null, 2);
+export function formatGoalToolResult(
+  value: GoalState,
+  sidecar?: ToolExecutionSidecar,
+): RawToolResult {
+  return createTextToolResult(JSON.stringify(value, null, 2), { sidecar });
 }
 
 export function extractGoalToolAuthorization(ctx: ToolExecutionContext): GoalToolAuthorizationContext {
@@ -119,7 +123,7 @@ export function assertGoalManageActionAuthorized(
 export function goalToolErrorResult(
   error: unknown,
   options: GoalToolErrorMappingOptions = {},
-): ToolExecutionResult {
+): RawToolResult {
   if (error instanceof GoalNotFoundError) {
     return goalWorkspaceError("GOAL_NOT_FOUND", error.message);
   }
@@ -172,10 +176,10 @@ function assertReviewerFinalizationAuthorized(
   }
 }
 
-function goalWorkspaceError(code: string, message: string): ToolExecutionResult {
+function goalWorkspaceError(code: string, message: string): RawToolResult {
   return goalError("workspace", code, message);
 }
 
-function goalError(kind: ToolErrorKind, code: string, message: string): ToolExecutionResult {
+function goalError(kind: ToolErrorKind, code: string, message: string): RawToolResult {
   return createToolErrorResult({ kind, code, message });
 }

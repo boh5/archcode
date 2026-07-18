@@ -1,10 +1,10 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
 import { z } from "zod";
 
 import { engineerAgentDefinition } from "../../agents/definitions";
 import { registerBuiltinTools } from "../../core/register-tools";
 import { silentLogger } from "../../logger";
-import { createRegistry } from "../registry";
+import { createTestToolRegistryFixture } from "../test-registry";
 
 type JsonObject = Record<string, unknown>;
 
@@ -88,7 +88,7 @@ const CONTRACTS: readonly ModelVisibleContract[] = [
     tool: "glob",
     competitorEvidenceIds: ["CC-160-A:Glob", "OC:glob"],
     runtimeSourceIds: ["tools/builtins/glob.ts:13-18,30-76"],
-    descriptionPatterns: [/file-name or path glob/, /not by file contents/, /glob\(/, /glob.*grep.*file_read/i, /100 paths/, /delegate.*Explore/i],
+    descriptionPatterns: [/file-name or path glob/, /not by file contents/, /glob\(/, /glob.*grep.*file_read/i, /delegate.*Explore/i],
     schema: [
       { path: ["properties", "pattern"], descriptionPatterns: [/Glob pattern/, /\*\*\/\*\.ts/] },
     ],
@@ -135,9 +135,9 @@ const CONTRACTS: readonly ModelVisibleContract[] = [
     tool: "ask_user",
     competitorEvidenceIds: ["CC-160-A:AskUserQuestion", "OC:question"],
     runtimeSourceIds: ["tools/builtins/ask-user.ts:10-27,35-109,138-146"],
-    descriptionPatterns: [/preferences, requirements, or implementation choices/, /Investigate first/, /facts available from the request, repository, tool output/, /sensible reversible default/, /bad question asks which file to edit/i, /ask_user\(/, /\(Recommended\)/, /do not add an `Other` option/i],
+    descriptionPatterns: [/preferences, requirements, or implementation choices/, /Investigate first/, /facts available from the request, repository, tool output/, /sensible reversible default/, /\(Recommended\)/, /do not add an `Other` option/i],
     schema: [
-      { path: ["properties", "questions", "items", "properties", "options"], descriptionPatterns: [/Do not add an `Other` option/, /recommended choice first/] },
+      { path: ["properties", "questions", "items", "properties", "options"], descriptionPatterns: [/Do not add an `Other` option/, /recommended (?:choice|option) first/] },
       { path: ["properties", "questions", "items", "properties", "custom"], descriptionPatterns: [/free-text answer choice/, /default/] },
     ],
   },
@@ -164,11 +164,15 @@ const CONTRACTS: readonly ModelVisibleContract[] = [
     tool: "background_output",
     competitorEvidenceIds: ["CC-160-A:TaskOutput", "OMO-B", "GB:task_output"],
     runtimeSourceIds: ["tools/builtins/background-output.ts"],
-    descriptionPatterns: [/execution status/, /canonical result receipt/, /direct child Session/, /never treats assistant text as a child result/i, /terminal execution without result_receipt/i, /block=true/, /terminal reminder/, /do not poll/i],
+    descriptionPatterns: [/status/, /canonical result receipt/, /direct child Session/, /never treats assistant text as a child result/i, /terminal execution without result_receipt/i, /block=true/, /terminal reminder/, /do not poll/i, /background_output\(/, /status is still running.*not a final deliverable/i, /full_session=true/, /50 KiB/, /2,000 lines/, /exact schema-valid nextInput/, /without an artifact or silent truncation/i],
     schema: [
-      { path: ["properties", "session_id"] },
-      { path: ["properties", "block"] },
-      { path: ["properties", "timeout_ms"] },
+      { path: ["properties", "session_id"], descriptionPatterns: [/delegate, resume_session, a terminal reminder, or a prior child result/i, /must not be the current Session ID/i] },
+      { path: ["properties", "block"], descriptionPatterns: [/Default false/, /waits while the Session is running/] },
+      { path: ["properties", "timeout_ms"], descriptionPatterns: [/0 to 1800000/, /Default 1800000/, /30 minutes/] },
+      { path: ["properties", "full_session"], descriptionPatterns: [/latest assistant message/, /filtered stored messages/, /Default false/] },
+      { path: ["properties", "cursor"], descriptionPatterns: [/Exact forward cursor/, /nextInput/, /Do not construct or modify/] },
+      { path: ["properties", "include_tool_results"], descriptionPatterns: [/unified tool previews/, /strict details/, /recovery references/, /default/i] },
+      { path: ["properties", "include_reasoning"], descriptionPatterns: [/assistant reasoning/, /default/i] },
     ],
   },
   {
@@ -279,10 +283,9 @@ const CONTRACTS: readonly ModelVisibleContract[] = [
     tool: "web_fetch",
     competitorEvidenceIds: ["CC-160-A:WebFetch", "OC:webfetch"],
     runtimeSourceIds: ["tools/builtins/web-fetch.ts:20-48,60-90,169-274,279-315,340-425"],
-    descriptionPatterns: [/unauthenticated/, /does not use browser cookies or login state/, /headers and all redirects share a fixed 30-second deadline/i, /body is not covered by that timer/i, /over 5MB.*rejected/, /beyond maxLength.*truncated/],
+    descriptionPatterns: [/unauthenticated/, /does not use browser cookies or login state/, /headers and all redirects share a fixed 30-second deadline/i, /body is not covered by that timer/i, /over 5MB.*rejected/],
     schema: [
       { path: ["properties", "url"], descriptionPatterns: [/HTTP or HTTPS/, /credentials.*rejected/] },
-      { path: ["properties", "maxLength"], descriptionPatterns: [/after fetching and extraction/, /truncated with a marker/] },
     ],
   },
   {
@@ -315,15 +318,17 @@ function expectPatterns(value: string, patterns: readonly RegExp[]): void {
   }
 }
 
-const registry = createRegistry(undefined, silentLogger);
-registerBuiltinTools(registry, silentLogger);
+const registryFixture = createTestToolRegistryFixture();
+const registry = registryFixture.registry;
+registerBuiltinTools(registry, silentLogger, { github: { enabled: false } });
+afterAll(() => registryFixture.dispose());
 const resolved = registry.resolveForAgent(engineerAgentDefinition.tools.tools);
 const aiTools = resolved.toAITools();
 
 describe("Engineer model-visible Tool Contract", () => {
-  it("preserves the exact 30-tool Engineer definition order", () => {
+  it("preserves the exact 31-tool Engineer definition order", () => {
     const expected = [...engineerAgentDefinition.tools.tools];
-    expect(expected).toHaveLength(30);
+    expect(expected).toHaveLength(31);
     expect(resolved.descriptors.map((descriptor) => descriptor.name)).toEqual(expected);
     expect(Object.keys(aiTools)).toEqual(expected);
   });

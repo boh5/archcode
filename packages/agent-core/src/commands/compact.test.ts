@@ -1,14 +1,15 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { CompressionBlockSnapshot } from "@archcode/protocol";
 import type { ModelInfo } from "../provider/model";
+import type { ExecutionModelBinding } from "../models";
 import { storeManager } from "../store/store";
 import type { CompactionPart, StoredMessage } from "../store/types";
 import { setLlmAdapterForTest } from "../llm";
 import type { CircuitBreaker } from "../compact/circuit-breaker";
-import type { ModelCallOptions } from "../config";
 import { SkillService } from "../skills";
 import { createCompactCommand } from "./compact";
 import type { CommandContext } from "./types";
+import { createTestModelInfo } from "../testing/test-execution-fixtures";
 
 function makeUserMessage(id: string, text: string): StoredMessage {
   return {
@@ -63,16 +64,23 @@ function compressionBlockSnapshot(): CompressionBlockSnapshot {
 }
 
 const model = { modelId: "mock" } as unknown as ModelInfo["model"];
-const modelInfo = {
+const modelInfo = createTestModelInfo({
   model,
   displayName: "Mock",
   limit: { context: 100000, output: 1000 },
-  modalities: { input: ["text"], output: ["text"] },
-          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
-  providerId: "test",
   modelId: "mock",
-  qualifiedId: "test:mock",
-} as unknown as ModelInfo;
+});
+function binding(options?: ExecutionModelBinding["options"]): ExecutionModelBinding {
+  return {
+    modelInfo,
+    options,
+    summary: {
+      selection: { model: modelInfo.qualifiedId }, providerId: modelInfo.providerId, modelId: modelInfo.modelId,
+      providerDisplayName: modelInfo.providerDisplayName, modelDisplayName: modelInfo.displayName,
+      resolution: "agent_default", modelRuntimeRevision: "test-revision",
+    },
+  };
+}
 const skillService = new SkillService({ builtinSkills: {} });
 const TEST_WORKSPACE_ROOT = `/tmp/archcode-agent-core-compact-command-${crypto.randomUUID()}`;
 
@@ -82,7 +90,7 @@ function commandContext(
 ): CommandContext {
   return {
     store,
-    modelInfo,
+    binding: binding(),
     cwd: import.meta.dir,
     agentName: "engineer",
     agentSkills: [],
@@ -140,7 +148,7 @@ describe("createCompactCommand", () => {
   test("returns compact descriptor", () => {
     const store = storeManager.create(`compact-command-descriptor-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, { agentName: "engineer" });
 
-    const descriptor = createCompactCommand(store, modelInfo);
+    const descriptor = createCompactCommand();
 
     expect(descriptor.name).toBe("compact");
     expect(descriptor.description).toContain("Compact");
@@ -150,7 +158,7 @@ describe("createCompactCommand", () => {
     const store = storeManager.create(`compact-command-success-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, { agentName: "engineer" });
     store.setState({ messages: compactableMessages() });
 
-    const result = await createCompactCommand(store, modelInfo).handler(commandContext(store));
+    const result = await createCompactCommand().handler(commandContext(store));
 
     expect(result.success).toBe(true);
     expect(result.message).toBe("Context compacted. 6 messages summarized. 5 messages preserved in tail.");
@@ -170,7 +178,7 @@ describe("createCompactCommand", () => {
 
     expect(store.getState().compression?.activeBlockRefs).toEqual(["b1"]);
 
-    const result = await createCompactCommand(store, modelInfo).handler(commandContext(store));
+    const result = await createCompactCommand().handler(commandContext(store));
 
     expect(result.success).toBe(true);
     expect(store.getState().compression?.activeBlockRefs).toEqual([]);
@@ -198,14 +206,14 @@ describe("createCompactCommand", () => {
     const store = storeManager.create(`compact-command-options-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, { agentName: "engineer" });
     store.setState({ messages: compactableMessages() });
 
-    const result = await createCompactCommand(store, modelInfo).handler(commandContext(store, {
-      modelOptions: {
+    const result = await createCompactCommand().handler(commandContext(store, {
+      binding: binding({
         temperature: 0.4,
         topP: 0.6,
         maxOutputTokens: 4096,
         providerOptions,
         variant: "large-context",
-      } as unknown as ModelCallOptions,
+      } as unknown as ExecutionModelBinding["options"]),
     }));
 
     expect(result.success).toBe(true);
@@ -221,7 +229,7 @@ describe("createCompactCommand", () => {
     const circuitBreaker = createBreaker();
     store.setState({ messages: compactableMessages() });
 
-    const result = await createCompactCommand(store, modelInfo, circuitBreaker).handler(commandContext(store, {
+    const result = await createCompactCommand({ circuitBreaker }).handler(commandContext(store, {
       circuitBreaker,
     }));
 
@@ -234,7 +242,7 @@ describe("createCompactCommand", () => {
     const circuitBreaker = createBreaker();
     store.setState({ messages: [makeUserMessage("u1", "Only one")] });
 
-    const result = await createCompactCommand(store, modelInfo, circuitBreaker).handler(commandContext(store, {
+    const result = await createCompactCommand({ circuitBreaker }).handler(commandContext(store, {
       circuitBreaker,
     }));
 
@@ -258,7 +266,7 @@ describe("createCompactCommand", () => {
     });
     const store = storeManager.create(`compact-command-busy-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, { agentName: "engineer" });
     store.setState({ messages: compactableMessages() });
-    const descriptor = createCompactCommand(store, modelInfo);
+    const descriptor = createCompactCommand();
 
     const first = descriptor.handler(commandContext(store));
     await Promise.resolve();
@@ -277,7 +285,7 @@ describe("createCompactCommand", () => {
     });
     const store = storeManager.create(`compact-command-error-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, { agentName: "engineer" });
     store.setState({ messages: compactableMessages() });
-    const descriptor = createCompactCommand(store, modelInfo);
+    const descriptor = createCompactCommand();
 
     const failed = await descriptor.handler(commandContext(store));
     const retry = await descriptor.handler(commandContext(store));

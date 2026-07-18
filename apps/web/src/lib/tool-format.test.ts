@@ -297,7 +297,14 @@ describe("formatToolInputDetails", () => {
       session_id: "ses_abc123", block: true, timeout_ms: 1000,
       full_session: true, message_limit: 10, since_message_id: "m1", include_tool_results: true, include_reasoning: true, cursor: "old",
     });
-    expect(background).toEqual({ session_id: "ses_abc123", block: "true", timeout_ms: "1000" });
+    expect(background).toEqual({
+      session_id: "ses_abc123",
+      block: "true",
+      timeout_ms: "1000",
+      full_session: "true",
+      include_tool_results: "true",
+      include_reasoning: "true",
+    });
   });
 
   test("returns null for null input", () => {

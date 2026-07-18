@@ -8,6 +8,7 @@ import { silentLogger } from "../../logger";
 import { SessionCwdTransitionConflictError } from "../../agents/errors";
 import { WorktreeService } from "../../worktrees";
 import { createTestProjectContext } from "../test-project-context";
+import { expectTextDraft } from "../test-results";
 import { createToolExecutionContext } from "../types";
 import {
   executeWorktreeEnter,
@@ -70,7 +71,7 @@ describe("worktree Session tools", () => {
     if (typeof reentered === "string") throw new Error("Expected structured re-enter result");
     expect(reentered.isError).toBe(false);
     expect(store.getState().cwd).toBe(worktreeCwd);
-    expect(JSON.parse(reentered.output)).toMatchObject({ cwd: worktreeCwd, created: false });
+    expect(JSON.parse(expectTextDraft(reentered))).toMatchObject({ cwd: worktreeCwd, created: false });
   });
 
   test("rejects worktree transitions for Goal-owned Sessions", async () => {
@@ -98,7 +99,7 @@ describe("worktree Session tools", () => {
 
     const result = await executeWorktreeEnter({}, ctx);
     if (typeof result === "string") throw new Error("Expected error result");
-    expect(result).toMatchObject({ isError: true, meta: { toolError: { code: "WORKTREE_SESSION_NOT_ELIGIBLE" } } });
+    expect(result).toMatchObject({ isError: true, details: { error: { code: "WORKTREE_SESSION_NOT_ELIGIBLE" } } });
     expect(store.getState().cwd).toBe(projectRoot);
   });
 
@@ -134,7 +135,7 @@ describe("worktree Session tools", () => {
     if (typeof result === "string") throw new Error("Expected structured error result");
     expect(result).toMatchObject({
       isError: true,
-      meta: { toolError: { code: "WORKTREE_ACTIVE_DESCENDANTS" } },
+      details: { error: { code: "WORKTREE_ACTIVE_DESCENDANTS" } },
     });
     expect(store.getState().cwd).toBe(projectRoot);
     expect(await new WorktreeService({ canonicalRoot: projectRoot }).findManaged({ owner: { type: "session", id: sessionId } })).toBeUndefined();
@@ -166,7 +167,7 @@ describe("worktree Session tools", () => {
     const result = await executeWorktreeEnter({ path: projectRoot }, ctx);
 
     if (typeof result === "string") throw new Error("Expected structured error result");
-    expect(result).toMatchObject({ isError: true, meta: { toolError: { code: "WORKTREE_TARGET_IS_PROJECT" } } });
+    expect(result).toMatchObject({ isError: true, details: { error: { code: "WORKTREE_TARGET_IS_PROJECT" } } });
     expect(store.getState().cwd).toBe(projectRoot);
   });
 
@@ -198,7 +199,7 @@ describe("worktree Session tools", () => {
     const result = await executeWorktreeEnter({ path: projectRoot }, ctx);
 
     if (typeof result === "string") throw new Error("Expected structured error result");
-    expect(result).toMatchObject({ isError: true, meta: { toolError: { code: "WORKTREE_TARGET_IS_PROJECT" } } });
+    expect(result).toMatchObject({ isError: true, details: { error: { code: "WORKTREE_TARGET_IS_PROJECT" } } });
     expect(store.getState().cwd).toBe(projectRoot);
   });
 
@@ -238,7 +239,7 @@ describe("worktree Session tools", () => {
       if (typeof result === "string") throw new Error("Expected structured error result");
       expect(result).toMatchObject({
         isError: true,
-        meta: { toolError: { code: "WORKTREE_TARGET_NOT_OWNED" } },
+        details: { error: { code: "WORKTREE_TARGET_NOT_OWNED" } },
       });
       expect(store.getState().cwd).toBe(projectRoot);
     }
@@ -337,7 +338,7 @@ describe("worktree Session tools", () => {
     const result = await executeWorktreeEnter({}, ctx);
 
     if (typeof result === "string") throw new Error("Expected structured error result");
-    expect(result).toMatchObject({ isError: true, meta: { toolError: { code: "WORKTREE_SESSION_NOT_ELIGIBLE" } } });
+    expect(result).toMatchObject({ isError: true, details: { error: { code: "WORKTREE_SESSION_NOT_ELIGIBLE" } } });
   });
 
 });

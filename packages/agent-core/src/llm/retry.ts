@@ -1,6 +1,7 @@
 import { LLM_SHORT_RETRY_PROFILE, type LlmRetryProfile } from "./constants";
 import { LlmMaxRetriesError } from "./errors";
 import { classifyLlmError } from "./classify";
+import { sanitizeProviderError, type SensitiveTextRedactor } from "./provider-error-sanitizer";
 
 export interface LlmRetryAuditEntry {
   readonly label: string;
@@ -29,6 +30,7 @@ export async function withLlmRetry<T>(
     abortSignal?: AbortSignal;
     onRetry?: (entry: LlmRetryAuditEntry) => void;
     retryScheduler?: RetryScheduler;
+    redactSensitiveText?: SensitiveTextRedactor;
   },
 ): Promise<T> {
   const retryScheduler = options?.retryScheduler ?? realRetryScheduler;
@@ -39,13 +41,16 @@ export async function withLlmRetry<T>(
     try {
       return await operation();
     } catch (err) {
-      lastError = err;
       const classification = classifyLlmError(err, { boundary: "provider-request" });
+      const safeError = options?.redactSensitiveText
+        ? sanitizeProviderError(err, options.redactSensitiveText)
+        : err;
+      lastError = safeError;
       lastRetryable = classification.retryable;
       if (!classification.retryable || attempt >= profile.totalAttempts) {
         throw new LlmMaxRetriesError({
-          message: `${label} failed after ${attempt} attempt${attempt === 1 ? "" : "s"}: ${err instanceof Error ? err.message : String(err)}`,
-          cause: err instanceof Error ? err : undefined,
+          message: `${label} failed after ${attempt} attempt${attempt === 1 ? "" : "s"}: ${safeError instanceof Error ? safeError.message : String(safeError)}`,
+          cause: safeError instanceof Error ? safeError : undefined,
           attempts: attempt,
           retryable: classification.retryable,
         });

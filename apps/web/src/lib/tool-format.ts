@@ -26,7 +26,6 @@ import {
   TOOL_WAIT_FOR_REMINDER,
   TOOL_BACKGROUND_OUTPUT,
   TOOL_RESUME_SESSION,
-  TOOL_VIEW_TOOL_OUTPUT,
   TOOL_SKILL_LIST,
   TOOL_SKILL_READ,
 } from "@archcode/protocol";
@@ -241,7 +240,7 @@ export function getToolSummary(toolName: string, input: unknown): ToolSummary {
     const instruction = typeof obj.instruction === "string" ? obj.instruction : undefined;
     return { icon, primary: sessionId ?? "—", secondary: instruction ? truncate(instruction, INLINE_VALUE_MAX_CHARS) : undefined };
   }
-  if (toolName === TOOL_WAIT_FOR_REMINDER || toolName === TOOL_VIEW_TOOL_OUTPUT) {
+  if (toolName === TOOL_WAIT_FOR_REMINDER) {
     return { icon, primary: "—" };
   }
 
@@ -295,9 +294,8 @@ const DETAIL_FIELDS_BY_TOOL: Partial<Record<BuiltinToolName, string[]>> = {
   [TOOL_SKILL_LIST]: [],
   [TOOL_SKILL_READ]: ["name"],
   [TOOL_WAIT_FOR_REMINDER]: [],
-  [TOOL_BACKGROUND_OUTPUT]: ["session_id", "block", "timeout_ms"],
+  [TOOL_BACKGROUND_OUTPUT]: ["session_id", "block", "timeout_ms", "full_session", "include_tool_results", "include_reasoning"],
   [TOOL_RESUME_SESSION]: ["session_id", "instruction", "new_evidence", "background"],
-  [TOOL_VIEW_TOOL_OUTPUT]: ["taskId"],
 };
 
 const CONTENT_FIELDS = new Set(["content", "oldString", "newString", "edits"]);

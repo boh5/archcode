@@ -1,15 +1,17 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SkillService, type SkillIndexEntry } from "../../skills";
 import { storeManager } from "../../store/store";
 import { createMockStore } from "../../store/test-helpers";
 import { createTestProjectContext } from "../test-project-context";
+import { expectTextDraft } from "../test-results";
 import { createToolExecutionContext, type ToolExecutionContext } from "../types";
 import { createBuiltinToolDescriptors } from "./index";
 import { SkillListInputSchema, skillListTool } from "./skill-list";
 
-const tmpRoot = join(import.meta.dir, "__test_tmp__", "skill-list-tool", crypto.randomUUID());
+const tmpRoot = join(tmpdir(), "archcode-skill-list-tool", crypto.randomUUID());
 const projectRoot = join(tmpRoot, "project");
 const userSkillsRoot = join(tmpRoot, "user", ".archcode", "skills");
 
@@ -43,7 +45,7 @@ describe("skill_list tool", () => {
 
   test("engineer allow-list returns all five builtin skill entries without bodies", async () => {
     const result = await skillListTool.execute({}, makeContext(engineerSkills));
-    const entries = JSON.parse(result as string) as SkillIndexEntry[];
+    const entries = JSON.parse(expectTextDraft(result)) as SkillIndexEntry[];
 
     expect(entries.map((entry) => entry.name)).toEqual([
       "codemap",
@@ -62,7 +64,7 @@ describe("skill_list tool", () => {
 
   test("explore allow-list returns codemap and research-docs only", async () => {
     const result = await skillListTool.execute({}, makeContext(exploreSkills));
-    const entries = JSON.parse(result as string) as SkillIndexEntry[];
+    const entries = JSON.parse(expectTextDraft(result)) as SkillIndexEntry[];
 
     expect(entries.map((entry) => entry.name)).toEqual(["codemap", "research-docs"]);
   });
@@ -70,7 +72,7 @@ describe("skill_list tool", () => {
   test("agent with no skills receives an empty list", async () => {
     const result = await skillListTool.execute({}, makeContext([]));
 
-    expect(JSON.parse(result as string)).toEqual([]);
+    expect(JSON.parse(expectTextDraft(result))).toEqual([]);
   });
 
   test("input schema rejects unknown keys including agentName", () => {

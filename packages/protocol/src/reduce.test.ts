@@ -14,7 +14,48 @@ import type {
   SessionTodo,
   StreamEvent,
   ToolChildSessionLink,
+  ToolDiffMetadata,
+  ToolResultDetails,
 } from "./types";
+
+const REQUESTED_MODEL_SELECTION = {
+  mode: "agent_default" as const,
+  selection: { model: "test:model" },
+};
+const TEST_BINDING = {
+  selection: { model: "test:model" },
+  providerId: "test",
+  modelId: "model",
+  providerDisplayName: "Test",
+  modelDisplayName: "Model",
+  resolution: "agent_default" as const,
+  modelRuntimeRevision: "runtime-1",
+};
+
+function executionStart(executionId: string): StreamEvent {
+  return { type: "execution-start", executionId, binding: TEST_BINDING, origin: "user_message" };
+}
+
+function makeFinalizedResult(
+  preview: string,
+  isError = false,
+  details?: ToolResultDetails,
+) {
+  const bytes = new TextEncoder().encode(preview).byteLength;
+  return {
+    isError,
+    output: {
+      preview,
+      completeness: "complete" as const,
+      observed: { bytes, lines: 1 },
+      canonical: { bytes, lines: 1 },
+      stored: { bytes, lines: 1 },
+      omitted: { bytes: 0, lines: 0 },
+      recovery: { kind: "none" as const },
+    },
+    ...(details === undefined ? {} : { details }),
+  };
+}
 
 function createProjection(overrides: Partial<SessionProjection> = {}): SessionProjection {
   return {
@@ -34,6 +75,7 @@ function createProjection(overrides: Partial<SessionProjection> = {}): SessionPr
     executionCount: 0,
     isRunning: false,
     isStreamingModel: false,
+    modelSelection: { revision: 0 },
     ...overrides,
   };
 }
@@ -199,7 +241,7 @@ describe("reduceStreamEvent", () => {
 
   test("produces identical projections with the same events and deterministic context", () => {
     const events: StreamEvent[] = [
-      { type: "execution-start", executionId: "run-identical" },
+      executionStart("run-identical"),
       committedUserEvent("hello", "run-identical"),
       { type: "step-start", step: 0 },
       { type: "text-start" },
@@ -210,8 +252,7 @@ describe("reduceStreamEvent", () => {
         type: "tool-result",
         toolCallId: "call-1",
         toolName: "read",
-        output: "content",
-        isError: false,
+        result: makeFinalizedResult("content"),
       },
       { type: "step-end", step: 0, finishReason: "stop" },
       { type: "execution-end", status: "completed" },
@@ -245,9 +286,9 @@ describe("reduceStreamEvent", () => {
         type: "tool-result",
         toolCallId: "call-1",
         toolName: "read",
-        output: "content",
-        isError: false,
-        meta: { exitCode: 0 },
+        result: makeFinalizedResult("content", false, {
+          process: { exitCode: 0, signal: null, timedOut: false, aborted: false, durationMs: 1 },
+        }),
       },
     ]);
 
@@ -255,8 +296,8 @@ describe("reduceStreamEvent", () => {
     expect(tool.state).toBe("completed");
     if (tool.state !== "completed") throw new Error("Expected completed tool");
     expect(tool.input).toBe(input);
-    expect(tool.output).toBe("content");
-    expect(tool.meta).toEqual({ exitCode: 0 });
+    expect(tool.result.output.preview).toBe("content");
+    expect(tool.result.details?.process?.exitCode).toBe(0);
     expect(state.stats.tools).toEqual({ calls: 1, completed: 1, failed: 0 });
   });
 
@@ -270,15 +311,14 @@ describe("reduceStreamEvent", () => {
       type: "tool-result",
       toolCallId: "call-before-restart",
       toolName: "ask_user",
-      output: "answered after restart",
-      isError: false,
+      result: makeFinalizedResult("answered after restart"),
     }]);
 
     const tool = partOfType(onlyMessage(settled.messages), "tool");
     expect(tool).toMatchObject({
       state: "completed",
       toolCallId: "call-before-restart",
-      output: "answered after restart",
+      result: { output: { preview: "answered after restart" } },
     });
     expect(settled.stats.tools).toEqual({ calls: 1, completed: 1, failed: 0 });
   });
@@ -286,11 +326,11 @@ describe("reduceStreamEvent", () => {
   test("allows a later assistant message to reuse a completed toolCallId", () => {
     const state = applyEvents(createProjection(), [
       { type: "tool-call", toolCallId: "reused-call", toolName: "read", input: { path: "first.ts" } },
-      { type: "tool-result", toolCallId: "reused-call", toolName: "read", output: "first", isError: false },
+      { type: "tool-result", toolCallId: "reused-call", toolName: "read", result: makeFinalizedResult("first") },
       { type: "step-start", step: 1 },
       { type: "tool-input-start", toolCallId: "reused-call", toolName: "read" },
       { type: "tool-call", toolCallId: "reused-call", toolName: "read", input: { path: "second.ts" } },
-      { type: "tool-result", toolCallId: "reused-call", toolName: "read", output: "second", isError: false },
+      { type: "tool-result", toolCallId: "reused-call", toolName: "read", result: makeFinalizedResult("second") },
     ]);
 
     expect(state.messages).toHaveLength(2);
@@ -300,13 +340,13 @@ describe("reduceStreamEvent", () => {
       state: "completed",
       toolCallId: "reused-call",
       input: { path: "first.ts" },
-      output: "first",
+      result: { output: { preview: "first" } },
     });
     expect(second).toMatchObject({
       state: "completed",
       toolCallId: "reused-call",
       input: { path: "second.ts" },
-      output: "second",
+      result: { output: { preview: "second" } },
     });
     expect(state.stats.tools).toEqual({ calls: 2, completed: 2, failed: 0 });
   });
@@ -316,14 +356,14 @@ describe("reduceStreamEvent", () => {
       { type: "tool-call", toolCallId: "reused-running", toolName: "read", input: { path: "old.ts" } },
       { type: "step-start", step: 1 },
       { type: "tool-call", toolCallId: "reused-running", toolName: "read", input: { path: "current.ts" } },
-      { type: "tool-result", toolCallId: "reused-running", toolName: "read", output: "current", isError: false },
-      { type: "tool-result", toolCallId: "reused-running", toolName: "read", output: "duplicate", isError: false },
+      { type: "tool-result", toolCallId: "reused-running", toolName: "read", result: makeFinalizedResult("current") },
+      { type: "tool-result", toolCallId: "reused-running", toolName: "read", result: makeFinalizedResult("duplicate") },
     ]);
 
     const oldTool = partOfType(state.messages[0]!, "tool");
     const currentTool = partOfType(state.messages[1]!, "tool");
     expect(oldTool).toMatchObject({ state: "running", input: { path: "old.ts" } });
-    expect(currentTool).toMatchObject({ state: "completed", input: { path: "current.ts" }, output: "current" });
+    expect(currentTool).toMatchObject({ state: "completed", input: { path: "current.ts" }, result: { output: { preview: "current" } } });
     expect(state.stats.tools).toEqual({ calls: 2, completed: 1, failed: 0 });
   });
 
@@ -347,9 +387,9 @@ describe("reduceStreamEvent", () => {
     expect(tool.attemptDestructive).toBe(true);
   });
 
-  test("missing result after recorded attempt settles as unknown-result error", () => {
+  test("execution-end leaves an attempted tool unfinalized for the Registry recovery lane", () => {
     const state = applyEvents(createProjection(), [
-      { type: "execution-start", executionId: "run-unknown" },
+      executionStart("run-unknown"),
       { type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { path: "a.ts" } },
       {
         type: "tool-attempt",
@@ -363,26 +403,21 @@ describe("reduceStreamEvent", () => {
     ]);
 
     const tool = partOfType(onlyMessage(state.messages), "tool");
-    expect(tool.state).toBe("error");
-    if (tool.state !== "error") throw new Error("Expected error tool");
-    expect(tool.errorMessage).toBe("Tool execution result unknown: execution was interrupted");
-    expect(tool.meta).toEqual({ unknownResult: true });
+    expect(tool.state).toBe("running");
+    if (tool.state !== "running") throw new Error("Expected running tool");
     expect(tool.attemptId).toBe("attempt-1");
   });
 
-  test("aborted partial tool input settles with a persistable null input", () => {
+  test("execution-end leaves partial tool input pending for the Registry recovery lane", () => {
     const state = applyEvents(createProjection(), [
-      { type: "execution-start", executionId: "run-partial-input" },
+      executionStart("run-partial-input"),
       { type: "tool-input-start", toolCallId: "call-partial", toolName: "file_write" },
       { type: "execution-end", status: "aborted" },
     ]);
 
     const tool = partOfType(onlyMessage(state.messages), "tool");
-    expect(tool.state).toBe("error");
-    if (tool.state !== "error") throw new Error("Expected error tool");
-    expect(tool.input).toBeNull();
-    expect(tool.errorMessage).toBe("Execution ended before tool result");
-    expect(JSON.parse(JSON.stringify(state)).messages[0].parts[0].input).toBeNull();
+    expect(tool.state).toBe("pending");
+    expect(JSON.parse(JSON.stringify(state)).messages[0].parts[0]).not.toHaveProperty("result");
   });
 
   test("resolved undefined tool input is canonicalized to null", () => {
@@ -408,9 +443,9 @@ describe("reduceStreamEvent", () => {
     expect(tool.input).toBeNull();
   });
 
-  test("late result after unknown-result settlement is ignored so side effects are not replayed", () => {
+  test("a Registry result can settle an unfinalized tool after execution-end", () => {
     const interrupted = applyEvents(createProjection(), [
-      { type: "execution-start", executionId: "run-unknown-late" },
+      executionStart("run-unknown-late"),
       { type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { path: "a.ts" } },
       {
         type: "tool-attempt",
@@ -424,20 +459,19 @@ describe("reduceStreamEvent", () => {
     ]);
 
     const afterLateResult = applyEvents(interrupted, [
-      { type: "tool-result", toolCallId: "call-1", toolName: "file_write", output: "late write", isError: false },
+      { type: "tool-result", toolCallId: "call-1", toolName: "file_write", result: makeFinalizedResult("late write") },
     ]);
 
     const tool = partOfType(onlyMessage(afterLateResult.messages), "tool");
-    expect(tool.state).toBe("error");
-    if (tool.state !== "error") throw new Error("Expected error tool");
-    expect(tool.meta).toEqual({ unknownResult: true });
-    expect(tool.errorMessage).toBe("Tool execution result unknown: execution was interrupted");
-    expect(afterLateResult.stats.tools).toEqual(interrupted.stats.tools);
+    expect(tool.state).toBe("completed");
+    if (tool.state !== "completed") throw new Error("Expected completed tool");
+    expect(tool.result.output.preview).toBe("late write");
+    expect(afterLateResult.stats.tools.completed).toBe(interrupted.stats.tools.completed + 1);
   });
 
   test("completed tool result is preserved across later recovery settlement", () => {
     const state = applyEvents(createProjection(), [
-      { type: "execution-start", executionId: "run-completed" },
+      executionStart("run-completed"),
       { type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { path: "a.ts" } },
       {
         type: "tool-attempt",
@@ -447,7 +481,7 @@ describe("reduceStreamEvent", () => {
         timestamp: 99,
         destructive: true,
       },
-      { type: "tool-result", toolCallId: "call-1", toolName: "file_write", output: "written", isError: false },
+      { type: "tool-result", toolCallId: "call-1", toolName: "file_write", result: makeFinalizedResult("written") },
       { type: "execution-end", status: "interrupted" },
       { type: "execution-end", status: "interrupted" },
     ]);
@@ -455,13 +489,13 @@ describe("reduceStreamEvent", () => {
     const tool = partOfType(onlyMessage(state.messages), "tool");
     expect(tool.state).toBe("completed");
     if (tool.state !== "completed") throw new Error("Expected completed tool");
-    expect(tool.output).toBe("written");
-    expect(tool.meta?.unknownResult).toBeUndefined();
+    expect(tool.result.output.preview).toBe("written");
+    expect(tool.result.details?.unknownResult).toBeUndefined();
   });
 
   test("interrupted execution marks incomplete text and reasoning as discarded context", () => {
     const state = applyEvents(createProjection(), [
-      { type: "execution-start", executionId: "run-interrupted" },
+      executionStart("run-interrupted"),
       { type: "text-start" },
       { type: "text-delta", text: "partial assistant truth" },
       { type: "reasoning-start" },
@@ -486,7 +520,7 @@ describe("reduceStreamEvent", () => {
 
   test("failed execution marks incomplete text as discarded context", () => {
     const state = applyEvents(createProjection(), [
-      { type: "execution-start", executionId: "run-failed" },
+      executionStart("run-failed"),
       { type: "text-start" },
       { type: "text-delta", text: "partial before failure" },
       { type: "execution-end", status: "failed", error: "stream failed" },
@@ -500,7 +534,7 @@ describe("reduceStreamEvent", () => {
 
   test("completed execution finalizes incomplete text without discarding it", () => {
     const state = applyEvents(createProjection(), [
-      { type: "execution-start", executionId: "run-completed" },
+      executionStart("run-completed"),
       { type: "text-start" },
       { type: "text-delta", text: "late but accepted" },
       { type: "execution-end", status: "completed" },
@@ -607,7 +641,7 @@ describe("reduceStreamEvent", () => {
   });
 
   test("preserves nested diff metadata on completed tool parts", () => {
-    const diffs = {
+    const diffs: ToolDiffMetadata = {
       files: [
         {
           path: "src/index.ts",
@@ -624,16 +658,16 @@ describe("reduceStreamEvent", () => {
         type: "tool-result",
         toolCallId: "call-1",
         toolName: "file_edit",
-        output: "updated",
-        isError: false,
-        meta: { diffs },
+        result: makeFinalizedResult("updated", false, {
+          presentations: [{ kind: "diff", files: diffs.files }],
+        }),
       },
     ]);
 
     const tool = partOfType(onlyMessage(state.messages), "tool");
     expect(tool.state).toBe("completed");
     if (tool.state !== "completed") throw new Error("Expected completed tool");
-    expect(tool.meta?.diffs).toBe(diffs);
+    expect(tool.result.details?.presentations?.[0]).toEqual({ kind: "diff", files: diffs.files });
   });
 
   test("transitions tool call lifecycle from pending to running to error", () => {
@@ -644,15 +678,14 @@ describe("reduceStreamEvent", () => {
         type: "tool-result",
         toolCallId: "call-1",
         toolName: "bash",
-        output: "failed",
-        isError: true,
+        result: makeFinalizedResult("failed", true),
       },
     ]);
 
     const tool = partOfType(onlyMessage(state.messages), "tool");
     expect(tool.state).toBe("error");
     if (tool.state !== "error") throw new Error("Expected error tool");
-    expect(tool.errorMessage).toBe("failed");
+    expect(tool.result.output.preview).toBe("failed");
     expect(tool.endedAt).toBeGreaterThan(0);
     expect(state.stats.tools).toEqual({ calls: 1, completed: 0, failed: 1 });
   });
@@ -832,10 +865,10 @@ describe("reduceStreamEvent", () => {
     const afterStart = applyEvents(
       createProjection({
         isRunning: true,
-        executions: [{ id: "run-1", startedAt: 1, status: "completed", endedAt: 2, durationMs: 1 }],
+        executions: [{ id: "run-1", startedAt: 1, status: "completed", endedAt: 2, durationMs: 1, binding: TEST_BINDING, origin: "user_message" }],
         executionCount: 1,
       }),
-      [{ type: "execution-start", executionId: "run-2" }],
+      [executionStart("run-2")],
     );
 
     expect(afterStart.isRunning).toBe(true);
@@ -881,7 +914,7 @@ describe("reduceStreamEvent", () => {
     const state = applyEvents(createProjection(), [
       { type: "step-start", step: 0 },
       { type: "tool-call", toolCallId: "call-1", toolName: "bash", input: "exit 1" },
-      { type: "tool-result", toolCallId: "call-1", toolName: "bash", output: "boom", isError: true },
+      { type: "tool-result", toolCallId: "call-1", toolName: "bash", result: makeFinalizedResult("boom", true) },
     ]);
 
     expect(state.stats.tools).toEqual({ calls: 1, completed: 0, failed: 1 });
@@ -892,23 +925,23 @@ describe("reduceStreamEvent", () => {
       { type: "tool-input-start", toolCallId: "call-1", toolName: "read" },
       { type: "tool-call", toolCallId: "call-1", toolName: "read", input: { path: "a" } },
       { type: "tool-call", toolCallId: "call-1", toolName: "read", input: { path: "a" } },
-      { type: "tool-result", toolCallId: "call-1", toolName: "read", output: "ok", isError: false },
-      { type: "tool-result", toolCallId: "call-1", toolName: "read", output: "ok", isError: false },
+      { type: "tool-result", toolCallId: "call-1", toolName: "read", result: makeFinalizedResult("ok") },
+      { type: "tool-result", toolCallId: "call-1", toolName: "read", result: makeFinalizedResult("ok") },
     ]);
 
     expect(state.stats.tools).toEqual({ calls: 1, completed: 1, failed: 0 });
   });
 
-  test("pending and running tools settled by execution-end increment failed exactly once for counted calls", () => {
+  test("execution-end does not count a tool failure before Registry settlement", () => {
     const state = applyEvents(createProjection(), [
-      { type: "execution-start", executionId: "run-1" },
+      executionStart("run-1"),
       { type: "tool-input-start", toolCallId: "pending", toolName: "read" },
       { type: "tool-call", toolCallId: "running", toolName: "read", input: {} },
       { type: "execution-end", status: "failed", error: "boom" },
       { type: "execution-end", status: "failed" },
     ]);
 
-    expect(state.stats.tools).toEqual({ calls: 1, completed: 0, failed: 1 });
+    expect(state.stats.tools).toEqual({ calls: 1, completed: 0, failed: 0 });
   });
 
   test("step-end usage provider variants normalize into shared usage stats", () => {
@@ -961,7 +994,7 @@ describe("reduceStreamEvent", () => {
 
   test("computed execution id aligns executions, current execution, messages, and steps", () => {
     const state = applyEvents(createProjection(), [
-      { type: "execution-start", executionId: "run-computed" },
+      executionStart("run-computed"),
       committedUserEvent("hello", "run-computed"),
       { type: "step-start", step: 0 },
     ]);
@@ -983,7 +1016,7 @@ describe("reduceStreamEvent", () => {
     const created = createProjection();
     expect(created.executionCount).toBe(created.executions.length);
 
-    const started = applyEvents(created, [{ type: "execution-start", executionId: "run-1" }]);
+    const started = applyEvents(created, [executionStart("run-1")]);
     expect(started.executionCount).toBe(started.executions.length);
 
     const ended = applyEvents(started, [{ type: "execution-end", status: "completed" }]);
@@ -992,11 +1025,11 @@ describe("reduceStreamEvent", () => {
 
   test("cancelled, aborted, and timed_out execution-end statuses populate latest execution", () => {
     const state = applyEvents(createProjection(), [
-      { type: "execution-start", executionId: "run-cancelled" },
+      executionStart("run-cancelled"),
       { type: "execution-end", status: "cancelled", error: "cancelled by user" },
-      { type: "execution-start", executionId: "run-aborted" },
+      executionStart("run-aborted"),
       { type: "execution-end", status: "aborted", error: "abort signal" },
-      { type: "execution-start", executionId: "run-timed-out" },
+      executionStart("run-timed-out"),
       { type: "execution-end", status: "timed_out", error: "deadline" },
     ]);
 
@@ -1014,7 +1047,7 @@ describe("reduceStreamEvent", () => {
       committedUserEvent("old"),
       { type: "step-start", step: 0 },
       { type: "tool-call", toolCallId: "call-1", toolName: "read", input: {} },
-      { type: "tool-result", toolCallId: "call-1", toolName: "read", output: "ok", isError: false },
+      { type: "tool-result", toolCallId: "call-1", toolName: "read", result: makeFinalizedResult("ok") },
       { type: "step-end", step: 0, finishReason: "stop", usage: { inputTokens: 3, outputTokens: 4 } },
     ]);
     const stats = before.stats;
@@ -1066,6 +1099,7 @@ describe("reduceStreamEvent", () => {
       revision: 0,
       acceptedAt: 10,
       updatedAt: 10,
+      requestedModelSelection: REQUESTED_MODEL_SELECTION,
     };
     const steering = {
       ...queued,
@@ -1082,9 +1116,10 @@ describe("reduceStreamEvent", () => {
       completedAt: 12,
       executionId: "execution-a",
       clientRequestId: queued.clientRequestId,
+      modelAudit: { requested: REQUESTED_MODEL_SELECTION, actual: TEST_BINDING.selection },
     };
     const state = applyEvents(createProjection(), [
-      { type: "execution-start", executionId: "execution-a" },
+      executionStart("execution-a"),
       { type: "session.message_accepted", message: queued },
       { type: "session.message_steer_claimed", message: steering },
       { type: "session.messages_committed", executionId: "execution-a", messages: [canonical] },
@@ -1131,7 +1166,7 @@ describe("reduceStreamEvent", () => {
   test("tool-input-resolved updates completed tool part input", () => {
     const state = applyEvents(createProjection(), [
       { type: "tool-call", toolCallId: "call-1", toolName: "background_output", input: { session_id: "ses_abc" } },
-      { type: "tool-result", toolCallId: "call-1", toolName: "background_output", output: "done", isError: false },
+      { type: "tool-result", toolCallId: "call-1", toolName: "background_output", result: makeFinalizedResult("done") },
       { type: "tool-input-resolved", toolCallId: "call-1", toolName: "background_output", input: { session_id: "ses_abc", block: false } },
     ]);
 
@@ -1330,7 +1365,7 @@ describe("reduceStreamEvent", () => {
 
   test("retry and recovery events are serializable and replay-safe", () => {
     const events: StreamEvent[] = [
-      { type: "execution-start", executionId: "run-retry" },
+      executionStart("run-retry"),
       {
         type: "llm-retry",
         scope: "session",
@@ -1404,7 +1439,7 @@ describe("reduceStreamEvent", () => {
 
   test("execution-end completes in-flight recovery notices", () => {
     const state = applyEvents(createProjection(), [
-      { type: "execution-start", executionId: "run-notice" },
+      executionStart("run-notice"),
       {
         type: "llm-retry",
         scope: "session",

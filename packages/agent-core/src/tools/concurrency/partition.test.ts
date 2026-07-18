@@ -1,10 +1,14 @@
-import { describe, test, expect } from "bun:test";
+import { afterAll, describe, test, expect } from "bun:test";
 import type { ToolCallLike } from "../types";
 import { partitionToolCalls } from "./partition";
-import { createRegistry } from "../registry";
 import type { ToolDescriptor } from "../types";
 import { adaptMcpTool } from "../../mcp/tool-adapter";
 import type { McpClient } from "../../mcp/client";
+import { SecretRedactionPolicy } from "../../security";
+import { createTextToolResult } from "../results";
+import { createTestToolRegistryFixture } from "../test-registry";
+
+const TEST_REDACTION_POLICY = new SecretRedactionPolicy([]);
 
 function makeToolDescriptor(
   name: string,
@@ -21,7 +25,8 @@ function makeToolDescriptor(
       concurrencySafe,
     },
     ...(destructive ? { permissions: [async () => ({ outcome: "allow" })] } : {}),
-    execute: async () => "",
+    outputPolicy: { kind: "inline", previewDirection: "head" },
+    execute: async () => createTextToolResult(""),
   };
 }
 
@@ -39,7 +44,9 @@ describe("partitionToolCalls", () => {
   const safeTool = makeToolDescriptor("read_tool", true);
   const unsafeTool = makeToolDescriptor("write_tool", false);
 
-  const registry = createRegistry([safeTool, unsafeTool]);
+  const registryFixture = createTestToolRegistryFixture({ descriptors: [safeTool, unsafeTool] });
+  const registry = registryFixture.registry;
+  afterAll(() => registryFixture.dispose());
 
   test("all safe calls → one parallel batch", () => {
     const calls = [makeCall("read_tool", "a"), makeCall("read_tool", "b"), makeCall("read_tool", "c")];
@@ -129,30 +136,31 @@ describe("partitionToolCalls", () => {
     }
   });
 
-  test("MCP adapter traits make read-only tools parallel and destructive tools serial", () => {
+  test("MCP adapter traits make read-only tools parallel and destructive tools serial", async () => {
     const readDescriptor = adaptMcpTool(
       { name: "read", annotations: { readOnlyHint: true } },
       "docs",
       makeMcpClient(),
-      [],
+      TEST_REDACTION_POLICY,
     );
     const otherReadDescriptor = adaptMcpTool(
       { name: "lookup" },
       "docs",
       makeMcpClient(),
-      [],
+      TEST_REDACTION_POLICY,
     );
     const destructiveDescriptor = adaptMcpTool(
       { name: "delete", annotations: { destructiveHint: true } },
       "docs",
       makeMcpClient(),
-      [],
+      TEST_REDACTION_POLICY,
     );
-    const mcpRegistry = createRegistry([
+    const mcpFixture = createTestToolRegistryFixture({ descriptors: [
       readDescriptor,
       otherReadDescriptor,
       destructiveDescriptor,
-    ]);
+    ] });
+    const mcpRegistry = mcpFixture.registry;
     const calls = [
       makeCall("mcp__docs__read", "read-1"),
       makeCall("mcp__docs__lookup", "read-2"),
@@ -175,5 +183,6 @@ describe("partitionToolCalls", () => {
       { type: "serial", call: calls[2] },
       { type: "parallel", calls: [calls[3]] },
     ]);
+    await mcpFixture.dispose();
   });
 });

@@ -137,6 +137,9 @@ function processResult(input: ProcessRunnerInput, kind: "success" | "nonzero", s
       stdoutTruncated: false,
       stderrTruncated: false,
       combinedTruncated: false,
+      stdoutBytes: 0,
+      stderrBytes: new TextEncoder().encode(stderr).byteLength,
+      sinkStatus: "unused" as const,
     },
   };
   return kind === "success" ? { ...base, kind, exitCode: 0 } : { ...base, kind, exitCode: 1 };

@@ -19,7 +19,6 @@ function createTestRuntime(
     mcpManager: undefined,
     toolRegistry: undefined,
     skillService: undefined,
-    providerRegistry: undefined,
     warnings: [],
     contextResolver: undefined,
     reconcileRegisteredProject: async () => undefined,

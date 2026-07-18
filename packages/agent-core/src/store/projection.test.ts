@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { toModelMessagesFromStoredMessages } from "./projection";
 import type { CompactionPart, StoredMessage, StoredPart, SystemNoticePart } from "./types";
-import { REDACTION_MARKER } from "../tools/security";
+import type { FinalizedToolResult, ToolOutputRecovery, ToolResultDetails } from "@archcode/protocol";
+import { REDACTION_MARKER } from "../security";
 import { createEmptyCompressionState, type CompressionState } from "../compression";
 
 let idCounter = 0;
@@ -32,12 +33,35 @@ function reasoningPart(text: string, completed = true): StoredPart {
   };
 }
 
+function finalizedResult(
+  preview: string,
+  isError: boolean,
+  details?: ToolResultDetails,
+  recovery: ToolOutputRecovery = { kind: "none" },
+): FinalizedToolResult {
+  const bytes = new TextEncoder().encode(preview).byteLength;
+  return {
+    isError,
+    output: {
+      preview,
+      completeness: recovery.kind === "none" ? "complete" : "partial",
+      observed: { bytes, lines: 1 },
+      canonical: { bytes, lines: 1 },
+      stored: { bytes, lines: 1 },
+      omitted: { bytes: 0, lines: 0 },
+      recovery,
+    },
+    ...(details === undefined ? {} : { details }),
+  };
+}
+
 function completedToolPart(options: {
   toolCallId?: string;
   toolName?: string;
   input?: unknown;
-  output?: string;
-  meta?: Record<string, unknown>;
+  preview?: string;
+  details?: ToolResultDetails;
+  recovery?: ToolOutputRecovery;
 }): StoredPart {
   return {
     type: "tool",
@@ -46,11 +70,15 @@ function completedToolPart(options: {
     toolCallId: options.toolCallId ?? nextId("call"),
     toolName: options.toolName ?? "read_file",
     input: options.input ?? { path: "README.md" },
-    output: options.output ?? "file content",
+    result: finalizedResult(
+      options.preview ?? "file content",
+      false,
+      options.details,
+      options.recovery,
+    ),
     createdAt: idCounter,
     startedAt: idCounter + 1,
     endedAt: idCounter + 2,
-    ...(options.meta ? { meta: options.meta } : {}),
   };
 }
 
@@ -58,8 +86,8 @@ function errorToolPart(options: {
   toolCallId?: string;
   toolName?: string;
   input?: unknown;
-  errorMessage?: string;
-  meta?: Record<string, unknown>;
+  preview?: string;
+  details?: ToolResultDetails;
 }): StoredPart {
   return {
     type: "tool",
@@ -68,11 +96,10 @@ function errorToolPart(options: {
     toolCallId: options.toolCallId ?? nextId("call"),
     toolName: options.toolName ?? "write_file",
     input: options.input ?? { path: "missing.txt" },
-    errorMessage: options.errorMessage ?? "permission denied",
+    result: finalizedResult(options.preview ?? "permission denied", true, options.details),
     createdAt: idCounter,
     startedAt: idCounter + 1,
     endedAt: idCounter + 2,
-    ...(options.meta ? { meta: options.meta } : {}),
   };
 }
 
@@ -338,7 +365,7 @@ describe("toModelMessagesFromStoredMessages", () => {
           toolCallId: "call-1",
           toolName: "read_file",
           input: { path: "a.txt" },
-          output: "contents",
+          preview: "contents",
         }),
       ]),
     ];
@@ -371,7 +398,7 @@ describe("toModelMessagesFromStoredMessages", () => {
           toolCallId: "call-2",
           toolName: "write_file",
           input: { path: "a.txt" },
-          errorMessage: "disk full",
+          preview: "disk full",
         }),
       ]),
     ];
@@ -439,7 +466,7 @@ describe("toModelMessagesFromStoredMessages", () => {
 
   test("successful tool result uses output text object and never isError", () => {
     const [, projected] = toModelMessagesFromStoredMessages([
-      storedMessage("assistant", [completedToolPart({ toolCallId: "call-4", output: "ok" })]),
+      storedMessage("assistant", [completedToolPart({ toolCallId: "call-4", preview: "ok" })]),
     ]);
 
     expect(projected).toEqual({
@@ -458,7 +485,7 @@ describe("toModelMessagesFromStoredMessages", () => {
 
   test("error tool result uses output error-text object", () => {
     const [, projected] = toModelMessagesFromStoredMessages([
-      storedMessage("assistant", [errorToolPart({ toolCallId: "call-5", errorMessage: "boom" })]),
+      storedMessage("assistant", [errorToolPart({ toolCallId: "call-5", preview: "boom" })]),
     ]);
 
     expect(projected).toEqual({
@@ -474,13 +501,57 @@ describe("toModelMessagesFromStoredMessages", () => {
     });
   });
 
+  test("projects strict visible details and recovery within the actual 50 KiB serialized tool-result budget", () => {
+    const preview = `HEAD_SENTINEL界${'\\"'.repeat(12_000)}界TAIL_SENTINEL`;
+    const details: ToolResultDetails = {
+      error: { kind: "execution", code: "E_FAIL", name: "Failure", hint: "h".repeat(2_048) },
+      process: { exitCode: 9, signal: "SIGTERM", timedOut: true, aborted: false, durationMs: 42 },
+      unknownResult: true,
+      presentations: [{
+        kind: "ask_user",
+        answers: [{ question: "PRESENTATION_MUST_NOT_PROJECT", answers: ["hidden"] }],
+      }],
+    };
+    const recovery: ToolOutputRecovery = {
+      kind: "source",
+      toolName: "background_output",
+      nextInput: { cursor: "r".repeat(8 * 1024) },
+    };
+    const project = (mode: "model" | "full-history") => toModelMessagesFromStoredMessages([
+      storedMessage("assistant", [completedToolPart({
+        toolCallId: "call-budget",
+        toolName: "background_output",
+        preview,
+        details,
+        recovery,
+      })]),
+    ], { mode });
+
+    for (const mode of ["model", "full-history"] as const) {
+      const projected = project(mode);
+      const toolMessage = projected.find((message) => message.role === "tool");
+      if (toolMessage?.role !== "tool") throw new Error("Expected tool projection");
+      const [part] = toolMessage.content;
+      const serializedBytes = new TextEncoder().encode(JSON.stringify(part)).byteLength;
+      const value = part?.type === "tool-result" && "value" in part.output ? String(part.output.value) : "";
+      expect(serializedBytes).toBeLessThanOrEqual(50 * 1024);
+      expect(JSON.stringify(part)).toContain("HEAD_SENTINEL");
+      expect(JSON.stringify(part)).toContain("TAIL_SENTINEL");
+      expect(JSON.stringify(part)).toContain("tool-result-details");
+      expect(value).toContain('"unknownResult":true');
+      expect(JSON.stringify(part)).toContain("tool-output-recovery");
+      expect(JSON.stringify(part)).not.toContain("PRESENTATION_MUST_NOT_PROJECT");
+      expect(JSON.stringify(part)).not.toContain("�");
+    }
+  });
+
   test("projects mixed assistant parts in order with separate tool result message", () => {
     const messages = [
       storedMessage("assistant", [
         textPart("before"),
-        completedToolPart({ toolCallId: "call-6", toolName: "read", input: { file: "a" }, output: "A" }),
+        completedToolPart({ toolCallId: "call-6", toolName: "read", input: { file: "a" }, preview: "A" }),
         textPart("after"),
-        errorToolPart({ toolCallId: "call-7", toolName: "write", input: { file: "b" }, errorMessage: "B" }),
+        errorToolPart({ toolCallId: "call-7", toolName: "write", input: { file: "b" }, preview: "B" }),
       ]),
     ];
 
@@ -547,7 +618,7 @@ describe("toModelMessagesFromStoredMessages", () => {
           toolCallId: "call-8",
           toolName: "read_file",
           input: { path: "notes.md" },
-          output: "notes",
+          preview: "notes",
         }),
       ]),
     ];
@@ -659,7 +730,7 @@ describe("toModelMessagesFromStoredMessages compaction", () => {
 
     const prefixUserMsg = storedMessage("user", [textPart("old question")], true);
     const prefixAssistantMsg = storedMessage("assistant", [
-      completedToolPart({ toolCallId: "call-1", toolName: "read", input: { path: "a" }, output: "A" }),
+      completedToolPart({ toolCallId: "call-1", toolName: "read", input: { path: "a" }, preview: "A" }),
     ], true);
 
     const messages = [prefixUserMsg, prefixAssistantMsg, compactionMsg, tailMsg];
@@ -756,15 +827,17 @@ describe("toModelMessagesFromStoredMessages compaction", () => {
     expect(userContents.some((c) => c.includes("old question"))).toBe(false);
   });
 
-  test("meta propagation: CompletedToolPart with meta projects normally", () => {
+  test("strict process details remain visible beside the preview", () => {
     const messages = [
       storedMessage("assistant", [
         completedToolPart({
           toolCallId: "call-meta",
           toolName: "bash",
           input: "ls",
-          output: "file.txt",
-          meta: { exitCode: 0 },
+          preview: "file.txt",
+          details: {
+            process: { exitCode: 0, signal: null, timedOut: false, aborted: false, durationMs: 1 },
+          },
         }),
       ]),
     ];
@@ -777,13 +850,50 @@ describe("toModelMessagesFromStoredMessages compaction", () => {
     });
     expect(projected[1]).toEqual({
       role: "tool",
-      content: [{ type: "tool-result", toolCallId: "call-meta", toolName: "bash", output: { type: "text", value: "file.txt" } }],
+      content: [{
+        type: "tool-result",
+        toolCallId: "call-meta",
+        toolName: "bash",
+        output: {
+          type: "text",
+          value: 'file.txt\n[tool-result-details] {"process":{"exitCode":0,"signal":null,"timedOut":false,"aborted":false,"durationMs":1}}',
+        },
+      }],
+    });
+  });
+
+  test("projects an opaque artifact recovery reference without a filesystem path", () => {
+    const messages = [storedMessage("assistant", [completedToolPart({
+      toolCallId: "call-artifact",
+      toolName: "bash",
+      preview: "head\ntail",
+      recovery: {
+        kind: "artifact",
+        outputRef: "AbCdEfGhIjKlMnOpQrStUv",
+        expiresAt: 123,
+        canRead: true,
+        canSearch: true,
+      },
+    })])];
+
+    const projected = toModelMessagesFromStoredMessages(messages);
+    expect(projected[1]).toEqual({
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "call-artifact",
+        toolName: "bash",
+        output: {
+          type: "text",
+          value: 'head\ntail\n[tool-output-recovery] {"kind":"artifact","outputRef":"AbCdEfGhIjKlMnOpQrStUv","readTool":"output_read","searchTool":"output_search"}',
+        },
+      }],
     });
   });
 
   test("full-history mode projects compacted tool parts", () => {
     const prefixMsg = storedMessage("assistant", [
-      completedToolPart({ toolCallId: "call-old", toolName: "read", input: { path: "old" }, output: "old content" }),
+      completedToolPart({ toolCallId: "call-old", toolName: "read", input: { path: "old" }, preview: "old content" }),
     ], true);
 
     const tailMsg = storedMessage("user", [textPart("new question")]);

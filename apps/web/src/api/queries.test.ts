@@ -96,7 +96,7 @@ describe("web session query contracts", () => {
       rootSessionId: "root-session",
       agentName: "goal_lead",
       activeSkillNames: [],
-      modelInfo: null,
+      modelSelection: { revision: 0 },
       goalId: "goal-root",
       title: "Root",
       createdAt: 1_000,
@@ -109,7 +109,7 @@ describe("web session query contracts", () => {
       parentSessionId: "root-session",
       agentName: "explore",
       activeSkillNames: [],
-      modelInfo: null,
+      modelSelection: { revision: 0 },
       title: "Child",
       createdAt: 1_500,
       updatedAt: 1_700,
@@ -130,7 +130,7 @@ describe("web session query contracts", () => {
         parentSessionId: undefined,
         agentName: "goal_lead",
         activeSkillNames: [],
-        modelInfo: null,
+        modelSelection: { revision: 0 },
         goalId: "goal-root",
         title: "Root",
         createdAt: 1_000,
@@ -143,7 +143,7 @@ describe("web session query contracts", () => {
         parentSessionId: "root-session",
         agentName: "explore",
         activeSkillNames: [],
-        modelInfo: null,
+        modelSelection: { revision: 0 },
         title: "Child",
         createdAt: 1_500,
         updatedAt: 1_700,
@@ -188,7 +188,7 @@ describe("web session query contracts", () => {
     globalThis.document = { cookie: "" } as Document;
     const tree: SessionTreeResponse = {
       root: {
-        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", agentName: "engineer", activeSkillNames: [], modelInfo: null, title: "Root", createdAt: 1_000, updatedAt: 1_000 },
+        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", agentName: "engineer", activeSkillNames: [], modelSelection: { revision: 0 }, title: "Root", createdAt: 1_000, updatedAt: 1_000 },
         children: [
           {
             session: {
@@ -198,7 +198,7 @@ describe("web session query contracts", () => {
               parentSessionId: "root-session",
               agentName: "explore",
               activeSkillNames: [],
-              modelInfo: null,
+              modelSelection: { revision: 0 },
               title: "Child",
               createdAt: 2_000,
               updatedAt: 2_000,

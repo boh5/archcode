@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronRight, Layers, LoaderCircle, AlertTriangle, RotateCw, FileText, Wrench, Link2, AlertCircle } from "lucide-react";
+import { ChevronRight, Layers, LoaderCircle, TriangleAlert, RotateCw, FileText, AlertCircle } from "lucide-react";
 import type {
   CompressionBlockPart,
   CompressionBlockSnapshot,
@@ -12,13 +12,13 @@ import type {
 import { TOOL_DELEGATE } from "@archcode/protocol";
 import { MarkdownContent } from "../primitives/MarkdownContent";
 import { DelegationCard } from "./DelegationCard";
+import { ToolCard } from "./ToolCard";
 import { buildDelegationCardViewModel } from "../../lib/delegation-card-model";
 import { fetchCompressionOriginalRange } from "../../api/compression";
 import type {
   CompressionOriginalRangeEntry,
   CompressionOriginalRangeSuccess,
   OriginalRangePart,
-  PersistedOutputReference,
 } from "../../api/compression";
 import { formatRelativeTime } from "../../lib/time-format";
 
@@ -153,7 +153,7 @@ export function CompressionBlock({ part, projectSlug, sessionId, focusStoreSessi
           )}
           {expansion.status === "error" && (
             <div className="flex items-center gap-2 px-3 py-2.5 text-[12px] text-error">
-              <AlertTriangle size={12} />
+              <TriangleAlert size={12} />
               <span className="flex-1">{expansion.message}</span>
               <button
                 type="button"
@@ -303,7 +303,7 @@ function OriginalRangePartView({
           />
         );
       }
-      return <OriginalRangeToolPart part={part} />;
+      return <ToolCard part={part} projectSlug={projectSlug} sessionId={focusStoreSessionId} />;
     case "system-notice":
       return (
         <div className="flex items-start gap-1.5 text-[11px] text-text-muted">
@@ -350,48 +350,4 @@ function DelegateRangeCard({
     childSessionLinks,
     agentDescriptors,
   })} />;
-}
-
-function OriginalRangeToolPart({ part }: { part: OriginalRangePart & { type: "tool" } }) {
-  const isUnknownResult = part.state === "error" && part.meta?.unknownResult === true;
-  const persisted = "persistedOutput" in part ? (part as { persistedOutput?: PersistedOutputReference }).persistedOutput : undefined;
-  const output = part.state === "completed" ? part.output : part.state === "error" ? part.errorMessage : undefined;
-
-  return (
-    <div className="flex items-start gap-1.5">
-      <Wrench size={11} className="text-text-muted shrink-0 mt-0.5" />
-      <div className="flex flex-col gap-1 min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          <span className="font-mono text-[11px] text-text-secondary">{part.toolName}</span>
-          <span className={`px-1 py-0.5 rounded-sm text-[10px] font-medium ${
-            part.state === "completed" ? "text-success bg-success-muted"
-            : part.state === "error" ? "text-error bg-error-muted"
-            : "text-text-muted bg-bg-active"
-          }`}>
-            {part.state}
-          </span>
-        </div>
-        {isUnknownResult && (
-          <div className="flex items-center gap-1 text-[11px] text-warning">
-            <AlertTriangle size={11} />
-            <span>Tool result unknown</span>
-          </div>
-        )}
-        {persisted && (
-          <div className="flex items-start gap-1.5 px-1.5 py-1 rounded-sm bg-bg-overlay border border-border-subtle">
-            <Link2 size={10} className="text-text-muted shrink-0 mt-0.5" />
-            <div className="flex flex-col gap-0.5 min-w-0">
-              <span className="text-[10.5px] text-text-tertiary font-mono truncate">{persisted.ref}</span>
-              <span className="text-[11px] text-text-muted whitespace-pre-wrap break-words">{persisted.preview}</span>
-            </div>
-          </div>
-        )}
-        {!persisted && output && (
-          <div className="text-[11px] text-text-muted whitespace-pre-wrap break-words font-mono bg-bg-overlay rounded-sm px-1.5 py-1 max-h-32 overflow-y-auto">
-            {output}
-          </div>
-        )}
-      </div>
-    </div>
-  );
 }

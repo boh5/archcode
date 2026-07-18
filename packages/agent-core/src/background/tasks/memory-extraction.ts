@@ -14,6 +14,7 @@ import {
 } from "../../memory/constants";
 import { containsSecretPattern } from "../../security/patterns";
 import { buildMemoryManifest } from "../../memory/manifest";
+import { sliceUtf8Head, utf8ByteLength } from "../../tool-output/utf8";
 
 const READ_TOOLS = new Set([
   "file_read",
@@ -27,7 +28,6 @@ const READ_TOOLS = new Set([
   "lsp_symbols",
   "web_fetch",
   "background_output",
-  "view_tool_output",
   "memory_read",
 ]);
 
@@ -41,9 +41,10 @@ export function filterMessagesForExtraction(messages: StoredMessage[]): StoredMe
       if (part.type === "text") {
         if (message.role !== "user") continue;
         if (part.meta?.interrupted === true || part.meta?.discardedFromContext === true) continue;
+        const bounded = sliceUtf8Head(part.text, 4_000);
         parts.push({
           ...part,
-          text: part.text.slice(0, 4000),
+          text: bounded.text,
         } as TextPart);
         continue;
       }
@@ -53,9 +54,19 @@ export function filterMessagesForExtraction(messages: StoredMessage[]): StoredMe
       if (!READ_TOOLS.has(part.toolName)) continue;
 
       const toolPart = part as CompletedToolPart;
+      const bounded = sliceUtf8Head(toolPart.result.output.preview, 1_000);
       parts.push({
         ...toolPart,
-        output: toolPart.output.slice(0, 1000),
+        result: {
+          ...toolPart.result,
+          output: {
+            ...toolPart.result.output,
+            preview: bounded.text,
+            completeness: bounded.truncated
+              ? "partial"
+              : toolPart.result.output.completeness,
+          },
+        },
       });
     }
 
@@ -130,7 +141,8 @@ export function createMemoryExtractionTask(
       const modelMessages = toModelMessagesFromStoredMessages(filteredMessages, { mode: "full-history" });
       const truncated = modelMessages.slice(-maxMessages);
 
-      const MAX_CONTENT_CHARS = 4000;
+      const MAX_CONTENT_BYTES = 4_000;
+      const TRUNCATION_SUFFIX = "\n[...truncated]";
       const conversationText = truncated
         .map((msg) => {
           const role = msg.role;
@@ -154,8 +166,12 @@ export function createMemoryExtractionTask(
           } else {
             content = String(msg.content ?? "");
           }
-          if (content.length > MAX_CONTENT_CHARS) {
-            content = content.slice(0, MAX_CONTENT_CHARS) + "\n[...truncated]";
+          const bounded = sliceUtf8Head(
+            content,
+            MAX_CONTENT_BYTES - utf8ByteLength(TRUNCATION_SUFFIX),
+          );
+          if (bounded.truncated) {
+            content = bounded.text + TRUNCATION_SUFFIX;
           }
           return `${role}: ${content}`;
         })
@@ -165,9 +181,10 @@ export function createMemoryExtractionTask(
       let result: MemoryExtractionResult;
       try {
         result = await runLlmObject({
-          model: ctx.modelInfo.model,
-          modelOptions: ctx.modelOptions,
+          model: ctx.binding.modelInfo.model,
+          modelOptions: ctx.binding.options,
           retryScheduler: ctx.retryScheduler,
+          redactSensitiveText: (text) => ctx.binding.modelInfo.redactSensitiveText(text),
           schema: MemoryExtractionResultSchema,
           prompt: `Extract durable knowledge, preferences, and feedback from this conversation.
 Focus on information that would be useful in future sessions:

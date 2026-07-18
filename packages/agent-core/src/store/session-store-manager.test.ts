@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { createEmptySessionStats, type CompressionBlockSnapshot, type DelegationContract } from "@archcode/protocol";
+import { createEmptySessionStats, type CompressionBlockSnapshot, type DelegationContract, type FinalizedToolResult } from "@archcode/protocol";
 import { createEmptyCompressionState } from "../compression";
 import { SessionStoreManager } from "./session-store-manager";
 import { NotRootSessionError, SessionInitialPersistenceError, SessionTreeIntegrityError } from "./errors";
@@ -11,6 +11,15 @@ import { silentLogger } from "../logger";
 import { hashDelegationContract } from "../delegation/contract";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "session-store-manager", crypto.randomUUID());
+const TEST_REQUESTED_MODEL_SELECTION = { mode: "agent_default" as const, selection: { model: "test:model" } };
+const TEST_BINDING = {
+  selection: { model: "test:model" }, providerId: "test", modelId: "model",
+  providerDisplayName: "Test", modelDisplayName: "Model",
+  resolution: "agent_default" as const, modelRuntimeRevision: "runtime-1",
+};
+const executionStart = (executionId: string) => ({
+  type: "execution-start" as const, executionId, binding: TEST_BINDING, origin: "user_message" as const,
+});
 
 beforeEach(async () => {
   await mkdir(TMP_DIR, { recursive: true });
@@ -42,6 +51,22 @@ describe("SessionStoreManager", () => {
     };
   }
 
+  function finalizedResult(preview: string, isError = false): FinalizedToolResult {
+    const bytes = new TextEncoder().encode(preview).byteLength;
+    return {
+      isError,
+      output: {
+        preview,
+        completeness: "complete",
+        observed: { bytes, lines: 1 },
+        canonical: { bytes, lines: 1 },
+        stored: { bytes, lines: 1 },
+        omitted: { bytes: 0, lines: 0 },
+        recovery: { kind: "none" },
+      },
+    };
+  }
+
   type PersistedSessionState = Parameters<typeof sessionFileInternals.saveSessionTranscript>[0];
 
   function persistedSession(
@@ -68,7 +93,7 @@ describe("SessionStoreManager", () => {
       cwd: TMP_DIR,
       agentName: "engineer",
       activeSkillNames: [],
-      modelInfo: null,
+      modelSelection: { revision: 0 },
       title: null,
       messages: [],
       pendingMessages: [],
@@ -190,7 +215,7 @@ describe("SessionStoreManager", () => {
       const second = manager.commitDurableSessionMutation(id, TMP_DIR, () => ({
         result: undefined,
         events: [
-          { type: "execution-start", executionId: "execution-2" },
+          executionStart("execution-2"),
           { type: "system-notice", message: "second" },
         ],
       }));
@@ -417,7 +442,7 @@ describe("SessionStoreManager", () => {
     const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
     await manager.flushSession(id, TMP_DIR);
 
-    store.getState().append({ type: "execution-start", executionId: "execution-1" });
+    store.getState().append(executionStart("execution-1"));
     await manager.flushSession(id, TMP_DIR);
 
     const persisted = await readSessionJson(canonicalSessionPath(id));
@@ -680,12 +705,12 @@ describe("SessionStoreManager", () => {
     expect(loaded.getState().childSessionLinks).toEqual([link]);
   });
 
-  test("persists tool attempts and reconciles missing effectful results as unknown", async () => {
+  test("persists attempted tools without fabricating a result during load reconciliation", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
     const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
 
-    store.getState().append({ type: "execution-start", executionId: "run-1" });
+    store.getState().append(executionStart("run-1"));
     store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { path: "a.ts" } });
     store.getState().append({
       type: "tool-attempt",
@@ -705,19 +730,19 @@ describe("SessionStoreManager", () => {
     const tool = loaded.getState().messages[0]?.parts[0];
     expect(tool).toMatchObject({
       type: "tool",
-      state: "error",
+      state: "running",
       toolCallId: "call-1",
-      errorMessage: "Tool execution result unknown: execution was interrupted",
-      meta: { unknownResult: true },
+      attemptId: "attempt-1",
     });
+    expect(tool).not.toHaveProperty("result");
   });
 
-  test("persists and reloads a cancelled partial tool input", async () => {
+  test("persists and reloads partial tool input for Registry recovery", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
     const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
 
-    store.getState().append({ type: "execution-start", executionId: "run-partial-input" });
+    store.getState().append(executionStart("run-partial-input"));
     store.getState().append({
       type: "tool-input-start",
       toolCallId: "call-partial",
@@ -728,23 +753,19 @@ describe("SessionStoreManager", () => {
     const filePath = canonicalSessionPath(id);
     const raw = await waitForSessionJson(
       filePath,
-      (json) => JSON.stringify(json).includes("Execution ended before tool result"),
+      (json) => JSON.stringify(json).includes("call-partial"),
     );
     const rawMessages = raw.messages as Array<{ parts: Array<Record<string, unknown>> }>;
     expect(rawMessages[0]?.parts[0]).toMatchObject({
       type: "tool",
-      state: "error",
-      input: null,
-      errorMessage: "Execution ended before tool result",
+      state: "pending",
     });
 
     const restarted = new SessionStoreManager({ logger: silentLogger });
     const loaded = await restarted.getOrLoad(id, TMP_DIR);
     expect(loaded.getState().messages[0]?.parts[0]).toMatchObject({
       type: "tool",
-      state: "error",
-      input: null,
-      errorMessage: "Execution ended before tool result",
+      state: "pending",
     });
   });
 
@@ -753,7 +774,7 @@ describe("SessionStoreManager", () => {
     const id = sessionId();
     const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
 
-    store.getState().append({ type: "execution-start", executionId: "run-undefined-input" });
+    store.getState().append(executionStart("run-undefined-input"));
     store.getState().append({
       type: "tool-call",
       toolCallId: "call-undefined",
@@ -776,7 +797,7 @@ describe("SessionStoreManager", () => {
     const loaded = await restarted.getOrLoad(id, TMP_DIR);
     expect(loaded.getState().messages[0]?.parts[0]).toMatchObject({
       type: "tool",
-      state: "error",
+      state: "running",
       input: null,
     });
   });
@@ -802,7 +823,7 @@ describe("SessionStoreManager", () => {
             executionId: "run-1",
           },
         ],
-        executions: [{ id: "run-1", startedAt: 1000, status: "running" }],
+        executions: [{ id: "run-1", startedAt: 1000, status: "running", binding: TEST_BINDING, origin: "user_message" }],
       }),
       TMP_DIR,
     );
@@ -824,7 +845,7 @@ describe("SessionStoreManager", () => {
     const id = sessionId();
     await sessionFileInternals.saveSessionTranscript(
       persistedSession(id, {
-        executions: [{ id: "run-1", startedAt: 1000, status: "waiting_for_human", endedAt: 2000, durationMs: 1000 }],
+        executions: [{ id: "run-1", startedAt: 1000, status: "waiting_for_human", endedAt: 2000, durationMs: 1000, binding: TEST_BINDING, origin: "user_message" }],
       }),
       TMP_DIR,
     );
@@ -847,6 +868,7 @@ describe("SessionStoreManager", () => {
         clientRequestId: "interrupted-command",
         requestFingerprint: "user-command",
         status: "executing",
+        requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
       }],
     }), TMP_DIR);
 
@@ -866,7 +888,7 @@ describe("SessionStoreManager", () => {
     const id = sessionId();
     const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
 
-    store.getState().append({ type: "execution-start", executionId: "run-1" });
+    store.getState().append(executionStart("run-1"));
     store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { path: "a.ts" } });
     store.getState().append({
       type: "tool-attempt",
@@ -876,7 +898,7 @@ describe("SessionStoreManager", () => {
       timestamp: 123,
       destructive: true,
     });
-    store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "file_write", output: "written", isError: false });
+    store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "file_write", result: finalizedResult("written") });
 
     const filePath = canonicalSessionPath(id);
     await waitForSessionJson(filePath, (json) => JSON.stringify(json).includes("written"));
@@ -888,7 +910,7 @@ describe("SessionStoreManager", () => {
       type: "tool",
       state: "completed",
       toolCallId: "call-1",
-      output: "written",
+      result: { output: { preview: "written" } },
       attemptId: "attempt-1",
     });
     expect(JSON.stringify(tool)).not.toContain("unknownResult");
@@ -900,7 +922,7 @@ describe("SessionStoreManager", () => {
     const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
     const errorMsg = "Execution terminated due to terminal failure";
 
-    store.getState().append({ type: "execution-start", executionId: "run-1" });
+    store.getState().append(executionStart("run-1"));
     store.getState().append({ type: "step-start", step: 0 });
     store.getState().append({ type: "execution-error", step: 0, error: errorMsg });
 
@@ -915,7 +937,7 @@ describe("SessionStoreManager", () => {
     const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
     const errorMsg = "model crashed in step 0";
 
-    store.getState().append({ type: "execution-start", executionId: "run-1" });
+    store.getState().append(executionStart("run-1"));
     store.getState().append({ type: "step-start", step: 0 });
     store.getState().append({ type: "execution-error", step: 0, error: errorMsg });
 

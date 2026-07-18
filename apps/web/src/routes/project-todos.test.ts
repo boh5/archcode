@@ -59,7 +59,7 @@ function session(sessionId: string): SessionSummary {
     rootSessionId: sessionId,
     agentName: "engineer",
     activeSkillNames: [],
-    modelInfo: null,
+    modelSelection: { revision: 0 },
     title: "Session",
     createdAt: 1,
     updatedAt: 1,

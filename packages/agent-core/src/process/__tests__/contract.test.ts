@@ -23,7 +23,8 @@ describe("process runner contract", () => {
     expect(PROCESS_RUNNER_CONTRACT.name).toBe("ProcessRunner");
     expect(PROCESS_RUNNER_CONTRACT.input.argv).toContain("argv[0]");
     expect(PROCESS_RUNNER_CONTRACT.input.timeoutMs).toContain("milliseconds");
-    expect(PROCESS_RUNNER_CONTRACT.output.combinedTruncated).toContain("maxOutputBytes");
+    expect(PROCESS_RUNNER_CONTRACT.input.maxOutputBytes).toContain("per stdout/stderr stream");
+    expect(PROCESS_RUNNER_CONTRACT.input.outputSink).toContain("cannot prevent");
 
     const clone = createProcessRunnerContract();
     expect(clone).toBe(PROCESS_RUNNER_CONTRACT);

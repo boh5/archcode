@@ -181,6 +181,7 @@ export function parseSSEEvent(_event: string, data: string): GlobalSSEEvent | nu
       case "lagged":
       case "shutdown":
       case "mcp_status":
+      case "model_runtime.changed":
       case "hitl.snapshot":
       case "session.runtime.snapshot":
       case "session.runtime_changed":
@@ -260,6 +261,8 @@ export function handleSSEEvent(
       }
 
       if (
+        envelope.payload.type === "session.model_selection_changed"
+        ||
         envelope.payload.type === "session.message_accepted"
         || envelope.payload.type === "session.message_edited"
         || envelope.payload.type === "session.message_deleted"
@@ -302,6 +305,11 @@ export function handleSSEEvent(
     case "mcp_status": {
       const mcpEvent = parsed as GlobalSSEMcpStatusEvent;
       useMcpStatusStore.getState().updateServer(mcpEvent.serverName, mcpEvent.status);
+      break;
+    }
+    case "model_runtime.changed": {
+      deps.invalidateQueries({ queryKey: queryKeys.modelRuntime });
+      deps.refreshSessionSnapshots();
       break;
     }
     case "hitl.snapshot": {
@@ -455,6 +463,7 @@ export function GlobalSSEProvider({ children }: { children: ReactNode }) {
         reconnectStateRef.current.requested = false;
         watchdogRef.current?.connectionOpened();
         refreshSessionSnapshots();
+        void queryClient.invalidateQueries({ queryKey: queryKeys.modelRuntime });
         void refreshProjectTodoQueriesAfterSSEOpen(queryClient);
         setConnectionState("open");
       },

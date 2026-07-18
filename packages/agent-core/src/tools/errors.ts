@@ -1,8 +1,12 @@
 import type { ZodError } from "zod";
-import type { ToolExecutionResult } from "./types";
-import { redactString, redactValue } from "./security/redaction";
+import type { RawToolResult } from "./types";
+import { redactString } from "../security";
+import { createTextToolResult } from "./results";
+import { decodeUtf8, safeUtf8End, utf8ByteLength } from "../tool-output/utf8";
 
-export const TOOL_ERROR_META_KEY = "toolError";
+export const TOOL_ERROR_MESSAGE_MAX_BYTES = 32 * 1024;
+export const TOOL_ERROR_HINT_MAX_BYTES = 2 * 1024;
+export const TOOL_ERROR_IDENTIFIER_MAX_BYTES = 128;
 
 export type ToolErrorKind =
   | "unknown-tool"
@@ -52,11 +56,10 @@ export type ToolErrorKind =
   | "webfetch-content-type-unsupported";
 
 export interface FormattedToolError {
-  name?: string;
-  kind?: ToolErrorKind;
-  code?: string;
+  name: string;
+  kind: ToolErrorKind;
+  code: string;
   message: string;
-  details?: unknown;
   hint: string;
 }
 
@@ -66,11 +69,9 @@ export interface FormatToolErrorOptions {
   code?: string;
   name?: string;
   message?: string;
-  details?: unknown;
   hint?: string;
   zodError?: ZodError;
   expectedInput?: string;
-  meta?: Record<string, unknown>;
 }
 
 const CODE_PATTERN = /\[(TOOL_[A-Z0-9_]+|PATH_[A-Z0-9_]+)\]/g;
@@ -119,43 +120,47 @@ const HINTS: Record<ToolErrorKind, string> = {
   "webfetch-invalid-url": "The URL is invalid; ensure it starts with http:// or https:// and contains no credentials.",
   "webfetch-timeout": "The request timed out; try again with a longer timeout or a different URL.",
   "webfetch-http-error": "The server returned an error status; check the URL and try again.",
-  "webfetch-size-exceeded": "The response body exceeds the maximum allowed size; try a different URL or reduce maxLength.",
+  "webfetch-size-exceeded": "The response body exceeds the 5 MiB transport safety limit; try a different URL or a narrower resource.",
   "webfetch-content-type-unsupported": "The content type is not supported; only HTML, JSON, and plain text can be fetched.",
 };
 
 export function formatToolError(options: FormatToolErrorOptions): FormattedToolError {
-  const message = redactString(resolveMessage(options));
-  const rawCode = options.code ?? extractCode(message) ?? codeFromKind(options.kind) ?? "TOOL_EXECUTION_FAILED";
-  const kind = options.kind ?? kindFromCode(rawCode) ?? kindFromMessage(message);
-  const code = redactString(rawCode);
-  const rawName = options.name ?? (options.error !== undefined ? safeErrorName(options.error) : undefined);
-  const name = rawName ? redactString(rawName) : undefined;
-  const hint = redactString(options.hint ?? resolveHint(options, message, code));
-  const details = resolveDetails(options);
+  const redactedMessage = redactString(resolveMessage(options));
+  const message = boundUtf8(redactedMessage, TOOL_ERROR_MESSAGE_MAX_BYTES);
+  const rawCode = options.code ?? extractCode(redactedMessage) ?? codeFromKind(options.kind) ?? "TOOL_EXECUTION_FAILED";
+  const kind = options.kind ?? kindFromCode(rawCode) ?? kindFromMessage(message) ?? "execution";
+  const code = boundUtf8(redactString(rawCode), TOOL_ERROR_IDENTIFIER_MAX_BYTES);
+  const rawName = options.name ?? (options.error !== undefined ? safeErrorName(options.error) : undefined) ?? "ToolError";
+  const name = boundUtf8(redactString(rawName), TOOL_ERROR_IDENTIFIER_MAX_BYTES);
+  const hint = boundUtf8(
+    redactString(options.hint ?? resolveHint(options, message, code)),
+    TOOL_ERROR_HINT_MAX_BYTES,
+  );
 
   return {
-    ...(name ? { name } : {}),
-    ...(kind ? { kind } : {}),
-    ...(code ? { code } : {}),
+    name,
+    kind,
+    code,
     message,
-    ...(details !== undefined ? { details: redactValue(details) } : {}),
     hint,
   };
 }
 
 export function createToolErrorResult(
   options: FormatToolErrorOptions,
-): ToolExecutionResult {
+): RawToolResult {
   const formatted = formatToolError(options);
-
-  return {
-    output: serializeToolError(formatted),
+  return createTextToolResult(serializeToolError(formatted), {
     isError: true,
-    meta: redactValue({
-      ...options.meta,
-      [TOOL_ERROR_META_KEY]: formatted,
-    }),
-  };
+    details: {
+      error: {
+        kind: formatted.kind,
+        code: formatted.code,
+        name: formatted.name,
+        hint: formatted.hint,
+      },
+    },
+  });
 }
 
 export function serializeToolError(error: FormattedToolError): string {
@@ -163,26 +168,24 @@ export function serializeToolError(error: FormattedToolError): string {
 }
 
 export function normalizeToolErrorResult(
-  result: ToolExecutionResult,
+  result: RawToolResult,
   defaults: FormatToolErrorOptions = {},
-): ToolExecutionResult {
+): RawToolResult {
   if (!result.isError || isStructuredToolError(result)) {
     return result;
   }
 
   return createToolErrorResult({
     ...defaults,
-    message: result.output,
-    details: result.meta,
-    meta: result.meta,
+    message: draftText(result),
   });
 }
 
-export function isStructuredToolError(result: ToolExecutionResult): boolean {
-  if (result.meta?.[TOOL_ERROR_META_KEY]) return true;
+export function isStructuredToolError(result: RawToolResult): boolean {
+  if (result.details?.error) return true;
 
   try {
-    const parsed = JSON.parse(result.output) as Partial<FormattedToolError>;
+    const parsed = JSON.parse(draftText(result)) as Partial<FormattedToolError>;
     return typeof parsed === "object" && parsed !== null && typeof parsed.message === "string" && typeof parsed.hint === "string";
   } catch {
     return false;
@@ -190,29 +193,15 @@ export function isStructuredToolError(result: ToolExecutionResult): boolean {
 }
 
 export function inferToolErrorKindFromResult(
-  result: ToolExecutionResult,
+  result: RawToolResult,
 ): ToolErrorKind | undefined {
-  const output = result.output;
-  const permissionCode = result.meta?.permissionErrorCode;
-  if (typeof permissionCode === "string") {
-    return kindFromCode(permissionCode) ?? "permission-denied";
-  }
-
-  if (result.meta?.timedOut === true) return "bash-timeout";
-  if (result.meta?.aborted === true) return "bash-aborted";
-
-  const toolError = result.meta?.[TOOL_ERROR_META_KEY];
-  if (toolError && typeof toolError === "object") {
-    if ("kind" in toolError && typeof toolError.kind === "string") {
-      return toolError.kind as ToolErrorKind;
-    }
-    if ("code" in toolError && typeof toolError.code === "string") {
-      const kind = kindFromCode(toolError.code);
-      if (kind) return kind;
-    }
-  }
-
-  if (typeof result.meta?.exitCode === "number" && result.meta.exitCode !== 0) return "bash-nonzero";
+  const output = draftText(result);
+  const toolError = result.details?.error;
+  if (toolError?.kind) return toolError.kind as ToolErrorKind;
+  if (toolError?.code) return kindFromCode(toolError.code);
+  if (result.details?.process?.timedOut) return "bash-timeout";
+  if (result.details?.process?.aborted) return "bash-aborted";
+  if (typeof result.details?.process?.exitCode === "number" && result.details.process.exitCode !== 0) return "bash-nonzero";
 
   const code = extractCode(output);
   const byCode = code ? kindFromCode(code) : undefined;
@@ -237,29 +226,19 @@ function resolveMessage(options: FormatToolErrorOptions): string {
   return "Tool execution failed";
 }
 
-function resolveDetails(options: FormatToolErrorOptions): unknown {
-  if (options.details !== undefined) return options.details;
-  if (options.zodError) {
-    return {
-      issues: options.zodError.issues.map((issue) => ({
-        path: issue.path.join("."),
-        code: issue.code,
-        message: issue.message,
-      })),
-      ...(options.expectedInput ? { expectedInput: options.expectedInput } : {}),
-    };
-  }
-
-  if (options.error instanceof Error && options.error.cause !== undefined) {
-    return { cause: String(options.error.cause) };
-  }
-
-  return undefined;
-}
-
 function safeErrorName(error: unknown): string | undefined {
   if (!(error instanceof Error)) return "NonErrorThrow";
   return error.name && error.name !== "Error" ? error.name : undefined;
+}
+
+function boundUtf8(value: string, maxBytes: number): string {
+  if (utf8ByteLength(value) <= maxBytes) return value;
+  const bytes = new TextEncoder().encode(value);
+  return decodeUtf8(bytes.subarray(0, safeUtf8End(bytes, maxBytes)));
+}
+
+function draftText(result: RawToolResult): string {
+  return result.draft.kind === "text" ? result.draft.text : "Tool execution failed";
 }
 
 function resolveHint(

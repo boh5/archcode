@@ -1,14 +1,17 @@
 import { afterAll, afterEach, beforeAll, describe, expect, mock, test } from "bun:test";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { z } from "zod";
 import { ModelInfo } from "../provider/model";
-import type { ProviderRegistry } from "../provider/index";
+import type { ExecutionModelBinding } from "../models";
 import { SkillNotFoundError, SkillService } from "../skills";
 import { storeManager } from "../store/store";
 import { __setSessionsDirForTest } from "../store/sessions-dir";
-import { createRegistry } from "../tools/registry";
+import type { ToolRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
+import { createTextToolResult } from "../tools/results";
+import { createTestToolRegistryFixture, type TestToolRegistryFixture } from "../tools/test-registry";
 import { worktreeEnterTool, worktreeExitTool } from "../tools/builtins/worktree";
 import { DELEGATION_CORE_TOOLS, MAX_SUB_AGENT_DEPTH } from "./constants";
 import {
@@ -27,8 +30,16 @@ import { testReviewExecutionFields } from "../goals/test-review-fixture";
 import { createTestProjectContextResolver } from "./test-project-context-resolver";
 import type { AgentRunOptions } from "./types";
 
-const tmpRoot = join(import.meta.dir, "__test_tmp__", "configured-agent", crypto.randomUUID());
-const worktreeRoot = join(import.meta.dir, "__test_tmp__", "configured-agent-worktree", crypto.randomUUID());
+const tmpRoot = join(tmpdir(), "archcode-configured-agent", crypto.randomUUID());
+const worktreeRoot = join(tmpdir(), "archcode-configured-agent-worktree", crypto.randomUUID());
+const registryFixtures: TestToolRegistryFixture[] = [];
+const outputAccessFixture = createTestToolRegistryFixture();
+
+function createTestRegistry(descriptors: AnyToolDescriptor[]): ToolRegistry {
+  const fixture = createTestToolRegistryFixture({ descriptors });
+  registryFixtures.push(fixture);
+  return fixture.registry;
+}
 
 function createTestSkillService(): SkillService {
   return new SkillService({ builtinSkills: {} });
@@ -79,52 +90,43 @@ function makeTool(name: string): AnyToolDescriptor {
     description: `${name} tool`,
     inputSchema: z.object({}).strict(),
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
-    execute: () => `${name} result`,
+    outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
+    execute: () => createTextToolResult(`${name} result`),
   };
 }
 
-function makeProviderRegistry(): ProviderRegistry {
-  const fallbackModel = new ModelInfo({
+function makeModelInfo(modelId = "configured"): ModelInfo {
+  return new ModelInfo({
     model: {} as ConstructorParameters<typeof ModelInfo>[0]["model"],
     config: {
-      name: "Fallback Model",
-      limit: { context: 128_000, output: 8_192 },
-      modalities: { input: ["text"], output: ["text"] },
-          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
-    },
-    providerId: "test",
-    modelId: "fallback",
-  });
-
-  const configuredModel = new ModelInfo({
-    model: {} as ConstructorParameters<typeof ModelInfo>[0]["model"],
-    config: {
-      name: "Configured Model",
+      name: `${modelId} Model`,
       limit: { context: 64_000, output: 4_096 },
       modalities: { input: ["text"], output: ["text"] },
-          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
+      capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
     },
     providerId: "test",
-    modelId: "configured",
+    providerDisplayName: "Test Provider",
+    modelId,
   });
-
-  return {
-    sdkRegistry: {} as ProviderRegistry["sdkRegistry"],
-    models: new Map([
-      [fallbackModel.qualifiedId, fallbackModel],
-      [configuredModel.qualifiedId, configuredModel],
-    ]),
-    modelIds: [fallbackModel.qualifiedId, configuredModel.qualifiedId],
-    getModel: (qualifiedId: string) => {
-      if (qualifiedId === fallbackModel.qualifiedId) return fallbackModel;
-      if (qualifiedId === configuredModel.qualifiedId) return configuredModel;
-      throw new Error(`unexpected model lookup: ${qualifiedId}`);
-    },
-  } as ProviderRegistry;
 }
 
-function makeModelInfo(): ModelInfo {
-  return makeProviderRegistry().getModel("test:configured");
+function makeBinding(
+  modelInfo = makeModelInfo(),
+  options: ExecutionModelBinding["options"] = { temperature: 0.3 },
+): ExecutionModelBinding {
+  return {
+    modelInfo,
+    options,
+    summary: {
+      selection: { model: modelInfo.qualifiedId },
+      providerId: modelInfo.providerId,
+      modelId: modelInfo.modelId,
+      providerDisplayName: modelInfo.providerDisplayName,
+      modelDisplayName: modelInfo.displayName,
+      resolution: "agent_default",
+      modelRuntimeRevision: "test-revision",
+    },
+  };
 }
 
 const READ_ONLY_FIXTURE_TOOLS = [
@@ -133,7 +135,7 @@ const READ_ONLY_FIXTURE_TOOLS = [
 ] as const;
 
 function makeToolRegistry() {
-  return createRegistry([
+  return createTestRegistry([
     makeTool("unknown_tool"),
     ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
     ...DELEGATION_CORE_TOOLS.map(makeTool),
@@ -202,19 +204,15 @@ function createAgent(options: {
   definition: AgentDefinition;
   store?: ReturnType<typeof storeManager.create>;
   btm?: RecordingBackgroundTaskManager;
-  quotaEnforcer?: (directory: string) => Promise<void>;
   projectRoot?: string;
   cwd?: string;
   depth?: number;
   toolRegistry?: ReturnType<typeof makeToolRegistry>;
-  providerRegistry?: ProviderRegistry;
-  modelInfo?: ModelInfo;
   memoryConfig?: MemoryExtractionConfig;
   skillService?: SkillService;
   versionControl?: VersionControl;
 }) {
   const toolRegistry = options.toolRegistry ?? makeToolRegistry();
-  const providerRegistry = options.providerRegistry ?? makeProviderRegistry();
   const projectRoot = options.projectRoot ?? tmpRoot;
   const cwd = options.cwd ?? projectRoot;
   const store = options.store ?? storeManager.create(crypto.randomUUID(), projectRoot, { cwd, agentName: options.definition.name });
@@ -225,9 +223,6 @@ function createAgent(options: {
   }
   return new ConfiguredAgent({
     definition: options.definition,
-    providerRegistry,
-    modelInfo: options.modelInfo ?? providerRegistry.getModel("test:configured"),
-    modelOptions: { temperature: 0.3 },
     toolRegistry,
     skillService: options.skillService ?? createTestSkillService(),
     store,
@@ -239,7 +234,7 @@ function createAgent(options: {
     depth: options.depth,
     backgroundTaskManager: options.btm as never,
     memoryConfig: options.memoryConfig,
-    quotaEnforcer: options.quotaEnforcer,
+    toolOutputAccess: outputAccessFixture.createToolOutputAccess(projectRoot, store.getState().rootSessionId),
     logger: silentLogger,
     resolveAllowedTools: (definition, depth) => {
       const requested = [...definition.tools.tools, ...definition.roleContract.requiredCapabilities];
@@ -272,7 +267,7 @@ async function runAgent(
       clientRequestId: `request-${id}`,
     }],
   });
-  return agent.run(options);
+  return agent.run(makeBinding(), options);
 }
 
 describe("ConfiguredAgent", () => {
@@ -294,6 +289,7 @@ describe("ConfiguredAgent", () => {
     __setSessionsDirForTest(undefined);
     await rm(tmpRoot, { recursive: true, force: true });
     await rm(worktreeRoot, { recursive: true, force: true });
+    await Promise.all([...registryFixtures, outputAccessFixture].map((fixture) => fixture.dispose()));
   });
 
   test("classifies slash commands without treating command arguments as model input", () => {
@@ -322,7 +318,7 @@ describe("ConfiguredAgent", () => {
     const command = agent.classifyCommand("/skill use git-master commit changes");
 
     expect(command).not.toBeNull();
-    const result = await agent.executeCommand(command!);
+    const result = await agent.executeCommand(command!, makeBinding());
 
     expect(result.kind).toBe("message");
     if (result.kind === "message") {
@@ -348,7 +344,7 @@ describe("ConfiguredAgent", () => {
     const command = agent.classifyCommand("/skill use git-master commit changes");
 
     expect(command).not.toBeNull();
-    await expect(agent.executeCommand(command!, { abort: abortController.signal }))
+    await expect(agent.executeCommand(command!, makeBinding(), { abort: abortController.signal }))
       .rejects.toThrow("Session family cancelled");
     expect(agent.store.getState().messages).toEqual([]);
   });
@@ -358,7 +354,7 @@ describe("ConfiguredAgent", () => {
     const command = agent.classifyCommand("/unknown");
 
     expect(command).not.toBeNull();
-    await expect(agent.executeCommand(command!)).resolves.toEqual({ kind: "handled" });
+    await expect(agent.executeCommand(command!, makeBinding())).resolves.toEqual({ kind: "handled" });
     expect(agent.store.getState().toModelMessages()).toEqual([]);
     expect(agent.store.getState().messages[0]!.parts[0]).toMatchObject({
       type: "system-notice",
@@ -400,7 +396,7 @@ describe("ConfiguredAgent", () => {
     expect(JSON.stringify(callArgs.messages)).toContain("remember this");
     expect(agent.store.getState().reminders.some((reminder) => reminder.source.type === "todo_loop_continuation")).toBe(true);
     expect(btm.dispatched).toContain("title-generation");
-    expect(btm.drainCalls).toBe(1);
+    expect(btm.drainCalls).toBe(0);
   });
 
   test("Goal Lead leaves next-Run continuation exclusively to the Goal driver", async () => {
@@ -423,31 +419,38 @@ describe("ConfiguredAgent", () => {
     expect(btm.cancelAllCalls).toBe(0);
   });
 
-  test("constructs without relying on provider registry model order when modelInfo is supplied", async () => {
-    setupMockStreamText("explicit model ok");
-    const providerRegistry = {
-      sdkRegistry: {} as ProviderRegistry["sdkRegistry"],
-      models: new Map(),
-      modelIds: [],
-      getModel: () => {
-        throw new Error("unexpected fallback lookup");
-      },
-    } as ProviderRegistry;
-
-    const agent = createAgent({
-      definition: exploreAgentDefinition,
-      providerRegistry,
-      modelInfo: makeModelInfo(),
+  test("uses the model binding supplied to this run instead of constructor state", async () => {
+    const streamText = setupMockStreamText("explicit model ok");
+    const agent = createAgent({ definition: exploreAgentDefinition });
+    const modelInfo = makeModelInfo("per-execution");
+    const id = crypto.randomUUID();
+    agent.store.getState().append({
+      type: "session.messages_committed",
+      executionId: id,
+      messages: [{
+        id,
+        role: "user",
+        parts: [{ type: "text", id: `${id}:text`, text: "explicit model", createdAt: 1, completedAt: 1 }],
+        createdAt: 1,
+        completedAt: 1,
+        executionId: id,
+      }],
     });
 
-    await expect(runAgent(agent, "explicit model"))
+    await expect(agent.run(makeBinding(modelInfo, { temperature: 0.6 })))
       .resolves.toEqual({ text: "explicit model ok", steps: 0, status: "completed" });
+    expect(streamText).toHaveBeenCalledWith(expect.objectContaining({
+      model: modelInfo.model,
+      temperature: 0.6,
+    }));
+    expect((streamText.mock.calls[0]![0] as { system: string }).system)
+      .toContain("multiToolCallEmission=parallel");
   });
 
   test("passes definition skills and SkillService into tool execution context", async () => {
     const skillService = createTestSkillService();
     let capturedContext: { agentSkills: readonly string[]; skillService: SkillService } | undefined;
-    const toolRegistry = createRegistry([
+    const toolRegistry = createTestRegistry([
       makeTool("file_read"),
       makeTool("submit_child_result"),
       {
@@ -455,10 +458,11 @@ describe("ConfiguredAgent", () => {
         description: "Capture context",
         inputSchema: z.object({ agentSkills: z.array(z.string()).optional() }).strict(),
         traits: { readOnly: true, destructive: false, concurrencySafe: false },
+        outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
         execute: (_input, ctx) => {
           if (!ctx.agentSkills || !ctx.skillService) throw new Error("missing skill context");
           capturedContext = { agentSkills: ctx.agentSkills, skillService: ctx.skillService };
-          return "captured";
+          return createTextToolResult("captured");
         },
       } satisfies AnyToolDescriptor,
     ]);
@@ -477,7 +481,7 @@ describe("ConfiguredAgent", () => {
 
   test("uses Session cwd for prompt and tools while resolving project state from the canonical root", async () => {
     let capturedContext: { cwd: string; projectRoot: string } | undefined;
-    const toolRegistry = createRegistry([
+    const toolRegistry = createTestRegistry([
       makeTool("file_read"),
       makeTool("submit_child_result"),
       {
@@ -485,12 +489,13 @@ describe("ConfiguredAgent", () => {
         description: "Capture workspace roots",
         inputSchema: z.object({}).strict(),
         traits: { readOnly: true, destructive: false, concurrencySafe: false },
+        outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
         execute: (_input, ctx) => {
           capturedContext = {
             cwd: ctx.cwd,
             projectRoot: ctx.projectContext.project.workspaceRoot,
           };
-          return "captured";
+          return createTextToolResult("captured");
         },
       } satisfies AnyToolDescriptor,
     ]);
@@ -734,7 +739,7 @@ describe("ConfiguredAgent", () => {
 
   test("non-loop runs keep definition tools unchanged and do not expose profile-only GitHub tools", async () => {
     const streamFn = setupMockStreamText("default tools ok");
-    const toolRegistry = createRegistry(engineerAgentDefinition.tools.tools.map(makeTool));
+    const toolRegistry = createTestRegistry(engineerAgentDefinition.tools.tools.map(makeTool));
     const agent = createAgent({ definition: engineerAgentDefinition, toolRegistry });
 
     await runAgent(agent, "default run");
@@ -748,7 +753,7 @@ describe("ConfiguredAgent", () => {
   });
 
   test("exposes exactly one cwd transition to eligible interactive root Sessions", async () => {
-    const toolRegistry = createRegistry([
+    const toolRegistry = createTestRegistry([
       ...engineerAgentDefinition.tools.tools.map(makeTool),
       worktreeEnterTool,
       worktreeExitTool,
@@ -779,7 +784,7 @@ describe("ConfiguredAgent", () => {
 
   test("does not expose cwd transitions to Goal-owned root Sessions", async () => {
     const streamFn = setupMockStreamText("goal tools");
-    const toolRegistry = createRegistry([
+    const toolRegistry = createTestRegistry([
       ...goalLeadAgentDefinition.tools.tools.map(makeTool),
       worktreeEnterTool,
       worktreeExitTool,
@@ -857,7 +862,7 @@ describe("ConfiguredAgent", () => {
 
   test("extraTools cannot grant cwd transitions to an ineligible Session", async () => {
     const streamFn = setupMockStreamText("should not run");
-    const toolRegistry = createRegistry([
+    const toolRegistry = createTestRegistry([
       ...engineerAgentDefinition.tools.tools.map(makeTool),
       worktreeEnterTool,
       worktreeExitTool,
@@ -881,7 +886,7 @@ describe("ConfiguredAgent", () => {
 
   test("extraTools add registered tools without narrowing baseline prompt tools", async () => {
     const streamFn = setupMockStreamText("extra tools ok");
-    const toolRegistry = createRegistry([
+    const toolRegistry = createTestRegistry([
       ...engineerAgentDefinition.tools.tools.map(makeTool),
       makeTool("github_get_pull_request"),
       makeTool("github_create_issue_comment"),
@@ -905,7 +910,7 @@ describe("ConfiguredAgent", () => {
   test("extraTools effective tools are enforced in tool execution context", async () => {
     setupToolCallStreamText("github_create_issue_comment");
     let capturedAllowedTools: string[] = [];
-    const toolRegistry = createRegistry([
+    const toolRegistry = createTestRegistry([
       ...engineerAgentDefinition.tools.tools.map(makeTool),
     ]);
     toolRegistry.register({
@@ -913,9 +918,10 @@ describe("ConfiguredAgent", () => {
       description: "Create a GitHub issue comment placeholder",
       inputSchema: z.object({}).strict(),
       traits: { readOnly: false, destructive: false, concurrencySafe: false },
+      outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
       execute: (_input, ctx) => {
         capturedAllowedTools = [...ctx.allowedTools];
-        return "commented";
+        return createTextToolResult("commented");
       },
     });
     const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "engineer" });
@@ -926,7 +932,6 @@ describe("ConfiguredAgent", () => {
 
     await runAgent(agent, "comment on PR", {
       maxSteps: 1,
-      confirmPermission: async () => "approve",
       extraTools: ["github_create_issue_comment"],
     });
 
@@ -994,7 +999,7 @@ describe("ConfiguredAgent", () => {
     try {
       await runAgent(agent, "first run");
       expect(store.getState().promptTraces?.at(-1)?.skills.active).toEqual([
-        { name: skillName, source: join(skillDir, "SKILL.md") },
+        { name: skillName, source: join(await realpath(skillDir), "SKILL.md") },
       ]);
       await rm(skillDir, { recursive: true, force: true });
       const eventStart = store.getState().events.length;
@@ -1030,21 +1035,6 @@ describe("ConfiguredAgent", () => {
     expect(errorIndex).toBeGreaterThan(traceIndex);
     expect(streamFn).not.toHaveBeenCalled();
   });
-
-  test("enforceToolOutputQuota controls quota enforcement", async () => {
-    setupMockStreamText("quota ok");
-    const quotaEnforcer = mock(async (_directory: string) => {});
-
-    await runAgent(createAgent({ definition: engineerAgentDefinition, quotaEnforcer }), "root run");
-    expect(quotaEnforcer).toHaveBeenCalledTimes(1);
-
-    await runAgent(createAgent({ definition: exploreAgentDefinition, quotaEnforcer }), "explore run");
-    expect(quotaEnforcer).toHaveBeenCalledTimes(1);
-
-    await runAgent(createAgent({ definition: definitionWith({ enforceToolOutputQuota: false }), quotaEnforcer }), "no quota");
-    expect(quotaEnforcer).toHaveBeenCalledTimes(1);
-  });
-
   test("includeMemoryInPrompt controls memory roots in prompt context", async () => {
     const withMemoryStreamFn = setupMockStreamText("memory ok");
     await runAgent(createAgent({ definition: engineerAgentDefinition }), "with memory");
@@ -1056,6 +1046,29 @@ describe("ConfiguredAgent", () => {
     await runAgent(createAgent({ definition: exploreAgentDefinition }), "without memory");
     const withoutMemory = withoutMemoryStreamFn.mock.calls[0]![0] as { system: string };
     expect(withoutMemory.system).toContain("Status: absent. Memory is non-authoritative historical context.");
+  });
+
+  test("legacy active workflow context is omitted for agents", async () => {
+    const streamFn = setupMockStreamText("no workflow tools ok");
+    const sessionId = crypto.randomUUID();
+    const goal = await new GoalStateManager(tmpRoot).commit({
+      id: crypto.randomUUID(),
+      projectSlug: "project-a",
+      createdFromSessionId: crypto.randomUUID(),
+      objective: "Keep retired workflow context out of Goal prompts.",
+      acceptanceCriteria: "The Prompt contains no Active Workflow section.",
+      mainSessionId: sessionId,
+    });
+    const store = storeManager.create(sessionId, tmpRoot, { goalId: goal.id, agentName: "goal_lead" });
+    const agent = createAgent({
+      definition: goalLeadAgentDefinition,
+      store,
+    });
+
+    await expect(runAgent(agent, "run without workflow tools")).resolves.toEqual({ text: "no workflow tools ok", steps: 0, status: "completed" });
+    expect(streamFn).toHaveBeenCalled();
+    const callArgs = streamFn.mock.calls[0]![0] as { system: string };
+    expect(callArgs.system).not.toContain("## Active Workflow");
   });
 
   test("simplified Goal retry sessions do not inject legacy operator repair context", async () => {
@@ -1091,10 +1104,11 @@ describe("ConfiguredAgent", () => {
       description: "Capture execution context",
       inputSchema: z.object({}).strict(),
       traits: { readOnly: true, destructive: false, concurrencySafe: false },
+      outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
       execute: (_input, ctx) => {
         capturedAgentName = ctx.agentName;
         capturedDepth = ctx.currentDepth;
-        return "captured";
+        return createTextToolResult("captured");
       },
     });
 
@@ -1120,10 +1134,11 @@ describe("ConfiguredAgent", () => {
       description: "Capture execution context",
       inputSchema: z.object({}).strict(),
       traits: { readOnly: true, destructive: false, concurrencySafe: false },
+      outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
       execute: (_input, ctx) => {
         capturedAgentName = ctx.agentName;
         capturedDepth = ctx.currentDepth;
-        return "captured";
+        return createTextToolResult("captured");
       },
     });
 

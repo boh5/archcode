@@ -5,6 +5,8 @@ import { storeManager } from "../../../store/store";
 import { createTitleGenerationHook } from "./title-generation";
 import type { BeforeModelCallContext } from "../loop-hooks";
 import type { ModelInfo } from "../../../provider/model";
+import { createTestModelInfo } from "../../../testing/test-execution-fixtures";
+import type { ExecutionModelBinding } from "../../../models";
 import { setLlmAdapterForTest } from "../../../llm";
 import { __setSessionsDirForTest } from "../../../store/sessions-dir";
 import { silentLogger } from "../../../logger";
@@ -30,15 +32,23 @@ async function readPersistedTitle(sessionId: string): Promise<string | null> {
 }
 
 function makeModelInfo(): ModelInfo {
+  return createTestModelInfo();
+}
+
+function makeBinding(options?: ExecutionModelBinding["options"]): ExecutionModelBinding {
+  const modelInfo = makeModelInfo();
   return {
-    model: { provider: "test" } as never,
-    displayName: "Test Model",
-    limit: { context: 4096, output: 1024 },
-    modalities: { input: ["text"], output: ["text"] },
-          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
-    providerId: "test",
-    modelId: "test-model",
-    qualifiedId: "test:test-model",
+    modelInfo,
+    options,
+    summary: {
+      selection: { model: modelInfo.qualifiedId },
+      providerId: modelInfo.providerId,
+      modelId: modelInfo.modelId,
+      providerDisplayName: modelInfo.providerDisplayName,
+      modelDisplayName: modelInfo.displayName,
+      resolution: "agent_default",
+      modelRuntimeRevision: "test-revision",
+    },
   };
 }
 
@@ -67,7 +77,7 @@ describe("createTitleGenerationHook", () => {
 
     const ctx: BeforeModelCallContext = {
       store,
-      modelInfo: makeModelInfo(),
+      binding: makeBinding(),
       logger: silentLogger,
       messages: [],
     };
@@ -87,7 +97,7 @@ describe("createTitleGenerationHook", () => {
 
     const ctx: BeforeModelCallContext = {
       store,
-      modelInfo: makeModelInfo(),
+      binding: makeBinding(),
       logger: silentLogger,
       messages: [],
     };
@@ -102,7 +112,7 @@ describe("createTitleGenerationHook", () => {
 
     const ctx: BeforeModelCallContext = {
       store,
-      modelInfo: makeModelInfo(),
+      binding: makeBinding(),
       logger: silentLogger,
       messages: [],
     };
@@ -142,9 +152,8 @@ describe("createTitleGenerationHook", () => {
 
     const ctx: BeforeModelCallContext = {
       store,
-      modelInfo: makeModelInfo(),
+      binding: makeBinding(modelOptions),
       logger: silentLogger,
-      modelOptions,
       messages: [],
     };
 
@@ -188,7 +197,7 @@ describe("createTitleGenerationHook", () => {
 
     const ctx: BeforeModelCallContext = {
       store,
-      modelInfo: makeModelInfo(),
+      binding: makeBinding(),
       logger: silentLogger,
       messages: [],
     };

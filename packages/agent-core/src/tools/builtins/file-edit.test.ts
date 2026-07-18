@@ -16,18 +16,52 @@ import {
   utimes,
 } from "node:fs/promises";
 import path, { join } from "node:path";
+import { tmpdir } from "node:os";
 import type { StoreApi } from "zustand";
 import type { SessionStoreState } from "../../store/index";
 import { createMockStore } from "../../store/test-helpers";
-import { inferToolErrorKindFromResult, TOOL_ERROR_META_KEY } from "../errors";
+import { inferToolErrorKindFromResult } from "../errors";
 import { createReadSnapshotAfterHook } from "../hooks";
-import { ToolRegistry } from "../registry";
-import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import type { RawToolResult, RegistryExecutionOutcome, ToolExecutionContext } from "../types";
+import { createTextToolResult } from "../results";
+import { createTestToolRegistryFixture } from "../test-registry";
 import { fileEditTool } from "./file-edit";
 import { createTestProjectContext } from "../test-project-context";
 
-const testDir = join(import.meta.dir, "__test_tmp__", "file-edit", crypto.randomUUID());
-const canonicalProjectDir = join(import.meta.dir, "__test_tmp__", "file-edit-canonical-project", crypto.randomUUID());
+const testDir = join(tmpdir(), "archcode-file-edit", crypto.randomUUID());
+const canonicalProjectDir = join(tmpdir(), "archcode-file-edit-canonical-project", crypto.randomUUID());
+const registryFixture = createTestToolRegistryFixture({ descriptors: [fileEditTool] });
+
+type ToolTestResult = RawToolResult | RegistryExecutionOutcome;
+
+function rawText(result: RawToolResult): string {
+  if (result.draft.kind !== "text") throw new Error("Expected text draft");
+  return result.draft.text;
+}
+
+function resultText(result: ToolTestResult): string {
+  if ("kind" in result) {
+    if (result.kind !== "settled") throw new Error("Expected settled Registry outcome");
+    return result.result.output.preview;
+  }
+  return rawText(result);
+}
+
+function resultIsError(result: ToolTestResult): boolean {
+  if ("kind" in result) {
+    if (result.kind !== "settled") throw new Error("Expected settled Registry outcome");
+    return result.result.isError;
+  }
+  return result.isError;
+}
+
+function resultErrorKind(result: ToolTestResult): string | undefined {
+  if ("kind" in result) {
+    if (result.kind !== "settled") throw new Error("Expected settled Registry outcome");
+    return result.result.details?.error?.kind;
+  }
+  return inferToolErrorKindFromResult(result);
+}
 
 function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   return { store: createMockStore(),
@@ -65,22 +99,18 @@ async function executeThroughRegistry(
   input: unknown,
   ctx: ToolExecutionContext,
 ) {
-  const registry = new ToolRegistry();
-  registry.register(fileEditTool);
-
-  return registry.execute(
+  return registryFixture.registry.execute(
     { toolCallId: ctx.toolCallId, toolName: "file_edit", input },
     ctx,
   );
 }
 
 function expectToolErrorKind(
-  result: ToolExecutionResult,
+  result: ToolTestResult,
   kind: NonNullable<ReturnType<typeof inferToolErrorKindFromResult>>,
 ): void {
-  expect(result.isError).toBe(true);
-  expect(inferToolErrorKindFromResult(result)).toBe(kind);
-  expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
+  expect(resultIsError(result)).toBe(true);
+  expect(resultErrorKind(result)).toBe(kind);
 }
 
 beforeEach(async () => {
@@ -91,6 +121,7 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  await registryFixture.dispose();
   await rm(testDir, { recursive: true, force: true });
   await rm(canonicalProjectDir, { recursive: true, force: true });
 });
@@ -103,7 +134,6 @@ describe("fileEditTool", () => {
     await mkdir(canonicalState, { recursive: true });
     await Bun.write(target, "before\n");
     await symlink(canonicalState, stateLink);
-    const confirmPermission = mock(async () => "approve_once" as const);
 
     const result = await executeThroughRegistry(
       {
@@ -113,15 +143,12 @@ describe("fileEditTool", () => {
       makeCtx({
         projectContext: createTestProjectContext(canonicalProjectDir),
         store: await createReadStore(target),
-        confirmPermission,
       }),
     );
 
     expectToolErrorKind(result, "permission-denied");
-    expect(result.meta?.[TOOL_ERROR_META_KEY]).toMatchObject({
-      code: "PROTECTED_PATH_WRITE_DENIED",
-    });
-    expect(confirmPermission).not.toHaveBeenCalled();
+    if (result.kind !== "settled") throw new Error("Expected settled Registry outcome");
+    expect(result.result.details?.error?.code).toBe("PROTECTED_PATH_WRITE_DENIED");
     expect(await Bun.file(target).text()).toBe("before\n");
   });
 
@@ -134,20 +161,20 @@ describe("fileEditTool", () => {
       ctx,
     );
 
-    expect(typeof output).not.toBe("string");
-    const result = output as ToolExecutionResult;
-    expect(result.output).toBe("Successfully applied 1 edit(s) to single.txt");
+    const result = output;
+    expect(rawText(result)).toBe("Successfully applied 1 edit(s) to single.txt");
     expect(result.isError).toBe(false);
-    expect(result.meta?.diffs).toMatchObject({
-      files: [
-        {
+    expect(result.details?.presentations).toContainEqual(expect.objectContaining({
+      kind: "diff",
+      files: expect.arrayContaining([
+        expect.objectContaining({
           path: "single.txt",
           status: "modified",
           additions: 1,
           deletions: 1,
-        },
-      ],
-    });
+        }),
+      ]),
+    }));
     expect(await Bun.file(join(testDir, "single.txt")).text()).toBe("hello archcode\n");
   });
 
@@ -166,7 +193,7 @@ describe("fileEditTool", () => {
       ctx,
     );
 
-    expect((output as ToolExecutionResult).output).toBe("Successfully applied 2 edit(s) to multiple.txt");
+    expect(rawText(output)).toBe("Successfully applied 2 edit(s) to multiple.txt");
     expect(await Bun.file(join(testDir, "multiple.txt")).text()).toBe(
       "one beta three\n",
     );
@@ -181,8 +208,8 @@ describe("fileEditTool", () => {
       ctx,
     );
 
-    expect(result.isError).toBe(true);
-    expect(result.output).toContain("Invalid input");
+    expect(resultIsError(result)).toBe(true);
+    expect(resultText(result)).toContain("Invalid input");
     expect(await Bun.file(join(testDir, "flat-input.txt")).text()).toBe("before\n");
   });
 
@@ -209,7 +236,7 @@ describe("fileEditTool", () => {
       }),
     );
 
-    expect(result.isError).toBe(false);
+    expect(resultIsError(result)).toBe(false);
     expect(resolvedInput).toEqual({
       path: "quotes.ts",
       edits: [
@@ -232,8 +259,7 @@ describe("fileEditTool", () => {
     );
 
     expectToolErrorKind(result, "edit-no-match");
-    expect(result.meta?.diffs).toBeUndefined();
-    expect(result.output).toContain("TOOL_EDIT_NO_MATCH");
+    expect(resultText(result)).toContain("TOOL_EDIT_NO_MATCH");
   });
 
   test("returns error when oldString matches multiple locations", async () => {
@@ -246,7 +272,7 @@ describe("fileEditTool", () => {
     );
 
     expectToolErrorKind(result, "edit-ambiguous");
-    expect(result.output).toContain("TOOL_EDIT_AMBIGUOUS_MATCH");
+    expect(resultText(result)).toContain("TOOL_EDIT_AMBIGUOUS_MATCH");
   });
 
   test("returns error for overlapping edits", async () => {
@@ -265,7 +291,7 @@ describe("fileEditTool", () => {
     );
 
     expectToolErrorKind(result, "edit-overlap");
-    expect(result.output).toContain("TOOL_EDIT_OVERLAP");
+    expect(resultText(result)).toContain("TOOL_EDIT_OVERLAP");
   });
 
   test("returns error when oldString and newString are identical", async () => {
@@ -278,7 +304,7 @@ describe("fileEditTool", () => {
     );
 
     expectToolErrorKind(result, "edit-identical");
-    expect(result.output).toContain("oldString and newString are identical");
+    expect(resultText(result)).toContain("oldString and newString are identical");
   });
 
   test("returns file-not-found error when target file is missing", async () => {
@@ -294,10 +320,8 @@ describe("fileEditTool", () => {
       makeCtx({ store }),
     );
 
-    expect(typeof result).not.toBe("string");
-    const errorResult = result as ToolExecutionResult;
-    expectToolErrorKind(errorResult, "file-not-found");
-    expect(errorResult.output).toContain("TOOL_FILE_NOT_FOUND");
+    expectToolErrorKind(result, "file-not-found");
+    expect(rawText(result)).toContain("TOOL_FILE_NOT_FOUND");
   });
 
   test("fuzzy match handles whitespace, smart quotes, dashes, and line endings", async () => {
@@ -320,7 +344,7 @@ describe("fileEditTool", () => {
       ctx,
     );
 
-    expect((output as ToolExecutionResult).output).toBe("Successfully applied 1 edit(s) to fuzzy.txt");
+    expect(rawText(output)).toBe("Successfully applied 1 edit(s) to fuzzy.txt");
     expect(await Bun.file(join(testDir, "fuzzy.txt")).text()).toBe(
       "const text = 'updated';\nnext line\r\n",
     );
@@ -336,7 +360,7 @@ describe("fileEditTool", () => {
     );
 
     expectToolErrorKind(result, "read-before-write");
-    expect(result.output).toContain("not been read first");
+    expect(resultText(result)).toContain("not been read first");
   });
 
   test("file_read equivalent normalized path snapshot allows file_edit direct path", async () => {
@@ -345,7 +369,7 @@ describe("fileEditTool", () => {
     const store = createMockStore();
     const readCtx = makeCtx({ store, toolName: "file_read", input: { path: "src/../src/main.ts" } });
 
-    await createReadSnapshotAfterHook()({ output: "1: before\n", isError: false }, readCtx);
+    await createReadSnapshotAfterHook()(createTextToolResult("1: before\n"), readCtx);
 
     expect(store.getState().readSnapshots.has(resolved)).toBe(true);
 
@@ -354,7 +378,7 @@ describe("fileEditTool", () => {
       makeCtx({ store }),
     );
 
-    expect(result.isError).toBe(false);
+    expect(resultIsError(result)).toBe(false);
     expect(await Bun.file(filePath).text()).toBe("after\n");
   });
 
@@ -369,7 +393,7 @@ describe("fileEditTool", () => {
     );
 
     expectToolErrorKind(result, "write-conflict");
-    expect(result.output).toContain("modified since it was read");
+    expect(resultText(result)).toContain("modified since it was read");
   });
 
   test("workspace ask falls through to read-before-edit when confirmation is unavailable", async () => {
@@ -379,7 +403,7 @@ describe("fileEditTool", () => {
     );
 
     expectToolErrorKind(result, "read-before-write");
-    expect(result.output).toContain("has not been read first");
+    expect(resultText(result)).toContain("has not been read first");
   });
 
   test("applies edits back-to-front so offsets remain stable", async () => {
@@ -416,9 +440,9 @@ describe("fileEditTool", () => {
       ),
     ]);
 
-    expect(results).toEqual([
-      expect.objectContaining({ output: "Successfully applied 1 edit(s) to queue.txt", isError: false }),
-      expect.objectContaining({ output: "Successfully applied 1 edit(s) to queue.txt", isError: false }),
+    expect(results.map(rawText)).toEqual([
+      "Successfully applied 1 edit(s) to queue.txt",
+      "Successfully applied 1 edit(s) to queue.txt",
     ]);
     expect(await Bun.file(join(testDir, "queue.txt")).text()).toBe("1 two 3");
   });
@@ -433,9 +457,9 @@ describe("fileEditTool", () => {
     );
 
     expectToolErrorKind(result, "edit-no-match");
-    expect(result.output).toContain("TOOL_EDIT_NO_MATCH");
-    expect(result.output).toContain("---");
-    expect(result.output).toContain("The oldString was not found in the file.");
+    expect(resultText(result)).toContain("TOOL_EDIT_NO_MATCH");
+    expect(resultText(result)).toContain("---");
+    expect(resultText(result)).toContain("The oldString was not found in the file.");
   });
 
   test("refreshes read snapshot after successful edit", async () => {

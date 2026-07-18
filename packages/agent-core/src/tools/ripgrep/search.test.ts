@@ -257,9 +257,7 @@ describe("formatSearchResult", () => {
 describe("buildSearchArgs", () => {
   test("constructs basic rg search arguments", () => {
     const args = buildSearchArgs({ pattern: "foo" });
-    expect(args).toContain("--json");
-    expect(args).toContain("-e");
-    expect(args).toContain("foo");
+    expect(args).toEqual(["--json", "--sort", "path", "-e", "foo"]);
   });
 
   test("includes path when provided", () => {
@@ -279,12 +277,6 @@ describe("buildSearchArgs", () => {
     expect(args).toContain("3");
   });
 
-  test("sets max-count to 100", () => {
-    const args = buildSearchArgs({ pattern: "foo" });
-    const maxCountIdx = args.indexOf("--max-count");
-    expect(maxCountIdx).not.toBe(-1);
-    expect(args[maxCountIdx + 1]).toBe("100");
-  });
 });
 
 // ─── buildFileListArgs ───
@@ -292,7 +284,7 @@ describe("buildSearchArgs", () => {
 describe("buildFileListArgs", () => {
   test("constructs --files-with-matches arguments", () => {
     const args = buildFileListArgs("hello");
-    expect(args).toEqual(["--files-with-matches", "-e", "hello"]);
+    expect(args).toEqual(["--files-with-matches", "--sort", "path", "-e", "hello"]);
   });
 
   test("includes glob when provided", () => {
@@ -308,7 +300,7 @@ describe("buildFileListArgs", () => {
 
   test("includes both glob and path", () => {
     const args = buildFileListArgs("hello", "*.ts", "src/");
-    expect(args).toEqual(["--files-with-matches", "-e", "hello", "--glob", "*.ts", "src/"]);
+    expect(args).toEqual(["--files-with-matches", "--sort", "path", "-e", "hello", "--glob", "*.ts", "src/"]);
   });
 });
 
@@ -317,7 +309,7 @@ describe("buildFileListArgs", () => {
 describe("buildCountArgs", () => {
   test("constructs --count arguments", () => {
     const args = buildCountArgs("hello");
-    expect(args).toEqual(["--count", "-e", "hello"]);
+    expect(args).toEqual(["--count", "--sort", "path", "-e", "hello"]);
   });
 
   test("includes glob when provided", () => {
@@ -333,7 +325,7 @@ describe("buildCountArgs", () => {
 
   test("includes both glob and path", () => {
     const args = buildCountArgs("hello", "*.ts", "src/");
-    expect(args).toEqual(["--count", "-e", "hello", "--glob", "*.ts", "src/"]);
+    expect(args).toEqual(["--count", "--sort", "path", "-e", "hello", "--glob", "*.ts", "src/"]);
   });
 });
 

@@ -4,6 +4,7 @@ import type { ModelMessage, StreamTextResult, ToolSet } from "ai";
 import type { ModelCallOptions } from "../config/provider";
 import type { Logger } from "../logger";
 import type { RetryScheduler } from "./retry";
+import type { SensitiveTextRedactor } from "./provider-error-sanitizer";
 
 export interface LlmStreamInput<TTools extends ToolSet = ToolSet> {
   model: LanguageModelV3;
@@ -25,6 +26,7 @@ export interface LlmTextInput {
   modelOptions?: ModelCallOptions;
   logger?: Logger;
   retryScheduler?: RetryScheduler;
+  redactSensitiveText: SensitiveTextRedactor;
 }
 
 export interface LlmTextResult {
@@ -40,6 +42,7 @@ export interface LlmObjectInput<T> {
   modelOptions?: ModelCallOptions;
   logger?: Logger;
   retryScheduler?: RetryScheduler;
+  redactSensitiveText: SensitiveTextRedactor;
   /** Schema name used in tool definition (defaults to "result") */
   schemaName?: string;
   /** Schema description used in tool definition */

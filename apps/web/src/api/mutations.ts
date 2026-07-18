@@ -1,6 +1,7 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 import { queryKeys } from "./queries";
+import type { RequestedModelSelection, SessionModelState } from "@archcode/protocol";
 import {
   removeProjectControlPlane,
 } from "../store/control-plane-readiness";
@@ -84,23 +85,53 @@ export interface PostMessageInput {
   sessionId: string;
   content: string;
   clientRequestId?: string;
+  requestedModelSelection: RequestedModelSelection;
 }
 
-export interface MessageAcceptance {
-  clientRequestId: string;
-  messageId: string;
-  status?: "queued" | "canonical" | "command";
-}
+export type MessageAcceptance =
+  | { clientRequestId: string; status: "command" }
+  | { clientRequestId: string; messageId: string; status: "queued" | "canonical" };
 
-export function postMessage({ slug, sessionId, content, clientRequestId }: PostMessageInput): Promise<MessageAcceptance> {
+export function postMessage({ slug, sessionId, content, clientRequestId, requestedModelSelection }: PostMessageInput): Promise<MessageAcceptance> {
   const requestId = clientRequestId ?? crypto.randomUUID();
   return apiFetch<MessageAcceptance>(
     `/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(sessionId)}/messages`,
     {
       method: "POST",
-      body: { text: content, clientRequestId: requestId },
+      body: { text: content, clientRequestId: requestId, requestedModelSelection },
     },
   );
+}
+
+export interface PatchSessionModelSelectionInput {
+  slug: string;
+  sessionId: string;
+  expectedRevision: number;
+  requestedModelSelection: RequestedModelSelection;
+}
+
+export function patchSessionModelSelection({ slug, sessionId, expectedRevision, requestedModelSelection }: PatchSessionModelSelectionInput): Promise<SessionModelState> {
+  return apiFetch<SessionModelState>(
+    `/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(sessionId)}/model-selection`,
+    { method: "PATCH", body: { expectedRevision, requestedModelSelection } },
+  );
+}
+
+export function usePatchSessionModelSelection() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: patchSessionModelSelection,
+    onSettled: async (_state, _error, variables) => {
+      await invalidateSessionModelSelectionQuery(queryClient, variables);
+    },
+  });
+}
+
+export async function invalidateSessionModelSelectionQuery(
+  queryClient: Pick<QueryClient, "invalidateQueries">,
+  variables: Pick<PatchSessionModelSelectionInput, "slug" | "sessionId">,
+): Promise<void> {
+  await queryClient.invalidateQueries({ queryKey: queryKeys.session(variables.slug, variables.sessionId) });
 }
 
 export function usePostMessage() {

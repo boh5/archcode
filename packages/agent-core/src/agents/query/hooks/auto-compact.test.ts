@@ -4,7 +4,10 @@ import { silentLogger } from "../../../logger";
 import { storeManager } from "../../../store/store";
 import type { StoredMessage } from "../../../store/types";
 import type { BeforeModelBuildContext } from "../loop-hooks";
+import type { ExecutionModelBinding } from "../../../models";
+import { createTestModelInfo } from "../../../testing/test-execution-fixtures";
 import { createAutoCompactHook } from "./auto-compact";
+import type { ToolOutputAccessService } from "../../../tool-output/access-service";
 
 const TEST_WORKSPACE_ROOT = `/tmp/archcode-agent-core-auto-compact-${crypto.randomUUID()}`;
 
@@ -67,27 +70,42 @@ function createStore(messageCount = 6) {
   return store;
 }
 
-function modelInfo(context = 1000): BeforeModelBuildContext["modelInfo"] {
-  return {
+function binding(context = 1000): ExecutionModelBinding {
+  const modelInfo = createTestModelInfo({
     model: { modelId: "mock" } as never,
     displayName: "Mock",
     limit: { context, output: 1000 },
-    modalities: { input: ["text"], output: ["text"] },
-          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
     providerId: "test",
     modelId: "mock",
-    qualifiedId: "test:mock",
-  } as never;
+  });
+  return {
+    modelInfo,
+    options: undefined,
+    summary: {
+      selection: { model: "test:mock" },
+      providerId: "test",
+      modelId: "mock",
+      providerDisplayName: "Test",
+      modelDisplayName: "Mock",
+      resolution: "agent_default",
+      modelRuntimeRevision: "test-revision",
+    },
+  };
 }
 
 function buildCtx(store: ReturnType<typeof createStore>, inputTokens: number): BeforeModelBuildContext {
   store.setState({ steps: [{ id: "step-1", step: 1, startedAt: 1, usage: { inputTokens, outputTokens: 1, totalTokens: inputTokens + 1 } }] });
-  return { store, modelInfo: modelInfo(), logger: silentLogger };
+  return { store, binding: binding(), logger: silentLogger };
 }
 
 describe("createAutoCompactHook", () => {
+  const toolOutputAccess = {
+    countRecoverable: async () => 0,
+    read: async () => { throw new Error("not used"); },
+    search: async () => { throw new Error("not used"); },
+  } satisfies ToolOutputAccessService;
   test("returns the hook function and circuit breaker", () => {
-    const result = createAutoCompactHook(silentLogger);
+    const result = createAutoCompactHook(silentLogger, toolOutputAccess);
 
     expect(typeof result.hook).toBe("function");
     expect(result.circuitBreaker).toBeDefined();
@@ -99,7 +117,7 @@ describe("createAutoCompactHook", () => {
 
   test("delegates automatic high-threshold compaction to forced hard compact", async () => {
     const store = createStore();
-    const result = createAutoCompactHook(silentLogger);
+    const result = createAutoCompactHook(silentLogger, toolOutputAccess);
 
     await result.hook(buildCtx(store, 850));
 
@@ -110,7 +128,7 @@ describe("createAutoCompactHook", () => {
   });
 
   test("keeps circuitBreaker.reset available for manual command integration", () => {
-    const result = createAutoCompactHook(silentLogger);
+    const result = createAutoCompactHook(silentLogger, toolOutputAccess);
     result.circuitBreaker.recordFailure();
     result.circuitBreaker.recordFailure();
     result.circuitBreaker.recordFailure();

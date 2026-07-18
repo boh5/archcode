@@ -19,6 +19,7 @@ import { hitlStore } from "../store/hitl-store";
 import { focusedSessionQueryOptions } from "../api/queries";
 import { SessionRoute } from "./session";
 import { WorkbenchLayoutProvider } from "../context/workbench-layout";
+import { SettingsModalProvider } from "../context/settings-modal";
 
 function createSession(input: {
   id: string;
@@ -38,7 +39,15 @@ function createSession(input: {
     updatedAt: 1,
     agentName: "engineer",
     activeSkillNames: [],
-    modelInfo: null,
+    modelSelection: { revision: 0 },
+    nextModelSelection: {
+      requested: { mode: "agent_default", selection: { model: "test:model" } },
+      resolved: {
+        selection: { model: "test:model" }, providerId: "test", modelId: "model",
+        providerDisplayName: "Test", modelDisplayName: "Test Model", resolution: "agent_default",
+        modelRuntimeRevision: "m1",
+      },
+    },
     messages: input.messages,
     pendingMessages: [],
     steps: [],
@@ -142,15 +151,17 @@ function findElementByText(container: Element, text: string): Element {
 async function renderSessionRoute(root: Root, queryClient: QueryClient): Promise<void> {
   await act(async () => {
     root.render(
-      <WorkbenchLayoutProvider>
-      <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={["/projects/demo/sessions/root-session"]}>
-          <Routes>
-            <Route path="/projects/:slug/sessions/:sessionId" element={<SessionRoute />} />
-          </Routes>
-        </MemoryRouter>
-      </QueryClientProvider>
-      </WorkbenchLayoutProvider>,
+      <SettingsModalProvider>
+        <WorkbenchLayoutProvider>
+          <QueryClientProvider client={queryClient}>
+            <MemoryRouter initialEntries={["/projects/demo/sessions/root-session"]}>
+              <Routes>
+                <Route path="/projects/:slug/sessions/:sessionId" element={<SessionRoute />} />
+              </Routes>
+            </MemoryRouter>
+          </QueryClientProvider>
+        </WorkbenchLayoutProvider>
+      </SettingsModalProvider>,
     );
   });
 }
@@ -268,7 +279,18 @@ describe("SessionRoute focused view store behavior", () => {
                 acceptance_criteria: [{ id: "ac-1", condition: "Inspect child output", requiredEvidence: "file refs" }],
                 evidence: [], verification: [], depends_on: [], skills: [], background: false,
               },
-              output: "Sub-agent completed.",
+              result: {
+                isError: false,
+                output: {
+                  preview: "Sub-agent completed.",
+                  completeness: "complete",
+                  observed: { bytes: 20, lines: 1 },
+                  canonical: { bytes: 20, lines: 1 },
+                  stored: { bytes: 20, lines: 1 },
+                  omitted: { bytes: 0, lines: 0 },
+                  recovery: { kind: "none" },
+                },
+              },
               createdAt: 1,
               startedAt: 1,
               endedAt: 2,
@@ -492,7 +514,8 @@ describe("SessionRoute focused view store behavior", () => {
     try {
       await act(async () => {
         reactRoot.render(
-          <WorkbenchLayoutProvider>
+          <SettingsModalProvider>
+            <WorkbenchLayoutProvider>
             <QueryClientProvider client={queryClient}>
               <MemoryRouter initialEntries={["/projects/demo/sessions/root-session"]}>
                 <Routes>
@@ -501,7 +524,8 @@ describe("SessionRoute focused view store behavior", () => {
                 </Routes>
               </MemoryRouter>
             </QueryClientProvider>
-          </WorkbenchLayoutProvider>,
+            </WorkbenchLayoutProvider>
+          </SettingsModalProvider>,
         );
       });
 
@@ -576,8 +600,9 @@ describe("SessionRoute focused view store behavior", () => {
     try {
       await act(async () => {
         reactRoot.render(
-          <WorkbenchLayoutProvider>
-          <QueryClientProvider client={queryClient}>
+          <SettingsModalProvider>
+            <WorkbenchLayoutProvider>
+            <QueryClientProvider client={queryClient}>
             <MemoryRouter initialEntries={["/projects/demo/sessions/child-1"]}>
               <Routes>
                 <Route
@@ -591,8 +616,9 @@ describe("SessionRoute focused view store behavior", () => {
                 />
               </Routes>
             </MemoryRouter>
-          </QueryClientProvider>
-          </WorkbenchLayoutProvider>,
+            </QueryClientProvider>
+            </WorkbenchLayoutProvider>
+          </SettingsModalProvider>,
         );
       });
 

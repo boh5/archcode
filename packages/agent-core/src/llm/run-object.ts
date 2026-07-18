@@ -6,6 +6,7 @@ import { LlmObjectError, LlmSchemaValidationError } from "./errors";
 import { pickModelCallOptions } from "./options";
 import { withLlmRetry } from "./retry";
 import { silentLogger } from "../logger";
+import { redactSensitiveValue } from "./provider-error-sanitizer";
 
 export async function runLlmObject<T>(input: LlmObjectInput<T>): Promise<T> {
   const logger = input.logger ?? silentLogger;
@@ -32,10 +33,15 @@ export async function runLlmObject<T>(input: LlmObjectInput<T>): Promise<T> {
     }), "LLM object generation", undefined, {
       abortSignal: input.abortSignal,
       retryScheduler: input.retryScheduler,
+      redactSensitiveText: input.redactSensitiveText,
     });
 
     try {
-      return parseObjectResult(result.toolCalls, toolName, input.schema);
+      return parseObjectResult(
+        redactSensitiveValue(result.toolCalls, input.redactSensitiveText),
+        toolName,
+        input.schema,
+      );
     } catch (err) {
       if (!(err instanceof LlmSchemaValidationError)) throw err;
       lastSchemaError = err;

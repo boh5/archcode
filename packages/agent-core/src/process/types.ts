@@ -6,13 +6,29 @@ export type ProcessRunnerStdin =
   | ReadableStream<Uint8Array>
   | null;
 
+export type ProcessOutputStream = "stdout" | "stderr";
+
+/**
+ * Optional streaming destination for process output. ProcessRunner owns pipe
+ * draining and permanently stops calling the sink after its first failure or
+ * one-second write deadline. A sink must not retain the supplied Uint8Array.
+ */
+export interface ProcessOutputSink {
+  write(stream: ProcessOutputStream, chunk: Uint8Array): void | Promise<void>;
+  /** Optional non-blocking observation after write delivery has permanently failed. */
+  discard?(stream: ProcessOutputStream, chunk: Uint8Array): void | Promise<void>;
+}
+
 export interface ProcessRunnerInput {
   readonly argv: readonly [string, ...string[]];
   readonly cwd?: string;
   readonly env?: Record<string, string | undefined>;
   readonly stdin?: ProcessRunnerStdin;
   readonly timeoutMs?: number;
+  /** Maximum retained head-tail bytes per stdout/stderr stream. */
   readonly maxOutputBytes?: number;
+  /** Optional raw-byte stream destination; it never controls pipe draining. */
+  readonly outputSink?: ProcessOutputSink;
   readonly signal?: AbortSignal;
 }
 
@@ -24,13 +40,14 @@ export interface ProcessRunnerOutputCapture {
   readonly stderrTruncated: boolean;
   readonly combinedTruncated: boolean;
   readonly maxOutputBytes?: number;
+  readonly stdoutBytes: number;
+  readonly stderrBytes: number;
+  readonly sinkStatus: "unused" | "complete" | "discarded";
 }
 
 export interface ProcessRunnerErrorSnapshot {
   readonly name: string;
   readonly message: string;
-  readonly stack?: string;
-  readonly cause?: string;
 }
 
 export interface ProcessRunnerBaseResult {

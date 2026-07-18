@@ -1,20 +1,26 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { setLlmAdapterForTest } from "../llm";
 import type { ModelInfo } from "../provider/model";
+import type { ExecutionModelBinding } from "../models";
 import { createFakeRetryScheduler } from "../testing/fake-retry-scheduler";
+import { createTestModelInfo } from "../testing/test-execution-fixtures";
 import { generateTitle } from "./generator";
 
 const generateText = mock(async () => ({ text: "  Retry propagation  ", toolCalls: [] }));
 
-const modelInfo: ModelInfo = {
-  model: { provider: "test" } as never,
-  displayName: "Test Model",
-  limit: { context: 4096, output: 1024 },
-  modalities: { input: ["text"], output: ["text"] },
-          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
-  providerId: "test",
-  modelId: "test-model",
-  qualifiedId: "test:test-model",
+const modelInfo: ModelInfo = createTestModelInfo();
+const binding: ExecutionModelBinding = {
+  modelInfo,
+  options: undefined,
+  summary: {
+    selection: { model: modelInfo.qualifiedId },
+    providerId: modelInfo.providerId,
+    modelId: modelInfo.modelId,
+    providerDisplayName: modelInfo.providerDisplayName,
+    modelDisplayName: modelInfo.displayName,
+    resolution: "agent_default",
+    modelRuntimeRevision: "test-revision",
+  },
 };
 
 beforeEach(() => {
@@ -32,7 +38,7 @@ describe("generateTitle", () => {
     const title = await generateTitle({
       kind: "session",
       text: "propagate a retry scheduler",
-      modelInfo,
+      binding,
       retryScheduler: createFakeRetryScheduler(),
     });
 
@@ -48,7 +54,7 @@ describe("generateTitle", () => {
     const title = await generateTitle({
       kind: "goal",
       text: "finish deterministic retries",
-      modelInfo,
+      binding,
       retryScheduler,
     });
 

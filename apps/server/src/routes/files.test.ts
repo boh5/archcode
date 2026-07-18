@@ -20,7 +20,6 @@ function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
     mcpManager: undefined,
     toolRegistry: undefined,
     skillService: undefined,
-    providerRegistry: undefined,
     warnings: [],
     contextResolver: undefined,
     subscribeSessionRuntimeChanges: () => () => undefined,

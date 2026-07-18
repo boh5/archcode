@@ -71,6 +71,31 @@ mock.module("react/jsx-dev-runtime", () => ({
   jsxs: jsxDEV,
 }));
 
+const Icon = (props: Record<string, unknown>) => jsxDEV("svg", props);
+mock.module("lucide-react", () => ({
+  Brain: Icon,
+  Check: Icon,
+  ChevronDown: Icon,
+  ChevronRight: Icon,
+  CircleQuestionMark: Icon,
+  Clock: Icon,
+  FileText: Icon,
+  GitBranch: Icon,
+  Globe: Icon,
+  Handshake: Icon,
+  LoaderCircle: Icon,
+  MessageSquare: Icon,
+  Pencil: Icon,
+  Plug: Icon,
+  Search: Icon,
+  Target: Icon,
+  Terminal: Icon,
+  TriangleAlert: Icon,
+  Wrench: Icon,
+  X: Icon,
+  Zap: Icon,
+}));
+
 const { GroupedToolCard } = await import("./GroupedToolCard");
 
 function makeTool(id: string, filePath: string): CompletedToolPart {
@@ -81,7 +106,18 @@ function makeTool(id: string, filePath: string): CompletedToolPart {
     toolCallId: `call-${id}`,
     toolName: "file_read",
     input: { filePath },
-    output: `contents of ${filePath}`,
+    result: {
+      isError: false,
+      output: {
+        preview: `contents of ${filePath}`,
+        completeness: "complete",
+        observed: { bytes: 10, lines: 1 },
+        canonical: { bytes: 10, lines: 1 },
+        stored: { bytes: 10, lines: 1 },
+        omitted: { bytes: 0, lines: 0 },
+        recovery: { kind: "none" },
+      },
+    },
     createdAt: Date.now(),
     startedAt: Date.now(),
     endedAt: Date.now(),
@@ -96,7 +132,7 @@ beforeEach(() => {
 describe("GroupedToolCard", () => {
   test("collapsed group renders only the batch summary", () => {
     booleanStates = [false];
-    const el = GroupedToolCard({ tools: [makeTool("one", "a.ts"), makeTool("two", "b.ts")] });
+    const el = GroupedToolCard({ tools: [makeTool("one", "a.ts"), makeTool("two", "b.ts")], projectSlug: "demo", sessionId: "root-1" });
 
     expect(findButtons(el)).toHaveLength(1);
     expect(textContent(el)).toContain("Read 2 items");
@@ -107,7 +143,7 @@ describe("GroupedToolCard", () => {
 
   test("expanded group renders independently collapsible child summary rows", () => {
     booleanStates = [true, false, false];
-    const el = GroupedToolCard({ tools: [makeTool("one", "a.ts"), makeTool("two", "b.ts")] });
+    const el = GroupedToolCard({ tools: [makeTool("one", "a.ts"), makeTool("two", "b.ts")], projectSlug: "demo", sessionId: "root-1" });
     const buttons = findButtons(el);
 
     expect(buttons).toHaveLength(3);

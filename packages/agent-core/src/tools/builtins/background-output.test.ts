@@ -1,236 +1,165 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import type { ChildResultReceipt, DelegationContract } from "@archcode/protocol";
-import { hashDelegationContract } from "../../delegation/contract";
+
 import { silentLogger } from "../../logger";
 import { SessionStoreManager } from "../../store/session-store-manager";
 import { __setSessionsDirForTest } from "../../store/sessions-dir";
-import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { createTestProjectContext } from "../test-project-context";
+import type { SessionStoreState, StoredMessage } from "../../store/types";
+import type { ToolExecutionContext } from "../types";
 import { BackgroundOutputInputSchema, executeBackgroundOutput } from "./background-output";
+import { sourceDraftText } from "./source-page";
+import { testExecutionStart } from "../../testing/test-execution-fixtures";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__", "background-output-v2", crypto.randomUUID());
-const WORKSPACE_ROOT = join(TMP_DIR, "workspace");
+// Keep mutable fixtures out of the source worktree: constrained runners can mount it read-only.
+const root = join("/tmp", "archcode-background-source", crypto.randomUUID());
+const workspace = join(root, "workspace");
+
+function context(): ToolExecutionContext {
+  const manager = new SessionStoreManager({ logger: silentLogger });
+  const id = crypto.randomUUID();
+  return {
+    store: manager.create(id, workspace, { agentName: "engineer" }), storeManager: manager,
+    toolName: "background_output", toolCallId: "call", input: {}, step: 1,
+    abort: new AbortController().signal, startedAt: Date.now(), allowedTools: new Set(["background_output"]),
+    cwd: workspace, projectContext: createTestProjectContext(workspace),
+  };
+}
+
+function child(ctx: ToolExecutionContext) {
+  const store = ctx.storeManager.create(crypto.randomUUID(), workspace, { agentName: "engineer" });
+  store.getState().setParentSessionId(ctx.store.getState().sessionId);
+  store.setState({ rootSessionId: ctx.store.getState().rootSessionId });
+  return store;
+}
+
+function appendUser(store: ReturnType<typeof child>, id: string, text: string): void {
+  store.getState().append({
+    type: "session.messages_committed",
+    executionId: `execution-${id}`,
+    messages: [{
+      id, role: "user", createdAt: 1, completedAt: 1, executionId: `execution-${id}`,
+      clientRequestId: `request-${id}`,
+      parts: [{ type: "text", id: `${id}:text`, text, createdAt: 1, completedAt: 1 }],
+    }],
+  });
+}
+
+function setMessages(store: ReturnType<typeof child>, messages: StoredMessage[]): void {
+  store.setState({ messages } as Partial<SessionStoreState>);
+}
+
+async function readAllPages(
+  firstInput: ReturnType<typeof input>,
+  ctx: ToolExecutionContext,
+): Promise<{ pages: string[]; nextInputs: unknown[] }> {
+  const pages: string[] = [];
+  const nextInputs: unknown[] = [];
+  let current = firstInput;
+  for (let pageIndex = 0; pageIndex < 100; pageIndex += 1) {
+    const result = await executeBackgroundOutput(current, ctx);
+    if (result.draft.kind !== "source") throw new Error("Expected source page");
+    pages.push(result.draft.text);
+    expect(new TextEncoder().encode(result.draft.text).byteLength).toBeLessThanOrEqual(50 * 1024);
+    expect(result.draft.text.split("\n").length).toBeLessThanOrEqual(2_000);
+    expect(result.draft.text).not.toContain("[output truncated]");
+    if (result.draft.nextInput === undefined) return { pages, nextInputs };
+    expect(BackgroundOutputInputSchema.safeParse(result.draft.nextInput).success).toBe(true);
+    expect(JSON.stringify(result.draft.nextInput)).not.toBe(JSON.stringify(current));
+    nextInputs.push(result.draft.nextInput);
+    current = BackgroundOutputInputSchema.parse(result.draft.nextInput);
+  }
+  throw new Error("background_output pagination did not terminate");
+}
+
+function input(sessionId: string, overrides: Record<string, unknown> = {}) {
+  return BackgroundOutputInputSchema.parse({ session_id: sessionId, ...overrides });
+}
 
 beforeEach(async () => {
-  await mkdir(WORKSPACE_ROOT, { recursive: true });
-  __setSessionsDirForTest(() => join(TMP_DIR, "sessions"));
+  await rm(root, { recursive: true, force: true });
+  await mkdir(workspace, { recursive: true });
+  __setSessionsDirForTest(() => join(root, "sessions"));
 });
+afterEach(() => __setSessionsDirForTest(undefined));
+afterAll(async () => { __setSessionsDirForTest(undefined); await rm(root, { recursive: true, force: true }); });
 
-afterEach(async () => {
-  __setSessionsDirForTest(undefined);
-  await rm(TMP_DIR, { recursive: true, force: true });
-});
+describe("background_output source pages", () => {
+  test("returns latest output as a Raw SourcePageDraft", async () => {
+    const ctx = context();
+    const store = child(ctx);
+    store.getState().append(testExecutionStart("run"));
+    store.getState().append({ type: "text-start" });
+    store.getState().append({ type: "text-delta", text: "latest" });
+    store.getState().append({ type: "text-end" });
+    store.getState().append({ type: "execution-end", status: "completed" });
 
-function contract(): DelegationContract {
-  return {
-    agent_type: "explore",
-    title: "Inspect",
-    objective: "Inspect one owner",
-    owned_scope: [],
-    non_goals: [],
-    acceptance_criteria: [{ id: "ac-1", condition: "Owner found", requiredEvidence: "File ref" }],
-    evidence: [],
-    verification: [],
-    depends_on: [],
-    skills: [],
-    background: true,
-  };
-}
-
-function makeContext(): ToolExecutionContext {
-  const storeManager = new SessionStoreManager({ logger: silentLogger });
-  return {
-    store: storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT, { agentName: "engineer" }),
-    storeManager,
-    toolName: "background_output",
-    toolCallId: "background-output-call",
-    input: {},
-    step: 0,
-    abort: new AbortController().signal,
-    startedAt: 0,
-    allowedTools: new Set(["background_output"]),
-    cwd: WORKSPACE_ROOT,
-    projectContext: createTestProjectContext(WORKSPACE_ROOT),
-  };
-}
-
-function createChild(ctx: ToolExecutionContext) {
-  const value = contract();
-  return ctx.storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT, {
-    agentName: "explore",
-    parentSessionId: ctx.store.getState().sessionId,
-    rootSessionId: ctx.store.getState().rootSessionId,
-    delegationContract: value,
-    delegationContractHash: hashDelegationContract(value),
-    title: value.title,
-  });
-}
-
-function appendReceipt(child: ReturnType<typeof createChild>): ChildResultReceipt {
-  const executionId = crypto.randomUUID();
-  const receipt: ChildResultReceipt = {
-    executionId,
-    delegationContractHash: child.getState().delegationContractHash!,
-    submittedAt: 10,
-    result: {
-      status: "completed",
-      summary: "Owner found",
-      deliverables: [],
-      evidence: [{ claim: "Owner found", ref: "src/owner.ts:1" }],
-      criteria: [{ id: "ac-1", status: "passed", evidenceRefs: ["src/owner.ts:1"] }],
-      verification: [],
-      unresolved: [],
-    },
-  };
-  child.getState().append({ type: "execution-start", executionId });
-  child.getState().append({ type: "text-start" });
-  child.getState().append({ type: "text-delta", text: "This text is not the result" });
-  child.getState().append({ type: "text-end" });
-  child.getState().append({ type: "child-result", receipt });
-  child.getState().append({ type: "execution-end", status: "completed" });
-  return receipt;
-}
-
-describe("background_output V2", () => {
-  it("accepts only canonical status/wait parameters", () => {
-    expect(BackgroundOutputInputSchema.parse({ session_id: "child" })).toEqual({
-      session_id: "child",
-      block: false,
-      timeout_ms: 1_800_000,
-    });
-    for (const field of ["full_session", "message_limit", "since_message_id", "include_tool_results", "include_reasoning"]) {
-      expect(BackgroundOutputInputSchema.safeParse({ session_id: "child", [field]: true }).success).toBe(false);
-    }
+    const result = await executeBackgroundOutput(input(store.getState().sessionId), ctx);
+    expect(result.draft.kind).toBe("source");
+    expect(sourceDraftText(result)).toContain("latest");
+    expect(result.draft.kind === "source" && result.draft.nextInput).toBeUndefined();
   });
 
-  it("returns the matching persisted receipt and never assistant text", async () => {
-    const ctx = makeContext();
-    const child = createChild(ctx);
-    const receipt = appendReceipt(child);
-    const output = await executeBackgroundOutput({
-      session_id: child.getState().sessionId,
-      block: false,
-      timeout_ms: 1_000,
-    }, ctx) as string;
-    expect(JSON.parse(output)).toEqual({
-      session_id: child.getState().sessionId,
-      execution_status: "completed",
-      wait_status: "not_waited",
-      result_receipt: receipt,
-    });
-    expect(output).not.toContain("This text is not the result");
-  });
-
-  it("reports running without fabricating a receipt", async () => {
-    const ctx = makeContext();
-    const child = createChild(ctx);
-    child.getState().append({ type: "execution-start", executionId: "running" });
-    const output = await executeBackgroundOutput({
-      session_id: child.getState().sessionId,
-      block: false,
-      timeout_ms: 1_000,
-    }, ctx) as string;
-    expect(JSON.parse(output)).toEqual({
-      session_id: child.getState().sessionId,
-      execution_status: "running",
-      wait_status: "not_waited",
-    });
-  });
-
-  it("recovers a missing Session projection from the canonical Goal review receipt", async () => {
-    const ctx = makeContext();
-    const goalId = crypto.randomUUID();
-    ctx.store.setState({
-      agentName: "goal_lead",
-      goalId,
-      sessionRole: "main",
-    });
-    const reviewContract: DelegationContract = {
-      ...contract(),
-      agent_type: "reviewer",
-      title: "Review Goal",
-      objective: "Verify the Goal acceptance criteria",
-      acceptance_criteria: [{
-        id: "goal-ac",
-        condition: "Goal acceptance criteria are satisfied",
-        requiredEvidence: "Review evidence",
+  test("pages through a huge latest assistant part at UTF-8 boundaries", async () => {
+    const ctx = context();
+    const store = child(ctx);
+    setMessages(store, [{
+      id: "assistant-huge",
+      role: "assistant",
+      createdAt: 1,
+      completedAt: 2,
+      parts: [{
+        type: "text",
+        id: "text-huge",
+        text: `HEAD_SENTINEL${"界".repeat(45_000)}TAIL_SENTINEL`,
+        createdAt: 1,
+        completedAt: 2,
       }],
-    };
-    const child = ctx.storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT, {
-      agentName: "reviewer",
-      parentSessionId: ctx.store.getState().sessionId,
-      rootSessionId: ctx.store.getState().rootSessionId,
-      delegationContract: reviewContract,
-      delegationContractHash: hashDelegationContract(reviewContract),
-      title: reviewContract.title,
-      goalId,
-      sessionRole: "review",
-    });
-    const executionId = crypto.randomUUID();
-    child.getState().append({ type: "execution-start", executionId });
-    child.getState().append({ type: "execution-end", status: "completed" });
+    }]);
 
-    const goal = await ctx.projectContext.goalState.commit({
-      id: goalId,
-      projectSlug: ctx.projectContext.project.slug,
-      createdFromSessionId: crypto.randomUUID(),
-      objective: "Recover the canonical review result",
-      acceptanceCriteria: "The parent can collect the result after a projection crash",
-      mainSessionId: ctx.store.getState().sessionId,
-    });
-    const reviewing = await ctx.projectContext.goalState.beginReview(goal.id);
-    const result = {
-      status: "completed" as const,
-      summary: "Goal verified",
-      criteria: [{ id: "goal-ac", status: "passed" as const, evidenceRefs: ["goal-test"] }],
-      deliverables: [],
-      evidence: [{ claim: "Goal verified", ref: "goal-test" }],
-      verification: [],
-      unresolved: [],
-    };
-    const finalized = await ctx.projectContext.goalState.finalizeReview(goal.id, {
-      expectedReviewGeneration: reviewing.reviewGeneration,
-      verdict: "DONE",
-      summary: result.summary,
-      evidenceRefs: [{ kind: "test_output", ref: "goal-test", summary: "Goal review passed" }],
-      executionId,
-      delegationContractHash: hashDelegationContract(reviewContract),
-      result,
-      authorization: {
-        agentName: "reviewer",
-        sessionRole: "review",
-        sessionGoalId: goalId,
-        reviewerSessionId: child.getState().sessionId,
-      },
-    });
-    expect(child.getState().childResultReceipts).toEqual([]);
-
-    const output = await executeBackgroundOutput({
-      session_id: child.getState().sessionId,
-      block: false,
-      timeout_ms: 1_000,
-    }, ctx) as string;
-    const recovered = JSON.parse(output);
-
-    expect(recovered.result_receipt).toMatchObject({
-      executionId,
-      delegationContractHash: hashDelegationContract(reviewContract),
-      result,
-    });
-    expect(recovered.result_receipt.submittedAt).toBe(Date.parse(finalized.review!.decidedAt));
-    expect(child.getState().childResultReceipts).toEqual([recovered.result_receipt]);
+    const { pages, nextInputs } = await readAllPages(input(store.getState().sessionId), ctx);
+    expect(pages.length).toBeGreaterThan(2);
+    expect(nextInputs.length).toBe(pages.length - 1);
+    expect(pages[0]).toContain("HEAD_SENTINEL");
+    expect(pages.at(-1)).toContain("TAIL_SENTINEL");
+    expect(pages.join("")).not.toContain("�");
   });
 
-  it("rejects non-direct Sessions", async () => {
-    const ctx = makeContext();
-    const unrelated = ctx.storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT, { agentName: "engineer" });
-    const result = await executeBackgroundOutput({
-      session_id: unrelated.getState().sessionId,
-      block: false,
-      timeout_ms: 1_000,
-    }, ctx) as ToolExecutionResult;
-    expect(JSON.parse(result.output).code).toBe("TOOL_CHILD_SESSION_NOT_DIRECT");
+  test("full_session cursor advances inside a huge part and across messages to a sentinel", async () => {
+    const ctx = context();
+    const store = child(ctx);
+    appendUser(store, "m1", `FIRST_MESSAGE${"界".repeat(40_000)}FIRST_TAIL`);
+    appendUser(store, "m2", "SECOND_MESSAGE_SENTINEL");
+
+    const { pages } = await readAllPages(input(store.getState().sessionId, { full_session: true }), ctx);
+    expect(pages.length).toBeGreaterThan(2);
+    expect(pages.join("")).toContain("FIRST_TAIL");
+    expect(pages.join("")).toContain("SECOND_MESSAGE_SENTINEL");
+  });
+
+  test("running Session pages explicitly declare non-frozen snapshot semantics", async () => {
+    const ctx = context();
+    const store = child(ctx);
+    store.getState().append(testExecutionStart("running"));
+    store.getState().append({ type: "text-start" });
+    store.getState().append({ type: "text-delta", text: "still working" });
+
+    const result = await executeBackgroundOutput(input(store.getState().sessionId), ctx);
+    expect(sourceDraftText(result)).toContain("Snapshot: false (live Session)");
+    expect(sourceDraftText(result)).toContain("not a final deliverable");
+  });
+
+  test("hard-cuts legacy message cursors and limits from the strict schema", () => {
+    const session_id = crypto.randomUUID();
+    expect(BackgroundOutputInputSchema.safeParse({ session_id, since_message_id: "old" }).success).toBe(false);
+    expect(BackgroundOutputInputSchema.safeParse({ session_id, message_limit: 20 }).success).toBe(false);
+  });
+
+  test("rejects the current Session with a bounded Raw error", async () => {
+    const ctx = context();
+    const result = await executeBackgroundOutput(input(ctx.store.getState().sessionId), ctx);
+    expect(result.isError).toBe(true);
+    expect(result.details?.error?.code).toBe("TOOL_INVALID_BACKGROUND_SESSION");
   });
 });

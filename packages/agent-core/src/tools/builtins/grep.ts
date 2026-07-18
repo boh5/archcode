@@ -6,8 +6,10 @@ import type { RipgrepService } from "../ripgrep/service";
 import { createWorkspacePermission } from "../permission";
 import { createProcessRunner } from "../../process/runner";
 import type { ProcessRunnerResult } from "../../process/types";
-import { buildFileListArgs, buildCountArgs, buildSearchArgs, formatSearchResult, parseRgOutput } from "../ripgrep/search";
-import type { ToolExecutionResult } from "../types";
+import { buildFileListArgs, buildCountArgs, buildSearchArgs, parseRgJsonLine } from "../ripgrep/search";
+import type { RawToolResult } from "../types";
+import { createLineSourcePage } from "./source-page";
+import { createBoundedSourceLineSink } from "./bounded-source-sink";
 
 // ─── Schema ───
 
@@ -18,6 +20,8 @@ export const GrepInputSchema = z
     include: z.string().optional().describe("File-name glob used to filter searched files, for example `*.ts` or `*.{ts,tsx}`."),
     output_mode: z.enum(["content", "files_with_matches", "count"]).optional().describe("`content` returns matching lines, `files_with_matches` returns paths only, and `count` returns per-file counts. Default `content`. At most 100 entries are returned."),
     context: z.number().optional().describe("Number of lines before and after each match. Used only with output_mode `content`."),
+    offset: z.number().int().nonnegative().default(0).describe("Strictly forward result offset from a prior page. Results are re-evaluated, so snapshot is false."),
+    limit: z.number().int().min(1).max(1_000).default(100).describe("Maximum sorted records requested for this page; the 50 KiB/2,000-line source cap may return fewer."),
   })
   .strict();
 
@@ -46,28 +50,38 @@ export const grepTool = defineTool({
     destructive: false,
     concurrencySafe: true,
   },
+  outputPolicy: { kind: "source", previewDirection: "head" },
   permissions: [createWorkspacePermission()],
-  async execute(input, ctx): Promise<string | ToolExecutionResult> {
+  async execute(input, ctx): Promise<RawToolResult> {
     try {
       const rgPath = await rgService.ensure();
       const outputMode = input.output_mode ?? "content";
       const runner = createProcessRunner();
 
-      const runRg = async (args: string[]) => {
+      const runRg = async (args: string[], sink?: import("../../process/types").ProcessOutputSink) => {
         return runner.run({
           argv: [rgPath, ...args],
           cwd: ctx.cwd,
           env: { ...process.env },
           signal: ctx.abort,
+          ...(sink === undefined ? {} : { outputSink: sink }),
         });
       };
 
       if (outputMode === "files_with_matches") {
-        return await formatFileListResult(await runRg(buildFileListArgs(input.pattern, input.include, input.path)), input.pattern);
+        const collector = createBoundedSourceLineSink(input.offset, input.limit, (line) => line.trim() || undefined);
+        const result = await runRg(buildFileListArgs(input.pattern, input.include, input.path), collector.sink);
+        const output = getProcessRunnerStdout(result);
+        if (output.ok === false) return output.error;
+        return formatCollectedPage(result, collector.finish(), input);
       }
 
       if (outputMode === "count") {
-        return await formatFileListResult(await runRg(buildCountArgs(input.pattern, input.include, input.path)), input.pattern);
+        const collector = createBoundedSourceLineSink(input.offset, input.limit, (line) => line.trim() || undefined);
+        const result = await runRg(buildCountArgs(input.pattern, input.include, input.path), collector.sink);
+        const output = getProcessRunnerStdout(result);
+        if (output.ok === false) return output.error;
+        return formatCollectedPage(result, collector.finish(), input);
       }
 
       const searchArgs = {
@@ -77,23 +91,20 @@ export const grepTool = defineTool({
         context: input.context,
       };
 
-      const result = await runRg(buildSearchArgs(searchArgs));
+      const collector = createBoundedSourceLineSink(input.offset, input.limit, (line) => {
+        const match = parseRgJsonLine(line);
+        return match === null ? undefined : `${match.path}:${match.lineNumber}:${match.content}`;
+      });
+      const result = await runRg(buildSearchArgs(searchArgs), collector.sink);
       const output = getProcessRunnerStdout(result);
       if (output.ok === false) return output.error;
 
-      const parsed = parseRgOutput(output.stdout, 100);
-
-      if (parsed.matches.length === 0) {
-        return `No matches found for pattern: ${input.pattern}`;
+      const lines = collector.finish();
+      if (lines.length === 0) {
+        return createLineSourcePage({ lines: [], offset: 0, nextInput: () => input, emptyText: `No matches found for pattern: ${input.pattern}` });
       }
 
-      const formatted = formatSearchResult(parsed, "content");
-
-      if (parsed.truncated) {
-        return `${formatted}\n[Output truncated: showing first 100 matches]`;
-      }
-
-      return formatted;
+      return createGrepPage(lines, input, true);
     } catch (error) {
       return createToolErrorResult({
         kind: "grep-error",
@@ -105,28 +116,39 @@ export const grepTool = defineTool({
   },
 });
 
-async function formatFileListResult(result: ProcessRunnerResult, pattern: string): Promise<string | ToolExecutionResult> {
+function formatCollectedPage(result: ProcessRunnerResult, lines: readonly string[], input: z.infer<typeof GrepInputSchema>): RawToolResult {
   const output = getProcessRunnerStdout(result);
   if (output.ok === false) return output.error;
-
-  const stdout = output.stdout;
-  const lines = stdout.trim().split("\n").filter(Boolean);
   if (lines.length === 0) {
-    return `No matches found for pattern: ${pattern}`;
+    return createLineSourcePage({ lines: [], offset: 0, nextInput: () => input, emptyText: `No matches found for pattern: ${input.pattern}` });
   }
+  return createGrepPage(lines, input, true);
+}
 
-  const truncated = lines.length > 100;
-  const display = truncated ? lines.slice(0, 100) : lines;
-  let formatted = display.join("\n");
-  if (truncated) {
-    formatted += "\n[Output truncated: showing first 100 files]";
-  }
-  return formatted;
+function createGrepPage(lines: readonly string[], input: z.infer<typeof GrepInputSchema>, alreadyPaged = false): RawToolResult {
+  const remaining = alreadyPaged ? lines : lines.slice(input.offset);
+  return createLineSourcePage({
+    lines: ["snapshot: false", ...remaining],
+    offset: 0,
+    recordLimit: input.limit + 1,
+    emptyText: `No matches found for pattern: ${input.pattern}`,
+    nextInput: (consumed) => ({ ...input, offset: input.offset + Math.max(0, consumed - 1) }),
+  });
 }
 
 function getProcessRunnerStdout(
   result: ProcessRunnerResult,
-): { ok: true; stdout: string } | { ok: false; error: ToolExecutionResult } {
+): { ok: true; stdout: string } | { ok: false; error: RawToolResult } {
+  if (result.kind !== "spawn-failure" && result.output.sinkStatus === "discarded") {
+    return {
+      ok: false,
+      error: createToolErrorResult({
+        kind: "grep-error",
+        code: "TOOL_GREP_ERROR",
+        message: "rg source collection failed before a complete bounded page was available",
+      }),
+    };
+  }
   switch (result.kind) {
     case "success":
       return { ok: true, stdout: result.output.stdout };
@@ -140,7 +162,6 @@ function getProcessRunnerStdout(
           message: result.output.stderr
             ? `rg exited with code ${result.exitCode}: ${result.output.stderr}`
             : `rg exited with code ${result.exitCode}`,
-          meta: { exitCode: result.exitCode },
         }),
       };
     case "timeout":
@@ -150,7 +171,6 @@ function getProcessRunnerStdout(
           kind: "grep-error",
           code: "TOOL_GREP_ERROR",
           message: `rg timed out after ${result.timeoutMs}ms`,
-          meta: { timeoutMs: result.timeoutMs },
         }),
       };
     case "aborted":
@@ -160,7 +180,6 @@ function getProcessRunnerStdout(
           kind: "grep-error",
           code: "TOOL_GREP_ERROR",
           message: "rg was aborted",
-          meta: { aborted: true },
         }),
       };
     case "signal":
@@ -170,7 +189,6 @@ function getProcessRunnerStdout(
           kind: "grep-error",
           code: "TOOL_GREP_ERROR",
           message: `rg was terminated by signal ${result.signal}`,
-          meta: { signal: result.signal, exitCode: result.exitCode },
         }),
       };
     case "spawn-failure":
@@ -181,7 +199,6 @@ function getProcessRunnerStdout(
           code: "TOOL_GREP_ERROR",
           error: new Error(result.error.message),
           message: result.error.message,
-          meta: { argv: result.argv, cwd: result.cwd },
         }),
       };
   }

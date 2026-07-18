@@ -3,7 +3,8 @@ import { storeManager } from "../../store/store";
 import type { Logger } from "../../logger";
 import { createMockLogger } from "../../logger.test-helper";
 import { createMockStore } from "../../store/test-helpers";
-import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import type { FinalizedToolResult } from "@archcode/protocol";
+import type { ToolExecutionContext } from "../types";
 import { createExecutionLogger } from "./logger";
 import { createTestProjectContext } from "../test-project-context";
 
@@ -22,11 +23,20 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     projectContext: createTestProjectContext("/tmp"), ...overrides,  };
 }
 
-function makeResult(overrides: Partial<ToolExecutionResult> = {}): ToolExecutionResult {
+function makeResult(overrides: { preview?: string; isError?: boolean } = {}): FinalizedToolResult {
+  const preview = overrides.preview ?? "hello world";
+  const count = { bytes: Buffer.byteLength(preview), lines: 1 };
   return {
-    output: overrides.output ?? "hello world",
     isError: overrides.isError ?? false,
-    meta: overrides.meta ?? {},
+    output: {
+      preview,
+      completeness: "complete",
+      observed: count,
+      canonical: count,
+      stored: count,
+      omitted: { bytes: 0, lines: 0 },
+      recovery: { kind: "none" },
+    },
   };
 }
 
@@ -49,7 +59,7 @@ describe("createExecutionLogger", () => {
   it("logs one debug call per tool execution with correct fields", async () => {
     const mockLogger = createMockLogger();
     const hook = createExecutionLogger(mockLogger as unknown as Logger);
-    const result = makeResult({ output: "some output here", isError: false });
+    const result = makeResult({ preview: "some output here", isError: false });
     const ctx = makeCtx({
       toolName: "bash",
       toolCallId: "call-xyz",
@@ -69,15 +79,19 @@ describe("createExecutionLogger", () => {
     expect(meta.toolName).toBe("bash");
     expect(meta.toolCallId).toBe("call-xyz");
     expect(meta.isError).toBe(false);
-    expect(meta.outputSize).toBe("some output here".length);
+    expect(meta.previewBytes).toBe("some output here".length);
+    expect(meta.canonicalBytes).toBe("some output here".length);
     expect(meta.durationMs).toBe(150);
     expect(meta.step).toBe(1);
     expect(meta.permissionOutcome).toBe("allow");
     expect(Object.keys(meta).sort()).toEqual([
+      "canonicalBytes",
+      "completeness",
       "durationMs",
       "isError",
-      "outputSize",
       "permissionOutcome",
+      "previewBytes",
+      "recovery",
       "step",
       "toolCallId",
       "toolName",
@@ -88,22 +102,22 @@ describe("createExecutionLogger", () => {
     expect("rawOutput" in meta).toBe(false);
   });
 
-  it("logs output size as length of output string", async () => {
+  it("logs preview size as UTF-8 bytes", async () => {
     const mockLogger = createMockLogger();
     const hook = createExecutionLogger(mockLogger as unknown as Logger);
-    const result = makeResult({ output: "abc" });
+    const result = makeResult({ preview: "abc" });
     const ctx = makeCtx();
 
     await hook(result, ctx);
 
     const meta = (mockLogger.debug.mock.calls[0]! as [string, { meta: Record<string, unknown> }])[1]!.meta;
-    expect(meta.outputSize).toBe(3);
+    expect(meta.previewBytes).toBe(3);
   });
 
   it("logs isError true for error results", async () => {
     const mockLogger = createMockLogger();
     const hook = createExecutionLogger(mockLogger as unknown as Logger);
-    const result = makeResult({ output: "error!", isError: true });
+    const result = makeResult({ preview: "error!", isError: true });
     const ctx = makeCtx();
 
     await hook(result, ctx);
@@ -149,7 +163,7 @@ describe("createExecutionLogger", () => {
       child: () => customLogger,
     };
     const hook = createExecutionLogger(customLogger);
-    const result = makeResult({ output: "test" });
+    const result = makeResult({ preview: "test" });
     const ctx = makeCtx();
 
     await hook(result, ctx);
@@ -157,7 +171,7 @@ describe("createExecutionLogger", () => {
     expect(mockLogger.debug).toHaveBeenCalledTimes(1);
     const meta = (mockLogger.debug.mock.calls[0]! as [string, { meta: Record<string, unknown> }])[1]!.meta;
     expect(meta.toolName).toBe("bash");
-    expect(meta.outputSize).toBe(4);
+    expect(meta.previewBytes).toBe(4);
   });
 
   it("uses the required debug method", async () => {
@@ -183,7 +197,7 @@ describe("createExecutionLogger", () => {
       redactedInput: { command: "token=[REDACTED]" },
     });
 
-    await hook(makeResult({ output: `result ${rawSecret}` }), ctx);
+    await hook(makeResult({ preview: `result ${rawSecret}` }), ctx);
 
     const fields = (mockLogger.debug.mock.calls[0]! as [string, { context: Record<string, unknown>; meta: Record<string, unknown> }])[1]!;
     const serialized = JSON.stringify(fields);

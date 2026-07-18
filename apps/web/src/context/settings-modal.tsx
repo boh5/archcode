@@ -1,9 +1,11 @@
 import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
 import { SettingsDialog } from "../components/features/SettingsDialog";
+import type { SettingsSection } from "../components/features/settings-helpers";
 
 interface SettingsModalContextValue {
   settingsOpen: boolean;
-  openSettingsModal: () => void;
+  settingsSection: SettingsSection;
+  openSettingsModal: (section?: SettingsSection) => void;
   closeSettingsModal: () => void;
 }
 
@@ -11,19 +13,23 @@ const SettingsModalContext = createContext<SettingsModalContextValue | null>(nul
 
 export function SettingsModalProvider({ children }: { children: ReactNode }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const openSettingsModal = useCallback(() => setSettingsOpen(true), []);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("models");
+  const openSettingsModal = useCallback((section: SettingsSection = "models") => {
+    setSettingsSection(section);
+    setSettingsOpen(true);
+  }, []);
   const closeSettingsModal = useCallback(() => setSettingsOpen(false), []);
 
   return (
-    <SettingsModalContext.Provider value={{ settingsOpen, openSettingsModal, closeSettingsModal }}>
+    <SettingsModalContext.Provider value={{ settingsOpen, settingsSection, openSettingsModal, closeSettingsModal }}>
       {children}
     </SettingsModalContext.Provider>
   );
 }
 
 export function SettingsModalRenderer() {
-  const { settingsOpen, closeSettingsModal } = useSettingsModal();
-  return <SettingsDialog open={settingsOpen} onClose={closeSettingsModal} />;
+  const { settingsOpen, settingsSection, closeSettingsModal } = useSettingsModal();
+  return <SettingsDialog open={settingsOpen} section={settingsSection} onClose={closeSettingsModal} />;
 }
 
 export function useSettingsModal() {

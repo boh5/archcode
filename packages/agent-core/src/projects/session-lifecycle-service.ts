@@ -10,6 +10,9 @@ import type { SessionStoreManager } from "../store/session-store-manager";
 export interface SessionLifecycleServiceOptions {
   readonly storeManager: SessionStoreManager;
   readonly cancelSessionToolBatch: CancelSessionToolBatch;
+  readonly deleteToolOutputs: (
+    input: SessionDeletionPreflightInput,
+  ) => Promise<void>;
   readonly findProjectTodoOwners: (
     input: SessionDeletionPreflightInput,
   ) => Promise<readonly SessionDeletionOwnerDetail[]>;
@@ -19,11 +22,13 @@ export interface SessionLifecycleServiceOptions {
 export class SessionLifecycleService implements SessionDeletionLifecycle {
   readonly #storeManager: SessionStoreManager;
   readonly #cancelSessionToolBatch: CancelSessionToolBatch;
+  readonly #deleteToolOutputs: SessionLifecycleServiceOptions["deleteToolOutputs"];
   readonly #findProjectTodoOwners: SessionLifecycleServiceOptions["findProjectTodoOwners"];
 
   constructor(options: SessionLifecycleServiceOptions) {
     this.#storeManager = options.storeManager;
     this.#cancelSessionToolBatch = options.cancelSessionToolBatch;
+    this.#deleteToolOutputs = options.deleteToolOutputs;
     this.#findProjectTodoOwners = options.findProjectTodoOwners;
   }
 
@@ -53,5 +58,6 @@ export class SessionLifecycleService implements SessionDeletionLifecycle {
     for (const sessionId of [...new Set(input.sessionIds)].sort()) {
       await this.#cancelSessionToolBatch(sessionId, input.workspaceRoot, "session_deleted");
     }
+    await this.#deleteToolOutputs(input);
   }
 }

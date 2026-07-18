@@ -1,19 +1,13 @@
-import type { StoreApi } from "zustand";
 import { compact, commitCompact, type CircuitBreaker } from "../compact";
-import type { ModelCallOptions } from "../config/index";
 import { silentLogger, type Logger } from "../logger";
-import type { ModelInfo } from "../provider/model";
-import type { SessionStoreState } from "../store/types";
-import { TOOL_OUTPUT_DIR } from "../tools/persist-output";
 import type { CommandDescriptor } from "./types";
 
-export function createCompactCommand(
-  store: StoreApi<SessionStoreState>,
-  modelInfo: ModelInfo,
-  circuitBreaker?: CircuitBreaker,
-  modelOptions?: ModelCallOptions,
-  logger: Logger = silentLogger,
-): CommandDescriptor {
+export interface CompactCommandOptions {
+  readonly circuitBreaker?: CircuitBreaker;
+  readonly logger?: Logger;
+}
+
+export function createCompactCommand(options: CompactCommandOptions = {}): CommandDescriptor {
   let isCompacting = false;
 
   return {
@@ -26,23 +20,17 @@ export function createCompactCommand(
 
       isCompacting = true;
 
-      const activeLogger = ctx.logger ?? logger;
+      const activeLogger = ctx.logger ?? options.logger ?? silentLogger;
 
       try {
-        const activeStore = ctx.store ?? store;
-        const activeModelInfo = ctx.modelInfo ?? modelInfo;
-        const activeModelOptions = ctx.modelOptions ?? modelOptions;
-        const activeCircuitBreaker = ctx.circuitBreaker ?? circuitBreaker;
+        const activeStore = ctx.store;
+        const activeCircuitBreaker = ctx.circuitBreaker ?? options.circuitBreaker;
         const beforeMessages = activeStore.getState().messages.length;
         const state = activeStore.getState();
         const result = await compact({
           messages: state.messages,
-          contextLimit: activeModelInfo.limit.context,
-          model: activeModelInfo.model,
-          modelOptions: activeModelOptions,
-          sessionId: state.sessionId,
+          binding: ctx.binding,
           logger: activeLogger,
-          toolOutputDir: TOOL_OUTPUT_DIR,
         }, ctx.abort);
 
         if (result === null) {

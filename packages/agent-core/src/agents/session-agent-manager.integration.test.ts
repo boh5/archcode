@@ -3,22 +3,30 @@ import { mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 
-import type { ArchCodeConfig } from "../config/schema";
 import { silentLogger } from "../logger";
-import type { ProviderRegistry } from "../provider";
-import { ModelInfo } from "../provider/model";
 import { SkillService } from "../skills";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { createTestTempRoot } from "../testing/test-temp-root";
-import { createRegistry } from "../tools/registry";
+import type { ToolRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
+import { createTextToolResult } from "../tools/results";
+import { createTestToolRegistryFixture, type TestToolRegistryFixture } from "../tools/test-registry";
 import { engineerAgentDefinition } from "./definitions";
 import { SessionAgentManager } from "./session-agent-manager";
 import { createTestProjectContextResolver } from "./test-project-context-resolver";
 
 const testTempRoot = createTestTempRoot("session-agent-manager");
+const registryFixtures: TestToolRegistryFixture[] = [];
+const outputAccessFixture = createTestToolRegistryFixture();
+
+function createTestRegistry(descriptors: AnyToolDescriptor[]): ToolRegistry {
+  const fixture = createTestToolRegistryFixture({ descriptors });
+  registryFixtures.push(fixture);
+  return fixture.registry;
+}
 
 afterAll(async () => {
+  await Promise.all([...registryFixtures, outputAccessFixture].map((fixture) => fixture.dispose()));
   await testTempRoot.cleanup();
 });
 
@@ -61,18 +69,13 @@ describe("SessionAgentManager Git cwd validation", () => {
 });
 
 function createManager(storeManager: SessionStoreManager): SessionAgentManager {
-  const providerRegistry = makeProviderRegistry();
   return new SessionAgentManager({
     definitions: [engineerAgentDefinition],
-    providerRegistry,
-    toolRegistry: createRegistry([makeTool("unknown_tool")]),
+    toolRegistry: createTestRegistry([makeTool("unknown_tool")]),
     skillService: new SkillService({ builtinSkills: {} }),
     storeManager,
+    createToolOutputAccess: outputAccessFixture.createToolOutputAccess,
     projectContextResolver: createTestProjectContextResolver(storeManager),
-    config: {
-      provider: {},
-      agents: { engineer: { model: providerRegistry.modelIds[0]! } },
-    } as unknown as ArchCodeConfig,
     logger: silentLogger,
   });
 }
@@ -83,28 +86,9 @@ function makeTool(name: string): AnyToolDescriptor {
     description: `${name} tool`,
     inputSchema: z.object({}).strict(),
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
-    execute: () => `${name} result`,
+    outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
+    execute: () => createTextToolResult(`${name} result`),
   };
-}
-
-function makeProviderRegistry(): ProviderRegistry {
-  const model = new ModelInfo({
-    model: {} as ConstructorParameters<typeof ModelInfo>[0]["model"],
-    config: {
-      name: "Test Model",
-      limit: { context: 128_000, output: 8_192 },
-      modalities: { input: ["text"], output: ["text"] },
-          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
-    },
-    providerId: "test",
-    modelId: "model",
-  });
-  return {
-    sdkRegistry: {} as ProviderRegistry["sdkRegistry"],
-    models: new Map([[model.qualifiedId, model]]),
-    modelIds: [model.qualifiedId],
-    getModel: () => model,
-  } as ProviderRegistry;
 }
 
 async function gitInit(cwd: string): Promise<void> {

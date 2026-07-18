@@ -23,9 +23,8 @@ export function createTitleGenerationHook(
       if (isCancelled?.()) return Promise.resolve();
       return task.run({
         store: ctx.store,
-        modelInfo: ctx.modelInfo,
+        binding: ctx.binding,
         logger: ctx.logger,
-        modelOptions: ctx.modelOptions,
         workspaceRoot,
         abort: ctx.abort,
       });

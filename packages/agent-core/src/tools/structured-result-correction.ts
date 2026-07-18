@@ -1,8 +1,8 @@
 import type { ModelCapabilities } from "../config";
 import { createToolErrorResult } from "./errors";
 import type {
+  RawToolResult,
   StructuredResultCorrectionGate,
-  ToolExecutionResult,
 } from "./types";
 import type { SessionStoreState } from "../store/types";
 
@@ -32,7 +32,7 @@ export function createStructuredResultCorrectionGate(
   return {
     policy,
     submission,
-    recordFailure(error: Error): ToolExecutionResult {
+    recordFailure(error: Error): RawToolResult {
       failures += 1;
       const terminate = policy === "strict" || failures > 1;
       const result = createToolErrorResult({
@@ -52,8 +52,8 @@ export function createStructuredResultCorrectionGate(
       if (!terminate) return result;
       return {
         ...result,
-        meta: {
-          ...result.meta,
+        sidecar: {
+          ...result.sidecar,
           executionControl: {
             action: "fail_execution",
             reason: "child_result_required",
@@ -76,7 +76,7 @@ export function countStructuredResultFailures(
     if (batch.executionId !== executionId) continue;
     for (const call of batch.calls) {
       if (!isStructuredResultSubmission(call.toolName, call.input, submission) || call.result?.isError !== true) continue;
-      const code = toolErrorCode(call.result.output);
+      const code = toolErrorCode(call.result.output.preview);
       if (
         code === "STRUCTURED_RESULT_CORRECTION_REQUIRED"
         || code === "CHILD_RESULT_REQUIRED"

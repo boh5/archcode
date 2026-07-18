@@ -9,6 +9,9 @@ export function runLlmStream<TTools extends ToolSet = ToolSet>(input: LlmStreamI
     ...pickModelCallOptions(input.modelOptions),
     messages: input.messages,
     abortSignal: input.abortSignal,
+    // QueryLoop owns classification, redaction, persistence, and logging.
+    // Suppress AI SDK's default raw Provider error logging at this boundary.
+    onError: () => {},
     ...(input.tools ? { tools: input.tools } : {}),
     ...(input.system ? { system: input.system } : {}),
   }) as LlmStreamResult<TTools>;

@@ -4,7 +4,8 @@ import { TOOL_AUTOMATION_CREATE, type Automation } from "@archcode/protocol";
 import { createMockStore } from "../../store/test-helpers";
 import { storeManager } from "../../store/store";
 import type { SessionStoreState } from "../../store/types";
-import { createToolExecutionContext, type ToolExecutionContext, type ToolExecutionResult } from "../types";
+import { expectTextDraft } from "../test-results";
+import { createToolExecutionContext, type ToolExecutionContext } from "../types";
 import { AutomationCreateSchema } from "../../automations/schema";
 import { automationCreateTool } from "./automation-create";
 
@@ -68,7 +69,7 @@ describe("automation_create", () => {
 
     const result = await automationCreateTool.execute(input, ctx);
 
-    expect(typeof result).toBe("string");
+    expect(result.isError).toBe(false);
     expect(createAutomation).toHaveBeenCalledWith({
       ...input,
       createdFromSessionId: "22222222-2222-4222-8222-222222222222",
@@ -84,10 +85,10 @@ describe("automation_create", () => {
       { sessionRole: "main" as const },
     ]) {
       const { ctx, createAutomation } = makeContext(override);
-      const result = await automationCreateTool.execute(input, ctx) as ToolExecutionResult;
+      const result = await automationCreateTool.execute(input, ctx);
 
       expect(result.isError).toBe(true);
-      expect(result.output).toContain("AUTOMATION_CREATE_DENIED");
+      expect(expectTextDraft(result)).toContain("AUTOMATION_CREATE_DENIED");
       expect(createAutomation).not.toHaveBeenCalled();
     }
   });

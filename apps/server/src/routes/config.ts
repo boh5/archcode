@@ -3,7 +3,13 @@ import {
   ConfigRevisionConflictError,
   ConfigSemanticValidationError,
 } from "@archcode/agent-core";
-import type { ServerConfigSnapshot, UpdateServerConfigRequest, UpdateServerConfigResponse } from "@archcode/protocol";
+import type {
+  ModelRuntimeCatalog,
+  ProviderAdapterCatalog,
+  ServerConfigSnapshot,
+  UpdateServerConfigRequest,
+  UpdateServerConfigResponse,
+} from "@archcode/protocol";
 import {
   BadRequestError,
   ConfigRevisionConflictHttpError,
@@ -13,6 +19,8 @@ import {
 /** Global server configuration. This route intentionally has no project slug. */
 export interface ConfigServicePort {
   getSnapshot(): Promise<ServerConfigSnapshot>;
+  getModelRuntimeCatalog(): ModelRuntimeCatalog;
+  getProviderAdapterCatalog(): ProviderAdapterCatalog;
   save(request: UpdateServerConfigRequest): Promise<UpdateServerConfigResponse>;
 }
 
@@ -20,6 +28,8 @@ export function createConfigRoutes(configService: ConfigServicePort): Hono {
   const app = new Hono();
 
   app.get("/", async (c) => c.json(await configService.getSnapshot()));
+  app.get("/model-runtime", (c) => c.json(configService.getModelRuntimeCatalog()));
+  app.get("/provider-adapters", (c) => c.json(configService.getProviderAdapterCatalog()));
 
   app.put("/", async (c) => {
     const input = await parseUpdateRequest(c.req.raw);

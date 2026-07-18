@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import type { McpServerStatus } from "@archcode/protocol";
+import type { McpServerStatus, ProviderAdapterCatalog } from "@archcode/protocol";
 import type { ServerConfig } from "../../api/config";
 import {
   SettingsModelsPanel,
   SettingsMcpPanel,
   SettingsNavigation,
-  SettingsRestartBanner,
+  SettingsApplyNotice,
 } from "./SettingsDialog";
 
 interface ElementLike {
@@ -69,6 +69,15 @@ const config: ServerConfig = {
   memory: { enabled: true, minMessages: 5, minContentLength: 1000, cooldownMs: 300000 },
 };
 
+const adapterCatalog: ProviderAdapterCatalog = [{
+  npmPackage: "@ai-sdk/openai-compatible",
+  displayName: "OpenAI-compatible",
+  fields: [
+    { path: "baseURL", label: "Base URL", kind: "url", required: true, secret: false },
+    { path: "apiKey", label: "API key", kind: "string", required: false, secret: true },
+  ],
+}];
+
 describe("SettingsDialog", () => {
   test("uses the exact Server navigation and no placeholder settings", () => {
     const tree = SettingsNavigation({ activeSection: "models", onSelect: () => {} });
@@ -82,7 +91,7 @@ describe("SettingsDialog", () => {
   });
 
   test("keeps providers and models in one continuous Models surface", () => {
-    const tree = SettingsModelsPanel({ config, onChange: () => {} });
+    const tree = SettingsModelsPanel({ config, adapterCatalog, onChange: () => {} });
     const header = findAll(tree, (element) => element.props?.title === "Models")[0];
     expect(header?.props?.description).toBe("Providers and their model profiles are configured together.");
     expect(textContent(tree)).toContain("local");
@@ -91,7 +100,7 @@ describe("SettingsDialog", () => {
   });
 
   test("shows required model capability controls but removes pricing and fine-grained call controls", () => {
-    const tree = SettingsModelsPanel({ config, onChange: () => {} });
+    const tree = SettingsModelsPanel({ config, adapterCatalog, onChange: () => {} });
     const content = textContent(tree);
     const editor = findAll(tree, (element) => element.props?.providerId === "local" && element.props?.modelId === "demo-model")[0];
 
@@ -122,8 +131,11 @@ describe("SettingsDialog", () => {
     expect(buttons).not.toContain("Delete exa");
   });
 
-  test("shows the restart notice only after a persisted config change", () => {
-    expect(textContent(SettingsRestartBanner({ restartRequired: false }))).toBe("");
-    expect(textContent(SettingsRestartBanner({ restartRequired: true }))).toContain("Restart required");
+  test("distinguishes live model application from named restart-only sections", () => {
+    expect(textContent(SettingsApplyNotice({ modelsAppliedLive: false, restartRequiredSections: [] }))).toBe("");
+    expect(textContent(SettingsApplyNotice({ modelsAppliedLive: true, restartRequiredSections: [] }))).toContain("applied live");
+    const notice = textContent(SettingsApplyNotice({ modelsAppliedLive: true, restartRequiredSections: ["mcp", "integrations.github"] }));
+    expect(notice).toContain("applied live");
+    expect(notice).toContain("Restart required for: MCP, GitHub");
   });
 });

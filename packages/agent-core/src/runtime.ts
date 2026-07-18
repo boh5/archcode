@@ -1,7 +1,8 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { defaultAgentDefinitions } from "./agents";
 import type { AgentName } from "./agents";
 import { SessionCwdTransitionConflictError, SessionCwdTransitionInProgressError } from "./agents/errors";
-import { resolveAgentModel } from "./agents/model-resolver";
 import { SessionAgentManager } from "./agents/session-agent-manager";
 import { BackgroundTaskManager } from "./background/manager";
 import { ServerConfigService } from "./config/server-config-service";
@@ -14,13 +15,17 @@ import {
   resolveMcpConfig,
   type ResolvedMcpConfig,
 } from "./config/mcp";
+import {
+  collectRuntimeSecretLiterals,
+  resolveGithubIntegrationConfig,
+} from "./config";
 import { registerBuiltinTools } from "./core/index";
 import {
   BUILTIN_MCP_SERVERS,
   McpManager,
   type McpWarning,
 } from "./mcp/index";
-import { createRegistry as createProviderRegistry, type ProviderRegistry } from "./provider/index";
+import { ModelSelectionResolver, type ModelRuntime } from "./models";
 import { ProjectContextResolver } from "./projects/context-resolver";
 import { ProjectRegistry } from "./projects/registry";
 import type { ProjectInfo } from "./projects/types";
@@ -33,9 +38,11 @@ import type {
   AgentDescriptor,
   Automation,
   AutomationInvocation,
+  ExecutionModelBindingSummary,
   GlobalSSEEvent,
   GlobalSSEHitlRealtimeEvent,
   GlobalSSEHitlSnapshotEvent,
+  GlobalSSEModelRuntimeChangedEvent,
   GlobalSSEResourceChangedEvent,
   GlobalSessionEventEnvelope,
   GlobalSSESessionRuntimeChangedEvent,
@@ -43,10 +50,13 @@ import type {
   HitlResponse,
   HitlView,
   McpServerStatus,
+  SessionNextModelSelection,
+  SessionModelState,
+  RequestedModelSelection,
   SessionFamilyActivity,
   SessionTreeResponse,
 } from "@archcode/protocol";
-import { createRegistry as createToolRegistry, DuplicateToolError, type ToolRegistry } from "./tools/index";
+import { createRegistry as createToolRegistry, createToolExecutionContext, DuplicateToolError, type ToolRegistry } from "./tools/index";
 import {
   applySessionToolBatchResponse,
   cancelSessionToolBatch,
@@ -73,6 +83,7 @@ import { GoalCancellationService, type GoalCancellationRequest } from "./goals/c
 import { GoalLifecycleService } from "./goals/lifecycle-service";
 import {
   MAX_HITL_DELIVERY_ATTEMPTS,
+  HitlBoundaryCodec,
   HitlConflictError,
   ProjectHitlQueue,
   requiresInspection,
@@ -95,11 +106,25 @@ import { scopedKey } from "./store/key";
 import { Logger, createConsoleLogger } from "./logger";
 import { SessionStoreManager } from "./store/session-store-manager";
 import { SessionInputService, type CommandRequestReplay, type MessageAcceptance } from "./session-input/service";
+import {
+  SessionModelSelectionInvalidError,
+  SessionModelSelectionService,
+} from "./session-input/model-selection-service";
 import type { SessionRole } from "./store/types";
 import { generateTitle } from "./title-generation";
 import type { GoalState } from "./goals/state";
 import { WorktreeService } from "./worktrees";
 import { ProjectTodoService, ProjectTodoStateManager } from "./todos";
+import {
+  createScopeBoundToolOutputAccess,
+  type ScopedOutputReadInput,
+  type ScopedOutputSearchInput,
+  type ToolOutputAccessService,
+} from "./tool-output/access-service";
+import { ToolOutputArtifactStore, computeProjectIdentity } from "./tool-output/artifact-store";
+import { ToolOutputFinalizer } from "./tool-output/finalizer";
+import { createRuntimeLogSafetyBoundary, SecretRedactionPolicy } from "./security";
+import { USER_DATA_DIR_NAME } from "@archcode/protocol";
 
 type SessionToolBatchExecutionInput = Omit<StartSessionExecutionInput, "input" | "origin">;
 type SessionToolBatchExecutor = (input: SessionToolBatchExecutionInput) => Promise<ActiveSessionExecution>;
@@ -111,6 +136,7 @@ export interface AcceptSessionMessageInput {
   readonly text: string;
   readonly clientRequestId: string;
   readonly source: "user" | "automation";
+  readonly requestedModelSelection: RequestedModelSelection;
 }
 
 export type SessionMessageAcceptance =
@@ -146,12 +172,21 @@ export class SessionCommandOutcomeError extends Error {
 export interface AgentRuntimeOptions {
   /** Explicit dependency-injection seam for isolated tests. */
   configService?: ServerConfigService;
-  mcpManagerFactory?: (config: ResolvedMcpConfig) => McpManager;
+  mcpManagerFactory?: (config: ResolvedMcpConfig, redactionPolicy: SecretRedactionPolicy) => McpManager;
+  /** Already-resolved process-owned secrets, such as the server password. */
+  externalSecretLiterals?: readonly string[];
   projectRegistryHomeDir?: string;
+  /** Internal storage location override for isolated tests. */
+  toolOutputRootDir?: string;
   automationSchedulerTimer?: AutomationSchedulerTimer;
   automationSchedulerClock?: AutomationSchedulerClock;
   logger?: Logger;
   goalLeadContinuationFactory?: (options: GoalLeadContinuationOptions) => GoalLeadContinuationCoordinator;
+}
+
+interface AgentRuntimeInternalOptions extends AgentRuntimeOptions {
+  /** Test-only seam kept out of the package contract. */
+  toolOutputStoreFactory?: (rootDir: string) => ToolOutputArtifactStore;
 }
 
 export interface CreateRuntimeSessionOptions {
@@ -202,9 +237,8 @@ export class ResourceCreationSourceError extends Error {
 }
 
 export interface AgentRuntime {
-  readonly mcpManager: McpManager;
   readonly toolRegistry: ToolRegistry;
-  readonly providerRegistry: ProviderRegistry;
+  readonly modelRuntime: ModelRuntime;
   readonly skillService: SkillService;
   readonly warnings: McpWarning[];
   readonly configService: ServerConfigService;
@@ -230,13 +264,24 @@ export interface AgentRuntime {
   listSessionRuntimeEvents(): Promise<GlobalSSESessionRuntimeSnapshotEvent[]>;
   getProjectControlPlaneSnapshot(workspaceRoot: string, projectSlug: string): Promise<ProjectControlPlaneSnapshot>;
   subscribeSessionRuntimeChanges(listener: (event: GlobalSSESessionRuntimeChangedEvent) => void): () => void;
+  subscribeModelRuntimeChanges(listener: (event: GlobalSSEModelRuntimeChangedEvent) => void): () => void;
   subscribeResourceChanges?(listener: (event: GlobalSSEResourceChangedEvent) => void): () => void;
   queueGoalTitleGeneration?(workspaceRoot: string, goalId: string): void;
   cancelGoal(workspaceRoot: string, goalId: string, request: GoalCancellationRequest): Promise<GoalState>;
   subscribeMcpStatusChanges(listener: (serverName: string, status: McpServerStatus) => void): () => void;
   getMcpServerStatuses(): Map<string, McpServerStatus>;
-  createSession(workspaceRoot: string, options: CreateRuntimeSessionOptions): Promise<SessionFile>;
-  getSessionFile(workspaceRoot: string, sessionId: string): Promise<SessionFile>;
+  createSession(workspaceRoot: string, options: CreateRuntimeSessionOptions): Promise<RuntimeSessionFile>;
+  getSessionFile(workspaceRoot: string, sessionId: string): Promise<RuntimeSessionFile>;
+  getSessionModelState(workspaceRoot: string, sessionId: string): Promise<SessionModelState>;
+  patchSessionModelSelection(input: {
+    readonly workspaceRoot: string;
+    readonly sessionId: string;
+    readonly expectedRevision: number;
+    readonly requestedModelSelection: RequestedModelSelection;
+  }): Promise<SessionModelState>;
+  getToolOutputAccess(workspaceRoot: string, sessionId: string): Promise<ToolOutputAccessService>;
+  readToolOutput(workspaceRoot: string, sessionId: string, input: ScopedOutputReadInput): ReturnType<ToolOutputAccessService["read"]>;
+  searchToolOutputs(workspaceRoot: string, sessionId: string, input: ScopedOutputSearchInput): ReturnType<ToolOutputAccessService["search"]>;
   resolveCompressionOriginalRange(workspaceRoot: string, sessionId: string, blockRef: string): Promise<CompressionOriginalRangeResult>;
   listSessions(workspaceRoot: string): Promise<SessionSummary[]>;
   /** Durably accepts a root Session message; execution dispatch is a separate best-effort consequence. */
@@ -290,8 +335,16 @@ export interface AgentRuntime {
   recoverProjectTodos(): Promise<void>;
   reconcileRegisteredProject(workspaceRoot: string, projectSlug: string): Promise<void>;
   stopAutomationSchedulers(): Promise<void>;
+  disposeToolOutputs(): Promise<void>;
+  /** Closes every Runtime-owned resource through its safe internal boundaries. */
+  shutdown(): Promise<void>;
   notifyRuntimeShutdown(reason: string): void;
 }
+
+export type RuntimeSessionFile = SessionFile & {
+  readonly nextModelSelection: SessionNextModelSelection;
+  readonly activeModelBinding?: ExecutionModelBindingSummary;
+};
 
 export interface HitlMutationResult {
   readonly hitlId: string;
@@ -302,40 +355,90 @@ export interface HitlMutationResult {
 export async function createRuntime(
   options: AgentRuntimeOptions = {},
 ): Promise<AgentRuntime> {
+  const internalOptions = options as AgentRuntimeInternalOptions;
   const logger = options.logger ?? createConsoleLogger({ level: "info" });
-  const runtimeLogger = logger.child({ module: "runtime" });
   const warnings: McpWarning[] = [];
   const configService = options.configService ?? new ServerConfigService();
   const config = await configService.loadForStartup();
-  const providerRegistry = createProviderRegistry(config.provider);
-  const toolRegistry = createToolRegistry();
-  registerBuiltinTools(toolRegistry, logger.child({ module: "tools" }), {
-    ...(config.integrations?.github === undefined ? {} : { github: config.integrations.github }),
-  });
-  const skillService = new SkillService();
+  const modelRuntime = configService.modelRuntime;
+  const modelSelectionResolver = new ModelSelectionResolver();
 
+  const projectSessionModels = (file: SessionFile): RuntimeSessionFile => {
+    const snapshot = modelRuntime.current;
+    const validOverride = file.modelSelection.override !== undefined
+      && snapshot.tryResolveSelection(file.modelSelection.override) !== undefined;
+    const agentDefault = snapshot.getAgentDefault(file.agentName);
+    if (agentDefault === undefined) {
+      throw new Error(`Agent "${file.agentName}" has no configured default model`);
+    }
+    const requested = validOverride
+      ? { mode: "session_override" as const, selection: { ...file.modelSelection.override! } }
+      : { mode: "agent_default" as const, selection: { ...agentDefault } };
+    const resolved = modelSelectionResolver.resolve({
+      snapshot,
+      agentName: file.agentName,
+      ...(validOverride ? { sessionOverride: file.modelSelection.override } : {}),
+    }).summary;
+    const activeModelBinding = [...file.executions]
+      .reverse()
+      .find((execution) => execution.status === "running")
+      ?.binding;
+    return {
+      ...file,
+      nextModelSelection: { requested, resolved },
+      ...(activeModelBinding === undefined ? {} : { activeModelBinding }),
+    };
+  };
   const resolvedMcpConfig = resolveMcpConfig(config.mcp);
-  const mcpManager = options.mcpManagerFactory
-    ? options.mcpManagerFactory(resolvedMcpConfig)
-    : new McpManager(BUILTIN_MCP_SERVERS, resolvedMcpConfig.servers, undefined, runtimeLogger.child({ module: "mcp" }));
+  const resolvedGithubConfig = resolveGithubIntegrationConfig(config.integrations?.github);
+  const literalRegistry = collectRuntimeSecretLiterals({
+    providers: config.provider,
+    userMcp: resolvedMcpConfig,
+    github: resolvedGithubConfig,
+    externalLiterals: options.externalSecretLiterals ?? [],
+  });
+  const redactionPolicy = new SecretRedactionPolicy(literalRegistry.values());
+  const runtimeLogger = createRuntimeLogSafetyBoundary(logger, redactionPolicy).child({ module: "runtime" });
 
-  configureDefaultLspClientPoolLogger(runtimeLogger.child({ module: "lsp" }));
-  configureDefaultBinaryManagerLogger(runtimeLogger.child({ module: "binary" }));
-  configureDefaultProcessRunnerLogger(runtimeLogger.child({ module: "process" }));
-  configureDefaultLspToolLogger(runtimeLogger.child({ module: "lsp.tools" }));
-  configureDefaultWebFetchLogger(runtimeLogger.child({ module: "webfetch" }));
-
+  const toolOutputRootDir = options.toolOutputRootDir
+    ?? join(options.projectRegistryHomeDir ?? homedir(), USER_DATA_DIR_NAME, "tool-output");
+  const toolOutputArtifactStore = internalOptions.toolOutputStoreFactory?.(toolOutputRootDir)
+    ?? new ToolOutputArtifactStore({ rootDir: toolOutputRootDir });
+  let mcpManager: McpManager | undefined;
   const recordWarning = (warning: McpWarning): void => {
-    warnings.push(warning);
+    const safeWarning = redactionPolicy.redactValue(warning);
+    warnings.push(safeWarning);
     runtimeLogger.warn("mcp.discovery.warning", {
-      message: warning.message,
-      context: warning.toolName ? { toolName: warning.toolName } : undefined,
-      meta: { warning },
+      message: safeWarning.message,
+      context: safeWarning.toolName ? { toolName: safeWarning.toolName } : undefined,
+      meta: { warning: safeWarning },
     });
   };
 
   try {
-    mcpManager.startBackgroundDiscovery(
+    mcpManager = options.mcpManagerFactory
+      ? options.mcpManagerFactory(resolvedMcpConfig, redactionPolicy)
+      : new McpManager(BUILTIN_MCP_SERVERS, resolvedMcpConfig.servers, redactionPolicy, undefined, runtimeLogger.child({ module: "mcp" }));
+    const activeMcpManager = mcpManager;
+    await toolOutputArtifactStore.ready();
+    const finalizer = new ToolOutputFinalizer({
+      artifactStore: toolOutputArtifactStore,
+      redactionPolicy,
+    });
+    const hitlCodec = new HitlBoundaryCodec(redactionPolicy);
+    const toolRegistry = createToolRegistry({ finalizer, hitlCodec, logger: runtimeLogger.child({ module: "tools.registry" }) });
+    registerBuiltinTools(toolRegistry, runtimeLogger.child({ module: "tools" }), {
+      github: resolvedGithubConfig,
+    });
+    const skillService = new SkillService();
+
+    configureDefaultLspClientPoolLogger(runtimeLogger.child({ module: "lsp" }));
+    configureDefaultBinaryManagerLogger(runtimeLogger.child({ module: "binary" }));
+    configureDefaultProcessRunnerLogger(runtimeLogger.child({ module: "process" }));
+    configureDefaultLspToolLogger(runtimeLogger.child({ module: "lsp.tools" }));
+    configureDefaultWebFetchLogger(runtimeLogger.child({ module: "webfetch" }));
+
+    activeMcpManager.startBackgroundDiscovery(
       (descriptors) => {
         for (const descriptor of descriptors) {
           if (toolRegistry.get(descriptor.name)) {
@@ -363,7 +466,7 @@ export async function createRuntime(
       (warning) => recordWarning(warning),
     );
 
-    const projectRegistry = new ProjectRegistry({ homeDir: options.projectRegistryHomeDir, logger: logger.child({ module: "projects.registry" }) });
+    const projectRegistry = new ProjectRegistry({ homeDir: options.projectRegistryHomeDir, logger: runtimeLogger.child({ module: "projects.registry" }) });
     const projectSlugsByWorkspace = new Map(
       (await projectRegistry.list()).map((project) => [project.workspaceRoot, project.slug]),
     );
@@ -371,8 +474,9 @@ export async function createRuntime(
       const project = await projectRegistry.getByWorkspace(workspaceRoot);
       if (project !== undefined) projectSlugsByWorkspace.set(project.workspaceRoot, project.slug);
     };
-    const sessionStoreManager = new SessionStoreManager({ logger });
+    const sessionStoreManager = new SessionStoreManager({ logger: runtimeLogger.child({ module: "sessions.store" }) });
     const sessionInputService = new SessionInputService(sessionStoreManager);
+    const sessionModelSelectionService = new SessionModelSelectionService(sessionStoreManager);
     const sessionEventBridge = new SessionEventBridge({
       source: sessionStoreManager,
       resolveProjectSlug: (workspaceRoot) => projectSlugsByWorkspace.get(workspaceRoot),
@@ -430,6 +534,7 @@ export async function createRuntime(
     let contextResolver!: ProjectContextResolver;
     let executionScopeValidator!: SessionExecutionScopeValidator;
     contextResolver = new ProjectContextResolver({
+      hitlCodec,
       projectInfoFactory: async (workspaceRoot) => {
         const project = await projectRegistry.getByWorkspace(workspaceRoot);
         if (project === undefined) {
@@ -438,8 +543,9 @@ export async function createRuntime(
         projectSlugsByWorkspace.set(project.workspaceRoot, project.slug);
         return project;
       },
-      hitlFactory: ({ workspaceRoot }) => new ProjectHitlQueue({
+      hitlFactory: ({ workspaceRoot, codec }) => new ProjectHitlQueue({
         workspaceRoot,
+        codec,
         onEvent: (event) => publishProjectHitlEvent(workspaceRoot, event),
       }),
       goalCancellationFactory: ({ workspaceRoot, goalState }) => new GoalCancellationService({
@@ -585,14 +691,17 @@ export async function createRuntime(
     executionScopeValidator = new SessionExecutionScopeValidator({ projectContextResolver: contextResolver });
     const sessionAgentManager = new SessionAgentManager({
       definitions: defaultAgentDefinitions,
-      providerRegistry,
       toolRegistry,
       skillService,
-      config,
+      memoryConfig: config.memory,
       projectContextResolver: contextResolver,
-      resolveMcpStatuses: () => mcpManager.getStatus(),
+      resolveMcpStatuses: () => activeMcpManager.getStatus(),
       storeManager: sessionStoreManager,
-      logger,
+      createToolOutputAccess: (workspaceRoot, rootSessionId) => createScopeBoundToolOutputAccess(
+        toolOutputArtifactStore,
+        { workspaceRoot, rootSessionId },
+      ),
+      logger: runtimeLogger.child({ module: "sessions.agents" }),
     });
     const activeSessionKeys = new Map<string, { workspaceRoot: string; sessionId: string }>();
     function notifyRuntimeShutdown(reason: string): void {
@@ -611,6 +720,8 @@ export async function createRuntime(
 
     const executionManager = new SessionExecutionManager({
       sessionAgentManager,
+      modelRuntime,
+      modelSelectionResolver,
       createSessionStore: (sessionId, workspaceRoot, createOptions) => sessionStoreManager.create(sessionId, workspaceRoot, createOptions),
       flushSessionStore: (sessionId, workspaceRoot) => sessionStoreManager.flushSession(sessionId, workspaceRoot),
       getSessionStore: (sessionId, workspaceRoot) => sessionStoreManager.get(sessionId, workspaceRoot),
@@ -635,12 +746,21 @@ export async function createRuntime(
         cancelSessionToolBatch: (sessionId, workspaceRoot, reason) => (
           cancelSessionBatchAndHitl(sessionId, workspaceRoot, reason)
         ),
+        deleteToolOutputs: async ({ workspaceRoot, rootSessionId, sessionIds }) => {
+          await toolOutputArtifactStore.deleteProducerSessions(
+            {
+              projectIdentity: await computeProjectIdentity(workspaceRoot),
+              rootSessionId,
+            },
+            new Set(sessionIds),
+          );
+        },
         findProjectTodoOwners: async (input) => {
           const context = await contextResolver.resolve(input.workspaceRoot);
           return await context.todos.findSessionOwners(input.sessionIds);
         },
       }),
-      logger,
+      logger: runtimeLogger.child({ module: "sessions.execution" }),
     });
     const continuationOptions: GoalLeadContinuationOptions = {
       projectContextResolver: contextResolver,
@@ -704,6 +824,7 @@ export async function createRuntime(
           switch (dispatching.owner.type) {
             case "session":
               await applySessionToolBatchResponse({
+                registry: toolRegistry,
                 storeManager: sessionStoreManager,
                 workspaceRoot,
                 sessionId: dispatching.owner.id,
@@ -724,9 +845,10 @@ export async function createRuntime(
               workspaceRoot,
               sessionId: applied.owner.id,
             }).catch((error) => {
+              const failure = hitlCodec.redactFailure(error);
               runtimeLogger.warn("session.tool_batch.wake_failed", {
-                error,
-                context: { projectSlug, sessionId: applied.owner.id, hitlId: applied.hitlId },
+                context: redactionPolicy.redactValue({ projectSlug, sessionId: applied.owner.id, hitlId: applied.hitlId }),
+                meta: { failure },
               });
             });
           } else {
@@ -735,17 +857,17 @@ export async function createRuntime(
           return applied;
         } catch (error) {
           const attempts = dispatching.delivery?.attempts ?? 0;
+          const failure = hitlCodec.redactFailure(error);
           current = await context.hitl.resolve(dispatching.hitlId, {
             type: "delivery_failed",
-            error: errorMessage(error),
+            error: failure.message,
             ...(attempts < MAX_HITL_DELIVERY_ATTEMPTS
               ? { retryAt: new Date().toISOString() }
               : {}),
           });
           runtimeLogger.warn("hitl.delivery.failed", {
-            error,
-            context: { projectSlug, hitlId: dispatching.hitlId, ownerType: dispatching.owner.type },
-            meta: { attempts },
+            context: redactionPolicy.redactValue({ projectSlug, hitlId: dispatching.hitlId, ownerType: dispatching.owner.type }),
+            meta: { attempts, failure },
           });
         }
       }
@@ -769,6 +891,7 @@ export async function createRuntime(
       ) {
         try {
           await validateSessionToolBatchResponse({
+            registry: toolRegistry,
             storeManager: sessionStoreManager,
             workspaceRoot: input.workspaceRoot,
             sessionId: pending.owner.id,
@@ -821,6 +944,31 @@ export async function createRuntime(
       const cancelled = await cancelSessionToolBatch({
         storeManager: sessionStoreManager,
         hitlQueue: context.hitl,
+        settleSystem: async (call, step, raw) => {
+          const store = await sessionStoreManager.getOrLoad(sessionId, workspaceRoot);
+          const state = store.getState();
+          const outcome = await toolRegistry.settleSystem(
+            call,
+            createToolExecutionContext({
+              store,
+              storeManager: sessionStoreManager,
+              toolName: call.toolName,
+              toolCallId: call.toolCallId,
+              input: call.input,
+              step,
+              abort: new AbortController().signal,
+              agentName: state.agentName,
+              startedAt: Date.now(),
+              allowedTools: new Set(),
+              agentSkills: state.activeSkillNames,
+              skillService,
+              projectContext: context,
+              cwd: state.cwd,
+            }),
+            raw,
+          );
+          return outcome;
+        },
         prepareHitlCancellation: async (hitlIds) => {
           const records = (await context.hitl.list({ owner: { type: "session", id: sessionId } }))
             .filter((record) => hitlIds.includes(record.hitlId));
@@ -884,9 +1032,10 @@ export async function createRuntime(
         try {
           await dispatchAnsweredHitl(workspaceRoot, projectSlug, record);
         } catch (error) {
+          const failure = hitlCodec.redactFailure(error);
           runtimeLogger.warn("hitl.delivery.reconcile_failed", {
-            error,
-            context: { projectSlug, hitlId: record.hitlId, ownerType: record.owner.type },
+            context: redactionPolicy.redactValue({ projectSlug, hitlId: record.hitlId, ownerType: record.owner.type }),
+            meta: { failure },
           });
         }
       }
@@ -952,6 +1101,7 @@ export async function createRuntime(
               text: input.text,
               clientRequestId: input.clientRequestId,
               source: input.source,
+              requestedModelSelection: input.requestedModelSelection,
             } as const;
             const settledAcceptance = (replay: CommandRequestReplay | undefined): SessionMessageAcceptance => {
               if (replay === undefined || (replay.kind === "command" && replay.status === "executing")) {
@@ -989,7 +1139,8 @@ export async function createRuntime(
                   workspaceRoot: input.workspaceRoot,
                   sessionId: input.sessionId,
                   clientRequestId: input.clientRequestId,
-                }, async (signal): Promise<SessionMessageAcceptance> => {
+                  requestedModelSelection: input.requestedModelSelection,
+                }, async (binding, signal): Promise<SessionMessageAcceptance> => {
                   if ((await sessionStoreManager.listSessionFamilyToolBatchHitlIds(
                     input.workspaceRoot,
                     input.sessionId,
@@ -1001,7 +1152,7 @@ export async function createRuntime(
                   let result;
                   try {
                     signal.throwIfAborted();
-                    result = await agent.executeCommand(command, { abort: signal });
+                    result = await agent.executeCommand(command, binding, { abort: signal });
                     signal.throwIfAborted();
                   } catch (error) {
                     await sessionInputService.failCommand({
@@ -1026,6 +1177,7 @@ export async function createRuntime(
                     clientRequestId: input.clientRequestId,
                     text: result.content,
                     source: input.source,
+                    requestedModelSelection: input.requestedModelSelection,
                   });
                 });
               } catch (error) {
@@ -1060,6 +1212,7 @@ export async function createRuntime(
           text: input.text,
           clientRequestId: input.clientRequestId,
           source: input.source,
+          requestedModelSelection: input.requestedModelSelection,
         });
         triggerQueuedExecution();
         return accepted;
@@ -1168,7 +1321,14 @@ export async function createRuntime(
         sessionStoreManager,
         sessionRuntime: {
           acceptSessionMessage: async (input) => {
-            const accepted = await acceptSessionMessage(input);
+            const session = projectSessionModels(await sessionStoreManager.getSessionFile(
+              input.workspaceRoot,
+              input.sessionId,
+            ));
+            const accepted = await acceptSessionMessage({
+              ...input,
+              requestedModelSelection: session.nextModelSelection.requested,
+            });
             if (accepted.status === "command") {
               throw new Error("Automation messages cannot execute Session commands");
             }
@@ -1217,8 +1377,11 @@ export async function createRuntime(
     }
 
     async function generateGoalTitle(text: string): Promise<string | null> {
-      const { modelInfo, options: modelOptions } = resolveAgentModel("engineer", config, providerRegistry);
-      return await generateTitle({ kind: "goal", text, modelInfo, modelOptions });
+      const binding = modelSelectionResolver.resolve({
+        snapshot: modelRuntime.current,
+        agentName: "engineer",
+      });
+      return await generateTitle({ kind: "goal", text, binding });
     }
 
     async function notifyGoalStateChanged(workspaceRoot: string, goalId: string): Promise<void> {
@@ -1480,6 +1643,17 @@ export async function createRuntime(
       automationRuntimeServices.clear();
     }
 
+    async function getToolOutputAccess(
+      workspaceRoot: string,
+      sessionId: string,
+    ): Promise<ToolOutputAccessService> {
+      const rootSessionId = await sessionStoreManager.resolveRootSessionId(sessionId, workspaceRoot);
+      return createScopeBoundToolOutputAccess(toolOutputArtifactStore, {
+        workspaceRoot,
+        rootSessionId,
+      });
+    }
+
     sessionAgentManager.setStartChildExecution((workspaceRoot, request) => executionManager.startChildExecution(workspaceRoot, request));
     sessionAgentManager.setCancelChildSession((workspaceRoot, parentSessionId, childSessionId) => executionManager.cancelChildSession(workspaceRoot, parentSessionId, childSessionId));
     sessionAgentManager.setResumeChildSession((workspaceRoot, request) => executionManager.resumeChildExecution(workspaceRoot, request));
@@ -1561,6 +1735,9 @@ export async function createRuntime(
 
         const removed = await projectRegistry.remove(project.slug);
         if (removed === undefined) return undefined;
+        // Project removal is unregister-only. Session and Tool Output data remain
+        // owned by the workspace identity so re-registering the same workspace
+        // can recover unexpired refs.
         cancelWorkspaceReconciliation(project.workspaceRoot);
         const projectRetryKey = `${project.workspaceRoot}\0${project.slug}`;
         const projectRetry = projectReconcileRetries.get(projectRetryKey);
@@ -1598,10 +1775,30 @@ export async function createRuntime(
       }
     }
 
+    const abortAllSessionExecutions = (): Promise<void> => {
+      continuationService.shutdown();
+      shutdownGoalStateReconciliation();
+      return executionManager.abortAll();
+    };
+    let shutdownPromise: Promise<void> | undefined;
+    const shutdown = (): Promise<void> => {
+      if (shutdownPromise !== undefined) return shutdownPromise;
+
+      shutdownPromise = (async () => {
+        await Promise.all([
+          stopAutomationSchedulers(),
+          abortAllSessionExecutions(),
+          toolOutputArtifactStore.dispose(),
+          closeMcpManager(activeMcpManager, warnings, runtimeLogger),
+        ]);
+        sessionAgentManager.disposeAll();
+      })();
+      return shutdownPromise;
+    };
+
     return {
-      mcpManager,
       toolRegistry,
-      providerRegistry,
+      modelRuntime,
       skillService,
       warnings,
       configService,
@@ -1663,6 +1860,11 @@ export async function createRuntime(
           sessionRuntimeListeners.delete(listener);
         };
       },
+      subscribeModelRuntimeChanges: (listener) => modelRuntime.subscribe((snapshot) => listener({
+        type: "model_runtime.changed",
+        revision: snapshot.revision,
+        createdAt: Date.now(),
+      })),
       subscribeResourceChanges: (listener) => {
         resourceChangeListeners.add(listener);
         return () => {
@@ -1677,17 +1879,49 @@ export async function createRuntime(
         await notifyGoalStateChanged(workspaceRoot, goalId);
         return goal;
       },
-      subscribeMcpStatusChanges: (listener) => mcpManager.onStatusChange(listener),
-      getMcpServerStatuses: () => mcpManager.getStatus(),
-      createSession: (workspaceRoot, createOptions) => {
+      subscribeMcpStatusChanges: (listener) => activeMcpManager.onStatusChange(listener),
+      getMcpServerStatuses: () => activeMcpManager.getStatus(),
+      createSession: async (workspaceRoot, createOptions) => {
         executionManager.assertWorkspaceOpen(workspaceRoot);
         assertRuntimeSessionAgentScope(createOptions);
-        return sessionStoreManager.createSessionFile(workspaceRoot, createOptions);
+        return projectSessionModels(await sessionStoreManager.createSessionFile(workspaceRoot, createOptions));
       },
       getSessionFile: async (workspaceRoot, sessionId) => {
         await sessionStoreManager.flushSession(sessionId, workspaceRoot);
-        return await sessionStoreManager.getSessionFile(workspaceRoot, sessionId);
+        return projectSessionModels(await sessionStoreManager.getSessionFile(workspaceRoot, sessionId));
       },
+      getSessionModelState: async (workspaceRoot, sessionId) => {
+        const projected = projectSessionModels(await sessionStoreManager.getSessionFile(workspaceRoot, sessionId));
+        return {
+          modelSelection: projected.modelSelection,
+          nextModelSelection: projected.nextModelSelection,
+          ...(projected.activeModelBinding === undefined ? {} : { activeModelBinding: projected.activeModelBinding }),
+        };
+      },
+      patchSessionModelSelection: async (input) => {
+        const file = await sessionStoreManager.getSessionFile(input.workspaceRoot, input.sessionId);
+        if (input.requestedModelSelection.mode === "session_override"
+          && modelRuntime.current.tryResolveSelection(input.requestedModelSelection.selection) === undefined) {
+          throw new SessionModelSelectionInvalidError(input.requestedModelSelection);
+        }
+        await sessionModelSelectionService.patch(input);
+        const projected = projectSessionModels(await sessionStoreManager.getSessionFile(input.workspaceRoot, input.sessionId));
+        if (projected.agentName !== file.agentName) {
+          throw new Error(`Session "${input.sessionId}" Agent identity changed during model selection update`);
+        }
+        return {
+          modelSelection: projected.modelSelection,
+          nextModelSelection: projected.nextModelSelection,
+          ...(projected.activeModelBinding === undefined ? {} : { activeModelBinding: projected.activeModelBinding }),
+        };
+      },
+      getToolOutputAccess,
+      readToolOutput: async (workspaceRoot, sessionId, input) => (
+        await (await getToolOutputAccess(workspaceRoot, sessionId)).read(input)
+      ),
+      searchToolOutputs: async (workspaceRoot, sessionId, input) => (
+        await (await getToolOutputAccess(workspaceRoot, sessionId)).search(input)
+      ),
       resolveCompressionOriginalRange: (workspaceRoot, sessionId, blockRef) => sessionStoreManager.resolveCompressionOriginalRange(workspaceRoot, sessionId, blockRef),
       listSessions: (workspaceRoot) => sessionStoreManager.listSessionSummaries(workspaceRoot),
       acceptSessionMessage,
@@ -1717,11 +1951,7 @@ export async function createRuntime(
         }
         await sessionFamilyStopService.stop(workspaceRoot, rootSessionId);
       },
-      abortAllSessionExecutions: () => {
-        continuationService.shutdown();
-        shutdownGoalStateReconciliation();
-        return executionManager.abortAll();
-      },
+      abortAllSessionExecutions,
       getSessionExecution: (workspaceRoot, sessionId) => executionManager.getExecution(workspaceRoot, sessionId),
       subscribeSessionEvents: (listener) => sessionEventBridge.subscribe(listener),
       deleteSession: (workspaceRoot, sessionId) => executionManager.deleteSession(workspaceRoot, sessionId),
@@ -1756,13 +1986,21 @@ export async function createRuntime(
       recoverProjectTodos,
       reconcileRegisteredProject,
       stopAutomationSchedulers,
+      disposeToolOutputs: () => toolOutputArtifactStore.dispose(),
+      shutdown,
       notifyRuntimeShutdown,
     };
   } catch (err) {
+    const errorName = err instanceof Error ? err.name : "NonErrorThrow";
+    const errorCode = typeof err === "object" && err !== null && "code" in err && typeof err.code === "string"
+      ? err.code
+      : "RUNTIME_INIT_FAILED";
     runtimeLogger.error("runtime.init.failed", {
-      error: err instanceof Error ? err.message : String(err),
+      message: redactionPolicy.redactString(errorMessage(err)),
+      meta: { errorName, errorCode },
     });
-    await closeMcpManagerBestEffort(mcpManager, recordWarning);
+    if (mcpManager !== undefined) await closeMcpManager(mcpManager, warnings, runtimeLogger);
+    await toolOutputArtifactStore.dispose();
     throw err;
   }
 }
@@ -1788,20 +2026,32 @@ function assertRuntimeSessionAgentScope(options: CreateRuntimeSessionOptions): v
   }
 }
 
-export async function closeMcpManagerBestEffort(
+/**
+ * MCP close failures cross a process boundary. Deliberately do not preserve
+ * their message, server name, stderr, or stack: those values can contain
+ * credentials, URLs, and local paths. The Runtime is the sole owner of this
+ * boundary; callers only receive the stable warning record and log event.
+ */
+async function closeMcpManager(
   mcpManager: McpManager,
-  warn?: (warning: McpWarning) => void,
+  warnings: McpWarning[],
+  logger: Logger,
 ): Promise<void> {
   try {
     const closeWarnings = await mcpManager.closeAll();
-    for (const warning of closeWarnings) {
-      warn?.(warning);
-    }
-  } catch (err) {
-    warn?.({
-      message: `Failed to close MCP manager during shutdown: ${errorMessage(err)}`,
-    });
+    for (const _warning of closeWarnings) recordMcpShutdownWarning(warnings, logger);
+  } catch {
+    recordMcpShutdownWarning(warnings, logger);
   }
+}
+
+function recordMcpShutdownWarning(warnings: McpWarning[], logger: Logger): void {
+  const warning: McpWarning = { message: "MCP shutdown failed" };
+  warnings.push(warning);
+  logger.warn("mcp.shutdown.warning", {
+    message: warning.message,
+    meta: { failure: { name: "McpShutdownError", code: "MCP_SHUTDOWN_FAILED" } },
+  });
 }
 
 function errorMessage(error: unknown): string {

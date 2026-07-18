@@ -54,7 +54,8 @@ export const TOOL_RESUME_SESSION = "resume_session";
 export const TOOL_WAIT_FOR_REMINDER = "wait_for_reminder";
 export const TOOL_BACKGROUND_OUTPUT = "background_output";
 export const TOOL_SUBMIT_CHILD_RESULT = "submit_child_result";
-export const TOOL_VIEW_TOOL_OUTPUT = "view_tool_output";
+export const TOOL_OUTPUT_READ = "output_read";
+export const TOOL_OUTPUT_SEARCH = "output_search";
 export const TOOL_CANCEL_SESSION = "cancel_session";
 
 // Skills
@@ -108,7 +109,8 @@ export type BuiltinToolName =
   | typeof TOOL_WAIT_FOR_REMINDER
   | typeof TOOL_BACKGROUND_OUTPUT
   | typeof TOOL_SUBMIT_CHILD_RESULT
-  | typeof TOOL_VIEW_TOOL_OUTPUT
+  | typeof TOOL_OUTPUT_READ
+  | typeof TOOL_OUTPUT_SEARCH
   | typeof TOOL_CANCEL_SESSION
   | typeof TOOL_SKILL_LIST
   | typeof TOOL_SKILL_READ
@@ -172,7 +174,8 @@ export const TOOL_CATEGORY_MAP = {
   [TOOL_WAIT_FOR_REMINDER]: "delegation",
   [TOOL_BACKGROUND_OUTPUT]: "delegation",
   [TOOL_SUBMIT_CHILD_RESULT]: "delegation",
-  [TOOL_VIEW_TOOL_OUTPUT]: "delegation",
+  [TOOL_OUTPUT_READ]: "search",
+  [TOOL_OUTPUT_SEARCH]: "search",
   [TOOL_CANCEL_SESSION]: "delegation",
   [TOOL_SKILL_LIST]: "skill",
   [TOOL_SKILL_READ]: "skill",

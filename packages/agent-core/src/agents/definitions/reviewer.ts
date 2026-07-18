@@ -22,7 +22,8 @@ import {
   TOOL_LSP_SYMBOLS,
   TOOL_MEMORY_READ,
   TOOL_TODO_WRITE,
-  TOOL_VIEW_TOOL_OUTPUT,
+  TOOL_OUTPUT_READ,
+  TOOL_OUTPUT_SEARCH,
   TOOL_WEB_FETCH,
 } from "../../tools/names";
 
@@ -48,7 +49,8 @@ export const reviewerAgentDefinition = {
       TOOL_TODO_WRITE,
       TOOL_GOAL_MANAGE,
       ...DELEGATION_CORE_TOOLS,
-      TOOL_VIEW_TOOL_OUTPUT,
+      TOOL_OUTPUT_READ,
+      TOOL_OUTPUT_SEARCH,
       TOOL_COMPRESS,
       ...SKILL_ACCESS_TOOLS,
       "submit_child_result",
@@ -72,6 +74,5 @@ export const reviewerAgentDefinition = {
     terminalReminders: true,
   },
   includeMemoryInPrompt: true,
-  enforceToolOutputQuota: true,
   skills: ["codemap", "safe-refactor", "review-work", "research-docs"],
 } as const satisfies AgentDefinition;

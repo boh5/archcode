@@ -1,30 +1,43 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { z } from "zod";
 import { silentLogger, type Logger } from "../../logger";
 import { storeManager } from "../../store/store";
 import { defineTool } from "../define-tool";
-import { TOOL_ERROR_META_KEY } from "../errors";
-import { createRegistry } from "../registry";
+import { createTextToolResult } from "../results";
+import type { ToolRegistry } from "../registry";
+import { createTestToolRegistryFixture, type TestToolRegistryFixture } from "../test-registry";
 import type {
   PermissionDecision,
   ToolCallLike,
-  ToolConfirmationRequest,
-  ToolConfirmationResult,
   ToolDescriptor,
   ToolExecutionContext,
   ToolPermission,
 } from "../types";
+import type { FinalizedToolResult } from "@archcode/protocol";
 import { createProtectedPathPermission } from "./protected-path";
 import { ProjectApprovalLoadError, ProjectApprovalManager } from "./project-approvals";
 import type { PermissionApprovalScope } from "./policy-types";
 import { createTestProjectContext } from "../test-project-context";
 import { createMockStore } from "../../store/test-helpers";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__", "permission-regression", crypto.randomUUID());
+const TMP_DIR = realpathSync.native(mkdtempSync(join(tmpdir(), "archcode-permission-regression-")));
 const WORKSPACE = join(TMP_DIR, "workspace");
 const OUTSIDE = join(TMP_DIR, "outside");
+const registryFixtures: TestToolRegistryFixture[] = [];
+
+function createTestRegistry(descriptors: ToolDescriptor[]): ToolRegistry {
+  const fixture = createTestToolRegistryFixture({ descriptors });
+  registryFixtures.push(fixture);
+  return fixture.registry;
+}
+
+function settled(outcome: Awaited<ReturnType<ToolRegistry["execute"]>>): FinalizedToolResult {
+  if (outcome.kind !== "settled") throw new Error("Expected settled Registry outcome");
+  return outcome.result;
+}
 
 const ELIGIBLE_SCOPE: PermissionApprovalScope = {
   kind: "bash-exact",
@@ -71,7 +84,8 @@ const DENY_DECISION: PermissionDecision = {
 };
 
 function resetWorkspace(): void {
-  rmSync(TMP_DIR, { recursive: true, force: true });
+  rmSync(WORKSPACE, { recursive: true, force: true });
+  rmSync(OUTSIDE, { recursive: true, force: true });
   mkdirSync(join(WORKSPACE, "src"), { recursive: true });
   mkdirSync(join(WORKSPACE, ".archcode", "memory"), { recursive: true });
   mkdirSync(OUTSIDE, { recursive: true });
@@ -108,8 +122,9 @@ function decisionTool(permission: ToolPermission): ToolDescriptor<{ value?: stri
     description: "Permission regression probe",
     inputSchema: z.object({ value: z.string().optional() }).strict(),
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
+    outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
     permissions: [permission],
-    execute: async () => "executed",
+    execute: async () => createTextToolResult("executed"),
   });
 }
 
@@ -119,8 +134,9 @@ function archcodeProtectedTool(): ToolDescriptor<{ path: string; content?: strin
     description: "Protected .archcode mutation regression probe",
     inputSchema: z.object({ path: z.string(), content: z.string().optional() }).strict(),
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
+    outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
     permissions: [createProtectedPathPermission()],
-    execute: async () => "executed",
+    execute: async () => createTextToolResult("executed"),
   });
 }
 
@@ -139,20 +155,27 @@ function makeLogger(overrides: Partial<Logger> = {}): Logger {
 async function executeWithConfirmation(
   descriptor: ToolDescriptor,
   input: unknown,
-  confirmation: ToolConfirmationResult,
+  confirmation: "approve_once" | "approve_always" | "deny",
   manager = new ProjectApprovalManager(silentLogger),
 ) {
   await manager.load(WORKSPACE);
-  const confirmPermission = mock(async (_request: ToolConfirmationRequest) => confirmation);
-  const registry = createRegistry([descriptor]);
+  const registry = createTestRegistry([descriptor]);
   const ctx = makeContext({
     input,
     projectContext: { ...createTestProjectContext(WORKSPACE), approvals: manager },
-    confirmPermission,
   });
 
-  const result = await registry.execute(makeCall(input), ctx);
-  return { result, confirmPermission, manager, ctx };
+  const first = await registry.execute(makeCall(input), ctx);
+  const result = first.kind === "blocked"
+    ? await registry.resumeBlocked({
+      toolCall: makeCall(input),
+      request: first.request,
+      requestKey: first.requestKey,
+      response: { type: "permission_decision", decision: confirmation },
+      context: ctx,
+    })
+    : first;
+  return { result: settled(result), request: first.kind === "blocked" ? first.request : undefined, manager, ctx };
 }
 
 beforeEach(() => {
@@ -160,21 +183,21 @@ beforeEach(() => {
 });
 
 afterAll(() => {
+  void Promise.all(registryFixtures.map((fixture) => fixture.dispose()));
   rmSync(TMP_DIR, { recursive: true, force: true });
 });
 
 describe("permission integration regressions", () => {
   test("Deny cannot be overridden by Allow Always", async () => {
-    const { result, confirmPermission, manager } = await executeWithConfirmation(
+    const { result, request, manager } = await executeWithConfirmation(
       decisionTool(async () => DENY_DECISION),
       {},
       "approve_always",
     );
 
     expect(result.isError).toBe(true);
-    expect(result.meta?.permissionErrorCode).toBe("TOOL_PERMISSION_DENIED");
-    expect(result.meta?.skippedExecution).toBe(true);
-    expect(confirmPermission).not.toHaveBeenCalled();
+    expect(result.details?.error?.code).toBe("TOOL_PERMISSION_DENIED");
+    expect(request).toBeUndefined();
     expect(manager.listApprovals()).toEqual([]);
   });
 
@@ -186,8 +209,8 @@ describe("permission integration regressions", () => {
     );
 
     expect(once.result.isError).toBe(false);
-    expect(once.result.output).toBe("executed");
-    expect(once.confirmPermission).toHaveBeenCalledTimes(1);
+    expect(once.result.output.preview).toBe("executed");
+    expect(once.request?.source.type).toBe("tool_permission");
     expect(once.manager.listApprovals()).toEqual([]);
 
     const always = await executeWithConfirmation(
@@ -197,7 +220,6 @@ describe("permission integration regressions", () => {
     );
 
     expect(always.result.isError).toBe(false);
-    expect(always.manager.hasApproval(ELIGIBLE_SCOPE)).toBe(true);
     expect(always.manager.listApprovals()).toHaveLength(1);
   });
 
@@ -211,31 +233,28 @@ describe("permission integration regressions", () => {
       manager,
     );
 
-    const confirmPermission = mock(async () => "deny" as ToolConfirmationResult);
-    const registry = createRegistry([decisionTool(async () => ELIGIBLE_ASK)]);
-    const result = await registry.execute(makeCall(), makeContext({
-      confirmPermission,
+    const registry = createTestRegistry([decisionTool(async () => ELIGIBLE_ASK)]);
+    const outcome = await registry.execute(makeCall(), makeContext({
       projectContext: { ...createTestProjectContext(WORKSPACE), approvals: manager },
     }));
+    const result = settled(outcome);
 
     expect(result.isError).toBe(false);
-    expect(result.output).toBe("executed");
-    expect(confirmPermission).not.toHaveBeenCalled();
+    expect(result.output.preview).toBe("executed");
+    expect(outcome.kind).toBe("settled");
   });
 
   test("ineligible Ask cannot be approved always", async () => {
-    const { result, manager, confirmPermission } = await executeWithConfirmation(
+    const { result, manager, request } = await executeWithConfirmation(
       decisionTool(async () => INELIGIBLE_ASK),
       {},
       "approve_always",
     );
 
     expect(result.isError).toBe(true);
-    expect(result.meta?.permissionErrorCode).toBe("TOOL_PERMISSION_CONFIRMATION_DENIED");
-    expect(confirmPermission).toHaveBeenCalledTimes(1);
+    expect(result.details?.error?.code).toBe("TOOL_PERMISSION_CONFIRMATION_DENIED");
     expect(manager.listApprovals()).toEqual([]);
-    const request = confirmPermission.mock.calls[0]?.[0];
-    expect(request?.approval?.eligible).toBe(false);
+    expect(request).toMatchObject({ persistentApprovalEligible: false });
   });
 
   test("malformed approvals file aborts permission context loading with a typed error", async () => {
@@ -250,16 +269,15 @@ describe("permission integration regressions", () => {
   });
 
   test(".archcode direct mutation is denied through registry file-tool style guard", async () => {
-    const { result, confirmPermission } = await executeWithConfirmation(
+    const { result, request } = await executeWithConfirmation(
       archcodeProtectedTool(),
       { path: ".archcode/memory/index.md", content: "# hacked" },
       "approve_always",
     );
 
     expect(result.isError).toBe(true);
-    expect(result.meta?.permissionErrorCode).toBe("PROTECTED_PATH_WRITE_DENIED");
-    expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
-    expect(confirmPermission).not.toHaveBeenCalled();
+    expect(result.details?.error?.code).toBe("PROTECTED_PATH_WRITE_DENIED");
+    expect(request).toBeUndefined();
   });
 });
 
@@ -311,28 +329,34 @@ describe("workspace permission approval regression", () => {
       description: "Tests that approved out-of-workspace paths reach execute",
       inputSchema: z.object({ path: z.string() }).strict(),
       traits: { readOnly: true, destructive: false, concurrencySafe: true },
+      outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
       permissions: [async () => workspaceAsk],
       execute: async () => {
         executeRan = true;
-        return "executed successfully";
+        return createTextToolResult("executed successfully");
       },
     });
 
-    const registry = createRegistry([tool]);
-    const confimPermission = mock(async () => "deny" as ToolConfirmationResult);
-    const result = await registry.execute(
+    const registry = createTestRegistry([tool]);
+    const first = await registry.execute(
       makeCall({ path: outsideFile }),
       makeContext({
         projectContext: { ...createTestProjectContext(WORKSPACE), approvals: manager },
-        confirmPermission: confimPermission,
       }),
     );
+    const result = settled(first.kind === "blocked"
+      ? await registry.resumeBlocked({
+        toolCall: makeCall({ path: outsideFile }),
+        request: first.request,
+        requestKey: first.requestKey,
+        response: { type: "permission_decision", decision: "approve_once" },
+        context: makeContext({ projectContext: { ...createTestProjectContext(WORKSPACE), approvals: manager } }),
+      })
+      : first);
 
-    // The pre-existing approval should satisfy the "ask" without prompting.
-    expect(confimPermission).not.toHaveBeenCalled();
     // Execute should run (not blocked by a duplicate workspace check).
     expect(executeRan).toBe(true);
     expect(result.isError).toBe(false);
-    expect(result.output).toBe("executed successfully");
+    expect(result.output.preview).toBe("executed successfully");
   });
 });

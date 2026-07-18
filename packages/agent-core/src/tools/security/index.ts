@@ -22,4 +22,3 @@ export type {
   PathValidationResult,
   ResolveAndValidatePathResult,
 } from "./path-validator";
-export { redactString, redactValue, REDACTION_MARKER } from "./redaction";

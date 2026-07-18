@@ -17,9 +17,10 @@ import type { SessionStoreState } from "../../store/types";
 import { createTestTempRoot } from "../../testing/test-temp-root";
 import { WorktreeService } from "../../worktrees";
 import { ProjectApprovalManager } from "../permission/project-approvals";
-import { createToolExecutionContext, type ToolExecutionContext, type ToolExecutionResult } from "../types";
+import { expectTextDraft } from "../test-results";
+import { createToolExecutionContext, type RawToolResult, type ToolExecutionContext } from "../types";
 import { goalManageTool } from "./goal-tools";
-import { createTestProjectTodoService } from "../test-project-context";
+import { createTestHitlCodec, createTestProjectTodoService } from "../test-project-context";
 
 const testSkillService = new SkillService({ builtinSkills: {} });
 
@@ -134,7 +135,7 @@ function makeProjectContext(
     addedAt: new Date().toISOString(),
   };
   const goalState = manager as unknown as ProjectContext["goalState"];
-  const hitl = new ProjectHitlQueue({ workspaceRoot });
+  const hitl = new ProjectHitlQueue({ workspaceRoot, codec: createTestHitlCodec() });
   return {
     project,
     goalState,
@@ -177,8 +178,8 @@ function makeContext(
   });
 }
 
-function normalizeOutput(output: string | ToolExecutionResult): ToolExecutionResult {
-  return typeof output === "string" ? { output, isError: false } : output;
+function normalizeOutput(output: RawToolResult): RawToolResult {
+  return output;
 }
 
 async function runGit(cwd: string, args: readonly string[]): Promise<string> {
@@ -257,7 +258,7 @@ describe("goal_manage builtin tool integration", () => {
         makeContext(finalizeInput, makeStore(goalId, "reviewer", "review"), context, created.worktreePath),
       ));
       expect(wrongBranch.isError).toBe(true);
-      expect(wrongBranch.output).toContain("GOAL_WORKTREE_CHANGED");
+      expect(expectTextDraft(wrongBranch)).toContain("GOAL_WORKTREE_CHANGED");
       expect(manager.calls).toEqual(["finalizeReview"]);
 
       await runGit(created.worktreePath, ["switch", created.branchName]);
@@ -268,7 +269,7 @@ describe("goal_manage builtin tool integration", () => {
         makeContext(beginReviewInput, makeStore(goalId, "goal_lead", "main"), context, created.worktreePath),
       ));
       expect(resetBehind.isError).toBe(true);
-      expect(resetBehind.output).toContain("GOAL_WORKTREE_CHANGED");
+      expect(expectTextDraft(resetBehind)).toContain("GOAL_WORKTREE_CHANGED");
       expect(manager.calls).toEqual(["finalizeReview"]);
     } finally {
       await tempRoot.cleanup();

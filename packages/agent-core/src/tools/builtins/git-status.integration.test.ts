@@ -4,10 +4,14 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { gitStatusTool } from "./git-status";
-import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../errors";
-import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import { expectSettledResult } from "../test-results";
+import type { ToolExecutionContext } from "../types";
 import { createTestProjectContext } from "../test-project-context";
+import { createTestToolRegistryFixture } from "../test-registry";
 import { setProcessRunnerForTest } from "../../process/runner";
+import { createMockStore } from "../../store/test-helpers";
+
+const registryFixture = createTestToolRegistryFixture({ descriptors: [gitStatusTool] });
 
 function exec(cmd: string, args: string[], cwd: string): void {
   const result = Bun.spawnSync([cmd, ...args], { cwd });
@@ -31,7 +35,7 @@ function mockCtx(
   tmpDir: string,
   overrides?: Partial<ToolExecutionContext>,
 ): ToolExecutionContext {
-  return { store: {} as any,
+  return { store: createMockStore({ cwd: tmpDir }),
   toolName: "git_status",
   toolCallId: "call_1",
   input: {},
@@ -41,7 +45,14 @@ function mockCtx(
   allowedTools: new Set(["git_status"]),
   cwd: tmpDir,
   storeManager,
-    projectContext: createTestProjectContext("/canonical/project"), ...overrides,  };
+    projectContext: createTestProjectContext(tmpDir), ...overrides,  };
+}
+
+async function execute(ctx: ToolExecutionContext) {
+  return expectSettledResult(await registryFixture.registry.execute(
+    { toolName: "git_status", toolCallId: ctx.toolCallId, input: {} },
+    ctx,
+  ));
 }
 
 describe("gitStatusTool", () => {
@@ -58,14 +69,15 @@ describe("gitStatusTool", () => {
     exec("git", ["clean", "-fd"], tmpDir);
   });
 
-  afterAll(() => {
+  afterAll(async () => {
+    await registryFixture.dispose();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
   test("returns empty output for clean working tree", async () => {
     const ctx = mockCtx(tmpDir);
-    const result = await gitStatusTool.execute({}, ctx);
-    expect(result).toBe("");
+    const result = await execute(ctx);
+    expect(result.output.preview).toBe("");
   });
 
   test("returns formatted output for changed files", async () => {
@@ -73,21 +85,21 @@ describe("gitStatusTool", () => {
     writeFileSync(join(tmpDir, "untracked.txt"), "new file");
 
     const ctx = mockCtx(tmpDir);
-    const result = await gitStatusTool.execute({}, ctx);
+    const result = await execute(ctx);
 
-    expect(result).toContain(" M tracked.txt");
-    expect(result).toContain("?? untracked.txt");
-    expect((result as string).split("\n").length).toBe(2);
+    const output = result.output.preview;
+    expect(output).toContain(" M tracked.txt");
+    expect(output).toContain("?? untracked.txt");
+    expect(output.trimEnd().split("\n")).toHaveLength(2);
   });
 
   test("handles git command failure (non-git directory)", async () => {
     const nonGitDir = mkdtempSync(join(tmpdir(), "git-status-non-repo-"));
     try {
       const ctx = mockCtx(nonGitDir);
-      const result = (await gitStatusTool.execute({}, ctx)) as ToolExecutionResult;
+      const result = await execute(ctx);
       expect(result.isError).toBe(true);
-      expect(inferToolErrorKindFromResult(result)).toBe("execution");
-      expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
+      expect(result.details?.error).toMatchObject({ kind: "execution" });
     } finally {
       rmSync(nonGitDir, { recursive: true, force: true });
     }
@@ -107,9 +119,9 @@ describe("gitStatusTool", () => {
       };
     });
     const ctx = mockCtx(tmpDir, { abort: ac.signal });
-    const result = (await gitStatusTool.execute({}, ctx)) as ToolExecutionResult;
+    const result = await execute(ctx);
     expect(result.isError).toBe(true);
-    expect(inferToolErrorKindFromResult(result)).toBe("execution");
-    expect(result.output).toContain("git status was aborted");
+    expect(result.details?.error).toMatchObject({ kind: "execution", code: "TOOL_PROCESS_ABORTED" });
+    expect(result.output.preview).toContain("git status was aborted");
   });
 });

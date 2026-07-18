@@ -1,15 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import type { ChildResult, DelegationContract } from "@archcode/protocol";
+import type { ChildResult, DelegationContract, FinalizedToolResult } from "@archcode/protocol";
 import { hashDelegationContract } from "../../delegation/contract";
 import { silentLogger } from "../../logger";
 import { SessionStoreManager } from "../../store/session-store-manager";
 import { __setSessionsDirForTest } from "../../store/sessions-dir";
-import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import { testExecutionStart } from "../../testing/test-execution-fixtures";
+import type { RawToolResult, ToolExecutionContext } from "../types";
 import type { SessionToolBatch } from "../../store/types";
 import { createTestProjectContext } from "../test-project-context";
-import { createRegistry } from "../registry";
+import { createTestToolRegistryFixture } from "../test-registry";
+import { expectTextDraft } from "../test-results";
 import {
   countStructuredResultFailures,
   createStructuredResultCorrectionGate,
@@ -69,7 +71,7 @@ function context() {
     delegationContractHash: hashDelegationContract(value),
     title: value.title,
   });
-  child.getState().append({ type: "execution-start", executionId: "execution-1" });
+  child.getState().append(testExecutionStart("execution-1"));
   const ctx: ToolExecutionContext = {
     store: child,
     storeManager: manager,
@@ -91,7 +93,7 @@ describe("submit_child_result", () => {
     const { manager, child, ctx } = context();
     const result = await executeSubmitChildResult(childResult(), ctx);
     expect(result.isError).toBe(false);
-    expect(result.meta?.executionControl).toEqual({ action: "complete_execution", reason: "child_result_submitted" });
+    expect(result.sidecar?.executionControl).toEqual({ action: "complete_execution", reason: "child_result_submitted" });
     expect(child.getState().childResultReceipts).toHaveLength(1);
     expect(child.getState().childResultReceipts[0]).toMatchObject({
       executionId: "execution-1",
@@ -110,21 +112,21 @@ describe("submit_child_result", () => {
     invalid.criteria = [{ id: "wrong", status: "passed", evidenceRefs: [] }];
     const mismatch = await executeSubmitChildResult(invalid, ctx);
     expect(mismatch.isError).toBe(true);
-    expect(JSON.parse(mismatch.output).message).toContain("exactly match");
+    expect(JSON.parse(expectTextDraft(mismatch)).message).toContain("exactly match");
 
     expect((await executeSubmitChildResult(childResult(), ctx)).isError).toBe(false);
     const duplicate = await executeSubmitChildResult(childResult(), ctx);
     expect(duplicate.isError).toBe(true);
-    expect(JSON.parse(duplicate.output).message).toContain("already submitted");
+    expect(JSON.parse(expectTextDraft(duplicate)).message).toContain("already submitted");
   });
 
   it("rejects root Sessions", async () => {
     const { ctx } = context();
     const root = ctx.storeManager.create(crypto.randomUUID(), WORKSPACE, { agentName: "engineer" });
-    root.getState().append({ type: "execution-start", executionId: "root-execution" });
-    const result = await executeSubmitChildResult(childResult(), { ...ctx, store: root }) as ToolExecutionResult;
+    root.getState().append(testExecutionStart("root-execution"));
+    const result = await executeSubmitChildResult(childResult(), { ...ctx, store: root });
     expect(result.isError).toBe(true);
-    expect(JSON.parse(result.output).message).toContain("delegated child");
+    expect(JSON.parse(expectTextDraft(result)).message).toContain("delegated child");
   });
 
   it("allows one best-effort semantic correction and fails the second attempt", async () => {
@@ -134,12 +136,12 @@ describe("submit_child_result", () => {
     invalid.criteria = [{ id: "wrong", status: "passed", evidenceRefs: [] }];
 
     const first = await executeSubmitChildResult(invalid, ctx);
-    expect(JSON.parse(first.output).code).toBe("STRUCTURED_RESULT_CORRECTION_REQUIRED");
-    expect(first.meta?.executionControl).toBeUndefined();
+    expect(JSON.parse(expectTextDraft(first)).code).toBe("STRUCTURED_RESULT_CORRECTION_REQUIRED");
+    expect(first.sidecar?.executionControl).toBeUndefined();
 
     const second = await executeSubmitChildResult(invalid, ctx);
-    expect(JSON.parse(second.output).code).toBe("CHILD_RESULT_REQUIRED");
-    expect(second.meta?.executionControl).toEqual({
+    expect(JSON.parse(expectTextDraft(second)).code).toBe("CHILD_RESULT_REQUIRED");
+    expect(second.sidecar?.executionControl).toEqual({
       action: "fail_execution",
       reason: "child_result_required",
       error: expect.stringContaining("CHILD_RESULT_REQUIRED"),
@@ -153,11 +155,11 @@ describe("submit_child_result", () => {
     invalid.criteria = [{ id: "wrong", status: "passed", evidenceRefs: [] }];
 
     const first = await executeSubmitChildResult(invalid, ctx);
-    expect(first.meta?.executionControl).toBeUndefined();
+    expect(first.sidecar?.executionControl).toBeUndefined();
     const corrected = await executeSubmitChildResult(childResult(), ctx);
 
     expect(corrected.isError).toBe(false);
-    expect(corrected.meta?.executionControl).toEqual({
+    expect(corrected.sidecar?.executionControl).toEqual({
       action: "complete_execution",
       reason: "child_result_submitted",
     });
@@ -167,24 +169,31 @@ describe("submit_child_result", () => {
   it("shares one best-effort correction across schema and semantic failures", async () => {
     const { ctx } = context();
     ctx.structuredResultCorrection = createStructuredResultCorrectionGate("best_effort");
-    const registry = createRegistry([submitChildResultTool]);
+    const fixture = createTestToolRegistryFixture({ descriptors: [submitChildResultTool] });
+    const registry = fixture.registry;
 
-    const schemaFailure = await registry.execute({
-      toolName: "submit_child_result",
-      toolCallId: "schema-failure",
-      input: { status: "completed" },
-    }, ctx);
-    expect(JSON.parse(schemaFailure.output).code).toBe("STRUCTURED_RESULT_CORRECTION_REQUIRED");
+    try {
+      const schemaFailure = await registry.execute({
+        toolName: "submit_child_result",
+        toolCallId: "schema-failure",
+        input: { status: "completed" },
+      }, ctx);
+      if (schemaFailure.kind !== "settled") throw new Error("Expected settled schema failure");
+      expect(JSON.parse(schemaFailure.result.output.preview).code).toBe("STRUCTURED_RESULT_CORRECTION_REQUIRED");
 
-    const invalid = childResult();
-    invalid.criteria = [{ id: "wrong", status: "passed", evidenceRefs: [] }];
-    const semanticFailure = await registry.execute({
-      toolName: "submit_child_result",
-      toolCallId: "semantic-failure",
-      input: invalid,
-    }, ctx);
-    expect(JSON.parse(semanticFailure.output).code).toBe("CHILD_RESULT_REQUIRED");
-    expect(semanticFailure.meta?.executionControl).toMatchObject({ action: "fail_execution" });
+      const invalid = childResult();
+      invalid.criteria = [{ id: "wrong", status: "passed", evidenceRefs: [] }];
+      const semanticFailure = await registry.execute({
+        toolName: "submit_child_result",
+        toolCallId: "semantic-failure",
+        input: invalid,
+      }, ctx);
+      if (semanticFailure.kind !== "settled") throw new Error("Expected settled semantic failure");
+      expect(JSON.parse(semanticFailure.result.output.preview).code).toBe("CHILD_RESULT_REQUIRED");
+      expect(semanticFailure.sidecar?.executionControl).toMatchObject({ action: "fail_execution" });
+    } finally {
+      await fixture.dispose();
+    }
   });
 
   it("fails the first invalid strict submission", async () => {
@@ -194,8 +203,8 @@ describe("submit_child_result", () => {
     invalid.criteria = [{ id: "wrong", status: "passed", evidenceRefs: [] }];
 
     const result = await executeSubmitChildResult(invalid, ctx);
-    expect(JSON.parse(result.output).code).toBe("CHILD_RESULT_REQUIRED");
-    expect(result.meta?.executionControl).toMatchObject({
+    expect(JSON.parse(expectTextDraft(result)).code).toBe("CHILD_RESULT_REQUIRED");
+    expect(result.sidecar?.executionControl).toMatchObject({
       action: "fail_execution",
       reason: "child_result_required",
     });
@@ -223,7 +232,7 @@ describe("submit_child_result", () => {
         traits: { readOnly: false, destructive: false, concurrencySafe: false },
         state: "failed",
         attempt: 1,
-        result: durableFailure,
+        result: finalizedInlineResult(durableFailure),
       }],
       createdAt: now,
       updatedAt: now,
@@ -237,7 +246,25 @@ describe("submit_child_result", () => {
     invalid.criteria = [{ id: "wrong", status: "passed", evidenceRefs: [] }];
 
     const recoveredAttempt = await executeSubmitChildResult(invalid, ctx);
-    expect(JSON.parse(recoveredAttempt.output).code).toBe("CHILD_RESULT_REQUIRED");
-    expect(recoveredAttempt.meta?.executionControl).toMatchObject({ action: "fail_execution" });
+    expect(JSON.parse(expectTextDraft(recoveredAttempt)).code).toBe("CHILD_RESULT_REQUIRED");
+    expect(recoveredAttempt.sidecar?.executionControl).toMatchObject({ action: "fail_execution" });
   });
 });
+
+function finalizedInlineResult(result: RawToolResult): FinalizedToolResult {
+  const text = expectTextDraft(result);
+  const count = { bytes: new TextEncoder().encode(text).byteLength, lines: text.length === 0 ? 0 : text.split("\n").length };
+  return {
+    isError: result.isError,
+    output: {
+      preview: text,
+      completeness: "complete",
+      observed: count,
+      canonical: count,
+      stored: count,
+      omitted: { bytes: 0, lines: 0 },
+      recovery: { kind: "none" },
+    },
+    ...(result.details === undefined ? {} : { details: result.details }),
+  };
+}

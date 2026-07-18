@@ -375,6 +375,7 @@ export function Sidebar({
           slug,
           sessionId: session.sessionId,
           content: `/skill use ${skill}`,
+          requestedModelSelection: session.nextModelSelection.requested,
         });
       },
     });

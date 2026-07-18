@@ -9,6 +9,7 @@ let dom: JSDOM;
 let root: Root;
 let container: HTMLElement;
 const originals = new Map<string, PropertyDescriptor | undefined>();
+const binding = { selection: { model: "test:model" }, providerId: "test", modelId: "model", providerDisplayName: "Test", modelDisplayName: "Test Model", resolution: "agent_default" as const, modelRuntimeRevision: "m1" };
 
 beforeEach(() => {
   dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: "http://localhost" });
@@ -94,11 +95,11 @@ describe("TodoProgressButton interactions", () => {
 
   test("announces failed and completed execution states from real Session state", async () => {
     const store = getWebSessionStore("session", "demo");
-    store.setState({ todos: [{ id: "one", content: "Run tests", status: "pending" }], executions: [{ id: "e1", startedAt: 1, status: "failed", endedAt: 2, error: "boom" }] });
+    store.setState({ todos: [{ id: "one", content: "Run tests", status: "pending" }], executions: [{ id: "e1", startedAt: 1, status: "failed", endedAt: 2, error: "boom", binding, origin: "user_message" }] });
     await render();
     expect(container.querySelector("button")?.getAttribute("aria-label")).toContain("failed");
 
-    await act(async () => store.setState({ todos: [{ id: "one", content: "Run tests", status: "completed" }], executions: [{ id: "e2", startedAt: 1, status: "completed", endedAt: 2 }] }));
+    await act(async () => store.setState({ todos: [{ id: "one", content: "Run tests", status: "completed" }], executions: [{ id: "e2", startedAt: 1, status: "completed", endedAt: 2, binding, origin: "user_message" }] }));
     expect(container.querySelector("button")?.getAttribute("aria-label")).toContain("completed");
   });
 });

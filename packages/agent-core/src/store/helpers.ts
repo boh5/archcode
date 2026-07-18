@@ -2,7 +2,13 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod/v4";
 import type { SessionEventEnvelope, SessionStoreState, StoredMessage } from "./types";
-import { isSessionEventPayload, type SessionEventPayload, type SessionModelInfo } from "@archcode/protocol";
+import {
+  isSessionEventPayload,
+  type FinalizedToolResult,
+  type JsonObject,
+  type SessionEventPayload,
+  type SessionModelSelection,
+} from "@archcode/protocol";
 import { getSessionPath, getSessionsDir } from "./sessions-dir";
 import type { SessionRole } from "./types";
 import {
@@ -14,18 +20,157 @@ import {
   createEmptyCompressionState,
 } from "../compression";
 import { AGENT_NAMES, type AgentName } from "../agents/names";
+import { HitlBoundaryCodec } from "../hitl/boundary-codec";
 import { atomicWrite } from "../utils/safe-file";
 import { hashDelegationContract } from "../delegation/contract";
 import { ChildResultReceiptSchema, DelegationContractSchema } from "../delegation/schema";
 
 const SessionRoleSchema = z.enum(["main", "plan", "build", "review", "explore", "librarian", "standalone"]);
 const AgentNameSchema = z.enum(AGENT_NAMES);
+const ToolLifecycleIdSchema = z.string().min(1).refine(
+  (value) => new TextEncoder().encode(value).byteLength <= 128,
+  "Tool lifecycle identifier exceeds 128 UTF-8 bytes",
+);
+const ToolNameSchema = z.string().min(1).refine(
+  (value) => new TextEncoder().encode(value).byteLength <= 128,
+  "Tool name exceeds 128 UTF-8 bytes",
+);
+const ToolLifecycleTimestampSchema = z.number().finite().nonnegative();
+const ToolOutputCountSchema = z.strictObject({
+  bytes: z.number().int().nonnegative().safe(),
+  lines: z.number().int().nonnegative().safe(),
+});
+const ToolSourceInputSchema = z.record(z.string(), z.unknown()).refine(
+  isBoundedJsonObject,
+  "Source recovery input must be bounded JSON",
+);
+const ToolOutputRecoverySchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("none") }),
+  z.strictObject({
+    kind: z.literal("source"),
+    toolName: ToolNameSchema,
+    nextInput: ToolSourceInputSchema,
+  }),
+  z.strictObject({
+    kind: z.literal("artifact"),
+    outputRef: z.string().regex(/^[A-Za-z0-9_-]{22}$/),
+    expiresAt: z.number().finite().nonnegative(),
+    canRead: z.literal(true),
+    canSearch: z.literal(true),
+  }),
+]).refine(
+  (recovery) => utf8Bytes(JSON.stringify(recovery)) <= 16 * 1024,
+  "Tool output recovery exceeds 16 KiB",
+);
+const ToolDiffLineSchema = z.strictObject({
+  type: z.enum(["context", "add", "delete"]),
+  content: boundedUtf8String(4 * 1024),
+});
+const ToolDiffHunkSchema = z.strictObject({
+  header: boundedUtf8String(4 * 1024),
+  oldStart: z.number().int(),
+  oldLines: z.number().int().nonnegative(),
+  newStart: z.number().int(),
+  newLines: z.number().int().nonnegative(),
+  lines: z.array(ToolDiffLineSchema),
+});
+const ToolDiffFileSchema = z.strictObject({
+  path: boundedUtf8String(4 * 1024),
+  status: z.enum(["modified", "created", "deleted"]).optional(),
+  additions: z.number().int().nonnegative().optional(),
+  deletions: z.number().int().nonnegative().optional(),
+  hunks: z.array(ToolDiffHunkSchema),
+});
+const ToolResultPresentationSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("diff"),
+    files: z.array(ToolDiffFileSchema).max(20),
+    truncated: z.literal(true).optional(),
+  }).refine(
+    (presentation) => presentation.files.reduce(
+      (count, file) => count + file.hunks.reduce((sum, hunk) => sum + hunk.lines.length, 0),
+      0,
+    ) <= 2_000,
+    "Diff presentation exceeds 2,000 lines",
+  ),
+  z.strictObject({
+    kind: z.literal("ask_user"),
+    answers: z.array(z.strictObject({
+      question: boundedUtf8String(2 * 1024),
+      answers: z.array(boundedUtf8String(16 * 1024)),
+    })).max(3),
+    truncated: z.literal(true).optional(),
+  }).refine(
+    (presentation) => utf8Bytes(JSON.stringify(presentation.answers)) <= 64 * 1024,
+    "Ask-user presentation exceeds 64 KiB",
+  ),
+]);
+const ToolResultDetailsSchema = z.strictObject({
+  error: z.strictObject({
+    kind: boundedUtf8String(128),
+    code: boundedUtf8String(128),
+    name: boundedUtf8String(128),
+    hint: boundedUtf8String(2 * 1024).optional(),
+  }).optional(),
+  process: z.strictObject({
+    exitCode: z.number().int().nullable(),
+    signal: boundedUtf8String(32).nullable(),
+    timedOut: z.boolean(),
+    aborted: z.boolean(),
+    durationMs: z.number().finite().nonnegative(),
+  }).optional(),
+  unknownResult: z.literal(true).optional(),
+  presentations: z.array(ToolResultPresentationSchema).max(2).optional(),
+}).refine(
+  (details) => utf8Bytes(JSON.stringify(details)) <= 256 * 1024,
+  "Tool result details exceeds 256 KiB",
+);
+const FinalizedToolResultSchema: z.ZodType<FinalizedToolResult> = z.strictObject({
+  isError: z.boolean(),
+  output: z.strictObject({
+    preview: boundedUtf8String(50 * 1024).refine(
+      (value) => value.length === 0 || value.split("\n").length <= 2_000,
+      "Tool preview exceeds 2,000 lines",
+    ),
+    completeness: z.enum(["complete", "partial"]),
+    observed: ToolOutputCountSchema,
+    canonical: ToolOutputCountSchema,
+    stored: ToolOutputCountSchema,
+    omitted: ToolOutputCountSchema,
+    recovery: ToolOutputRecoverySchema,
+  }),
+  details: ToolResultDetailsSchema.optional(),
+});
 
-const SessionModelInfoSchema = z.strictObject({
-  displayName: z.string(),
-  modelId: z.string(),
-  providerId: z.string(),
-  qualifiedId: z.string(),
+const ModelSelectionRefSchema = z.strictObject({
+  model: z.string().trim().min(1),
+  variant: z.string().trim().min(1).optional(),
+});
+
+const RequestedModelSelectionSchema = z.strictObject({
+  mode: z.enum(["agent_default", "session_override"]),
+  selection: ModelSelectionRefSchema,
+});
+
+const SessionModelSelectionSchema = z.strictObject({
+  revision: z.number().int().nonnegative(),
+  override: ModelSelectionRefSchema.optional(),
+});
+
+const ExecutionModelBindingSchema = z.strictObject({
+  selection: ModelSelectionRefSchema,
+  providerId: z.string().trim().min(1),
+  modelId: z.string().trim().min(1),
+  providerDisplayName: z.string().trim().min(1),
+  modelDisplayName: z.string().trim().min(1),
+  resolution: z.enum(["requested", "session_override", "agent_default"]),
+  modelRuntimeRevision: z.string().trim().min(1),
+});
+
+const MessageModelAuditSchema = z.strictObject({
+  requested: RequestedModelSelectionSchema,
+  actual: ModelSelectionRefSchema,
+  reason: z.literal("config_invalidated").optional(),
 });
 
 const NormalizedUsageSchema = z.strictObject({
@@ -62,6 +207,8 @@ const SessionExecutionRecordSchema = z.strictObject({
   durationMs: z.number().optional(),
   error: z.string().optional(),
   stopRequestedAt: z.number().optional(),
+  binding: ExecutionModelBindingSchema,
+  origin: z.enum(["user_message", "tool_call", "tool_batch", "goal_claim"]),
 });
 
 const PendingSessionMessageSchema = z.strictObject({
@@ -74,6 +221,7 @@ const PendingSessionMessageSchema = z.strictObject({
   acceptedAt: z.number(),
   updatedAt: z.number(),
   targetExecutionId: z.string().trim().min(1).optional(),
+  requestedModelSelection: RequestedModelSelectionSchema,
 }).superRefine((message, ctx) => {
   if ((message.state === "steering") !== (message.targetExecutionId !== undefined)) {
     ctx.addIssue({
@@ -91,6 +239,7 @@ const SessionInputReceiptSchema = z.discriminatedUnion("kind", [
     messageId: z.string().trim().min(1),
     requestFingerprint: z.string(),
     status: z.enum(["pending", "canonical", "deleted"]),
+    requestedModelSelection: RequestedModelSelectionSchema,
   }),
   z.strictObject({
     kind: z.literal("command"),
@@ -98,6 +247,7 @@ const SessionInputReceiptSchema = z.discriminatedUnion("kind", [
     requestFingerprint: z.string(),
     status: z.enum(["executing", "completed", "failed", "indeterminate"]),
     error: z.string().optional(),
+    requestedModelSelection: RequestedModelSelectionSchema,
   }).superRefine((receipt, ctx) => {
     if ((receipt.status === "failed" || receipt.status === "indeterminate") !== (receipt.error !== undefined)) {
       ctx.addIssue({
@@ -206,62 +356,58 @@ const ReasoningPartSchema = z.strictObject({
 const PendingToolPartSchema = z.strictObject({
   type: z.literal("tool"),
   state: z.literal("pending"),
-  id: z.string(),
-  toolCallId: z.string(),
-  toolName: z.string(),
-  createdAt: z.number(),
-  attemptId: z.string().optional(),
-  attemptTimestamp: z.number().optional(),
+  id: ToolLifecycleIdSchema,
+  toolCallId: ToolLifecycleIdSchema,
+  toolName: ToolNameSchema,
+  createdAt: ToolLifecycleTimestampSchema,
+  attemptId: ToolLifecycleIdSchema.optional(),
+  attemptTimestamp: ToolLifecycleTimestampSchema.optional(),
   attemptDestructive: z.boolean().optional(),
-  meta: z.record(z.string(), z.unknown()).optional(),
 });
 
 const RunningToolPartSchema = z.strictObject({
   type: z.literal("tool"),
   state: z.literal("running"),
-  id: z.string(),
-  toolCallId: z.string(),
-  toolName: z.string(),
+  id: ToolLifecycleIdSchema,
+  toolCallId: ToolLifecycleIdSchema,
+  toolName: ToolNameSchema,
   input: z.unknown(),
-  createdAt: z.number(),
-  startedAt: z.number(),
-  attemptId: z.string().optional(),
-  attemptTimestamp: z.number().optional(),
+  createdAt: ToolLifecycleTimestampSchema,
+  startedAt: ToolLifecycleTimestampSchema,
+  attemptId: ToolLifecycleIdSchema.optional(),
+  attemptTimestamp: ToolLifecycleTimestampSchema.optional(),
   attemptDestructive: z.boolean().optional(),
-  meta: z.record(z.string(), z.unknown()).optional(),
 });
 
 const CompletedToolPartSchema = z.strictObject({
   type: z.literal("tool"),
   state: z.literal("completed"),
-  id: z.string(),
-  toolCallId: z.string(),
-  toolName: z.string(),
+  id: ToolLifecycleIdSchema,
+  toolCallId: ToolLifecycleIdSchema,
+  toolName: ToolNameSchema,
   input: z.unknown(),
-  output: z.string(),
-  createdAt: z.number(),
-  startedAt: z.number(),
-  endedAt: z.number(),
-  meta: z.record(z.string(), z.unknown()).optional(),
-  attemptId: z.string().optional(),
-  attemptTimestamp: z.number().optional(),
+  result: FinalizedToolResultSchema,
+  createdAt: ToolLifecycleTimestampSchema,
+  startedAt: ToolLifecycleTimestampSchema,
+  endedAt: ToolLifecycleTimestampSchema,
+  attemptId: ToolLifecycleIdSchema.optional(),
+  attemptTimestamp: ToolLifecycleTimestampSchema.optional(),
   attemptDestructive: z.boolean().optional(),
 });
 
 const ErrorToolPartSchema = z.strictObject({
   type: z.literal("tool"),
   state: z.literal("error"),
-  id: z.string(),
-  toolCallId: z.string(),
-  toolName: z.string(),
+  id: ToolLifecycleIdSchema,
+  toolCallId: ToolLifecycleIdSchema,
+  toolName: ToolNameSchema,
   input: z.unknown(),
-  errorMessage: z.string(),
-  createdAt: z.number(),
-  startedAt: z.number(),
-  endedAt: z.number(),
-  meta: z.record(z.string(), z.unknown()).optional(),
-  attemptId: z.string().optional(),
-  attemptTimestamp: z.number().optional(),
+  result: FinalizedToolResultSchema,
+  createdAt: ToolLifecycleTimestampSchema,
+  startedAt: ToolLifecycleTimestampSchema,
+  endedAt: ToolLifecycleTimestampSchema,
+  attemptId: ToolLifecycleIdSchema.optional(),
+  attemptTimestamp: ToolLifecycleTimestampSchema.optional(),
   attemptDestructive: z.boolean().optional(),
 });
 
@@ -319,6 +465,14 @@ const StoredMessageSchema = z.strictObject({
   executionId: z.string().optional(),
   clientRequestId: z.string().optional(),
   compacted: z.boolean().optional(),
+  modelAudit: MessageModelAuditSchema.optional(),
+}).superRefine((message, ctx) => {
+  if (message.role === "assistant" && message.modelAudit !== undefined) {
+    ctx.addIssue({ code: "custom", path: ["modelAudit"], message: "Assistant messages cannot carry modelAudit" });
+  }
+  if (message.role === "user" && message.clientRequestId !== undefined && message.modelAudit === undefined) {
+    ctx.addIssue({ code: "custom", path: ["modelAudit"], message: "Canonical user input must carry modelAudit" });
+  }
 });
 
 const StepInfoSchema = z.strictObject({
@@ -425,53 +579,23 @@ const SessionEventEnvelopeSchema = z.strictObject({
   payload: z.custom<SessionEventPayload>(isSessionEventPayload, "Expected a Session event payload with a current type"),
 }).transform((value) => value as SessionEventEnvelope);
 
-const SessionToolBatchHitlSourceSchema = z.discriminatedUnion("type", [
-  z.strictObject({ type: z.literal("ask_user"), toolCallId: z.string().trim().min(1) }),
-  z.strictObject({ type: z.literal("tool_permission"), toolCallId: z.string().trim().min(1), toolName: z.string().trim().min(1) }),
+const SessionToolRecoveryFailureSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("read_retry_exhausted") }),
+  z.strictObject({ kind: z.literal("effectful_outcome_unknown") }),
+  z.strictObject({ kind: z.literal("effectful_cancelled_unknown") }),
 ]);
 
-const HitlDisplayPayloadSchema = z.strictObject({
-  title: z.string().trim().min(1),
-  summary: z.string().optional(),
-  fields: z.array(z.strictObject({ label: z.string(), value: z.string() })).optional(),
-  questions: z.array(z.strictObject({
-    question: z.string(),
-    header: z.string(),
-    options: z.array(z.strictObject({ label: z.string(), description: z.string() })).optional(),
-    multiple: z.boolean().optional(),
-    custom: z.boolean(),
-  })).optional(),
-  redacted: z.literal(true),
-});
-
-const SessionToolCallResultSchema = z.strictObject({
-  output: z.string(),
-  isError: z.boolean(),
-  meta: z.record(z.string(), z.unknown()).optional(),
-});
-
-const SessionToolCallBlockerSchema = z.strictObject({
-  requestKey: z.string().trim().min(1),
-  hitlId: z.string().trim().min(1).optional(),
-  source: SessionToolBatchHitlSourceSchema,
-  displayPayload: HitlDisplayPayloadSchema,
-  permissionFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
-  persistentApprovalEligible: z.boolean().optional(),
-  permission: z.strictObject({
-    description: z.string(),
-    reason: z.string().optional(),
-    decisionDisplay: z.string().optional(),
-    ruleId: z.string().optional(),
-  }).optional(),
-  responseAppliedAt: z.string().optional(),
-  permissionDecision: z.enum(["approve_once", "approve_always", "deny"]).optional(),
-});
+const SessionToolManualInspectionReasonSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("continuation_interrupted"), batchId: ToolLifecycleIdSchema }),
+  z.strictObject({ kind: z.literal("effectful_outcome_unknown"), toolCallId: ToolLifecycleIdSchema, toolName: ToolNameSchema }),
+  z.strictObject({ kind: z.literal("effectful_cancelled_unknown"), toolCallId: ToolLifecycleIdSchema, toolName: ToolNameSchema }),
+]);
 
 const SessionToolBatchCallSchema = z.strictObject({
   ordinal: z.number().int().nonnegative(),
   partitionIndex: z.number().int().nonnegative(),
-  toolCallId: z.string().trim().min(1),
-  toolName: z.string().trim().min(1),
+  toolCallId: ToolLifecycleIdSchema,
+  toolName: ToolNameSchema,
   input: z.unknown(),
   traits: z.strictObject({
     readOnly: z.boolean(),
@@ -480,13 +604,19 @@ const SessionToolBatchCallSchema = z.strictObject({
   }),
   state: z.enum(["queued", "running", "blocked", "completed", "failed", "manual_inspection_required"]),
   attempt: z.number().int().nonnegative(),
-  result: SessionToolCallResultSchema.optional(),
-  blocker: SessionToolCallBlockerSchema.optional(),
-  recoveryFailure: z.string().optional(),
+  result: FinalizedToolResultSchema.optional(),
+  blocker: HitlBoundaryCodec.sessionToolCallBlockerSchema.optional(),
+  recoveryFailure: SessionToolRecoveryFailureSchema.optional(),
 }).superRefine((call, ctx) => {
   const terminalResult = call.state === "completed" || call.state === "failed";
   if (terminalResult !== (call.result !== undefined)) {
     ctx.addIssue({ code: "custom", path: ["result"], message: `${call.state} has invalid result presence` });
+  }
+  if (call.state === "completed" && call.result?.isError !== false) {
+    ctx.addIssue({ code: "custom", path: ["result", "isError"], message: "completed result must not be an error" });
+  }
+  if (call.state === "failed" && call.result?.isError !== true) {
+    ctx.addIssue({ code: "custom", path: ["result", "isError"], message: "failed result must be an error" });
   }
   if ((call.state === "blocked") !== (call.blocker !== undefined && call.blocker.responseAppliedAt === undefined)) {
     ctx.addIssue({ code: "custom", path: ["blocker"], message: `${call.state} has invalid active blocker` });
@@ -508,7 +638,7 @@ const SessionToolBatchSchema = z.strictObject({
   continuationStartedAt: z.string().optional(),
   continuationCompletedAt: z.string().optional(),
   archivedAt: z.string().optional(),
-  manualInspectionReason: z.string().optional(),
+  manualInspectionReason: SessionToolManualInspectionReasonSchema.optional(),
 }).superRefine((batch, ctx) => {
   const ids = batch.calls.map((call) => call.toolCallId);
   if (new Set(ids).size !== ids.length) ctx.addIssue({ code: "custom", path: ["calls"], message: "Duplicate toolCallId in batch" });
@@ -537,7 +667,7 @@ export const SessionFileSchema = z.strictObject({
     (names) => new Set(names).size === names.length,
     "activeSkillNames must not contain duplicates",
   ),
-  modelInfo: SessionModelInfoSchema.nullable(),
+  modelSelection: SessionModelSelectionSchema,
   title: z.string().nullable(),
   messages: z.array(StoredMessageSchema),
   pendingMessages: z.array(PendingSessionMessageSchema).superRefine((messages, ctx) => {
@@ -627,6 +757,11 @@ export const SessionFileSchema = z.strictObject({
     if (receipt.kind === "command") continue;
     const pending = pendingById.get(receipt.messageId);
     const canonical = canonicalById.get(receipt.messageId);
+    const requested = pending?.requestedModelSelection ?? canonical?.modelAudit?.requested;
+    if (requested !== undefined
+      && JSON.stringify(requested) !== JSON.stringify(receipt.requestedModelSelection)) {
+      ctx.addIssue({ code: "custom", path: ["inputRequestReceipts"], message: `Receipt ${receipt.clientRequestId} model selection mismatch` });
+    }
     if (receipt.status === "pending" && pending === undefined) {
       ctx.addIssue({ code: "custom", path: ["inputRequestReceipts"], message: `Pending receipt ${receipt.clientRequestId} has no message` });
     }
@@ -636,6 +771,16 @@ export const SessionFileSchema = z.strictObject({
     }
     if (receipt.status === "deleted" && (pending !== undefined || canonical !== undefined)) {
       ctx.addIssue({ code: "custom", path: ["inputRequestReceipts"], message: `Deleted receipt ${receipt.clientRequestId} still has a message` });
+    }
+  }
+
+  const executionById = new Map(session.executions.map((execution) => [execution.id, execution]));
+  for (const message of session.messages) {
+    if (message.modelAudit === undefined || message.executionId === undefined) continue;
+    const execution = executionById.get(message.executionId);
+    if (execution === undefined
+      || JSON.stringify(message.modelAudit.actual) !== JSON.stringify(execution.binding.selection)) {
+      ctx.addIssue({ code: "custom", path: ["messages"], message: `Message ${message.id} model audit has no matching execution binding` });
     }
   }
 });
@@ -654,7 +799,7 @@ export interface SessionSummary {
   sessionRole?: SessionRole;
   agentName: string;
   activeSkillNames: string[];
-  modelInfo: SessionModelInfo | null;
+  modelSelection: SessionModelSelection;
   title: string | null;
   createdAt: number;
   updatedAt: number;
@@ -662,7 +807,7 @@ export interface SessionSummary {
 
 type PersistableSessionState = Pick<
   SessionStoreState,
-  "sessionId" | "createdAt" | "updatedAt" | "cwd" | "agentName" | "activeSkillNames" | "modelInfo" | "title" | "messages" | "pendingMessages" | "inputRequestReceipts" | "steps" | "stats" | "executions" | "compression" | "todos" | "reminders" | "childSessionLinks" | "delegationContract" | "delegationContractHash" | "toolBatches" | "rootSessionId"
+  "sessionId" | "createdAt" | "updatedAt" | "cwd" | "agentName" | "activeSkillNames" | "modelSelection" | "title" | "messages" | "pendingMessages" | "inputRequestReceipts" | "steps" | "stats" | "executions" | "compression" | "todos" | "reminders" | "childSessionLinks" | "delegationContract" | "delegationContractHash" | "toolBatches" | "rootSessionId"
 > & Partial<Pick<
   SessionStoreState,
   "parentSessionId" | "goalId" | "sessionRole" | "events" | "queueDispatchBarrierAt"
@@ -685,6 +830,44 @@ export function getAssistantText(messages: StoredMessage[]): string {
   return text;
 }
 
+function boundedUtf8String(maxBytes: number) {
+  return z.string().refine(
+    (value) => utf8Bytes(value) <= maxBytes,
+    `String exceeds ${maxBytes} UTF-8 bytes`,
+  );
+}
+
+function utf8Bytes(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+
+function isBoundedJsonObject(value: unknown): value is JsonObject {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  return isBoundedJsonValue(value, 1, { keys: 0, items: 0 });
+}
+
+function isBoundedJsonValue(
+  value: unknown,
+  depth: number,
+  budget: { keys: number; items: number },
+): boolean {
+  if (depth > 8) return false;
+  if (value === null || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value === "string") return utf8Bytes(value) <= 8 * 1024;
+  if (Array.isArray(value)) {
+    budget.items += value.length;
+    return budget.items <= 256
+      && value.every((item) => isBoundedJsonValue(item, depth + 1, budget));
+  }
+  if (typeof value !== "object") return false;
+  const entries = Object.entries(value);
+  budget.keys += entries.length;
+  return budget.keys <= 64
+    && entries.every(([key, item]) => utf8Bytes(key) <= 128
+      && isBoundedJsonValue(item, depth + 1, budget));
+}
+
 async function saveSessionTranscript(
   state: PersistableSessionState,
   workspaceRoot: string,
@@ -698,7 +881,7 @@ async function saveSessionTranscript(
     cwd: state.cwd,
     agentName: state.agentName,
     activeSkillNames: state.activeSkillNames,
-    modelInfo: state.modelInfo,
+    modelSelection: state.modelSelection,
     title: state.title,
     messages: state.messages,
     pendingMessages: state.pendingMessages,
@@ -752,7 +935,7 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
     cwd: state.cwd,
     agentName: state.agentName,
     activeSkillNames: state.activeSkillNames,
-    modelInfo: state.modelInfo,
+    modelSelection: state.modelSelection,
     title: state.title,
     messages: state.messages,
     pendingMessages: state.pendingMessages,
@@ -799,7 +982,7 @@ async function listSessionSummaries(workspaceRoot: string): Promise<SessionSumma
         ...(parsed.sessionRole === undefined ? {} : { sessionRole: parsed.sessionRole }),
         agentName: parsed.agentName,
         activeSkillNames: parsed.activeSkillNames,
-        modelInfo: parsed.modelInfo,
+        modelSelection: parsed.modelSelection,
         title: parsed.title,
         createdAt: parsed.createdAt,
         updatedAt: parsed.updatedAt,
@@ -852,7 +1035,7 @@ async function scanAllSessionSummaries(workspaceRoot: string): Promise<SessionSu
       ...(parsed.sessionRole === undefined ? {} : { sessionRole: parsed.sessionRole }),
       agentName: parsed.agentName,
       activeSkillNames: parsed.activeSkillNames,
-      modelInfo: parsed.modelInfo,
+      modelSelection: parsed.modelSelection,
       title: parsed.title,
       createdAt: parsed.createdAt,
       updatedAt: parsed.updatedAt,

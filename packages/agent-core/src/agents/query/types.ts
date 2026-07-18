@@ -1,10 +1,10 @@
 import type { StoreApi } from "zustand";
-import type { ModelCallOptions } from "../../config/provider";
-import type { ModelInfo } from "../../provider/model";
+import type { ExecutionModelBinding } from "../../models";
 import type { SessionStoreManager } from "../../store/session-store-manager";
 import type { ExecutionEndEvent, SessionStoreState } from "../../store/types";
-import type { AskUserCallback, ToolConfirmationCallback, ToolExecutionControl } from "../../tools/index";
+import type { ToolExecutionControl } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
+import type { ToolOutputAccessService } from "../../tool-output/access-service";
 import type { ProjectContext } from "../../projects/types";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../../delegation/types";
 import type { SkillService } from "../../skills";
@@ -14,9 +14,8 @@ import type { Logger } from "../../logger";
 export const DOOM_LOOP_MESSAGE = "Doom loop detected: same tool and input repeated 3 times";
 
 export interface QueryLoopOptions {
-  modelInfo: ModelInfo;
+  binding: ExecutionModelBinding;
   logger: Logger;
-  modelOptions?: ModelCallOptions;
   toolRegistry: ToolRegistry;
   allowedTools: readonly string[];
   agentSkills: readonly string[];
@@ -25,8 +24,7 @@ export interface QueryLoopOptions {
   /** Current Session execution directory, independent of the canonical project context. */
   cwd: string;
   projectContext: ProjectContext;
-  confirmPermission?: ToolConfirmationCallback;
-  askUser?: AskUserCallback;
+  toolOutputAccess: ToolOutputAccessService;
   abort?: AbortSignal;
   systemPrompt?: string;
   /** Rebuilds lifecycle-sensitive prompt state immediately before every model call. */

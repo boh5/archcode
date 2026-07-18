@@ -3,7 +3,7 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { StoreApi } from "zustand";
 
-import { TOOL_GOAL_CREATE, TOOL_GOAL_MANAGE, type DelegationContract, type GoalReviewReceipt, type GoalState } from "@archcode/protocol";
+import { TOOL_GOAL_CREATE, TOOL_GOAL_MANAGE, type DelegationContract, type FinalizedToolResult, type GoalReviewReceipt, type GoalState } from "@archcode/protocol";
 import { hashDelegationContract } from "../../delegation/contract";
 import { GoalStateManager } from "../../goals/state";
 import { GoalCancellationCleanupError } from "../../goals/cancellation";
@@ -17,19 +17,21 @@ import { storeManager } from "../../store/store";
 import type { SessionStoreState, SessionToolBatch } from "../../store/types";
 import { createToolErrorResult, inferToolErrorKindFromResult } from "../errors";
 import { ProjectApprovalManager } from "../permission/project-approvals";
-import { createRegistry } from "../registry";
 import {
   countStructuredResultFailures,
   createStructuredResultCorrectionGate,
 } from "../structured-result-correction";
-import { createToolExecutionContext, type ToolExecutionContext, type ToolExecutionResult } from "../types";
+import { expectTextDraft } from "../test-results";
+import { createTestToolRegistryFixture, type TestToolRegistryFixture } from "../test-registry";
+import { createToolExecutionContext, type RawToolResult, type RegistryExecutionOutcome, type ToolExecutionContext } from "../types";
 import { silentLogger } from "../../logger";
-import { createTestProjectTodoService } from "../test-project-context";
+import { createTestHitlCodec, createTestProjectTodoService } from "../test-project-context";
 import { GoalCreateInputSchema, GoalManageInputSchema, goalCreateTool, goalManageTool } from "./goal-tools";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "goal-tools", crypto.randomUUID());
 const testSkillService = new SkillService({ builtinSkills: {} });
 const DEFAULT_GOAL_ID = "11111111-1111-4111-8111-111111111111";
+const registryFixtures: TestToolRegistryFixture[] = [];
 
 interface GoalManageCall {
   readonly method: string;
@@ -162,6 +164,7 @@ function reviewStore(goalId: string, overrides: Partial<SessionStoreState> = {})
 }
 
 afterAll(async () => {
+  await Promise.all(registryFixtures.splice(0).map((fixture) => fixture.dispose()));
   await rm(TMP_DIR, { recursive: true, force: true });
 });
 
@@ -176,7 +179,7 @@ function makeProjectContext(
     addedAt: new Date().toISOString(),
   };
   const resolvedGoalState = goalState as unknown as GoalStateManager;
-  const hitl = new ProjectHitlQueue({ workspaceRoot });
+  const hitl = new ProjectHitlQueue({ workspaceRoot, codec: createTestHitlCodec() });
   return {
     project,
     goalState: resolvedGoalState,
@@ -226,7 +229,7 @@ async function executeCreate(
     store?: StoreApi<SessionStoreState>;
     goalState?: SimplifiedGoalStateManagerMock;
   } = {},
-): Promise<{ result: ToolExecutionResult; goalState: SimplifiedGoalStateManagerMock }> {
+): Promise<{ result: RawToolResult; goalState: SimplifiedGoalStateManagerMock }> {
   const goalState = options.goalState ?? new SimplifiedGoalStateManagerMock();
   const parsed = goalCreateTool.inputSchema.safeParse(input);
   if (!parsed.success) {
@@ -245,7 +248,7 @@ async function executeCreate(
     parsed.data,
     makeCtx(parsed.data, options.store ?? engineerStore(), projectContext, projectContext.project.workspaceRoot, TOOL_GOAL_CREATE),
   );
-  return { goalState, result: typeof output === "string" ? { output, isError: false } : output };
+  return { goalState, result: output };
 }
 
 async function execute(
@@ -254,7 +257,7 @@ async function execute(
     store?: StoreApi<SessionStoreState>;
     goalState?: SimplifiedGoalStateManagerMock;
   } = {},
-): Promise<{ result: ToolExecutionResult; goalState: SimplifiedGoalStateManagerMock }> {
+): Promise<{ result: RawToolResult; goalState: SimplifiedGoalStateManagerMock }> {
   const goalState = options.goalState ?? new SimplifiedGoalStateManagerMock();
   const parsed = goalManageTool.inputSchema.safeParse(input);
   if (!parsed.success) {
@@ -270,11 +273,29 @@ async function execute(
 
   const projectContext = makeProjectContext(goalState);
   const output = await goalManageTool.execute(parsed.data, makeCtx(parsed.data, options.store ?? mainStore(), projectContext));
-  return { goalState, result: typeof output === "string" ? { output, isError: false } : output };
+  return { goalState, result: output };
 }
 
-function normalizeOutput(output: string | ToolExecutionResult): ToolExecutionResult {
-  return typeof output === "string" ? { output, isError: false } : output;
+function normalizeOutput(output: RawToolResult): RawToolResult {
+  return output;
+}
+
+function finalizedInlineResult(result: RawToolResult): FinalizedToolResult {
+  const text = expectTextDraft(result);
+  const count = { bytes: new TextEncoder().encode(text).byteLength, lines: text.length === 0 ? 0 : text.split("\n").length };
+  return {
+    isError: result.isError,
+    output: {
+      preview: text,
+      completeness: "complete",
+      observed: count,
+      canonical: count,
+      stored: count,
+      omitted: { bytes: 0, lines: 0 },
+      recovery: { kind: "none" },
+    },
+    ...(result.details === undefined ? {} : { details: result.details }),
+  };
 }
 
 function makeGoalState(overrides: Partial<GoalState> = {}): GoalState {
@@ -329,18 +350,26 @@ async function executeGoalManageWithCorrection(
   store: StoreApi<SessionStoreState>,
   policy: "strict" | "best_effort",
   initialFailures = 0,
-): Promise<ToolExecutionResult> {
+): Promise<Extract<RegistryExecutionOutcome, { kind: "settled" }>> {
   const ctx = makeCtx(input, store, makeProjectContext());
   ctx.structuredResultCorrection = createStructuredResultCorrectionGate(
     policy,
     initialFailures,
     "goal_manage.finalize_review",
   );
-  return await createRegistry([goalManageTool]).execute({
+  const outcome = await createGoalManageRegistry().execute({
     toolName: TOOL_GOAL_MANAGE,
     toolCallId: crypto.randomUUID(),
     input,
   }, ctx);
+  if (outcome.kind !== "settled") throw new Error("Expected settled goal_manage result");
+  return outcome;
+}
+
+function createGoalManageRegistry() {
+  const fixture = createTestToolRegistryFixture({ descriptors: [goalManageTool] });
+  registryFixtures.push(fixture);
+  return fixture.registry;
 }
 
 describe("goal_manage builtin tool", () => {
@@ -428,7 +457,7 @@ describe("goal_manage builtin tool", () => {
     const { result } = await execute({ action: "begin_review", goalId: DEFAULT_GOAL_ID }, { goalState, store });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain("GOAL_BUILD_ACTIVE");
+    expect(expectTextDraft(result)).toContain("GOAL_BUILD_ACTIVE");
     expect(goalState.calls).toEqual([]);
   });
 
@@ -476,7 +505,7 @@ describe("goal_manage builtin tool", () => {
     const { result } = await execute({ action: "begin_review", goalId: DEFAULT_GOAL_ID }, { goalState, store });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain("GOAL_BUILD_ACTIVE");
+    expect(expectTextDraft(result)).toContain("GOAL_BUILD_ACTIVE");
     expect(goalState.calls).toEqual([]);
   });
 
@@ -492,7 +521,7 @@ describe("goal_manage builtin tool", () => {
     );
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain("GOAL_CONTEXT_REQUIRED");
+    expect(expectTextDraft(result)).toContain("GOAL_CONTEXT_REQUIRED");
     expect(goalState.calls).toEqual([]);
   });
 
@@ -551,7 +580,7 @@ describe("goal_manage builtin tool", () => {
       acceptanceCriteria: "It works",
       useWorktree: true,
     } }]);
-    expect(JSON.parse(result.output)).toMatchObject({ projectSlug: "test-project", status: "running", createdFromSessionId: "engineer-session" });
+    expect(JSON.parse(expectTextDraft(result))).toMatchObject({ projectSlug: "test-project", status: "running", createdFromSessionId: "engineer-session" });
 
     const standalone = await executeCreate(input, { store: engineerStore({ sessionRole: "standalone" }) });
     expect(standalone.result.isError).toBe(false);
@@ -564,7 +593,7 @@ describe("goal_manage builtin tool", () => {
     ]) {
       const denied = await executeCreate(input, { goalState: new SimplifiedGoalStateManagerMock(), store });
       expect(denied.result.isError).toBe(true);
-      expect(denied.result.output).toContain("GOAL_CREATE_DENIED");
+      expect(expectTextDraft(denied.result)).toContain("GOAL_CREATE_DENIED");
     }
   });
 
@@ -578,7 +607,7 @@ describe("goal_manage builtin tool", () => {
 
     expect(result).toMatchObject({
       isError: false,
-      meta: {
+      sidecar: {
         executionControl: {
           action: "stop_session_family",
           reason: "goal_cancelled",
@@ -604,9 +633,9 @@ describe("goal_manage builtin tool", () => {
     const result = normalizeOutput(output);
 
     expect(result.isError).toBe(true);
-    expect(result.meta?.executionControl).toEqual({
+    expect(result.sidecar?.executionControl).toEqual({
       action: "stop_session_family",
-      reason: "goal_cancelled_cleanup_incomplete",
+      reason: "goal_cancelled",
     });
   });
 
@@ -628,9 +657,9 @@ describe("goal_manage builtin tool", () => {
       });
       expect(result.isError).toBe(true);
       expect(inferToolErrorKindFromResult(result)).toBe("permission-denied");
-      expect(result.output).toContain("GOAL_CONTEXT_REQUIRED");
-      expect(result.output).toContain(currentGoalId);
-      expect(result.output).toContain(targetGoalId);
+      expect(expectTextDraft(result)).toContain("GOAL_CONTEXT_REQUIRED");
+      expect(expectTextDraft(result)).toContain(currentGoalId);
+      expect(expectTextDraft(result)).toContain(targetGoalId);
     }
     expect(goalState.calls).toEqual([]);
   });
@@ -645,7 +674,7 @@ describe("goal_manage builtin tool", () => {
 
     expect(result.isError).toBe(true);
     expect(inferToolErrorKindFromResult(result)).toBe("permission-denied");
-    expect(result.output).toContain("GOAL_MANAGE_ACTION_DENIED");
+    expect(expectTextDraft(result)).toContain("GOAL_MANAGE_ACTION_DENIED");
     expect(goalState.calls).toEqual([]);
   });
 
@@ -664,7 +693,7 @@ describe("goal_manage builtin tool", () => {
 
     expect(result.isError).toBe(true);
     expect(inferToolErrorKindFromResult(result)).toBe("permission-denied");
-    expect(result.output).toContain("GOAL_REVIEWER_REQUIRED");
+    expect(expectTextDraft(result)).toContain("GOAL_REVIEWER_REQUIRED");
     expect(goalState.calls).toEqual([]);
   });
 
@@ -687,7 +716,7 @@ describe("goal_manage builtin tool", () => {
     );
 
     expect(result.isError).toBe(false);
-    const completed = JSON.parse(result.output) as GoalState;
+    const completed = JSON.parse(expectTextDraft(result)) as GoalState;
     expect(completed.status).toBe("done");
     expect(completed.review).toMatchObject({
       verdict: "DONE",
@@ -704,8 +733,8 @@ describe("goal_manage builtin tool", () => {
       goalId: DEFAULT_GOAL_ID,
     }, reviewStore(DEFAULT_GOAL_ID), "strict");
 
-    expect(JSON.parse(result.output).code).toBe("CHILD_RESULT_REQUIRED");
-    expect(result.meta?.executionControl).toMatchObject({
+    expect(JSON.parse(result.result.output.preview).code).toBe("CHILD_RESULT_REQUIRED");
+    expect(result.sidecar?.executionControl).toMatchObject({
       action: "fail_execution",
       reason: "child_result_required",
     });
@@ -721,8 +750,8 @@ describe("goal_manage builtin tool", () => {
       "strict",
     );
 
-    expect(JSON.parse(result.output).code).toBe("CHILD_RESULT_REQUIRED");
-    expect(result.meta?.executionControl).toMatchObject({ action: "fail_execution" });
+    expect(JSON.parse(result.result.output.preview).code).toBe("CHILD_RESULT_REQUIRED");
+    expect(result.sidecar?.executionControl).toMatchObject({ action: "fail_execution" });
   });
 
   it("gives best-effort finalize_review one shared schema-to-semantic correction before failure", async () => {
@@ -734,15 +763,16 @@ describe("goal_manage builtin tool", () => {
     );
     const ctx = makeCtx({}, store, makeProjectContext());
     ctx.structuredResultCorrection = gate;
-    const registry = createRegistry([goalManageTool]);
+    const registry = createGoalManageRegistry();
 
     const schemaFailure = await registry.execute({
       toolName: TOOL_GOAL_MANAGE,
       toolCallId: "goal-review-schema-failure",
       input: { action: "finalize_review", goalId: DEFAULT_GOAL_ID },
     }, ctx);
-    expect(JSON.parse(schemaFailure.output).code).toBe("STRUCTURED_RESULT_CORRECTION_REQUIRED");
-    expect(schemaFailure.meta?.executionControl).toBeUndefined();
+    if (schemaFailure.kind !== "settled") throw new Error("Expected settled schema failure");
+    expect(JSON.parse(schemaFailure.result.output.preview).code).toBe("STRUCTURED_RESULT_CORRECTION_REQUIRED");
+    expect(schemaFailure.sidecar?.executionControl).toBeUndefined();
 
     const invalidResult = testReviewExecutionFields("DONE").result;
     invalidResult.criteria = [{ id: "wrong", status: "passed", evidenceRefs: [] }];
@@ -751,8 +781,9 @@ describe("goal_manage builtin tool", () => {
       toolCallId: "goal-review-semantic-failure",
       input: finalizeReviewInput({ result: invalidResult }),
     }, ctx);
-    expect(JSON.parse(semanticFailure.output).code).toBe("CHILD_RESULT_REQUIRED");
-    expect(semanticFailure.meta?.executionControl).toMatchObject({ action: "fail_execution" });
+    if (semanticFailure.kind !== "settled") throw new Error("Expected settled semantic failure");
+    expect(JSON.parse(semanticFailure.result.output.preview).code).toBe("CHILD_RESULT_REQUIRED");
+    expect(semanticFailure.sidecar?.executionControl).toMatchObject({ action: "fail_execution" });
   });
 
   it("does not spend the finalize_review correction on another goal_manage action", async () => {
@@ -764,21 +795,23 @@ describe("goal_manage builtin tool", () => {
     );
     const ctx = makeCtx({}, store, makeProjectContext());
     ctx.structuredResultCorrection = gate;
-    const registry = createRegistry([goalManageTool]);
+    const registry = createGoalManageRegistry();
 
     const unrelated = await registry.execute({
       toolName: TOOL_GOAL_MANAGE,
       toolCallId: "invalid-begin-review",
       input: { action: "begin_review" },
     }, ctx);
-    expect(JSON.parse(unrelated.output).code).not.toBe("STRUCTURED_RESULT_CORRECTION_REQUIRED");
+    if (unrelated.kind !== "settled") throw new Error("Expected settled unrelated failure");
+    expect(JSON.parse(unrelated.result.output.preview).code).not.toBe("STRUCTURED_RESULT_CORRECTION_REQUIRED");
 
     const firstFinalizeFailure = await registry.execute({
       toolName: TOOL_GOAL_MANAGE,
       toolCallId: "first-finalize-review",
       input: { action: "finalize_review", goalId: DEFAULT_GOAL_ID },
     }, ctx);
-    expect(JSON.parse(firstFinalizeFailure.output).code).toBe("STRUCTURED_RESULT_CORRECTION_REQUIRED");
+    if (firstFinalizeFailure.kind !== "settled") throw new Error("Expected settled finalize failure");
+    expect(JSON.parse(firstFinalizeFailure.result.output.preview).code).toBe("STRUCTURED_RESULT_CORRECTION_REQUIRED");
   });
 
   it("rebuilds the finalize_review correction count from the durable current execution", async () => {
@@ -806,7 +839,7 @@ describe("goal_manage builtin tool", () => {
         traits: { readOnly: false, destructive: false, concurrencySafe: false },
         state: "failed",
         attempt: 1,
-        result: durableFailure,
+        result: finalizedInlineResult(durableFailure),
       }],
       createdAt: now,
       updatedAt: now,
@@ -824,8 +857,8 @@ describe("goal_manage builtin tool", () => {
       "best_effort",
       failures,
     );
-    expect(JSON.parse(recovered.output).code).toBe("CHILD_RESULT_REQUIRED");
-    expect(recovered.meta?.executionControl).toMatchObject({ action: "fail_execution" });
+    expect(JSON.parse(recovered.result.output.preview).code).toBe("CHILD_RESULT_REQUIRED");
+    expect(recovered.sidecar?.executionControl).toMatchObject({ action: "fail_execution" });
   });
 
   it("denies finalize_review for wrong roles and wrong Goal-scoped review sessions", async () => {
@@ -848,7 +881,7 @@ describe("goal_manage builtin tool", () => {
     ]) {
       const { result, goalState } = await execute(input, { store });
       expect(result.isError).toBe(true);
-      expect(result.output).toContain("GOAL_REVIEWER_REQUIRED");
+      expect(expectTextDraft(result)).toContain("GOAL_REVIEWER_REQUIRED");
       expect(goalState.calls).toEqual([]);
     }
   });

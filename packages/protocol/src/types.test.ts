@@ -32,6 +32,7 @@ import type {
   SessionSummary,
   Session,
   ToolDiffMetadata,
+  FinalizedToolResult,
   ServerConfigUpdate,
 } from "./types";
 
@@ -44,6 +45,39 @@ function compositeIdentity(event: GlobalSessionEventEnvelope): string {
 }
 
 describe("current tool and config wire types", () => {
+  test("round-trips the strict finalized tool result contract", () => {
+    const result: FinalizedToolResult = {
+      isError: false,
+      output: {
+        preview: "head\ntail",
+        completeness: "partial",
+        observed: { bytes: 100, lines: 10 },
+        canonical: { bytes: 90, lines: 10 },
+        stored: { bytes: 20, lines: 2 },
+        omitted: { bytes: 70, lines: 8 },
+        recovery: {
+          kind: "artifact",
+          outputRef: "x".repeat(22),
+          expiresAt: 123,
+          canRead: true,
+          canSearch: true,
+        },
+      },
+      details: {
+        process: {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          aborted: false,
+          durationMs: 12,
+        },
+        presentations: [{ kind: "ask_user", answers: [{ question: "Continue?", answers: ["yes"] }] }],
+      },
+    };
+
+    expect(serializeRoundTrip(result)).toEqual(result);
+  });
+
   test("round-trips unversioned ToolDiff metadata", () => {
     const diffs: ToolDiffMetadata = {
       files: [{

@@ -77,6 +77,13 @@ describe("HITL hard-cut architecture", () => {
     expect(text).toContain("interface SessionToolBatchQueue");
   });
 
+  test("Session persistence reuses the HITL-owned blocker schema without a local copy", () => {
+    const storeHelpers = source("packages/agent-core/src/store/helpers.ts");
+    expect(storeHelpers).toContain("HitlBoundaryCodec.sessionToolCallBlockerSchema");
+    expect(storeHelpers).not.toMatch(/SessionToolBatchHitlSourceSchema|HitlDisplayPayloadSchema|SessionToolBatchHitlResponseSchema/);
+    expect(storeHelpers).not.toMatch(/const\s+SessionToolCallBlockerSchema/);
+  });
+
   test("Goal budget handler owns no tool, Session, or LLM execution", () => {
     const text = source("packages/agent-core/src/goals/budget-handler.ts");
     expect(text).not.toMatch(/from\s+["'][^"']*(?:agents\/query|execution|store|tools)\//);
@@ -111,5 +118,38 @@ describe("HITL hard-cut architecture", () => {
       /\bgoal_review\b/,
       /\bprojectionPath\b/,
     ])).toEqual([]);
+  });
+
+  test("retired callback HITL contracts and public exports stay deleted", () => {
+    expect(productionMatches([
+      /\bToolConfirmationRequest\b/,
+      /\bToolConfirmationResult\b/,
+      /\bToolConfirmationCallback\b/,
+      /\bAskUserRequest\b/,
+      /\bAskUserAnswer\b/,
+      /\bAskUserCallback\b/,
+      /\bconfirmPermission\s*\??:/,
+      /\baskUser\s*\??:/,
+    ])).toEqual([]);
+
+    for (const relativePath of [
+      "packages/agent-core/src/tools/index.ts",
+      "packages/agent-core/src/index.ts",
+    ]) {
+      expect(source(relativePath)).not.toMatch(/\b(?:ToolConfirmation(?:Request|Result|Callback)|AskUser(?:Request|Answer|Callback))\b/);
+    }
+  });
+
+  test("Runtime HITL delivery logs use only redacted stable failures", () => {
+    const runtime = source("packages/agent-core/src/runtime.ts");
+    for (const event of ["session.tool_batch.wake_failed", "hitl.delivery.failed"]) {
+      const eventIndex = runtime.indexOf(`runtimeLogger.warn("${event}"`);
+      expect(eventIndex).toBeGreaterThan(0);
+      const snippet = runtime.slice(Math.max(0, eventIndex - 600), eventIndex + 500);
+      expect(snippet).toContain("hitlCodec.redactFailure(error)");
+      expect(snippet).toContain("redactionPolicy.redactValue(");
+      expect(snippet).not.toMatch(/\berror\s*,/);
+      expect(snippet).not.toContain("error.stack");
+    }
   });
 });

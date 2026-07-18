@@ -399,6 +399,50 @@ describe("monorepo package boundaries", () => {
       );
     });
 
+    test("Agent construction and caching do not own executable model state", () => {
+      const files = [
+        join(projectRoot, "packages/agent-core/src/agents/factory.ts"),
+        join(projectRoot, "packages/agent-core/src/agents/configured-agent.ts"),
+        join(projectRoot, "packages/agent-core/src/agents/session-agent-manager.ts"),
+      ];
+
+      expectNoViolations(
+        findProductionTextViolations(files, [
+          /\bProviderRegistry\b/,
+          /\bArchCodeConfig\b/,
+          /\bresolveAgentModel\b/,
+          /\bmodelOptions\b/,
+          /\bmodelInfo\s*:/,
+          /setState\s*\(\s*\{\s*modelInfo\b/,
+        ]),
+      );
+      expect(existsSync(join(projectRoot, "packages/agent-core/src/agents/model-resolver.ts"))).toBe(false);
+    });
+
+    test("every production LLM entry receives its model through an Execution binding", () => {
+      const files = [
+        "packages/agent-core/src/agents/query/loop.ts",
+        "packages/agent-core/src/compact/compact.ts",
+        "packages/agent-core/src/title-generation/generator.ts",
+        "packages/agent-core/src/background/tasks/memory-extraction.ts",
+        "packages/agent-core/src/background/tasks/memory-consolidation.ts",
+      ].map((file) => join(projectRoot, file));
+
+      expectNoViolations(
+        findProductionTextViolations(files, [
+          /ctx\.modelInfo\b/,
+          /ctx\.modelOptions\b/,
+          /input\.modelInfo\b/,
+          /input\.modelOptions\b/,
+          /options\.modelInfo\b/,
+          /options\.modelOptions\b/,
+        ]),
+      );
+      for (const file of files) {
+        expect(stripComments(readFileSync(file, "utf8"))).toMatch(/\bbinding\b/);
+      }
+    });
+
     test("web production code does not parse legacy delegate metadata", () => {
       expectNoViolations(
         findProductionTextViolationsInScope("apps/web/src", [

@@ -22,6 +22,9 @@ function successResult(stdout: string): ProcessRunnerResult {
       stdoutTruncated: false,
       stderrTruncated: false,
       combinedTruncated: false,
+      stdoutBytes: Buffer.byteLength(stdout),
+      stderrBytes: 0,
+      sinkStatus: "unused",
     },
   };
 }

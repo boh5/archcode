@@ -6,14 +6,17 @@ import { globalEventBus } from "./events/global-event-bus";
 
 const mockRuntime = {
   configService: {
-    getSnapshot: mock(async () => ({ config: { provider: {}, agents: {} }, revision: "test", configPath: "/test", restartRequired: false })),
-    save: mock(async () => ({ config: { provider: {}, agents: {} }, revision: "test", configPath: "/test", restartRequired: false })),
+    getSnapshot: mock(async () => ({ config: { provider: {}, agents: {} }, revision: "test", modelRuntimeRevision: "test", configPath: "/test", restartRequiredSections: [] })),
+    getModelRuntimeCatalog: mock(() => ({ revision: "test", providers: [], agentDefaults: {} })),
+    getProviderAdapterCatalog: mock(() => []),
+    save: mock(async () => ({ config: { provider: {}, agents: {} }, revision: "test", modelRuntimeRevision: "test", configPath: "/test", restartRequiredSections: [] })),
   },
   listAgentDescriptors: mock(() => []),
   subscribeSessionEvents: mock(() => () => undefined),
   subscribeHitlEvents: mock(() => () => undefined),
   subscribeSessionRuntimeChanges: mock(() => () => undefined),
   subscribeMcpStatusChanges: mock(() => () => undefined),
+  subscribeModelRuntimeChanges: mock(() => () => undefined),
   getMcpServerStatuses: mock(() => new Map()),
 } as unknown as AgentRuntime;
 
@@ -48,7 +51,20 @@ describe("createServerApp", () => {
     const runtime = {
       ...mockRuntime,
       subscribeSessionEvents: mock((listener: (event: GlobalSSEEvent) => void) => {
-        listener({ type: "event", slug: "proj", sessionId: "session-1", eventId: 1, createdAt: 1, agentName: "engineer", payload: { type: "execution-start", executionId: "run-1" } });
+        listener({ type: "event", slug: "proj", sessionId: "session-1", eventId: 1, createdAt: 1, agentName: "engineer", payload: {
+          type: "execution-start",
+          executionId: "run-1",
+          binding: {
+            selection: { model: "local:test" },
+            providerId: "local",
+            modelId: "test",
+            providerDisplayName: "Local",
+            modelDisplayName: "Test",
+            resolution: "agent_default",
+            modelRuntimeRevision: "test",
+          },
+          origin: "user_message",
+        } });
         listener({ type: "event", slug: "proj", sessionId: "session-1", eventId: 2, createdAt: 2, agentName: "engineer", payload: { type: "execution-end", status: "completed" } });
         return () => undefined;
       }),
@@ -71,6 +87,20 @@ describe("createServerApp", () => {
     createServerApp(runtime, { dev: true });
     listener!("context7", { state: "ready", toolCount: 1, warningCount: 0 });
     expect(observed[0]).toMatchObject({ type: "mcp_status", serverName: "context7" });
+    unsubscribe();
+  });
+
+  test("bridges ModelRuntime revision changes", () => {
+    let listener: ((event: Extract<GlobalSSEEvent, { type: "model_runtime.changed" }>) => void) | undefined;
+    const runtime = {
+      ...mockRuntime,
+      subscribeModelRuntimeChanges: mock((next: typeof listener) => { listener = next; return () => undefined; }),
+    } as unknown as AgentRuntime;
+    const observed: GlobalSSEEvent[] = [];
+    const unsubscribe = globalEventBus.subscribe((event) => observed.push(event));
+    createServerApp(runtime, { dev: true });
+    listener!({ type: "model_runtime.changed", revision: "revision-2", createdAt: 2 });
+    expect(observed[0]).toEqual({ type: "model_runtime.changed", revision: "revision-2", createdAt: 2 });
     unsubscribe();
   });
 });

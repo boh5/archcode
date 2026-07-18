@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { TOOL_COMPRESS } from "../names";
 import { defineTool } from "../define-tool";
-import type { ToolExecutionResult } from "../types";
+import type { RawToolResult } from "../types";
+import { createTextToolResult } from "../results";
 import {
   COMPRESS_TOOL_TRAITS,
   COMPRESSION_SUMMARY_SECTION_NAMES,
@@ -31,32 +32,22 @@ export const compressTool = defineTool({
     "Compresses a visible transcript range by projection refs. Validates the model-authored structured summary and commits compression metadata without changing canonical transcript text.",
   inputSchema: CompressInputSchema,
   traits: COMPRESS_TOOL_TRAITS,
-  execute(input, ctx): ToolExecutionResult {
+  outputPolicy: { kind: "inline", previewDirection: "head" },
+  execute(input, ctx): RawToolResult {
     const result = prepareDynamicRangeCompression(ctx.store.getState(), input);
     ctx.store.getState().append(result.event);
 
     if (!result.ok) {
-      return {
-        output: JSON.stringify({
+      return createTextToolResult(JSON.stringify({
           ok: false,
           code: result.code,
           reason: result.reason,
           issues: result.issues,
           protectedRefs: result.protectedRefs,
-        }),
-        isError: false,
-        meta: {
-          compression: {
-            ok: false,
-            code: result.code,
-            protectedRefs: result.protectedRefs,
-          },
-        },
-      };
+        }));
     }
 
-    return {
-      output: JSON.stringify({
+    return createTextToolResult(JSON.stringify({
         ok: true,
         blockRef: result.block.ref,
         startRef: result.block.range.startRef,
@@ -64,16 +55,6 @@ export const compressTool = defineTool({
         childBlockRefs: result.block.childBlockRefs,
         deduplicatedToolOutputs: result.deduplicatedToolOutputs,
         purgedErrors: result.purgedErrors,
-      }),
-      isError: false,
-      meta: {
-        compression: {
-          ok: true,
-          blockRef: result.block.ref,
-          activeBlockRefs: result.state.activeBlockRefs,
-          supersededBlockRefs: result.state.supersededBlockRefs,
-        },
-      },
-    };
+      }));
   },
 });

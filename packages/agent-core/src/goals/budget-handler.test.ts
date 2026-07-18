@@ -6,6 +6,7 @@ import { ProjectHitlQueue, type HitlRecord } from "../hitl/project-queue";
 import { silentLogger } from "../logger";
 import { GoalBudgetHandler } from "./budget-handler";
 import { GoalStateManager } from "./state";
+import { createTestHitlCodec } from "../tools/test-project-context";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "budget-handler", crypto.randomUUID());
 const NOW = new Date("2026-07-14T00:00:00.000Z");
@@ -17,7 +18,7 @@ beforeEach(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });
   await mkdir(TMP_ROOT, { recursive: true });
   goals = new GoalStateManager(TMP_ROOT, silentLogger);
-  queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT, now: () => NOW });
+  queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT, now: () => NOW, codec: createTestHitlCodec() });
 });
 
 afterAll(async () => {

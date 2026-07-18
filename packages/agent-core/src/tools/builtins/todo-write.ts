@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
-import type { ToolExecutionResult } from "../types";
+import { createTextToolResult } from "../results";
 
 // ─── Constants ───
 
@@ -80,7 +80,8 @@ export const todoWriteTool = defineTool({
   ].join("\n"),
   inputSchema: TodoWriteInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: true },
-  execute: (input, ctx): string | ToolExecutionResult => {
+  outputPolicy: { kind: "inline", previewDirection: "head" },
+  execute: (input, ctx) => {
     // 1. Generate deterministic IDs for items without id
     const todos = input.todos.map((todo, index) => ({
       ...todo,
@@ -118,6 +119,6 @@ export const todoWriteTool = defineTool({
     ctx.store.getState().append({ type: "todo-write", todos });
 
     // 5. Build and return summary
-    return buildTodoSummary(todos);
+    return createTextToolResult(buildTodoSummary(todos));
   },
 });

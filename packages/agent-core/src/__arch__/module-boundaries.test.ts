@@ -30,6 +30,7 @@ function findTsFiles(dir: string, options: { includeTests?: boolean } = {}): str
 
     if (stats.isDirectory()) {
       if (entry === "dist" || entry === "__test_tmp__") continue;
+      if (entry === "testing" && options.includeTests !== true) continue;
       files.push(...findTsFiles(fullPath, options));
       continue;
     }
@@ -160,7 +161,8 @@ const rawBuiltinToolNames = [
   "skill_list",
   "skill_read",
   "todo_write",
-  "view_tool_output",
+  "output_read",
+  "output_search",
   "wait_for_reminder",
   "web_fetch",
 ] as const;

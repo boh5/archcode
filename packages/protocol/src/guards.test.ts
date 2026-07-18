@@ -9,6 +9,19 @@ import {
 import type { SessionEventPayload } from "./types";
 
 const displayPayload = { title: "Question", redacted: true as const };
+const requestedModelSelection = {
+  mode: "agent_default" as const,
+  selection: { model: "test:model" },
+};
+const binding = {
+  selection: { model: "test:model" },
+  providerId: "test",
+  modelId: "model",
+  providerDisplayName: "Test",
+  modelDisplayName: "Model",
+  resolution: "agent_default" as const,
+  modelRuntimeRevision: "runtime-1",
+};
 const refMap = {
   messageRefsById: { message: "m0001" as const },
   messageIdsByRef: { m0001: "message" },
@@ -54,6 +67,7 @@ const pendingMessage = {
   revision: 0,
   acceptedAt: 1,
   updatedAt: 1,
+  requestedModelSelection,
 };
 const steeringMessage = {
   ...pendingMessage,
@@ -69,6 +83,19 @@ const canonicalMessage = {
   completedAt: 2,
   executionId: "execution-1",
   clientRequestId: pendingMessage.clientRequestId,
+  modelAudit: { requested: requestedModelSelection, actual: binding.selection },
+};
+const finalizedResult = {
+  isError: false,
+  output: {
+    preview: "ok",
+    completeness: "complete" as const,
+    observed: { bytes: 2, lines: 1 },
+    canonical: { bytes: 2, lines: 1 },
+    stored: { bytes: 2, lines: 1 },
+    omitted: { bytes: 0, lines: 0 },
+    recovery: { kind: "none" as const },
+  },
 };
 const childResultReceipt = {
   executionId: "execution-child-1",
@@ -87,9 +114,10 @@ const childResultReceipt = {
 
 const validPayloads = [
   { type: "shutdown", reason: "restart" },
-  { type: "execution-start", executionId: "execution-1" },
+  { type: "execution-start", executionId: "execution-1", binding, origin: "user_message" },
   { type: "execution-end", status: "waiting_for_human", blockedByHitlIds: ["hitl-1"] },
   { type: "session.cwd_changed", previousCwd: "/old", cwd: "/new" },
+  { type: "session.model_selection_changed", modelSelection: { revision: 1, override: { model: "test:model" } } },
   { type: "session.message_accepted", message: pendingMessage },
   { type: "session.message_edited", message: { ...pendingMessage, content: "edited", revision: 1 } },
   { type: "session.message_deleted", messageId: pendingMessage.id, clientRequestId: pendingMessage.clientRequestId, revision: 1, deletedAt: 2 },
@@ -108,7 +136,7 @@ const validPayloads = [
   { type: "tool-call", toolCallId: "call-1", toolName: "file_read", input: { path: "README.md" } },
   { type: "tool-input-resolved", toolCallId: "call-1", toolName: "file_read", input: { path: "README.md" } },
   { type: "tool-attempt", toolCallId: "call-1", toolName: "file_write", attemptId: "attempt-1", timestamp: 1, destructive: false },
-  { type: "tool-result", toolCallId: "call-1", toolName: "file_read", output: "ok", isError: false, meta: {} },
+  { type: "tool-result", toolCallId: "call-1", toolName: "file_read", result: finalizedResult },
   { type: "tool-child-session-link", link: { parentSessionId: "parent", parentToolCallId: "call", toolName: "delegate", childSessionId: "child", childAgentName: "explore", title: "Explore child", depth: 1, background: false, status: "completed", createdAt: 1 } },
   { type: "child-result", receipt: childResultReceipt },
   { type: "todo-write", todos: [{ id: "todo-1", content: "work", status: "in_progress" }] },
@@ -155,6 +183,7 @@ describe("protocol event guards", () => {
       "session.message_steer_claimed",
       "session.message_steer_rolled_back",
       "session.messages_committed",
+      "session.model_selection_changed",
       "shutdown",
       "step-end",
       "step-start",
@@ -178,12 +207,108 @@ describe("protocol event guards", () => {
   });
 
   test("rejects malformed Session event payloads without throwing", () => {
+    expect(validPayloads.filter((event) => !isSessionEventPayload(event)).map((event) => event.type)).toEqual([]);
     expect(validPayloads.every(isSessionEventPayload)).toBe(true);
     for (const event of validPayloads) {
       expect(isSessionEventPayload({ ...event, legacy: true })).toBe(false);
     }
     expect(isSessionEventPayload({ type: "text-delta" })).toBe(false);
     expect(isSessionEventPayload({ type: "text-delta", text: 1 })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "tool-result",
+      toolCallId: "call-1",
+      toolName: "file_read",
+      output: "legacy",
+      isError: false,
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "tool-result",
+      toolCallId: "call-1",
+      toolName: "file_read",
+      result: {
+        ...finalizedResult,
+        output: {
+          ...finalizedResult.output,
+          recovery: {
+            kind: "source",
+            toolName: "file_read",
+            nextInput: { first: "a".repeat(8 * 1024), second: "b".repeat(8 * 1024) },
+          },
+        },
+      },
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "tool-result",
+      toolCallId: "call-1",
+      toolName: "git_diff",
+      result: {
+        ...finalizedResult,
+        details: {
+          presentations: [{
+            kind: "diff",
+            files: [{
+              path: "large.ts",
+              additions: 1.5,
+              hunks: [{
+                header: "@@",
+                oldStart: 1,
+                oldLines: 0,
+                newStart: 1,
+                newLines: 65,
+                lines: Array.from({ length: 65 }, () => ({ type: "add", content: "x".repeat(4 * 1024) })),
+              }],
+            }],
+          }],
+        },
+      },
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "tool-result",
+      toolCallId: "call-1",
+      toolName: "git_diff",
+      result: {
+        ...finalizedResult,
+        details: {
+          presentations: [{
+            kind: "diff",
+            files: [{ path: "small.ts", additions: 1.5, hunks: [] }],
+          }],
+        },
+      },
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "tool-result",
+      toolCallId: "call-1",
+      toolName: "file_read",
+      result: { ...finalizedResult, meta: {} },
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "tool-result",
+      toolCallId: "call-1",
+      toolName: "file_read",
+      result: {
+        ...finalizedResult,
+        output: { ...finalizedResult.output, recovery: { kind: "source", toolName: "file_read", nextInput: { bad: undefined } } },
+      },
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "tool-result",
+      toolCallId: "call-1",
+      toolName: "file_read",
+      result: {
+        ...finalizedResult,
+        output: {
+          ...finalizedResult.output,
+          recovery: { kind: "artifact", outputRef: "local/path", expiresAt: 1, canRead: true, canSearch: true },
+        },
+      },
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "tool-result",
+      toolCallId: "call-1",
+      toolName: "file_read",
+      result: { ...finalizedResult, details: { arbitrary: "metadata escape" } },
+    })).toBe(false);
     expect(isSessionEventPayload({ type: "tool-child-session-link", link: { ...validPayloads[23]!.link, legacy: true } })).toBe(false);
     expect(isSessionEventPayload({ type: "compression.block_committed", block: { ...compressionBlock, range: { ...compressionBlock.range, endIndex: "0" } } })).toBe(false);
     expect(isSessionEventPayload({ type: "hitl.request" })).toBe(false);

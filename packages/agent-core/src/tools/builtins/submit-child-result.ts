@@ -3,14 +3,15 @@ import { ChildResultSchema } from "../../delegation/schema";
 import { validateChildResultAgainstContract } from "../../delegation/contract";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
-import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import { createTextToolResult } from "../results";
+import type { RawToolResult, ToolExecutionContext } from "../types";
 
 export const SubmitChildResultInputSchema = ChildResultSchema;
 
 export async function executeSubmitChildResult(
   input: ChildResult,
   ctx: ToolExecutionContext,
-): Promise<ToolExecutionResult> {
+): Promise<RawToolResult> {
   const workspaceRoot = ctx.projectContext.project.workspaceRoot;
   const sessionId = ctx.store.getState().sessionId;
 
@@ -46,17 +47,14 @@ export async function executeSubmitChildResult(
       },
     );
 
-    return {
-      output: JSON.stringify(receipt),
-      isError: false,
-      meta: {
-        childResultReceipt: receipt,
+    return createTextToolResult(JSON.stringify(receipt), {
+      sidecar: {
         executionControl: {
           action: "complete_execution",
           reason: "child_result_submitted",
         },
       },
-    };
+    });
   } catch (error) {
     const safeError = error instanceof Error ? error : new Error(String(error));
     if (ctx.structuredResultCorrection !== undefined) {
@@ -81,5 +79,6 @@ export const submitChildResultTool = defineTool({
   ].join("\n"),
   inputSchema: SubmitChildResultInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
+  outputPolicy: { kind: "inline", previewDirection: "head" },
   execute: executeSubmitChildResult,
 });

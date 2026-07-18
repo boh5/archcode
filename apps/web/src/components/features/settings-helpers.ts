@@ -10,7 +10,6 @@ export const AGENT_NAMES = [
 ] as const;
 
 export const BUILT_IN_MCP_NAMES = BUILTIN_MCP_SERVER_NAMES;
-export const OPENAI_COMPATIBLE_PACKAGE = "@ai-sdk/openai-compatible";
 
 export function cloneConfig(config: ServerConfig): ServerConfig {
   return structuredClone(config);

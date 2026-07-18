@@ -8,6 +8,13 @@ import { SessionInputConflictError, SessionInputService } from "./service";
 const WORKSPACE = join(import.meta.dir, "__test_tmp__", crypto.randomUUID());
 const ROOT_SESSION_ID = "00000000-0000-4000-8000-000000000001";
 const CHILD_SESSION_ID = "00000000-0000-4000-8000-000000000002";
+const REQUESTED_MODEL_SELECTION = { mode: "agent_default" as const, selection: { model: "test:model" } };
+const BINDING = {
+  selection: { model: "test:model" }, providerId: "test", modelId: "model",
+  providerDisplayName: "Test", modelDisplayName: "Model",
+  resolution: "agent_default" as const, modelRuntimeRevision: "runtime-1",
+};
+const MODEL_AUDIT = { requested: REQUESTED_MODEL_SELECTION, actual: BINDING.selection };
 
 describe("SessionInputService", () => {
   let manager: SessionStoreManager;
@@ -31,6 +38,7 @@ describe("SessionInputService", () => {
       text: "B",
       clientRequestId: "request-b",
       source: "user",
+      requestedModelSelection: REQUESTED_MODEL_SELECTION,
     });
     const retry = await service.acceptMessage({
       sessionId: ROOT_SESSION_ID,
@@ -38,6 +46,7 @@ describe("SessionInputService", () => {
       text: "B",
       clientRequestId: "request-b",
       source: "user",
+      requestedModelSelection: REQUESTED_MODEL_SELECTION,
     });
     await service.acceptMessage({
       sessionId: ROOT_SESSION_ID,
@@ -45,6 +54,7 @@ describe("SessionInputService", () => {
       text: "C",
       clientRequestId: "request-c",
       source: "user",
+      requestedModelSelection: REQUESTED_MODEL_SELECTION,
     });
 
     expect(retry).toEqual(first);
@@ -59,6 +69,7 @@ describe("SessionInputService", () => {
       text: "/compact",
       clientRequestId: "command-request",
       source: "user" as const,
+      requestedModelSelection: REQUESTED_MODEL_SELECTION,
     };
 
     expect(await service.getCommandReplay(input)).toBeUndefined();
@@ -89,6 +100,7 @@ describe("SessionInputService", () => {
       text: "/skill use test inspect",
       clientRequestId: "skill-command-request",
       source: "user" as const,
+      requestedModelSelection: REQUESTED_MODEL_SELECTION,
     };
     await service.claimCommand(input);
     const accepted = await service.completeCommandAsMessage({
@@ -121,6 +133,7 @@ describe("SessionInputService", () => {
       text: "B",
       clientRequestId: "same-request",
       source: "user",
+      requestedModelSelection: REQUESTED_MODEL_SELECTION,
     });
 
     await expect(service.acceptMessage({
@@ -129,6 +142,7 @@ describe("SessionInputService", () => {
       text: "different",
       clientRequestId: "same-request",
       source: "user",
+      requestedModelSelection: REQUESTED_MODEL_SELECTION,
     })).rejects.toMatchObject({ reason: "idempotency" });
   });
 
@@ -140,6 +154,7 @@ describe("SessionInputService", () => {
       text: content,
       clientRequestId: "digest-only-request",
       source: "user",
+      requestedModelSelection: REQUESTED_MODEL_SELECTION,
     });
     const acceptedFile = await manager.getSessionFile(WORKSPACE, ROOT_SESSION_ID);
     const acceptedReceipt = acceptedFile.inputRequestReceipts[0];
@@ -165,6 +180,7 @@ describe("SessionInputService", () => {
       text: "before",
       clientRequestId: "request-edit",
       source: "user",
+      requestedModelSelection: REQUESTED_MODEL_SELECTION,
     });
     const edited = await service.editMessage({
       sessionId: ROOT_SESSION_ID,
@@ -218,13 +234,17 @@ describe("SessionInputService", () => {
   });
 
   test("moves all queued messages in one cutoff into one execution without joining bodies", async () => {
-    await service.acceptMessage({ sessionId: ROOT_SESSION_ID, workspaceRoot: WORKSPACE, text: "B", clientRequestId: "b", source: "user" });
-    await service.acceptMessage({ sessionId: ROOT_SESSION_ID, workspaceRoot: WORKSPACE, text: "C", clientRequestId: "c", source: "user" });
+    await service.acceptMessage({ sessionId: ROOT_SESSION_ID, workspaceRoot: WORKSPACE, text: "B", clientRequestId: "b", source: "user", requestedModelSelection: REQUESTED_MODEL_SELECTION });
+    await service.acceptMessage({ sessionId: ROOT_SESSION_ID, workspaceRoot: WORKSPACE, text: "C", clientRequestId: "c", source: "user", requestedModelSelection: REQUESTED_MODEL_SELECTION });
+    const pending = await service.getPendingMessages(ROOT_SESSION_ID, WORKSPACE);
 
     const batch = await service.beginQueueExecution({
       sessionId: ROOT_SESSION_ID,
       workspaceRoot: WORKSPACE,
       executionId: "execution-bc",
+      snapshots: pending.map((message) => ({ pending: message, modelAudit: MODEL_AUDIT })),
+      binding: BINDING,
+      origin: "user_message",
     });
 
     expect(batch.messages).toHaveLength(2);
@@ -257,8 +277,8 @@ describe("SessionInputService", () => {
   });
 
   test("commits a claimed Steer from its full snapshot and leaves other Queue input untouched", async () => {
-    const acceptedB = await service.acceptMessage({ sessionId: ROOT_SESSION_ID, workspaceRoot: WORKSPACE, text: "B", clientRequestId: "b", source: "user" });
-    await service.acceptMessage({ sessionId: ROOT_SESSION_ID, workspaceRoot: WORKSPACE, text: "C", clientRequestId: "c", source: "user" });
+    const acceptedB = await service.acceptMessage({ sessionId: ROOT_SESSION_ID, workspaceRoot: WORKSPACE, text: "B", clientRequestId: "b", source: "user", requestedModelSelection: REQUESTED_MODEL_SELECTION });
+    await service.acceptMessage({ sessionId: ROOT_SESSION_ID, workspaceRoot: WORKSPACE, text: "C", clientRequestId: "c", source: "user", requestedModelSelection: REQUESTED_MODEL_SELECTION });
     const claimed = await service.claimSteer({
       sessionId: ROOT_SESSION_ID,
       workspaceRoot: WORKSPACE,
@@ -271,7 +291,8 @@ describe("SessionInputService", () => {
       sessionId: ROOT_SESSION_ID,
       workspaceRoot: WORKSPACE,
       executionId: "execution-a",
-      messages: [claimed],
+      snapshots: [{ pending: claimed, modelAudit: MODEL_AUDIT }],
+      binding: BINDING,
     });
 
     expect(committed).toEqual([expect.objectContaining({ id: acceptedB.messageId, executionId: "execution-a" })]);
@@ -290,6 +311,10 @@ describe("SessionInputService", () => {
       workspaceRoot: WORKSPACE,
       executionId: "execution-child",
       text: "direct child input",
+      requestedModelSelection: REQUESTED_MODEL_SELECTION,
+      modelAudit: MODEL_AUDIT,
+      binding: BINDING,
+      origin: "tool_call",
     });
 
     expect(message.clientRequestId).toBeUndefined();
@@ -299,7 +324,7 @@ describe("SessionInputService", () => {
   });
 
   test("rolls orphaned steering back to queued with a new revision", async () => {
-    const accepted = await service.acceptMessage({ sessionId: ROOT_SESSION_ID, workspaceRoot: WORKSPACE, text: "B", clientRequestId: "b", source: "user" });
+    const accepted = await service.acceptMessage({ sessionId: ROOT_SESSION_ID, workspaceRoot: WORKSPACE, text: "B", clientRequestId: "b", source: "user", requestedModelSelection: REQUESTED_MODEL_SELECTION });
     await service.claimSteer({
       sessionId: ROOT_SESSION_ID,
       workspaceRoot: WORKSPACE,
@@ -327,6 +352,7 @@ describe("SessionInputService", () => {
         text: "not allowed",
         clientRequestId: "child-request",
         source: "user",
+        requestedModelSelection: REQUESTED_MODEL_SELECTION,
       });
       throw new Error("Expected acceptMessage to reject child Queue admission");
     } catch (error) {

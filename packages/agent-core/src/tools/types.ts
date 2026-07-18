@@ -1,4 +1,6 @@
 import type { Schema as AiSchema } from "ai";
+import type { HitlResponse } from "@archcode/protocol";
+import type { FinalizedToolResult } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 import type { SessionStoreState } from "../store/index";
 import type { SessionStoreManager } from "../store/session-store-manager";
@@ -7,8 +9,24 @@ import type { ZodTypeAny } from "zod";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
 import type { PermissionApprovalRequest } from "./permission/policy-types";
 import type { ProjectContext } from "../projects/types";
-import type { HitlDisplayPayload, HitlSource } from "@archcode/protocol";
 import type { SkillService } from "../skills";
+import type {
+  RawToolResult,
+  ToolBlockedRequest,
+  ToolExecutionControl,
+  ToolOutputPolicy,
+} from "../tool-output/types";
+import type { ToolOutputCapture } from "../tool-output/capture";
+import type { ToolOutputAccessService } from "../tool-output/access-service";
+
+export type {
+  RawToolResult,
+  RegistryExecutionOutcome,
+  ToolBlockedRequest,
+  ToolExecutionControl,
+  ToolExecutionSidecar,
+  ToolOutputPolicy,
+} from "../tool-output/types";
 
 export type MaybePromise<T> = T | Promise<T>;
 
@@ -16,28 +34,6 @@ export interface ToolTraits {
   readOnly: boolean;
   destructive: boolean;
   concurrencySafe: boolean;
-}
-
-export interface ToolExecutionResult {
-  output: string;
-  isError: boolean;
-  meta?: Record<string, unknown>;
-  /** Internal scheduler control outcome. It is never appended as a tool result. */
-  blocked?: ToolBlockedRequest;
-}
-
-export interface ToolBlockedRequest {
-  readonly source: Extract<HitlSource, { type: "ask_user" | "tool_permission" }>;
-  readonly displayPayload: HitlDisplayPayload;
-  /** SHA-256 identity of the exact permission request; never a raw scope preimage. */
-  readonly permissionFingerprint?: string;
-  readonly persistentApprovalEligible?: boolean;
-  readonly permission?: {
-    readonly description: string;
-    readonly reason?: string;
-    readonly decisionDisplay?: string;
-    readonly ruleId?: string;
-  };
 }
 
 export interface ToolAttemptMetadata {
@@ -48,27 +44,11 @@ export interface ToolAttemptMetadata {
   destructive: boolean;
 }
 
-export type ToolExecutionControl =
-  | {
-      readonly action: "stop_session_family";
-      readonly reason: "goal_cancelled" | "goal_cancelled_cleanup_incomplete";
-    }
-  | {
-      readonly action: "complete_execution";
-      readonly reason: "child_result_submitted" | "goal_review_finalized";
-    }
-  | {
-      readonly action: "fail_execution";
-      readonly reason: "child_result_required";
-      readonly error: string;
-    };
-
 export interface StructuredResultCorrectionGate {
   readonly policy: "strict" | "best_effort";
   readonly submission: "submit_child_result" | "goal_manage.finalize_review";
-  recordFailure(error: Error): ToolExecutionResult;
+  recordFailure(error: Error): RawToolResult;
 }
-
 export interface ToolExecutionContext {
   store: StoreApi<SessionStoreState>;
   storeManager: SessionStoreManager;
@@ -91,13 +71,10 @@ export interface ToolExecutionContext {
   projectContext: ProjectContext;
   /** Current Session execution directory. This may be a worktree and is independent of the canonical project context. */
   readonly cwd: string;
-  confirmPermission?: ToolConfirmationCallback;
-  /** A durable answer awaiting comparison with this attempt's freshly evaluated permission scope. */
-  deferredPermissionResponse?: {
-    readonly decision: "approve_once" | "approve_always";
-    readonly fingerprint: string;
-  };
-  askUser?: AskUserCallback;
+  /** Registry-owned capture for artifact-policy tools. Descriptors may only write; Registry owns finalize/abort. */
+  outputCapture?: ToolOutputCapture;
+  /** Scope-bound artifact accessor. Descriptors never receive project/root authorization fields. */
+  outputArtifacts?: ToolOutputAccessService;
   startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
   cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
   resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
@@ -126,9 +103,14 @@ export type BeforeHook = (
 ) => MaybePromise<unknown | void>;
 
 export type AfterHook = (
-  result: ToolExecutionResult,
+  result: RawToolResult,
   ctx: ToolExecutionContext,
-) => MaybePromise<ToolExecutionResult | void>;
+) => MaybePromise<RawToolResult | void>;
+
+export type FinalizedResultHook = (
+  result: FinalizedToolResult,
+  ctx: ToolExecutionContext,
+) => MaybePromise<void>;
 
 export type PermissionDecision = {
   outcome: "allow" | "deny" | "ask";
@@ -147,61 +129,6 @@ export type ToolPermission = (
   input: unknown,
   ctx: ToolExecutionContext,
 ) => MaybePromise<PermissionDecision>;
-
-export interface ToolConfirmationRequest {
-  toolName: string;
-  toolCallId: string;
-  input: unknown;
-  description: string;
-  reason?: string;
-  approval?: PermissionApprovalRequest;
-  agentName?: string;
-  currentDepth?: number;
-  decisionDisplay?: string;
-  ruleId?: string;
-  permissionFingerprint?: string;
-  persistentApprovalEligible?: boolean;
-}
-
-export type ToolConfirmationResult =
-  | "approve_once"
-  | "approve_always"
-  | "approve"
-  | "deny"
-  | "timeout";
-
-export type ToolConfirmationCallback = (
-  request: ToolConfirmationRequest,
-  abortSignal?: AbortSignal,
-) => Promise<ToolConfirmationResult>;
-
-export interface AskUserQuestionOption {
-  label: string;
-  description: string;
-}
-
-export interface AskUserQuestion {
-  question: string;
-  header: string;
-  options: AskUserQuestionOption[];
-  multiple?: boolean;
-  custom: boolean;
-}
-
-export interface AskUserRequest {
-  toolName: string;
-  toolCallId: string;
-  questions: AskUserQuestion[];
-  questionType?: "decision" | "approval" | "clarification";
-  context?: Record<string, unknown>;
-  abortSignal?: AbortSignal;
-}
-
-export type AskUserAnswer = string[];
-
-export type AskUserCallback = (
-  request: AskUserRequest,
-) => Promise<{ answers: AskUserAnswer[] } | { isError: true; reason: string }>;
 
 export type PermissionErrorCode =
   | "TOOL_UNKNOWN"
@@ -229,7 +156,7 @@ export type PermissionErrorCode =
  */
 export type AiToolInputSchema = ZodTypeAny | AiSchema<unknown>;
 
-export interface ToolDescriptor<I = any, O extends string | ToolExecutionResult = string> {
+export interface ToolDescriptor<I = any> {
   name: string;
   description: string;
   /**
@@ -251,16 +178,23 @@ export interface ToolDescriptor<I = any, O extends string | ToolExecutionResult 
    */
   aiInputSchema?: AiToolInputSchema;
   traits: ToolTraits;
+  outputPolicy: ToolOutputPolicy;
   hooks?: {
     before?: BeforeHook[];
     after?: AfterHook[];
   };
   prepareInput?: (raw: unknown, ctx: ToolExecutionContext) => MaybePromise<unknown>;
+  prepareBlock?: (input: I, ctx: ToolExecutionContext) => MaybePromise<ToolBlockedRequest>;
+  resume?: (
+    input: I,
+    response: HitlResponse,
+    ctx: ToolExecutionContext,
+  ) => MaybePromise<RawToolResult>;
   permissions?: ToolPermission[];
-  execute: (input: I, ctx: ToolExecutionContext) => MaybePromise<O>;
+  execute: (input: I, ctx: ToolExecutionContext) => MaybePromise<RawToolResult>;
 }
 
-export type AnyToolDescriptor = ToolDescriptor<any, string | ToolExecutionResult>;
+export type AnyToolDescriptor = ToolDescriptor<any>;
 
 export interface ToolCallLike {
   toolCallId: string;

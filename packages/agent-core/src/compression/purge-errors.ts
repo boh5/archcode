@@ -39,9 +39,9 @@ function toPurgedGroup(
   group: { toolName: string; entries: Array<{ ref: MessageRef; part: ErrorToolPart }> },
 ): PurgedRepeatedErrorGroup {
   const unknownResultRefs = group.entries
-    .filter(({ part }) => part.meta?.unknownResult === true)
+    .filter(({ part }) => part.result.details?.unknownResult === true)
     .map(({ ref }) => ref);
-  const actionable = group.entries.filter(({ part }) => part.meta?.unknownResult !== true);
+  const actionable = group.entries.filter(({ part }) => part.result.details?.unknownResult !== true);
   const preservedActionable = actionable.at(-1);
   const collapsedRefs = preservedActionable === undefined
     ? []
@@ -58,6 +58,8 @@ function normalizedErrorKey(part: ErrorToolPart): string {
   return JSON.stringify({
     toolName: part.toolName,
     input: normalizeValue(part.input),
-    errorMessage: normalizeText(part.errorMessage),
+    preview: normalizeText(part.result.output.preview),
+    error: part.result.details?.error,
+    recovery: part.result.output.recovery,
   });
 }

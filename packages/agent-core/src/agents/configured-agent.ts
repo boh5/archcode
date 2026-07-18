@@ -5,14 +5,13 @@ import type { StoreApi } from "zustand";
 import type { BackgroundTaskManager } from "../background/manager";
 import { BackgroundTaskManager as DefaultBackgroundTaskManager } from "../background/manager";
 import { CommandRegistry, createCompactCommand, createSkillCommand } from "../commands/index";
-import type { MemoryExtractionConfig, ModelCallOptions } from "../config/index";
+import type { MemoryExtractionConfig } from "../config/index";
+import type { ExecutionModelBinding } from "../models";
 import type { MemoryRoots } from "../memory";
 import { MemoryFileManager } from "../memory/file-manager";
 import type { ProjectContextResolver } from "../projects/context-resolver";
 import type { ProjectContext } from "../projects/types";
 import { createGoalBudgetEnforcementHooks } from "../goals/budget-enforcement";
-import type { ProviderRegistry } from "../provider/index";
-import type { ModelInfo } from "../provider/model";
 import { SkillNotFoundError, type SkillService } from "../skills";
 import type { ResolvedSkill } from "../skills/types";
 import { AgentsMdLoadError, PromptContractCompiler, createFailedPromptTrace, loadAgentsMd } from "../prompt/index";
@@ -21,8 +20,8 @@ import type { SessionStoreManager } from "../store/session-store-manager";
 import { BusyError } from "../store/types";
 import type { SessionStoreState } from "../store/types";
 import type { Logger } from "../logger";
-import type { AskUserCallback, ToolConfirmationCallback, ToolRegistry } from "../tools/index";
-import { TOOL_OUTPUT_DIR, enforceQuota } from "../tools/index";
+import type { ToolRegistry } from "../tools/index";
+import type { ToolOutputAccessService } from "../tool-output/access-service";
 import { TOOL_GOAL_MANAGE, TOOL_WORKTREE_ENTER, TOOL_WORKTREE_EXIT } from "../tools/names";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
 import { isGoalDelegationAllowed } from "../execution/goal-session-phase-policy";
@@ -56,15 +55,11 @@ export class IneligibleSessionWorktreeToolError extends Error {
 
 export interface ConfiguredAgentOptions {
   readonly definition: AgentDefinition;
-  readonly providerRegistry: ProviderRegistry;
-  readonly modelInfo: ModelInfo;
-  readonly modelOptions?: ModelCallOptions;
   readonly toolRegistry: ToolRegistry;
   readonly skillService: SkillService;
   readonly storeManager: SessionStoreManager;
   readonly store: StoreApi<SessionStoreState>;
-  readonly confirmPermission?: ToolConfirmationCallback;
-  readonly askUser?: AskUserCallback;
+  readonly toolOutputAccess: ToolOutputAccessService;
   /** Canonical project root used for persistent project/session state. */
   readonly projectRoot: string;
   /** Current Session execution directory used by prompts and filesystem tools. */
@@ -79,7 +74,6 @@ export interface ConfiguredAgentOptions {
   readonly resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
   readonly acquireSessionCwdTransition?: (workspaceRoot: string, sessionId: string) => () => void;
   readonly resolveMcpStatuses?: () => ReadonlyMap<string, McpServerStatus>;
-  readonly quotaEnforcer?: (directory: string) => Promise<void>;
   readonly memoryConfig?: MemoryExtractionConfig;
   readonly logger: Logger;
 }
@@ -156,10 +150,7 @@ export class ConfiguredAgent implements Agent {
   private readonly toolRegistry: ToolRegistry;
   private readonly skillService: SkillService;
   private readonly storeManager: SessionStoreManager;
-  private readonly modelInfo: ModelInfo;
-  private readonly modelOptions: ModelCallOptions | undefined;
-  private readonly confirmPermission: ToolConfirmationCallback | undefined;
-  private readonly askUserDefault: AskUserCallback | undefined;
+  private readonly toolOutputAccess: ToolOutputAccessService;
   private readonly projectRoot: string;
   readonly cwd: string;
   private readonly projectContextResolver: ProjectContextResolver;
@@ -176,7 +167,6 @@ export class ConfiguredAgent implements Agent {
   private readonly resumeChildSession: ((workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>) | undefined;
   private readonly acquireSessionCwdTransition: ((workspaceRoot: string, sessionId: string) => () => void) | undefined;
   private readonly resolveMcpStatuses: (() => ReadonlyMap<string, McpServerStatus>) | undefined;
-  private readonly quotaEnforcer: (directory: string) => Promise<void>;
   private readonly memoryConfig: MemoryExtractionConfig | undefined;
   private readonly logger: Logger;
   private agentsMd: PromptSource<string> = { status: "absent", source: "AGENTS.md search" };
@@ -187,15 +177,15 @@ export class ConfiguredAgent implements Agent {
       module: "agents.configured-agent",
       context: { agentName: options.definition.name },
     });
-    this.hybridCompressionHook = createHybridCompressionHook(this.logger.child({ module: "compression.hybrid" }));
+    this.hybridCompressionHook = createHybridCompressionHook(
+      this.logger.child({ module: "compression.hybrid" }),
+      options.toolOutputAccess,
+    );
     this.definition = options.definition;
     this.toolRegistry = options.toolRegistry;
     this.skillService = options.skillService;
     this.storeManager = options.storeManager;
-    this.modelInfo = options.modelInfo;
-    this.modelOptions = options.modelOptions;
-    this.confirmPermission = options.confirmPermission;
-    this.askUserDefault = options.askUser;
+    this.toolOutputAccess = options.toolOutputAccess;
     if (!options.store) throw new Error("ConfiguredAgent requires an explicit store");
     this.store = options.store;
     this.projectRoot = options.projectRoot;
@@ -214,9 +204,6 @@ export class ConfiguredAgent implements Agent {
     this.acquireSessionCwdTransition = options.acquireSessionCwdTransition;
     this.resolveMcpStatuses = options.resolveMcpStatuses;
     this.memoryConfig = options.memoryConfig;
-    this.quotaEnforcer = options.quotaEnforcer ?? (async (directory) => {
-      await enforceQuota(directory, { logger: this.logger.child({ module: "tool.output.cache" }) });
-    });
     this.memoryRoots = {
       project: join(this.projectRoot, PROJECT_STATE_DIR_NAME, "memory"),
       user: join(homedir(), USER_DATA_DIR_NAME, "memory"),
@@ -225,11 +212,10 @@ export class ConfiguredAgent implements Agent {
     this.commandRegistry = new CommandRegistry();
     this.commandRegistry.register(
       createCompactCommand(
-        this.store,
-        this.modelInfo,
-        this.hybridCompressionHook.circuitBreaker,
-        this.modelOptions,
-        this.logger.child({ module: "compact.command" }),
+        {
+          circuitBreaker: this.hybridCompressionHook.circuitBreaker,
+          logger: this.logger.child({ module: "compact.command" }),
+        },
       ),
     );
     this.commandRegistry.register(
@@ -248,6 +234,7 @@ export class ConfiguredAgent implements Agent {
 
   async executeCommand(
     command: AgentCommand,
+    binding: ExecutionModelBinding,
     options: Pick<AgentRunOptions, "abort"> = {},
   ): Promise<AgentCommandResult> {
     if (this.disposed) throw new Error("Agent has been disposed");
@@ -265,15 +252,17 @@ export class ConfiguredAgent implements Agent {
 
     const result = await descriptor.handler({
       store: this.store,
-      modelInfo: this.modelInfo,
+      binding,
       logger: this.logger,
-      modelOptions: this.modelOptions,
       abort: options.abort,
       cwd: this.cwd,
       agentName: this.definition.name,
       agentSkills: this.definition.skills,
       skillService: this.skillService,
     }, command.args);
+    if (command.name === "compact" && result.success) {
+      await this.hybridCompressionHook.scheduleToolOutputRecoveryNotice();
+    }
     options.abort?.throwIfAborted();
     this.store.getState().append({ type: "system-notice", message: result.message });
     await this.storeManager.flushSession(this.store.getState().sessionId, this.projectRoot);
@@ -282,27 +271,22 @@ export class ConfiguredAgent implements Agent {
       : { kind: "message", content: result.continueAsMessage };
   }
 
-  async run(options: AgentRunOptions = {}): Promise<AgentResult> {
+  async run(binding: ExecutionModelBinding, options: AgentRunOptions = {}): Promise<AgentResult> {
     if (this.disposed) {
       throw new Error("Agent has been disposed");
     }
 
     const {
       abort,
-      confirmPermission,
-      askUser: requestedAskUser,
       maxSteps,
       extraTools,
       consumeSteers,
     } = options;
-    const confirm = confirmPermission ?? this.confirmPermission;
-    const askUser = requestedAskUser ?? this.askUserDefault;
 
     const btm = this.backgroundTaskManager;
-    const shouldDrainBackgroundTasks = this.ownsBackgroundTaskManager || this.definition.enforceToolOutputQuota === true;
+    const shouldDrainBackgroundTasks = this.ownsBackgroundTaskManager;
 
     try {
-      await this.enforceToolOutputQuotaIfNeeded();
       await this.refreshAgentsMd();
 
       const definitionAllowedTools = [
@@ -334,7 +318,7 @@ export class ConfiguredAgent implements Agent {
         }
       } catch (error) {
         const contract = await this.buildPromptContract({
-          allowedTools, availableSkills, activeSkills, env, projectContext, memory, mcpStatuses,
+          allowedTools, availableSkills, activeSkills, env, projectContext, memory, mcpStatuses, binding,
         });
         const trace = durablePromptTrace(createFailedPromptTrace(contract, error, {
           status: "error",
@@ -354,6 +338,7 @@ export class ConfiguredAgent implements Agent {
           projectContext,
           memory,
           mcpStatuses,
+          binding,
         });
         try {
           const compiled = await compiler.compile(contract);
@@ -373,9 +358,8 @@ export class ConfiguredAgent implements Agent {
       while (true) {
         const result = await runQueryLoop(
           {
-            modelInfo: this.modelInfo,
+            binding,
             logger: this.logger,
-            modelOptions: this.modelOptions,
             toolRegistry: this.toolRegistry,
             allowedTools,
             agentSkills,
@@ -383,8 +367,7 @@ export class ConfiguredAgent implements Agent {
             storeManager: this.storeManager,
             projectContext,
             cwd: this.cwd,
-            confirmPermission: confirm,
-            askUser,
+            toolOutputAccess: this.toolOutputAccess,
             abort,
             resolveSystemPrompt,
             store: this.store,
@@ -461,6 +444,7 @@ export class ConfiguredAgent implements Agent {
     readonly projectContext: ProjectContext;
     readonly memory: PromptSource<PromptMemorySnapshot>;
     readonly mcpStatuses: ReadonlyMap<string, McpServerStatus>;
+    readonly binding: ExecutionModelBinding;
   }): Promise<PromptContractV2> {
     const state = this.store.getState();
     const goal = state.goalId === undefined ? undefined : await input.projectContext.goalState.read(state.goalId);
@@ -514,7 +498,7 @@ export class ConfiguredAgent implements Agent {
       remainingDepth: Math.max(0, (this.definition.childPolicy?.maxDepth ?? this.depth) - this.depth),
       maxConcurrentChildren: this.definition.childPolicy?.maxConcurrent ?? 0,
       mcp: Object.fromEntries((this.definition.mcpTools ?? []).map((server) => [server, mapMcpServerStatusForPrompt(input.mcpStatuses.get(server))])),
-      modelCapabilities: this.modelInfo.capabilities,
+      modelCapabilities: input.binding.modelInfo.capabilities,
     };
     return {
       version: "2",
@@ -553,19 +537,6 @@ export class ConfiguredAgent implements Agent {
         source: "project-and-user-memory",
         error: error instanceof Error ? error.message : String(error),
       };
-    }
-  }
-
-  private async enforceToolOutputQuotaIfNeeded(): Promise<void> {
-    if (this.definition.enforceToolOutputQuota !== true) return;
-
-    try {
-      await this.quotaEnforcer(TOOL_OUTPUT_DIR);
-    } catch (error) {
-      this.logger.warn("tool.output.quota.failed", {
-        error,
-        meta: { directory: TOOL_OUTPUT_DIR },
-      });
     }
   }
 

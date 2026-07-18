@@ -1,17 +1,32 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { z } from "zod";
 import { storeManager } from "../../store/store";
 import { createMockStore } from "../../store/test-helpers";
 import { createTestProjectContext } from "../test-project-context";
-import type { ToolExecutionContext } from "../types";
-import { ToolRegistry } from "../registry";
+import type { RegistryExecutionOutcome, ToolExecutionContext } from "../types";
+import { createTextToolResult } from "../results";
+import { createTestToolRegistryFixture, type TestToolRegistryFixture } from "../test-registry";
 import { createBashPermission } from "./bash";
 
-const testDir = join(import.meta.dir, "__test_tmp__", `bash-permission-${process.pid}-${Date.now()}`);
+const testDir = realpathSync.native(mkdtempSync(join(tmpdir(), "archcode-bash-permission-")));
 const workspace = join(testDir, "workspace");
 const outside = join(testDir, "outside");
+const registryFixtures: TestToolRegistryFixture[] = [];
+
+function createTestRegistry() {
+  const fixture = createTestToolRegistryFixture();
+  registryFixtures.push(fixture);
+  return fixture.registry;
+}
+
+function blockedPermissionFingerprint(outcome: RegistryExecutionOutcome): string | undefined {
+  return outcome.kind === "blocked" && "permissionFingerprint" in outcome.request
+    ? outcome.request.permissionFingerprint
+    : undefined;
+}
 
 beforeAll(() => {
   mkdirSync(join(workspace, "dist"), { recursive: true });
@@ -41,7 +56,10 @@ beforeAll(() => {
     symlinkSync(target, join(workspace, directory, "--"));
   }
 });
-afterAll(() => rmSync(testDir, { recursive: true, force: true }));
+afterAll(async () => {
+  await Promise.all(registryFixtures.map((fixture) => fixture.dispose()));
+  rmSync(testDir, { recursive: true, force: true });
+});
 
 function ctx(): ToolExecutionContext {
   return {
@@ -1056,69 +1074,107 @@ describe("createBashPermission", () => {
     expect(JSON.stringify(secret)).not.toContain("sk_test_1234567890abcdef");
   });
 
-  test("re-evaluates real Bash scopes before consuming deferred permission decisions", async () => {
+  test("re-evaluates real Bash scopes before resuming persisted permission requests", async () => {
     const resumeLink = join(workspace, "resume-link");
     symlinkSync(join(outside, "target"), resumeLink);
     const executions: string[] = [];
-    const registry = new ToolRegistry();
+    const registry = createTestRegistry();
     registry.register({
       name: "bash",
       description: "test Bash scope rebinding",
       inputSchema: z.object({ command: z.string(), cwd: z.string().optional() }).strict(),
       traits: { readOnly: false, destructive: true, concurrencySafe: false },
+      outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
       permissions: [createBashPermission()],
       execute: async (input) => {
         executions.push(input.command);
-        return "executed";
+        return createTextToolResult("executed");
       },
     });
     const call = { toolCallId: "bash-rebind", toolName: "bash", input: { command: "cp file resume-link" } };
 
     const initial = await registry.execute(call, ctx());
-    const firstFingerprint = initial.blocked?.permissionFingerprint;
+    const firstFingerprint = blockedPermissionFingerprint(initial);
     expect(firstFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    if (initial.kind !== "blocked") throw new Error("Expected initial Bash permission block");
 
-    const same = await registry.execute(call, { ...ctx(), deferredPermissionResponse: { decision: "approve_once", fingerprint: firstFingerprint! } });
-    expect(same).toEqual({ output: "executed", isError: false });
+    const same = await registry.resumeBlocked({
+      toolCall: call,
+      request: initial.request,
+      requestKey: initial.requestKey,
+      response: { type: "permission_decision", decision: "approve_once" },
+      context: ctx(),
+    });
+    expect(same).toMatchObject({ kind: "settled", result: { isError: false, output: { preview: "executed" } } });
 
     unlinkSync(resumeLink);
     symlinkSync(join(outside, "second"), resumeLink);
-    const changed = await registry.execute(call, { ...ctx(), deferredPermissionResponse: { decision: "approve_once", fingerprint: firstFingerprint! } });
-    const secondFingerprint = changed.blocked?.permissionFingerprint;
+    const changed = await registry.resumeBlocked({
+      toolCall: call,
+      request: initial.request,
+      requestKey: initial.requestKey,
+      response: { type: "permission_decision", decision: "approve_once" },
+      context: ctx(),
+    });
+    expect(changed).toMatchObject({ kind: "settled", result: { details: { error: { code: "TOOL_BLOCKED_RESPONSE_INVALID" } } } });
+    const second = await registry.execute(call, ctx());
+    const secondFingerprint = blockedPermissionFingerprint(second);
     expect(secondFingerprint).toMatch(/^[a-f0-9]{64}$/);
     expect(secondFingerprint).not.toBe(firstFingerprint);
+    if (second.kind !== "blocked") throw new Error("Expected rebound Bash permission block");
 
     unlinkSync(resumeLink);
     symlinkSync(join(workspace, ".archcode"), resumeLink);
-    const denied = await registry.execute(call, { ...ctx(), deferredPermissionResponse: { decision: "approve_once", fingerprint: secondFingerprint! } });
-    expect(denied.isError).toBe(true);
-    expect(denied.blocked).toBeUndefined();
+    const denied = await registry.resumeBlocked({
+      toolCall: call,
+      request: second.request,
+      requestKey: second.requestKey,
+      response: { type: "permission_decision", decision: "approve_once" },
+      context: ctx(),
+    });
+    expect(denied).toMatchObject({ kind: "settled", result: { isError: true } });
 
     unlinkSync(resumeLink);
     symlinkSync(join(workspace, "dist"), resumeLink);
-    const nowAllowed = await registry.execute(call, { ...ctx(), deferredPermissionResponse: { decision: "approve_once", fingerprint: secondFingerprint! } });
-    expect(nowAllowed).toEqual({ output: "executed", isError: false });
-    expect(executions).toHaveLength(2);
+    const nowAllowed = await registry.resumeBlocked({
+      toolCall: call,
+      request: second.request,
+      requestKey: second.requestKey,
+      response: { type: "permission_decision", decision: "approve_once" },
+      context: ctx(),
+    });
+    expect(nowAllowed).toMatchObject({ kind: "settled", result: { details: { error: { code: "TOOL_BLOCKED_RESPONSE_INVALID" } } } });
+    expect(executions).toHaveLength(1);
   });
 
-  test("binds deferred Bash permission to canonical structured cwd", async () => {
-    const registry = new ToolRegistry();
+  test("binds persisted Bash permission to canonical structured cwd", async () => {
+    const registry = createTestRegistry();
     registry.register({
       name: "bash",
       description: "test Bash cwd rebinding",
       inputSchema: z.object({ command: z.string(), cwd: z.string().optional() }).strict(),
       traits: { readOnly: false, destructive: true, concurrencySafe: false },
+      outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
       permissions: [createBashPermission()],
-      execute: async () => "executed",
+      execute: async () => createTextToolResult("executed"),
     });
     const initialCall = { toolCallId: "bash-cwd", toolName: "bash", input: { command: "sudo true" } };
     const initial = await registry.execute(initialCall, ctx());
-    const fingerprint = initial.blocked?.permissionFingerprint;
+    const fingerprint = blockedPermissionFingerprint(initial);
+    if (initial.kind !== "blocked") throw new Error("Expected initial Bash cwd permission block");
     const changedCall = { ...initialCall, input: { command: "sudo true", cwd: "dist" } };
-    const changed = await registry.execute(changedCall, { ...ctx(), deferredPermissionResponse: { decision: "approve_once", fingerprint: fingerprint! } });
+    const rejected = await registry.resumeBlocked({
+      toolCall: changedCall,
+      request: initial.request,
+      requestKey: initial.requestKey,
+      response: { type: "permission_decision", decision: "approve_once" },
+      context: ctx(),
+    });
+    expect(rejected).toMatchObject({ kind: "settled", result: { details: { error: { code: "TOOL_BLOCKED_RESPONSE_INVALID" } } } });
+    const changed = await registry.execute(changedCall, ctx());
 
-    expect(changed.blocked?.permissionFingerprint).toMatch(/^[a-f0-9]{64}$/);
-    expect(changed.blocked?.permissionFingerprint).not.toBe(fingerprint);
+    expect(blockedPermissionFingerprint(changed)).toMatch(/^[a-f0-9]{64}$/);
+    expect(blockedPermissionFingerprint(changed)).not.toBe(fingerprint);
   });
 
   test("deny wins over ask through supported privilege wrappers", async () => {

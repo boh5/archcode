@@ -31,19 +31,45 @@ const snapshot = {
     agents: {},
   },
   revision: "revision-1",
+  modelRuntimeRevision: "revision-1",
   configPath: "/Users/test/.archcode/config.json",
-  restartRequired: false,
+  restartRequiredSections: [],
 } as const;
 
-function createService(overrides: Partial<Pick<ServerConfigService, "getSnapshot" | "save">> = {}) {
+const modelRuntimeCatalog = {
+  revision: "revision-1",
+  providers: [],
+  agentDefaults: {},
+} as const;
+
+const providerAdapterCatalog = [{
+  npmPackage: "@ai-sdk/openai-compatible",
+  displayName: "OpenAI-compatible",
+  fields: [{
+    path: "baseURL",
+    label: "Base URL",
+    kind: "url",
+    required: true,
+    secret: false,
+  }],
+}] as const;
+
+type ConfigServiceTestPort = Pick<
+  ServerConfigService,
+  "getSnapshot" | "getModelRuntimeCatalog" | "getProviderAdapterCatalog" | "save"
+>;
+
+function createService(overrides: Partial<ConfigServiceTestPort> = {}) {
   return {
     getSnapshot: mock(async () => snapshot),
+    getModelRuntimeCatalog: mock(() => modelRuntimeCatalog),
+    getProviderAdapterCatalog: mock(() => providerAdapterCatalog),
     save: mock(async () => snapshot),
     ...overrides,
-  } as Pick<ServerConfigService, "getSnapshot" | "save">;
+  } as ConfigServiceTestPort;
 }
 
-function createApp(service: Pick<ServerConfigService, "getSnapshot" | "save">) {
+function createApp(service: ConfigServiceTestPort) {
   const app = createConfigRoutes(service);
   app.onError(errorHandler);
   return app;
@@ -61,6 +87,20 @@ describe("config routes", () => {
       structuredToolCalls: "best_effort",
       instructionTier: "standard",
     });
+  });
+
+  test("returns the secret-free model runtime catalog", async () => {
+    const response = await createApp(createService()).request("/model-runtime");
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(modelRuntimeCatalog);
+  });
+
+  test("returns Provider adapter field metadata without configuration values", async () => {
+    const response = await createApp(createService()).request("/provider-adapters");
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(providerAdapterCatalog);
   });
 
   test("rejects malformed PUT input with 400", async () => {

@@ -313,7 +313,7 @@ function stateWith(overrides: Partial<SessionStoreState>): SessionStoreState {
   toModelMessages: () => [],
   ...overrides,
   updatedAt: overrides.updatedAt ?? 1,
-  modelInfo: overrides.modelInfo ?? null,
+  modelSelection: overrides.modelSelection ?? { revision: 0 },
   compression: overrides.compression ?? createEmptyCompressionState(),
   publishableNextEventId: overrides.publishableNextEventId ?? 0,
   };

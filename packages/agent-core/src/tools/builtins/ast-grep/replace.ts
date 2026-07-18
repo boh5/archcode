@@ -8,10 +8,12 @@ import { sharedMutationQueue } from "../../concurrency/mutation-queue";
 import { defineTool } from "../../define-tool";
 import { computeToolDiffs } from "../../diff";
 import { createToolErrorResult } from "../../errors";
+import { createTextToolResult } from "../../results";
 import { createPostEditDiagnosticsHook } from "../../hooks";
 import { createProtectedPathPermission, isProtectedToolWritePath } from "../../permission";
 import { resolveAndValidatePath } from "../../security";
-import type { PermissionDecision, ToolExecutionContext, ToolExecutionResult, ToolPermission } from "../../types";
+import type { PermissionDecision, RawToolResult, ToolExecutionContext, ToolPermission } from "../../types";
+import { AstGrepNdjsonCollector } from "./ndjson";
 
 export const AstGrepReplaceInputSchema = z
   .object({
@@ -24,73 +26,12 @@ export const AstGrepReplaceInputSchema = z
   })
   .strict();
 
-const AstGrepRangePositionSchema = z
-  .object({
-    line: z.number(),
-    column: z.number(),
-  })
-  .passthrough();
-
-const AstGrepRangeSchema = z
-  .object({
-    byteOffset: z
-      .object({
-        start: z.number(),
-        end: z.number(),
-      })
-      .passthrough(),
-    start: AstGrepRangePositionSchema,
-    end: AstGrepRangePositionSchema,
-  })
-  .passthrough();
-
-/** ast-grep outputs { text, range } where the record key IS the variable name */
-const AstGrepMatchNodeSchema = z
-  .object({
-    text: z.string(),
-    range: AstGrepRangeSchema.optional(),
-  })
-  .passthrough();
-
-const AstGrepReplacementMatchSchema = z
-  .object({
-    text: z.string(),
-    range: AstGrepRangeSchema,
-    file: z.string(),
-    lines: z.string(),
-    /** ast-grep v0.42+ outputs charCount for context character counts */
-    charCount: z
-      .object({
-        leading: z.number(),
-        trailing: z.number(),
-      })
-      .passthrough()
-      .optional(),
-    /** ast-grep v0.42+ outputs the matched language */
-    language: z.string().optional(),
-    replacement: z.string().optional(),
-    replacementOffsets: z
-      .object({
-        start: z.number(),
-        end: z.number(),
-      })
-      .passthrough()
-      .optional(),
-    metaVariables: z
-      .object({
-        single: z.record(z.string(), AstGrepMatchNodeSchema).optional(),
-        multi: z.record(z.string(), z.array(AstGrepMatchNodeSchema)).optional(),
-        transformed: z.record(z.string(), z.string()).optional(),
-      })
-      .passthrough()
-      .optional(),
-  })
-  .passthrough();
-
-const AstGrepReplacementMatchesSchema = z.array(AstGrepReplacementMatchSchema);
+const AST_GREP_MAX_MATCHES = 10_000;
+const AST_GREP_MAX_UNIQUE_FILES = 1_000;
+const AST_GREP_MAX_PATH_BYTES = 4 * 1024 * 1024;
 
 type AstGrepReplaceInput = z.infer<typeof AstGrepReplaceInputSchema>;
-type AstGrepReplacementMatch = z.infer<typeof AstGrepReplacementMatchSchema>;
+type AstGrepReplacementTarget = { file: string };
 
 export class AstGrepReplaceToolError extends Error {
   readonly exitCode?: number;
@@ -112,18 +53,20 @@ export const astGrepReplaceTool = defineTool({
     destructive: true,
     concurrencySafe: false,
   },
+  outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
   permissions: [createAstGrepReplaceWorkspacePermission(), createProtectedPathPermission()],
   hooks: { after: [createPostEditDiagnosticsHook({ inputPathKeys: [] })] },
-  async execute(input, ctx): Promise<string | ToolExecutionResult> {
+  async execute(input, ctx): Promise<RawToolResult> {
     try {
       const astGrepPath = await createBinaryManager().resolve("ast-grep");
       const runner = createProcessRunner();
-      let matches: AstGrepReplacementMatch[];
+      let matches: AstGrepReplacementTarget[];
 
       if (input.dryRun === false) {
-        const previewResult = await runAstGrepReplace(astGrepPath, { ...input, dryRun: true }, ctx, runner);
+        const previewInput = { ...input, dryRun: true };
+        const previewResult = await runAstGrepReplace(astGrepPath, previewInput, ctx, runner, false, true);
         if ("isError" in previewResult) return previewResult;
-        matches = previewResult;
+        matches = previewResult.matches;
 
         const protectedPreviewCheck = checkApplyProtectedPath(matches, ctx);
         if (protectedPreviewCheck) return protectedPreviewCheck;
@@ -131,26 +74,61 @@ export const astGrepReplaceTool = defineTool({
         const snapshotCheck = checkApplyReadSnapshots(matches, ctx);
         if (snapshotCheck) return snapshotCheck;
 
+        if (matches.length === 0) {
+          return ctx.outputCapture === undefined
+            ? createTextToolResult("")
+            : { isError: false, draft: { kind: "capture" } };
+        }
+
         return await withApplyTargetQueues(matches, ctx, async () => {
+          const lockedPreview = await runAstGrepReplace(astGrepPath, previewInput, ctx, runner, false, true);
+          if ("isError" in lockedPreview) return lockedPreview;
+          const lockedProtectedCheck = checkApplyProtectedPath(lockedPreview.matches, ctx);
+          if (lockedProtectedCheck) return lockedProtectedCheck;
+          if (!sameApplyTargets(matches, lockedPreview.matches, ctx)) {
+            return createToolErrorResult({
+              kind: "write-conflict",
+              code: "TOOL_FILE_WRITE_CONFLICT",
+              message: "ast-grep replacement targets changed while waiting for the mutation lock; preview again",
+            });
+          }
+          matches = lockedPreview.matches;
+          const lockedSnapshotCheck = checkApplyReadSnapshots(matches, ctx);
+          if (lockedSnapshotCheck) return lockedSnapshotCheck;
+
           const beforeFiles = await captureApplyFileContents(matches, ctx);
-          const applyResult = await runAstGrepReplace(astGrepPath, input, ctx, runner);
+          const applyResult = await runAstGrepReplace(
+            astGrepPath,
+            { ...input, paths: [...new Set(matches.map((match) => match.file))], globs: undefined },
+            ctx,
+            runner,
+            true,
+            false,
+          );
           if ("isError" in applyResult) return applyResult;
-          matches = applyResult;
 
-          const protectedApplyCheck = checkApplyProtectedPath(matches, ctx);
-          if (protectedApplyCheck) return protectedApplyCheck;
-
-          const output = JSON.stringify(normalizeAstGrepReplaceResult(matches, input.dryRun), null, 2);
+          const output = applyResult.canonical;
           const diffs = await computeApplyDiffs(beforeFiles);
-          return diffs ? { output, isError: false, meta: { diffs } } : output;
+          if (ctx.outputCapture !== undefined) {
+            return {
+              isError: false,
+              draft: { kind: "capture" },
+              ...(diffs?.files === undefined ? {} : { details: { presentations: [{ kind: "diff", files: diffs.files }] } }),
+            };
+          }
+          return createTextToolResult(output, {
+            ...(diffs?.files === undefined ? {} : { details: { presentations: [{ kind: "diff", files: diffs.files }] } }),
+          });
         });
       } else {
-        const previewResult = await runAstGrepReplace(astGrepPath, input, ctx, runner);
+        const previewResult = await runAstGrepReplace(astGrepPath, input, ctx, runner, true, true);
         if ("isError" in previewResult) return previewResult;
-        matches = previewResult;
+        matches = previewResult.matches;
+        return ctx.outputCapture === undefined
+          ? createTextToolResult(previewResult.canonical)
+          : { isError: false, draft: { kind: "capture" } };
       }
 
-      return JSON.stringify(normalizeAstGrepReplaceResult(matches, input.dryRun), null, 2);
     } catch (error) {
       const maybeBinaryError = toBinaryToolError(error);
       if (maybeBinaryError) return maybeBinaryError;
@@ -168,24 +146,61 @@ async function runAstGrepReplace(
   input: AstGrepReplaceInput,
   ctx: ToolExecutionContext,
   runner: ReturnType<typeof createProcessRunner>,
-): Promise<AstGrepReplacementMatch[] | ToolExecutionResult> {
+  captureCanonical: boolean,
+  collectMatches: boolean,
+): Promise<{ matches: AstGrepReplacementTarget[]; canonical: string } | RawToolResult> {
+  const matches: AstGrepReplacementTarget[] = [];
+  const files = new Set<string>();
+  let pathBytes = 0;
+  const collector = collectMatches ? new AstGrepNdjsonCollector(
+    (record) => {
+      if (matches.length >= AST_GREP_MAX_MATCHES) throw new AstGrepReplaceToolError(`ast-grep replacement exceeds ${AST_GREP_MAX_MATCHES} matches`);
+      matches.push({ file: record.file });
+      pathBytes += new TextEncoder().encode(record.file).byteLength;
+      if (pathBytes > AST_GREP_MAX_PATH_BYTES) throw new AstGrepReplaceToolError(`ast-grep replacement paths exceed ${AST_GREP_MAX_PATH_BYTES} bytes`);
+      files.add(record.file);
+      if (files.size > AST_GREP_MAX_UNIQUE_FILES) throw new AstGrepReplaceToolError(`ast-grep replacement exceeds ${AST_GREP_MAX_UNIQUE_FILES} unique files`);
+    },
+  ) : undefined;
   const result = await runner.run({
     argv: [astGrepPath, ...buildAstGrepReplaceArgs(input)],
     cwd: ctx.cwd,
     env: { ...process.env },
     signal: ctx.abort,
+    outputSink: createAstGrepReplaceSink(collector, captureCanonical ? ctx.outputCapture : undefined),
   });
 
   const output = getAstGrepReplaceStdout(result);
   if (output.ok === false) return output.error;
 
-  return parseAstGrepReplacementMatches(output.stdout);
+  try {
+    collector?.finish();
+    return { matches, canonical: output.stdout };
+  } catch (error) {
+    return createAstGrepReplaceErrorResult({
+      error: error instanceof Error ? error : new Error(String(error)),
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function sameApplyTargets(
+  left: AstGrepReplacementTarget[],
+  right: AstGrepReplacementTarget[],
+  ctx: ToolExecutionContext,
+): boolean {
+  const normalize = (matches: AstGrepReplacementTarget[]) => [...new Set(
+    matches.map((match) => resolveAndValidatePath(match.file, ctx.cwd).resolved),
+  )].sort();
+  const leftFiles = normalize(left);
+  const rightFiles = normalize(right);
+  return leftFiles.length === rightFiles.length && leftFiles.every((file, index) => file === rightFiles[index]);
 }
 
 function checkApplyProtectedPath(
-  matches: AstGrepReplacementMatch[],
+  matches: AstGrepReplacementTarget[],
   ctx: ToolExecutionContext,
-): ToolExecutionResult | undefined {
+): RawToolResult | undefined {
   const protectedMatch = matches.find((match) => isProtectedToolWritePath(match.file, ctx));
   if (!protectedMatch) return undefined;
 
@@ -199,9 +214,9 @@ function checkApplyProtectedPath(
 }
 
 function checkApplyReadSnapshots(
-  matches: AstGrepReplacementMatch[],
+  matches: AstGrepReplacementTarget[],
   ctx: ToolExecutionContext,
-): ToolExecutionResult | undefined {
+): RawToolResult | undefined {
   const snapshots = ctx.store.getState().readSnapshots;
   const files = new Set(matches.map((match) => match.file));
 
@@ -246,7 +261,7 @@ type CapturedApplyFile = {
 };
 
 async function captureApplyFileContents(
-  matches: AstGrepReplacementMatch[],
+  matches: AstGrepReplacementTarget[],
   ctx: ToolExecutionContext,
 ): Promise<CapturedApplyFile[]> {
   const files = getUniqueApplyFiles(matches, ctx);
@@ -283,7 +298,7 @@ async function computeApplyDiffs(files: CapturedApplyFile[]) {
 }
 
 function getUniqueApplyFiles(
-  matches: AstGrepReplacementMatch[],
+  matches: AstGrepReplacementTarget[],
   ctx: ToolExecutionContext,
 ): Array<{ path: string; resolved: string }> {
   const files = new Map<string, { path: string; resolved: string }>();
@@ -297,7 +312,7 @@ function getUniqueApplyFiles(
 }
 
 async function withApplyTargetQueues<T>(
-  matches: AstGrepReplacementMatch[],
+  matches: AstGrepReplacementTarget[],
   ctx: ToolExecutionContext,
   fn: () => Promise<T>,
 ): Promise<T> {
@@ -319,7 +334,7 @@ export function buildAstGrepReplaceArgs(input: AstGrepReplaceInput): string[] {
   const args = ["run", "--pattern", input.pattern, "--rewrite", input.rewrite];
 
   if (input.dryRun === false) args.push("--update-all");
-  args.push("--json");
+  args.push("--json=stream");
 
   if (input.lang) args.push("--lang", input.lang);
   for (const glob of input.globs ?? []) {
@@ -330,49 +345,9 @@ export function buildAstGrepReplaceArgs(input: AstGrepReplaceInput): string[] {
   return args;
 }
 
-function parseAstGrepReplacementMatches(stdout: string): AstGrepReplacementMatch[] {
-  const trimmed = stdout.trim();
-  if (!trimmed) return [];
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(trimmed);
-  } catch (error) {
-    throw new AstGrepReplaceToolError("Failed to parse ast-grep JSON output", { cause: error });
-  }
-
-  const validation = AstGrepReplacementMatchesSchema.safeParse(parsed);
-  if (!validation.success) {
-    throw new AstGrepReplaceToolError("ast-grep returned invalid JSON replacement output", { cause: validation.error });
-  }
-
-  return validation.data;
-}
-
-function normalizeAstGrepReplaceResult(matches: AstGrepReplacementMatch[], dryRun: boolean) {
-  return {
-    dryRun,
-    applied: !dryRun,
-    count: matches.length,
-    matches: matches.map((match) => ({
-      file: match.file,
-      text: match.text,
-      lines: match.lines,
-      replacement: match.replacement,
-      ...(match.replacementOffsets ? { replacementOffsets: match.replacementOffsets } : {}),
-      range: {
-        byteOffset: match.range.byteOffset,
-        start: match.range.start,
-        end: match.range.end,
-      },
-      ...(match.metaVariables ? { metaVariables: match.metaVariables } : {}),
-    })),
-  };
-}
-
 function getAstGrepReplaceStdout(
   result: ProcessRunnerResult,
-): { ok: true; stdout: string } | { ok: false; error: ToolExecutionResult } {
+): { ok: true; stdout: string } | { ok: false; error: RawToolResult } {
   switch (result.kind) {
     case "success":
       return { ok: true, stdout: result.output.stdout };
@@ -383,7 +358,6 @@ function getAstGrepReplaceStdout(
         error: createAstGrepReplaceErrorResult({
           error: new AstGrepReplaceToolError(formatAstGrepReplaceExitMessage(result.exitCode, result.output.stderr), { exitCode: result.exitCode }),
           message: formatAstGrepReplaceExitMessage(result.exitCode, result.output.stderr),
-          meta: { exitCode: result.exitCode },
         }),
       };
     case "timeout":
@@ -391,7 +365,6 @@ function getAstGrepReplaceStdout(
         ok: false,
         error: createAstGrepReplaceErrorResult({
           message: `ast-grep timed out after ${result.timeoutMs}ms`,
-          meta: { timeoutMs: result.timeoutMs },
         }),
       };
     case "aborted":
@@ -399,7 +372,6 @@ function getAstGrepReplaceStdout(
         ok: false,
         error: createAstGrepReplaceErrorResult({
           message: "ast-grep was aborted",
-          meta: { astGrepAborted: true, reason: result.reason },
         }),
       };
     case "signal":
@@ -407,7 +379,6 @@ function getAstGrepReplaceStdout(
         ok: false,
         error: createAstGrepReplaceErrorResult({
           message: `ast-grep was terminated by signal ${result.signal}`,
-          meta: { signal: result.signal, exitCode: result.exitCode },
         }),
       };
     case "spawn-failure":
@@ -416,7 +387,6 @@ function getAstGrepReplaceStdout(
         error: createAstGrepReplaceErrorResult({
           error: new Error(result.error.message),
           message: result.error.message,
-          meta: { argv: result.argv, cwd: result.cwd },
         }),
       };
   }
@@ -466,21 +436,31 @@ function formatAstGrepReplaceExitMessage(exitCode: number, stderr: string): stri
 function createAstGrepReplaceErrorResult(options: {
   error?: Error;
   message: string;
-  meta?: Record<string, unknown>;
-}): ToolExecutionResult {
+}): RawToolResult {
   return createToolErrorResult({
     kind: "ast-grep-error",
     code: "TOOL_AST_GREP_ERROR",
     error: options.error,
     message: options.message,
-    meta: options.meta,
   });
 }
 
-function toBinaryToolError(error: unknown): ToolExecutionResult | undefined {
+function toBinaryToolError(error: unknown): RawToolResult | undefined {
   if (!error || typeof error !== "object" || !("toToolError" in error) || typeof error.toToolError !== "function") {
     return undefined;
   }
 
   return createToolErrorResult(error.toToolError());
+}
+
+function createAstGrepReplaceSink(
+  collector: AstGrepNdjsonCollector | undefined,
+  capture: ToolExecutionContext["outputCapture"],
+) {
+  return {
+    async write(stream: "stdout" | "stderr", chunk: Uint8Array): Promise<void> {
+      collector?.write(stream, chunk);
+      if (stream === "stdout" && capture !== undefined) await capture.write(chunk);
+    },
+  };
 }

@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { CompressionBlockPart, CompressionBlockSnapshot, CompactionPart, ToolChildSessionLink, RecoveryNoticePart, SessionMessage, TextPart, ReasoningPart } from "@archcode/protocol";
-import { MsgUser, parseToolOutput, PartRenderer } from "./ChatMessages";
+import { MsgUser, PartRenderer } from "./ChatMessages";
 import { CompressionBlock } from "./CompressionBlock";
 import type { CompressionOriginalRangeSuccess } from "../../api/compression";
 
@@ -71,6 +71,10 @@ mock.module("../../api/compression", () => ({
   fetchCompressionOriginalRange: fetchCompressionOriginalRangeMock,
 }));
 
+mock.module("./ToolOutputViewer", () => ({
+  ToolOutputViewer: ({ outputRef }: { outputRef: string }) => outputRef,
+}));
+
 function textContent(value: unknown): string {
   if (typeof value === "string" || typeof value === "number") return String(value);
   if (Array.isArray(value)) return value.map(textContent).join("");
@@ -80,27 +84,6 @@ function textContent(value: unknown): string {
   }
   return "";
 }
-
-// ─── parseToolOutput ───
-
-describe("parseToolOutput", () => {
-  test("parses valid JSON output", () => {
-    const result = parseToolOutput(JSON.stringify({ sessionId: "abc-123", text: "Done" }));
-    expect(result).toEqual({ sessionId: "abc-123", text: "Done" });
-  });
-
-  test("returns null for undefined output", () => {
-    expect(parseToolOutput(undefined)).toBeNull();
-  });
-
-  test("returns null for invalid JSON", () => {
-    expect(parseToolOutput("not json")).toBeNull();
-  });
-
-  test("returns null for empty string", () => {
-    expect(parseToolOutput("")).toBeNull();
-  });
-});
 
 describe("PartRenderer", () => {
   const defaultProps = { projectSlug: "demo", focusStoreSessionId: "session-1", childSessionLinks: [] as never[] };
@@ -457,11 +440,22 @@ describe("CompressionBlock", () => {
                 toolCallId: "tc-1",
                 toolName: "bash",
                 input: { command: "ls" },
-                errorMessage: "partial output",
+                result: {
+                  isError: true,
+                  output: {
+                    preview: "partial output",
+                    completeness: "partial",
+                    observed: { bytes: 14, lines: 1 },
+                    canonical: { bytes: 14, lines: 1 },
+                    stored: { bytes: 14, lines: 1 },
+                    omitted: { bytes: 0, lines: 0 },
+                    recovery: { kind: "none" },
+                  },
+                  details: { unknownResult: true },
+                },
                 createdAt: 3,
                 startedAt: 3,
                 endedAt: 4,
-                meta: { unknownResult: true },
               },
             ],
             createdAt: 3,
@@ -491,7 +485,7 @@ describe("CompressionBlock", () => {
 
     expect(expandedText).toContain("original hello");
     expect(expandedText).toContain("bash");
-    expect(expandedText).toContain("Tool result unknown");
+    expect(expandedText).toContain("Result unknown");
     expect(expandedText).toContain("Hide original range");
   });
 
@@ -519,7 +513,7 @@ describe("CompressionBlock", () => {
     expect(text).toContain("Retry");
   });
 
-  test("renders persisted output preview and ref without inlining full output", async () => {
+  test("renders artifact output preview and ref without inlining an artifact body", async () => {
     resetStateSlots();
     fetchCompressionOriginalRangeMock.mockClear();
 
@@ -555,16 +549,27 @@ describe("CompressionBlock", () => {
                 toolCallId: "tc-big",
                 toolName: "file_read",
                 input: { path: "/big.txt" },
-                output: "short preview only",
+                result: {
+                  isError: false,
+                  output: {
+                    preview: "first 2000 chars preview…",
+                    completeness: "partial",
+                    observed: { bytes: 5000, lines: 100 },
+                    canonical: { bytes: 4900, lines: 98 },
+                    stored: { bytes: 4000, lines: 80 },
+                    omitted: { bytes: 900, lines: 18 },
+                    recovery: {
+                      kind: "artifact",
+                      outputRef: "abcdefghijklmnopqrstuv",
+                      expiresAt: 9999999999999,
+                      canRead: true,
+                      canSearch: true,
+                    },
+                  },
+                },
                 createdAt: 1,
                 startedAt: 1,
                 endedAt: 2,
-                persistedOutput: {
-                  kind: "tool-output",
-                  ref: "sess-1:file_read:tc-big",
-                  truncated: true,
-                  preview: "first 2000 chars preview…",
-                },
               },
             ],
             createdAt: 1,
@@ -587,9 +592,8 @@ describe("CompressionBlock", () => {
     const el2 = CompressionBlock({ part, projectSlug: "demo", sessionId: "sess-1", focusStoreSessionId: "session-1" });
     const text = textContent(el2);
 
-    expect(text).toContain("sess-1:file_read:tc-big");
+    expect(text).toContain("abcdefghijklmnopqrstuv");
     expect(text).toContain("first 2000 chars preview");
-    expect(text).not.toContain("short preview only");
   });
 
   test("renders DelegationCard for delegate tool parts in expanded originals", async () => {
@@ -654,7 +658,18 @@ describe("CompressionBlock", () => {
                   acceptance_criteria: [{ id: "ac-1", condition: "Map relevant code", requiredEvidence: "file refs" }],
                   evidence: [], verification: [], depends_on: [], skills: [], background: false,
                 },
-                output: JSON.stringify({ sessionId: "child-sess-1", text: "Done" }),
+                result: {
+                  isError: false,
+                  output: {
+                    preview: "Done",
+                    completeness: "complete",
+                    observed: { bytes: 4, lines: 1 },
+                    canonical: { bytes: 4, lines: 1 },
+                    stored: { bytes: 4, lines: 1 },
+                    omitted: { bytes: 0, lines: 0 },
+                    recovery: { kind: "none" },
+                  },
+                },
                 createdAt: 1,
                 startedAt: 1,
                 endedAt: 2,

@@ -30,6 +30,23 @@ function text(id: string, textValue: string): StoredMessage["parts"][number] {
   return { type: "text", id, text: textValue, createdAt: 100, completedAt: 101 };
 }
 
+function finalizedResult(preview: string, isError = false, unknownResult = false) {
+  const counts = { bytes: new TextEncoder().encode(preview).byteLength, lines: preview.length === 0 ? 0 : preview.split("\n").length };
+  return {
+    isError,
+    output: {
+      preview,
+      completeness: "complete" as const,
+      observed: counts,
+      canonical: counts,
+      stored: counts,
+      omitted: { bytes: 0, lines: 0 },
+      recovery: { kind: "none" as const },
+    },
+    ...(unknownResult ? { details: { unknownResult: true as const } } : {}),
+  };
+}
+
 function baseState(messages: StoredMessage[]): SessionStoreState {
   return {
     sessionId: "session-1",
@@ -38,7 +55,7 @@ function baseState(messages: StoredMessage[]): SessionStoreState {
     cwd: "/workspace",
     agentName: "engineer",
     activeSkillNames: [],
-    modelInfo: null,
+    modelSelection: { revision: 0 },
     title: null,
     messages,
     pendingMessages: [],
@@ -179,7 +196,7 @@ describe("dynamic range compression", () => {
       message("msg-1", "user", [text("t1", "<protect>keep this</protect>")]),
       message("msg-2", "assistant", [{ type: "tool", id: "tool-pending", state: "pending", toolCallId: "call-pending", toolName: "file_read", createdAt: 1 }]),
       message("msg-3", "assistant", [{ type: "tool", id: "tool-1", state: "running", toolCallId: "call-1", toolName: "bash", input: {}, createdAt: 1, startedAt: 2 }]),
-      message("msg-4", "assistant", [{ type: "tool", id: "tool-2", state: "error", toolCallId: "call-2", toolName: "file_write", input: {}, errorMessage: "unknown", createdAt: 1, startedAt: 2, endedAt: 3, meta: { unknownResult: true } }]),
+      message("msg-4", "assistant", [{ type: "tool", id: "tool-2", state: "error", toolCallId: "call-2", toolName: "file_write", input: {}, result: finalizedResult("unknown", true, true), createdAt: 1, startedAt: 2, endedAt: 3 }]),
     ]);
     state.todos = [{ id: "todo-1", content: "finish", status: "pending" }];
     state.reminders = [{ id: "r1", source: { type: "todo_step_reminder", pendingTodos: [] }, delivery: "auto_inject", content: "remember", createdAt: 1, consumedAt: null }];
@@ -202,10 +219,10 @@ describe("dynamic range compression", () => {
 
   test("deduplicates repeated completed outputs and purges repeated old errors", () => {
     const state = baseState([
-      message("msg-1", "assistant", [{ type: "tool", id: "ok-1", state: "completed", toolCallId: "ok-1", toolName: "grep", input: { pattern: "x" }, output: "same output", createdAt: 1, startedAt: 2, endedAt: 3 }]),
-      message("msg-2", "assistant", [{ type: "tool", id: "ok-2", state: "completed", toolCallId: "ok-2", toolName: "grep", input: { pattern: "x" }, output: "same   output", createdAt: 1, startedAt: 2, endedAt: 3 }]),
-      message("msg-3", "assistant", [{ type: "tool", id: "err-1", state: "error", toolCallId: "err-1", toolName: "bash", input: "bad", errorMessage: "failed", createdAt: 1, startedAt: 2, endedAt: 3 }]),
-      message("msg-4", "assistant", [{ type: "tool", id: "err-2", state: "error", toolCallId: "err-2", toolName: "bash", input: "bad", errorMessage: "failed", createdAt: 1, startedAt: 2, endedAt: 3 }]),
+      message("msg-1", "assistant", [{ type: "tool", id: "ok-1", state: "completed", toolCallId: "ok-1", toolName: "grep", input: { pattern: "x" }, result: finalizedResult("same output"), createdAt: 1, startedAt: 2, endedAt: 3 }]),
+      message("msg-2", "assistant", [{ type: "tool", id: "ok-2", state: "completed", toolCallId: "ok-2", toolName: "grep", input: { pattern: "x" }, result: finalizedResult("same   output"), createdAt: 1, startedAt: 2, endedAt: 3 }]),
+      message("msg-3", "assistant", [{ type: "tool", id: "err-1", state: "error", toolCallId: "err-1", toolName: "bash", input: "bad", result: finalizedResult("failed", true), createdAt: 1, startedAt: 2, endedAt: 3 }]),
+      message("msg-4", "assistant", [{ type: "tool", id: "err-2", state: "error", toolCallId: "err-2", toolName: "bash", input: "bad", result: finalizedResult("failed", true), createdAt: 1, startedAt: 2, endedAt: 3 }]),
       message("msg-5", "user", [text("tail-1", "tail one")]),
       message("msg-6", "assistant", [text("tail-2", "tail two")]),
     ]);
@@ -216,14 +233,14 @@ describe("dynamic range compression", () => {
     if (!result.ok) throw new Error("expected success");
     expect(result.deduplicatedToolOutputs[0]?.count).toBe(2);
     expect(result.purgedErrors[0]?.collapsedRefs).toEqual(["m0003"]);
-    expect(state.messages[0]?.parts[0]).toMatchObject({ type: "tool", state: "completed", output: "same output" });
+    expect(state.messages[0]?.parts[0]).toMatchObject({ type: "tool", state: "completed", result: { output: { preview: "same output" } } });
   });
 
   test("purge analysis preserves unknownResult errors instead of collapsing them", () => {
     const messages = [
-      message("msg-1", "assistant", [{ type: "tool", id: "err-1", state: "error", toolCallId: "err-1", toolName: "bash", input: "bad", errorMessage: "failed", createdAt: 1, startedAt: 2, endedAt: 3 }]),
-      message("msg-2", "assistant", [{ type: "tool", id: "err-2", state: "error", toolCallId: "err-2", toolName: "bash", input: "bad", errorMessage: "failed", createdAt: 1, startedAt: 2, endedAt: 3 }]),
-      message("msg-3", "assistant", [{ type: "tool", id: "err-unknown", state: "error", toolCallId: "err-unknown", toolName: "bash", input: "bad", errorMessage: "failed", createdAt: 1, startedAt: 2, endedAt: 3, meta: { unknownResult: true } }]),
+      message("msg-1", "assistant", [{ type: "tool", id: "err-1", state: "error", toolCallId: "err-1", toolName: "bash", input: "bad", result: finalizedResult("failed", true), createdAt: 1, startedAt: 2, endedAt: 3 }]),
+      message("msg-2", "assistant", [{ type: "tool", id: "err-2", state: "error", toolCallId: "err-2", toolName: "bash", input: "bad", result: finalizedResult("failed", true), createdAt: 1, startedAt: 2, endedAt: 3 }]),
+      message("msg-3", "assistant", [{ type: "tool", id: "err-unknown", state: "error", toolCallId: "err-unknown", toolName: "bash", input: "bad", result: finalizedResult("failed", true, true), createdAt: 1, startedAt: 2, endedAt: 3 }]),
     ];
 
     const groups = purgeRepeatedOldErrors(messages, {

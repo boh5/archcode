@@ -57,6 +57,9 @@ export const DEFAULT_LSP_TRANSPORT_TIMEOUTS: LspTransportTimeouts = {
 
 const EXIT_WAIT_MS = 2_000;
 const DEFAULT_STDERR_BUFFER_LIMIT = 16_384;
+/** JSON-RPC payload budget, enforced before vscode-jsonrpc can parse a frame. */
+export const MAX_LSP_TRANSPORT_FRAME_BYTES = 8 * 1024 * 1024;
+const MAX_LSP_TRANSPORT_HEADER_BYTES = 16 * 1024;
 const HEADER_SEPARATOR = new Uint8Array([13, 10, 13, 10]);
 const CONTENT_LENGTH_HEADER = /^content-length:\s*(\d+)$/i;
 
@@ -77,61 +80,129 @@ export function adaptReader(stream: ReadableStream<Uint8Array>, options: { logge
   const reader = stream.getReader();
   const streamLogger = (options.logger ?? silentLogger).child({ module: "lsp.transport" });
   const emitCompleteFrames = createFrameEmitter();
+  const dataListeners = new Set<(data: Uint8Array) => void>();
+  const closeListeners = new Set<() => void>();
+  const errorListeners = new Set<(error: unknown) => void>();
+  const endListeners = new Set<() => void>();
+  let started = false;
+  let stopped = false;
+
+  const fail = (error: unknown): void => {
+    if (stopped) return;
+    stopped = true;
+    const safeError = isFrameBoundaryError(error)
+      ? error
+      : new Error("LSP transport stream failed");
+    streamLogger.debug("lsp.transport.stream.error", {
+      context: { code: "LSP_TRANSPORT_STREAM_ERROR" },
+    });
+    for (const listener of errorListeners) listener(safeError);
+    reader.cancel().catch(() => undefined);
+  };
+
+  const pump = async (): Promise<void> => {
+    try {
+      while (!stopped) {
+        const { done, value } = await reader.read();
+        if (done) {
+          stopped = true;
+          for (const listener of endListeners) listener();
+          for (const listener of closeListeners) listener();
+          return;
+        }
+        if (value) {
+          emitCompleteFrames(value, (frame) => {
+            for (const listener of dataListeners) listener(frame);
+          });
+        }
+      }
+    } catch (error) {
+      fail(error);
+    }
+  };
 
   return {
     onData(listener: (data: Uint8Array) => void): Disposable {
-      let cancelled = false;
-      const pump = () => {
-        if (cancelled) return;
-
-        reader.read().then(({ done, value }) => {
-          if (cancelled || done) return;
-          if (value) emitCompleteFrames(value, listener);
-          pump();
-        }).catch((error) => {
-          streamLogger.debug("lsp.transport.stream.error", {
-            context: { error: error instanceof Error ? error.message : String(error) },
-          });
-        });
-      };
-
-      pump();
+      dataListeners.add(listener);
+      if (!started) {
+        started = true;
+        void pump();
+      }
 
       return {
         dispose: () => {
-          cancelled = true;
-          reader.cancel().catch(() => undefined);
+          dataListeners.delete(listener);
+          if (dataListeners.size === 0 && !stopped) {
+            stopped = true;
+            reader.cancel().catch(() => undefined);
+          }
         },
       };
     },
-    onClose: () => ({ dispose: () => {} }),
-    onError: () => ({ dispose: () => {} }),
-    onEnd: () => ({ dispose: () => {} }),
+    onClose(listener) {
+      closeListeners.add(listener);
+      return { dispose: () => closeListeners.delete(listener) };
+    },
+    onError(listener) {
+      errorListeners.add(listener);
+      return { dispose: () => errorListeners.delete(listener) };
+    },
+    onEnd(listener) {
+      endListeners.add(listener);
+      return { dispose: () => endListeners.delete(listener) };
+    },
   };
 }
 
 function createFrameEmitter(): (chunk: Uint8Array, listener: (data: Uint8Array) => void) => void {
-  let pending: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
+  const header = new Uint8Array(MAX_LSP_TRANSPORT_HEADER_BYTES);
+  let headerLength = 0;
+  let frame: Uint8Array | undefined;
+  let frameOffset = 0;
 
   return (chunk, listener) => {
-    pending = concatBytes(pending, chunk);
-
-    for (;;) {
-      const headerEnd = indexOfBytes(pending, HEADER_SEPARATOR);
-      if (headerEnd === -1) return;
-
-      const contentLength = parseContentLength(pending.slice(0, headerEnd));
-      if (contentLength === undefined) {
-        listener(pending);
-        pending = new Uint8Array(0);
-        return;
+    let chunkOffset = 0;
+    while (chunkOffset < chunk.byteLength) {
+      if (frame !== undefined) {
+        const count = Math.min(frame.byteLength - frameOffset, chunk.byteLength - chunkOffset);
+        frame.set(chunk.subarray(chunkOffset, chunkOffset + count), frameOffset);
+        frameOffset += count;
+        chunkOffset += count;
+        if (frameOffset === frame.byteLength) {
+          listener(frame);
+          frame = undefined;
+          frameOffset = 0;
+        }
+        continue;
       }
 
-      const frameLength = headerEnd + HEADER_SEPARATOR.byteLength + contentLength;
-      if (pending.byteLength < frameLength) return;
+      while (chunkOffset < chunk.byteLength && frame === undefined) {
+        if (headerLength === header.byteLength) {
+          throw new Error("LSP transport header exceeded 16 KiB");
+        }
+        header[headerLength++] = chunk[chunkOffset++]!;
+        if (!endsWithHeaderSeparator(header, headerLength)) continue;
 
-      listener(pending.slice(0, frameLength));
-      pending = pending.slice(frameLength);
+        const contentLength = parseContentLength(
+          header.subarray(0, headerLength - HEADER_SEPARATOR.byteLength),
+        );
+        if (contentLength === undefined) {
+          throw new Error("LSP transport frame has no valid Content-Length");
+        }
+        if (contentLength > MAX_LSP_TRANSPORT_FRAME_BYTES) {
+          throw new Error("LSP transport frame exceeded 8 MiB");
+        }
+
+        frame = new Uint8Array(headerLength + contentLength);
+        frame.set(header.subarray(0, headerLength));
+        frameOffset = headerLength;
+        headerLength = 0;
+        if (contentLength === 0) {
+          listener(frame);
+          frame = undefined;
+          frameOffset = 0;
+        }
+      }
     }
   };
 }
@@ -144,14 +215,18 @@ function concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array<ArrayBuffe
   return result;
 }
 
-function indexOfBytes(source: Uint8Array, needle: Uint8Array): number {
-  outer: for (let index = 0; index <= source.byteLength - needle.byteLength; index += 1) {
-    for (let offset = 0; offset < needle.byteLength; offset += 1) {
-      if (source[index + offset] !== needle[offset]) continue outer;
+function endsWithHeaderSeparator(source: Uint8Array, length: number): boolean {
+  if (length < HEADER_SEPARATOR.byteLength) return false;
+  for (let offset = 0; offset < HEADER_SEPARATOR.byteLength; offset += 1) {
+    if (source[length - HEADER_SEPARATOR.byteLength + offset] !== HEADER_SEPARATOR[offset]) {
+      return false;
     }
-    return index;
   }
-  return -1;
+  return true;
+}
+
+function isFrameBoundaryError(error: unknown): error is Error {
+  return error instanceof Error && error.message.startsWith("LSP transport ");
 }
 
 function parseContentLength(headerBytes: Uint8Array): number | undefined {
@@ -230,8 +305,7 @@ export class StdioLspTransport implements LspTransport {
       "initialize",
     ).catch((error) => {
       this.#logger.error("lsp.transport.initialize.failed", {
-        error,
-        meta: stderrMeta(this.stderrBuffer),
+        context: { code: "LSP_INITIALIZE_FAILED", stderrCaptured: this.stderrBuffer.length > 0 },
       });
       throw error;
     });
@@ -316,7 +390,7 @@ export class StdioLspTransport implements LspTransport {
         pump();
       }).catch((error) => {
         this.#logger.debug("lsp.transport.stderr.capture.failed", {
-          context: { error: error instanceof Error ? error.message : String(error) },
+          context: { code: "LSP_STDERR_CAPTURE_FAILED" },
         });
       });
     };
@@ -374,13 +448,9 @@ function safeKill(proc: BunSubprocess, signal: "SIGTERM" | "SIGKILL", logger: Lo
     proc.kill(signal);
   } catch (error) {
     logger.debug("lsp.transport.process.kill.failed", {
-      context: { pid: proc.pid, error: error instanceof Error ? error.message : String(error) },
+      context: { pid: proc.pid, code: "LSP_PROCESS_KILL_FAILED" },
     });
   }
-}
-
-function stderrMeta(stderr: string): Record<string, unknown> | undefined {
-  return stderr.length > 0 ? { lspStderr: stderr } : undefined;
 }
 
 async function ignoreErrors(promise: Promise<unknown>): Promise<void> {

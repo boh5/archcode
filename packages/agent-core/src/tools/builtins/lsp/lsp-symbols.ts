@@ -5,7 +5,8 @@ import { createWorkspacePermission } from "../../permission";
 import { isRecord } from "./shared";
 import { getLspToolLogger } from "./tool-logger";
 import { resolveAndValidatePath } from "../../security/path-validator";
-import type { ToolExecutionResult } from "../../types";
+import { createTextToolResult } from "../../results";
+import type { RawToolResult } from "../../types";
 import { formatDocumentSymbols, formatWorkspaceSymbols } from "./format-output";
 
 interface RangeLike {
@@ -26,8 +27,9 @@ export const lspSymbolsTool = defineTool({
     destructive: false,
     concurrencySafe: true,
   },
+  outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
   permissions: [createWorkspacePermission({ pathKey: "filePath" })],
-  async execute(input, ctx): Promise<string | ToolExecutionResult> {
+  async execute(input, ctx): Promise<RawToolResult> {
     if (input.scope === "workspace") {
       return handleWorkspaceSymbols(input.query!, ctx);
     }
@@ -41,7 +43,7 @@ export const lspSymbolsTool = defineTool({
 async function handleDocumentSymbols(
   filePath: string,
   ctx: { cwd: string },
-): Promise<string | ToolExecutionResult> {
+): Promise<RawToolResult> {
   // Workspace access is enforced by createWorkspacePermission() guard.
   // Out-of-workspace paths may have been explicitly approved.
   const { resolved: resolvedPath } = resolveAndValidatePath(
@@ -64,7 +66,6 @@ async function handleDocumentSymbols(
       kind: "lsp-server-not-found",
       code: "TOOL_LSP_SERVER_NOT_FOUND",
       message: `No language server is available for language "${languageId}". Install or configure a compatible server, then retry.`,
-      meta: { languageId },
     });
   }
 
@@ -88,7 +89,7 @@ async function handleDocumentSymbols(
       const response = await client.sendRequest("textDocument/documentSymbol", {
         textDocument: { uri },
       });
-      return formatDocumentSymbols(parseDocumentSymbols(response, resolvedPath));
+      return createTextToolResult(formatDocumentSymbols(parseDocumentSymbols(response, resolvedPath)));
     } finally {
       documentHandle?.release();
       pool.release(poolKey);
@@ -104,7 +105,7 @@ async function handleDocumentSymbols(
 async function handleWorkspaceSymbols(
   query: string,
   ctx: { cwd: string },
-): Promise<string | ToolExecutionResult> {
+): Promise<RawToolResult> {
   // Workspace symbols have no file path to infer a language server from, so use
   // the first built-in server (TypeScript) as the default broad workspace indexer.
   const serverDefinition = BUILTIN_SERVER_DEFINITIONS[0];
@@ -129,7 +130,7 @@ async function handleWorkspaceSymbols(
 
     try {
       const response = await client.sendRequest("workspaceSymbol/symbol", { query });
-      return formatWorkspaceSymbols(parseSymbolInformationList(response));
+      return createTextToolResult(formatWorkspaceSymbols(parseSymbolInformationList(response)));
     } finally {
       pool.release(poolKey);
     }
@@ -293,14 +294,13 @@ function logLspToolError(error: unknown, scope: string): void {
   }
 }
 
-function toLspToolErrorResult(error: unknown, label: string): ToolExecutionResult {
+function toLspToolErrorResult(error: unknown, label: string): RawToolResult {
   if (error instanceof LspError) {
     return createToolErrorResult({
       kind: error.kind,
       code: error.kind === "lsp-timeout" ? "TOOL_LSP_TIMEOUT" : "TOOL_LSP_ERROR",
       error,
       message: error.message,
-      meta: { lspCode: error.code, lspData: error.data },
     });
   }
 

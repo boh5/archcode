@@ -1,23 +1,46 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { act } from "react";
+import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
+import type { ProviderAdapterCatalog } from "@archcode/protocol";
 import type { ServerConfigSnapshot } from "../../api/config";
 import { DialogRoot } from "../ui/Dialog";
-import { SettingsBody, SettingsCloseButton } from "./SettingsDialog";
+import { SettingsBody as SettingsBodyComponent, SettingsCloseButton } from "./SettingsDialog";
 
 let dom: JSDOM;
 let root: Root;
 let container: HTMLDivElement;
 
 const snapshot: ServerConfigSnapshot = {
-  revision: "r1", configPath: "/home/a/.archcode/config.json", restartRequired: false,
+  revision: "r1", modelRuntimeRevision: "m1", configPath: "/home/a/.archcode/config.json", restartRequiredSections: [],
   config: {
     provider: { local: { npm: "@ai-sdk/openai-compatible", name: "Local", options: { baseURL: "http://localhost/v1", apiKey: { action: "preserve" }, headers: { Authorization: { action: "preserve" } } }, models: { demo: { name: "Demo", limit: { context: 1000, output: 500 }, modalities: { input: ["text"], output: ["text"] }, capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "rich" }, variants: { fast: { temperature: 0.1 } } } } } },
     agents: { engineer: { model: "local:demo" }, goal_lead: { model: "local:demo" }, plan: { model: "local:demo" }, build: { model: "local:demo" }, reviewer: { model: "local:demo" }, explore: { model: "local:demo" }, librarian: { model: "local:demo" }, shaper: { model: "local:demo" } },
     mcp: { servers: { custom: { url: "https://example.com/mcp", headers: { Authorization: { action: "preserve" } } } } },
   },
 };
+
+const adapterCatalog: ProviderAdapterCatalog = [{
+  npmPackage: "@ai-sdk/openai-compatible",
+  displayName: "OpenAI-compatible",
+  fields: [
+    { path: "baseURL", label: "Base URL", kind: "url", required: true, secret: false },
+    { path: "apiKey", label: "API key", kind: "string", required: false, secret: true },
+    { path: "headers", label: "Headers", kind: "json", required: false, secret: true },
+    { path: "queryParams", label: "Query parameters", kind: "json", required: false, secret: true },
+  ],
+}, {
+  npmPackage: "@ai-sdk/anthropic",
+  displayName: "Anthropic",
+  fields: [
+    { path: "apiKey", label: "API key", kind: "string", required: false, secret: true },
+    { path: "baseURL", label: "Base URL", kind: "url", required: false, secret: false },
+  ],
+}];
+
+function SettingsBody(props: Omit<ComponentProps<typeof SettingsBodyComponent>, "adapterCatalog">) {
+  return <SettingsBodyComponent {...props} adapterCatalog={adapterCatalog} />;
+}
 
 function installDom() {
   dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost" });
@@ -53,10 +76,11 @@ function blur(element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElemen
     else element.dispatchEvent(new dom.window.FocusEvent("focusout", { bubbles: true }));
   });
 }
-function successfulSaveResponse(restartRequired = false) {
+function successfulSaveResponse(restartRequiredSections: ServerConfigSnapshot["restartRequiredSections"] = []) {
   return {
     ...snapshot,
-    restartRequired,
+    modelRuntimeRevision: "m2",
+    restartRequiredSections,
     config: {
       ...snapshot.config,
       provider: {
@@ -78,6 +102,14 @@ beforeEach(() => installDom());
 afterEach(() => { act(() => root.unmount()); dom.window.close(); });
 
 describe("SettingsDialog interactions", () => {
+  test("opens the requested section and follows an external section change", () => {
+    act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} section="agents" /></DialogRoot>));
+    expect(container.textContent).toContain("Each of the eight agents");
+
+    act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} section="models" /></DialogRoot>));
+    expect(container.textContent).toContain("Providers and their model profiles");
+  });
+
   test("navigates all five server settings sections", () => {
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
     const sections: Array<[string, string]> = [
@@ -162,6 +194,23 @@ describe("SettingsDialog interactions", () => {
     });
   });
 
+  test("selects packages from the server catalog and preserves adapter-specific advanced options", () => {
+    act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
+    const providerPackage = input("Provider package");
+    expect([...providerPackage.querySelectorAll("option")].map((option) => option.value)).toEqual([
+      "@ai-sdk/openai-compatible",
+      "@ai-sdk/anthropic",
+    ]);
+
+    change(providerPackage, "@ai-sdk/anthropic");
+    expect(input("Provider package").value).toBe("@ai-sdk/anthropic");
+    expect(input("Advanced options JSON").value).toContain("Authorization");
+    expect(input("Advanced options JSON").value).toContain("preserve");
+
+    change(input("Provider package"), "@ai-sdk/openai-compatible");
+    expect((input("Value for Authorization") as HTMLInputElement).placeholder).toBe("Configured");
+  });
+
   test("keeps a dirty Models draft through navigation and enables save", () => {
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
     click("Add provider");
@@ -192,14 +241,49 @@ describe("SettingsDialog interactions", () => {
     expect(container.textContent).toContain("provider-2");
   });
 
-  test("shows a restart banner after a successful persisted save", async () => {
+  test("reports live-applied Models separately from named restart sections", async () => {
     Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async () => Response.json({
-      ...successfulSaveResponse(true),
+      ...successfulSaveResponse(["mcp", "memory"]),
     })) });
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
     click("Add provider");
     await act(async () => { click("Save changes"); await Promise.resolve(); });
-    expect(container.textContent).toContain("Restart required");
+    expect(container.textContent).toContain("Model and Agent changes applied live");
+    expect(container.textContent).toContain("Restart required for: MCP, Memory");
+  });
+
+  test("clears a prior live-applied notice before a failed follow-up save", async () => {
+    let saveCount = 0;
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async () => {
+      saveCount += 1;
+      if (saveCount === 1) return Response.json(successfulSaveResponse());
+      return Response.json({
+        error: { code: "CONFIG_VALIDATION_ERROR", message: "Invalid configuration", details: { issues: [{ path: "provider.local.options.baseURL", message: "Must be a URL" }] } },
+      }, { status: 422 });
+    }) });
+    act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
+
+    click("Add provider");
+    await act(async () => { click("Save changes"); await Promise.resolve(); });
+    expect(container.textContent).toContain("Model and Agent changes applied live");
+
+    click("Add provider");
+    await act(async () => { click("Save changes"); await Promise.resolve(); });
+    expect(container.textContent).toContain("Must be a URL");
+    expect(container.textContent).not.toContain("applied live");
+  });
+
+  test("names restart-only sections without claiming a model live-apply", async () => {
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async () => Response.json(
+      successfulSaveResponse(["memory"]),
+    )) });
+    act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
+    click("Memory");
+    const enabled = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    act(() => enabled.click());
+    await act(async () => { click("Save changes"); await Promise.resolve(); });
+    expect(container.textContent).toContain("Restart required for: Memory");
+    expect(container.textContent).not.toContain("applied live");
   });
 
   test("submits explicit delete mutations for configured API and header secrets", async () => {
@@ -213,8 +297,9 @@ describe("SettingsDialog interactions", () => {
     act(() => [...container.querySelectorAll("button")].filter((button) => button.textContent === "Clear")[1]!.click());
     await act(async () => { click("Save changes"); await Promise.resolve(); });
     const config = request?.config as typeof snapshot.config;
-    expect(config.provider.local!.options.apiKey).toEqual({ action: "delete" });
-    expect(config.provider.local!.options.headers?.Authorization).toEqual({ action: "delete" });
+    const providerOptions = config.provider.local.options as unknown as { apiKey?: unknown; headers?: Record<string, unknown> };
+    expect(providerOptions.apiKey).toEqual({ action: "delete" });
+    expect(providerOptions.headers?.Authorization).toEqual({ action: "delete" });
   });
 
   test("keeps unchanged secrets as preserve mutations", async () => {
@@ -227,8 +312,9 @@ describe("SettingsDialog interactions", () => {
     change(input("Display name"), "Local changed");
     await act(async () => { click("Save changes"); await Promise.resolve(); });
     const config = request?.config as typeof snapshot.config;
-    expect(config.provider.local.options.apiKey).toEqual({ action: "preserve" });
-    expect(config.provider.local.options.headers?.Authorization).toEqual({ action: "preserve" });
+    const providerOptions = config.provider.local.options as unknown as { apiKey?: unknown; headers?: Record<string, unknown> };
+    expect(providerOptions.apiKey).toEqual({ action: "preserve" });
+    expect(providerOptions.headers?.Authorization).toEqual({ action: "preserve" });
     expect(config.mcp?.servers.custom.headers?.Authorization).toEqual({ action: "preserve" });
   });
 
@@ -241,15 +327,19 @@ describe("SettingsDialog interactions", () => {
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
     change(input("API key"), "api-secret-123");
     change(input("Value for Authorization"), "provider-header-123");
-    click("Add value");
+    const queryParams = [...container.querySelectorAll("fieldset")].find((fieldset) => fieldset.querySelector("legend")?.textContent === "Query parameters");
+    const addQueryParam = [...(queryParams?.querySelectorAll("button") ?? [])].find((button) => button.textContent === "Add value");
+    if (!addQueryParam) throw new Error("Missing Query parameters Add value");
+    act(() => addQueryParam.click());
     change(input("Value for header"), "query-secret-123");
     click("MCP");
     change(input("Value for Authorization"), "mcp-header-123");
     await act(async () => { click("Save changes"); await Promise.resolve(); });
     const config = request?.config as typeof snapshot.config;
-    expect(config.provider.local.options.apiKey).toEqual({ action: "replace", value: "api-secret-123" });
-    expect(config.provider.local.options.headers?.Authorization).toEqual({ action: "replace", value: "provider-header-123" });
-    expect(config.provider.local.options.queryParams?.header).toEqual({ action: "replace", value: "query-secret-123" });
+    const providerOptions = config.provider.local.options as unknown as { apiKey?: unknown; headers?: Record<string, unknown>; queryParams?: Record<string, unknown> };
+    expect(providerOptions.apiKey).toEqual({ action: "replace", value: "api-secret-123" });
+    expect(providerOptions.headers?.Authorization).toEqual({ action: "replace", value: "provider-header-123" });
+    expect(providerOptions.queryParams?.header).toEqual({ action: "replace", value: "query-secret-123" });
     expect(config.mcp?.servers.custom.headers?.Authorization).toEqual({ action: "replace", value: "mcp-header-123" });
   });
 
@@ -267,7 +357,8 @@ describe("SettingsDialog interactions", () => {
     change(input("Value for Authorization"), "");
     await act(async () => { click("Save changes"); await Promise.resolve(); });
     const config = request?.config as typeof snapshot.config;
-    expect(config.provider.local.options.queryParams?.token).toEqual({ action: "delete" });
+    const providerOptions = config.provider.local.options as unknown as { queryParams?: Record<string, unknown> };
+    expect(providerOptions.queryParams?.token).toEqual({ action: "delete" });
     expect(config.mcp?.servers.custom.headers?.Authorization).toEqual({ action: "delete" });
   });
 

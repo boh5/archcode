@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { storeManager } from "../../store/store";
-import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import type { RawToolResult, ToolExecutionContext } from "../types";
+import { createTextToolResult } from "../results";
 import {
   createToolErrorResult,
   inferToolErrorKindFromResult,
   isStructuredToolError,
-  TOOL_ERROR_META_KEY,
 } from "../errors";
 import { createEditErrorRecoveryHook } from "./edit-error-recovery";
 import { createTestProjectContext } from "../test-project-context";
@@ -26,11 +26,16 @@ function makeCtx(
     projectContext: createTestProjectContext("/tmp"), ...overrides,  };
 }
 
-function makeResult(
-  overrides: Partial<ToolExecutionResult> = {},
-): ToolExecutionResult {
-  return { output: "",
-  isError: false, ...overrides,  };
+function makeResult(input: { output?: string; isError?: boolean; details?: RawToolResult["details"] } = {}): RawToolResult {
+  return createTextToolResult(input.output ?? "", {
+    isError: input.isError,
+    details: input.details,
+  });
+}
+
+function rawText(result: RawToolResult): string {
+  if (result.draft.kind !== "text") throw new Error("Expected text draft");
+  return result.draft.text;
 }
 
 describe("createEditErrorRecoveryHook", () => {
@@ -48,7 +53,7 @@ describe("createEditErrorRecoveryHook", () => {
     const result = makeResult({
       output: "success",
       isError: false,
-      meta: { durationMs: 42 },
+      details: { process: { exitCode: 0, signal: null, timedOut: false, aborted: false, durationMs: 42 } },
     });
     const ctx = makeCtx();
 
@@ -66,7 +71,7 @@ describe("createEditErrorRecoveryHook", () => {
 
     const returned = await hook(result, ctx);
     expect(returned).not.toBeUndefined();
-    expect(returned!.output).toContain(
+    expect(rawText(returned!)).toContain(
       "You must read the file first using file_read before editing it.",
     );
   });
@@ -82,12 +87,10 @@ describe("createEditErrorRecoveryHook", () => {
 
     const returned = await hook(result, ctx);
     expect(returned).not.toBeUndefined();
-    expect(returned!.output).toContain(
+    expect(rawText(returned!)).toContain(
       "The oldString was not found in the file.",
     );
-    expect(returned!.meta?.[TOOL_ERROR_META_KEY]).toEqual(
-      result.meta?.[TOOL_ERROR_META_KEY],
-    );
+    expect(returned!.details?.error).toEqual(result.details?.error);
     expect(isStructuredToolError(returned!)).toBe(true);
     expect(inferToolErrorKindFromResult(returned!)).toBe("edit-no-match");
   });
@@ -103,7 +106,7 @@ describe("createEditErrorRecoveryHook", () => {
 
     const returned = await hook(result, ctx);
     expect(returned).toBe(result);
-    expect(returned!.output).not.toContain("\n---\n");
+    expect(rawText(returned!)).not.toContain("\n---\n");
     expect(isStructuredToolError(returned!)).toBe(true);
     expect(inferToolErrorKindFromResult(returned!)).toBe("execution");
   });
@@ -119,12 +122,10 @@ describe("createEditErrorRecoveryHook", () => {
 
     const returned = await hook(result, ctx);
     expect(returned).not.toBeUndefined();
-    expect(returned!.output).toContain(
+    expect(rawText(returned!)).toContain(
       "oldString and newString are identical; change newString or skip this edit.",
     );
-    expect(returned!.meta?.[TOOL_ERROR_META_KEY]).toEqual(
-      result.meta?.[TOOL_ERROR_META_KEY],
-    );
+    expect(returned!.details?.error).toEqual(result.details?.error);
     expect(isStructuredToolError(returned!)).toBe(true);
   });
 
@@ -138,7 +139,7 @@ describe("createEditErrorRecoveryHook", () => {
 
     const returned = await hook(result, ctx);
     expect(returned).not.toBeUndefined();
-    expect(returned!.output).toContain(
+    expect(rawText(returned!)).toContain(
       "The file was modified externally since you last read it.",
     );
   });
@@ -153,7 +154,7 @@ describe("createEditErrorRecoveryHook", () => {
 
     const returned = await hook(result, ctx);
     expect(returned).not.toBeUndefined();
-    expect(returned!.output).toContain(
+    expect(rawText(returned!)).toContain(
       "The oldString was not found in the file.",
     );
   });
@@ -168,7 +169,7 @@ describe("createEditErrorRecoveryHook", () => {
 
     const returned = await hook(result, ctx);
     expect(returned).not.toBeUndefined();
-    expect(returned!.output).toContain(
+    expect(rawText(returned!)).toContain(
       "The oldString was not found in the file.",
     );
   });
@@ -183,7 +184,7 @@ describe("createEditErrorRecoveryHook", () => {
 
     const returned = await hook(result, ctx);
     expect(returned).not.toBeUndefined();
-    expect(returned!.output).toContain(
+    expect(rawText(returned!)).toContain(
       "The oldString matched multiple locations in the file.",
     );
   });
@@ -198,7 +199,7 @@ describe("createEditErrorRecoveryHook", () => {
 
     const returned = await hook(result, ctx);
     expect(returned).not.toBeUndefined();
-    expect(returned!.output).toContain(
+    expect(rawText(returned!)).toContain(
       "The oldString matched multiple locations in the file.",
     );
   });
@@ -213,7 +214,7 @@ describe("createEditErrorRecoveryHook", () => {
 
     const returned = await hook(result, ctx);
     expect(returned).not.toBeUndefined();
-    expect(returned!.output).toContain(
+    expect(rawText(returned!)).toContain(
       "The edits overlap with each other.",
     );
   });
@@ -228,7 +229,7 @@ describe("createEditErrorRecoveryHook", () => {
 
     const returned = await hook(result, ctx);
     expect(returned).not.toBeUndefined();
-    expect(returned!.output).toContain(
+    expect(rawText(returned!)).toContain(
       "The edit failed. Try re-reading the file and ensuring your oldString exactly matches the current content.",
     );
   });
@@ -244,22 +245,22 @@ describe("createEditErrorRecoveryHook", () => {
 
     const returned = await hook(result, ctx);
     expect(returned).not.toBeUndefined();
-    expect(returned!.output).toStartWith(originalMsg);
-    expect(returned!.output).toContain("\n---\n");
+    expect(rawText(returned!)).toStartWith(originalMsg);
+    expect(rawText(returned!)).toContain("\n---\n");
   });
 
-  test("preserves meta from original result when modifying output", async () => {
+  test("preserves strict details from original result when modifying output", async () => {
     const hook = createEditErrorRecoveryHook();
     const result = makeResult({
       output: "Error: oldString not found",
       isError: true,
-      meta: { toolName: "file_edit", step: 1 },
+      details: { process: { exitCode: 1, signal: null, timedOut: false, aborted: false, durationMs: 1 } },
     });
     const ctx = makeCtx();
 
     const returned = await hook(result, ctx);
     expect(returned).not.toBeUndefined();
-    expect(returned!.meta).toEqual({ toolName: "file_edit", step: 1 });
+    expect(returned!.details).toEqual(result.details);
   });
 
   test("handles case-insensitive matching for patterns", async () => {
@@ -272,7 +273,7 @@ describe("createEditErrorRecoveryHook", () => {
 
     const returned = await hook(result, ctx);
     expect(returned).not.toBeUndefined();
-    expect(returned!.output).toContain(
+    expect(rawText(returned!)).toContain(
       "The oldString matched multiple locations in the file.",
     );
   });

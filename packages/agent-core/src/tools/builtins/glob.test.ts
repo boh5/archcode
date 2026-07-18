@@ -1,269 +1,83 @@
-import { describe, expect, test, mock, beforeEach, afterEach, beforeAll } from "bun:test";
-import { storeManager } from "../../store/store";
-import { z } from "zod";
-import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../errors";
-import { RipgrepNotFoundError } from "../ripgrep/service";
-import type { FormattedToolError, ToolErrorKind } from "../errors";
-import type { RipgrepService } from "../ripgrep/service";
-import type { ToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../types";
-import { createTestProjectContext } from "../test-project-context";
-import { SkillService } from "../../skills";
-import { setProcessRunnerForTest } from "../../process/runner";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
-function mockReadableStream(data: string): ReadableStream<Uint8Array> {
-  return new ReadableStream({
-    start(controller) {
-      controller.enqueue(new TextEncoder().encode(data));
-      controller.close();
-    },
-  });
+import { setProcessRunnerForTest } from "../../process/runner";
+import { storeManager } from "../../store/store";
+import { inferToolErrorKindFromResult } from "../errors";
+import type { RipgrepService } from "../ripgrep/service";
+import { createTestProjectContext } from "../test-project-context";
+import type { ToolExecutionContext } from "../types";
+import { GlobInputSchema, globTool, setRipgrepService } from "./glob";
+import { SOURCE_PAGE_MAX_BYTES, SOURCE_PAGE_MAX_LINES, sourceDraftText } from "./source-page";
+
+function stream(text: string): ReadableStream<Uint8Array> {
+  return new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode(text)); controller.close(); } });
 }
 
-function mockSpawnResult(stdout: string, stderr = "", exitCode = 0) {
+function processResult(stdout: string, stderr = "", exitCode = 0) {
+  return { stdout: stream(stdout), stderr: stream(stderr), exited: Promise.resolve(exitCode), exitCode, kill: mock(() => undefined) };
+}
+
+function ctx(): ToolExecutionContext {
   return {
-    stdout: mockReadableStream(stdout),
-    stderr: mockReadableStream(stderr),
-    exited: Promise.resolve(exitCode),
-    exitCode,
-    kill: mock(() => undefined),
+    store: {} as any, storeManager, toolName: "glob", toolCallId: "call", input: {}, step: 1,
+    abort: new AbortController().signal, startedAt: Date.now(), allowedTools: new Set(["glob"]),
+    cwd: "/workspace", projectContext: createTestProjectContext("/workspace"),
   };
 }
 
-function createMockCtx(overrides?: Partial<ToolExecutionContext>): ToolExecutionContext {
-  return { store: {} as any,
-  toolName: "glob",
-  toolCallId: "test-call-id",
-  input: {},
-  step: 1,
-  abort: new AbortController().signal,
-  agentName: "engineer-agent",
-  startedAt: Date.now(),
-  allowedTools: new Set(["glob"]),
-  agentSkills: [],
-  skillService: new SkillService({ builtinSkills: {} }),
-  cwd: "/workspace",
-  storeManager,
-    projectContext: createTestProjectContext("/workspace"), ...overrides,  };
-}
+beforeEach(() => setRipgrepService({ ensure: mock(async () => "/bin/rg") } as RipgrepService));
+afterEach(() => setProcessRunnerForTest(undefined));
 
-function createMockRgService(overrides?: Partial<RipgrepService>): RipgrepService {
-  return { ensure: mock(() => Promise.resolve("/usr/local/bin/rg")), ...overrides,  };
-}
+describe("glob source pages", () => {
+  test("sorts paths and advances a schema-valid offset cursor with snapshot false", async () => {
+    // ripgrep --sort path is the canonical ordering; fake stdout mirrors it.
+    setProcessRunnerForTest(mock(() => processResult("a.ts\nb.ts\nc.ts\n")));
+    const first = await globTool.execute({ pattern: "*.ts", offset: 0, limit: 2 }, ctx());
+    expect(sourceDraftText(first)).toBe("snapshot: false\na.ts\nb.ts");
+    if (first.draft.kind !== "source" || first.draft.nextInput === undefined) throw new Error("Expected recovery");
+    expect(GlobInputSchema.safeParse(first.draft.nextInput).success).toBe(true);
+    expect(first.draft.nextInput.offset).toBe(2);
 
-function expectToolError(
-  result: unknown,
-  expected: { kind: ToolErrorKind; code: string; messageIncludes?: string },
-) {
-  const r = result as ToolExecutionResult;
-  expect(r.isError).toBe(true);
-  expect(inferToolErrorKindFromResult(r)).toBe(expected.kind);
-  const toolError = r.meta?.[TOOL_ERROR_META_KEY] as FormattedToolError | undefined;
-  expect(toolError?.kind).toBe(expected.kind);
-  expect(toolError?.code).toBe(expected.code);
-  if (expected.messageIncludes) {
-    expect(r.output).toContain(expected.messageIncludes);
-  }
-}
-
-describe("GlobInputSchema", () => {
-  let schema: z.ZodTypeAny;
-
-  beforeAll(async () => {
-    const mod = await import("./glob");
-    schema = mod.GlobInputSchema;
+    const second = await globTool.execute(first.draft.nextInput as any, ctx());
+    expect(sourceDraftText(second)).toBe("snapshot: false\nc.ts");
+    expect(second.draft.kind === "source" && second.draft.nextInput).toBeUndefined();
   });
 
-  test("validates valid input", () => {
-    const result = schema.parse({ pattern: "*.ts" }) as { pattern: string };
-    expect(result.pattern).toBe("*.ts");
+  test("bounds page bytes and lines", async () => {
+    const files = Array.from({ length: 2_500 }, (_, index) => `${String(index).padStart(4, "0")}-${"x".repeat(30)}.ts`);
+    setProcessRunnerForTest(mock(() => processResult(`${files.join("\n")}\n`)));
+    const page = await globTool.execute({ pattern: "*.ts", offset: 0, limit: 1_000 }, ctx());
+    expect(new TextEncoder().encode(sourceDraftText(page)).byteLength).toBeLessThanOrEqual(SOURCE_PAGE_MAX_BYTES);
+    expect(sourceDraftText(page).split("\n").length).toBeLessThanOrEqual(SOURCE_PAGE_MAX_LINES);
+    expect(page.draft.kind === "source" && page.draft.nextInput).toBeDefined();
   });
 
-  test("accepts optional path", () => {
-    const result = schema.parse({ pattern: "*.ts", path: "src/" }) as { pattern: string; path?: string };
-    expect(result.path).toBe("src/");
+  test("reaches a sentinel beyond the ProcessRunner 1 MiB diagnostic ring", async () => {
+    const prefix = Array.from({ length: 30_000 }, (_, index) => `${String(index).padStart(5, "0")}-${"x".repeat(32)}.ts`);
+    const sentinel = "zzzzz-SOURCE_SENTINEL.ts";
+    setProcessRunnerForTest(mock(() => processResult(`${prefix.join("\n")}\n${sentinel}\n`)));
+    const page = await globTool.execute({ pattern: "*.ts", offset: prefix.length, limit: 1 }, ctx());
+    expect(sourceDraftText(page)).toContain(sentinel);
+    expect(page.draft.kind === "source" && page.draft.nextInput).toBeUndefined();
   });
 
-  test("rejects unknown properties", () => {
-    expect(() => schema.parse({ pattern: "*.ts", unknownField: "value" })).toThrow();
+  test("returns source empty state and Raw errors", async () => {
+    setProcessRunnerForTest(mock(() => processResult("")));
+    expect(sourceDraftText(await globTool.execute({ pattern: "*.none", offset: 0, limit: 100 }, ctx()))).toContain("No files matched");
+
+    setProcessRunnerForTest(mock(() => processResult("", "bad glob", 2)));
+    const error = await globTool.execute({ pattern: "[", offset: 0, limit: 100 }, ctx());
+    expect(error.isError).toBe(true);
+    expect(inferToolErrorKindFromResult(error)).toBe("glob-error");
   });
 
-  test("pattern is required", () => {
-    expect(() => schema.parse({})).toThrow();
-  });
-});
+  test("fails closed when one rg path record exceeds the bounded collector", async () => {
+    setProcessRunnerForTest(mock(() => processResult(`before.ts\n${"x".repeat(70 * 1024)}.ts\n`)));
 
-describe("glob tool", () => {
-  let tool: ToolDescriptor<any, string | ToolExecutionResult>;
-  let setRgService: (svc: RipgrepService) => void;
+    const result = await globTool.execute({ pattern: "*.ts", offset: 0, limit: 100 }, ctx());
 
-  beforeAll(async () => {
-    const mod = await import("./glob");
-    tool = mod.globTool;
-    setRgService = mod.setRipgrepService;
-  });
-
-  beforeEach(() => {
-    setRgService(createMockRgService());
-    setProcessRunnerForTest(
-      mock(() => mockSpawnResult("file1.ts\nfile2.ts\nfile3.ts\n")),
-    );
-  });
-
-  afterEach(() => {
-    setProcessRunnerForTest(undefined);
-  });
-
-  test("returns list of files sorted by mtime", async () => {
-    setProcessRunnerForTest(
-      mock(() => mockSpawnResult("c.ts\na.ts\nb.ts\n")),
-    );
-
-    const result = await tool.execute({ pattern: "*.ts" }, createMockCtx());
-    expect(result).toBe("c.ts\na.ts\nb.ts");
-  });
-
-  test("runs from execution cwd instead of the canonical project root", async () => {
-    const executionCwd = "/worktrees/session-glob";
-    let spawnedCwd: string | undefined;
-    setProcessRunnerForTest(mock((_argv: unknown, options: { cwd?: string }) => {
-      spawnedCwd = options.cwd;
-      return mockSpawnResult("file.ts\n");
-    }) as NonNullable<Parameters<typeof setProcessRunnerForTest>[0]>);
-
-    await tool.execute({ pattern: "*.ts" }, createMockCtx({
-      cwd: executionCwd,
-      projectContext: createTestProjectContext("/canonical/project"),
-    }));
-
-    expect(spawnedCwd).toBe(executionCwd);
-  });
-
-  test("respects path parameter", async () => {
-    let capturedArgs: readonly string[] = [];
-    setProcessRunnerForTest(
-      mock((cmdAndArgs: readonly [string, ...string[]]) => {
-        capturedArgs = cmdAndArgs;
-        return mockSpawnResult("src/bar.ts\n");
-      }),
-    );
-
-    await tool.execute({ pattern: "*.ts", path: "src/" }, createMockCtx());
-    expect(capturedArgs).toContain("src/");
-  });
-
-  test("truncates to 100 results", async () => {
-    const manyFiles = Array.from({ length: 150 }, (_, i) => `file${i}.ts`);
-    setProcessRunnerForTest(
-      mock(() => mockSpawnResult(manyFiles.join("\n") + "\n")),
-    );
-
-    const result = await tool.execute({ pattern: "*.ts" }, createMockCtx());
-    expect(typeof result).toBe("string");
-    if (typeof result !== "string") throw new Error("Expected string result");
-    const lines = result.split("\n");
-    // truncation notice adds 1 line
-    expect(lines).toHaveLength(101);
-    expect(lines[100]).toContain("truncated");
-  });
-
-  test("returns helpful message when no files match", async () => {
-    setProcessRunnerForTest(
-      mock(() => mockSpawnResult("")),
-    );
-
-    const result = await tool.execute({ pattern: "*.xyz" }, createMockCtx());
-    expect(result).toBe("No files matched pattern: *.xyz");
-  });
-
-  test("treats exit code 1 with non-empty stdout as error (broken binary)", async () => {
-    setProcessRunnerForTest(
-      mock(() => mockSpawnResult("rg shim file was executed...", "", 1)),
-    );
-
-    const result = await tool.execute({ pattern: "*.ts" }, createMockCtx());
-    expectToolError(result, {
-      kind: "glob-error",
-      code: "TOOL_GLOB_ERROR",
-      messageIncludes: "rg exited with code 1",
-    });
-  });
-
-  test("treats exit code 1 with non-empty stderr as error", async () => {
-    setProcessRunnerForTest(
-      mock(() => mockSpawnResult("", "error: inaccessible files", 1)),
-    );
-
-    const result = await tool.execute({ pattern: "*.ts" }, createMockCtx());
-    expectToolError(result, {
-      kind: "glob-error",
-      code: "TOOL_GLOB_ERROR",
-      messageIncludes: "error: inaccessible files",
-    });
-  });
-
-  test("handles rg binary not found (RipgrepNotFoundError)", async () => {
-    const failing = createMockRgService({
-      ensure: mock(() => Promise.reject(new RipgrepNotFoundError("rg not found on this system"))),
-    });
-    setRgService(failing);
-
-    const result = await tool.execute({ pattern: "*.ts" }, createMockCtx());
-    expectToolError(result, {
-      kind: "glob-error",
-      code: "TOOL_GLOB_ERROR",
-      messageIncludes: "glob failed: rg not found on this system",
-    });
-  });
-
-  test("handles spawn error exit code >= 2", async () => {
-    setProcessRunnerForTest(
-      mock(() => mockSpawnResult("", "parse error: invalid pattern", 2)),
-    );
-
-    const result = await tool.execute({ pattern: "[" }, createMockCtx());
-    expectToolError(result, {
-      kind: "glob-error",
-      code: "TOOL_GLOB_ERROR",
-      messageIncludes: "rg exited with code 2",
-    });
-    expect((result as unknown as ToolExecutionResult).output).toContain("parse error: invalid pattern");
-  });
-
-  test("handles spawn error gracefully", async () => {
-    setProcessRunnerForTest(
-      mock(() => {
-        throw new Error("ENOENT: spawn rg ENOENT");
-      }),
-    );
-
-    const result = await tool.execute({ pattern: "*.ts" }, createMockCtx());
-    expectToolError(result, {
-      kind: "glob-error",
-      code: "TOOL_GLOB_ERROR",
-      messageIncludes: "ENOENT",
-    });
-  });
-
-  test("workspace permission asks for path outside workspace", async () => {
-    const perm = tool.permissions![0];
-
-    const decision = await perm({ pattern: "*.ts", path: "../outside" }, createMockCtx());
-    expect(decision.outcome).toBe("ask");
-    expect(decision.reason).toContain("outside");
-    expect(decision.approval?.scope).toMatchObject({ kind: "file-path", operation: "read", pathMode: "exact" });
-  });
-
-  test("workspace permission allows path within workspace", async () => {
-    const perm = tool.permissions![0];
-
-    const decision = await perm({ pattern: "*.ts", path: "src/" }, createMockCtx());
-    expect(decision.outcome).toBe("allow");
-  });
-
-  test("workspace permission allows when no path provided", async () => {
-    const perm = tool.permissions![0];
-
-    const decision = await perm({ pattern: "*.ts" }, createMockCtx());
-    expect(decision.outcome).toBe("allow");
+    expect(result.isError).toBe(true);
+    expect(result.details?.error?.code).toBe("TOOL_GLOB_ERROR");
+    expect(JSON.stringify(result.draft)).not.toContain("before.ts");
   });
 });

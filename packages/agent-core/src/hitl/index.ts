@@ -15,6 +15,7 @@ export type {
   HitlRecord,
   ProjectHitlQueueEvent,
   ProjectHitlQueueOptions,
+  ProjectHitlFile,
   ResolveHitlOutcome,
 } from "./project-queue";
 
@@ -29,3 +30,4 @@ export type {
   HitlStatus,
   HitlView,
 } from "@archcode/protocol";
+export { HitlBoundaryCodec } from "./boundary-codec";

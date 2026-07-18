@@ -2,10 +2,10 @@ import { z } from "zod/v4";
 import type { ChildResultReceipt, SessionExecutionRecord } from "@archcode/protocol";
 import { DelegationContractSchema } from "../../delegation/schema";
 import type { ChildExecutionHandle, ChildExecutionOutcome } from "../../delegation/types";
-import { SkillNotAllowedError } from "../../agents/errors";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
-import type { ToolExecutionContext } from "../types";
+import { createTextToolResult } from "../results";
+import type { RawToolResult, ToolExecutionContext } from "../types";
 
 export const DelegateInputSchema = DelegationContractSchema.superRefine((contract, ctx) => {
   if (contract.agent_type === "build" && contract.owned_scope.length === 0) {
@@ -28,14 +28,13 @@ export interface DelegateErrorOutput {
   allowed_skills?: readonly string[];
 }
 
-export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionContext) {
+export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionContext): Promise<RawToolResult> {
   if (ctx.startChildExecution === undefined) {
     return createToolErrorResult({
       kind: "execution",
       code: "TOOL_DELEGATE_EXECUTOR_UNAVAILABLE",
       name: "SubAgentError",
       message: "Child execution is not available in this execution context",
-      details: { ok: false, session_id: "" } satisfies Pick<DelegateErrorOutput, "ok" | "session_id">,
     });
   }
 
@@ -51,33 +50,21 @@ export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionCo
     });
   } catch (error) {
     const safeError = error instanceof Error ? error : new Error(String(error));
-    const skillRecovery = safeError instanceof SkillNotAllowedError
-      ? {
-          target_agent: safeError.targetAgentName,
-          rejected_skill: safeError.skillName,
-          allowed_skills: [...safeError.allowedSkills],
-        }
-      : {};
     return createToolErrorResult({
       kind: "execution",
       code: "TOOL_DELEGATE_FAILED",
       message: safeError.message,
       name: safeError.name,
       error: safeError,
-      details: {
-        ok: false,
-        session_id: "",
-        error: { name: safeError.name, message: safeError.message },
-        ...skillRecovery,
-      } satisfies DelegateErrorOutput,
-      ...(safeError instanceof SkillNotAllowedError
-        ? { hint: "Retry delegate with skills selected from details.allowed_skills, or pass an empty skills array when no Skill is needed." }
-        : {}),
     });
   }
 
-  if (input.background) return formatAsyncChildOutput(handle);
-  return formatSyncChildOutput(handle, await waitForChildOutcome(handle));
+  if (input.background ?? false) {
+    return createTextToolResult(formatAsyncChildOutput(handle));
+  }
+
+  const outcome = await waitForChildOutcome(handle);
+  return createTextToolResult(formatSyncChildOutput(handle, outcome));
 }
 
 export function formatAsyncChildOutput(handle: ChildExecutionHandle): string {
@@ -155,5 +142,6 @@ export const delegateTool = defineTool({
   ].join("\n"),
   inputSchema: DelegateInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
+  outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
   execute: executeDelegate,
 });

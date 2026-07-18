@@ -41,7 +41,7 @@ function collectMessageProtectedRefs(
       if (part.state === "running") {
         protectedRefs.push(protectedRef(ref, "running_tool", "Running tool calls cannot be compressed", message.id, part.id));
       }
-      if (part.state === "error" && part.meta?.unknownResult === true) {
+      if (part.state === "error" && part.result.details?.unknownResult === true) {
         protectedRefs.push(protectedRef(ref, "unknown_result", "Unknown tool results must remain visible", message.id, part.id));
       }
       if (linksByToolCallId.has(part.toolCallId)) {

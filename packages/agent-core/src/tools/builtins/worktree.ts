@@ -4,7 +4,8 @@ import { z } from "zod";
 import { TOOL_WORKTREE_ENTER, TOOL_WORKTREE_EXIT } from "../names";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
-import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import { createTextToolResult } from "../results";
+import type { RawToolResult, ToolExecutionContext } from "../types";
 import {
   isArchCodeManagedBranch,
   isManagedWorktreeFor,
@@ -43,6 +44,7 @@ export const worktreeEnterTool = defineTool({
   ].join(" "),
   inputSchema: WorktreeEnterInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
+  outputPolicy: { kind: "inline", previewDirection: "head" },
   permissions: [confirmWorktreeTransition],
   execute: executeWorktreeEnter,
 });
@@ -52,6 +54,7 @@ export const worktreeExitTool = defineTool({
   description: "Return this interactive root Engineer Session to its canonical project checkout after descendant sessions have stopped. This changes Session cwd but never removes the worktree.",
   inputSchema: WorktreeExitInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
+  outputPolicy: { kind: "inline", previewDirection: "head" },
   permissions: [confirmWorktreeTransition],
   execute: executeWorktreeExit,
 });
@@ -59,7 +62,7 @@ export const worktreeExitTool = defineTool({
 export async function executeWorktreeEnter(
   input: WorktreeEnterInput,
   ctx: ToolExecutionContext,
-): Promise<string | ToolExecutionResult> {
+): Promise<RawToolResult> {
   const eligibilityError = validateInteractiveRootSession(ctx);
   if (eligibilityError !== undefined) return eligibilityError;
 
@@ -105,17 +108,13 @@ export async function executeWorktreeEnter(
     }
 
     await ctx.storeManager.updateCwd(state.sessionId, projectRoot, target, state.cwd);
-    return {
-      output: JSON.stringify({
+    return createTextToolResult(JSON.stringify({
         changed: true,
         previousCwd: state.cwd,
         cwd: target,
         created: created !== undefined,
         ...(created === undefined ? {} : { branchName: created.branchName }),
-      }),
-      isError: false,
-      meta: { sessionCwdChanged: true, previousCwd: state.cwd, cwd: target },
-    };
+      }), { sidecar: { sessionCwdChanged: true } });
   } catch (error) {
     let transitionError = error;
     if (created !== undefined) {
@@ -151,7 +150,7 @@ export async function executeWorktreeEnter(
 function validateExplicitTargetOwnership(
   target: WorktreeInfo,
   owner: { readonly type: "session"; readonly id: string },
-): ToolExecutionResult | undefined {
+): RawToolResult | undefined {
   const isOwnedBySession = isManagedWorktreeFor(target, { owner });
   if ((target.isManaged || isArchCodeManagedBranch(target.branchName)) && !isOwnedBySession) {
     return createToolErrorResult({
@@ -166,7 +165,7 @@ function validateExplicitTargetOwnership(
 export async function executeWorktreeExit(
   _input: Record<string, never>,
   ctx: ToolExecutionContext,
-): Promise<string | ToolExecutionResult> {
+): Promise<RawToolResult> {
   const eligibilityError = validateInteractiveRootSession(ctx);
   if (eligibilityError !== undefined) return eligibilityError;
 
@@ -184,11 +183,10 @@ export async function executeWorktreeExit(
 
   try {
     await ctx.storeManager.updateCwd(state.sessionId, projectRoot, projectRoot, state.cwd);
-    return {
-      output: JSON.stringify({ changed: true, previousCwd: state.cwd, cwd: projectRoot, removed: false }),
-      isError: false,
-      meta: { sessionCwdChanged: true, previousCwd: state.cwd, cwd: projectRoot },
-    };
+    return createTextToolResult(
+      JSON.stringify({ changed: true, previousCwd: state.cwd, cwd: projectRoot, removed: false }),
+      { sidecar: { sessionCwdChanged: true } },
+    );
   } catch (error) {
     return worktreeErrorResult(error);
   } finally {
@@ -200,7 +198,7 @@ function acquireCwdTransition(
   ctx: ToolExecutionContext,
   projectRoot: string,
   sessionId: string,
-): (() => void) | ToolExecutionResult {
+): (() => void) | RawToolResult {
   if (ctx.acquireSessionCwdTransition === undefined) {
     return createToolErrorResult({
       kind: "execution",
@@ -215,7 +213,7 @@ function acquireCwdTransition(
   }
 }
 
-function validateInteractiveRootSession(ctx: ToolExecutionContext): ToolExecutionResult | undefined {
+function validateInteractiveRootSession(ctx: ToolExecutionContext): RawToolResult | undefined {
   const state = ctx.store.getState();
   if (
     ctx.agentName !== "engineer"
@@ -232,7 +230,7 @@ function validateInteractiveRootSession(ctx: ToolExecutionContext): ToolExecutio
   return undefined;
 }
 
-function worktreeErrorResult(error: unknown): ToolExecutionResult {
+function worktreeErrorResult(error: unknown): RawToolResult {
   const safeError = error instanceof Error ? error : new Error(String(error));
   return createToolErrorResult({
     kind: "execution",

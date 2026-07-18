@@ -1,5 +1,4 @@
-import type { ModelCallOptions } from "../config/provider";
-import type { ModelInfo } from "../provider/model";
+import type { ExecutionModelBinding } from "../models";
 import { runLlmText } from "../llm";
 import type { RetryScheduler } from "../llm/retry";
 
@@ -8,8 +7,7 @@ export type TitleGenerationKind = "session" | "goal";
 export interface GenerateTitleInput {
   readonly kind: TitleGenerationKind;
   readonly text: string;
-  readonly modelInfo: ModelInfo;
-  readonly modelOptions?: ModelCallOptions;
+  readonly binding: ExecutionModelBinding;
   readonly retryScheduler?: RetryScheduler;
 }
 
@@ -20,10 +18,11 @@ export async function generateTitle(input: GenerateTitleInput): Promise<string |
   if (!source) return null;
 
   const result = await runLlmText({
-    model: input.modelInfo.model,
+    model: input.binding.modelInfo.model,
     prompt: buildTitlePrompt(input.kind, source),
-    modelOptions: input.modelOptions,
+    modelOptions: input.binding.options,
     retryScheduler: input.retryScheduler,
+    redactSensitiveText: (text) => input.binding.modelInfo.redactSensitiveText(text),
   });
 
   const title = normalizeGeneratedTitle(result.text);

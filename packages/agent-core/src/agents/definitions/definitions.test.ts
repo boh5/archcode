@@ -254,7 +254,8 @@ describe("agentDefinitions", () => {
 
   test("audits the complete role-sensitive capability matrix from real definitions", () => {
     const capabilityNames = [
-      "view_tool_output",
+      "output_read",
+      "output_search",
       "cancel_session",
       "bash",
       "memory_read",
@@ -269,14 +270,14 @@ describe("agentDefinitions", () => {
       "skill_read",
     ] as const;
     const expected = {
-      engineer: ["view_tool_output", "cancel_session", "bash", "memory_read", "memory_write", "file_write", "file_edit", "ast_grep_replace", "goal_create", "delegate", "skill_list", "skill_read"],
-      goal_lead: ["view_tool_output", "cancel_session", "memory_read", "memory_write", "goal_manage", "delegate", "skill_list", "skill_read"],
-      plan: ["view_tool_output", "memory_read", "delegate", "skill_list", "skill_read"],
-      build: ["view_tool_output", "bash", "memory_read", "memory_write", "file_write", "file_edit", "ast_grep_replace", "delegate", "skill_list", "skill_read"],
-      reviewer: ["view_tool_output", "bash", "memory_read", "goal_manage", "delegate", "skill_list", "skill_read"],
-      explore: ["skill_list", "skill_read"],
-      librarian: ["memory_read", "skill_list", "skill_read"],
-      shaper: ["view_tool_output", "bash", "memory_read", "memory_write", "delegate", "skill_list", "skill_read"],
+      engineer: ["output_read", "output_search", "cancel_session", "bash", "memory_read", "memory_write", "file_write", "file_edit", "ast_grep_replace", "goal_create", "delegate", "skill_list", "skill_read"],
+      goal_lead: ["output_read", "output_search", "cancel_session", "memory_read", "memory_write", "goal_manage", "delegate", "skill_list", "skill_read"],
+      plan: ["output_read", "output_search", "memory_read", "delegate", "skill_list", "skill_read"],
+      build: ["output_read", "output_search", "bash", "memory_read", "memory_write", "file_write", "file_edit", "ast_grep_replace", "delegate", "skill_list", "skill_read"],
+      reviewer: ["output_read", "output_search", "bash", "memory_read", "goal_manage", "delegate", "skill_list", "skill_read"],
+      explore: ["output_read", "output_search", "skill_list", "skill_read"],
+      librarian: ["output_read", "output_search", "memory_read", "skill_list", "skill_read"],
+      shaper: ["output_read", "output_search", "bash", "memory_read", "memory_write", "delegate", "skill_list", "skill_read"],
     } as const;
 
     for (const definition of agentDefinitions) {

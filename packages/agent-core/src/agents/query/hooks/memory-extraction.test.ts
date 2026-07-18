@@ -103,7 +103,7 @@ describe("createMemoryExtractionHook", () => {
       ],
     });
 
-    const ctx = { store, modelInfo: undefined as never, abort: undefined };
+    const ctx = { store, binding: undefined as never, abort: undefined };
     const hook = createMemoryExtractionHook(
       mockBtm as never,
       mockMemoryRoots,
@@ -125,7 +125,7 @@ describe("createMemoryExtractionHook", () => {
       messages: [makeUserMessage("Hi", now)],
     });
 
-    const ctx = { store, modelInfo: undefined as never };
+    const ctx = { store, binding: undefined as never };
     const hook = createMemoryExtractionHook(
       mockBtm as never,
       mockMemoryRoots,
@@ -146,7 +146,7 @@ describe("createMemoryExtractionHook", () => {
       ],
     });
 
-    const ctx = { store, modelInfo: undefined as never };
+    const ctx = { store, binding: undefined as never };
     const hook = createMemoryExtractionHook(
       mockBtm as never,
       mockMemoryRoots,
@@ -172,7 +172,7 @@ describe("createMemoryExtractionHook", () => {
       ],
     });
 
-    const ctx = { store, modelInfo: undefined as never };
+    const ctx = { store, binding: undefined as never };
     const hook = createMemoryExtractionHook(
       mockBtm as never,
       mockMemoryRoots,
@@ -200,7 +200,7 @@ describe("createMemoryExtractionHook", () => {
       ],
     });
 
-    const ctx = { store, modelInfo: undefined as never };
+    const ctx = { store, binding: undefined as never };
     const hook = createMemoryExtractionHook(
       mockBtm as never,
       mockMemoryRoots,
@@ -227,7 +227,7 @@ describe("createMemoryExtractionHook", () => {
     });
 
     const hook = createMemoryExtractionHook(mockBtm as never, mockMemoryRoots);
-    await hook({ store, modelInfo: undefined as never } as never);
+    await hook({ store, binding: undefined as never } as never);
 
     expect(mockDispatch).not.toHaveBeenCalled();
   });
@@ -249,7 +249,7 @@ describe("createMemoryExtractionHook", () => {
     });
 
     const hook = createMemoryExtractionHook(mockBtm as never, mockMemoryRoots);
-    await hook({ store, modelInfo: undefined as never } as never);
+    await hook({ store, binding: undefined as never } as never);
 
     expect(mockDispatch).toHaveBeenCalledTimes(1);
   });
@@ -268,7 +268,7 @@ describe("createMemoryExtractionHook", () => {
     });
 
     const hook = createMemoryExtractionHook(mockBtm as never, mockMemoryRoots);
-    await hook({ store, modelInfo: undefined as never } as never);
+    await hook({ store, binding: undefined as never } as never);
 
     expect(store.getState().lastExtractionIndex).toBe(5);
     expect(store.getState().lastExtractionTime).toBeGreaterThan(0);
@@ -292,7 +292,7 @@ describe("createMemoryExtractionHook", () => {
 
     try {
       const hook = createMemoryExtractionHook(mockBtm as never, mockMemoryRoots);
-      await hook({ store, modelInfo: undefined as never } as never);
+      await hook({ store, binding: undefined as never } as never);
       expect(mockDispatch).not.toHaveBeenCalled();
     } finally {
       Date.now = originalDateNow;
@@ -314,7 +314,7 @@ describe("createMemoryExtractionHook", () => {
 
     mockGetLastCompletedAt.mockImplementation(() => undefined);
     const hook = createMemoryExtractionHook(mockBtm as never, mockMemoryRoots);
-    await hook({ store, modelInfo: undefined as never } as never);
+    await hook({ store, binding: undefined as never } as never);
     expect(mockDispatch).toHaveBeenCalledTimes(1);
   });
 
@@ -325,7 +325,7 @@ describe("createMemoryExtractionHook", () => {
       messages: [makeUserMessage("A".repeat(150), now)],
     });
 
-    const ctx = { store, modelInfo: undefined as never };
+    const ctx = { store, binding: undefined as never };
     const hook = createMemoryExtractionHook(
       mockBtm as never,
       mockMemoryRoots,
@@ -345,7 +345,7 @@ describe("createMemoryExtractionHook", () => {
       messages: [makeUserMessage("A".repeat(150), now)],
     });
 
-    const ctx = { store, modelInfo: undefined as never };
+    const ctx = { store, binding: undefined as never };
     const hook = createMemoryExtractionHook(
       mockBtm as never,
       mockMemoryRoots,
@@ -363,7 +363,7 @@ describe("createMemoryExtractionHook", () => {
       messages: [makeUserMessage("A".repeat(150), now)],
     });
 
-    const ctx = { store, modelInfo: undefined as never };
+    const ctx = { store, binding: undefined as never };
     const hook = createMemoryExtractionHook(
       mockBtm as never,
       mockMemoryRoots,
@@ -393,7 +393,7 @@ describe("createMemoryExtractionHook", () => {
     mockDispatch.mockImplementation(() => false);
 
     const hook = createMemoryExtractionHook(mockBtm as never, mockMemoryRoots);
-    await hook({ store, modelInfo: undefined as never } as never);
+    await hook({ store, binding: undefined as never } as never);
 
     expect(store.getState().lastExtractionIndex).toBe(0);
   });
@@ -405,7 +405,7 @@ describe("createMemoryExtractionHook", () => {
       messages: [makeUserMessage("A".repeat(150), now)],
     });
 
-    const ctx = { store, modelInfo: undefined as never };
+    const ctx = { store, binding: undefined as never };
     const hook = createMemoryExtractionHook(
       mockBtm as never,
       mockMemoryRoots,

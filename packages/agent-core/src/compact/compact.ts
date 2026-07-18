@@ -1,12 +1,10 @@
-import type { LanguageModelV3 } from "@ai-sdk/provider";
 import type { StoreApi } from "zustand";
-import type { ModelCallOptions } from "../config/provider";
+import type { ExecutionModelBinding } from "../models";
 import type { Logger } from "../logger";
 import type { SessionStoreState, StoredMessage } from "../store/types";
 import { runLlmStream } from "../llm";
 import { withLlmRetry, type RetryScheduler } from "../llm/retry";
 import { toModelMessagesFromStoredMessages } from "../store/projection";
-import { persistToolOutput } from "../tools/persist-output";
 import { COMPACT_MIN_NEW_MESSAGES } from "./token-estimation";
 
 // ---------------------------------------------------------------------------
@@ -29,19 +27,14 @@ export class CompactError extends Error {
 
 export interface CompactInput {
   messages: StoredMessage[];
-  contextLimit: number;
-  model: LanguageModelV3;
-  modelOptions?: ModelCallOptions;
-  sessionId: string;
+  binding: ExecutionModelBinding;
   logger: Logger;
-  toolOutputDir: string;
   retryScheduler?: RetryScheduler;
 }
 
 export interface CompactResult {
   summary: string;
   tailStartId: string;
-  prunedToolOutputs: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -67,8 +60,8 @@ Tasks that are still pending or in progress.
 ## Important Files
 Files that have been read, modified, or created during the conversation.
 
-## Tool Output References
-References to tool outputs that have been persisted to disk (shown as "[Output truncated; full output saved to: PATH]"). Mention the path and a brief description of what the output contained.
+## Tool Output Recovery
+Do not preserve individual artifact references, recoverable artifact bodies, previews, or their tool inputs. Hard compact recovery is provided separately through a bounded Session-family artifact notice. Preserve source-tool continuation instructions only when they are already visible in the conversation.
 
 ## Recent Failures
 Any errors, failed attempts, or issues encountered.
@@ -195,51 +188,17 @@ function adjustBoundaryForToolAtomicity(messages: StoredMessage[], splitIndex: n
 }
 
 // ---------------------------------------------------------------------------
-// Prune tool outputs in prefix (on deep-cloned messages)
-// ---------------------------------------------------------------------------
-
-async function pruneToolOutputs(
-  clonedPrefix: StoredMessage[],
-  sessionId: string,
-  toolOutputDir: string,
-  logger: Logger,
-  abort?: AbortSignal,
-): Promise<string[]> {
-  const prunedPaths: string[] = [];
-
-  for (const message of clonedPrefix) {
-    if (abort?.aborted) break;
-
-    for (const part of message.parts) {
-      if (part.type === "tool") {
-        if (part.state === "pending" || part.state === "running") {
-          continue;
-        }
-
-        const fullPath = await persistToolOutput(part, sessionId, { logger, previewLines: 5, outputDir: toolOutputDir });
-        if (fullPath) {
-          prunedPaths.push(fullPath);
-        }
-      }
-    }
-  }
-
-  return prunedPaths;
-}
-
-// ---------------------------------------------------------------------------
 // Summarize prefix
 // ---------------------------------------------------------------------------
 
 async function summarizePrefix(
   clonedPrefix: StoredMessage[],
-  model: LanguageModelV3,
-  modelOptions: ModelCallOptions | undefined,
+  binding: ExecutionModelBinding,
   contextLimit: number,
   abort?: AbortSignal,
   retryScheduler?: RetryScheduler,
 ): Promise<string> {
-  const projected = toModelMessagesFromStoredMessages(clonedPrefix);
+  const projected = toModelMessagesFromStoredMessages(omitRecoverableArtifactTools(clonedPrefix));
 
   let messagesToSummarize = projected;
   const maxTokensForSummary = Math.floor(contextLimit * 0.5);
@@ -257,13 +216,13 @@ async function summarizePrefix(
   const summary = await withLlmRetry(
     async () => {
       const result = runLlmStream({
-        model,
+        model: binding.modelInfo.model,
         messages: messagesToSummarize,
         system: COMPACT_SYSTEM_PROMPT,
         abortSignal: abort,
-        modelOptions,
+        modelOptions: binding.options,
       });
-      const text = await result.text;
+      const text = binding.modelInfo.redactSensitiveText(await result.text);
       if (!text || text.trim().length === 0) {
         throw new CompactError("Summarizer returned empty summary");
       }
@@ -271,10 +230,28 @@ async function summarizePrefix(
     },
     "compact.summarize",
     undefined,
-    { abortSignal: abort, retryScheduler },
+    {
+      abortSignal: abort,
+      retryScheduler,
+      redactSensitiveText: (text) => binding.modelInfo.redactSensitiveText(text),
+    },
   );
 
   return summary;
+}
+
+function omitRecoverableArtifactTools(messages: StoredMessage[]): StoredMessage[] {
+  // Hard compact recovery is family-scoped. Keeping an artifact ToolPart here would
+  // expose its input, preview, and individual ref to the summarizer and let the
+  // generated compact summary reintroduce all three into the next model context.
+  return messages.map((message) => ({
+    ...message,
+    parts: message.parts.filter((part) =>
+      part.type !== "tool" ||
+      (part.state !== "completed" && part.state !== "error") ||
+      part.result.output.recovery.kind !== "artifact"
+    ),
+  }));
 }
 
 function estimateTokensFromModelMessages(messages: import("ai").ModelMessage[]): number {
@@ -329,7 +306,7 @@ function deepCloneMessages(messages: StoredMessage[]): StoredMessage[] {
 // ---------------------------------------------------------------------------
 
 /**
- * Three-phase compact pipeline: select compactable prefix → prune tool outputs → summarize prefix.
+ * Compact pipeline: select compactable prefix → summarize its bounded projection.
  *
  * Works on deep-cloned messages. Only commits to store on success via `commitCompact()`.
  * Returns null if compaction should be skipped (hysteresis, no prefix, etc.).
@@ -338,7 +315,8 @@ export async function compact(
   input: CompactInput,
   abort?: AbortSignal,
 ): Promise<CompactResult | null> {
-  const { messages, contextLimit, model, modelOptions, sessionId, logger, toolOutputDir, retryScheduler } = input;
+  const { messages, binding, logger, retryScheduler } = input;
+  const contextLimit = binding.modelInfo.limit.context;
 
   if (abort?.aborted) {
     throw new DOMException("Compaction aborted", "AbortError");
@@ -356,15 +334,13 @@ export async function compact(
   const { tailStartId, prefixMessages } = boundary;
   const clonedPrefix = deepCloneMessages(prefixMessages);
 
-  const prunedToolOutputs = await pruneToolOutputs(clonedPrefix, sessionId, toolOutputDir, logger, abort);
-
   if (abort?.aborted) {
     throw new DOMException("Compaction aborted", "AbortError");
   }
 
   let summary: string;
   try {
-    summary = await summarizePrefix(clonedPrefix, model, modelOptions, contextLimit, abort, retryScheduler);
+    summary = await summarizePrefix(clonedPrefix, binding, contextLimit, abort, retryScheduler);
   } catch (err) {
     if (abort?.aborted) {
       throw new DOMException("Compaction aborted", "AbortError");
@@ -385,7 +361,6 @@ export async function compact(
   return {
     summary,
     tailStartId,
-    prunedToolOutputs,
   };
 }
 

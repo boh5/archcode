@@ -1,6 +1,6 @@
 # Multi-Agent Architecture
 
-ArchCode has seven closed Agent identities. An Agent identity determines prompt, tools, delegation targets, model configuration, and UI display metadata. A Session persists exactly one identity in `agentName`; execution always reconstructs that Agent and cannot override it per turn.
+ArchCode has eight closed Agent identities. An Agent identity determines prompt, tools, delegation targets, model configuration, and UI display metadata. A Session persists exactly one identity in `agentName`; execution always reconstructs that Agent and cannot override it per turn.
 
 | ID | Display name | Purpose |
 |---|---|---|
@@ -60,4 +60,4 @@ Specialist prompts are context-neutral by default: ordinary Sessions and Loops d
 
 ## Configuration
 
-The server-wide `~/.archcode/config.json` requires exactly the seven current Agent keys under `agents`. Missing, unknown, or legacy keys fail validation. Display names are not configurable there; they belong to the definitions and catalog.
+The server-wide `~/.archcode/config.json` requires exactly the eight current Agent keys under `agents`. Missing, unknown, or legacy keys fail validation. Display names are not configurable there; they belong to the definitions and catalog.

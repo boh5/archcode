@@ -4,7 +4,7 @@ import { PROJECT_STATE_DIR_NAME, USER_DATA_DIR_NAME } from "@archcode/protocol";
 
 import { GoalStateManager } from "../goals/state";
 import type { GoalCancellationCapability } from "../goals/cancellation";
-import { ProjectHitlQueue, type ProjectHitlQueueOptions } from "../hitl";
+import { HitlBoundaryCodec, ProjectHitlQueue, type ProjectHitlQueueOptions } from "../hitl";
 import { MemoryFileManager } from "../memory/file-manager";
 import { silentLogger } from "../logger";
 import type { Logger } from "../logger";
@@ -15,6 +15,8 @@ import type { GoalLifecycleService } from "../goals/lifecycle-service";
 import type { ProjectTodoService } from "../todos";
 
 export interface ProjectContextResolverOptions {
+  /** Runtime-wide strict HITL boundary shared with ToolRegistry. */
+  hitlCodec: HitlBoundaryCodec;
   /** Registry-backed ProjectInfo lookup. Missing projects must fail resolution. */
   projectInfoFactory: (workspaceRoot: string) => Promise<ProjectInfo> | ProjectInfo;
   /** Factory primarily for testing alternate GoalStateManager construction. */
@@ -66,6 +68,7 @@ export interface ProjectContextResolverOptions {
 export class ProjectContextResolver {
   #contexts = new Map<string, Promise<ProjectContext>>();
   readonly #logger: Logger;
+  readonly #hitlCodec: HitlBoundaryCodec;
   readonly #projectInfoFactory: (workspaceRoot: string) => Promise<ProjectInfo> | ProjectInfo;
   readonly #goalStateFactory: NonNullable<ProjectContextResolverOptions["goalStateFactory"]>;
   readonly #goalCommitted: NonNullable<ProjectContextResolverOptions["goalCommitted"]>;
@@ -79,6 +82,7 @@ export class ProjectContextResolver {
 
   constructor(options: ProjectContextResolverOptions) {
     this.#logger = (options.logger ?? silentLogger).child({ module: "projects.context" });
+    this.#hitlCodec = options.hitlCodec;
     this.#projectInfoFactory = options.projectInfoFactory;
     this.#goalStateFactory = options.goalStateFactory ?? ((workspaceRoot, onCommitted) => {
       return new GoalStateManager(workspaceRoot, this.#logger.child({ module: "goals.state" }), onCommitted);
@@ -133,7 +137,7 @@ export class ProjectContextResolver {
       workspaceRoot,
       (goal) => this.#goalCommitted({ workspaceRoot, project, goal }),
     );
-    const hitl = this.#hitlFactory({ workspaceRoot });
+    const hitl = this.#hitlFactory({ workspaceRoot, codec: this.#hitlCodec });
     const todos = this.#projectTodoFactory({ workspaceRoot, project, goalState });
     const context: ProjectContext = {
       project,

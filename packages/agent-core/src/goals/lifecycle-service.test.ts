@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import type { GoalEvidenceRef } from "@archcode/protocol";
 
 import { silentLogger } from "../logger";
+import { testExecutionStart } from "../testing/test-execution-fixtures";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { getSessionPath } from "../store/sessions-dir";
 import { managedWorktreeNames } from "../worktrees";
@@ -241,7 +242,7 @@ describe("GoalLifecycleService committed creation", () => {
   test("recovers after Session persistence without accepting a second initial execution", async () => {
     const acceptedThenUnknown = mock(async (input) => {
       const store = await sessions.getOrLoad(input.sessionId, workspaceRoot);
-      store.getState().append({ type: "execution-start", executionId: input.executionId });
+      store.getState().append(testExecutionStart(input.executionId, "goal_claim"));
       await sessions.flushSession(input.sessionId, workspaceRoot);
       throw new Error("connection dropped after execution acceptance");
     });

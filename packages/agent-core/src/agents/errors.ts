@@ -1,10 +1,3 @@
-export class NoModelsConfiguredError extends Error {
-  constructor() {
-    super("No models configured in ~/.archcode/config.json");
-    this.name = "NoModelsConfiguredError";
-  }
-}
-
 export class AgentRunningError extends Error {
   constructor() {
     super("Agent is already running");
@@ -16,30 +9,6 @@ export class MissingProjectContextError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "MissingProjectContextError";
-  }
-}
-
-export class MissingAgentModelConfigError extends Error {
-  constructor(
-    public readonly agentName: string,
-    public readonly availableAgents: string[],
-  ) {
-    super(`Agent "${agentName}" must define a model in config.agents.${agentName}.model. Available agents: ${availableAgents.join(", ")}`);
-    this.name = "MissingAgentModelConfigError";
-  }
-}
-
-export class UnknownModelVariantError extends Error {
-  constructor(
-    public readonly agentName: string,
-    public readonly modelId: string,
-    public readonly requestedVariant: string,
-    public readonly availableVariants: string[],
-  ) {
-    super(
-      `Agent "${agentName}" requested unknown variant "${requestedVariant}" for model "${modelId}". Available variants: ${availableVariants.join(", ")}`,
-    );
-    this.name = "UnknownModelVariantError";
   }
 }
 

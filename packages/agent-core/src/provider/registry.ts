@@ -3,8 +3,10 @@ import type { ProviderRegistryProvider } from "ai";
 import type { ProvidersConfig } from "../config/index";
 import {
   createProviderInstance,
+  collectProviderSecretValues,
   getProviderConfig,
   getModelConfig,
+  providerAdapterCatalog,
 } from "../config/index";
 import { ModelInfo } from "./model";
 
@@ -95,18 +97,23 @@ export function createRegistry(providers: ProvidersConfig): ProviderRegistry {
   const models = new Map<string, ModelInfo>();
 
   for (const [providerId, providerConfig] of Object.entries(providers)) {
-    const instance = createProviderInstance(providerConfig);
+    const instance = createProviderInstance(providerId, providerConfig);
+    const adapter = providerAdapterCatalog.get(providerConfig.npm);
+    if (!adapter) throw new Error(`Validated Provider adapter disappeared: ${providerConfig.npm}`);
+    const providerSecretValues = collectProviderSecretValues(adapter, providerConfig.options);
     sdkProviders[providerId] = instance;
 
     for (const modelId of Object.keys(providerConfig.models)) {
       const modelConfig = getModelConfig(providerConfig, modelId);
-      const sdkModel = instance.chatModel(modelId);
+      const sdkModel = instance.languageModel(modelId);
 
       const info = new ModelInfo({
         model: sdkModel,
         config: modelConfig,
         providerId,
+        providerDisplayName: providerConfig.name,
         modelId,
+        providerSecretValues,
       });
 
       models.set(info.qualifiedId, info);

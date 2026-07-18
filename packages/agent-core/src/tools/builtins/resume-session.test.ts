@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { ChildExecutionHandle, ResumeChildRequest } from "../../delegation/types";
+import { testExecutionStart } from "../../testing/test-execution-fixtures";
 import { storeManager } from "../../store/store";
 import type { ToolExecutionContext } from "../types";
 import { createTestProjectContext } from "../test-project-context";
@@ -31,7 +32,7 @@ function handle(parentSessionId: string): ChildExecutionHandle {
     parentSessionId,
     title: "Original title",
   });
-  store.getState().append({ type: "execution-start", executionId: crypto.randomUUID() });
+  store.getState().append(testExecutionStart(crypto.randomUUID()));
   store.getState().append({ type: "execution-end", status: "failed" });
   return {
     sessionId: store.getState().sessionId,

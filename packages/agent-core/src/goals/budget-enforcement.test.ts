@@ -7,6 +7,7 @@ import type { GoalBudgetSummary } from "@archcode/protocol";
 import { ProjectHitlQueue } from "../hitl/project-queue";
 import { createSessionStore } from "../store/store";
 import { silentLogger } from "../logger";
+import { createTestHitlCodec } from "../tools/test-project-context";
 import {
   BUDGET_APPROVAL_POINT,
   GoalBudgetEnforcementStopError,
@@ -27,7 +28,7 @@ beforeEach(async () => {
   workspaceRoot = await mkdtemp(join(TMP_ROOT, "workspace-"));
   projectContext = {
     goalState: new GoalStateManager(workspaceRoot, silentLogger),
-    hitl: new ProjectHitlQueue({ workspaceRoot }),
+    hitl: new ProjectHitlQueue({ workspaceRoot, codec: createTestHitlCodec() }),
   };
 });
 

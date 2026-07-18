@@ -29,7 +29,8 @@ import {
   TOOL_MEMORY_READ,
   TOOL_MEMORY_WRITE,
   TOOL_TODO_WRITE,
-  TOOL_VIEW_TOOL_OUTPUT,
+  TOOL_OUTPUT_READ,
+  TOOL_OUTPUT_SEARCH,
   TOOL_WEB_FETCH,
 } from "../../tools/names";
 
@@ -58,7 +59,8 @@ export const engineerAgentDefinition = {
       TOOL_WEB_FETCH,
       ...DELEGATION_CORE_TOOLS,
       TOOL_CANCEL_SESSION,
-      TOOL_VIEW_TOOL_OUTPUT,
+      TOOL_OUTPUT_READ,
+      TOOL_OUTPUT_SEARCH,
       TOOL_COMPRESS,
       TOOL_MEMORY_READ,
       TOOL_MEMORY_WRITE,
@@ -86,6 +88,5 @@ export const engineerAgentDefinition = {
     terminalReminders: true,
   },
   includeMemoryInPrompt: true,
-  enforceToolOutputQuota: true,
   skills: ["git-master", "safe-refactor", "codemap", "review-work", "research-docs", "goal-create", "automation-create"],
 } as const satisfies AgentDefinition;

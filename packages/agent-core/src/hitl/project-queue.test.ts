@@ -11,8 +11,11 @@ import {
   type CreateHitlInput,
   type ProjectHitlQueueEvent,
 } from "./project-queue";
+import { HitlBoundaryCodec } from "./boundary-codec";
+import { REDACTION_MARKER, SecretRedactionPolicy } from "../security";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "project-queue", crypto.randomUUID());
+const codec = new HitlBoundaryCodec(new SecretRedactionPolicy([]));
 
 beforeEach(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });
@@ -25,7 +28,7 @@ afterAll(async () => {
 
 describe("ProjectHitlQueue", () => {
   test("persists every owner in the one project queue", async () => {
-    const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT });
+    const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT, codec });
     const session = await queue.create(questionInput("question-1"));
     const goal = await queue.create(budgetInput("budget-1"));
 
@@ -38,7 +41,7 @@ describe("ProjectHitlQueue", () => {
   });
 
   test("create is idempotent by requestKey and rejects a changed intent", async () => {
-    const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT });
+    const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT, codec });
     const first = await queue.create(questionInput("same"));
     const repeated = await queue.create(questionInput("same"));
 
@@ -57,12 +60,12 @@ describe("ProjectHitlQueue", () => {
       updatedAt: new Date().toISOString(),
     }));
 
-    const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT });
+    const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT, codec });
     await expect(queue.list()).rejects.toThrow();
   });
 
   test("strict creation enforces owner-source boundaries", async () => {
-    const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT });
+    const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT, codec });
     await expect(queue.create({
       ...questionInput("wrong-owner"),
       owner: { type: "goal", id: "goal-1" },
@@ -74,7 +77,7 @@ describe("ProjectHitlQueue", () => {
   });
 
   test("persists redacted persistent-approval eligibility and rejects forged approve always", async () => {
-    const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT });
+    const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT, codec });
     const eligible = await queue.create({ ...permissionInput("eligible"), persistentApprovalEligible: true });
     const ineligible = await queue.create({ ...permissionInput("ineligible"), persistentApprovalEligible: false });
 
@@ -93,7 +96,7 @@ describe("ProjectHitlQueue", () => {
   });
 
   test("accepts one immutable response under a race", async () => {
-    const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT });
+    const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT, codec });
     const { record } = await queue.create(questionInput("race"));
     const results = await Promise.allSettled([
       queue.respond(record.hitlId, { type: "question_answer", answers: ["first"] }),
@@ -109,7 +112,7 @@ describe("ProjectHitlQueue", () => {
   });
 
   test("validates response variant against source", async () => {
-    const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT });
+    const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT, codec });
     const { record } = await queue.create(budgetInput("budget-response"));
 
     await expect(queue.respond(record.hitlId, {
@@ -119,9 +122,9 @@ describe("ProjectHitlQueue", () => {
   });
 
   test("persists dispatch attempts and derives inspection after the third failure", async () => {
-    const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT });
+    const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT, codec });
     const events: ProjectHitlQueueEvent[] = [];
-    const eventQueue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT, onEvent: (event) => events.push(event) });
+    const eventQueue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT, codec, onEvent: (event) => events.push(event) });
     const { record } = await eventQueue.create(questionInput("delivery"));
     await eventQueue.respond(record.hitlId, { type: "question_answer", answers: ["yes"] });
 
@@ -149,7 +152,7 @@ describe("ProjectHitlQueue", () => {
   });
 
   test("applied answer resolves while applied cancel becomes cancelled", async () => {
-    const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT });
+    const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT, codec });
     const question = (await queue.create(questionInput("resolve"))).record;
     const permission = (await queue.create(permissionInput("cancel"))).record;
     await queue.respond(question.hitlId, { type: "question_answer", answers: ["yes"] });
@@ -163,7 +166,7 @@ describe("ProjectHitlQueue", () => {
 
   test("events and safe views never expose accepted responses or delivery errors", async () => {
     const events: ProjectHitlQueueEvent[] = [];
-    const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT, onEvent: (event) => events.push(event) });
+    const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT, codec, onEvent: (event) => events.push(event) });
     const { record } = await queue.create(questionInput("safe-events"));
     await queue.respond(record.hitlId, { type: "question_answer", answers: ["secret answer"] });
     await queue.resolve(record.hitlId, { type: "dispatching" });
@@ -185,18 +188,68 @@ describe("ProjectHitlQueue", () => {
   test("event callback failure never rolls back durable queue mutations", async () => {
     const queue = new ProjectHitlQueue({
       workspaceRoot: TMP_ROOT,
+      codec,
       onEvent: () => { throw new Error("subscriber unavailable"); },
     });
 
     const { record } = await queue.create(questionInput("event-failure"));
     await queue.respond(record.hitlId, { type: "question_answer", answers: ["persisted"] });
 
-    const reloaded = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT });
+    const reloaded = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT, codec });
     expect((await reloaded.list())[0]).toMatchObject({
       hitlId: record.hitlId,
       status: "answered",
       response: { type: "question_answer", answers: ["persisted"] },
     });
+  });
+
+  test("redacts secret-bearing request and response before durable validation and persistence", async () => {
+    const secret = "hitl-secret-literal-123456";
+    const secretCodec = new HitlBoundaryCodec(new SecretRedactionPolicy([secret]));
+    const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT, codec: secretCodec });
+    const { record } = await queue.create({
+      ...questionInput("secret-safe"),
+      displayPayload: {
+        title: "Choose",
+        summary: `Never persist ${secret}`,
+        questions: [{ question: `Use ${secret}?`, header: "Decision", custom: true }],
+        redacted: true,
+      },
+    });
+    await queue.respond(record.hitlId, {
+      type: "question_answer",
+      answers: [`Continue with ${secret}`],
+      comment: `Comment ${secret}`,
+    });
+
+    const persisted = await Bun.file(projectHitlQueuePath(TMP_ROOT)).text();
+    expect(persisted).not.toContain(secret);
+    expect(persisted).toContain(REDACTION_MARKER);
+  });
+
+  test("invalid request, response, and record candidates leave durable queue bytes unchanged", async () => {
+    const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT, codec });
+    await expect(queue.create({
+      ...questionInput("x".repeat(129)),
+    })).rejects.toThrow();
+    expect(await Bun.file(projectHitlQueuePath(TMP_ROOT)).exists()).toBe(false);
+
+    const { record } = await queue.create(questionInput("valid"));
+    const beforeResponse = await Bun.file(projectHitlQueuePath(TMP_ROOT)).text();
+    await expect(queue.respond(record.hitlId, {
+      type: "question_answer",
+      answers: ["ordinary words ".repeat(1400)],
+    })).rejects.toThrow();
+    expect(await Bun.file(projectHitlQueuePath(TMP_ROOT)).text()).toBe(beforeResponse);
+
+    await queue.respond(record.hitlId, { type: "question_answer", answers: ["yes"] });
+    await queue.resolve(record.hitlId, { type: "dispatching" });
+    const beforeRecord = await Bun.file(projectHitlQueuePath(TMP_ROOT)).text();
+    await expect(queue.resolve(record.hitlId, {
+      type: "delivery_failed",
+      error: "ordinary failure words ".repeat(100),
+    })).rejects.toThrow();
+    expect(await Bun.file(projectHitlQueuePath(TMP_ROOT)).text()).toBe(beforeRecord);
   });
 });
 

@@ -1,14 +1,17 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { storeManager } from "../../../store/store";
 import path from "node:path";
+import { tmpdir } from "node:os";
 import { mkdir, rm } from "node:fs/promises";
 import { createMockStore } from "../../../store/test-helpers";
-import { ToolRegistry } from "../../registry";
+import { createTestToolRegistryFixture } from "../../test-registry";
+import { expectBlockedRequest } from "../../test-results";
 import type { ToolExecutionContext } from "../../types";
 import { lspSymbolsTool } from "./lsp-symbols";
 import { createDurableTestSessionContext, createTestProjectContext } from "../../test-project-context";
 
-const testDir = path.join(import.meta.dir, "__test_tmp__", "lsp-symbols", crypto.randomUUID());
+const testDir = path.join(tmpdir(), "archcode-lsp-symbols", crypto.randomUUID());
+const registryFixture = createTestToolRegistryFixture({ descriptors: [lspSymbolsTool] });
 
 beforeEach(async () => {
   await rm(testDir, { recursive: true, force: true });
@@ -16,6 +19,7 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  await registryFixture.dispose();
   await rm(testDir, { recursive: true, force: true });
 });
 
@@ -54,18 +58,15 @@ describe("lspSymbolsTool", () => {
   });
 
   test("workspace permission asks for document path outside workspace through registry", async () => {
-    const registry = new ToolRegistry();
-    registry.register(lspSymbolsTool);
-
     const input = { scope: "document", filePath: "../outside.ts" };
     const durable = await createDurableTestSessionContext(testDir, crypto.randomUUID());
     const ctx = makeCtx({ toolName: "lsp_symbols", toolCallId: "call-1", agentName: "engineer", agentSkills: [], input, ...durable });
 
-    const result = await registry.execute(
+    const result = await registryFixture.registry.execute(
         { toolName: "lsp_symbols", toolCallId: "call-1", input },
         ctx,
       );
-    expect(result.blocked?.source).toEqual({ type: "tool_permission", toolCallId: "call-1", toolName: "lsp_symbols" });
+    expect(expectBlockedRequest(result).source).toEqual({ type: "tool_permission", toolCallId: "call-1", toolName: "lsp_symbols" });
   });
 
 });

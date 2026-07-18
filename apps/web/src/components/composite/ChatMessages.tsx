@@ -3,6 +3,7 @@ import { ChevronRight, Sparkles, Info, TriangleAlert } from "lucide-react";
 import { getWebSessionStore, useSessionStore } from "../../store/session-store";
 import { useSessionFamilySteerTargetExecutionId } from "../../store/session-runtime-store";
 import { useDeletePendingMessage, useEditPendingMessage, usePostMessage, useSteerPendingMessage } from "../../api/mutations";
+import { useModelRuntime } from "../../api/queries";
 import { ApiError } from "../../api/client";
 import { MarkdownContent } from "../primitives/MarkdownContent";
 import { ToolCard } from "./ToolCard";
@@ -21,6 +22,11 @@ import type {
   ToolPart,
   ToolChildSessionLink,
   CompressionBlockPart,
+  ExecutionModelBindingSummary,
+  ModelRuntimeCatalog,
+  ModelSelectionRef,
+  RequestedModelSelection,
+  SessionNextModelSelection,
 } from "@archcode/protocol";
 import { TOOL_DELEGATE } from "@archcode/protocol";
 import { RecoveryNotice } from "./RecoveryNotice";
@@ -28,6 +34,7 @@ import { GroupedToolCard } from "./GroupedToolCard";
 import { groupReadOnlyToolParts } from "../../lib/group-tools";
 import { formatRelativeTime } from "../../lib/time-format";
 import { ConversationRail } from "../primitives/ConversationRail";
+import { coherentModelRuntime } from "../../lib/model-runtime-coherence";
 
 function ReasoningBlock({ part }: { part: ReasoningPart }) {
   const [expanded, setExpanded] = useState(false);
@@ -54,6 +61,42 @@ function ReasoningBlock({ part }: { part: ReasoningPart }) {
   );
 }
 
+function selectionLabel(selection: ModelSelectionRef): string {
+  return selection.variant ? `${selection.model} · ${selection.variant}` : selection.model;
+}
+
+function requestedSelectionLabel(requested: RequestedModelSelection): string {
+  return `${requested.mode === "agent_default" ? "Agent default" : "Override"}: ${selectionLabel(requested.selection)}`;
+}
+
+function sameSelection(left: ModelSelectionRef, right: ModelSelectionRef): boolean {
+  return left.model === right.model && left.variant === right.variant;
+}
+
+function catalogHasSelection(catalog: ModelRuntimeCatalog, selection: ModelSelectionRef): boolean {
+  const model = catalog.providers
+    .flatMap((provider) => provider.models)
+    .find((candidate) => candidate.qualifiedId === selection.model);
+  return model !== undefined && (selection.variant === undefined || model.variants.includes(selection.variant));
+}
+
+function resolvePendingSelection(
+  requested: RequestedModelSelection,
+  catalog: ModelRuntimeCatalog | undefined,
+  nextModelSelection: SessionNextModelSelection | undefined,
+): ModelSelectionRef | undefined {
+  if (catalog === undefined || nextModelSelection === undefined) return undefined;
+  if (catalogHasSelection(catalog, requested.selection)) return requested.selection;
+  return nextModelSelection?.resolved.selection;
+}
+
+function inspectMessage(messageId: string): void {
+  const url = new URL(window.location.href);
+  url.searchParams.set("message", messageId);
+  window.history.pushState({}, "", url);
+  window.dispatchEvent(new window.PopStateEvent("popstate"));
+}
+
 export function MsgUser({ message }: { message: SessionMessage }) {
   const textParts = message.parts.filter((p): p is TextPart => p.type === "text");
   const systemNoticeParts = message.parts.filter((p): p is SystemNoticePart => p.type === "system-notice");
@@ -74,7 +117,15 @@ export function MsgUser({ message }: { message: SessionMessage }) {
             {part.text}
           </div>
         ))}
-        <span className="text-[11px] text-text-muted">{formatRelativeTime(message.createdAt)}</span>
+        <div className="flex flex-wrap items-center justify-end gap-x-2 text-[11px] text-text-muted">
+          {message.modelAudit && <>
+            <span data-testid={`message-requested-model-${message.id}`}>{requestedSelectionLabel(message.modelAudit.requested)}</span>
+            <span data-testid={`message-actual-model-${message.id}`}>Actual: {selectionLabel(message.modelAudit.actual)}</span>
+            {message.modelAudit.reason === "config_invalidated" && <span className="text-warning">Requested model was invalidated by configuration</span>}
+          </>}
+          {message.executionId && <button type="button" className="hover:text-accent" onClick={() => inspectMessage(message.id)}>Inspect</button>}
+          <span>{formatRelativeTime(message.createdAt)}</span>
+        </div>
       </div>
     </div>
   );
@@ -85,20 +136,34 @@ function PendingMessageBubble({
   projectSlug,
   sessionId,
   steerTargetExecutionId,
+  activeModelBinding,
+  modelRuntime,
+  nextModelSelection,
 }: {
   message: PendingSessionMessage;
   projectSlug: string;
   sessionId: string;
   steerTargetExecutionId?: string;
+  activeModelBinding?: ExecutionModelBindingSummary;
+  modelRuntime?: ModelRuntimeCatalog;
+  nextModelSelection?: SessionNextModelSelection;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.content);
   const editMessage = useEditPendingMessage();
   const deleteMessage = useDeletePendingMessage();
   const steerMessage = useSteerPendingMessage();
+  const resolvedPendingSelection = resolvePendingSelection(message.requestedModelSelection, modelRuntime, nextModelSelection);
+  const invalidationLabel = resolvedPendingSelection !== undefined
+    && !sameSelection(message.requestedModelSelection.selection, resolvedPendingSelection)
+    ? `Will use ${selectionLabel(resolvedPendingSelection)} · requested model invalidated by configuration`
+    : undefined;
   const canSteer = message.state === "queued"
     && typeof steerTargetExecutionId === "string"
-    && steerTargetExecutionId.length > 0;
+    && steerTargetExecutionId.length > 0
+    && activeModelBinding !== undefined
+    && resolvedPendingSelection !== undefined
+    && sameSelection(resolvedPendingSelection, activeModelBinding.selection);
 
   const saveEdit = () => {
     const content = draft.trim();
@@ -137,6 +202,12 @@ function PendingMessageBubble({
         )}
         <div className="flex items-center gap-2 text-[11px] text-text-muted">
           <span>{message.state === "steering" ? "Steering…" : "Queued"}</span>
+          <span data-testid={`pending-requested-model-${message.id}`}>{requestedSelectionLabel(message.requestedModelSelection)}</span>
+          {invalidationLabel && (
+            <span className="text-warning" data-testid={`pending-model-invalidation-${message.id}`}>
+              {invalidationLabel}
+            </span>
+          )}
           {message.state === "queued" && (
             <>
               {canSteer && (
@@ -191,6 +262,7 @@ export function MsgAgent({
   focusStoreSessionId,
   childSessionLinks,
   agents,
+  binding,
 }: {
   message: SessionMessage;
   agentName: string | null;
@@ -198,6 +270,7 @@ export function MsgAgent({
   focusStoreSessionId: string;
   childSessionLinks: ToolChildSessionLink[];
   agents: readonly AgentDescriptor[];
+  binding?: ExecutionModelBindingSummary;
 }) {
   const appearance = resolveAgentAppearance(agentName);
 
@@ -208,7 +281,7 @@ export function MsgAgent({
           {groupReadOnlyToolParts(message.parts).map((entry) => {
             const partKind = entry.type === "grouped-tools" || entry.type === "tool" ? "tool" : "content";
             if (entry.type === "grouped-tools") {
-              return <div key={entry.id} className="conversation-part" data-conversation-part={partKind}><GroupedToolCard tools={entry.tools} /></div>;
+              return <div key={entry.id} className="conversation-part" data-conversation-part={partKind}><GroupedToolCard tools={entry.tools} projectSlug={projectSlug} sessionId={focusStoreSessionId} /></div>;
             }
             const part = entry as SessionPart;
             return <div key={part.id} className="conversation-part" data-conversation-part={partKind}><PartRenderer part={part} projectSlug={projectSlug} focusStoreSessionId={focusStoreSessionId} childSessionLinks={childSessionLinks} agentDescriptors={agents} /></div>;
@@ -221,6 +294,10 @@ export function MsgAgent({
       >
         <span className="sr-only">Sent </span>{formatRelativeTime(message.createdAt)}
       </time>
+      {binding && <div className="mt-0.5 flex items-center gap-2 text-[11px] text-text-muted" data-testid={`assistant-model-${message.id}`}>
+        <span>Actual: {binding.modelDisplayName}{binding.selection.variant ? ` · ${binding.selection.variant}` : ""}</span>
+        <button type="button" className="hover:text-accent" onClick={() => inspectMessage(message.id)}>Inspect</button>
+      </div>}
     </div>
   );
 }
@@ -249,11 +326,6 @@ function CompactionBlock({ part }: { part: { type: "compaction"; summary: string
       </div>
     </div>
   );
-}
-
-export function parseToolOutput(output: string | undefined): Record<string, unknown> | null {
-  if (!output) return null;
-  try { return JSON.parse(output); } catch { return null; }
 }
 
 function DelegateToolCard({
@@ -312,7 +384,7 @@ export function PartRenderer({ part, projectSlug, focusStoreSessionId, childSess
       if (part.toolName === TOOL_DELEGATE) {
         return <DelegateToolCard part={part} projectSlug={projectSlug} focusStoreSessionId={focusStoreSessionId} childSessionLinks={childSessionLinks} agentDescriptors={agentDescriptors} />;
       }
-      return <ToolCard part={part} />;
+      return <ToolCard part={part} projectSlug={projectSlug} sessionId={focusStoreSessionId} />;
     case "system-notice":
       return <SystemNoticeBlock part={part} />;
     case "compaction":
@@ -335,6 +407,7 @@ interface LocalSendingMessage {
   readonly content: string;
   readonly createdAt: number;
   readonly status: "sending" | "retryable";
+  readonly requestedModelSelection: RequestedModelSelection;
 }
 
 function LocalSendingMessageBubble({
@@ -356,6 +429,7 @@ function LocalSendingMessageBubble({
         sessionId,
         content: message.content,
         clientRequestId: message.clientRequestId,
+        requestedModelSelection: message.requestedModelSelection,
       },
       {
         onSuccess: (acceptance) => {
@@ -384,6 +458,7 @@ function LocalSendingMessageBubble({
         </div>
         <div className="flex items-center gap-2 text-[11px] text-text-muted">
           <span>{retryable ? "Send status unknown" : "Sending…"}</span>
+          <span>{requestedSelectionLabel(message.requestedModelSelection)}</span>
           {retryable && (
             <button
               type="button"
@@ -410,6 +485,15 @@ export function ChatMessages({ slug, sessionId, agents }: ChatMessagesProps) {
   const focusStoreSessionId = useSessionStore(sessionId, (s) => s.rootSessionId, slug);
   const childSessionLinks = useSessionStore(sessionId, (s) => s.childSessionLinks, slug);
   const agentName = useSessionStore(sessionId, (s) => s.agentName, slug);
+  const activeModelBinding = useSessionStore(sessionId, (s) => s.activeModelBinding, slug);
+  const nextModelSelection = useSessionStore(sessionId, (s) => s.nextModelSelection, slug);
+  const { data: modelRuntime, isFetching: isModelRuntimeFetching } = useModelRuntime();
+  const coherentRuntime = coherentModelRuntime(
+    modelRuntime,
+    nextModelSelection,
+    isModelRuntimeFetching,
+  );
+  const executions = useSessionStore(sessionId, (s) => s.executions, slug);
   const compressionBlocks = useSessionStore(sessionId, (s) => s.compressionBlocks ?? [], slug);
   const compression = useSessionStore(sessionId, (s) => s.compression, slug);
 
@@ -522,6 +606,9 @@ export function ChatMessages({ slug, sessionId, agents }: ChatMessagesProps) {
               projectSlug={slug}
               sessionId={sessionId}
               steerTargetExecutionId={steerTargetExecutionId}
+              activeModelBinding={activeModelBinding}
+              modelRuntime={coherentRuntime}
+              nextModelSelection={coherentRuntime ? nextModelSelection : undefined}
             />
           );
         }
@@ -539,7 +626,7 @@ export function ChatMessages({ slug, sessionId, agents }: ChatMessagesProps) {
         if (msg.role === "user") {
           return <MsgUser key={msg.id} message={msg} />;
         }
-        return <MsgAgent key={msg.id} message={msg} agentName={agentName} projectSlug={slug} focusStoreSessionId={focusStoreSessionId} childSessionLinks={childSessionLinks} agents={agents} />;
+        return <MsgAgent key={msg.id} message={msg} agentName={agentName} projectSlug={slug} focusStoreSessionId={focusStoreSessionId} childSessionLinks={childSessionLinks} agents={agents} binding={executions.find((execution) => execution.id === msg.executionId)?.binding} />;
         })}
         <div ref={sentinelRef} />
       </ConversationRail>

@@ -1,23 +1,11 @@
 import { z } from "zod";
+import { createProcessRunner } from "../../process/runner";
+import type { ProcessOutputSink, ProcessRunnerResult } from "../../process/types";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
-import type { ToolExecutionResult } from "../types";
-import { createProcessRunner } from "../../process/runner";
-import type { ProcessRunnerResult } from "../../process/types";
+import type { RawToolResult } from "../types";
 
 const GitStatusInputSchema = z.object({}).strict();
-
-export function parseGitStatusOutput(raw: string): string {
-  return raw
-    .split("\0")
-    .filter(Boolean)
-    .join("\n");
-}
-
-interface GitStatusResult {
-  output: string;
-  exitCode: number;
-}
 
 const GIT_STATUS_ARGV = [
   "git",
@@ -28,49 +16,47 @@ const GIT_STATUS_ARGV = [
   "--no-renames",
 ] as const;
 
-export async function runGitStatus(
-  cwd: string,
-  signal: AbortSignal,
-): Promise<GitStatusResult> {
-  const result = await createProcessRunner().run({
-    argv: GIT_STATUS_ARGV,
-    cwd,
-    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
-    signal,
-  });
-
-  return formatGitStatusResult(result);
+/** Convert porcelain NUL records as they arrive, without ever retaining stdout. */
+export function createGitStatusCaptureSink(
+  capture: NonNullable<import("../types").ToolExecutionContext["outputCapture"]>,
+): ProcessOutputSink {
+  return {
+    async write(stream, chunk) {
+      if (stream !== "stdout") return;
+      const formatted = chunk.slice();
+      for (let index = 0; index < formatted.byteLength; index++) {
+        if (formatted[index] === 0) formatted[index] = 0x0a;
+      }
+      await capture.write(formatted);
+    },
+  };
 }
 
-function formatGitStatusResult(result: ProcessRunnerResult): GitStatusResult {
+function processDetails(result: ProcessRunnerResult) {
+  if (result.kind === "spawn-failure") return undefined;
+  return {
+    exitCode: result.kind === "signal" ? result.exitCode : result.kind === "timeout" || result.kind === "aborted" ? result.exitCode ?? null : result.exitCode,
+    signal: result.kind === "signal" ? String(result.signal) : null,
+    timedOut: result.kind === "timeout",
+    aborted: result.kind === "aborted",
+    durationMs: result.durationMs,
+  };
+}
+
+function errorFromGitStatus(result: ProcessRunnerResult): RawToolResult | undefined {
   switch (result.kind) {
     case "success":
-      return { output: parseGitStatusOutput(result.output.stdout), exitCode: result.exitCode };
+      return undefined;
     case "nonzero":
-      return {
-        output: result.output.stderr.trim() || `git status exited with code ${result.exitCode}`,
-        exitCode: result.exitCode,
-      };
+      return createToolErrorResult({ kind: "execution", message: result.output.stderr.trim() || `git status exited with code ${result.exitCode}` });
     case "timeout":
-      return {
-        output: `git status timed out after ${result.timeoutMs}ms`,
-        exitCode: 1,
-      };
+      return createToolErrorResult({ kind: "execution", code: "TOOL_PROCESS_TIMEOUT", message: `git status timed out after ${result.timeoutMs}ms` });
     case "aborted":
-      return {
-        output: "git status was aborted",
-        exitCode: 1,
-      };
+      return createToolErrorResult({ kind: "execution", code: "TOOL_PROCESS_ABORTED", message: "git status was aborted" });
     case "signal":
-      return {
-        output: `git status was terminated by signal ${result.signal}`,
-        exitCode: 1,
-      };
+      return createToolErrorResult({ kind: "execution", message: `git status was terminated by signal ${result.signal}` });
     case "spawn-failure":
-      return {
-        output: result.error.message,
-        exitCode: 1,
-      };
+      return createToolErrorResult({ kind: "execution", error: new Error(result.error.message), name: result.error.name });
   }
 }
 
@@ -83,22 +69,27 @@ export const gitStatusTool = defineTool({
   ].join("\n"),
   inputSchema: GitStatusInputSchema,
   traits: { readOnly: true, destructive: false, concurrencySafe: true },
-  execute: async (_input, ctx): Promise<string | ToolExecutionResult> => {
+  outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
+  execute: async (_input, ctx): Promise<RawToolResult> => {
+    if (!ctx.outputCapture) {
+      return createToolErrorResult({ kind: "execution", code: "TOOL_OUTPUT_UNAVAILABLE", message: "Git status requires the registry output capture" });
+    }
     try {
-      const result = await runGitStatus(ctx.cwd, ctx.abort);
-      if (result.exitCode !== 0) {
-        return createToolErrorResult({
-          kind: "execution",
-          message: result.output || `git status exited with code ${result.exitCode}`,
-        });
-      }
-      return result.output;
-    } catch (e) {
-      return createToolErrorResult({
-        kind: "execution",
-        error: e instanceof Error ? e : new Error(String(e)),
-        message: `Failed to run git status: ${e instanceof Error ? e.message : String(e)}`,
+      const result = await createProcessRunner().run({
+        argv: GIT_STATUS_ARGV,
+        cwd: ctx.cwd,
+        env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+        signal: ctx.abort,
+        outputSink: createGitStatusCaptureSink(ctx.outputCapture),
       });
+      const error = errorFromGitStatus(result);
+      if (error) return {
+        ...error,
+        ...(processDetails(result) === undefined ? {} : { details: { ...error.details, process: processDetails(result)! } }),
+      };
+      return { isError: false, draft: { kind: "capture" }, details: { process: processDetails(result)! } };
+    } catch (error) {
+      return createToolErrorResult({ kind: "execution", error, message: `Failed to run git status: ${error instanceof Error ? error.message : String(error)}` });
     }
   },
 });

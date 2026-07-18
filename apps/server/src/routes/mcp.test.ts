@@ -13,7 +13,6 @@ function createTestRuntime(statuses: Map<string, McpServerStatus>): AgentRuntime
     mcpManager: undefined,
     toolRegistry: undefined,
     skillService: undefined,
-    providerRegistry: undefined,
     warnings: [],
     contextResolver: undefined,
     subscribeSessionRuntimeChanges: mock(() => () => undefined),

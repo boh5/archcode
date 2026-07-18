@@ -1,8 +1,8 @@
 import { describe, expect, it, mock } from "bun:test";
 import { ChildSessionNotDescendantError } from "../../agents/errors";
 import { storeManager } from "../../store/store";
-import type { ToolExecutionContext, ToolExecutionResult } from "../types";
-import { TOOL_ERROR_META_KEY } from "../errors";
+import { expectTextDraft } from "../test-results";
+import type { RawToolResult, ToolExecutionContext } from "../types";
 import { createTestProjectContext } from "../test-project-context";
 import { CancelSessionInputSchema, cancelSessionTool, executeCancelSession } from "./cancel-session";
 
@@ -30,12 +30,12 @@ function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecuti
   };
 }
 
-function isToolError(result: unknown): result is ToolExecutionResult {
-  return typeof result === "object" && result !== null && "isError" in result && (result as ToolExecutionResult).isError === true;
+function isToolError(result: RawToolResult): boolean {
+  return result.isError;
 }
 
-function errorOutput(result: ToolExecutionResult): string {
-  return result.output;
+function errorOutput(result: RawToolResult): string {
+  return expectTextDraft(result);
 }
 
 describe("cancel_session tool", () => {
@@ -105,8 +105,7 @@ describe("cancel_session tool", () => {
       const callingSessionId = ctx.store.getState().sessionId;
       const result = await executeCancelSession({ session_id: CHILD_SESSION_ID }, ctx);
       expect(isToolError(result)).toBe(false);
-      expect(typeof result).toBe("string");
-      expect(result as string).toContain(CHILD_SESSION_ID);
+      expect(expectTextDraft(result)).toContain(CHILD_SESSION_ID);
       expect(cancelChildSession).toHaveBeenCalledTimes(1);
       expect(cancelChildSession).toHaveBeenCalledWith(WORKSPACE_ROOT, callingSessionId, CHILD_SESSION_ID);
     });
@@ -121,8 +120,7 @@ describe("cancel_session tool", () => {
       const result = await executeCancelSession({ session_id: NON_DESCENDANT_ID }, ctx);
       expect(isToolError(result)).toBe(true);
       if (isToolError(result)) {
-        const meta = result.meta?.[TOOL_ERROR_META_KEY] as { name?: string } | undefined;
-        expect(meta?.name).toBe("ChildSessionNotDescendantError");
+        expect(result.details?.error?.name).toBe("ChildSessionNotDescendantError");
         expect(errorOutput(result)).toContain("not a descendant");
       }
     });
@@ -134,8 +132,7 @@ describe("cancel_session tool", () => {
       });
       const result = await executeCancelSession({ session_id: CHILD_SESSION_ID }, ctx);
       expect(isToolError(result)).toBe(false);
-      expect(typeof result).toBe("string");
-      expect(result as string).toContain("not running");
+      expect(expectTextDraft(result)).toContain("not running");
     });
 
     it("returns error when target session does not exist (callback throws generic error)", async () => {

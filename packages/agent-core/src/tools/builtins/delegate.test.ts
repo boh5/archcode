@@ -3,8 +3,10 @@ import type { ChildResultReceipt, DelegationContract } from "@archcode/protocol"
 import type { ChildExecutionHandle, ChildExecutionRequest } from "../../delegation/types";
 import { hashDelegationContract } from "../../delegation/contract";
 import { SkillNotAllowedError } from "../../agents/errors";
+import { testExecutionStart } from "../../testing/test-execution-fixtures";
 import { storeManager } from "../../store/store";
-import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import { expectTextDraft } from "../test-results";
+import type { ToolExecutionContext } from "../types";
 import { createTestProjectContext } from "../test-project-context";
 import { DelegateInputSchema, executeDelegate } from "./delegate";
 
@@ -72,7 +74,7 @@ function childHandle(parentSessionId: string, contractValue: DelegationContract)
     title: contractValue.title,
   });
   const resultReceipt = receipt(contractValue, executionId);
-  store.getState().append({ type: "execution-start", executionId });
+  store.getState().append(testExecutionStart(executionId));
   store.getState().append({ type: "child-result", receipt: resultReceipt });
   store.getState().append({ type: "execution-end", status: "completed" });
   return {
@@ -109,7 +111,7 @@ describe("delegate V2 contract", () => {
 
     expect(request).toMatchObject({ toolName: "delegate", contract: contractValue });
     expect(request && "prompt" in request).toBe(false);
-    expect(JSON.parse(output as string)).toMatchObject({
+    expect(JSON.parse(expectTextDraft(output))).toMatchObject({
       session_id: handle.sessionId,
       execution_status: "completed",
       result_receipt: { result: { status: "completed" } },
@@ -121,11 +123,11 @@ describe("delegate V2 contract", () => {
       startChildExecution: async () => {
         throw new SkillNotAllowedError("explore", "research-docs", ["codemap"]);
       },
-    })) as ToolExecutionResult;
-    expect(JSON.parse(result.output).details).toMatchObject({
-      target_agent: "explore",
-      rejected_skill: "research-docs",
-      allowed_skills: ["codemap"],
+    }));
+    expect(JSON.parse(expectTextDraft(result))).toMatchObject({
+      code: "TOOL_DELEGATE_FAILED",
+      name: "SkillNotAllowedError",
+      message: 'Skill "research-docs" is not allowed for delegated agent "explore"',
     });
   });
 
@@ -135,7 +137,7 @@ describe("delegate V2 contract", () => {
     const handle = childHandle(parent.store.getState().sessionId, contractValue);
     const startChildExecution = mock(async (_request: ChildExecutionRequest) => handle);
     const output = await executeDelegate(contractValue, { ...parent, startChildExecution });
-    expect(JSON.parse(output as string)).toEqual({
+    expect(JSON.parse(expectTextDraft(output))).toEqual({
       session_id: handle.sessionId,
       agent_type: "explore",
       execution_status: "running",

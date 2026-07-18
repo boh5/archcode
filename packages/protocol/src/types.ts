@@ -1,9 +1,27 @@
 import type { ChildResult, ChildResultReceipt, DelegationContract } from "./delegation";
+import type {
+  ExecutionModelBindingSummary,
+  GlobalSSEModelRuntimeChangedEvent,
+  MessageModelAudit,
+  RequestedModelSelection,
+  SessionNextModelSelection,
+  SessionModelSelection,
+} from "./model-runtime";
+
+export type JsonPrimitive = string | number | boolean | null;
+export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
+export interface JsonObject {
+  readonly [key: string]: JsonValue;
+}
 
 export interface ExecutionStartEvent {
   type: "execution-start";
-  executionId?: string;
+  executionId: string;
+  binding: ExecutionModelBindingSummary;
+  origin: SessionExecutionOrigin;
 }
+
+export type SessionExecutionOrigin = "user_message" | "tool_call" | "tool_batch" | "goal_claim";
 
 export interface ExecutionEndEvent {
   type: "execution-end";
@@ -44,6 +62,8 @@ export interface SessionExecutionRecord {
   error?: string;
   /** User-requested Stop fact for this execution. This is not a Session pause state. */
   stopRequestedAt?: number;
+  binding: ExecutionModelBindingSummary;
+  origin: SessionExecutionOrigin;
 }
 
 export type SessionMessageSource = "user" | "automation";
@@ -58,6 +78,7 @@ export interface PendingSessionMessage {
   acceptedAt: number;
   updatedAt: number;
   targetExecutionId?: string;
+  requestedModelSelection: RequestedModelSelection;
 }
 
 export interface SessionMessageInputReceipt {
@@ -66,6 +87,7 @@ export interface SessionMessageInputReceipt {
   messageId: string;
   requestFingerprint: string;
   status: "pending" | "canonical" | "deleted";
+  requestedModelSelection: RequestedModelSelection;
 }
 
 export interface SessionCommandInputReceipt {
@@ -74,6 +96,7 @@ export interface SessionCommandInputReceipt {
   requestFingerprint: string;
   status: "executing" | "completed" | "failed" | "indeterminate";
   error?: string;
+  requestedModelSelection: RequestedModelSelection;
 }
 
 /** Durable idempotency index for every client-submitted Session input. */
@@ -131,6 +154,11 @@ export interface Reminder {
 export interface SessionMessageAcceptedEvent {
   type: "session.message_accepted";
   message: PendingSessionMessage;
+}
+
+export interface SessionModelSelectionChangedEvent {
+  type: "session.model_selection_changed";
+  modelSelection: SessionModelSelection;
 }
 
 export interface SessionMessageEditedEvent {
@@ -229,13 +257,84 @@ export interface ToolAttemptEvent {
   destructive: boolean;
 }
 
+export interface ToolOutputCount {
+  bytes: number;
+  lines: number;
+}
+
+export type ToolOutputRecovery =
+  | { kind: "none" }
+  | { kind: "source"; toolName: string; nextInput: JsonObject }
+  | {
+      kind: "artifact";
+      outputRef: string;
+      expiresAt: number;
+      canRead: true;
+      canSearch: true;
+    };
+
+export interface ToolOutput {
+  preview: string;
+  completeness: "complete" | "partial";
+  observed: ToolOutputCount;
+  canonical: ToolOutputCount;
+  stored: ToolOutputCount;
+  omitted: ToolOutputCount;
+  recovery: ToolOutputRecovery;
+}
+
+export interface ToolResultErrorDetails {
+  kind: string;
+  code: string;
+  name: string;
+  hint?: string;
+}
+
+export interface ToolProcessDetails {
+  exitCode: number | null;
+  signal: string | null;
+  timedOut: boolean;
+  aborted: boolean;
+  durationMs: number;
+}
+
+export interface ToolDiffPresentation {
+  kind: "diff";
+  files: DiffFile[];
+  truncated?: true;
+}
+
+export interface ToolAskUserAnswerPresentation {
+  question: string;
+  answers: string[];
+}
+
+export interface ToolAskUserPresentation {
+  kind: "ask_user";
+  answers: ToolAskUserAnswerPresentation[];
+  truncated?: true;
+}
+
+export type ToolResultPresentation = ToolDiffPresentation | ToolAskUserPresentation;
+
+export interface ToolResultDetails {
+  error?: ToolResultErrorDetails;
+  process?: ToolProcessDetails;
+  unknownResult?: true;
+  presentations?: ToolResultPresentation[];
+}
+
+export interface FinalizedToolResult {
+  isError: boolean;
+  output: ToolOutput;
+  details?: ToolResultDetails;
+}
+
 export interface ToolResultEvent {
   type: "tool-result";
   toolCallId: string;
   toolName: string;
-  output: string;
-  isError: boolean;
-  meta?: Record<string, unknown>;
+  result: FinalizedToolResult;
 }
 
 export type ToolChildSessionLinkStatus =
@@ -491,6 +590,7 @@ export type StreamEvent =
   | ExecutionStartEvent
   | ExecutionEndEvent
   | SessionCwdChangedEvent
+  | SessionModelSelectionChangedEvent
   | SessionMessageAcceptedEvent
   | SessionMessageEditedEvent
   | SessionMessageDeletedEvent
@@ -581,6 +681,19 @@ export type ConfigSecretMutation =
   | { action: "replace"; value: string }
   | { action: "delete" };
 
+/** JSON values accepted in generic provider and provider-call option trees. */
+export type ConfigJsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | ConfigJsonValue[]
+  | { [key: string]: ConfigJsonValue };
+
+export type ConfigProviderOptions<Secret> = {
+  [key: string]: ConfigJsonValue | Secret | ConfigProviderOptions<Secret>;
+};
+
 export interface ConfigModelCallOptions {
   maxOutputTokens?: number;
   temperature?: number;
@@ -591,7 +704,7 @@ export interface ConfigModelCallOptions {
   stopSequences?: string[];
   seed?: number;
   timeout?: number;
-  providerOptions?: Record<string, unknown>;
+  providerOptions?: Record<string, ConfigJsonValue>;
 }
 
 export interface ConfigModelCapabilities {
@@ -612,12 +725,7 @@ export interface ConfigModelSettings {
 export interface ConfigProviderSettings<Secret> {
   npm: string;
   name: string;
-  options: {
-    baseURL: string;
-    apiKey?: Secret;
-    headers?: Record<string, Secret>;
-    queryParams?: Record<string, Secret>;
-  };
+  options: ConfigProviderOptions<Secret>;
   models: Record<string, ConfigModelSettings>;
 }
 
@@ -674,8 +782,9 @@ export type ServerConfigUpdate = ServerConfigDocument<ConfigSecretMutation>;
 export interface ServerConfigSnapshot {
   config: ServerConfigEditableView;
   revision: string;
+  modelRuntimeRevision: string;
   configPath: string;
-  restartRequired: boolean;
+  restartRequiredSections: Array<"mcp" | "memory" | "integrations.github">;
 }
 
 export interface UpdateServerConfigRequest {
@@ -766,6 +875,7 @@ export type GlobalSSEEvent =
   | GlobalSSELaggedEvent
   | GlobalSSEShutdownEvent
   | GlobalSSEMcpStatusEvent
+  | GlobalSSEModelRuntimeChangedEvent
   | GlobalSSESessionRuntimeSnapshotEvent
   | GlobalSSESessionRuntimeChangedEvent
   | GlobalSSEHitlSnapshotEvent
@@ -811,7 +921,6 @@ export interface PendingToolPart {
   attemptId?: string;
   attemptTimestamp?: number;
   attemptDestructive?: boolean;
-  meta?: Record<string, unknown>;
 }
 
 export interface RunningToolPart {
@@ -826,7 +935,6 @@ export interface RunningToolPart {
   attemptId?: string;
   attemptTimestamp?: number;
   attemptDestructive?: boolean;
-  meta?: Record<string, unknown>;
 }
 
 export interface CompletedToolPart {
@@ -836,11 +944,10 @@ export interface CompletedToolPart {
   toolCallId: string;
   toolName: string;
   input: unknown;
-  output: string;
+  result: FinalizedToolResult;
   createdAt: number;
   startedAt: number;
   endedAt: number;
-  meta?: Record<string, unknown>;
   attemptId?: string;
   attemptTimestamp?: number;
   attemptDestructive?: boolean;
@@ -853,12 +960,10 @@ export interface ErrorToolPart {
   toolCallId: string;
   toolName: string;
   input: unknown;
-  errorMessage: string;
+  result: FinalizedToolResult;
   createdAt: number;
   startedAt: number;
   endedAt: number;
-  /** Set meta.unknownResult=true when an attempted effectful tool was interrupted before a durable result. */
-  meta?: Record<string, unknown>;
   attemptId?: string;
   attemptTimestamp?: number;
   attemptDestructive?: boolean;
@@ -921,6 +1026,8 @@ export interface SessionMessage {
   /** Correlates a canonical user message with Queue admission and optimistic UI. */
   clientRequestId?: string;
   compacted?: boolean;
+  /** Required for canonical user input; absent from Assistant and internal notice messages. */
+  modelAudit?: MessageModelAudit;
 }
 
 export interface SessionStep {
@@ -932,13 +1039,6 @@ export interface SessionStep {
   finishReason?: string;
   usage?: unknown;
   error?: string;
-}
-
-export interface SessionModelInfo {
-  displayName: string;
-  modelId: string;
-  providerId: string;
-  qualifiedId: string;
 }
 
 export interface SessionProjection {
@@ -965,7 +1065,7 @@ export interface SessionProjection {
   isStreamingModel: boolean;
   currentExecutionId?: string;
   currentAssistantMessageId?: string;
-  modelInfo?: SessionModelInfo | null;
+  modelSelection: SessionModelSelection;
   /** DCP-like dynamic compression state. Cleared when hard compact emits a compact event. */
   compression?: CompressionStateSnapshot;
   /** Projection-only compression block display parts. Canonical messages remain unchanged. */
@@ -1013,7 +1113,7 @@ export interface SessionSummary {
   agentName: string;
   /** Persisted Skill identity; execution resolves these names against current policy. */
   activeSkillNames: string[];
-  modelInfo: SessionModelInfo | null;
+  modelSelection: SessionModelSelection;
   title: string | null;
   /** Goal this session belongs to. */
   goalId?: string;
@@ -1070,7 +1170,9 @@ export interface Session {
   delegationContract?: DelegationContract;
   delegationContractHash?: string;
   eventCursor?: number;
-  modelInfo: SessionModelInfo | null;
+  modelSelection: SessionModelSelection;
+  nextModelSelection: SessionNextModelSelection;
+  activeModelBinding?: ExecutionModelBindingSummary;
   agentName: string;
   activeSkillNames: string[];
 }
@@ -1106,13 +1208,6 @@ export interface ToolDiffMetadata {
   truncated?: boolean;
   unsupportedReason?: ToolDiffUnsupportedReason;
   warning?: string;
-}
-
-export interface ToolResultMeta {
-  /** True when an effectful tool attempt was durably recorded but execution stopped before a result was known. */
-  unknownResult?: boolean;
-  diffs?: ToolDiffMetadata;
-  [key: string]: unknown;
 }
 
 // ─── Goal Types ───

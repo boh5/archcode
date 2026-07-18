@@ -1,6 +1,5 @@
 import type { StoreApi } from "zustand";
-import type { ModelCallOptions } from "../../config/provider";
-import type { ModelInfo } from "../../provider/model";
+import type { ExecutionModelBinding } from "../../models";
 import type { ModelMessage } from "ai";
 import type { ExecutionEndEvent, SessionStoreState } from "../../store/types";
 import type { Logger } from "../../logger";
@@ -8,18 +7,16 @@ import type { ProjectContext } from "../../projects/types";
 
 export interface BeforeModelBuildContext {
   store: StoreApi<SessionStoreState>;
-  modelInfo: ModelInfo;
+  binding: ExecutionModelBinding;
   logger: Logger;
-  modelOptions?: ModelCallOptions;
   abort?: AbortSignal;
   systemPrompt?: string;
 }
 
 export interface BeforeModelCallContext {
   store: StoreApi<SessionStoreState>;
-  modelInfo: ModelInfo;
+  binding: ExecutionModelBinding;
   logger: Logger;
-  modelOptions?: ModelCallOptions;
   abort?: AbortSignal;
   projectContext?: ProjectContext;
   /** Mutable. Modifications only affect this LLM call, NOT persisted to store.
@@ -29,18 +26,16 @@ export interface BeforeModelCallContext {
 
 export interface AfterStepEndContext {
   store: StoreApi<SessionStoreState>;
-  modelInfo: ModelInfo;
+  binding: ExecutionModelBinding;
   logger: Logger;
-  modelOptions?: ModelCallOptions;
   abort?: AbortSignal;
   projectContext?: ProjectContext;
 }
 
 export interface AfterLoopEndContext {
   store: StoreApi<SessionStoreState>;
-  modelInfo: ModelInfo;
+  binding: ExecutionModelBinding;
   logger: Logger;
-  modelOptions?: ModelCallOptions;
   abort?: AbortSignal;
   loopEndStatus: ExecutionEndEvent["status"];
   projectContext?: ProjectContext;

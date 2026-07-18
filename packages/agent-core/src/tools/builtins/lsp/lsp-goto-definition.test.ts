@@ -1,15 +1,18 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { storeManager } from "../../../store/store";
 import path from "node:path";
+import { tmpdir } from "node:os";
 import { mkdir, rm } from "node:fs/promises";
 import { createMockStore } from "../../../store/test-helpers";
 import { inferToolErrorKindFromResult } from "../../errors";
-import { ToolRegistry } from "../../registry";
-import type { ToolExecutionContext, ToolExecutionResult } from "../../types";
+import { createTestToolRegistryFixture } from "../../test-registry";
+import { expectBlockedRequest } from "../../test-results";
+import type { RawToolResult, ToolExecutionContext } from "../../types";
 import { lspGotoDefinitionTool } from "./lsp-goto-definition";
 import { createDurableTestSessionContext, createTestProjectContext } from "../../test-project-context";
 
-const testDir = path.join(import.meta.dir, "__test_tmp__", "lsp-goto-definition", crypto.randomUUID());
+const testDir = path.join(tmpdir(), "archcode-lsp-goto-definition", crypto.randomUUID());
+const registryFixture = createTestToolRegistryFixture({ descriptors: [lspGotoDefinitionTool] });
 
 beforeEach(async () => {
   await rm(testDir, { recursive: true, force: true });
@@ -17,6 +20,7 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  await registryFixture.dispose();
   await rm(testDir, { recursive: true, force: true });
 });
 
@@ -34,8 +38,6 @@ describe("lspGotoDefinitionTool", () => {
   });
 
   test("workspace permission asks for traversal through registry", async () => {
-    const registry = new ToolRegistry();
-    registry.register(lspGotoDefinitionTool);
     const durable = await createDurableTestSessionContext(testDir, crypto.randomUUID());
     const ctx = makeCtx({
       toolName: "lsp_goto_definition",
@@ -46,21 +48,21 @@ describe("lspGotoDefinitionTool", () => {
       ...durable,
     });
 
-    const result = await registry.execute(
+    const result = await registryFixture.registry.execute(
         { toolName: "lsp_goto_definition", toolCallId: "call-1", input: { filePath: "../outside.ts", line: 1, character: 0 } },
         ctx,
       );
-    expect(result.blocked?.source).toEqual({ type: "tool_permission", toolCallId: "call-1", toolName: "lsp_goto_definition" });
+    expect(expectBlockedRequest(result).source).toEqual({ type: "tool_permission", toolCallId: "call-1", toolName: "lsp_goto_definition" });
   });
 
   test("returns lsp-server-not-found for unsupported extension", async () => {
     await writeWorkspaceFile("notes.unknownext", "hello\n");
 
-    const result = await lspGotoDefinitionTool.execute({ filePath: "notes.unknownext", line: 1, character: 0 }, makeCtx()) as ToolExecutionResult;
+    const result = await lspGotoDefinitionTool.execute({ filePath: "notes.unknownext", line: 1, character: 0 }, makeCtx()) as RawToolResult;
 
     expect(result.isError).toBe(true);
     expect(inferToolErrorKindFromResult(result)).toBe("lsp-server-not-found");
-    expect(result.output).toContain("No language mapping found");
+    expect(result.draft.kind === "text" ? result.draft.text : "").toContain("No language mapping found");
   });
 });
 
