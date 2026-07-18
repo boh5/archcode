@@ -2,7 +2,8 @@ import { describe, expect, it, mock } from "bun:test";
 import type { ChildExecutionHandle, ChildExecutionRequest } from "../../delegation/types";
 import { SkillNotAllowedError } from "../../agents/errors";
 import { storeManager } from "../../store/store";
-import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import { expectTextDraft } from "../test-results";
+import type { ToolExecutionContext } from "../types";
 import { createTestProjectContext } from "../test-project-context";
 import { testExecutionStart } from "../../testing/test-execution-fixtures";
 import { DelegateInputSchema, delegateTool, executeDelegate } from "./delegate";
@@ -92,8 +93,8 @@ describe("delegate tool hard cut", () => {
       prompt: "Task:\ninspect\n\nContext:\nverify boundaries",
     });
     expect(request && "currentDepth" in request).toBe(false);
-    expect(result).toContain("Agent type: explore");
-    expect(result).toContain("Result:\ndone");
+    expect(expectTextDraft(result)).toContain("Agent type: explore");
+    expect(expectTextDraft(result)).toContain("Result:\ndone");
   });
 
   it("returns a structured error when child execution is unavailable", async () => {
@@ -103,9 +104,9 @@ describe("delegate tool hard cut", () => {
       skills: [],
       title: "Inspect ownership",
       background: false,
-    }, makeContext()) as ToolExecutionResult;
+    }, makeContext());
     expect(result.isError).toBe(true);
-    expect(JSON.parse(result.output).code).toBe("TOOL_DELEGATE_EXECUTOR_UNAVAILABLE");
+    expect(JSON.parse(expectTextDraft(result)).code).toBe("TOOL_DELEGATE_EXECUTOR_UNAVAILABLE");
   });
 
   it("returns the target Agent Skill allow-list when delegation rejects a Skill", async () => {
@@ -119,18 +120,13 @@ describe("delegate tool hard cut", () => {
       startChildExecution: async () => {
         throw new SkillNotAllowedError("explore", "research-docs", ["codemap"]);
       },
-    })) as ToolExecutionResult;
+    }));
 
     expect(result.isError).toBe(true);
-    expect(JSON.parse(result.output)).toMatchObject({
+    expect(JSON.parse(expectTextDraft(result))).toMatchObject({
       code: "TOOL_DELEGATE_FAILED",
       name: "SkillNotAllowedError",
-      details: {
-        target_agent: "explore",
-        rejected_skill: "research-docs",
-        allowed_skills: ["codemap"],
-      },
-      hint: expect.stringContaining("details.allowed_skills"),
+      message: 'Skill "research-docs" is not allowed for delegated agent "explore"',
     });
   });
 
@@ -145,21 +141,18 @@ describe("delegate tool hard cut", () => {
       startChildExecution: async () => {
         throw new Error("launch failed");
       },
-    })) as ToolExecutionResult;
-    const parsed = JSON.parse(result.output) as {
+    }));
+    const parsed = JSON.parse(expectTextDraft(result)) as {
       code: string;
       name: string;
-      details: Record<string, unknown>;
+      message: string;
       hint: string;
     };
 
     expect(result.isError).toBe(true);
     expect(parsed.code).toBe("TOOL_DELEGATE_FAILED");
     expect(parsed.name).toBe("Error");
-    expect("target_agent" in parsed.details).toBe(false);
-    expect("rejected_skill" in parsed.details).toBe(false);
-    expect("allowed_skills" in parsed.details).toBe(false);
-    expect(parsed.hint).not.toContain("details.allowed_skills");
+    expect(parsed.message).toBe("launch failed");
   });
 
   it("returns launch guidance for background children", async () => {
@@ -173,7 +166,7 @@ describe("delegate tool hard cut", () => {
       title: "Inspect ownership",
       background: true,
     }, makeContext({ store: parentStore, startChildExecution }));
-    expect(result).toContain("Sub-agent started.");
-    expect(result).toContain(`background_output(session_id="${handle.sessionId}")`);
+    expect(expectTextDraft(result)).toContain("Sub-agent started.");
+    expect(expectTextDraft(result)).toContain(`background_output(session_id="${handle.sessionId}")`);
   });
 });

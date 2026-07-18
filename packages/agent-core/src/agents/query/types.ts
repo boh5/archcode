@@ -2,8 +2,9 @@ import type { StoreApi } from "zustand";
 import type { ExecutionModelBinding } from "../../models";
 import type { SessionStoreManager } from "../../store/session-store-manager";
 import type { ExecutionEndEvent, SessionStoreState } from "../../store/types";
-import type { AskUserCallback, ToolConfirmationCallback, ToolExecutionControl } from "../../tools/index";
+import type { ToolExecutionControl } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
+import type { ToolOutputAccessService } from "../../tool-output/access-service";
 import type { ProjectContext } from "../../projects/types";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../../delegation/types";
 import type { SkillService } from "../../skills";
@@ -23,8 +24,7 @@ export interface QueryLoopOptions {
   /** Current Session execution directory, independent of the canonical project context. */
   cwd: string;
   projectContext: ProjectContext;
-  confirmPermission?: ToolConfirmationCallback;
-  askUser?: AskUserCallback;
+  toolOutputAccess: ToolOutputAccessService;
   abort?: AbortSignal;
   systemPrompt?: string;
   maxSteps?: number;

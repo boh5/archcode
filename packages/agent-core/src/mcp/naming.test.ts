@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { REDACTION_MARKER } from "../tools/security";
+import { REDACTION_MARKER } from "../security";
 import {
   McpServerNameError,
   McpToolNameError,
   McpDuplicateToolError,
   McpConnectionError,
   McpToolExecutionError,
-  redactMcpMessage,
 } from "./errors";
+import { SecretRedactionPolicy } from "../security";
 import type { McpWarning } from "./errors";
 import {
   validateMcpNameSegment,
@@ -149,38 +149,6 @@ describe("sanitizeMcpServerNameForRegistry", () => {
   });
 });
 
-// ─── redactMcpMessage ───
-
-describe("redactMcpMessage", () => {
-  test("replaces literal secret with REDACTION_MARKER", () => {
-    const result = redactMcpMessage("my key is sk-abc123 def", ["sk-abc123"]);
-    expect(result).toBe(`my key is ${REDACTION_MARKER} def`);
-  });
-
-  test("replaces multiple occurrences of the same secret", () => {
-    const result = redactMcpMessage("key=sk-abc, token=sk-abc", ["sk-abc"]);
-    expect(result).toBe(`key=${REDACTION_MARKER}, token=${REDACTION_MARKER}`);
-  });
-
-  test("covers direct literal secrets, not only environment-expanded values", () => {
-    const result = redactMcpMessage("Bearer myRawSecretValue", [
-      "myRawSecretValue",
-    ]);
-    expect(result).toBe(`Bearer ${REDACTION_MARKER}`);
-  });
-
-  test("ignores empty-string secrets", () => {
-    const result = redactMcpMessage("hello world", [""]);
-    expect(result).toBe("hello world");
-  });
-
-  test("handles multiple secrets in one pass", () => {
-    const secrets = ["secret1", "secret2"];
-    const result = redactMcpMessage("secret1 and secret2", secrets);
-    expect(result).toBe(`${REDACTION_MARKER} and ${REDACTION_MARKER}`);
-  });
-});
-
 // ─── Error Classes ───
 
 describe("McpServerNameError", () => {
@@ -311,7 +279,7 @@ describe("redaction safety", () => {
 
   test("McpWarning message can hold redacted content safely", () => {
     const raw = "Authorization: Bearer sk-abc123";
-    const redacted = redactMcpMessage(raw, ["sk-abc123"]);
+    const redacted = new SecretRedactionPolicy(["sk-abc123"]).redactString(raw);
     const warning: McpWarning = {
       serverName: "test-server",
       message: redacted,

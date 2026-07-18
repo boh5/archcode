@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 import {
   TOOL_GITHUB_CREATE_ISSUE_COMMENT,
@@ -13,8 +14,9 @@ import {
   TOOL_GITHUB_RERUN_WORKFLOW_RUN,
 } from "./names";
 import { createGitHubToolDescriptors } from "./github";
-import { createRegistry } from "./registry";
 import { createToolExecutionContext, type ToolExecutionContext } from "./types";
+import { createTestToolRegistryFixture, type TestToolRegistryFixture } from "./test-registry";
+import { expectBlockedRequest, expectSettledResult } from "./test-results";
 import { createTestProjectContext } from "./test-project-context";
 import { createSessionStore } from "../store/store";
 import { SessionStoreManager } from "../store/session-store-manager";
@@ -22,9 +24,16 @@ import { SkillService } from "../skills";
 import { silentLogger } from "../logger";
 import type { GitHubConnectorApi, GitHubResponse, GitHubWorkflowRunsPage } from "../integrations/github";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__", "github-tools", crypto.randomUUID());
+const TMP_DIR = join(tmpdir(), "archcode-github-tools", crypto.randomUUID());
 const storeManager = new SessionStoreManager({ logger: silentLogger });
 const CONNECTOR_COVERAGE_BRANCH = "feature/connector-coverage";
+const registryFixtures: TestToolRegistryFixture[] = [];
+
+function createConnectorRegistry(connector: GitHubConnectorApi): TestToolRegistryFixture {
+  const fixture = createTestToolRegistryFixture({ descriptors: createGitHubToolDescriptors({ connector }) });
+  registryFixtures.push(fixture);
+  return fixture;
+}
 
 interface PullRequestChecksOutput {
   type: string;
@@ -41,6 +50,7 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  await Promise.all(registryFixtures.map((fixture) => fixture.dispose()));
   await rm(TMP_DIR, { recursive: true, force: true }).catch(() => {});
 });
 
@@ -77,7 +87,7 @@ describe("GitHub connector-backed tools", () => {
 
   test("routes read tools to the injected connector without network access", async () => {
     const connector = makeConnector();
-    const registry = createRegistry(createGitHubToolDescriptors({ connector }));
+    const registry = createConnectorRegistry(connector).registry;
     const input = { owner: "test-owner", repo: "test-repo", number: 42 };
 
     const result = await registry.execute(
@@ -85,14 +95,15 @@ describe("GitHub connector-backed tools", () => {
       context(TOOL_GITHUB_GET_PULL_REQUEST, [TOOL_GITHUB_GET_PULL_REQUEST], input),
     );
 
-    expect(result.isError).toBe(false);
-    expect(JSON.parse(result.output)).toMatchObject({ type: "github.pull_request", data: { number: 42 } });
+    const finalized = expectSettledResult(result);
+    expect(finalized.isError).toBe(false);
+    expect(JSON.parse(finalized.output.preview)).toMatchObject({ type: "github.pull_request", data: { number: 42 } });
     expect(connector.getPullRequest).toHaveBeenCalledWith("test-owner", "test-repo", 42);
   });
 
   test("maps pull request checks to connector-supported PR metadata and workflow runs", async () => {
     const connector = makeConnector();
-    const registry = createRegistry(createGitHubToolDescriptors({ connector }));
+    const registry = createConnectorRegistry(connector).registry;
     const input = { owner: "test-owner", repo: "test-repo", number: 42, perPage: 25 };
 
     const result = await registry.execute(
@@ -100,8 +111,9 @@ describe("GitHub connector-backed tools", () => {
       context(TOOL_GITHUB_GET_PULL_REQUEST_CHECKS, [TOOL_GITHUB_GET_PULL_REQUEST_CHECKS], input),
     );
 
-    const output = JSON.parse(result.output) as PullRequestChecksOutput;
-    expect(result.isError).toBe(false);
+    const finalized = expectSettledResult(result);
+    const output = JSON.parse(finalized.output.preview) as PullRequestChecksOutput;
+    expect(finalized.isError).toBe(false);
     expect(output.type).toBe("github.pull_request_checks");
     expect(output.data.headBranch).toBe(CONNECTOR_COVERAGE_BRANCH);
     expect(output.data.headSha).toBe("abc123");
@@ -115,47 +127,46 @@ describe("GitHub connector-backed tools", () => {
 
   test("effectful tools request permission before connector execution", async () => {
     const connector = makeConnector();
-    const registry = createRegistry(createGitHubToolDescriptors({ connector }));
+    const registry = createConnectorRegistry(connector).registry;
     const input = { owner: "test-owner", repo: "test-repo", issueNumber: 42, body: "Looks good" };
-    const confirmPermission = mock(async (request) => {
-      expect(request.toolName).toBe(TOOL_GITHUB_CREATE_ISSUE_COMMENT);
-      expect(request.ruleId).toBe("github.create_issue_comment");
-      expect(request.approval).toMatchObject({
-        eligible: true,
-        scope: {
-          kind: "tool-operation",
-          toolName: TOOL_GITHUB_CREATE_ISSUE_COMMENT,
-          operation: "create_issue_comment",
-          target: "test-owner/test-repo#42",
-        },
-      });
-      return "approve_once" as const;
-    });
-
-    const result = await registry.execute(
-      { toolName: TOOL_GITHUB_CREATE_ISSUE_COMMENT, toolCallId: "gh-comment", input },
-      context(TOOL_GITHUB_CREATE_ISSUE_COMMENT, [TOOL_GITHUB_CREATE_ISSUE_COMMENT], input, { confirmPermission }),
+    const toolCall = { toolName: TOOL_GITHUB_CREATE_ISSUE_COMMENT, toolCallId: "gh-comment", input };
+    const toolContext = context(TOOL_GITHUB_CREATE_ISSUE_COMMENT, [TOOL_GITHUB_CREATE_ISSUE_COMMENT], input);
+    const blocked = await registry.execute(
+      toolCall,
+      toolContext,
     );
-
-    expect(result.isError).toBe(false);
-    expect(confirmPermission).toHaveBeenCalledTimes(1);
+    const request = expectBlockedRequest(blocked);
+    expect(request.source).toEqual({ type: "tool_permission", toolCallId: "gh-comment", toolName: TOOL_GITHUB_CREATE_ISSUE_COMMENT });
+    expect("permission" in request && request.permission.ruleId).toBe("github.create_issue_comment");
+    const result = await registry.resumeBlocked({
+      toolCall,
+      request,
+      requestKey: blocked.kind === "blocked" ? blocked.requestKey : "",
+      response: { type: "permission_decision", decision: "approve_once" },
+      context: toolContext,
+    });
+    expect(expectSettledResult(result).isError).toBe(false);
     expect(connector.createIssueComment).toHaveBeenCalledWith("test-owner", "test-repo", 42, "Looks good");
   });
 
   test("permission denial blocks rerun connector execution", async () => {
     const connector = makeConnector();
-    const registry = createRegistry(createGitHubToolDescriptors({ connector }));
+    const registry = createConnectorRegistry(connector).registry;
     const input = { owner: "test-owner", repo: "test-repo", runId: 9001, headBranch: "main" };
 
-    const result = await registry.execute(
-      { toolName: TOOL_GITHUB_RERUN_WORKFLOW_RUN, toolCallId: "gh-rerun", input },
-      context(TOOL_GITHUB_RERUN_WORKFLOW_RUN, [TOOL_GITHUB_RERUN_WORKFLOW_RUN], input, {
-        confirmPermission: async () => "deny",
-      }),
-    );
+    const toolCall = { toolName: TOOL_GITHUB_RERUN_WORKFLOW_RUN, toolCallId: "gh-rerun", input };
+    const toolContext = context(TOOL_GITHUB_RERUN_WORKFLOW_RUN, [TOOL_GITHUB_RERUN_WORKFLOW_RUN], input);
+    const blocked = await registry.execute(toolCall, toolContext);
+    const result = await registry.resumeBlocked({
+      toolCall,
+      request: expectBlockedRequest(blocked),
+      requestKey: blocked.kind === "blocked" ? blocked.requestKey : "",
+      response: { type: "permission_decision", decision: "deny" },
+      context: toolContext,
+    });
 
-    expect(result.isError).toBe(true);
-    expect(result.meta?.permissionErrorCode).toBe("TOOL_PERMISSION_CONFIRMATION_DENIED");
+    expect(expectSettledResult(result).isError).toBe(true);
+    expect(expectSettledResult(result).details?.error?.code).toBe("TOOL_PERMISSION_CONFIRMATION_DENIED");
     expect(connector.rerunWorkflowRun).not.toHaveBeenCalled();
   });
 

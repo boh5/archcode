@@ -9,13 +9,10 @@ import {
   type McpClientFactories,
   type McpToolLike,
 } from "./client";
-import {
-  McpDuplicateToolError,
-  type McpWarning,
-  redactMcpMessage,
-} from "./errors";
+import { McpDuplicateToolError, type McpWarning } from "./errors";
 import { adaptMcpTool } from "./tool-adapter";
 import { toMcpToolRegistryName, validateMcpNameSegment } from "./naming";
+import type { SecretRedactionPolicy } from "../security";
 
 export interface McpDiscoveryResult {
   descriptors: AnyToolDescriptor[];
@@ -45,7 +42,6 @@ export class McpManager {
   readonly #logger: Logger;
   private readonly clientFactories: McpClientFactories;
   private readonly connectedClients: ConnectedMcpClient[] = [];
-  private readonly secrets: string[];
   private readonly serverStatuses = new Map<string, McpServerStatus>();
   private readonly statusListeners = new Set<McpStatusListener>();
   #started = false;
@@ -54,6 +50,7 @@ export class McpManager {
   constructor(
     private readonly builtinServers: Record<string, ResolvedMcpServerConfig>,
     private readonly userServers: Record<string, ResolvedMcpServerConfig>,
+    private readonly redactionPolicy: SecretRedactionPolicy,
     clientFactories: McpClientFactories = createDefaultMcpClientFactories(),
     logger: Logger = silentLogger,
   ) {
@@ -63,7 +60,6 @@ export class McpManager {
     }
     this.#logger = logger.child({ module: "mcp.manager" });
     this.clientFactories = clientFactories;
-    this.secrets = collectSecrets(builtinServers, userServers);
 
     for (const serverName of Object.keys(builtinServers)) {
       this.serverStatuses.set(serverName, { state: "pending" });
@@ -92,7 +88,7 @@ export class McpManager {
       } catch (err) {
         this.#logger.warn("mcp.status.listener.failed", {
           context: { serverId: serverName },
-          error: logError(err),
+          error: logError(err, this.redactionPolicy),
         });
       }
     }
@@ -119,7 +115,7 @@ export class McpManager {
       );
     } catch (err) {
       this.#logger.warn("mcp.discovery.toplevel.failed", {
-        error: logError(err),
+        error: logError(err, this.redactionPolicy),
       });
       const message = this.redactedMessage(
         `MCP background discovery failed: ${errorMessage(err)}`,
@@ -144,6 +140,7 @@ export class McpManager {
     const client = new McpClient(
       serverName,
       config,
+      this.redactionPolicy,
       this.clientFactories,
       this.#logger.child({ module: "mcp.client", context: { serverId: serverName } }),
     );
@@ -193,7 +190,7 @@ export class McpManager {
       }
       this.#logger.warn("mcp.discovery.server.failed", {
         context: { serverId: serverName },
-        error: logError(err),
+        error: logError(err, this.redactionPolicy),
       });
       onWarning({
         serverName,
@@ -262,7 +259,7 @@ export class McpManager {
             tool,
             serverName,
             client,
-            this.secrets,
+            this.redactionPolicy,
             this.#logger.child({
               module: "mcp.tool-adapter",
               context: { serverId: serverName },
@@ -272,7 +269,7 @@ export class McpManager {
       } catch (err) {
         this.#logger.warn("mcp.adapt.tools.failed", {
           context: { serverId: serverName, toolName: tool.name },
-          error: logError(err),
+          error: logError(err, this.redactionPolicy),
         });
         warnings.push({
           serverName,
@@ -290,31 +287,11 @@ export class McpManager {
   }
 
   private redactedMessage(message: string): string {
-    return redactMcpMessage(message, this.secrets);
+    return this.redactionPolicy.redactString(message);
   }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function collectSecrets(
-  ...serverGroups: Array<Record<string, ResolvedMcpServerConfig>>
-): string[] {
-  const secrets: string[] = [];
-  for (const servers of serverGroups) {
-    for (const config of Object.values(servers)) {
-      if (config.headers) {
-        secrets.push(...Object.values(config.headers));
-        // Only redact URL when server has auth headers — URL may contain
-        // embedded credentials (e.g. tokens in query params) that should not
-        // leak into error messages alongside the auth headers.
-        secrets.push(config.url);
-      }
-      // Public servers without auth headers have no secrets to redact;
-      // their URLs are safe to show in error messages.
-    }
-  }
-  return secrets;
-}
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -322,10 +299,10 @@ function errorMessage(error: unknown): string {
   return "Unknown MCP manager error";
 }
 
-function logError(error: unknown): { name: string; message: string } {
+function logError(error: unknown, policy: SecretRedactionPolicy): { name: string; message: string } {
   if (error instanceof Error) {
-    return { name: error.name || "Error", message: error.message };
+    return { name: error.name || "Error", message: policy.redactString(error.message) };
   }
 
-  return { name: typeof error, message: String(error) };
+  return { name: typeof error, message: policy.redactString(String(error)) };
 }

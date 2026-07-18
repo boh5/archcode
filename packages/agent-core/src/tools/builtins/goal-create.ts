@@ -2,7 +2,7 @@ import { z } from "zod/v4";
 import { TOOL_GOAL_CREATE } from "@archcode/protocol";
 
 import { defineTool } from "../define-tool";
-import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../types";
+import type { AnyToolDescriptor, ToolExecutionContext } from "../types";
 import {
   assertGoalCreateAuthorized,
   formatGoalToolResult,
@@ -25,7 +25,8 @@ export const goalCreateTool: AnyToolDescriptor = defineTool({
   description: "Commit and activate a durable Goal immediately, only after the user explicitly requests or accepts Goal creation and the goal-create Skill has obtained a separate confirmation of the complete objective, acceptance criteria, and worktree choice. Do not infer Goal creation from an ordinary long or complex task. A material change after confirmation requires confirmation again. This tool is available only to an unbound ordinary Engineer root Session; provenance is derived from that Session. User confirmation is a model-visible Skill protocol, while runtime authorization separately enforces the Session boundary.",
   inputSchema: GoalCreateInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
-  execute: async (input: GoalCreateInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
+  outputPolicy: { kind: "inline", previewDirection: "head" },
+  execute: async (input: GoalCreateInput, ctx: ToolExecutionContext) => {
     try {
       const source = assertGoalCreateAuthorized(ctx);
       const goal = await ctx.projectContext.goalLifecycle.create({

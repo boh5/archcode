@@ -8,7 +8,7 @@ import { z } from "zod/v4";
 
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
-import type { ToolExecutionResult } from "../types";
+import { createTextToolResult } from "../results";
 
 const ProjectTodoDiscussionPatchSchema = z
   .strictObject({
@@ -43,7 +43,8 @@ export const projectTodoUpdateTool = defineTool({
   description: "Update the Project Todo bound to this root Shaper Discussion. The current Todo is inferred from the Session; no Todo ID is accepted. Every update must make one explicit keep-current, Idea, Ready, or Reject decision with a rationale.",
   inputSchema: ProjectTodoUpdateInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
-  execute: async (input, ctx): Promise<string | ToolExecutionResult> => {
+  outputPolicy: { kind: "inline", previewDirection: "head" },
+  execute: async (input, ctx) => {
     const state = ctx.store.getState();
     const agentName = ctx.agentName ?? state.agentName;
     const isRootSession = state.sessionId === state.rootSessionId && state.parentSessionId === undefined;
@@ -80,7 +81,7 @@ export const projectTodoUpdateTool = defineTool({
         expectedRevision: input.expectedRevision,
         patch,
       });
-      return JSON.stringify(todo, null, 2);
+      return createTextToolResult(JSON.stringify(todo, null, 2));
     } catch (error) {
       return createToolErrorResult({
         kind: "execution",

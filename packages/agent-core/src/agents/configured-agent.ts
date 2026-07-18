@@ -19,8 +19,8 @@ import type { SessionStoreManager } from "../store/session-store-manager";
 import { BusyError } from "../store/types";
 import type { SessionStoreState } from "../store/types";
 import type { Logger } from "../logger";
-import type { AskUserCallback, ToolConfirmationCallback, ToolRegistry } from "../tools/index";
-import { TOOL_OUTPUT_DIR, enforceQuota } from "../tools/index";
+import type { ToolRegistry } from "../tools/index";
+import type { ToolOutputAccessService } from "../tool-output/access-service";
 import { TOOL_WORKTREE_ENTER, TOOL_WORKTREE_EXIT } from "../tools/names";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
 import type { VersionControl, VersionControlDetector } from "../version-control/detector";
@@ -57,8 +57,7 @@ export interface ConfiguredAgentOptions {
   readonly skillService: SkillService;
   readonly storeManager: SessionStoreManager;
   readonly store: StoreApi<SessionStoreState>;
-  readonly confirmPermission?: ToolConfirmationCallback;
-  readonly askUser?: AskUserCallback;
+  readonly toolOutputAccess: ToolOutputAccessService;
   /** Canonical project root used for persistent project/session state. */
   readonly projectRoot: string;
   /** Current Session execution directory used by prompts and filesystem tools. */
@@ -72,7 +71,6 @@ export interface ConfiguredAgentOptions {
   readonly cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
   readonly resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
   readonly acquireSessionCwdTransition?: (workspaceRoot: string, sessionId: string) => () => void;
-  readonly quotaEnforcer?: (directory: string) => Promise<void>;
   readonly memoryConfig?: MemoryExtractionConfig;
   readonly logger: Logger;
 }
@@ -95,8 +93,7 @@ export class ConfiguredAgent implements Agent {
   private readonly toolRegistry: ToolRegistry;
   private readonly skillService: SkillService;
   private readonly storeManager: SessionStoreManager;
-  private readonly confirmPermission: ToolConfirmationCallback | undefined;
-  private readonly askUserDefault: AskUserCallback | undefined;
+  private readonly toolOutputAccess: ToolOutputAccessService;
   private readonly projectRoot: string;
   readonly cwd: string;
   private readonly projectContextResolver: ProjectContextResolver;
@@ -112,7 +109,6 @@ export class ConfiguredAgent implements Agent {
   private readonly cancelChildSession: ((workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean) | undefined;
   private readonly resumeChildSession: ((workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>) | undefined;
   private readonly acquireSessionCwdTransition: ((workspaceRoot: string, sessionId: string) => () => void) | undefined;
-  private readonly quotaEnforcer: (directory: string) => Promise<void>;
   private readonly memoryConfig: MemoryExtractionConfig | undefined;
   private readonly logger: Logger;
   private agentsMd: string | undefined;
@@ -123,13 +119,15 @@ export class ConfiguredAgent implements Agent {
       module: "agents.configured-agent",
       context: { agentName: options.definition.name },
     });
-    this.hybridCompressionHook = createHybridCompressionHook(this.logger.child({ module: "compression.hybrid" }));
+    this.hybridCompressionHook = createHybridCompressionHook(
+      this.logger.child({ module: "compression.hybrid" }),
+      options.toolOutputAccess,
+    );
     this.definition = options.definition;
     this.toolRegistry = options.toolRegistry;
     this.skillService = options.skillService;
     this.storeManager = options.storeManager;
-    this.confirmPermission = options.confirmPermission;
-    this.askUserDefault = options.askUser;
+    this.toolOutputAccess = options.toolOutputAccess;
     if (!options.store) throw new Error("ConfiguredAgent requires an explicit store");
     this.store = options.store;
     this.projectRoot = options.projectRoot;
@@ -147,9 +145,6 @@ export class ConfiguredAgent implements Agent {
     this.resumeChildSession = options.resumeChildSession;
     this.acquireSessionCwdTransition = options.acquireSessionCwdTransition;
     this.memoryConfig = options.memoryConfig;
-    this.quotaEnforcer = options.quotaEnforcer ?? (async (directory) => {
-      await enforceQuota(directory, { logger: this.logger.child({ module: "tool.output.cache" }) });
-    });
     this.memoryRoots = {
       project: join(this.projectRoot, PROJECT_STATE_DIR_NAME, "memory"),
       user: join(homedir(), USER_DATA_DIR_NAME, "memory"),
@@ -206,6 +201,9 @@ export class ConfiguredAgent implements Agent {
       agentSkills: this.definition.skills,
       skillService: this.skillService,
     }, command.args);
+    if (command.name === "compact" && result.success) {
+      await this.hybridCompressionHook.scheduleToolOutputRecoveryNotice();
+    }
     options.abort?.throwIfAborted();
     this.store.getState().append({ type: "system-notice", message: result.message });
     await this.storeManager.flushSession(this.store.getState().sessionId, this.projectRoot);
@@ -221,20 +219,15 @@ export class ConfiguredAgent implements Agent {
 
     const {
       abort,
-      confirmPermission,
-      askUser: requestedAskUser,
       maxSteps,
       extraTools,
       consumeSteers,
     } = options;
-    const confirm = confirmPermission ?? this.confirmPermission;
-    const askUser = requestedAskUser ?? this.askUserDefault;
 
     const btm = this.backgroundTaskManager;
-    const shouldDrainBackgroundTasks = this.ownsBackgroundTaskManager || this.definition.enforceToolOutputQuota === true;
+    const shouldDrainBackgroundTasks = this.ownsBackgroundTaskManager;
 
     try {
-      await this.enforceToolOutputQuotaIfNeeded();
       await this.refreshAgentsMd();
 
       const definitionAllowedTools = [
@@ -281,8 +274,7 @@ export class ConfiguredAgent implements Agent {
             storeManager: this.storeManager,
             projectContext,
             cwd: this.cwd,
-            confirmPermission: confirm,
-            askUser,
+            toolOutputAccess: this.toolOutputAccess,
             abort,
             systemPrompt,
             store: this.store,
@@ -348,19 +340,6 @@ export class ConfiguredAgent implements Agent {
       resolved.push(skill);
     }
     return resolved;
-  }
-
-  private async enforceToolOutputQuotaIfNeeded(): Promise<void> {
-    if (this.definition.enforceToolOutputQuota !== true) return;
-
-    try {
-      await this.quotaEnforcer(TOOL_OUTPUT_DIR);
-    } catch (error) {
-      this.logger.warn("tool.output.quota.failed", {
-        error,
-        meta: { directory: TOOL_OUTPUT_DIR },
-      });
-    }
   }
 
   private buildHooks(btm: BackgroundTaskManager): QueryLoopHooks {

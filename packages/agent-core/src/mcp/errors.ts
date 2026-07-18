@@ -1,5 +1,3 @@
-import { REDACTION_MARKER } from "../tools/security";
-
 // ─── Error Classes ───
 
 export class McpServerNameError extends Error {
@@ -70,24 +68,4 @@ export interface McpWarning {
   serverName?: string;
   toolName?: string;
   message: string;
-}
-
-// ─── Redaction ───
-
-/**
- * Replace all occurrences of any secret in the set within `message`
- * with the standard `REDACTION_MARKER`.
- *
- * Empty-string secrets are silently ignored to avoid corrupting all messages.
- */
-export function redactMcpMessage(
-  message: string,
-  secrets: Iterable<string>,
-): string {
-  let result = message;
-  for (const secret of secrets) {
-    if (secret.length === 0) continue;
-    result = result.replaceAll(secret, REDACTION_MARKER);
-  }
-  return result;
 }

@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
-import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import { createTextToolResult } from "../results";
+import type { RawToolResult, ToolExecutionContext } from "../types";
 import { ChildSessionNotDescendantError } from "../../agents/errors";
 import { createWorkspacePermission } from "../permission/workspace";
 
@@ -16,7 +17,7 @@ export type CancelSessionInput = z.infer<typeof CancelSessionInputSchema>;
 export async function executeCancelSession(
   input: CancelSessionInput,
   ctx: ToolExecutionContext,
-): Promise<string | ToolExecutionResult> {
+): Promise<RawToolResult> {
   if (ctx.cancelChildSession === undefined) {
     return createToolErrorResult({
       kind: "execution",
@@ -62,10 +63,10 @@ export async function executeCancelSession(
   }
 
   if (!cancelled) {
-    return `Session ${input.session_id} is not running. No action taken.`;
+    return createTextToolResult(`Session ${input.session_id} is not running. No action taken.`);
   }
 
-  return `Session ${input.session_id} cancelled successfully. All descendant sessions were aborted.`;
+  return createTextToolResult(`Session ${input.session_id} cancelled successfully. All descendant sessions were aborted.`);
 }
 
 export const cancelSessionTool = defineTool({
@@ -74,6 +75,7 @@ export const cancelSessionTool = defineTool({
     "Cancel a running sub-agent session. Only descendant sessions of the calling session can be cancelled. Cascades to all child sessions of the target. Use this to interrupt a sub-agent that is going in the wrong direction or taking too long.",
   inputSchema: CancelSessionInputSchema,
   traits: { readOnly: false, destructive: true, concurrencySafe: false },
+  outputPolicy: { kind: "inline", previewDirection: "head" },
   permissions: [createWorkspacePermission()],
   execute: async (input, ctx) => executeCancelSession(input, ctx),
 });

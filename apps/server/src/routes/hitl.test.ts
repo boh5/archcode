@@ -3,12 +3,16 @@ import { Hono } from "hono";
 
 import {
   HitlConflictError,
+  HitlBoundaryCodec,
   HitlNotFoundError,
+  SecretRedactionPolicy,
   type AgentRuntime,
 } from "@archcode/agent-core";
 
 import { errorHandler } from "../error-handler";
 import { createHitlRoutes } from "./hitl";
+
+const TEST_SECRET = "http-hitl-secret-123456";
 
 function createApp(overrides: Partial<AgentRuntime>): Hono {
   const project = {
@@ -21,6 +25,11 @@ function createApp(overrides: Partial<AgentRuntime>): Hono {
   const runtime = {
     projectRegistry: {
       get: mock(async (slug: string) => slug === project.slug ? project : undefined),
+    },
+    contextResolver: {
+      resolve: mock(async () => ({
+        hitl: { codec: new HitlBoundaryCodec(new SecretRedactionPolicy([TEST_SECRET])) },
+      })),
     },
     ...overrides,
   } as unknown as AgentRuntime;
@@ -83,5 +92,42 @@ describe("HITL routes", () => {
 
     expect(response.status).toBe(409);
     expect(respondToHitl).toHaveBeenCalledTimes(1);
+  });
+
+  test("redacts a secret response before handing it to runtime", async () => {
+    const respondToHitl = mock(async (input: { response: unknown }) => ({
+      hitlId: "hitl-1",
+      status: "answered",
+      view: {},
+      response: input.response,
+    }));
+    const app = createApp({ respondToHitl: respondToHitl as never });
+
+    const response = await app.request("/api/projects/demo/hitl/hitl-1/respond", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type: "question_answer", answers: [`Use ${TEST_SECRET}`] }),
+    });
+
+    expect(response.status).toBe(200);
+    const forwarded = JSON.stringify(respondToHitl.mock.calls[0]?.[0]);
+    expect(forwarded).not.toContain(TEST_SECRET);
+    expect(forwarded).toContain("[REDACTED:SECRET]");
+  });
+
+  test("rejects an oversized body before runtime mutation", async () => {
+    const respondToHitl = mock(async () => {
+      throw new Error("must not be called");
+    });
+    const app = createApp({ respondToHitl });
+
+    const response = await app.request("/api/projects/demo/hitl/hitl-1/respond", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type: "question_answer", answers: ["x".repeat(129 * 1024)] }),
+    });
+
+    expect(response.status).toBe(413);
+    expect(respondToHitl).not.toHaveBeenCalled();
   });
 });

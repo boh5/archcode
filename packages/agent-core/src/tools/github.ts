@@ -11,7 +11,8 @@ import {
 } from "./names";
 import { defineTool } from "./define-tool";
 import { createToolErrorResult } from "./errors";
-import type { AnyToolDescriptor, PermissionDecision, ToolExecutionResult } from "./types";
+import { createTextToolResult } from "./results";
+import type { AnyToolDescriptor, PermissionDecision, RawToolResult } from "./types";
 import {
   createGitHubConnector,
   IntegrationError,
@@ -130,6 +131,7 @@ export function createGitHubToolDescriptors(options: GitHubToolDescriptorOptions
       description: "Fetch a GitHub pull request by owner, repo, and PR number through the configured connector.",
       inputSchema: GitHubGetPullRequestInputSchema,
       traits: { readOnly: true, destructive: false, concurrencySafe: true },
+      outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
       execute: async (input: GitHubGetPullRequestInput) => withGitHubErrors(async () => {
         const response = await connectorFactory().getPullRequest(input.owner, input.repo, input.number);
         return formatGitHubResult("github.pull_request", response);
@@ -140,6 +142,7 @@ export function createGitHubToolDescriptors(options: GitHubToolDescriptorOptions
       description: "List GitHub pull requests for a repository with optional state, branch, sort, and pagination filters.",
       inputSchema: GitHubListPullRequestsInputSchema,
       traits: { readOnly: true, destructive: false, concurrencySafe: true },
+      outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
       execute: async (input: GitHubListPullRequestsInput) => withGitHubErrors(async () => {
         const response = await connectorFactory().listPullRequests(input.owner, input.repo, pullRequestFilters(input));
         return formatGitHubResult("github.pull_requests", response);
@@ -150,6 +153,7 @@ export function createGitHubToolDescriptors(options: GitHubToolDescriptorOptions
       description: "Fetch PR status context using connector-supported PR metadata and matching GitHub Actions workflow runs.",
       inputSchema: GitHubGetPullRequestChecksInputSchema,
       traits: { readOnly: true, destructive: false, concurrencySafe: true },
+      outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
       execute: async (input: GitHubGetPullRequestChecksInput) => withGitHubErrors(async () => {
         const connector = connectorFactory();
         const pullRequest = await connector.getPullRequest(input.owner, input.repo, input.number);
@@ -179,6 +183,7 @@ export function createGitHubToolDescriptors(options: GitHubToolDescriptorOptions
       description: "List issue or pull-request comments for a GitHub repository issue number.",
       inputSchema: GitHubListIssueCommentsInputSchema,
       traits: { readOnly: true, destructive: false, concurrencySafe: true },
+      outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
       execute: async (input: GitHubListIssueCommentsInput) => withGitHubErrors(async () => {
         const response = await connectorFactory().listIssueComments(input.owner, input.repo, input.issueNumber, pagination(input));
         return formatGitHubResult("github.issue_comments", response);
@@ -189,6 +194,7 @@ export function createGitHubToolDescriptors(options: GitHubToolDescriptorOptions
       description: "Create a GitHub issue or pull-request comment after permission approval.",
       inputSchema: GitHubCreateIssueCommentInputSchema,
       traits: { readOnly: false, destructive: false, concurrencySafe: false },
+      outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
       permissions: [createGitHubIssueCommentPermission()],
       execute: async (input: GitHubCreateIssueCommentInput) => withGitHubErrors(async () => {
         const response = await connectorFactory().createIssueComment(input.owner, input.repo, input.issueNumber, input.body);
@@ -200,6 +206,7 @@ export function createGitHubToolDescriptors(options: GitHubToolDescriptorOptions
       description: "List GitHub Actions workflow runs for a repository with optional branch, status, SHA, and pagination filters.",
       inputSchema: GitHubListWorkflowRunsInputSchema,
       traits: { readOnly: true, destructive: false, concurrencySafe: true },
+      outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
       execute: async (input: GitHubListWorkflowRunsInput) => withGitHubErrors(async () => {
         const response = await connectorFactory().listWorkflowRuns(input.owner, input.repo, workflowRunFilters(input));
         return formatGitHubResult("github.workflow_runs", response);
@@ -210,6 +217,7 @@ export function createGitHubToolDescriptors(options: GitHubToolDescriptorOptions
       description: "Fetch one GitHub Actions workflow run by repository and run id.",
       inputSchema: GitHubGetWorkflowRunInputSchema,
       traits: { readOnly: true, destructive: false, concurrencySafe: true },
+      outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
       execute: async (input: GitHubGetWorkflowRunInput) => withGitHubErrors(async () => {
         const response = await connectorFactory().getWorkflowRun(input.owner, input.repo, input.runId);
         return formatGitHubResult("github.workflow_run", response);
@@ -220,6 +228,7 @@ export function createGitHubToolDescriptors(options: GitHubToolDescriptorOptions
       description: "Rerun a GitHub Actions workflow run after permission approval.",
       inputSchema: GitHubRerunWorkflowRunInputSchema,
       traits: { readOnly: false, destructive: false, concurrencySafe: false },
+      outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
       permissions: [createGitHubWorkflowRerunPermission()],
       execute: async (input: GitHubRerunWorkflowRunInput) => withGitHubErrors(async () => {
         const response = await connectorFactory().rerunWorkflowRun(input.owner, input.repo, input.runId);
@@ -309,7 +318,7 @@ function pagination(input: { readonly perPage?: number; readonly page?: number }
   };
 }
 
-async function withGitHubErrors(action: () => Promise<ToolExecutionResult>): Promise<ToolExecutionResult> {
+async function withGitHubErrors(action: () => Promise<RawToolResult>): Promise<RawToolResult> {
   try {
     return await action();
   } catch (error) {
@@ -318,12 +327,6 @@ async function withGitHubErrors(action: () => Promise<ToolExecutionResult>): Pro
         kind: "execution",
         code: error.code.toUpperCase(),
         message: error.message,
-        meta: {
-          integrationId: error.integrationId,
-          integrationErrorCode: error.code,
-          ...(error.status === undefined ? {} : { status: error.status }),
-          ...(error.rateLimit?.retryAfterMs === undefined ? {} : { retryAfterMs: error.rateLimit.retryAfterMs }),
-        },
       });
     }
 
@@ -331,15 +334,11 @@ async function withGitHubErrors(action: () => Promise<ToolExecutionResult>): Pro
   }
 }
 
-function formatGitHubResult(label: string, response: { readonly data: unknown; readonly status: number; readonly rateLimit?: unknown }): ToolExecutionResult {
-  return {
-    output: JSON.stringify({
+function formatGitHubResult(label: string, response: { readonly data: unknown; readonly status: number; readonly rateLimit?: unknown }): RawToolResult {
+  return createTextToolResult(JSON.stringify({
       type: label,
       status: response.status,
       data: response.data,
       ...(response.rateLimit === undefined ? {} : { rateLimit: response.rateLimit }),
-    }, null, 2),
-    isError: false,
-    meta: { status: response.status },
-  };
+    }, null, 2));
 }

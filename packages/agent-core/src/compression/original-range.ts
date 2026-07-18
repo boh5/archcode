@@ -1,24 +1,9 @@
 import type { CompressionBlockRef } from "@archcode/protocol";
 import type { SessionFile } from "../store/helpers";
-import type { StoredMessage, StoredPart, ToolPart } from "../store/types";
+import type { StoredMessage, StoredPart } from "../store/types";
 import type { BlockRef, CompressionBlock, CompressionRange, CompressionStrategy, CompressionTrigger, MessageRef } from "./types";
 
-const LARGE_TOOL_OUTPUT_THRESHOLD = 8_000;
-const PREVIEW_MAX_CHARS = 2_000;
-const TRUNCATED_OUTPUT_MARKER = "[Output truncated; full output saved to:";
-
-export interface PersistedOutputReference {
-  readonly kind: "tool-output";
-  readonly ref: string;
-  readonly truncated: true;
-  readonly preview: string;
-}
-
-export type OriginalRangePart = StoredPart | (Omit<ToolPart, "output" | "errorMessage"> & {
-  readonly output?: string;
-  readonly errorMessage?: string;
-  readonly persistedOutput: PersistedOutputReference;
-});
+export type OriginalRangePart = StoredPart;
 
 export type OriginalRangeMessage = Omit<StoredMessage, "parts"> & {
   readonly parts: OriginalRangePart[];
@@ -109,58 +94,20 @@ function resolveCoveredEntries(
     const ref = rawRef ?? formatMessageRef(startIndex + offset + 1);
     return {
       ref,
-      message: sanitizeMessageForOriginalRange(session.sessionId, message),
+      message: copyMessageForOriginalRange(message),
     };
   });
 }
 
-function sanitizeMessageForOriginalRange(sessionId: string, message: StoredMessage): OriginalRangeMessage {
+function copyMessageForOriginalRange(message: StoredMessage): OriginalRangeMessage {
   return {
     ...message,
-    parts: message.parts.map((part) => sanitizePartForOriginalRange(sessionId, part)),
+    parts: message.parts.map(copyPartForOriginalRange),
   };
 }
 
-function sanitizePartForOriginalRange(sessionId: string, part: StoredPart): OriginalRangePart {
-  if (part.type !== "tool" || (part.state !== "completed" && part.state !== "error")) return part;
-
-  const output = part.state === "completed" ? part.output : part.errorMessage;
-  const hasPersistedOutput = typeof part.meta?.fullOutputPath === "string" || output.includes(TRUNCATED_OUTPUT_MARKER);
-  if (!hasPersistedOutput && output.length < LARGE_TOOL_OUTPUT_THRESHOLD) return part;
-
-  const preview = previewOutput(output);
-  const persistedOutput: PersistedOutputReference = {
-    kind: "tool-output",
-    ref: persistedOutputRef(sessionId, part.toolName, part.toolCallId),
-    truncated: true,
-    preview,
-  };
-  const sanitizedMeta = sanitizePersistedOutputMeta(part.meta);
-
-  if (part.state === "completed") {
-    return { ...part, output: preview, ...(sanitizedMeta === undefined ? { meta: undefined } : { meta: sanitizedMeta }), persistedOutput };
-  }
-  return { ...part, errorMessage: preview, ...(sanitizedMeta === undefined ? { meta: undefined } : { meta: sanitizedMeta }), persistedOutput };
-}
-
-function sanitizePersistedOutputMeta(meta: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
-  if (meta === undefined) return undefined;
-  const { fullOutputPath: _fullOutputPath, ...rest } = meta;
-  return Object.keys(rest).length === 0 ? undefined : rest;
-}
-
-function previewOutput(output: string): string {
-  const markerIndex = output.indexOf(TRUNCATED_OUTPUT_MARKER);
-  const preview = markerIndex >= 0 ? output.slice(0, markerIndex).trimEnd() : output;
-  return preview.length <= PREVIEW_MAX_CHARS ? preview : `${preview.slice(0, PREVIEW_MAX_CHARS)}…`;
-}
-
-function persistedOutputRef(sessionId: string, toolName: string, toolCallId: string): string {
-  return `${sanitizeRefSegment(sessionId)}:${sanitizeRefSegment(toolName)}:${sanitizeRefSegment(toolCallId)}`;
-}
-
-function sanitizeRefSegment(value: string): string {
-  return value.replace(/[^a-zA-Z0-9_-]/g, "_");
+function copyPartForOriginalRange(part: StoredPart): OriginalRangePart {
+  return structuredClone(part);
 }
 
 function isBlockRef(value: string): value is CompressionBlockRef & BlockRef {

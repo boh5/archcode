@@ -96,17 +96,25 @@ describe("SessionLifecycleService", () => {
       [ORDINARY_SESSION_ID, TMP_ROOT, "session_deleted"],
       [childSessionId, TMP_ROOT, "session_deleted"],
     ]);
+    expect(fixture.deleteToolOutputs).toHaveBeenCalledTimes(1);
+    expect(fixture.deleteToolOutputs.mock.calls[0]?.[0]).toEqual({
+      workspaceRoot: TMP_ROOT,
+      rootSessionId: ORDINARY_SESSION_ID,
+      sessionIds: [childSessionId, ORDINARY_SESSION_ID, childSessionId],
+    });
   });
 });
 
 function createFixture(overrides: Partial<SessionLifecycleServiceOptions> = {}) {
   const sessions = new SessionStoreManager({ logger: silentLogger });
   const cancelSessionToolBatch = mock(async (_sessionId: string, _workspaceRoot: string, _reason: string) => undefined);
+  const deleteToolOutputs = mock(overrides.deleteToolOutputs ?? (async () => undefined));
   const findProjectTodoOwners = overrides.findProjectTodoOwners ?? mock(async () => []);
   const service = new SessionLifecycleService({
     storeManager: sessions,
     cancelSessionToolBatch,
+    deleteToolOutputs,
     findProjectTodoOwners,
   });
-  return { sessions, cancelSessionToolBatch, findProjectTodoOwners, service };
+  return { sessions, cancelSessionToolBatch, deleteToolOutputs, findProjectTodoOwners, service };
 }

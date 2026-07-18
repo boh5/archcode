@@ -1,9 +1,11 @@
 import { z } from "zod";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
-import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../types";
+import { createTextToolResult } from "../results";
+import type { AnyToolDescriptor, RawToolResult, ToolExecutionContext } from "../types";
 import { SkillNotFoundError, SkillPathError, SkillValidationError, type ResolvedSkill } from "../../skills";
 import { SKILL_NAME_REGEX } from "../../skills/schema";
+import { BoundedFileReadError, ONE_SHOT_FILE_READ_MAX_BYTES } from "../../utils/safe-file";
 
 const SKILL_NAME_MESSAGE = "Skill name must match pattern ^[a-z0-9][a-z0-9-]*$";
 
@@ -30,7 +32,21 @@ export function formatResolvedSkill(skill: ResolvedSkill): string {
   return [headerLines.join("\n"), skill.body].join("\n\n");
 }
 
-function skillReadError(error: unknown, name: string): ToolExecutionResult {
+function skillReadError(error: unknown, name: string): RawToolResult {
+  const boundedReadError = error instanceof BoundedFileReadError
+    ? error
+    : error instanceof SkillValidationError && error.cause instanceof BoundedFileReadError
+      ? error.cause
+      : undefined;
+  if (boundedReadError !== undefined) {
+    return createToolErrorResult({
+      kind: "execution",
+      code: "TOOL_OUTPUT_POLICY_VIOLATION",
+      message: `Skill exceeds the ${ONE_SHOT_FILE_READ_MAX_BYTES}-byte one-shot read limit`,
+      name: boundedReadError.name,
+    });
+  }
+
   if (error instanceof SkillNotFoundError) {
     return createToolErrorResult({
       kind: "file-not-found",
@@ -45,11 +61,6 @@ function skillReadError(error: unknown, name: string): ToolExecutionResult {
       code: "TOOL_SKILL_INVALID",
       message: error.message,
       name: error.name,
-      details: {
-        skillName: error.skillName,
-        source: error.source,
-        path: error.path,
-      },
     });
   }
 
@@ -57,9 +68,8 @@ function skillReadError(error: unknown, name: string): ToolExecutionResult {
     return createToolErrorResult({
       kind: "workspace",
       code: "TOOL_SKILL_PATH_INVALID",
-      message: error.message,
+      message: `Skill "${name}" resolved outside its allowed root`,
       name: error.name,
-      details: { path: error.path, reason: error.reason },
     });
   }
 
@@ -90,10 +100,11 @@ export function createSkillReadTool(): AnyToolDescriptor {
     ].join("\n"),
     inputSchema: SkillReadInputSchema,
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
+    outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
     execute: async (
       input: SkillReadInput,
       ctx: ToolExecutionContext,
-    ): Promise<string | ToolExecutionResult> => {
+    ) => {
       if (ctx.skillService === undefined || ctx.agentSkills === undefined) {
         return createToolErrorResult({
           kind: "execution",
@@ -110,7 +121,7 @@ export function createSkillReadTool(): AnyToolDescriptor {
             message: `Skill not found or not allowed for current agent: ${input.name}`,
           });
         }
-        return formatResolvedSkill(skill);
+        return createTextToolResult(formatResolvedSkill(skill));
       } catch (error) {
         return skillReadError(error, input.name);
       }

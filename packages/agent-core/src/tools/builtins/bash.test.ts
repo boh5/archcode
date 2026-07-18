@@ -1,13 +1,27 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
 import { storeManager } from "../../store/store";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bashTool, BashInputSchema, buildBashEnv, formatBashOutput, runBashCommand } from "./bash";
-import { createRegistry } from "../registry";
-import type { ToolExecutionContext } from "../types";
+import type { RawToolResult, RegistryExecutionOutcome, ToolExecutionContext } from "../types";
+import { createTestToolRegistryFixture } from "../test-registry";
 import { createTestProjectContext } from "../test-project-context";
 import { setProcessRunnerForTest } from "../../process/runner";
+
+const registryFixture = createTestToolRegistryFixture({ descriptors: [bashTool] });
+const ownedSessionStores: Array<{ sessionId: string; workspaceRoot: string }> = [];
+let directCapturedText = "";
+
+function rawText(result: RawToolResult): string {
+  if (result.draft.kind !== "text") throw new Error("Expected text draft");
+  return result.draft.text;
+}
+
+function settled(outcome: RegistryExecutionOutcome) {
+  if (outcome.kind !== "settled") throw new Error("Expected settled Registry outcome");
+  return outcome.result;
+}
 
 function stringToStream(text: string): ReadableStream<Uint8Array> {
   return new ReadableStream({
@@ -39,47 +53,71 @@ function mockCtx(
   workspaceRoot: string,
   overrides?: Partial<ToolExecutionContext>,
 ): ToolExecutionContext {
-  return { store: {} as any,
-  toolName: "bash",
-  toolCallId: "call_1",
-  input: {},
-  step: 1,
-  abort: new AbortController().signal,
-  startedAt: Date.now(),
-  allowedTools: new Set(["bash"]),
-  cwd: workspaceRoot,
-  storeManager,
-    projectContext: createTestProjectContext(workspaceRoot), ...overrides,  };
+  directCapturedText = "";
+  const defaultCapture = {
+    async write(chunk: string | Uint8Array) {
+      directCapturedText += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+      return "accepted" as const;
+    },
+  };
+  const sessionWorkspaceRoot = mkdtempSync(join(tmpdir(), "bash-session-store-"));
+  const sessionId = crypto.randomUUID();
+  ownedSessionStores.push({ sessionId, workspaceRoot: sessionWorkspaceRoot });
+  return {
+    store: storeManager.create(sessionId, sessionWorkspaceRoot, { agentName: "engineer" }),
+    toolName: "bash",
+    toolCallId: "call_1",
+    input: {},
+    step: 1,
+    abort: new AbortController().signal,
+    startedAt: Date.now(),
+    allowedTools: new Set(["bash"]),
+    cwd: workspaceRoot,
+    storeManager,
+    projectContext: createTestProjectContext(workspaceRoot),
+    outputCapture: defaultCapture as any,
+    ...overrides,
+  };
 }
 
 describe("bashTool", () => {
   const testWorkspaceRoot = realpathSync.native(import.meta.dir);
 
-  afterEach(() => {
+  afterEach(async () => {
     setProcessRunnerForTest(undefined);
+    await Promise.all(ownedSessionStores.map(({ sessionId, workspaceRoot }) => storeManager.flushSession(sessionId, workspaceRoot)));
+    for (const { sessionId, workspaceRoot } of ownedSessionStores) {
+      storeManager.delete(sessionId, workspaceRoot);
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+    ownedSessionStores.length = 0;
+  });
+
+  afterAll(async () => {
+    await registryFixture.dispose();
   });
 
   test("schema rejects empty command, extra fields, and negative timeout", async () => {
-    const registry = createRegistry([bashTool]);
+    const registry = registryFixture.registry;
     const ctx = mockCtx(mkdtempSync(join(tmpdir(), "bash-schema-test-")));
     try {
       const empty = await registry.execute(
         { toolName: "bash", toolCallId: "empty", input: { description: "Test empty command", command: "" } },
         ctx,
       );
-      expect(empty.isError).toBe(true);
+      expect(settled(empty).isError).toBe(true);
 
       const extra = await registry.execute(
         { toolName: "bash", toolCallId: "extra", input: { description: "Test extra field rejection", command: "pwd", extra: true } },
         ctx,
       );
-      expect(extra.isError).toBe(true);
+      expect(settled(extra).isError).toBe(true);
 
       const negativeTimeout = await registry.execute(
         { toolName: "bash", toolCallId: "timeout", input: { description: "Test negative timeout", command: "pwd", timeoutMs: -1 } },
         ctx,
       );
-      expect(negativeTimeout.isError).toBe(true);
+      expect(settled(negativeTimeout).isError).toBe(true);
     } finally {
       rmSync(ctx.cwd, { recursive: true, force: true });
     }
@@ -101,7 +139,7 @@ describe("bashTool", () => {
   });
 
   test("schema/prepareInput rejects cwd outside workspace before spawning", async () => {
-    const registry = createRegistry([bashTool]);
+    const registry = registryFixture.registry;
     const workspaceRoot = mkdtempSync(join(tmpdir(), "bash-cwd-test-"));
     try {
       const spawnMock = mock(() => mockSpawnResult(""));
@@ -112,8 +150,8 @@ describe("bashTool", () => {
         mockCtx(workspaceRoot),
       );
 
-      expect(result.isError).toBe(true);
-      expect(result.output).toContain("cwd must resolve inside workspace");
+      expect(settled(result).isError).toBe(true);
+      expect(settled(result).output.preview).toContain("cwd must resolve inside workspace");
       expect(spawnMock).toHaveBeenCalledTimes(0);
     } finally {
       rmSync(workspaceRoot, { recursive: true, force: true });
@@ -163,7 +201,7 @@ describe("bashTool", () => {
       );
 
       expect(result.isError).toBe(false);
-      expect(result.output).toContain("EXIT_CODE: 0");
+      expect(directCapturedText).toContain("EXIT_CODE: 0");
       expect(captured.argv).toEqual(["bash", "-c", "pwd"]);
       expect(captured.opts?.cwd).toBe(realpathSync.native(executionCwd));
       expect(captured.opts?.stdin).toBe("ignore");
@@ -180,11 +218,10 @@ describe("bashTool", () => {
     const result = await runBashCommand({ description: "Test nonzero exit", command: "pwd" }, mockCtx(testWorkspaceRoot));
 
     expect(result.isError).toBe(true);
-    const nonzeroParsed = JSON.parse(result.output);
-    expect(nonzeroParsed.message).toContain("STDERR:\nboom\n");
-    expect(nonzeroParsed.message).toContain("EXIT_CODE: 7");
-    expect(nonzeroParsed.code).toBe("TOOL_BASH_NONZERO_EXIT");
-    expect(result.meta?.exitCode).toBe(7);
+    expect(directCapturedText).toContain("STDERR:\nboom\n");
+    expect(directCapturedText).toContain("EXIT_CODE: 7");
+    expect(result.details?.error?.code).toBe("TOOL_BASH_NONZERO_EXIT");
+    expect(result.details?.process?.exitCode).toBe(7);
   });
 
   test("timeout kills process and returns timeout error", async () => {
@@ -200,12 +237,9 @@ describe("bashTool", () => {
     const result = await runBashCommand({ description: "Test timeout", command: "pwd", timeoutMs: 1 }, mockCtx(testWorkspaceRoot));
 
     expect(kill).toHaveBeenCalledTimes(1);
-    const timeoutParsed = JSON.parse(result.output);
-    expect(timeoutParsed.message).toBe("Command timed out after 1ms");
-    expect(timeoutParsed.code).toBe("TOOL_BASH_TIMEOUT");
+    expect(result.details?.error?.code).toBe("TOOL_BASH_TIMEOUT");
     expect(result.isError).toBe(true);
-    expect(result.meta?.timedOut).toBe(true);
-    expect(result.meta?.timeoutMs).toBe(1);
+    expect(result.details?.process?.timedOut).toBe(true);
   });
 
   test("AbortSignal kills process and returns abort error", async () => {
@@ -227,11 +261,9 @@ describe("bashTool", () => {
 
     const result = await promise;
     expect(kill).toHaveBeenCalledTimes(1);
-    const abortParsed = JSON.parse(result.output);
-    expect(abortParsed.message).toBe("Command was aborted");
-    expect(abortParsed.code).toBe("TOOL_BASH_ABORTED");
+    expect(result.details?.error?.code).toBe("TOOL_BASH_ABORTED");
     expect(result.isError).toBe(true);
-    expect(result.meta?.aborted).toBe(true);
+    expect(result.details?.process?.aborted).toBe(true);
   });
 
   test("signal exits map to bash aborted errors", async () => {
@@ -246,12 +278,10 @@ describe("bashTool", () => {
     const result = await runBashCommand({ description: "Test signal exit", command: "pwd" }, mockCtx(testWorkspaceRoot));
 
     expect(result.isError).toBe(true);
-    const abortParsed = JSON.parse(result.output);
-    expect(abortParsed.message).toBe("Command was aborted");
-    expect(abortParsed.code).toBe("TOOL_BASH_ABORTED");
-    expect(result.meta?.aborted).toBe(true);
-    expect(result.meta?.signal).toBe("SIGTERM");
-    expect(result.meta?.exitCode).toBe(143);
+    expect(result.details?.error?.code).toBe("TOOL_BASH_ABORTED");
+    expect(result.details?.process?.aborted).toBe(true);
+    expect(result.details?.process?.signal).toBe("SIGTERM");
+    expect(result.details?.process?.exitCode).toBe(143);
   });
 
   test("spawn failures return execution errors", async () => {
@@ -262,8 +292,8 @@ describe("bashTool", () => {
     const result = await runBashCommand({ description: "Test spawn failure", command: "pwd" }, mockCtx(testWorkspaceRoot));
 
     expect(result.isError).toBe(true);
-    const parsed = JSON.parse(result.output);
-    expect(parsed.message).toBe("spawn failed");
+    const parsed = JSON.parse(rawText(result));
+    expect(parsed.message).toBe("Process failed to start");
     expect(parsed.code).toBe("TOOL_EXECUTION_FAILED");
   });
 
@@ -278,12 +308,62 @@ describe("bashTool", () => {
     const result = await runBashCommand({ description: "Test EAGAIN retry", command: "pwd" }, mockCtx(testWorkspaceRoot));
 
     expect(result.isError).toBe(false);
-    expect(result.output).toContain("STDOUT:\ndone\n");
+    expect(directCapturedText).toContain("STDOUT:\ndone\n");
     expect(spawn).toHaveBeenCalledTimes(3);
   });
 
+  test("labels every stdout/stderr transition in the canonical stream", async () => {
+    const chunks = (values: string[]) => new ReadableStream<Uint8Array>({
+      pull(controller) {
+        const value = values.shift();
+        if (value === undefined) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(new TextEncoder().encode(value));
+      },
+    }, { highWaterMark: 0 });
+    setProcessRunnerForTest(() => ({
+      stdout: chunks(["out-1", "out-2"]),
+      stderr: chunks(["err-1", "err-2"]),
+      exited: Promise.resolve(0),
+      exitCode: 0,
+      signalCode: null,
+      kill: mock(() => {}),
+    }) as any);
+    let canonical = "";
+    const outputCapture = {
+      async write(chunk: string | Uint8Array) {
+        canonical += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+        return "accepted" as const;
+      },
+    };
+
+    const result = await runBashCommand(
+      { description: "Test interleaved output", command: "fake" },
+      mockCtx(testWorkspaceRoot, { outputCapture: outputCapture as any }),
+    );
+
+    expect(result.isError).toBe(false);
+    expect(canonical).toBe(
+      "STDOUT:\nout-1\nSTDERR:\nerr-1\nSTDOUT:\nout-2\nSTDERR:\nerr-2\nEXIT_CODE: 0\n",
+    );
+  });
+
+  test("includes an explicit empty stream segment in the canonical stream", async () => {
+    setProcessRunnerForTest(() => mockSpawnResult("stdout-only", "", 0) as any);
+
+    const result = await runBashCommand(
+      { description: "Test stdout-only output", command: "fake" },
+      mockCtx(testWorkspaceRoot),
+    );
+
+    expect(result.isError).toBe(false);
+    expect(directCapturedText).toBe("STDOUT:\nstdout-only\nSTDERR:\n\nEXIT_CODE: 0\n");
+  });
+
   test("commands that require approval block before calling ProcessRunner", async () => {
-    const registry = createRegistry([bashTool]);
+    const registry = registryFixture.registry;
     const spawnMock = mock(() => mockSpawnResult(""));
     setProcessRunnerForTest(spawnMock as any);
 
@@ -292,9 +372,10 @@ describe("bashTool", () => {
       mockCtx(testWorkspaceRoot),
     );
 
-    expect(result.isError).toBe(false);
-    expect(result.blocked?.source).toEqual({ type: "tool_permission", toolCallId: "denied", toolName: "bash" });
-    expect(result.blocked?.persistentApprovalEligible).toBe(true);
+    expect(result.kind).toBe("blocked");
+    if (result.kind !== "blocked") throw new Error("Expected blocked Registry outcome");
+    expect(result.request.source).toEqual({ type: "tool_permission", toolCallId: "denied", toolName: "bash" });
+    expect("persistentApprovalEligible" in result.request && result.request.persistentApprovalEligible).toBe(true);
     expect(spawnMock).toHaveBeenCalledTimes(0);
   });
 
@@ -307,7 +388,7 @@ describe("bashTool", () => {
     symlinkSync(join(canonicalRoot, ".archcode"), join(worktreeRoot, "canonical-state"));
 
     try {
-      const registry = createRegistry([bashTool]);
+      const registry = registryFixture.registry;
       const spawnMock = mock(() => mockSpawnResult(""));
       setProcessRunnerForTest(spawnMock as any);
 
@@ -323,8 +404,8 @@ describe("bashTool", () => {
         mockCtx(worktreeRoot, { projectContext: createTestProjectContext(canonicalRoot) }),
       );
 
-      expect(result.isError).toBe(true);
-      expect(result.meta?.permissionErrorCode).toBe("TOOL_PERMISSION_DENIED");
+      expect(settled(result).isError).toBe(true);
+      expect(settled(result).details?.error?.code).toBe("TOOL_PERMISSION_DENIED");
       expect(spawnMock).toHaveBeenCalledTimes(0);
     } finally {
       rmSync(root, { recursive: true, force: true });

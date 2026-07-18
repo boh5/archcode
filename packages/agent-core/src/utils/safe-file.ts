@@ -1,4 +1,4 @@
-import { chmod, mkdir, realpath, rename, rm } from "node:fs/promises";
+import { chmod, mkdir, open, realpath, rename, rm, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 export class SafePathError extends Error {
@@ -9,6 +9,55 @@ export class SafePathError extends Error {
     super(`Safe path error: ${reason} (path: "${path}")`);
     this.name = "SafePathError";
   }
+}
+
+export const ONE_SHOT_FILE_READ_MAX_BYTES = 8 * 1024 * 1024;
+
+export class BoundedFileReadError extends Error {
+  constructor(public readonly maxBytes: number) {
+    super(`File exceeds the safe one-shot read limit of ${maxBytes} bytes`);
+    this.name = "BoundedFileReadError";
+  }
+}
+
+/** Read a complete UTF-8 file or fail before returning any partial content. */
+export async function readUtf8FileBounded(
+  filePath: string,
+  maxBytes = ONE_SHOT_FILE_READ_MAX_BYTES,
+): Promise<string> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+    throw new RangeError("Bounded file read limit must be a non-negative safe integer");
+  }
+
+  const size = (await stat(filePath)).size;
+  if (size > maxBytes) throw new BoundedFileReadError(maxBytes);
+
+  const handle = await open(filePath, "r");
+  const decoder = new TextDecoder("utf-8", { fatal: false });
+  const chunks: string[] = [];
+  const buffer = new Uint8Array(Math.min(64 * 1024, Math.max(1, maxBytes + 1)));
+  let total = 0;
+  try {
+    while (true) {
+      const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, null);
+      if (bytesRead === 0) break;
+      total += bytesRead;
+      if (total > maxBytes) throw new BoundedFileReadError(maxBytes);
+      chunks.push(decoder.decode(buffer.subarray(0, bytesRead), { stream: true }));
+    }
+    chunks.push(decoder.decode());
+    return chunks.join("");
+  } finally {
+    await handle.close();
+  }
+}
+
+export function assertUtf8TextWithinLimit(
+  content: string,
+  maxBytes = ONE_SHOT_FILE_READ_MAX_BYTES,
+): void {
+  const bounded = new TextEncoder().encode(content);
+  if (bounded.byteLength > maxBytes) throw new BoundedFileReadError(maxBytes);
 }
 
 export async function atomicWrite(

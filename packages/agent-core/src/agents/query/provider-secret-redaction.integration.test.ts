@@ -4,8 +4,8 @@ import { parseConfig } from "../../config";
 import { createRegistry as createProviderRegistry } from "../../provider";
 import { SkillService } from "../../skills";
 import { storeManager } from "../../store/store";
-import { createRegistry as createToolRegistry } from "../../tools";
 import { createTestProjectContext } from "../../tools/test-project-context";
+import { createTestToolRegistryFixture } from "../../tools/test-registry";
 import { createTestTempRoot } from "../../testing/test-temp-root";
 import type { ExecutionModelBinding } from "../../models";
 import { runQueryLoop } from "./loop";
@@ -33,6 +33,7 @@ describe("Provider secret redaction integration", () => {
         }, { status: 401 });
       },
     });
+    const toolFixture = createTestToolRegistryFixture();
 
     try {
       const agent = { model: "echo:test-model" };
@@ -101,13 +102,14 @@ describe("Provider secret redaction integration", () => {
       const result = await runQueryLoop({
         binding,
         logger: memoryLogger.logger,
-        toolRegistry: createToolRegistry(),
+        toolRegistry: toolFixture.registry,
         store,
         allowedTools: [],
         agentSkills: [],
         skillService: new SkillService({ builtinSkills: {} }),
         storeManager,
         projectContext: createTestProjectContext(testRoot.path),
+        toolOutputAccess: toolFixture.createToolOutputAccess(testRoot.path, store.getState().rootSessionId),
         cwd: testRoot.path,
         agentName: "engineer",
       });
@@ -128,6 +130,7 @@ describe("Provider secret redaction integration", () => {
       expect(visible).not.toContain(encodeURIComponent(QUERY_SECRET));
       expect(visible).not.toContain(new URLSearchParams({ trace: QUERY_SECRET }).toString());
     } finally {
+      await toolFixture.dispose();
       server.stop(true);
     }
   });

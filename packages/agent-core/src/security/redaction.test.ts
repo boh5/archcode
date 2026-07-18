@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { REDACTION_MARKER, redactString, redactValue } from "./redaction";
-import { containsSecretPattern } from "../../security/patterns";
+import { containsSecretPattern } from "./patterns";
 
 const RAW_SECRET = "sk_test_1234567890abcdef";
 
@@ -26,15 +26,15 @@ describe("redaction primitives", () => {
     });
   });
 
-  it("redacts detector-positive path-like text while preserving ordinary paths", () => {
+  it("preserves recognized absolute paths without weakening conservative detection", () => {
     const detectorPositivePath =
       "Symbols: Interface Agent (/Users/bo/Developer/AI/archcode/src/agents/engineer-agent.ts:19:1)";
     expect(containsSecretPattern(detectorPositivePath).found).toBe(true);
-    expect(
-      redactString(detectorPositivePath),
-    ).toBe(
-      `Symbols: Interface Agent (/${REDACTION_MARKER}-agent.ts:19:1)`,
-    );
+    expect(redactString(detectorPositivePath)).toBe(detectorPositivePath);
+
+    const temporaryPath = "/private/var/folders/ab/cd/T/archcode-bash-cwd-fixture";
+    expect(containsSecretPattern(temporaryPath).found).toBe(true);
+    expect(redactString(temporaryPath)).toBe(temporaryPath);
 
     expect(redactString("path=/home/user/project/src/secret-handler.ts:42:5")).toBe(
       "path=/home/user/project/src/secret-handler.ts:42:5",

@@ -25,7 +25,7 @@ import {
 import { SessionFileSchema, sessionFileInternals, type HydratedSessionFile, type SessionSummary } from "./helpers";
 import { projectModelMessagesFromStoredMessages } from "./projection";
 import { reduceStreamEvent } from "./reduce";
-import { toDurableSessionEvent, toDurableToolInput } from "./durable-tool-input";
+import { toDurableSessionEvent } from "./durable-tool-input";
 import { assertSafeSessionId, getSessionPath, getSessionsDir } from "./sessions-dir";
 import {
   type ReasoningPart,
@@ -1406,25 +1406,7 @@ function reconcileInterruptedSessionFile(file: HydratedSessionFile): HydratedSes
         };
       }
 
-      if (
-        part.type !== "tool"
-        || (part.state !== "pending" && part.state !== "running")
-        || part.attemptId === undefined
-      ) {
-        return part;
-      }
-
-      changed = true;
-      messageChanged = true;
-      return {
-        ...part,
-        state: "error" as const,
-        input: toDurableToolInput("input" in part ? part.input : undefined),
-        startedAt: "startedAt" in part ? part.startedAt : now,
-        endedAt: now,
-        errorMessage: "Tool execution result unknown: execution was interrupted",
-        meta: { unknownResult: true },
-      };
+      return part;
     });
 
     return messageChanged ? { ...message, parts, completedAt: message.completedAt ?? now } : message;

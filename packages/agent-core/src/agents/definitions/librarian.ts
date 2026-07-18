@@ -6,6 +6,8 @@ import {
   TOOL_GLOB,
   TOOL_GREP,
   TOOL_MEMORY_READ,
+  TOOL_OUTPUT_READ,
+  TOOL_OUTPUT_SEARCH,
   TOOL_TODO_WRITE,
   TOOL_WEB_FETCH,
 } from "../../tools/names";
@@ -39,6 +41,8 @@ Output contract:
       TOOL_GLOB,
       TOOL_WEB_FETCH,
       TOOL_MEMORY_READ,
+      TOOL_OUTPUT_READ,
+      TOOL_OUTPUT_SEARCH,
       TOOL_TODO_WRITE,
       TOOL_COMPRESS,
       ...SKILL_ACCESS_TOOLS,

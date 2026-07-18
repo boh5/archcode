@@ -121,9 +121,18 @@ describe("web session store registry", () => {
         type: "tool-result",
         toolCallId: "worktree-enter-1",
         toolName: "worktree_enter",
-        output: "changed",
-        isError: false,
-        meta: { sessionCwdChanged: true, previousCwd: "/repo", cwd: "/wrong-source" },
+        result: {
+          isError: false,
+          output: {
+            preview: "changed",
+            completeness: "complete",
+            observed: { bytes: 7, lines: 1 },
+            canonical: { bytes: 7, lines: 1 },
+            stored: { bytes: 7, lines: 1 },
+            omitted: { bytes: 0, lines: 0 },
+            recovery: { kind: "none" },
+          },
+        },
       }),
       sessionId: "session-cwd-meta",
     });

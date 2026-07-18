@@ -35,10 +35,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   activeRuntime?.notifyRuntimeShutdown("test cleanup");
-  await activeRuntime?.abortAllSessionExecutions();
-  await activeRuntime?.stopAutomationSchedulers();
-  activeRuntime?.disposeAllSessionAgents();
-  await activeRuntime?.mcpManager.closeAll();
+  await activeRuntime?.shutdown();
   activeRuntime = undefined;
   setLlmAdapterForTest(undefined);
 });
@@ -108,7 +105,7 @@ function config(): Record<string, unknown> {
       local: {
         npm: "@ai-sdk/openai-compatible",
         name: "Local",
-        options: { baseURL: "http://localhost:8090/v1", apiKey: "test" },
+        options: { baseURL: "http://localhost:8090/v1", apiKey: "test-secret" },
         models: {
           test: {
             name: "Test",

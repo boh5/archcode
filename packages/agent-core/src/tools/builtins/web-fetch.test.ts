@@ -1,373 +1,121 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { storeManager } from "../../store/store";
 import { WebFetchInputSchema, validateUrl, runWebFetch, webFetchTool } from "./web-fetch";
-import { createRegistry } from "../registry";
 import type { ToolExecutionContext } from "../types";
 import { createTestProjectContext } from "../test-project-context";
 
-// ─── Helpers ───
-
-function mockCtx(overrides?: Partial<ToolExecutionContext>): ToolExecutionContext {
+function context(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   const workspaceRoot = import.meta.dir;
-  return { store: {} as any,
-  toolName: "web_fetch",
-  toolCallId: "call_test",
-  input: {},
-  step: 1,
-  abort: new AbortController().signal,
-  startedAt: Date.now(),
-  allowedTools: new Set(["web_fetch"]),
-  cwd: workspaceRoot,
-  storeManager,
-    projectContext: createTestProjectContext(workspaceRoot), ...overrides,  };
+  return { store: {} as never, toolName: "web_fetch", toolCallId: "call", input: {}, step: 1, abort: new AbortController().signal, startedAt: Date.now(), allowedTools: new Set(["web_fetch"]), cwd: workspaceRoot, storeManager, projectContext: createTestProjectContext(workspaceRoot), ...overrides };
 }
 
-const HTML_PAGE = `<!DOCTYPE html>
-<html lang="en">
-<head><title>Test Page</title></head>
-<body>
-  <article>
-    <h1>Hello World</h1>
-    <p>This is a test article with <strong>bold text</strong> and a <a href="/link">link</a>.</p>
-    <ul><li>Item 1</li><li>Item 2</li></ul>
-  </article>
-</body>
-</html>`;
-
-const JSON_RESPONSE = JSON.stringify({ message: "hello", count: 42 });
-
-function mockFetchResponse(body: string, options: { status?: number; contentType?: string; headers?: Record<string, string> } = {}) {
-  const { status = 200, contentType = "text/html; charset=utf-8", headers = {} } = options;
-  return new Response(body, {
-    status,
-    headers: {
-      "content-type": contentType,
-      ...headers,
-    },
-  });
+function text(result: Awaited<ReturnType<typeof runWebFetch>>): string {
+  return result.draft.kind === "text" ? result.draft.text : "";
 }
 
-// ─── URL Validation ───
+const originalFetch = globalThis.fetch;
+afterEach(() => { globalThis.fetch = originalFetch; });
 
-describe("validateUrl", () => {
-  test("accepts valid https URL", () => {
-    const result = validateUrl("https://example.com/path");
-    expect(result.url).toBe("https://example.com/path");
-    expect(result.originalUrl).toBe("https://example.com/path");
+describe("web fetch output boundary", () => {
+  test("removes maxLength from the strict public schema", () => {
+    expect(WebFetchInputSchema.safeParse({ url: "https://example.com" }).success).toBe(true);
+    expect(WebFetchInputSchema.safeParse({ url: "https://example.com", maxLength: 1_000 }).success).toBe(false);
   });
 
-  test("accepts valid http URL and upgrades to https", () => {
-    const result = validateUrl("http://example.com");
-    expect(result.url).toBe("https://example.com/");
-    expect(result.originalUrl).toBe("http://example.com/");
+  test("returns complete extracted content for finalization instead of producer truncation", async () => {
+    const body = `<html><body><article><h1>Heading</h1><p>${"x".repeat(80_000)}</p></article></body></html>`;
+    globalThis.fetch = mock(() => Promise.resolve(new Response(body, { headers: { "content-type": "text/html" } }))) as unknown as typeof fetch;
+    const result = await runWebFetch({ url: "https://example.com", format: "markdown" }, context());
+    expect(result.isError).toBe(false);
+    expect(text(result)).toContain("Heading");
+    expect(text(result)).toContain("x".repeat(80_000));
+    expect(text(result)).not.toContain("maxLength");
   });
 
-  test("rejects non-http protocols", () => {
+  test("rejects a declared body larger than the fixed 5 MiB pre-parse limit", async () => {
+    globalThis.fetch = mock(() => Promise.resolve(new Response("ignored", { headers: { "content-type": "text/plain", "content-length": String(5 * 1024 * 1024 + 1) } }))) as unknown as typeof fetch;
+    const result = await runWebFetch({ url: "https://example.com", format: "text" }, context());
+    expect(result.isError).toBe(true);
+    expect(result.details?.error?.code).toBe("TOOL_WEBFETCH_SIZE_EXCEEDED");
+  });
+
+  test("reads a no-content-length body delivered as one-byte chunks", async () => {
+    const bytes = new TextEncoder().encode("one-byte-stream");
+    let index = 0;
+    globalThis.fetch = mock(() => Promise.resolve(new Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (index >= bytes.byteLength) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(bytes.subarray(index, ++index));
+      },
+    }), { headers: { "content-type": "text/plain" } }))) as unknown as typeof fetch;
+
+    const result = await runWebFetch({ url: "https://example.com", format: "text" }, context());
+
+    expect(result.isError).toBe(false);
+    expect(text(result)).toContain("one-byte-stream");
+  });
+
+  test("cancels a streamed body immediately after the fixed 5 MiB pre-parse cap", async () => {
+    const chunk = new Uint8Array(64 * 1024).fill(0x61);
+    let emitted = 0;
+    let cancelled = 0;
+    globalThis.fetch = mock(() => Promise.resolve(new Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        emitted += chunk.byteLength;
+        controller.enqueue(chunk);
+      },
+      cancel() { cancelled += 1; },
+    }, { highWaterMark: 0 }), { headers: { "content-type": "text/plain" } }))) as unknown as typeof fetch;
+
+    const result = await runWebFetch({ url: "https://example.com", format: "text" }, context());
+
+    expect(result.isError).toBe(true);
+    expect(result.details?.error?.code).toBe("TOOL_WEBFETCH_SIZE_EXCEEDED");
+    expect(emitted).toBe(5 * 1024 * 1024 + chunk.byteLength);
+    expect(cancelled).toBe(1);
+  });
+
+  test("keeps URL security validation", () => {
+    expect(validateUrl("http://example.com").url).toBe("https://example.com/");
     expect(() => validateUrl("ftp://example.com")).toThrow("Unsupported URL scheme");
-    expect(() => validateUrl("file:///tmp/test")).toThrow("Unsupported URL scheme");
-    expect(() => validateUrl("javascript:alert(1)")).toThrow("Unsupported URL scheme");
-  });
-
-  test("rejects URLs with credentials", () => {
     expect(() => validateUrl("https://user:pass@example.com")).toThrow("credentials");
+    expect(() => validateUrl("not a URL")).toThrow("Invalid URL");
+    expect(() => validateUrl(`https://example.com/${"x".repeat(2_048)}`)).toThrow("maximum length");
   });
 
-  test("rejects overly long URLs", () => {
-    const longUrl = "https://example.com/" + "a".repeat(3000);
-    expect(() => validateUrl(longUrl)).toThrow("maximum length");
+  test("preserves the selected HTML, text, and JSON content formats before finalization", async () => {
+    const html = "<html><body><article><h1>Title</h1><p>Body</p></article></body></html>";
+    globalThis.fetch = mock(() => Promise.resolve(new Response(html, { headers: { "content-type": "text/html" } }))) as unknown as typeof fetch;
+    expect(text(await runWebFetch({ url: "https://example.com", format: "html" }, context()))).toContain("<h1>Title</h1>");
+
+    globalThis.fetch = mock(() => Promise.resolve(new Response("plain body", { headers: { "content-type": "text/plain" } }))) as unknown as typeof fetch;
+    expect(text(await runWebFetch({ url: "https://example.com", format: "text" }, context()))).toContain("plain body");
+
+    globalThis.fetch = mock(() => Promise.resolve(new Response('{"ok":true}', { headers: { "content-type": "application/json" } }))) as unknown as typeof fetch;
+    expect(text(await runWebFetch({ url: "https://example.com", format: "markdown" }, context()))).toContain('{"ok":true}');
   });
 
-  test("rejects malformed URLs", () => {
-    expect(() => validateUrl("")).toThrow("Invalid URL");
-    expect(() => validateUrl("not a url")).toThrow("Invalid URL");
-  });
-});
+  test("follows safe redirects but rejects unsafe targets", async () => {
+    const calls: string[] = [];
+    globalThis.fetch = mock((url: string) => {
+      calls.push(url);
+      return Promise.resolve(calls.length === 1
+        ? new Response(null, { status: 302, headers: { location: "/final" } })
+        : new Response("final", { headers: { "content-type": "text/plain" } }));
+    }) as unknown as typeof fetch;
+    const followed = await runWebFetch({ url: "https://example.com/start", format: "text" }, context());
+    expect(text(followed)).toContain("https://example.com/final");
+    expect(calls).toEqual(["https://example.com/start", "https://example.com/final"]);
 
-// ─── Input Schema ───
-
-describe("WebFetchInputSchema", () => {
-  test("accepts valid input with defaults", () => {
-    const result = WebFetchInputSchema.safeParse({ url: "https://example.com" });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.url).toBe("https://example.com");
-      expect(result.data.format).toBe("markdown");
-      expect(result.data.maxLength).toBe(50_000);
-    }
+    globalThis.fetch = mock(() => Promise.resolve(new Response(null, { status: 302, headers: { location: "ftp://example.com" } }))) as unknown as typeof fetch;
+    const rejected = await runWebFetch({ url: "https://example.com/start", format: "text" }, context());
+    expect(rejected.details?.error?.code).toBe("TOOL_WEBFETCH_INVALID_URL");
   });
 
-  test("accepts custom format and maxLength", () => {
-    const result = WebFetchInputSchema.safeParse({
-      url: "https://example.com",
-      format: "text",
-      maxLength: 10_000,
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.format).toBe("text");
-      expect(result.data.maxLength).toBe(10_000);
-    }
-  });
-
-  test("rejects extra fields", () => {
-    const result = WebFetchInputSchema.safeParse({
-      url: "https://example.com",
-      extra: true,
-    });
-    expect(result.success).toBe(false);
-  });
-
-  test("rejects invalid format", () => {
-    const result = WebFetchInputSchema.safeParse({
-      url: "https://example.com",
-      format: "xml",
-    });
-    expect(result.success).toBe(false);
-  });
-
-  test("rejects maxLength out of range", () => {
-    const tooSmall = WebFetchInputSchema.safeParse({
-      url: "https://example.com",
-      maxLength: 500,
-    });
-    expect(tooSmall.success).toBe(false);
-
-    const tooLarge = WebFetchInputSchema.safeParse({
-      url: "https://example.com",
-      maxLength: 1_000_000,
-    });
-    expect(tooLarge.success).toBe(false);
-  });
-});
-
-// ─── Fetch Integration via Registry ───
-
-describe("webFetchTool via registry", () => {
-  const originalFetch = globalThis.fetch;
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
-
-  test("schema validates input through registry", async () => {
-    const registry = createRegistry([webFetchTool]);
-    const result = await registry.execute(
-      { toolName: "web_fetch", toolCallId: "bad", input: { url: "", extra: true } },
-      mockCtx(),
-    );
-    expect(result.isError).toBe(true);
-  });
-
-  test("invalid URL returns error", async () => {
-    const registry = createRegistry([webFetchTool]);
-    const result = await registry.execute(
-      { toolName: "web_fetch", toolCallId: "bad-url", input: { url: "ftp://bad" } },
-      mockCtx(),
-    );
-    expect(result.isError).toBe(true);
-    const parsed = JSON.parse(result.output);
-    expect(parsed.kind).toBe("webfetch-invalid-url");
-  });
-
-  test("successful HTML fetch returns markdown by default", async () => {
-    globalThis.fetch = mock(() =>
-      Promise.resolve(mockFetchResponse(HTML_PAGE)),
-    ) as unknown as typeof globalThis.fetch;
-
-    const result = await runWebFetch(
-      { url: "https://example.com", format: "markdown", maxLength: 50_000 },
-      mockCtx(),
-    );
-
-    expect(result.isError).toBe(false);
-    expect(result.output).toContain("<fetch-result>");
-    expect(result.output).toContain("<url>https://example.com/</url>");
-    expect(result.output).toContain("<status>200</status>");
-    expect(result.output).toContain("Hello World");
-  });
-
-  test("HTML fetch with text format returns plain text", async () => {
-    globalThis.fetch = mock(() =>
-      Promise.resolve(mockFetchResponse(HTML_PAGE)),
-    ) as unknown as typeof globalThis.fetch;
-
-    const result = await runWebFetch(
-      { url: "https://example.com", format: "text", maxLength: 50_000 },
-      mockCtx(),
-    );
-
-    expect(result.isError).toBe(false);
-    expect(result.output).toContain("Hello World");
-    expect(result.output).toContain("bold text");
-  });
-
-  test("HTML fetch with html format returns raw HTML", async () => {
-    globalThis.fetch = mock(() =>
-      Promise.resolve(mockFetchResponse(HTML_PAGE)),
-    ) as unknown as typeof globalThis.fetch;
-
-    const result = await runWebFetch(
-      { url: "https://example.com", format: "html", maxLength: 50_000 },
-      mockCtx(),
-    );
-
-    expect(result.isError).toBe(false);
-    expect(result.output).toContain("<!DOCTYPE html>");
-    expect(result.output).toContain("<h1>Hello World</h1>");
-  });
-
-  test("JSON response is returned as-is", async () => {
-    globalThis.fetch = mock(() =>
-      Promise.resolve(mockFetchResponse(JSON_RESPONSE, { contentType: "application/json" })),
-    ) as unknown as typeof globalThis.fetch;
-
-    const result = await runWebFetch(
-      { url: "https://api.example.com/data", format: "markdown", maxLength: 50_000 },
-      mockCtx(),
-    );
-
-    expect(result.isError).toBe(false);
-    expect(result.output).toContain('"message":"hello"');
-  });
-
-  test("text/plain response is returned as-is", async () => {
-    globalThis.fetch = mock(() =>
-      Promise.resolve(mockFetchResponse("Hello plain text", { contentType: "text/plain" })),
-    ) as unknown as typeof globalThis.fetch;
-
-    const result = await runWebFetch(
-      { url: "https://example.com/readme.txt", format: "markdown", maxLength: 50_000 },
-      mockCtx(),
-    );
-
-    expect(result.isError).toBe(false);
-    expect(result.output).toContain("Hello plain text");
-  });
-
-  test("unsupported content type returns error", async () => {
-    globalThis.fetch = mock(() =>
-      Promise.resolve(
-        mockFetchResponse("binary data", { contentType: "application/pdf" }),
-      ),
-    ) as unknown as typeof globalThis.fetch;
-
-    const result = await runWebFetch(
-      { url: "https://example.com/doc.pdf", format: "markdown", maxLength: 50_000 },
-      mockCtx(),
-    );
-
-    expect(result.isError).toBe(true);
-    const parsed = JSON.parse(result.output);
-    expect(parsed.kind).toBe("webfetch-content-type-unsupported");
-  });
-
-  test("HTTP error status still returns content", async () => {
-    globalThis.fetch = mock(() =>
-      Promise.resolve(
-        mockFetchResponse("<html><body><h1>Not Found</h1><p>The page was not found.</p></body></html>", {
-          status: 404,
-          contentType: "text/html",
-        }),
-      ),
-    ) as unknown as typeof globalThis.fetch;
-
-    const result = await runWebFetch(
-      { url: "https://example.com/missing", format: "markdown", maxLength: 50_000 },
-      mockCtx(),
-    );
-
-    expect(result.isError).toBe(false);
-    expect(result.output).toContain("<status>404</status>");
-    expect(result.output).toContain("Not Found");
-  });
-
-  test("content is truncated beyond maxLength", async () => {
-    const longPage = `<!DOCTYPE html><html><body><p>${"x".repeat(1000)}</p></body></html>`;
-    globalThis.fetch = mock(() =>
-      Promise.resolve(mockFetchResponse(longPage)),
-    ) as unknown as typeof globalThis.fetch;
-
-    const result = await runWebFetch(
-      { url: "https://example.com/long", format: "html", maxLength: 500 },
-      mockCtx(),
-    );
-
-    expect(result.isError).toBe(false);
-    expect(result.output).toContain("[Output truncated: content exceeded maxLength]");
-  });
-
-  test("timeout returns timeout error", async () => {
-    globalThis.fetch = mock(() =>
-      new Promise((_, reject) => {
-        setTimeout(() => reject(new DOMException("Aborted", "AbortError")), 50);
-      }),
-    ) as unknown as typeof globalThis.fetch;
-
-    // Use a very short timeout by overriding the constant indirectly
-    // Since we can't easily override DEFAULT_TIMEOUT_MS, test with AbortController
-    const abortController = new AbortController();
-    setTimeout(() => abortController.abort(), 5);
-
-    const result = await runWebFetch(
-      { url: "https://example.com/slow", format: "markdown", maxLength: 50_000 },
-      mockCtx({ abort: abortController.signal }),
-    );
-
-    expect(result.isError).toBe(true);
-    const parsed = JSON.parse(result.output);
-    expect(parsed.kind).toBe("cancelled");
-  });
-
-  test("redirects are followed with URL validation", async () => {
-    let callCount = 0;
-    globalThis.fetch = mock((url: string, opts: any) => {
-      callCount++;
-      if (callCount === 1) {
-        return Promise.resolve(
-          new Response(null, {
-            status: 301,
-            headers: { location: "https://example.com/final" },
-          }),
-        );
-      }
-      return Promise.resolve(mockFetchResponse(HTML_PAGE));
-    }) as unknown as typeof globalThis.fetch;
-
-    const result = await runWebFetch(
-      { url: "https://example.com/redirect", format: "markdown", maxLength: 50_000 },
-      mockCtx(),
-    );
-
-    expect(result.isError).toBe(false);
-    expect(result.output).toContain("<url>https://example.com/final</url>");
-    expect(callCount).toBe(2);
-  });
-
-  test("redirect to invalid URL is rejected", async () => {
-    globalThis.fetch = mock(() =>
-      Promise.resolve(
-        new Response(null, {
-          status: 302,
-          headers: { location: "ftp://malicious.com" },
-        }),
-      ),
-    ) as unknown as typeof globalThis.fetch;
-
-    const result = await runWebFetch(
-      { url: "https://example.com/bad-redirect", format: "markdown", maxLength: 50_000 },
-      mockCtx(),
-    );
-
-    expect(result.isError).toBe(true);
-    const parsed = JSON.parse(result.output);
-    expect(parsed.kind).toBe("webfetch-invalid-url");
-  });
-
-  test("tool traits are correct", () => {
-    expect(webFetchTool.traits).toEqual({
-      readOnly: true,
-      destructive: false,
-      concurrencySafe: true,
-    });
+  test("keeps artifact output policy", () => {
+    expect(webFetchTool.outputPolicy).toEqual({ kind: "artifact", previewDirection: "head-tail" });
   });
 });

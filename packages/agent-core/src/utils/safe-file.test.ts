@@ -1,7 +1,13 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { atomicWrite, isContained, resolveContainedPath } from "./safe-file";
+import {
+  BoundedFileReadError,
+  atomicWrite,
+  isContained,
+  readUtf8FileBounded,
+  resolveContainedPath,
+} from "./safe-file";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "safe-file", crypto.randomUUID());
 
@@ -61,5 +67,22 @@ describe("path containment helpers", () => {
     await expect(resolveContainedPath("../escape", TMP_DIR)).rejects.toThrow(
       "Path escapes the allowed root directory",
     );
+  });
+});
+
+describe("readUtf8FileBounded", () => {
+  test("accepts the exact byte boundary and preserves split multibyte characters", async () => {
+    const filePath = join(TMP_DIR, "bounded.txt");
+    const content = `${"a".repeat(65_535)}界`;
+    await Bun.write(filePath, content);
+
+    await expect(readUtf8FileBounded(filePath, 65_538)).resolves.toBe(content);
+  });
+
+  test("rejects one byte over the cap without returning partial content", async () => {
+    const filePath = join(TMP_DIR, "too-large.txt");
+    await Bun.write(filePath, "x".repeat(1_025));
+
+    await expect(readUtf8FileBounded(filePath, 1_024)).rejects.toBeInstanceOf(BoundedFileReadError);
   });
 });

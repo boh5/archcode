@@ -8,6 +8,7 @@ import { storeManager } from "../../../store/store";
 import { createMockStore } from "../../../store/test-helpers";
 import { createTestTempRoot } from "../../../testing/test-temp-root";
 import { createTestProjectContext } from "../../test-project-context";
+import { expectTextDraft } from "../../test-results";
 import type { ToolExecutionContext } from "../../types";
 import { lspFindReferencesTool } from "./lsp-find-references";
 
@@ -29,7 +30,7 @@ describe("lspFindReferencesTool integration", () => {
     const pool = await install(server);
     try {
       const result = await lspFindReferencesTool.execute({ filePath: "b.ts", line: 1, character: 13 }, makeCtx());
-      expect(result).toBe(`References: ${testDir}/a.ts:2:3, ${testDir}/a.ts:2:10, ${testDir}/b.ts:2:5`);
+      expect(expectTextDraft(result)).toBe(`References: ${testDir}/a.ts:2:3, ${testDir}/a.ts:2:10, ${testDir}/b.ts:2:5`);
       expect(pool.releaseKeys).toEqual([{ workspaceRoot: testDir, serverId: "typescript" }]);
       expect(pool.acquireOptions[0]).toMatchObject({ command: "typescript-language-server", args: ["--stdio"], cwd: testDir });
     } finally { await server.stop(); }
@@ -60,7 +61,7 @@ describe("lspFindReferencesTool integration", () => {
     const server = new FakeLspServer({ responses: { "textDocument/references": null } });
     await install(server);
     try {
-      expect(await lspFindReferencesTool.execute({ filePath: "main.ts", line: 1, character: 6 }, makeCtx())).toBe("No references found.");
+      expect(expectTextDraft(await lspFindReferencesTool.execute({ filePath: "main.ts", line: 1, character: 6 }, makeCtx()))).toBe("No references found.");
     } finally { await server.stop(); }
   });
 
@@ -71,7 +72,7 @@ describe("lspFindReferencesTool integration", () => {
     try {
       const result = await lspFindReferencesTool.execute({ filePath: "main.ts", line: 2, character: 7 }, makeCtx());
       expect(pool.client.requests[0]?.params).toMatchObject({ position: { line: 1, character: 7 } });
-      expect(result).toBe(`References: ${testDir}/main.ts:3:7`);
+      expect(expectTextDraft(result)).toBe(`References: ${testDir}/main.ts:3:7`);
     } finally { await server.stop(); }
   });
 });

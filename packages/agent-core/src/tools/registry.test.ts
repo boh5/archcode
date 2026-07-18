@@ -1,2254 +1,846 @@
-import { describe, expect, test, beforeEach, afterAll, mock } from "bun:test";
+import { afterAll, describe, expect, mock, spyOn, test } from "bun:test";
 import { join } from "node:path";
-import { rmSync } from "node:fs";
-
+import { mkdirSync } from "node:fs";
+import { rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { z } from "zod";
+
 import { SkillService } from "../skills";
 import { storeManager } from "../store/store";
-import { createRegistry } from "./registry";
-import type { ToolRegistry } from "./registry";
-import { ResolvedToolSet } from "./registry";
-import type { ProjectContext } from "../projects/types";
-import type {
-  ToolDescriptor,
-  ToolExecutionContext,
-  ToolCallLike,
-  ToolPermission,
-} from "./types";
-import { silentLogger, type Logger } from "../logger";
-import { createToolExecutionContext, DuplicateToolError } from "./types";
-import { DestructiveToolPermissionError } from "./types";
-import { createExecutionLogger } from "./hooks/logger";
-import { createAuditHook, type AuditEvent } from "./hooks/audit";
-import { REDACTION_MARKER } from "./security/redaction";
-import { createRedactionHook } from "./hooks/redact";
-import { createOutputTruncator } from "./hooks/truncate";
-import { TOOL_ERROR_META_KEY } from "./errors";
-import { ProjectApprovalManager } from "./permission";
-import { approvalFingerprint } from "./permission/approval-fingerprint";
-import type { PermissionApprovalScope } from "./permission";
-import { jsonSchema } from "ai";
+import type { Logger } from "../logger";
 import { createTestProjectContext } from "./test-project-context";
+import { createTestToolRegistryFixture, type TestToolRegistryFixture } from "./test-registry";
+import { expectBlockedOutcome, expectBlockedRequest, expectSettledResult } from "./test-results";
+import { createTextToolResult } from "./results";
+import { askUserTool } from "./builtins/ask-user";
+import { createRegistry, ResolvedToolSet } from "./registry";
+import {
+  createToolExecutionContext,
+  DestructiveToolPermissionError,
+  DuplicateToolError,
+  type ToolDescriptor,
+  type ToolExecutionContext,
+} from "./types";
 
-const TEST_TEMP_ROOT = join(import.meta.dir, "__test_tmp__", `registry-${crypto.randomUUID()}`);
+const fixtures: TestToolRegistryFixture[] = [];
+const skills = new SkillService({ builtinSkills: {} });
+let workspaceIndex = 0;
+const contextRoots: string[] = [];
 
-afterAll(() => {
-  rmSync(TEST_TEMP_ROOT, { recursive: true, force: true });
+afterAll(async () => {
+  await Promise.all(fixtures.map((fixture) => fixture.dispose()));
+  await Promise.all(contextRoots.map((root) => rm(root, { recursive: true, force: true })));
 });
 
-// ─── Test helpers ───
-
-function makeDescriptor(name: string): ToolDescriptor {
-  return {
-    name,
-    description: `Tool: ${name}`,
-    inputSchema: z.object({ msg: z.string() }).strict(),
-    traits: {
-      readOnly: true,
-      destructive: false,
-      concurrencySafe: true,
-    },
-    async execute(input, _ctx) {
-      return `echo: ${(input as { msg: string }).msg}`;
-    },
-  };
+function fixture(options: Parameters<typeof createTestToolRegistryFixture>[0] = {}): TestToolRegistryFixture {
+  const created = createTestToolRegistryFixture(options);
+  fixtures.push(created);
+  return created;
 }
 
-function makeLogger(): Logger & { warn: ReturnType<typeof mock>; debug: ReturnType<typeof mock> } {
-  const logger: Logger & { warn: ReturnType<typeof mock>; debug: ReturnType<typeof mock> } = {
-    warn: mock((_message: string, _meta?: Record<string, unknown>) => {}),
-    debug: mock(() => {}),
-    info: mock(() => {}),
-    error: mock(() => {}),
-    child: () => logger,
-  };
-  return logger;
-}
-
-function makeProjectContext(
-  workspaceRoot: string,
-  approvals = new ProjectApprovalManager(silentLogger),
-): ProjectContext {
-  return {
-    ...createTestProjectContext(workspaceRoot),
-    approvals,
-  };
-}
-
-async function makeLoadedProjectContext(workspaceRoot: string): Promise<ProjectContext> {
-  return makeProjectContext(workspaceRoot);
-}
-
-// ─── ToolRegistry ───
-
-describe("ToolRegistry", () => {
-  let registry: ToolRegistry;
-
-  beforeEach(() => {
-    registry = createRegistry();
-  });
-
-  describe("register()", () => {
-    test("registers a single tool and retrieves it by name", () => {
-      const desc = makeDescriptor("echo");
-      registry.register(desc);
-
-      expect(registry.get("echo")).toBe(desc);
-    });
-
-    test("throws DuplicateToolError for duplicate name", () => {
-      registry.register(makeDescriptor("echo"));
-
-      expect(() => registry.register(makeDescriptor("echo"))).toThrow(
-        DuplicateToolError,
-      );
-    });
-
-    test("throws DestructiveToolPermissionError for destructive tool with no permissions", () => {
-      const desc: ToolDescriptor = {
-        name: "nuke",
-        description: "Nukes everything",
-        inputSchema: z.object({}).strict(),
-        traits: { readOnly: false, destructive: true, concurrencySafe: false },
-        async execute() {
-          return "nuked";
-        },
-      };
-
-      expect(() => registry.register(desc)).toThrow(DestructiveToolPermissionError);
-      expect(() => registry.register(desc)).toThrow(/nuke/);
-    });
-
-    test("throws DestructiveToolPermissionError for destructive tool with empty permissions array", () => {
-      const desc: ToolDescriptor = {
-        name: "nuke",
-        description: "Nukes everything",
-        inputSchema: z.object({}).strict(),
-        traits: { readOnly: false, destructive: true, concurrencySafe: false },
-        permissions: [],
-        async execute() {
-          return "nuked";
-        },
-      };
-
-      expect(() => registry.register(desc)).toThrow(DestructiveToolPermissionError);
-    });
-
-    test("allows destructive tool with at least one permission", () => {
-      const perm: ToolPermission = async () => ({ outcome: "allow" });
-      const desc: ToolDescriptor = {
-        name: "bash",
-        description: "Run bash",
-        inputSchema: z.object({}).strict(),
-        traits: { readOnly: false, destructive: true, concurrencySafe: false },
-        permissions: [perm],
-        async execute() {
-          return "ok";
-        },
-      };
-
-      expect(() => registry.register(desc)).not.toThrow();
-      expect(registry.get("bash")).toBe(desc);
-    });
-
-    test("allows non-destructive tool with no permissions", () => {
-      const desc: ToolDescriptor = {
-        name: "read",
-        description: "Read-only tool",
-        inputSchema: z.object({}).strict(),
-        traits: { readOnly: true, destructive: false, concurrencySafe: true },
-        async execute() {
-          return "ok";
-        },
-      };
-
-      expect(() => registry.register(desc)).not.toThrow();
-      expect(registry.get("read")).toBe(desc);
-    });
-
-    test("allows non-destructive tool with empty permissions array", () => {
-      const desc: ToolDescriptor = {
-        name: "read",
-        description: "Read-only tool",
-        inputSchema: z.object({}).strict(),
-        traits: { readOnly: true, destructive: false, concurrencySafe: true },
-        permissions: [],
-        async execute() {
-          return "ok";
-        },
-      };
-
-      expect(() => registry.register(desc)).not.toThrow();
-    });
-  });
-
-  describe("registerAll()", () => {
-    test("registers multiple tools at once", () => {
-const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("write")];
-
-      registry.registerAll(descs);
-
-      expect(registry.get("echo")).toBe(descs[0]);
-      expect(registry.get("read")).toBe(descs[1]);
-      expect(registry.get("write")).toBe(descs[2]);
-    });
-
-    test("throws on first duplicate", () => {
-      registry.register(makeDescriptor("echo"));
-
-      expect(() =>
-        registry.registerAll([makeDescriptor("read"), makeDescriptor("echo")]),
-      ).toThrow(DuplicateToolError);
-    });
-  });
-
-  describe("get()", () => {
-    test("returns undefined for unknown name", () => {
-      expect(registry.get("nonexistent")).toBeUndefined();
-    });
-  });
-
-  describe("getAll()", () => {
-    test("returns all registered descriptors", () => {
-      const descs = [makeDescriptor("a"), makeDescriptor("b")];
-      registry.registerAll(descs);
-
-      const all = registry.getAll();
-
-      expect(all).toHaveLength(2);
-      expect(all).toContain(descs[0]);
-      expect(all).toContain(descs[1]);
-    });
-
-    test("returns empty array when nothing registered", () => {
-      expect(registry.getAll()).toEqual([]);
-    });
-  });
-
-  describe("listByPrefix()", () => {
-    test("returns descriptors whose names start with the given prefix", () => {
-      const desc1 = makeDescriptor("mcp__context7__resolve");
-      const desc2 = makeDescriptor("mcp__context7__search");
-      const desc3 = makeDescriptor("file_read");
-      registry.registerAll([desc1, desc2, desc3]);
-
-      const result = registry.listByPrefix("mcp__context7__");
-
-      expect(result).toHaveLength(2);
-      expect(result).toContain(desc1);
-      expect(result).toContain(desc2);
-      expect(result).not.toContain(desc3);
-    });
-
-    test("returns empty array when no descriptors match the prefix", () => {
-      registry.register(makeDescriptor("file_read"));
-
-      const result = registry.listByPrefix("nonexistent__");
-
-      expect(result).toEqual([]);
-    });
-
-    test("returns all matching descriptors when multiple match", () => {
-      const descs = [
-        makeDescriptor("mcp__a__tool1"),
-        makeDescriptor("mcp__a__tool2"),
-        makeDescriptor("mcp__a__tool3"),
-        makeDescriptor("mcp__b__other"),
-        makeDescriptor("bash"),
-      ];
-      registry.registerAll(descs);
-
-      const result = registry.listByPrefix("mcp__a__");
-
-      expect(result).toHaveLength(3);
-      expect(result).toContain(descs[0]);
-      expect(result).toContain(descs[1]);
-      expect(result).toContain(descs[2]);
-      expect(result).not.toContain(descs[3]);
-      expect(result).not.toContain(descs[4]);
-    });
-
-    test("preserves registration order in result", () => {
-      const descs = [
-        makeDescriptor("z_last"),
-        makeDescriptor("a_first"),
-        makeDescriptor("m_middle"),
-      ];
-      registry.registerAll(descs);
-
-      const result = registry.listByPrefix("");
-
-      expect(result).toHaveLength(3);
-      expect(result[0]).toBe(descs[0]);
-      expect(result[1]).toBe(descs[1]);
-      expect(result[2]).toBe(descs[2]);
-    });
-
-    test("exact name without trailing prefix chars does not match", () => {
-      const desc = makeDescriptor("mcp__context7");
-      registry.register(desc);
-
-      const result = registry.listByPrefix("mcp__context7__");
-
-      expect(result).toEqual([]);
-    });
-
-    test("returns empty array when registry is empty", () => {
-      const result = registry.listByPrefix("anything");
-
-      expect(result).toEqual([]);
-    });
-  });
-
-  describe("globalHooks", () => {
-    test("initializes to empty arrays", () => {
-      expect(registry.globalHooks.before).toEqual([]);
-      expect(registry.globalHooks.after).toEqual([]);
-      expect(registry.globalPermissions).toEqual([]);
-    });
-  });
-
-  // ─── execute() ───
-
-  function makeContext(
-    overrides?: Partial<ToolExecutionContext>,
-  ): ToolExecutionContext {
-    const ac = new AbortController();
-    const workspaceRoot = overrides?.projectContext?.project.workspaceRoot ?? overrides?.cwd ?? "/tmp";
-    return createToolExecutionContext({ store: { getState: () => ({ sessionId: "test-session" }) } as ToolExecutionContext["store"], storeManager, toolName: "echo",
-    toolCallId: "call-1",
-    input: { msg: "hello" },
+function context(
+  toolName: string,
+  effectfulAttempt: NonNullable<ToolExecutionContext["onToolAttempt"]> = mock(async () => undefined),
+) {
+  const workspaceRoot = join(tmpdir(), `archcode-registry-context-${workspaceIndex++}-${crypto.randomUUID()}`);
+  contextRoots.push(workspaceRoot);
+  mkdirSync(workspaceRoot, { recursive: true });
+  const store = storeManager.create(`registry-${crypto.randomUUID()}`, workspaceRoot, { agentName: "engineer" });
+  return createToolExecutionContext({
+    store,
+    storeManager,
+    toolName,
+    toolCallId: `${toolName}-${crypto.randomUUID()}`,
+    input: {},
     step: 0,
-    abort: ac.signal,
-    startedAt: 0,
-    allowedTools: new Set(["echo"]),
+    abort: new AbortController().signal,
+    startedAt: Date.now(),
+    allowedTools: new Set([toolName]),
     agentSkills: [],
-    skillService: new SkillService({ builtinSkills: {} }),
-    projectContext: makeProjectContext(workspaceRoot),
+    skillService: skills,
+    projectContext: createTestProjectContext(workspaceRoot),
+    cwd: workspaceRoot,
+    onToolAttempt: effectfulAttempt,
+  });
+}
+
+function descriptor(overrides: Partial<ToolDescriptor> = {}): ToolDescriptor {
+  return {
+    name: "echo",
+    description: "echo",
+    inputSchema: z.object({}).strict(),
+    outputPolicy: { kind: "inline", previewDirection: "head" },
+    traits: { readOnly: true, destructive: false, concurrencySafe: true },
+    execute: async () => ({ isError: false, draft: { kind: "text", text: "ok" } }),
     ...overrides,
-    cwd: workspaceRoot, });
-  }
+  };
+}
 
-  function makeToolCall(
-    overrides?: Partial<ToolCallLike>,
-  ): ToolCallLike {
-    return { toolCallId: "call-1",
-    toolName: "echo",
-    input: { msg: "hello" }, ...overrides,  };
-  }
-
-  describe("execute()", () => {
-    function makeSpiedDescriptor(name: string): ToolDescriptor & { execute: ReturnType<typeof mock> } {
-      return {
-        ...makeDescriptor(name),
-        execute: mock(async (input: unknown) => `echo: ${(input as { msg: string }).msg}`),
-      };
-    }
-
-    // 1. Unknown tool returns error result (no throw)
-    test("unknown tool returns error result, no throw", async () => {
-      const ctx = makeContext({ toolName: "missing" });
-      const call = makeToolCall({ toolName: "missing" });
-
-      const result = await registry.execute(call, ctx);
-
-      expect(result.isError).toBe(true);
-      expect(result.output).toContain("missing");
-      expect(result.output).toContain("not registered");
-      expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
-      expect(result.meta?.permissionErrorCode).toBe("TOOL_UNKNOWN");
-      expect(result.meta?.skippedExecution).toBe(true);
+describe("ToolRegistry hard-cut lifecycle", () => {
+  test("blocked permission calls execute/finalize zero times", async () => {
+    const execute = mock(async () => ({ isError: false, draft: { kind: "text" as const, text: "forbidden" } }));
+    const created = fixture({
+      descriptors: [descriptor({
+        permissions: [async () => ({ outcome: "ask", reason: "approval required" })],
+        execute,
+      })],
     });
+    const finalized = mock(async () => undefined);
+    created.registry.globalHooks.finalized.push(finalized);
+    const ctx = context("echo");
 
-    test("unknown tool returns TOOL_UNKNOWN even when explicitly allowed", async () => {
-      registry.register(makeSpiedDescriptor("safeTool"));
-      const ctx = makeContext({
-        toolName: "missingTool",
-        allowedTools: new Set(["safeTool", "missingTool"]),
-      });
-      const call = makeToolCall({ toolName: "missingTool" });
+    const outcome = await created.registry.execute(
+      { toolName: "echo", toolCallId: ctx.toolCallId, input: {} },
+      ctx,
+    );
 
-      const result = await registry.execute(call, ctx);
+    expect(outcome.kind).toBe("blocked");
+    expect(execute).not.toHaveBeenCalled();
+    expect(finalized).not.toHaveBeenCalled();
+  });
 
-      expect(result.isError).toBe(true);
-      expect(result.meta?.permissionErrorCode).toBe("TOOL_UNKNOWN");
-      expect(result.meta?.skippedExecution).toBe(true);
-    });
+  test("settled calls finalize and run finalized hooks exactly once", async () => {
+    const created = fixture({ descriptors: [descriptor()] });
+    const finalized = mock(async () => undefined);
+    created.registry.globalHooks.finalized.push(finalized);
+    const ctx = context("echo");
 
-    // 2. Invalid input returns error result (no throw)
-    test("invalid input returns error result, no throw", async () => {
-      registry.register(makeDescriptor("echo"));
-      const ctx = makeContext();
-      const call = makeToolCall({ input: { bad: 123 } });
+    const outcome = await created.registry.execute(
+      { toolName: "echo", toolCallId: ctx.toolCallId, input: {} },
+      ctx,
+    );
 
-      const result = await registry.execute(call, ctx);
+    expect(outcome.kind).toBe("settled");
+    expect(outcome.kind === "settled" ? outcome.result.output.preview : "").toBe("ok");
+    expect(finalized).toHaveBeenCalledTimes(1);
+  });
 
-      expect(result.isError).toBe(true);
-      expect(result.output).toContain("invalid_type");
-      expect(result.output).toContain("TOOL_SCHEMA_INVALID_INPUT");
-    });
-
-    // 3. Successful execution
-    test("successful execution returns output with isError false", async () => {
-      registry.register(makeDescriptor("echo"));
-      const ctx = makeContext();
-      const call = makeToolCall({ input: { msg: "world" } });
-
-      const result = await registry.execute(call, ctx);
-
-      expect(result.isError).toBe(false);
-      expect(result.output).toBe("echo: world");
-    });
-
-    test("awaits durable effectful attempt recording before execute", async () => {
-      let releaseAttempt!: () => void;
-      const attemptDurable = new Promise<void>((resolve) => {
-        releaseAttempt = resolve;
-      });
-      const execute = mock(async () => "written");
-      registry.register({
-        name: "write",
-        description: "effectful write",
-        inputSchema: z.object({}).strict(),
+  test("creates artifact capture before effectful execute", async () => {
+    let captureWasPresent = false;
+    const attempt = mock(async () => undefined);
+    const created = fixture({
+      descriptors: [descriptor({
+        outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
         traits: { readOnly: false, destructive: false, concurrencySafe: false },
-        execute,
-      });
-      const onToolAttempt = mock(async () => await attemptDurable);
-      const execution = registry.execute(
-        makeToolCall({ toolName: "write", input: {} }),
-        makeContext({ toolName: "write", allowedTools: new Set(["write"]), onToolAttempt }),
-      );
-
-      await Promise.resolve();
-      await Promise.resolve();
-      expect(onToolAttempt).toHaveBeenCalledTimes(1);
-      expect(execute).not.toHaveBeenCalled();
-
-      releaseAttempt();
-      expect((await execution).isError).toBe(false);
-      expect(execute).toHaveBeenCalledTimes(1);
-    });
-
-    // 4. Executor throw becomes error result
-    test("executor throw becomes error result", async () => {
-      const desc: ToolDescriptor = {
-        name: "crash",
-        description: "always crashes",
-        inputSchema: z.object({}).strict(),
-        traits: { readOnly: true, destructive: false, concurrencySafe: true },
-        async execute() {
-          throw new Error("BOOM");
+        execute: async (_input, ctx) => {
+          captureWasPresent = ctx.outputCapture !== undefined;
+          await ctx.outputCapture?.write("captured output");
+          return { isError: false, draft: { kind: "capture" } };
         },
-      };
-      registry.register(desc);
-      const ctx = makeContext({ toolName: "crash", allowedTools: new Set(["crash"]) });
-      const call = makeToolCall({ toolName: "crash", input: {} });
-
-      const result = await registry.execute(call, ctx);
-
-      expect(result.isError).toBe(true);
-      const output = JSON.parse(result.output) as Record<string, unknown>;
-      expect(output.message).toBe("BOOM");
-      expect(output.code).toBe("TOOL_EXECUTION_FAILED");
+      })],
     });
+    await created.artifactStore.ready();
+    const ctx = context("echo", attempt);
+    const outcome = await created.registry.execute(
+      { toolName: "echo", toolCallId: ctx.toolCallId, input: {} },
+      ctx,
+    );
 
-    // 5. Global before hook mutates input, re-parsed
-    test("global before hook mutates input, re-parsed successfully", async () => {
-      registry.register(makeDescriptor("echo"));
-      registry.globalHooks.before.push(async (input) => {
-        return { msg: (input as { msg: string }).msg + "!" };
-      });
-      const ctx = makeContext();
-      const call = makeToolCall({ input: { msg: "hi" } });
+    expect(captureWasPresent).toBe(true);
+    expect(attempt).toHaveBeenCalledTimes(1);
+    expect(outcome.kind === "settled" ? outcome.result.output.preview : "").toBe("captured output");
+  });
 
-      const result = await registry.execute(call, ctx);
-
-      expect(result.isError).toBe(false);
-      expect(result.output).toBe("echo: hi!");
+  test("distinguishes pre-attempt capture failure from post-attempt finalizer failure", async () => {
+    const created = fixture({
+      descriptors: [descriptor({
+        outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
+        traits: { readOnly: false, destructive: false, concurrencySafe: false },
+      })],
     });
+    const attempt = mock(async () => undefined);
+    const beginCapture = spyOn(created.finalizer, "beginCapture").mockRejectedValueOnce(new Error("sink failed"));
+    const firstCtx = context("echo", attempt);
+    const beforeAttempt = await created.registry.execute(
+      { toolName: "echo", toolCallId: firstCtx.toolCallId, input: {} },
+      firstCtx,
+    );
+    expect(attempt).not.toHaveBeenCalled();
+    expect(beforeAttempt.kind === "settled" ? beforeAttempt.result.details?.unknownResult : true).toBeUndefined();
+    beginCapture.mockRestore();
 
-    // 6. Global before hook mutation fails re-parse → error result
-    test("global before hook mutation fails re-parse → error result", async () => {
-      registry.register(makeDescriptor("echo"));
-      registry.globalHooks.before.push(async () => {
-        return { bad: true };
-      });
-      const ctx = makeContext();
-      const call = makeToolCall();
+    const finalize = spyOn(created.finalizer, "finalize").mockRejectedValueOnce(new Error("finalizer failed"));
+    const secondCtx = context("echo", attempt);
+    const afterAttempt = await created.registry.execute(
+      { toolName: "echo", toolCallId: secondCtx.toolCallId, input: {} },
+      secondCtx,
+    );
+    expect(attempt).toHaveBeenCalledTimes(1);
+    expect(afterAttempt.kind === "settled" ? afterAttempt.result.details?.unknownResult : false).toBe(true);
+    finalize.mockRestore();
+  });
 
-      const result = await registry.execute(call, ctx);
-
-      expect(result.isError).toBe(true);
+  test("redacts raw exceptions before finalized output or logs", async () => {
+    const secret = "runtime-literal-secret";
+    const logFields: unknown[] = [];
+    const logger: Logger = {
+      debug: (_event, fields) => logFields.push(fields),
+      info: (_event, fields) => logFields.push(fields),
+      warn: (_event, fields) => logFields.push(fields),
+      error: (_event, fields) => logFields.push(fields),
+      child: () => logger,
+    };
+    const created = fixture({
+      logger,
+      secretLiterals: [secret],
+      descriptors: [descriptor({ execute: async () => { throw new Error(`boom ${secret}`); } })],
     });
-
-    // 7. Per-tool before hook mutates input, re-parsed
-    test("per-tool before hook mutates input, re-parsed successfully", async () => {
-      const desc = makeDescriptor("echo");
-      desc.hooks = {
-        before: [
-          async (input) => {
-            return { msg: ((input as { msg: string }).msg as string).toUpperCase() };
-          },
-        ],
-      };
-      registry.register(desc);
-      const ctx = makeContext();
-      const call = makeToolCall({ input: { msg: "hey" } });
-
-      const result = await registry.execute(call, ctx);
-
-      expect(result.isError).toBe(false);
-      expect(result.output).toBe("echo: HEY");
-    });
-
-    // 8. Per-tool before hook mutation fails re-parse → error result
-    test("per-tool before hook mutation fails re-parse → error result", async () => {
-      const desc = makeDescriptor("echo");
-      desc.hooks = {
-        before: [
-          async () => {
-            return { nope: 1 };
-          },
-        ],
-      };
-      registry.register(desc);
-      const ctx = makeContext();
-      const call = makeToolCall();
-
-      const result = await registry.execute(call, ctx);
-
-      expect(result.isError).toBe(true);
-    });
-
-    // 9. Per-tool after hook mutates result
-    test("per-tool after hook mutates result", async () => {
-      const desc = makeDescriptor("echo");
-      desc.hooks = {
-        after: [
-          async (result) => {
-            return { ...result, output: `[wrapped] ${result.output}` };
-          },
-        ],
-      };
-      registry.register(desc);
-      const ctx = makeContext();
-      const call = makeToolCall({ input: { msg: "test" } });
-
-      const result = await registry.execute(call, ctx);
-
-      expect(result.isError).toBe(false);
-      expect(result.output).toBe("[wrapped] echo: test");
-    });
-
-    // 10. Per-tool after hook throws → result becomes error, global after still runs
-    test("per-tool after hook throws → result becomes error, global after still runs", async () => {
-      const desc = makeDescriptor("echo");
-      desc.hooks = {
-        after: [
-          async () => {
-            throw new Error("after boom");
-          },
-        ],
-      };
-      registry.register(desc);
-
-      let globalAfterRan = false;
-      registry.globalHooks.after.push(async (result, _ctx) => {
-        globalAfterRan = true;
-        return result;
-      });
-
-      const ctx = makeContext();
-      const call = makeToolCall({ input: { msg: "x" } });
-
-      const result = await registry.execute(call, ctx);
-
-      expect(result.isError).toBe(true);
-      const output = JSON.parse(result.output) as Record<string, unknown>;
-      expect(output.message).toBe("after boom");
-      expect(output.code).toBe("TOOL_AFTER_HOOK_FAILED");
-      expect(globalAfterRan).toBe(true);
-    });
-
-    // 11. Global after hook mutates result
-    test("global after hook mutates result", async () => {
-      registry.register(makeDescriptor("echo"));
-      registry.globalHooks.after.push(async (result) => {
-        return { ...result, output: `[global] ${result.output}` };
-      });
-      const ctx = makeContext();
-      const call = makeToolCall({ input: { msg: "x" } });
-
-      const result = await registry.execute(call, ctx);
-
-      expect(result.isError).toBe(false);
-      expect(result.output).toBe("[global] echo: x");
-    });
-
-    // 12. Global after hook throws → result becomes error, remaining global after still run
-    test("global after hook throws → result becomes error, remaining still run", async () => {
-      registry.register(makeDescriptor("echo"));
-
-      let secondRan = false;
-      registry.globalHooks.after.push(async () => {
-        throw new Error("global after error 1");
-      });
-      registry.globalHooks.after.push(async (result, _ctx) => {
-        secondRan = true;
-        return result;
-      });
-
-      const ctx = makeContext();
-      const call = makeToolCall({ input: { msg: "x" } });
-
-      const result = await registry.execute(call, ctx);
-
-      expect(result.isError).toBe(true);
-      const output = JSON.parse(result.output) as Record<string, unknown>;
-      expect(output.message).toBe("global after error 1");
-      expect(output.code).toBe("TOOL_AFTER_HOOK_FAILED");
-      expect(secondRan).toBe(true);
-    });
-
-    // 13. Hook ordering: global before → per-tool before → executor → per-tool after → global after
-    test("hook ordering is correct", async () => {
-      const order: string[] = [];
-
-      registry.globalPermissions.push(async () => {
-        order.push("global-perm");
-        return { outcome: "allow" };
-      });
-
-      registry.globalHooks.before.push(async () => {
-        order.push("global-before");
-      });
-
-      const desc = makeDescriptor("echo");
-      desc.hooks = {
-        before: [
-          async () => {
-            order.push("per-tool-before");
-          },
-        ],
-        after: [
-          async (result) => {
-            order.push("per-tool-after");
-            return result;
-          },
-        ],
-      };
-      desc.prepareInput = async (raw) => {
-        order.push("prepare-input");
-        return raw;
-      };
-      desc.permissions = [
-        async () => {
-          order.push("per-tool-perm");
-          return { outcome: "allow" };
-        },
-      ];
-      desc.execute = async (input) => {
-        order.push("executor");
-        return `echo: ${(input as { msg: string }).msg}`;
-      };
-      registry.register(desc);
-
-      registry.globalHooks.after.push(async (result) => {
-        order.push("global-after");
-        return result;
-      });
-
-      const ctx = makeContext();
-      const call = makeToolCall();
-
-      await registry.execute(call, ctx);
-
-      expect(order).toEqual([
-        "prepare-input",
-        "global-perm",
-        "per-tool-perm",
-        "global-before",
-        "per-tool-before",
-        "executor",
-        "per-tool-after",
-        "global-after",
-      ]);
-    });
-
-    // 14. Context has correct toolName, toolCallId, step, startedAt, durationMs
-    test("context is populated with correct fields", async () => {
-      registry.register(makeDescriptor("echo"));
-
-      let capturedCtx: ToolExecutionContext | null = null;
-      const desc: ToolDescriptor = {
-        name: "capture",
-        description: "captures ctx",
-        inputSchema: z.object({}).strict(),
-        traits: { readOnly: true, destructive: false, concurrencySafe: true },
-        async execute(_input, ctx) {
-          capturedCtx = ctx;
-          return "ok";
-        },
-      };
-      registry.register(desc);
-
-      const ac = new AbortController();
-      const ctx = makeContext({
-        toolName: "capture",
-        toolCallId: "my-call-id",
-        step: 5,
-        abort: ac.signal,
-        allowedTools: new Set(["capture"]),
-      });
-      const call = makeToolCall({
-        toolName: "capture",
-        toolCallId: "my-call-id",
-        input: {},
-      });
-
-      await registry.execute(call, ctx);
-
-      expect(capturedCtx).not.toBeNull();
-      expect(capturedCtx!.toolName).toBe("capture");
-      expect(capturedCtx!.toolCallId).toBe("my-call-id");
-      expect(capturedCtx!.step).toBe(5);
-      expect(capturedCtx!.startedAt).toBeGreaterThan(0);
-      expect(capturedCtx!.durationMs).toBeGreaterThanOrEqual(0);
-      expect(capturedCtx!.input).toEqual({});
-    });
-
-    // 15. AbortSignal identity preserved in context
-    test("abort signal identity is preserved", async () => {
-      registry.register(makeDescriptor("echo"));
-
-      let capturedSignal: AbortSignal | null = null;
-      const desc: ToolDescriptor = {
-        name: "check-abort",
-        description: "checks abort signal",
-        inputSchema: z.object({}).strict(),
-        traits: { readOnly: true, destructive: false, concurrencySafe: true },
-        async execute(_input, ctx) {
-          capturedSignal = ctx.abort;
-          return "ok";
-        },
-      };
-      registry.register(desc);
-
-      const ac = new AbortController();
-      const ctx = makeContext({
-        toolName: "check-abort",
-        abort: ac.signal,
-        allowedTools: new Set(["check-abort"]),
-      });
-      const call = makeToolCall({ toolName: "check-abort", input: {} });
-
-      await registry.execute(call, ctx);
-
-      expect(capturedSignal).not.toBeNull();
-      expect(capturedSignal === ac.signal).toBe(true);
-    });
-
-    // 16. execute() never throws
-    test("execute() never throws for any failure mode", async () => {
-      // Unknown tool
-      await expect(
-        registry.execute(makeToolCall({ toolName: "nope" }), makeContext({ toolName: "nope" })),
-      ).resolves.toBeDefined();
-
-      // Registered tool with invalid input
-      registry.register(makeDescriptor("echo"));
-      await expect(
-        registry.execute(makeToolCall({ input: { bad: 1 } }), makeContext()),
-      ).resolves.toBeDefined();
-
-      // Executor throws
-      const crashDesc: ToolDescriptor = {
-        name: "crash",
-        description: "crashes",
-        inputSchema: z.object({}).strict(),
-        traits: { readOnly: true, destructive: false, concurrencySafe: true },
-        async execute() {
-          throw new Error("bang");
-        },
-      };
-      registry.register(crashDesc);
-      await expect(
-        registry.execute(
-          makeToolCall({ toolName: "crash", input: {} }),
-          makeContext({ toolName: "crash", allowedTools: new Set(["crash"]) }),
-        ),
-      ).resolves.toBeDefined();
-    });
-
-    test("prepareInput runs before parse and failure returns permission error through global after only", async () => {
-      const order: string[] = [];
-      const desc = makeDescriptor("echo");
-      desc.prepareInput = async () => {
-        order.push("prepare-input");
-        throw new Error("prepare failed");
-      };
-      desc.hooks = {
-        before: [async () => order.push("per-tool-before")],
-        after: [async (result) => {
-          order.push("per-tool-after");
-          return result;
-        }],
-      };
-      desc.execute = async () => {
-        order.push("executor");
-        return "ok";
-      };
-      registry.register(desc);
-      registry.globalHooks.before.push(async () => {
-        order.push("global-before");
-      });
-      registry.globalHooks.after.push(async (result) => {
-        order.push("global-after");
-        return { ...result, output: `${result.output} wrapped` };
-      });
-
-      const result = await registry.execute(makeToolCall(), makeContext());
-
-      expect(result.isError).toBe(true);
-      expect(result.output).toContain("prepare failed");
-      expect(result.output).toContain("wrapped");
-      expect(result.meta?.permissionErrorCode).toBe("TOOL_PREPARE_INPUT_FAILED");
-      expect(result.meta?.skippedExecution).toBe(true);
-      expect(order).toEqual(["prepare-input", "global-after"]);
-    });
-
-    test("registered but disallowed tool skips execution and runs global after only", async () => {
-      const order: string[] = [];
-      const desc = makeDescriptor("echo");
-      desc.hooks = {
-        before: [async () => order.push("per-tool-before")],
-        after: [async (result) => {
-          order.push("per-tool-after");
-          return result;
-        }],
-      };
-      desc.execute = async () => {
-        order.push("executor");
-        return "ok";
-      };
-      registry.register(desc);
-      registry.globalHooks.before.push(async () => {
-        order.push("global-before");
-      });
-      registry.globalHooks.after.push(async (result) => {
-        order.push("global-after");
-        return result;
-      });
-
-      const result = await registry.execute(makeToolCall(), makeContext({ allowedTools: new Set() }));
-
-      expect(result.isError).toBe(true);
-      expect(result.meta?.permissionErrorCode).toBe("TOOL_NOT_ALLOWED");
-      expect(result.meta?.skippedExecution).toBe(true);
-      expect(order).toEqual(["global-after"]);
-    });
-
-    test("registered destructiveTool not in allowedTools returns TOOL_NOT_ALLOWED and skips executor spy", async () => {
-      const desc = makeSpiedDescriptor("destructiveTool");
-      desc.traits = { readOnly: false, destructive: true, concurrencySafe: false };
-      desc.permissions = [async () => ({ outcome: "allow" })];
-      registry.register(desc);
-
-      const result = await registry.execute(
-        makeToolCall({ toolName: "destructiveTool" }),
-        makeContext({ toolName: "destructiveTool", allowedTools: new Set(["safeTool"]) }),
-      );
-
-      expect(result.isError).toBe(true);
-      expect(result.meta?.permissionErrorCode).toBe("TOOL_NOT_ALLOWED");
-      expect(desc.execute).not.toHaveBeenCalled();
-    });
-
-    test("permission deny uses stable permission metadata and skips hooks plus executor", async () => {
-      const order: string[] = [];
-      const desc = makeDescriptor("echo");
-      desc.permissions = [async () => {
-        order.push("per-tool-perm");
-        return { outcome: "allow" };
-      }];
-      desc.hooks = { before: [async () => order.push("per-tool-before")] };
-      desc.execute = async () => {
-        order.push("executor");
-        return "ok";
-      };
-      registry.register(desc);
-      registry.globalPermissions.push(async () => {
-        order.push("global-perm");
-        return { outcome: "deny", reason: "blocked" };
-      });
-      registry.globalHooks.after.push(async (result) => {
-        order.push("global-after");
-        return result;
-      });
-
-      const result = await registry.execute(makeToolCall(), makeContext());
-
-      expect(result.isError).toBe(true);
-      expect(result.output).toContain("blocked");
-      expect(result.meta?.permissionErrorCode).toBe("TOOL_PERMISSION_DENIED");
-      expect(result.meta?.skippedExecution).toBe(true);
-      expect(order).toEqual(["global-perm", "per-tool-perm", "global-after"]);
-    });
-
-    test("permission deny uses permission-provided structured error kind and code", async () => {
-      const desc = makeSpiedDescriptor("safeTool");
-      desc.permissions = [async () => ({
-        outcome: "deny",
-        reason: "must read before write",
-        errorKind: "read-before-write",
-        errorCode: "TOOL_FILE_NOT_READ_FIRST",
-      })];
-      registry.register(desc);
-
-      const result = await registry.execute(
-        makeToolCall({ toolName: "safeTool" }),
-        makeContext({ toolName: "safeTool", allowedTools: new Set(["safeTool"]) }),
-      );
-
-      const output = JSON.parse(result.output) as Record<string, unknown>;
-      const toolError = result.meta?.[TOOL_ERROR_META_KEY] as Record<string, unknown>;
-      expect(result.isError).toBe(true);
-      expect(output.kind).toBe("read-before-write");
-      expect(output.code).toBe("TOOL_FILE_NOT_READ_FIRST");
-      expect(toolError.kind).toBe("read-before-write");
-      expect(result.meta?.permissionErrorCode).toBe("TOOL_FILE_NOT_READ_FIRST");
-      expect(result.meta?.skippedExecution).toBe(true);
-      expect(desc.execute).not.toHaveBeenCalled();
-    });
-
-    test("permission deny without structured fields falls back to generic permission denial", async () => {
-      const desc = makeSpiedDescriptor("safeTool");
-      desc.permissions = [async () => ({ outcome: "deny", reason: "blocked" })];
-      registry.register(desc);
-
-      const result = await registry.execute(
-        makeToolCall({ toolName: "safeTool" }),
-        makeContext({ toolName: "safeTool", allowedTools: new Set(["safeTool"]) }),
-      );
-
-      const output = JSON.parse(result.output) as Record<string, unknown>;
-      expect(result.isError).toBe(true);
-      expect(output.kind).toBe("permission-denied");
-      expect(output.code).toBe("TOOL_PERMISSION_DENIED");
-      expect(result.meta?.permissionErrorCode).toBe("TOOL_PERMISSION_DENIED");
-      expect(result.meta?.skippedExecution).toBe(true);
-      expect(desc.execute).not.toHaveBeenCalled();
-    });
-
-    test("permission deny skips before executor per-tool after and still runs global after", async () => {
-      const order: string[] = [];
-      const desc = makeSpiedDescriptor("sensitiveReadTool");
-      desc.hooks = {
-        before: [async () => order.push("per-tool-before")],
-        after: [async (result) => {
-          order.push("per-tool-after");
-          return result;
-        }],
-      };
-      desc.permissions = [async () => {
-        order.push("descriptor-perm");
-        return { outcome: "deny", reason: "sensitive read denied" };
-      }];
-      registry.register(desc);
-      registry.globalHooks.before.push(async () => order.push("global-before"));
-      registry.globalHooks.after.push(async (result) => {
-        order.push("global-after");
-        return result;
-      });
-
-      const result = await registry.execute(
-        makeToolCall({ toolName: "sensitiveReadTool" }),
-        makeContext({ toolName: "sensitiveReadTool", allowedTools: new Set(["sensitiveReadTool"]) }),
-      );
-
-      expect(result.isError).toBe(true);
-      expect(result.meta?.permissionErrorCode).toBe("TOOL_PERMISSION_DENIED");
-      expect(desc.execute).not.toHaveBeenCalled();
-      expect(order).toEqual(["descriptor-perm", "global-after"]);
-    });
-
-    test("ask decision calls confirmation callback and approval continues", async () => {
-      const order: string[] = [];
-      registry.globalPermissions.push(async () => {
-        order.push("global-perm");
-        return { outcome: "ask", reason: "needs approval" };
-      });
-      registry.globalHooks.before.push(async () => {
-        order.push("global-before");
-      });
-      const desc = makeDescriptor("echo");
-      desc.execute = async () => {
-        order.push("executor");
-        return "approved";
-      };
-      registry.register(desc);
-      const confirmPermission = mock(async (request) => {
-        expect(request).toMatchObject({
-          toolName: "echo",
-          toolCallId: "call-1",
-          input: { msg: "hello" },
-          description: "Tool: echo",
-          reason: "needs approval",
-        });
-        expect(request.permissionFingerprint).toMatch(/^[a-f0-9]{64}$/);
-        expect(request.persistentApprovalEligible).toBe(false);
-        order.push("confirm");
-        return "approve" as const;
-      });
-
-      const result = await registry.execute(makeToolCall(), makeContext({ confirmPermission }));
-
-      expect(result).toEqual({ output: "approved", isError: false });
-      expect(confirmPermission).toHaveBeenCalledTimes(1);
-      expect(order).toEqual(["global-perm", "confirm", "global-before", "executor"]);
-    });
-
-    test("deny decisions skip confirmation even when approval exists", async () => {
-      const scope: PermissionApprovalScope = {
-        kind: "tool-operation",
-        toolName: "echo",
-        operation: "danger",
-      };
-      const manager = new ProjectApprovalManager(silentLogger);
-      const workspaceRoot = join(TEST_TEMP_ROOT, `approval-deny-${crypto.randomUUID()}`);
-      await manager.load(workspaceRoot);
-      await manager.addApproval(scope, { display: "Existing approval", reason: "already trusted" });
-      registry.register({
-        ...makeDescriptor("echo"),
-        execute: mock(async () => "should not run"),
-        permissions: [async () => ({
-          outcome: "deny",
-          reason: "blocked despite approval",
-          approval: { eligible: true, scope, display: "Existing approval", reason: "already trusted" },
-        })],
-      });
-      const confirmPermission = mock(async () => "approve_once" as const);
-
-      const result = await registry.execute(
-        makeToolCall(),
-        makeContext({ projectContext: makeProjectContext(workspaceRoot, manager), confirmPermission }),
-      );
-
-      expect(result.isError).toBe(true);
-      expect(result.meta?.permissionErrorCode).toBe("TOOL_PERMISSION_DENIED");
-      expect(confirmPermission).not.toHaveBeenCalled();
-      expect(registry.get("echo")!.execute).not.toHaveBeenCalled();
-    });
-
-    test("eligible ask without matching approval prompts user", async () => {
-      const scope: PermissionApprovalScope = {
-        kind: "file-path",
-        operation: "write",
-        path: "notes.md",
-        pathMode: "exact",
-      };
-      const workspaceRoot = join(TEST_TEMP_ROOT, `approval-prompt-${crypto.randomUUID()}`);
-      const manager = new ProjectApprovalManager(silentLogger);
-      await manager.load(workspaceRoot);
-      registry.register({
-        ...makeDescriptor("echo"),
-        permissions: [async () => ({
-          outcome: "ask",
-          reason: "write notes",
-          prompt: "Allow writing notes?",
-          display: "Write notes.md",
-          ruleId: "file-write",
-          approval: { eligible: true, scope, display: "Write notes.md", reason: "write notes" },
-        })],
-      });
-      const confirmPermission = mock(async (request) => {
-        expect(request.approval).toEqual({
-          eligible: true,
-          scope,
-          display: "Write notes.md",
-          reason: "write notes",
-        });
-        expect(request.reason).toBe("Allow writing notes?");
-        expect(request.decisionDisplay).toBe("Write notes.md");
-        expect(request.ruleId).toBe("file-write");
-        return "approve_once" as const;
-      });
-
-      const result = await registry.execute(
-        makeToolCall(),
-        makeContext({ projectContext: makeProjectContext(workspaceRoot, manager), confirmPermission }),
-      );
-
-      expect(result.isError).toBe(false);
-      expect(confirmPermission).toHaveBeenCalledTimes(1);
-    });
-
-    test("redacts approval display and reason while preserving scope", async () => {
-      const scope: PermissionApprovalScope = {
-        kind: "bash-exact",
-        command: "curl https://example.com?api_key=sk-1234567890",
-        cwd: "/workspace",
-        accesses: [],
-      };
-      const workspaceRoot = join(TEST_TEMP_ROOT, `approval-redaction-${crypto.randomUUID()}`);
-      const manager = new ProjectApprovalManager(silentLogger);
-      await manager.load(workspaceRoot);
-      registry.register({
-        ...makeDescriptor("echo"),
-        permissions: [async () => ({
-          outcome: "ask",
-          reason: "api_key=sk-1234567890",
-          approval: {
-            eligible: true,
-            scope,
-            display: "Run api_key=sk-1234567890",
-            reason: "Needed because token=ghp-1234567890",
-          },
-        })],
-      });
-      const confirmPermission = mock(async (request) => {
-        expect(request.approval).toEqual({
-          eligible: true,
-          scope,
-          display: `Run api_key=${REDACTION_MARKER}`,
-          reason: `Needed because token=${REDACTION_MARKER}`,
-        });
-        return "approve_once" as const;
-      });
-
-      const result = await registry.execute(
-        makeToolCall(),
-        makeContext({ projectContext: makeProjectContext(workspaceRoot, manager), confirmPermission }),
-      );
-
-      expect(result.isError).toBe(false);
-      expect(confirmPermission).toHaveBeenCalledTimes(1);
-    });
-
-    test("eligible ask with matching project approval executes without prompt", async () => {
-      const scope: PermissionApprovalScope = {
-        kind: "web-origin",
-        origin: "https://example.com",
-      };
-      const manager = new ProjectApprovalManager(silentLogger);
-      const workspaceRoot = join(TEST_TEMP_ROOT, `approval-match-${crypto.randomUUID()}`);
-      await manager.load(workspaceRoot);
-      await manager.addApproval(scope, { display: "Fetch example.com", reason: "trusted origin" });
-      const desc = makeSpiedDescriptor("echo");
-      desc.permissions = [async () => ({
-        outcome: "ask",
-        reason: "fetch origin",
-        approval: { eligible: true, scope, display: "Fetch example.com", reason: "trusted origin" },
-      })];
-      registry.register(desc);
-      const confirmPermission = mock(async () => "deny" as const);
-
-      const result = await registry.execute(
-        makeToolCall(),
-        makeContext({ projectContext: makeProjectContext(workspaceRoot, manager), confirmPermission }),
-      );
-
-      expect(result.isError).toBe(false);
-      expect(desc.execute).toHaveBeenCalledTimes(1);
-      expect(confirmPermission).not.toHaveBeenCalled();
-    });
-
-    test("ineligible ask rejects approve always and is not persisted", async () => {
-      const manager = new ProjectApprovalManager(silentLogger);
-      const workspaceRoot = join(TEST_TEMP_ROOT, `approval-ineligible-${crypto.randomUUID()}`);
-      await manager.load(workspaceRoot);
-      registry.register({
-        ...makeDescriptor("echo"),
-        permissions: [async () => ({
-          outcome: "ask",
-          reason: "dynamic request",
-          approval: { eligible: false, display: "Dynamic request", reason: "dynamic requests cannot persist" },
-        })],
-      });
-      const confirmPermission = mock(async (request) => {
-        expect(request.approval).toEqual({
-          eligible: false,
-          display: "Dynamic request",
-          reason: "dynamic requests cannot persist",
-        });
-        expect(request.approval?.scope).toBeUndefined();
-        return "approve_always" as const;
-      });
-
-      const result = await registry.execute(
-        makeToolCall(),
-        makeContext({ projectContext: makeProjectContext(workspaceRoot, manager), confirmPermission }),
-      );
-
-      expect(result.isError).toBe(true);
-      expect(result.meta?.permissionErrorCode).toBe("TOOL_PERMISSION_CONFIRMATION_DENIED");
-      expect(manager.listApprovals()).toEqual([]);
-    });
-
-    test("durable permission response is consumed only for the same freshly evaluated fingerprint", async () => {
-      let scope: PermissionApprovalScope = {
-        kind: "bash-exact",
-        command: "cat /tmp/a",
-        cwd: "/workspace",
-        accesses: [{ operation: "read", path: "/tmp/a" }],
-      };
-      const execute = mock(async () => "executed");
-      registry.register({
-        ...makeDescriptor("echo"),
-        execute,
-        permissions: [async () => ({
-          outcome: "ask",
-          reason: "outside workspace",
-          approval: { eligible: true, scope, display: "Read external file", reason: "outside workspace" },
-        })],
-      });
-
-      const initial = await registry.execute(makeToolCall(), makeContext());
-      expect(initial.blocked).toMatchObject({
-        persistentApprovalEligible: true,
-        permission: { description: "Tool: echo" },
-      });
-      expect(initial.blocked?.permissionFingerprint).toMatch(/^[a-f0-9]{64}$/);
-      expect(initial.blocked?.permission).not.toHaveProperty("approval");
-      const initialFingerprint = initial.blocked!.permissionFingerprint!;
-      expect(initialFingerprint).toBe(approvalFingerprint(scope));
-
-      scope = {
-        kind: "bash-exact",
-        command: "cat /tmp/b",
-        cwd: "/workspace",
-        accesses: [{ operation: "read", path: "/tmp/b" }],
-      };
-      const changed = await registry.execute(makeToolCall(), makeContext({
-        deferredPermissionResponse: { decision: "approve_once", fingerprint: initialFingerprint },
-      }));
-      expect(changed.blocked?.permissionFingerprint).not.toBe(initialFingerprint);
-      expect(execute).not.toHaveBeenCalled();
-
-      scope = {
-        kind: "bash-exact",
-        command: "cat /tmp/a",
-        cwd: "/workspace",
-        accesses: [{ operation: "read", path: "/tmp/a" }],
-      };
-      const resumed = await registry.execute(makeToolCall(), makeContext({
-        deferredPermissionResponse: { decision: "approve_once", fingerprint: initialFingerprint },
-      }));
-      expect(resumed).toEqual({ output: "executed", isError: false });
-      expect(execute).toHaveBeenCalledTimes(1);
-    });
-
-    test("fresh allow or deny ignores a stale durable permission answer", async () => {
-      let outcome: "allow" | "deny" | "ask" = "ask";
-      const execute = mock(async () => "executed");
-      registry.register({
-        ...makeDescriptor("echo"),
-        execute,
-        permissions: [async () => ({ outcome, reason: "current policy" })],
-      });
-      const initial = await registry.execute(makeToolCall(), makeContext());
-      const deferredPermissionResponse = {
-        decision: "approve_once" as const,
-        fingerprint: initial.blocked!.permissionFingerprint!,
-      };
-
-      outcome = "deny";
-      const denied = await registry.execute(makeToolCall(), makeContext({ deferredPermissionResponse }));
-      expect(denied.isError).toBe(true);
-      expect(execute).not.toHaveBeenCalled();
-
-      outcome = "allow";
-      const allowed = await registry.execute(makeToolCall(), makeContext({ deferredPermissionResponse }));
-      expect(allowed).toEqual({ output: "executed", isError: false });
-    });
-
-    test("allow always persists exactly the structured approval scope", async () => {
-      const scope: PermissionApprovalScope = {
-        kind: "bash-exact",
-        command: "bun test src/tools/registry.test.ts",
-        cwd: "/workspace",
-        accesses: [],
-      };
-      const manager = new ProjectApprovalManager(silentLogger);
-      const workspaceRoot = join(TEST_TEMP_ROOT, `approval-persist-${crypto.randomUUID()}`);
-      await manager.load(workspaceRoot);
-      registry.register({
-        ...makeDescriptor("echo"),
-        permissions: [async () => ({
-          outcome: "ask",
-          reason: "run test command",
-          approval: { eligible: true, scope, display: "Run registry test", reason: "run test command" },
-        })],
-      });
-
-      const result = await registry.execute(
-        makeToolCall(),
-        makeContext({
-          projectContext: makeProjectContext(workspaceRoot, manager),
-          agentName: "Engineer",
-          currentDepth: 0,
-          confirmPermission: async () => "approve_always",
-        }),
-      );
-
-      expect(result.isError).toBe(false);
-      const approvals = manager.listApprovals();
-      expect(approvals).toHaveLength(1);
-      expect(approvals[0].scope).toEqual(scope);
-      expect(approvals[0].display).toBe("Run registry test");
-      expect(approvals[0].reason).toBe("run test command");
-      expect(approvals[0].grantedBy).toEqual({ agentName: "Engineer", depth: 0 });
-    });
-
-    test("permission ask approve runs before hooks and executor for safeTool", async () => {
-      const order: string[] = [];
-      const desc = makeSpiedDescriptor("safeTool");
-      desc.permissions = [async () => {
-        order.push("descriptor-perm");
-        return { outcome: "ask", reason: "confirm safe tool" };
-      }];
-      desc.hooks = {
-        before: [async () => {
-          order.push("per-tool-before");
-        }],
-      };
-      desc.execute = mock(async () => {
-        order.push("executor");
-        return "approved";
-      });
-      registry.register(desc);
-      registry.globalHooks.before.push(async () => {
-        order.push("global-before");
-      });
-      const confirmPermission = mock(async () => {
-        order.push("confirm");
-        return "approve" as const;
-      });
-
-      const result = await registry.execute(
-        makeToolCall({ toolName: "safeTool" }),
-        makeContext({ toolName: "safeTool", allowedTools: new Set(["safeTool"]), confirmPermission }),
-      );
-
-      expect(result).toEqual({ output: "approved", isError: false });
-      expect(desc.execute).toHaveBeenCalledTimes(1);
-      expect(order).toEqual(["descriptor-perm", "confirm", "global-before", "per-tool-before", "executor"]);
-    });
-
-    test.each([
-      ["deny", "TOOL_PERMISSION_CONFIRMATION_DENIED"],
-      ["timeout", "TOOL_PERMISSION_CONFIRMATION_TIMEOUT"],
-    ] as const)("confirmation %s returns %s and skips execution", async (decision, code) => {
-      const order: string[] = [];
-      registry.register({
-        ...makeDescriptor("echo"),
-        execute: async () => {
-          order.push("executor");
-          return "nope";
-        },
-      });
-      registry.globalPermissions.push(async () => ({ outcome: "ask", reason: "confirm" }));
-      registry.globalHooks.after.push(async (result) => {
-        order.push("global-after");
-        return result;
-      });
-
-      const result = await registry.execute(
-        makeToolCall(),
-        makeContext({ confirmPermission: async () => decision }),
-      );
-
-      expect(result.isError).toBe(true);
-      expect(result.meta?.permissionErrorCode).toBe(code);
-      expect(result.meta?.skippedExecution).toBe(true);
-      expect(order).toEqual(["global-after"]);
-    });
-
-    test("ask decision without confirmation callback pauses for durable Session HITL", async () => {
-      registry.register(makeDescriptor("echo"));
-      registry.globalPermissions.push(async () => ({ outcome: "ask", reason: "confirm" }));
-      const workspaceRoot = join(TEST_TEMP_ROOT, `permission-pause-${crypto.randomUUID()}`);
-      const sessionId = crypto.randomUUID();
-      const ctx = makeContext({
-        cwd: workspaceRoot,
-        agentName: "engineer",
-        store: storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" }),
-        projectContext: await makeLoadedProjectContext(workspaceRoot),
-      });
-
-      const result = await registry.execute(makeToolCall(), ctx);
-      expect(result.blocked?.source).toEqual({ type: "tool_permission", toolCallId: "call-1", toolName: "echo" });
-      expect(ctx.permissionOutcome).toBe("ask");
-      await storeManager.flushSession(sessionId, workspaceRoot);
-    });
-
-    test("confirmation rejection returns failed permission result", async () => {
-      registry.register(makeDescriptor("echo"));
-      registry.globalPermissions.push(async () => ({ outcome: "ask", reason: "confirm" }));
-
-      const result = await registry.execute(
-        makeToolCall(),
-        makeContext({ confirmPermission: async () => { throw new Error("ui failed"); } }),
-      );
-
-      expect(result.isError).toBe(true);
-      expect(result.output).toContain("ui failed");
-      expect(result.meta?.permissionErrorCode).toBe("TOOL_PERMISSION_CONFIRMATION_FAILED");
-      expect(result.meta?.skippedExecution).toBe(true);
-    });
-
-    test("descriptor with no permissions defaults to allow when global permissions allow", async () => {
-      const desc = makeSpiedDescriptor("safeTool");
-      registry.register(desc);
-      registry.globalPermissions.push(async () => ({ outcome: "allow" }));
-
-      const result = await registry.execute(
-        makeToolCall({ toolName: "safeTool", input: { msg: "open" } }),
-        makeContext({ toolName: "safeTool", allowedTools: new Set(["safeTool"]) }),
-      );
-
-      expect(result).toEqual({ output: "echo: open", isError: false });
-      expect(desc.execute).toHaveBeenCalledTimes(1);
-    });
-
-    test("no global permissions and no descriptor permissions defaults to allow", async () => {
-      const desc = makeSpiedDescriptor("safeTool");
-      registry.register(desc);
-
-      const result = await registry.execute(
-        makeToolCall({ toolName: "safeTool", input: { msg: "open" } }),
-        makeContext({ toolName: "safeTool", allowedTools: new Set(["safeTool"]) }),
-      );
-
-      expect(result).toEqual({ output: "echo: open", isError: false });
-      expect(desc.execute).toHaveBeenCalledTimes(1);
-    });
-
-    test("safeParse failure preserves existing non-permission error behavior", async () => {
-      const desc = makeSpiedDescriptor("safeTool");
-      registry.register(desc);
-      const globalAfter = mock(async (result) => result);
-      registry.globalHooks.after.push(globalAfter);
-
-      const result = await registry.execute(
-        makeToolCall({ toolName: "safeTool", input: { bad: 1 } }),
-        makeContext({ toolName: "safeTool", allowedTools: new Set(["safeTool"]) }),
-      );
-
-      expect(result.isError).toBe(true);
-      expect(result.output).toContain("invalid_type");
-      expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
-      expect(desc.execute).not.toHaveBeenCalled();
-      expect(globalAfter).toHaveBeenCalledTimes(1);
-    });
-
-    test("global after hook throwing on permission denied preserves current global-after semantics", async () => {
-      const desc = makeSpiedDescriptor("safeTool");
-      desc.permissions = [async () => ({ outcome: "deny", reason: "blocked" })];
-      registry.register(desc);
-      const secondAfter = mock(async (result) => result);
-      registry.globalHooks.after.push(async () => {
-        throw new Error("global after denied failure");
-      });
-      registry.globalHooks.after.push(secondAfter);
-
-      const result = await registry.execute(
-        makeToolCall({ toolName: "safeTool" }),
-        makeContext({ toolName: "safeTool", allowedTools: new Set(["safeTool"]) }),
-      );
-
-      const output = JSON.parse(result.output) as Record<string, unknown>;
-      expect(output.message).toBe("global after denied failure");
-      expect(output.code).toBe("TOOL_AFTER_HOOK_FAILED");
-      expect(desc.execute).not.toHaveBeenCalled();
-      expect(secondAfter).toHaveBeenCalledTimes(1);
-    });
-
-    test.each([
-      ["deny", "TOOL_PERMISSION_CONFIRMATION_DENIED"],
-      ["timeout", "TOOL_PERMISSION_CONFIRMATION_TIMEOUT"],
-      ["failed", "TOOL_PERMISSION_CONFIRMATION_FAILED"],
-    ] as const)("permission ask %s returns %s and skips execution", async (scenario, code) => {
-      const desc = makeSpiedDescriptor("sensitiveReadTool");
-      desc.permissions = [async () => ({ outcome: "ask", reason: "confirm sensitive read" })];
-      registry.register(desc);
-
-      const confirmPermission =
-        scenario === "deny"
-          ? mock(async () => "deny" as const)
-          : scenario === "timeout"
-            ? mock(async () => "timeout" as const)
-            : scenario === "failed"
-              ? mock(async () => { throw new Error("confirmation failed"); })
-              : undefined;
-
-      const result = await registry.execute(
-        makeToolCall({ toolName: "sensitiveReadTool" }),
-        makeContext({
-          toolName: "sensitiveReadTool",
-          allowedTools: new Set(["sensitiveReadTool"]),
-          ...(confirmPermission ? { confirmPermission } : {}),
-        }),
-      );
-
-      expect(result.isError).toBe(true);
-      expect(result.meta?.permissionErrorCode).toBe(code);
-      expect(result.meta?.skippedExecution).toBe(true);
-      expect(desc.execute).not.toHaveBeenCalled();
-    });
-
-    test("permission ask without confirmation callback pauses for durable Session HITL and skips execution", async () => {
-      const desc = makeSpiedDescriptor("sensitiveReadTool");
-      desc.permissions = [async () => ({ outcome: "ask", reason: "confirm sensitive read" })];
-      registry.register(desc);
-      const workspaceRoot = join(TEST_TEMP_ROOT, `permission-sensitive-pause-${crypto.randomUUID()}`);
-      const sessionId = crypto.randomUUID();
-      const ctx = makeContext({
-        toolName: "sensitiveReadTool",
-        allowedTools: new Set(["sensitiveReadTool"]),
-        cwd: workspaceRoot,
-        agentName: "engineer",
-        store: storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" }),
-        projectContext: await makeLoadedProjectContext(workspaceRoot),
-      });
-
-      const result = await registry.execute(makeToolCall({ toolName: "sensitiveReadTool" }), ctx);
-      expect(result.blocked?.source).toEqual({ type: "tool_permission", toolCallId: "call-1", toolName: "sensitiveReadTool" });
-      expect(ctx.permissionOutcome).toBe("ask");
-      expect(desc.execute).not.toHaveBeenCalled();
-      await storeManager.flushSession(sessionId, workspaceRoot);
-    });
-
-    test("prepareInput failure returns TOOL_PREPARE_INPUT_FAILED and runs global after", async () => {
-      const order: string[] = [];
-      const desc = makeSpiedDescriptor("safeTool");
-      desc.prepareInput = async () => {
-        order.push("prepare-input");
-        throw new Error("bad mirror input");
-      };
-      registry.register(desc);
-      registry.globalHooks.after.push(async (result) => {
-        order.push("global-after");
-        return result;
-      });
-
-      const result = await registry.execute(
-        makeToolCall({ toolName: "safeTool" }),
-        makeContext({ toolName: "safeTool", allowedTools: new Set(["safeTool"]) }),
-      );
-
-      expect(result.isError).toBe(true);
-      expect(result.output).toContain("bad mirror input");
-      expect(result.meta?.permissionErrorCode).toBe("TOOL_PREPARE_INPUT_FAILED");
-      expect(desc.execute).not.toHaveBeenCalled();
-      expect(order).toEqual(["prepare-input", "global-after"]);
-    });
-
-    test("global permissions run before descriptor permissions", async () => {
-      const order: string[] = [];
-      registry.globalPermissions.push(async () => {
-        order.push("global-perm-1");
-        return { outcome: "allow" };
-      });
-      registry.globalPermissions.push(async () => {
-        order.push("global-perm-2");
-        return { outcome: "ask", reason: "global ask" };
-      });
-      const desc = makeSpiedDescriptor("safeTool");
-      desc.permissions = [async () => {
-        order.push("descriptor-perm");
-        return { outcome: "allow" };
-      }];
-      registry.register(desc);
-
-      await registry.execute(
-        makeToolCall({ toolName: "safeTool" }),
-        makeContext({
-          toolName: "safeTool",
-          allowedTools: new Set(["safeTool"]),
-          confirmPermission: async () => "approve",
-        }),
-      );
-
-      expect(order).toEqual(["global-perm-1", "global-perm-2", "descriptor-perm"]);
-    });
-
-    test("permission confirmation request includes agent attribution and abort signal", async () => {
-      const desc = makeSpiedDescriptor("attributedTool");
-      desc.permissions = [async () => ({ outcome: "ask", reason: "confirm attributed tool" })];
-      registry.register(desc);
-      const controller = new AbortController();
-      let capturedSignal: AbortSignal | undefined;
-      const confirmPermission = mock(async (_request, abortSignal?: AbortSignal) => {
-        capturedSignal = abortSignal;
-        return "approve_once" as const;
-      });
-
-      const result = await registry.execute(
-        makeToolCall({ toolName: "attributedTool" }),
-        makeContext({
-          toolName: "attributedTool",
-          allowedTools: new Set(["attributedTool"]),
-          abort: controller.signal,
-          agentName: "Explorer",
-          currentDepth: 2,
-          confirmPermission,
-        }),
-      );
-
-      expect(result.isError).toBe(false);
-      expect(confirmPermission).toHaveBeenCalledTimes(1);
-      expect(confirmPermission.mock.calls[0]![0]).toMatchObject({
-        toolName: "attributedTool",
-        toolCallId: "call-1",
-        agentName: "Explorer",
-        currentDepth: 2,
-      });
-      expect(capturedSignal).toBe(controller.signal);
-    });
+    const ctx = context("echo");
+    const outcome = await created.registry.execute(
+      { toolName: "echo", toolCallId: ctx.toolCallId, input: {} },
+      ctx,
+    );
+    const serialized = JSON.stringify({ outcome, logFields });
+    expect(serialized).not.toContain(secret);
+    expect(serialized).toContain("[REDACTED:SECRET]");
   });
 });
 
-// ─── resolveForAgent ───
-
-describe("resolveForAgent()", () => {
-  let registry: ToolRegistry;
-
-  beforeEach(() => {
-    registry = createRegistry();
+describe("ToolRegistry registration and resolution", () => {
+  test("registers and retrieves one descriptor", () => {
+    const created = fixture();
+    const tool = descriptor();
+    created.registry.register(tool);
+    expect(created.registry.get("echo")).toBe(tool);
   });
 
-  test("undefined toolNames returns empty ResolvedToolSet", () => {
-    registry.register(makeDescriptor("echo"));
-
-    const resolved = registry.resolveForAgent(undefined);
-
-    expect(resolved.descriptors).toEqual([]);
+  test("rejects duplicate names", () => {
+    const created = fixture({ descriptors: [descriptor()] });
+    expect(() => created.registry.register(descriptor())).toThrow(DuplicateToolError);
   });
 
-  test("empty array toolNames returns empty ResolvedToolSet", () => {
-    registry.register(makeDescriptor("echo"));
-
-    const resolved = registry.resolveForAgent([]);
-
-    expect(resolved.descriptors).toEqual([]);
+  test("rejects destructive descriptors without permission policy", () => {
+    const created = fixture();
+    const tool = descriptor({ traits: { readOnly: false, destructive: true, concurrencySafe: false } });
+    expect(() => created.registry.register(tool)).toThrow(DestructiveToolPermissionError);
   });
 
-  test("resolves registered tool by name", () => {
-    const echoDesc = makeDescriptor("echo");
-    const readDesc = makeDescriptor("read");
-    registry.registerAll([echoDesc, readDesc]);
-
-    const resolved = registry.resolveForAgent(["echo"]);
-
-    expect(resolved.has("echo")).toBe(true);
-    expect(resolved.has("read")).toBe(false);
-    expect(resolved.get("echo")).toBe(echoDesc);
-    expect(resolved.get("read")).toBeUndefined();
+  test("accepts destructive descriptors with a permission policy", () => {
+    const created = fixture();
+    const tool = descriptor({
+      name: "delete",
+      traits: { readOnly: false, destructive: true, concurrencySafe: false },
+      permissions: [async () => ({ outcome: "allow" })],
+    });
+    created.registry.register(tool);
+    expect(created.registry.get("delete")).toBe(tool);
   });
 
-  test("unknown tool name is warned via logger and omitted", () => {
-    const logger = makeLogger();
-    registry = createRegistry([], logger);
+  test("registerAll and getAll preserve registration order", () => {
+    const created = fixture();
+    const tools = [descriptor({ name: "first" }), descriptor({ name: "second" })];
+    created.registry.registerAll(tools);
+    expect(created.registry.getAll()).toEqual(tools);
+  });
 
-    registry.register(makeDescriptor("echo"));
+  test("listByPrefix returns only matching descriptors in order", () => {
+    const created = fixture({
+      descriptors: [descriptor({ name: "mcp__docs__read" }), descriptor({ name: "file_read" }), descriptor({ name: "mcp__docs__find" })],
+    });
+    expect(created.registry.listByPrefix("mcp__docs__").map(({ name }) => name)).toEqual([
+      "mcp__docs__read",
+      "mcp__docs__find",
+    ]);
+    expect(created.registry.listByPrefix("missing")).toEqual([]);
+  });
 
-    const resolved = registry.resolveForAgent(["echo", "missing"]);
+  test("resolveForAgent handles missing, empty, and ordered names", () => {
+    const created = fixture({ descriptors: [descriptor({ name: "one" }), descriptor({ name: "two" })] });
+    expect(created.registry.resolveForAgent().descriptors).toEqual([]);
+    expect(created.registry.resolveForAgent([]).descriptors).toEqual([]);
+    expect(created.registry.resolveForAgent(["two", "one"]).descriptors.map(({ name }) => name)).toEqual(["two", "one"]);
+  });
 
-    // missing tool is omitted
+  test("resolveForAgent warns and omits unknown names", () => {
+    const warnings: unknown[] = [];
+    const logger: Logger = {
+      debug: () => {}, info: () => {}, error: () => {},
+      warn: (event, fields) => warnings.push({ event, fields }),
+      child: () => logger,
+    };
+    const created = fixture({ logger, descriptors: [descriptor()] });
+    expect(created.registry.resolveForAgent(["missing", "echo"]).descriptors.map(({ name }) => name)).toEqual(["echo"]);
+    expect(warnings).toEqual([expect.objectContaining({ event: "tool.resolve.unknown" })]);
+  });
+
+  test("ResolvedToolSet exposes descriptors and model-visible schemas only", () => {
+    const aiInputSchema = z.object({ query: z.string() });
+    const tool = descriptor({ aiInputSchema });
+    const resolved = new ResolvedToolSet([tool]);
     expect(resolved.has("echo")).toBe(true);
     expect(resolved.has("missing")).toBe(false);
-    expect(resolved.descriptors).toHaveLength(1);
+    expect(resolved.get("echo")).toBe(tool);
+    expect(resolved.get("missing")).toBeUndefined();
+    expect(resolved.toAITools()).toEqual({ echo: { description: "echo", inputSchema: aiInputSchema } });
+    expect("execute" in resolved.toAITools().echo).toBe(false);
+  });
 
-    // logger.warn was called for the missing tool
-    expect(logger.warn).toHaveBeenCalledTimes(1);
-    expect((logger.warn as ReturnType<typeof mock>).mock.calls[0][0]).toBe("tool.resolve.unknown");
-    expect((logger.warn as ReturnType<typeof mock>).mock.calls[0][1]).toEqual({ meta: { toolName: "missing" } });
+  test("ResolvedToolSet falls back to the runtime input schema", () => {
+    const tool = descriptor();
+    expect(new ResolvedToolSet([tool]).toAITools().echo.inputSchema).toBe(tool.inputSchema);
+  });
+
+  test("createRegistry registers initial descriptors", () => {
+    const backing = fixture();
+    const tool = descriptor();
+    const registry = createRegistry({ finalizer: backing.finalizer, hitlCodec: backing.hitlCodec }, [tool]);
+    expect(registry.getAll()).toEqual([tool]);
+    expect(registry.globalHooks).toEqual({ before: [], finalized: [] });
+    expect(registry.globalPermissions).toEqual([]);
   });
 });
 
-// ─── ResolvedToolSet ───
-
-describe("ResolvedToolSet", () => {
-  let echoDesc: ToolDescriptor;
-  let readDesc: ToolDescriptor;
-  let set: ResolvedToolSet;
-
-  beforeEach(() => {
-    echoDesc = makeDescriptor("echo");
-    readDesc = makeDescriptor("read");
-    set = new ResolvedToolSet([echoDesc, readDesc]);
-  });
-
-  describe("descriptors", () => {
-    test("exposes all descriptors", () => {
-      expect(set.descriptors).toHaveLength(2);
-      expect(set.descriptors[0]).toBe(echoDesc);
-      expect(set.descriptors[1]).toBe(readDesc);
-    });
-  });
-
-  describe("has()", () => {
-    test("returns true for known name", () => {
-      expect(set.has("echo")).toBe(true);
-      expect(set.has("read")).toBe(true);
-    });
-
-    test("returns false for unknown name", () => {
-      expect(set.has("write")).toBe(false);
-    });
-  });
-
-  describe("get()", () => {
-    test("returns descriptor for known name", () => {
-      expect(set.get("echo")).toBe(echoDesc);
-    });
-
-    test("returns undefined for unknown name", () => {
-      expect(set.get("write")).toBeUndefined();
-    });
-  });
-
-  describe("toAITools()", () => {
-    test("returns description + inputSchema, no execute", () => {
-      const aiTools = set.toAITools();
-
-      expect(aiTools).toHaveProperty("echo");
-      expect(aiTools).toHaveProperty("read");
-
-      const echoAi = aiTools["echo"];
-      expect(echoAi).toHaveProperty("description", "Tool: echo");
-      expect(echoAi).toHaveProperty("inputSchema");
-      // Must NOT include execute
-      expect(echoAi).not.toHaveProperty("execute");
-
-      const readAi = aiTools["read"];
-      expect(readAi).toHaveProperty("description", "Tool: read");
-      expect(readAi).toHaveProperty("inputSchema");
-      expect(readAi).not.toHaveProperty("execute");
-    });
-
-    test("returns empty object for empty descriptor list", () => {
-      const empty = new ResolvedToolSet([]);
-      expect(empty.toAITools()).toEqual({});
-    });
-
-    test("prefers aiInputSchema over inputSchema when set", () => {
-      const zodSchema = z.object({ msg: z.string() });
-      const aiSchema = jsonSchema({
-        type: "object",
-        properties: { query: { type: "string" } },
-        required: ["query"],
-      });
-
-      const dualDesc: ToolDescriptor = {
-        name: "mcp__ctx7__resolve",
-        description: "Resolve context",
-        inputSchema: zodSchema,
-        aiInputSchema: aiSchema,
-        traits: { readOnly: true, destructive: false, concurrencySafe: true },
-        execute: async () => "ok",
-      };
-
-      const aiTools = new ResolvedToolSet([dualDesc]).toAITools();
-
-      expect(aiTools["mcp__ctx7__resolve"].inputSchema).toBe(aiSchema);
-    });
-
-    test("falls back to inputSchema when aiInputSchema is undefined", () => {
-      const zodSchema = z.object({ msg: z.string() });
-      const builtinDesc: ToolDescriptor = {
-        name: "echo",
-        description: "Echo tool",
-        inputSchema: zodSchema,
-        traits: { readOnly: true, destructive: false, concurrencySafe: true },
-        execute: async () => "ok",
-      };
-
-      const aiTools = new ResolvedToolSet([builtinDesc]).toAITools();
-
-      // When aiInputSchema is undefined, inputSchema (Zod) is used
-      expect(aiTools["echo"].inputSchema).toBe(zodSchema);
-    });
-  });
-});
-
-// ─── createRegistry factory ───
-
-describe("createRegistry()", () => {
-  test("creates ToolRegistry with no descriptors", () => {
-    const registry = createRegistry();
-
-    expect(registry.getAll()).toEqual([]);
-    expect(registry.globalHooks.before).toEqual([]);
-    expect(registry.globalHooks.after).toEqual([]);
-  });
-
-  test("creates ToolRegistry and registers initial descriptors", () => {
-    const descs = [makeDescriptor("echo"), makeDescriptor("read")];
-
-    const registry = createRegistry(descs);
-
-    expect(registry.getAll()).toHaveLength(2);
-    expect(registry.get("echo")).toBe(descs[0]);
-    expect(registry.get("read")).toBe(descs[1]);
-  });
-
-  test("accepts optional logger", () => {
-    const logger = makeLogger();
-
-    const registry = createRegistry([], logger);
-
-    // Verify the logger is used (resolveForAgent for a missing tool)
-    registry.register(makeDescriptor("echo"));
-    const resolved = registry.resolveForAgent(["missing"]);
-
-    expect(resolved.descriptors).toEqual([]);
-    expect(logger.warn).toHaveBeenCalledTimes(1);
-    expect(logger.warn.mock.calls[0][0]).toBe("tool.resolve.unknown");
-    expect(logger.warn.mock.calls[0][1]).toEqual({ meta: { toolName: "missing" } });
-  });
-});
-
-// ─── Hook Integration with Registry ───
-
-describe("hook integration with registry", () => {
-  const tmpRoot = join(TEST_TEMP_ROOT, "redaction-order");
-
-  afterAll(() => {
-    rmSync(tmpRoot, { recursive: true, force: true });
-  });
-
-  function makeContext(
-    overrides?: Partial<ToolExecutionContext>,
-  ): ToolExecutionContext {
-    const ac = new AbortController();
-    const workspaceRoot = overrides?.projectContext?.project.workspaceRoot ?? overrides?.cwd ?? "/tmp";
-    return createToolExecutionContext({ store: { getState: () => ({ sessionId: "test-session" }) } as ToolExecutionContext["store"], storeManager, toolName: "echo",
-    toolCallId: "call-1",
-    input: { msg: "hello" },
-    step: 0,
-    abort: ac.signal,
-    startedAt: 0,
-    allowedTools: new Set(["echo"]),
-    agentSkills: [],
-    skillService: new SkillService({ builtinSkills: {} }),
-    projectContext: makeProjectContext(workspaceRoot),
-    ...overrides,
-    cwd: workspaceRoot, });
-  }
-
-  function makeToolCall(
-    overrides?: Partial<ToolCallLike>,
-  ): ToolCallLike {
-    return { toolCallId: "call-1",
-    toolName: "echo",
-    input: { msg: "hello" }, ...overrides,  };
-  }
-
-  // 1. Duration flows into execution logger via global after hook
-  test("duration flows into execution logger via global after hook", async () => {
-    const registry = createRegistry();
-    registry.register(makeDescriptor("echo"));
-
-    const logger = makeLogger();
-    registry.globalHooks.after.push(createExecutionLogger(logger));
-
-    const ctx = makeContext();
-    const call = makeToolCall({ input: { msg: "hello" } });
-
-    await registry.execute(call, ctx);
-
-    expect(logger.debug).toHaveBeenCalledTimes(1);
-    const calls = logger.debug.mock.calls;
-    expect(calls[0][0]).toBe("tool.execute.completed");
-
-    const fields = calls[0][1] as { context: Record<string, unknown>; meta: Record<string, unknown> };
-    expect(fields.context.sessionId).toBe("test-session");
-    const meta = fields.meta;
-    expect(meta.toolName).toBe("echo");
-    expect(meta.toolCallId).toBe("call-1");
-    expect(meta.isError).toBe(false);
-    expect(typeof meta.outputSize).toBe("number");
-    expect((meta.outputSize as number) > 0).toBe(true);
-    expect(typeof meta.durationMs).toBe("number");
-    expect((meta.durationMs as number) >= 0).toBe(true);
-  });
-
-  // 2. Truncator runs after per-tool after failure and truncates error output
-  test("truncator truncates error output from failed per-tool after hook", async () => {
-    const registry = createRegistry();
-    const desc = makeDescriptor("echo");
-
-    // Per-tool after hook throws a long error message (> maxBytes=100)
-    const longErrorMessage = "ERROR: " + "X".repeat(200);
-    desc.hooks = {
-      after: [
-        async () => {
-          throw new Error(longErrorMessage);
-        },
-      ],
-    };
-    registry.register(desc);
-
-    const truncOutDir = join(tmpRoot, "scenario2");
-    registry.globalHooks.after.push(
-      createOutputTruncator({ outputDir: truncOutDir, maxBytes: 100, maxLines: 5 }),
-    );
-
-    const ctx = makeContext();
-    const call = makeToolCall({ input: { msg: "hello" } });
-
-    const result = await registry.execute(call, ctx);
-
-    // Result should still be error
+describe("ToolRegistry strict execution pipeline", () => {
+  test("unknown tools settle as TOOL_UNKNOWN without throwing", async () => {
+    const created = fixture();
+    const result = expectSettledResult(await created.registry.execute(
+      { toolName: "missing", toolCallId: "missing-call", input: {} },
+      context("missing"),
+    ));
     expect(result.isError).toBe(true);
-    // Output should contain truncation marker
-    expect(result.output).toContain("[Output truncated; full output saved to:");
-    expect(result.meta?.truncated).toBe(true);
-    expect(typeof result.meta?.fullOutputPath).toBe("string");
-
-    // Verify full error was persisted to file
-    const fullPath = result.meta!.fullOutputPath as string;
-    const fileContent = await Bun.file(fullPath).text();
-    expect(fileContent).toContain("TOOL_AFTER_HOOK_FAILED");
-    expect(fileContent).toContain("ERROR: [REDACTED:SECRET]");
+    expect(result.details?.error?.code).toBe("TOOL_UNKNOWN");
   });
 
-  // 3. Permission check runs before executor without mutating input
-  test("permission check runs before executor without mutating input", async () => {
-    const registry = createRegistry();
-    registry.register(makeDescriptor("echo"));
+  test("schema failures settle before descriptor execution", async () => {
+    const execute = mock(async () => createTextToolResult("unreachable"));
+    const created = fixture({ descriptors: [descriptor({ inputSchema: z.object({ value: z.string() }).strict(), execute })] });
+    const result = expectSettledResult(await created.registry.execute(
+      { toolName: "echo", toolCallId: "schema-call", input: { value: 1 } },
+      context("echo"),
+    ));
+    expect(result.details?.error?.code).toBe("TOOL_SCHEMA_INVALID_INPUT");
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  test("successful execution returns a finalized result", async () => {
+    const created = fixture({ descriptors: [descriptor()] });
+    const result = expectSettledResult(await created.registry.execute(
+      { toolName: "echo", toolCallId: "success-call", input: {} },
+      context("echo"),
+    ));
+    expect(result).toMatchObject({ isError: false, output: { preview: "ok", completeness: "complete" } });
+  });
+
+  test("executor exceptions become redacted settled errors", async () => {
+    const created = fixture({ descriptors: [descriptor({ execute: async () => { throw new Error("boom"); } })] });
+    const result = expectSettledResult(await created.registry.execute(
+      { toolName: "echo", toolCallId: "throw-call", input: {} },
+      context("echo"),
+    ));
+    expect(result.isError).toBe(true);
+    expect(result.details?.error?.kind).toBe("execution");
+    expect(result.output.preview).toContain("boom");
+  });
+
+  test("prepareInput runs before schema parsing and updates resolved input", async () => {
+    let received: unknown;
+    const created = fixture({ descriptors: [descriptor({
+      inputSchema: z.object({ value: z.string() }).strict(),
+      prepareInput: () => ({ value: "prepared" }),
+      execute: async (input) => { received = input; return createTextToolResult("ok"); },
+    })] });
+    await created.registry.execute({ toolName: "echo", toolCallId: "prepare-call", input: null }, context("echo"));
+    expect(received).toEqual({ value: "prepared" });
+  });
+
+  test("prepareInput exceptions settle as TOOL_PREPARE_INPUT_FAILED", async () => {
+    const created = fixture({ descriptors: [descriptor({ prepareInput: () => { throw new Error("prepare failed"); } })] });
+    const result = expectSettledResult(await created.registry.execute(
+      { toolName: "echo", toolCallId: "prepare-fail", input: {} }, context("echo"),
+    ));
+    expect(result.details?.error?.code).toBe("TOOL_PREPARE_INPUT_FAILED");
+  });
+
+  test("global and descriptor before hooks mutate and re-parse input", async () => {
+    let received: unknown;
+    const created = fixture({ descriptors: [descriptor({
+      inputSchema: z.object({ value: z.string() }).strict(),
+      hooks: { before: [(input) => ({ value: `${(input as { value: string }).value}-tool` })] },
+      execute: async (input) => { received = input; return createTextToolResult("ok"); },
+    })] });
+    created.registry.globalHooks.before.push(() => ({ value: "global" }));
+    await created.registry.execute({ toolName: "echo", toolCallId: "before-call", input: { value: "initial" } }, context("echo"));
+    expect(received).toEqual({ value: "global-tool" });
+  });
+
+  test("invalid before-hook mutation settles as TOOL_BEFORE_HOOK_INVALID_INPUT", async () => {
+    const created = fixture({ descriptors: [descriptor({
+      inputSchema: z.object({ value: z.string() }).strict(),
+      hooks: { before: [() => ({ value: 1 })] },
+    })] });
+    const result = expectSettledResult(await created.registry.execute(
+      { toolName: "echo", toolCallId: "before-invalid", input: { value: "ok" } }, context("echo"),
+    ));
+    expect(result.details?.error?.code).toBe("TOOL_BEFORE_HOOK_INVALID_INPUT");
+  });
+
+  test("descriptor after hooks mutate Raw results before finalization", async () => {
+    const created = fixture({ descriptors: [descriptor({
+      hooks: { after: [(result) => ({ ...result, draft: { kind: "text", text: "after" } })] },
+    })] });
+    const result = expectSettledResult(await created.registry.execute(
+      { toolName: "echo", toolCallId: "after-call", input: {} }, context("echo"),
+    ));
+    expect(result.output.preview).toBe("after");
+  });
+
+  test("after-hook exceptions settle with unknownResult after effectful execution", async () => {
+    const created = fixture({ descriptors: [descriptor({
+      traits: { readOnly: false, destructive: false, concurrencySafe: false },
+      hooks: { after: [() => { throw new Error("after failed"); }] },
+    })] });
+    const result = expectSettledResult(await created.registry.execute(
+      { toolName: "echo", toolCallId: "after-fail", input: {} }, context("echo"),
+    ));
+    expect(result.details?.error?.kind).toBe("after-hook");
+    expect(result.details?.unknownResult).toBe(true);
+  });
+
+  test("pipeline ordering is global before, tool before, execute, tool after, finalized", async () => {
     const order: string[] = [];
-    registry.globalPermissions.push(async () => {
-      order.push("perm");
-      return { outcome: "allow" };
-    });
-    registry.globalHooks.before.push(async () => {
-      order.push("before");
-    });
-
-    const ctx = makeContext();
-    const call = makeToolCall({ input: { msg: "hello" } });
-
-    const result = await registry.execute(call, ctx);
-
-    expect(result.isError).toBe(false);
-    expect(result.output).toBe("echo: hello");
-    expect(order).toEqual(["perm", "before"]);
+    const created = fixture({ descriptors: [descriptor({
+      hooks: {
+        before: [() => { order.push("tool-before"); }],
+        after: [() => { order.push("tool-after"); }],
+      },
+      execute: async () => { order.push("execute"); return createTextToolResult("ok"); },
+    })] });
+    created.registry.globalHooks.before.push(() => { order.push("global-before"); });
+    created.registry.globalHooks.finalized.push(() => { order.push("finalized"); });
+    await created.registry.execute({ toolName: "echo", toolCallId: "order-call", input: {} }, context("echo"));
+    expect(order).toEqual(["global-before", "tool-before", "execute", "tool-after", "finalized"]);
   });
 
-  // 4. Truncator handles large successful output, preserves isError false
-  test("truncator truncates large successful output, preserves isError false", async () => {
-    const registry = createRegistry();
-    const desc = makeDescriptor("echo");
-
-    // Executor returns large output (> maxBytes=100)
-    desc.execute = async () => {
-      return "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\n" + "X".repeat(200);
-    };
-    registry.register(desc);
-
-    const truncOutDir = join(tmpRoot, "scenario4");
-    registry.globalHooks.after.push(
-      createOutputTruncator({ outputDir: truncOutDir, maxBytes: 100, maxLines: 5 }),
-    );
-
-    const ctx = makeContext();
-    const call = makeToolCall({ input: { msg: "hello" } });
-
-    const result = await registry.execute(call, ctx);
-
-    // isError should remain false (successful execution)
-    expect(result.isError).toBe(false);
-    // Output should contain truncation marker
-    expect(result.output).toContain("[Output truncated; full output saved to:");
-    expect(result.meta?.truncated).toBe(true);
-    expect(typeof result.meta?.fullOutputPath).toBe("string");
-
-    // Verify full output was persisted to file
-    const fullPath = result.meta!.fullOutputPath as string;
-    const fileContent = await Bun.file(fullPath).text();
-    const expectedContent = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\n" + "X".repeat(200);
-    expect(fileContent).toBe(expectedContent);
+  test("execution context receives call identity, parsed input, traits, and original abort signal", async () => {
+    let observed: ToolExecutionContext | undefined;
+    const controller = new AbortController();
+    const created = fixture({ descriptors: [descriptor({ execute: async (_input, ctx) => { observed = ctx; return createTextToolResult("ok"); } })] });
+    const ctx = context("echo");
+    ctx.abort = controller.signal;
+    await created.registry.execute({ toolName: "echo", toolCallId: "identity-call", input: {} }, ctx);
+    expect(observed).toBe(ctx);
+    expect(observed).toMatchObject({ toolName: "echo", toolCallId: "identity-call", input: {}, toolTraits: descriptor().traits });
+    expect(observed?.abort).toBe(controller.signal);
   });
 
-  test("redaction precedes truncation, audit, logger, and persisted full output", async () => {
-    const registry = createRegistry();
-    const events: AuditEvent[] = [];
-    const logger = makeLogger();
-    const rawSecret = "sk_test_1234567890abcdef";
-    const output = [
-      "line1",
-      "line2",
-      "line3",
-      "line4",
-      "line5",
-      `line6 secret=${rawSecret}`,
-    ].join("\n");
-
-    const desc = makeDescriptor("echo");
-    desc.execute = async () => output;
-    registry.register(desc);
-    const auditSink = (event: AuditEvent): void => { events.push(event); };
-    registry.globalHooks.after.push(createRedactionHook());
-    registry.globalHooks.after.push(createOutputTruncator({ outputDir: join(tmpRoot, "redact-truncate"), maxBytes: 20, maxLines: 3 }));
-    registry.globalHooks.after.push(createAuditHook({ sink: auditSink }));
-    registry.globalHooks.after.push(createExecutionLogger(logger));
-
-    const result = await registry.execute(
-      makeToolCall({ input: { msg: `token=${rawSecret}` } }),
-      makeContext({ input: { msg: `token=${rawSecret}` } }),
-    );
-
-    expect(result.output).not.toContain(rawSecret);
-    expect(result.output).toContain("[Output truncated; full output saved to:");
-    const fullPath = result.meta!.fullOutputPath as string;
-    const fileContent = await Bun.file(fullPath).text();
-    expect(fileContent).toContain(REDACTION_MARKER);
-    expect(fileContent).not.toContain(rawSecret);
-    expect(JSON.stringify(events)).toContain(REDACTION_MARKER);
-    expect(JSON.stringify(events)).not.toContain(rawSecret);
-    const loggerMeta = (logger.debug.mock.calls[0][1] as { meta: Record<string, unknown> }).meta;
-    expect("input" in loggerMeta).toBe(false);
-    expect("redactedInput" in loggerMeta).toBe(false);
-    expect("output" in loggerMeta).toBe(false);
-    expect("rawOutput" in loggerMeta).toBe(false);
-    expect(JSON.stringify(loggerMeta)).not.toContain(rawSecret);
-  });
-
-  test("schema parse errors and before-hook reparse errors run global after hooks", async () => {
-    const registry = createRegistry();
-    const after = mock(async (result) => ({ ...result, output: `${result.output}\nAFTER` }));
-    registry.register(makeDescriptor("echo"));
-    registry.globalHooks.after.push(after);
-
-    const parseError = await registry.execute(
-      makeToolCall({ input: { bad: 1 } }),
-      makeContext({ input: { bad: 1 } }),
-    );
-
-    registry.globalHooks.before.push(async () => ({ bad: true }));
-    const reparseError = await registry.execute(makeToolCall(), makeContext());
-
-    expect(parseError.output).toContain("AFTER");
-    expect(reparseError.output).toContain("AFTER");
-    expect(after).toHaveBeenCalledTimes(2);
-  });
-
-  test("redacts permission denial and confirmation prompt before callback and result", async () => {
-    const registry = createRegistry();
-    const rawSecret = "sk_test_1234567890abcdef";
-    registry.register(makeDescriptor("echo"));
-    registry.globalHooks.after.push(createRedactionHook());
-
-    registry.globalPermissions.push(async () => ({ outcome: "ask", prompt: `approve token=${rawSecret}` }));
-    const confirmPermission = mock(async (request) => {
-      expect(JSON.stringify(request)).not.toContain(rawSecret);
-      expect(JSON.stringify(request)).toContain(REDACTION_MARKER);
-      return "deny" as const;
-    });
-
-    const denied = await registry.execute(
-      makeToolCall({ input: { msg: `token=${rawSecret}` } }),
-      makeContext({ input: { msg: `token=${rawSecret}` }, confirmPermission }),
-    );
-
-    expect(denied.output).not.toContain(rawSecret);
-    expect(confirmPermission).toHaveBeenCalledTimes(1);
-
-    const denyRegistry = createRegistry();
-    denyRegistry.register(makeDescriptor("echo"));
-    denyRegistry.globalHooks.after.push(createRedactionHook());
-    denyRegistry.globalPermissions.push(async () => ({ outcome: "deny", reason: `blocked secret=${rawSecret}` }));
-    const result = await denyRegistry.execute(makeToolCall(), makeContext());
-    expect(result.output).toContain(`blocked secret=${REDACTION_MARKER}`);
-    expect(result.output).not.toContain(rawSecret);
-  });
-
-  test("detector-positive slash token is absent from a durable blocked permission display", async () => {
-    const registry = createRegistry();
-    const rawToken = "AAAAAAAAAAAAAAA/AAAAAAAAAAAAAAAA";
-    registry.register(makeDescriptor("echo"));
-    registry.globalPermissions.push(async () => ({ outcome: "ask", reason: "Review command" }));
-
-    const blocked = await registry.execute(
-      makeToolCall({ input: { msg: `sudo echo ${rawToken}` } }),
-      makeContext({ input: { msg: `sudo echo ${rawToken}` } }),
-    );
-
-    expect(blocked.blocked).toBeDefined();
-    const display = JSON.stringify(blocked.blocked?.displayPayload);
-    expect(display).not.toContain(rawToken);
-    expect(display).toContain(REDACTION_MARKER);
-    expect(blocked.blocked?.displayPayload.fields).toContainEqual({
-      label: "Input",
-      value: `{"msg":"sudo echo ${REDACTION_MARKER}"}`,
-    });
+  test("registered but disallowed tools settle before permissions and execution", async () => {
+    const permission = mock(async () => ({ outcome: "allow" as const }));
+    const execute = mock(async () => createTextToolResult("unreachable"));
+    const created = fixture({ descriptors: [descriptor({ permissions: [permission], execute })] });
+    const ctx = context("echo");
+    ctx.allowedTools = new Set();
+    const result = expectSettledResult(await created.registry.execute(
+      { toolName: "echo", toolCallId: "disallowed-call", input: {} }, ctx,
+    ));
+    expect(result.details?.error?.code).toBe("TOOL_NOT_ALLOWED");
+    expect(permission).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
   });
 });
 
-// ─── Permission API contract (TDD red phase) ───
-
-describe("Permission API contract — registry", () => {
-  let registry: ToolRegistry;
-
-  beforeEach(() => {
-    registry = createRegistry();
+describe("ToolRegistry permission and durable HITL boundary", () => {
+  test("global permissions run before descriptor permissions", async () => {
+    const order: string[] = [];
+    const created = fixture({ descriptors: [descriptor({ permissions: [async () => { order.push("tool"); return { outcome: "allow" }; }] })] });
+    created.registry.globalPermissions.push(async () => { order.push("global"); return { outcome: "allow" }; });
+    await created.registry.execute({ toolName: "echo", toolCallId: "permission-order", input: {} }, context("echo"));
+    expect(order).toEqual(["global", "tool"]);
   });
 
-  describe("globalPermissions", () => {
-    test("registry has 'globalPermissions' field instead of 'globalGuards'", () => {
-      expect(Array.isArray(registry.globalPermissions)).toBe(true);
-      expect(registry.globalPermissions).toEqual([]);
-    });
-
-    test("globalPermissions is a mutable array accepting ToolPermission functions", () => {
-      const perm: ToolPermission = async () => ({ outcome: "allow" });
-      registry.globalPermissions.push(perm);
-      expect(registry.globalPermissions).toHaveLength(1);
-      expect(registry.globalPermissions[0]).toBe(perm);
-    });
-
-
+  test("permission deny runs after input hooks, skips execution, and preserves structured kind/code", async () => {
+    const before = mock(async () => undefined);
+    const execute = mock(async () => createTextToolResult("unreachable"));
+    const created = fixture({ descriptors: [descriptor({
+      permissions: [async () => ({ outcome: "deny", reason: "blocked", errorKind: "workspace", errorCode: "PATH_OUTSIDE_WORKSPACE" })],
+      hooks: { before: [before] }, execute,
+    })] });
+    const ctx = context("echo");
+    const result = expectSettledResult(await created.registry.execute(
+      { toolName: "echo", toolCallId: "deny-call", input: {} }, ctx,
+    ));
+    expect(result.details?.error).toMatchObject({ kind: "workspace", code: "PATH_OUTSIDE_WORKSPACE" });
+    expect(ctx.permissionOutcome).toBe("deny");
+    expect(before).toHaveBeenCalledTimes(1);
+    expect(execute).not.toHaveBeenCalled();
   });
 
-  describe("descriptor.permissions", () => {
-    test("descriptor uses 'permissions' instead of 'guards'", () => {
-      const perm: ToolPermission = async () => ({ outcome: "allow" });
-      const desc: ToolDescriptor = {
-        name: "test_perm",
-        description: "Test permission",
-        inputSchema: z.object({ msg: z.string() }).strict(),
-        traits: { readOnly: true, destructive: false, concurrencySafe: true },
-        permissions: [perm],
-        async execute(input) {
-          return `echo: ${(input as { msg: string }).msg}`;
-        },
-      };
-
-      expect(Array.isArray(desc.permissions)).toBe(true);
-      expect(desc.permissions).toHaveLength(1);
-    });
-
-
+  test("ask creates a redacted blocked request with a stable fingerprint", async () => {
+    const created = fixture({ descriptors: [descriptor({ permissions: [async () => ({
+      outcome: "ask",
+      reason: "approval needed",
+      approval: { eligible: false, display: "Echo", reason: "Approval needed" },
+    })] })] });
+    const ctx = context("echo");
+    const first = expectBlockedRequest(await created.registry.execute(
+      { toolName: "echo", toolCallId: ctx.toolCallId, input: {} }, ctx,
+    ));
+    expect(first.source).toEqual({ type: "tool_permission", toolCallId: ctx.toolCallId, toolName: "echo" });
+    expect("permissionFingerprint" in first && first.permissionFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(first.displayPayload.redacted).toBe(true);
+    expect(ctx.permissionOutcome).toBe("ask");
   });
 
-  describe("ctx.permissionOutcome", () => {
-    function makeContext(
-      overrides?: Partial<ToolExecutionContext>,
-    ): ToolExecutionContext {
-      const ac = new AbortController();
-      const workspaceRoot = overrides?.projectContext?.project.workspaceRoot ?? overrides?.cwd ?? "/tmp";
-      return createToolExecutionContext({ store: { getState: () => ({ sessionId: "test-session" }) } as ToolExecutionContext["store"], storeManager, toolName: "echo",
-      toolCallId: "call-1",
-      input: { msg: "hello" },
-      step: 0,
-      abort: ac.signal,
-      startedAt: 0,
-      allowedTools: new Set(["echo"]),
-      agentSkills: [],
-      skillService: new SkillService({ builtinSkills: {} }),
-      projectContext: makeProjectContext(workspaceRoot),
-      ...overrides,
-      cwd: workspaceRoot, });
+  test("approve_once resumes the exact blocked call and executes once", async () => {
+    const execute = mock(async () => createTextToolResult("approved"));
+    const created = fixture({ descriptors: [descriptor({
+      permissions: [async () => ({ outcome: "ask", approval: { eligible: false, display: "Echo", reason: "Approve" } })],
+      execute,
+    })] });
+    const ctx = context("echo");
+    const toolCall = { toolName: "echo", toolCallId: ctx.toolCallId, input: {} };
+    const blocked = expectBlockedOutcome(await created.registry.execute(toolCall, ctx));
+    const result = expectSettledResult(await created.registry.resumeBlocked({
+      toolCall,
+      request: blocked.request,
+      requestKey: blocked.requestKey,
+      response: { type: "permission_decision", decision: "approve_once" },
+      context: ctx,
+    }));
+    expect(result.output.preview).toBe("approved");
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(ctx.permissionOutcome).toBe("allow");
+  });
+
+  test("deny response settles without executing", async () => {
+    const execute = mock(async () => createTextToolResult("unreachable"));
+    const created = fixture({ descriptors: [descriptor({ permissions: [async () => ({ outcome: "ask" })], execute })] });
+    const ctx = context("echo");
+    const toolCall = { toolName: "echo", toolCallId: ctx.toolCallId, input: {} };
+    const blocked = expectBlockedOutcome(await created.registry.execute(toolCall, ctx));
+    const result = expectSettledResult(await created.registry.resumeBlocked({
+      toolCall,
+      request: blocked.request,
+      requestKey: blocked.requestKey,
+      response: { type: "permission_decision", decision: "deny" },
+      context: ctx,
+    }));
+    expect(result.details?.error?.code).toBe("TOOL_PERMISSION_CONFIRMATION_DENIED");
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  test("validateBlockedResponse rejects mismatched response shapes", async () => {
+    const created = fixture({ descriptors: [descriptor({ permissions: [async () => ({ outcome: "ask" })] })] });
+    const ctx = context("echo");
+    const request = expectBlockedRequest(await created.registry.execute(
+      { toolName: "echo", toolCallId: ctx.toolCallId, input: {} }, ctx,
+    ));
+    expect(() => created.registry.validateBlockedResponse(request, { type: "question_answer", answers: ["yes"] })).toThrow();
+    expect(created.registry.validateBlockedResponse(request, { type: "permission_decision", decision: "approve_once" })).toEqual({ type: "permission_decision", decision: "approve_once" });
+  });
+
+  test("cancel response settles as TOOL_CANCELLED", async () => {
+    const created = fixture({ descriptors: [descriptor({ permissions: [async () => ({ outcome: "ask" })] })] });
+    const ctx = context("echo");
+    const toolCall = { toolName: "echo", toolCallId: ctx.toolCallId, input: {} };
+    const blocked = expectBlockedOutcome(await created.registry.execute(toolCall, ctx));
+    const result = expectSettledResult(await created.registry.resumeBlocked({
+      toolCall,
+      request: blocked.request,
+      requestKey: blocked.requestKey,
+      response: { type: "cancel", reason: "stop" },
+      context: ctx,
+    }));
+    expect(result.details?.error?.code).toBe("TOOL_CANCELLED");
+  });
+
+  test("permission exceptions settle as permission-denied without execution", async () => {
+    const execute = mock(async () => createTextToolResult("unreachable"));
+    const created = fixture({ descriptors: [descriptor({
+      permissions: [async () => { throw new Error("policy failed"); }], execute,
+    })] });
+    const result = expectSettledResult(await created.registry.execute(
+      { toolName: "echo", toolCallId: "policy-throw", input: {} }, context("echo"),
+    ));
+    expect(result.details?.error?.kind).toBe("permission-denied");
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  test("oversize permission requests settle once without executing", async () => {
+    const execute = mock(async () => createTextToolResult("unreachable"));
+    const created = fixture({ descriptors: [descriptor({
+      description: "ordinary description words ".repeat(220),
+      permissions: [async () => ({ outcome: "ask", reason: "approve" })],
+      execute,
+    })] });
+    const finalized = mock(async () => undefined);
+    created.registry.globalHooks.finalized.push(finalized);
+
+    const result = expectSettledResult(await created.registry.execute(
+      { toolName: "echo", toolCallId: "oversize-permission", input: {} },
+      context("echo"),
+    ));
+
+    expect(result.isError).toBe(true);
+    expect(result.details?.error?.kind).toBe("permission-denied");
+    expect(finalized).toHaveBeenCalledTimes(1);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  test("approval lookup and persistence failures settle once without escaping", async () => {
+    const scope = { kind: "tool-operation" as const, toolName: "echo", operation: "run", target: "fixture" };
+    const permission = async () => ({
+      outcome: "ask" as const,
+      approval: { eligible: true as const, scope, display: "Run echo", reason: "Approve" },
+    });
+
+    const lookupFixture = fixture({ descriptors: [descriptor({ permissions: [permission] })] });
+    const lookupContext = context("echo");
+    const lookupFinalized = mock(async () => undefined);
+    lookupFixture.registry.globalHooks.finalized.push(lookupFinalized);
+    const hasApproval = spyOn(lookupContext.projectContext.approvals, "hasApproval")
+      .mockImplementation(() => { throw new Error("lookup-secret"); });
+    const lookupResult = expectSettledResult(await lookupFixture.registry.execute(
+      { toolName: "echo", toolCallId: lookupContext.toolCallId, input: {} },
+      lookupContext,
+    ));
+    expect(lookupResult.details?.error?.kind).toBe("permission-denied");
+    expect(lookupFinalized).toHaveBeenCalledTimes(1);
+    hasApproval.mockRestore();
+
+    const persistFixture = fixture({ descriptors: [descriptor({ permissions: [permission] })] });
+    const persistContext = context("echo");
+    const toolCall = { toolName: "echo", toolCallId: persistContext.toolCallId, input: {} };
+    const blocked = expectBlockedOutcome(await persistFixture.registry.execute(toolCall, persistContext));
+    const persistFinalized = mock(async () => undefined);
+    persistFixture.registry.globalHooks.finalized.push(persistFinalized);
+    const addApproval = spyOn(persistContext.projectContext.approvals, "addApproval")
+      .mockRejectedValue(new Error("persist-secret"));
+    const persistResult = expectSettledResult(await persistFixture.registry.resumeBlocked({
+      toolCall,
+      request: blocked.request,
+      requestKey: blocked.requestKey,
+      response: { type: "permission_decision", decision: "approve_always" },
+      context: persistContext,
+    }));
+    expect(persistResult.details?.error?.kind).toBe("permission-denied");
+    expect(persistFinalized).toHaveBeenCalledTimes(1);
+    addApproval.mockRestore();
+  });
+
+  test("approve_always is rejected for an ineligible request", async () => {
+    const created = fixture({ descriptors: [descriptor({ permissions: [async () => ({ outcome: "ask" })] })] });
+    const ctx = context("echo");
+    const toolCall = { toolName: "echo", toolCallId: ctx.toolCallId, input: {} };
+    const blocked = expectBlockedOutcome(await created.registry.execute(toolCall, ctx));
+    const result = expectSettledResult(await created.registry.resumeBlocked({
+      toolCall,
+      request: blocked.request,
+      requestKey: blocked.requestKey,
+      response: { type: "permission_decision", decision: "approve_always" },
+      context: ctx,
+    }));
+    expect(result.details?.error?.code).toBe("TOOL_PERMISSION_CONFIRMATION_DENIED");
+  });
+
+  test("approve_always persists an exact eligible scope and satisfies future asks", async () => {
+    const scope = { kind: "tool-operation" as const, toolName: "echo", operation: "run", target: "fixture" };
+    const execute = mock(async () => createTextToolResult("approved"));
+    const created = fixture({ descriptors: [descriptor({
+      permissions: [async () => ({
+        outcome: "ask",
+        approval: { eligible: true, scope, display: "Run echo", reason: "Fixture approval" },
+      })],
+      execute,
+    })] });
+    const ctx = context("echo");
+    await ctx.projectContext.approvals.load(ctx.projectContext.project.workspaceRoot);
+    const toolCall = { toolName: "echo", toolCallId: ctx.toolCallId, input: {} };
+    const blocked = expectBlockedOutcome(await created.registry.execute(toolCall, ctx));
+    expectSettledResult(await created.registry.resumeBlocked({
+      toolCall,
+      request: blocked.request,
+      requestKey: blocked.requestKey,
+      response: { type: "permission_decision", decision: "approve_always" },
+      context: ctx,
+    }));
+    expect(ctx.projectContext.approvals.hasApproval(scope)).toBe(true);
+    const second = expectSettledResult(await created.registry.execute(toolCall, ctx));
+    expect(second.output.preview).toBe("approved");
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
+  test("deny execution control leaves persistence through the runtime-only sidecar", async () => {
+    const created = fixture({ descriptors: [descriptor({ permissions: [async () => ({
+      outcome: "deny",
+      reason: "stop",
+      executionControl: { action: "stop_session_family", reason: "goal_cancelled" },
+    })] })] });
+    const outcome = await created.registry.execute(
+      { toolName: "echo", toolCallId: "sidecar-deny", input: {} }, context("echo"),
+    );
+    expect(outcome.kind).toBe("settled");
+    expect(outcome.kind === "settled" ? outcome.sidecar : undefined).toEqual({
+      executionControl: { action: "stop_session_family", reason: "goal_cancelled" },
+    });
+  });
+
+  test("resumeBlocked rejects a request belonging to another call", async () => {
+    const created = fixture({ descriptors: [descriptor({ permissions: [async () => ({ outcome: "ask" })] })] });
+    const ctx = context("echo");
+    const toolCall = { toolName: "echo", toolCallId: ctx.toolCallId, input: {} };
+    const blocked = expectBlockedOutcome(await created.registry.execute(toolCall, ctx));
+    const result = expectSettledResult(await created.registry.resumeBlocked({
+      toolCall: { ...toolCall, toolCallId: "different-call" },
+      request: blocked.request,
+      requestKey: blocked.requestKey,
+      response: { type: "permission_decision", decision: "approve_once" },
+      context: ctx,
+    }));
+    expect(result.details?.error?.code).toBe("TOOL_BLOCKED_RESPONSE_INVALID");
+  });
+
+  test("invalid resume request, response, and requestKey each settle as a bounded error", async () => {
+    const created = fixture({ descriptors: [descriptor({ permissions: [async () => ({ outcome: "ask" })] })] });
+    const ctx = context("echo");
+    const toolCall = { toolName: "echo", toolCallId: ctx.toolCallId, input: {} };
+    const blocked = expectBlockedOutcome(await created.registry.execute(toolCall, ctx));
+
+    for (const input of [
+      {
+        request: { ...blocked.request, displayPayload: { ...blocked.request.displayPayload, redacted: false } } as any,
+        requestKey: blocked.requestKey,
+        response: { type: "permission_decision", decision: "approve_once" },
+      },
+      {
+        request: blocked.request,
+        requestKey: blocked.requestKey,
+        response: { type: "question_answer", answers: ["yes"] },
+      },
+      {
+        request: blocked.request,
+        requestKey: "tool:wrong",
+        response: { type: "permission_decision", decision: "approve_once" },
+      },
+    ]) {
+      const result = expectSettledResult(await created.registry.resumeBlocked({
+        toolCall,
+        request: input.request,
+        requestKey: input.requestKey,
+        response: input.response,
+        context: ctx,
+      }));
+      expect(result.details?.error?.code).toBe("TOOL_BLOCKED_RESPONSE_INVALID");
+      expect(new TextEncoder().encode(result.output.preview).byteLength).toBeLessThan(50 * 1024);
     }
-
-    function makeToolCall(
-      overrides?: Partial<ToolCallLike>,
-    ): ToolCallLike {
-      return { toolCallId: "call-1",
-      toolName: "echo",
-      input: { msg: "hello" }, ...overrides,  };
-    }
-
-    test("permissionOutcome is set to 'allow' when all permissions allow", async () => {
-      const desc: ToolDescriptor = {
-        name: "echo",
-        description: "Tool: echo",
-        inputSchema: z.object({ msg: z.string() }).strict(),
-        traits: { readOnly: true, destructive: false, concurrencySafe: true },
-        permissions: [async () => ({ outcome: "allow" })],
-        async execute(input) {
-          return `echo: ${(input as { msg: string }).msg}`;
-        },
-      };
-      registry.register(desc);
-      registry.globalPermissions.push(async () => ({ outcome: "allow" }));
-
-      const ctx = makeContext();
-      await registry.execute(makeToolCall(), ctx);
-
-      expect(ctx.permissionOutcome).toBe("allow");
-    });
-
-    test("permissionOutcome is set to 'deny' when a permission denies", async () => {
-      const desc: ToolDescriptor = {
-        name: "echo",
-        description: "Tool: echo",
-        inputSchema: z.object({ msg: z.string() }).strict(),
-        traits: { readOnly: true, destructive: false, concurrencySafe: true },
-        permissions: [async () => ({ outcome: "deny", reason: "blocked" })],
-        async execute(input) {
-          return `echo: ${(input as { msg: string }).msg}`;
-        },
-      };
-      registry.register(desc);
-
-      const ctx = makeContext();
-      await registry.execute(makeToolCall(), ctx);
-
-      expect(ctx.permissionOutcome).toBe("deny");
-    });
-
-    test("permissionOutcome is set to 'ask' when a permission asks", async () => {
-      const desc: ToolDescriptor = {
-        name: "echo",
-        description: "Tool: echo",
-        inputSchema: z.object({ msg: z.string() }).strict(),
-        traits: { readOnly: true, destructive: false, concurrencySafe: true },
-        permissions: [async () => ({ outcome: "ask", reason: "confirm?" })],
-        async execute(input) {
-          return `echo: ${(input as { msg: string }).msg}`;
-        },
-      };
-      registry.register(desc);
-      const workspaceRoot = join(TEST_TEMP_ROOT, `permission-outcome-ask-${crypto.randomUUID()}`);
-      const sessionId = crypto.randomUUID();
-
-      const ctx = makeContext({
-        cwd: workspaceRoot,
-        agentName: "engineer",
-        store: storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" }),
-        projectContext: await makeLoadedProjectContext(workspaceRoot),
-      });
-      const result = await registry.execute(makeToolCall(), ctx);
-      expect(result.blocked?.source).toEqual({ type: "tool_permission", toolCallId: "call-1", toolName: "echo" });
-
-      expect(ctx.permissionOutcome).toBe("ask");
-      await storeManager.flushSession(sessionId, workspaceRoot);
-    });
   });
 
-  describe("combinePermissionDecisions", () => {
-    test("combinePermissionDecisions is exported from ./permission", async () => {
-      const { combinePermissionDecisions } = await import("./permission");
-      expect(typeof combinePermissionDecisions).toBe("function");
-
-      const allow = combinePermissionDecisions([{ outcome: "allow" }]);
-      expect(allow.outcome).toBe("allow");
-
-      const deny = combinePermissionDecisions([
-        { outcome: "allow" },
-        { outcome: "deny", reason: "blocked" },
-      ]);
-      expect(deny.outcome).toBe("deny");
-
-      const ask = combinePermissionDecisions([
-        { outcome: "allow" },
-        { outcome: "ask", reason: "confirm?" },
-      ]);
-      expect(ask.outcome).toBe("ask");
+  test("recomputed keys cannot authorize tampered permission or ask-user requests", async () => {
+    const execute = mock(async () => createTextToolResult("unreachable"));
+    const permissionFixture = fixture({ descriptors: [descriptor({
+      permissions: [async () => ({ outcome: "ask", reason: "Approve" })],
+      execute,
+    })] });
+    const permissionContext = context("echo");
+    const permissionCall = { toolName: "echo", toolCallId: permissionContext.toolCallId, input: {} };
+    const permissionBlocked = expectBlockedOutcome(await permissionFixture.registry.execute(permissionCall, permissionContext));
+    if (permissionBlocked.request.source.type !== "tool_permission") throw new Error("Expected permission request");
+    const tamperedPermission = {
+      ...permissionBlocked.request,
+      displayPayload: { ...permissionBlocked.request.displayPayload, title: "Tampered permission" },
+    };
+    const tamperedPermissionKey = permissionFixture.hitlCodec.createToolRequestKey({
+      sessionId: permissionContext.store.getState().sessionId,
+      toolCallId: permissionCall.toolCallId,
+      toolName: permissionCall.toolName,
+      request: tamperedPermission,
     });
+    const permissionResult = expectSettledResult(await permissionFixture.registry.resumeBlocked({
+      toolCall: permissionCall,
+      request: tamperedPermission,
+      requestKey: tamperedPermissionKey,
+      response: { type: "permission_decision", decision: "approve_once" },
+      context: permissionContext,
+    }));
+    expect(permissionResult.details?.error?.code).toBe("TOOL_BLOCKED_RESPONSE_INVALID");
+    expect(execute).not.toHaveBeenCalled();
+
+    const askFixture = fixture({ descriptors: [askUserTool] });
+    const askContext = context("ask_user");
+    const askCall = {
+      toolName: "ask_user",
+      toolCallId: askContext.toolCallId,
+      input: { questions: [{ question: "Continue?", header: "Decision", options: [], custom: true }] },
+    };
+    const askBlocked = expectBlockedOutcome(await askFixture.registry.execute(askCall, askContext));
+    if (askBlocked.request.source.type !== "ask_user") throw new Error("Expected ask-user request");
+    const tamperedAsk = {
+      ...askBlocked.request,
+      displayPayload: { ...askBlocked.request.displayPayload, summary: "Tampered question" },
+    };
+    const tamperedAskKey = askFixture.hitlCodec.createToolRequestKey({
+      sessionId: askContext.store.getState().sessionId,
+      toolCallId: askCall.toolCallId,
+      toolName: askCall.toolName,
+      request: tamperedAsk,
+    });
+    const askResult = expectSettledResult(await askFixture.registry.resumeBlocked({
+      toolCall: askCall,
+      request: tamperedAsk,
+      requestKey: tamperedAskKey,
+      response: { type: "question_answer", answers: ["Yes"] },
+      context: askContext,
+    }));
+    expect(askResult.details?.error?.code).toBe("TOOL_BLOCKED_RESPONSE_INVALID");
+  });
+});
+
+describe("ToolRegistry current lifecycle callbacks", () => {
+  test("onInputResolved receives the redacted parsed input", async () => {
+    const secret = "runtime-secret-value";
+    const created = fixture({ secretLiterals: [secret], descriptors: [descriptor({
+      inputSchema: z.object({ value: z.string() }).strict(),
+    })] });
+    const onInputResolved = mock(() => undefined);
+    const ctx = context("echo");
+    ctx.onInputResolved = onInputResolved;
+    await created.registry.execute(
+      { toolName: "echo", toolCallId: "resolved-input", input: { value: secret } }, ctx,
+    );
+    expect(onInputResolved).toHaveBeenCalledWith({ value: "[REDACTED:SECRET]" });
+  });
+
+  test("effectful attempt recording is awaited before execute", async () => {
+    const order: string[] = [];
+    const created = fixture({ descriptors: [descriptor({
+      traits: { readOnly: false, destructive: false, concurrencySafe: false },
+      execute: async () => { order.push("execute"); return createTextToolResult("ok"); },
+    })] });
+    const ctx = context("echo", async () => { await Bun.sleep(1); order.push("attempt"); });
+    await created.registry.execute({ toolName: "echo", toolCallId: "attempt-call", input: {} }, ctx);
+    expect(order).toEqual(["attempt", "execute"]);
+  });
+
+  test("read-only descriptors do not record an effectful attempt", async () => {
+    const attempt = mock(async () => undefined);
+    const created = fixture({ descriptors: [descriptor()] });
+    await created.registry.execute(
+      { toolName: "echo", toolCallId: "read-call", input: {} }, context("echo", attempt),
+    );
+    expect(attempt).not.toHaveBeenCalled();
+  });
+
+  test("a failing finalized hook cannot prevent later finalized hooks", async () => {
+    const order: string[] = [];
+    const created = fixture({ descriptors: [descriptor()] });
+    created.registry.globalHooks.finalized.push(() => { order.push("first"); throw new Error("hook failed"); });
+    created.registry.globalHooks.finalized.push(() => { order.push("second"); });
+    const result = expectSettledResult(await created.registry.execute(
+      { toolName: "echo", toolCallId: "finalized-hooks", input: {} }, context("echo"),
+    ));
+    expect(result.output.preview).toBe("ok");
+    expect(order).toEqual(["first", "second"]);
+  });
+
+  test("settleSystem finalizes strict Raw text and runs finalized hooks", async () => {
+    const finalized = mock(async () => undefined);
+    const created = fixture();
+    created.registry.globalHooks.finalized.push(finalized);
+    const settled = await created.registry.settleSystem(
+      { toolName: "system", toolCallId: "system-call", input: {} },
+      context("system"),
+      createTextToolResult("system output"),
+    );
+    expect(settled.result.output.preview).toBe("system output");
+    expect(finalized).toHaveBeenCalledTimes(1);
   });
 });

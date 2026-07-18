@@ -11,9 +11,8 @@ import {
   type HitlView,
 } from "@archcode/protocol";
 import { sortJsonValue } from "@archcode/utils";
-import { z } from "zod/v4";
-
 import { atomicWrite } from "../utils/safe-file";
+import { HitlBoundaryCodec } from "./boundary-codec";
 
 export const MAX_HITL_DELIVERY_ATTEMPTS = 3;
 
@@ -67,124 +66,15 @@ export type ResolveHitlOutcome =
 
 export interface ProjectHitlQueueOptions {
   readonly workspaceRoot: string;
+  readonly codec: HitlBoundaryCodec;
   readonly onEvent?: (event: ProjectHitlQueueEvent) => unknown;
   readonly now?: () => Date;
 }
 
-interface ProjectHitlFile {
+export interface ProjectHitlFile {
   readonly records: HitlRecord[];
   readonly updatedAt: string;
 }
-
-const NonEmptyStringSchema = z.string().trim().min(1);
-
-const HitlOwnerSchema: z.ZodType<HitlOwner> = z.discriminatedUnion("type", [
-  z.strictObject({ type: z.literal("session"), id: NonEmptyStringSchema }),
-  z.strictObject({ type: z.literal("goal"), id: NonEmptyStringSchema }),
-]);
-
-const HitlSourceSchema: z.ZodType<HitlSource> = z.discriminatedUnion("type", [
-  z.strictObject({ type: z.literal("ask_user"), toolCallId: NonEmptyStringSchema }),
-  z.strictObject({ type: z.literal("tool_permission"), toolCallId: NonEmptyStringSchema, toolName: NonEmptyStringSchema }),
-  z.strictObject({ type: z.literal("goal_budget"), approvalPoint: NonEmptyStringSchema }),
-]);
-
-const HitlDisplayPayloadSchema: z.ZodType<HitlDisplayPayload> = z.strictObject({
-  title: NonEmptyStringSchema,
-  summary: z.string().optional(),
-  fields: z.array(z.strictObject({ label: z.string(), value: z.string() })).optional(),
-  questions: z.array(z.strictObject({
-    question: z.string(),
-    header: z.string(),
-    options: z.array(z.strictObject({ label: z.string(), description: z.string() })).optional(),
-    multiple: z.boolean().optional(),
-    custom: z.boolean(),
-  })).optional(),
-  redacted: z.literal(true),
-});
-
-const HitlResponseSchema: z.ZodType<HitlResponse> = z.discriminatedUnion("type", [
-  z.strictObject({
-    type: z.literal("question_answer"),
-    answers: z.array(z.string()),
-    comment: z.string().optional(),
-    answeredBy: z.string().optional(),
-  }),
-  z.strictObject({
-    type: z.literal("permission_decision"),
-    decision: z.enum(["approve_once", "approve_always", "deny"]),
-    comment: z.string().optional(),
-    decidedBy: z.string().optional(),
-  }),
-  z.strictObject({
-    type: z.literal("budget_decision"),
-    decision: z.enum(["approved", "denied"]),
-    comment: z.string().optional(),
-    decidedBy: z.string().optional(),
-  }),
-  z.strictObject({
-    type: z.literal("cancel"),
-    reason: NonEmptyStringSchema,
-    cancelledBy: z.string().optional(),
-  }),
-]);
-
-const HitlDeliverySchema: z.ZodType<HitlDelivery> = z.strictObject({
-  attempts: z.number().int().min(0).max(MAX_HITL_DELIVERY_ATTEMPTS),
-  retryAt: NonEmptyStringSchema.optional(),
-  error: NonEmptyStringSchema.optional(),
-});
-
-const HitlRecordSchema: z.ZodType<HitlRecord> = z.strictObject({
-  hitlId: NonEmptyStringSchema,
-  requestKey: NonEmptyStringSchema,
-  owner: HitlOwnerSchema,
-  source: HitlSourceSchema,
-  status: z.enum(["pending", "answered", "resolved", "cancelled"]),
-  displayPayload: HitlDisplayPayloadSchema,
-  persistentApprovalEligible: z.boolean().optional(),
-  response: HitlResponseSchema.optional(),
-  delivery: HitlDeliverySchema.optional(),
-  createdAt: NonEmptyStringSchema,
-  updatedAt: NonEmptyStringSchema,
-  resolvedAt: NonEmptyStringSchema.optional(),
-}).superRefine((record, ctx) => {
-  const sessionSource = record.source.type === "ask_user" || record.source.type === "tool_permission";
-  if ((record.owner.type === "session") !== sessionSource) {
-    ctx.addIssue({ code: "custom", path: ["source"], message: `${record.source.type} does not belong to ${record.owner.type}` });
-  }
-  if (record.persistentApprovalEligible !== undefined && record.source.type !== "tool_permission") {
-    ctx.addIssue({ code: "custom", path: ["persistentApprovalEligible"], message: "Persistent approval eligibility belongs only to tool_permission HITL" });
-  }
-  const hasAcceptedResponse = record.status !== "pending";
-  if (hasAcceptedResponse !== (record.response !== undefined)) {
-    ctx.addIssue({ code: "custom", path: ["response"], message: `${record.status} has invalid response presence` });
-  }
-  const isTerminal = record.status === "resolved" || record.status === "cancelled";
-  if (isTerminal !== (record.resolvedAt !== undefined)) {
-    ctx.addIssue({ code: "custom", path: ["resolvedAt"], message: `${record.status} has invalid resolvedAt presence` });
-  }
-  if (record.delivery !== undefined && record.status !== "answered") {
-    ctx.addIssue({ code: "custom", path: ["delivery"], message: "Only answered HITL may carry delivery metadata" });
-  }
-  if (record.delivery?.retryAt !== undefined && record.delivery.error === undefined) {
-    ctx.addIssue({ code: "custom", path: ["delivery", "retryAt"], message: "retryAt requires a delivery error" });
-  }
-});
-
-const ProjectHitlFileSchema: z.ZodType<ProjectHitlFile> = z.strictObject({
-  records: z.array(HitlRecordSchema),
-  updatedAt: NonEmptyStringSchema,
-}).superRefine((file, ctx) => {
-  const hitlIds = new Set<string>();
-  const requestKeys = new Set<string>();
-  file.records.forEach((record, index) => {
-    if (hitlIds.has(record.hitlId)) ctx.addIssue({ code: "custom", path: ["records", index, "hitlId"], message: "Duplicate hitlId" });
-    if (requestKeys.has(record.requestKey)) ctx.addIssue({ code: "custom", path: ["records", index, "requestKey"], message: "Duplicate requestKey" });
-    hitlIds.add(record.hitlId);
-    requestKeys.add(record.requestKey);
-  });
-});
 
 const queueMutationLocks = new Map<string, Promise<void>>();
 
@@ -204,18 +94,20 @@ export class HitlNotFoundError extends Error {
 
 export class ProjectHitlQueue {
   readonly #filePath: string;
+  readonly codec: HitlBoundaryCodec;
   readonly #onEvent: ProjectHitlQueueOptions["onEvent"];
   readonly #now: () => Date;
 
   constructor(options: ProjectHitlQueueOptions) {
     if (options.workspaceRoot.trim().length === 0) throw new TypeError("ProjectHitlQueue requires workspaceRoot");
     this.#filePath = projectHitlQueuePath(options.workspaceRoot);
+    this.codec = options.codec;
     this.#onEvent = options.onEvent;
     this.#now = options.now ?? (() => new Date());
   }
 
   async create(input: CreateHitlInput): Promise<{ created: boolean; record: HitlRecord }> {
-    const parsedInput = parseCreateInput(input);
+    const parsedInput = this.codec.parseCreateInput(input);
     const result = await this.#mutate((file) => {
       const existing = file.records.find((record) => record.requestKey === parsedInput.requestKey);
       if (existing !== undefined) {
@@ -229,7 +121,7 @@ export class ProjectHitlQueue {
         throw new HitlConflictError(hitlId, `HITL id ${hitlId} already exists`);
       }
       const now = parsedInput.createdAt ?? this.#now().toISOString();
-      const record = HitlRecordSchema.parse({
+      const record = this.codec.parseRecord({
         hitlId,
         requestKey: parsedInput.requestKey,
         owner: parsedInput.owner,
@@ -284,7 +176,7 @@ export class ProjectHitlQueue {
           if (attempts >= MAX_HITL_DELIVERY_ATTEMPTS) {
             throw new HitlConflictError(hitlId, `HITL delivery exhausted ${MAX_HITL_DELIVERY_ATTEMPTS} attempts`);
           }
-          next = HitlRecordSchema.parse({
+          next = this.codec.parseRecord({
             ...record,
             delivery: { attempts: attempts + 1 },
             updatedAt: now,
@@ -296,9 +188,9 @@ export class ProjectHitlQueue {
           const attempts = record.delivery?.attempts ?? 0;
           if (attempts === 0) throw new HitlConflictError(hitlId, "Delivery failure requires a persisted dispatch attempt");
           const retryAt = attempts >= MAX_HITL_DELIVERY_ATTEMPTS ? undefined : outcome.retryAt;
-          next = HitlRecordSchema.parse({
+          next = this.codec.parseRecord({
             ...record,
-            delivery: withoutUndefined({ attempts, error: outcome.error, retryAt }),
+            delivery: this.codec.parseDelivery(withoutUndefined({ attempts, error: outcome.error, retryAt })),
             updatedAt: now,
           });
           event = { type: "hitl.delivery", view: toHitlView(next) };
@@ -309,7 +201,7 @@ export class ProjectHitlQueue {
             throw new HitlConflictError(hitlId, "Applied HITL requires a persisted dispatch attempt");
           }
           const status = record.response?.type === "cancel" ? "cancelled" : "resolved";
-          next = HitlRecordSchema.parse({
+          next = this.codec.parseRecord({
             ...record,
             status,
             delivery: undefined,
@@ -327,10 +219,9 @@ export class ProjectHitlQueue {
   }
 
   async #acceptResponse(hitlId: string, response: HitlResponse): Promise<HitlRecord> {
-    const parsedResponse = HitlResponseSchema.parse(response);
     return await this.#mutate((file) => {
       const { index, record } = findRecord(file, hitlId);
-      assertResponseMatchesSource(record.source, parsedResponse, hitlId);
+      const parsedResponse = this.codec.parseResponseForSource(record.source, response);
       if (parsedResponse.type === "permission_decision"
         && parsedResponse.decision === "approve_always"
         && record.persistentApprovalEligible !== true) {
@@ -342,7 +233,7 @@ export class ProjectHitlQueue {
       }
       if (record.status !== "pending") throw new HitlConflictError(hitlId, `Cannot answer HITL in ${record.status}`);
       const now = this.#now().toISOString();
-      const next = HitlRecordSchema.parse({ ...record, status: "answered", response: parsedResponse, updatedAt: now });
+      const next = this.codec.parseRecord({ ...record, status: "answered", response: parsedResponse, updatedAt: now });
       const records = [...file.records];
       records[index] = next;
       return {
@@ -360,7 +251,7 @@ export class ProjectHitlQueue {
   async #readUnlocked(): Promise<ProjectHitlFile> {
     const file = Bun.file(this.#filePath);
     if (!(await file.exists())) return { records: [], updatedAt: this.#now().toISOString() };
-    return ProjectHitlFileSchema.parse(JSON.parse(await file.text()));
+    return this.codec.parseProjectFile(JSON.parse(await file.text()));
   }
 
   async #mutate<T>(operation: (file: ProjectHitlFile) => {
@@ -374,7 +265,7 @@ export class ProjectHitlQueue {
       const mutation = operation(current);
       event = mutation.event;
       if (mutation.file !== current) {
-        const parsed = ProjectHitlFileSchema.parse(mutation.file);
+        const parsed = this.codec.parseProjectFile(mutation.file);
         await atomicWrite(this.#filePath, `${JSON.stringify(parsed, null, 2)}\n`);
       }
       return mutation.result;
@@ -429,34 +320,6 @@ function allowedActions(record: HitlRecord): HitlAllowedAction[] {
   }
 }
 
-function parseCreateInput(input: CreateHitlInput): CreateHitlInput {
-  return z.strictObject({
-    requestKey: NonEmptyStringSchema,
-    owner: HitlOwnerSchema,
-    source: HitlSourceSchema,
-    displayPayload: HitlDisplayPayloadSchema,
-    persistentApprovalEligible: z.boolean().optional(),
-    hitlId: NonEmptyStringSchema.optional(),
-    createdAt: NonEmptyStringSchema.optional(),
-  }).superRefine((value, ctx) => {
-    const sessionSource = value.source.type === "ask_user" || value.source.type === "tool_permission";
-    if ((value.owner.type === "session") !== sessionSource) {
-      ctx.addIssue({ code: "custom", path: ["source"], message: `${value.source.type} does not belong to ${value.owner.type}` });
-    }
-    if (value.persistentApprovalEligible !== undefined && value.source.type !== "tool_permission") {
-      ctx.addIssue({ code: "custom", path: ["persistentApprovalEligible"], message: "Persistent approval eligibility belongs only to tool_permission HITL" });
-    }
-  }).parse(input) as CreateHitlInput;
-}
-
-function assertResponseMatchesSource(source: HitlSource, response: HitlResponse, hitlId: string): void {
-  const matches = response.type === "cancel"
-    || (source.type === "ask_user" && response.type === "question_answer")
-    || (source.type === "tool_permission" && response.type === "permission_decision")
-    || (source.type === "goal_budget" && response.type === "budget_decision");
-  if (!matches) throw new HitlConflictError(hitlId, `${response.type} does not answer ${source.type}`);
-}
-
 function sameCreateIntent(record: HitlRecord, input: CreateHitlInput): boolean {
   return stableJson({ owner: record.owner, source: record.source, displayPayload: record.displayPayload, persistentApprovalEligible: record.persistentApprovalEligible })
     === stableJson({ owner: input.owner, source: input.source, displayPayload: input.displayPayload, persistentApprovalEligible: input.persistentApprovalEligible });
@@ -477,7 +340,7 @@ function stableJson(value: unknown): string {
 }
 
 function cloneRecord(record: HitlRecord): HitlRecord {
-  return HitlRecordSchema.parse(structuredClone(record));
+  return structuredClone(record);
 }
 
 function withoutUndefined<T extends Record<string, unknown>>(value: T): T {

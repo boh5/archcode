@@ -15,9 +15,10 @@ import { storeManager } from "../../store/store";
 import type { SessionStoreState } from "../../store/types";
 import { createToolErrorResult, inferToolErrorKindFromResult } from "../errors";
 import { ProjectApprovalManager } from "../permission/project-approvals";
-import { createToolExecutionContext, type ToolExecutionContext, type ToolExecutionResult } from "../types";
+import { expectTextDraft } from "../test-results";
+import { createToolExecutionContext, type RawToolResult, type ToolExecutionContext } from "../types";
 import { silentLogger } from "../../logger";
-import { createTestProjectTodoService } from "../test-project-context";
+import { createTestHitlCodec, createTestProjectTodoService } from "../test-project-context";
 import { GoalCreateInputSchema, GoalManageInputSchema, goalCreateTool, goalManageTool } from "./goal-tools";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "goal-tools", crypto.randomUUID());
@@ -147,7 +148,7 @@ function makeProjectContext(
     addedAt: new Date().toISOString(),
   };
   const resolvedGoalState = goalState as unknown as GoalStateManager;
-  const hitl = new ProjectHitlQueue({ workspaceRoot });
+  const hitl = new ProjectHitlQueue({ workspaceRoot, codec: createTestHitlCodec() });
   return {
     project,
     goalState: resolvedGoalState,
@@ -197,7 +198,7 @@ async function executeCreate(
     store?: StoreApi<SessionStoreState>;
     goalState?: SimplifiedGoalStateManagerMock;
   } = {},
-): Promise<{ result: ToolExecutionResult; goalState: SimplifiedGoalStateManagerMock }> {
+): Promise<{ result: RawToolResult; goalState: SimplifiedGoalStateManagerMock }> {
   const goalState = options.goalState ?? new SimplifiedGoalStateManagerMock();
   const parsed = goalCreateTool.inputSchema.safeParse(input);
   if (!parsed.success) {
@@ -216,7 +217,7 @@ async function executeCreate(
     parsed.data,
     makeCtx(parsed.data, options.store ?? engineerStore(), projectContext, projectContext.project.workspaceRoot, TOOL_GOAL_CREATE),
   );
-  return { goalState, result: typeof output === "string" ? { output, isError: false } : output };
+  return { goalState, result: output };
 }
 
 async function execute(
@@ -225,7 +226,7 @@ async function execute(
     store?: StoreApi<SessionStoreState>;
     goalState?: SimplifiedGoalStateManagerMock;
   } = {},
-): Promise<{ result: ToolExecutionResult; goalState: SimplifiedGoalStateManagerMock }> {
+): Promise<{ result: RawToolResult; goalState: SimplifiedGoalStateManagerMock }> {
   const goalState = options.goalState ?? new SimplifiedGoalStateManagerMock();
   const parsed = goalManageTool.inputSchema.safeParse(input);
   if (!parsed.success) {
@@ -241,11 +242,11 @@ async function execute(
 
   const projectContext = makeProjectContext(goalState);
   const output = await goalManageTool.execute(parsed.data, makeCtx(parsed.data, options.store ?? mainStore(), projectContext));
-  return { goalState, result: typeof output === "string" ? { output, isError: false } : output };
+  return { goalState, result: output };
 }
 
-function normalizeOutput(output: string | ToolExecutionResult): ToolExecutionResult {
-  return typeof output === "string" ? { output, isError: false } : output;
+function normalizeOutput(output: RawToolResult): RawToolResult {
+  return output;
 }
 
 function makeGoalState(overrides: Partial<GoalState> = {}): GoalState {
@@ -363,7 +364,7 @@ describe("goal_manage builtin tool", () => {
     const { result } = await execute({ action: "begin_review", goalId: DEFAULT_GOAL_ID }, { goalState, store });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain("GOAL_BUILD_ACTIVE");
+    expect(expectTextDraft(result)).toContain("GOAL_BUILD_ACTIVE");
     expect(goalState.calls).toEqual([]);
   });
 
@@ -411,7 +412,7 @@ describe("goal_manage builtin tool", () => {
     const { result } = await execute({ action: "begin_review", goalId: DEFAULT_GOAL_ID }, { goalState, store });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain("GOAL_BUILD_ACTIVE");
+    expect(expectTextDraft(result)).toContain("GOAL_BUILD_ACTIVE");
     expect(goalState.calls).toEqual([]);
   });
 
@@ -427,7 +428,7 @@ describe("goal_manage builtin tool", () => {
     );
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain("GOAL_CONTEXT_REQUIRED");
+    expect(expectTextDraft(result)).toContain("GOAL_CONTEXT_REQUIRED");
     expect(goalState.calls).toEqual([]);
   });
 
@@ -485,7 +486,7 @@ describe("goal_manage builtin tool", () => {
       acceptanceCriteria: "It works",
       useWorktree: true,
     } }]);
-    expect(JSON.parse(result.output)).toMatchObject({ projectSlug: "test-project", status: "running", createdFromSessionId: "engineer-session" });
+    expect(JSON.parse(expectTextDraft(result))).toMatchObject({ projectSlug: "test-project", status: "running", createdFromSessionId: "engineer-session" });
 
     const standalone = await executeCreate(input, { store: engineerStore({ sessionRole: "standalone" }) });
     expect(standalone.result.isError).toBe(false);
@@ -498,7 +499,7 @@ describe("goal_manage builtin tool", () => {
     ]) {
       const denied = await executeCreate(input, { goalState: new SimplifiedGoalStateManagerMock(), store });
       expect(denied.result.isError).toBe(true);
-      expect(denied.result.output).toContain("GOAL_CREATE_DENIED");
+      expect(expectTextDraft(denied.result)).toContain("GOAL_CREATE_DENIED");
     }
   });
 
@@ -512,7 +513,7 @@ describe("goal_manage builtin tool", () => {
 
     expect(result).toMatchObject({
       isError: false,
-      meta: {
+      sidecar: {
         executionControl: {
           action: "stop_session_family",
           reason: "goal_cancelled",
@@ -538,9 +539,9 @@ describe("goal_manage builtin tool", () => {
     const result = normalizeOutput(output);
 
     expect(result.isError).toBe(true);
-    expect(result.meta?.executionControl).toEqual({
+    expect(result.sidecar?.executionControl).toEqual({
       action: "stop_session_family",
-      reason: "goal_cancelled_cleanup_incomplete",
+      reason: "goal_cancelled",
     });
   });
 
@@ -562,9 +563,9 @@ describe("goal_manage builtin tool", () => {
       });
       expect(result.isError).toBe(true);
       expect(inferToolErrorKindFromResult(result)).toBe("permission-denied");
-      expect(result.output).toContain("GOAL_CONTEXT_REQUIRED");
-      expect(result.output).toContain(currentGoalId);
-      expect(result.output).toContain(targetGoalId);
+      expect(expectTextDraft(result)).toContain("GOAL_CONTEXT_REQUIRED");
+      expect(expectTextDraft(result)).toContain(currentGoalId);
+      expect(expectTextDraft(result)).toContain(targetGoalId);
     }
     expect(goalState.calls).toEqual([]);
   });
@@ -579,7 +580,7 @@ describe("goal_manage builtin tool", () => {
 
     expect(result.isError).toBe(true);
     expect(inferToolErrorKindFromResult(result)).toBe("permission-denied");
-    expect(result.output).toContain("GOAL_MANAGE_ACTION_DENIED");
+    expect(expectTextDraft(result)).toContain("GOAL_MANAGE_ACTION_DENIED");
     expect(goalState.calls).toEqual([]);
   });
 
@@ -597,7 +598,7 @@ describe("goal_manage builtin tool", () => {
 
     expect(result.isError).toBe(true);
     expect(inferToolErrorKindFromResult(result)).toBe("permission-denied");
-    expect(result.output).toContain("GOAL_REVIEWER_REQUIRED");
+    expect(expectTextDraft(result)).toContain("GOAL_REVIEWER_REQUIRED");
     expect(goalState.calls).toEqual([]);
   });
 
@@ -619,7 +620,7 @@ describe("goal_manage builtin tool", () => {
     );
 
     expect(result.isError).toBe(false);
-    const completed = JSON.parse(result.output) as GoalState;
+    const completed = JSON.parse(expectTextDraft(result)) as GoalState;
     expect(completed.status).toBe("done");
     expect(completed.review).toMatchObject({
       verdict: "DONE",
@@ -649,7 +650,7 @@ describe("goal_manage builtin tool", () => {
     ]) {
       const { result, goalState } = await execute(input, { store });
       expect(result.isError).toBe(true);
-      expect(result.output).toContain("GOAL_REVIEWER_REQUIRED");
+      expect(expectTextDraft(result)).toContain("GOAL_REVIEWER_REQUIRED");
       expect(goalState.calls).toEqual([]);
     }
   });

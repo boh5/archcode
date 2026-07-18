@@ -1,10 +1,15 @@
-import { describe, expect, test, mock, afterEach } from "bun:test";
+import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { gitDiffTool, buildArgs } from "./git-diff";
-import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../errors";
-import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import { expectSettledResult } from "../test-results";
+import type { ToolExecutionContext } from "../types";
 import { createTestProjectContext } from "../test-project-context";
+import { createTestToolRegistryFixture } from "../test-registry";
 import { setProcessRunnerForTest } from "../../process/runner";
 import { storeManager } from "../../store/store";
+import { createMockStore } from "../../store/test-helpers";
 
 // ─── Helpers ───
 
@@ -28,9 +33,12 @@ function mockSpawnResult(stdout: string, stderr = "", exitCode = 0) {
   };
 }
 
+const workspaceRoot = realpathSync.native(mkdtempSync(join(tmpdir(), "archcode-git-diff-")));
+const registryFixture = createTestToolRegistryFixture({ descriptors: [gitDiffTool] });
+
 function mockCtx(): ToolExecutionContext {
   return {
-    store: {} as any,
+    store: createMockStore(),
     storeManager,
     toolName: "git_diff",
     toolCallId: "call_1",
@@ -39,10 +47,22 @@ function mockCtx(): ToolExecutionContext {
     abort: new AbortController().signal,
     startedAt: Date.now(),
     allowedTools: new Set(["git_diff"]),
-    cwd: "/tmp/workspace",
-    projectContext: createTestProjectContext("/canonical/project"),
+    cwd: workspaceRoot,
+    projectContext: createTestProjectContext(workspaceRoot),
   };
 }
+
+async function execute(input: { staged?: boolean }, ctx = mockCtx()) {
+  return expectSettledResult(await registryFixture.registry.execute(
+    { toolName: "git_diff", toolCallId: ctx.toolCallId, input },
+    ctx,
+  ));
+}
+
+afterAll(async () => {
+  await registryFixture.dispose();
+  rmSync(workspaceRoot, { recursive: true, force: true });
+});
 
 // ─── buildArgs ───
 
@@ -93,8 +113,8 @@ describe("gitDiffTool", () => {
       mockSpawnResult(diffOutput),
     ));
 
-    const result = await gitDiffTool.execute({ staged: false }, mockCtx());
-    expect(result).toBe(diffOutput);
+    const result = await execute({ staged: false });
+    expect(result.output.preview).toBe(diffOutput);
   });
 
   test("returns diff output for staged changes (staged=true)", async () => {
@@ -112,8 +132,8 @@ describe("gitDiffTool", () => {
       mockSpawnResult(diffOutput),
     ));
 
-    const result = await gitDiffTool.execute({ staged: true }, mockCtx());
-    expect(result).toBe(diffOutput);
+    const result = await execute({ staged: true });
+    expect(result.output.preview).toBe(diffOutput);
   });
 
   test("returns structured error on git command failure", async () => {
@@ -121,23 +141,20 @@ describe("gitDiffTool", () => {
       mockSpawnResult("", "fatal: not a git repository", 128),
     ));
 
-    const result = (await gitDiffTool.execute(
-      { staged: false },
-      mockCtx(),
-    )) as ToolExecutionResult;
+    const result = await execute({ staged: false });
     expect(result.isError).toBe(true);
-    expect(inferToolErrorKindFromResult(result)).toBe("execution");
-    expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
-    expect(result.output).toContain("Git diff failed");
+    expect(result.details?.error).toMatchObject({ kind: "execution" });
+    expect(result.output.preview).toContain("Git diff failed");
   });
 
-  test("returns helpful message for empty diff (no changes)", async () => {
+  test("returns an empty complete preview for an empty diff", async () => {
     setProcessRunnerForTest(mock((_cmd, _opts) =>
       mockSpawnResult(""),
     ));
 
-    const result = await gitDiffTool.execute({ staged: false }, mockCtx());
-    expect(result).toBe("No changes detected");
+    const result = await execute({ staged: false });
+    expect(result.output.preview).toBe("");
+    expect(result.output.completeness).toBe("complete");
   });
 
   test("uses ProcessRunner abort behavior", async () => {
@@ -147,14 +164,14 @@ describe("gitDiffTool", () => {
     ctx.abort = abortController.signal;
 
     setProcessRunnerForTest(mock((_cmd, opts) => {
-      expect(opts.cwd).toBe("/tmp/workspace");
+      expect(opts.cwd).toBe(workspaceRoot);
       return mockSpawnResult("");
     }));
 
-    const result = (await gitDiffTool.execute({ staged: false }, ctx)) as ToolExecutionResult;
+    const result = await execute({ staged: false }, ctx);
     expect(result.isError).toBe(true);
-    expect(inferToolErrorKindFromResult(result)).toBe("execution");
-    expect(result.output).toContain("Git diff was aborted");
+    expect(result.details?.error).toMatchObject({ kind: "execution", code: "TOOL_PROCESS_ABORTED" });
+    expect(result.output.preview).toContain("Git diff was aborted");
   });
 
   test("uses execution cwd instead of the canonical project root", async () => {
@@ -165,9 +182,9 @@ describe("gitDiffTool", () => {
       return mockSpawnResult("");
     }));
 
-    await gitDiffTool.execute({ staged: false }, mockCtx());
+    await execute({ staged: false });
     expect(capturedOpts).not.toBeNull();
-    expect(capturedOpts!.cwd).toBe("/tmp/workspace");
+    expect(capturedOpts!.cwd).toBe(workspaceRoot);
   });
 
   test("sets GIT_OPTIONAL_LOCKS=0 in environment", async () => {
@@ -178,7 +195,7 @@ describe("gitDiffTool", () => {
       return mockSpawnResult("");
     }));
 
-    await gitDiffTool.execute({ staged: false }, mockCtx());
+    await execute({ staged: false });
     expect(capturedOpts).not.toBeNull();
     expect(capturedOpts!.env?.GIT_OPTIONAL_LOCKS).toBe("0");
   });

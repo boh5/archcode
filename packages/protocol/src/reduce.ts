@@ -21,6 +21,7 @@ import type {
   TextPart,
   ToolPart,
   ExecutionEndEvent,
+  FinalizedToolResult,
 } from "./types";
 import { addUsage, createEmptySessionStats, normalizeUsage } from "./usage";
 
@@ -73,13 +74,10 @@ export function reduceStreamEvent(
     }
 
     case "execution-end": {
-      const settledToolFailures = event.status === "waiting_for_human" ? 0 : countRunningTools(state.messages, state.currentAssistantMessageId);
-      const stats = incrementToolFailures(state.stats, settledToolFailures);
       const executions = settleCurrentExecution(state.executions ?? [], state.currentExecutionId, event, timestamp);
 
       return {
         messages: settleIncompleteState(state.messages, state.currentAssistantMessageId, timestamp, event.status),
-        stats,
         executions,
         executionCount: executions.length,
         isRunning: false,
@@ -436,10 +434,10 @@ export function reduceStreamEvent(
           location.partId,
           (part) =>
             part.type === "tool"
-              ? toSettledToolPart(part, event.output, event.isError, timestamp, event.meta)
+              ? toSettledToolPart(part, event.result, timestamp)
               : part,
         ),
-        stats: event.isError ? incrementToolFailures(state.stats, 1) : incrementToolCompleted(state.stats),
+        stats: event.result.isError ? incrementToolFailures(state.stats, 1) : incrementToolCompleted(state.stats),
       };
     }
 
@@ -934,18 +932,6 @@ function settleCurrentExecution(
   return changed ? updated : executions;
 }
 
-function countRunningTools(
-  messages: SessionMessage[],
-  currentAssistantMessageId: string | undefined,
-): number {
-  if (!currentAssistantMessageId) return 0;
-
-  const message = messages.find((item) => item.id === currentAssistantMessageId);
-  if (!message) return 0;
-
-  return message.parts.filter((part) => part.type === "tool" && part.state === "running").length;
-}
-
 function settleIncompleteState(
   messages: SessionMessage[],
   currentAssistantMessageId: string | undefined,
@@ -953,8 +939,6 @@ function settleIncompleteState(
   executionStatus: ExecutionEndEvent["status"],
 ): SessionMessage[] {
   const shouldDiscardPartialModelOutput = executionStatus === "interrupted" || executionStatus === "failed";
-  const waitingForHuman = executionStatus === "waiting_for_human";
-
   return messages.map((message) => {
     const parts: SessionPart[] = message.parts.map((part): SessionPart => {
       if (part.type === "text" && part.completedAt === undefined) {
@@ -983,28 +967,6 @@ function settleIncompleteState(
 
       if (part.type === "recovery-notice" && part.completedAt === undefined) {
         return { ...part, completedAt: timestamp };
-      }
-
-      if (part.type === "tool" && (part.state === "pending" || part.state === "running")) {
-        if (waitingForHuman) {
-          return {
-            ...part,
-            meta: { ...(part.meta ?? {}), waitingForHuman: true },
-          };
-        }
-
-        const hasAttempt = part.attemptId !== undefined;
-        const errorPart: ErrorToolPart = {
-          ...toRunningToolPart(part, "input" in part ? part.input : undefined, timestamp),
-          state: "error",
-          errorMessage: hasAttempt
-            ? "Tool execution result unknown: execution was interrupted"
-            : "Execution ended before tool result",
-          endedAt: timestamp,
-          ...(hasAttempt ? { meta: { unknownResult: true } } : {}),
-        };
-
-        return errorPart;
       }
 
       return part;
@@ -1319,28 +1281,24 @@ function withToolAttempt(
 
 function toSettledToolPart(
   part: ToolPart,
-  output: string,
-  isError: boolean,
+  result: FinalizedToolResult,
   timestamp: number,
-  meta?: Record<string, unknown>,
 ): CompletedToolPart | ErrorToolPart {
   const runningPart = toRunningToolPart(part, "input" in part ? part.input : undefined, timestamp);
 
-  if (isError) {
+  if (result.isError) {
     return {
       ...runningPart,
       state: "error",
-      errorMessage: output,
+      result,
       endedAt: timestamp,
-      ...(meta ? { meta } : {}),
     };
   }
 
   return {
     ...runningPart,
     state: "completed",
-    output,
+    result,
     endedAt: timestamp,
-    ...(meta ? { meta } : {}),
   };
 }

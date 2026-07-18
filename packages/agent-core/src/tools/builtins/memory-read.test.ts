@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMemoryReadTool } from "./memory-read";
 import { MemoryFileManager } from "../../memory";
@@ -17,17 +18,19 @@ import {
   PREFERENCES_MARKER_END,
   PREFERENCES_MARKER_START,
 } from "../../memory/constants";
-import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../errors";
+import { inferToolErrorKindFromResult } from "../errors";
 import { SkillService } from "../../skills";
 import { createMockStore } from "../../store/test-helpers";
-import { createToolExecutionContext, type ToolExecutionContext, type ToolExecutionResult } from "../types";
+import { expectTextDraft } from "../test-results";
+import { createToolExecutionContext, type ToolExecutionContext } from "../types";
 import { createTestProjectContext } from "../test-project-context";
+import { ONE_SHOT_FILE_READ_MAX_BYTES } from "../../utils/safe-file";
 
 // ---------------------------------------------------------------------------
 // Test setup
 // ---------------------------------------------------------------------------
 
-const testDir = join(import.meta.dir, "__test_tmp__", "memory-read", crypto.randomUUID());
+const testDir = join(tmpdir(), "archcode-memory-read", crypto.randomUUID());
 const projectDir = join(testDir, "project");
 const userDir = join(testDir, "user");
 const knowledgeDir = join(projectDir, KNOWLEDGE_DIR_NAME);
@@ -103,10 +106,10 @@ describe("createMemoryReadTool", () => {
       await Bun.write(join(projectDir, INDEX_FILE), "- [Alpha](alpha) — First topic\n");
       await Bun.write(join(userDir, PREFERENCES_FILE), "User likes simplicity.");
 
-      const result = (await memoryReadTool.execute(
+      const result = expectTextDraft(await memoryReadTool.execute(
         {},
         makeCtx(),
-      )) as string;
+      ));
 
       expect(result).toContain(MEMORY_CONTEXT_START);
       expect(result).toContain(MEMORY_CONTEXT_END);
@@ -123,10 +126,10 @@ describe("createMemoryReadTool", () => {
     });
 
     test("returns context with no content when no files exist", async () => {
-      const result = (await memoryReadTool.execute(
+      const result = expectTextDraft(await memoryReadTool.execute(
         {},
         makeCtx(),
-      )) as string;
+      ));
 
       expect(result).toBe(`${MEMORY_CONTEXT_START}\n\n${MEMORY_CONTEXT_END}`);
     });
@@ -135,10 +138,10 @@ describe("createMemoryReadTool", () => {
       const manyLines = createIndexEntries(DEFAULT_MAX_INDEX_LINES + 10);
       await Bun.write(join(projectDir, INDEX_FILE), manyLines);
 
-      const result = (await memoryReadTool.execute(
+      const result = expectTextDraft(await memoryReadTool.execute(
         {},
         makeCtx(),
-      )) as string;
+      ));
 
       const indexSection = result.slice(
         result.indexOf("## Memory Index"),
@@ -153,10 +156,10 @@ describe("createMemoryReadTool", () => {
       const largePref = "x".repeat(DEFAULT_MAX_PREFERENCES_BYTES + 1000);
       await Bun.write(join(userDir, PREFERENCES_FILE), largePref);
 
-      const result = (await memoryReadTool.execute(
+      const result = expectTextDraft(await memoryReadTool.execute(
         {},
         makeCtx(),
-      )) as string;
+      ));
 
       const prefsIndex = result.indexOf(PREFERENCES_MARKER_START);
       const prefsEnd = result.indexOf(PREFERENCES_MARKER_END);
@@ -175,10 +178,10 @@ describe("createMemoryReadTool", () => {
     test("returns user preferences content", async () => {
       await Bun.write(join(userDir, PREFERENCES_FILE), "I prefer dark mode.");
 
-      const result = (await memoryReadTool.execute(
+      const result = expectTextDraft(await memoryReadTool.execute(
         { name: "preferences" },
         makeCtx(),
-      )) as string;
+      ));
 
       expect(result).toBe("I prefer dark mode.");
     });
@@ -187,11 +190,20 @@ describe("createMemoryReadTool", () => {
       const result = (await memoryReadTool.execute(
         { name: "preferences" },
         makeCtx(),
-      )) as ToolExecutionResult;
+      ));
 
       expect(result.isError).toBe(true);
       expect(inferToolErrorKindFromResult(result)).toBe("file-not-found");
-      expect(result.output).toContain("Memory preferences not found");
+      expect(expectTextDraft(result)).toContain("Memory preferences not found");
+    });
+
+    test("rejects one byte over the one-shot file cap without partial fallback", async () => {
+      await Bun.write(join(userDir, PREFERENCES_FILE), "x".repeat(ONE_SHOT_FILE_READ_MAX_BYTES + 1));
+
+      const result = await memoryReadTool.execute({ name: "preferences" }, makeCtx());
+      expect(result.isError).toBe(true);
+      expect(result.details?.error?.code).toBe("TOOL_OUTPUT_POLICY_VIOLATION");
+      expect(expectTextDraft(result)).not.toContain("x".repeat(1_024));
     });
   });
 
@@ -199,10 +211,10 @@ describe("createMemoryReadTool", () => {
     test("returns index content", async () => {
       await Bun.write(join(projectDir, INDEX_FILE), "- [Test](test_memory) — Test summary\n");
 
-      const result = (await memoryReadTool.execute(
+      const result = expectTextDraft(await memoryReadTool.execute(
         { name: "index" },
         makeCtx(),
-      )) as string;
+      ));
 
       expect(result).toContain("- [Test](test_memory) — Test summary");
     });
@@ -211,11 +223,11 @@ describe("createMemoryReadTool", () => {
       const result = (await memoryReadTool.execute(
         { name: "index" },
         makeCtx(),
-      )) as ToolExecutionResult;
+      ));
 
       expect(result.isError).toBe(true);
       expect(inferToolErrorKindFromResult(result)).toBe("file-not-found");
-      expect(result.output).toContain("Memory index not found");
+      expect(expectTextDraft(result)).toContain("Memory index not found");
     });
   });
 
@@ -229,10 +241,10 @@ type: reference
 React hooks are powerful.`;
       await Bun.write(join(knowledgeDir, "react_patterns.md"), topicContent);
 
-      const result = (await memoryReadTool.execute(
+      const result = expectTextDraft(await memoryReadTool.execute(
         { name: "react_patterns" },
         makeCtx(),
-      )) as string;
+      ));
 
       expect(result).toContain(MEMORY_CONTEXT_START);
       expect(result).toContain(MEMORY_CONTEXT_END);
@@ -246,12 +258,12 @@ React hooks are powerful.`;
       const result = (await memoryReadTool.execute(
         { name: "nonexistent" },
         makeCtx(),
-      )) as ToolExecutionResult;
+      ));
 
       expect(result.isError).toBe(true);
       expect(inferToolErrorKindFromResult(result)).toBe("file-not-found");
-      expect(result.output).toContain("Memory file not found");
-      expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
+      expect(expectTextDraft(result)).toContain("Memory file not found");
+      expect(result.details?.error).toBeDefined();
     });
 
     test("returns error for topic file without frontmatter", async () => {
@@ -260,7 +272,7 @@ React hooks are powerful.`;
       const result = (await memoryReadTool.execute(
         { name: "raw" },
         makeCtx(),
-      )) as ToolExecutionResult;
+      ));
 
       expect(result.isError).toBe(true);
       expect(inferToolErrorKindFromResult(result)).toBe("execution");
@@ -270,10 +282,10 @@ React hooks are powerful.`;
       const result = (await memoryReadTool.execute(
         { name: "path/traversal" },
         makeCtx(),
-      )) as ToolExecutionResult;
+      ));
 
       expect(result.isError).toBe(true);
-      expect(result.output).toContain("Invalid memory name");
+      expect(expectTextDraft(result)).toContain("Invalid memory name");
     });
   });
 

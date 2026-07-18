@@ -101,6 +101,10 @@ function makeAssistantMessage(text: string, now: number): StoredMessage {
 }
 
 function makeToolMessage(toolName: string, output: string, now: number): StoredMessage {
+  const counts = {
+    bytes: new TextEncoder().encode(output).byteLength,
+    lines: output.length === 0 ? 0 : output.split("\n").length,
+  };
   return {
     id: crypto.randomUUID(),
     role: "assistant",
@@ -112,7 +116,18 @@ function makeToolMessage(toolName: string, output: string, now: number): StoredM
         toolCallId: crypto.randomUUID(),
         toolName,
         input: { path: "/tmp/test.ts" },
-        output,
+        result: {
+          isError: false,
+          output: {
+            preview: output,
+            completeness: "complete",
+            observed: counts,
+            canonical: counts,
+            stored: counts,
+            omitted: { bytes: 0, lines: 0 },
+            recovery: { kind: "none" },
+          },
+        },
         createdAt: now,
         startedAt: now,
         endedAt: now,
@@ -828,7 +843,10 @@ describe("createMemoryExtractionTask", () => {
     expect(filtered[0].parts[0].type).toBe("text");
     expect((filtered[0].parts[0] as { text: string }).text).toHaveLength(4000);
     expect(filtered[1].parts[0].type).toBe("tool");
-    expect((filtered[1].parts[0] as { output: string }).output).toHaveLength(1000);
+    const toolPart = filtered[1].parts[0];
+    if (toolPart.type !== "tool" || toolPart.state !== "completed") throw new Error("Expected completed tool part");
+    expect(toolPart.result.output.preview).toHaveLength(1000);
+    expect(toolPart.result.output.completeness).toBe("partial");
     expect(JSON.stringify(filtered)).not.toContain("assistant text");
     expect(JSON.stringify(filtered)).not.toContain("write output");
     expect(JSON.stringify(filtered)).not.toContain("unknown output");
@@ -844,6 +862,24 @@ describe("createMemoryExtractionTask", () => {
     expect(filtered).toHaveLength(1);
     expect(filtered[0].role).toBe("user");
     expect((filtered[0].parts[0] as { text: string }).text).toBe("user text");
+  });
+
+  test("filterMessagesForExtraction applies UTF-8 byte caps without splitting multibyte text", () => {
+    const now = Date.now();
+    const multibyte = "界".repeat(2_000);
+    const filtered = filterMessagesForExtraction([
+      makeUserMessage(multibyte, now),
+      makeToolMessage("file_read", multibyte, now),
+    ]);
+    const userPart = filtered[0]?.parts[0];
+    const toolPart = filtered[1]?.parts[0];
+    if (userPart?.type !== "text") throw new Error("Expected user text");
+    if (toolPart?.type !== "tool" || toolPart.state !== "completed") throw new Error("Expected tool result");
+
+    expect(new TextEncoder().encode(userPart.text).byteLength).toBeLessThanOrEqual(4_000);
+    expect(new TextEncoder().encode(toolPart.result.output.preview).byteLength).toBeLessThanOrEqual(1_000);
+    expect(userPart.text).not.toContain("�");
+    expect(toolPart.result.output.preview).not.toContain("�");
   });
 
   test("filterMessagesForExtraction skips interrupted user text so memory cannot learn discarded partial context", () => {

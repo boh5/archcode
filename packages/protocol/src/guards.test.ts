@@ -85,6 +85,18 @@ const canonicalMessage = {
   clientRequestId: pendingMessage.clientRequestId,
   modelAudit: { requested: requestedModelSelection, actual: binding.selection },
 };
+const finalizedResult = {
+  isError: false,
+  output: {
+    preview: "ok",
+    completeness: "complete" as const,
+    observed: { bytes: 2, lines: 1 },
+    canonical: { bytes: 2, lines: 1 },
+    stored: { bytes: 2, lines: 1 },
+    omitted: { bytes: 0, lines: 0 },
+    recovery: { kind: "none" as const },
+  },
+};
 
 const validPayloads = [
   { type: "shutdown", reason: "restart" },
@@ -110,7 +122,7 @@ const validPayloads = [
   { type: "tool-call", toolCallId: "call-1", toolName: "file_read", input: { path: "README.md" } },
   { type: "tool-input-resolved", toolCallId: "call-1", toolName: "file_read", input: { path: "README.md" } },
   { type: "tool-attempt", toolCallId: "call-1", toolName: "file_write", attemptId: "attempt-1", timestamp: 1, destructive: false },
-  { type: "tool-result", toolCallId: "call-1", toolName: "file_read", output: "ok", isError: false, meta: {} },
+  { type: "tool-result", toolCallId: "call-1", toolName: "file_read", result: finalizedResult },
   { type: "tool-child-session-link", link: { parentSessionId: "parent", parentToolCallId: "call", toolName: "delegate", childSessionId: "child", childAgentName: "explore", title: "Explore child", depth: 1, background: false, status: "completed", createdAt: 1 } },
   { type: "todo-write", todos: [{ id: "todo-1", content: "work", status: "in_progress" }] },
   { type: "reminder", reminder: { id: "reminder-1", source: { type: "subagent_completed", sessionId: "child" }, delivery: "auto_inject", content: "done", createdAt: 1, consumedAt: null } },
@@ -184,6 +196,101 @@ describe("protocol event guards", () => {
     }
     expect(isSessionEventPayload({ type: "text-delta" })).toBe(false);
     expect(isSessionEventPayload({ type: "text-delta", text: 1 })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "tool-result",
+      toolCallId: "call-1",
+      toolName: "file_read",
+      output: "legacy",
+      isError: false,
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "tool-result",
+      toolCallId: "call-1",
+      toolName: "file_read",
+      result: {
+        ...finalizedResult,
+        output: {
+          ...finalizedResult.output,
+          recovery: {
+            kind: "source",
+            toolName: "file_read",
+            nextInput: { first: "a".repeat(8 * 1024), second: "b".repeat(8 * 1024) },
+          },
+        },
+      },
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "tool-result",
+      toolCallId: "call-1",
+      toolName: "git_diff",
+      result: {
+        ...finalizedResult,
+        details: {
+          presentations: [{
+            kind: "diff",
+            files: [{
+              path: "large.ts",
+              additions: 1.5,
+              hunks: [{
+                header: "@@",
+                oldStart: 1,
+                oldLines: 0,
+                newStart: 1,
+                newLines: 65,
+                lines: Array.from({ length: 65 }, () => ({ type: "add", content: "x".repeat(4 * 1024) })),
+              }],
+            }],
+          }],
+        },
+      },
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "tool-result",
+      toolCallId: "call-1",
+      toolName: "git_diff",
+      result: {
+        ...finalizedResult,
+        details: {
+          presentations: [{
+            kind: "diff",
+            files: [{ path: "small.ts", additions: 1.5, hunks: [] }],
+          }],
+        },
+      },
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "tool-result",
+      toolCallId: "call-1",
+      toolName: "file_read",
+      result: { ...finalizedResult, meta: {} },
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "tool-result",
+      toolCallId: "call-1",
+      toolName: "file_read",
+      result: {
+        ...finalizedResult,
+        output: { ...finalizedResult.output, recovery: { kind: "source", toolName: "file_read", nextInput: { bad: undefined } } },
+      },
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "tool-result",
+      toolCallId: "call-1",
+      toolName: "file_read",
+      result: {
+        ...finalizedResult,
+        output: {
+          ...finalizedResult.output,
+          recovery: { kind: "artifact", outputRef: "local/path", expiresAt: 1, canRead: true, canSearch: true },
+        },
+      },
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "tool-result",
+      toolCallId: "call-1",
+      toolName: "file_read",
+      result: { ...finalizedResult, details: { arbitrary: "metadata escape" } },
+    })).toBe(false);
     expect(isSessionEventPayload({ type: "tool-child-session-link", link: { ...validPayloads[23]!.link, legacy: true } })).toBe(false);
     expect(isSessionEventPayload({ type: "compression.block_committed", block: { ...compressionBlock, range: { ...compressionBlock.range, endIndex: "0" } } })).toBe(false);
     expect(isSessionEventPayload({ type: "hitl.request" })).toBe(false);

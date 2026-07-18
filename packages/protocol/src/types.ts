@@ -7,6 +7,12 @@ import type {
   SessionModelSelection,
 } from "./model-runtime";
 
+export type JsonPrimitive = string | number | boolean | null;
+export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
+export interface JsonObject {
+  readonly [key: string]: JsonValue;
+}
+
 export interface ExecutionStartEvent {
   type: "execution-start";
   executionId: string;
@@ -250,13 +256,84 @@ export interface ToolAttemptEvent {
   destructive: boolean;
 }
 
+export interface ToolOutputCount {
+  bytes: number;
+  lines: number;
+}
+
+export type ToolOutputRecovery =
+  | { kind: "none" }
+  | { kind: "source"; toolName: string; nextInput: JsonObject }
+  | {
+      kind: "artifact";
+      outputRef: string;
+      expiresAt: number;
+      canRead: true;
+      canSearch: true;
+    };
+
+export interface ToolOutput {
+  preview: string;
+  completeness: "complete" | "partial";
+  observed: ToolOutputCount;
+  canonical: ToolOutputCount;
+  stored: ToolOutputCount;
+  omitted: ToolOutputCount;
+  recovery: ToolOutputRecovery;
+}
+
+export interface ToolResultErrorDetails {
+  kind: string;
+  code: string;
+  name: string;
+  hint?: string;
+}
+
+export interface ToolProcessDetails {
+  exitCode: number | null;
+  signal: string | null;
+  timedOut: boolean;
+  aborted: boolean;
+  durationMs: number;
+}
+
+export interface ToolDiffPresentation {
+  kind: "diff";
+  files: DiffFile[];
+  truncated?: true;
+}
+
+export interface ToolAskUserAnswerPresentation {
+  question: string;
+  answers: string[];
+}
+
+export interface ToolAskUserPresentation {
+  kind: "ask_user";
+  answers: ToolAskUserAnswerPresentation[];
+  truncated?: true;
+}
+
+export type ToolResultPresentation = ToolDiffPresentation | ToolAskUserPresentation;
+
+export interface ToolResultDetails {
+  error?: ToolResultErrorDetails;
+  process?: ToolProcessDetails;
+  unknownResult?: true;
+  presentations?: ToolResultPresentation[];
+}
+
+export interface FinalizedToolResult {
+  isError: boolean;
+  output: ToolOutput;
+  details?: ToolResultDetails;
+}
+
 export interface ToolResultEvent {
   type: "tool-result";
   toolCallId: string;
   toolName: string;
-  output: string;
-  isError: boolean;
-  meta?: Record<string, unknown>;
+  result: FinalizedToolResult;
 }
 
 export type ToolChildSessionLinkStatus =
@@ -798,7 +875,6 @@ export interface PendingToolPart {
   attemptId?: string;
   attemptTimestamp?: number;
   attemptDestructive?: boolean;
-  meta?: Record<string, unknown>;
 }
 
 export interface RunningToolPart {
@@ -813,7 +889,6 @@ export interface RunningToolPart {
   attemptId?: string;
   attemptTimestamp?: number;
   attemptDestructive?: boolean;
-  meta?: Record<string, unknown>;
 }
 
 export interface CompletedToolPart {
@@ -823,11 +898,10 @@ export interface CompletedToolPart {
   toolCallId: string;
   toolName: string;
   input: unknown;
-  output: string;
+  result: FinalizedToolResult;
   createdAt: number;
   startedAt: number;
   endedAt: number;
-  meta?: Record<string, unknown>;
   attemptId?: string;
   attemptTimestamp?: number;
   attemptDestructive?: boolean;
@@ -840,12 +914,10 @@ export interface ErrorToolPart {
   toolCallId: string;
   toolName: string;
   input: unknown;
-  errorMessage: string;
+  result: FinalizedToolResult;
   createdAt: number;
   startedAt: number;
   endedAt: number;
-  /** Set meta.unknownResult=true when an attempted effectful tool was interrupted before a durable result. */
-  meta?: Record<string, unknown>;
   attemptId?: string;
   attemptTimestamp?: number;
   attemptDestructive?: boolean;
@@ -1081,13 +1153,6 @@ export interface ToolDiffMetadata {
   truncated?: boolean;
   unsupportedReason?: ToolDiffUnsupportedReason;
   warning?: string;
-}
-
-export interface ToolResultMeta {
-  /** True when an effectful tool attempt was durably recorded but execution stopped before a result was known. */
-  unknownResult?: boolean;
-  diffs?: ToolDiffMetadata;
-  [key: string]: unknown;
 }
 
 // ─── Goal Types ───

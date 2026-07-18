@@ -1,6 +1,7 @@
 import type {
   GlobalSSEHitlRealtimeEvent,
   GlobalSSEResourceChangedEvent,
+  FinalizedToolResult,
   SessionEventPayload,
   StreamEvent,
   ToolChildSessionLinkStatus,
@@ -84,10 +85,9 @@ export function isSessionEventPayload(value: unknown): value is SessionEventPayl
         && isString(event.toolCallId) && isString(event.toolName) && isString(event.attemptId)
         && isFiniteNumber(event.timestamp) && typeof event.destructive === "boolean";
     case "tool-result":
-      return exact(event, ["type", "toolCallId", "toolName", "output", "isError"], ["meta"])
-        && isString(event.toolCallId) && isString(event.toolName) && isString(event.output)
-        && typeof event.isError === "boolean"
-        && (event.meta === undefined || record(event.meta) !== undefined);
+      return exact(event, ["type", "toolCallId", "toolName", "result"])
+        && isString(event.toolCallId) && isString(event.toolName)
+        && isFinalizedToolResult(event.result);
     case "tool-child-session-link":
       return exact(event, ["type", "link"]) && isToolChildSessionLink(event.link);
     case "todo-write":
@@ -293,6 +293,210 @@ function isToolChildSessionLink(value: unknown): boolean {
     && isFiniteNumber(link.createdAt) && isString(link.title) && optionalString(link.description)
     && optionalFiniteNumber(link.startedAt) && optionalFiniteNumber(link.endedAt)
     && optionalFiniteNumber(link.durationMs) && optionalString(link.summary) && optionalString(link.error);
+}
+
+export function isFinalizedToolResult(value: unknown): value is FinalizedToolResult {
+  const result = record(value);
+  return result !== undefined
+    && exact(result, ["isError", "output"], ["details"])
+    && typeof result.isError === "boolean"
+    && isToolOutput(result.output)
+    && (result.details === undefined || isToolResultDetails(result.details));
+}
+
+function isToolOutput(value: unknown): boolean {
+  const output = record(value);
+  return output !== undefined
+    && exact(output, ["preview", "completeness", "observed", "canonical", "stored", "omitted", "recovery"])
+    && isString(output.preview)
+    && utf8ByteLength(output.preview) <= 50 * 1024
+    && lineCount(output.preview) <= 2_000
+    && oneOf(output.completeness, ["complete", "partial"])
+    && isToolOutputCount(output.observed)
+    && isToolOutputCount(output.canonical)
+    && isToolOutputCount(output.stored)
+    && isToolOutputCount(output.omitted)
+    && isToolOutputRecovery(output.recovery);
+}
+
+function isToolOutputCount(value: unknown): boolean {
+  const count = record(value);
+  return count !== undefined
+    && exact(count, ["bytes", "lines"])
+    && isNonNegativeSafeInteger(count.bytes)
+    && isNonNegativeSafeInteger(count.lines);
+}
+
+function isToolOutputRecovery(value: unknown): boolean {
+  const recovery = record(value);
+  if (recovery === undefined || typeof recovery.kind !== "string") return false;
+  if (!hasSerializedUtf8Limit(recovery, 16 * 1024)) return false;
+  switch (recovery.kind) {
+    case "none":
+      return exact(recovery, ["kind"]);
+    case "source":
+      return exact(recovery, ["kind", "toolName", "nextInput"])
+        && isString(recovery.toolName)
+        && utf8ByteLength(recovery.toolName) <= 128
+        && isBoundedJsonObject(recovery.nextInput);
+    case "artifact":
+      return exact(recovery, ["kind", "outputRef", "expiresAt", "canRead", "canSearch"])
+        && isString(recovery.outputRef)
+        && /^[A-Za-z0-9_-]{22}$/.test(recovery.outputRef)
+        && isFiniteNumber(recovery.expiresAt)
+        && recovery.expiresAt >= 0
+        && recovery.canRead === true
+        && recovery.canSearch === true;
+    default:
+      return false;
+  }
+}
+
+function isToolResultDetails(value: unknown): boolean {
+  const details = record(value);
+  return details !== undefined
+    && exact(details, [], ["error", "process", "unknownResult", "presentations"])
+    && (details.error === undefined || isToolResultErrorDetails(details.error))
+    && (details.process === undefined || isToolResultProcessDetails(details.process))
+    && (details.unknownResult === undefined || details.unknownResult === true)
+    && optionalArray(details.presentations, isToolResultPresentation)
+    && (!Array.isArray(details.presentations) || details.presentations.length <= 2)
+    && hasSerializedUtf8Limit(details, 256 * 1024);
+}
+
+function isToolResultErrorDetails(value: unknown): boolean {
+  const error = record(value);
+  return error !== undefined
+    && exact(error, ["kind", "code", "name"], ["hint"])
+    && isString(error.kind)
+    && utf8ByteLength(error.kind) <= 128
+    && isString(error.code)
+    && utf8ByteLength(error.code) <= 128
+    && isString(error.name)
+    && utf8ByteLength(error.name) <= 128
+    && optionalString(error.hint)
+    && (error.hint === undefined || utf8ByteLength(error.hint as string) <= 2 * 1024);
+}
+
+function isToolResultProcessDetails(value: unknown): boolean {
+  const process = record(value);
+  return process !== undefined
+    && exact(process, ["exitCode", "signal", "timedOut", "aborted", "durationMs"])
+    && (process.exitCode === null || (isFiniteNumber(process.exitCode) && Number.isInteger(process.exitCode)))
+    && (process.signal === null || (isString(process.signal) && utf8ByteLength(process.signal) <= 32))
+    && typeof process.timedOut === "boolean"
+    && typeof process.aborted === "boolean"
+    && isFiniteNumber(process.durationMs)
+    && process.durationMs >= 0;
+}
+
+function isToolResultPresentation(value: unknown): boolean {
+  const presentation = record(value);
+  if (presentation === undefined || typeof presentation.kind !== "string") return false;
+  switch (presentation.kind) {
+    case "diff":
+      return exact(presentation, ["kind", "files"], ["truncated"])
+        && isBoundedDiffPresentationFiles(presentation.files)
+        && (presentation.truncated === undefined || presentation.truncated === true);
+    case "ask_user":
+      return exact(presentation, ["kind", "answers"], ["truncated"])
+        && isBoundedAskUserPresentations(presentation.answers)
+        && (presentation.truncated === undefined || presentation.truncated === true);
+    default:
+      return false;
+  }
+}
+
+function isBoundedDiffPresentationFiles(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length > 20 || !value.every(isDiffFile)) return false;
+  let lines = 0;
+  for (const file of value) {
+    const hunks = record(file)?.hunks;
+    if (!Array.isArray(hunks)) return false;
+    for (const hunk of hunks) {
+      const hunkLines = record(hunk)?.lines;
+      if (!Array.isArray(hunkLines)) return false;
+      lines += hunkLines.length;
+      if (lines > 2_000) return false;
+    }
+  }
+  return true;
+}
+
+function isBoundedAskUserPresentations(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length > 3 || !value.every(isAskUserAnswerPresentation)) return false;
+  return hasSerializedUtf8Limit(value, 64 * 1024);
+}
+
+function isDiffFile(value: unknown): boolean {
+  const file = record(value);
+  return file !== undefined
+    && exact(file, ["path", "hunks"], ["status", "additions", "deletions"])
+    && isString(file.path)
+    && utf8ByteLength(file.path) <= 4 * 1024
+    && (file.status === undefined || oneOf(file.status, ["modified", "created", "deleted"]))
+    && (file.additions === undefined || isNonNegativeSafeInteger(file.additions))
+    && (file.deletions === undefined || isNonNegativeSafeInteger(file.deletions))
+    && arrayOf(file.hunks, isDiffHunk);
+}
+
+function isDiffHunk(value: unknown): boolean {
+  const hunk = record(value);
+  return hunk !== undefined
+    && exact(hunk, ["header", "oldStart", "oldLines", "newStart", "newLines", "lines"])
+    && isString(hunk.header)
+    && utf8ByteLength(hunk.header) <= 4 * 1024
+    && isSafeInteger(hunk.oldStart)
+    && isNonNegativeSafeInteger(hunk.oldLines)
+    && isSafeInteger(hunk.newStart)
+    && isNonNegativeSafeInteger(hunk.newLines)
+    && arrayOf(hunk.lines, isDiffLine);
+}
+
+function isDiffLine(value: unknown): boolean {
+  const line = record(value);
+  return line !== undefined
+    && exact(line, ["type", "content"])
+    && oneOf(line.type, ["context", "add", "delete"])
+    && isString(line.content)
+    && utf8ByteLength(line.content) <= 4 * 1024;
+}
+
+function isAskUserAnswerPresentation(value: unknown): boolean {
+  const answer = record(value);
+  return answer !== undefined
+    && exact(answer, ["question", "answers"])
+    && isString(answer.question)
+    && utf8ByteLength(answer.question) <= 2 * 1024
+    && arrayOf(answer.answers, (item) => isString(item) && utf8ByteLength(item) <= 16 * 1024);
+}
+
+function isBoundedJsonObject(value: unknown): boolean {
+  const budget = { keys: 0, items: 0 };
+  return isBoundedJsonValue(value, 1, budget) && record(value) !== undefined;
+}
+
+function isBoundedJsonValue(
+  value: unknown,
+  depth: number,
+  budget: { keys: number; items: number },
+): boolean {
+  if (depth > 8) return false;
+  if (value === null || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value === "string") return utf8ByteLength(value) <= 8 * 1024;
+  if (Array.isArray(value)) {
+    budget.items += value.length;
+    return budget.items <= 256
+      && value.every((item) => isBoundedJsonValue(item, depth + 1, budget));
+  }
+  const object = record(value);
+  if (object === undefined) return false;
+  const entries = Object.entries(object);
+  budget.keys += entries.length;
+  return budget.keys <= 64
+    && entries.every(([key, item]) => utf8ByteLength(key) <= 128
+      && isBoundedJsonValue(item, depth + 1, budget));
 }
 
 function isReminder(value: unknown): boolean {
@@ -579,8 +783,35 @@ function isNonNegativeInteger(value: unknown): value is number {
   return isFiniteNumber(value) && Number.isInteger(value) && value >= 0;
 }
 
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return isNonNegativeInteger(value) && Number.isSafeInteger(value);
+}
+
+function isSafeInteger(value: unknown): value is number {
+  return isFiniteNumber(value) && Number.isSafeInteger(value);
+}
+
 function optionalFiniteNumber(value: unknown): boolean {
   return value === undefined || isFiniteNumber(value);
+}
+
+function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+
+function hasSerializedUtf8Limit(value: unknown, maxBytes: number): boolean {
+  try {
+    return utf8ByteLength(JSON.stringify(value)) <= maxBytes;
+  } catch {
+    return false;
+  }
+}
+
+function lineCount(value: string): number {
+  if (value.length === 0) return 0;
+  let lines = 1;
+  for (const character of value) if (character === "\n") lines += 1;
+  return lines;
 }
 
 function oneOf(value: unknown, values: readonly unknown[]): boolean {

@@ -4,7 +4,7 @@ import { basename, join } from "node:path";
 
 import { GoalStateManager } from "../goals/state";
 import { GoalLifecycleService } from "../goals/lifecycle-service";
-import { ProjectHitlQueue } from "../hitl";
+import { HitlBoundaryCodec, ProjectHitlQueue } from "../hitl";
 import { MemoryFileManager } from "../memory/file-manager";
 import { SessionStoreManager } from "../store/session-store-manager";
 import type { PermissionApprovalScope } from "../tools/permission/policy-types";
@@ -12,6 +12,7 @@ import { silentLogger } from "../logger";
 import { ProjectTodoService } from "../todos";
 import { ProjectApprovalManager } from "../tools/permission/project-approvals";
 import { ProjectContextResolver, type ProjectContextResolverOptions } from "./context-resolver";
+import { SecretRedactionPolicy } from "../security";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "context-resolver", crypto.randomUUID());
 
@@ -20,6 +21,7 @@ const TEST_SCOPE: PermissionApprovalScope = {
   toolName: "file_write",
   operation: "write",
 };
+const TEST_HITL_CODEC = new HitlBoundaryCodec(new SecretRedactionPolicy([]));
 
 async function makeWorkspace(name: string): Promise<string> {
   await mkdir(TMP_ROOT, { recursive: true });
@@ -39,6 +41,7 @@ function createResolver(overrides: Partial<ProjectContextResolverOptions> = {}):
   const sessions = new SessionStoreManager({ logger: silentLogger });
   return new ProjectContextResolver({
     ...overrides,
+    hitlCodec: overrides.hitlCodec ?? TEST_HITL_CODEC,
     projectInfoFactory: overrides.projectInfoFactory ?? ((workspaceRoot) => {
       const name = basename(workspaceRoot);
       return { slug: name, name, workspaceRoot, addedAt: new Date().toISOString() };

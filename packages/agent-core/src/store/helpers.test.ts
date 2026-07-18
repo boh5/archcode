@@ -4,8 +4,21 @@ import { join } from "node:path";
 import { getAssistantText, SessionFileSchema, sessionFileInternals } from "./helpers";
 import { storeManager } from "./store";
 import { __setSessionsDirForTest } from "./sessions-dir";
-import { createEmptySessionStats, type SessionExecutionRecord, type SessionStats, type ToolChildSessionLink } from "@archcode/protocol";
-import type { CompactionPart, Reminder, SessionRole, SessionStoreState, StepInfo, StoredMessage, StoredPart, StoredTodo, SystemNoticePart } from "./types";
+import { createEmptySessionStats, type FinalizedToolResult, type SessionExecutionRecord, type SessionStats, type ToolChildSessionLink } from "@archcode/protocol";
+import type {
+  CompactionPart,
+  Reminder,
+  SessionRole,
+  SessionStoreState,
+  SessionToolBatch,
+  SessionToolCallBlocker,
+  SessionToolCallState,
+  StepInfo,
+  StoredMessage,
+  StoredPart,
+  StoredTodo,
+  SystemNoticePart,
+} from "./types";
 import { createEmptyCompressionState, type CompressionState } from "../compression";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "helpers", crypto.randomUUID());
@@ -76,6 +89,31 @@ function textPart(id: string, text: string, completedAt?: number): StoredPart {
     : { type: "text", id, text, createdAt: 100, completedAt };
 }
 
+function finalizedResult(
+  preview: string,
+  isError = false,
+  exitCode: number | null = null,
+): FinalizedToolResult {
+  const bytes = new TextEncoder().encode(preview).byteLength;
+  return {
+    isError,
+    output: {
+      preview,
+      completeness: "complete",
+      observed: { bytes, lines: 1 },
+      canonical: { bytes, lines: 1 },
+      stored: { bytes, lines: 1 },
+      omitted: { bytes: 0, lines: 0 },
+      recovery: { kind: "none" },
+    },
+    ...(exitCode === null ? {} : {
+      details: {
+        process: { exitCode, signal: null, timedOut: false, aborted: false, durationMs: 42 },
+      },
+    }),
+  };
+}
+
 function sampleMessages(): StoredMessage[] {
   return [
     {
@@ -110,8 +148,8 @@ function allPartVariantsMessage(): StoredMessage {
       { type: "reasoning", id: "reasoning-complete", text: "because", createdAt: 204, completedAt: 205 },
       { type: "tool", state: "pending", id: "tool-pending", toolCallId: "call-pending", toolName: "read", createdAt: 206 },
       { type: "tool", state: "running", id: "tool-running", toolCallId: "call-running", toolName: "bash", input: { cmd: "pwd" }, createdAt: 207, startedAt: 208 },
-      { type: "tool", state: "completed", id: "tool-completed", toolCallId: "call-completed", toolName: "write", input: { path: "a.ts" }, output: "ok", createdAt: 209, startedAt: 210, endedAt: 211 },
-      { type: "tool", state: "error", id: "tool-error", toolCallId: "call-error", toolName: "edit", input: "bad", errorMessage: "failed", createdAt: 212, startedAt: 213, endedAt: 214 },
+      { type: "tool", state: "completed", id: "tool-completed", toolCallId: "call-completed", toolName: "write", input: { path: "a.ts" }, result: finalizedResult("ok"), createdAt: 209, startedAt: 210, endedAt: 211 },
+      { type: "tool", state: "error", id: "tool-error", toolCallId: "call-error", toolName: "edit", input: "bad", result: finalizedResult("failed", true), createdAt: 212, startedAt: 213, endedAt: 214 },
     ],
   };
 }
@@ -256,6 +294,36 @@ function persistedState(
   };
 }
 
+function persistedToolBatch(
+  state: SessionToolCallState,
+  blocker?: SessionToolCallBlocker,
+  result?: FinalizedToolResult,
+): SessionToolBatch {
+  return {
+    batchId: "batch-1",
+    executionId: "execution-1",
+    step: 0,
+    agentName: "engineer",
+    allowedTools: ["ask_user", "bash"],
+    agentSkills: [],
+    partitions: [{ type: "serial", callIds: ["call-1"] }],
+    calls: [{
+      ordinal: 0,
+      partitionIndex: 0,
+      toolCallId: "call-1",
+      toolName: blocker?.source.type === "tool_permission" ? "bash" : "ask_user",
+      input: {},
+      traits: { readOnly: false, destructive: false, concurrencySafe: false },
+      state,
+      attempt: 1,
+      ...(blocker === undefined ? {} : { blocker }),
+      ...(result === undefined ? {} : { result }),
+    }],
+    createdAt: "2026-07-18T00:00:00.000Z",
+    updatedAt: "2026-07-18T00:00:00.000Z",
+  };
+}
+
 function appendCanonicalUserMessage(store: { getState(): SessionStoreState }, content: string): void {
   const id = crypto.randomUUID();
   const executionId = store.getState().currentExecutionId ?? `direct-${id}`;
@@ -358,6 +426,90 @@ function richCompressionState(): CompressionState {
 }
 
 describe("session transcript serialization", () => {
+  test("SessionFileSchema reuses the strict HITL boundary for every durable blocker state", () => {
+    const sessionId = uniqueSessionId("strict-hitl-blocker");
+    const base = persistedState(sessionId, [], []);
+    const askBlocker: SessionToolCallBlocker = {
+      requestKey: "tool:ask-1",
+      hitlId: "hitl-ask-1",
+      source: { type: "ask_user", toolCallId: "call-1" },
+      displayPayload: { title: "Question", redacted: true },
+    };
+    const permissionBlocker: SessionToolCallBlocker = {
+      requestKey: "tool:permission-1",
+      hitlId: "hitl-permission-1",
+      source: { type: "tool_permission", toolCallId: "call-1", toolName: "bash" },
+      displayPayload: { title: "Run command", redacted: true },
+      permissionFingerprint: "a".repeat(64),
+      persistentApprovalEligible: true,
+      permission: { description: "Run the requested command" },
+    };
+    const parse = (batch: SessionToolBatch) => SessionFileSchema.safeParse({ ...base, toolBatches: [batch] }).success;
+
+    expect(parse(persistedToolBatch("queued"))).toBe(true);
+    expect(parse(persistedToolBatch("blocked", askBlocker))).toBe(true);
+    expect(parse(persistedToolBatch("blocked", permissionBlocker))).toBe(true);
+    expect(parse(persistedToolBatch("blocked", {
+      requestKey: "tool:incomplete-permission",
+      source: { type: "tool_permission", toolCallId: "call-1", toolName: "bash" },
+      displayPayload: { title: "Run command", redacted: true },
+    }))).toBe(false);
+    expect(parse(persistedToolBatch("blocked", {
+      ...askBlocker,
+      permissionFingerprint: "a".repeat(64),
+      persistentApprovalEligible: true,
+      permission: { description: "Must not belong to ask_user" },
+    }))).toBe(false);
+    expect(parse(persistedToolBatch("queued", {
+      ...askBlocker,
+      responseAppliedAt: "2026-07-18T00:00:01.000Z",
+      response: { type: "question_answer", answers: ["Continue"] },
+    }))).toBe(true);
+    expect(parse(persistedToolBatch("failed", {
+      ...askBlocker,
+      responseAppliedAt: "2026-07-18T00:00:01.000Z",
+      response: { type: "cancel", reason: "Session stopped" },
+    }, finalizedResult("cancelled", true)))).toBe(true);
+
+    const oversizedIdentifier = "界".repeat(43);
+    expect(parse(persistedToolBatch("blocked", { ...askBlocker, requestKey: oversizedIdentifier }))).toBe(false);
+    expect(parse(persistedToolBatch("blocked", { ...askBlocker, hitlId: oversizedIdentifier }))).toBe(false);
+    expect(parse(persistedToolBatch("blocked", {
+      ...askBlocker,
+      source: { type: "ask_user", toolCallId: oversizedIdentifier },
+    }))).toBe(false);
+    expect(parse(persistedToolBatch("blocked", {
+      ...permissionBlocker,
+      source: { type: "tool_permission", toolCallId: "call-1", toolName: oversizedIdentifier },
+    }))).toBe(false);
+
+    const oversizedDisplay = {
+      title: "Run command",
+      fields: Array.from({ length: 9 }, (_, index) => ({ label: `Field ${index}`, value: "x".repeat(4 * 1024) })),
+      redacted: true as const,
+    };
+    expect(new TextEncoder().encode(JSON.stringify(oversizedDisplay)).byteLength).toBeGreaterThan(32 * 1024);
+    expect(parse(persistedToolBatch("blocked", { ...askBlocker, displayPayload: oversizedDisplay }))).toBe(false);
+
+    const oversizedBlockedRequest: SessionToolCallBlocker = {
+      ...permissionBlocker,
+      displayPayload: oversizedDisplay,
+      permission: {
+        description: "d".repeat(4 * 1024),
+        reason: "r".repeat(4 * 1024),
+        decisionDisplay: "v".repeat(4 * 1024),
+      },
+    };
+    expect(new TextEncoder().encode(JSON.stringify({
+      source: oversizedBlockedRequest.source,
+      displayPayload: oversizedBlockedRequest.displayPayload,
+      permissionFingerprint: oversizedBlockedRequest.permissionFingerprint,
+      persistentApprovalEligible: oversizedBlockedRequest.persistentApprovalEligible,
+      permission: oversizedBlockedRequest.permission,
+    })).byteLength).toBeGreaterThan(48 * 1024);
+    expect(parse(persistedToolBatch("blocked", oversizedBlockedRequest))).toBe(false);
+  });
+
   test("save/load roundtrips sessionId, createdAt, messages, steps, stats, executions, and todos", async () => {
     const sessionId = uniqueSessionId("roundtrip");
     const stats = { ...createEmptySessionStats(), messages: { user: 1, assistant: 1, total: 2 } };
@@ -940,6 +1092,116 @@ describe("session transcript serialization", () => {
     await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
   });
 
+  test("load rejects legacy string tool results and arbitrary result metadata", async () => {
+    const sessionId = uniqueSessionId("legacy-tool-result");
+    await writeSessionFile(sessionId, {
+      ...persistedState(sessionId, [], []),
+      messages: [{
+        id: "message",
+        role: "assistant",
+        createdAt: 1,
+        parts: [{
+          type: "tool",
+          state: "completed",
+          id: "tool",
+          toolCallId: "call",
+          toolName: "read",
+          input: {},
+          output: "legacy",
+          meta: { arbitrary: true },
+          createdAt: 2,
+          startedAt: 3,
+          endedAt: 4,
+        }],
+      }],
+    });
+
+    await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
+  });
+
+  test("load rejects unbounded pending and running tool lifecycle identifiers", async () => {
+    const sessionId = uniqueSessionId("unbounded-tool-lifecycle");
+    await writeSessionFile(sessionId, {
+      ...persistedState(sessionId, [], []),
+      messages: [{
+        id: "message",
+        role: "assistant",
+        createdAt: 1,
+        parts: [{
+          type: "tool",
+          state: "running",
+          id: "tool",
+          toolCallId: "界".repeat(43),
+          toolName: "read",
+          input: {},
+          createdAt: 2,
+          startedAt: 3,
+        }],
+      }],
+    });
+
+    await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
+  });
+
+  test("load rejects recovery and details whose serialized totals exceed strict limits", async () => {
+    const baseResult = finalizedResult("bounded");
+    const oversizedRecovery = {
+      ...baseResult,
+      output: {
+        ...baseResult.output,
+        recovery: {
+          kind: "source",
+          toolName: "file_read",
+          nextInput: { first: "a".repeat(8 * 1024), second: "b".repeat(8 * 1024) },
+        },
+      },
+    };
+    const oversizedDetails = {
+      ...baseResult,
+      details: {
+        presentations: [{
+          kind: "diff",
+          files: [{
+            path: "large.ts",
+            hunks: [{
+              header: "@@",
+              oldStart: 1,
+              oldLines: 0,
+              newStart: 1,
+              newLines: 65,
+              lines: Array.from({ length: 65 }, () => ({ type: "add", content: "x".repeat(4 * 1024) })),
+            }],
+          }],
+        }],
+      },
+    };
+
+    for (const [label, result] of [["recovery", oversizedRecovery], ["details", oversizedDetails]] as const) {
+      const sessionId = uniqueSessionId(`oversized-${label}`);
+      await writeSessionFile(sessionId, {
+        ...persistedState(sessionId, [], []),
+        messages: [{
+          id: "message",
+          role: "assistant",
+          createdAt: 1,
+          parts: [{
+            type: "tool",
+            state: "completed",
+            id: "tool",
+            toolCallId: "call",
+            toolName: "read",
+            input: {},
+            result,
+            createdAt: 2,
+            startedAt: 3,
+            endedAt: 4,
+          }],
+        }],
+      });
+      await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
+    }
+  });
+
   test("load rejects invalid todo status", async () => {
     const sessionId = uniqueSessionId("invalid-todo-status");
     await writeSessionFile(sessionId, {
@@ -1017,7 +1279,7 @@ describe("session transcript serialization", () => {
         completedAt: 8,
         parts: [
           { type: "text", id: "assistant-text", text: "hi", createdAt: 4, completedAt: 5 },
-          { type: "tool", state: "completed", id: "tool", toolCallId: "call", toolName: "read", input: { path: "a" }, output: "content", createdAt: 5, startedAt: 6, endedAt: 7 },
+          { type: "tool", state: "completed", id: "tool", toolCallId: "call", toolName: "read", input: { path: "a" }, result: finalizedResult("content"), createdAt: 5, startedAt: 6, endedAt: 7 },
         ],
       },
     ];
@@ -1400,7 +1662,7 @@ describe("compaction and meta transcript round-trip", () => {
     expect(loaded.getState().messages).toEqual(messages);
   });
 
-  test("roundtrips CompletedToolPart with meta", async () => {
+  test("roundtrips CompletedToolPart with strict process details", async () => {
     const sessionId = uniqueSessionId("tool-meta-roundtrip");
     const messages: StoredMessage[] = [
       {
@@ -1413,11 +1675,10 @@ describe("compaction and meta transcript round-trip", () => {
           toolCallId: "call-1",
           toolName: "bash",
           input: "ls",
-          output: "file.txt",
+          result: finalizedResult("file.txt", false, 0),
           createdAt: 100,
           startedAt: 101,
           endedAt: 102,
-          meta: { exitCode: 0, durationMs: 42 },
         }],
         createdAt: 100,
         completedAt: 103,
@@ -1430,7 +1691,7 @@ describe("compaction and meta transcript round-trip", () => {
     expect(loaded.getState().messages).toEqual(messages);
   });
 
-  test("roundtrips ErrorToolPart with meta", async () => {
+  test("roundtrips ErrorToolPart with strict process details", async () => {
     const sessionId = uniqueSessionId("tool-error-meta-roundtrip");
     const messages: StoredMessage[] = [
       {
@@ -1443,11 +1704,10 @@ describe("compaction and meta transcript round-trip", () => {
           toolCallId: "call-2",
           toolName: "bash",
           input: "bad",
-          errorMessage: "command failed",
+          result: finalizedResult("command failed", true, 1),
           createdAt: 200,
           startedAt: 201,
           endedAt: 202,
-          meta: { exitCode: 1, timedOut: false },
         }],
         createdAt: 200,
         completedAt: 203,
@@ -1500,11 +1760,10 @@ describe("compaction and meta transcript round-trip", () => {
           toolCallId: "call-full",
           toolName: "bash",
           input: "echo hi",
-          output: "hi",
+          result: finalizedResult("hi", false, 0),
           createdAt: 70,
           startedAt: 71,
           endedAt: 72,
-          meta: { exitCode: 0 },
         }],
         createdAt: 70,
         completedAt: 73,

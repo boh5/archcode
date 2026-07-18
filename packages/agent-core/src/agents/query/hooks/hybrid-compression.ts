@@ -1,6 +1,6 @@
 import { COMPACT_MIN_NEW_MESSAGES, compact, commitCompact, createCircuitBreaker, type CircuitBreaker } from "../../../compact";
 import type { Logger } from "../../../logger";
-import { TOOL_OUTPUT_DIR } from "../../../tools/persist-output";
+import type { ToolOutputAccessService } from "../../../tool-output/access-service";
 import {
   HARD_COMPACT_RATIO,
   SOFT_NUDGE_RATIO,
@@ -15,12 +15,21 @@ export interface HybridCompressionHookResult {
   readonly beforeModelBuild: (ctx: BeforeModelBuildContext) => Promise<void>;
   readonly beforeModelCall: (ctx: BeforeModelCallContext) => Promise<void>;
   readonly circuitBreaker: CircuitBreaker;
+  readonly scheduleToolOutputRecoveryNotice: () => Promise<void>;
 }
 
-export function createHybridCompressionHook(logger: Logger): HybridCompressionHookResult {
+export function createHybridCompressionHook(
+  logger: Logger,
+  toolOutputAccess: ToolOutputAccessService,
+): HybridCompressionHookResult {
   const circuitBreaker = createCircuitBreaker(3);
   let isCompressing = false;
   let lastCommittedMessageCount: number | undefined;
+  let pendingRecoverableArtifactCount: number | undefined;
+
+  const scheduleToolOutputRecoveryNotice = async (): Promise<void> => {
+    pendingRecoverableArtifactCount = await toolOutputAccess.countRecoverable();
+  };
 
   const beforeModelBuild = async (ctx: BeforeModelBuildContext): Promise<void> => {
     if (isCompressing || circuitBreaker.isOpen) return;
@@ -36,9 +45,7 @@ export function createHybridCompressionHook(logger: Logger): HybridCompressionHo
       const result = await compact({
         messages: state.messages,
         binding: ctx.binding,
-        sessionId: state.sessionId,
         logger,
-        toolOutputDir: TOOL_OUTPUT_DIR,
       }, ctx.abort);
 
       if (result === null) {
@@ -48,6 +55,7 @@ export function createHybridCompressionHook(logger: Logger): HybridCompressionHo
       }
 
       commitCompact(ctx.store, result);
+      await scheduleToolOutputRecoveryNotice();
       lastCommittedMessageCount = ctx.store.getState().messages.length;
       circuitBreaker.recordSuccess();
     } catch (error) {
@@ -60,13 +68,27 @@ export function createHybridCompressionHook(logger: Logger): HybridCompressionHo
   };
 
   const beforeModelCall = async (ctx: BeforeModelCallContext): Promise<void> => {
+    if (pendingRecoverableArtifactCount !== undefined) {
+      ctx.messages.push(toolOutputRecoveryNotice(pendingRecoverableArtifactCount));
+      pendingRecoverableArtifactCount = undefined;
+    }
     const pressure = getCompressionTokenPressure(ctx.store, ctx.binding.modelInfo.limit.context);
     if (pressure === null || pressure.ratio < SOFT_NUDGE_RATIO || pressure.ratio >= HARD_COMPACT_RATIO) return;
     const strength = pressure.ratio >= STRONG_NUDGE_RATIO ? "strong" : "soft";
     ctx.messages.push(compressionNudgeMessage(strength, pressure.ratio));
   };
 
-  return { beforeModelBuild, beforeModelCall, circuitBreaker };
+  return { beforeModelBuild, beforeModelCall, circuitBreaker, scheduleToolOutputRecoveryNotice };
+}
+
+function toolOutputRecoveryNotice(count: number): ModelCallMessage {
+  return {
+    role: "user",
+    content: [{
+      type: "text",
+      text: `<system-reminder>\nHard compact completed. The current Session family has ${count} recoverable tool-output artifact${count === 1 ? "" : "s"}. To rediscover prior output, call output_search without outputRef.\n</system-reminder>`,
+    }],
+  };
 }
 
 function compressionNudgeMessage(strength: "soft" | "strong", ratio: number): ModelCallMessage {

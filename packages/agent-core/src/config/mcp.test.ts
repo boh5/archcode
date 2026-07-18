@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { REDACTION_MARKER } from "../tools/security";
+import { REDACTION_MARKER } from "../security";
 import {
   ConfigEnvExpansionError,
   type McpConfig,

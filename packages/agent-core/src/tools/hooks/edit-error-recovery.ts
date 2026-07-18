@@ -1,4 +1,4 @@
-import type { AfterHook, ToolExecutionResult } from "../types";
+import type { AfterHook, RawToolResult } from "../types";
 import { inferToolErrorKindFromResult, isStructuredToolError } from "../errors";
 import type { ToolErrorKind } from "../errors";
 
@@ -67,7 +67,7 @@ function findNudge(output: string): string {
 }
 
 export function createEditErrorRecoveryHook(): AfterHook {
-  return (result: ToolExecutionResult): ToolExecutionResult | void => {
+  return (result: RawToolResult): RawToolResult | void => {
     if (!result.isError) {
       return;
     }
@@ -83,17 +83,19 @@ export function createEditErrorRecoveryHook(): AfterHook {
         return result;
       }
 
+      if (result.draft.kind !== "text") return result;
       return {
         ...result,
-        output: `${result.output}${SEPARATOR}${nudge}`,
+        draft: { kind: "text", text: `${result.draft.text}${SEPARATOR}${nudge}` },
       };
     }
 
-    const nudge = findNudge(result.output);
+    if (result.draft.kind !== "text") return result;
+    const nudge = findNudge(result.draft.text);
 
     return {
       ...result,
-      output: `${result.output}${SEPARATOR}${nudge}`,
+      draft: { kind: "text", text: `${result.draft.text}${SEPARATOR}${nudge}` },
     };
   };
 }

@@ -5,11 +5,14 @@ import {
   type ResolvedGithubIntegrationConfig,
   resolveGithubIntegrationConfig,
 } from "../config";
-import { REDACTION_MARKER as SECURITY_REDACTION_MARKER, redactString } from "../tools/security";
+import { REDACTION_MARKER as SECURITY_REDACTION_MARKER, redactString } from "../security";
+import { BoundedByteBuffer } from "../utils/bounded-byte-buffer";
 
 export const GITHUB_REST_API_VERSION = "2022-11-28" as const;
 export const REDACTION_MARKER = SECURITY_REDACTION_MARKER;
 const GITHUB_API_BASE_URL = "https://api.github.com";
+/** Hard network/parse boundary; artifact policy is not an HTTP memory budget. */
+export const MAX_GITHUB_RESPONSE_BYTES = 8 * 1024 * 1024;
 
 export type IntegrationErrorCode =
   | "integration_auth_missing"
@@ -475,6 +478,7 @@ export class GitHubRestProvider implements GitHubIntegrationProvider {
 
     const method = request.method;
     const url = this.#buildUrl(request.path, request.query);
+    const displayUrl = stripUrlQuery(url);
     let response: Response;
 
     try {
@@ -492,8 +496,8 @@ export class GitHubRestProvider implements GitHubIntegrationProvider {
     } catch (error) {
       throw this.#error(
         "integration_bad_response",
-        `GitHub request failed: ${error instanceof Error ? error.message : String(error)}`,
-        { integrationId: request.integrationId, method, url, cause: error },
+        "GitHub request failed.",
+        { integrationId: request.integrationId, method, url: displayUrl, cause: error },
       );
     }
 
@@ -504,7 +508,7 @@ export class GitHubRestProvider implements GitHubIntegrationProvider {
       throw this.#httpError({
         response,
         request,
-        url,
+        url: displayUrl,
         method,
         bodyText,
         rateLimit,
@@ -515,12 +519,12 @@ export class GitHubRestProvider implements GitHubIntegrationProvider {
     if (!expectedStatus.includes(response.status)) {
       throw this.#error(
         "integration_bad_response",
-        `GitHub returned unexpected status ${response.status} for ${method} ${url}.`,
-        { integrationId: request.integrationId, status: response.status, method, url, rateLimit },
+        `GitHub returned unexpected status ${response.status} for ${method} ${displayUrl}.`,
+        { integrationId: request.integrationId, status: response.status, method, url: displayUrl, rateLimit },
       );
     }
 
-    const data = this.#parseSuccessBody(bodyText, request, response.status, method, url, rateLimit);
+    const data = this.#parseSuccessBody(bodyText, request, response.status, method, displayUrl, rateLimit);
 
     return {
       data: this.redactValue(data),
@@ -1336,13 +1340,42 @@ function parseOptionalInt(value: string | null): number | undefined {
 }
 
 async function readResponseText(response: Response, token: string): Promise<string> {
-  try {
-    return await response.text();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+  const declaredLength = response.headers.get("content-length");
+  if (declaredLength !== null && Number.parseInt(declaredLength, 10) > MAX_GITHUB_RESPONSE_BYTES) {
+    await response.body?.cancel().catch(() => undefined);
     throw new IntegrationError(
       "integration_bad_response",
-      redactString(redactGitHubTokenValue(`Failed to read GitHub response body: ${message}`, token)),
+      "GitHub response body exceeded the 8 MiB safety limit.",
+      { status: response.status },
+    );
+  }
+  if (response.body === null) return "";
+  try {
+    const reader = response.body.getReader();
+    const buffer = new BoundedByteBuffer(MAX_GITHUB_RESPONSE_BYTES);
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value === undefined) continue;
+        if (!buffer.append(value)) {
+          await reader.cancel().catch(() => undefined);
+          throw new IntegrationError(
+            "integration_bad_response",
+            "GitHub response body exceeded the 8 MiB safety limit.",
+            { status: response.status },
+          );
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    return new TextDecoder().decode(buffer.bytes());
+  } catch (error) {
+    if (error instanceof IntegrationError) throw error;
+    throw new IntegrationError(
+      "integration_bad_response",
+      redactString(redactGitHubTokenValue("Failed to read GitHub response body.", token)),
       { status: response.status, cause: error },
     );
   }
@@ -1382,9 +1415,13 @@ function escapeRegExp(value: string): string {
 
 function sanitizeErrorCause(cause: unknown, redactedFallback: string): unknown {
   if (cause === undefined) return undefined;
-  if (cause instanceof Error) {
-    return new Error(redactString(cause.message) === cause.message ? redactedFallback : redactString(cause.message));
-  }
-  if (typeof cause === "string") return redactString(cause);
+  if (cause instanceof Error || typeof cause === "string") return new Error(redactedFallback);
   return undefined;
+}
+
+function stripUrlQuery(value: string): string {
+  const url = new URL(value);
+  url.search = "";
+  url.hash = "";
+  return url.href;
 }

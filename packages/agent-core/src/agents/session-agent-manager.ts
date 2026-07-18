@@ -13,6 +13,7 @@ import type { Agent } from "./types";
 import type { Logger } from "../logger";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
 import { assertValidSessionCwd } from "../store/session-cwd";
+import type { ToolOutputAccessService } from "../tool-output/access-service";
 
 export interface SessionAgentManagerConfig {
   readonly definitions: readonly AgentDefinition[];
@@ -22,6 +23,7 @@ export interface SessionAgentManagerConfig {
   readonly projectContextResolver: ProjectContextResolver;
   readonly tombstoneTtlMs?: number;
   readonly storeManager: SessionStoreManager;
+  readonly createToolOutputAccess: (workspaceRoot: string, rootSessionId: string) => ToolOutputAccessService;
   readonly startChildExecution?: (workspaceRoot: string, request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
   readonly cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
   readonly resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
@@ -213,6 +215,7 @@ export class SessionAgentManager {
         toolRegistry: this.#config.toolRegistry,
         skillService: this.#config.skillService,
         storeManager: this.#storeManager,
+        createToolOutputAccess: this.#config.createToolOutputAccess,
         workspaceRoot,
         memoryConfig: this.#config.memoryConfig,
         projectContextResolver: this.#config.projectContextResolver,

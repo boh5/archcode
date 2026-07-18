@@ -1,4 +1,4 @@
-export { closeMcpManagerBestEffort, createRuntime, ProjectRuntimeActiveError, SessionCommandConflictError, SessionCommandOutcomeError } from "./runtime";
+export { createRuntime, ProjectRuntimeActiveError, SessionCommandConflictError, SessionCommandOutcomeError } from "./runtime";
 export type { AcceptSessionMessageInput, AgentRuntime, AgentRuntimeOptions, CreateRuntimeSessionOptions, ProjectControlPlaneSnapshot, ProjectRemovalResult, SessionMessageAcceptance } from "./runtime";
 export * from "./automations";
 export type { CompressionOriginalRangeResult } from "./compression";
@@ -13,6 +13,7 @@ export type { ServerConfigServiceOptions } from "./config";
 
 export { createProcessRunner } from "./process/runner";
 export type { ProcessRunner, ProcessRunnerInput, ProcessRunnerResult } from "./process/types";
+export * from "./tool-output";
 export { createVersionControlDetector, detectVersionControl } from "./version-control/detector";
 export type { VersionControl, VersionControlDetector } from "./version-control/detector";
 
@@ -92,6 +93,7 @@ export type { SessionLifecycleServiceOptions } from "./projects/session-lifecycl
 export type { ProjectContext, ProjectInfo } from "./projects/types";
 export * from "./todos";
 export {
+  HitlBoundaryCodec,
   HitlConflictError,
   HitlNotFoundError,
   MAX_HITL_DELIVERY_ATTEMPTS,
@@ -100,6 +102,7 @@ export {
   requiresInspection,
   toHitlView,
 } from "./hitl";
+export { SecretRedactionPolicy } from "./security";
 export type {
   CreateHitlInput,
   HitlDelivery,
@@ -188,12 +191,3 @@ export type {
   InvalidTodoStateError,
   SessionEventEnvelope,
 } from "./store/types";
-
-export type {
-  AskUserAnswer,
-  AskUserCallback,
-  AskUserRequest,
-  ToolConfirmationCallback,
-  ToolConfirmationRequest,
-  ToolConfirmationResult,
-} from "./tools/types";

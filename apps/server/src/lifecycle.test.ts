@@ -30,10 +30,9 @@ function createProcess() {
   return { handlers, processRef };
 }
 
-function makeRuntime(abortAllSessionExecutions = mock(async () => undefined)): AgentRuntime {
+function makeRuntime(shutdown = mock(async () => undefined)): AgentRuntime {
   return {
-    abortAllSessionExecutions,
-    stopAutomationSchedulers: mock(() => undefined),
+    shutdown,
     notifyRuntimeShutdown: mock(() => undefined),
   } as unknown as AgentRuntime;
 }
@@ -56,15 +55,11 @@ describe("server lifecycle", () => {
     expect(processRef.off).toHaveBeenCalledWith("SIGTERM", expect.any(Function));
   });
 
-  test("shutdown pushes SSE shutdown, aborts, waits, stops, then exits", async () => {
+  test("shutdown pushes SSE shutdown, delegates to Runtime, stops, then exits", async () => {
     const order: string[] = [];
     const runtime = makeRuntime(mock(async () => {
-      order.push("abort");
-      order.push("wait");
+      order.push("runtime-shutdown");
     }));
-    runtime.stopAutomationSchedulers = mock(async () => {
-      order.push("stop-schedulers");
-    });
     const globalEvents: unknown[] = [];
     const unsubscribeGlobalEvents = globalEventBus.subscribe((event) => globalEvents.push(event));
     const server = { stop: mock(() => order.push("stop")) };
@@ -80,10 +75,9 @@ describe("server lifecycle", () => {
     unsubscribeGlobalEvents();
 
     expect(runtime.notifyRuntimeShutdown).toHaveBeenCalledWith("server_shutdown");
-    expect(runtime.abortAllSessionExecutions).toHaveBeenCalled();
+    expect(runtime.shutdown).toHaveBeenCalled();
     expect(globalEvents).toContainEqual({ type: "shutdown", reason: "server_shutdown" });
-    expect(runtime.stopAutomationSchedulers).toHaveBeenCalled();
-    expect(order).toEqual(["stop-schedulers", "abort", "wait", "stop", "exit:0"]);
+    expect(order).toEqual(["runtime-shutdown", "stop", "exit:0"]);
   });
 
   test("shutdown exits with code 1 when running jobs exceed timeout", async () => {

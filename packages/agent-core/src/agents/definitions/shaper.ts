@@ -23,7 +23,8 @@ import {
   TOOL_MEMORY_WRITE,
   TOOL_PROJECT_TODO_UPDATE,
   TOOL_TODO_WRITE,
-  TOOL_VIEW_TOOL_OUTPUT,
+  TOOL_OUTPUT_READ,
+  TOOL_OUTPUT_SEARCH,
   TOOL_WEB_FETCH,
 } from "../../tools/names";
 
@@ -67,7 +68,8 @@ Output:
       TOOL_MEMORY_WRITE,
       TOOL_PROJECT_TODO_UPDATE,
       ...DELEGATION_CORE_TOOLS,
-      TOOL_VIEW_TOOL_OUTPUT,
+      TOOL_OUTPUT_READ,
+      TOOL_OUTPUT_SEARCH,
       TOOL_COMPRESS,
       ...SKILL_ACCESS_TOOLS,
     ],
@@ -90,6 +92,5 @@ Output:
     terminalReminders: true,
   },
   includeMemoryInPrompt: true,
-  enforceToolOutputQuota: true,
   skills: ["codemap", "research-docs"],
 } as const satisfies AgentDefinition;

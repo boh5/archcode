@@ -11,7 +11,8 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createMockStore } from "../../store/test-helpers";
-import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import { createTextToolResult } from "../results";
+import type { RawToolResult, ToolExecutionContext } from "../types";
 import {
   createReadSnapshotAfterHook,
   refreshReadSnapshot,
@@ -51,12 +52,8 @@ function makeCtx(
     projectContext: createTestProjectContext(workspaceDir), ...overrides,  };
 }
 
-function makeResult(
-  overrides: Partial<ToolExecutionResult> = {},
-): ToolExecutionResult {
-  return { output: "",
-  isError: false,
-  meta: {}, ...overrides,  };
+function makeResult(overrides: { text?: string; isError?: boolean } = {}): RawToolResult {
+  return createTextToolResult(overrides.text ?? "", { isError: overrides.isError });
 }
 
 /** Create a file inside workspaceDir and return its absolute path. */
@@ -106,7 +103,7 @@ describe("createReadSnapshotAfterHook", () => {
     const ctx = makeCtx({ store, input: { path: file }, cwd: workspaceDir });
 
     const hook = createReadSnapshotAfterHook();
-    await hook(makeResult({ output: "content" }), ctx);
+    await hook(makeResult({ text: "content" }), ctx);
 
     const snapshots = store.getState().readSnapshots;
     expect(snapshots.size).toBe(1);
@@ -120,7 +117,7 @@ describe("createReadSnapshotAfterHook", () => {
     const ctx = makeCtx({ store, input: { path: file }, cwd: workspaceDir });
 
     const hook = createReadSnapshotAfterHook();
-    await hook(makeResult({ isError: true, output: "error" }), ctx);
+    await hook(makeResult({ isError: true, text: "error" }), ctx);
 
     expect(store.getState().readSnapshots.size).toBe(0);
   });
@@ -129,7 +126,7 @@ describe("createReadSnapshotAfterHook", () => {
     const file = workspaceFile("after-hook-identity.txt");
     const store = createMockStore();
     const ctx = makeCtx({ store, input: { path: file }, cwd: workspaceDir });
-    const result = makeResult({ output: "hello" });
+    const result = makeResult({ text: "hello" });
 
     const hook = createReadSnapshotAfterHook();
     const returned = await hook(result, ctx);
@@ -216,7 +213,7 @@ describe("LRU eviction", () => {
     });
 
     const hook = createReadSnapshotAfterHook();
-    await hook(makeResult({ output: "content" }), ctx);
+    await hook(makeResult({ text: "content" }), ctx);
 
     const state = store.getState().readSnapshots;
     expect(state.size).toBe(1024);
@@ -243,7 +240,7 @@ describe("LRU eviction", () => {
     });
 
     const hook = createReadSnapshotAfterHook();
-    await hook(makeResult({ output: "content" }), ctx);
+    await hook(makeResult({ text: "content" }), ctx);
 
     expect(store.getState().readSnapshots.size).toBe(101); // 100 + 1
     expect(store.getState().readSnapshots.has(realpath)).toBe(true);

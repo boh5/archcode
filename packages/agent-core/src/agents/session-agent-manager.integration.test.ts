@@ -7,15 +7,26 @@ import { silentLogger } from "../logger";
 import { SkillService } from "../skills";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { createTestTempRoot } from "../testing/test-temp-root";
-import { createRegistry } from "../tools/registry";
+import type { ToolRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
+import { createTextToolResult } from "../tools/results";
+import { createTestToolRegistryFixture, type TestToolRegistryFixture } from "../tools/test-registry";
 import { engineerAgentDefinition } from "./definitions";
 import { SessionAgentManager } from "./session-agent-manager";
 import { createTestProjectContextResolver } from "./test-project-context-resolver";
 
 const testTempRoot = createTestTempRoot("session-agent-manager");
+const registryFixtures: TestToolRegistryFixture[] = [];
+const outputAccessFixture = createTestToolRegistryFixture();
+
+function createTestRegistry(descriptors: AnyToolDescriptor[]): ToolRegistry {
+  const fixture = createTestToolRegistryFixture({ descriptors });
+  registryFixtures.push(fixture);
+  return fixture.registry;
+}
 
 afterAll(async () => {
+  await Promise.all([...registryFixtures, outputAccessFixture].map((fixture) => fixture.dispose()));
   await testTempRoot.cleanup();
 });
 
@@ -60,9 +71,10 @@ describe("SessionAgentManager Git cwd validation", () => {
 function createManager(storeManager: SessionStoreManager): SessionAgentManager {
   return new SessionAgentManager({
     definitions: [engineerAgentDefinition],
-    toolRegistry: createRegistry([makeTool("unknown_tool")]),
+    toolRegistry: createTestRegistry([makeTool("unknown_tool")]),
     skillService: new SkillService({ builtinSkills: {} }),
     storeManager,
+    createToolOutputAccess: outputAccessFixture.createToolOutputAccess,
     projectContextResolver: createTestProjectContextResolver(storeManager),
     logger: silentLogger,
   });
@@ -74,7 +86,8 @@ function makeTool(name: string): AnyToolDescriptor {
     description: `${name} tool`,
     inputSchema: z.object({}).strict(),
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
-    execute: () => `${name} result`,
+    outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
+    execute: () => createTextToolResult(`${name} result`),
   };
 }
 

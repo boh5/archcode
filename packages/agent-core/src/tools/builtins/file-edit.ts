@@ -5,10 +5,11 @@ import { sharedMutationQueue } from "../concurrency/mutation-queue";
 import { defineTool } from "../define-tool";
 import { computeToolDiff } from "../diff";
 import { createToolErrorResult } from "../errors";
+import { createTextToolResult } from "../results";
 import { createEditErrorRecoveryHook, createPostEditDiagnosticsHook, refreshReadSnapshot } from "../hooks";
 import { createProtectedPathPermission, createReadBeforeEditPermission, createWorkspacePermission } from "../permission";
 import { resolveAndValidatePath } from "../security";
-import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import type { RawToolResult, ToolExecutionContext } from "../types";
 
 // ─── Input Schema ───
 
@@ -69,7 +70,7 @@ function editMatchFail(
   return { ok: false, kind, code, message };
 }
 
-function editFailToResult(failure: EditMatchFailure): ToolExecutionResult {
+function editFailToResult(failure: EditMatchFailure): RawToolResult {
   return createToolErrorResult({
     kind: failure.kind,
     code: failure.code,
@@ -330,10 +331,11 @@ export const fileEditTool = defineTool({
   ].join("\n"),
   inputSchema: FileEditInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
+  outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
   prepareInput: prepareEditInput,
   permissions: [createWorkspacePermission(), createReadBeforeEditPermission(), createProtectedPathPermission()],
   hooks: { after: [createEditErrorRecoveryHook(), createPostEditDiagnosticsHook()] },
-  execute: async (input, ctx): Promise<string | ToolExecutionResult> => {
+  execute: async (input, ctx): Promise<RawToolResult> => {
     // Workspace access is enforced by createWorkspacePermission() guard.
     // If the permission pipeline allows execution, out-of-workspace paths
     // may have been explicitly approved and should not be re-checked here.
@@ -368,18 +370,17 @@ export const fileEditTool = defineTool({
         }
 
         refreshReadSnapshot(resolvedPath, ctx.store, ctx.cwd);
-        return {
-          output: `Successfully applied ${matches.length} edit(s) to ${input.path}`,
-          isError: false,
-          meta: {
-            diffs: computeToolDiff({
-              path: input.path,
-              before: content,
-              after: modified,
-              status: "modified",
-            }),
-          },
-        };
+        const diff = computeToolDiff({
+          path: input.path,
+          before: content,
+          after: modified,
+          status: "modified",
+        });
+        return createTextToolResult(`Successfully applied ${matches.length} edit(s) to ${input.path}`, {
+          details: diff.files.length === 0
+            ? undefined
+            : { presentations: [{ kind: "diff", files: diff.files, ...(diff.truncated ? { truncated: true } : {}) }] },
+        });
       });
 
       return result;

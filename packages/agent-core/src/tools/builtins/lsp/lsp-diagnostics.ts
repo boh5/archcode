@@ -5,7 +5,8 @@ import { createWorkspacePermission } from "../../permission";
 import { isRecord } from "./shared";
 import { getLspToolLogger } from "./tool-logger";
 import { resolveAndValidatePath } from "../../security/path-validator";
-import type { ToolExecutionResult } from "../../types";
+import { createTextToolResult } from "../../results";
+import type { RawToolResult } from "../../types";
 import { formatDiagnostics, formatTimeout } from "./format-output";
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
@@ -44,8 +45,9 @@ export const lspDiagnosticsTool = defineTool({
     destructive: false,
     concurrencySafe: true,
   },
+  outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
   permissions: [createWorkspacePermission({ pathKey: "filePath" })],
-  async execute(input, ctx): Promise<string | ToolExecutionResult> {
+  async execute(input, ctx): Promise<RawToolResult> {
     const severity = input.severity ?? "all";
     // Workspace access is enforced by createWorkspacePermission() guard.
     // Out-of-workspace paths may have been explicitly approved.
@@ -79,7 +81,7 @@ export async function handleFileDiagnostics(
   displayPath: string,
   severity: LspDiagnosticSeverityFilter,
   ctx: { cwd: string },
-): Promise<string | ToolExecutionResult> {
+): Promise<RawToolResult> {
   const languageId = getLanguageIdFromFilename(resolvedPath);
   if (!languageId) {
     return createToolErrorResult({
@@ -95,7 +97,6 @@ export async function handleFileDiagnostics(
       kind: "lsp-server-not-found",
       code: "TOOL_LSP_SERVER_NOT_FOUND",
       message: `No language server is available for language "${languageId}". Install or configure a compatible server, then retry.`,
-      meta: { languageId },
     });
   }
 
@@ -125,7 +126,7 @@ export async function handleFileDiagnostics(
       const snapshot = await client.waitForDiagnostics(uri, { afterSequence: baseline, timeoutMs: DIAGNOSTICS_TIMEOUT_MS });
       const diagnostics = diagnosticsFromSnapshot(snapshot, resolvedPath, severity);
       lastDiagnostics = diagnostics;
-      return formatDiagnostics(diagnostics, displayPath);
+      return createTextToolResult(formatDiagnostics(diagnostics, displayPath));
     } finally {
       documentHandle?.release();
       pool.release(poolKey);
@@ -140,7 +141,6 @@ export async function handleFileDiagnostics(
         kind: "lsp-timeout",
         code: "TOOL_LSP_TIMEOUT",
         message: `${formatTimeout("Diagnostics", DIAGNOSTICS_TIMEOUT_MS)}\n${formatDiagnostics(lastDiagnostics, displayPath)}`,
-        meta: { diagnostics: lastDiagnostics, timeoutMs: DIAGNOSTICS_TIMEOUT_MS },
       });
     }
 
@@ -155,7 +155,6 @@ export async function handleFileDiagnostics(
         code: error.kind === "lsp-timeout" ? "TOOL_LSP_TIMEOUT" : "TOOL_LSP_ERROR",
         error,
         message: error.message,
-        meta: { lspCode: error.code, lspData: error.data },
       });
     }
 
@@ -274,14 +273,14 @@ async function handleDirectoryDiagnostics(
   dirPath: string,
   severity: LspDiagnosticSeverityFilter,
   ctx: { cwd: string },
-): Promise<string | ToolExecutionResult> {
+): Promise<RawToolResult> {
   const { supportedFiles, totalFilesFound } = await walkSupportedFiles(dirPath);
 
   if (supportedFiles.length === 0) {
     if (totalFilesFound === 0) {
-      return "No diagnostics found.";
+      return createTextToolResult("No diagnostics found.");
     }
-    return "No diagnostics found (no supported language files).";
+    return createTextToolResult("No diagnostics found (no supported language files).");
   }
 
   const filesToProcess = supportedFiles
@@ -355,7 +354,7 @@ async function handleDirectoryDiagnostics(
 
   allDiagnostics.sort(sortDiagnostics);
 
-  return formatDirectoryDiagnostics(allDiagnostics, totalFilesFound, warnings);
+  return createTextToolResult(formatDirectoryDiagnostics(allDiagnostics, totalFilesFound, warnings));
 }
 
 // ─── Diagnostics helpers ───

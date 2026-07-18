@@ -135,11 +135,11 @@ export class LspClientPool {
         });
         await client.initialize(key.workspaceRoot, initializeOptionsFromServerOptions(serverOptions));
         entry.client = client;
-        this.watchForCrash(id, entry, transport);
+        this.watchForCrash(id, key.serverId, entry, transport);
         return client;
       } catch (error) {
         this.#logger.error("lsp.pool.acquire.failed", {
-          context: { serverId: id },
+          context: { serverId: key.serverId },
           error,
           meta: { ...errorFields(error), ...stderrFields(transport) },
         });
@@ -210,7 +210,7 @@ export class LspClientPool {
     }
   }
 
-  private watchForCrash(id: string, entry: PoolEntry, transport: unknown): void {
+  private watchForCrash(id: string, serverId: string, entry: PoolEntry, transport: unknown): void {
     const exited = getExitedPromise(transport);
     if (!exited) return;
 
@@ -219,7 +219,7 @@ export class LspClientPool {
       if (this.entries.get(id) !== entry) return;
 
       this.#logger.error("lsp.pool.crash.detected", {
-        context: { serverId: id, exitCode: code },
+        context: { serverId, exitCode: code },
         meta: stderrFields(transport),
       });
       this.entries.delete(id);
@@ -228,7 +228,7 @@ export class LspClientPool {
     }).catch(() => {
       if (this.shutdownKeys.has(id) || this.entries.get(id) !== entry) return;
       this.#logger.error("lsp.pool.crash.detected", {
-        context: { serverId: id, exitCode: undefined },
+        context: { serverId, exitCode: undefined },
         meta: stderrFields(transport),
       });
       this.entries.delete(id);
@@ -298,7 +298,7 @@ function stderrFields(transport: unknown): Record<string, unknown> {
   if (!isRecord(transport) || typeof transport.stderrSnapshot !== "string" || transport.stderrSnapshot.length === 0) {
     return {};
   }
-  return { lspStderr: transport.stderrSnapshot };
+  return { lspStderrCaptured: true };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -313,9 +313,9 @@ async function ignoreErrors(promise: Promise<unknown>): Promise<void> {
   }
 }
 
-function errorFields(error: unknown): { errorName: string; errorMessage: string } {
-  if (error instanceof Error) return { errorName: error.name, errorMessage: error.message };
-  return { errorName: "NonError", errorMessage: String(error) };
+function errorFields(error: unknown): { errorName: string; errorCode: string } {
+  if (error instanceof Error) return { errorName: error.name, errorCode: "LSP_OPERATION_FAILED" };
+  return { errorName: "NonError", errorCode: "LSP_OPERATION_FAILED" };
 }
 
 const defaultPool = new LspClientPool();

@@ -3,8 +3,9 @@ import type { ChildExecutionHandle, ResumeChildRequest } from "../../delegation/
 import { storeManager } from "../../store/store";
 import type { ToolExecutionContext } from "../types";
 import { createTestProjectContext } from "../test-project-context";
-import { testExecutionStart } from "../../testing/test-execution-fixtures";
+import { expectTextDraft } from "../test-results";
 import { executeResumeSession, ResumeSessionInputSchema, resumeSessionTool } from "./resume-session";
+import { testExecutionStart } from "../../testing/test-execution-fixtures";
 
 const WORKSPACE_ROOT = import.meta.dir;
 
@@ -75,6 +76,6 @@ describe("resume_session tool", () => {
     expect(request && "targetAgentName" in request).toBe(false);
     expect(request && "title" in request).toBe(false);
     expect(request && "skills" in request).toBe(false);
-    expect(result).toContain("Agent type: build");
+    expect(expectTextDraft(result)).toContain("Agent type: build");
   });
 });

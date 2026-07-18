@@ -1,11 +1,6 @@
 import type { AskUserInput } from "./ask-user";
-import type { ToolExecutionResult } from "../types";
-
-export const ASK_USER_RESULT_META_KEY = "askUser";
-
-export interface AskUserResultMetadata {
-  answers: string[][];
-}
+import type { RawToolResult } from "../types";
+import { createTextToolResult } from "../results";
 
 export function formatAskUserAnswers(answers: string[][], questions: AskUserInput["questions"]): string {
   const lines = questions.flatMap((question, index) => [
@@ -22,13 +17,16 @@ export function formatAskUserAnswers(answers: string[][], questions: AskUserInpu
 export function createAskUserSuccessResult(
   answers: string[][],
   questions: AskUserInput["questions"],
-): ToolExecutionResult {
-  const metadata: AskUserResultMetadata = {
-    answers: answers.map((answer) => [...answer]),
-  };
-  return {
-    output: formatAskUserAnswers(answers, questions),
-    isError: false,
-    meta: { [ASK_USER_RESULT_META_KEY]: metadata },
-  };
+): RawToolResult {
+  return createTextToolResult(formatAskUserAnswers(answers, questions), {
+    details: {
+      presentations: [{
+        kind: "ask_user",
+        answers: questions.map((question, index) => ({
+          question: question.question,
+          answers: [...(answers[index] ?? [])],
+        })),
+      }],
+    },
+  });
 }

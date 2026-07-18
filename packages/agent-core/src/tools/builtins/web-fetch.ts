@@ -6,8 +6,10 @@ import { gfm } from "@truto/turndown-plugin-gfm";
 import type { Logger } from "../../logger";
 import { silentLogger } from "../../logger";
 import { defineTool } from "../define-tool";
-import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import type { RawToolResult, ToolExecutionContext } from "../types";
 import { createToolErrorResult } from "../errors";
+import { createTextToolResult } from "../results";
+import { BoundedByteBuffer } from "../../utils/bounded-byte-buffer";
 
 // ─── Module-level logger ───
 
@@ -37,13 +39,6 @@ export const WebFetchInputSchema = z
       .describe(
         "Output format: `markdown` extracts readable content and converts it to Markdown; `text` extracts plain text; `html` returns raw HTML. Default `markdown`.",
       ),
-    maxLength: z
-      .number()
-      .int()
-      .min(1000)
-      .max(500_000)
-      .default(50_000)
-      .describe("Maximum returned characters after fetching and extraction, from 1,000 to 500,000. Default 50,000; excess returned content is truncated with a marker."),
   })
   .strict();
 
@@ -62,7 +57,7 @@ export function validateUrl(raw: string): ValidatedURL {
   try {
     url = new URL(raw);
   } catch {
-    throw new Error(`Invalid URL: ${raw}`);
+    throw new Error("Invalid URL.");
   }
 
   // Only allow http: and https: schemes
@@ -145,7 +140,6 @@ interface FetchResult {
   statusCode: number;
   contentType: string;
   content: string;
-  truncated: boolean;
   originalUrl: string;
   finalUrl: string;
 }
@@ -153,7 +147,7 @@ interface FetchResult {
 export async function runWebFetch(
   input: WebFetchInput,
   ctx: ToolExecutionContext,
-): Promise<ToolExecutionResult> {
+): Promise<RawToolResult> {
   // ── Validate URL ──
   let validated: ValidatedURL;
   try {
@@ -210,7 +204,7 @@ export async function runWebFetch(
         return createToolErrorResult({
           kind: "webfetch-invalid-url",
           code: "TOOL_WEBFETCH_INVALID_URL",
-          message: `Redirect target URL is invalid: ${redirectUrl}`,
+          message: "Redirect target URL is invalid.",
         });
       }
 
@@ -240,18 +234,18 @@ export async function runWebFetch(
     if (controller.signal.aborted && !ctx.abort.aborted) {
       _logger.warn("webfetch.timeout", {
         module: "webfetch",
-        context: { url: validated.url, timeoutMs: DEFAULT_TIMEOUT_MS },
+        context: { code: "TOOL_WEBFETCH_TIMEOUT", timeoutMs: DEFAULT_TIMEOUT_MS },
       });
       return createToolErrorResult({
         kind: "webfetch-timeout",
         code: "TOOL_WEBFETCH_TIMEOUT",
-        message: `Request to ${validated.url} timed out after ${DEFAULT_TIMEOUT_MS}ms`,
+        message: `Web fetch timed out after ${DEFAULT_TIMEOUT_MS}ms`,
       });
     }
     if (ctx.abort.aborted) {
       _logger.debug("webfetch.cancelled", {
         module: "webfetch",
-        context: { url: validated.url },
+        context: { code: "TOOL_CANCELLED" },
       });
       return createToolErrorResult({
         kind: "cancelled",
@@ -261,12 +255,12 @@ export async function runWebFetch(
     }
     _logger.error("webfetch.failed", {
       module: "webfetch",
-      error,
-      context: { url: validated.url },
+      context: { code: "TOOL_WEBFETCH_FAILED" },
     });
     return createToolErrorResult({
       kind: "execution",
-      error: error instanceof Error ? error : new Error(String(error)),
+      code: "TOOL_WEBFETCH_FAILED",
+      message: "Web fetch request failed.",
     });
   } finally {
     clearTimeout(timeoutId);
@@ -287,6 +281,7 @@ export async function runWebFetch(
 
   const contentLength = response.headers.get("content-length");
   if (contentLength && parseInt(contentLength, 10) > MAX_RESPONSE_BYTES) {
+    await response.body.cancel().catch(() => undefined);
     return createToolErrorResult({
       kind: "webfetch-size-exceeded",
       code: "TOOL_WEBFETCH_SIZE_EXCEEDED",
@@ -294,8 +289,7 @@ export async function runWebFetch(
     });
   }
 
-  const chunks: Uint8Array[] = [];
-  let totalBytes = 0;
+  const buffer = new BoundedByteBuffer(MAX_RESPONSE_BYTES);
 
   try {
     const reader = response.body.getReader();
@@ -303,22 +297,20 @@ export async function runWebFetch(
       const { done, value } = await reader.read();
       if (done) break;
 
-      totalBytes += value.length;
-      if (totalBytes > MAX_RESPONSE_BYTES) {
-        reader.cancel();
+      if (!buffer.append(value)) {
+        await reader.cancel().catch(() => undefined);
         return createToolErrorResult({
           kind: "webfetch-size-exceeded",
           code: "TOOL_WEBFETCH_SIZE_EXCEEDED",
           message: `Response body exceeded maximum size of ${MAX_RESPONSE_BYTES} bytes during streaming`,
         });
       }
-      chunks.push(value);
     }
   } catch (error) {
     if (ctx.abort.aborted) {
       _logger.debug("webfetch.stream.cancelled", {
         module: "webfetch",
-        context: { url: validated.url },
+        context: { code: "TOOL_CANCELLED" },
       });
       return createToolErrorResult({
         kind: "cancelled",
@@ -328,23 +320,17 @@ export async function runWebFetch(
     }
     _logger.error("webfetch.stream.failed", {
       module: "webfetch",
-      error,
-      context: { url: validated.url },
+      context: { code: "TOOL_WEBFETCH_STREAM_FAILED" },
     });
     return createToolErrorResult({
       kind: "execution",
-      error: error instanceof Error ? error : new Error(String(error)),
+      code: "TOOL_WEBFETCH_STREAM_FAILED",
+      message: "Web fetch response stream failed.",
     });
   }
 
   // ── Decode response body ──
-  const buffer = new Uint8Array(totalBytes);
-  let offset = 0;
-  for (const chunk of chunks) {
-    buffer.set(chunk, offset);
-    offset += chunk.length;
-  }
-  const bodyText = new TextDecoder().decode(buffer);
+  const bodyText = new TextDecoder().decode(buffer.bytes());
 
   // ── Parse content type ──
   const contentTypeHeader = response.headers.get("content-type") ?? "";
@@ -355,13 +341,10 @@ export async function runWebFetch(
     contentType.startsWith("application/json") ||
     contentType.startsWith("text/json")
   ) {
-    const truncated = bodyText.length > input.maxLength;
-    const content = truncated ? bodyText.slice(0, input.maxLength) : bodyText;
     return formatResult({
       statusCode,
       contentType: contentTypeHeader,
-      content,
-      truncated,
+      content: bodyText,
       originalUrl: validated.originalUrl,
       finalUrl,
     });
@@ -375,13 +358,10 @@ export async function runWebFetch(
     contentType.startsWith("application/javascript") ||
     contentType.startsWith("text/javascript")
   ) {
-    const truncated = bodyText.length > input.maxLength;
-    const content = truncated ? bodyText.slice(0, input.maxLength) : bodyText;
     return formatResult({
       statusCode,
       contentType: contentTypeHeader,
-      content,
-      truncated,
+      content: bodyText,
       originalUrl: validated.originalUrl,
       finalUrl,
     });
@@ -399,7 +379,7 @@ export async function runWebFetch(
     return createToolErrorResult({
       kind: "webfetch-content-type-unsupported",
       code: "TOOL_WEBFETCH_CONTENT_TYPE_UNSUPPORTED",
-      message: `Unsupported content type: ${contentTypeHeader}. URL: ${finalUrl}`,
+      message: `Unsupported content type: ${contentTypeHeader}.`,
     });
   }
 
@@ -412,14 +392,10 @@ export async function runWebFetch(
     extractedContent = bodyText;
   }
 
-  const truncated = extractedContent.length > input.maxLength;
-  const content = truncated ? extractedContent.slice(0, input.maxLength) : extractedContent;
-
   return formatResult({
     statusCode,
     contentType: contentTypeHeader,
-    content,
-    truncated,
+    content: extractedContent,
     originalUrl: validated.originalUrl,
     finalUrl,
   });
@@ -427,7 +403,7 @@ export async function runWebFetch(
 
 // ─── Output Formatting ───
 
-function formatResult(result: FetchResult): ToolExecutionResult {
+function formatResult(result: FetchResult): RawToolResult {
   const lines: string[] = [
     `<fetch-result>`,
     `<url>${result.finalUrl}</url>`,
@@ -437,17 +413,10 @@ function formatResult(result: FetchResult): ToolExecutionResult {
     result.content,
   ];
 
-  if (result.truncated) {
-    lines.push(`\n[Output truncated: content exceeded maxLength]`);
-  }
-
   lines.push(`</content>`);
   lines.push(`</fetch-result>`);
 
-  return {
-    output: lines.join("\n"),
-    isError: false,
-  };
+  return createTextToolResult(lines.join("\n"));
 }
 
 // ─── Tool Definition ───
@@ -455,9 +424,10 @@ function formatResult(result: FetchResult): ToolExecutionResult {
 export const webFetchTool = defineTool({
   name: "web_fetch",
   description:
-    "Fetch an unauthenticated HTTP(S) URL and return markdown, text, or HTML. Prefer a specialized MCP tool for authenticated, private, or task-specific resources; this tool does not use browser cookies or login state. Response headers and all redirects share a fixed 30-second deadline; reading the response body is not covered by that timer. Initial HTTP URLs are upgraded to HTTPS, up to 5 redirects are followed, and response bodies over 5MB are rejected. HTML may be extracted and converted, and returned content beyond maxLength is truncated with a marker.",
+    "Fetch an unauthenticated HTTP(S) URL and return markdown, text, or HTML. Prefer a specialized MCP tool for authenticated, private, or task-specific resources; this tool does not use browser cookies or login state. Response headers and all redirects share a fixed 30-second deadline; reading the response body is not covered by that timer. Initial HTTP URLs are upgraded to HTTPS, up to 5 redirects are followed, and response bodies over 5MB are rejected. HTML may be extracted and converted; output recovery is provided by the Tool Output Plane when needed.",
   inputSchema: WebFetchInputSchema,
   traits: { readOnly: true, destructive: false, concurrencySafe: true },
+  outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
   execute: async (input: WebFetchInput, ctx: ToolExecutionContext) => {
     return runWebFetch(input, ctx);
   },

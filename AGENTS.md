@@ -98,16 +98,17 @@ packages/agent-core/src/
 ├── agents/query/loop-hooks.ts  # 4 hook points: beforeModelBuild, beforeModelCall, afterStepEnd, afterLoopEnd
 ├── agents/query/hooks/         # auto-compact, auto-inject-reminder, title-generation, todo-continuation, memory-extraction, memory-consolidation
 ├── execution/session-execution-manager.ts # Sole live Execution admission, concurrency, abort, and terminal owner
-├── tools/define-tool.ts        # defineTool() → ToolDescriptor (name, inputSchema, traits, hooks, guards, execute)
-├── tools/registry.ts           # register/registerAll/execute, globalGuards, globalHooks
+├── tools/define-tool.ts        # defineTool() → ToolDescriptor (strict RawToolResult + explicit outputPolicy)
+├── tools/registry.ts           # admission/blocked handling and exactly-once Raw → Finalized finalization
 ├── tools/builtins/             # Base, delegation/resume, memory, Goal, and worktree tools
 ├── tools/github.ts             # Generic GitHub connector descriptors; not default agent tools
-├── tools/hooks/                # File/workspace guards and after hooks: edit recovery, redact, truncate, audit, logger
+├── tools/hooks/                # File/workspace guards and raw-result hooks such as edit recovery
 ├── tools/permission/           # Tool access policy; Bash owns finite analysis -> deny/ask/default allow
 ├── tools/concurrency/          # partitionToolCalls(): groups concurrencySafe calls into parallel batches
 ├── tools/security/             # Secret detection plus finite Bash syntax/path analysis facts
+├── tool-output/                # Finalizer, streaming redaction/capture, bounded artifacts, read/search authorization
 ├── tools/riipgrep/             # Ripgrep wrapper for search tools
-├── core/                       # register-tools.ts: wires base + memory + Goal + GitHub tools and global after-hooks
+├── core/                       # register-tools.ts: wires tools and finalized-result audit/logger hooks
 ├── store/                      # Zustand vanilla store: createSessionStore, StreamEvent reducer, ModelMessage projection, persist/load
 ├── background/                 # BackgroundTaskManager (fire-and-forget, dedup) + tasks: title-generation, memory-extraction, memory-consolidation
 ├── commands/                   # CommandRegistry + /compact command
@@ -191,9 +192,11 @@ Delegation: delegate creates a titled child; resume_session restarts a persisted
 ```
 partitionToolCalls → global permissions
   → tool permissions (workspace, protected/sensitive path, finite Bash policy)
-  → before hooks → execute → after hooks (edit-error-recovery)
-  → global after (redact → truncate → audit → logger)
+  → before hooks → execute → raw after hooks (edit-error-recovery)
+  → Registry → ToolOutputFinalizer → finalized audit → logger
 ```
+
+Every descriptor declares an explicit `outputPolicy`. Registry is the sole Raw-to-Finalized conversion boundary: blocked requests produce no settled result, while settled and synthetic results are finalized exactly once. `ToolOutputFinalizer` owns redaction of output/details and streaming capture redacts before artifact persistence; model, Session/SSE/UI, audit, and logger consume only finalized data. Large one-shot output is recovered through authorized, bounded `output_read` and `output_search` pages rather than a full-output escape hatch.
 
 **Config** (`~/.archcode/config.json`): server-wide `provider.<id>.{npm, name, options, models}` + strict eight-agent `agents.<agentName>.{model, variant, options}` + optional `memory`, `integrations.github`, and `mcp.servers.<id>.{url, headers, timeout}`. Strict Zod. Provider values are literal; MCP URL/headers and GitHub token resolution retain their environment-variable behavior. Project directories are never searched for configuration.
 
@@ -350,13 +353,14 @@ beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-in
 | Interaction | ask_user✅❌not-concurrent, todo_write❌, project_todo_update❌ | ask_user serializes (interactive); `project_todo_update` derives its Todo from the current root Shaper Session and requires `expectedRevision` |
 | Web | web_fetch✅ | — |
 | LSP | lsp_diagnostics✅, lsp_goto_definition✅, lsp_find_references✅, lsp_symbols✅ | Guard: workspace |
-| Delegation / Skills | delegate❌, resume_session❌, background_output✅, wait_for_reminder✅, view_tool_output✅, cancel_session❌, skill_list✅, skill_read✅ | `delegate` only creates titled children; `resume_session` preserves persisted identity. Both are available only to delegation-capable agents. |
+| Delegation / Skills | delegate❌, resume_session❌, background_output✅, wait_for_reminder✅, cancel_session❌, skill_list✅, skill_read✅ | `delegate` only creates titled children; `resume_session` preserves persisted identity. Both are available only to delegation-capable agents. |
+| Tool output recovery | output_read✅, output_search✅ | All agents may retrieve only authorized, bounded artifact pages or search results; `view_tool_output` is removed. |
 | Memory | memory_read✅, memory_write❌ | memory_write rejects secrets |
 | Goal / Automation creation | goal_create❌, goal_manage❌, automation_create❌ | After explicit user confirmation, Engineer uses `goal_create` to atomically commit and activate a Goal or `automation_create` to commit an Automation. Goal Lead manages an already-started Goal and Reviewer finalizes it through `goal_manage`; model-facing create/start actions are not part of `goal_manage`. |
 
 (✅ = readOnly, ❌ = not readOnly, ✅destructive = only destructive tool)
 
-**Global permissions/hooks**: standard permissions run before tool execution. Global after-hooks run **redact → truncate → audit → logger**.
+**Output finalization/hooks**: standard permissions run before execution. Tool-specific after hooks still operate on raw results; Registry then finalizes once through the Tool Output Plane. Redaction is owned by the Finalizer/capture boundary, and global finalized-result hooks are **audit → logger**.
 
 **Core API**: `defineTool()` → `ToolDescriptor`. `ToolTraits: { readOnly, destructive, concurrencySafe }`. `partitionToolCalls()` groups concurrent-safe calls into parallel batches. Guards return `{ outcome: "allow" | "deny" | "ask" }`.
 

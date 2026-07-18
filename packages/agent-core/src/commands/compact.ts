@@ -1,6 +1,5 @@
 import { compact, commitCompact, type CircuitBreaker } from "../compact";
 import { silentLogger, type Logger } from "../logger";
-import { TOOL_OUTPUT_DIR } from "../tools/persist-output";
 import type { CommandDescriptor } from "./types";
 
 export interface CompactCommandOptions {
@@ -31,9 +30,7 @@ export function createCompactCommand(options: CompactCommandOptions = {}): Comma
         const result = await compact({
           messages: state.messages,
           binding: ctx.binding,
-          sessionId: state.sessionId,
           logger: activeLogger,
-          toolOutputDir: TOOL_OUTPUT_DIR,
         }, ctx.abort);
 
         if (result === null) {

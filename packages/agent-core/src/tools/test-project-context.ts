@@ -4,7 +4,7 @@ import type { StoreApi } from "zustand";
 
 import { GoalStateManager } from "../goals/state";
 import { GoalLifecycleService } from "../goals/lifecycle-service";
-import { ProjectHitlQueue } from "../hitl";
+import { HitlBoundaryCodec, ProjectHitlQueue } from "../hitl";
 import { MemoryFileManager } from "../memory/file-manager";
 import { silentLogger } from "../logger";
 import { ProjectTodoService } from "../todos";
@@ -13,6 +13,13 @@ import type { ProjectContext } from "../projects/types";
 import { SessionStoreManager } from "../store/session-store-manager";
 import type { SessionStoreState } from "../store/types";
 import { ProjectApprovalManager } from "./permission";
+import { SecretRedactionPolicy } from "../security";
+
+const TEST_HITL_CODEC = new HitlBoundaryCodec(new SecretRedactionPolicy([]));
+
+export function createTestHitlCodec(): HitlBoundaryCodec {
+  return new HitlBoundaryCodec(new SecretRedactionPolicy([]));
+}
 
 export function createTestProjectContext(
   workspaceRoot: string,
@@ -25,7 +32,7 @@ export function createTestProjectContext(
     addedAt: new Date().toISOString(),
   };
   const goalState = new GoalStateManager(workspaceRoot);
-  const hitl = new ProjectHitlQueue({ workspaceRoot });
+  const hitl = new ProjectHitlQueue({ workspaceRoot, codec: TEST_HITL_CODEC });
   const todos = createTestProjectTodoService(workspaceRoot, project.slug);
   return {
     project,
@@ -47,6 +54,7 @@ export function createTestProjectContextResolverOptions(
   sessionStoreManager: SessionStoreManager,
 ): ProjectContextResolverOptions {
   return {
+    hitlCodec: TEST_HITL_CODEC,
     projectInfoFactory: (workspaceRoot) => ({
       slug: "test-project",
       name: "Test Project",

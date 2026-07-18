@@ -464,7 +464,7 @@ function config(): Record<string, unknown> {
       local: {
         npm: "@ai-sdk/openai-compatible",
         name: "Local",
-        options: { baseURL: "http://localhost:8090/v1", apiKey: "test" },
+        options: { baseURL: "http://localhost:8090/v1", apiKey: "test-secret" },
         models: {
           test: {
             name: "Test",

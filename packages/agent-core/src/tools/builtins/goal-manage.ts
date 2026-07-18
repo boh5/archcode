@@ -7,7 +7,7 @@ import {
 } from "@archcode/protocol";
 
 import { defineTool } from "../define-tool";
-import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../types";
+import type { AnyToolDescriptor, ToolExecutionContext } from "../types";
 import { GoalCancellationCleanupError } from "../../goals/cancellation";
 import { GoalUuidSchema } from "../../goals/state";
 import { GoalReviewReceiptSchema, GoalReviewSummarySchema } from "../../goals/review-schema";
@@ -74,7 +74,8 @@ export const goalManageTool: AnyToolDescriptor = defineTool({
   description: "Manage a Goal lifecycle: begin_review, finalize_review, retry, or cancel.",
   inputSchema: GoalManageInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
-  execute: async (input: GoalManageInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
+  outputPolicy: { kind: "inline", previewDirection: "head" },
+  execute: async (input: GoalManageInput, ctx: ToolExecutionContext) => {
     try {
       const authorization = assertGoalManageActionAuthorized(
         input.action,
@@ -136,25 +137,20 @@ export const goalManageTool: AnyToolDescriptor = defineTool({
             const result = goalToolErrorResult(error);
             return {
               ...result,
-              meta: {
-                ...result.meta,
+              sidecar: {
                 executionControl: {
                   action: "stop_session_family",
-                  reason: "goal_cancelled_cleanup_incomplete",
+                  reason: "goal_cancelled",
                 },
               },
             };
           }
-          return {
-            output: formatGoalToolResult(cancelled),
-            isError: false,
-            meta: {
+          return formatGoalToolResult(cancelled, {
               executionControl: {
                 action: "stop_session_family",
                 reason: "goal_cancelled",
               },
-            },
-          };
+          });
         }
       }
     } catch (error) {
