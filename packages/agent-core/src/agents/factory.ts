@@ -1,10 +1,7 @@
 import type { BackgroundTaskManager } from "../background/manager";
 import { BackgroundTaskManager as DefaultBackgroundTaskManager } from "../background/manager";
-import type { ArchCodeConfig } from "../config/schema";
+import type { MemoryExtractionConfig } from "../config/schema";
 import type { ProjectContextResolver } from "../projects/context-resolver";
-import type { ProviderRegistry } from "../provider/index";
-import type { ModelInfo } from "../provider/model";
-import type { SessionModelInfo } from "@archcode/protocol";
 import type { SessionStoreManager } from "../store/session-store-manager";
 import type { SessionStoreState } from "../store/types";
 import type { Logger } from "../logger";
@@ -13,28 +10,23 @@ import { assertSkillName } from "../skills/schema";
 import type { ToolRegistry } from "../tools/index";
 import { sanitizeMcpServerNameForRegistry } from "../mcp/naming";
 import { ConfiguredAgent } from "./configured-agent";
-import {
-  NoModelsConfiguredError,
-  SkillNotAllowedError,
-} from "./errors";
+import { SkillNotAllowedError } from "./errors";
 import type { StoreApi } from "zustand";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
 import type { AgentDefinition, AgentName } from "./factory-types";
 import { DELEGATION_CORE_TOOLS, MAX_SUB_AGENT_DEPTH } from "./constants";
 import type { Agent } from "./types";
-import { resolveAgentModel } from "./model-resolver";
 import { detectVersionControl, type VersionControlDetector } from "../version-control/detector";
 
 export type { ChildExecutionHandle, ChildExecutionRequest } from "./factory-types";
 
 export interface AgentFactoryConfig {
   readonly definitions: readonly AgentDefinition[];
-  readonly providerRegistry: ProviderRegistry;
   readonly toolRegistry: ToolRegistry;
   readonly skillService: SkillService;
   readonly storeManager: SessionStoreManager;
   readonly workspaceRoot: string;
-  readonly config?: ArchCodeConfig;
+  readonly memoryConfig?: MemoryExtractionConfig;
   readonly backgroundTaskManager?: BackgroundTaskManager;
   readonly projectContextResolver: ProjectContextResolver;
   readonly versionControlDetector?: VersionControlDetector;
@@ -174,20 +166,9 @@ function createConfiguredAgent(
   options: CreateAgentOptions,
 ): Agent {
   const store = prepareStore(config, definition, options);
-  if (config.providerRegistry.modelIds.length === 0) {
-    throw new NoModelsConfiguredError();
-  }
-
-  const resolvedConfig = config.config ?? ({ provider: {} } as ArchCodeConfig);
-  const { modelInfo, options: modelOptions } = resolveAgentModel(definition.name, resolvedConfig, config.providerRegistry);
-
-  store.setState({ modelInfo: toSessionModelInfo(modelInfo) });
 
   return new ConfiguredAgent({
     definition,
-    providerRegistry: config.providerRegistry,
-    modelInfo,
-    modelOptions,
     toolRegistry: config.toolRegistry,
     skillService: config.skillService,
     storeManager: config.storeManager,
@@ -196,7 +177,7 @@ function createConfiguredAgent(
     store,
     depth: options.depth,
     backgroundTaskManager: config.backgroundTaskManager,
-    memoryConfig: resolvedConfig.memory,
+    memoryConfig: config.memoryConfig,
     projectContextResolver: config.projectContextResolver,
     resolveVersionControl: config.versionControlDetector ?? detectVersionControl,
     logger: config.logger,
@@ -245,13 +226,4 @@ function prepareStore(config: AgentFactoryConfig, definition: AgentDefinition, o
   }
 
   return store;
-}
-
-function toSessionModelInfo(modelInfo: ModelInfo): SessionModelInfo {
-  return {
-    displayName: modelInfo.displayName,
-    modelId: modelInfo.modelId,
-    providerId: modelInfo.providerId,
-    qualifiedId: modelInfo.qualifiedId,
-  };
 }

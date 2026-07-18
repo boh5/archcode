@@ -71,6 +71,31 @@ mock.module("react/jsx-dev-runtime", () => ({
   jsxs: jsxDEV,
 }));
 
+const Icon = (props: Record<string, unknown>) => jsxDEV("svg", props);
+mock.module("lucide-react", () => ({
+  Brain: Icon,
+  Check: Icon,
+  ChevronDown: Icon,
+  ChevronRight: Icon,
+  CircleQuestionMark: Icon,
+  Clock: Icon,
+  FileText: Icon,
+  GitBranch: Icon,
+  Globe: Icon,
+  Handshake: Icon,
+  LoaderCircle: Icon,
+  MessageSquare: Icon,
+  Pencil: Icon,
+  Plug: Icon,
+  Search: Icon,
+  Target: Icon,
+  Terminal: Icon,
+  TriangleAlert: Icon,
+  Wrench: Icon,
+  X: Icon,
+  Zap: Icon,
+}));
+
 const { GroupedToolCard } = await import("./GroupedToolCard");
 
 function makeTool(id: string, filePath: string): CompletedToolPart {

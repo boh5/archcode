@@ -27,8 +27,7 @@ export function createTitleGenerationTask(
         const title = await generateTitle({
           kind: "session",
           text,
-          modelInfo: ctx.modelInfo,
-          modelOptions: ctx.modelOptions,
+          binding: ctx.binding,
           retryScheduler: ctx.retryScheduler,
         });
         if (title !== null) store.getState().setTitle(title);

@@ -66,6 +66,7 @@ function createStoredSession(input: {
 
 function createTestRuntime(projectRegistry: ProjectRegistry) {
   const sessions = new Map<string, StoredSessionBody>();
+  const modelSelectionRevisions = new Map<string, number>();
   const calls = {
     createSession: 0,
     getSessionFile: 0,
@@ -79,7 +80,6 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
     mcpManager: undefined,
     toolRegistry: undefined,
     skillService: undefined,
-    providerRegistry: undefined,
     warnings: [],
     contextResolver: undefined,
     subscribeSessionRuntimeChanges: () => () => undefined,
@@ -109,6 +109,23 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
           updatedAt: session.updatedAt,
         }))
         .sort((a, b) => b.createdAt - a.createdAt);
+    },
+    getSessionModelState: async (workspaceRoot: string, sessionId: string) => {
+      const key = `${workspaceRoot}\0${sessionId}`;
+      if (!sessions.has(key)) throw new MissingSessionFileError();
+      const revision = modelSelectionRevisions.get(key) ?? 0;
+      return testModelState(revision);
+    },
+    patchSessionModelSelection: async (input: {
+      workspaceRoot: string;
+      sessionId: string;
+      expectedRevision: number;
+    }) => {
+      const key = `${input.workspaceRoot}\0${input.sessionId}`;
+      if (!sessions.has(key)) throw new MissingSessionFileError();
+      const revision = (modelSelectionRevisions.get(key) ?? input.expectedRevision) + 1;
+      modelSelectionRevisions.set(key, revision);
+      return testModelState(revision);
     },
     listSessionTree: async (workspaceRoot: string, rootSessionId: string) => {
       const key = `${workspaceRoot}\0${rootSessionId}`;
@@ -192,6 +209,28 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
   } as unknown as AgentRuntime;
 
   return { runtime, sessions, calls };
+}
+
+function testModelState(revision: number) {
+  const requested = {
+    mode: "agent_default" as const,
+    selection: { model: "local:test", variant: "fast" },
+  };
+  return {
+    modelSelection: { revision },
+    nextModelSelection: {
+      requested,
+      resolved: {
+        selection: requested.selection,
+        providerId: "local",
+        modelId: "test",
+        providerDisplayName: "Local",
+        modelDisplayName: "Test Model",
+        resolution: "agent_default" as const,
+        modelRuntimeRevision: "runtime-1",
+      },
+    },
+  };
 }
 
 async function makeWorkspace(name: string): Promise<string> {
@@ -407,6 +446,37 @@ describe("sessions routes", () => {
 
     expect(res.status).toBe(200);
     expect(calls.getSessionFile).toBe(1);
+  });
+
+  test("GET/PATCH model selection returns the complete next model before first send", async () => {
+    const { app, project } = await createTestApp("session-model-selection");
+    const created = await app.request(`/api/projects/${project.slug}/sessions`, { method: "POST" });
+    const session = (await created.json()) as SessionFileBody;
+    const path = `/api/projects/${project.slug}/sessions/${session.sessionId}/model-selection`;
+
+    const initial = await app.request(path);
+    expect(initial.status).toBe(200);
+    expect(await initial.json()).toMatchObject({
+      modelSelection: { revision: 0 },
+      nextModelSelection: {
+        requested: { mode: "agent_default", selection: { model: "local:test", variant: "fast" } },
+        resolved: { modelDisplayName: "Test Model", resolution: "agent_default" },
+      },
+    });
+
+    const patched = await app.request(path, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        expectedRevision: 0,
+        requestedModelSelection: {
+          mode: "session_override",
+          selection: { model: "local:test", variant: "fast" },
+        },
+      }),
+    });
+    expect(patched.status).toBe(200);
+    expect(await patched.json()).toMatchObject({ modelSelection: { revision: 1 } });
   });
 
   test("DELETE /api/projects/:slug/sessions/:sessionId returns ok", async () => {

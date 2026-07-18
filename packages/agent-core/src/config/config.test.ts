@@ -5,7 +5,7 @@ import {
   getProviderConfig,
   getModelConfig,
   createProviderInstance,
-  createLanguageModel,
+  findSecretBearingProviderOptionPaths,
   UnsupportedProviderPackageError,
   UnknownProviderError,
   UnknownModelError,
@@ -111,14 +111,17 @@ describe("parseConfig", () => {
     expect(() => parseConfig(config)).toThrow(ConfigValidationError);
   });
 
-  test("rejects invalid baseURL", () => {
+  test("preserves adapter-specific provider options", () => {
     const config = {
       ...VALID_CONFIG_WITH_AGENTS,
       provider: {
         xxx: {
           npm: "@ai-sdk/openai-compatible",
           name: "xxx",
-          options: { baseURL: "not-a-url" },
+          options: {
+            endpointName: "not-a-url",
+            nested: { retry: { enabled: true } },
+          },
           models: {
             "gpt-5.2": {
               name: "GPT-5.2",
@@ -129,6 +132,26 @@ describe("parseConfig", () => {
         },
       },
     };
+    const parsed = parseConfig(config);
+    expect(parsed.provider.xxx.options).toEqual({
+      endpointName: "not-a-url",
+      nested: { retry: { enabled: true } },
+    });
+  });
+
+  test("rejects non-JSON provider options", () => {
+    const config = structuredClone(VALID_CONFIG_WITH_AGENTS);
+    (config.provider.xxx.options as Record<string, unknown>).custom = () => undefined;
+
+    expect(() => parseConfig(config)).toThrow(ConfigValidationError);
+  });
+
+  test("rejects non-JSON model-call providerOptions", () => {
+    const config = structuredClone(VALID_CONFIG_WITH_AGENTS);
+    (config.provider.xxx.models["gpt-5.2"] as Record<string, unknown>).options = {
+      providerOptions: { custom: () => undefined },
+    };
+
     expect(() => parseConfig(config)).toThrow(ConfigValidationError);
   });
 
@@ -740,25 +763,93 @@ describe("getModelConfig", () => {
 describe("createProviderInstance", () => {
   test("creates an instance for a valid provider", () => {
     const provider = parseConfig(VALID_CONFIG_WITH_AGENTS).provider["xxx"];
-    const instance = createProviderInstance(provider);
+    const instance = createProviderInstance("xxx", provider);
     expect(instance).toBeDefined();
-    expect(typeof instance.chatModel).toBe("function");
+    expect(typeof instance.languageModel).toBe("function");
   });
 
   test("throws UnsupportedProviderPackageError for unknown npm", () => {
     const provider = parseConfig(VALID_CONFIG_WITH_AGENTS).provider["xxx"];
     const modified = { ...provider, npm: "@ai-sdk/unknown" };
-    expect(() => createProviderInstance(modified)).toThrow(
+    expect(() => createProviderInstance("xxx", modified)).toThrow(
       UnsupportedProviderPackageError,
     );
   });
 });
 
-describe("createLanguageModel", () => {
-  test("creates a language model from config + ids", () => {
-    const providers = parseConfig(VALID_CONFIG_WITH_AGENTS).provider;
-    const model = createLanguageModel(providers, "xxx", "gpt-5.2");
-    expect(model).toBeDefined();
-    expect(typeof model.doGenerate).toBe("function");
+describe("provider call-option secret protection", () => {
+  test("finds secret-bearing nested paths", () => {
+    expect(
+      findSecretBearingProviderOptionPaths({
+        custom: { authorization: "Bearer should-not-be-here" },
+        retries: [{ api_key: "also-not-here" }],
+      }),
+    ).toEqual([
+      "providerOptions.custom.authorization",
+      "providerOptions.retries[0].api_key",
+    ]);
+  });
+
+  test("detects credential-bearing compound keys without rejecting endpoint metadata", () => {
+    expect(
+      findSecretBearingProviderOptionPaths({
+        secretValue: "one",
+        credentialFile: "two",
+        credentialsJson: "three",
+        apiKeyValue: "four",
+        privateKeyPem: "five",
+        tokenValue: "six",
+        accessTokenValue: "seven",
+        tokenData: "eight",
+        tokensJson: "nine",
+        accessKeyId: "ten",
+        secretAccessKey: "eleven",
+        authorizationHeader: "twelve",
+        credentialProvider: "thirteen",
+        APIKeyValue: "fourteen",
+        APIKeyHeader: "fifteen",
+        APITokenValue: "sixteen",
+        tokenEndpoint: "https://issuer.example/token",
+        passwordResetUrl: "https://app.example/reset",
+      }),
+    ).toEqual([
+      "providerOptions.secretValue",
+      "providerOptions.credentialFile",
+      "providerOptions.credentialsJson",
+      "providerOptions.apiKeyValue",
+      "providerOptions.privateKeyPem",
+      "providerOptions.tokenValue",
+      "providerOptions.accessTokenValue",
+      "providerOptions.tokenData",
+      "providerOptions.tokensJson",
+      "providerOptions.accessKeyId",
+      "providerOptions.secretAccessKey",
+      "providerOptions.authorizationHeader",
+      "providerOptions.credentialProvider",
+      "providerOptions.APIKeyValue",
+      "providerOptions.APIKeyHeader",
+      "providerOptions.APITokenValue",
+    ]);
+  });
+
+  test("rejects secrets in model-call providerOptions", () => {
+    const config = {
+      ...structuredClone(VALID_CONFIG_WITH_AGENTS),
+      provider: {
+        xxx: {
+          ...structuredClone(VALID_CONFIG_WITH_AGENTS.provider.xxx),
+          models: {
+            "gpt-5.2": {
+              ...structuredClone(VALID_CONFIG_WITH_AGENTS.provider.xxx.models["gpt-5.2"]),
+              options: {
+                providerOptions: { nested: { token: "secret-sentinel" } },
+              },
+            },
+          },
+        },
+      },
+    };
+
+    expect(() => parseConfig(config)).toThrow(ConfigValidationError);
   });
 });

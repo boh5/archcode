@@ -34,11 +34,27 @@ function makeInput<T>(overrides: Partial<LlmObjectInput<T>> & { schema: LlmObjec
     model: dummyModel,
     prompt: "test prompt",
     retryScheduler: createFakeRetryScheduler(),
+    redactSensitiveText: (text) => text,
     ...overrides,
   };
 }
 
 describe("runLlmObject", () => {
+  test("redacts configured Provider values from structured keys and values", async () => {
+    const schema = z.record(z.string(), z.string());
+    mockGenerateText.mockResolvedValueOnce({
+      text: "",
+      toolCalls: [{ toolName: "result", input: { "configured-secret": "configured-secret" } }],
+    } as never);
+
+    const result = await runLlmObject(makeInput({
+      schema,
+      redactSensitiveText: (text) => text.replaceAll("configured-secret", "[redacted]"),
+    }));
+
+    expect(result).toEqual({ "[redacted]": "[redacted]" });
+  });
+
   test("returns parsed object and uses forced tool call", async () => {
     const schema = z.strictObject({ name: z.string() });
     const result = await runLlmObject(makeInput({ schema, system: "You are a helper" }));

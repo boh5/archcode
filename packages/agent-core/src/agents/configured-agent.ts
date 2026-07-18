@@ -5,13 +5,12 @@ import type { StoreApi } from "zustand";
 import type { BackgroundTaskManager } from "../background/manager";
 import { BackgroundTaskManager as DefaultBackgroundTaskManager } from "../background/manager";
 import { CommandRegistry, createCompactCommand, createSkillCommand } from "../commands/index";
-import type { MemoryExtractionConfig, ModelCallOptions } from "../config/index";
+import type { MemoryExtractionConfig } from "../config/index";
+import type { ExecutionModelBinding } from "../models";
 import type { MemoryRoots } from "../memory";
 import type { ProjectContextResolver } from "../projects/context-resolver";
 import type { ProjectContext } from "../projects/types";
 import { createGoalBudgetEnforcementHooks } from "../goals/budget-enforcement";
-import type { ProviderRegistry } from "../provider/index";
-import type { ModelInfo } from "../provider/model";
 import { SkillNotFoundError, type SkillService } from "../skills";
 import type { ResolvedSkill } from "../skills/types";
 import { buildSystemPrompt, loadAgentsMd } from "../prompt/index";
@@ -54,9 +53,6 @@ export class IneligibleSessionWorktreeToolError extends Error {
 
 export interface ConfiguredAgentOptions {
   readonly definition: AgentDefinition;
-  readonly providerRegistry: ProviderRegistry;
-  readonly modelInfo: ModelInfo;
-  readonly modelOptions?: ModelCallOptions;
   readonly toolRegistry: ToolRegistry;
   readonly skillService: SkillService;
   readonly storeManager: SessionStoreManager;
@@ -99,8 +95,6 @@ export class ConfiguredAgent implements Agent {
   private readonly toolRegistry: ToolRegistry;
   private readonly skillService: SkillService;
   private readonly storeManager: SessionStoreManager;
-  private readonly modelInfo: ModelInfo;
-  private readonly modelOptions: ModelCallOptions | undefined;
   private readonly confirmPermission: ToolConfirmationCallback | undefined;
   private readonly askUserDefault: AskUserCallback | undefined;
   private readonly projectRoot: string;
@@ -134,8 +128,6 @@ export class ConfiguredAgent implements Agent {
     this.toolRegistry = options.toolRegistry;
     this.skillService = options.skillService;
     this.storeManager = options.storeManager;
-    this.modelInfo = options.modelInfo;
-    this.modelOptions = options.modelOptions;
     this.confirmPermission = options.confirmPermission;
     this.askUserDefault = options.askUser;
     if (!options.store) throw new Error("ConfiguredAgent requires an explicit store");
@@ -166,11 +158,10 @@ export class ConfiguredAgent implements Agent {
     this.commandRegistry = new CommandRegistry();
     this.commandRegistry.register(
       createCompactCommand(
-        this.store,
-        this.modelInfo,
-        this.hybridCompressionHook.circuitBreaker,
-        this.modelOptions,
-        this.logger.child({ module: "compact.command" }),
+        {
+          circuitBreaker: this.hybridCompressionHook.circuitBreaker,
+          logger: this.logger.child({ module: "compact.command" }),
+        },
       ),
     );
     this.commandRegistry.register(
@@ -189,6 +180,7 @@ export class ConfiguredAgent implements Agent {
 
   async executeCommand(
     command: AgentCommand,
+    binding: ExecutionModelBinding,
     options: Pick<AgentRunOptions, "abort"> = {},
   ): Promise<AgentCommandResult> {
     if (this.disposed) throw new Error("Agent has been disposed");
@@ -206,9 +198,8 @@ export class ConfiguredAgent implements Agent {
 
     const result = await descriptor.handler({
       store: this.store,
-      modelInfo: this.modelInfo,
+      binding,
       logger: this.logger,
-      modelOptions: this.modelOptions,
       abort: options.abort,
       cwd: this.cwd,
       agentName: this.definition.name,
@@ -223,7 +214,7 @@ export class ConfiguredAgent implements Agent {
       : { kind: "message", content: result.continueAsMessage };
   }
 
-  async run(options: AgentRunOptions = {}): Promise<AgentResult> {
+  async run(binding: ExecutionModelBinding, options: AgentRunOptions = {}): Promise<AgentResult> {
     if (this.disposed) {
       throw new Error("Agent has been disposed");
     }
@@ -281,9 +272,8 @@ export class ConfiguredAgent implements Agent {
       while (true) {
         const result = await runQueryLoop(
           {
-            modelInfo: this.modelInfo,
+            binding,
             logger: this.logger,
-            modelOptions: this.modelOptions,
             toolRegistry: this.toolRegistry,
             allowedTools,
             agentSkills,

@@ -1,8 +1,8 @@
-import type { ConfigSecretMutation, McpServerStatus } from "@archcode/protocol";
+import type { ConfigSecretMutation, McpServerStatus, ProviderAdapterCatalog, ProviderAdapterDescriptor, ProviderAdapterOptionDescriptor } from "@archcode/protocol";
 import { ChevronRight, Plus, Trash2 } from "lucide-react";
 import type { ModelCallOptions, ServerConfig, ServerMcpConfig, ServerModelConfig } from "../../api/config";
 import { Field, JsonObjectField, NumberField, RenameInput, SecretField, SecretRecordEditor, TextInput } from "./settings-fields";
-import { AGENT_NAMES, BUILT_IN_MCP_NAMES, defaultMemoryConfig, errorAtOrBelow, OPENAI_COMPATIBLE_PACKAGE, type FieldErrors, type SettingsSection, withDraft } from "./settings-helpers";
+import { AGENT_NAMES, BUILT_IN_MCP_NAMES, defaultMemoryConfig, errorAtOrBelow, type FieldErrors, type SettingsSection, withDraft } from "./settings-helpers";
 
 type JsonValidationChange = (path: string, error?: string) => void;
 
@@ -40,9 +40,70 @@ function hasPreservedSecretRecord(record?: Record<string, ConfigSecretMutation>)
 }
 
 function hasPreservedProviderSecrets(provider: ServerConfig["provider"][string]): boolean {
-  return provider.options.apiKey?.action === "preserve"
-    || hasPreservedSecretRecord(provider.options.headers)
-    || hasPreservedSecretRecord(provider.options.queryParams);
+  const containsPreservedSecret = (value: unknown): boolean => {
+    if (Array.isArray(value)) return value.some(containsPreservedSecret);
+    if (!value || typeof value !== "object") return false;
+    if ((value as { action?: unknown }).action === "preserve") return true;
+    return Object.values(value).some(containsPreservedSecret);
+  };
+  return containsPreservedSecret(provider.options);
+}
+
+function optionRecord(options: ServerConfig["provider"][string]["options"]): Record<string, unknown> {
+  return options as unknown as Record<string, unknown>;
+}
+
+function getOption(options: Record<string, unknown>, path: string): unknown {
+  return path.split(".").reduce<unknown>((value, segment) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    return (value as Record<string, unknown>)[segment];
+  }, options);
+}
+
+function setOption(options: Record<string, unknown>, path: string, value: unknown): void {
+  const segments = path.split(".");
+  const final = segments.pop();
+  if (!final) return;
+  let current = options;
+  const ancestors: Array<[Record<string, unknown>, string]> = [];
+  for (const segment of segments) {
+    const child = current[segment];
+    if (!child || typeof child !== "object" || Array.isArray(child)) {
+      if (value === undefined) return;
+      current[segment] = {};
+    }
+    ancestors.push([current, segment]);
+    current = current[segment] as Record<string, unknown>;
+  }
+  if (value !== undefined) {
+    current[final] = value;
+    return;
+  }
+  delete current[final];
+  for (const [parent, segment] of ancestors.reverse()) {
+    const child = parent[segment];
+    if (!child || typeof child !== "object" || Array.isArray(child) || Object.keys(child).length > 0) break;
+    delete parent[segment];
+  }
+}
+
+function advancedOptions(options: Record<string, unknown>, adapter?: ProviderAdapterDescriptor): Record<string, unknown> | undefined {
+  const advanced = structuredClone(options);
+  for (const field of adapter?.fields ?? []) setOption(advanced, field.path, undefined);
+  return Object.keys(advanced).length > 0 ? advanced : undefined;
+}
+
+function mergeAdvancedOptions(
+  options: Record<string, unknown>,
+  adapter: ProviderAdapterDescriptor | undefined,
+  advanced: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const merged = structuredClone(advanced ?? {});
+  for (const field of adapter?.fields ?? []) {
+    const value = getOption(options, field.path);
+    if (value !== undefined) setOption(merged, field.path, value);
+  }
+  return merged;
 }
 
 const MCP_STATUS_META: Record<McpServerStatus["state"] | "unreported", { label: string; dotClass: string; badgeClass: string }> = {
@@ -81,15 +142,19 @@ export function SettingsNavigation({ activeSection, onSelect }: { activeSection:
   </nav>;
 }
 
-export function SettingsModelsPanel({ config, onChange, errors = {}, onJsonValidationChange, jsonResetVersion = 0 }: { config: ServerConfig; onChange: (config: ServerConfig) => void; errors?: FieldErrors; onJsonValidationChange?: JsonValidationChange; jsonResetVersion?: number }) {
+export function SettingsModelsPanel({ config, adapterCatalog, onChange, errors = {}, onJsonValidationChange, jsonResetVersion = 0 }: { config: ServerConfig; adapterCatalog: ProviderAdapterCatalog; onChange: (config: ServerConfig) => void; errors?: FieldErrors; onJsonValidationChange?: JsonValidationChange; jsonResetVersion?: number }) {
   const addProvider = () => onChange(withDraft(config, (draft) => {
+    const adapter = adapterCatalog[0];
+    if (!adapter) return;
     const id = nextGeneratedId("provider", draft.provider);
-    draft.provider[id] = { npm: OPENAI_COMPATIBLE_PACKAGE, name: "New provider", options: { baseURL: "https://api.example.com/v1" }, models: {} };
+    draft.provider[id] = { npm: adapter.npmPackage, name: "New provider", options: {}, models: {} };
   }));
   return <section data-settings-section="models" className="space-y-5 pb-1">
     <PanelHeader title="Models" description="Providers and their model profiles are configured together." />
     {Object.entries(config.provider).map(([providerId, provider]) => {
       const providerIdLocked = hasPreservedProviderSecrets(provider);
+      const adapter = adapterCatalog.find((entry) => entry.npmPackage === provider.npm);
+      const options = optionRecord(provider.options);
       return <article key={providerId} className="overflow-hidden rounded-md border border-border-default bg-bg-surface">
       <div className="flex items-center justify-between gap-3 border-b border-border-subtle bg-bg-elevated px-4 py-3">
         <div className="min-w-0"><p className="text-[9.5px] font-semibold uppercase tracking-[0.14em] text-text-muted">Provider</p><h2 className="truncate font-mono text-[13px] font-semibold text-text-primary">{providerId}</h2></div>
@@ -108,12 +173,10 @@ export function SettingsModelsPanel({ config, onChange, errors = {}, onJsonValid
           return true;
         }} />{providerIdLocked && <span className="text-[10.5px] font-normal text-text-muted">Replace or clear configured secrets before renaming.</span>}</Field>
         <Field label="Display name"><TextInput value={provider.name} onChange={(next) => onChange(withDraft(config, (draft) => { draft.provider[providerId].name = next; }))} /></Field>
-        <Field label="Base URL" error={errors[`provider.${providerId}.options.baseURL`]}><TextInput value={provider.options.baseURL} onChange={(next) => onChange(withDraft(config, (draft) => { draft.provider[providerId].options.baseURL = next; }))} /></Field>
-        <Field label="Provider package"><TextInput value={provider.npm} readOnly onChange={() => {}} /></Field>
-        <SecretField label="API key" value={provider.options.apiKey} onChange={(next) => onChange(withDraft(config, (draft) => { draft.provider[providerId].options.apiKey = next; }))} error={errors[`provider.${providerId}.options.apiKey`]} />
-        <SecretRecordEditor label="Query params" value={provider.options.queryParams} onChange={(next) => onChange(withDraft(config, (draft) => { draft.provider[providerId].options.queryParams = next; }))} errors={errors} path={`provider.${providerId}.options.queryParams`} />
+        <Field label="Provider package" error={errors[`provider.${providerId}.npm`]}><select className={selectClass} value={provider.npm} onChange={(event) => onChange(withDraft(config, (draft) => { draft.provider[providerId].npm = event.target.value; }))}>{!adapter && <option value={provider.npm}>{provider.npm} (unsupported)</option>}{adapterCatalog.map((entry) => <option key={entry.npmPackage} value={entry.npmPackage}>{entry.displayName} — {entry.npmPackage}</option>)}</select></Field>
       </div>
-      <SecretRecordEditor label="Headers" value={provider.options.headers} onChange={(next) => onChange(withDraft(config, (draft) => { draft.provider[providerId].options.headers = next; }))} errors={errors} path={`provider.${providerId}.options.headers`} />
+      {adapter ? <div className="grid gap-x-4 gap-y-3.5 sm:grid-cols-2">{adapter.fields.map((field) => <ProviderOptionField key={field.path} field={field} providerId={providerId} value={getOption(options, field.path)} config={config} onChange={onChange} errors={errors} onJsonValidationChange={onJsonValidationChange} jsonResetVersion={jsonResetVersion} />)}</div> : <p role="alert" className="text-xs text-warning">This package is not available in the server adapter catalog. Choose a supported adapter before saving.</p>}
+      <JsonObjectField label="Advanced options JSON" value={advancedOptions(options, adapter)} onChange={(next) => onChange(withDraft(config, (draft) => { draft.provider[providerId].options = mergeAdvancedOptions(optionRecord(draft.provider[providerId].options), adapter, next) as ServerConfig["provider"][string]["options"]; }))} error={errors[`provider.${providerId}.options`]} validationPath={`provider.${providerId}.options`} onValidationChange={onJsonValidationChange} resetVersion={jsonResetVersion} />
       <div className="space-y-2.5 border-t border-border-subtle pt-4">
         <div className="flex items-center justify-between"><div className="flex items-center gap-2"><h3 className="text-[12.5px] font-semibold text-text-secondary">Models</h3><span className="rounded-sm bg-bg-active px-1.5 py-0.5 text-[10px] text-text-muted">{Object.keys(provider.models).length}</span></div><button type="button" onClick={() => onChange(withDraft(config, (draft) => {
           const id = nextGeneratedId("model", draft.provider[providerId].models);
@@ -124,8 +187,20 @@ export function SettingsModelsPanel({ config, onChange, errors = {}, onJsonValid
       </div>
     </article>;
     })}
-    <button type="button" onClick={addProvider} className="flex w-full items-center justify-center gap-2 rounded-sm border border-dashed border-border-default bg-bg-surface px-3 py-3 text-[12.5px] font-medium text-text-secondary transition-colors duration-150 hover:border-border-strong hover:bg-bg-hover hover:text-text-primary"><Plus size={14} aria-hidden="true" />Add provider</button>
+    <button type="button" disabled={adapterCatalog.length === 0} onClick={addProvider} className="flex w-full items-center justify-center gap-2 rounded-sm border border-dashed border-border-default bg-bg-surface px-3 py-3 text-[12.5px] font-medium text-text-secondary transition-colors duration-150 hover:border-border-strong hover:bg-bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"><Plus size={14} aria-hidden="true" />Add provider</button>
   </section>;
+}
+
+function ProviderOptionField({ field, providerId, value, config, onChange, errors, onJsonValidationChange, jsonResetVersion }: { field: ProviderAdapterOptionDescriptor; providerId: string; value: unknown; config: ServerConfig; onChange: (config: ServerConfig) => void; errors: FieldErrors; onJsonValidationChange?: JsonValidationChange; jsonResetVersion: number }) {
+  const path = `provider.${providerId}.options.${field.path}`;
+  const update = (next: unknown) => onChange(withDraft(config, (draft) => setOption(optionRecord(draft.provider[providerId].options), field.path, next)));
+  const label = field.label;
+  if (field.secret && field.kind === "json") return <SecretRecordEditor label={label} value={value as Record<string, ConfigSecretMutation> | undefined} onChange={update} errors={errors} path={path} />;
+  if (field.secret) return <SecretField label={label} value={value as ConfigSecretMutation | undefined} onChange={update} error={errors[path]} />;
+  if (field.kind === "number") return <Field label={label} error={errors[path]}><NumberField value={typeof value === "number" ? value : undefined} onChange={update} /></Field>;
+  if (field.kind === "boolean") return <SettingsToggle checked={value === true} onChange={update} label={label} description={`Provider option: ${field.path}`} />;
+  if (field.kind === "json") return <JsonObjectField label={label} value={value as Record<string, unknown> | undefined} onChange={update} error={errorAtOrBelow(errors, path)} validationPath={path} onValidationChange={onJsonValidationChange} resetVersion={jsonResetVersion} />;
+  return <Field label={label} error={errors[path]}><TextInput value={typeof value === "string" ? value : ""} onChange={update} /></Field>;
 }
 
 function ModelEditor({ config, onChange, providerId, modelId, model, errors, onJsonValidationChange, jsonResetVersion }: { config: ServerConfig; onChange: (config: ServerConfig) => void; providerId: string; modelId: string; model: ServerModelConfig; errors: FieldErrors; onJsonValidationChange?: JsonValidationChange; jsonResetVersion: number }) {

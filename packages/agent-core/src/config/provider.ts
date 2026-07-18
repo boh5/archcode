@@ -1,8 +1,5 @@
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { z } from "zod";
-
-/** The only provider npm package supported at the moment. */
-export const OPENAI_COMPATIBLE_PROVIDER_PACKAGE = "@ai-sdk/openai-compatible";
+import { providerAdapterCatalog } from "./provider-adapter-catalog";
 
 export const modelModalitySchema = z.enum(["text", "image", "audio", "video"]);
 
@@ -20,6 +17,79 @@ export const modelModalitiesSchema = z
   })
   .strict();
 
+const terminalSecretBearingOptionSegments = [
+  "apikey",
+  "authorization",
+  "byok",
+  "credential",
+  "password",
+  "privatekey",
+  "secret",
+  "token",
+] as const;
+const pluralSecretBearingOptionSegments = [
+  "apikeys",
+  "authorizations",
+  "credentials",
+  "passwords",
+  "privatekeys",
+  "secrets",
+] as const;
+
+function isSecretBearingOptionKey(key: string): boolean {
+  const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const tokens = key
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[^A-Za-z0-9]+/g, " ")
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+  const terminalMatch = terminalSecretBearingOptionSegments.some(
+    (segment) =>
+      normalized === segment ||
+      normalized.endsWith(segment) ||
+      (segment === "byok" && normalized.startsWith(segment)),
+  );
+  const pluralMatch = pluralSecretBearingOptionSegments.some(
+    (segment) => normalized === segment || normalized.endsWith(segment),
+  ) || normalized === "tokens";
+  const compoundKeyMatch = tokens.some((token, index) =>
+    (token === "api" && tokens[index + 1] === "key")
+    || (token === "private" && tokens[index + 1] === "key")
+    || (token === "access" && tokens[index + 1] === "key"),
+  );
+  const qualifiedSecretMatch = tokens.some((token, index) =>
+    ["authorization", "credential", "credentials", "password", "secret", "token", "tokens"].includes(token)
+    && ["content", "contents", "data", "file", "header", "id", "json", "key", "pem", "provider", "raw", "text", "value"].includes(tokens[index + 1] ?? ""),
+  );
+  return terminalMatch || pluralMatch || compoundKeyMatch || qualifiedSecretMatch;
+}
+
+/** Return paths under a model call's providerOptions that must not contain credentials. */
+export function findSecretBearingProviderOptionPaths(
+  value: unknown,
+  path = "providerOptions",
+): string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) =>
+      findSecretBearingProviderOptionPaths(item, `${path}[${index}]`),
+    );
+  }
+
+  if (value === null || typeof value !== "object") {
+    return [];
+  }
+
+  return Object.entries(value).flatMap(([key, nestedValue]) => {
+    const nestedPath = path.length === 0 ? key : `${path}.${key}`;
+    return [
+      ...(isSecretBearingOptionKey(key) ? [nestedPath] : []),
+      ...findSecretBearingProviderOptionPaths(nestedValue, nestedPath),
+    ];
+  });
+}
+
 export const modelCallOptionsSchema = z
   .object({
     maxOutputTokens: z.number().int().positive().optional(),
@@ -31,9 +101,20 @@ export const modelCallOptionsSchema = z
     stopSequences: z.array(z.string()).optional(),
     seed: z.number().int().optional(),
     timeout: z.number().int().nonnegative().optional(),
-    providerOptions: z.record(z.string(), z.unknown()).optional(),
+    providerOptions: z.record(z.string(), z.json()).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((options, context) => {
+    for (const path of findSecretBearingProviderOptionPaths(
+      options.providerOptions,
+    )) {
+      context.addIssue({
+        code: "custom",
+        path: ["providerOptions"],
+        message: `Provider call options must not contain secrets (${path})`,
+      });
+    }
+  });
 
 export const modelConfigSchema = z
   .object({
@@ -45,14 +126,15 @@ export const modelConfigSchema = z
   })
   .strict();
 
+/** Provider factory options are adapter-specific JSON values. */
 export const providerOptionsSchema = z
   .object({
-    baseURL: z.string().url("Provider baseURL must be a valid URL"),
+    baseURL: z.string().optional(),
     apiKey: z.string().min(1).optional(),
     headers: z.record(z.string(), z.string()).optional(),
     queryParams: z.record(z.string(), z.string()).optional(),
   })
-  .strict();
+  .catchall(z.json());
 
 export const providerConfigSchema = z
   .object({
@@ -87,8 +169,12 @@ export type ModelCallOptions = z.infer<typeof modelCallOptionsSchema>;
 
 export class UnsupportedProviderPackageError extends Error {
   constructor(public readonly npmPackage: string) {
+    const available = providerAdapterCatalog
+      .list()
+      .map((adapter) => adapter.npmPackage)
+      .join(", ");
     super(
-      `Unsupported provider npm package: "${npmPackage}". Only "${OPENAI_COMPATIBLE_PROVIDER_PACKAGE}" is supported.`,
+      `Unsupported provider npm package: "${npmPackage}". Available adapters: ${available}.`,
     );
     this.name = "UnsupportedProviderPackageError";
   }
@@ -148,33 +234,19 @@ export function getModelConfig(
 }
 
 /**
- * Create an AI SDK provider instance from a provider config.
- * Currently only `@ai-sdk/openai-compatible` is supported.
+ * Create an AI SDK ProviderV3 instance using its package adapter.
  */
-export function createProviderInstance(provider: ProviderConfig) {
-  if (provider.npm !== OPENAI_COMPATIBLE_PROVIDER_PACKAGE) {
+export function createProviderInstance(
+  providerId: string,
+  provider: ProviderConfig,
+) {
+  const adapter = providerAdapterCatalog.get(provider.npm);
+  if (!adapter) {
     throw new UnsupportedProviderPackageError(provider.npm);
   }
 
-  return createOpenAICompatible({
-    name: provider.name,
-    baseURL: provider.options.baseURL,
-    apiKey: provider.options.apiKey,
-    headers: provider.options.headers,
-    queryParams: provider.options.queryParams,
+  return adapter.create({
+    providerId,
+    options: provider.options,
   });
-}
-
-/**
- * Convenience: create a language model (chat model) directly from a full
- * config, provider ID, and model ID.
- */
-export function createLanguageModel(
-  providers: ProvidersConfig,
-  providerId: string,
-  modelId: string,
-) {
-  const providerConfig = getProviderConfig(providers, providerId);
-  getModelConfig(providerConfig, modelId);
-  return createProviderInstance(providerConfig).chatModel(modelId);
 }

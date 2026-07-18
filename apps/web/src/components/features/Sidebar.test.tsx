@@ -371,7 +371,7 @@ describe("Sidebar", () => {
         rootSessionId: "root-session",
         agentName: "engineer",
         activeSkillNames: [],
-        modelInfo: null,
+        modelSelection: { revision: 0 },
         title: "Root Session",
         createdAt: 1,
         updatedAt: 1,
@@ -383,7 +383,7 @@ describe("Sidebar", () => {
         parentSessionId: "root-session",
         agentName: "build",
         activeSkillNames: [],
-        modelInfo: null,
+        modelSelection: { revision: 0 },
         title: "Child Session",
         createdAt: 2,
         updatedAt: 2,
@@ -391,7 +391,7 @@ describe("Sidebar", () => {
     ];
     sessionTree = {
       root: {
-        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", agentName: "engineer", activeSkillNames: [], modelInfo: null, title: "Root Session", createdAt: 1, updatedAt: 1 },
+        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", agentName: "engineer", activeSkillNames: [], modelSelection: { revision: 0 }, title: "Root Session", createdAt: 1, updatedAt: 1 },
         children: [
           {
             session: {
@@ -401,7 +401,7 @@ describe("Sidebar", () => {
               parentSessionId: "root-session",
               agentName: "build",
               activeSkillNames: [],
-              modelInfo: null,
+              modelSelection: { revision: 0 },
               title: "Child Session",
               createdAt: 2,
               updatedAt: 2,
@@ -434,7 +434,7 @@ describe("Sidebar", () => {
         rootSessionId: "root-running",
         agentName: "engineer",
         activeSkillNames: [],
-        modelInfo: null,
+        modelSelection: { revision: 0 },
         title: "Old but running",
         createdAt: 1,
         updatedAt: 1,
@@ -445,7 +445,7 @@ describe("Sidebar", () => {
         rootSessionId: "root-idle",
         agentName: "engineer",
         activeSkillNames: [],
-        modelInfo: null,
+        modelSelection: { revision: 0 },
         title: "Fresh but idle",
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -484,7 +484,7 @@ describe("Sidebar", () => {
       rootSessionId: "root-1",
       agentName: "engineer",
       activeSkillNames: [],
-      modelInfo: null,
+      modelSelection: { revision: 0 },
       title: "Session",
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -508,7 +508,7 @@ describe("Sidebar", () => {
         rootSessionId: "root-session",
         agentName: "engineer",
         activeSkillNames: [],
-        modelInfo: null,
+        modelSelection: { revision: 0 },
         title: "Root Session",
         createdAt: 1,
         updatedAt: 1,
@@ -520,7 +520,7 @@ describe("Sidebar", () => {
         parentSessionId: "root-session",
         agentName: "explore",
         activeSkillNames: [],
-        modelInfo: null,
+        modelSelection: { revision: 0 },
         title: "Child Session",
         createdAt: 2,
         updatedAt: 2,
@@ -528,7 +528,7 @@ describe("Sidebar", () => {
     ];
     sessionTree = {
       root: {
-        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", agentName: "engineer", activeSkillNames: [], modelInfo: null, title: "Root Session", createdAt: 1, updatedAt: 1 },
+        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", agentName: "engineer", activeSkillNames: [], modelSelection: { revision: 0 }, title: "Root Session", createdAt: 1, updatedAt: 1 },
         children: [
           {
             session: {
@@ -538,7 +538,7 @@ describe("Sidebar", () => {
               parentSessionId: "root-session",
               agentName: "explore",
               activeSkillNames: [],
-              modelInfo: null,
+              modelSelection: { revision: 0 },
               title: "Child Session",
               createdAt: 2,
               updatedAt: 2,
@@ -569,7 +569,7 @@ describe("Sidebar", () => {
         rootSessionId: "root-session",
         agentName: "engineer",
         activeSkillNames: [],
-        modelInfo: null,
+        modelSelection: { revision: 0 },
         title: "Root Session",
         createdAt: 1,
         updatedAt: 1,
@@ -581,7 +581,7 @@ describe("Sidebar", () => {
         parentSessionId: "root-session",
         agentName: "explore",
         activeSkillNames: [],
-        modelInfo: null,
+        modelSelection: { revision: 0 },
         title: "Child Session",
         createdAt: 2,
         updatedAt: 2,
@@ -589,7 +589,7 @@ describe("Sidebar", () => {
     ];
     sessionTree = {
       root: {
-        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", agentName: "engineer", activeSkillNames: [], modelInfo: null, title: "Root Session", createdAt: 1, updatedAt: 1 },
+        session: { sessionId: "root-session", cwd: "/workspace", rootSessionId: "root-session", agentName: "engineer", activeSkillNames: [], modelSelection: { revision: 0 }, title: "Root Session", createdAt: 1, updatedAt: 1 },
         children: [
           {
             session: {
@@ -599,7 +599,7 @@ describe("Sidebar", () => {
               parentSessionId: "root-session",
               agentName: "explore",
               activeSkillNames: [],
-              modelInfo: null,
+              modelSelection: { revision: 0 },
               title: "Child Session",
               createdAt: 2,
               updatedAt: 2,

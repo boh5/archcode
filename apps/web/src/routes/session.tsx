@@ -92,7 +92,9 @@ export function SessionRoute() {
         executions,
         childSessionLinks,
         eventCursor,
-        modelInfo,
+        modelSelection,
+        nextModelSelection,
+        activeModelBinding,
         cwd,
       } = focusedSession;
       childStore.getState().initializeFromSnapshot({
@@ -109,7 +111,9 @@ export function SessionRoute() {
         executions,
         childSessionLinks,
         eventCursor,
-        modelInfo,
+        modelSelection,
+        nextModelSelection,
+        activeModelBinding,
         cwd,
       });
     }
@@ -140,7 +144,9 @@ export function SessionRoute() {
         executions,
         childSessionLinks,
         eventCursor,
-        modelInfo,
+        modelSelection,
+        nextModelSelection,
+        activeModelBinding,
         cwd,
       } = session;
       store.getState().initializeFromSnapshot({
@@ -157,7 +163,9 @@ export function SessionRoute() {
         executions,
         childSessionLinks,
         eventCursor,
-        modelInfo,
+        modelSelection,
+        nextModelSelection,
+        activeModelBinding,
         cwd,
       });
     }

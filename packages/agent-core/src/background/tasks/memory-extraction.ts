@@ -165,9 +165,10 @@ export function createMemoryExtractionTask(
       let result: MemoryExtractionResult;
       try {
         result = await runLlmObject({
-          model: ctx.modelInfo.model,
-          modelOptions: ctx.modelOptions,
+          model: ctx.binding.modelInfo.model,
+          modelOptions: ctx.binding.options,
           retryScheduler: ctx.retryScheduler,
+          redactSensitiveText: (text) => ctx.binding.modelInfo.redactSensitiveText(text),
           schema: MemoryExtractionResultSchema,
           prompt: `Extract durable knowledge, preferences, and feedback from this conversation.
 Focus on information that would be useful in future sessions:

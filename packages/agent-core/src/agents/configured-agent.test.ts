@@ -3,7 +3,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { ModelInfo } from "../provider/model";
-import type { ProviderRegistry } from "../provider/index";
+import type { ExecutionModelBinding } from "../models";
 import { SkillNotFoundError, SkillService } from "../skills";
 import { storeManager } from "../store/store";
 import { __setSessionsDirForTest } from "../store/sessions-dir";
@@ -82,46 +82,37 @@ function makeTool(name: string): AnyToolDescriptor {
   };
 }
 
-function makeProviderRegistry(): ProviderRegistry {
-  const fallbackModel = new ModelInfo({
+function makeModelInfo(modelId = "configured"): ModelInfo {
+  return new ModelInfo({
     model: {} as ConstructorParameters<typeof ModelInfo>[0]["model"],
     config: {
-      name: "Fallback Model",
-      limit: { context: 128_000, output: 8_192 },
-      modalities: { input: ["text"], output: ["text"] },
-    },
-    providerId: "test",
-    modelId: "fallback",
-  });
-
-  const configuredModel = new ModelInfo({
-    model: {} as ConstructorParameters<typeof ModelInfo>[0]["model"],
-    config: {
-      name: "Configured Model",
+      name: `${modelId} Model`,
       limit: { context: 64_000, output: 4_096 },
       modalities: { input: ["text"], output: ["text"] },
     },
     providerId: "test",
-    modelId: "configured",
+    providerDisplayName: "Test Provider",
+    modelId,
   });
-
-  return {
-    sdkRegistry: {} as ProviderRegistry["sdkRegistry"],
-    models: new Map([
-      [fallbackModel.qualifiedId, fallbackModel],
-      [configuredModel.qualifiedId, configuredModel],
-    ]),
-    modelIds: [fallbackModel.qualifiedId, configuredModel.qualifiedId],
-    getModel: (qualifiedId: string) => {
-      if (qualifiedId === fallbackModel.qualifiedId) return fallbackModel;
-      if (qualifiedId === configuredModel.qualifiedId) return configuredModel;
-      throw new Error(`unexpected model lookup: ${qualifiedId}`);
-    },
-  } as ProviderRegistry;
 }
 
-function makeModelInfo(): ModelInfo {
-  return makeProviderRegistry().getModel("test:configured");
+function makeBinding(
+  modelInfo = makeModelInfo(),
+  options: ExecutionModelBinding["options"] = { temperature: 0.3 },
+): ExecutionModelBinding {
+  return {
+    modelInfo,
+    options,
+    summary: {
+      selection: { model: modelInfo.qualifiedId },
+      providerId: modelInfo.providerId,
+      modelId: modelInfo.modelId,
+      providerDisplayName: modelInfo.providerDisplayName,
+      modelDisplayName: modelInfo.displayName,
+      resolution: "agent_default",
+      modelRuntimeRevision: "test-revision",
+    },
+  };
 }
 
 const READ_ONLY_FIXTURE_TOOLS = [
@@ -201,21 +192,15 @@ function createAgent(options: {
   cwd?: string;
   depth?: number;
   toolRegistry?: ReturnType<typeof makeToolRegistry>;
-  providerRegistry?: ProviderRegistry;
-  modelInfo?: ModelInfo;
   memoryConfig?: MemoryExtractionConfig;
   skillService?: SkillService;
   versionControl?: VersionControl;
 }) {
   const toolRegistry = options.toolRegistry ?? makeToolRegistry();
-  const providerRegistry = options.providerRegistry ?? makeProviderRegistry();
   const projectRoot = options.projectRoot ?? tmpRoot;
   const cwd = options.cwd ?? projectRoot;
   return new ConfiguredAgent({
     definition: options.definition,
-    providerRegistry,
-    modelInfo: options.modelInfo ?? providerRegistry.getModel("test:configured"),
-    modelOptions: { temperature: 0.3 },
     toolRegistry,
     skillService: options.skillService ?? createTestSkillService(),
     store: options.store ?? storeManager.create(crypto.randomUUID(), projectRoot, { cwd, agentName: "engineer" }),
@@ -259,7 +244,7 @@ async function runAgent(
       clientRequestId: `request-${id}`,
     }],
   });
-  return agent.run(options);
+  return agent.run(makeBinding(), options);
 }
 
 describe("ConfiguredAgent", () => {
@@ -309,7 +294,7 @@ describe("ConfiguredAgent", () => {
     const command = agent.classifyCommand("/skill use git-master commit changes");
 
     expect(command).not.toBeNull();
-    const result = await agent.executeCommand(command!);
+    const result = await agent.executeCommand(command!, makeBinding());
 
     expect(result.kind).toBe("message");
     if (result.kind === "message") {
@@ -335,7 +320,7 @@ describe("ConfiguredAgent", () => {
     const command = agent.classifyCommand("/skill use git-master commit changes");
 
     expect(command).not.toBeNull();
-    await expect(agent.executeCommand(command!, { abort: abortController.signal }))
+    await expect(agent.executeCommand(command!, makeBinding(), { abort: abortController.signal }))
       .rejects.toThrow("Session family cancelled");
     expect(agent.store.getState().messages).toEqual([]);
   });
@@ -345,7 +330,7 @@ describe("ConfiguredAgent", () => {
     const command = agent.classifyCommand("/unknown");
 
     expect(command).not.toBeNull();
-    await expect(agent.executeCommand(command!)).resolves.toEqual({ kind: "handled" });
+    await expect(agent.executeCommand(command!, makeBinding())).resolves.toEqual({ kind: "handled" });
     expect(agent.store.getState().toModelMessages()).toEqual([]);
     expect(agent.store.getState().messages[0]!.parts[0]).toMatchObject({
       type: "system-notice",
@@ -410,25 +395,30 @@ describe("ConfiguredAgent", () => {
     expect(btm.cancelAllCalls).toBe(0);
   });
 
-  test("constructs without relying on provider registry model order when modelInfo is supplied", async () => {
-    setupMockStreamText("explicit model ok");
-    const providerRegistry = {
-      sdkRegistry: {} as ProviderRegistry["sdkRegistry"],
-      models: new Map(),
-      modelIds: [],
-      getModel: () => {
-        throw new Error("unexpected fallback lookup");
-      },
-    } as ProviderRegistry;
-
-    const agent = createAgent({
-      definition: exploreAgentDefinition,
-      providerRegistry,
-      modelInfo: makeModelInfo(),
+  test("uses the model binding supplied to this run instead of constructor state", async () => {
+    const streamText = setupMockStreamText("explicit model ok");
+    const agent = createAgent({ definition: exploreAgentDefinition });
+    const modelInfo = makeModelInfo("per-execution");
+    const id = crypto.randomUUID();
+    agent.store.getState().append({
+      type: "session.messages_committed",
+      executionId: id,
+      messages: [{
+        id,
+        role: "user",
+        parts: [{ type: "text", id: `${id}:text`, text: "explicit model", createdAt: 1, completedAt: 1 }],
+        createdAt: 1,
+        completedAt: 1,
+        executionId: id,
+      }],
     });
 
-    await expect(runAgent(agent, "explicit model"))
+    await expect(agent.run(makeBinding(modelInfo, { temperature: 0.6 })))
       .resolves.toEqual({ text: "explicit model ok", steps: 0, status: "completed" });
+    expect(streamText).toHaveBeenCalledWith(expect.objectContaining({
+      model: modelInfo.model,
+      temperature: 0.6,
+    }));
   });
 
   test("passes definition skills and SkillService into tool execution context", async () => {

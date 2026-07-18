@@ -16,6 +16,24 @@ import type {
   ToolChildSessionLink,
 } from "./types";
 
+const REQUESTED_MODEL_SELECTION = {
+  mode: "agent_default" as const,
+  selection: { model: "test:model" },
+};
+const TEST_BINDING = {
+  selection: { model: "test:model" },
+  providerId: "test",
+  modelId: "model",
+  providerDisplayName: "Test",
+  modelDisplayName: "Model",
+  resolution: "agent_default" as const,
+  modelRuntimeRevision: "runtime-1",
+};
+
+function executionStart(executionId: string): StreamEvent {
+  return { type: "execution-start", executionId, binding: TEST_BINDING, origin: "user_message" };
+}
+
 function createProjection(overrides: Partial<SessionProjection> = {}): SessionProjection {
   return {
     sessionId: "session-test",
@@ -33,6 +51,7 @@ function createProjection(overrides: Partial<SessionProjection> = {}): SessionPr
     executionCount: 0,
     isRunning: false,
     isStreamingModel: false,
+    modelSelection: { revision: 0 },
     ...overrides,
   };
 }
@@ -199,7 +218,7 @@ describe("reduceStreamEvent", () => {
 
   test("produces identical projections with the same events and deterministic context", () => {
     const events: StreamEvent[] = [
-      { type: "execution-start", executionId: "run-identical" },
+      executionStart("run-identical"),
       committedUserEvent("hello", "run-identical"),
       { type: "step-start", step: 0 },
       { type: "text-start" },
@@ -349,7 +368,7 @@ describe("reduceStreamEvent", () => {
 
   test("missing result after recorded attempt settles as unknown-result error", () => {
     const state = applyEvents(createProjection(), [
-      { type: "execution-start", executionId: "run-unknown" },
+      executionStart("run-unknown"),
       { type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { path: "a.ts" } },
       {
         type: "tool-attempt",
@@ -372,7 +391,7 @@ describe("reduceStreamEvent", () => {
 
   test("aborted partial tool input settles with a persistable null input", () => {
     const state = applyEvents(createProjection(), [
-      { type: "execution-start", executionId: "run-partial-input" },
+      executionStart("run-partial-input"),
       { type: "tool-input-start", toolCallId: "call-partial", toolName: "file_write" },
       { type: "execution-end", status: "aborted" },
     ]);
@@ -410,7 +429,7 @@ describe("reduceStreamEvent", () => {
 
   test("late result after unknown-result settlement is ignored so side effects are not replayed", () => {
     const interrupted = applyEvents(createProjection(), [
-      { type: "execution-start", executionId: "run-unknown-late" },
+      executionStart("run-unknown-late"),
       { type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { path: "a.ts" } },
       {
         type: "tool-attempt",
@@ -437,7 +456,7 @@ describe("reduceStreamEvent", () => {
 
   test("completed tool result is preserved across later recovery settlement", () => {
     const state = applyEvents(createProjection(), [
-      { type: "execution-start", executionId: "run-completed" },
+      executionStart("run-completed"),
       { type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { path: "a.ts" } },
       {
         type: "tool-attempt",
@@ -461,7 +480,7 @@ describe("reduceStreamEvent", () => {
 
   test("interrupted execution marks incomplete text and reasoning as discarded context", () => {
     const state = applyEvents(createProjection(), [
-      { type: "execution-start", executionId: "run-interrupted" },
+      executionStart("run-interrupted"),
       { type: "text-start" },
       { type: "text-delta", text: "partial assistant truth" },
       { type: "reasoning-start" },
@@ -486,7 +505,7 @@ describe("reduceStreamEvent", () => {
 
   test("failed execution marks incomplete text as discarded context", () => {
     const state = applyEvents(createProjection(), [
-      { type: "execution-start", executionId: "run-failed" },
+      executionStart("run-failed"),
       { type: "text-start" },
       { type: "text-delta", text: "partial before failure" },
       { type: "execution-end", status: "failed", error: "stream failed" },
@@ -500,7 +519,7 @@ describe("reduceStreamEvent", () => {
 
   test("completed execution finalizes incomplete text without discarding it", () => {
     const state = applyEvents(createProjection(), [
-      { type: "execution-start", executionId: "run-completed" },
+      executionStart("run-completed"),
       { type: "text-start" },
       { type: "text-delta", text: "late but accepted" },
       { type: "execution-end", status: "completed" },
@@ -814,10 +833,10 @@ describe("reduceStreamEvent", () => {
     const afterStart = applyEvents(
       createProjection({
         isRunning: true,
-        executions: [{ id: "run-1", startedAt: 1, status: "completed", endedAt: 2, durationMs: 1 }],
+        executions: [{ id: "run-1", startedAt: 1, status: "completed", endedAt: 2, durationMs: 1, binding: TEST_BINDING, origin: "user_message" }],
         executionCount: 1,
       }),
-      [{ type: "execution-start", executionId: "run-2" }],
+      [executionStart("run-2")],
     );
 
     expect(afterStart.isRunning).toBe(true);
@@ -883,7 +902,7 @@ describe("reduceStreamEvent", () => {
 
   test("pending and running tools settled by execution-end increment failed exactly once for counted calls", () => {
     const state = applyEvents(createProjection(), [
-      { type: "execution-start", executionId: "run-1" },
+      executionStart("run-1"),
       { type: "tool-input-start", toolCallId: "pending", toolName: "read" },
       { type: "tool-call", toolCallId: "running", toolName: "read", input: {} },
       { type: "execution-end", status: "failed", error: "boom" },
@@ -943,7 +962,7 @@ describe("reduceStreamEvent", () => {
 
   test("computed execution id aligns executions, current execution, messages, and steps", () => {
     const state = applyEvents(createProjection(), [
-      { type: "execution-start", executionId: "run-computed" },
+      executionStart("run-computed"),
       committedUserEvent("hello", "run-computed"),
       { type: "step-start", step: 0 },
     ]);
@@ -965,7 +984,7 @@ describe("reduceStreamEvent", () => {
     const created = createProjection();
     expect(created.executionCount).toBe(created.executions.length);
 
-    const started = applyEvents(created, [{ type: "execution-start", executionId: "run-1" }]);
+    const started = applyEvents(created, [executionStart("run-1")]);
     expect(started.executionCount).toBe(started.executions.length);
 
     const ended = applyEvents(started, [{ type: "execution-end", status: "completed" }]);
@@ -974,11 +993,11 @@ describe("reduceStreamEvent", () => {
 
   test("cancelled, aborted, and timed_out execution-end statuses populate latest execution", () => {
     const state = applyEvents(createProjection(), [
-      { type: "execution-start", executionId: "run-cancelled" },
+      executionStart("run-cancelled"),
       { type: "execution-end", status: "cancelled", error: "cancelled by user" },
-      { type: "execution-start", executionId: "run-aborted" },
+      executionStart("run-aborted"),
       { type: "execution-end", status: "aborted", error: "abort signal" },
-      { type: "execution-start", executionId: "run-timed-out" },
+      executionStart("run-timed-out"),
       { type: "execution-end", status: "timed_out", error: "deadline" },
     ]);
 
@@ -1048,6 +1067,7 @@ describe("reduceStreamEvent", () => {
       revision: 0,
       acceptedAt: 10,
       updatedAt: 10,
+      requestedModelSelection: REQUESTED_MODEL_SELECTION,
     };
     const steering = {
       ...queued,
@@ -1064,9 +1084,10 @@ describe("reduceStreamEvent", () => {
       completedAt: 12,
       executionId: "execution-a",
       clientRequestId: queued.clientRequestId,
+      modelAudit: { requested: REQUESTED_MODEL_SELECTION, actual: TEST_BINDING.selection },
     };
     const state = applyEvents(createProjection(), [
-      { type: "execution-start", executionId: "execution-a" },
+      executionStart("execution-a"),
       { type: "session.message_accepted", message: queued },
       { type: "session.message_steer_claimed", message: steering },
       { type: "session.messages_committed", executionId: "execution-a", messages: [canonical] },
@@ -1312,7 +1333,7 @@ describe("reduceStreamEvent", () => {
 
   test("retry and recovery events are serializable and replay-safe", () => {
     const events: StreamEvent[] = [
-      { type: "execution-start", executionId: "run-retry" },
+      executionStart("run-retry"),
       {
         type: "llm-retry",
         scope: "session",
@@ -1368,7 +1389,7 @@ describe("reduceStreamEvent", () => {
 
   test("execution-end completes in-flight recovery notices", () => {
     const state = applyEvents(createProjection(), [
-      { type: "execution-start", executionId: "run-notice" },
+      executionStart("run-notice"),
       {
         type: "llm-retry",
         scope: "session",

@@ -6,6 +6,7 @@ import type {
   GlobalSSEHeartbeatEvent,
   GlobalSSEHitlRealtimeEvent,
   GlobalSSEMcpStatusEvent,
+  GlobalSSEModelRuntimeChangedEvent,
   GlobalSSEResetEvent,
   GlobalSSELaggedEvent,
   GlobalSSESessionRuntimeChangedEvent,
@@ -33,6 +34,8 @@ import {
   requestSSEShutdownReconnectOnce,
   type SSEReconnectState,
 } from "./global-sse";
+
+const binding = { selection: { model: "test:model" }, providerId: "test", modelId: "model", providerDisplayName: "Test", modelDisplayName: "Test Model", resolution: "agent_default" as const, modelRuntimeRevision: "m1" };
 import type { SSEEventHandlerDeps } from "./global-sse";
 
 function createMockStore(): StoreApi<WebSessionStoreState> {
@@ -326,6 +329,16 @@ describe("parseSSEEvent", () => {
     expect(parsed.createdAt).toBe(1700000000000);
   });
 
+  test("parses model runtime invalidation events", () => {
+    const event: GlobalSSEModelRuntimeChangedEvent = {
+      type: "model_runtime.changed",
+      revision: "revision-2",
+      createdAt: 1700000000002,
+    };
+
+    expect(parseSSEEvent(event.type, JSON.stringify(event))).toEqual(event);
+  });
+
   test("parses hitl.event with its canonical view", () => {
     const event = hitlRealtimeEvent({
       projectSlug: "proj",
@@ -494,7 +507,7 @@ describe("handleSSEEvent", () => {
       sessionId: "source-session",
       eventId: 1,
       createdAt: 2,
-      payload: { type: "execution-start", executionId: "project-todo:todo-1:activation" },
+      payload: { type: "execution-start", executionId: "project-todo:todo-1:activation", binding, origin: "user_message" },
       agentName: "engineer",
     };
     handleSSEEvent({ event: "event", data: JSON.stringify(executionStart) }, deps);
@@ -792,6 +805,19 @@ describe("handleSSEEvent", () => {
     handleSSEEvent({ event: "mcp_status", data: JSON.stringify(mcpEvent) }, deps);
 
     expect(useMcpStatusStore.getState().servers).toEqual({ context7: status });
+  });
+
+  test("invalidates the secret-free model runtime query on publish", () => {
+    const event: GlobalSSEModelRuntimeChangedEvent = {
+      type: "model_runtime.changed",
+      revision: "revision-2",
+      createdAt: 1700000000002,
+    };
+
+    handleSSEEvent({ event: event.type, data: JSON.stringify(event) }, deps);
+
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.modelRuntime });
+    expect(mockRefreshSessionSnapshots).toHaveBeenCalledTimes(1);
   });
 
   test("mcp_status event merges into existing servers without dropping them", () => {

@@ -2,7 +2,7 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod/v4";
 import type { SessionEventEnvelope, SessionStoreState, StoredMessage } from "./types";
-import { isSessionEventPayload, type SessionEventPayload, type SessionModelInfo } from "@archcode/protocol";
+import { isSessionEventPayload, type SessionEventPayload, type SessionModelSelection } from "@archcode/protocol";
 import { getSessionPath, getSessionsDir } from "./sessions-dir";
 import type { SessionRole } from "./types";
 import {
@@ -19,11 +19,35 @@ import { atomicWrite } from "../utils/safe-file";
 const SessionRoleSchema = z.enum(["main", "plan", "build", "review", "explore", "librarian", "standalone"]);
 const AgentNameSchema = z.enum(AGENT_NAMES);
 
-const SessionModelInfoSchema = z.strictObject({
-  displayName: z.string(),
-  modelId: z.string(),
-  providerId: z.string(),
-  qualifiedId: z.string(),
+const ModelSelectionRefSchema = z.strictObject({
+  model: z.string().trim().min(1),
+  variant: z.string().trim().min(1).optional(),
+});
+
+const RequestedModelSelectionSchema = z.strictObject({
+  mode: z.enum(["agent_default", "session_override"]),
+  selection: ModelSelectionRefSchema,
+});
+
+const SessionModelSelectionSchema = z.strictObject({
+  revision: z.number().int().nonnegative(),
+  override: ModelSelectionRefSchema.optional(),
+});
+
+const ExecutionModelBindingSchema = z.strictObject({
+  selection: ModelSelectionRefSchema,
+  providerId: z.string().trim().min(1),
+  modelId: z.string().trim().min(1),
+  providerDisplayName: z.string().trim().min(1),
+  modelDisplayName: z.string().trim().min(1),
+  resolution: z.enum(["requested", "session_override", "agent_default"]),
+  modelRuntimeRevision: z.string().trim().min(1),
+});
+
+const MessageModelAuditSchema = z.strictObject({
+  requested: RequestedModelSelectionSchema,
+  actual: ModelSelectionRefSchema,
+  reason: z.literal("config_invalidated").optional(),
 });
 
 const NormalizedUsageSchema = z.strictObject({
@@ -60,6 +84,8 @@ const SessionExecutionRecordSchema = z.strictObject({
   durationMs: z.number().optional(),
   error: z.string().optional(),
   stopRequestedAt: z.number().optional(),
+  binding: ExecutionModelBindingSchema,
+  origin: z.enum(["user_message", "tool_call", "tool_batch", "goal_claim"]),
 });
 
 const PendingSessionMessageSchema = z.strictObject({
@@ -72,6 +98,7 @@ const PendingSessionMessageSchema = z.strictObject({
   acceptedAt: z.number(),
   updatedAt: z.number(),
   targetExecutionId: z.string().trim().min(1).optional(),
+  requestedModelSelection: RequestedModelSelectionSchema,
 }).superRefine((message, ctx) => {
   if ((message.state === "steering") !== (message.targetExecutionId !== undefined)) {
     ctx.addIssue({
@@ -89,6 +116,7 @@ const SessionInputReceiptSchema = z.discriminatedUnion("kind", [
     messageId: z.string().trim().min(1),
     requestFingerprint: z.string(),
     status: z.enum(["pending", "canonical", "deleted"]),
+    requestedModelSelection: RequestedModelSelectionSchema,
   }),
   z.strictObject({
     kind: z.literal("command"),
@@ -96,6 +124,7 @@ const SessionInputReceiptSchema = z.discriminatedUnion("kind", [
     requestFingerprint: z.string(),
     status: z.enum(["executing", "completed", "failed", "indeterminate"]),
     error: z.string().optional(),
+    requestedModelSelection: RequestedModelSelectionSchema,
   }).superRefine((receipt, ctx) => {
     if ((receipt.status === "failed" || receipt.status === "indeterminate") !== (receipt.error !== undefined)) {
       ctx.addIssue({
@@ -318,6 +347,14 @@ const StoredMessageSchema = z.strictObject({
   executionId: z.string().optional(),
   clientRequestId: z.string().optional(),
   compacted: z.boolean().optional(),
+  modelAudit: MessageModelAuditSchema.optional(),
+}).superRefine((message, ctx) => {
+  if (message.role === "assistant" && message.modelAudit !== undefined) {
+    ctx.addIssue({ code: "custom", path: ["modelAudit"], message: "Assistant messages cannot carry modelAudit" });
+  }
+  if (message.role === "user" && message.clientRequestId !== undefined && message.modelAudit === undefined) {
+    ctx.addIssue({ code: "custom", path: ["modelAudit"], message: "Canonical user input must carry modelAudit" });
+  }
 });
 
 const StepInfoSchema = z.strictObject({
@@ -536,7 +573,7 @@ export const SessionFileSchema = z.strictObject({
     (names) => new Set(names).size === names.length,
     "activeSkillNames must not contain duplicates",
   ),
-  modelInfo: SessionModelInfoSchema.nullable(),
+  modelSelection: SessionModelSelectionSchema,
   title: z.string().nullable(),
   messages: z.array(StoredMessageSchema),
   pendingMessages: z.array(PendingSessionMessageSchema).superRefine((messages, ctx) => {
@@ -599,6 +636,11 @@ export const SessionFileSchema = z.strictObject({
     if (receipt.kind === "command") continue;
     const pending = pendingById.get(receipt.messageId);
     const canonical = canonicalById.get(receipt.messageId);
+    const requested = pending?.requestedModelSelection ?? canonical?.modelAudit?.requested;
+    if (requested !== undefined
+      && JSON.stringify(requested) !== JSON.stringify(receipt.requestedModelSelection)) {
+      ctx.addIssue({ code: "custom", path: ["inputRequestReceipts"], message: `Receipt ${receipt.clientRequestId} model selection mismatch` });
+    }
     if (receipt.status === "pending" && pending === undefined) {
       ctx.addIssue({ code: "custom", path: ["inputRequestReceipts"], message: `Pending receipt ${receipt.clientRequestId} has no message` });
     }
@@ -608,6 +650,16 @@ export const SessionFileSchema = z.strictObject({
     }
     if (receipt.status === "deleted" && (pending !== undefined || canonical !== undefined)) {
       ctx.addIssue({ code: "custom", path: ["inputRequestReceipts"], message: `Deleted receipt ${receipt.clientRequestId} still has a message` });
+    }
+  }
+
+  const executionById = new Map(session.executions.map((execution) => [execution.id, execution]));
+  for (const message of session.messages) {
+    if (message.modelAudit === undefined || message.executionId === undefined) continue;
+    const execution = executionById.get(message.executionId);
+    if (execution === undefined
+      || JSON.stringify(message.modelAudit.actual) !== JSON.stringify(execution.binding.selection)) {
+      ctx.addIssue({ code: "custom", path: ["messages"], message: `Message ${message.id} model audit has no matching execution binding` });
     }
   }
 });
@@ -624,7 +676,7 @@ export interface SessionSummary {
   sessionRole?: SessionRole;
   agentName: string;
   activeSkillNames: string[];
-  modelInfo: SessionModelInfo | null;
+  modelSelection: SessionModelSelection;
   title: string | null;
   createdAt: number;
   updatedAt: number;
@@ -632,7 +684,7 @@ export interface SessionSummary {
 
 type PersistableSessionState = Pick<
   SessionStoreState,
-  "sessionId" | "createdAt" | "updatedAt" | "cwd" | "agentName" | "activeSkillNames" | "modelInfo" | "title" | "messages" | "pendingMessages" | "inputRequestReceipts" | "steps" | "stats" | "executions" | "compression" | "todos" | "reminders" | "childSessionLinks" | "toolBatches" | "rootSessionId"
+  "sessionId" | "createdAt" | "updatedAt" | "cwd" | "agentName" | "activeSkillNames" | "modelSelection" | "title" | "messages" | "pendingMessages" | "inputRequestReceipts" | "steps" | "stats" | "executions" | "compression" | "todos" | "reminders" | "childSessionLinks" | "toolBatches" | "rootSessionId"
 > & Partial<Pick<
   SessionStoreState,
   "parentSessionId" | "goalId" | "sessionRole" | "events" | "queueDispatchBarrierAt"
@@ -668,7 +720,7 @@ async function saveSessionTranscript(
     cwd: state.cwd,
     agentName: state.agentName,
     activeSkillNames: state.activeSkillNames,
-    modelInfo: state.modelInfo,
+    modelSelection: state.modelSelection,
     title: state.title,
     messages: state.messages,
     pendingMessages: state.pendingMessages,
@@ -720,7 +772,7 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
     cwd: state.cwd,
     agentName: state.agentName,
     activeSkillNames: state.activeSkillNames,
-    modelInfo: state.modelInfo,
+    modelSelection: state.modelSelection,
     title: state.title,
     messages: state.messages,
     pendingMessages: state.pendingMessages,
@@ -763,7 +815,7 @@ async function listSessionSummaries(workspaceRoot: string): Promise<SessionSumma
         ...(parsed.sessionRole === undefined ? {} : { sessionRole: parsed.sessionRole }),
         agentName: parsed.agentName,
         activeSkillNames: parsed.activeSkillNames,
-        modelInfo: parsed.modelInfo,
+        modelSelection: parsed.modelSelection,
         title: parsed.title,
         createdAt: parsed.createdAt,
         updatedAt: parsed.updatedAt,
@@ -816,7 +868,7 @@ async function scanAllSessionSummaries(workspaceRoot: string): Promise<SessionSu
       ...(parsed.sessionRole === undefined ? {} : { sessionRole: parsed.sessionRole }),
       agentName: parsed.agentName,
       activeSkillNames: parsed.activeSkillNames,
-      modelInfo: parsed.modelInfo,
+      modelSelection: parsed.modelSelection,
       title: parsed.title,
       createdAt: parsed.createdAt,
       updatedAt: parsed.updatedAt,

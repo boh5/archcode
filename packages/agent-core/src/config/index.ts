@@ -31,7 +31,6 @@ export {
   type ServerConfigServiceOptions,
 } from "./server-config-service";
 export {
-  OPENAI_COMPATIBLE_PROVIDER_PACKAGE,
   type ModelCallOptions,
   type ModelConfig,
   type ModelLimit,
@@ -43,8 +42,8 @@ export {
   UnsupportedProviderPackageError,
   UnknownModelError,
   UnknownProviderError,
-  createLanguageModel,
   createProviderInstance,
+  findSecretBearingProviderOptionPaths,
   getModelConfig,
   getProviderConfig,
   modelCallOptionsSchema,
@@ -56,6 +55,17 @@ export {
   providerOptionsSchema,
   providersConfigSchema,
 } from "./provider";
+export {
+  ProviderAdapterCatalog,
+  collectProviderSecretValues,
+  providerAdapterCatalog,
+  type JsonSafeProviderOptions,
+  MissingProviderOptionError,
+  UnsupportedProviderOptionError,
+  validateProviderAdapterOptions,
+  type ProviderAdapter,
+  type ProviderOptionField,
+} from "./provider-adapter-catalog";
 export {
   type McpConfig,
   type McpServerConfig,

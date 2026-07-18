@@ -1,7 +1,7 @@
 import type { ModelMessage } from "ai";
 import type {
   SessionMessage,
-  SessionModelInfo,
+  SessionModelSelection,
   SessionStep,
   SessionTodo,
   Reminder,
@@ -80,7 +80,7 @@ export type {
   ReminderSource,
   SessionPart as StoredPart,
   SessionMessage as StoredMessage,
-  SessionModelInfo,
+  SessionModelSelection,
   SessionStep as StepInfo,
   SessionTodo as StoredTodo,
   SessionTodoStatus as StoredTodoStatus,
@@ -173,7 +173,7 @@ export interface SessionStoreState {
   agentName: AgentName;
   /** Canonical Skill identity. Resolved afresh for each execution. */
   activeSkillNames: string[];
-  modelInfo: SessionModelInfo | null;
+  modelSelection: SessionModelSelection;
   title: string | null;
   messages: SessionMessage[];
   pendingMessages: PendingSessionMessage[];

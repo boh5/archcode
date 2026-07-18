@@ -33,12 +33,12 @@ export {
 export type {
   ActiveSessionExecution,
   SessionExecutionClaimCoordinator,
-  SessionExecutionOrigin,
   SessionExecutionInput,
   SessionRuntimeChange,
   SessionRuntimeChangeListener,
   StartSessionExecutionInput,
 } from "./session-execution-manager";
+export type { SessionExecutionOrigin } from "@archcode/protocol";
 export type {
   SessionToolBatchAdvanceResult,
   SessionToolBatchQueue,

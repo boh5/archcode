@@ -6,7 +6,7 @@ import type { AgentName } from "../agents/names";
 import { collectSessionTreeIds } from "../execution/session-tree";
 import { createEmptyCompressionState, resolveCompressionOriginalRange, type CompressionOriginalRangeResult } from "../compression";
 import type {
-  SessionModelInfo,
+  SessionModelSelection,
   SessionTreeNode,
   SessionTreeResponse,
 } from "@archcode/protocol";
@@ -66,7 +66,7 @@ export interface CreateSessionOptions {
   readonly parentSessionId?: string;
   readonly goalId?: string;
   readonly sessionRole?: SessionRole;
-  readonly modelInfo?: SessionModelInfo | null;
+  readonly modelSelection?: SessionModelSelection;
   readonly title?: string;
 }
 
@@ -158,6 +158,7 @@ export class SessionStoreManager {
         || event.type === "tool-attempt"
         || event.type === "tool-result"
         || event.type === "session.cwd_changed"
+        || event.type === "session.model_selection_changed"
         || event.type === "llm-retry"
         || event.type === "llm-recovery"
         || event.type === "llm-recovery-failed"
@@ -179,7 +180,7 @@ export class SessionStoreManager {
       cwd,
       agentName: options.agentName,
       activeSkillNames: [...new Set(options.activeSkillNames ?? [])],
-      modelInfo: options.modelInfo ?? null,
+      modelSelection: options.modelSelection ?? { revision: 0 },
       title: options.title ?? null,
       messages: [],
       pendingMessages: [],
@@ -1086,7 +1087,7 @@ export class SessionStoreManager {
         sessionRole: parsed.sessionRole,
         agentName: parsed.agentName,
         activeSkillNames: parsed.activeSkillNames,
-        modelInfo: parsed.modelInfo,
+        modelSelection: parsed.modelSelection,
         ...(parsed.title === null ? {} : { title: parsed.title }),
       });
       store.setState({
@@ -1096,7 +1097,7 @@ export class SessionStoreManager {
         cwd: parsed.cwd,
         agentName: parsed.agentName,
         activeSkillNames: parsed.activeSkillNames,
-        modelInfo: parsed.modelInfo,
+        modelSelection: parsed.modelSelection,
         title: parsed.title,
         messages: parsed.messages,
         pendingMessages: parsed.pendingMessages,
@@ -1346,7 +1347,7 @@ function toSessionSummary(file: HydratedSessionFile): SessionSummary {
     ...(file.sessionRole === undefined ? {} : { sessionRole: file.sessionRole }),
     agentName: file.agentName,
     activeSkillNames: file.activeSkillNames,
-    modelInfo: file.modelInfo,
+    modelSelection: file.modelSelection,
     title: file.title,
     createdAt: file.createdAt,
     updatedAt: file.updatedAt,

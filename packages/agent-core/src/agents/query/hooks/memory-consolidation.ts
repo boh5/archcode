@@ -27,9 +27,8 @@ export function createMemoryConsolidationHook(
         ? Promise.resolve()
         : task.run({
             store: ctx.store,
-            modelInfo: ctx.modelInfo,
+            binding: ctx.binding,
             logger: ctx.logger,
-            modelOptions: ctx.modelOptions,
             workspaceRoot: memoryRoots.project,
             abort: ctx.abort,
           }),

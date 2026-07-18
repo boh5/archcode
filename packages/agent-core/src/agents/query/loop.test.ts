@@ -4,6 +4,7 @@ import type { ModelMessage } from "ai";
 import type { StoreApi } from "zustand";
 import { z } from "zod";
 import type { ModelInfo } from "../../provider/model";
+import type { ExecutionModelBinding } from "../../models";
 import { SkillService } from "../../skills";
 import { createSessionStore, storeManager } from "../../store/store";
 import type { Reminder, SessionEventPayload, SessionStoreState, StoredMessage, StoredTodo } from "../../store/types";
@@ -12,7 +13,7 @@ import { REDACTION_MARKER } from "../../tools/index";
 import { createDurableTestSessionContext, createTestProjectContext } from "../../tools/test-project-context";
 import type { AskUserCallback, PermissionErrorCode, ToolExecutionContext } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
-import { silentLogger } from "../../logger";
+import { createInMemoryLogger, silentLogger } from "../../logger";
 import { createMockLogger } from "../../logger.test-helper";
 import { createAutoInjectReminderHook } from "./hooks/auto-inject-reminder";
 import { setLlmAdapterForTest } from "../../llm/adapter";
@@ -24,6 +25,8 @@ import { createFakeRetryScheduler } from "../../testing/fake-retry-scheduler";
 import type { RetryScheduler } from "../../llm/retry";
 import { createTestTempRoot } from "../../testing/test-temp-root";
 import { SessionToolBatchScheduler } from "../../execution/session-tool-batch-scheduler";
+import { createTestModelInfo } from "../../testing/test-execution-fixtures";
+import { PROVIDER_SECRET_REDACTION_MARKER } from "../../provider/sensitive-value-redactor";
 
 const testTempRoot = createTestTempRoot("query-loop");
 const TEST_WORKSPACE_ROOT = testTempRoot.path;
@@ -68,15 +71,51 @@ const dummyModel = {
   provider: "mock-provider",
 };
 
-const dummyModelInfo = {
-  model: dummyModel,
+const dummyModelInfo = createTestModelInfo({
+  model: dummyModel as never,
   displayName: "Mock Model",
   limit: { context: 1000, output: 100 },
-  modalities: { input: ["text"], output: ["text"] },
   providerId: "mock-provider",
+  providerDisplayName: "Mock Provider",
   modelId: "mock-model",
-  qualifiedId: "mock-provider:mock-model",
-} as unknown as ModelInfo;
+});
+
+const dummyBinding: ExecutionModelBinding = {
+  modelInfo: dummyModelInfo,
+  options: undefined,
+  summary: {
+    selection: { model: dummyModelInfo.qualifiedId },
+    providerId: dummyModelInfo.providerId,
+    modelId: dummyModelInfo.modelId,
+    providerDisplayName: "Mock Provider",
+    modelDisplayName: dummyModelInfo.displayName,
+    resolution: "agent_default",
+    modelRuntimeRevision: "test-revision",
+  },
+};
+
+function bindingWithProviderSecret(secret: string): ExecutionModelBinding {
+  const modelInfo = createTestModelInfo({
+    model: dummyModel as never,
+    providerId: "mock-provider",
+    providerDisplayName: "Mock Provider",
+    modelId: "mock-model",
+    providerSecretValues: [secret],
+  });
+  return {
+    modelInfo,
+    options: undefined,
+    summary: {
+      selection: { model: modelInfo.qualifiedId },
+      providerId: modelInfo.providerId,
+      modelId: modelInfo.modelId,
+      providerDisplayName: modelInfo.providerDisplayName,
+      modelDisplayName: modelInfo.displayName,
+      resolution: "agent_default",
+      modelRuntimeRevision: "test-revision",
+    },
+  };
+}
 
 const testToolSchema = z.object({ message: z.string().optional() }).strict();
 const testSkillService = new SkillService({ builtinSkills: {} });
@@ -163,7 +202,7 @@ function autoInjectReminder(id = "reminder-1", createdAt = Date.now()): Reminder
 
 function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOptions {
   const workspaceRoot = TEST_WORKSPACE_ROOT;
-  return { modelInfo: dummyModelInfo,
+  return { binding: dummyBinding,
   logger: silentLogger,
   toolRegistry: createRegistry(),
   store: createStore(),
@@ -345,6 +384,101 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     expect(result).toEqual({ text: "Hello", steps: 0, status: "completed" });
     expect("messages" in result).toBe(false);
+  });
+
+  test("redacts Provider secrets across stream chunks and before tool persistence or execution", async () => {
+    const secret = "configured-provider-secret";
+    const store = createStore();
+    let executedInput: unknown;
+    createMockStreamText([
+      {
+        chunks: [
+          { type: "text-delta", text: "echo configured-" },
+          { type: "text-delta", text: "provider-secret" },
+          { type: "reasoning-delta", text: "reason configured-provider-" },
+          { type: "reasoning-delta", text: "secret" },
+          { type: "tool-call", toolCallId: "secret-tool", toolName: "echo", input: { message: secret } },
+        ],
+        finishReason: "tool-calls",
+        text: `echo ${secret}`,
+        toolCalls: [{ toolCallId: "secret-tool", toolName: "echo", input: { message: secret } }],
+      },
+      { text: "done" },
+    ]);
+
+    const result = await runQueryLoop(makeOptions({
+      store,
+      binding: bindingWithProviderSecret(secret),
+      toolRegistry: createTestRegistry(async (input) => {
+        executedInput = input;
+        return "ok";
+      }),
+      allowedTools: ["echo"],
+    }), "start");
+
+    expect(result.text).toBe("done");
+    expect(executedInput).toEqual({ message: PROVIDER_SECRET_REDACTION_MARKER });
+    const visibleState = JSON.stringify({
+      events: store.getState().events,
+      messages: store.getState().messages,
+      modelMessages: store.getState().toModelMessages(),
+    });
+    expect(visibleState).not.toContain(secret);
+    expect(visibleState).toContain(PROVIDER_SECRET_REDACTION_MARKER);
+  });
+
+  test("redacts Provider secrets from terminal errors and logger entries", async () => {
+    const secret = "configured-provider-secret";
+    const store = createStore();
+    const memoryLogger = createInMemoryLogger();
+    const rawError = Object.assign(new Error(`request failed at ${secret}`), {
+      name: `Provider${secret}Error`,
+      status: 401,
+      code: secret,
+      url: `https://example.test/?secret=${secret}`,
+    });
+    createMockStreamText([{ fullStreamError: rawError }]);
+
+    const result = await runQueryLoop(makeOptions({
+      store,
+      binding: bindingWithProviderSecret(secret),
+      logger: memoryLogger.logger,
+    }), "start");
+
+    const visibleState = JSON.stringify({ result, events: store.getState().events, logs: memoryLogger.entries });
+    expect(result.status).toBe("failed");
+    expect(visibleState).not.toContain(secret);
+    expect(visibleState).toContain(PROVIDER_SECRET_REDACTION_MARKER);
+  });
+
+  test("rejects Provider secrets in streamed or finalized tool identifiers before persistence", async () => {
+    const secret = "configured-provider-secret";
+    for (const round of [
+      {
+        chunks: [{ type: "tool-input-start" as const, id: secret, toolName: "echo" }],
+        finishReason: "tool-calls",
+      },
+      {
+        chunks: [],
+        finishReason: "tool-calls",
+        toolCalls: [{ toolCallId: "call-1", toolName: secret, input: { message: "safe" } }],
+      },
+    ]) {
+      const store = createStore();
+      createMockStreamText([round]);
+
+      const result = await runQueryLoop(makeOptions({
+        store,
+        binding: bindingWithProviderSecret(secret),
+        toolRegistry: createTestRegistry(),
+        allowedTools: ["echo"],
+      }), "start");
+
+      expect(result.status).toBe("failed");
+      expect(JSON.stringify({ result, events: store.getState().events, messages: store.getState().messages }))
+        .not.toContain(secret);
+      expect(store.getState().messages.flatMap((message) => message.parts).some((part) => part.type === "tool")).toBeFalse();
+    }
   });
 
   test("does not own durable execution lifecycle", async () => {
@@ -1357,9 +1491,9 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       );
 
       expect(contexts).toHaveLength(3);
-      for (const context of contexts as Array<{ store: unknown; modelInfo: unknown; abort: unknown; logger: unknown }>) {
+      for (const context of contexts as Array<{ store: unknown; binding: unknown; abort: unknown; logger: unknown }>) {
         expect(context.store).toBe(store);
-        expect(context.modelInfo).toBe(dummyModelInfo);
+        expect(context.binding).toBe(dummyBinding);
         expect(context.abort).toBe(abortController.signal);
         expect(context.logger).toBe(silentLogger);
       }
@@ -1564,10 +1698,11 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       expect(receivedSystemPrompt).toEqual([undefined]);
     });
 
-    test("hooks receive modelOptions in every loop context", async () => {
+    test("hooks receive the same Execution binding in every loop context", async () => {
       const store = createStore();
       const abortController = new AbortController();
-      const modelOptions: QueryLoopOptions["modelOptions"] = { temperature: 0.2, maxOutputTokens: 1024 };
+      const modelOptions: ExecutionModelBinding["options"] = { temperature: 0.2, maxOutputTokens: 1024 };
+      const binding = { ...dummyBinding, options: modelOptions };
       const contexts: BeforeModelBuildContext[] = [];
       createMockStreamText([{ text: "ok" }]);
 
@@ -1575,7 +1710,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
         makeOptions({
           store,
           abort: abortController.signal,
-          modelOptions,
+          binding,
           hooks: {
             beforeModelBuild: [async (ctx) => { contexts.push(ctx); }],
             beforeModelCall: [async (ctx) => { contexts.push(ctx); }],
@@ -1588,12 +1723,11 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
       expect(contexts).toHaveLength(4);
       expect(contexts[0].store).toBe(store);
-      expect(contexts[0].modelInfo).toBe(dummyModelInfo);
-      expect(contexts.map((ctx) => ctx.modelOptions)).toEqual([
-        modelOptions,
-        modelOptions,
-        modelOptions,
-        modelOptions,
+      expect(contexts.map((ctx) => ctx.binding)).toEqual([
+        binding,
+        binding,
+        binding,
+        binding,
       ]);
       expect(contexts[0].abort).toBe(abortController.signal);
       expect("messages" in contexts[0]).toBe(false);
@@ -2231,13 +2365,13 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     await runQueryLoop(
       makeOptions({
-        modelOptions: {
+        binding: { ...dummyBinding, options: {
           temperature: 0.2,
           topP: 0.8,
           maxOutputTokens: 2048,
           providerOptions,
           variant: "fast",
-        } as unknown as QueryLoopOptions["modelOptions"],
+        } as unknown as ExecutionModelBinding["options"] },
       }),
       "Hi",
     );
@@ -2256,7 +2390,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     await runQueryLoop(
       makeOptions({
-        modelOptions: {
+        binding: { ...dummyBinding, options: {
           maxOutputTokens: 512,
           temperature: 0.4,
           topP: 0.6,
@@ -2269,7 +2403,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
           timeout: 10_000,
           providerOptions,
           variant: "never-forward",
-        } as unknown as QueryLoopOptions["modelOptions"],
+        } as unknown as ExecutionModelBinding["options"] },
       }),
       "Hi",
     );

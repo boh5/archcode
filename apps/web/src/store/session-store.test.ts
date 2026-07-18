@@ -14,6 +14,12 @@ import {
   __resetWebSessionStoresForTest,
 } from "./session-store";
 
+const requestedModelSelection = {
+  mode: "agent_default" as const,
+  selection: { model: "test:model" },
+};
+const binding = { selection: { model: "test:model" }, providerId: "test", modelId: "model", providerDisplayName: "Test", modelDisplayName: "Test Model", resolution: "agent_default" as const, modelRuntimeRevision: "m1" };
+
 function event(eventId: number, payload: SessionEventPayload): GlobalSessionEventEnvelope {
   return {
     type: "event",
@@ -38,6 +44,7 @@ function committedMessage(content: string, suffix: string): SessionEventPayload 
       createdAt: 1,
       completedAt: 1,
       executionId: `execution-${suffix}`,
+      modelAudit: { requested: requestedModelSelection, actual: requestedModelSelection.selection },
     }],
   };
 }
@@ -74,6 +81,21 @@ describe("web session store registry", () => {
     expect(rootStore.getState()).not.toHaveProperty("subAgentDescriptions");
     expect(childStore.getState()).not.toHaveProperty("childSessionIds");
     expect(childStore.getState()).not.toHaveProperty("subAgentDescriptions");
+  });
+
+  test("hydrates durable selection state and tracks the active execution binding", () => {
+    const store = createWebSessionStore("model-state", "demo");
+    store.getState().initializeFromSnapshot({
+      modelSelection: { revision: 2 },
+      nextModelSelection: { requested: requestedModelSelection, resolved: binding },
+      activeModelBinding: undefined,
+      eventCursor: -1,
+    });
+    expect(store.getState().nextModelSelection?.resolved).toEqual(binding);
+    store.getState().applyRemoteEnvelope({ ...event(0, { type: "execution-start", executionId: "execution-model", binding, origin: "user_message" }), sessionId: "model-state" });
+    expect(store.getState().activeModelBinding).toEqual(binding);
+    store.getState().applyRemoteEnvelope({ ...event(1, { type: "execution-end", status: "completed" }), sessionId: "model-state" });
+    expect(store.getState().activeModelBinding).toBeUndefined();
   });
 
   test("tracks Session cwd from snapshots and formal cwd transition events", () => {
@@ -228,6 +250,7 @@ describe("applyRemoteEnvelope", () => {
     store.getState().addLocalSendingMessage({
       clientRequestId: "request-1",
       content: "hello",
+      requestedModelSelection,
       createdAt: 42,
     });
     expect(store.getState().localSendingMessages).toEqual([{
@@ -235,6 +258,7 @@ describe("applyRemoteEnvelope", () => {
       content: "hello",
       createdAt: 42,
       status: "sending",
+      requestedModelSelection,
     }]);
     store.getState().setLocalSendingMessageStatus("request-1", "retryable");
     expect(store.getState().localSendingMessages[0]?.status).toBe("retryable");
@@ -251,6 +275,7 @@ describe("applyRemoteEnvelope", () => {
           revision: 1,
           acceptedAt: 43,
           updatedAt: 43,
+          requestedModelSelection,
         },
       }),
       sessionId: "optimistic",
@@ -271,6 +296,7 @@ describe("applyRemoteEnvelope", () => {
       revision: 1,
       acceptedAt: 10,
       updatedAt: 10,
+      requestedModelSelection,
     };
 
     const apply = (eventId: number, payload: SessionEventPayload) => store.getState().applyRemoteEnvelope({
@@ -303,6 +329,7 @@ describe("applyRemoteEnvelope", () => {
         createdAt: 14,
         completedAt: 14,
         executionId: "execution-2",
+        modelAudit: { requested: requestedModelSelection, actual: requestedModelSelection.selection },
       }],
     });
     expect(store.getState().pendingMessages).toEqual([]);
@@ -322,7 +349,7 @@ describe("initializeFromSnapshot", () => {
 
   test("durable snapshot takes over an optimistic bubble by clientRequestId", () => {
     const store = createWebSessionStore("snapshot-optimistic", "demo");
-    store.getState().addLocalSendingMessage({ clientRequestId: "request-1", content: "hello", createdAt: 1 });
+    store.getState().addLocalSendingMessage({ clientRequestId: "request-1", content: "hello", requestedModelSelection, createdAt: 1 });
 
     store.getState().initializeFromSnapshot({
       pendingMessages: [{
@@ -334,6 +361,7 @@ describe("initializeFromSnapshot", () => {
         revision: 1,
         acceptedAt: 2,
         updatedAt: 2,
+        requestedModelSelection,
       }],
       eventCursor: -1,
     });
@@ -419,6 +447,57 @@ describe("initializeFromSnapshot", () => {
 
     // nextEventId should stay at 5 (not reset to 3)
     expect(store.getState().nextEventId).toBe(5);
+  });
+
+  test("does not roll model selection back when a stale snapshot follows selection SSE", () => {
+    const store = createWebSessionStore("stale-model-selection", "demo");
+    const latestSelection = { revision: 3, override: { model: "test:new-model" } };
+    store.getState().initializeFromSnapshot({
+      modelSelection: { revision: 1 },
+      nextModelSelection: { requested: requestedModelSelection, resolved: binding },
+      eventCursor: -1,
+    });
+    store.getState().applyRemoteEnvelope({
+      ...event(0, { type: "session.model_selection_changed", modelSelection: latestSelection }),
+      sessionId: "stale-model-selection",
+    });
+
+    store.getState().initializeFromSnapshot({
+      modelSelection: { revision: 1 },
+      nextModelSelection: { requested: requestedModelSelection, resolved: binding },
+      eventCursor: -1,
+    });
+
+    expect(store.getState().modelSelection).toEqual(latestSelection);
+    expect(store.getState().nextModelSelection).toBeUndefined();
+  });
+
+  test("does not clear an active binding when a stale snapshot follows execution-start SSE", () => {
+    const store = createWebSessionStore("stale-active-binding", "demo");
+    store.getState().applyRemoteEnvelope({
+      ...event(0, { type: "execution-start", executionId: "execution-model", binding, origin: "user_message" }),
+      sessionId: "stale-active-binding",
+    });
+
+    store.getState().initializeFromSnapshot({ activeModelBinding: undefined, eventCursor: -1 });
+
+    expect(store.getState().activeModelBinding).toEqual(binding);
+  });
+
+  test("does not rewind the event log or cursor when a stale snapshot contains events", () => {
+    const store = createWebSessionStore("stale-events", "demo");
+    store.getState().applyRemoteEnvelope({ ...event(0, committedMessage("first", "first")), sessionId: "stale-events" });
+    store.getState().applyRemoteEnvelope({ ...event(1, committedMessage("second", "second")), sessionId: "stale-events" });
+    const eventsBeforeSnapshot = store.getState().events;
+
+    store.getState().initializeFromSnapshot({
+      events: [eventsBeforeSnapshot[0]!],
+      eventCursor: 0,
+    });
+
+    expect(store.getState().events).toEqual(eventsBeforeSnapshot);
+    expect(store.getState().nextEventId).toBe(2);
+    expect(store.getState().eventOffset).toBe(0);
   });
 
   test("overwrites reducer-managed state when snapshot is current or ahead", () => {

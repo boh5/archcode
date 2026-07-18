@@ -24,7 +24,7 @@ export function createHybridCompressionHook(logger: Logger): HybridCompressionHo
 
   const beforeModelBuild = async (ctx: BeforeModelBuildContext): Promise<void> => {
     if (isCompressing || circuitBreaker.isOpen) return;
-    const pressure = getCompressionTokenPressure(ctx.store, ctx.modelInfo.limit.context, ctx.systemPrompt);
+    const pressure = getCompressionTokenPressure(ctx.store, ctx.binding.modelInfo.limit.context, ctx.systemPrompt);
     if (pressure === null || pressure.ratio < HARD_COMPACT_RATIO) return;
 
     const messageCount = ctx.store.getState().messages.length;
@@ -35,9 +35,7 @@ export function createHybridCompressionHook(logger: Logger): HybridCompressionHo
       const state = ctx.store.getState();
       const result = await compact({
         messages: state.messages,
-        contextLimit: ctx.modelInfo.limit.context,
-        model: ctx.modelInfo.model,
-        modelOptions: ctx.modelOptions,
+        binding: ctx.binding,
         sessionId: state.sessionId,
         logger,
         toolOutputDir: TOOL_OUTPUT_DIR,
@@ -62,7 +60,7 @@ export function createHybridCompressionHook(logger: Logger): HybridCompressionHo
   };
 
   const beforeModelCall = async (ctx: BeforeModelCallContext): Promise<void> => {
-    const pressure = getCompressionTokenPressure(ctx.store, ctx.modelInfo.limit.context);
+    const pressure = getCompressionTokenPressure(ctx.store, ctx.binding.modelInfo.limit.context);
     if (pressure === null || pressure.ratio < SOFT_NUDGE_RATIO || pressure.ratio >= HARD_COMPACT_RATIO) return;
     const strength = pressure.ratio >= STRONG_NUDGE_RATIO ? "strong" : "soft";
     ctx.messages.push(compressionNudgeMessage(strength, pressure.ratio));

@@ -85,14 +85,14 @@ packages/agent-core/src/
 ├── runtime.ts                  # createRuntime(): config → providers → tools → MCP → session manager
 ├── index.ts                    # Public API exports
 ├── config/                     # Global config service, Zod schema (.strict()), MCP/GitHub env resolution
-├── provider/                   # Provider registry wrapping AI SDK instances, ModelInfo with token limits
+├── provider/                   # Provider instance creation and immutable model metadata
+├── models/                     # ModelRuntime snapshots, selection resolution, and Execution-owned bindings
 ├── agents/definitions/         # AgentDefinition records for engineer, goal_lead, shaper, plan, build, reviewer, explore, librarian
 ├── agents/factory.ts           # Agent creation and delegation through ConfiguredAgent
 ├── agents/configured-agent.ts  # Filtered tool set + own store per delegated agent
 ├── agents/session-agent-manager.ts  # Rebuildable per-Session Agent cache
 ├── agents/constants.ts         # AgentType/depth defaults + Skill/delegation capability packages only
 ├── agents/errors.ts            # NoModelsConfiguredError, AgentRunningError, SubAgentError, ConcurrentLimitError, DepthLimitError, etc.
-├── agents/model-resolver.ts    # Resolves provider:modelId + variant → AI SDK model instance
 ├── agents/tool-filter.ts       # Definition-based tool filtering and delegation-depth enforcement
 ├── agents/query/               # runLlmStream + tool execution cycle (max 50 steps), doom detection
 ├── agents/query/loop-hooks.ts  # 4 hook points: beforeModelBuild, beforeModelCall, afterStepEnd, afterLoopEnd
@@ -404,7 +404,7 @@ HTTP Streamable only. Built-in: context7, grep.app, exa (hardcoded in `BUILTIN_M
 
 ## Key Dependencies
 
-- `@archcode/agent-core`: `ai` v6 + `@ai-sdk/openai-compatible` (streamText), `@modelcontextprotocol/sdk`, `zustand` v5, `zod` v4 (.strict()), `vscode-jsonrpc` + `vscode-languageserver-protocol` (LSP), `jsdom` + `@mozilla/readability` + `turndown` + `@truto/turndown-plugin-gfm` (web_fetch)
+- `@archcode/agent-core`: `ai` v6 + the 24 statically supported official AI SDK language Provider packages (including `@ai-sdk/openai-compatible`), `@modelcontextprotocol/sdk`, `zustand` v5, `zod` v4 (.strict()), `vscode-jsonrpc` + `vscode-languageserver-protocol` (LSP), `jsdom` + `@mozilla/readability` + `turndown` + `@truto/turndown-plugin-gfm` (web_fetch)
 - `@archcode/server`: `hono` v4 (HTTP/SSE), `zustand` v5, `zod` v4, `fuzzysort`
 - `@archcode/web`: `react` 19 + `react-dom` + `react-router-dom` v7, `@tanstack/react-query`, `zustand` v5, `@radix-ui/*`, `streamdown`, `eventsource-parser`
 - `@archcode/protocol`: zero runtime deps

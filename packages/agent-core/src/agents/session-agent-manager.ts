@@ -1,6 +1,5 @@
-import type { ArchCodeConfig } from "../config/index";
+import type { MemoryExtractionConfig } from "../config/index";
 import type { ProjectContextResolver } from "../projects/context-resolver";
-import type { ProviderRegistry } from "../provider/index";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { scopedKey } from "../store/key";
 import type { SessionStoreState } from "../store/types";
@@ -17,10 +16,9 @@ import { assertValidSessionCwd } from "../store/session-cwd";
 
 export interface SessionAgentManagerConfig {
   readonly definitions: readonly AgentDefinition[];
-  readonly providerRegistry: ProviderRegistry;
   readonly toolRegistry: ToolRegistry;
   readonly skillService: SkillService;
-  readonly config?: ArchCodeConfig;
+  readonly memoryConfig?: MemoryExtractionConfig;
   readonly projectContextResolver: ProjectContextResolver;
   readonly tombstoneTtlMs?: number;
   readonly storeManager: SessionStoreManager;
@@ -212,12 +210,11 @@ export class SessionAgentManager {
     if (!factory) {
       factory = createAgentFactory({
         definitions: this.#config.definitions,
-        providerRegistry: this.#config.providerRegistry,
         toolRegistry: this.#config.toolRegistry,
         skillService: this.#config.skillService,
         storeManager: this.#storeManager,
         workspaceRoot,
-        config: this.#config.config,
+        memoryConfig: this.#config.memoryConfig,
         projectContextResolver: this.#config.projectContextResolver,
         startChildExecution: (request) => {
           if (this.#startChildExecution === undefined) {

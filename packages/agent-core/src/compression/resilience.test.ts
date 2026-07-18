@@ -3,6 +3,7 @@ import { createEmptySessionStats } from "@archcode/protocol";
 import { setLlmAdapterForTest } from "../llm";
 import { silentLogger } from "../logger";
 import type { ModelInfo } from "../provider/model";
+import type { ExecutionModelBinding } from "../models";
 import { SessionFileSchema } from "../store/helpers";
 import { storeManager } from "../store/store";
 import type { StoredMessage } from "../store/types";
@@ -10,23 +11,25 @@ import { createCompactCommand } from "../commands/compact";
 import type { CommandContext } from "../commands/types";
 import { SkillService } from "../skills";
 import { createEmptyCompressionState } from "./index";
+import { createTestModelInfo } from "../testing/test-execution-fixtures";
 
-const modelInfo = {
-  model: { modelId: "mock" } as never,
-  displayName: "Mock",
-  limit: { context: 1000, output: 1000 },
-  modalities: { input: ["text"], output: ["text"] },
-  providerId: "test",
-  modelId: "mock",
-  qualifiedId: "test:mock",
-} as ModelInfo;
+const modelInfo: ModelInfo = createTestModelInfo({ modelId: "mock", displayName: "Mock", model: { modelId: "mock" } as never });
+const binding: ExecutionModelBinding = {
+  modelInfo,
+  options: undefined,
+  summary: {
+    selection: { model: modelInfo.qualifiedId }, providerId: modelInfo.providerId, modelId: modelInfo.modelId,
+    providerDisplayName: modelInfo.providerDisplayName, modelDisplayName: modelInfo.displayName,
+    resolution: "agent_default", modelRuntimeRevision: "test-revision",
+  },
+};
 const skillService = new SkillService({ builtinSkills: {} });
 const TEST_WORKSPACE_ROOT = `/tmp/archcode-agent-core-compression-resilience-${crypto.randomUUID()}`;
 
 function commandContext(store: CommandContext["store"]): CommandContext {
   return {
     store,
-    modelInfo,
+    binding,
     logger: silentLogger,
     cwd: import.meta.dir,
     agentName: "engineer",
@@ -102,7 +105,7 @@ describe("compression resilience", () => {
     }));
     setLlmAdapterForTest({ streamText: streamText as never });
     const store = makeStore();
-    const command = createCompactCommand(store, modelInfo);
+    const command = createCompactCommand();
 
     const first = command.handler(commandContext(store));
     await waitUntil(() => releaseSummary !== undefined);

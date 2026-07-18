@@ -20,6 +20,7 @@ export function GoalsRoute() {
           slug,
           sessionId: session.sessionId,
           content: "/skill use goal-create",
+          requestedModelSelection: session.nextModelSelection.requested,
         });
       },
     });

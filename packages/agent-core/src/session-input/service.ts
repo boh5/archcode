@@ -6,6 +6,10 @@ import type {
   PendingSessionMessage,
   SessionMessage,
   SessionMessageSource,
+  ExecutionModelBindingSummary,
+  MessageModelAudit,
+  RequestedModelSelection,
+  SessionExecutionOrigin,
 } from "@archcode/protocol";
 import type { SessionStoreState } from "../store/types";
 
@@ -19,7 +23,7 @@ export interface SessionInputStorePort {
   getSessionFile(
     workspaceRoot: string,
     sessionId: string,
-  ): Promise<Pick<SessionStoreState, "pendingMessages" | "inputRequestReceipts">>;
+  ): Promise<Pick<SessionStoreState, "pendingMessages" | "inputRequestReceipts" | "modelSelection">>;
   commitDurableSessionMutation<T>(
     sessionId: string,
     workspaceRoot: string,
@@ -87,6 +91,12 @@ export interface BeginSessionInputResult {
   readonly messages: SessionMessage[];
 }
 
+/** Exact durable pending revision paired with its already-resolved per-message audit. */
+export interface ResolvedSessionInputSnapshot {
+  readonly pending: PendingSessionMessage;
+  readonly modelAudit: MessageModelAudit;
+}
+
 export class SessionInputService {
   readonly #store: SessionInputStorePort;
 
@@ -122,6 +132,7 @@ export class SessionInputService {
     text: string;
     clientRequestId: string;
     source: SessionMessageSource;
+    requestedModelSelection: RequestedModelSelection;
   }): Promise<CommandRequestReplay | undefined> {
     assertNonEmpty(input.text, "command text");
     assertNonEmpty(input.clientRequestId, "clientRequestId");
@@ -131,7 +142,7 @@ export class SessionInputService {
     );
     return receipt === undefined
       ? undefined
-      : replayForReceipt(state, receipt, sessionInputFingerprint(input.source, input.text));
+      : replayForReceipt(state, receipt, sessionInputFingerprint(input.source, input.text, input.requestedModelSelection));
   }
 
   async claimCommand(input: {
@@ -140,10 +151,11 @@ export class SessionInputService {
     text: string;
     clientRequestId: string;
     source: SessionMessageSource;
+    requestedModelSelection: RequestedModelSelection;
   }): Promise<CommandRequestClaim> {
     assertNonEmpty(input.text, "command text");
     assertNonEmpty(input.clientRequestId, "clientRequestId");
-    const requestFingerprint = sessionInputFingerprint(input.source, input.text);
+    const requestFingerprint = sessionInputFingerprint(input.source, input.text, input.requestedModelSelection);
     return await this.#store.commitDurableSessionMutation<CommandRequestClaim>(input.sessionId, input.workspaceRoot, (state) => {
       assertRootSession(state);
       const existing = state.inputRequestReceipts.find(
@@ -157,6 +169,7 @@ export class SessionInputService {
         clientRequestId: input.clientRequestId,
         requestFingerprint,
         status: "executing",
+        requestedModelSelection: copyRequestedSelection(input.requestedModelSelection),
       };
       return {
         result: { kind: "claimed" as const },
@@ -191,12 +204,16 @@ export class SessionInputService {
     clientRequestId: string;
     text: string;
     source: SessionMessageSource;
+    requestedModelSelection: RequestedModelSelection;
     messageId?: string;
   }): Promise<MessageAcceptance> {
     assertNonEmpty(input.text, "message text");
     return await this.#store.commitDurableSessionMutation(input.sessionId, input.workspaceRoot, (state) => {
       assertRootSession(state);
       const commandReceipt = requireExecutingCommandReceipt(state.inputRequestReceipts, input.clientRequestId);
+      if (!sameRequestedSelection(commandReceipt.requestedModelSelection, input.requestedModelSelection)) {
+        throw new SessionInputConflictError("idempotency", `Command ${input.clientRequestId} model selection changed before completion`);
+      }
       const messageId = input.messageId ?? crypto.randomUUID();
       assertMessageIdentityAvailable(state, messageId);
       const acceptedAt = nextSessionTimestamp(state);
@@ -209,6 +226,7 @@ export class SessionInputService {
         revision: 0,
         acceptedAt,
         updatedAt: acceptedAt,
+        requestedModelSelection: copyRequestedSelection(input.requestedModelSelection),
       };
       const receipt: SessionMessageInputReceipt = {
         kind: "message",
@@ -216,6 +234,7 @@ export class SessionInputService {
         messageId,
         requestFingerprint: commandReceipt.requestFingerprint,
         status: "pending",
+        requestedModelSelection: copyRequestedSelection(input.requestedModelSelection),
       };
       return {
         result: {
@@ -263,10 +282,11 @@ export class SessionInputService {
     clientRequestId: string;
     source: SessionMessageSource;
     messageId?: string;
+    requestedModelSelection: RequestedModelSelection;
   }): Promise<MessageAcceptance> {
     assertNonEmpty(input.text, "message text");
     assertNonEmpty(input.clientRequestId, "clientRequestId");
-    const requestFingerprint = sessionInputFingerprint(input.source, input.text);
+    const requestFingerprint = sessionInputFingerprint(input.source, input.text, input.requestedModelSelection);
 
     return await this.#store.commitDurableSessionMutation(
       input.sessionId,
@@ -304,6 +324,7 @@ export class SessionInputService {
           revision: 0,
           acceptedAt,
           updatedAt: acceptedAt,
+          requestedModelSelection: copyRequestedSelection(input.requestedModelSelection),
         };
         const receipt: SessionInputReceipt = {
           kind: "message",
@@ -311,6 +332,7 @@ export class SessionInputService {
           messageId,
           requestFingerprint,
           status: "pending",
+          requestedModelSelection: copyRequestedSelection(input.requestedModelSelection),
         };
         return {
           result: {
@@ -407,22 +429,31 @@ export class SessionInputService {
     sessionId: string;
     workspaceRoot: string;
     executionId: string;
-    cutoffAcceptedAt?: number;
+    snapshots: readonly ResolvedSessionInputSnapshot[];
+    binding: ExecutionModelBindingSummary;
+    origin: SessionExecutionOrigin;
     signal?: AbortSignal;
   }): Promise<BeginSessionInputResult> {
     assertNonEmpty(input.executionId, "executionId");
     return await this.#store.commitDurableSessionMutation(input.sessionId, input.workspaceRoot, (state) => {
       input.signal?.throwIfAborted();
       assertRootSession(state);
-      const cutoff = input.cutoffAcceptedAt ?? Number.POSITIVE_INFINITY;
-      const pendingMessages = state.pendingMessages.filter(
-        (message) => message.state === "queued" && message.acceptedAt <= cutoff,
-      );
-      if (pendingMessages.length === 0) {
+      if (input.snapshots.length === 0) {
         throw new SessionInputConflictError("empty_queue", `Session ${state.sessionId} has no queued input`);
       }
+      const queued = state.pendingMessages.filter((message) => message.state === "queued");
+      const pendingMessages = input.snapshots.map((snapshot, index) => {
+        const current = queued[index];
+        validateResolvedSnapshot(current, snapshot, input.binding, "queued");
+        return current!;
+      });
       const committedAt = nextSessionTimestamp(state);
-      const messages = pendingMessages.map((message) => toCanonicalMessage(message, input.executionId, committedAt));
+      const messages = pendingMessages.map((message, index) => toCanonicalMessage(
+        message,
+        input.executionId,
+        committedAt,
+        input.snapshots[index]!.modelAudit,
+      ));
       return {
         result: {
           pendingMessages: pendingMessages.map(copyPendingMessage),
@@ -437,7 +468,7 @@ export class SessionInputService {
           ),
         },
         events: [
-          { type: "execution-start", executionId: input.executionId },
+          { type: "execution-start", executionId: input.executionId, binding: input.binding, origin: input.origin },
           { type: "session.messages_committed", executionId: input.executionId, messages },
         ],
       };
@@ -452,6 +483,10 @@ export class SessionInputService {
     source?: SessionMessageSource;
     messageId?: string;
     clientRequestId?: string;
+    requestedModelSelection: RequestedModelSelection;
+    modelAudit: MessageModelAudit;
+    binding: ExecutionModelBindingSummary;
+    origin: SessionExecutionOrigin;
     signal?: AbortSignal;
   }): Promise<SessionMessage> {
     assertNonEmpty(input.executionId, "executionId");
@@ -478,19 +513,23 @@ export class SessionInputService {
         revision: 0,
         acceptedAt: createdAt,
         updatedAt: createdAt,
+        requestedModelSelection: copyRequestedSelection(input.requestedModelSelection),
       };
+      validateAudit(pending, input.modelAudit, input.binding);
       const message = toCanonicalMessage(
         pending,
         input.executionId,
         createdAt,
+        input.modelAudit,
         clientRequestId !== undefined,
       );
       const receipt: SessionMessageInputReceipt | undefined = clientRequestId === undefined ? undefined : {
         kind: "message",
         clientRequestId,
         messageId,
-        requestFingerprint: sessionInputFingerprint(input.source ?? "user", input.text),
+        requestFingerprint: sessionInputFingerprint(input.source ?? "user", input.text, input.requestedModelSelection),
         status: "canonical" as const,
+        requestedModelSelection: copyRequestedSelection(input.requestedModelSelection),
       };
       return {
         result: copySessionMessage(message),
@@ -498,7 +537,7 @@ export class SessionInputService {
           ? undefined
           : { inputRequestReceipts: [...state.inputRequestReceipts, receipt] },
         events: [
-          { type: "execution-start", executionId: input.executionId },
+          { type: "execution-start", executionId: input.executionId, binding: input.binding, origin: input.origin },
           { type: "session.messages_committed", executionId: input.executionId, messages: [message] },
         ],
       };
@@ -509,36 +548,36 @@ export class SessionInputService {
     sessionId: string;
     workspaceRoot: string;
     executionId: string;
-    messages: readonly PendingSessionMessage[];
+    snapshots: readonly ResolvedSessionInputSnapshot[];
+    binding: ExecutionModelBindingSummary;
     signal?: AbortSignal;
   }): Promise<SessionMessage[]> {
-    if (input.messages.length === 0) return [];
+    if (input.snapshots.length === 0) return [];
     return await this.#store.commitDurableSessionMutation(input.sessionId, input.workspaceRoot, (state) => {
       input.signal?.throwIfAborted();
       assertRootSession(state);
       const committedAt = nextSessionTimestamp(state);
-      const pendingMessages = input.messages.map((snapshot) => {
-        const current = state.pendingMessages.find((message) => message.id === snapshot.id);
+      const pendingMessages = input.snapshots.map((snapshot) => {
+        const current = state.pendingMessages.find((message) => message.id === snapshot.pending.id);
         if (current === undefined) {
-          throw new SessionInputConflictError("not_found", `Pending message ${snapshot.id} no longer exists`);
+          throw new SessionInputConflictError("not_found", `Pending message ${snapshot.pending.id} no longer exists`);
         }
         if (current.state !== "steering" || current.targetExecutionId !== input.executionId) {
           throw new SessionInputConflictError(
             "state",
-            `Message ${snapshot.id} is not steering to ${input.executionId}`,
+            `Message ${snapshot.pending.id} is not steering to ${input.executionId}`,
             pendingConflictProjection(current),
           );
         }
-        if (current.revision !== snapshot.revision || current.content !== snapshot.content) {
-          throw new SessionInputConflictError(
-            "revision",
-            `Message ${snapshot.id} changed after Steer claim`,
-            pendingConflictProjection(current),
-          );
-        }
+        validateResolvedSnapshot(current, snapshot, input.binding, "steering");
         return current;
       });
-      const messages = pendingMessages.map((message) => toCanonicalMessage(message, input.executionId, committedAt));
+      const messages = pendingMessages.map((message, index) => toCanonicalMessage(
+        message,
+        input.executionId,
+        committedAt,
+        input.snapshots[index]!.modelAudit,
+      ));
       return {
         result: messages.map(copySessionMessage),
         patch: {
@@ -718,6 +757,7 @@ function toCanonicalMessage(
   pending: PendingSessionMessage,
   executionId: string,
   completedAt: number,
+  modelAudit: MessageModelAudit,
   includeClientRequestId = true,
 ): SessionMessage {
   return {
@@ -733,6 +773,7 @@ function toCanonicalMessage(
     createdAt: pending.acceptedAt,
     completedAt,
     executionId,
+    modelAudit: copyModelAudit(modelAudit),
     ...(includeClientRequestId ? { clientRequestId: pending.clientRequestId } : {}),
   };
 }
@@ -844,11 +885,21 @@ function replaceExecutingCommandReceipt(
   return receipts.map((receipt) => receipt === current ? replace(current) : receipt);
 }
 
-function sessionInputFingerprint(source: SessionMessageSource, text: string): string {
+function sessionInputFingerprint(
+  source: SessionMessageSource,
+  text: string,
+  requested: RequestedModelSelection,
+): string {
   return createHash("sha256")
     .update(source)
     .update("\0")
     .update(text)
+    .update("\0")
+    .update(requested.mode)
+    .update("\0")
+    .update(requested.selection.model)
+    .update("\0")
+    .update(requested.selection.variant ?? "")
     .digest("hex");
 }
 
@@ -857,9 +908,82 @@ function assertNonEmpty(value: string, field: string): void {
 }
 
 function copyPendingMessage(message: PendingSessionMessage): PendingSessionMessage {
-  return { ...message };
+  return { ...message, requestedModelSelection: copyRequestedSelection(message.requestedModelSelection) };
 }
 
 function copySessionMessage(message: SessionMessage): SessionMessage {
-  return { ...message, parts: message.parts.map((part) => ({ ...part })) };
+  return {
+    ...message,
+    parts: message.parts.map((part) => ({ ...part })),
+    ...(message.modelAudit === undefined ? {} : { modelAudit: copyModelAudit(message.modelAudit) }),
+  };
+}
+
+function copyRequestedSelection(requested: RequestedModelSelection): RequestedModelSelection {
+  return { ...requested, selection: { ...requested.selection } };
+}
+
+function copyModelAudit(audit: MessageModelAudit): MessageModelAudit {
+  return {
+    ...audit,
+    requested: copyRequestedSelection(audit.requested),
+    actual: { ...audit.actual },
+  };
+}
+
+function sameRequestedSelection(left: RequestedModelSelection, right: RequestedModelSelection): boolean {
+  return left.mode === right.mode
+    && left.selection.model === right.selection.model
+    && left.selection.variant === right.selection.variant;
+}
+
+function sameSelection(
+  left: ExecutionModelBindingSummary["selection"],
+  right: ExecutionModelBindingSummary["selection"],
+): boolean {
+  return left.model === right.model && left.variant === right.variant;
+}
+
+function validateAudit(
+  pending: PendingSessionMessage,
+  audit: MessageModelAudit,
+  binding: ExecutionModelBindingSummary,
+): void {
+  if (!sameRequestedSelection(pending.requestedModelSelection, audit.requested)
+    || !sameSelection(audit.actual, binding.selection)) {
+    throw new SessionInputConflictError(
+      "revision",
+      `Message ${pending.id} model selection changed after resolution`,
+      pendingConflictProjection(pending),
+    );
+  }
+}
+
+function validateResolvedSnapshot(
+  current: PendingSessionMessage | undefined,
+  snapshot: ResolvedSessionInputSnapshot,
+  binding: ExecutionModelBindingSummary,
+  expectedState: PendingSessionMessage["state"],
+): asserts current is PendingSessionMessage {
+  if (current === undefined || current.id !== snapshot.pending.id) {
+    throw new SessionInputConflictError(
+      current === undefined ? "not_found" : "revision",
+      `Resolved input prefix no longer begins with ${snapshot.pending.id}`,
+      current === undefined ? undefined : pendingConflictProjection(current),
+    );
+  }
+  if (current.state !== expectedState
+    || current.revision !== snapshot.pending.revision
+    || current.clientRequestId !== snapshot.pending.clientRequestId
+    || current.content !== snapshot.pending.content
+    || current.source !== snapshot.pending.source
+    || current.targetExecutionId !== snapshot.pending.targetExecutionId
+    || !sameRequestedSelection(current.requestedModelSelection, snapshot.pending.requestedModelSelection)) {
+    throw new SessionInputConflictError(
+      current.state !== expectedState ? "state" : "revision",
+      `Message ${current.id} changed after model resolution`,
+      pendingConflictProjection(current),
+    );
+  }
+  validateAudit(current, snapshot.modelAudit, binding);
 }

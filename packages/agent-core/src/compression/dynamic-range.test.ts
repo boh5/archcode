@@ -38,7 +38,7 @@ function baseState(messages: StoredMessage[]): SessionStoreState {
     cwd: "/workspace",
     agentName: "engineer",
     activeSkillNames: [],
-    modelInfo: null,
+    modelSelection: { revision: 0 },
     title: null,
     messages,
     pendingMessages: [],

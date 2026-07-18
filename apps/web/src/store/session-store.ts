@@ -12,7 +12,10 @@ import type {
   SessionEventPayload,
   SessionMessage,
   PendingSessionMessage,
-  SessionModelInfo,
+  ExecutionModelBindingSummary,
+  RequestedModelSelection,
+  SessionModelSelection,
+  SessionNextModelSelection,
   SessionProjection,
   SessionExecutionRecord,
   SessionStats,
@@ -32,12 +35,15 @@ export interface WebSessionStoreState extends Omit<SessionProjection, "cwd" | "a
     content: string;
     createdAt: number;
     status: "sending" | "retryable";
+    requestedModelSelection: RequestedModelSelection;
   }>;
   createdAt: number;
   cwd: string | null;
   rootSessionId: string;
   parentSessionId: string | undefined;
   agentName: string | null;
+  nextModelSelection: SessionNextModelSelection | undefined;
+  activeModelBinding: ExecutionModelBindingSummary | undefined;
   focusSessionId: string | null;
   lastTodoWriteStepIndex: number | null;
   lastTodoReminderStepIndex: number | null;
@@ -50,7 +56,7 @@ export interface WebSessionStoreState extends Omit<SessionProjection, "cwd" | "a
   nextEventId: number;
   setFocusSessionId: (id: string | null) => void;
   append: (event: SessionEventPayload) => void;
-  addLocalSendingMessage: (input: { clientRequestId: string; content: string; createdAt?: number }) => void;
+  addLocalSendingMessage: (input: { clientRequestId: string; content: string; requestedModelSelection: RequestedModelSelection; createdAt?: number }) => void;
   setLocalSendingMessageStatus: (clientRequestId: string, status: "sending" | "retryable") => void;
   removeLocalSendingMessage: (clientRequestId: string) => void;
   reconcileLocalSendingMessage: (clientRequestId: string) => void;
@@ -73,7 +79,9 @@ export interface WebSessionStoreState extends Omit<SessionProjection, "cwd" | "a
     executions?: SessionExecutionRecord[];
     eventCursor?: number;
     events?: SessionEventEnvelope[];
-    modelInfo?: SessionModelInfo | null;
+    modelSelection?: SessionModelSelection;
+    nextModelSelection?: SessionNextModelSelection;
+    activeModelBinding?: ExecutionModelBindingSummary;
     compression?: CompressionStateSnapshot;
     compressionBlocks?: CompressionBlockPart[];
   }) => void;
@@ -132,21 +140,24 @@ function appendEnvelopeToState(
 
   // A durable queued/canonical message carries the same clientRequestId as the
   // source-window optimistic bubble. Reconcile it here instead of rendering a
-  // second copy. The protocol owns the field; this cast keeps the web package
-  // buildable while the hard-cut protocol change lands.
-  const durableMessages = (partial.messages ?? state.messages) as Array<SessionMessage & { clientRequestId?: string }>;
-  const durableRequestIds = new Set(
-    durableMessages
-      .map((message) => message.clientRequestId)
-      .filter((id): id is string => typeof id === "string"),
-  );
+  // second copy.
+  const durableMessages = partial.messages ?? state.messages;
+  const durableRequestIds = new Set(durableMessages.map((message) => message.clientRequestId));
   const durablePendingMessages = (partial.pendingMessages ?? state.pendingMessages) as PendingSessionMessage[];
   for (const message of durablePendingMessages) durableRequestIds.add(message.clientRequestId);
   const localSendingMessages = state.localSendingMessages.filter(
     (message) => !durableRequestIds.has(message.clientRequestId),
   );
 
-  return { ...partial, localSendingMessages, events, eventOffset, nextEventId };
+  const modelBindingUpdates = envelope.payload.type === "execution-start"
+    ? { activeModelBinding: envelope.payload.binding }
+    : envelope.payload.type === "execution-end"
+      ? { activeModelBinding: undefined }
+      : envelope.payload.type === "session.model_selection_changed"
+        ? { nextModelSelection: undefined }
+        : {};
+
+  return { ...partial, ...modelBindingUpdates, localSendingMessages, events, eventOffset, nextEventId };
 }
 
 function toLocalEnvelope(envelope: GlobalSessionEventEnvelope): SessionEventEnvelope {
@@ -230,7 +241,9 @@ export function createWebSessionStore(
     createdAt: Date.now(),
     cwd: null,
     title: null,
-    modelInfo: null,
+    modelSelection: { revision: 0 },
+    nextModelSelection: undefined,
+    activeModelBinding: undefined,
     agentName: null,
     messages: [],
     pendingMessages: [],
@@ -272,10 +285,10 @@ export function createWebSessionStore(
       });
       touchRegistryEntry(key);
     },
-    addLocalSendingMessage: ({ clientRequestId, content, createdAt = Date.now() }) => {
+    addLocalSendingMessage: ({ clientRequestId, content, requestedModelSelection, createdAt = Date.now() }) => {
       set((state) => state.localSendingMessages.some((item) => item.clientRequestId === clientRequestId)
         ? {}
-        : { localSendingMessages: [...state.localSendingMessages, { clientRequestId, content, createdAt, status: "sending" }] });
+        : { localSendingMessages: [...state.localSendingMessages, { clientRequestId, content, requestedModelSelection, createdAt, status: "sending" }] });
       touchRegistryEntry(key);
     },
     setLocalSendingMessageStatus: (clientRequestId, status) => {
@@ -323,7 +336,7 @@ export function createWebSessionStore(
         // reducer-managed state (messages, steps, etc.) and only update scalar
         // metadata fields (title, createdAt, etc.) that don't lose information
         // from missing SSE events like tool-input-resolved.
-        const stale = snapshotNextEventId > 0 && state.nextEventId > snapshotNextEventId;
+        const stale = state.nextEventId > snapshotNextEventId;
 
         const updates: Partial<WebSessionStoreState> = {};
         if (data.messages !== undefined && !stale) {
@@ -369,8 +382,14 @@ export function createWebSessionStore(
         if (data.agentName !== undefined) {
           updates.agentName = data.agentName;
         }
-        if (data.modelInfo !== undefined) {
-          updates.modelInfo = data.modelInfo;
+        if (data.modelSelection !== undefined && !stale) {
+          updates.modelSelection = data.modelSelection;
+        }
+        if (data.nextModelSelection !== undefined && !stale) {
+          updates.nextModelSelection = data.nextModelSelection;
+        }
+        if ("activeModelBinding" in data && !stale) {
+          updates.activeModelBinding = data.activeModelBinding;
         }
         if (data.compression !== undefined && !stale) {
           updates.compression = data.compression;
@@ -378,7 +397,7 @@ export function createWebSessionStore(
         if (data.compressionBlocks !== undefined && !stale) {
           updates.compressionBlocks = data.compressionBlocks;
         }
-        if (data.events !== undefined) {
+        if (data.events !== undefined && !stale) {
           updates.events = data.events;
           updates.nextEventId = data.events.length > 0 ? data.events[data.events.length - 1]!.id + 1 : 0;
           updates.eventOffset = data.events.length > 0 ? data.events[0]!.id : 0;

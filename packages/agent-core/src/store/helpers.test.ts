@@ -9,6 +9,14 @@ import type { CompactionPart, Reminder, SessionRole, SessionStoreState, StepInfo
 import { createEmptyCompressionState, type CompressionState } from "../compression";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "helpers", crypto.randomUUID());
+const TEST_BINDING = {
+  selection: { model: "test:model" }, providerId: "test", modelId: "model",
+  providerDisplayName: "Test", modelDisplayName: "Model",
+  resolution: "agent_default" as const, modelRuntimeRevision: "runtime-1",
+};
+const executionStart = (executionId: string) => ({
+  type: "execution-start" as const, executionId, binding: TEST_BINDING, origin: "user_message" as const,
+});
 const sessionIds = new Set<string>();
 
 afterAll(async () => {
@@ -187,7 +195,7 @@ type PersistedSessionState = Pick<
   | "cwd"
   | "agentName"
   | "activeSkillNames"
-  | "modelInfo"
+  | "modelSelection"
   | "title"
   | "messages"
   | "pendingMessages"
@@ -228,7 +236,7 @@ function persistedState(
     cwd: TMP_DIR,
     agentName: "engineer",
     activeSkillNames: [],
-    modelInfo: null,
+    modelSelection: { revision: 0 },
     title: null,
     messages,
     pendingMessages: [],
@@ -353,7 +361,7 @@ describe("session transcript serialization", () => {
   test("save/load roundtrips sessionId, createdAt, messages, steps, stats, executions, and todos", async () => {
     const sessionId = uniqueSessionId("roundtrip");
     const stats = { ...createEmptySessionStats(), messages: { user: 1, assistant: 1, total: 2 } };
-    const executions: SessionExecutionRecord[] = [{ id: "run-1", startedAt: 1, status: "completed", endedAt: 3, durationMs: 2 }];
+    const executions: SessionExecutionRecord[] = [{ id: "run-1", startedAt: 1, status: "completed", endedAt: 3, durationMs: 2, binding: TEST_BINDING, origin: "user_message" }];
     const state = persistedState(sessionId, sampleMessages(), sampleSteps(), sampleTodos(), stats, executions);
 
     await sessionFileInternals.saveSessionTranscript(state, TMP_DIR);
@@ -840,7 +848,7 @@ describe("session transcript serialization", () => {
 
     await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, [], []), TMP_DIR);
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
-    loaded.getState().append({ type: "execution-start", executionId: "run-after-load" });
+    loaded.getState().append(executionStart("run-after-load"));
     appendCanonicalUserMessage(loaded, "after load");
 
     const state = loaded.getState();
@@ -1041,7 +1049,7 @@ describe("session transcript serialization", () => {
       "executions",
       "inputRequestReceipts",
       "messages",
-      "modelInfo",
+      "modelSelection",
       "pendingMessages",
       "reminders",
       "rootSessionId",
@@ -1154,7 +1162,7 @@ describe("session transcript serialization", () => {
 
     await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, [], []), TMP_DIR);
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
-    loaded.getState().append({ type: "execution-start", executionId: "append-work-run" });
+    loaded.getState().append(executionStart("append-work-run"));
     appendCanonicalUserMessage(loaded, "appended after load");
 
     const state = loaded.getState();
@@ -1202,7 +1210,7 @@ describe("session transcript serialization", () => {
     expect(loaded.getState().nextEventId).toBe(0);
     expect(loaded.getState().events).toHaveLength(0);
 
-    loaded.getState().append({ type: "execution-start", executionId: "first-run" });
+    loaded.getState().append(executionStart("first-run"));
     expect(loaded.getState().nextEventId).toBe(1);
     expect(loaded.getState().events).toHaveLength(1);
     expect(loaded.getState().events[0]?.id).toBe(0);

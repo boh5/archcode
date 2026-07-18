@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { SessionEventSourceEvent } from "./session-event-bridge";
 import { SessionEventBridge } from "./session-event-bridge";
+import { testRequestedModelSelection } from "../testing/test-execution-fixtures";
 
 const workspaceRoot = "/workspace";
 
@@ -54,6 +55,7 @@ describe("SessionEventBridge", () => {
         revision: 0,
         acceptedAt: 10,
         updatedAt: 10,
+        requestedModelSelection: testRequestedModelSelection,
       } },
     });
 

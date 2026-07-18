@@ -34,13 +34,9 @@ export {
   reviewerAgentDefinition,
   shaperAgentDefinition,
 } from "./definitions";
-export { resolveAgentModel } from "./model-resolver";
 export {
   AgentRunningError,
   ConcurrentLimitError,
   DepthLimitError,
-  MissingAgentModelConfigError,
-  NoModelsConfiguredError,
   SubAgentError,
-  UnknownModelVariantError,
 } from "./errors";

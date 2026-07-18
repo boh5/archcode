@@ -9,11 +9,37 @@ import {
   __resetWebSessionStoresForTest,
   createWebSessionStore,
 } from "../../store/session-store";
+import { sessionRuntimeStore } from "../../store/session-runtime-store";
+import { queryKeys } from "../../api/queries";
 
 let dom: JSDOM;
 let root: Root;
 let container: HTMLDivElement;
 let fetchMock: ReturnType<typeof mock>;
+
+const requestedModelSelection = { mode: "agent_default" as const, selection: { model: "test:model" } };
+const binding = { selection: { model: "test:model" }, providerId: "test", modelId: "model", providerDisplayName: "Test", modelDisplayName: "Test Model", resolution: "agent_default" as const, modelRuntimeRevision: "m1" };
+const catalogM1 = {
+  revision: "m1",
+  providers: [{ id: "test", displayName: "Test", models: [
+    { id: "model", qualifiedId: "test:model", displayName: "Test Model", variants: [] },
+    { id: "x", qualifiedId: "test:x", displayName: "X", variants: [] },
+  ] }],
+  agentDefaults: { engineer: { model: "test:model" } },
+};
+const catalogM2 = {
+  revision: "m2",
+  providers: [{ id: "test", displayName: "Test", models: [
+    { id: "model", qualifiedId: "test:model", displayName: "Test Model", variants: [] },
+  ] }],
+  agentDefaults: { engineer: { model: "test:model" } },
+};
+
+function createClient(catalog = catalogM1): QueryClient {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } } });
+  client.setQueryData(queryKeys.modelRuntime, catalog);
+  return client;
+}
 
 beforeEach(() => {
   dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost" });
@@ -48,15 +74,179 @@ beforeEach(() => {
   document.body.append(container);
   root = createRoot(container);
   __resetWebSessionStoresForTest();
+  sessionRuntimeStore.getState().reset();
 });
 
 afterEach(() => {
   act(() => root.unmount());
   __resetWebSessionStoresForTest();
+  sessionRuntimeStore.getState().reset();
   dom.window.close();
 });
 
 describe("ChatMessages transcript ownership", () => {
+  test("shows request/actual audit and keeps assistant model bound to its historical execution", async () => {
+    const store = createWebSessionStore("session-1", "project-1");
+    store.getState().initializeFromSnapshot({
+      rootSessionId: "session-1",
+      eventCursor: -1,
+      messages: [{
+        id: "user-a", role: "user", executionId: "execution-a", createdAt: 1, completedAt: 1,
+        parts: [{ type: "text", id: "text-a", text: "Use old model", createdAt: 1, completedAt: 1 }],
+        modelAudit: { requested: { mode: "session_override", selection: { model: "test:removed" } }, actual: { model: "test:model" }, reason: "config_invalidated" },
+      }, {
+        id: "assistant-a", role: "assistant", executionId: "execution-a", createdAt: 2, completedAt: 2,
+        parts: [{ type: "text", id: "text-b", text: "Historical answer", createdAt: 2, completedAt: 2 }],
+      }],
+      executions: [{ id: "execution-a", startedAt: 1, endedAt: 2, status: "completed", binding, origin: "user_message" }],
+      nextModelSelection: { requested: { mode: "session_override", selection: { model: "test:new" } }, resolved: { ...binding, selection: { model: "test:new" }, modelId: "new", modelDisplayName: "New Model" } },
+    });
+    const client = createClient();
+    await act(async () => { root.render(<QueryClientProvider client={client}><ChatMessages slug="project-1" sessionId="session-1" agents={[]} /></QueryClientProvider>); });
+    expect(container.textContent).toContain("Override: test:removed");
+    expect(container.textContent).toContain("Actual: test:model");
+    expect(container.textContent).toContain("invalidated by configuration");
+    expect(container.querySelector('[data-testid="assistant-model-assistant-a"]')?.textContent).toContain("Test Model");
+    expect(container.textContent).not.toContain("New Model");
+  });
+
+  test("offers Steer only when the queued request resolves to the active binding", async () => {
+    const store = createWebSessionStore("session-1", "project-1");
+    store.getState().initializeFromSnapshot({
+      rootSessionId: "session-1",
+      eventCursor: -1,
+      pendingMessages: [{ id: "queued", clientRequestId: "request", content: "Follow up", source: "user", state: "queued", revision: 1, acceptedAt: 1, updatedAt: 1, requestedModelSelection }],
+      nextModelSelection: { requested: requestedModelSelection, resolved: binding },
+    });
+    sessionRuntimeStore.getState().applySnapshot({ type: "session.runtime.snapshot", projectSlugs: ["project-1"], families: [{ projectSlug: "project-1", rootSessionId: "session-1", activity: "running", steerTargetExecutionId: "execution-a" }], createdAt: 1 });
+    store.setState({ activeModelBinding: { ...binding, selection: { model: "test:other" } } });
+    const client = createClient();
+    await act(async () => { root.render(<QueryClientProvider client={client}><ChatMessages slug="project-1" sessionId="session-1" agents={[]} /></QueryClientProvider>); });
+    expect(container.textContent).not.toContain("Steer");
+    await act(async () => store.setState({ activeModelBinding: binding }));
+    expect(container.textContent).toContain("Steer");
+
+    const invalidRequested = { mode: "session_override" as const, selection: { model: "test:removed" } };
+    await act(async () => store.setState({
+      pendingMessages: [{ id: "queued", clientRequestId: "request", content: "Follow up", source: "user", state: "queued", revision: 2, acceptedAt: 1, updatedAt: 2, requestedModelSelection: invalidRequested }],
+      nextModelSelection: { requested: requestedModelSelection, resolved: binding },
+    }));
+    expect(container.textContent).toContain("Steer");
+
+    await act(async () => store.setState({
+      nextModelSelection: { requested: requestedModelSelection, resolved: { ...binding, selection: { model: "test:other" } } },
+    }));
+    expect(container.textContent).not.toContain("Steer");
+  });
+
+  test("shows each invalid queued request and the current model it will actually use", async () => {
+    const store = createWebSessionStore("session-1", "project-1");
+    store.getState().initializeFromSnapshot({
+      rootSessionId: "session-1",
+      eventCursor: -1,
+      pendingMessages: [
+        { id: "queued-x", clientRequestId: "request-x", content: "Use X", source: "user", state: "queued", revision: 1, acceptedAt: 1, updatedAt: 1, requestedModelSelection: { mode: "session_override", selection: { model: "test:x-invalid" } } },
+        { id: "queued-y", clientRequestId: "request-y", content: "Use Y", source: "user", state: "queued", revision: 1, acceptedAt: 2, updatedAt: 2, requestedModelSelection: { mode: "session_override", selection: { model: "test:y-invalid" } } },
+      ],
+      nextModelSelection: { requested: requestedModelSelection, resolved: binding },
+    });
+    const client = createClient();
+    await act(async () => { root.render(<QueryClientProvider client={client}><ChatMessages slug="project-1" sessionId="session-1" agents={[]} /></QueryClientProvider>); });
+
+    expect(container.querySelector('[data-testid="pending-requested-model-queued-x"]')?.textContent).toContain("test:x-invalid");
+    expect(container.querySelector('[data-testid="pending-requested-model-queued-y"]')?.textContent).toContain("test:y-invalid");
+    expect(container.querySelector('[data-testid="pending-model-invalidation-queued-x"]')?.textContent).toBe("Will use test:model · requested model invalidated by configuration");
+    expect(container.querySelector('[data-testid="pending-model-invalidation-queued-y"]')?.textContent).toBe("Will use test:model · requested model invalidated by configuration");
+  });
+
+  test("does not infer queue invalidation or Steer while the catalog is loading", async () => {
+    const store = createWebSessionStore("session-1", "project-1");
+    const requestedX = { mode: "session_override" as const, selection: { model: "test:x" } };
+    store.getState().initializeFromSnapshot({
+      rootSessionId: "session-1",
+      eventCursor: -1,
+      pendingMessages: [{ id: "queued-x", clientRequestId: "request-x", content: "Use X", source: "user", state: "queued", revision: 1, acceptedAt: 1, updatedAt: 1, requestedModelSelection: requestedX }],
+      nextModelSelection: { requested: requestedModelSelection, resolved: binding },
+      activeModelBinding: binding,
+    });
+    sessionRuntimeStore.getState().applySnapshot({ type: "session.runtime.snapshot", projectSlugs: ["project-1"], families: [{ projectSlug: "project-1", rootSessionId: "session-1", activity: "running", steerTargetExecutionId: "execution-a" }], createdAt: 1 });
+    let resolveCatalog!: (response: Response) => void;
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveCatalog = resolve; }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+
+    await act(async () => {
+      root.render(<QueryClientProvider client={client}><ChatMessages slug="project-1" sessionId="session-1" agents={[]} /></QueryClientProvider>);
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[data-testid="pending-requested-model-queued-x"]')?.textContent).toContain("test:x");
+    expect(container.querySelector('[data-testid="pending-model-invalidation-queued-x"]')).toBeNull();
+    expect(container.textContent).not.toContain("Steer");
+
+    await act(async () => {
+      resolveCatalog(Response.json(catalogM1));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  });
+
+  test("keeps queue projection neutral when Session refresh wins before catalog refresh", async () => {
+    const store = createWebSessionStore("session-1", "project-1");
+    const requestedX = { mode: "session_override" as const, selection: { model: "test:x" } };
+    store.getState().initializeFromSnapshot({
+      rootSessionId: "session-1", eventCursor: -1,
+      pendingMessages: [{ id: "queued-x", clientRequestId: "request-x", content: "Use X", source: "user", state: "queued", revision: 1, acceptedAt: 1, updatedAt: 1, requestedModelSelection: requestedX }],
+      nextModelSelection: { requested: requestedModelSelection, resolved: binding },
+      activeModelBinding: binding,
+    });
+    sessionRuntimeStore.getState().applySnapshot({ type: "session.runtime.snapshot", projectSlugs: ["project-1"], families: [{ projectSlug: "project-1", rootSessionId: "session-1", activity: "running", steerTargetExecutionId: "execution-a" }], createdAt: 1 });
+    const client = createClient(catalogM1);
+    await act(async () => { root.render(<QueryClientProvider client={client}><ChatMessages slug="project-1" sessionId="session-1" agents={[]} /></QueryClientProvider>); });
+    expect(container.querySelector('[data-testid="pending-model-invalidation-queued-x"]')).toBeNull();
+
+    let resolveCatalog!: (response: Response) => void;
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveCatalog = resolve; }));
+    let refresh!: Promise<void>;
+    await act(async () => {
+      refresh = client.invalidateQueries({ queryKey: queryKeys.modelRuntime });
+      await Promise.resolve();
+      store.setState({ nextModelSelection: { requested: requestedModelSelection, resolved: { ...binding, modelRuntimeRevision: "m2" } } });
+    });
+    expect(container.querySelector('[data-testid="pending-model-invalidation-queued-x"]')).toBeNull();
+    expect(container.textContent).not.toContain("Steer");
+
+    await act(async () => {
+      resolveCatalog(Response.json(catalogM2));
+      await refresh;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(container.querySelector('[data-testid="pending-model-invalidation-queued-x"]')?.textContent).toContain("Will use test:model");
+    expect(container.textContent).toContain("Steer");
+  });
+
+  test("keeps queue projection neutral when catalog refresh wins before Session refresh", async () => {
+    const store = createWebSessionStore("session-1", "project-1");
+    const requestedX = { mode: "session_override" as const, selection: { model: "test:x" } };
+    store.getState().initializeFromSnapshot({
+      rootSessionId: "session-1", eventCursor: -1,
+      pendingMessages: [{ id: "queued-x", clientRequestId: "request-x", content: "Use X", source: "user", state: "queued", revision: 1, acceptedAt: 1, updatedAt: 1, requestedModelSelection: requestedX }],
+      nextModelSelection: { requested: requestedModelSelection, resolved: binding },
+      activeModelBinding: binding,
+    });
+    sessionRuntimeStore.getState().applySnapshot({ type: "session.runtime.snapshot", projectSlugs: ["project-1"], families: [{ projectSlug: "project-1", rootSessionId: "session-1", activity: "running", steerTargetExecutionId: "execution-a" }], createdAt: 1 });
+    const client = createClient(catalogM1);
+    await act(async () => { root.render(<QueryClientProvider client={client}><ChatMessages slug="project-1" sessionId="session-1" agents={[]} /></QueryClientProvider>); });
+
+    fetchMock.mockImplementationOnce(async () => Response.json(catalogM2));
+    await act(async () => { await client.invalidateQueries({ queryKey: queryKeys.modelRuntime }); });
+    expect(container.querySelector('[data-testid="pending-model-invalidation-queued-x"]')).toBeNull();
+    expect(container.textContent).not.toContain("Steer");
+
+    await act(async () => {
+      store.setState({ nextModelSelection: { requested: requestedModelSelection, resolved: { ...binding, modelRuntimeRevision: "m2" } } });
+    });
+    expect(container.querySelector('[data-testid="pending-model-invalidation-queued-x"]')?.textContent).toContain("Will use test:model");
+    expect(container.textContent).toContain("Steer");
+  });
+
   test("renders queued states as ordinary user bubbles without repeated identity chrome", async () => {
     const store = createWebSessionStore("session-1", "project-1");
     store.getState().initializeFromSnapshot({
@@ -88,14 +278,13 @@ describe("ChatMessages transcript ownership", () => {
         revision: 1,
         acceptedAt: 3,
         updatedAt: 3,
+        requestedModelSelection,
       }],
     });
-    store.getState().addLocalSendingMessage({ clientRequestId: "sending-request", content: "Sending request", createdAt: 4 });
-    store.getState().addLocalSendingMessage({ clientRequestId: "failed-request", content: "Failed request", createdAt: 5 });
+    store.getState().addLocalSendingMessage({ clientRequestId: "sending-request", content: "Sending request", requestedModelSelection, createdAt: 4 });
+    store.getState().addLocalSendingMessage({ clientRequestId: "failed-request", content: "Failed request", requestedModelSelection, createdAt: 5 });
     store.getState().setLocalSendingMessageStatus("failed-request", "retryable");
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-    });
+    const client = createClient();
 
     await act(async () => {
       root.render(
@@ -187,11 +376,10 @@ describe("ChatMessages transcript ownership", () => {
         revision: 1,
         acceptedAt: 0,
         updatedAt: 0,
+        requestedModelSelection,
       }],
     });
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-    });
+    const client = createClient();
 
     await act(async () => {
       root.render(
@@ -214,12 +402,11 @@ describe("ChatMessages transcript ownership", () => {
     store.getState().addLocalSendingMessage({
       clientRequestId: "request-retry",
       content: "Do not duplicate me",
+      requestedModelSelection,
       createdAt: 1,
     });
     store.getState().setLocalSendingMessageStatus("request-retry", "retryable");
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-    });
+    const client = createClient();
 
     await act(async () => {
       root.render(
@@ -243,6 +430,7 @@ describe("ChatMessages transcript ownership", () => {
     expect(JSON.parse(String(init.body))).toEqual({
       text: "Do not duplicate me",
       clientRequestId: "request-retry",
+      requestedModelSelection,
     });
   });
 

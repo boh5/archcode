@@ -4,7 +4,11 @@ import { mkdir, mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
-import type { GlobalSSESessionRuntimeChangedEvent } from "@archcode/protocol";
+import type {
+  GlobalSSESessionRuntimeChangedEvent,
+  RequestedModelSelection,
+  ServerConfigUpdate,
+} from "@archcode/protocol";
 import type { ResolvedMcpConfig } from "./config/mcp";
 import { redactMcpMessage, type McpDiscoveryResult, type McpManager, type McpWarning } from "./mcp/index";
 import { storeManager } from "./store/store";
@@ -19,6 +23,10 @@ import { ServerConfigService, resolveServerConfigPath } from "./config";
 import { setLlmAdapterForTest } from "./llm";
 
 const tmpRoots: string[] = [];
+const requestedModelSelection: RequestedModelSelection = {
+  mode: "agent_default",
+  selection: { model: "local:test-model" },
+};
 afterAll(() => { for (const root of tmpRoots) rmSync(root, { recursive: true, force: true }); });
 afterEach(() => setLlmAdapterForTest(undefined));
 
@@ -48,6 +56,14 @@ describe("createRuntime", () => {
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Queued input" });
     const session = await runtime.createSession(workspaceRoot, { agentName: "engineer", title: "Queued input" });
+    expect(session.nextModelSelection).toMatchObject({
+      requested: requestedModelSelection,
+      resolved: {
+        selection: requestedModelSelection.selection,
+        modelDisplayName: "Test Model",
+        resolution: "agent_default",
+      },
+    });
     const clientRequestId = crypto.randomUUID();
     installTestLlmAdapter();
     try {
@@ -58,6 +74,7 @@ describe("createRuntime", () => {
         text: "Inspect the project",
         clientRequestId,
         source: "user",
+        requestedModelSelection,
       });
       expect(accepted).toMatchObject({ clientRequestId });
       expect(["pending", "canonical"]).toContain(accepted.status);
@@ -90,6 +107,7 @@ describe("createRuntime", () => {
       text: "/unknown-command",
       clientRequestId,
       source: "user" as const,
+      requestedModelSelection,
     };
 
     await expect(runtime.acceptSessionMessage(input)).resolves.toEqual({ clientRequestId, status: "command" });
@@ -119,6 +137,7 @@ describe("createRuntime", () => {
       text: "/unknown-command",
       clientRequestId,
       source: "user" as const,
+      requestedModelSelection,
     };
 
     await expect(Promise.all([
@@ -137,7 +156,32 @@ describe("createRuntime", () => {
       .filter((part) => part.type === "system-notice" && part.notice.includes("Unknown command")))
       .toHaveLength(1);
   });
-  test("keeps runtime providers on startup snapshot after settings save", async () => { const configService = await writeConfig(makeConfig({ servers: {} })); const runtime = await createRuntime({ configService, mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }) }); const snapshot = await runtime.configService.getSnapshot(); const update = structuredClone(snapshot.config) as any; update.provider.local.options.apiKey = { action: "preserve" }; update.provider.local.models["new-model"] = { name: "New", limit: { context: 128000, output: 8192 }, modalities: { input: ["text"], output: ["text"] } }; const saved = await runtime.configService.save({ expectedRevision: snapshot.revision, config: update }); expect(saved.restartRequired).toBe(true); expect(runtime.providerRegistry.modelIds).toEqual(["local:test-model"]); });
+  test("publishes provider and model settings to the live runtime", async () => {
+    const configService = await writeConfig(makeConfig({ servers: {} }));
+    const runtime = await createRuntime({
+      configService,
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    const snapshot = await runtime.configService.getSnapshot();
+    const update = structuredClone(snapshot.config) as unknown as ServerConfigUpdate;
+    update.provider.local.options.apiKey = { action: "preserve" };
+    update.provider.local.models["new-model"] = {
+      name: "New",
+      limit: { context: 128000, output: 8192 },
+      modalities: { input: ["text"], output: ["text"] },
+    };
+
+    const saved = await runtime.configService.save({
+      expectedRevision: snapshot.revision,
+      config: update,
+    });
+
+    expect(saved.restartRequiredSections).toEqual([]);
+    expect(saved.modelRuntimeRevision).toBe(saved.revision);
+    expect(runtime.modelRuntime.current.revision).toBe(saved.revision);
+    expect(runtime.modelRuntime.current.tryResolveSelection({ model: "local:new-model" }))
+      .toBeDefined();
+  });
   test("registers MCP descriptors before agent runs", async () => { const descriptor = makeMcpDescriptor(); const runtime = await createRuntime({ configService: await writeConfig(makeConfig({ servers: {} })), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [descriptor], warnings: [] }) }); expect(runtime.toolRegistry.get(descriptor.name)).toBe(descriptor); });
   test("starts with no MCP config", async () => { let resolved: ResolvedMcpConfig | undefined; const runtime = await createRuntime({ configService: await writeConfig(makeConfig()), mcpManagerFactory: (config) => { resolved = config; return makeFakeMcpManager({ descriptors: [], warnings: [] }); } }); expect(resolved).toEqual({ servers: {} }); expect(runtime.warnings).toEqual([]); });
   test("exposes project registry and shared context resolver", async () => { const runtime = await createRuntime({ configService: await writeConfig(makeConfig()), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }) }); expect(runtime.projectRegistry).toBeDefined(); expect(runtime.contextResolver).toBeDefined(); });

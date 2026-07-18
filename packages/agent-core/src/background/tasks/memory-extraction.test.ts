@@ -12,8 +12,10 @@ import type { ModelInfo } from "../../provider/model";
 import { createMockLogger } from "../../logger.test-helper";
 import { silentLogger } from "../../logger";
 import type { BackgroundTaskContext } from "../types";
+import type { ExecutionModelBinding } from "../../models";
 import { createTestTempRoot } from "../../testing/test-temp-root";
 import { createFakeRetryScheduler } from "../../testing/fake-retry-scheduler";
+import { createTestModelInfo } from "../../testing/test-execution-fixtures";
 
 function makeGenerateTextResult(input: unknown = { memories: [] }) {
   return {
@@ -35,15 +37,16 @@ const testTemp = createTestTempRoot("memory-extraction-task");
 const tmpDir = testTemp.path;
 
 function makeModelInfo(): ModelInfo {
-  return {
-    model: { provider: "test" } as never,
-    displayName: "Test Model",
-    limit: { context: 4096, output: 1024 },
-    modalities: { input: ["text"], output: ["text"] },
-    providerId: "test",
-    modelId: "test-model",
-    qualifiedId: "test:test-model",
-  };
+  return createTestModelInfo();
+}
+
+function makeBinding(options?: ExecutionModelBinding["options"]): ExecutionModelBinding {
+  const modelInfo = makeModelInfo();
+  return { modelInfo, options, summary: {
+    selection: { model: modelInfo.qualifiedId }, providerId: modelInfo.providerId, modelId: modelInfo.modelId,
+    providerDisplayName: modelInfo.providerDisplayName, modelDisplayName: modelInfo.displayName,
+    resolution: "agent_default", modelRuntimeRevision: "test-revision",
+  } };
 }
 
 function makeTaskContext(
@@ -51,7 +54,7 @@ function makeTaskContext(
   overrides: Partial<BackgroundTaskContext> = {},
 ): BackgroundTaskContext {
   return { store,
-  modelInfo: makeModelInfo(),
+  binding: makeBinding(),
   logger: silentLogger,
   retryScheduler: createFakeRetryScheduler(),
   workspaceRoot: "/tmp", ...overrides,  };
@@ -168,11 +171,11 @@ describe("createMemoryExtractionTask", () => {
 
     const task = createMemoryExtractionTask(store, roots);
     const ctx = makeTaskContext(store, {
-      modelOptions: {
+      binding: makeBinding({
         temperature: 0.55,
         maxOutputTokens: 256,
         providerOptions: { memoryExtraction: { mode: "archive" } },
-      },
+      }),
     });
 
     await task.run(ctx);
@@ -194,11 +197,11 @@ describe("createMemoryExtractionTask", () => {
 
     const task = createMemoryExtractionTask(store, roots);
     const ctx = makeTaskContext(store, {
-      modelOptions: {
+      binding: makeBinding({
         temperature: 0.55,
         maxOutputTokens: 256,
         providerOptions: { memoryExtraction: { mode: "archive" } },
-      },
+      }),
     });
 
     await task.run(ctx);
@@ -241,11 +244,11 @@ describe("createMemoryExtractionTask", () => {
 
     const task = createMemoryExtractionTask(store, roots);
     const ctx = makeTaskContext(store, {
-      modelOptions: {
+      binding: makeBinding({
         temperature: 0.55,
         maxOutputTokens: 256,
         providerOptions: { memoryExtraction: { mode: "archive" } },
-      },
+      }),
     });
 
     await task.run(ctx);

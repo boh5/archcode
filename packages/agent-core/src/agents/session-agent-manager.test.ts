@@ -1,8 +1,7 @@
 import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
 import { z } from "zod";
-import type { ArchCodeConfig } from "../config/schema";
 import { ModelInfo } from "../provider/model";
-import type { ProviderRegistry } from "../provider/index";
+import type { ExecutionModelBinding } from "../models";
 import { SkillService } from "../skills";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { createRegistry } from "../tools/registry";
@@ -39,7 +38,7 @@ function makeTool(name: string): AnyToolDescriptor {
   };
 }
 
-function makeProviderRegistry(): ProviderRegistry {
+function makeBinding(): ExecutionModelBinding {
   const model = new ModelInfo({
     model: {} as ConstructorParameters<typeof ModelInfo>[0]["model"],
     config: {
@@ -48,33 +47,35 @@ function makeProviderRegistry(): ProviderRegistry {
       modalities: { input: ["text"], output: ["text"] },
     },
     providerId: "test",
+    providerDisplayName: "Test Provider",
     modelId: "model",
   });
 
   return {
-    sdkRegistry: {} as ProviderRegistry["sdkRegistry"],
-    models: new Map([[model.qualifiedId, model]]),
-    modelIds: [model.qualifiedId],
-    getModel: () => model,
-  } as ProviderRegistry;
+    modelInfo: model,
+    options: undefined,
+    summary: {
+      selection: { model: model.qualifiedId },
+      providerId: model.providerId,
+      modelId: model.modelId,
+      providerDisplayName: model.providerDisplayName,
+      modelDisplayName: model.displayName,
+      resolution: "agent_default",
+      modelRuntimeRevision: "test-revision",
+    },
+  };
 }
 
 function createManager(
   tombstoneTtlMs?: number,
   storeManager = new SessionStoreManager({ logger: silentLogger }),
 ): SessionAgentManager {
-  const providerRegistry = makeProviderRegistry();
   return new SessionAgentManager({
     definitions: [engineerAgentDefinition],
-    providerRegistry,
     toolRegistry: createRegistry([makeTool("unknown_tool")]),
     skillService: new SkillService({ builtinSkills: {} }),
     storeManager,
     projectContextResolver: createTestProjectContextResolver(storeManager),
-    config: {
-      provider: {},
-      agents: { engineer: { model: providerRegistry.modelIds[0]! } },
-    } as unknown as ArchCodeConfig,
     logger: silentLogger,
     ...(tombstoneTtlMs === undefined ? {} : { tombstoneTtlMs }),
   });
@@ -123,7 +124,6 @@ function createIdentityManager(
   storeManager: SessionStoreManager,
   observedContexts: ToolExecutionContext[],
 ): SessionAgentManager {
-  const providerRegistry = makeProviderRegistry();
   const identityProbe: AnyToolDescriptor = {
     ...makeTool("identity_probe"),
     execute: (_input, context) => {
@@ -150,15 +150,10 @@ function createIdentityManager(
 
   return new SessionAgentManager({
     definitions: [identityAgentDefinition],
-    providerRegistry,
     toolRegistry,
     skillService,
     storeManager,
     projectContextResolver: createTestProjectContextResolver(storeManager),
-    config: {
-      provider: {},
-      agents: { engineer: { model: providerRegistry.modelIds[0]! } },
-    } as unknown as ArchCodeConfig,
     logger: silentLogger,
   });
 }
@@ -294,6 +289,13 @@ describe("SessionAgentManager", () => {
       const promptCount = streamText.mock.calls.length;
       const messageId = crypto.randomUUID();
       const executionId = `test-${messageId}`;
+      const binding = makeBinding();
+      agent.store.getState().append({
+        type: "execution-start",
+        executionId,
+        binding: binding.summary,
+        origin: "user_message",
+      });
       agent.store.getState().append({
         type: "session.messages_committed",
         executionId,
@@ -305,9 +307,15 @@ describe("SessionAgentManager", () => {
           completedAt: 1,
           executionId,
           clientRequestId: `request-${messageId}`,
+          modelAudit: {
+            requested: { mode: "agent_default", selection: binding.summary.selection },
+            actual: binding.summary.selection,
+          },
         }],
       });
-      await agent.run({ maxSteps: 1 });
+      await agent.run(binding, { maxSteps: 1 });
+      agent.store.getState().append({ type: "execution-end", status: "completed" });
+      await storeManager.flushSession(sessionId, workspaceRoot);
       const context = activeContexts[contextCount]!;
       const prompt = (streamText.mock.calls[promptCount]![0] as { system: string }).system;
       const depth = context.currentDepth!;

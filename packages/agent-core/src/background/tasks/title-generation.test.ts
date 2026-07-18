@@ -9,6 +9,7 @@ import { createMockLogger } from "../../logger.test-helper";
 import { setLlmAdapterForTest } from "../../llm";
 import { __setSessionsDirForTest } from "../../store/sessions-dir";
 import { createFakeRetryScheduler } from "../../testing/fake-retry-scheduler";
+import { createTestModelInfo } from "../../testing/test-execution-fixtures";
 
 const TEST_TMP = join(import.meta.dir, "__test_tmp__", "title-generation", crypto.randomUUID());
 
@@ -19,17 +20,19 @@ const mockGenerateText = mock(
 import { createTitleGenerationTask } from "./title-generation";
 import type { BackgroundTaskContext } from "../types";
 import type { ModelInfo } from "../../provider/model";
+import type { ExecutionModelBinding } from "../../models";
 
 function makeModelInfo(): ModelInfo {
-  return {
-    model: { provider: "test" } as never,
-    displayName: "Test Model",
-    limit: { context: 4096, output: 1024 },
-    modalities: { input: ["text"], output: ["text"] },
-    providerId: "test",
-    modelId: "test-model",
-    qualifiedId: "test:test-model",
-  };
+  return createTestModelInfo();
+}
+
+function makeBinding(options?: ExecutionModelBinding["options"]): ExecutionModelBinding {
+  const modelInfo = makeModelInfo();
+  return { modelInfo, options, summary: {
+    selection: { model: modelInfo.qualifiedId }, providerId: modelInfo.providerId, modelId: modelInfo.modelId,
+    providerDisplayName: modelInfo.providerDisplayName, modelDisplayName: modelInfo.displayName,
+    resolution: "agent_default", modelRuntimeRevision: "test-revision",
+  } };
 }
 
 function makeTaskContext(
@@ -37,7 +40,7 @@ function makeTaskContext(
   overrides: Partial<BackgroundTaskContext> = {},
 ): BackgroundTaskContext {
   return { store,
-  modelInfo: makeModelInfo(),
+  binding: makeBinding(),
   logger: silentLogger,
   retryScheduler: createFakeRetryScheduler(),
   workspaceRoot: "/tmp", ...overrides,  };
@@ -113,11 +116,11 @@ describe("createTitleGenerationTask", () => {
 
     const task = createTitleGenerationTask(store);
     const ctx = makeTaskContext(store, {
-      modelOptions: {
+      binding: makeBinding({
         temperature: 0.25,
         maxOutputTokens: 32,
         providerOptions: { title: { style: "concise" } },
-      },
+      }),
     });
 
     await task.run(ctx);
@@ -194,7 +197,7 @@ describe("createTitleGenerationTask", () => {
 
     const task = createTitleGenerationTask(store);
     await task.run(makeTaskContext(store, {
-      modelOptions: {
+      binding: makeBinding({
         maxOutputTokens: 64,
         temperature: 0.15,
         topP: 0.5,
@@ -207,7 +210,7 @@ describe("createTitleGenerationTask", () => {
         timeout: 5000,
         providerOptions,
         variant: "title-fast",
-      } as unknown as BackgroundTaskContext["modelOptions"],
+      } as unknown as ExecutionModelBinding["options"]),
     }));
 
     const calls = mockGenerateText.mock.calls as unknown as Array<[Record<string, unknown>]>;

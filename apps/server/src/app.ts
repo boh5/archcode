@@ -138,6 +138,7 @@ export function createServerApp(
   wireSessionEventBridge(serverRuntime, globalEventBus);
   wireSessionRuntimeBridge(serverRuntime, globalEventBus);
   wireMcpStatusBridge(serverRuntime, globalEventBus);
+  wireModelRuntimeBridge(serverRuntime, globalEventBus);
   wireResourceChangeBridge(serverRuntime, globalEventBus);
 
   return { app, runtime: serverRuntime };
@@ -182,6 +183,14 @@ function wireMcpStatusBridge(
       createdAt: Date.now(),
     });
   });
+}
+
+function wireModelRuntimeBridge(
+  runtime: AgentRuntime,
+  bus: { emit(event: GlobalSSEEvent): void },
+): void {
+  if (typeof runtime.subscribeModelRuntimeChanges !== "function") return;
+  runtime.subscribeModelRuntimeChanges((event) => bus.emit(event));
 }
 
 function wireResourceChangeBridge(

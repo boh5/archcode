@@ -3,6 +3,7 @@ import type { ChildExecutionHandle, ResumeChildRequest } from "../../delegation/
 import { storeManager } from "../../store/store";
 import type { ToolExecutionContext } from "../types";
 import { createTestProjectContext } from "../test-project-context";
+import { testExecutionStart } from "../../testing/test-execution-fixtures";
 import { executeResumeSession, ResumeSessionInputSchema, resumeSessionTool } from "./resume-session";
 
 const WORKSPACE_ROOT = import.meta.dir;
@@ -32,7 +33,7 @@ function handle(parentSessionId: string): ChildExecutionHandle {
     activeSkillNames: ["git-master"],
     title: "Original title",
   });
-  store.getState().append({ type: "execution-start", executionId: crypto.randomUUID() });
+  store.getState().append(testExecutionStart(crypto.randomUUID()));
   store.getState().append({ type: "execution-end", status: "completed" });
   return {
     sessionId: store.getState().sessionId,

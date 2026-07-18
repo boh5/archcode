@@ -1,6 +1,5 @@
 import type { StoreApi } from "zustand";
-import type { ModelCallOptions } from "../../config/provider";
-import type { ModelInfo } from "../../provider/model";
+import type { ExecutionModelBinding } from "../../models";
 import type { SessionStoreManager } from "../../store/session-store-manager";
 import type { ExecutionEndEvent, SessionStoreState } from "../../store/types";
 import type { AskUserCallback, ToolConfirmationCallback, ToolExecutionControl } from "../../tools/index";
@@ -14,9 +13,8 @@ import type { Logger } from "../../logger";
 export const DOOM_LOOP_MESSAGE = "Doom loop detected: same tool and input repeated 3 times";
 
 export interface QueryLoopOptions {
-  modelInfo: ModelInfo;
+  binding: ExecutionModelBinding;
   logger: Logger;
-  modelOptions?: ModelCallOptions;
   toolRegistry: ToolRegistry;
   allowedTools: readonly string[];
   agentSkills: readonly string[];

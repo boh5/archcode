@@ -9,6 +9,19 @@ import {
 import type { SessionEventPayload } from "./types";
 
 const displayPayload = { title: "Question", redacted: true as const };
+const requestedModelSelection = {
+  mode: "agent_default" as const,
+  selection: { model: "test:model" },
+};
+const binding = {
+  selection: { model: "test:model" },
+  providerId: "test",
+  modelId: "model",
+  providerDisplayName: "Test",
+  modelDisplayName: "Model",
+  resolution: "agent_default" as const,
+  modelRuntimeRevision: "runtime-1",
+};
 const refMap = {
   messageRefsById: { message: "m0001" as const },
   messageIdsByRef: { m0001: "message" },
@@ -54,6 +67,7 @@ const pendingMessage = {
   revision: 0,
   acceptedAt: 1,
   updatedAt: 1,
+  requestedModelSelection,
 };
 const steeringMessage = {
   ...pendingMessage,
@@ -69,13 +83,15 @@ const canonicalMessage = {
   completedAt: 2,
   executionId: "execution-1",
   clientRequestId: pendingMessage.clientRequestId,
+  modelAudit: { requested: requestedModelSelection, actual: binding.selection },
 };
 
 const validPayloads = [
   { type: "shutdown", reason: "restart" },
-  { type: "execution-start", executionId: "execution-1" },
+  { type: "execution-start", executionId: "execution-1", binding, origin: "user_message" },
   { type: "execution-end", status: "waiting_for_human", blockedByHitlIds: ["hitl-1"] },
   { type: "session.cwd_changed", previousCwd: "/old", cwd: "/new" },
+  { type: "session.model_selection_changed", modelSelection: { revision: 1, override: { model: "test:model" } } },
   { type: "session.message_accepted", message: pendingMessage },
   { type: "session.message_edited", message: { ...pendingMessage, content: "edited", revision: 1 } },
   { type: "session.message_deleted", messageId: pendingMessage.id, clientRequestId: pendingMessage.clientRequestId, revision: 1, deletedAt: 2 },
@@ -137,6 +153,7 @@ describe("protocol event guards", () => {
       "session.message_steer_claimed",
       "session.message_steer_rolled_back",
       "session.messages_committed",
+      "session.model_selection_changed",
       "shutdown",
       "step-end",
       "step-start",
@@ -160,6 +177,7 @@ describe("protocol event guards", () => {
   });
 
   test("rejects malformed Session event payloads without throwing", () => {
+    expect(validPayloads.filter((event) => !isSessionEventPayload(event)).map((event) => event.type)).toEqual([]);
     expect(validPayloads.every(isSessionEventPayload)).toBe(true);
     for (const event of validPayloads) {
       expect(isSessionEventPayload({ ...event, legacy: true })).toBe(false);

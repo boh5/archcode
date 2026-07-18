@@ -1,5 +1,5 @@
 import { rm } from "node:fs/promises";
-import { isTerminalChildSessionStatus, type ExecutionEndEvent, type PendingSessionMessage, type SessionExecutionRecord, type SessionFamilyActivity, type SessionMessageSource, type SessionTreeNode, type SessionTreeResponse, type ToolChildSessionLink, type ToolChildSessionLinkStatus } from "@archcode/protocol";
+import { isTerminalChildSessionStatus, type ExecutionEndEvent, type MessageModelAudit, type ModelSelectionRef, type PendingSessionMessage, type RequestedModelSelection, type SessionExecutionOrigin, type SessionExecutionRecord, type SessionFamilyActivity, type SessionMessageSource, type SessionTreeNode, type SessionTreeResponse, type ToolChildSessionLink, type ToolChildSessionLinkStatus } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
 import {
@@ -26,7 +26,10 @@ import type { Reminder, SessionRole, SessionStoreState } from "../store/types";
 import type { StoredMessage } from "../store/types";
 import type { AgentName } from "../agents/names";
 import type { Logger } from "../logger";
-import { nextSessionTimestamp, SessionInputConflictError, type SessionInputService } from "../session-input/service";
+import { nextSessionTimestamp, SessionInputConflictError, type ResolvedSessionInputSnapshot, type SessionInputService } from "../session-input/service";
+import type { ExecutionModelBinding, ModelRuntime, ModelRuntimeSnapshot } from "../models";
+import type { ModelSelectionResolver } from "../models/model-selection-resolver";
+import { sanitizeProviderError } from "../llm/provider-error-sanitizer";
 import {
   SessionExecutionScopeConflictError,
   type SessionExecutionScopeValidator,
@@ -58,12 +61,6 @@ import { collectSessionTreeIds } from "./session-tree";
 const ABORT_AND_WAIT_TIMEOUT_MS = 10000;
 const MAX_CWD_TRANSITIONS_PER_EXECUTION = 4;
 
-export type SessionExecutionOrigin =
-  | "user_message"
-  | "tool_call"
-  | "tool_batch"
-  | "goal_claim";
-
 export interface ActiveSessionExecution {
   readonly sessionId: string;
   readonly rootSessionId: string;
@@ -76,6 +73,8 @@ export interface ActiveSessionExecution {
   readonly startedAt: number;
   /** Durable id shared with the Session execution-start record. */
   readonly executionId: string;
+  /** Full immutable binding used by every model call in this Execution. */
+  readonly binding: ExecutionModelBinding;
   /** Settles once input plus execution-start are durable, before model work. */
   readonly started: Promise<void>;
 }
@@ -95,6 +94,7 @@ export type SessionExecutionInput =
     readonly source?: SessionMessageSource;
     readonly messageId?: string;
     readonly clientRequestId?: string;
+    readonly requestedModelSelection?: RequestedModelSelection;
   }
   | { readonly kind: "continuation" };
 
@@ -113,10 +113,11 @@ export interface StartSessionExecutionInput {
 interface PendingSessionExecution extends Omit<ActiveSessionExecution, "promise"> {
   promise?: Promise<void>;
   familyStopLease?: SessionFamilyStopLease;
-  queueCutoffAcceptedAt?: number;
+  readonly queueSnapshots?: readonly ResolvedSessionInputSnapshot[];
+  readonly directRequestedModelSelection?: RequestedModelSelection;
   ready: boolean;
   steerGateOpen: boolean;
-  readonly steerMailbox: PendingSessionMessage[];
+  readonly steerMailbox: ResolvedSessionInputSnapshot[];
   readonly steerOperations: Set<Promise<void>>;
   resolveStarted(): void;
   rejectStarted(error: unknown): void;
@@ -129,6 +130,7 @@ interface ActiveSessionCommand {
   readonly token: symbol;
   readonly abortController: AbortController;
   readonly completion: Promise<void>;
+  readonly binding: ExecutionModelBinding;
 }
 
 export type SessionCommandRunResult<T> =
@@ -175,6 +177,8 @@ export type SessionRuntimeChangeListener = (change: SessionRuntimeChange) => voi
 
 interface SessionExecutionManagerConfig {
   readonly sessionAgentManager: SessionAgentManager;
+  readonly modelRuntime: ModelRuntime;
+  readonly modelSelectionResolver: ModelSelectionResolver;
   readonly createSessionStore: (
     sessionId: string,
     workspaceRoot: string,
@@ -269,6 +273,25 @@ export class SessionExecutionManager {
     if (input.input.kind === "queue" && queuedAtClaim.length === 0) {
       throw new SessionInputConflictError("empty_queue", `Session ${sessionState.sessionId} has no queued input`);
     }
+    const modelSnapshot = this.#config.modelRuntime.current;
+    const resolved = input.input.kind === "queue"
+      ? resolveQueuePrefix(
+        queuedAtClaim,
+        modelSnapshot,
+        sessionState.agentName,
+        sessionState.modelSelection.override,
+        this.#config.modelSelectionResolver,
+      )
+      : resolveSingleBinding(
+        modelSnapshot,
+        sessionState.agentName,
+        sessionState.modelSelection.override,
+        input.input.kind === "direct" ? input.input.requestedModelSelection : undefined,
+        this.#config.modelSelectionResolver,
+      );
+    const directRequestedModelSelection = input.input.kind === "direct"
+      ? effectiveDirectRequest(input.input.requestedModelSelection, resolved.binding)
+      : undefined;
     const rootSessionId = sessionState.rootSessionId;
     const abortController = new AbortController();
     const executionToken = Symbol(`session-execution:${key}`);
@@ -289,9 +312,9 @@ export class SessionExecutionManager {
       executionToken,
       startedAt: Date.now(),
       executionId: input.executionId ?? crypto.randomUUID(),
-      ...(input.input.kind === "queue"
-        ? { queueCutoffAcceptedAt: Math.max(...queuedAtClaim.map((message) => message.acceptedAt)) }
-        : {}),
+      binding: resolved.binding,
+      ...(input.input.kind === "queue" ? { queueSnapshots: resolved.snapshots } : {}),
+      ...(directRequestedModelSelection === undefined ? {} : { directRequestedModelSelection }),
       started,
       ready: false,
       steerGateOpen: false,
@@ -362,7 +385,8 @@ export class SessionExecutionManager {
     readonly workspaceRoot: string;
     readonly sessionId: string;
     readonly clientRequestId: string;
-  }, execute: (signal: AbortSignal) => Promise<T>): Promise<SessionCommandRunResult<T>> {
+    readonly requestedModelSelection: RequestedModelSelection;
+  }, execute: (binding: ExecutionModelBinding, signal: AbortSignal) => Promise<T>): Promise<SessionCommandRunResult<T>> {
     this.#assertWorkspaceOpen(input.workspaceRoot);
     const state = this.#config.getSessionStore(input.sessionId, input.workspaceRoot)?.getState();
     if (state === undefined) throw new SessionFamilyIdentityUnavailableError(input.sessionId);
@@ -393,6 +417,12 @@ export class SessionExecutionManager {
         `Session ${input.sessionId} command cannot bypass ${state.pendingMessages.length} queued message(s)`,
       );
     }
+    const binding = this.#config.modelSelectionResolver.resolve({
+      snapshot: this.#config.modelRuntime.current,
+      agentName: state.agentName,
+      requested: input.requestedModelSelection,
+      sessionOverride: state.modelSelection.override,
+    });
 
     const token = Symbol(`session-command:${familyKey}`);
     const abortController = new AbortController();
@@ -410,16 +440,18 @@ export class SessionExecutionManager {
       token,
       abortController,
       completion,
+      binding,
     };
     this.#activeCommands.set(familyKey, command);
     this.#publishSessionRuntimeChange(input.workspaceRoot, state.rootSessionId);
     try {
-      const result = await execute(abortController.signal);
+      const result = await execute(binding, abortController.signal);
       resolveCompletion();
       return { kind: "executed", result };
     } catch (error) {
-      rejectCompletion(error);
-      throw error;
+      const safeError = sanitizeBindingError(error, binding);
+      rejectCompletion(safeError);
+      throw safeError;
     } finally {
       if (this.#activeCommands.get(familyKey)?.token === token) {
         this.#activeCommands.delete(familyKey);
@@ -781,6 +813,22 @@ export class SessionExecutionManager {
     let operation!: Promise<void>;
     let claimed: PendingSessionMessage | undefined;
     operation = (async () => {
+      const pending = (await this.#config.sessionInputService.getPendingMessages(
+        input.sessionId,
+        input.workspaceRoot,
+      )).find((message) => message.id === input.messageId);
+      if (pending === undefined || pending.revision !== input.expectedRevision || pending.state !== "queued") {
+        throw new SessionSteerUnavailableError(input.sessionId, input.expectedExecutionId);
+      }
+      const steerBinding = this.#config.modelSelectionResolver.resolve({
+        snapshot: this.#config.modelRuntime.current,
+        agentName: execution.agentName,
+        requested: pending.requestedModelSelection,
+        sessionOverride: this.#config.getSessionStore(input.sessionId, input.workspaceRoot)?.getState().modelSelection.override,
+      });
+      if (!sameModelSelection(steerBinding.summary.selection, execution.binding.summary.selection)) {
+        throw new SessionSteerUnavailableError(input.sessionId, input.expectedExecutionId);
+      }
       claimed = await this.#config.sessionInputService.claimSteer(input);
       const current = this.#active.get(key);
       if (
@@ -796,7 +844,10 @@ export class SessionExecutionManager {
         });
         throw new SessionSteerUnavailableError(input.sessionId, input.expectedExecutionId);
       }
-      current.steerMailbox.push(claimed);
+      current.steerMailbox.push({
+        pending: claimed,
+        modelAudit: modelAuditFor(claimed.requestedModelSelection, execution.binding),
+      });
     })().finally(() => {
       execution.steerOperations.delete(operation);
     });
@@ -988,7 +1039,10 @@ export class SessionExecutionManager {
         slug: "",
         workspaceRoot,
         sessionId: childSessionId,
-        input: { kind: "direct", text: childPrompt },
+        input: {
+          kind: "direct",
+          text: childPrompt,
+        },
         origin: "tool_call",
       });
       await execution.started;
@@ -1350,17 +1404,22 @@ export class SessionExecutionManager {
     try {
       if (store === undefined) throw new SessionFamilyIdentityUnavailableError(input.sessionId);
       if (input.input.kind === "queue") {
-        if (execution.queueCutoffAcceptedAt === undefined) {
-          throw new Error(`Queue execution ${execution.executionId} has no claim cutoff`);
+        if (execution.queueSnapshots === undefined || execution.queueSnapshots.length === 0) {
+          throw new Error(`Queue execution ${execution.executionId} has no resolved input prefix`);
         }
         await this.#config.sessionInputService.beginQueueExecution({
           sessionId: input.sessionId,
           workspaceRoot: input.workspaceRoot,
           executionId: execution.executionId,
-          cutoffAcceptedAt: execution.queueCutoffAcceptedAt,
+          snapshots: execution.queueSnapshots,
+          binding: execution.binding.summary,
+          origin: execution.origin,
           signal: execution.abortController.signal,
         });
       } else if (input.input.kind === "direct") {
+        if (execution.directRequestedModelSelection === undefined) {
+          throw new Error(`Direct execution ${execution.executionId} has no effective requested model selection`);
+        }
         await this.#config.sessionInputService.beginDirectExecution({
           sessionId: input.sessionId,
           workspaceRoot: input.workspaceRoot,
@@ -1369,10 +1428,19 @@ export class SessionExecutionManager {
           ...(input.input.source === undefined ? {} : { source: input.input.source }),
           ...(input.input.messageId === undefined ? {} : { messageId: input.input.messageId }),
           ...(input.input.clientRequestId === undefined ? {} : { clientRequestId: input.input.clientRequestId }),
+          requestedModelSelection: execution.directRequestedModelSelection,
+          modelAudit: modelAuditFor(execution.directRequestedModelSelection, execution.binding),
+          binding: execution.binding.summary,
+          origin: execution.origin,
           signal: execution.abortController.signal,
         });
       } else {
-        store.getState().append({ type: "execution-start", executionId: execution.executionId });
+        store.getState().append({
+          type: "execution-start",
+          executionId: execution.executionId,
+          binding: execution.binding.summary,
+          origin: execution.origin,
+        });
         await this.#config.flushSessionStore(input.sessionId, input.workspaceRoot);
       }
 
@@ -1393,7 +1461,7 @@ export class SessionExecutionManager {
         const current = this.#active.get(key);
         if (current?.executionToken !== execution.executionToken) return;
 
-        const result = await agent.run({
+        const result = await agent.run(execution.binding, {
           abort: execution.abortController.signal,
           ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
           ...(input.extraTools === undefined ? {} : { extraTools: input.extraTools }),
@@ -1401,7 +1469,9 @@ export class SessionExecutionManager {
         });
         if (result.executionControl?.action === "stop_session_family") {
           terminalStatus = result.status;
-          terminalError = result.error;
+          terminalError = result.error === undefined
+            ? undefined
+            : execution.binding.modelInfo.redactSensitiveText(result.error);
           const rootSessionId = execution.rootSessionId;
           const familyKey = scopedKey(input.workspaceRoot, rootSessionId);
           if (!this.#familyStops.has(familyKey)) {
@@ -1416,7 +1486,9 @@ export class SessionExecutionManager {
         }
         if (result.cwdChanged === undefined) {
           terminalStatus = result.status;
-          terminalError = result.error;
+          terminalError = result.error === undefined
+            ? undefined
+            : execution.binding.modelInfo.redactSensitiveText(result.error);
           return;
         }
         if (transitionCount === MAX_CWD_TRANSITIONS_PER_EXECUTION) {
@@ -1425,16 +1497,17 @@ export class SessionExecutionManager {
         this.#config.sessionAgentManager.releaseAgent(input.workspaceRoot, input.sessionId);
       }
     } catch (error) {
-      if (!execution.ready) execution.rejectStarted(error);
+      const safeError = sanitizeBindingError(error, execution.binding);
+      if (!execution.ready) execution.rejectStarted(safeError);
       terminalStatus = execution.abortController.signal.aborted
         ? abortExecutionStatus(execution.abortController.signal)
         : "failed";
-      terminalError = error instanceof Error ? error.message : String(error);
+      terminalError = safeError.message;
       if (!execution.abortController.signal.aborted) {
         const current = this.#active.get(key);
         if (current?.executionToken !== execution.executionToken) return;
         this.#logger.error("session.execution.failed", {
-          error,
+          error: safeError,
           context: { sessionId: input.sessionId, agentName: execution.agentName, origin: execution.origin },
           meta: { workspaceRoot: input.workspaceRoot },
         });
@@ -1479,7 +1552,8 @@ export class SessionExecutionManager {
       sessionId: execution.sessionId,
       workspaceRoot: execution.workspaceRoot,
       executionId: execution.executionId,
-      messages,
+      snapshots: messages,
+      binding: execution.binding.summary,
       signal: execution.abortController.signal,
     }).then(() => undefined).finally(() => {
       execution.steerOperations.delete(operation);
@@ -1573,7 +1647,13 @@ export class SessionExecutionManager {
     const executionId = active?.executionId ?? state?.executions.at(-1)?.id;
     if (store === undefined || state === undefined || executionId === undefined) return undefined;
     if (!state.executions.some((execution) => execution.id === executionId)) {
-      store.getState().append({ type: "execution-start", executionId });
+      if (active === undefined) return undefined;
+      store.getState().append({
+        type: "execution-start",
+        executionId,
+        binding: active.binding.summary,
+        origin: active.origin,
+      });
     }
     const stopState = store.getState();
     store.getState().append({
@@ -2086,6 +2166,15 @@ export class SessionExecutionManager {
 
 }
 
+function sanitizeBindingError(error: unknown, binding: ExecutionModelBinding): Error {
+  if (error instanceof Error) {
+    const safeName = binding.modelInfo.redactSensitiveText(error.name);
+    const safeMessage = binding.modelInfo.redactSensitiveText(error.message);
+    if (safeName === error.name && safeMessage === error.message) return error;
+  }
+  return sanitizeProviderError(error, (text) => binding.modelInfo.redactSensitiveText(text));
+}
+
 interface ExecutionScopeSnapshot {
   readonly cwd: string;
   readonly goalId: string | undefined;
@@ -2177,6 +2266,81 @@ function childTerminalStatus(run: SessionExecutionRecord | undefined, signal: Ab
 function sessionExecutionOrigin(origin: SessionExecutionOrigin | undefined): SessionExecutionOrigin {
   if (origin === "tool_call" || origin === "tool_batch" || origin === "goal_claim") return origin;
   return "user_message";
+}
+
+function resolveSingleBinding(
+  snapshot: ModelRuntimeSnapshot,
+  agentName: AgentName,
+  sessionOverride: ModelSelectionRef | undefined,
+  requested: RequestedModelSelection | undefined,
+  resolver: ModelSelectionResolver,
+): { readonly binding: ExecutionModelBinding; readonly snapshots?: undefined } {
+  return {
+    binding: resolver.resolve({ snapshot, agentName, requested, sessionOverride }),
+  };
+}
+
+function resolveQueuePrefix(
+  queued: readonly PendingSessionMessage[],
+  snapshot: ModelRuntimeSnapshot,
+  agentName: AgentName,
+  sessionOverride: ModelSelectionRef | undefined,
+  resolver: ModelSelectionResolver,
+): { readonly binding: ExecutionModelBinding; readonly snapshots: readonly ResolvedSessionInputSnapshot[] } {
+  let binding: ExecutionModelBinding | undefined;
+  const snapshots: ResolvedSessionInputSnapshot[] = [];
+  for (const pending of queued) {
+    const resolved = resolver.resolve({
+      snapshot,
+      agentName,
+      requested: pending.requestedModelSelection,
+      sessionOverride,
+    });
+    if (binding !== undefined
+      && !sameModelSelection(binding.summary.selection, resolved.summary.selection)) break;
+    binding ??= resolved;
+    snapshots.push({
+      pending: {
+        ...pending,
+        requestedModelSelection: {
+          ...pending.requestedModelSelection,
+          selection: { ...pending.requestedModelSelection.selection },
+        },
+      },
+      modelAudit: modelAuditFor(pending.requestedModelSelection, resolved),
+    });
+  }
+  if (binding === undefined) throw new SessionInputConflictError("empty_queue", "Queue has no resolvable input");
+  return { binding, snapshots };
+}
+
+function modelAuditFor(
+  requested: RequestedModelSelection,
+  binding: ExecutionModelBinding,
+): MessageModelAudit {
+  const actual = binding.summary.selection;
+  return {
+    requested: { ...requested, selection: { ...requested.selection } },
+    actual: { ...actual },
+    ...(sameModelSelection(requested.selection, actual) ? {} : { reason: "config_invalidated" as const }),
+  };
+}
+
+function sameModelSelection(left: ModelSelectionRef, right: ModelSelectionRef): boolean {
+  return left.model === right.model && left.variant === right.variant;
+}
+
+function effectiveDirectRequest(
+  explicit: RequestedModelSelection | undefined,
+  binding: ExecutionModelBinding,
+): RequestedModelSelection {
+  if (explicit !== undefined) {
+    return { ...explicit, selection: { ...explicit.selection } };
+  }
+  return {
+    mode: binding.summary.resolution === "session_override" ? "session_override" : "agent_default",
+    selection: { ...binding.summary.selection },
+  };
 }
 
 function queueDispatchEligible(

@@ -37,9 +37,10 @@ export function createMemoryConsolidationTask(
 
       try {
         const result = await runLlmObject({
-          model: ctx.modelInfo.model,
-          modelOptions: ctx.modelOptions,
+          model: ctx.binding.modelInfo.model,
+          modelOptions: ctx.binding.options,
           retryScheduler: ctx.retryScheduler,
+          redactSensitiveText: (text) => ctx.binding.modelInfo.redactSensitiveText(text),
           schema: MemoryConsolidationResultSchema,
           prompt: `You are a memory consolidation system. Reorganize the following memory index to be more concise and remove duplicates.
 

@@ -1,6 +1,5 @@
-import type { LanguageModelV3 } from "@ai-sdk/provider";
 import type { StoreApi } from "zustand";
-import type { ModelCallOptions } from "../config/provider";
+import type { ExecutionModelBinding } from "../models";
 import type { Logger } from "../logger";
 import type { SessionStoreState, StoredMessage } from "../store/types";
 import { runLlmStream } from "../llm";
@@ -29,9 +28,7 @@ export class CompactError extends Error {
 
 export interface CompactInput {
   messages: StoredMessage[];
-  contextLimit: number;
-  model: LanguageModelV3;
-  modelOptions?: ModelCallOptions;
+  binding: ExecutionModelBinding;
   sessionId: string;
   logger: Logger;
   toolOutputDir: string;
@@ -233,8 +230,7 @@ async function pruneToolOutputs(
 
 async function summarizePrefix(
   clonedPrefix: StoredMessage[],
-  model: LanguageModelV3,
-  modelOptions: ModelCallOptions | undefined,
+  binding: ExecutionModelBinding,
   contextLimit: number,
   abort?: AbortSignal,
   retryScheduler?: RetryScheduler,
@@ -257,13 +253,13 @@ async function summarizePrefix(
   const summary = await withLlmRetry(
     async () => {
       const result = runLlmStream({
-        model,
+        model: binding.modelInfo.model,
         messages: messagesToSummarize,
         system: COMPACT_SYSTEM_PROMPT,
         abortSignal: abort,
-        modelOptions,
+        modelOptions: binding.options,
       });
-      const text = await result.text;
+      const text = binding.modelInfo.redactSensitiveText(await result.text);
       if (!text || text.trim().length === 0) {
         throw new CompactError("Summarizer returned empty summary");
       }
@@ -271,7 +267,11 @@ async function summarizePrefix(
     },
     "compact.summarize",
     undefined,
-    { abortSignal: abort, retryScheduler },
+    {
+      abortSignal: abort,
+      retryScheduler,
+      redactSensitiveText: (text) => binding.modelInfo.redactSensitiveText(text),
+    },
   );
 
   return summary;
@@ -338,7 +338,8 @@ export async function compact(
   input: CompactInput,
   abort?: AbortSignal,
 ): Promise<CompactResult | null> {
-  const { messages, contextLimit, model, modelOptions, sessionId, logger, toolOutputDir, retryScheduler } = input;
+  const { messages, binding, sessionId, logger, toolOutputDir, retryScheduler } = input;
+  const contextLimit = binding.modelInfo.limit.context;
 
   if (abort?.aborted) {
     throw new DOMException("Compaction aborted", "AbortError");
@@ -364,7 +365,7 @@ export async function compact(
 
   let summary: string;
   try {
-    summary = await summarizePrefix(clonedPrefix, model, modelOptions, contextLimit, abort, retryScheduler);
+    summary = await summarizePrefix(clonedPrefix, binding, contextLimit, abort, retryScheduler);
   } catch (err) {
     if (abort?.aborted) {
       throw new DOMException("Compaction aborted", "AbortError");

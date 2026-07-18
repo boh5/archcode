@@ -1,14 +1,11 @@
 import { afterAll, describe, expect, mock, test } from "bun:test";
 import { z } from "zod";
-import type { ArchCodeConfig } from "../config/schema";
-import { ModelInfo } from "../provider/model";
-import { UnknownQualifiedIdError, type ProviderRegistry } from "../provider/index";
 import { SkillService } from "../skills";
 import { storeManager } from "../store/store";
 import { createRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
 import { DELEGATION_CORE_TOOLS } from "./constants";
-import { MissingAgentModelConfigError, NoModelsConfiguredError, SkillNotAllowedError } from "./errors";
+import { SkillNotAllowedError } from "./errors";
 import {
   AgentStoreIdentityMismatchError,
   DuplicateAgentDefinitionError,
@@ -53,46 +50,6 @@ function createSkillServiceWithBuiltins(): SkillService {
   });
 }
 
-function makeProviderRegistry(): ProviderRegistry {
-  const fallbackModel = new ModelInfo({
-    model: {} as ConstructorParameters<typeof ModelInfo>[0]["model"],
-    config: {
-      name: "Fallback Model",
-      limit: { context: 1000, output: 100 },
-      modalities: { input: ["text"], output: ["text"] },
-    },
-    providerId: "test",
-    modelId: "fallback",
-  });
-
-  const configuredModel = new ModelInfo({
-    model: {} as ConstructorParameters<typeof ModelInfo>[0]["model"],
-    config: {
-      name: "Configured Model",
-      limit: { context: 2000, output: 200 },
-      modalities: { input: ["text"], output: ["text"] },
-    },
-    providerId: "test",
-    modelId: "configured",
-  });
-
-  const getModel = mock((qualifiedId: string) => {
-    if (qualifiedId === fallbackModel.qualifiedId) return fallbackModel;
-    if (qualifiedId === configuredModel.qualifiedId) return configuredModel;
-    throw new UnknownQualifiedIdError(qualifiedId, [fallbackModel.qualifiedId, configuredModel.qualifiedId]);
-  });
-
-  return {
-    sdkRegistry: {} as ProviderRegistry["sdkRegistry"],
-    models: new Map([
-      [fallbackModel.qualifiedId, fallbackModel],
-      [configuredModel.qualifiedId, configuredModel],
-    ]),
-    modelIds: [fallbackModel.qualifiedId, configuredModel.qualifiedId],
-    getModel,
-  } as ProviderRegistry;
-}
-
 function definition(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
   return { name: "engineer",
   displayName: "Engineer",
@@ -113,21 +70,9 @@ function definition(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
 
 function makeFactory(
   definitions: readonly AgentDefinition[] = [definition()],
-  options: { providerRegistry?: ProviderRegistry; config?: Partial<ArchCodeConfig>; skillService?: SkillService } = {},
+  options: { skillService?: SkillService } = {},
 ) {
-  const providerRegistry = options.providerRegistry ?? makeProviderRegistry();
-  const config: ArchCodeConfig = {
-    provider: {},
-    ...options.config,
-    agents:
-      options.config?.agents ??
-      Object.fromEntries(
-        definitions.map((definitionItem) => [definitionItem.name, { model: providerRegistry.modelIds[1] ?? providerRegistry.modelIds[0] }]),
-      ),
-  } as unknown as ArchCodeConfig;
-
   return createAgentFactory({ definitions,
-  providerRegistry,
   toolRegistry: createRegistry([
     makeTool("unknown_tool"),
     ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
@@ -137,7 +82,7 @@ function makeFactory(
   storeManager,
   projectContextResolver: createTestProjectContextResolver(storeManager),
   workspaceRoot: TEST_WORKSPACE_ROOT,
-  config, logger: silentLogger });
+  logger: silentLogger });
 }
 
 const READ_ONLY_FIXTURE_TOOLS = [
@@ -200,9 +145,7 @@ describe("createAgentFactory", () => {
 
   test("keeps active Skill identity on the supplied Session store", () => {
     const skillService = createTestSkillService();
-    const providerRegistry = makeProviderRegistry();
     const factory = createAgentFactory({ definitions: [definition()],
-    providerRegistry,
     toolRegistry: createRegistry([
       makeTool("unknown_tool"),
       ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
@@ -212,12 +155,7 @@ describe("createAgentFactory", () => {
     storeManager,
     projectContextResolver: createTestProjectContextResolver(storeManager),
     workspaceRoot: TEST_WORKSPACE_ROOT,
-    config: {
-      provider: {},
-      agents: {
-        engineer: { model: providerRegistry.modelIds[1]! },
-      },
-    } as unknown as ArchCodeConfig, logger: silentLogger });
+    logger: silentLogger });
 
     const store = storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, {
       agentName: "engineer",
@@ -228,160 +166,6 @@ describe("createAgentFactory", () => {
     expect(agent).toBeInstanceOf(ConfiguredAgent);
     expect(agent.store.getState().activeSkillNames).toEqual(["git-master"]);
     expect((agent as unknown as { skillService: SkillService }).skillService).toBe(skillService);
-  });
-
-  test("resolves the configured model instead of the first registry entry", () => {
-    const providerRegistry = makeProviderRegistry();
-    const factory = createAgentFactory({ definitions: [definition()],
-    providerRegistry,
-    toolRegistry: createRegistry([
-      makeTool("unknown_tool"),
-      ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
-      ...DELEGATION_CORE_TOOLS.map(makeTool),
-    ]),
-    skillService: createTestSkillService(),
-    storeManager,
-    projectContextResolver: createTestProjectContextResolver(storeManager),
-    workspaceRoot: TEST_WORKSPACE_ROOT,
-    config: {
-      provider: {},
-      agents: {
-        engineer: { model: providerRegistry.modelIds[1]! },
-      },
-    } as unknown as ArchCodeConfig, logger: silentLogger });
-
-    factory.createRootAgent("engineer");
-
-    expect(providerRegistry.getModel).toHaveBeenCalledWith(providerRegistry.modelIds[1]);
-    expect(providerRegistry.getModel).not.toHaveBeenCalledWith(providerRegistry.modelIds[0]);
-  });
-
-  test("fails fast when engineer model config is missing", () => {
-    const providerRegistry = makeProviderRegistry();
-    const factory = createAgentFactory({ definitions: [definition()],
-    providerRegistry,
-    toolRegistry: createRegistry([
-      makeTool("unknown_tool"),
-      ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
-      ...DELEGATION_CORE_TOOLS.map(makeTool),
-    ]),
-    skillService: createTestSkillService(),
-    storeManager,
-    projectContextResolver: createTestProjectContextResolver(storeManager),
-    workspaceRoot: TEST_WORKSPACE_ROOT,
-    config: {
-      provider: {},
-      agents: {},
-    } as unknown as ArchCodeConfig, logger: silentLogger });
-
-    expect(() => factory.createRootAgent("engineer")).toThrow(MissingAgentModelConfigError);
-
-    try {
-      factory.createRootAgent("engineer");
-    } catch (error) {
-      expect(error).toBeInstanceOf(MissingAgentModelConfigError);
-      expect((error as MissingAgentModelConfigError).name).toBe("MissingAgentModelConfigError");
-      expect((error as MissingAgentModelConfigError).agentName).toBe("engineer");
-      expect((error as MissingAgentModelConfigError).availableAgents).toEqual([]);
-    }
-  });
-
-  test("fails fast when explore model config is missing", () => {
-    const providerRegistry = makeProviderRegistry();
-    const factory = createAgentFactory({ definitions: [
-      definition(),
-      definition({ name: "explore", displayName: "Explore", promptProfileId: "explorer", tools: { tools: nonDelegatingExplorerTools } }),
-    ],
-    providerRegistry,
-    toolRegistry: createRegistry([
-      makeTool("unknown_tool"),
-      ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
-      ...DELEGATION_CORE_TOOLS.map(makeTool),
-    ]),
-    skillService: createTestSkillService(),
-    storeManager,
-    projectContextResolver: createTestProjectContextResolver(storeManager),
-    workspaceRoot: TEST_WORKSPACE_ROOT,
-    config: {
-      provider: {},
-      agents: {
-        engineer: { model: providerRegistry.modelIds[1]! },
-      },
-    } as unknown as ArchCodeConfig, logger: silentLogger });
-
-    expect(() => factory.createAgent("explore")).toThrow(MissingAgentModelConfigError);
-
-    try {
-      factory.createAgent("explore");
-    } catch (error) {
-      expect(error).toBeInstanceOf(MissingAgentModelConfigError);
-      expect((error as MissingAgentModelConfigError).name).toBe("MissingAgentModelConfigError");
-      expect((error as MissingAgentModelConfigError).agentName).toBe("explore");
-      expect((error as MissingAgentModelConfigError).availableAgents).toEqual(["engineer"]);
-    }
-  });
-
-  test("preserves NoModelsConfiguredError when the provider registry is empty", () => {
-    const emptyProviderRegistry = {
-      sdkRegistry: {} as ProviderRegistry["sdkRegistry"],
-      models: new Map(),
-      modelIds: [],
-      getModel: () => {
-        throw new Error("unexpected model lookup");
-      },
-    } as ProviderRegistry;
-
-    const factory = createAgentFactory({ definitions: [definition()],
-    providerRegistry: emptyProviderRegistry,
-    toolRegistry: createRegistry([
-      makeTool("unknown_tool"),
-      ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
-      ...DELEGATION_CORE_TOOLS.map(makeTool),
-    ]),
-    skillService: createTestSkillService(),
-    storeManager,
-    projectContextResolver: createTestProjectContextResolver(storeManager),
-    workspaceRoot: TEST_WORKSPACE_ROOT,
-    config: {
-      provider: {},
-      agents: {
-        engineer: { model: "missing:model" },
-      },
-    } as unknown as ArchCodeConfig, logger: silentLogger });
-
-    expect(() => factory.createRootAgent("engineer")).toThrow(NoModelsConfiguredError);
-  });
-
-  test("fails fast with named unknown model error from provider registry", () => {
-    const providerRegistry = makeProviderRegistry();
-    const factory = createAgentFactory({ definitions: [definition()],
-    providerRegistry,
-    toolRegistry: createRegistry([
-      makeTool("unknown_tool"),
-      ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
-      ...DELEGATION_CORE_TOOLS.map(makeTool),
-    ]),
-    skillService: createTestSkillService(),
-    storeManager,
-    projectContextResolver: createTestProjectContextResolver(storeManager),
-    workspaceRoot: TEST_WORKSPACE_ROOT,
-    config: {
-      provider: {},
-      agents: {
-        engineer: { model: "test:missing" },
-      },
-    } as unknown as ArchCodeConfig, logger: silentLogger });
-
-    try {
-      factory.createRootAgent("engineer");
-      throw new Error("Expected createRootAgent to throw");
-    } catch (error) {
-      expect(error).toBeInstanceOf(UnknownQualifiedIdError);
-      const typedError = error as UnknownQualifiedIdError;
-      expect(typedError.name).toBe("UnknownQualifiedIdError");
-      expect(typedError.qualifiedId).toBe("test:missing");
-      expect(typedError.availableIds).toEqual(["test:fallback", "test:configured"]);
-    }
   });
 
   test("preserves the canonical title from the supplied Session store", () => {
@@ -500,10 +284,8 @@ describe("createAgentFactory", () => {
 
 describe("factoryResolveAllowedTools with MCP tools", () => {
   function makeMcpFactory(def: AgentDefinition, extraTools: AnyToolDescriptor[] = []) {
-    const providerRegistry = makeProviderRegistry();
     return createAgentFactory({
       definitions: [def],
-      providerRegistry,
       toolRegistry: createRegistry([
         makeTool("unknown_tool"),
         ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
@@ -514,10 +296,6 @@ describe("factoryResolveAllowedTools with MCP tools", () => {
       storeManager,
       projectContextResolver: createTestProjectContextResolver(storeManager),
       workspaceRoot: TEST_WORKSPACE_ROOT,
-      config: {
-        provider: {},
-        agents: { [def.name]: { model: providerRegistry.modelIds[0]! } },
-      } as unknown as ArchCodeConfig,
       logger: silentLogger,
     });
   }
@@ -558,7 +336,6 @@ describe("factoryResolveAllowedTools with MCP tools", () => {
 
   test("picks up tools registered after initial resolution (simulates background loading)", () => {
     const def = definition({ mcpTools: ["lazy"] });
-    const providerRegistry = makeProviderRegistry();
     const registry = createRegistry([
       makeTool("unknown_tool"),
       ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
@@ -566,16 +343,11 @@ describe("factoryResolveAllowedTools with MCP tools", () => {
     ]);
     const factory = createAgentFactory({
       definitions: [def],
-      providerRegistry,
       toolRegistry: registry,
       skillService: createTestSkillService(),
       storeManager,
       projectContextResolver: createTestProjectContextResolver(storeManager),
       workspaceRoot: TEST_WORKSPACE_ROOT,
-      config: {
-        provider: {},
-        agents: { [def.name]: { model: providerRegistry.modelIds[0]! } },
-      } as unknown as ArchCodeConfig,
       logger: silentLogger,
     });
 

@@ -18,6 +18,7 @@ export function AutomationsRoute() {
           slug,
           sessionId: session.sessionId,
           content: "/skill use automation-create",
+          requestedModelSelection: session.nextModelSelection.requested,
         });
       },
     });

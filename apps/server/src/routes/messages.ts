@@ -15,6 +15,13 @@ const MessageBodySchema = z.strictObject({
   text: z.string({ error: "text is required" })
     .refine((value) => value.trim().length > 0, { message: "text is required" }),
   clientRequestId: z.uuid(),
+  requestedModelSelection: z.strictObject({
+    mode: z.enum(["agent_default", "session_override"]),
+    selection: z.strictObject({
+      model: z.string().trim().min(1),
+      variant: z.string().trim().min(1).optional(),
+    }),
+  }),
 });
 
 const EditMessageBodySchema = z.strictObject({
@@ -46,7 +53,7 @@ export function createMessagesRoutes(runtime: AgentRuntime): Hono {
 
   app.post("/messages", zValidator("param", MessageParamsSchema), zValidator("json", MessageBodySchema), async (c) => {
     const { slug, sessionId } = c.req.valid("param");
-    const { text, clientRequestId } = c.req.valid("json");
+    const { text, clientRequestId, requestedModelSelection } = c.req.valid("json");
     const project = await resolveProject(runtime, slug);
 
     try {
@@ -57,6 +64,7 @@ export function createMessagesRoutes(runtime: AgentRuntime): Hono {
         text,
         clientRequestId,
         source: "user",
+        requestedModelSelection,
       });
       if (accepted.status === "command") {
         return c.json({ clientRequestId: accepted.clientRequestId, status: "command" as const }, 202);

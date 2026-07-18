@@ -2,11 +2,14 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { LanguageModelV3 } from "@ai-sdk/provider";
+import type { ExecutionModelBinding } from "../models";
+import type { ModelInfo } from "../provider";
 import { silentLogger } from "../logger";
 import type { StoredMessage } from "../store/types";
 import { storeManager } from "../store/store";
 import { setLlmAdapterForTest } from "../llm";
 import { createFakeRetryScheduler } from "../testing/fake-retry-scheduler";
+import { createTestModelInfo } from "../testing/test-execution-fixtures";
 import {
   CompactError,
   type CompactInput,
@@ -181,11 +184,23 @@ function makeCompactionMessage(id: string, summary: string, tailStartId: string)
 }
 
 const mockModel = { modelId: "test-model" } as unknown as LanguageModelV3;
+const mockModelInfo = createTestModelInfo({
+  model: mockModel,
+  limit: { context: 100000, output: 1000 },
+});
+const mockBinding: ExecutionModelBinding = {
+  modelInfo: mockModelInfo,
+  options: undefined,
+  summary: {
+    selection: { model: mockModelInfo.qualifiedId }, providerId: "test", modelId: "test-model",
+    providerDisplayName: "Test Provider", modelDisplayName: "Test Model",
+    resolution: "agent_default", modelRuntimeRevision: "test-revision",
+  },
+};
 
 function makeInput(messages: StoredMessage[], overrides?: Partial<CompactInput>): CompactInput {
   return { messages,
-  contextLimit: 100000,
-  model: mockModel,
+  binding: mockBinding,
   sessionId: "test-session",
   logger: silentLogger,
   toolOutputDir: TEST_TOOL_OUTPUT_DIR,
@@ -852,13 +867,13 @@ describe("compact", () => {
 
     await compact(
       makeInput(messages, {
-        modelOptions: {
+        binding: { ...mockBinding, options: {
           temperature: 0.3,
           topP: 0.7,
           maxOutputTokens: 1024,
           providerOptions,
           variant: "compact-fast",
-        } as unknown as CompactInput["modelOptions"],
+        } as unknown as ExecutionModelBinding["options"] },
       }),
     );
 
@@ -905,7 +920,7 @@ describe("compact", () => {
 
     await compact(
       makeInput(messages, {
-        modelOptions: {
+        binding: { ...mockBinding, options: {
           maxOutputTokens: 2048,
           temperature: 0.1,
           topP: 0.5,
@@ -918,7 +933,7 @@ describe("compact", () => {
           timeout: 15_000,
           providerOptions,
           variant: "compact-careful",
-        } as unknown as CompactInput["modelOptions"],
+        } as unknown as ExecutionModelBinding["options"] },
       }),
     );
 

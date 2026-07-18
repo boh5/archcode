@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import type { GoalState } from "@archcode/protocol";
-import type { ActiveSessionExecution, AgentRuntime, ProjectContext, ProjectInfo } from "@archcode/agent-core";
+import { ModelRuntime, type ActiveSessionExecution, type AgentRuntime, type ProjectContext, type ProjectInfo } from "@archcode/agent-core";
 
 import { errorHandler } from "../error-handler";
 import { createGoalsRoutes } from "./goals";
@@ -143,6 +143,29 @@ function createFixture(goals: GoalState[], activity: "idle" | "running" = "idle"
     ...await read(goalId),
     status: "cancelled" as const,
   }));
+  const modelRuntimeFixture = new ModelRuntime();
+  const agent = { model: "local:test" };
+  const snapshot = modelRuntimeFixture.prepare({
+    provider: {
+      local: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "Local",
+        options: { baseURL: "http://localhost.invalid/v1" },
+        models: {
+          test: {
+            name: "Test",
+            limit: { context: 64_000, output: 4_096 },
+            modalities: { input: ["text"], output: ["text"] },
+          },
+        },
+      },
+    },
+    agents: {
+      engineer: agent, goal_lead: agent, plan: agent, build: agent,
+      reviewer: agent, explore: agent, librarian: agent, shaper: agent,
+    },
+  }, "goal-route-test-runtime");
+  const modelInfo = snapshot.tryResolveSelection({ model: "local:test" })!.modelInfo;
   const startGoalSessionExecution = mock(async (input: Parameters<AgentRuntime["startGoalSessionExecution"]>[0]): Promise<ActiveSessionExecution> => ({
     sessionId: input.sessionId,
     rootSessionId: input.sessionId,
@@ -155,6 +178,19 @@ function createFixture(goals: GoalState[], activity: "idle" | "running" = "idle"
     executionToken: Symbol("goal-route-test-execution"),
     startedAt: Date.now(),
     executionId: input.executionId ?? "goal-route-test-execution",
+    binding: {
+      modelInfo,
+      options: undefined,
+      summary: {
+        selection: { model: "local:test" },
+        providerId: "local",
+        modelId: "test",
+        providerDisplayName: "Local",
+        modelDisplayName: "Test",
+        resolution: "agent_default",
+        modelRuntimeRevision: "test",
+      },
+    },
   }));
   const context = {
     project,

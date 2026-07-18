@@ -45,7 +45,7 @@ describe("createMemoryConsolidationHook", () => {
     await writeFile(join(projectRoot, "index.md"), lines + "\n");
 
     const store = makeStore();
-    const ctx = { store, modelInfo: undefined as never };
+    const ctx = { store, binding: undefined as never };
 
     const hook = createMemoryConsolidationHook(
       mockBtm as never,
@@ -73,7 +73,7 @@ describe("createMemoryConsolidationHook", () => {
     await writeFile(join(projectRoot, "index.md"), lines + "\n");
 
     const store = makeStore();
-    const ctx = { store, modelInfo: undefined as never };
+    const ctx = { store, binding: undefined as never };
 
     const hook = createMemoryConsolidationHook(
       mockBtm as never,
@@ -92,7 +92,7 @@ describe("createMemoryConsolidationHook", () => {
     await mkdir(userRoot, { recursive: true });
 
     const store = makeStore();
-    const ctx = { store, modelInfo: undefined as never };
+    const ctx = { store, binding: undefined as never };
 
     const hook = createMemoryConsolidationHook(
       mockBtm as never,

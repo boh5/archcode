@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowUp, Loader2, Square } from "lucide-react";
-import type { SessionFamilyActivity } from "@archcode/protocol";
+import type { RequestedModelSelection, SessionFamilyActivity } from "@archcode/protocol";
 import { ApiError } from "../../api/client";
-import { usePostMessage, useStopSessionFamily } from "../../api/mutations";
+import { usePatchSessionModelSelection, usePostMessage, useStopSessionFamily } from "../../api/mutations";
+import { useModelRuntime } from "../../api/queries";
 import { getWebSessionStore, useSessionStore } from "../../store/session-store";
+import { useSettingsModal } from "../../context/settings-modal";
+import { ModelPicker } from "./ModelPicker";
+import { coherentModelRuntime } from "../../lib/model-runtime-coherence";
 
 const SLASH_COMMANDS = [
   { name: "/compact", description: "Compact conversation context" },
@@ -46,15 +50,27 @@ export function ChatInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const slashMenuRef = useRef<HTMLDivElement>(null);
 
-  const modelInfo = useSessionStore(sessionId, (state) => state.modelInfo, slug);
+  const modelSelection = useSessionStore(sessionId, (state) => state.modelSelection, slug);
+  const nextModelSelection = useSessionStore(sessionId, (state) => state.nextModelSelection, slug);
+  const activeModelBinding = useSessionStore(sessionId, (state) => state.activeModelBinding, slug);
+  const agentName = useSessionStore(sessionId, (state) => state.agentName, slug);
+  const { data: modelCatalog, isFetching: isModelRuntimeFetching } = useModelRuntime();
+  const coherentCatalog = coherentModelRuntime(
+    modelCatalog,
+    nextModelSelection,
+    isModelRuntimeFetching,
+  );
+  const { openSettingsModal } = useSettingsModal();
   const postMessage = usePostMessage();
+  const patchModelSelection = usePatchSessionModelSelection();
   const stopSession = useStopSessionFamily();
 
-  const isPending = postMessage.isPending || stopSession.isPending;
+  const isPending = postMessage.isPending || patchModelSelection.isPending || stopSession.isPending;
   const isRunning = activity === "running";
   const isStopping = activity === "stopping";
   const runtimeReady = activity !== undefined;
-  const canCompose = runtimeReady && hitlReady && !isStopping && !isPending;
+  const modelControlsReady = coherentCatalog !== undefined && agentName !== null;
+  const canCompose = runtimeReady && hitlReady && modelControlsReady && !isStopping && !isPending && nextModelSelection !== undefined;
   const canSubmit = canCompose && value.trim().length > 0;
   const status = composerStatus(activity, hitlReady, hasPendingHitl);
   const filteredCommands = SLASH_COMMANDS.filter((command) =>
@@ -89,15 +105,16 @@ export function ChatInput({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [showSlashMenu]);
 
-  const submitMessage = useCallback((content: string) => {
+  const submitMessage = useCallback((content: string, requestedModelSelection: RequestedModelSelection) => {
     const clientRequestId = crypto.randomUUID();
     getWebSessionStore(sessionId, slug).getState().addLocalSendingMessage({
       clientRequestId,
       content,
+      requestedModelSelection,
     });
 
     postMessage.mutate(
-      { slug, sessionId, content, clientRequestId },
+      { slug, sessionId, content, clientRequestId, requestedModelSelection },
       {
         onSuccess: (acceptance) => {
           // Commands have no canonical message event to replace this optimistic record.
@@ -127,18 +144,30 @@ export function ChatInput({
 
   const sendMessage = useCallback(() => {
     const content = value.trim();
-    if (!content || !canCompose) return;
-    submitMessage(content);
-  }, [canCompose, submitMessage, value]);
+    if (!content || !canCompose || !nextModelSelection) return;
+    submitMessage(content, nextModelSelection.requested);
+  }, [canCompose, nextModelSelection, submitMessage, value]);
 
   const selectSlashCommand = useCallback((command: SlashCommand) => {
     if (!canCompose || isRunning || hasPendingHitl) return;
-    submitMessage(command.name);
+    if (!nextModelSelection) return;
+    submitMessage(command.name, nextModelSelection.requested);
     setShowSlashMenu(false);
     setSlashFilter("");
     setSlashActiveIndex(0);
     textareaRef.current?.focus();
-  }, [canCompose, hasPendingHitl, isRunning, submitMessage]);
+  }, [canCompose, hasPendingHitl, isRunning, nextModelSelection, submitMessage]);
+
+  const selectModel = useCallback((requestedModelSelection: RequestedModelSelection) => {
+    patchModelSelection.mutate({
+      slug,
+      sessionId,
+      expectedRevision: modelSelection.revision,
+      requestedModelSelection,
+    }, {
+      onSuccess: (state) => getWebSessionStore(sessionId, slug).getState().initializeFromSnapshot(state),
+    });
+  }, [modelSelection.revision, patchModelSelection, sessionId, slug]);
 
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (showSlashMenu && filteredCommands.length > 0) {
@@ -227,7 +256,7 @@ export function ChatInput({
       )}
 
       <div
-        className="overflow-hidden rounded-[16px] border border-border-default bg-bg-elevated shadow-md transition-[border-color,box-shadow] duration-150 focus-within:border-accent focus-within:shadow-[0_0_0_3px_var(--accent-subtle),var(--shadow-md)]"
+        className="overflow-visible rounded-[16px] border border-border-default bg-bg-elevated shadow-md transition-[border-color,box-shadow] duration-150 focus-within:border-accent focus-within:shadow-[0_0_0_3px_var(--accent-subtle),var(--shadow-md)]"
         data-testid="composer-card"
       >
         <textarea
@@ -241,7 +270,9 @@ export function ChatInput({
               ? "Connecting to runtime…"
               : !hitlReady
                 ? "Syncing pending requests…"
-                : hasPendingHitl || isRunning
+                : !modelControlsReady
+                  ? "Refreshing model configuration…"
+                  : hasPendingHitl || isRunning
                   ? "Queue a message…"
                   : isStopping
                     ? "Stopping…"
@@ -252,10 +283,16 @@ export function ChatInput({
         />
 
         <div className="flex min-h-[38px] items-center justify-between gap-3 px-[10px] pb-[9px]">
-          <div className="flex min-w-0 items-center gap-2 text-[11px] text-text-tertiary">
-            <span className="max-w-[180px] truncate" data-testid="composer-model">
-              {modelInfo?.displayName ?? "Unknown model"}
-            </span>
+          <div className="flex min-w-0 items-center gap-2 text-[11px] text-text-tertiary" data-testid="composer-model">
+            {coherentCatalog && nextModelSelection && agentName ? <ModelPicker
+              catalog={coherentCatalog}
+              agentName={agentName}
+              next={nextModelSelection}
+              active={activeModelBinding}
+              onSelect={selectModel}
+              onManageModels={() => openSettingsModal("models")}
+              disabled={patchModelSelection.isPending}
+            /> : <span className="max-w-[180px] truncate">Loading model…</span>}
             <span className="h-3 w-px shrink-0 bg-border-default" aria-hidden="true" />
             <span className="flex shrink-0 items-center gap-1.5" aria-live="polite">
               <span className={`h-1.5 w-1.5 rounded-full ${status.dotClass}`} aria-hidden="true" />

@@ -1,7 +1,6 @@
 import { defaultAgentDefinitions } from "./agents";
 import type { AgentName } from "./agents";
 import { SessionCwdTransitionConflictError, SessionCwdTransitionInProgressError } from "./agents/errors";
-import { resolveAgentModel } from "./agents/model-resolver";
 import { SessionAgentManager } from "./agents/session-agent-manager";
 import { BackgroundTaskManager } from "./background/manager";
 import { ServerConfigService } from "./config/server-config-service";
@@ -20,7 +19,7 @@ import {
   McpManager,
   type McpWarning,
 } from "./mcp/index";
-import { createRegistry as createProviderRegistry, type ProviderRegistry } from "./provider/index";
+import { ModelSelectionResolver, type ModelRuntime } from "./models";
 import { ProjectContextResolver } from "./projects/context-resolver";
 import { ProjectRegistry } from "./projects/registry";
 import type { ProjectInfo } from "./projects/types";
@@ -33,9 +32,11 @@ import type {
   AgentDescriptor,
   Automation,
   AutomationInvocation,
+  ExecutionModelBindingSummary,
   GlobalSSEEvent,
   GlobalSSEHitlRealtimeEvent,
   GlobalSSEHitlSnapshotEvent,
+  GlobalSSEModelRuntimeChangedEvent,
   GlobalSSEResourceChangedEvent,
   GlobalSessionEventEnvelope,
   GlobalSSESessionRuntimeChangedEvent,
@@ -43,6 +44,9 @@ import type {
   HitlResponse,
   HitlView,
   McpServerStatus,
+  SessionNextModelSelection,
+  SessionModelState,
+  RequestedModelSelection,
   SessionFamilyActivity,
   SessionTreeResponse,
 } from "@archcode/protocol";
@@ -95,6 +99,10 @@ import { scopedKey } from "./store/key";
 import { Logger, createConsoleLogger } from "./logger";
 import { SessionStoreManager } from "./store/session-store-manager";
 import { SessionInputService, type CommandRequestReplay, type MessageAcceptance } from "./session-input/service";
+import {
+  SessionModelSelectionInvalidError,
+  SessionModelSelectionService,
+} from "./session-input/model-selection-service";
 import type { SessionRole } from "./store/types";
 import { generateTitle } from "./title-generation";
 import type { GoalState } from "./goals/state";
@@ -111,6 +119,7 @@ export interface AcceptSessionMessageInput {
   readonly text: string;
   readonly clientRequestId: string;
   readonly source: "user" | "automation";
+  readonly requestedModelSelection: RequestedModelSelection;
 }
 
 export type SessionMessageAcceptance =
@@ -204,7 +213,7 @@ export class ResourceCreationSourceError extends Error {
 export interface AgentRuntime {
   readonly mcpManager: McpManager;
   readonly toolRegistry: ToolRegistry;
-  readonly providerRegistry: ProviderRegistry;
+  readonly modelRuntime: ModelRuntime;
   readonly skillService: SkillService;
   readonly warnings: McpWarning[];
   readonly configService: ServerConfigService;
@@ -230,13 +239,21 @@ export interface AgentRuntime {
   listSessionRuntimeEvents(): Promise<GlobalSSESessionRuntimeSnapshotEvent[]>;
   getProjectControlPlaneSnapshot(workspaceRoot: string, projectSlug: string): Promise<ProjectControlPlaneSnapshot>;
   subscribeSessionRuntimeChanges(listener: (event: GlobalSSESessionRuntimeChangedEvent) => void): () => void;
+  subscribeModelRuntimeChanges(listener: (event: GlobalSSEModelRuntimeChangedEvent) => void): () => void;
   subscribeResourceChanges?(listener: (event: GlobalSSEResourceChangedEvent) => void): () => void;
   queueGoalTitleGeneration?(workspaceRoot: string, goalId: string): void;
   cancelGoal(workspaceRoot: string, goalId: string, request: GoalCancellationRequest): Promise<GoalState>;
   subscribeMcpStatusChanges(listener: (serverName: string, status: McpServerStatus) => void): () => void;
   getMcpServerStatuses(): Map<string, McpServerStatus>;
-  createSession(workspaceRoot: string, options: CreateRuntimeSessionOptions): Promise<SessionFile>;
-  getSessionFile(workspaceRoot: string, sessionId: string): Promise<SessionFile>;
+  createSession(workspaceRoot: string, options: CreateRuntimeSessionOptions): Promise<RuntimeSessionFile>;
+  getSessionFile(workspaceRoot: string, sessionId: string): Promise<RuntimeSessionFile>;
+  getSessionModelState(workspaceRoot: string, sessionId: string): Promise<SessionModelState>;
+  patchSessionModelSelection(input: {
+    readonly workspaceRoot: string;
+    readonly sessionId: string;
+    readonly expectedRevision: number;
+    readonly requestedModelSelection: RequestedModelSelection;
+  }): Promise<SessionModelState>;
   resolveCompressionOriginalRange(workspaceRoot: string, sessionId: string, blockRef: string): Promise<CompressionOriginalRangeResult>;
   listSessions(workspaceRoot: string): Promise<SessionSummary[]>;
   /** Durably accepts a root Session message; execution dispatch is a separate best-effort consequence. */
@@ -293,6 +310,11 @@ export interface AgentRuntime {
   notifyRuntimeShutdown(reason: string): void;
 }
 
+export type RuntimeSessionFile = SessionFile & {
+  readonly nextModelSelection: SessionNextModelSelection;
+  readonly activeModelBinding?: ExecutionModelBindingSummary;
+};
+
 export interface HitlMutationResult {
   readonly hitlId: string;
   readonly status: import("@archcode/protocol").HitlStatus;
@@ -307,7 +329,35 @@ export async function createRuntime(
   const warnings: McpWarning[] = [];
   const configService = options.configService ?? new ServerConfigService();
   const config = await configService.loadForStartup();
-  const providerRegistry = createProviderRegistry(config.provider);
+  const modelRuntime = configService.modelRuntime;
+  const modelSelectionResolver = new ModelSelectionResolver();
+
+  const projectSessionModels = (file: SessionFile): RuntimeSessionFile => {
+    const snapshot = modelRuntime.current;
+    const validOverride = file.modelSelection.override !== undefined
+      && snapshot.tryResolveSelection(file.modelSelection.override) !== undefined;
+    const agentDefault = snapshot.getAgentDefault(file.agentName);
+    if (agentDefault === undefined) {
+      throw new Error(`Agent "${file.agentName}" has no configured default model`);
+    }
+    const requested = validOverride
+      ? { mode: "session_override" as const, selection: { ...file.modelSelection.override! } }
+      : { mode: "agent_default" as const, selection: { ...agentDefault } };
+    const resolved = modelSelectionResolver.resolve({
+      snapshot,
+      agentName: file.agentName,
+      ...(validOverride ? { sessionOverride: file.modelSelection.override } : {}),
+    }).summary;
+    const activeModelBinding = [...file.executions]
+      .reverse()
+      .find((execution) => execution.status === "running")
+      ?.binding;
+    return {
+      ...file,
+      nextModelSelection: { requested, resolved },
+      ...(activeModelBinding === undefined ? {} : { activeModelBinding }),
+    };
+  };
   const toolRegistry = createToolRegistry();
   registerBuiltinTools(toolRegistry, logger.child({ module: "tools" }), {
     ...(config.integrations?.github === undefined ? {} : { github: config.integrations.github }),
@@ -373,6 +423,7 @@ export async function createRuntime(
     };
     const sessionStoreManager = new SessionStoreManager({ logger });
     const sessionInputService = new SessionInputService(sessionStoreManager);
+    const sessionModelSelectionService = new SessionModelSelectionService(sessionStoreManager);
     const sessionEventBridge = new SessionEventBridge({
       source: sessionStoreManager,
       resolveProjectSlug: (workspaceRoot) => projectSlugsByWorkspace.get(workspaceRoot),
@@ -585,10 +636,9 @@ export async function createRuntime(
     executionScopeValidator = new SessionExecutionScopeValidator({ projectContextResolver: contextResolver });
     const sessionAgentManager = new SessionAgentManager({
       definitions: defaultAgentDefinitions,
-      providerRegistry,
       toolRegistry,
       skillService,
-      config,
+      memoryConfig: config.memory,
       projectContextResolver: contextResolver,
       storeManager: sessionStoreManager,
       logger,
@@ -610,6 +660,8 @@ export async function createRuntime(
 
     const executionManager = new SessionExecutionManager({
       sessionAgentManager,
+      modelRuntime,
+      modelSelectionResolver,
       createSessionStore: (sessionId, workspaceRoot, createOptions) => sessionStoreManager.create(sessionId, workspaceRoot, createOptions),
       flushSessionStore: (sessionId, workspaceRoot) => sessionStoreManager.flushSession(sessionId, workspaceRoot),
       getSessionStore: (sessionId, workspaceRoot) => sessionStoreManager.get(sessionId, workspaceRoot),
@@ -951,6 +1003,7 @@ export async function createRuntime(
               text: input.text,
               clientRequestId: input.clientRequestId,
               source: input.source,
+              requestedModelSelection: input.requestedModelSelection,
             } as const;
             const settledAcceptance = (replay: CommandRequestReplay | undefined): SessionMessageAcceptance => {
               if (replay === undefined || (replay.kind === "command" && replay.status === "executing")) {
@@ -988,7 +1041,8 @@ export async function createRuntime(
                   workspaceRoot: input.workspaceRoot,
                   sessionId: input.sessionId,
                   clientRequestId: input.clientRequestId,
-                }, async (signal): Promise<SessionMessageAcceptance> => {
+                  requestedModelSelection: input.requestedModelSelection,
+                }, async (binding, signal): Promise<SessionMessageAcceptance> => {
                   if ((await sessionStoreManager.listSessionFamilyToolBatchHitlIds(
                     input.workspaceRoot,
                     input.sessionId,
@@ -1000,7 +1054,7 @@ export async function createRuntime(
                   let result;
                   try {
                     signal.throwIfAborted();
-                    result = await agent.executeCommand(command, { abort: signal });
+                    result = await agent.executeCommand(command, binding, { abort: signal });
                     signal.throwIfAborted();
                   } catch (error) {
                     await sessionInputService.failCommand({
@@ -1025,6 +1079,7 @@ export async function createRuntime(
                     clientRequestId: input.clientRequestId,
                     text: result.content,
                     source: input.source,
+                    requestedModelSelection: input.requestedModelSelection,
                   });
                 });
               } catch (error) {
@@ -1059,6 +1114,7 @@ export async function createRuntime(
           text: input.text,
           clientRequestId: input.clientRequestId,
           source: input.source,
+          requestedModelSelection: input.requestedModelSelection,
         });
         triggerQueuedExecution();
         return accepted;
@@ -1167,7 +1223,14 @@ export async function createRuntime(
         sessionStoreManager,
         sessionRuntime: {
           acceptSessionMessage: async (input) => {
-            const accepted = await acceptSessionMessage(input);
+            const session = projectSessionModels(await sessionStoreManager.getSessionFile(
+              input.workspaceRoot,
+              input.sessionId,
+            ));
+            const accepted = await acceptSessionMessage({
+              ...input,
+              requestedModelSelection: session.nextModelSelection.requested,
+            });
             if (accepted.status === "command") {
               throw new Error("Automation messages cannot execute Session commands");
             }
@@ -1216,8 +1279,11 @@ export async function createRuntime(
     }
 
     async function generateGoalTitle(text: string): Promise<string | null> {
-      const { modelInfo, options: modelOptions } = resolveAgentModel("engineer", config, providerRegistry);
-      return await generateTitle({ kind: "goal", text, modelInfo, modelOptions });
+      const binding = modelSelectionResolver.resolve({
+        snapshot: modelRuntime.current,
+        agentName: "engineer",
+      });
+      return await generateTitle({ kind: "goal", text, binding });
     }
 
     async function notifyGoalStateChanged(workspaceRoot: string, goalId: string): Promise<void> {
@@ -1600,7 +1666,7 @@ export async function createRuntime(
     return {
       mcpManager,
       toolRegistry,
-      providerRegistry,
+      modelRuntime,
       skillService,
       warnings,
       configService,
@@ -1662,6 +1728,11 @@ export async function createRuntime(
           sessionRuntimeListeners.delete(listener);
         };
       },
+      subscribeModelRuntimeChanges: (listener) => modelRuntime.subscribe((snapshot) => listener({
+        type: "model_runtime.changed",
+        revision: snapshot.revision,
+        createdAt: Date.now(),
+      })),
       subscribeResourceChanges: (listener) => {
         resourceChangeListeners.add(listener);
         return () => {
@@ -1678,14 +1749,39 @@ export async function createRuntime(
       },
       subscribeMcpStatusChanges: (listener) => mcpManager.onStatusChange(listener),
       getMcpServerStatuses: () => mcpManager.getStatus(),
-      createSession: (workspaceRoot, createOptions) => {
+      createSession: async (workspaceRoot, createOptions) => {
         executionManager.assertWorkspaceOpen(workspaceRoot);
         assertRuntimeSessionAgentScope(createOptions);
-        return sessionStoreManager.createSessionFile(workspaceRoot, createOptions);
+        return projectSessionModels(await sessionStoreManager.createSessionFile(workspaceRoot, createOptions));
       },
       getSessionFile: async (workspaceRoot, sessionId) => {
         await sessionStoreManager.flushSession(sessionId, workspaceRoot);
-        return await sessionStoreManager.getSessionFile(workspaceRoot, sessionId);
+        return projectSessionModels(await sessionStoreManager.getSessionFile(workspaceRoot, sessionId));
+      },
+      getSessionModelState: async (workspaceRoot, sessionId) => {
+        const projected = projectSessionModels(await sessionStoreManager.getSessionFile(workspaceRoot, sessionId));
+        return {
+          modelSelection: projected.modelSelection,
+          nextModelSelection: projected.nextModelSelection,
+          ...(projected.activeModelBinding === undefined ? {} : { activeModelBinding: projected.activeModelBinding }),
+        };
+      },
+      patchSessionModelSelection: async (input) => {
+        const file = await sessionStoreManager.getSessionFile(input.workspaceRoot, input.sessionId);
+        if (input.requestedModelSelection.mode === "session_override"
+          && modelRuntime.current.tryResolveSelection(input.requestedModelSelection.selection) === undefined) {
+          throw new SessionModelSelectionInvalidError(input.requestedModelSelection);
+        }
+        await sessionModelSelectionService.patch(input);
+        const projected = projectSessionModels(await sessionStoreManager.getSessionFile(input.workspaceRoot, input.sessionId));
+        if (projected.agentName !== file.agentName) {
+          throw new Error(`Session "${input.sessionId}" Agent identity changed during model selection update`);
+        }
+        return {
+          modelSelection: projected.modelSelection,
+          nextModelSelection: projected.nextModelSelection,
+          ...(projected.activeModelBinding === undefined ? {} : { activeModelBinding: projected.activeModelBinding }),
+        };
       },
       resolveCompressionOriginalRange: (workspaceRoot, sessionId, blockRef) => sessionStoreManager.resolveCompressionOriginalRange(workspaceRoot, sessionId, blockRef),
       listSessions: (workspaceRoot) => sessionStoreManager.listSessionSummaries(workspaceRoot),

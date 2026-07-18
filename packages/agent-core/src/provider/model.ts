@@ -4,6 +4,7 @@ import type {
   ModelLimit,
   ModelModalities,
 } from "../config/index";
+import { SensitiveValueRedactor, type StreamingSensitiveTextRedactor } from "./sensitive-value-redactor";
 
 /**
  * Wraps an AI SDK LanguageModel instance together with its static metadata
@@ -28,21 +29,46 @@ export class ModelInfo {
   /** The provider ID this model belongs to (e.g. "xxx"). */
   readonly providerId: string;
 
+  /** Human-readable provider name from config, separate from its namespace ID. */
+  readonly providerDisplayName: string;
+
   /** The model ID within its provider (e.g. "gpt-5.2"). */
   readonly modelId: string;
+
+  readonly #sensitiveValueRedactor: SensitiveValueRedactor;
 
   constructor(options: {
     model: LanguageModelV3;
     config: ModelConfig;
     providerId: string;
+    providerDisplayName?: string;
     modelId: string;
+    providerSecretValues?: readonly string[];
   }) {
     this.model = options.model;
     this.displayName = options.config.name;
-    this.limit = options.config.limit;
-    this.modalities = options.config.modalities;
+    this.limit = Object.freeze({ ...options.config.limit });
+    this.modalities = Object.freeze({
+      input: Object.freeze([...options.config.modalities.input]),
+      output: Object.freeze([...options.config.modalities.output]),
+    }) as unknown as ModelModalities;
     this.providerId = options.providerId;
+    this.providerDisplayName = options.providerDisplayName ?? options.providerId;
     this.modelId = options.modelId;
+    this.#sensitiveValueRedactor = new SensitiveValueRedactor(options.providerSecretValues ?? []);
+    Object.freeze(this);
+  }
+
+  redactSensitiveText(text: string): string {
+    return this.#sensitiveValueRedactor.redact(text);
+  }
+
+  redactSensitiveValue<T>(value: T): T {
+    return this.#sensitiveValueRedactor.redactValue(value);
+  }
+
+  createSensitiveTextStream(): StreamingSensitiveTextRedactor {
+    return this.#sensitiveValueRedactor.createTextStream();
   }
 
   /** Fully qualified identifier: `"providerId:modelId"` */

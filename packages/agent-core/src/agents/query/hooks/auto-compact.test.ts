@@ -4,6 +4,8 @@ import { silentLogger } from "../../../logger";
 import { storeManager } from "../../../store/store";
 import type { StoredMessage } from "../../../store/types";
 import type { BeforeModelBuildContext } from "../loop-hooks";
+import type { ExecutionModelBinding } from "../../../models";
+import { createTestModelInfo } from "../../../testing/test-execution-fixtures";
 import { createAutoCompactHook } from "./auto-compact";
 
 const TEST_WORKSPACE_ROOT = `/tmp/archcode-agent-core-auto-compact-${crypto.randomUUID()}`;
@@ -67,21 +69,32 @@ function createStore(messageCount = 6) {
   return store;
 }
 
-function modelInfo(context = 1000): BeforeModelBuildContext["modelInfo"] {
-  return {
+function binding(context = 1000): ExecutionModelBinding {
+  const modelInfo = createTestModelInfo({
     model: { modelId: "mock" } as never,
     displayName: "Mock",
     limit: { context, output: 1000 },
-    modalities: { input: ["text"], output: ["text"] },
     providerId: "test",
     modelId: "mock",
-    qualifiedId: "test:mock",
-  } as never;
+  });
+  return {
+    modelInfo,
+    options: undefined,
+    summary: {
+      selection: { model: "test:mock" },
+      providerId: "test",
+      modelId: "mock",
+      providerDisplayName: "Test",
+      modelDisplayName: "Mock",
+      resolution: "agent_default",
+      modelRuntimeRevision: "test-revision",
+    },
+  };
 }
 
 function buildCtx(store: ReturnType<typeof createStore>, inputTokens: number): BeforeModelBuildContext {
   store.setState({ steps: [{ id: "step-1", step: 1, startedAt: 1, usage: { inputTokens, outputTokens: 1, totalTokens: inputTokens + 1 } }] });
-  return { store, modelInfo: modelInfo(), logger: silentLogger };
+  return { store, binding: binding(), logger: silentLogger };
 }
 
 describe("createAutoCompactHook", () => {

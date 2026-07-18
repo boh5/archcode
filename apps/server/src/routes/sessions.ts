@@ -1,8 +1,18 @@
 import { Hono } from "hono";
-import { NotRootSessionError, SessionDeleteConflictError, SessionDeleteInProgressError, SessionDeleteOwnerConflictError, SessionFamilyStopConflictError, SessionFamilyStopInProgressError, SessionFileNotFoundError } from "@archcode/agent-core";
+import {
+  NotRootSessionError,
+  SessionDeleteConflictError,
+  SessionDeleteInProgressError,
+  SessionDeleteOwnerConflictError,
+  SessionFamilyStopConflictError,
+  SessionFamilyStopInProgressError,
+  SessionFileNotFoundError,
+  SessionModelSelectionConflictError,
+  SessionModelSelectionInvalidError,
+} from "@archcode/agent-core";
 import type { AgentRuntime } from "@archcode/agent-core";
 import { z } from "zod/v4";
-import { BadRequestError, ConflictError, SessionNotFoundError, SessionStopConflictHttpError } from "../errors";
+import { BadRequestError, ConflictError, ServerError, SessionNotFoundError, SessionStopConflictHttpError } from "../errors";
 import { resolveProject } from "../resolve";
 import { zValidator } from "../validation";
 
@@ -14,6 +24,17 @@ const SessionParamsSchema = z.strictObject({
 const RootSessionParamsSchema = z.strictObject({
   slug: z.string().min(1),
   rootSessionId: z.string().min(1),
+});
+const ModelSelectionSchema = z.strictObject({
+  mode: z.enum(["agent_default", "session_override"]),
+  selection: z.strictObject({
+    model: z.string().trim().min(1),
+    variant: z.string().trim().min(1).optional(),
+  }),
+});
+const PatchModelSelectionSchema = z.strictObject({
+  expectedRevision: z.number().int().nonnegative(),
+  requestedModelSelection: ModelSelectionSchema,
 });
 
 export function createSessionsRoutes(runtime: AgentRuntime): Hono {
@@ -45,6 +66,54 @@ export function createSessionsRoutes(runtime: AgentRuntime): Hono {
       throw error;
     }
   });
+
+  app.get("/:sessionId/model-selection", zValidator("param", SessionParamsSchema), async (c) => {
+    const { slug, sessionId } = c.req.valid("param");
+    const project = await resolveProject(runtime, slug);
+    try {
+      return c.json(await runtime.getSessionModelState(project.workspaceRoot, sessionId));
+    } catch (error) {
+      if (error instanceof SessionFileNotFoundError || isMissingFileError(error)) {
+        throw new SessionNotFoundError(sessionId);
+      }
+      throw error;
+    }
+  });
+
+  app.patch(
+    "/:sessionId/model-selection",
+    zValidator("param", SessionParamsSchema),
+    zValidator("json", PatchModelSelectionSchema),
+    async (c) => {
+      const { slug, sessionId } = c.req.valid("param");
+      const project = await resolveProject(runtime, slug);
+      try {
+        return c.json(await runtime.patchSessionModelSelection({
+          workspaceRoot: project.workspaceRoot,
+          sessionId,
+          ...c.req.valid("json"),
+        }));
+      } catch (error) {
+        if (error instanceof SessionModelSelectionConflictError) {
+          throw new ServerError("BAD_REQUEST", error.message, 409, {
+            scopeCode: "SESSION_MODEL_SELECTION_CONFLICT",
+            expectedRevision: error.expectedRevision,
+            current: error.current,
+          });
+        }
+        if (error instanceof SessionModelSelectionInvalidError) {
+          throw new ServerError("BAD_REQUEST", error.message, 422, {
+            scopeCode: "SESSION_MODEL_SELECTION_INVALID",
+            requested: error.requested,
+          });
+        }
+        if (error instanceof SessionFileNotFoundError || isMissingFileError(error)) {
+          throw new SessionNotFoundError(sessionId);
+        }
+        throw error;
+      }
+    },
+  );
 
   app.get("/:sessionId/tree", zValidator("param", SessionParamsSchema), async (c) => {
     const { slug, sessionId } = c.req.valid("param");

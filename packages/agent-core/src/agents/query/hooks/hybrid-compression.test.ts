@@ -6,6 +6,8 @@ import { storeManager } from "../../../store/store";
 import type { CompactionPart, SessionStoreState, StoredMessage } from "../../../store/types";
 import { silentLogger } from "../../../logger";
 import type { BeforeModelBuildContext, BeforeModelCallContext } from "../loop-hooks";
+import type { ExecutionModelBinding } from "../../../models";
+import { createTestModelInfo } from "../../../testing/test-execution-fixtures";
 import { createHybridCompressionHook } from "./hybrid-compression";
 
 const TEST_WORKSPACE_ROOT = `/tmp/archcode-agent-core-hybrid-compression-${crypto.randomUUID()}`;
@@ -69,16 +71,27 @@ function message(index: number): StoredMessage {
   };
 }
 
-function modelInfo(context = 1000): BeforeModelBuildContext["modelInfo"] {
-  return {
+function binding(context = 1000): ExecutionModelBinding {
+  const modelInfo = createTestModelInfo({
     model: { modelId: "mock" } as never,
     displayName: "Mock",
     limit: { context, output: 1000 },
-    modalities: { input: ["text"], output: ["text"] },
     providerId: "test",
     modelId: "mock",
-    qualifiedId: "test:mock",
-  } as never;
+  });
+  return {
+    modelInfo,
+    options: undefined,
+    summary: {
+      selection: { model: "test:mock" },
+      providerId: "test",
+      modelId: "mock",
+      providerDisplayName: "Test",
+      modelDisplayName: "Mock",
+      resolution: "agent_default",
+      modelRuntimeRevision: "test-revision",
+    },
+  };
 }
 
 function stepUsage(inputTokens: number) {
@@ -87,12 +100,12 @@ function stepUsage(inputTokens: number) {
 
 function buildCtx(store: StoreApi<SessionStoreState>, inputTokens: number): BeforeModelBuildContext {
   store.setState({ steps: stepUsage(inputTokens) });
-  return { store, modelInfo: modelInfo(), logger: silentLogger };
+  return { store, binding: binding(), logger: silentLogger };
 }
 
 function callCtx(store: StoreApi<SessionStoreState>, inputTokens: number): BeforeModelCallContext {
   store.setState({ steps: stepUsage(inputTokens) });
-  return { store, modelInfo: modelInfo(), logger: silentLogger, messages: [] };
+  return { store, binding: binding(), logger: silentLogger, messages: [] };
 }
 
 describe("hybrid compression hooks", () => {

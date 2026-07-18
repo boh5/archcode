@@ -30,6 +30,7 @@ function findTsFiles(dir: string, options: { includeTests?: boolean } = {}): str
 
     if (stats.isDirectory()) {
       if (entry === "dist" || entry === "__test_tmp__") continue;
+      if (entry === "testing" && options.includeTests !== true) continue;
       files.push(...findTsFiles(fullPath, options));
       continue;
     }

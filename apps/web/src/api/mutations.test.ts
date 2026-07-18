@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { apiFetch } from "./client";
-import { createSession, stopSessionFamily } from "./mutations";
+import { createSession, invalidateSessionModelSelectionQuery, patchSessionModelSelection, postMessage, stopSessionFamily } from "./mutations";
 
 const originalFetch = globalThis.fetch;
 const originalDocument = globalThis.document;
@@ -50,6 +50,8 @@ describe("web goal mutation API calls", () => {
 });
 
 describe("web session runtime mutation API calls", () => {
+  const requestedModelSelection = { mode: "session_override" as const, selection: { model: "openai:gpt-5", variant: "deep" } };
+
   test("createSession calls the bodyless Session endpoint", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -77,6 +79,43 @@ describe("web session runtime mutation API calls", () => {
     await stopSessionFamily({ slug: TEST_PROJECT_SLUG, rootSessionId: "root-session" });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("POST messages locks the requested model selection into the request", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/sessions/root-session/messages`);
+      expect(JSON.parse(String(init?.body))).toEqual({ text: "Build it", clientRequestId: "11111111-1111-4111-8111-111111111111", requestedModelSelection });
+      return jsonResponse({ clientRequestId: "11111111-1111-4111-8111-111111111111", messageId: "message-1", status: "queued" }, { status: 202 });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    await postMessage({ slug: TEST_PROJECT_SLUG, sessionId: "root-session", content: "Build it", clientRequestId: "11111111-1111-4111-8111-111111111111", requestedModelSelection });
+  });
+
+  test("PATCH model selection sends optimistic revision and returns complete model state", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const response = { modelSelection: { revision: 3, override: requestedModelSelection.selection }, nextModelSelection: { requested: requestedModelSelection, resolved: { selection: requestedModelSelection.selection, providerId: "openai", modelId: "gpt-5", providerDisplayName: "OpenAI", modelDisplayName: "GPT-5", resolution: "session_override" as const, modelRuntimeRevision: "m3" } } };
+    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/sessions/root-session/model-selection`);
+      expect(init?.method).toBe("PATCH");
+      expect(JSON.parse(String(init?.body))).toEqual({ expectedRevision: 2, requestedModelSelection });
+      return jsonResponse(response);
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    await expect(patchSessionModelSelection({ slug: TEST_PROJECT_SLUG, sessionId: "root-session", expectedRevision: 2, requestedModelSelection })).resolves.toEqual(response);
+  });
+
+  test("refreshes Session model state after a revision conflict before retry", async () => {
+    const invalidateQueries = mock(async () => undefined);
+
+    await invalidateSessionModelSelectionQuery({ invalidateQueries } as never, {
+      slug: TEST_PROJECT_SLUG,
+      sessionId: "root-session",
+    });
+
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ["projects", TEST_PROJECT_SLUG, "sessions", "root-session"],
+    });
   });
 });
 

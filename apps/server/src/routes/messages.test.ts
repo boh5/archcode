@@ -6,13 +6,23 @@ import type { AgentRuntime } from "@archcode/agent-core";
 import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "messages-routes");
+const requestedModelSelection = {
+  mode: "agent_default" as const,
+  selection: { model: "local:test", variant: "fast" },
+};
 
 function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
-  const pending = { id: "message-1", clientRequestId: "request-1", content: "Hello", state: "queued" as const, revision: 0 };
+  const pending = { id: "message-1", clientRequestId: "request-1", content: "Hello", state: "queued" as const, revision: 0, requestedModelSelection };
   return {
     projectRegistry,
     contextResolver: undefined,
-    configService: { getSnapshot: mock(async () => ({ config: { provider: {}, agents: {} }, revision: "test", configPath: "/test", restartRequired: false })) },
+    configService: { getSnapshot: mock(async () => ({
+      config: { provider: {}, agents: {} },
+      revision: "test",
+      modelRuntimeRevision: "test",
+      configPath: "/test",
+      restartRequiredSections: [],
+    })) },
     listAgentDescriptors: mock(() => []),
     subscribeSessionEvents: mock(() => () => undefined),
     subscribeHitlEvents: mock(() => () => undefined),
@@ -46,12 +56,12 @@ describe("messages routes", () => {
     const { app, project, runtime } = await createTestApp("accept");
     const response = await app.request(`/api/projects/${project.slug}/sessions/session-1/messages`, {
       method: "POST",
-      body: JSON.stringify({ text: "Hello", clientRequestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }),
+      body: JSON.stringify({ text: "Hello", clientRequestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", requestedModelSelection }),
       headers: { "content-type": "application/json" },
     });
     expect(response.status).toBe(202);
     expect(await response.json()).toMatchObject({ status: "queued", messageId: "message-1" });
-    expect(runtime.acceptSessionMessage).toHaveBeenCalledWith(expect.objectContaining({ source: "user", sessionId: "session-1" }));
+    expect(runtime.acceptSessionMessage).toHaveBeenCalledWith(expect.objectContaining({ source: "user", sessionId: "session-1", requestedModelSelection }));
   });
 
   test("POST requires text and clientRequestId", async () => {
@@ -139,7 +149,7 @@ describe("messages routes", () => {
     });
     const response = await app.request(`/api/projects/${project.slug}/sessions/session-1/messages`, {
       method: "POST",
-      body: JSON.stringify({ text: "/compact", clientRequestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }),
+      body: JSON.stringify({ text: "/compact", clientRequestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", requestedModelSelection }),
       headers: { "content-type": "application/json" },
     });
 

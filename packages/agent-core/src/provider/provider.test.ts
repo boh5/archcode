@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { parseConfig } from "../config/index";
 import {
   createRegistry,
-  Registry,
+  ProviderRegistry,
   ModelInfo,
   UnknownQualifiedIdError,
 } from "./index";
@@ -69,8 +69,8 @@ describe("createRegistry", () => {
   const providers = parseConfig(VALID_CONFIG).provider;
   const registry = createRegistry(providers);
 
-  test("returns a Registry instance", () => {
-    expect(registry).toBeInstanceOf(Registry);
+  test("returns a ProviderRegistry instance", () => {
+    expect(registry).toBeInstanceOf(ProviderRegistry);
   });
 
   test("has sdkRegistry with languageModel method", () => {
@@ -153,5 +153,16 @@ describe("ModelInfo", () => {
 
   test("qualifiedId is providerId:modelId", () => {
     expect(info.qualifiedId).toBe("xxx:gpt-5.2");
+  });
+
+  test("keeps metadata immutable when source config or consumers mutate", () => {
+    const source = parseConfig(VALID_CONFIG).provider;
+    const immutable = createRegistry(source).getModel("xxx:gpt-5.2");
+    source.xxx.models["gpt-5.2"]!.limit.context = 1;
+
+    expect(immutable.limit.context).toBe(400000);
+    expect(() => { (immutable as { displayName: string }).displayName = "Changed"; }).toThrow();
+    expect(() => { (immutable.limit as { context: number }).context = 1; }).toThrow();
+    expect(() => { (immutable.modalities.input as string[]).push("audio"); }).toThrow();
   });
 });

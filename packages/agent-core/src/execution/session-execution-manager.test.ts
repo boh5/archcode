@@ -2,10 +2,11 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createEmptySessionStats } from "@archcode/protocol";
+import type { LanguageModelV3 } from "@ai-sdk/provider";
 import type { Agent, AgentCommand, AgentCommandResult, AgentResult, AgentRunOptions } from "../agents/types";
 import { ConfiguredAgent } from "../agents/configured-agent";
 import { engineerAgentDefinition } from "../agents/definitions";
-import type { ProviderRegistry } from "../provider";
+import { ProviderRegistry } from "../provider";
 import { ModelInfo } from "../provider/model";
 import { SkillService } from "../skills";
 import { createTestProjectContextResolver } from "../agents/test-project-context-resolver";
@@ -19,7 +20,7 @@ import { SessionFamilyActiveError, SessionFamilyIdentityUnavailableError, Sessio
 import type { SessionFile } from "../store/helpers";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { getSessionDir, getSessionPath } from "../store/sessions-dir";
-import { SessionExecutionManager } from "./session-execution-manager";
+import { SessionExecutionManager, SessionSteerUnavailableError } from "./session-execution-manager";
 import { SessionExecutionScopeConflictError } from "./session-execution-scope-validator";
 import { SessionWorkspaceClosingError } from "./session-workspace-control";
 import { silentLogger } from "../logger";
@@ -29,6 +30,9 @@ import type { AgentDefinition } from "../agents/factory-types";
 import { createEmptyCompressionState } from "../compression";
 import type { SessionGoalDelegationContext } from "./session-goal-delegation-context";
 import { SessionInputConflictError, SessionInputService } from "../session-input/service";
+import type { ArchCodeConfig, ModelConfig } from "../config";
+import type { ExecutionModelBinding } from "../models";
+import { ModelRuntime, ModelRuntimeSnapshot, ModelSelectionResolver } from "../models";
 
 const testRoot = join(
   import.meta.dir,
@@ -38,6 +42,15 @@ const testRoot = join(
 let workspaceRoot = join(testRoot, "bootstrap");
 let defaultAgentWorkspaceRoot = workspaceRoot;
 const storeManager = new SessionStoreManager({ logger: silentLogger });
+const TEST_REQUESTED_MODEL_SELECTION = {
+  mode: "agent_default" as const,
+  selection: { model: "test:model" },
+};
+const TEST_BINDING_SUMMARY = {
+  selection: { model: "test:model" }, providerId: "test", modelId: "model",
+  providerDisplayName: "Test Provider", modelDisplayName: "Test Model",
+  resolution: "agent_default" as const, modelRuntimeRevision: "test-runtime-1",
+};
 interface Deferred<T> {
   promise: Promise<T>;
   resolve(value: T): void;
@@ -84,6 +97,7 @@ type MockAgentResult = Partial<AgentResult> & Pick<AgentResult, "text" | "steps"
 class MockAgent implements Agent {
   readonly store;
   readonly cwd: string;
+  readonly runBindings: ExecutionModelBinding[] = [];
   readonly runMock = mock(async (options: AgentRunOptions = {}): Promise<AgentResult> => {
     const signal = options.abort;
     const result = await withAbort(this.result, signal);
@@ -111,7 +125,8 @@ class MockAgent implements Agent {
     return { kind: "handled" };
   }
 
-  run(options?: AgentRunOptions): Promise<AgentResult> {
+  run(binding: ExecutionModelBinding, options?: AgentRunOptions): Promise<AgentResult> {
+    this.runBindings.push(binding);
     return this.runMock(options);
   }
 
@@ -134,6 +149,7 @@ interface FakeManagerOptions {
   listSessionFamilyToolBatchHitlIds?: ConstructorParameters<typeof SessionExecutionManager>[0]["listSessionFamilyToolBatchHitlIds"];
   sessionInputService?: ConstructorParameters<typeof SessionExecutionManager>[0]["sessionInputService"];
   sessionFamilyStopTimeoutMs?: number;
+  modelRuntime?: ModelRuntime;
 }
 
 const allowExecutionScope = { validate: async () => undefined };
@@ -178,7 +194,7 @@ function createFakeManager(agents: Record<string, MockAgent>, options: FakeManag
         store: input.store,
         classifyCommand: mock((_input: string) => null),
         executeCommand: mock(async (_command: AgentCommand): Promise<AgentCommandResult> => ({ kind: "handled" })),
-        run: mock(async (runOptions?: AgentRunOptions): Promise<AgentResult> => {
+        run: mock(async (_binding: ExecutionModelBinding, runOptions?: AgentRunOptions): Promise<AgentResult> => {
           const signal = runOptions?.abort;
           options.childCanonicalMessage?.(getUserMessageTexts(input.store.getState()).at(-1) ?? "");
           options.childRunOptions?.(runOptions);
@@ -244,13 +260,75 @@ function makeFactoryWithChildPolicy(
   });
 }
 
+function makeModelRuntime(
+  withOtherModel = true,
+  agentModel: "test:model" | "test:other" = "test:model",
+  revision = "test-runtime-1",
+  providerSecretValues: readonly string[] = [],
+): ModelRuntime {
+  const model: ModelConfig = {
+    name: "Test Model",
+    limit: { context: 100_000, output: 10_000 },
+    modalities: { input: ["text"], output: ["text"] },
+  };
+  const otherModel: ModelConfig = {
+    ...model,
+    name: "Other Model",
+  };
+  const agent = { model: agentModel };
+  const config: ArchCodeConfig = {
+    provider: {
+      test: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "Test Provider",
+        options: { baseURL: "http://localhost.invalid/v1" },
+        models: withOtherModel ? { model, other: otherModel } : { model },
+      },
+    },
+    agents: {
+      engineer: { ...agent }, goal_lead: { ...agent }, plan: { ...agent }, build: { ...agent },
+      reviewer: { ...agent }, explore: { ...agent }, librarian: { ...agent }, shaper: { ...agent },
+    },
+  };
+  const info = new ModelInfo({
+    model: {} as LanguageModelV3,
+    config: model,
+    providerId: "test",
+    modelId: "model",
+    providerSecretValues,
+  });
+  const otherInfo = new ModelInfo({
+    model: {} as LanguageModelV3,
+    config: otherModel,
+    providerId: "test",
+    modelId: "other",
+    providerSecretValues,
+  });
+  const registry = new ProviderRegistry(
+    {} as ProviderRegistry["sdkRegistry"],
+    new Map(withOtherModel
+      ? [[info.qualifiedId, info], [otherInfo.qualifiedId, otherInfo]]
+      : [[info.qualifiedId, info]]),
+  );
+  const runtime = new ModelRuntime();
+  runtime.publish(new ModelRuntimeSnapshot({
+    revision,
+    config,
+    providerRegistry: registry,
+  }));
+  return runtime;
+}
+
 function createManager(agents: Record<string, MockAgent>, options: FakeManagerOptions = {}) {
   const sessionAgentManager = createFakeManager(agents, options);
   const executionStoreManager = options.storeManager ?? storeManager;
   const trackSession = mock(() => undefined);
   const untrackSession = mock(() => undefined);
+  const modelRuntime = options.modelRuntime ?? makeModelRuntime();
   const manager = new SessionExecutionManager({
     sessionAgentManager,
+    modelRuntime,
+    modelSelectionResolver: new ModelSelectionResolver(),
     ...storeCallbacks(executionStoreManager),
     flushSessionStore: options.flushSessionStore ?? (async () => undefined),
     ...(options.listSessionFamilyToolBatchHitlIds === undefined ? {} : {
@@ -319,7 +397,7 @@ async function writeSessionFile(input: {
     cwd: input.cwd ?? workspaceRoot,
     agentName: input.parentSessionId === undefined ? "engineer" : "explore",
     activeSkillNames: [],
-    modelInfo: null,
+    modelSelection: { revision: 0 },
     title: input.title ?? null,
     messages: [],
     pendingMessages: [],
@@ -399,6 +477,246 @@ describe("SessionExecutionManager", () => {
     await rm(testRoot, { recursive: true, force: true });
   });
 
+  test("fixes one binding at claim and commits only the same-actual-selection Queue prefix", async () => {
+    const rootId = crypto.randomUUID();
+    const rootAgent = new MockAgent(rootId, Promise.resolve({ text: "done", steps: 1 }), workspaceRoot);
+    const { manager } = createManager({ [rootId]: rootAgent });
+    const service = new SessionInputService(storeManager);
+    const defaultRequest = { mode: "agent_default" as const, selection: { model: "test:model" } };
+    const otherRequest = { mode: "session_override" as const, selection: { model: "test:other" } };
+
+    await service.acceptMessage({
+      sessionId: rootId,
+      workspaceRoot,
+      text: "first",
+      clientRequestId: "request-first",
+      source: "user",
+      requestedModelSelection: defaultRequest,
+    });
+    await service.acceptMessage({
+      sessionId: rootId,
+      workspaceRoot,
+      text: "second",
+      clientRequestId: "request-second",
+      source: "user",
+      requestedModelSelection: otherRequest,
+    });
+
+    const execution = await manager.tryStartQueuedExecution({ slug: "project", workspaceRoot, sessionId: rootId });
+    expect(execution).toBeDefined();
+    await execution!.promise;
+
+    const state = rootAgent.store.getState();
+    expect(getUserMessageTexts(state)).toEqual(["first"]);
+    expect(state.pendingMessages.map((message) => message.content)).toEqual(["second"]);
+    expect(state.messages[0]?.modelAudit).toEqual({
+      requested: defaultRequest,
+      actual: { model: "test:model" },
+    });
+    expect(state.executions[0]?.binding.selection).toEqual({ model: "test:model" });
+    expect(state.executions[0]?.origin).toBe("user_message");
+    expect(rootAgent.runBindings[0]?.summary).toEqual(state.executions[0]?.binding);
+  });
+
+  test("keeps an active binding on revision A and resolves the next execution from revision B", async () => {
+    const rootId = crypto.randomUUID();
+    const firstGate = deferred<MockAgentResult>();
+    const rootAgent = new MockAgent(rootId, firstGate.promise, workspaceRoot);
+    const modelRuntime = makeModelRuntime(true, "test:model", "runtime-a");
+    const { manager } = createManager({ [rootId]: rootAgent }, { modelRuntime });
+
+    const first = await manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: rootId,
+      input: { kind: "direct", text: "run on A" },
+    });
+    await first.started;
+    expect(first.binding.summary).toMatchObject({
+      selection: { model: "test:model" },
+      modelRuntimeRevision: "runtime-a",
+    });
+
+    modelRuntime.publish(makeModelRuntime(true, "test:other", "runtime-b").current);
+    expect(first.binding.summary).toMatchObject({
+      selection: { model: "test:model" },
+      modelRuntimeRevision: "runtime-a",
+    });
+    firstGate.resolve({ text: "A done", steps: 1 });
+    await first.promise;
+
+    const secondAgent = new MockAgent(rootId, Promise.resolve({ text: "B done", steps: 1 }), workspaceRoot);
+    const nextManager = createManager({ [rootId]: secondAgent }, { modelRuntime }).manager;
+    const second = await nextManager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: rootId,
+      input: { kind: "direct", text: "run on B" },
+    });
+    await second.promise;
+    expect(second.binding.summary).toMatchObject({
+      selection: { model: "test:other" },
+      modelRuntimeRevision: "runtime-b",
+    });
+  });
+
+  test("dispatches X,X,Y as two FIFO executions and X,Y,X as three", async () => {
+    async function runSequence(sequence: readonly ("model" | "other")[]) {
+      const rootId = crypto.randomUUID();
+      const rootAgent = new MockAgent(rootId, Promise.resolve({ text: "done", steps: 1 }), workspaceRoot);
+      const { manager } = createManager({ [rootId]: rootAgent });
+      const service = new SessionInputService(storeManager);
+      for (const [index, model] of sequence.entries()) {
+        await service.acceptMessage({
+          sessionId: rootId,
+          workspaceRoot,
+          text: `message-${index}`,
+          clientRequestId: `sequence-${rootId}-${index}`,
+          source: "user",
+          requestedModelSelection: {
+            mode: model === "model" ? "agent_default" : "session_override",
+            selection: { model: `test:${model}` },
+          },
+        });
+      }
+
+      while ((await service.getPendingMessages(rootId, workspaceRoot)).length > 0) {
+        const execution = await manager.tryStartQueuedExecution({
+          slug: "project",
+          workspaceRoot,
+          sessionId: rootId,
+        });
+        expect(execution).toBeDefined();
+        await execution!.promise;
+      }
+      return rootAgent;
+    }
+
+    const grouped = await runSequence(["model", "model", "other"]);
+    expect(grouped.store.getState().executions.map((execution) => execution.binding.selection.model))
+      .toEqual(["test:model", "test:other"]);
+    expect(grouped.store.getState().messages.filter((message) => message.role === "user").map((message) => message.executionId))
+      .toEqual([
+        grouped.store.getState().executions[0]!.id,
+        grouped.store.getState().executions[0]!.id,
+        grouped.store.getState().executions[1]!.id,
+      ]);
+
+    const alternating = await runSequence(["model", "other", "model"]);
+    expect(alternating.store.getState().executions.map((execution) => execution.binding.selection.model))
+      .toEqual(["test:model", "test:other", "test:model"]);
+  });
+
+  test("coalesces distinct invalid requests onto the current default with per-message audits", async () => {
+    const rootId = crypto.randomUUID();
+    const rootAgent = new MockAgent(rootId, Promise.resolve({ text: "done", steps: 1 }), workspaceRoot);
+    const modelRuntime = makeModelRuntime(false, "test:model", "runtime-z");
+    const { manager } = createManager({ [rootId]: rootAgent }, { modelRuntime });
+    const service = new SessionInputService(storeManager);
+    const requests = [
+      { mode: "agent_default" as const, selection: { model: "removed:x" } },
+      { mode: "session_override" as const, selection: { model: "removed:y", variant: "deep" } },
+    ];
+    for (const [index, requestedModelSelection] of requests.entries()) {
+      await service.acceptMessage({
+        sessionId: rootId,
+        workspaceRoot,
+        text: `invalid-${index}`,
+        clientRequestId: `invalid-${index}`,
+        source: "user",
+        requestedModelSelection,
+      });
+    }
+
+    const execution = await manager.tryStartQueuedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: rootId,
+    });
+    await execution!.promise;
+
+    const state = rootAgent.store.getState();
+    expect(state.executions).toHaveLength(1);
+    expect(state.executions[0]!.binding).toMatchObject({
+      selection: { model: "test:model" },
+      modelRuntimeRevision: "runtime-z",
+    });
+    expect(state.messages.filter((message) => message.role === "user").map((message) => message.modelAudit))
+      .toEqual(requests.map((requestedModelSelection) => ({
+        requested: requestedModelSelection,
+        actual: { model: "test:model" },
+        reason: "config_invalidated",
+      })));
+  });
+
+  test("passes a fixed command binding to the command callback", async () => {
+    const rootId = crypto.randomUUID();
+    const rootAgent = new MockAgent(rootId, Promise.resolve({ text: "unused", steps: 0 }), workspaceRoot);
+    const { manager } = createManager({ [rootId]: rootAgent });
+    let seen: ExecutionModelBinding | undefined;
+    const result = await manager.runSessionCommand({
+      workspaceRoot,
+      sessionId: rootId,
+      clientRequestId: "command-binding",
+      requestedModelSelection: {
+        mode: "session_override",
+        selection: { model: "test:other" },
+      },
+    }, async (binding) => {
+      seen = binding;
+      return "done";
+    });
+    expect(result).toEqual({ kind: "executed", result: "done" });
+    expect(seen?.summary.selection).toEqual({ model: "test:other" });
+  });
+
+  test("rejects Steer when its resolved actual selection differs from the active binding", async () => {
+    const rootId = crypto.randomUUID();
+    const gate = deferred<MockAgentResult>();
+    const rootAgent = new MockAgent(rootId, gate.promise, workspaceRoot);
+    const modelRuntime = makeModelRuntime(false);
+    const { manager } = createManager({ [rootId]: rootAgent }, { modelRuntime });
+    const service = new SessionInputService(storeManager);
+    const execution = await manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: rootId,
+      input: {
+        kind: "direct",
+        text: "start",
+      },
+    });
+    await execution.started;
+    expect(execution.binding.summary.resolution).toBe("agent_default");
+    expect(rootAgent.store.getState().executions[0]?.origin).toBe("user_message");
+    expect(rootAgent.store.getState().messages[0]?.modelAudit?.requested).toEqual({
+      mode: "agent_default",
+      selection: { model: "test:model" },
+    });
+    modelRuntime.publish(makeModelRuntime(true).current);
+    const accepted = await service.acceptMessage({
+      sessionId: rootId,
+      workspaceRoot,
+      text: "different model",
+      clientRequestId: "steer-other",
+      source: "user",
+      requestedModelSelection: {
+        mode: "session_override",
+        selection: { model: "test:other" },
+      },
+    });
+    await expect(manager.steerQueuedMessage({
+      workspaceRoot,
+      sessionId: rootId,
+      messageId: accepted.messageId,
+      expectedRevision: 0,
+      expectedExecutionId: execution.executionId,
+    })).rejects.toBeInstanceOf(SessionSteerUnavailableError);
+    expect((await service.getPendingMessages(rootId, workspaceRoot))[0]?.state).toBe("queued");
+    gate.resolve({ text: "done", steps: 1 });
+    await execution.promise;
+  });
+
   test("commands share family admission, coalesce identical requests, and fence Queue execution", async () => {
     const rootId = crypto.randomUUID();
     const commandGate = deferred<void>();
@@ -411,7 +729,8 @@ describe("SessionExecutionManager", () => {
       workspaceRoot,
       sessionId: rootId,
       clientRequestId: "command-1",
-    }, async (signal) => {
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
+    }, async (_binding, signal) => {
       commandCalls += 1;
       await withAbort(commandGate.promise, signal);
       return "done";
@@ -422,6 +741,7 @@ describe("SessionExecutionManager", () => {
       workspaceRoot,
       sessionId: rootId,
       clientRequestId: "command-1",
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
     }, async () => {
       commandCalls += 1;
       return "must not run";
@@ -430,6 +750,7 @@ describe("SessionExecutionManager", () => {
       workspaceRoot,
       sessionId: rootId,
       clientRequestId: "command-2",
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
     }, async () => "must not run")).rejects.toBeInstanceOf(SessionFamilyActiveError);
 
     await service.acceptMessage({
@@ -438,6 +759,7 @@ describe("SessionExecutionManager", () => {
       text: "queued during command",
       clientRequestId: "queued-during-command",
       source: "user",
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
     });
     expect(await manager.tryStartQueuedExecution({ slug: "project", workspaceRoot, sessionId: rootId })).toBeUndefined();
     expect(rootAgent.runMock).not.toHaveBeenCalled();
@@ -466,6 +788,7 @@ describe("SessionExecutionManager", () => {
       workspaceRoot,
       sessionId: rootId,
       clientRequestId: "command-pre-claim-failure",
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
     }, async () => {
       await failGate.promise;
       throw failure;
@@ -474,6 +797,7 @@ describe("SessionExecutionManager", () => {
       workspaceRoot,
       sessionId: rootId,
       clientRequestId: "command-pre-claim-failure",
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
     }, async () => "must not run");
 
     failGate.resolve(undefined);
@@ -492,7 +816,8 @@ describe("SessionExecutionManager", () => {
       workspaceRoot,
       sessionId: rootId,
       clientRequestId: "command-stop",
-    }, async (signal) => {
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
+    }, async (_binding, signal) => {
       commandSignal = signal;
       await withAbort(new Promise<never>(() => undefined), signal);
     });
@@ -507,6 +832,7 @@ describe("SessionExecutionManager", () => {
       text: "B before Stop",
       clientRequestId: "queued-before-command-stop",
       source: "user",
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
     });
 
     await manager.stopSessionFamily(workspaceRoot, rootId);
@@ -537,6 +863,7 @@ describe("SessionExecutionManager", () => {
       text: "D after Stop",
       clientRequestId: "queued-after-command-stop",
       source: "user",
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
     });
     const restarted = await coldManager.tryStartQueuedExecution({ slug: "project", workspaceRoot, sessionId: rootId });
     if (restarted === undefined) throw new Error("Expected a post-Stop Queue execution");
@@ -579,6 +906,7 @@ describe("SessionExecutionManager", () => {
       text: "queued before descendant-only Stop",
       clientRequestId: "queued-before-descendant-stop",
       source: "user",
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
     });
 
     const stopping = manager.stopSessionFamily(workspaceRoot, rootId);
@@ -755,6 +1083,7 @@ describe("SessionExecutionManager", () => {
       text: "B",
       clientRequestId: crypto.randomUUID(),
       source: "user",
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
     });
     const acceptedC = await inputs.acceptMessage({
       sessionId,
@@ -762,6 +1091,7 @@ describe("SessionExecutionManager", () => {
       text: "C",
       clientRequestId: crypto.randomUUID(),
       source: "user",
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
     });
 
     expect(await manager.tryStartQueuedExecution({ slug: "project", workspaceRoot, sessionId })).toBeUndefined();
@@ -808,6 +1138,7 @@ describe("SessionExecutionManager", () => {
         text,
         clientRequestId: crypto.randomUUID(),
         source: "user",
+        requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
       });
     }
 
@@ -826,6 +1157,7 @@ describe("SessionExecutionManager", () => {
       text: "D",
       clientRequestId: crypto.randomUUID(),
       source: "user",
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
     });
     const second = await manager.tryStartQueuedExecution({ slug: "project", workspaceRoot, sessionId });
     if (second === undefined) throw new Error("Expected post-Stop queued execution");
@@ -863,6 +1195,7 @@ describe("SessionExecutionManager", () => {
         text,
         clientRequestId: crypto.randomUUID(),
         source: "user",
+        requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
       });
     }
 
@@ -887,7 +1220,7 @@ describe("SessionExecutionManager", () => {
     expect(agent.runMock).toHaveBeenCalledTimes(0);
   });
 
-  test("captures the Queue cutoff at the final synchronous claim", async () => {
+  test("captures the exact Queue prefix at the final synchronous claim", async () => {
     const sessionId = crypto.randomUUID();
     const agent = new MockAgent(sessionId, Promise.resolve({ text: "done", steps: 1 }));
     const inputs = new SessionInputService(storeManager);
@@ -895,7 +1228,7 @@ describe("SessionExecutionManager", () => {
     const releaseValidation = deferred<void>();
     const beginEntered = deferred<void>();
     const releaseBegin = deferred<void>();
-    let claimedCutoff: number | undefined;
+    let claimedSnapshotIds: string[] = [];
     let committedAtBegin: string[] = [];
     const port = inputServicePort(inputs);
     const { manager } = createManager({ [sessionId]: agent }, {
@@ -908,7 +1241,7 @@ describe("SessionExecutionManager", () => {
       sessionInputService: {
         ...port,
         beginQueueExecution: async (input) => {
-          claimedCutoff = input.cutoffAcceptedAt;
+          claimedSnapshotIds = input.snapshots.map((snapshot) => snapshot.pending.id);
           beginEntered.resolve(undefined);
           await releaseBegin.promise;
           const result = await inputs.beginQueueExecution(input);
@@ -923,6 +1256,7 @@ describe("SessionExecutionManager", () => {
       text: "B",
       clientRequestId: crypto.randomUUID(),
       source: "user",
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
     });
 
     const starting = manager.tryStartQueuedExecution({ slug: "project", workspaceRoot, sessionId });
@@ -933,6 +1267,7 @@ describe("SessionExecutionManager", () => {
       text: "C",
       clientRequestId: crypto.randomUUID(),
       source: "user",
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
     });
     releaseValidation.resolve(undefined);
     await beginEntered.promise;
@@ -942,9 +1277,10 @@ describe("SessionExecutionManager", () => {
       text: "D",
       clientRequestId: crypto.randomUUID(),
       source: "user",
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
     });
-    expect(claimedCutoff).toBe(acceptedC.message?.acceptedAt);
-    expect(acceptedD.message!.acceptedAt).toBeGreaterThan(claimedCutoff!);
+    expect(claimedSnapshotIds).toEqual([acceptedB.messageId, acceptedC.messageId]);
+    expect(claimedSnapshotIds).not.toContain(acceptedD.messageId);
     releaseBegin.resolve(undefined);
     const execution = await starting;
     if (execution === undefined) throw new Error("Expected Queue execution");
@@ -969,7 +1305,7 @@ describe("SessionExecutionManager", () => {
       cwd: workspaceRoot,
       classifyCommand: () => null,
       executeCommand: async () => ({ kind: "handled" }),
-      run: async (options) => {
+      run: async (_binding, options) => {
         enteredRun.resolve(undefined);
         await releaseSafePoint.promise;
         await options?.consumeSteers?.();
@@ -1001,6 +1337,7 @@ describe("SessionExecutionManager", () => {
       text: "B",
       clientRequestId: crypto.randomUUID(),
       source: "user",
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
     });
     const steered = await manager.steerQueuedMessage({
       workspaceRoot,
@@ -1062,6 +1399,7 @@ describe("SessionExecutionManager", () => {
       text: "B",
       clientRequestId: crypto.randomUUID(),
       source: "user",
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
     });
     await manager.steerQueuedMessage({
       workspaceRoot,
@@ -1141,6 +1479,7 @@ describe("SessionExecutionManager", () => {
       text: "B",
       clientRequestId: crypto.randomUUID(),
       source: "user",
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
     });
     await manager.steerQueuedMessage({
       workspaceRoot,
@@ -1181,6 +1520,7 @@ describe("SessionExecutionManager", () => {
       text: "B",
       clientRequestId: crypto.randomUUID(),
       source: "user",
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
     });
     await manager.steerQueuedMessage({
       workspaceRoot,
@@ -1218,7 +1558,7 @@ describe("SessionExecutionManager", () => {
       cwd: workspaceRoot,
       classifyCommand: () => null,
       executeCommand: async () => ({ kind: "handled" }),
-      run: async (options) => {
+      run: async (_binding, options) => {
         enteredRun.resolve(undefined);
         await releaseSafePoint.promise;
         await options?.consumeSteers?.();
@@ -1250,6 +1590,7 @@ describe("SessionExecutionManager", () => {
       text: "B",
       clientRequestId: crypto.randomUUID(),
       source: "user",
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
     });
     await manager.steerQueuedMessage({
       workspaceRoot,
@@ -1319,6 +1660,7 @@ describe("SessionExecutionManager", () => {
       text: "user wins",
       clientRequestId: crypto.randomUUID(),
       source: "user",
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
     });
     releaseValidation.resolve(undefined);
 
@@ -1350,16 +1692,6 @@ describe("SessionExecutionManager", () => {
         titleGeneration: "disabled" as const,
       },
     };
-    const modelInfo = new ModelInfo({
-      model: { modelId: "todo-test", provider: "todo-test" } as never,
-      config: {
-        name: "Todo test model",
-        limit: { context: 16_000, output: 2_000 },
-        modalities: { input: ["text"], output: ["text"] },
-      },
-      providerId: "todo-test",
-      modelId: "todo-test",
-    });
     let modelRound = 0;
     const realNow = Date.now;
     let now = realNow();
@@ -1383,8 +1715,6 @@ describe("SessionExecutionManager", () => {
 
     const configuredAgent = new ConfiguredAgent({
       definition,
-      providerRegistry: {} as ProviderRegistry,
-      modelInfo,
       toolRegistry: createRegistry([]),
       skillService: new SkillService({ builtinSkills: {} }),
       storeManager,
@@ -1413,7 +1743,7 @@ describe("SessionExecutionManager", () => {
       expect(modelRound).toBe(2);
       expect(store.getState().todos[0]?.status).toBe("completed");
       expect(lifecycleEvents).toEqual([
-        { type: "execution-start", executionId: execution.executionId },
+        { type: "execution-start", executionId: execution.executionId, binding: execution.binding.summary, origin: "user_message" },
         { type: "execution-end", status: "completed" },
       ]);
       expect(store.getState().executions).toEqual([
@@ -1481,16 +1811,48 @@ describe("SessionExecutionManager", () => {
     }
   });
 
+  test("redacts Provider secrets from manager-owned terminal records", async () => {
+    const sessionId = crypto.randomUUID();
+    const secret = "configured-provider-secret";
+    const agent = new MockAgent(sessionId, Promise.resolve({
+      text: "safe partial output",
+      steps: 1,
+      status: "failed",
+      error: `Provider echoed ${secret}`,
+    }), workspaceRoot);
+    const { manager } = createManager({ [sessionId]: agent }, {
+      modelRuntime: makeModelRuntime(true, "test:model", "test-runtime-secret", [secret]),
+    });
+
+    const execution = await manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId,
+      input: { kind: "direct", text: "fail safely" },
+    });
+    await execution.promise;
+
+    const durable = JSON.stringify({
+      events: agent.store.getState().events,
+      executions: agent.store.getState().executions,
+    });
+    expect(durable).not.toContain(secret);
+    expect(durable).toContain("[REDACTED_PROVIDER_SECRET]");
+  });
+
   test("HITL ends one execution and tool_batch resumes with a new execution id", async () => {
     const sessionId = crypto.randomUUID();
     const store = storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" });
+    const modelRuntime = makeModelRuntime(true, "test:model", "runtime-before-hitl");
+    const bindings: ExecutionModelBinding[] = [];
     let invocation = 0;
     const agent = {
       store,
       cwd: workspaceRoot,
       classifyCommand: mock((_input: string) => null),
       executeCommand: mock(async (_command: AgentCommand): Promise<AgentCommandResult> => ({ kind: "handled" })),
-      run: mock(async (): Promise<AgentResult> => {
+      run: mock(async (binding: ExecutionModelBinding): Promise<AgentResult> => {
+        bindings.push(binding);
         invocation += 1;
         if (invocation === 1) {
           store.setState({ toolBatches: [blockedToolBatch("resume-after-hitl")] });
@@ -1500,12 +1862,13 @@ describe("SessionExecutionManager", () => {
       }),
       dispose: mock(() => undefined),
     } as Agent;
-    const { manager } = createManager({ [sessionId]: agent as MockAgent });
+    const { manager } = createManager({ [sessionId]: agent as MockAgent }, { modelRuntime });
 
     const waiting = await manager.startCheckedExecution({
       slug: "project", workspaceRoot, sessionId, input: { kind: "direct", text: "ask" },
     });
     await waiting.promise;
+    modelRuntime.publish(makeModelRuntime(true, "test:other", "runtime-after-hitl").current);
     const resumed = await manager.startSessionToolBatchExecution({
       slug: "project", workspaceRoot, sessionId,
     });
@@ -1515,6 +1878,16 @@ describe("SessionExecutionManager", () => {
     expect(store.getState().executions.map(({ id, status }) => ({ id, status }))).toEqual([
       { id: waiting.executionId, status: "waiting_for_human" },
       { id: resumed.executionId, status: "completed" },
+    ]);
+    expect(bindings.map((binding) => binding.summary)).toEqual([
+      expect.objectContaining({
+        selection: { model: "test:model" },
+        modelRuntimeRevision: "runtime-before-hitl",
+      }),
+      expect.objectContaining({
+        selection: { model: "test:other" },
+        modelRuntimeRevision: "runtime-after-hitl",
+      }),
     ]);
   });
 
@@ -1567,6 +1940,8 @@ describe("SessionExecutionManager", () => {
         ...sessionAgentManager,
         getOrCreate: mock(async () => await new Promise<Agent>(() => undefined)),
       } as unknown as SessionAgentManager,
+      modelRuntime: makeModelRuntime(),
+      modelSelectionResolver: new ModelSelectionResolver(),
       ...storeCallbacks(storeManager),
       sessionInputService: new SessionInputService(storeManager),
       trackSession: mock(() => undefined),
@@ -1645,6 +2020,8 @@ describe("SessionExecutionManager", () => {
     const sessionAgentManager = createFakeManager({ [sessionId]: agentB });
     const managerB = new SessionExecutionManager({
       sessionAgentManager,
+      modelRuntime: makeModelRuntime(),
+      modelSelectionResolver: new ModelSelectionResolver(),
       ...storeCallbacks(storeManager),
       sessionInputService: new SessionInputService(storeManager),
       trackSession: mock(() => undefined),
@@ -2618,7 +2995,7 @@ describe("SessionExecutionManager", () => {
       cwd: store.getState().cwd,
       classifyCommand: mock((_input: string) => null),
       executeCommand: mock(async (_command: AgentCommand): Promise<AgentCommandResult> => ({ kind: "handled" })),
-      run: mock(async (options?: AgentRunOptions) => {
+      run: mock(async (_binding: ExecutionModelBinding, options?: AgentRunOptions) => {
         runStarted = true;
         const signal = options?.abort;
         return await new Promise<AgentResult>((_resolve, reject) => {
@@ -2741,7 +3118,7 @@ describe("SessionExecutionManager", () => {
     const now = Date.now();
     await writeSessionFile({
       sessionId: rootId,
-      executions: [{ id: "execution-running", startedAt: now - 1000, status: "running" }],
+      executions: [{ id: "execution-running", startedAt: now - 1000, status: "running", binding: TEST_BINDING_SUMMARY, origin: "user_message" }],
       childSessionLinks: [{
         parentSessionId: rootId,
         parentToolCallId: "tool-child",
@@ -3123,7 +3500,8 @@ describe("SessionExecutionManager", () => {
       workspaceRoot,
       sessionId,
       clientRequestId: "command-during-cwd-transition",
-    }, async (signal) => {
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
+    }, async (_binding, signal) => {
       await withAbort(commandGate.promise, signal);
     });
 
@@ -3380,6 +3758,8 @@ describe("SessionExecutionManager", () => {
     const callbacks = storeCallbacks(storeManager);
     const manager = new SessionExecutionManager({
       sessionAgentManager: createFakeManager({}, { factory: makeFactory() }),
+      modelRuntime: makeModelRuntime(),
+      modelSelectionResolver: new ModelSelectionResolver(),
       ...callbacks,
       sessionInputService: new SessionInputService(storeManager),
       loadSessionStore: async (sessionId, root) => {

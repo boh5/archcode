@@ -18,6 +18,7 @@ export type { VersionControl, VersionControlDetector } from "./version-control/d
 
 export type { Agent, AgentCommand, AgentCommandResult, AgentResult, AgentRunOptions } from "./agents/types";
 export { AgentRunningError, ChildSessionCwdMismatchError, SessionCwdTransitionInProgressError, SessionToolBatchActiveError } from "./agents/errors";
+export * from "./models";
 
 export type { SlashCommandResult } from "./commands/types";
 export {
@@ -167,12 +168,18 @@ export {
 } from "./store/errors";
 export type { SessionTreeIntegrityReason } from "./store/errors";
 export { SessionInputConflictError, SessionInputService, nextSessionTimestamp } from "./session-input/service";
+export {
+  SessionModelSelectionConflictError,
+  SessionModelSelectionInvalidError,
+  SessionModelSelectionService,
+} from "./session-input/model-selection-service";
 export type {
   BeginSessionInputResult,
   MessageAcceptance,
   SessionInputConflictReason,
   SessionInputDurableMutation,
   SessionInputStorePort,
+  ResolvedSessionInputSnapshot,
 } from "./session-input/service";
 export { reduceStreamEvent } from "./store/reduce";
 export { assertValidSessionCwd, resolveValidSessionCwd } from "./store/session-cwd";

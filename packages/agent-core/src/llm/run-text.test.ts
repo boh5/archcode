@@ -16,6 +16,7 @@ function makeInput(overrides: Partial<LlmTextInput> = {}): LlmTextInput {
     model: dummyModel,
     prompt: "x",
     retryScheduler: createFakeRetryScheduler(),
+    redactSensitiveText: (text) => text,
     ...overrides,
   };
 }
@@ -38,6 +39,16 @@ afterEach(() => {
 });
 
 describe("runLlmText", () => {
+  test("redacts configured Provider values from successful text", async () => {
+    mockGenerateText.mockResolvedValueOnce({ text: "echo configured-secret", toolCalls: [] });
+
+    const result = await runLlmText(makeInput({
+      redactSensitiveText: (text) => text.replaceAll("configured-secret", "[redacted]"),
+    }));
+
+    expect(result).toEqual({ text: "echo [redacted]" });
+  });
+
   test("calls generateText with maxRetries 0 and returns exact text contract", async () => {
     mockGenerateText.mockResolvedValueOnce({ text: "hello", toolCalls: [] });
     const result = await runLlmText(makeInput({ prompt: "Say hi" }));

@@ -66,6 +66,13 @@ async function renderInspector(root: Root, path: string, kind: "session" | "goal
 }
 
 const collapseInspector = mock(() => {});
+const requestedModelSelection = { mode: "agent_default" as const, selection: { model: "openai:gpt-5" } };
+const binding = {
+  selection: { model: "openai:gpt-5" }, providerId: "openai", modelId: "gpt-5",
+  providerDisplayName: "OpenAI", modelDisplayName: "GPT-5", resolution: "agent_default" as const,
+  modelRuntimeRevision: "m1",
+};
+const modelState = { modelSelection: { revision: 0 }, nextModelSelection: { requested: requestedModelSelection, resolved: binding } };
 
 function LocationProbe() {
   const location = useLocation();
@@ -92,11 +99,112 @@ afterEach(() => {
 });
 
 describe("ContextInspector interactions", () => {
+  test("inspects the selected message by executionId without substituting the current next model", async () => {
+    const dom = installDom("/projects/demo/sessions/root?message=user-old");
+    const historicalBinding = { ...binding, selection: { model: "openai:gpt-4" }, modelId: "gpt-4", modelDisplayName: "GPT-4", modelRuntimeRevision: "m-old" };
+    const session: Session = {
+      sessionId: "root", rootSessionId: "root", cwd: "/workspace/demo", title: "Audit", createdAt: 1, updatedAt: 2,
+      agentName: "engineer", activeSkillNames: [], ...modelState, pendingMessages: [], steps: [], todos: [], reminders: [], childSessionLinks: [], stats: createEmptySessionStats(),
+      messages: [{ id: "user-old", role: "user", executionId: "execution-old", createdAt: 1, completedAt: 1, parts: [{ type: "text", id: "text-old", text: "Historical", createdAt: 1, completedAt: 1 }], modelAudit: { requested: { mode: "session_override", selection: { model: "openai:gpt-4", variant: "deep" } }, actual: { model: "openai:gpt-4" }, reason: "config_invalidated" } }],
+      executions: [{ id: "execution-old", startedAt: 1, endedAt: 2, status: "completed", binding: historicalBinding, origin: "user_message" }],
+    };
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/agents") return Response.json({ agents: [] });
+      if (url.endsWith("/goals")) return Response.json({ goals: [] });
+      if (url.endsWith("/automations")) return Response.json({ automations: [] });
+      if (url.endsWith("/sessions/root")) return Response.json(session);
+      if (url.endsWith("/tree")) return Response.json({ root: { session: { sessionId: "root", rootSessionId: "root", cwd: session.cwd, title: session.title, createdAt: 1, updatedAt: 2, agentName: "engineer", activeSkillNames: [], modelSelection: { revision: 0 } }, children: [] }, diagnostics: [] });
+      return new Response("not found", { status: 404 });
+    }) });
+    const container = document.getElementById("root")!;
+    const root = createRoot(container);
+    const client = await renderInspector(root, "/projects/demo/sessions/root?message=user-old", "session");
+    try {
+      await act(async () => { (Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Context") as HTMLButtonElement).click(); });
+      await waitFor(() => expect(container.textContent).toContain("Inspected message model audit"));
+      expect(container.textContent).toContain("execution-old");
+      expect(container.textContent).toContain("Originuser_message");
+      expect(container.textContent).toContain("openai:gpt-4 · deep");
+      expect(container.textContent).toContain("GPT-4");
+      expect(container.textContent).toContain("m-old");
+      expect(container.textContent).toContain("Requested model invalidated by configuration");
+      expect(container.textContent).not.toContain("ActualGPT-5");
+    } finally {
+      await act(async () => root.unmount()); client.clear(); dom.window.close();
+    }
+  });
+
+  test("shows every queued request when inspecting a batched assistant execution", async () => {
+    const dom = installDom("/projects/demo/sessions/root?message=assistant-batched");
+    const batchedBinding = {
+      ...binding,
+      selection: { model: "provider-z:model-z" },
+      providerId: "provider-z",
+      modelId: "model-z",
+      providerDisplayName: "Provider Z",
+      modelDisplayName: "Model Z",
+      resolution: "agent_default" as const,
+      modelRuntimeRevision: "m-batched",
+    };
+    const commonMessage = { executionId: "execution-batched", createdAt: 1, completedAt: 1 };
+    const session: Session = {
+      sessionId: "root", rootSessionId: "root", cwd: "/workspace/demo", title: "Batched audit", createdAt: 1, updatedAt: 2,
+      agentName: "engineer", activeSkillNames: [], ...modelState, pendingMessages: [], steps: [], todos: [], reminders: [], childSessionLinks: [], stats: createEmptySessionStats(),
+      messages: [
+        {
+          ...commonMessage,
+          id: "user-x",
+          role: "user",
+          parts: [{ type: "text", id: "text-x", text: "X request", createdAt: 1, completedAt: 1 }],
+          modelAudit: { requested: { mode: "session_override", selection: { model: "provider-x:model-x" } }, actual: { model: "provider-z:model-z" }, reason: "config_invalidated" },
+        },
+        {
+          ...commonMessage,
+          id: "user-y",
+          role: "user",
+          parts: [{ type: "text", id: "text-y", text: "Y request", createdAt: 1, completedAt: 1 }],
+          modelAudit: { requested: { mode: "session_override", selection: { model: "provider-y:model-y", variant: "deep" } }, actual: { model: "provider-z:model-z" }, reason: "config_invalidated" },
+        },
+        {
+          ...commonMessage,
+          id: "assistant-batched",
+          role: "assistant",
+          parts: [{ type: "text", id: "text-assistant", text: "Batched answer", createdAt: 1, completedAt: 1 }],
+        },
+      ],
+      executions: [{ id: "execution-batched", startedAt: 1, endedAt: 2, status: "completed", binding: batchedBinding, origin: "user_message" }],
+    };
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/agents") return Response.json({ agents: [] });
+      if (url.endsWith("/goals")) return Response.json({ goals: [] });
+      if (url.endsWith("/automations")) return Response.json({ automations: [] });
+      if (url.endsWith("/sessions/root")) return Response.json(session);
+      if (url.endsWith("/tree")) return Response.json({ root: { session: { sessionId: "root", rootSessionId: "root", cwd: session.cwd, title: session.title, createdAt: 1, updatedAt: 2, agentName: "engineer", activeSkillNames: [], modelSelection: { revision: 0 } }, children: [] }, diagnostics: [] });
+      return new Response("not found", { status: 404 });
+    }) });
+    const container = document.getElementById("root")!;
+    const root = createRoot(container);
+    const client = await renderInspector(root, "/projects/demo/sessions/root?message=assistant-batched", "session");
+    try {
+      await act(async () => { (Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Context") as HTMLButtonElement).click(); });
+      await waitFor(() => expect(container.textContent).toContain("Inspected message model audit"));
+      expect(container.textContent).toContain("Request 1user-x · Session override · provider-x:model-x · Requested model invalidated by configuration");
+      expect(container.textContent).toContain("Request 2user-y · Session override · provider-y:model-y · deep · Requested model invalidated by configuration");
+      expect(container.textContent).toContain("Actualprovider-z:model-z");
+      expect(container.textContent).toContain("Model Z");
+      expect(container.textContent).not.toContain("Requestedprovider-x:model-x");
+    } finally {
+      await act(async () => root.unmount()); client.clear(); dom.window.close();
+    }
+  });
+
   test("organizes Session agents, changed files, and context from real APIs", async () => {
     const dom = installDom("/projects/demo/sessions/root");
     const session: Session = {
       sessionId: "root", rootSessionId: "root", cwd: "/workspace/demo", title: "Root execution",
-      createdAt: 1, updatedAt: 2, agentName: "engineer", activeSkillNames: [], modelInfo: null, messages: [], pendingMessages: [], steps: [], todos: [], reminders: [], childSessionLinks: [], executions: [], stats: createEmptySessionStats(),
+      createdAt: 1, updatedAt: 2, agentName: "engineer", activeSkillNames: [], ...modelState, messages: [], pendingMessages: [], steps: [], todos: [], reminders: [], childSessionLinks: [], executions: [], stats: createEmptySessionStats(),
     };
     const childSession: Session = {
       ...session,
@@ -107,7 +215,6 @@ describe("ContextInspector interactions", () => {
       title: "Build agent",
       agentName: "build",
       goalId: "executing-goal",
-      modelInfo: { providerId: "openai", modelId: "gpt-5", qualifiedId: "openai:gpt-5", displayName: "GPT-5" },
       stats: { ...createEmptySessionStats(), messages: { total: 4, user: 1, assistant: 3 }, tools: { calls: 2, completed: 2, failed: 0 } },
     };
     const relatedGoal: GoalState = {
@@ -141,9 +248,9 @@ describe("ContextInspector interactions", () => {
       nextFireAt: "2026-07-13T01:00:00.000Z",
     };
     const tree: SessionTreeResponse = {
-      root: { session: { sessionId: "root", rootSessionId: "root", cwd: session.cwd, title: session.title, createdAt: 1, updatedAt: 2, agentName: "engineer", activeSkillNames: [], modelInfo: null }, children: [
-        { session: { sessionId: "child", rootSessionId: "root", parentSessionId: "root", cwd: session.cwd, title: "Build agent", createdAt: 1, updatedAt: 2, agentName: "build", activeSkillNames: [], modelInfo: null }, children: [
-          { session: { sessionId: "custom", rootSessionId: "root", parentSessionId: "child", cwd: session.cwd, title: "Custom agent", createdAt: 1, updatedAt: 2, agentName: "custom_agent", activeSkillNames: [], modelInfo: null }, children: [] },
+      root: { session: { sessionId: "root", rootSessionId: "root", cwd: session.cwd, title: session.title, createdAt: 1, updatedAt: 2, agentName: "engineer", activeSkillNames: [], modelSelection: { revision: 0 } }, children: [
+        { session: { sessionId: "child", rootSessionId: "root", parentSessionId: "root", cwd: session.cwd, title: "Build agent", createdAt: 1, updatedAt: 2, agentName: "build", activeSkillNames: [], modelSelection: { revision: 0 } }, children: [
+          { session: { sessionId: "custom", rootSessionId: "root", parentSessionId: "child", cwd: session.cwd, title: "Custom agent", createdAt: 1, updatedAt: 2, agentName: "custom_agent", activeSkillNames: [], modelSelection: { revision: 0 } }, children: [] },
         ] },
       ] }, diagnostics: [],
     };
@@ -206,13 +313,17 @@ describe("ContextInspector interactions", () => {
       await act(async () => getWebSessionStore("child", "demo").setState({
         hydrationStatus: "hydrated",
         cwd: "/workspace/live-child",
-        modelInfo: { providerId: "openai", modelId: "gpt-5-live", qualifiedId: "openai:gpt-5-live", displayName: "GPT-5 Live" },
+        nextModelSelection: { requested: requestedModelSelection, resolved: { ...binding, selection: { model: "openai:gpt-5-live" }, modelId: "gpt-5-live", modelDisplayName: "GPT-5 Live" } },
         stats: { ...createEmptySessionStats(), messages: { total: 9, user: 2, assistant: 7 } },
-        executions: [{ id: "live-execution", status: "running", startedAt: 1 }],
+        executions: [{ id: "live-execution", status: "running", startedAt: 1, binding, origin: "user_message" }],
       }));
       expect(container.textContent).toContain("/workspace/live-child");
       expect(container.textContent).toContain("GPT-5 Live");
       expect(container.textContent).toContain("9");
+      await act(async () => getWebSessionStore("child", "demo").setState({ nextModelSelection: undefined }));
+      expect(container.textContent).toContain("Syncing model selection");
+      expect(container.textContent).not.toContain("GPT-5 Live");
+      expect(container.textContent).not.toContain("GPT-5");
       await act(async () => { (Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Changes") as HTMLButtonElement).click(); });
       await waitFor(() => expect(container.textContent).toContain("src/app.ts"));
       expect(container.textContent).toContain("1 files");

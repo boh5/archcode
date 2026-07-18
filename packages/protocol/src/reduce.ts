@@ -56,10 +56,10 @@ export function reduceStreamEvent(
 
   switch (event.type) {
     case "execution-start": {
-      const executionId = event.executionId ?? ctx.generateId();
+      const executionId = event.executionId;
       const executions = [
         ...(state.executions ?? []),
-        { id: executionId, startedAt: timestamp, status: "running" as const },
+        { id: executionId, startedAt: timestamp, status: "running" as const, binding: event.binding, origin: event.origin },
       ];
 
       return {
@@ -91,6 +91,9 @@ export function reduceStreamEvent(
 
     case "session.cwd_changed":
       return { cwd: event.cwd };
+
+    case "session.model_selection_changed":
+      return { modelSelection: event.modelSelection };
 
     case "session.message_accepted":
       return { pendingMessages: [...state.pendingMessages, event.message] };

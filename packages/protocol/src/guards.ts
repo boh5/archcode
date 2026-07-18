@@ -25,7 +25,9 @@ export function isSessionEventPayload(value: unknown): value is SessionEventPayl
     case "shutdown":
       return exact(event, ["type"], ["reason"]) && optionalString(event.reason);
     case "execution-start":
-      return exact(event, ["type"], ["executionId"]) && optionalString(event.executionId);
+      return exact(event, ["type", "executionId", "binding", "origin"])
+        && isString(event.executionId) && isExecutionModelBinding(event.binding)
+        && oneOf(event.origin, ["user_message", "tool_call", "tool_batch", "goal_claim"]);
     case "execution-end":
       return exact(event, ["type", "status"], ["error", "blockedByHitlIds", "blockedToolCallId"])
         && oneOf(event.status, ["completed", "max_steps", "failed", "aborted", "cancelled", "timed_out", "interrupted", "waiting_for_human"])
@@ -35,6 +37,9 @@ export function isSessionEventPayload(value: unknown): value is SessionEventPayl
     case "session.cwd_changed":
       return exact(event, ["type", "previousCwd", "cwd"])
         && isString(event.previousCwd) && isString(event.cwd);
+    case "session.model_selection_changed":
+      return exact(event, ["type", "modelSelection"])
+        && isSessionModelSelection(event.modelSelection);
     case "session.message_accepted":
     case "session.message_edited":
     case "session.message_steer_claimed":
@@ -129,7 +134,7 @@ function isPendingSessionMessage(value: unknown): boolean {
   if (message === undefined
     || !exact(
       message,
-      ["id", "clientRequestId", "content", "source", "state", "revision", "acceptedAt", "updatedAt"],
+      ["id", "clientRequestId", "content", "source", "state", "revision", "acceptedAt", "updatedAt", "requestedModelSelection"],
       ["targetExecutionId"],
     )
     || !isString(message.id)
@@ -140,6 +145,7 @@ function isPendingSessionMessage(value: unknown): boolean {
     || !isNonNegativeInteger(message.revision)
     || !isFiniteNumber(message.acceptedAt)
     || !isFiniteNumber(message.updatedAt)
+    || !isRequestedModelSelection(message.requestedModelSelection)
     || !optionalString(message.targetExecutionId)) return false;
 
   return message.state === "steering"
@@ -154,7 +160,7 @@ function isCommittedUserMessage(value: unknown, executionId: string): boolean {
     && exact(
       message,
       ["id", "role", "parts", "createdAt"],
-      ["completedAt", "executionId", "clientRequestId", "compacted"],
+      ["completedAt", "executionId", "clientRequestId", "compacted", "modelAudit"],
     )
     && isString(message.id)
     && message.role === "user"
@@ -165,7 +171,54 @@ function isCommittedUserMessage(value: unknown, executionId: string): boolean {
     && optionalFiniteNumber(message.completedAt)
     && message.executionId === executionId
     && optionalString(message.clientRequestId)
+    && isMessageModelAudit(message.modelAudit)
     && (message.compacted === undefined || typeof message.compacted === "boolean");
+}
+
+function isModelSelectionRef(value: unknown): boolean {
+  const selection = record(value);
+  return selection !== undefined
+    && exact(selection, ["model"], ["variant"])
+    && isString(selection.model)
+    && optionalString(selection.variant);
+}
+
+function isRequestedModelSelection(value: unknown): boolean {
+  const requested = record(value);
+  return requested !== undefined
+    && exact(requested, ["mode", "selection"])
+    && oneOf(requested.mode, ["agent_default", "session_override"])
+    && isModelSelectionRef(requested.selection);
+}
+
+function isSessionModelSelection(value: unknown): boolean {
+  const selection = record(value);
+  return selection !== undefined
+    && exact(selection, ["revision"], ["override"])
+    && isNonNegativeInteger(selection.revision)
+    && (selection.override === undefined || isModelSelectionRef(selection.override));
+}
+
+function isExecutionModelBinding(value: unknown): boolean {
+  const binding = record(value);
+  return binding !== undefined
+    && exact(binding, ["selection", "providerId", "modelId", "providerDisplayName", "modelDisplayName", "resolution", "modelRuntimeRevision"])
+    && isModelSelectionRef(binding.selection)
+    && isString(binding.providerId)
+    && isString(binding.modelId)
+    && isString(binding.providerDisplayName)
+    && isString(binding.modelDisplayName)
+    && oneOf(binding.resolution, ["requested", "session_override", "agent_default"])
+    && isString(binding.modelRuntimeRevision);
+}
+
+function isMessageModelAudit(value: unknown): boolean {
+  const audit = record(value);
+  return audit !== undefined
+    && exact(audit, ["requested", "actual"], ["reason"])
+    && isRequestedModelSelection(audit.requested)
+    && isModelSelectionRef(audit.actual)
+    && (audit.reason === undefined || audit.reason === "config_invalidated");
 }
 
 function isCommittedUserTextPart(value: unknown): boolean {

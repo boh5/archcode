@@ -3,6 +3,7 @@ import type { ModelMessage } from "ai";
 import type { StoreApi } from "zustand";
 import { z } from "zod";
 import type { ModelInfo } from "../../provider/model";
+import type { ExecutionModelBinding } from "../../models";
 import { SkillService } from "../../skills";
 import { silentLogger } from "../../logger";
 import { storeManager } from "../../store/store";
@@ -17,6 +18,7 @@ import { runQueryLoop as runCanonicalQueryLoop } from "./loop";
 import { sessionFileInternals } from "../../store/helpers";
 import { createFakeRetryScheduler } from "../../testing/fake-retry-scheduler";
 import { createTestTempRoot } from "../../testing/test-temp-root";
+import { createTestModelInfo } from "../../testing/test-execution-fixtures";
 
 const testTempRoot = createTestTempRoot("query-recovery");
 const TEST_WORKSPACE_ROOT = testTempRoot.path;
@@ -46,15 +48,28 @@ const retryableEof = (message = "stream EOF", retryAfterMs?: number) => retryAft
   ? new Error(message)
   : Object.assign(new Error(message), { retryAfterMs });
 
-const dummyModelInfo = {
-  model: { modelId: "mock-model", provider: "mock-provider" },
+const dummyModelInfo = createTestModelInfo({
+  model: { modelId: "mock-model", provider: "mock-provider" } as never,
   displayName: "Mock Model",
   limit: { context: 1000, output: 100 },
-  modalities: { input: ["text"], output: ["text"] },
   providerId: "mock-provider",
+  providerDisplayName: "Mock Provider",
   modelId: "mock-model",
-  qualifiedId: "mock-provider:mock-model",
-} as unknown as ModelInfo;
+});
+
+const dummyBinding: ExecutionModelBinding = {
+  modelInfo: dummyModelInfo,
+  options: undefined,
+  summary: {
+    selection: { model: dummyModelInfo.qualifiedId },
+    providerId: dummyModelInfo.providerId,
+    modelId: dummyModelInfo.modelId,
+    providerDisplayName: "Mock Provider",
+    modelDisplayName: dummyModelInfo.displayName,
+    resolution: "agent_default",
+    modelRuntimeRevision: "test-revision",
+  },
+};
 
 const testSkillService = new SkillService({ builtinSkills: {} });
 const inputSchema = z.object({ message: z.string().optional() }).strict();
@@ -70,7 +85,7 @@ function wrappedMessage(ref: string, text: string): string {
 function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOptions {
   const workspaceRoot = TEST_WORKSPACE_ROOT;
   return {
-    modelInfo: dummyModelInfo,
+    binding: dummyBinding,
     logger: silentLogger,
     toolRegistry: createRegistry([]),
     store: createStore(),

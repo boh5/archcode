@@ -12,7 +12,7 @@ Unlike a coding CLI that runs a task and exits, ArchCode keeps the engineering w
 - **Web workbench** — capture project Todos, shape them with a dedicated Agent, and manage sessions, goals, automations, approvals, and reviews from a browser.
 - **AI engineering workflow** — describe a goal, let agents plan and build, then review evidence before accepting the result.
 - **Human-in-the-loop control** — approve sensitive actions, answer agent questions, and inspect what changed.
-- **Bring your own models** — configure OpenAI-compatible providers and choose models per agent role.
+- **Bring your own models** — configure official AI SDK language Providers or custom OpenAI-compatible/Responses endpoints and choose models per Agent role.
 - **Self-hosted by default** — your workspaces stay on the machine where ArchCode runs.
 
 ## Quick start
@@ -27,14 +27,14 @@ bun install
 
 ### 2. Configure models
 
-Create `~/.archcode/config.json`. ArchCode reads this single server-wide file for every registered project; project directories are never searched for configuration. This minimal example uses an OpenAI-compatible local provider and assigns the same model to all eight built-in agent roles:
+Create `~/.archcode/config.json`. ArchCode reads this single server-wide file for every registered project; project directories are never searched for configuration. This minimal example uses a custom OpenAI-compatible local endpoint and assigns the same model to all eight built-in Agent roles:
 
 ```json
 {
   "provider": {
     "local": {
       "npm": "@ai-sdk/openai-compatible",
-      "name": "local",
+      "name": "Local GLM",
       "options": {
         "baseURL": "http://localhost:8090/v1",
         "apiKey": "local-dev-key"
@@ -61,7 +61,7 @@ Create `~/.archcode/config.json`. ArchCode reads this single server-wide file fo
 }
 ```
 
-Provider IDs and model IDs combine as `provider:modelId`, such as `local:glm-5`. Provider options are literal values and are not expanded from environment-variable expressions.
+Provider IDs and model IDs combine as `provider:modelId`, such as `local:glm-5`. The ID is the runtime namespace; `provider.name` is display-only. Provider factory options are literal JSON values and are not expanded from environment-variable expressions. See [provider configuration](docs/configuration.md) for all supported packages, secret handling, and custom endpoints.
 
 Existing development checkouts can copy the former repository-local file once:
 
@@ -72,7 +72,7 @@ install -m 600 .archcode.json ~/.archcode/config.json
 
 ArchCode does not read, migrate, or fall back to the old file.
 
-The Web UI edits the same global file from **Settings → Server**. Saving validates and writes the file atomically, but the running process keeps its startup configuration; restart ArchCode when Settings shows **Restart required**.
+The Web UI edits the same global file from **Settings → Models / Agents**. Saving validates, prepares, atomically writes, and immediately applies Models and Agent defaults. MCP, Memory, and GitHub integration changes are reported as the precise restart-required sections. Direct edits to the file have no watcher; save through Settings or restart to load them.
 
 ### 3. Start ArchCode
 
@@ -200,6 +200,8 @@ Custom MCP servers use the current HTTP-only configuration shape without a trans
 - Agent options are merged in this order: `model.options → variants[agent.variant] → agents[agent].options`.
 - `providerOptions` is shallow-replaced by later layers, not deep-merged.
 - MCP URLs and headers retain their existing `${VAR}` / `${VAR:-default}` expansion; Provider options do not use this expansion.
+- Provider factory options are generic JSON for the selected package. Provider secrets, including API keys and custom header/query values declared by that adapter, are redacted by Settings and must be explicitly preserved, replaced, or deleted.
+- A Composer or Session model choice applies to the next Execution only. A running Execution keeps its immutable binding and model-runtime revision. When a queued Execution starts, an invalid requested selection falls back to a valid Session override, then that Agent's current validated default. ArchCode never changes a running or failed model call to another model automatically.
 
 ## Self-hosting notes
 

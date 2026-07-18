@@ -10,6 +10,15 @@ import { sessionFileInternals } from "./helpers";
 import { silentLogger } from "../logger";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "session-store-manager", crypto.randomUUID());
+const TEST_REQUESTED_MODEL_SELECTION = { mode: "agent_default" as const, selection: { model: "test:model" } };
+const TEST_BINDING = {
+  selection: { model: "test:model" }, providerId: "test", modelId: "model",
+  providerDisplayName: "Test", modelDisplayName: "Model",
+  resolution: "agent_default" as const, modelRuntimeRevision: "runtime-1",
+};
+const executionStart = (executionId: string) => ({
+  type: "execution-start" as const, executionId, binding: TEST_BINDING, origin: "user_message" as const,
+});
 
 beforeEach(async () => {
   await mkdir(TMP_DIR, { recursive: true });
@@ -54,7 +63,7 @@ describe("SessionStoreManager", () => {
       cwd: TMP_DIR,
       agentName: "engineer",
       activeSkillNames: [],
-      modelInfo: null,
+      modelSelection: { revision: 0 },
       title: null,
       messages: [],
       pendingMessages: [],
@@ -172,7 +181,7 @@ describe("SessionStoreManager", () => {
       const second = manager.commitDurableSessionMutation(id, TMP_DIR, () => ({
         result: undefined,
         events: [
-          { type: "execution-start", executionId: "execution-2" },
+          executionStart("execution-2"),
           { type: "system-notice", message: "second" },
         ],
       }));
@@ -399,7 +408,7 @@ describe("SessionStoreManager", () => {
     const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
     await manager.flushSession(id, TMP_DIR);
 
-    store.getState().append({ type: "execution-start", executionId: "execution-1" });
+    store.getState().append(executionStart("execution-1"));
     await manager.flushSession(id, TMP_DIR);
 
     const persisted = await readSessionJson(canonicalSessionPath(id));
@@ -669,7 +678,7 @@ describe("SessionStoreManager", () => {
     const id = sessionId();
     const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
 
-    store.getState().append({ type: "execution-start", executionId: "run-1" });
+    store.getState().append(executionStart("run-1"));
     store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { path: "a.ts" } });
     store.getState().append({
       type: "tool-attempt",
@@ -701,7 +710,7 @@ describe("SessionStoreManager", () => {
     const id = sessionId();
     const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
 
-    store.getState().append({ type: "execution-start", executionId: "run-partial-input" });
+    store.getState().append(executionStart("run-partial-input"));
     store.getState().append({
       type: "tool-input-start",
       toolCallId: "call-partial",
@@ -737,7 +746,7 @@ describe("SessionStoreManager", () => {
     const id = sessionId();
     const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
 
-    store.getState().append({ type: "execution-start", executionId: "run-undefined-input" });
+    store.getState().append(executionStart("run-undefined-input"));
     store.getState().append({
       type: "tool-call",
       toolCallId: "call-undefined",
@@ -786,7 +795,7 @@ describe("SessionStoreManager", () => {
             executionId: "run-1",
           },
         ],
-        executions: [{ id: "run-1", startedAt: 1000, status: "running" }],
+        executions: [{ id: "run-1", startedAt: 1000, status: "running", binding: TEST_BINDING, origin: "user_message" }],
       }),
       TMP_DIR,
     );
@@ -808,7 +817,7 @@ describe("SessionStoreManager", () => {
     const id = sessionId();
     await sessionFileInternals.saveSessionTranscript(
       persistedSession(id, {
-        executions: [{ id: "run-1", startedAt: 1000, status: "waiting_for_human", endedAt: 2000, durationMs: 1000 }],
+        executions: [{ id: "run-1", startedAt: 1000, status: "waiting_for_human", endedAt: 2000, durationMs: 1000, binding: TEST_BINDING, origin: "user_message" }],
       }),
       TMP_DIR,
     );
@@ -831,6 +840,7 @@ describe("SessionStoreManager", () => {
         clientRequestId: "interrupted-command",
         requestFingerprint: "user-command",
         status: "executing",
+        requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
       }],
     }), TMP_DIR);
 
@@ -850,7 +860,7 @@ describe("SessionStoreManager", () => {
     const id = sessionId();
     const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
 
-    store.getState().append({ type: "execution-start", executionId: "run-1" });
+    store.getState().append(executionStart("run-1"));
     store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { path: "a.ts" } });
     store.getState().append({
       type: "tool-attempt",
@@ -884,7 +894,7 @@ describe("SessionStoreManager", () => {
     const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
     const errorMsg = "Execution terminated due to terminal failure";
 
-    store.getState().append({ type: "execution-start", executionId: "run-1" });
+    store.getState().append(executionStart("run-1"));
     store.getState().append({ type: "step-start", step: 0 });
     store.getState().append({ type: "execution-error", step: 0, error: errorMsg });
 
@@ -899,7 +909,7 @@ describe("SessionStoreManager", () => {
     const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
     const errorMsg = "model crashed in step 0";
 
-    store.getState().append({ type: "execution-start", executionId: "run-1" });
+    store.getState().append(executionStart("run-1"));
     store.getState().append({ type: "step-start", step: 0 });
     store.getState().append({ type: "execution-error", step: 0, error: errorMsg });
 

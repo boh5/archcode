@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { SessionFamilyActivity } from "@archcode/protocol";
+import type { ModelRuntimeCatalog, SessionFamilyActivity, SessionNextModelSelection } from "@archcode/protocol";
 
 globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
   callback(0);
@@ -48,6 +48,7 @@ const setState = mock((_value: unknown) => {});
 let hookCursor = 0;
 const stateValues: unknown[] = [];
 const postMessageMutate = mock((_variables: unknown, _options?: unknown) => {});
+const patchModelSelectionMutate = mock((_variables: unknown, _options?: unknown) => {});
 const stopSessionMutate = mock((_variables: unknown) => {});
 const addLocalSendingMessage = mock((_input: unknown) => {});
 const removeLocalSendingMessage = mock((_clientRequestId: string) => {});
@@ -56,11 +57,13 @@ let activity: SessionFamilyActivity | undefined;
 let pendingHitlCount = 0;
 let hitlReady = false;
 let stopPending = false;
+let modelRuntimeFetching = false;
 
 mock.module("react", () => ({
   default: {},
   useCallback: <T extends (...args: never[]) => unknown>(callback: T) => callback,
   useEffect: (_callback: () => void | (() => void), _deps?: unknown[]) => {},
+  useMemo: <T,>(factory: () => T) => factory(),
   useRef: <T,>(initial: T) => ({ current: initial }),
   useState: <T,>(initial: T): [T, (value: T | ((previous: T) => T)) => void] => {
     const index = hookCursor++;
@@ -81,19 +84,35 @@ mock.module("react", () => ({
 mock.module("react/jsx-dev-runtime", () => ({ Fragment, jsxDEV, jsx: jsxDEV, jsxs: jsxDEV }));
 
 const Icon = (props: Record<string, unknown>) => jsxDEV("svg", props);
-mock.module("lucide-react", () => ({ ArrowUp: Icon, Loader2: Icon, Square: Icon }));
+mock.module("lucide-react", () => ({ ArrowUp: Icon, Check: Icon, ChevronDown: Icon, Loader2: Icon, Search: Icon, Square: Icon }));
 
 mock.module("../../api/mutations", () => ({
   usePostMessage: () => ({ mutate: postMessageMutate, isPending: false }),
+  usePatchSessionModelSelection: () => ({ mutate: patchModelSelectionMutate, isPending: false }),
   useStopSessionFamily: () => ({ mutate: stopSessionMutate, isPending: stopPending }),
 }));
+
+const requestedModelSelection = { mode: "agent_default" as const, selection: { model: "test:model" } };
+const nextBinding = { selection: { model: "test:model" }, providerId: "test", modelId: "model", providerDisplayName: "Test", modelDisplayName: "Test Model", resolution: "agent_default" as const, modelRuntimeRevision: "m1" };
+let nextModelSelection: SessionNextModelSelection = { requested: requestedModelSelection, resolved: nextBinding };
+let modelCatalog: ModelRuntimeCatalog = { revision: "m1", providers: [], agentDefaults: { engineer: { model: "test:model" } } };
+
+mock.module("../../api/queries", () => ({
+  useModelRuntime: () => ({ data: modelCatalog, isFetching: modelRuntimeFetching }),
+}));
+mock.module("../../context/settings-modal", () => ({ useSettingsModal: () => ({ openSettingsModal: mock(() => {}) }) }));
 
 mock.module("../../store/session-store", () => ({
   getWebSessionStore: () => ({
     getState: () => ({ addLocalSendingMessage, removeLocalSendingMessage, setLocalSendingMessageStatus }),
   }),
-  useSessionStore: (_sessionId: string, selector: (state: { modelInfo: { displayName: string } }) => unknown) =>
-    selector({ modelInfo: { displayName: "Test Model" } }),
+  useSessionStore: (_sessionId: string, selector: (state: Record<string, unknown>) => unknown) =>
+    selector({
+      modelSelection: { revision: 0 },
+      nextModelSelection,
+      activeModelBinding: activity === "running" ? { ...nextBinding, selection: { model: "test:running" }, modelDisplayName: "Running Model" } : undefined,
+      agentName: "engineer",
+    }),
 }));
 
 const { ChatInput } = await import("./ChatInput");
@@ -114,10 +133,14 @@ describe("ChatInput runtime controls", () => {
     pendingHitlCount = 0;
     hitlReady = false;
     stopPending = false;
+    modelRuntimeFetching = false;
+    nextModelSelection = { requested: requestedModelSelection, resolved: nextBinding };
+    modelCatalog = { revision: "m1", providers: [], agentDefaults: { engineer: { model: "test:model" } } };
     hookCursor = 0;
     stateValues.length = 0;
     setState.mockClear();
     postMessageMutate.mockClear();
+    patchModelSelectionMutate.mockClear();
     stopSessionMutate.mockClear();
     addLocalSendingMessage.mockClear();
     removeLocalSendingMessage.mockClear();
@@ -130,11 +153,85 @@ describe("ChatInput runtime controls", () => {
     const textarea = findAll(tree, (element) => element.type === "textarea")[0];
 
     expect(card?.props?.className).toContain("rounded-[16px]");
+    expect(card?.props?.className).toContain("overflow-visible");
+    expect(card?.props?.className).not.toContain("overflow-hidden");
     expect(card?.props?.className).toContain("focus-within:border-accent");
     expect(textarea?.props?.className).toContain("border-0");
     expect(textarea?.props?.className).toContain("bg-transparent");
     expect(findAll(tree, (element) => element.props?.title === "Attach file")).toHaveLength(0);
     expect(findAll(tree, (element) => element.props?.title === "Send message")).toHaveLength(1);
+  });
+
+  test("shows the resolved Agent default before first send and separates running from next", () => {
+    activity = "idle";
+    hitlReady = true;
+    let tree = renderChatInput();
+    let picker = findAll(tree, (element) => typeof element.type === "function" && (element.type as { name?: string }).name === "ModelPicker")[0];
+    expect((picker?.props?.next as { requested: { mode: string }; resolved: { modelDisplayName: string } }).requested.mode).toBe("agent_default");
+    expect((picker?.props?.next as { resolved: { modelDisplayName: string } }).resolved.modelDisplayName).toBe("Test Model");
+    expect(picker?.props?.active).toBeUndefined();
+
+    activity = "running";
+    hookCursor = 0;
+    tree = renderChatInput();
+    picker = findAll(tree, (element) => typeof element.type === "function" && (element.type as { name?: string }).name === "ModelPicker")[0];
+    expect((picker?.props?.active as { modelDisplayName: string }).modelDisplayName).toBe("Running Model");
+    expect((picker?.props?.next as { resolved: { modelDisplayName: string } }).resolved.modelDisplayName).toBe("Test Model");
+  });
+
+  test("gates the picker and sending until catalog and Session next share one revision", () => {
+    activity = "idle";
+    hitlReady = true;
+
+    let tree = renderChatInput();
+    expect(findAll(tree, (element) => typeof element.type === "function" && (element.type as { name?: string }).name === "ModelPicker")).toHaveLength(1);
+
+    modelRuntimeFetching = true;
+    hookCursor = 0;
+    tree = renderChatInput();
+    expect(findAll(tree, (element) => typeof element.type === "function" && (element.type as { name?: string }).name === "ModelPicker")).toHaveLength(0);
+    expect(findAll(tree, (element) => element.type === "textarea")[0]?.props?.placeholder).toBe("Refreshing model configuration…");
+    expect(findAll(tree, (element) => element.type === "textarea")[0]?.props?.disabled).toBe(true);
+
+    // Session-first response: new next remains hidden until the matching catalog arrives.
+    nextModelSelection = {
+      requested: { mode: "agent_default", selection: { model: "test:new" } },
+      resolved: { ...nextBinding, selection: { model: "test:new" }, modelId: "new", modelDisplayName: "New Model", modelRuntimeRevision: "m2" },
+    };
+    modelRuntimeFetching = false;
+    hookCursor = 0;
+    tree = renderChatInput();
+    expect(findAll(tree, (element) => typeof element.type === "function" && (element.type as { name?: string }).name === "ModelPicker")).toHaveLength(0);
+
+    modelCatalog = { revision: "m2", providers: [], agentDefaults: { engineer: { model: "test:new" } } };
+    hookCursor = 0;
+    tree = renderChatInput();
+    let picker = findAll(tree, (element) => typeof element.type === "function" && (element.type as { name?: string }).name === "ModelPicker")[0];
+    expect((picker?.props?.next as SessionNextModelSelection).resolved.modelDisplayName).toBe("New Model");
+
+    // Catalog-first response is also neutral until Session next catches up.
+    modelCatalog = { revision: "m3", providers: [], agentDefaults: { engineer: { model: "test:newer" } } };
+    hookCursor = 0;
+    tree = renderChatInput();
+    expect(findAll(tree, (element) => typeof element.type === "function" && (element.type as { name?: string }).name === "ModelPicker")).toHaveLength(0);
+    nextModelSelection = {
+      requested: { mode: "agent_default", selection: { model: "test:newer" } },
+      resolved: { ...nextBinding, selection: { model: "test:newer" }, modelId: "newer", modelDisplayName: "Newer Model", modelRuntimeRevision: "m3" },
+    };
+    hookCursor = 0;
+    tree = renderChatInput();
+    picker = findAll(tree, (element) => typeof element.type === "function" && (element.type as { name?: string }).name === "ModelPicker")[0];
+    expect((picker?.props?.next as SessionNextModelSelection).resolved.modelDisplayName).toBe("Newer Model");
+  });
+
+  test("patches the controlled Session selection with the current revision", () => {
+    activity = "idle";
+    hitlReady = true;
+    const tree = renderChatInput();
+    const picker = findAll(tree, (element) => typeof element.type === "function" && (element.type as { name?: string }).name === "ModelPicker")[0];
+    const requested = { mode: "session_override", selection: { model: "test:other", variant: "deep" } };
+    (picker?.props?.onSelect as (selection: typeof requested) => void)(requested);
+    expect(patchModelSelectionMutate).toHaveBeenCalledWith({ slug: "proj", sessionId: "root-1", expectedRevision: 0, requestedModelSelection: requested }, expect.any(Object));
   });
 
   test("disables controls until the runtime snapshot initializes", () => {
@@ -187,6 +284,7 @@ describe("ChatInput runtime controls", () => {
         sessionId: "root-1",
         content: "Queue while running",
         clientRequestId: expect.any(String),
+        requestedModelSelection,
       }),
       expect.any(Object),
     );
@@ -271,12 +369,14 @@ describe("ChatInput runtime controls", () => {
         sessionId: "root-1",
         content: "/compact",
         clientRequestId: expect.any(String),
+        requestedModelSelection,
       }),
       expect.any(Object),
     );
     expect(addLocalSendingMessage).toHaveBeenCalledWith(expect.objectContaining({
       content: "/compact",
       clientRequestId: expect.any(String),
+      requestedModelSelection,
     }));
   });
 

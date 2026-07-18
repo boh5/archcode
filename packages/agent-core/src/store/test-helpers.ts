@@ -13,7 +13,7 @@ export function createMockStore(
     cwd: "/workspace",
     agentName: "engineer",
     activeSkillNames: [],
-    modelInfo: null,
+    modelSelection: { revision: 0 },
     title: null,
     messages: [],
     pendingMessages: [],

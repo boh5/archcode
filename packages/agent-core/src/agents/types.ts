@@ -1,5 +1,6 @@
 import type { StoreApi } from "zustand";
 import type { ExecutionEndEvent, SessionStoreState } from "../store/types";
+import type { ExecutionModelBinding } from "../models";
 import type { AskUserCallback, ToolConfirmationCallback, ToolExecutionControl } from "../tools/index";
 
 export interface AgentCommand {
@@ -28,9 +29,13 @@ export interface Agent {
   /** Classify a user input before Queue admission. This method has no side effects. */
   classifyCommand(input: string): AgentCommand | null;
   /** Execute a command after the caller has enforced the command admission rules. */
-  executeCommand(command: AgentCommand, options?: Pick<AgentRunOptions, "abort">): Promise<AgentCommandResult>;
+  executeCommand(
+    command: AgentCommand,
+    binding: ExecutionModelBinding,
+    options?: Pick<AgentRunOptions, "abort">,
+  ): Promise<AgentCommandResult>;
   /** Run against input that is already present in the canonical Session transcript. */
-  run(options?: AgentRunOptions): Promise<AgentResult>;
+  run(binding: ExecutionModelBinding, options?: AgentRunOptions): Promise<AgentResult>;
   /** Clean up session-scoped resources. After disposal, agent should not be used. */
   dispose(): void;
 }

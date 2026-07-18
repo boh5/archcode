@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import type { StoreApi } from "zustand";
-import type { ModelInfo } from "../../../provider/model";
 import { createMockStore } from "../../../store/test-helpers";
 import type { SessionStoreState, StepInfo, StoredPart, StoredTodo, ExecutionEndEvent } from "../../../store/types";
 import { createTestProjectContext } from "../../../tools/test-project-context";
@@ -202,7 +201,7 @@ async function runStep(
     steps: [...state.steps, stepInfo(stepIndex)],
   }));
 
-  await hook({ store, modelInfo: modelInfoStub(), logger: silentLogger });
+  await hook({ store, binding: undefined as never, logger: silentLogger });
 }
 
 async function runLoopEnd(
@@ -211,7 +210,7 @@ async function runLoopEnd(
   loopEndStatus: ExecutionEndEvent["status"],
   projectContext?: AfterLoopEndContext["projectContext"],
 ): Promise<void> {
-  await hook({ store, modelInfo: modelInfoStub(), logger: silentLogger, loopEndStatus, projectContext });
+  await hook({ store, binding: undefined as never, logger: silentLogger, loopEndStatus, projectContext });
 }
 
 function seedTodos(store: StoreApi<SessionStoreState>, todos: StoredTodo[]): void {
@@ -254,8 +253,4 @@ function stepInfo(step: number): StepInfo {
     startedAt: step,
     completedAt: step + 1,
   };
-}
-
-function modelInfoStub(): ModelInfo {
-  return {} as ModelInfo;
 }

@@ -1,12 +1,24 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { ApiError } from "./client";
-import { getServerConfig, saveServerConfig, toConfigDraft, type ServerConfig } from "./config";
+import type { ProviderAdapterCatalog } from "@archcode/protocol";
+import { getModelRuntimeCatalog, getProviderAdapterCatalog, getServerConfig, saveServerConfig, toConfigDraft, type ServerConfig } from "./config";
 
 const config: ServerConfig = {
   provider: {},
   agents: {} as ServerConfig["agents"],
   memory: { enabled: true, minMessages: 5, minContentLength: 1000, cooldownMs: 300000 },
 };
+
+const adapterCatalog: ProviderAdapterCatalog = [{
+  npmPackage: "@ai-sdk/openai-compatible",
+  displayName: "OpenAI-compatible",
+  fields: [
+    { path: "baseURL", label: "Base URL", kind: "url", required: true, secret: false },
+    { path: "apiKey", label: "API key", kind: "string", required: false, secret: true },
+    { path: "headers", label: "Headers", kind: "json", required: false, secret: true },
+    { path: "queryParams", label: "Query parameters", kind: "json", required: false, secret: true },
+  ],
+}];
 
 describe("config API", () => {
   beforeEach(() => {
@@ -15,7 +27,7 @@ describe("config API", () => {
   test("loads the one global config resource", async () => {
     const fetchMock = mock(async (input: RequestInfo | URL) => {
       expect(String(input)).toBe("/api/config");
-      return Response.json({ config, revision: "r1", configPath: "/home/a/.archcode/config.json", restartRequired: false });
+      return Response.json({ config, revision: "r1", modelRuntimeRevision: "m1", configPath: "/home/a/.archcode/config.json", restartRequiredSections: [] });
     });
     Object.defineProperty(globalThis, "fetch", { configurable: true, value: fetchMock });
 
@@ -36,7 +48,7 @@ describe("config API", () => {
     });
   });
 
-  test("converts safe secret views into explicit preserve mutations", () => {
+  test("converts only catalog-declared secret views without mutating generic options", () => {
     const draft = toConfigDraft({
       config: {
         ...config,
@@ -44,16 +56,47 @@ describe("config API", () => {
           local: {
             npm: "@ai-sdk/openai-compatible",
             name: "Local",
-            options: { baseURL: "http://localhost/v1", apiKey: { configured: true } },
+            options: {
+              baseURL: "http://localhost/v1",
+              apiKey: { configured: true },
+              queryParams: { token: { configured: true }, region: "test" },
+              advancedFeature: { configured: true },
+              nested: { keep: [1, { enabled: true }] },
+            },
             models: {},
           },
         },
       } as never,
       revision: "r1",
+      modelRuntimeRevision: "m1",
       configPath: "/home/a/.archcode/config.json",
-      restartRequired: false,
-    });
+      restartRequiredSections: [],
+    }, adapterCatalog);
 
     expect(draft.config.provider.local!.options.apiKey).toEqual({ action: "preserve" });
+    expect(draft.config.provider.local!.options.queryParams).toEqual({
+      token: { action: "preserve" },
+      region: "test",
+    });
+    expect(draft.config.provider.local!.options.advancedFeature).toEqual({ configured: true });
+    expect(draft.config.provider.local!.options.nested).toEqual({ keep: [1, { enabled: true }] });
+  });
+
+  test("loads Provider adapters and model runtime from their stable endpoints", async () => {
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/config/provider-adapters") {
+        return Response.json([{ npmPackage: "@ai-sdk/openai", displayName: "OpenAI", fields: [] }]);
+      }
+      if (String(input) === "/api/config/model-runtime") {
+        return Response.json({ revision: "m1", providers: [], agentDefaults: {} });
+      }
+      return new Response(null, { status: 404 });
+    });
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: fetchMock });
+
+    await expect(getProviderAdapterCatalog()).resolves.toEqual([
+      { npmPackage: "@ai-sdk/openai", displayName: "OpenAI", fields: [] },
+    ]);
+    await expect(getModelRuntimeCatalog()).resolves.toEqual({ revision: "m1", providers: [], agentDefaults: {} });
   });
 });

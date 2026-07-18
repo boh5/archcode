@@ -8,11 +8,27 @@ import { hitlStore } from "../../store/hitl-store";
 import { sessionRuntimeStore } from "../../store/session-runtime-store";
 import { __resetWebSessionStoresForTest, createWebSessionStore } from "../../store/session-store";
 import { SessionComposerDock } from "./SessionComposerDock";
+import { SettingsModalProvider } from "../../context/settings-modal";
 
 let dom: JSDOM;
 let root: Root;
 let container: HTMLDivElement;
 let fetchMock: ReturnType<typeof mock>;
+
+const requestedModelSelection = { mode: "agent_default" as const, selection: { model: "test:model" } };
+const binding = {
+  selection: { model: "test:model" },
+  providerId: "test",
+  modelId: "model",
+  providerDisplayName: "Test",
+  modelDisplayName: "Test Model",
+  resolution: "agent_default" as const,
+  modelRuntimeRevision: "m1",
+};
+const modelState = {
+  modelSelection: { revision: 0 },
+  nextModelSelection: { requested: requestedModelSelection, resolved: binding },
+};
 
 beforeEach(() => {
   dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost" });
@@ -35,7 +51,11 @@ beforeEach(() => {
   })) {
     Object.defineProperty(globalThis, name, { configurable: true, value });
   }
-  fetchMock = mock(async () => Response.json({
+  fetchMock = mock(async (input: RequestInfo | URL) => String(input).endsWith("/api/config/model-runtime") ? Response.json({
+    revision: "m1",
+    providers: [{ id: "test", displayName: "Test", models: [{ id: "model", qualifiedId: "test:model", displayName: "Test Model", variants: [] }] }],
+    agentDefaults: { engineer: { model: "test:model" } },
+  }) : Response.json({
     clientRequestId: "request-retry",
     messageId: "message-retry",
     status: "queued",
@@ -63,7 +83,8 @@ describe("SessionComposerDock", () => {
     store.getState().initializeFromSnapshot({
       rootSessionId: "session-1",
       eventCursor: -1,
-      modelInfo: { providerId: "test", modelId: "model", qualifiedId: "test:model", displayName: "Test Model" },
+      agentName: "engineer",
+      ...modelState,
       pendingMessages: [{
         id: "queued-user",
         clientRequestId: "queued-request",
@@ -73,11 +94,13 @@ describe("SessionComposerDock", () => {
         revision: 1,
         acceptedAt: 3,
         updatedAt: 3,
+        requestedModelSelection,
       }],
     });
     store.getState().addLocalSendingMessage({
       clientRequestId: "request-retry",
       content: "Retry this exact request",
+      requestedModelSelection,
       createdAt: 4,
     });
     store.getState().setLocalSendingMessageStatus("request-retry", "retryable");
@@ -119,7 +142,7 @@ describe("SessionComposerDock", () => {
     await act(async () => {
       root.render(
         <QueryClientProvider client={client}>
-          <SessionComposerDock slug="project-1" sessionId="session-1" />
+          <SettingsModalProvider><SessionComposerDock slug="project-1" sessionId="session-1" /></SettingsModalProvider>
         </QueryClientProvider>,
       );
       await Promise.resolve();
@@ -145,7 +168,7 @@ describe("SessionComposerDock", () => {
     expect(container.textContent).not.toContain("Steer");
     expect(container.querySelector('button[title="Attach file"]')).toBeNull();
     expect(container.querySelector('button[aria-label="Retry sending message"]')).toBeNull();
-    expect(fetchMock).toHaveBeenCalledTimes(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   test("steps through multi-question Ask User and submits only from Confirm", async () => {
@@ -153,7 +176,8 @@ describe("SessionComposerDock", () => {
     store.getState().initializeFromSnapshot({
       rootSessionId: "session-2",
       eventCursor: -1,
-      modelInfo: { providerId: "test", modelId: "model", qualifiedId: "test:model", displayName: "Test Model" },
+      agentName: "engineer",
+      ...modelState,
       pendingMessages: [],
     });
     sessionRuntimeStore.getState().applySnapshot({
@@ -213,7 +237,7 @@ describe("SessionComposerDock", () => {
     await act(async () => {
       root.render(
         <QueryClientProvider client={client}>
-          <SessionComposerDock slug="project-1" sessionId="session-2" />
+          <SettingsModalProvider><SessionComposerDock slug="project-1" sessionId="session-2" /></SettingsModalProvider>
         </QueryClientProvider>,
       );
       await Promise.resolve();
@@ -262,8 +286,10 @@ describe("SessionComposerDock", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [path, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const responseCall = fetchMock.mock.calls.find(([path]) => String(path).endsWith("/hitl/hitl-multi/respond"));
+    if (!responseCall) throw new Error("Missing HITL response request");
+    const [path, init] = responseCall as unknown as [string, RequestInit];
     expect(path).toBe("/api/projects/project-1/hitl/hitl-multi/respond");
     expect(JSON.parse(String(init.body))).toEqual({
       type: "question_answer",

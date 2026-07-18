@@ -1,6 +1,6 @@
 import { queryOptions, useQuery } from "@tanstack/react-query";
 import { apiFetch } from "./client";
-import type { AgentDescriptor } from "@archcode/protocol";
+import type { AgentDescriptor, ModelRuntimeCatalog } from "@archcode/protocol";
 import type {
   DashboardGoal,
   DashboardAutomation,
@@ -19,6 +19,7 @@ import type {
 
 export const queryKeys = {
   agents: ["agents"] as const,
+  modelRuntime: ["config", "model-runtime"] as const,
   projects: ["projects"] as const,
   goals: ["goals"] as const,
   activeGoals: ["goals", "active"] as const,
@@ -39,6 +40,13 @@ export const queryKeys = {
   projectTodos: (slug: string) => ["projects", slug, "todos"] as const,
   projectTodo: (slug: string, todoId: string) => ["projects", slug, "todos", todoId] as const,
 };
+
+export function modelRuntimeQueryOptions() {
+  return queryOptions({
+    queryKey: queryKeys.modelRuntime,
+    queryFn: () => apiFetch<ModelRuntimeCatalog>("/api/config/model-runtime"),
+  });
+}
 
 export function agentsQueryOptions() {
   return queryOptions({
@@ -157,6 +165,10 @@ export function useProjects() {
 
 export function useAgents() {
   return useQuery(agentsQueryOptions());
+}
+
+export function useModelRuntime() {
+  return useQuery(modelRuntimeQueryOptions());
 }
 
 export function useSessions(slug: string) {

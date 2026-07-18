@@ -3,10 +3,7 @@ import { mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 
-import type { ArchCodeConfig } from "../config/schema";
 import { silentLogger } from "../logger";
-import type { ProviderRegistry } from "../provider";
-import { ModelInfo } from "../provider/model";
 import { SkillService } from "../skills";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { createTestTempRoot } from "../testing/test-temp-root";
@@ -61,18 +58,12 @@ describe("SessionAgentManager Git cwd validation", () => {
 });
 
 function createManager(storeManager: SessionStoreManager): SessionAgentManager {
-  const providerRegistry = makeProviderRegistry();
   return new SessionAgentManager({
     definitions: [engineerAgentDefinition],
-    providerRegistry,
     toolRegistry: createRegistry([makeTool("unknown_tool")]),
     skillService: new SkillService({ builtinSkills: {} }),
     storeManager,
     projectContextResolver: createTestProjectContextResolver(storeManager),
-    config: {
-      provider: {},
-      agents: { engineer: { model: providerRegistry.modelIds[0]! } },
-    } as unknown as ArchCodeConfig,
     logger: silentLogger,
   });
 }
@@ -85,25 +76,6 @@ function makeTool(name: string): AnyToolDescriptor {
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
     execute: () => `${name} result`,
   };
-}
-
-function makeProviderRegistry(): ProviderRegistry {
-  const model = new ModelInfo({
-    model: {} as ConstructorParameters<typeof ModelInfo>[0]["model"],
-    config: {
-      name: "Test Model",
-      limit: { context: 128_000, output: 8_192 },
-      modalities: { input: ["text"], output: ["text"] },
-    },
-    providerId: "test",
-    modelId: "model",
-  });
-  return {
-    sdkRegistry: {} as ProviderRegistry["sdkRegistry"],
-    models: new Map([[model.qualifiedId, model]]),
-    modelIds: [model.qualifiedId],
-    getModel: () => model,
-  } as ProviderRegistry;
 }
 
 async function gitInit(cwd: string): Promise<void> {

@@ -5,12 +5,14 @@ import { createMemoryConsolidationTask } from "./memory-consolidation";
 import { setLlmAdapterForTest } from "../../llm";
 import type { ModelInfo } from "../../provider/model";
 import type { BackgroundTaskContext } from "../types";
+import type { ExecutionModelBinding } from "../../models";
 import { MemoryFileManager } from "../../memory/file-manager";
 import { createMockLogger } from "../../logger.test-helper";
 import { silentLogger } from "../../logger";
 import { storeManager } from "../../store/store";
 import { createTestTempRoot } from "../../testing/test-temp-root";
 import { createFakeRetryScheduler } from "../../testing/fake-retry-scheduler";
+import { createTestModelInfo } from "../../testing/test-execution-fixtures";
 
 type MockGenerateTextResult = { text: string; toolCalls: Array<{ type: string; toolCallId: string; toolName: string; input: unknown }> };
 
@@ -37,20 +39,21 @@ function makeGenerateTextResult(
 const mockGenerateText = mock(async () => makeGenerateTextResult());
 
 function makeModelInfo(): ModelInfo {
-  return {
-    model: { provider: "test" } as never,
-    displayName: "Test Model",
-    limit: { context: 4096, output: 1024 },
-    modalities: { input: ["text"], output: ["text"] },
-    providerId: "test",
-    modelId: "test-model",
-    qualifiedId: "test:test-model",
-  };
+  return createTestModelInfo();
+}
+
+function makeBinding(options?: ExecutionModelBinding["options"]): ExecutionModelBinding {
+  const modelInfo = makeModelInfo();
+  return { modelInfo, options, summary: {
+    selection: { model: modelInfo.qualifiedId }, providerId: modelInfo.providerId, modelId: modelInfo.modelId,
+    providerDisplayName: modelInfo.providerDisplayName, modelDisplayName: modelInfo.displayName,
+    resolution: "agent_default", modelRuntimeRevision: "test-revision",
+  } };
 }
 
 function makeTaskContext(overrides: Partial<BackgroundTaskContext> = {}): BackgroundTaskContext {
   return { store: storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "engineer" }),
-  modelInfo: makeModelInfo(),
+  binding: makeBinding(),
   logger: silentLogger,
   retryScheduler: createFakeRetryScheduler(),
   workspaceRoot: "/tmp", ...overrides,  };
@@ -143,11 +146,11 @@ describe("createMemoryConsolidationTask", () => {
     });
 
     await task.run(makeTaskContext({
-      modelOptions: {
+      binding: makeBinding({
         temperature: 0.15,
         maxOutputTokens: 96,
         providerOptions: { memoryConsolidation: { mode: "compact" } },
-      },
+      }),
     }));
 
     expect(mockGenerateText).toHaveBeenCalledTimes(1);

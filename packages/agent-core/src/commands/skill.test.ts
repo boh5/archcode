@@ -1,5 +1,4 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import type { ModelInfo } from "../provider/model";
 import { SkillService } from "../skills/service";
 import { storeManager } from "../store/store";
 import { createSkillCommand } from "./skill";
@@ -14,16 +13,6 @@ afterAll(async () => {
   await testTempRoot.cleanup();
 });
 
-const dummyModelInfo = {
-  model: {},
-  displayName: "Mock Model",
-  limit: { context: 1000, output: 100 },
-  modalities: { input: ["text"], output: ["text"] },
-  providerId: "mock",
-  modelId: "model",
-  qualifiedId: "mock:model",
-} as unknown as ModelInfo;
-
 const gitMasterBody = "FULL GIT MASTER BODY MUST NOT LEAK";
 const builtinSkills = {
   "git-master": `---\nname: git-master\ndescription: Git guidance.\nwhen_to_use: Use for git operations.\n---\n\n${gitMasterBody}`,
@@ -35,7 +24,7 @@ function createCommand(agentSkills: readonly string[] = ["git-master"]) {
     command: createSkillCommand(),
     context: {
       store: storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, { agentName: "engineer" }),
-      modelInfo: dummyModelInfo,
+      binding: undefined as never,
       cwd: TEST_WORKSPACE_ROOT,
       agentName: "test-agent",
       agentSkills,

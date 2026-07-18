@@ -51,7 +51,6 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
     mcpManager: undefined,
     toolRegistry: undefined,
     skillService: undefined,
-    providerRegistry: undefined,
     warnings: [],
     contextResolver: undefined,
     hitl: undefined,

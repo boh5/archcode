@@ -4,6 +4,7 @@ import { SkillNotAllowedError } from "../../agents/errors";
 import { storeManager } from "../../store/store";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { createTestProjectContext } from "../test-project-context";
+import { testExecutionStart } from "../../testing/test-execution-fixtures";
 import { DelegateInputSchema, delegateTool, executeDelegate } from "./delegate";
 
 const WORKSPACE_ROOT = import.meta.dir;
@@ -33,7 +34,7 @@ function childHandle(parentSessionId: string): ChildExecutionHandle {
     activeSkillNames: ["codemap"],
     title: "Inspect ownership",
   });
-  store.getState().append({ type: "execution-start", executionId: crypto.randomUUID() });
+  store.getState().append(testExecutionStart(crypto.randomUUID()));
   store.getState().append({ type: "text-start" });
   store.getState().append({ type: "text-delta", text: "done" });
   store.getState().append({ type: "text-end" });
