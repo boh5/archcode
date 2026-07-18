@@ -33,6 +33,7 @@ export {
 export {
   OPENAI_COMPATIBLE_PROVIDER_PACKAGE,
   type ModelCallOptions,
+  type ModelCapabilities,
   type ModelConfig,
   type ModelLimit,
   type ModelModalities,
@@ -48,6 +49,7 @@ export {
   getModelConfig,
   getProviderConfig,
   modelCallOptionsSchema,
+  modelCapabilitiesSchema,
   modelConfigSchema,
   modelLimitSchema,
   modelModalitiesSchema,

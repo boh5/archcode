@@ -1,12 +1,12 @@
 export type { ChildExecutionHandle, ChildExecutionRequest } from "../delegation/types";
 export type { AgentName } from "./names";
 import type { AgentName } from "./names";
+import type { RoleContract } from "../prompt/types";
 
 export interface AgentDefinition {
   readonly name: AgentName;
   readonly displayName: string;
-  readonly promptProfileId: string;
-  readonly rolePrompt?: string;
+  readonly roleContract: RoleContract;
   readonly tools: AgentToolPolicy;
   readonly mcpTools?: readonly string[];
   readonly hooks: AgentHookPolicy;

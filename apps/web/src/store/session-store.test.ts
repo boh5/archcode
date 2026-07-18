@@ -128,7 +128,12 @@ describe("web session store registry", () => {
       status: "completed" as const,
       endedAt: 200,
       durationMs: 100,
-      summary: "Done",
+      resultReceipt: {
+        executionId: "exec-1",
+        delegationContractHash: "hash-1",
+        submittedAt: 200,
+        result: { status: "completed" as const, summary: "Done", deliverables: [], evidence: [], criteria: [], verification: [], unresolved: [] },
+      },
     };
 
     store.getState().applyRemoteEnvelope(event(0, { type: "tool-child-session-link", link }));
@@ -142,6 +147,20 @@ describe("web session store registry", () => {
     });
 
     expect(store.getState().childSessionLinks).toEqual([link]);
+  });
+
+  test("hydrates canonical child result receipts from a Session snapshot", () => {
+    const store = createWebSessionStore("session-result", "demo");
+    const receipt = {
+      executionId: "exec-1",
+      delegationContractHash: "hash-1",
+      submittedAt: 200,
+      result: { status: "completed" as const, summary: "Done", deliverables: [], evidence: [], criteria: [], verification: [], unresolved: [] },
+    };
+
+    store.getState().initializeFromSnapshot({ childResultReceipts: [receipt], eventCursor: 0 });
+
+    expect(store.getState().childResultReceipts).toEqual([receipt]);
   });
 
   test("evicts least-recent idle stores down to twenty", () => {

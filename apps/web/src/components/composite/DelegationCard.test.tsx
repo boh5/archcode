@@ -159,10 +159,11 @@ describe("DelegationCard", () => {
     agentType: "explore",
     agentDisplayName: "Explore",
     taskTitle: "Find relevant files",
-    status: "running" as const,
+    executionStatus: "running" as const,
+    taskStatus: "pending" as const,
     depth: 1,
     startedAt: Date.now() - 60000,
-    summary: "Searching for relevant files",
+    taskSummary: "Searching for relevant files",
     tools: [
       { name: "grep", status: "success" as const, input: { pattern: "needle" } },
       { name: "file_read", status: "default" as const, input: { filePath: "/src/index.ts" } },
@@ -193,14 +194,24 @@ describe("DelegationCard", () => {
   test("renders running status with elapsed time", () => {
     const result = DelegationCard(baseProps);
     const text = textContent(result);
-    expect(text).toContain("Running");
+    expect(text).toContain("Execution: Running");
+    expect(text).toContain("Task: Pending");
   });
 
-  test("renders completed status", () => {
-    const result = DelegationCard({ ...baseProps, status: "completed" });
+  test("renders execution completion independently from partial task completion", () => {
+    const result = DelegationCard({ ...baseProps, executionStatus: "completed", taskStatus: "partial" });
     const text = textContent(result);
-    expect(text).toContain("Completed");
-    expect(text).toContain("done");
+    expect(text).toContain("Execution: Completed");
+    expect(text).toContain("Task: Partial");
+    expect(text).not.toContain("done");
+  });
+
+  test("renders every canonical task result status and unavailable separately", () => {
+    for (const [taskStatus, label] of [["completed", "Completed"], ["partial", "Partial"], ["blocked", "Blocked"], ["failed", "Failed"], ["unavailable", "Unavailable"]] as const) {
+      const text = textContent(DelegationCard({ ...baseProps, executionStatus: "completed", taskStatus }));
+      expect(text).toContain(`Execution: Completed`);
+      expect(text).toContain(`Task: ${label}`);
+    }
   });
 
   test("renders depth indicator", () => {

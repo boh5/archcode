@@ -38,7 +38,7 @@ function createTestRuntime(statuses: Map<string, McpServerStatus>): AgentRuntime
 describe("GET /api/mcp/status", () => {
   test("returns 200 with server statuses when MCP servers exist", async () => {
     const statuses = new Map<string, McpServerStatus>([
-      ["context7", { state: "ready", toolCount: 3 }],
+      ["context7", { state: "ready", toolCount: 3, warningCount: 0 }],
       ["exa", { state: "pending" }],
       ["broken", { state: "failed", error: "connection refused" }],
       ["disabled-server", { state: "disabled" }],
@@ -51,7 +51,7 @@ describe("GET /api/mcp/status", () => {
 
     expect(res.status).toBe(200);
     expect(body.servers).toEqual({
-      "context7": { state: "ready", toolCount: 3 },
+      "context7": { state: "ready", toolCount: 3, warningCount: 0 },
       "exa": { state: "pending" },
       "broken": { state: "failed", error: "connection refused" },
       "disabled-server": { state: "disabled" },
@@ -72,7 +72,7 @@ describe("GET /api/mcp/status", () => {
   test("returns correct pending/ready/failed states matching the runtime", async () => {
     const statuses = new Map<string, McpServerStatus>([
       ["pending-srv", { state: "pending" }],
-      ["ready-srv", { state: "ready", toolCount: 5 }],
+      ["ready-srv", { state: "ready", toolCount: 5, warningCount: 2 }],
       ["failed-srv", { state: "failed", error: "boom" }],
     ]);
     const runtime = createTestRuntime(statuses);
@@ -83,7 +83,7 @@ describe("GET /api/mcp/status", () => {
 
     expect(res.status).toBe(200);
     expect(body.servers["pending-srv"]).toEqual({ state: "pending" });
-    expect(body.servers["ready-srv"]).toEqual({ state: "ready", toolCount: 5 });
+    expect(body.servers["ready-srv"]).toEqual({ state: "ready", toolCount: 5, warningCount: 2 });
     expect(body.servers["failed-srv"]).toEqual({ state: "failed", error: "boom" });
   });
 

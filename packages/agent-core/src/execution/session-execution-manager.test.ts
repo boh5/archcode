@@ -1,10 +1,11 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { createEmptySessionStats } from "@archcode/protocol";
+import { createEmptySessionStats, type DelegationContract } from "@archcode/protocol";
 import type { Agent, AgentCommand, AgentCommandResult, AgentResult, AgentRunOptions } from "../agents/types";
+import type { AgentName } from "../agents/names";
 import { ConfiguredAgent } from "../agents/configured-agent";
-import { engineerAgentDefinition } from "../agents/definitions";
+import { buildAgentDefinition, engineerAgentDefinition, exploreAgentDefinition } from "../agents/definitions";
 import type { ProviderRegistry } from "../provider";
 import { ModelInfo } from "../provider/model";
 import { SkillService } from "../skills";
@@ -19,7 +20,8 @@ import { SessionFamilyActiveError, SessionFamilyIdentityUnavailableError, Sessio
 import type { SessionFile } from "../store/helpers";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { getSessionDir, getSessionPath } from "../store/sessions-dir";
-import { SessionExecutionManager } from "./session-execution-manager";
+import { SessionExecutionManager, type StartSessionExecutionInput } from "./session-execution-manager";
+import { BuildOwnershipConflictError } from "./build-ownership-lease";
 import { SessionExecutionScopeConflictError } from "./session-execution-scope-validator";
 import { SessionWorkspaceClosingError } from "./session-workspace-control";
 import { silentLogger } from "../logger";
@@ -29,6 +31,7 @@ import type { AgentDefinition } from "../agents/factory-types";
 import { createEmptyCompressionState } from "../compression";
 import type { SessionGoalDelegationContext } from "./session-goal-delegation-context";
 import { SessionInputConflictError, SessionInputService } from "../session-input/service";
+import { hashDelegationContract } from "../delegation/contract";
 
 const testRoot = join(
   import.meta.dir,
@@ -37,7 +40,32 @@ const testRoot = join(
 );
 let workspaceRoot = join(testRoot, "bootstrap");
 let defaultAgentWorkspaceRoot = workspaceRoot;
-const storeManager = new SessionStoreManager({ logger: silentLogger });
+
+class TestSessionStoreManager extends SessionStoreManager {
+  override create(
+    sessionId: string,
+    root: string,
+    options: Parameters<SessionStoreManager["create"]>[2],
+  ) {
+    const normalizedOptions = options.parentSessionId === undefined || options.sessionRole !== undefined
+      ? options
+      : { ...options, sessionRole: testSessionRoleForAgent(options.agentName) };
+    if (normalizedOptions.parentSessionId === undefined || normalizedOptions.delegationContract !== undefined) {
+      return super.create(sessionId, root, normalizedOptions);
+    }
+    const contract = delegationContract({
+      agent_type: normalizedOptions.agentName === "build" ? "build" : "explore",
+      title: normalizedOptions.title ?? "Delegated child",
+    });
+    return super.create(sessionId, root, {
+      ...normalizedOptions,
+      delegationContract: contract,
+      delegationContractHash: hashDelegationContract(contract),
+    });
+  }
+}
+
+const storeManager = new TestSessionStoreManager({ logger: silentLogger });
 interface Deferred<T> {
   promise: Promise<T>;
   resolve(value: T): void;
@@ -79,17 +107,94 @@ function getUserMessageTexts(state: SessionStoreState): string[] {
       .join(""));
 }
 
+function delegationContract(overrides: Partial<DelegationContract> = {}): DelegationContract {
+  return {
+    agent_type: "explore",
+    title: "Delegated child",
+    objective: "Inspect the delegated scope",
+    owned_scope: [],
+    non_goals: [],
+    acceptance_criteria: [{ id: "ac-1", condition: "Complete the delegated scope", requiredEvidence: "A result summary" }],
+    evidence: [],
+    verification: [],
+    depends_on: [],
+    skills: [],
+    background: false,
+    ...overrides,
+  };
+}
+
+function testSessionRoleForAgent(agentName: AgentName): SessionStoreState["sessionRole"] {
+  if (agentName === "reviewer") return "review";
+  if (agentName === "plan" || agentName === "build" || agentName === "explore" || agentName === "librarian") return agentName;
+  return undefined;
+}
+
+function createTestSession(
+  manager: SessionStoreManager,
+  sessionId: string,
+  root: string,
+  options: Parameters<SessionStoreManager["create"]>[2],
+) {
+  const normalizedOptions = options.parentSessionId === undefined || options.sessionRole !== undefined
+    ? options
+    : { ...options, sessionRole: testSessionRoleForAgent(options.agentName) };
+  if (normalizedOptions.parentSessionId === undefined || normalizedOptions.delegationContract !== undefined) {
+    return manager.create(sessionId, root, normalizedOptions);
+  }
+  const contract = delegationContract({
+    agent_type: normalizedOptions.agentName === "build" ? "build" : "explore",
+    title: normalizedOptions.title ?? "Delegated child",
+  });
+  return manager.create(sessionId, root, {
+    ...normalizedOptions,
+    delegationContract: contract,
+    delegationContractHash: hashDelegationContract(contract),
+  });
+}
+
+function appendTestChildResult(store: { getState(): SessionStoreState }): void {
+  const state = store.getState();
+  const executionId = state.currentExecutionId;
+  const contract = state.delegationContract;
+  const delegationContractHash = state.delegationContractHash;
+  if (executionId === undefined || contract === undefined || delegationContractHash === undefined) return;
+  state.append({
+    type: "child-result",
+    receipt: {
+      executionId,
+      delegationContractHash,
+      submittedAt: Date.now(),
+      result: {
+        status: "completed",
+        summary: "Completed the delegated scope",
+        criteria: contract.acceptance_criteria.map((criterion) => ({
+          id: criterion.id,
+          status: "passed",
+          evidenceRefs: ["test-evidence"],
+        })),
+        deliverables: [],
+        evidence: [{ claim: "Delegated scope completed", ref: "test-evidence" }],
+        verification: [],
+        unresolved: [],
+      },
+    },
+  });
+}
+
 type MockAgentResult = Partial<AgentResult> & Pick<AgentResult, "text" | "steps">;
 
 class MockAgent implements Agent {
   readonly store;
   readonly cwd: string;
+  readonly disposeMock = mock(() => undefined);
   readonly runMock = mock(async (options: AgentRunOptions = {}): Promise<AgentResult> => {
     const signal = options.abort;
     const result = await withAbort(this.result, signal);
     this.store.getState().append({ type: "text-start" });
     this.store.getState().append({ type: "text-delta", text: result.text });
     this.store.getState().append({ type: "text-end" });
+    if ((result.status ?? "completed") === "completed") appendTestChildResult(this.store);
     return { ...result, status: result.status ?? "completed" };
   });
 
@@ -99,7 +204,7 @@ class MockAgent implements Agent {
     readonly workspaceRoot: string = defaultAgentWorkspaceRoot,
     sessionStores: SessionStoreManager = storeManager,
   ) {
-    this.store = sessionStores.create(sessionId, workspaceRoot, { agentName: "engineer" });
+    this.store = createTestSession(sessionStores, sessionId, workspaceRoot, { agentName: "engineer" });
     this.cwd = this.store.getState().cwd;
   }
 
@@ -115,7 +220,7 @@ class MockAgent implements Agent {
     return this.runMock(options);
   }
 
-  dispose(): void {}
+  dispose(): void { this.disposeMock(); }
 }
 
 interface FakeManagerOptions {
@@ -125,12 +230,14 @@ interface FakeManagerOptions {
   childRunStarted?: () => void;
   childCanonicalMessage?: (message: string) => void;
   childRunOptions?: (options: AgentRunOptions | undefined) => void;
+  appendChildReceipt?: boolean;
   getAgent?: (sessionId: string) => Agent;
   onReleaseAgent?: (sessionId: string) => void;
   executionScopeValidator?: ConstructorParameters<typeof SessionExecutionManager>[0]["executionScopeValidator"];
   goalDelegationAdmission?: ConstructorParameters<typeof SessionExecutionManager>[0]["goalDelegationAdmission"];
   deletionLifecycle?: ConstructorParameters<typeof SessionExecutionManager>[0]["deletionLifecycle"];
   flushSessionStore?: ConstructorParameters<typeof SessionExecutionManager>[0]["flushSessionStore"];
+  createSessionStore?: ConstructorParameters<typeof SessionExecutionManager>[0]["createSessionStore"];
   listSessionFamilyToolBatchHitlIds?: ConstructorParameters<typeof SessionExecutionManager>[0]["listSessionFamilyToolBatchHitlIds"];
   sessionInputService?: ConstructorParameters<typeof SessionExecutionManager>[0]["sessionInputService"];
   sessionFamilyStopTimeoutMs?: number;
@@ -145,7 +252,7 @@ function storeCallbacks(manager: SessionStoreManager): Pick<
   "createSessionStore" | "flushSessionStore" | "getSessionStore" | "loadSessionStore" | "deleteSessionStore" | "resolveRootSessionId" | "resolveSessionDepth" | "buildSessionTree" | "listSessionFamilyToolBatchHitlIds"
 > {
   return {
-    createSessionStore: (sessionId, root, createOptions) => manager.create(sessionId, root, createOptions),
+    createSessionStore: (sessionId, root, createOptions) => createTestSession(manager, sessionId, root, createOptions),
     flushSessionStore: (sessionId, root) => manager.flushSession(sessionId, root),
     getSessionStore: (sessionId, root) => manager.get(sessionId, root),
     loadSessionStore: (sessionId, root) => manager.getOrLoad(sessionId, root),
@@ -169,10 +276,17 @@ function storeCallbacks(manager: SessionStoreManager): Pick<
 }
 
 function createFakeManager(agents: Record<string, MockAgent>, options: FakeManagerOptions = {}): SessionAgentManager {
+  const cachedAgents = new Map<string, MockAgent>(Object.entries(agents));
   return {
-    getOrCreate: mock(async (_root: string, sessionId: string) => options.getAgent?.(sessionId) ?? agents[sessionId]!),
-    get: mock((_root: string, sessionId: string) => agents[sessionId]),
-    getFactory: mock(() => options.factory),
+    getOrCreate: mock(async (_root: string, sessionId: string) => {
+      const cached = cachedAgents.get(sessionId);
+      if (cached !== undefined) return cached;
+      const agent = (options.getAgent?.(sessionId) ?? agents[sessionId]) as MockAgent | undefined;
+      if (agent !== undefined) cachedAgents.set(sessionId, agent);
+      return agent!;
+    }),
+    get: mock((_root: string, sessionId: string) => cachedAgents.get(sessionId)),
+    getFactory: mock(() => options.factory ?? makeFactory()),
     createChildAgent: mock((input: { workspaceRoot: string; sessionId: string; store: MockAgent["store"] }) => {
       const childAgent = {
         store: input.store,
@@ -190,23 +304,29 @@ function createFakeManager(agents: Record<string, MockAgent>, options: FakeManag
           input.store.getState().append({ type: "text-start" });
           input.store.getState().append({ type: "text-delta", text: result.text });
           input.store.getState().append({ type: "text-end" });
+          if ((result.status ?? "completed") === "completed" && options.appendChildReceipt !== false) {
+            appendTestChildResult(input.store);
+          }
           return { ...result, status: result.status ?? "completed" };
         }),
         dispose: mock(() => undefined),
       } as unknown as MockAgent;
       agents[input.sessionId] = childAgent;
+      cachedAgents.set(input.sessionId, childAgent);
       return childAgent;
     }),
     dispose: mock(() => undefined),
-    releaseAgent: mock((_root: string, sessionId: string) => options.onReleaseAgent?.(sessionId)),
+    releaseAgent: mock((_root: string, sessionId: string) => {
+      cachedAgents.get(sessionId)?.dispose();
+      cachedAgents.delete(sessionId);
+      options.onReleaseAgent?.(sessionId);
+    }),
   } as unknown as SessionAgentManager;
 }
 
 function makeFactory(overrides: Partial<AgentFactory> = {}): AgentFactory {
   const parentDefinition: AgentDefinition = {
-    name: "engineer",
-    displayName: "Engineer",
-    promptProfileId: "default",
+    ...engineerAgentDefinition,
     tools: { tools: ["delegate"], delegateTargets: ["explore"] },
     hooks: { autoCompact: false, autoInjectReminder: false, todoStepReminder: false, todoQueryLoopContinuation: false, memoryExtraction: false, memoryConsolidation: false, titleGeneration: "disabled" },
     childPolicy: { maxDepth: 2, maxConcurrent: 1, timeoutMs: 0, abortCascade: true, terminalReminders: true },
@@ -244,6 +364,32 @@ function makeFactoryWithChildPolicy(
   });
 }
 
+function makeBuildFactory(
+  policy: Partial<NonNullable<AgentDefinition["childPolicy"]>> = {},
+): AgentFactory {
+  const base = makeFactory();
+  const parentDefinition: AgentDefinition = {
+    ...base.getDefinition("engineer"),
+    tools: { tools: ["delegate"], delegateTargets: ["build"] },
+    childPolicy: {
+      maxDepth: 2,
+      maxConcurrent: 2,
+      timeoutMs: 0,
+      abortCascade: true,
+      terminalReminders: true,
+      ...policy,
+    },
+  };
+  return makeFactory({
+    getDefinition: mock((name: string) => {
+      if (name === "engineer") return parentDefinition;
+      if (name === "build") return buildAgentDefinition;
+      return base.getDefinition(name);
+    }),
+    listAgentNames: mock(() => ["engineer", "build"]),
+  });
+}
+
 function createManager(agents: Record<string, MockAgent>, options: FakeManagerOptions = {}) {
   const sessionAgentManager = createFakeManager(agents, options);
   const executionStoreManager = options.storeManager ?? storeManager;
@@ -252,6 +398,7 @@ function createManager(agents: Record<string, MockAgent>, options: FakeManagerOp
   const manager = new SessionExecutionManager({
     sessionAgentManager,
     ...storeCallbacks(executionStoreManager),
+    ...(options.createSessionStore === undefined ? {} : { createSessionStore: options.createSessionStore }),
     flushSessionStore: options.flushSessionStore ?? (async () => undefined),
     ...(options.listSessionFamilyToolBatchHitlIds === undefined ? {} : {
       listSessionFamilyToolBatchHitlIds: options.listSessionFamilyToolBatchHitlIds,
@@ -310,14 +457,23 @@ async function writeSessionFile(input: {
   childSessionLinks?: SessionFile["childSessionLinks"];
   toolBatches?: SessionFile["toolBatches"];
   goalId?: string;
+  agentName?: AgentName;
+  sessionRole?: SessionStoreState["sessionRole"];
+  delegationContract?: DelegationContract;
 }): Promise<void> {
   const rootSessionId = input.rootSessionId ?? input.sessionId;
+  const contract = input.parentSessionId === undefined
+    ? undefined
+    : input.delegationContract ?? delegationContract({
+      agent_type: input.agentName === "build" ? "build" : "explore",
+      title: input.title ?? "Delegated child",
+    });
   const file: SessionFile = {
     sessionId: input.sessionId,
     createdAt: Date.now(),
     updatedAt: Date.now(),
     cwd: input.cwd ?? workspaceRoot,
-    agentName: input.parentSessionId === undefined ? "engineer" : "explore",
+    agentName: input.agentName ?? (input.parentSessionId === undefined ? "engineer" : "explore"),
     activeSkillNames: [],
     modelInfo: null,
     title: input.title ?? null,
@@ -333,6 +489,13 @@ async function writeSessionFile(input: {
     childSessionLinks: input.childSessionLinks ?? [],
     toolBatches: input.toolBatches ?? [],
     rootSessionId,
+    ...(input.parentSessionId === undefined
+      ? (input.sessionRole === undefined ? {} : { sessionRole: input.sessionRole })
+      : { sessionRole: input.sessionRole ?? testSessionRoleForAgent(input.agentName ?? "explore") }),
+    ...(contract === undefined ? {} : {
+      delegationContract: contract,
+      delegationContractHash: hashDelegationContract(contract),
+    }),
     ...(input.goalId === undefined ? {} : { goalId: input.goalId }),
     ...(input.parentSessionId === undefined ? {} : { parentSessionId: input.parentSessionId }),
   };
@@ -1338,6 +1501,11 @@ describe("SessionExecutionManager", () => {
 
     const definition = {
       ...engineerAgentDefinition,
+      roleContract: {
+        ...engineerAgentDefinition.roleContract,
+        requiredCapabilities: [],
+        delegateTargets: [],
+      },
       tools: { tools: [] },
       skills: [],
       hooks: {
@@ -1356,6 +1524,7 @@ describe("SessionExecutionManager", () => {
         name: "Todo test model",
         limit: { context: 16_000, output: 2_000 },
         modalities: { input: ["text"], output: ["text"] },
+          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
       },
       providerId: "todo-test",
       modelId: "todo-test",
@@ -1479,6 +1648,38 @@ describe("SessionExecutionManager", () => {
         }),
       ]);
     }
+  });
+
+  test("persists typed child-result failure directly as a failed execution", async () => {
+    const sessionId = crypto.randomUUID();
+    const agent = new MockAgent(sessionId, Promise.resolve({
+      text: "",
+      steps: 1,
+      status: "failed",
+      error: "CHILD_RESULT_REQUIRED: invalid canonical result",
+      executionControl: {
+        action: "fail_execution",
+        reason: "child_result_required",
+        error: "CHILD_RESULT_REQUIRED: invalid canonical result",
+      },
+    }), workspaceRoot);
+    const { manager } = createManager({ [sessionId]: agent });
+
+    const execution = await manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId,
+      input: { kind: "direct", text: "submit result" },
+    });
+    await execution.promise;
+
+    expect(agent.store.getState().executions).toEqual([
+      expect.objectContaining({
+        id: execution.executionId,
+        status: "failed",
+        error: "CHILD_RESULT_REQUIRED: invalid canonical result",
+      }),
+    ]);
   });
 
   test("HITL ends one execution and tool_batch resumes with a new execution id", async () => {
@@ -1706,10 +1907,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: rootId,
       parentToolCallId: "pending-before-stop",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "resolve slowly",
-      skills: [],
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "resolve slowly", skills: [], background: false }),
     });
     await waitFor(() => resolvingSkills);
     expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("running");
@@ -1735,10 +1933,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: rootId,
       parentToolCallId: "new-after-stop",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "must not launch",
-      skills: [],
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "must not launch", skills: [], background: false }),
     })).rejects.toThrow(SessionFamilyStopInProgressError);
 
     skillResolution.resolve([]);
@@ -1796,12 +1991,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       parentToolCallId: "tool-call",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "inspect",
-      skills: [],
-      description: "Inspect files",
-      background: false,
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "inspect", skills: [], background: false }),
       parentAbort: undefined,
     });
 
@@ -1821,11 +2011,299 @@ describe("SessionExecutionManager", () => {
       toolName: "delegate",
       childSessionId: handle.sessionId,
       childAgentName: "explore",
-      description: "Inspect files",
       depth: 1,
       background: false,
       status: "completed",
     });
+  });
+
+  test("fails a completed child execution that did not submit its canonical result", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
+    const { manager } = createManager({}, {
+      factory: makeFactory(),
+      appendChildReceipt: false,
+    });
+
+    const handle = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "missing-result",
+      toolName: "delegate",
+      contract: delegationContract(),
+    });
+
+    expect(await handle.result).toMatchObject({
+      executionStatus: "failed",
+      terminalError: expect.stringContaining("did not submit a canonical result receipt"),
+    });
+    expect(handle.store.getState().executions.at(-1)).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining("canonical result receipt"),
+    });
+    expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({ status: "failed" });
+    expect(parentStore.getState().childSessionLinks.at(-1)?.resultReceipt).toBeUndefined();
+  });
+
+  test("rejects overlapping Build ownership before persistence and releases it at terminal", async () => {
+    await mkdir(join(workspaceRoot, "src"), { recursive: true });
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
+    const childRun = deferred<MockAgentResult>();
+    const baseFactory = makeFactory();
+    const parentDefinition: AgentDefinition = {
+      ...baseFactory.getDefinition("engineer"),
+      tools: { tools: ["delegate"], delegateTargets: ["build"] },
+      childPolicy: { maxDepth: 2, maxConcurrent: 2, timeoutMs: 0, abortCascade: true, terminalReminders: true },
+    };
+    const factory = makeFactory({
+      getDefinition: mock((name: string) => {
+        if (name === "engineer") return parentDefinition;
+        if (name === "build") return buildAgentDefinition;
+        return baseFactory.getDefinition(name);
+      }),
+      listAgentNames: mock(() => ["engineer", "build"]),
+    });
+    const { manager, sessionAgentManager } = createManager({}, {
+      factory,
+      childRun: childRun.promise,
+    });
+    const buildContract = delegationContract({
+      agent_type: "build",
+      title: "Own src",
+      objective: "Implement src",
+      owned_scope: [{ kind: "tree", path: "src" }],
+    });
+
+    const first = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "build-first",
+      toolName: "delegate",
+      contract: buildContract,
+    });
+    await expect(manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "build-conflict",
+      toolName: "delegate",
+      contract: buildContract,
+    })).rejects.toBeInstanceOf(BuildOwnershipConflictError);
+    expect(sessionAgentManager.createChildAgent).toHaveBeenCalledTimes(1);
+    expect(parentStore.getState().childSessionLinks).toHaveLength(1);
+
+    childRun.resolve({ text: "done", steps: 1 });
+    expect(await first.result).toMatchObject({ executionStatus: "completed" });
+    const afterRelease = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "build-after-release",
+      toolName: "delegate",
+      contract: buildContract,
+    });
+    expect(await afterRelease.result).toMatchObject({ executionStatus: "completed" });
+  });
+
+  for (const terminalCase of [
+    { name: "completed", status: "completed" as const },
+    { name: "failed", status: "failed" as const },
+    { name: "interrupted", status: "interrupted" as const },
+    { name: "cancelled", status: "cancelled" as const },
+    { name: "timed_out", status: "timed_out" as const },
+  ]) {
+    test("releases Build ownership after " + terminalCase.name, async () => {
+      await mkdir(join(workspaceRoot, "src"), { recursive: true });
+      const parentId = crypto.randomUUID();
+      const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
+      const never = new Promise<MockAgentResult>(() => undefined);
+      const childRun = terminalCase.status === "timed_out" || terminalCase.status === "cancelled"
+        ? never
+        : Promise.resolve({
+          text: terminalCase.status,
+          steps: 1,
+          status: terminalCase.status,
+        });
+      const { manager } = createManager({}, {
+        factory: makeBuildFactory(terminalCase.status === "timed_out" ? { timeoutMs: 5 } : {}),
+        childRun,
+      });
+      const buildContract = delegationContract({
+        agent_type: "build",
+        title: "Own src",
+        objective: "Implement src",
+        owned_scope: [{ kind: "tree", path: "src" }],
+      });
+
+      const first = await manager.startChildExecution(workspaceRoot, {
+        parentStore,
+        parentSessionId: parentId,
+        parentToolCallId: "terminal-first",
+        toolName: "delegate",
+        contract: buildContract,
+      });
+      if (terminalCase.status === "cancelled") first.abort();
+      expect(await first.result).toMatchObject({ executionStatus: terminalCase.status });
+
+      const afterRelease = await manager.startChildExecution(workspaceRoot, {
+        parentStore,
+        parentSessionId: parentId,
+        parentToolCallId: "terminal-after-release",
+        toolName: "delegate",
+        contract: buildContract,
+      });
+      if (terminalCase.status === "cancelled") afterRelease.abort();
+      expect(await afterRelease.result).toMatchObject({ executionStatus: terminalCase.status });
+    });
+  }
+
+  test("resume and cold-start Build paths reject an overlapping runtime lease", async () => {
+    await mkdir(join(workspaceRoot, "src"), { recursive: true });
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
+    const childRun = deferred<MockAgentResult>();
+    const factory = makeBuildFactory({ maxConcurrent: 3 });
+    const { manager } = createManager({}, { factory, childRun: childRun.promise });
+    const buildContract = delegationContract({
+      agent_type: "build",
+      title: "Own src",
+      objective: "Implement src",
+      owned_scope: [{ kind: "tree", path: "src" }],
+    });
+    const active = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "active-build",
+      toolName: "delegate",
+      contract: buildContract,
+    });
+
+    const resumableId = crypto.randomUUID();
+    storeManager.create(resumableId, workspaceRoot, {
+      rootSessionId: parentId,
+      parentSessionId: parentId,
+      agentName: "build",
+      title: buildContract.title,
+      delegationContract: buildContract,
+      delegationContractHash: hashDelegationContract(buildContract),
+    });
+    await expect(manager.resumeChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "resume-overlap",
+      toolName: "resume_session",
+      sessionId: resumableId,
+      instruction: "Resume",
+      newEvidence: [],
+      background: false,
+    })).rejects.toBeInstanceOf(BuildOwnershipConflictError);
+
+    const coldParentId = crypto.randomUUID();
+    storeManager.create(coldParentId, workspaceRoot, { agentName: "engineer" });
+    const coldId = crypto.randomUUID();
+    await writeSessionFile({
+      sessionId: coldId,
+      rootSessionId: coldParentId,
+      parentSessionId: coldParentId,
+      agentName: "build",
+      title: buildContract.title,
+      delegationContract: buildContract,
+    });
+    await expect(manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: coldId,
+      input: { kind: "direct", text: "Cold start" },
+      origin: "tool_call",
+    })).rejects.toBeInstanceOf(BuildOwnershipConflictError);
+
+    childRun.resolve({ text: "done", steps: 1 });
+    await active.result;
+  });
+
+  test("admits only completed direct dependencies with a matching canonical receipt", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
+    const { manager, sessionAgentManager } = createManager({}, { factory: makeFactory() });
+    const createDependency = (
+      parentSessionId: string,
+      status: "running" | "completed",
+      receipt: "matching" | "missing" | "mismatch",
+      taskStatus: "completed" | "partial" | "blocked" | "failed" = "completed",
+    ) => {
+      const sessionId = crypto.randomUUID();
+      const store = storeManager.create(sessionId, workspaceRoot, {
+        rootSessionId: parentId,
+        parentSessionId,
+        agentName: "explore",
+        title: "Dependency",
+      });
+      const executionId = crypto.randomUUID();
+      store.getState().append({ type: "execution-start", executionId });
+      if (receipt !== "missing") {
+        store.getState().append({
+          type: "child-result",
+          receipt: {
+            executionId,
+            delegationContractHash: receipt === "matching"
+              ? store.getState().delegationContractHash!
+              : "f".repeat(64),
+            submittedAt: Date.now(),
+            result: {
+              status: taskStatus,
+              summary: "Dependency complete",
+              criteria: [{
+                id: "ac-1",
+                status: "passed",
+                evidenceRefs: ["dependency-evidence"],
+              }],
+              deliverables: [],
+              evidence: [{ claim: "Dependency complete", ref: "dependency-evidence" }],
+              verification: [],
+              unresolved: [],
+            },
+          },
+        });
+      }
+      if (status === "completed") store.getState().append({ type: "execution-end", status });
+      return sessionId;
+    };
+
+    const completed = createDependency(parentId, "completed", "matching");
+    const admitted = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "depends-completed",
+      toolName: "delegate",
+      contract: delegationContract({ depends_on: [completed] }),
+    });
+    expect(await admitted.result).toMatchObject({ executionStatus: "completed" });
+    expect(sessionAgentManager.createChildAgent).toHaveBeenCalledTimes(1);
+
+    const wrongParent = storeManager.create(crypto.randomUUID(), workspaceRoot, {
+      rootSessionId: parentId,
+      parentSessionId: parentId,
+      agentName: "explore",
+      title: "Other parent",
+    });
+    const cases = [
+      createDependency(wrongParent.getState().sessionId, "completed", "matching"),
+      createDependency(parentId, "running", "matching"),
+      createDependency(parentId, "completed", "missing"),
+      createDependency(parentId, "completed", "mismatch"),
+      createDependency(parentId, "completed", "matching", "partial"),
+      createDependency(parentId, "completed", "matching", "blocked"),
+      createDependency(parentId, "completed", "matching", "failed"),
+    ];
+    for (const [index, dependencyId] of cases.entries()) {
+      await expect(manager.startChildExecution(workspaceRoot, {
+        parentStore,
+        parentSessionId: parentId,
+        parentToolCallId: "depends-invalid-" + index,
+        toolName: "delegate",
+        contract: delegationContract({ depends_on: [dependencyId] }),
+      })).rejects.toMatchObject({ code: "DELEGATION_DEPENDENCY_REQUIRED" });
+      expect(sessionAgentManager.createChildAgent).toHaveBeenCalledTimes(1);
+    }
   });
 
   test("startChildExecution prepends the admitted Goal snapshot to the delegated prompt", async () => {
@@ -1844,10 +2322,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       parentToolCallId: "goal-delegate",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "Inspect the implementation",
-      skills: [],
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "Inspect the implementation", skills: [], background: false }),
     });
     await child.result;
 
@@ -1873,10 +2348,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       parentToolCallId: "ordinary-delegate",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "Keep this prompt byte-for-byte",
-      skills: [],
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "Keep this prompt byte-for-byte", skills: [], background: false }),
     });
     await child.result;
 
@@ -1889,10 +2361,15 @@ describe("SessionExecutionManager", () => {
     const goalId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer", goalId });
     let childRunStarted = false;
-    const { manager } = createManager({}, {
+    const createSessionStore = mock((sessionId: string, root: string, createOptions: Parameters<SessionStoreManager["create"]>[2]) =>
+      createTestSession(storeManager, sessionId, root, createOptions));
+    const flushSessionStore = mock(async () => undefined);
+    const { manager, sessionAgentManager } = createManager({}, {
       factory: makeFactory(),
       listSessionFamilyToolBatchHitlIds: async () => [],
       childRunStarted: () => { childRunStarted = true; },
+      createSessionStore,
+      flushSessionStore,
     });
 
     await expect(manager.startChildExecution(workspaceRoot, {
@@ -1900,12 +2377,12 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       parentToolCallId: "missing-goal-admission",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "Must not run without Goal context",
-      skills: [],
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "Must not run without Goal context", skills: [], background: false }),
     })).rejects.toThrow(`Goal ${goalId} delegation requires its latest admitted snapshot`);
     expect(childRunStarted).toBe(false);
+    expect(createSessionStore).not.toHaveBeenCalled();
+    expect(flushSessionStore).not.toHaveBeenCalled();
+    expect(sessionAgentManager.createChildAgent).not.toHaveBeenCalled();
   });
 
   test("blocks new Goal child execution while any sibling has durable HITL", async () => {
@@ -1924,11 +2401,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       parentToolCallId: "blocked-delegate",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "must not start",
-      skills: [],
-      background: false,
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "must not start", skills: [], background: false }),
       parentAbort: undefined,
     })).rejects.toMatchObject({ name: "SessionToolBatchActiveError", hitlIds: ["sibling-hitl"] });
     expect(sessionAgentManager.createChildAgent).not.toHaveBeenCalled();
@@ -1941,9 +2414,14 @@ describe("SessionExecutionManager", () => {
       goalId: crypto.randomUUID(),
     });
     let checks = 0;
-    const { manager } = createManager({}, {
+    const createSessionStore = mock((sessionId: string, root: string, createOptions: Parameters<SessionStoreManager["create"]>[2]) =>
+      createTestSession(storeManager, sessionId, root, createOptions));
+    const flushSessionStore = mock(async () => undefined);
+    const { manager, sessionAgentManager } = createManager({}, {
       factory: makeFactory(),
       listSessionFamilyToolBatchHitlIds: async () => (++checks === 1 ? [] : ["raced-hitl"]),
+      createSessionStore,
+      flushSessionStore,
     });
 
     await expect(manager.startChildExecution(workspaceRoot, {
@@ -1951,14 +2429,13 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       parentToolCallId: "raced-delegate",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "must not start",
-      skills: [],
-      background: false,
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "must not start", skills: [], background: false }),
       parentAbort: undefined,
     })).rejects.toMatchObject({ name: "SessionToolBatchActiveError", hitlIds: ["raced-hitl"] });
     expect(parentStore.getState().childSessionLinks).toEqual([]);
+    expect(createSessionStore).not.toHaveBeenCalled();
+    expect(flushSessionStore).not.toHaveBeenCalled();
+    expect(sessionAgentManager.createChildAgent).not.toHaveBeenCalled();
   });
 
   test("applies Goal phase admission to both new delegation and stale child resume", async () => {
@@ -1970,12 +2447,15 @@ describe("SessionExecutionManager", () => {
       sessionRole: "main",
     });
     const resumableChildId = crypto.randomUUID();
+    const resumableContract = delegationContract();
     storeManager.create(resumableChildId, workspaceRoot, {
       rootSessionId: parentSessionId,
       parentSessionId,
       agentName: "explore",
       goalId,
       title: "Delegated child",
+      delegationContract: resumableContract,
+      delegationContractHash: hashDelegationContract(resumableContract),
     });
     const denied = new Error("phase denied");
     const run = mock(async () => { throw denied; });
@@ -1988,13 +2468,20 @@ describe("SessionExecutionManager", () => {
       parentSessionId,
       parentToolCallId: "call-1",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "inspect",
+      contract: delegationContract({ objective: "inspect" }),
     } as const;
 
-    await expect(manager.startChildExecution(workspaceRoot, { ...base, skills: [] })).rejects.toBe(denied);
-    await expect(manager.resumeChildExecution(workspaceRoot, { ...base, sessionId: resumableChildId })).rejects.toBe(denied);
+    await expect(manager.startChildExecution(workspaceRoot, base)).rejects.toBe(denied);
+    await expect(manager.resumeChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId,
+      parentToolCallId: "call-1",
+      toolName: "resume_session",
+      sessionId: resumableChildId,
+      instruction: "inspect",
+      newEvidence: [],
+      background: false,
+    })).rejects.toBe(denied);
     expect(run).toHaveBeenCalledTimes(2);
   });
 
@@ -2020,11 +2507,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       parentToolCallId: "tool-call",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "inspect files",
-      skills: [],
-      background: false,
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "inspect files", skills: [], background: false }),
       parentAbort: undefined,
     });
     await handle.result;
@@ -2050,11 +2533,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       parentToolCallId: "tool-call",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "inspect without workflow tools",
-      skills: [],
-      background: false,
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "inspect without workflow tools", skills: [], background: false }),
       parentAbort: undefined,
     });
     await handle.result;
@@ -2081,9 +2560,7 @@ describe("SessionExecutionManager", () => {
       goalId,
     });
     const parentDefinition: AgentDefinition = {
-      name: "explore",
-      displayName: "Explore",
-      promptProfileId: "explore",
+      ...exploreAgentDefinition,
       tools: { tools: ["delegate", "file_read"], delegateTargets: ["explore"] },
       hooks: { autoCompact: false, autoInjectReminder: false, todoStepReminder: false, todoQueryLoopContinuation: false, memoryExtraction: false, memoryConsolidation: false, titleGeneration: "disabled" },
       childPolicy: { maxDepth: 2, maxConcurrent: 1, timeoutMs: 0, abortCascade: true, terminalReminders: true },
@@ -2117,11 +2594,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       parentToolCallId: "grandchild-call",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "grandchild inspect",
-      skills: [],
-      background: false,
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "grandchild inspect", skills: [], background: false }),
       parentAbort: undefined,
     });
     await handle.result;
@@ -2150,16 +2623,18 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       parentToolCallId: "tool-call",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "inspect",
-      skills: [],
-      background: false,
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "inspect", skills: [], background: false }),
       parentAbort: undefined,
     })).rejects.toThrow("link write failed");
 
     expect(sessionAgentManager.createChildAgent).toHaveBeenCalledTimes(1);
     expect(childRunStarted).toBe(false);
+    const createChildAgentCalls = (sessionAgentManager.createChildAgent as unknown as {
+      mock: { calls: Array<[{ sessionId: string }]> };
+    }).mock.calls;
+    const failedChildId = createChildAgentCalls[0]![0].sessionId;
+    expect(sessionAgentManager.releaseAgent).toHaveBeenCalledWith(workspaceRoot, failedChildId);
+    expect(sessionAgentManager.get(workspaceRoot, failedChildId)).toBeUndefined();
   });
 
   test("depth limit is checked before child session creation", async () => {
@@ -2187,11 +2662,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       parentToolCallId: "too-deep",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "inspect",
-      skills: [],
-      background: false,
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "inspect", skills: [], background: false }),
       parentAbort: undefined,
     })).rejects.toThrow(DepthLimitError);
 
@@ -2224,11 +2695,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       parentToolCallId: "tool-call",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "inspect",
-      skills: [],
-      background: false,
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "inspect", skills: [], background: false }),
       parentAbort: undefined,
     });
     await handle.result;
@@ -2261,11 +2728,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       parentToolCallId: "durable-child",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "inspect",
-      skills: [],
-      background: false,
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "inspect", skills: [], background: false }),
       parentAbort: undefined,
     });
     await waitFor(() => flushedChildSessionId !== undefined);
@@ -2308,15 +2771,11 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       parentToolCallId: "sync-tool-call",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "inspect",
-      skills: [],
-      background: false,
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "inspect", skills: [], background: false }),
       parentAbort: undefined,
     });
     handle.result.then(() => { resultResolved = true; });
-    await Promise.resolve();
+    await waitFor(() => childCanonicalMessage !== undefined);
 
     expect(resultResolved).toBe(false);
     expect(linkWhileRunning).toMatchObject({
@@ -2333,7 +2792,10 @@ describe("SessionExecutionManager", () => {
     childRun.resolve({ text: "live child done", steps: 1 });
     const result = await handle.result;
 
-    expect(result).toEqual({ text: "live child done", steps: 0, status: "completed" });
+    expect(result).toMatchObject({
+      executionStatus: "completed",
+      resultReceipt: { result: { status: "completed" } },
+    });
     expect(resultResolved).toBe(true);
     expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({
       childSessionId: handle.sessionId,
@@ -2362,11 +2824,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       parentToolCallId: "hitl-child",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "wait for approval",
-      skills: [],
-      background: true,
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "wait for approval", skills: [], background: true }),
       parentAbort: undefined,
     });
     await handle.result;
@@ -2394,11 +2852,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: failedParentId,
       parentToolCallId: "failed-call",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "inspect",
-      skills: [],
-      background: false,
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "inspect", skills: [], background: false }),
       parentAbort: undefined,
     });
     await failedHandle.result;
@@ -2422,11 +2876,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: timedParentId,
       parentToolCallId: "timed-call",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "inspect",
-      skills: [],
-      background: false,
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "inspect", skills: [], background: false }),
       parentAbort: undefined,
     });
     await timedHandle.result;
@@ -2445,11 +2895,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       parentToolCallId: "bad-target",
       toolName: "delegate",
-      targetAgentName: "writer",
-      title: "Delegated child",
-      prompt: "inspect",
-      skills: [],
-      background: false,
+      contract: delegationContract({ agent_type: "build", title: "Delegated child", objective: "inspect", skills: [], background: false }),
       parentAbort: undefined,
     })).rejects.toThrow(DelegateTargetNotAllowedError);
 
@@ -2458,11 +2904,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       parentToolCallId: "first",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "inspect",
-      skills: [],
-      background: true,
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "inspect", skills: [], background: true }),
       parentAbort: undefined,
     });
 
@@ -2471,11 +2913,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       parentToolCallId: "second",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "inspect",
-      skills: [],
-      background: true,
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "inspect", skills: [], background: true }),
       parentAbort: undefined,
     })).rejects.toThrow(ConcurrentLimitError);
     first.abort();
@@ -2493,11 +2931,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       parentToolCallId: "first",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "inspect",
-      skills: [],
-      background: true,
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "inspect", skills: [], background: true }),
       parentAbort: undefined,
     });
 
@@ -2556,10 +2990,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: rootId,
       parentToolCallId: "delete-race-child",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "race deletion",
-      skills: [],
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "race deletion", skills: [], background: false }),
     })).rejects.toThrow(SessionDeleteInProgressError);
     expect(() => manager.acquireSessionCwdTransition(workspaceRoot, rootId)).toThrow(SessionDeleteInProgressError);
     await expect(manager.runSessionInputMutation({
@@ -2775,7 +3206,7 @@ describe("SessionExecutionManager", () => {
     const childAgent = {
       store: storeManager.create(childId, workspaceRoot, {
         rootSessionId: rootId,
-        parentSessionId: rootId, agentName: "engineer"
+        parentSessionId: rootId, agentName: "explore"
       }),
       cwd: workspaceRoot,
       classifyCommand: mock((_input: string) => null),
@@ -2840,11 +3271,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       parentToolCallId: "initial-tool-call",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "first round",
-      skills: [],
-      background: false,
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "first round", skills: [], background: false }),
       parentAbort: undefined,
     });
     await first.result;
@@ -2857,9 +3284,11 @@ describe("SessionExecutionManager", () => {
       parentStore,
       parentSessionId: parentId,
       parentToolCallId: "resume-tool-call",
-      toolName: "delegate",
+      toolName: "resume_session",
       sessionId: childSessionId,
-      prompt: "second round",
+      instruction: "second round",
+      newEvidence: [],
+      background: false,
       parentAbort: undefined,
     });
     await resumed.result;
@@ -2901,10 +3330,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       parentToolCallId: "initial-goal-delegate",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "Initial work",
-      skills: [],
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "Initial work", skills: [], background: false }),
     });
     await first.result;
 
@@ -2917,9 +3343,11 @@ describe("SessionExecutionManager", () => {
       parentStore,
       parentSessionId: parentId,
       parentToolCallId: "resume-goal-delegate",
-      toolName: "delegate",
+      toolName: "resume_session",
       sessionId: first.sessionId,
-      prompt: "Address the review",
+      instruction: "Address the review",
+    newEvidence: [],
+    background: false,
     });
     await resumed.result;
 
@@ -2946,11 +3374,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       parentToolCallId: "background-child",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "keep working in the original checkout",
-      skills: [],
-      background: true,
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "keep working in the original checkout", skills: [], background: true }),
       parentAbort: undefined,
     });
     await waitFor(() => childRunCount === 1);
@@ -2982,9 +3406,11 @@ describe("SessionExecutionManager", () => {
       parentStore,
       parentSessionId: parentId,
       parentToolCallId: "resume-old-child",
-      toolName: "delegate",
+      toolName: "resume_session",
       sessionId: child.sessionId,
-      prompt: "write in the new checkout",
+      instruction: "write in the new checkout",
+      newEvidence: [],
+      background: false,
       parentAbort: undefined,
     })).rejects.toThrow(ChildSessionCwdMismatchError);
 
@@ -3015,11 +3441,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       parentToolCallId: "pending-child-launch",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "launch while skills resolve",
-      skills: [],
-      background: false,
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "launch while skills resolve", skills: [], background: false }),
       parentAbort: undefined,
     });
     await waitFor(() => skillResolutionStarted === 1);
@@ -3039,11 +3461,7 @@ describe("SessionExecutionManager", () => {
         parentSessionId: parentId,
         parentToolCallId: "start-during-transition",
         toolName: "delegate",
-        targetAgentName: "explore",
-      title: "Delegated child",
-        prompt: "must not start",
-        skills: [],
-        background: false,
+        contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "must not start", skills: [], background: false }),
         parentAbort: undefined,
       })).rejects.toThrow(SessionCwdTransitionInProgressError);
 
@@ -3051,9 +3469,11 @@ describe("SessionExecutionManager", () => {
         parentStore,
         parentSessionId: parentId,
         parentToolCallId: "resume-during-transition",
-        toolName: "delegate",
+        toolName: "resume_session",
         sessionId: child.sessionId,
-        prompt: "must not resume",
+        instruction: "must not resume",
+        newEvidence: [],
+        background: false,
         parentAbort: undefined,
       })).rejects.toThrow(SessionCwdTransitionInProgressError);
       expect(childRunCount).toBe(1);
@@ -3066,9 +3486,11 @@ describe("SessionExecutionManager", () => {
       parentStore,
       parentSessionId: parentId,
       parentToolCallId: "resume-after-transition",
-      toolName: "delegate",
+      toolName: "resume_session",
       sessionId: child.sessionId,
-      prompt: "resume after lease release",
+      instruction: "resume after lease release",
+      newEvidence: [],
+      background: false,
       parentAbort: undefined,
     });
     await resumed.result;
@@ -3209,6 +3631,150 @@ describe("SessionExecutionManager", () => {
     expect(coldStores.get(childId, workspaceRoot)).toBeDefined();
     expect(coldStores.get(rootId, workspaceRoot)).toBeDefined();
     expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("idle");
+  });
+
+  test("revalidates current parent delegation authority for direct, Queue, and Tool Batch child activation", async () => {
+    const baseFactory = makeFactory();
+    const deniedFactory = makeFactory({
+      getDefinition: mock((name: string) => {
+        const definition = baseFactory.getDefinition(name);
+        return name === "engineer"
+          ? { ...definition, tools: { ...definition.tools, delegateTargets: [] } }
+          : definition;
+      }),
+    });
+    const cases: Array<{
+      name: string;
+      input: StartSessionExecutionInput["input"];
+      origin: StartSessionExecutionInput["origin"];
+      toolBatch: boolean;
+    }> = [
+      { name: "direct", input: { kind: "direct", text: "continue" }, origin: "user_message", toolBatch: false },
+      { name: "queue", input: { kind: "queue" }, origin: "user_message", toolBatch: false },
+      { name: "tool_batch", input: { kind: "continuation" }, origin: "tool_batch", toolBatch: true },
+    ];
+
+    for (const activation of cases) {
+      const rootId = crypto.randomUUID();
+      const childId = crypto.randomUUID();
+      storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
+      const childStore = storeManager.create(childId, workspaceRoot, {
+        rootSessionId: rootId,
+        parentSessionId: rootId,
+        agentName: "explore",
+        title: activation.name,
+      });
+      if (activation.toolBatch) {
+        childStore.setState({
+          toolBatches: [{ ...blockedToolBatch(activation.name), agentName: "explore" }],
+        });
+      }
+      const { manager, sessionAgentManager } = createManager({}, { factory: deniedFactory });
+
+      await expect(manager.startCheckedExecution({
+        slug: "project",
+        workspaceRoot,
+        sessionId: childId,
+        input: activation.input,
+        origin: activation.origin,
+      })).rejects.toBeInstanceOf(DelegateTargetNotAllowedError);
+      expect(sessionAgentManager.getOrCreate).not.toHaveBeenCalled();
+      expect(childStore.getState().executions).toHaveLength(0);
+    }
+  });
+
+  test("re-enters Goal parent role and phase admission before cold child activation", async () => {
+    const rootId = crypto.randomUUID();
+    const childId = crypto.randomUUID();
+    const goalId = crypto.randomUUID();
+    storeManager.create(rootId, workspaceRoot, {
+      agentName: "engineer",
+      goalId,
+      sessionRole: "main",
+    });
+    storeManager.create(childId, workspaceRoot, {
+      rootSessionId: rootId,
+      parentSessionId: rootId,
+      agentName: "explore",
+      goalId,
+      title: "phase checked",
+    });
+    const phaseDenied = new Error("Goal phase denied for persisted parent role");
+    const admissionRun = mock(async (input: Parameters<NonNullable<FakeManagerOptions["goalDelegationAdmission"]>["run"]>[0]) => {
+      expect(input.parent).toMatchObject({
+        sessionId: rootId,
+        rootSessionId: rootId,
+        goalId,
+        agentName: "engineer",
+        sessionRole: "main",
+      });
+      expect(input.targetAgentName).toBe("explore");
+      throw phaseDenied;
+    });
+    const { manager, sessionAgentManager } = createManager({}, {
+      factory: makeFactory(),
+      goalDelegationAdmission: { run: admissionRun },
+    });
+
+    await expect(manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: childId,
+      input: { kind: "direct", text: "must not activate" },
+      origin: "user_message",
+    })).rejects.toBe(phaseDenied);
+    expect(admissionRun).toHaveBeenCalledTimes(1);
+    expect(sessionAgentManager.getOrCreate).not.toHaveBeenCalled();
+  });
+
+  test("releases only a newly activated child Agent when post-activation start validation fails", async () => {
+    for (const warm of [false, true]) {
+      const rootId = crypto.randomUUID();
+      const childId = crypto.randomUUID();
+      storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
+      const childStore = storeManager.create(childId, workspaceRoot, {
+        rootSessionId: rootId,
+        parentSessionId: rootId,
+        agentName: "explore",
+        title: warm ? "warm" : "cold",
+      });
+      const childAgent = new MockAgent(childId, Promise.resolve({ text: "must not run", steps: 1 }), workspaceRoot);
+      childAgent.store.setState(childStore.getState());
+      const agents = warm ? { [childId]: childAgent } : {};
+      const { manager, sessionAgentManager } = createManager(agents, {
+        factory: makeFactory(),
+        ...(warm ? {} : { getAgent: () => childAgent }),
+      });
+      const originalGetOrCreate = sessionAgentManager.getOrCreate.bind(sessionAgentManager);
+      sessionAgentManager.getOrCreate = mock(async (root, sessionId) => {
+        const agent = await originalGetOrCreate(root, sessionId);
+        agent.store.setState({
+          toolBatches: [{ ...blockedToolBatch(warm ? "warm-race" : "cold-race"), agentName: "explore" }],
+        });
+        return agent;
+      });
+
+      const execution = await manager.startCheckedExecution({
+        slug: "project",
+        workspaceRoot,
+        sessionId: childId,
+        input: { kind: "direct", text: "race activation" },
+        origin: "user_message",
+      });
+      await execution.promise;
+
+      expect(childStore.getState().executions.at(-1)).toMatchObject({ status: "failed" });
+      expect(childAgent.runMock).not.toHaveBeenCalled();
+      if (warm) {
+        expect(sessionAgentManager.releaseAgent).not.toHaveBeenCalled();
+        expect(sessionAgentManager.get(workspaceRoot, childId)).toBe(childAgent);
+        expect(childAgent.disposeMock).not.toHaveBeenCalled();
+      } else {
+        expect(sessionAgentManager.releaseAgent).toHaveBeenCalledWith(workspaceRoot, childId);
+        expect(sessionAgentManager.get(workspaceRoot, childId)).toBeUndefined();
+        expect(childAgent.disposeMock).toHaveBeenCalledTimes(1);
+      }
+    }
   });
 
   test("cold-loads a Session and rejects messages while its durable tool batch remains blocked", async () => {
@@ -3454,9 +4020,11 @@ describe("SessionExecutionManager", () => {
       parentStore,
       parentSessionId: parentId,
       parentToolCallId: "resume-tool-call",
-      toolName: "delegate",
+      toolName: "resume_session",
       sessionId: childSessionId,
-      prompt: "second round",
+      instruction: "second round",
+      newEvidence: [],
+      background: false,
       parentAbort: undefined,
     });
 
@@ -3500,9 +4068,11 @@ describe("SessionExecutionManager", () => {
       parentStore,
       parentSessionId: parentId,
       parentToolCallId: "canonical-title-resume",
-      toolName: "delegate",
+      toolName: "resume_session",
       sessionId: childId,
-      prompt: "resume",
+      instruction: "resume",
+    newEvidence: [],
+    background: false,
     });
     await resumed.result;
 
@@ -3525,9 +4095,11 @@ describe("SessionExecutionManager", () => {
       parentStore,
       parentSessionId: parentId,
       parentToolCallId: "missing-title-resume",
-      toolName: "delegate",
+      toolName: "resume_session",
       sessionId: childId,
-      prompt: "resume",
+      instruction: "resume",
+    newEvidence: [],
+    background: false,
     })).rejects.toThrow(`Child Session "${childId}" has no canonical title`);
     expect(parentStore.getState().childSessionLinks).toEqual([]);
   });
@@ -3549,9 +4121,11 @@ describe("SessionExecutionManager", () => {
       parentStore,
       parentSessionId: parentId,
       parentToolCallId: "foreign-root-resume",
-      toolName: "delegate",
+      toolName: "resume_session",
       sessionId: childId,
-      prompt: "resume",
+      instruction: "resume",
+    newEvidence: [],
+    background: false,
     })).rejects.toThrow(`belongs to root "${foreignRootId}", not "${parentId}"`);
     expect(parentStore.getState().childSessionLinks).toEqual([]);
   });
@@ -3586,9 +4160,11 @@ describe("SessionExecutionManager", () => {
       parentStore,
       parentSessionId: parentId,
       parentToolCallId: "too-deep-resume",
-      toolName: "delegate",
+      toolName: "resume_session",
       sessionId: childId,
-      prompt: "resume",
+      instruction: "resume",
+    newEvidence: [],
+    background: false,
     })).rejects.toThrow(DepthLimitError);
   });
 
@@ -3620,17 +4196,21 @@ describe("SessionExecutionManager", () => {
       parentStore,
       parentSessionId: parentId,
       parentToolCallId: "first-resume",
-      toolName: "delegate",
+      toolName: "resume_session",
       sessionId: firstChildId,
-      prompt: "resume",
+      instruction: "resume",
+    newEvidence: [],
+    background: false,
     });
     await expect(manager.resumeChildExecution(workspaceRoot, {
       parentStore,
       parentSessionId: parentId,
       parentToolCallId: "second-resume",
-      toolName: "delegate",
+      toolName: "resume_session",
       sessionId: secondChildId,
-      prompt: "resume",
+      instruction: "resume",
+    newEvidence: [],
+    background: false,
     })).rejects.toThrow(ConcurrentLimitError);
     firstRun.resolve({ text: "done", steps: 1 });
     await first.result;
@@ -3657,10 +4237,12 @@ describe("SessionExecutionManager", () => {
       factory: makeFactoryWithChildPolicy({ timeoutMs: 1 }),
     }).manager;
     const timed = await timedManager.resumeChildExecution(workspaceRoot, {
-      parentStore, parentSessionId: parentId, parentToolCallId: "timed-resume", toolName: "delegate",
-      sessionId: timedChildId, prompt: "resume",
+      parentStore, parentSessionId: parentId, parentToolCallId: "timed-resume", toolName: "resume_session",
+      sessionId: timedChildId, instruction: "resume",
+    newEvidence: [],
+    background: false,
     });
-    expect((await timed.result).status).toBe("timed_out");
+    expect((await timed.result).executionStatus).toBe("timed_out");
 
     const uncascadedRun = deferred<MockAgentResult>();
     const uncascadedAgent = new MockAgent(uncascadedChildId, uncascadedRun.promise, workspaceRoot);
@@ -3670,8 +4252,8 @@ describe("SessionExecutionManager", () => {
     }).manager;
     const parentAbort = new AbortController();
     const uncascaded = await uncascadedManager.resumeChildExecution(workspaceRoot, {
-      parentStore, parentSessionId: parentId, parentToolCallId: "uncascaded-resume", toolName: "delegate",
-      sessionId: uncascadedChildId, prompt: "resume", parentAbort: parentAbort.signal,
+      parentStore, parentSessionId: parentId, parentToolCallId: "uncascaded-resume", toolName: "resume_session",
+      sessionId: uncascadedChildId, instruction: "resume", newEvidence: [], background: false, parentAbort: parentAbort.signal,
     });
     parentAbort.abort();
     expect(uncascadedManager.getExecution(workspaceRoot, uncascadedChildId)?.abortController.signal.aborted).toBe(false);
@@ -3685,11 +4267,11 @@ describe("SessionExecutionManager", () => {
     }).manager;
     const cascadingAbort = new AbortController();
     const cascaded = await cascadedManager.resumeChildExecution(workspaceRoot, {
-      parentStore, parentSessionId: parentId, parentToolCallId: "cascaded-resume", toolName: "delegate",
-      sessionId: cascadedChildId, prompt: "resume", parentAbort: cascadingAbort.signal,
+      parentStore, parentSessionId: parentId, parentToolCallId: "cascaded-resume", toolName: "resume_session",
+      sessionId: cascadedChildId, instruction: "resume", newEvidence: [], background: false, parentAbort: cascadingAbort.signal,
     });
     cascadingAbort.abort();
-    expect((await cascaded.result).status).toBe("cancelled");
+    expect((await cascaded.result).executionStatus).toBe("cancelled");
   });
 
   test("rechecks Goal family HITL immediately before a child resume starts", async () => {
@@ -3724,9 +4306,10 @@ describe("SessionExecutionManager", () => {
     const childAgent = new MockAgent(childSessionId, Promise.resolve({ text: "must not run", steps: 1 }), workspaceRoot);
     childAgent.store.setState(childStore.getState());
     let checks = 0;
-    const { manager } = createManager({ [childSessionId]: childAgent }, {
+    const { manager, sessionAgentManager } = createManager({ [childSessionId]: childAgent }, {
       factory: makeFactory(),
       executionScopeValidator: allowExecutionScope,
+      goalDelegationAdmission: admitGoal(goalDelegationContext(goalId)),
       listSessionFamilyToolBatchHitlIds: async () => (++checks === 1 ? [] : ["raced-resume-hitl"]),
     });
 
@@ -3734,12 +4317,16 @@ describe("SessionExecutionManager", () => {
       parentStore,
       parentSessionId: parentId,
       parentToolCallId: "resume-call",
-      toolName: "delegate",
+      toolName: "resume_session",
       sessionId: childSessionId,
-      prompt: "must not resume",
+      instruction: "must not resume",
+      newEvidence: [],
+      background: false,
       parentAbort: undefined,
     })).rejects.toMatchObject({ name: "SessionToolBatchActiveError", hitlIds: ["raced-resume-hitl"] });
     expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({ status: "completed" });
+    expect(sessionAgentManager.getOrCreate).not.toHaveBeenCalled();
+    expect(manager.getExecution(workspaceRoot, childSessionId)).toBeUndefined();
     expect(childAgent.runMock).not.toHaveBeenCalled();
   });
 
@@ -3787,9 +4374,10 @@ describe("SessionExecutionManager", () => {
       parentStore,
       parentSessionId: parentId,
       parentToolCallId: "resume-background-tool-call",
-      toolName: "delegate",
+      toolName: "resume_session",
       sessionId: childSessionId,
-      prompt: "second round",
+      instruction: "second round",
+      newEvidence: [],
       background: true,
       parentAbort: undefined,
     });
@@ -3828,11 +4416,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       parentToolCallId: "running-tool-call",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "first round",
-      skills: [],
-      background: false,
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "first round", skills: [], background: false }),
       parentAbort: undefined,
     });
 
@@ -3840,9 +4424,11 @@ describe("SessionExecutionManager", () => {
       parentStore,
       parentSessionId: parentId,
       parentToolCallId: "running-tool-call",
-      toolName: "delegate",
+      toolName: "resume_session",
       sessionId: first.sessionId,
-      prompt: "second round",
+      instruction: "second round",
+      newEvidence: [],
+      background: false,
       parentAbort: undefined,
     })).rejects.toThrow(AgentRunningError);
 
@@ -3868,9 +4454,11 @@ describe("SessionExecutionManager", () => {
       parentStore,
       parentSessionId: parentId,
       parentToolCallId: "resume-blocked-child",
-      toolName: "delegate",
+      toolName: "resume_session",
       sessionId: childId,
-      prompt: "must wait for HITL",
+      instruction: "must wait for HITL",
+      newEvidence: [],
+      background: false,
       parentAbort: undefined,
     })).rejects.toThrow(SessionToolBatchActiveError);
 
@@ -3887,9 +4475,11 @@ describe("SessionExecutionManager", () => {
       parentStore,
       parentSessionId: parentId,
       parentToolCallId: "missing-tool-call",
-      toolName: "delegate",
+      toolName: "resume_session",
       sessionId: crypto.randomUUID(),
-      prompt: "resume",
+      instruction: "resume",
+      newEvidence: [],
+      background: false,
       parentAbort: undefined,
     })).rejects.toThrow(ChildSessionNotFoundError);
   });
@@ -3906,11 +4496,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       parentToolCallId: "parent-tool-call",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "first round",
-      skills: [],
-      background: false,
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "first round", skills: [], background: false }),
       parentAbort: undefined,
     });
     await first.result;
@@ -3919,9 +4505,11 @@ describe("SessionExecutionManager", () => {
       parentStore: otherParentStore,
       parentSessionId: otherParentId,
       parentToolCallId: "parent-tool-call",
-      toolName: "delegate",
+      toolName: "resume_session",
       sessionId: first.sessionId,
-      prompt: "second round",
+      instruction: "second round",
+      newEvidence: [],
+      background: false,
       parentAbort: undefined,
     })).rejects.toThrow(ChildSessionParentMismatchError);
   });
@@ -3937,11 +4525,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       parentToolCallId: "cancel-tool-call",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "running",
-      skills: [],
-      background: true,
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "running", skills: [], background: true }),
       parentAbort: undefined,
     });
 
@@ -3977,11 +4561,7 @@ describe("SessionExecutionManager", () => {
       parentSessionId: parentId,
       parentToolCallId: "completed-tool-call",
       toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Delegated child",
-      prompt: "done",
-      skills: [],
-      background: false,
+      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "done", skills: [], background: false }),
       parentAbort: undefined,
     });
     await child.result;

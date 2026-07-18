@@ -68,7 +68,7 @@ describe("loadAgentsMd", () => {
     await Bun.write(join(dir, "AGENTS.md"), content);
 
     const result = await loadAgentsMd(dir);
-    expect(result).toBe(content);
+    expect(result).toEqual({ path: join(dir, "AGENTS.md"), content });
   });
 
   test("returns undefined when no AGENTS.md found (isolated tmp)", async () => {
@@ -86,7 +86,7 @@ describe("loadAgentsMd", () => {
     await Bun.write(join(parent, "AGENTS.md"), "# Parent content");
 
     const result = await loadAgentsMd(child);
-    expect(result).toBe("# Parent content");
+    expect(result).toEqual({ path: join(parent, "AGENTS.md"), content: "# Parent content" });
   });
 
   test("returns empty string content when AGENTS.md is empty", async () => {
@@ -95,7 +95,7 @@ describe("loadAgentsMd", () => {
     await Bun.write(join(dir, "AGENTS.md"), "");
 
     const result = await loadAgentsMd(dir);
-    expect(result).toBe("");
+    expect(result).toEqual({ path: join(dir, "AGENTS.md"), content: "" });
   });
 });
 

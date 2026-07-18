@@ -45,7 +45,18 @@ describe("config API", () => {
             npm: "@ai-sdk/openai-compatible",
             name: "Local",
             options: { baseURL: "http://localhost/v1", apiKey: { configured: true } },
-            models: {},
+            models: {
+              demo: {
+                name: "Demo",
+                limit: { context: 128000, output: 16000 },
+                modalities: { input: ["text"], output: ["text"] },
+                capabilities: {
+                  multiToolCallEmission: "single",
+                  structuredToolCalls: "best_effort",
+                  instructionTier: "standard",
+                },
+              },
+            },
           },
         },
       } as never,
@@ -55,5 +66,10 @@ describe("config API", () => {
     });
 
     expect(draft.config.provider.local!.options.apiKey).toEqual({ action: "preserve" });
+    expect(draft.config.provider.local!.models.demo.capabilities).toEqual({
+      multiToolCallEmission: "single",
+      structuredToolCalls: "best_effort",
+      instructionTier: "standard",
+    });
   });
 });

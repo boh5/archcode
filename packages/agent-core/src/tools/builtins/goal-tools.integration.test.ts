@@ -3,7 +3,9 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { StoreApi } from "zustand";
 
-import type { GoalReviewReceipt, GoalState } from "@archcode/protocol";
+import type { DelegationContract, GoalReviewReceipt, GoalState } from "@archcode/protocol";
+import { hashDelegationContract } from "../../delegation/contract";
+import { testReviewExecutionFields } from "../../goals/test-review-fixture";
 import { ProjectHitlQueue } from "../../hitl";
 import { silentLogger } from "../../logger";
 import { MemoryFileManager } from "../../memory/file-manager";
@@ -42,6 +44,9 @@ class GoalStateManagerMock {
       readonly expectedReviewGeneration: number;
       readonly verdict: "DONE" | "NOT_DONE";
       readonly summary: string;
+      readonly executionId: string;
+      readonly delegationContractHash: string;
+      readonly result: GoalReviewReceipt["result"];
       readonly evidenceRefs?: readonly GoalReviewReceipt["evidenceRefs"][number][];
       readonly authorization: { readonly reviewerSessionId?: string };
     },
@@ -54,6 +59,9 @@ class GoalStateManagerMock {
         reviewGeneration: input.expectedReviewGeneration,
         verdict: input.verdict,
         summary: input.summary,
+        executionId: input.executionId,
+        delegationContractHash: input.delegationContractHash,
+        result: input.result,
         evidenceRefs: [...(input.evidenceRefs ?? [])],
         reviewerSessionId: input.authorization.reviewerSessionId ?? "review-session",
         decidedAt: "2026-07-08T00:00:00.000Z",
@@ -89,11 +97,29 @@ function makeStore(
   agentName: "goal_lead" | "reviewer",
   sessionRole: "main" | "review",
 ): StoreApi<SessionStoreState> {
+  const delegationContract: DelegationContract = {
+    agent_type: "reviewer",
+    title: "Review Goal",
+    objective: "Verify the Goal acceptance criteria",
+    owned_scope: [],
+    non_goals: [],
+    acceptance_criteria: [{ id: "acceptance", condition: "Goal is verified", requiredEvidence: "Review evidence" }],
+    evidence: [],
+    verification: [],
+    depends_on: [],
+    skills: [],
+    background: false,
+  };
   return createMockStore({
     sessionId: sessionRole === "main" ? "main-session" : "review-session",
     agentName,
     sessionRole,
     goalId,
+    ...(sessionRole === "review" ? {
+      currentExecutionId: "review-execution",
+      delegationContract,
+      delegationContractHash: hashDelegationContract(delegationContract),
+    } : {}),
   });
 }
 
@@ -215,6 +241,7 @@ describe("goal_manage builtin tool integration", () => {
           ref: "bun test packages/agent-core/src/tools/builtins/goal-tools.integration.test.ts",
           summary: "Targeted Goal tool integration test passed.",
         }],
+        result: testReviewExecutionFields("DONE").result,
       } as const;
 
       const allowed = normalizeOutput(await goalManageTool.execute(

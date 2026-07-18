@@ -8,6 +8,7 @@ import type {
   GlobalSessionEventEnvelope,
   Reminder,
   ToolChildSessionLink,
+  ChildResultReceipt,
   SessionEventEnvelope,
   SessionEventPayload,
   SessionMessage,
@@ -63,6 +64,7 @@ export interface WebSessionStoreState extends Omit<SessionProjection, "cwd" | "a
     todos?: SessionTodo[];
     reminders?: Reminder[];
     childSessionLinks?: ToolChildSessionLink[];
+    childResultReceipts?: ChildResultReceipt[];
     title?: string | null;
     createdAt?: number;
     cwd?: string;
@@ -241,6 +243,7 @@ export function createWebSessionStore(
     todos: [],
     reminders: [],
     childSessionLinks: [],
+    childResultReceipts: [],
     compression: undefined,
     compressionBlocks: [],
     // Mirrors persisted identity; tree relationships come from session-tree responses.
@@ -343,6 +346,9 @@ export function createWebSessionStore(
         }
         if (data.childSessionLinks !== undefined && !stale) {
           updates.childSessionLinks = data.childSessionLinks;
+        }
+        if (data.childResultReceipts !== undefined && !stale) {
+          updates.childResultReceipts = data.childResultReceipts;
         }
         if (data.title !== undefined) {
           updates.title = data.title;

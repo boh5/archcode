@@ -11,6 +11,7 @@ import { managedWorktreeNames } from "../worktrees";
 import { withGoalExecutionClaimLock } from "./execution-claim";
 import { GoalLifecycleService, GoalLifecycleServiceError, GoalSourceSessionError, type GoalLifecycleServiceOptions } from "./lifecycle-service";
 import { GoalReviewFinalizationError, GoalReviewerAuthorizationError, GoalStateManager, GoalTransitionError } from "./state";
+import { testReviewExecutionFields } from "./test-review-fixture";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-lifecycle", crypto.randomUUID());
 const SOURCE_SESSION_ID = "11111111-1111-4111-8111-111111111111";
@@ -281,6 +282,7 @@ describe("GoalLifecycleService lifecycle", () => {
     const notDone = await lifecycle.finalizeReview(goal.id, {
       expectedReviewGeneration: 1,
       verdict: "NOT_DONE",
+      ...testReviewExecutionFields("NOT_DONE"),
       summary: "More work is required.",
       authorization: reviewerAuth(goal.id),
     });
@@ -298,6 +300,7 @@ describe("GoalLifecycleService lifecycle", () => {
     await expect(lifecycle.finalizeReview(goal.id, {
       expectedReviewGeneration: 1,
       verdict: "DONE",
+      ...testReviewExecutionFields("DONE"),
       summary: "Missing evidence.",
       evidenceRefs: [],
       authorization: reviewerAuth(goal.id),
@@ -305,6 +308,7 @@ describe("GoalLifecycleService lifecycle", () => {
     await expect(lifecycle.finalizeReview(goal.id, {
       expectedReviewGeneration: 1,
       verdict: "DONE",
+      ...testReviewExecutionFields("DONE"),
       summary: "Wrong reviewer.",
       evidenceRefs: [evidenceRef()],
       authorization: { ...reviewerAuth(goal.id), agentName: "build" },
@@ -313,6 +317,7 @@ describe("GoalLifecycleService lifecycle", () => {
     const done = await lifecycle.finalizeReview(goal.id, {
       expectedReviewGeneration: 1,
       verdict: "DONE",
+      ...testReviewExecutionFields("DONE"),
       summary: "All criteria verified.",
       evidenceRefs: [evidenceRef()],
       authorization: reviewerAuth(goal.id),
@@ -328,6 +333,7 @@ describe("GoalLifecycleService lifecycle", () => {
     await lifecycle.finalizeReview(goal.id, {
       expectedReviewGeneration: 1,
       verdict: "NOT_DONE",
+      ...testReviewExecutionFields("NOT_DONE"),
       summary: "Retry after correcting the implementation.",
       authorization: reviewerAuth(goal.id),
     });

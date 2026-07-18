@@ -3,6 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { GoalState } from "@archcode/protocol";
+import { hashDelegationContract } from "../delegation/contract";
 
 import type {
   AcquireSessionFamilyStopInput,
@@ -12,6 +13,7 @@ import type {
 import { SessionFamilyStopConflictError } from "../execution/session-family-control";
 import { silentLogger } from "../logger";
 import { SessionStoreManager } from "../store/session-store-manager";
+import { testReviewExecutionFields } from "./test-review-fixture";
 import {
   GoalCancellationCleanupError,
   GoalCancellationError,
@@ -139,12 +141,27 @@ describe("GoalCancellationService", () => {
     const childId = crypto.randomUUID();
     const independentRootId = crypto.randomUUID();
     let goal = await createRunningGoal(fixture, mainId);
+    const childContract = {
+      agent_type: "build" as const,
+      title: "Build child",
+      objective: "Build the delegated scope",
+      owned_scope: [{ kind: "tree" as const, path: "src" }],
+      non_goals: [],
+      acceptance_criteria: [{ id: "acceptance", condition: "Scope is complete", requiredEvidence: "Tests" }],
+      evidence: [],
+      verification: [],
+      depends_on: [],
+      skills: [],
+      background: false,
+    };
     fixture.sessions.create(childId, TMP_ROOT, {
       rootSessionId: mainId,
       parentSessionId: mainId,
       goalId: goal.id,
       sessionRole: "build",
       agentName: "build",
+      delegationContract: childContract,
+      delegationContractHash: hashDelegationContract(childContract),
     });
     fixture.sessions.create(independentRootId, TMP_ROOT, {
       goalId: goal.id,
@@ -272,6 +289,7 @@ describe("GoalCancellationService", () => {
     await expect(withGoalExecutionClaimLock(goal.id, () => fixture.goalState.finalizeReview(goal.id, {
       expectedReviewGeneration: goal.reviewGeneration,
       verdict: "DONE",
+      ...testReviewExecutionFields("DONE"),
       summary: "Reviewer attempted to finish during cancellation",
       evidenceRefs: [{ kind: "test_output", ref: "tests", summary: "Tests passed" }],
       authorization: {
@@ -293,6 +311,7 @@ describe("GoalCancellationService", () => {
     await fixture.goalState.finalizeReview(goal.id, {
       expectedReviewGeneration: goal.reviewGeneration,
       verdict: "DONE",
+      ...testReviewExecutionFields("DONE"),
       summary: "Complete",
       evidenceRefs: [{ kind: "test_output", ref: "tests", summary: "Tests passed" }],
       authorization: {

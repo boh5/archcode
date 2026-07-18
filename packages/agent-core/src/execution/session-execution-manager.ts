@@ -1,7 +1,9 @@
 import { rm } from "node:fs/promises";
-import { isTerminalChildSessionStatus, type ExecutionEndEvent, type PendingSessionMessage, type SessionExecutionRecord, type SessionFamilyActivity, type SessionMessageSource, type SessionTreeNode, type SessionTreeResponse, type ToolChildSessionLink, type ToolChildSessionLinkStatus } from "@archcode/protocol";
+import { isTerminalChildSessionStatus, type ChildResultReceipt, type DelegationContract, type ExecutionEndEvent, type PendingSessionMessage, type SessionExecutionRecord, type SessionFamilyActivity, type SessionMessageSource, type SessionTreeNode, type SessionTreeResponse, type ToolChildSessionLink, type ToolChildSessionLinkStatus } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
+import type { Agent } from "../agents/types";
+import type { AgentChildPolicy } from "../agents/factory-types";
 import {
   AgentChildPolicyMissingError,
   AgentRunningError,
@@ -17,13 +19,16 @@ import {
   SessionCwdTransitionInProgressError,
   SessionToolBatchActiveError,
 } from "../agents/errors";
-import type { AgentResult } from "../agents/types";
-import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
+import {
+  hashDelegationContract,
+  validateChildResultAgainstContract,
+  validateDelegationScopes,
+} from "../delegation/contract";
+import type { ChildExecutionHandle, ChildExecutionOutcome, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
 import { getSessionDir } from "../store/sessions-dir";
 import { NotRootSessionError, SessionDeleteConflictError } from "../store/errors";
 import { scopedKey } from "../store/key";
 import type { Reminder, SessionRole, SessionStoreState } from "../store/types";
-import type { StoredMessage } from "../store/types";
 import type { AgentName } from "../agents/names";
 import type { Logger } from "../logger";
 import { nextSessionTimestamp, SessionInputConflictError, type SessionInputService } from "../session-input/service";
@@ -54,6 +59,10 @@ import {
   type SessionGoalDelegationContext,
 } from "./session-goal-delegation-context";
 import { collectSessionTreeIds } from "./session-tree";
+import {
+  BuildOwnershipLeaseRegistry,
+  type BuildOwnershipLease,
+} from "./build-ownership-lease";
 
 const ABORT_AND_WAIT_TIMEOUT_MS = 10000;
 const MAX_CWD_TRANSITIONS_PER_EXECUTION = 4;
@@ -112,6 +121,8 @@ export interface StartSessionExecutionInput {
 
 interface PendingSessionExecution extends Omit<ActiveSessionExecution, "promise"> {
   promise?: Promise<void>;
+  buildOwnershipLease?: BuildOwnershipLease;
+  newlyActivatedAgent?: Agent;
   familyStopLease?: SessionFamilyStopLease;
   queueCutoffAcceptedAt?: number;
   ready: boolean;
@@ -187,6 +198,8 @@ interface SessionExecutionManagerConfig {
       readonly agentName: AgentName;
       readonly title?: string;
       readonly activeSkillNames?: readonly string[];
+      readonly delegationContract?: DelegationContract;
+      readonly delegationContractHash?: string;
     },
   ) => StoreApi<SessionStoreState>;
   /** Durability barrier for a freshly created Session snapshot. */
@@ -220,6 +233,16 @@ export interface SessionExecutionClaimCoordinator {
   run<T>(ownerId: string, action: () => Promise<T>): Promise<T>;
 }
 
+interface ExistingChildActivationAdmission {
+  readonly childState: SessionStoreState;
+  readonly parentStore: StoreApi<SessionStoreState>;
+  readonly parentState: SessionStoreState;
+  readonly parentDepth: number;
+  readonly childDepth: number;
+  readonly childPolicy: AgentChildPolicy;
+  readonly goalContext?: SessionGoalDelegationContext;
+}
+
 export class SessionSteerUnavailableError extends Error {
   readonly code = "SESSION_STEER_UNAVAILABLE";
 
@@ -229,6 +252,25 @@ export class SessionSteerUnavailableError extends Error {
   ) {
     super(`Session "${sessionId}" is not accepting Steer for execution "${expectedExecutionId}"`);
     this.name = "SessionSteerUnavailableError";
+  }
+}
+
+export class DelegationExecutionAdmissionError extends Error {
+  constructor(
+    public readonly code: "DELEGATION_IDENTITY_REQUIRED" | "DELEGATION_DEPENDENCY_REQUIRED" | "BUILD_OWNED_SCOPE_REQUIRED",
+    message: string,
+  ) {
+    super(message);
+    this.name = "DelegationExecutionAdmissionError";
+  }
+}
+
+export class ChildResultRequiredError extends Error {
+  readonly code = "CHILD_RESULT_REQUIRED";
+
+  constructor(public readonly sessionId: string, public readonly executionId: string) {
+    super(`Child Session "${sessionId}" execution "${executionId}" did not submit a canonical result receipt`);
+    this.name = "ChildResultRequiredError";
   }
 }
 
@@ -245,6 +287,7 @@ export class SessionExecutionManager {
   readonly #pendingSessionInputMutations = new Map<string, PendingSessionInputMutationFamilyState>();
   readonly #runtimeChangeListeners = new Set<SessionRuntimeChangeListener>();
   readonly #publishedRuntime = new Map<string, Pick<SessionRuntimeChange, "activity" | "steerTargetExecutionId">>();
+  readonly #buildOwnership = new BuildOwnershipLeaseRegistry();
   readonly #config: SessionExecutionManagerConfig;
   readonly #logger: Logger;
 
@@ -253,7 +296,11 @@ export class SessionExecutionManager {
     this.#logger = config.logger;
   }
 
-  #claimExecution(input: StartSessionExecutionInput): ActiveSessionExecution {
+  #claimExecution(
+    input: StartSessionExecutionInput,
+    preclaimedBuildOwnership?: BuildOwnershipLease,
+    newlyActivatedAgent?: Agent,
+  ): ActiveSessionExecution {
     this.#assertWorkspaceOpen(input.workspaceRoot);
     const key = scopedKey(input.workspaceRoot, input.sessionId);
     if (this.#active.has(key)) {
@@ -261,6 +308,7 @@ export class SessionExecutionManager {
     }
     const sessionState = this.#config.getSessionStore(input.sessionId, input.workspaceRoot)?.getState();
     if (sessionState === undefined) throw new SessionFamilyIdentityUnavailableError(input.sessionId);
+    this.#assertDurableChildDelegationIdentity(sessionState);
     this.#assertSessionStartAllowed(input.workspaceRoot, input.sessionId, sessionState, input.origin === "tool_batch");
     this.#assertExecutionOriginReady(input, sessionState);
     const queuedAtClaim = input.input.kind === "queue"
@@ -279,6 +327,10 @@ export class SessionExecutionManager {
       rejectStarted = reject;
     });
     void started.catch(() => undefined);
+    let buildOwnershipLease = preclaimedBuildOwnership;
+    if (sessionState.agentName === "build" && sessionState.parentSessionId !== undefined) {
+      buildOwnershipLease ??= this.#acquireBuildOwnership(input.workspaceRoot, sessionState);
+    }
     const pending: PendingSessionExecution = {
       sessionId: input.sessionId,
       rootSessionId,
@@ -299,6 +351,8 @@ export class SessionExecutionManager {
       steerOperations: new Set(),
       resolveStarted,
       rejectStarted,
+      ...(buildOwnershipLease === undefined ? {} : { buildOwnershipLease }),
+      ...(newlyActivatedAgent === undefined ? {} : { newlyActivatedAgent }),
     };
 
     this.#active.set(key, pending);
@@ -470,71 +524,81 @@ export class SessionExecutionManager {
       const loadedState = store.getState();
       this.#assertExecutionOriginReady(input, loadedState);
       if (loadedState.parentSessionId !== undefined) {
-        await this.#config.loadSessionStore(loadedState.rootSessionId, input.workspaceRoot);
+        await this.#validateExistingChildActivation(input.workspaceRoot, store);
       }
       const claimedScope = executionScopeSnapshot(store.getState());
       const claimGoalId = claimedScope.goalId;
       const validateAndStart = async (): Promise<ActiveSessionExecution> => {
-      const validationState = store.getState();
-      const validationScope = executionScopeSnapshot(validationState);
-      if (!sameExecutionScopeSnapshot(claimedScope, validationScope)) {
-        throw executionScopeChanged(validationState.sessionId, claimedScope, validationScope);
-      }
-      await this.#config.executionScopeValidator.validate({
-        projectRoot: input.workspaceRoot,
-        subject: await resolveSessionExecutionIdentity({
-          workspaceRoot: input.workspaceRoot,
-          sessionId: validationState.sessionId,
-          sessions: {
-            getOrLoad: this.#config.loadSessionStore,
-            buildSessionTree: this.#config.buildSessionTree,
-          },
-        }),
-      });
+        const validationState = store.getState();
+        const validationScope = executionScopeSnapshot(validationState);
+        if (!sameExecutionScopeSnapshot(claimedScope, validationScope)) {
+          throw executionScopeChanged(validationState.sessionId, claimedScope, validationScope);
+        }
+        const claimAfterValidation = async (): Promise<ActiveSessionExecution> => {
+          const currentState = store.getState();
+          const currentScope = executionScopeSnapshot(currentState);
+          if (!sameExecutionScopeSnapshot(validationScope, currentScope)) {
+            throw executionScopeChanged(currentState.sessionId, validationScope, currentScope);
+          }
+          if (this.#config.getSessionStore(currentState.sessionId, input.workspaceRoot) !== store) {
+            throw executionScopeChanged(currentState.sessionId, validationScope, currentScope, ["sessionRegistration"]);
+          }
+          this.#assertSessionFamilyCwdAligned(input.workspaceRoot, input.sessionId, currentState);
+          const activity = this.getSessionFamilyActivity(input.workspaceRoot, currentState.rootSessionId);
+          if (activity === "stopping") {
+            throw new SessionFamilyStopInProgressError(input.sessionId, currentState.rootSessionId);
+          }
+          if (activity === "running") {
+            throw new SessionFamilyActiveError(input.sessionId, currentState.rootSessionId, activity);
+          }
+          if (currentState.goalId !== undefined && input.origin !== "tool_batch") {
+            const toolBatchHitlIds = await this.#config.listSessionFamilyToolBatchHitlIds(input.workspaceRoot, currentState.rootSessionId);
+            if (toolBatchHitlIds.length > 0) {
+              throw new SessionToolBatchActiveError(input.sessionId, [...toolBatchHitlIds]);
+            }
+            const activityAfterBlockerRead = this.getSessionFamilyActivity(input.workspaceRoot, currentState.rootSessionId);
+            if (activityAfterBlockerRead !== "idle") {
+              throw new SessionFamilyActiveError(input.sessionId, currentState.rootSessionId, activityAfterBlockerRead);
+            }
+            const postBlockerState = store.getState();
+            const postBlockerScope = executionScopeSnapshot(postBlockerState);
+            if (!sameExecutionScopeSnapshot(currentScope, postBlockerScope)) {
+              throw executionScopeChanged(postBlockerState.sessionId, currentScope, postBlockerScope);
+            }
+            if (this.#config.getSessionStore(postBlockerState.sessionId, input.workspaceRoot) !== store) {
+              throw executionScopeChanged(postBlockerState.sessionId, currentScope, postBlockerScope, ["sessionRegistration"]);
+            }
+          }
 
-      const currentState = store.getState();
-      const previousScope = executionScopeSnapshot(validationState);
-      const currentScope = executionScopeSnapshot(currentState);
-      if (!sameExecutionScopeSnapshot(previousScope, currentScope)) {
-        throw executionScopeChanged(currentState.sessionId, previousScope, currentScope);
-      }
-      if (this.#config.getSessionStore(currentState.sessionId, input.workspaceRoot) !== store) {
-        throw executionScopeChanged(currentState.sessionId, previousScope, currentScope, ["sessionRegistration"]);
-      }
-      this.#assertSessionFamilyCwdAligned(input.workspaceRoot, input.sessionId, currentState);
-      const activity = this.getSessionFamilyActivity(input.workspaceRoot, currentState.rootSessionId);
-      if (activity === "stopping") {
-        throw new SessionFamilyStopInProgressError(input.sessionId, currentState.rootSessionId);
-      }
-      if (activity === "running") {
-        throw new SessionFamilyActiveError(input.sessionId, currentState.rootSessionId, activity);
-      }
-      if (currentState.goalId !== undefined && input.origin !== "tool_batch") {
-        const toolBatchHitlIds = await this.#config.listSessionFamilyToolBatchHitlIds(input.workspaceRoot, currentState.rootSessionId);
-        if (toolBatchHitlIds.length > 0) {
-          throw new SessionToolBatchActiveError(input.sessionId, [...toolBatchHitlIds]);
-        }
-        const activityAfterBlockerRead = this.getSessionFamilyActivity(input.workspaceRoot, currentState.rootSessionId);
-        if (activityAfterBlockerRead !== "idle") {
-          throw new SessionFamilyActiveError(input.sessionId, currentState.rootSessionId, activityAfterBlockerRead);
-        }
-        const postBlockerState = store.getState();
-        const postBlockerScope = executionScopeSnapshot(postBlockerState);
-        if (!sameExecutionScopeSnapshot(currentScope, postBlockerScope)) {
-          throw executionScopeChanged(postBlockerState.sessionId, currentScope, postBlockerScope);
-        }
-        if (this.#config.getSessionStore(postBlockerState.sessionId, input.workspaceRoot) !== store) {
-          throw executionScopeChanged(postBlockerState.sessionId, currentScope, postBlockerScope, ["sessionRegistration"]);
-        }
-      }
+          // Deliberately no await between the final identity check and this claim.
+          return this.#claimExecution(input);
+        };
 
-      // Deliberately no await between the final identity check and this claim.
-      // startExecution re-checks cwd/HITL leases synchronously before publishing
-      // the active generation.
-      return this.#claimExecution(input);
+        if (validationState.parentSessionId !== undefined) {
+          return await this.#validateExistingChildActivation(
+            input.workspaceRoot,
+            store,
+            async () => await claimAfterValidation(),
+          );
+        }
+        await this.#config.executionScopeValidator.validate({
+          projectRoot: input.workspaceRoot,
+          subject: await resolveSessionExecutionIdentity({
+            workspaceRoot: input.workspaceRoot,
+            sessionId: validationState.sessionId,
+            sessions: {
+              getOrLoad: this.#config.loadSessionStore,
+              buildSessionTree: this.#config.buildSessionTree,
+            },
+          }),
+        });
+        return await claimAfterValidation();
       };
 
-      return !acquireGoalClaim || claimGoalId === undefined || this.#config.executionClaimCoordinator === undefined
+      return loadedState.parentSessionId !== undefined
+        || !acquireGoalClaim
+        || claimGoalId === undefined
+        || this.#config.executionClaimCoordinator === undefined
         ? await validateAndStart()
         : await this.#config.executionClaimCoordinator.run(claimGoalId, validateAndStart);
     } finally {
@@ -905,7 +969,7 @@ export class SessionExecutionManager {
         isParentDescendantOfRoot: parentState.parentSessionId === undefined
           ? undefined
           : this.#isDescendantOf(workspaceRoot, parentState.sessionId, parentState.rootSessionId),
-        targetAgentName: request.targetAgentName as AgentName,
+        targetAgentName: request.contract.agent_type as AgentName,
       }, start);
     }
     return await start();
@@ -919,6 +983,7 @@ export class SessionExecutionManager {
     const factory = this.#config.sessionAgentManager.getFactory(workspaceRoot);
     const currentDepth = await this.#config.resolveSessionDepth(workspaceRoot, request.parentSessionId);
     const parentAgentName = request.parentStore.getState().agentName;
+    const targetAgentName = request.contract.agent_type as AgentName;
     const parentDefinition = factory.getDefinition(parentAgentName);
     const allowedTools = factory.resolveAllowedTools(parentDefinition, currentDepth);
 
@@ -927,11 +992,11 @@ export class SessionExecutionManager {
     }
 
     const delegateTargets = factory.getDelegateTargetsFor(parentDefinition, currentDepth);
-    if (!delegateTargets.includes(request.targetAgentName)) {
-      throw new DelegateTargetNotAllowedError(parentAgentName, request.targetAgentName, currentDepth);
+    if (!delegateTargets.includes(targetAgentName)) {
+      throw new DelegateTargetNotAllowedError(parentAgentName, targetAgentName, currentDepth);
     }
 
-    const targetDefinition = factory.getDefinition(request.targetAgentName);
+    const targetDefinition = factory.getDefinition(targetAgentName);
     const childPolicy = parentDefinition.childPolicy;
     if (childPolicy === undefined) {
       throw new AgentChildPolicyMissingError(parentAgentName);
@@ -942,7 +1007,13 @@ export class SessionExecutionManager {
     }
 
     const parentState = request.parentStore.getState();
-    const childPrompt = prependSessionGoalDelegationContext(request.prompt, goalContext);
+    const validatedContract = await validateDelegationScopes(request.contract, parentState.cwd);
+    if (targetDefinition.name === "build" && validatedContract.owned_scope.length === 0) {
+      throw new DelegationExecutionAdmissionError(
+        "BUILD_OWNED_SCOPE_REQUIRED",
+        "Build delegation requires at least one owned_scope entry",
+      );
+    }
     const childSessionId = crypto.randomUUID();
     const releaseChildLaunch = this.#reserveChildLaunch(
       workspaceRoot,
@@ -950,16 +1021,47 @@ export class SessionExecutionManager {
       childSessionId,
     );
     let childLaunchReserved = true;
+    let activeSkillNames: readonly string[];
+    try {
+      activeSkillNames = await factory.resolveDelegatedSkillNames(
+        targetDefinition,
+        validatedContract.skills,
+        parentState.cwd,
+      );
+      await this.#assertDelegationDependencies(workspaceRoot, parentState, validatedContract);
+      await this.#validateProspectiveChildExecutionScope(
+        workspaceRoot,
+        parentState,
+        childSessionId,
+        targetDefinition.name,
+      );
+      await this.#assertGoalFamilyToolBatchReady(workspaceRoot, parentState);
+      assertGoalDelegationContext(parentState, goalContext);
+    } catch (error) {
+      releaseChildLaunch();
+      childLaunchReserved = false;
+      throw error;
+    }
+    const delegationContractHash = hashDelegationContract(validatedContract);
+    let buildOwnershipLease = targetDefinition.name === "build"
+      ? this.#buildOwnership.acquire({
+        workspaceRoot,
+        executionCwd: parentState.cwd,
+        sessionId: childSessionId,
+        ownedScope: validatedContract.owned_scope,
+      })
+      : undefined;
+    const childPrompt = prependSessionGoalDelegationContext(validatedContract.objective, goalContext);
     let childSlotReserved = false;
-    const background = request.background ?? false;
-    const childTitle = request.title;
+    const background = validatedContract.background;
+    const childTitle = validatedContract.title;
     const createdAt = Date.now();
     let childStore: StoreApi<SessionStoreState> | undefined;
     let childLinked = false;
     let execution: ActiveSessionExecution | undefined;
+    let newlyActivatedAgent: Agent | undefined;
 
     try {
-      const activeSkillNames = await factory.resolveDelegatedSkillNames(targetDefinition, request.skills, parentState.cwd);
       this.#reserveChildSlot(workspaceRoot, request.parentSessionId, childPolicy.maxConcurrent);
       childSlotReserved = true;
       childStore = this.#config.createSessionStore(childSessionId, workspaceRoot, {
@@ -971,26 +1073,30 @@ export class SessionExecutionManager {
         agentName: targetDefinition.name,
         title: childTitle,
         activeSkillNames,
+        delegationContract: validatedContract,
+        delegationContractHash,
       });
       await this.#config.flushSessionStore(childSessionId, workspaceRoot);
-      await this.#validateChildExecutionScope(workspaceRoot, childStore, true);
 
+      const cachedAgent = this.#config.sessionAgentManager.get(workspaceRoot, childSessionId);
       this.#config.sessionAgentManager.createChildAgent({
         workspaceRoot,
         sessionId: childSessionId,
         store: childStore,
         depth: currentDepth + 1,
       });
+      const activatedAgent = this.#config.sessionAgentManager.get(workspaceRoot, childSessionId);
+      if (cachedAgent !== activatedAgent) newlyActivatedAgent = activatedAgent;
 
-      await this.#assertGoalFamilyToolBatchReady(workspaceRoot, parentState);
-      assertGoalDelegationContext(parentState, goalContext);
       execution = this.#claimExecution({
         slug: "",
         workspaceRoot,
         sessionId: childSessionId,
         input: { kind: "direct", text: childPrompt },
         origin: "tool_call",
-      });
+      }, buildOwnershipLease, newlyActivatedAgent);
+      buildOwnershipLease = undefined;
+      newlyActivatedAgent = undefined;
       await execution.started;
       this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, "running", childTitle, createdAt, background);
       childLinked = true;
@@ -1000,6 +1106,13 @@ export class SessionExecutionManager {
       if (execution !== undefined) {
         this.#cancelExecution(execution, "Child Session link failed");
         await execution.promise.catch(() => undefined);
+      }
+      buildOwnershipLease?.release();
+      if (
+        newlyActivatedAgent !== undefined
+        && this.#config.sessionAgentManager.get(workspaceRoot, childSessionId) === newlyActivatedAgent
+      ) {
+        this.#config.sessionAgentManager.releaseAgent(workspaceRoot, childSessionId);
       }
       if (childLaunchReserved) releaseChildLaunch();
       if (childSlotReserved) this.#releaseChildSlot(workspaceRoot, request.parentSessionId);
@@ -1025,7 +1138,7 @@ export class SessionExecutionManager {
       : () => {};
 
     const result = execution.promise
-      .then(() => toAgentResult(childStore))
+      .then(() => toChildExecutionOutcome(childStore, execution.executionId))
       .finally(() => {
         if (timeout !== undefined) clearTimeout(timeout);
         removeParentAbort();
@@ -1038,7 +1151,7 @@ export class SessionExecutionManager {
         const status = childTerminalStatus(childStore.getState().executions.at(-1), execution.abortController.signal);
         this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, status, childTitle, createdAt, background);
         if (background && childPolicy.terminalReminders && status !== "waiting_for_human") {
-          appendTerminalReminder(request.parentStore, childSessionId, status);
+          appendTerminalReminder(request.parentStore, childSessionId, status, matchingChildResultReceipt(childStore.getState(), execution.executionId));
         }
       });
 
@@ -1075,7 +1188,14 @@ export class SessionExecutionManager {
 
     const now = Date.now();
     const run = childState.executions.at(-1);
-    const { startedAt: _startedAt, endedAt: _endedAt, durationMs: _durationMs, error: _error, ...base } = existing;
+    const {
+      startedAt: _startedAt,
+      endedAt: _endedAt,
+      durationMs: _durationMs,
+      error: _error,
+      resultReceipt: _resultReceipt,
+      ...base
+    } = existing;
     const isTerminal = isTerminalChildSessionStatus(status);
     const runMatchesStatus = childLinkStatusFromExecution(run) === status;
     const startedAt = status === "running"
@@ -1096,13 +1216,16 @@ export class SessionExecutionManager {
         ...(endedAt === undefined ? {} : { endedAt }),
         ...(durationMs === undefined ? {} : { durationMs }),
         ...(isTerminal && runMatchesStatus && run?.error !== undefined ? { error: run.error } : {}),
+        ...(isTerminal && runMatchesStatus && matchingChildResultReceipt(childState, run?.id) !== undefined
+          ? { resultReceipt: matchingChildResultReceipt(childState, run?.id) }
+          : {}),
       },
     });
     if (isTerminal && existing.background) {
       const parentAgentName = parentStore.getState().agentName;
       const parentDefinition = this.#config.sessionAgentManager.getFactory(workspaceRoot).getDefinition(parentAgentName);
       if (parentDefinition.childPolicy?.terminalReminders) {
-        appendTerminalReminder(parentStore, childSessionId, status);
+        appendTerminalReminder(parentStore, childSessionId, status, matchingChildResultReceipt(childState, run?.id));
       }
     }
     await this.#config.flushSessionStore(parentSessionId, workspaceRoot);
@@ -1116,7 +1239,6 @@ export class SessionExecutionManager {
   }
 
   async resumeChildExecution(workspaceRoot: string, request: ResumeChildRequest): Promise<ChildExecutionHandle> {
-    const parentState = request.parentStore.getState();
     const canonicalChild = await this.#config.loadSessionStore(request.sessionId, workspaceRoot)
       .catch(() => { throw new ChildSessionNotFoundError(workspaceRoot, request.sessionId); });
     const canonicalChildState = canonicalChild.getState();
@@ -1127,22 +1249,7 @@ export class SessionExecutionManager {
         canonicalChildState.parentSessionId,
       );
     }
-    const admission = this.#config.goalDelegationAdmission;
-    const resume = async (goalContext?: SessionGoalDelegationContext): Promise<ChildExecutionHandle> => {
-      await this.#assertGoalFamilyToolBatchReady(workspaceRoot, parentState);
-      return await this.#resumeChildExecution(workspaceRoot, request, goalContext);
-    };
-    if (admission !== undefined && parentState.goalId !== undefined) {
-      return await admission.run({
-        workspaceRoot,
-        parent: parentState,
-        isParentDescendantOfRoot: parentState.parentSessionId === undefined
-          ? undefined
-          : this.#isDescendantOf(workspaceRoot, parentState.sessionId, parentState.rootSessionId),
-        targetAgentName: canonicalChildState.agentName,
-      }, resume);
-    }
-    return await resume();
+    return await this.#resumeChildExecution(workspaceRoot, request);
   }
 
   async #assertGoalFamilyToolBatchReady(workspaceRoot: string, state: SessionStoreState): Promise<void> {
@@ -1154,14 +1261,15 @@ export class SessionExecutionManager {
   async #resumeChildExecution(
     workspaceRoot: string,
     request: ResumeChildRequest,
-    goalContext?: SessionGoalDelegationContext,
   ): Promise<ChildExecutionHandle> {
     const key = scopedKey(workspaceRoot, request.sessionId);
     if (this.#active.has(key)) throw new AgentRunningError();
 
     const childStore = await this.#config.loadSessionStore(request.sessionId, workspaceRoot)
       .catch(() => { throw new ChildSessionNotFoundError(workspaceRoot, request.sessionId); });
-    const childState = childStore.getState();
+    const initialAdmission = await this.#validateExistingChildActivation(workspaceRoot, childStore);
+    let childState = initialAdmission.childState;
+    await this.#assertGoalFamilyToolBatchReady(workspaceRoot, initialAdmission.parentState);
     this.#assertSessionToolBatchReady(request.sessionId, childState);
     if (childState.title === null || childState.title.trim().length === 0) {
       throw new Error(`Child Session "${request.sessionId}" has no canonical title`);
@@ -1170,54 +1278,17 @@ export class SessionExecutionManager {
     if (childState.parentSessionId !== request.parentSessionId) {
       throw new ChildSessionParentMismatchError(request.sessionId, request.parentSessionId, childState.parentSessionId);
     }
-    const parentState = request.parentStore.getState();
-    if (childState.rootSessionId !== parentState.rootSessionId) {
-      throw new Error(
-        `Child Session "${request.sessionId}" belongs to root "${childState.rootSessionId}", not "${parentState.rootSessionId}"`,
+    if (initialAdmission.parentStore !== request.parentStore) {
+      throw new DelegationExecutionAdmissionError(
+        "DELEGATION_IDENTITY_REQUIRED",
+        `Resume parent Store for child Session "${request.sessionId}" is not the canonical durable parent`,
       );
     }
-    const parentCwd = parentState.cwd;
-    if (childState.cwd !== parentCwd) {
-      throw new ChildSessionCwdMismatchError(request.sessionId, request.parentSessionId, parentCwd, childState.cwd);
-    }
-    await this.#validateChildExecutionScope(workspaceRoot, childStore, false);
+    const parentState = initialAdmission.parentState;
 
-    const background = request.background ?? false;
-    const parentAgentName = request.parentStore.getState().agentName;
-    const factory = this.#config.sessionAgentManager.getFactory(workspaceRoot);
-    const parentDefinition = factory.getDefinition(parentAgentName);
-    const parentDepth = await this.#config.resolveSessionDepth(workspaceRoot, request.parentSessionId);
-    const childPolicy = parentDefinition.childPolicy;
-    if (childPolicy === undefined) {
-      throw new AgentChildPolicyMissingError(parentAgentName);
-    }
-    if (parentDepth >= childPolicy.maxDepth) {
-      throw new DepthLimitError(parentDepth);
-    }
-    const allowedTools = factory.resolveAllowedTools(parentDefinition, parentDepth);
-    if (!allowedTools.includes("delegate")) {
-      throw new DelegationToolNotAllowedError(parentAgentName, parentDepth);
-    }
-    const delegateTargets = factory.getDelegateTargetsFor(parentDefinition, parentDepth);
-    if (!delegateTargets.includes(childState.agentName)) {
-      throw new DelegateTargetNotAllowedError(parentAgentName, childState.agentName, parentDepth);
-    }
-    const targetDefinition = factory.getDefinition(childState.agentName);
-    const activeSkillNames = await factory.resolveDelegatedSkillNames(
-      targetDefinition,
-      childState.activeSkillNames,
-      childState.cwd,
-    );
-    if (
-      activeSkillNames.length !== childState.activeSkillNames.length
-      || activeSkillNames.some((name, index) => name !== childState.activeSkillNames[index])
-    ) {
-      throw new Error(`Session "${request.sessionId}" active Skills no longer match canonical authorization`);
-    }
-    const childDepth = await this.#config.resolveSessionDepth(workspaceRoot, request.sessionId);
-    if (childDepth !== parentDepth + 1 || childDepth > childPolicy.maxDepth) {
-      throw new DepthLimitError(parentDepth);
-    }
+    const background = request.background;
+    const childPolicy = initialAdmission.childPolicy;
+    const childDepth = initialAdmission.childDepth;
     const existingLink = this.#findChildSessionLink(request.parentStore, request.sessionId);
     const resumeLinkCreatedAt = Date.now();
     const releaseChildLaunch = this.#reserveChildLaunch(
@@ -1227,51 +1298,83 @@ export class SessionExecutionManager {
     );
     let childLaunchReserved = true;
     let childSlotReserved = false;
-    let execution: ActiveSessionExecution;
+    let buildOwnershipLease: BuildOwnershipLease | undefined;
+    let newlyActivatedAgent: Agent | undefined;
+    let goalContext = initialAdmission.goalContext;
+    let execution: ActiveSessionExecution | undefined;
     try {
-      this.#reserveChildSlot(workspaceRoot, request.parentSessionId, childPolicy.maxConcurrent);
-      childSlotReserved = true;
-      await this.#config.sessionAgentManager.getOrCreate(workspaceRoot, request.sessionId);
-      await this.#assertGoalFamilyToolBatchReady(workspaceRoot, parentState);
-      assertGoalDelegationContext(parentState, goalContext);
-      execution = this.#claimExecution({
-        slug: "",
-        workspaceRoot,
-        sessionId: request.sessionId,
-        input: {
-          kind: "direct",
-          text: prependSessionGoalDelegationContext(request.prompt, goalContext),
-        },
-        origin: "tool_call",
+      await this.#validateExistingChildActivation(workspaceRoot, childStore, async (finalAdmission) => {
+        if (finalAdmission.parentStore !== request.parentStore) {
+          throw new DelegationExecutionAdmissionError(
+            "DELEGATION_IDENTITY_REQUIRED",
+            `Resume parent Store for child Session "${request.sessionId}" is not the canonical durable parent`,
+          );
+        }
+        childState = finalAdmission.childState;
+        goalContext = finalAdmission.goalContext;
+        await this.#assertGoalFamilyToolBatchReady(workspaceRoot, finalAdmission.parentState);
+        buildOwnershipLease = childState.agentName === "build"
+          ? this.#acquireBuildOwnership(workspaceRoot, childState)
+          : undefined;
+        this.#reserveChildSlot(workspaceRoot, request.parentSessionId, childPolicy.maxConcurrent);
+        childSlotReserved = true;
+        const cachedAgent = this.#config.sessionAgentManager.get(workspaceRoot, request.sessionId);
+        const activatedAgent = await this.#config.sessionAgentManager.getOrCreate(workspaceRoot, request.sessionId);
+        if (cachedAgent !== activatedAgent) newlyActivatedAgent = activatedAgent;
+        execution = this.#claimExecution({
+          slug: "",
+          workspaceRoot,
+          sessionId: request.sessionId,
+          input: {
+            kind: "direct",
+            text: prependSessionGoalDelegationContext(
+              buildResumeInstruction(request.instruction, request.newEvidence),
+              goalContext,
+            ),
+          },
+          origin: "tool_call",
+        }, buildOwnershipLease, newlyActivatedAgent);
+        buildOwnershipLease = undefined;
+        newlyActivatedAgent = undefined;
+        await execution.started;
+        this.#appendResumeChildLinkStatus(
+          workspaceRoot,
+          request,
+          existingLink,
+          childState.agentName,
+          childTitle,
+          childDepth,
+          "running",
+          resumeLinkCreatedAt,
+        );
+        releaseChildLaunch();
+        childLaunchReserved = false;
       });
-      await execution.started;
-      this.#appendResumeChildLinkStatus(
-        workspaceRoot,
-        request,
-        existingLink,
-        childState.agentName,
-        childTitle,
-        childDepth,
-        "running",
-        resumeLinkCreatedAt,
-      );
-      releaseChildLaunch();
-      childLaunchReserved = false;
     } catch (error) {
+      buildOwnershipLease?.release();
+      if (
+        newlyActivatedAgent !== undefined
+        && this.#config.sessionAgentManager.get(workspaceRoot, request.sessionId) === newlyActivatedAgent
+      ) {
+        this.#config.sessionAgentManager.releaseAgent(workspaceRoot, request.sessionId);
+      }
       if (childLaunchReserved) releaseChildLaunch();
       if (childSlotReserved) this.#releaseChildSlot(workspaceRoot, request.parentSessionId);
       throw error;
     }
 
+    if (execution === undefined) throw new Error(`Child Session "${request.sessionId}" did not claim execution`);
+    const claimedExecution = execution;
+
     const timeout = childPolicy.timeoutMs > 0
-      ? setTimeout(() => execution.abortController.abort(new Error("Sub-agent timed out")), childPolicy.timeoutMs)
+      ? setTimeout(() => claimedExecution.abortController.abort(new Error("Sub-agent timed out")), childPolicy.timeoutMs)
       : undefined;
     const removeParentAbort = childPolicy.abortCascade
-      ? wireAbortCascade(request.parentAbort, execution.abortController)
+      ? wireAbortCascade(request.parentAbort, claimedExecution.abortController)
       : () => {};
 
-    const result = execution.promise
-      .then(() => toAgentResult(childStore))
+    const result = claimedExecution.promise
+      .then(() => toChildExecutionOutcome(childStore, claimedExecution.executionId))
       .finally(() => {
         if (timeout !== undefined) clearTimeout(timeout);
         removeParentAbort();
@@ -1280,8 +1383,8 @@ export class SessionExecutionManager {
           childSlotReserved = false;
         }
         const current = this.#active.get(scopedKey(workspaceRoot, request.sessionId));
-        if (current !== undefined && current.executionToken !== execution.executionToken) return;
-        const status = childTerminalStatus(childStore.getState().executions.at(-1), execution.abortController.signal);
+        if (current !== undefined && current.executionToken !== claimedExecution.executionToken) return;
+        const status = childTerminalStatus(childStore.getState().executions.at(-1), claimedExecution.abortController.signal);
         this.#appendResumeChildLinkStatus(
           workspaceRoot,
           request,
@@ -1293,7 +1396,7 @@ export class SessionExecutionManager {
           resumeLinkCreatedAt,
         );
         if (background && childPolicy.terminalReminders && status !== "waiting_for_human") {
-          appendTerminalReminder(request.parentStore, request.sessionId, status);
+          appendTerminalReminder(request.parentStore, request.sessionId, status, matchingChildResultReceipt(childStore.getState(), claimedExecution.executionId));
         }
       });
 
@@ -1301,7 +1404,7 @@ export class SessionExecutionManager {
       sessionId: request.sessionId,
       store: childStore,
       result,
-      abort: () => this.#cancelExecution(execution, "Sub-agent aborted"),
+      abort: () => this.#cancelExecution(claimedExecution, "Sub-agent aborted"),
     };
   }
 
@@ -1382,7 +1485,15 @@ export class SessionExecutionManager {
       this.#publishSessionRuntimeChange(input.workspaceRoot, execution.rootSessionId);
 
       for (let transitionCount = 0; transitionCount <= MAX_CWD_TRANSITIONS_PER_EXECUTION; transitionCount += 1) {
+        const activationStore = this.#config.getSessionStore(input.sessionId, input.workspaceRoot);
+        if (activationStore?.getState().parentSessionId !== undefined) {
+          await this.#validateExistingChildActivation(input.workspaceRoot, activationStore);
+        }
+        const cachedAgent = this.#config.sessionAgentManager.get(input.workspaceRoot, input.sessionId);
         const agent = await this.#config.sessionAgentManager.getOrCreate(input.workspaceRoot, input.sessionId);
+        if (cachedAgent !== agent && execution.newlyActivatedAgent === undefined) {
+          execution.newlyActivatedAgent = agent;
+        }
         store = agent.store;
         this.#assertSessionStartAllowed(input.workspaceRoot, input.sessionId, agent.store.getState(), input.origin === "tool_batch");
         if (execution.abortController.signal.aborted) {
@@ -1399,6 +1510,10 @@ export class SessionExecutionManager {
           ...(input.extraTools === undefined ? {} : { extraTools: input.extraTools }),
           consumeSteers: async () => await this.#consumeSteers(execution),
         });
+        execution.newlyActivatedAgent = undefined;
+        if (result.status === "completed") {
+          this.#assertChildCompletionReceipt(agent.store.getState(), execution.executionId);
+        }
         if (result.executionControl?.action === "stop_session_family") {
           terminalStatus = result.status;
           terminalError = result.error;
@@ -1440,6 +1555,7 @@ export class SessionExecutionManager {
         });
       }
     } finally {
+      this.#releaseNewlyActivatedAgent(execution);
       this.#closeSteerGate(execution);
       await this.#settleSteers(execution, terminalStatus === "waiting_for_human");
       if (execution.abortController.signal.aborted) {
@@ -1515,9 +1631,19 @@ export class SessionExecutionManager {
     }
   }
 
+  #releaseNewlyActivatedAgent(execution: PendingSessionExecution): void {
+    const agent = execution.newlyActivatedAgent;
+    execution.newlyActivatedAgent = undefined;
+    if (agent === undefined) return;
+    if (this.#config.sessionAgentManager.get(execution.workspaceRoot, execution.sessionId) !== agent) return;
+    this.#config.sessionAgentManager.releaseAgent(execution.workspaceRoot, execution.sessionId);
+  }
+
   #finalizeExecution(key: string, execution: PendingSessionExecution): void {
     const ownedFamilyStopLease = execution.familyStopLease;
     execution.familyStopLease = undefined;
+    const buildOwnershipLease = execution.buildOwnershipLease;
+    execution.buildOwnershipLease = undefined;
     const current = this.#active.get(key);
     const isCurrentExecution = current?.executionToken === execution.executionToken;
     if (isCurrentExecution) {
@@ -1530,6 +1656,7 @@ export class SessionExecutionManager {
     if (ownedFamilyStopLease !== undefined) {
       void this.#finishExecutionOwnedFamilyStop(execution, ownedFamilyStopLease);
     }
+    buildOwnershipLease?.release();
   }
 
   /**
@@ -1952,6 +2079,8 @@ export class SessionExecutionManager {
     background?: boolean,
   ): void {
     const run = this.#config.getSessionStore(childSessionId, workspaceRoot)?.getState().executions.at(-1);
+    const childState = this.#config.getSessionStore(childSessionId, workspaceRoot)?.getState();
+    const resultReceipt = matchingChildResultReceipt(childState, run?.id);
     request.parentStore.getState().append({
       type: "tool-child-session-link",
       link: {
@@ -1961,15 +2090,15 @@ export class SessionExecutionManager {
         childSessionId,
         childAgentName,
         title,
-        ...(request.description === undefined ? {} : { description: request.description }),
         depth,
-        background: background ?? request.background ?? false,
+        background: background ?? request.contract.background,
         status,
         createdAt: createdAt ?? Date.now(),
         ...(run?.startedAt === undefined ? {} : { startedAt: run.startedAt }),
         ...(run?.endedAt === undefined ? {} : { endedAt: run.endedAt }),
         ...(run?.durationMs === undefined ? {} : { durationMs: run.durationMs }),
         ...(run?.error === undefined ? {} : { error: run.error }),
+        ...(resultReceipt === undefined ? {} : { resultReceipt }),
       },
     });
   }
@@ -1985,6 +2114,8 @@ export class SessionExecutionManager {
     createdAt: number,
   ): void {
     const run = this.#config.getSessionStore(request.sessionId, workspaceRoot)?.getState().executions.at(-1);
+    const childState = this.#config.getSessionStore(request.sessionId, workspaceRoot)?.getState();
+    const resultReceipt = matchingChildResultReceipt(childState, run?.id);
     const includeRunMetadata = isTerminalChildSessionStatus(status);
     request.parentStore.getState().append({
       type: "tool-child-session-link",
@@ -1995,15 +2126,15 @@ export class SessionExecutionManager {
         childSessionId: request.sessionId,
         childAgentName,
         title: childTitle,
-        ...(existingLink?.description === undefined ? {} : { description: existingLink.description }),
         depth,
-        background: request.background ?? false,
+        background: request.background,
         status,
         createdAt,
         ...(includeRunMetadata && run?.startedAt !== undefined ? { startedAt: run.startedAt } : {}),
         ...(includeRunMetadata && run?.endedAt !== undefined ? { endedAt: run.endedAt } : {}),
         ...(includeRunMetadata && run?.durationMs !== undefined ? { durationMs: run.durationMs } : {}),
         ...(includeRunMetadata && run?.error !== undefined ? { error: run.error } : {}),
+        ...(includeRunMetadata && resultReceipt !== undefined ? { resultReceipt } : {}),
       },
     });
   }
@@ -2054,6 +2185,174 @@ export class SessionExecutionManager {
     return undefined;
   }
 
+  /**
+   * Revalidates every durable authority needed to activate an existing child.
+   * This is intentionally shared by cold/direct, Queue, Tool Batch, and resume
+   * paths so a warm Agent cache can never substitute for persisted identity.
+   */
+  async #validateExistingChildActivation(
+    workspaceRoot: string,
+    childStore: StoreApi<SessionStoreState>,
+  ): Promise<ExistingChildActivationAdmission>;
+  async #validateExistingChildActivation<T>(
+    workspaceRoot: string,
+    childStore: StoreApi<SessionStoreState>,
+    action: (admission: ExistingChildActivationAdmission) => Promise<T>,
+  ): Promise<T>;
+  async #validateExistingChildActivation<T>(
+    workspaceRoot: string,
+    childStore: StoreApi<SessionStoreState>,
+    action?: (admission: ExistingChildActivationAdmission) => Promise<T>,
+  ): Promise<ExistingChildActivationAdmission | T> {
+    const claimedChild = childActivationIdentitySnapshot(childStore.getState());
+    this.#assertDurableChildDelegationIdentity(childStore.getState());
+    await this.#validatePersistedDelegationContract(workspaceRoot, childStore.getState());
+    const parentSessionId = childStore.getState().parentSessionId;
+    if (parentSessionId === undefined) {
+      throw new DelegationExecutionAdmissionError(
+        "DELEGATION_IDENTITY_REQUIRED",
+        `Session "${childStore.getState().sessionId}" is not a durable child Session`,
+      );
+    }
+
+    const parentStore = await this.#config.loadSessionStore(parentSessionId, workspaceRoot);
+    if (childStore.getState().rootSessionId !== parentStore.getState().rootSessionId) {
+      throw new Error(
+        `Child Session "${childStore.getState().sessionId}" belongs to root "${childStore.getState().rootSessionId}", not "${parentStore.getState().rootSessionId}"`,
+      );
+    }
+    const rootStore = await this.#config.loadSessionStore(childStore.getState().rootSessionId, workspaceRoot);
+    const claimedParent = childActivationIdentitySnapshot(parentStore.getState());
+    const claimedRoot = childActivationIdentitySnapshot(rootStore.getState());
+
+    const validate = async (
+      goalContext?: SessionGoalDelegationContext,
+    ): Promise<ExistingChildActivationAdmission | T> => {
+      const childState = childStore.getState();
+      const parentState = parentStore.getState();
+      const rootState = rootStore.getState();
+      assertStableChildActivationIdentity("child", claimedChild, childActivationIdentitySnapshot(childState));
+      assertStableChildActivationIdentity("parent", claimedParent, childActivationIdentitySnapshot(parentState));
+      assertStableChildActivationIdentity("root", claimedRoot, childActivationIdentitySnapshot(rootState));
+      if (
+        this.#config.getSessionStore(childState.sessionId, workspaceRoot) !== childStore
+        || this.#config.getSessionStore(parentState.sessionId, workspaceRoot) !== parentStore
+        || this.#config.getSessionStore(rootState.sessionId, workspaceRoot) !== rootStore
+      ) {
+        throw new DelegationExecutionAdmissionError(
+          "DELEGATION_IDENTITY_REQUIRED",
+          `Child Session "${childState.sessionId}" activation identity was replaced during admission`,
+        );
+      }
+      if (
+        childState.parentSessionId !== parentState.sessionId
+        || childState.rootSessionId !== parentState.rootSessionId
+        || rootState.sessionId !== childState.rootSessionId
+        || rootState.rootSessionId !== rootState.sessionId
+        || rootState.parentSessionId !== undefined
+      ) {
+        throw new DelegationExecutionAdmissionError(
+          "DELEGATION_IDENTITY_REQUIRED",
+          `Child Session "${childState.sessionId}" does not belong to its exact durable parent and root family`,
+        );
+      }
+      if (childState.cwd !== parentState.cwd || childState.cwd !== rootState.cwd) {
+        throw new ChildSessionCwdMismatchError(
+          childState.sessionId,
+          parentState.sessionId,
+          parentState.cwd,
+          childState.cwd,
+        );
+      }
+      if (childState.goalId !== parentState.goalId || childState.goalId !== rootState.goalId) {
+        throw new DelegationExecutionAdmissionError(
+          "DELEGATION_IDENTITY_REQUIRED",
+          `Child Session "${childState.sessionId}" does not match its durable family Goal identity`,
+        );
+      }
+      const expectedRole = sessionRoleForAgent(childState.agentName);
+      if (expectedRole === undefined || childState.sessionRole !== expectedRole) {
+        throw new DelegationExecutionAdmissionError(
+          "DELEGATION_IDENTITY_REQUIRED",
+          `Child Session "${childState.sessionId}" role does not match Agent ${childState.agentName}`,
+        );
+      }
+      assertGoalDelegationContext(parentState, goalContext);
+
+      const factory = this.#config.sessionAgentManager.getFactory(workspaceRoot);
+      const parentDefinition = factory.getDefinition(parentState.agentName);
+      const parentDepth = await this.#config.resolveSessionDepth(workspaceRoot, parentState.sessionId);
+      const childDepth = await this.#config.resolveSessionDepth(workspaceRoot, childState.sessionId);
+      const childPolicy = parentDefinition.childPolicy;
+      if (childPolicy === undefined) throw new AgentChildPolicyMissingError(parentState.agentName);
+      if (parentDepth >= childPolicy.maxDepth || childDepth !== parentDepth + 1 || childDepth > childPolicy.maxDepth) {
+        throw new DepthLimitError(parentDepth);
+      }
+      const allowedTools = factory.resolveAllowedTools(parentDefinition, parentDepth);
+      if (!allowedTools.includes("delegate")) {
+        throw new DelegationToolNotAllowedError(parentState.agentName, parentDepth);
+      }
+      const delegateTargets = factory.getDelegateTargetsFor(parentDefinition, parentDepth);
+      if (!delegateTargets.includes(childState.agentName)) {
+        throw new DelegateTargetNotAllowedError(parentState.agentName, childState.agentName, parentDepth);
+      }
+      const targetDefinition = factory.getDefinition(childState.agentName);
+      const activeSkillNames = await factory.resolveDelegatedSkillNames(
+        targetDefinition,
+        childState.activeSkillNames,
+        childState.cwd,
+      );
+      if (
+        activeSkillNames.length !== childState.activeSkillNames.length
+        || activeSkillNames.some((name, index) => name !== childState.activeSkillNames[index])
+      ) {
+        throw new DelegationExecutionAdmissionError(
+          "DELEGATION_IDENTITY_REQUIRED",
+          `Child Session "${childState.sessionId}" active Skills no longer match canonical authorization`,
+        );
+      }
+      await this.#assertDelegationDependencies(workspaceRoot, parentState, childState.delegationContract!);
+      await this.#validateChildExecutionScope(workspaceRoot, childStore, false);
+      assertStableChildActivationIdentity("child", claimedChild, childActivationIdentitySnapshot(childStore.getState()));
+      assertStableChildActivationIdentity("parent", claimedParent, childActivationIdentitySnapshot(parentStore.getState()));
+      assertStableChildActivationIdentity("root", claimedRoot, childActivationIdentitySnapshot(rootStore.getState()));
+      const result: ExistingChildActivationAdmission = {
+        childState: childStore.getState(),
+        parentStore,
+        parentState: parentStore.getState(),
+        parentDepth,
+        childDepth,
+        childPolicy,
+        ...(goalContext === undefined ? {} : { goalContext }),
+      };
+      return action === undefined ? result : await action(result);
+    };
+
+    const childState = childStore.getState();
+    if (childState.goalId === undefined) return await validate();
+    const admission = this.#config.goalDelegationAdmission;
+    if (admission === undefined) {
+      throw new DelegationExecutionAdmissionError(
+        "DELEGATION_IDENTITY_REQUIRED",
+        `Goal child Session "${childState.sessionId}" requires role and phase admission`,
+      );
+    }
+    const parentIdentity = await resolveSessionExecutionIdentity({
+      workspaceRoot,
+      sessionId: parentStore.getState().sessionId,
+      sessions: {
+        getOrLoad: this.#config.loadSessionStore,
+        buildSessionTree: this.#config.buildSessionTree,
+      },
+    });
+    return await admission.run({
+      workspaceRoot,
+      parent: parentStore.getState(),
+      isParentDescendantOfRoot: parentIdentity.isDescendantOfRoot,
+      targetAgentName: childState.agentName,
+    }, validate);
+  }
+
   async #validateChildExecutionScope(
     workspaceRoot: string,
     store: StoreApi<SessionStoreState>,
@@ -2084,6 +2383,135 @@ export class SessionExecutionManager {
     }
   }
 
+  #assertDurableChildDelegationIdentity(state: SessionStoreState): void {
+    if (state.parentSessionId === undefined) return;
+    const contract = state.delegationContract;
+    const contractHash = state.delegationContractHash;
+    if (contract === undefined || contractHash === undefined) {
+      throw new DelegationExecutionAdmissionError(
+        "DELEGATION_IDENTITY_REQUIRED",
+        `Child Session "${state.sessionId}" has no V2 delegation identity`,
+      );
+    }
+    if (contract.agent_type !== state.agentName || hashDelegationContract(contract) !== contractHash) {
+      throw new DelegationExecutionAdmissionError(
+        "DELEGATION_IDENTITY_REQUIRED",
+        `Child Session "${state.sessionId}" delegation identity does not match its durable Agent or contract hash`,
+      );
+    }
+    if (state.agentName === "build" && contract.owned_scope.length === 0) {
+      throw new DelegationExecutionAdmissionError(
+        "BUILD_OWNED_SCOPE_REQUIRED",
+        `Build Session "${state.sessionId}" requires at least one durable owned scope`,
+      );
+    }
+  }
+
+  async #validatePersistedDelegationContract(
+    workspaceRoot: string,
+    state: SessionStoreState,
+  ): Promise<void> {
+    if (state.parentSessionId === undefined) return;
+    const validated = await validateDelegationScopes(state.delegationContract!, state.cwd);
+    if (hashDelegationContract(validated) === state.delegationContractHash) return;
+    throw new DelegationExecutionAdmissionError(
+      "DELEGATION_IDENTITY_REQUIRED",
+      `Child Session "${state.sessionId}" delegation scope is not canonical for ${workspaceRoot}`,
+    );
+  }
+
+  async #assertDelegationDependencies(
+    workspaceRoot: string,
+    parentState: SessionStoreState,
+    contract: DelegationContract,
+  ): Promise<void> {
+    const dependencies = contract.depends_on;
+    if (new Set(dependencies).size !== dependencies.length) {
+      throw new DelegationExecutionAdmissionError(
+        "DELEGATION_DEPENDENCY_REQUIRED",
+        "Delegation depends_on must not contain duplicate child Session ids",
+      );
+    }
+    for (const dependencyId of dependencies) {
+      const dependencyStore = await this.#config.loadSessionStore(dependencyId, workspaceRoot).catch(() => undefined);
+      const dependency = dependencyStore?.getState();
+      const execution = dependency?.executions.at(-1);
+      const receipt = execution === undefined
+        ? undefined
+        : dependency?.childResultReceipts.find((candidate) => candidate.executionId === execution.id);
+      if (
+        dependency === undefined
+        || dependency.parentSessionId !== parentState.sessionId
+        || dependency.rootSessionId !== parentState.rootSessionId
+        || execution?.status !== "completed"
+        || receipt === undefined
+        || receipt.delegationContractHash !== dependency.delegationContractHash
+        || receipt.result.status !== "completed"
+      ) {
+        throw new DelegationExecutionAdmissionError(
+          "DELEGATION_DEPENDENCY_REQUIRED",
+          `Delegation dependency "${dependencyId}" must be a completed direct child with a canonical result receipt`,
+        );
+      }
+    }
+  }
+
+  async #validateProspectiveChildExecutionScope(
+    workspaceRoot: string,
+    parentState: SessionStoreState,
+    childSessionId: string,
+    agentName: AgentName,
+  ): Promise<void> {
+    await this.#config.executionScopeValidator.validate({
+      projectRoot: workspaceRoot,
+      subject: {
+        sessionId: childSessionId,
+        rootSessionId: parentState.rootSessionId,
+        parentSessionId: parentState.sessionId,
+        parentAgentName: parentState.agentName,
+        ...(parentState.goalId === undefined ? {} : { isDescendantOfRoot: true, goalId: parentState.goalId }),
+        cwd: parentState.cwd,
+        sessionRole: sessionRoleForAgent(agentName),
+        agentName,
+      },
+    });
+  }
+
+  #acquireBuildOwnership(
+    workspaceRoot: string,
+    state: SessionStoreState,
+  ): BuildOwnershipLease {
+    const contract = state.delegationContract;
+    if (contract === undefined) {
+      throw new DelegationExecutionAdmissionError(
+        "DELEGATION_IDENTITY_REQUIRED",
+        `Build Session "${state.sessionId}" has no durable delegation contract`,
+      );
+    }
+    return this.#buildOwnership.acquire({
+      workspaceRoot,
+      executionCwd: state.cwd,
+      sessionId: state.sessionId,
+      ownedScope: contract.owned_scope,
+    });
+  }
+
+  #assertChildCompletionReceipt(state: SessionStoreState, executionId: string): void {
+    if (state.parentSessionId === undefined) return;
+    const contract = state.delegationContract;
+    const contractHash = state.delegationContractHash;
+    const receipt = state.childResultReceipts.find((candidate) => candidate.executionId === executionId);
+    if (
+      contract === undefined
+      || contractHash === undefined
+      || receipt === undefined
+      || receipt.delegationContractHash !== contractHash
+    ) {
+      throw new ChildResultRequiredError(state.sessionId, executionId);
+    }
+    validateChildResultAgainstContract(receipt.result, contract);
+  }
+
 }
 
 interface ExecutionScopeSnapshot {
@@ -2092,6 +2520,45 @@ interface ExecutionScopeSnapshot {
   readonly rootSessionId: string;
   readonly parentSessionId: string | undefined;
   readonly sessionRole: SessionRole | undefined;
+}
+
+interface ChildActivationIdentitySnapshot extends ExecutionScopeSnapshot {
+  readonly sessionId: string;
+  readonly agentName: AgentName;
+  readonly title: string | null;
+  readonly activeSkillNames: readonly string[];
+  readonly delegationContractHash: string | undefined;
+}
+
+function childActivationIdentitySnapshot(state: SessionStoreState): ChildActivationIdentitySnapshot {
+  return {
+    sessionId: state.sessionId,
+    agentName: state.agentName,
+    title: state.title,
+    activeSkillNames: [...state.activeSkillNames],
+    delegationContractHash: state.delegationContractHash,
+    ...executionScopeSnapshot(state),
+  };
+}
+
+function assertStableChildActivationIdentity(
+  label: "child" | "parent" | "root",
+  expected: ChildActivationIdentitySnapshot,
+  actual: ChildActivationIdentitySnapshot,
+): void {
+  if (
+    expected.sessionId === actual.sessionId
+    && expected.agentName === actual.agentName
+    && expected.title === actual.title
+    && expected.delegationContractHash === actual.delegationContractHash
+    && sameExecutionScopeSnapshot(expected, actual)
+    && expected.activeSkillNames.length === actual.activeSkillNames.length
+    && expected.activeSkillNames.every((name, index) => name === actual.activeSkillNames[index])
+  ) return;
+  throw new DelegationExecutionAdmissionError(
+    "DELEGATION_IDENTITY_REQUIRED",
+    `Durable ${label} Session identity changed during child activation admission`,
+  );
 }
 
 function executionScopeSnapshot(state: SessionStoreState): ExecutionScopeSnapshot {
@@ -2217,6 +2684,7 @@ function appendTerminalReminder(
   parentStore: StoreApi<SessionStoreState>,
   sessionId: string,
   status: SubAgentTerminalStatus,
+  resultReceipt?: ChildResultReceipt,
 ): void {
   const reminder: Reminder = {
     id: crypto.randomUUID(),
@@ -2231,6 +2699,7 @@ function appendTerminalReminder(
     sessionId,
     terminalState: status,
     content: `Sub-agent ${sessionId} ${formatStatus(status)}. Use background_output(session_id="${sessionId}") to read the result.`,
+    ...(resultReceipt === undefined ? {} : { payload: { resultReceipt } }),
     createdAt: Date.now(),
     consumedAt: null,
     targetSessionId: parentStore.getState().sessionId,
@@ -2238,36 +2707,42 @@ function appendTerminalReminder(
   parentStore.getState().append({ type: "reminder", reminder });
 }
 
+function matchingChildResultReceipt(
+  state: Pick<SessionStoreState, "childResultReceipts"> | undefined,
+  executionId: string | undefined,
+): ChildResultReceipt | undefined {
+  if (state === undefined || executionId === undefined) return undefined;
+  return state.childResultReceipts.find((receipt) => receipt.executionId === executionId);
+}
+
 function formatStatus(status: SubAgentTerminalStatus): string {
   if (status === "timed_out") return "timed out";
   return status;
 }
 
-function toAgentResult(store: StoreApi<SessionStoreState>): AgentResult {
+function toChildExecutionOutcome(
+  store: StoreApi<SessionStoreState>,
+  executionId: string,
+): ChildExecutionOutcome {
   const state = store.getState();
-  const execution = state.executions.at(-1);
+  const execution = state.executions.find((candidate) => candidate.id === executionId);
   if (execution === undefined || execution.status === "running") {
-    throw new Error(`Session "${state.sessionId}" has no terminal execution result`);
+    throw new Error(`Session "${state.sessionId}" has no terminal execution outcome for "${executionId}"`);
   }
+  const resultReceipt = matchingChildResultReceipt(state, executionId);
   return {
-    text: getLastAssistantText(state.messages),
-    steps: state.steps.length,
-    status: execution.status,
-    ...(execution.error === undefined ? {} : { error: execution.error }),
+    executionStatus: execution.status,
+    ...(resultReceipt === undefined ? {} : { resultReceipt }),
+    ...(execution.error === undefined ? {} : { terminalError: execution.error }),
   };
 }
 
-function getLastAssistantText(messages: readonly StoredMessage[]): string {
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const message = messages[i];
-    if (message.role !== "assistant") continue;
-    const text = message.parts
-      .filter((part) => part.type === "text")
-      .map((part) => part.text)
-      .join("");
-    if (text.length > 0) return text;
-  }
-  return "";
+function buildResumeInstruction(
+  instruction: string,
+  newEvidence: ResumeChildRequest["newEvidence"],
+): string {
+  if (newEvidence.length === 0) return instruction;
+  return `${instruction}\n\nNew evidence:\n${newEvidence.map((item) => `- ${item.claim}: ${item.ref}`).join("\n")}`;
 }
 
 async function waitForExecutionToStop(execution: ActiveSessionExecution | PendingSessionExecution): Promise<void> {

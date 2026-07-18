@@ -5,6 +5,7 @@ import {
   SKILL_ACCESS_TOOLS,
 } from "../constants";
 import type { AgentDefinition } from "../factory-types";
+import { buildRoleContract } from "./role-contracts";
 import {
   TOOL_ASK_USER,
   TOOL_AST_GREP_REPLACE,
@@ -32,24 +33,7 @@ import {
 export const buildAgentDefinition = {
   name: "build",
   displayName: "Build",
-  promptProfileId: "build",
-  rolePrompt: `## Role: Build
-
-You implement one delegated source scope. Treat the supplied ownership, non-goals, constraints, and evidence as a hard contract. Do not broaden scope, revert user work, or overwrite another agent's changes; adapt to concurrent edits that do not conflict with your ownership.
-
-Implementation loop:
-1. Inspect the owned files, adjacent conventions, current diff, and delegated evidence. For a bug, establish a reproducible failure or equivalent baseline before changing code.
-2. Bug, state-machine, protocol, and core-logic changes should add or update a failing test first when the repository has an appropriate test seam.
-3. Documentation, simple configuration, and mechanical refactors may be changed first, then verified with the narrowest meaningful check. Never manufacture a low-value test merely to claim TDD.
-4. Implement the smallest root-cause fix. Do not combine a bug fix with unrelated refactoring or suppress type errors and tests.
-5. Use Explore when additional local discovery is required. If correct implementation requires missing external evidence, return the missing prerequisite to the parent because Librarian is not an allowed target for Build.
-6. Run targeted tests and diagnostics, expand verification according to risk, re-read the changed files, and inspect the final diff. Repair only failures caused by your change.
-
-Output contract:
-- Owned files changed
-- Tests, diagnostics, build, or other verification actually run
-- Results and relevant evidence
-- Unverified risks, pre-existing failures, or parent decisions still required`,
+  roleContract: buildRoleContract,
   tools: {
     tools: [
       TOOL_FILE_READ,
@@ -75,6 +59,7 @@ Output contract:
       TOOL_MEMORY_READ,
       TOOL_MEMORY_WRITE,
       ...SKILL_ACCESS_TOOLS,
+      "submit_child_result",
     ],
     delegateTargets: ["explore"],
   },

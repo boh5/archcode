@@ -28,6 +28,7 @@ function createProjection(overrides: Partial<SessionProjection> = {}): SessionPr
     todos: [],
     reminders: [],
     childSessionLinks: [],
+    childResultReceipts: [],
     stats: createEmptySessionStats(),
     executions: [],
     executionCount: 0,
@@ -114,7 +115,6 @@ function makeChildSessionLink(overrides: Partial<ToolChildSessionLink> = {}): To
     childSessionId: "child-1",
     childAgentName: "explore",
     title: "Child title",
-    description: "Investigate a thing",
     depth: 1,
     background: true,
     status: "linked",
@@ -554,7 +554,6 @@ describe("reduceStreamEvent", () => {
       startedAt: 110,
       endedAt: 210,
       durationMs: 100,
-      summary: "Done",
     });
 
     const state = applyEvents(createProjection(), [
@@ -563,6 +562,25 @@ describe("reduceStreamEvent", () => {
     ]);
 
     expect(state.childSessionLinks).toEqual([completed]);
+  });
+
+  test("stores one canonical child result receipt per execution", () => {
+    const receipt = {
+      executionId: "execution-child-1",
+      delegationContractHash: "a".repeat(64),
+      submittedAt: 210,
+      result: {
+        status: "completed" as const,
+        summary: "Done",
+        deliverables: [],
+        evidence: [],
+        criteria: [{ id: "ac-1", status: "passed" as const, evidenceRefs: ["diff:1"] }],
+        verification: [],
+        unresolved: [],
+      },
+    };
+    const state = applyEvents(createProjection(), [{ type: "child-result", receipt }]);
+    expect(state.childResultReceipts).toEqual([receipt]);
   });
 
   test("does not collapse links that share childSessionId but have different parent tool calls", () => {
@@ -1335,6 +1353,24 @@ describe("reduceStreamEvent", () => {
     const replayedEvents = JSON.parse(JSON.stringify(events)) as StreamEvent[];
 
     expect(applyEvents(createProjection(), replayedEvents)).toEqual(applyEvents(createProjection(), events));
+  });
+
+  test("persists dedicated Prompt traces in projection order", () => {
+    const trace = {
+      version: "2" as const,
+      status: "compiled" as const,
+      hash: "a".repeat(64),
+      sections: [{ name: "Runtime Envelope", source: "runtime/snapshot", hash: "b".repeat(64) }],
+      skills: { status: "present" as const, active: [{ name: "review-work", source: "/skills/review-work/SKILL.md" }] },
+      visibleTools: ["file_read"],
+      agentsMd: "present" as const,
+      memory: "absent" as const,
+      mcp: { context7: "partial-warning" as const },
+      warnings: ["partial discovery"],
+    };
+    const state = applyEvents(createProjection(), [{ type: "prompt-trace", trace }]);
+
+    expect(state.promptTraces).toEqual([trace]);
   });
 
   test("recoverable attempts do not end execution and execution errors remain after recovery", () => {

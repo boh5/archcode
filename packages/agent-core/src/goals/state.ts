@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 
 import { PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
 import type {
+  ChildResult,
   GoalBudgetApproval as ProtocolGoalBudgetApproval,
   GoalBudgetSummary as ProtocolGoalBudgetSummary,
   GoalEvidenceRef as ProtocolGoalEvidenceRef,
@@ -177,12 +178,15 @@ export interface GoalReviewerAuthorization {
 }
 
 export interface GoalFinalizeReviewInput {
+  readonly executionId: string;
+  readonly delegationContractHash: string;
   readonly expectedReviewGeneration: number;
   readonly verdict: GoalReviewVerdict;
   readonly summary: string;
   readonly evidenceRefs?: readonly GoalEvidenceRef[];
   readonly unresolvedItems?: readonly string[];
   readonly finalSummary?: string;
+  readonly result: ChildResult;
   readonly authorization: GoalReviewerAuthorization;
 }
 
@@ -662,6 +666,8 @@ export class GoalStateManager {
 
     const now = new Date().toISOString();
     const review = GoalReviewReceiptSchema.parse({
+      executionId: input.executionId,
+      delegationContractHash: input.delegationContractHash,
       reviewGeneration: state.reviewGeneration,
       verdict: input.verdict,
       summary: input.summary,
@@ -669,6 +675,7 @@ export class GoalStateManager {
       unresolvedItems: input.unresolvedItems,
       reviewerSessionId: input.authorization.reviewerSessionId,
       decidedAt: now,
+      result: input.result,
     });
     const status = input.verdict === "DONE" ? "done" : "not_done";
     this.assertTransition(state, status);

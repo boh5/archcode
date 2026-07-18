@@ -48,9 +48,25 @@ export interface ToolAttemptMetadata {
   destructive: boolean;
 }
 
-export interface ToolExecutionControl {
-  readonly action: "stop_session_family";
-  readonly reason: "goal_cancelled";
+export type ToolExecutionControl =
+  | {
+      readonly action: "stop_session_family";
+      readonly reason: "goal_cancelled" | "goal_cancelled_cleanup_incomplete";
+    }
+  | {
+      readonly action: "complete_execution";
+      readonly reason: "child_result_submitted" | "goal_review_finalized";
+    }
+  | {
+      readonly action: "fail_execution";
+      readonly reason: "child_result_required";
+      readonly error: string;
+    };
+
+export interface StructuredResultCorrectionGate {
+  readonly policy: "strict" | "best_effort";
+  readonly submission: "submit_child_result" | "goal_manage.finalize_review";
+  recordFailure(error: Error): ToolExecutionResult;
 }
 
 export interface ToolExecutionContext {
@@ -92,6 +108,8 @@ export interface ToolExecutionContext {
   onInputResolved?: (redactedInput: unknown) => void;
   /** Called immediately before an effectful tool's execute() can perform side effects. */
   onToolAttempt?: (attempt: ToolAttemptMetadata) => MaybePromise<void>;
+  /** Execution-scoped correction gate for the canonical structured result submission. */
+  structuredResultCorrection?: StructuredResultCorrectionGate;
 }
 
 type ToolExecutionContextInput = ToolExecutionContext;

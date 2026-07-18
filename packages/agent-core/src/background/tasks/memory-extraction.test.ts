@@ -40,6 +40,7 @@ function makeModelInfo(): ModelInfo {
     displayName: "Test Model",
     limit: { context: 4096, output: 1024 },
     modalities: { input: ["text"], output: ["text"] },
+          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
     providerId: "test",
     modelId: "test-model",
     qualifiedId: "test:test-model",

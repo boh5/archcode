@@ -31,7 +31,9 @@ export type GoalToolAuthorizationCode =
   | "GOAL_WORKTREE_REQUIRED"
   | "GOAL_WORKTREE_MISMATCH"
   | "GOAL_WORKTREE_CHANGED"
-  | "GOAL_BUILD_ACTIVE";
+  | "GOAL_BUILD_ACTIVE"
+  | "GOAL_REVIEW_EXECUTION_IDENTITY_REQUIRED"
+  | "GOAL_REVIEW_RESULT_INVALID";
 
 export interface GoalToolAuthorizationContext {
   readonly sessionId: string;

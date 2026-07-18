@@ -1,0 +1,109 @@
+import type { ModelCapabilities } from "../config";
+import { createToolErrorResult } from "./errors";
+import type {
+  StructuredResultCorrectionGate,
+  ToolExecutionResult,
+} from "./types";
+import type { SessionStoreState } from "../store/types";
+
+export type StructuredResultSubmission = StructuredResultCorrectionGate["submission"];
+
+const SUBMISSION_COPY: Record<StructuredResultSubmission, {
+  readonly label: string;
+  readonly tool: string;
+}> = {
+  submit_child_result: {
+    label: "Canonical child result",
+    tool: "submit_child_result",
+  },
+  "goal_manage.finalize_review": {
+    label: "Canonical Goal review result",
+    tool: "goal_manage.finalize_review",
+  },
+};
+
+export function createStructuredResultCorrectionGate(
+  policy: ModelCapabilities["structuredToolCalls"],
+  initialFailures = 0,
+  submission: StructuredResultSubmission = "submit_child_result",
+): StructuredResultCorrectionGate {
+  let failures = initialFailures;
+  const copy = SUBMISSION_COPY[submission];
+  return {
+    policy,
+    submission,
+    recordFailure(error: Error): ToolExecutionResult {
+      failures += 1;
+      const terminate = policy === "strict" || failures > 1;
+      const result = createToolErrorResult({
+        kind: "execution",
+        code: terminate
+          ? "CHILD_RESULT_REQUIRED"
+          : "STRUCTURED_RESULT_CORRECTION_REQUIRED",
+        name: error.name,
+        message: terminate
+          ? `${copy.label} rejected: ${error.message}`
+          : `${copy.label} rejected; one structured correction remains: ${error.message}`,
+        hint: terminate
+          ? `The child Execution is terminating without a valid result; free text cannot replace ${copy.tool}.`
+          : `Retry ${copy.tool} once with schema-valid input that exactly satisfies the durable delegation contract.`,
+        error,
+      });
+      if (!terminate) return result;
+      return {
+        ...result,
+        meta: {
+          ...result.meta,
+          executionControl: {
+            action: "fail_execution",
+            reason: "child_result_required",
+            error: "CHILD_RESULT_REQUIRED: " + error.message,
+          },
+        },
+      };
+    },
+  };
+}
+
+export function countStructuredResultFailures(
+  state: Pick<SessionStoreState, "currentExecutionId" | "toolBatches">,
+  submission: StructuredResultSubmission = "submit_child_result",
+): number {
+  const executionId = state.currentExecutionId;
+  if (executionId === undefined) return 0;
+  let failures = 0;
+  for (const batch of state.toolBatches) {
+    if (batch.executionId !== executionId) continue;
+    for (const call of batch.calls) {
+      if (!isStructuredResultSubmission(call.toolName, call.input, submission) || call.result?.isError !== true) continue;
+      const code = toolErrorCode(call.result.output);
+      if (
+        code === "STRUCTURED_RESULT_CORRECTION_REQUIRED"
+        || code === "CHILD_RESULT_REQUIRED"
+      ) failures += 1;
+    }
+  }
+  return failures;
+}
+
+export function isStructuredResultSubmission(
+  toolName: string,
+  input: unknown,
+  submission: StructuredResultSubmission,
+): boolean {
+  if (submission === "submit_child_result") return toolName === "submit_child_result";
+  return toolName === "goal_manage"
+    && typeof input === "object"
+    && input !== null
+    && "action" in input
+    && input.action === "finalize_review";
+}
+
+function toolErrorCode(output: string): string | undefined {
+  try {
+    const value = JSON.parse(output) as { code?: unknown };
+    return typeof value.code === "string" ? value.code : undefined;
+  } catch {
+    return undefined;
+  }
+}

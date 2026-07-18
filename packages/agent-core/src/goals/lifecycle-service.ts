@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 
-import type { GoalEvidenceRef, GoalReviewVerdict, GoalState } from "@archcode/protocol";
+import type { ChildResult, GoalEvidenceRef, GoalReviewVerdict, GoalState } from "@archcode/protocol";
 
 import type { ActiveSessionExecution, StartSessionExecutionInput } from "../execution";
 import type { SessionFile } from "../store/helpers";
@@ -41,12 +41,15 @@ export interface GoalLifecycleServiceOptions {
 }
 
 export interface GoalLifecycleFinalizeInput {
+  readonly executionId: string;
+  readonly delegationContractHash: string;
   readonly expectedReviewGeneration: number;
   readonly verdict: GoalReviewVerdict;
   readonly summary: string;
   readonly evidenceRefs?: readonly GoalEvidenceRef[];
   readonly unresolvedItems?: readonly string[];
   readonly finalSummary?: string;
+  readonly result: ChildResult;
   readonly authorization: GoalReviewerAuthorization;
 }
 

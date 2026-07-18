@@ -29,6 +29,8 @@ export interface QueryLoopOptions {
   askUser?: AskUserCallback;
   abort?: AbortSignal;
   systemPrompt?: string;
+  /** Rebuilds lifecycle-sensitive prompt state immediately before every model call. */
+  resolveSystemPrompt?: () => Promise<string>;
   maxSteps?: number;
   store: StoreApi<SessionStoreState>;
   /** Moves this Execution's accepted steer snapshots into the canonical transcript. */

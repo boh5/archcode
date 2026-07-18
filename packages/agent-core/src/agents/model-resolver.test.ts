@@ -15,6 +15,7 @@ const baseConfig: ArchCodeConfig = {
           name: "Main Model",
           limit: { context: 1000, output: 100 },
           modalities: { input: ["text"], output: ["text"] },
+          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
           options: {
             maxOutputTokens: 100,
             temperature: 0.2,
@@ -35,6 +36,7 @@ const baseConfig: ArchCodeConfig = {
           name: "Bare Model",
           limit: { context: 2000, output: 200 },
           modalities: { input: ["text"], output: ["text"] },
+          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
         },
       },
     },

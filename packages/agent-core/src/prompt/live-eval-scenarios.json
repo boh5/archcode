@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "scenarios": [
+    {
+      "id": "small-engineer-direct",
+      "agent": "engineer",
+      "executionMode": "ordinary-root",
+      "request": "Correct one obvious typo in a single known file and verify it.",
+      "expectedAny": ["direct"],
+      "forbidden": ["delegate", "child"]
+    },
+    {
+      "id": "independent-engineer-parallel",
+      "agent": "engineer",
+      "executionMode": "ordinary-root",
+      "request": "Collect independent local-code and external-documentation evidence; neither depends on the other and neither writes files.",
+      "expectedAny": ["parallel"],
+      "forbidden": ["serial"]
+    },
+    {
+      "id": "dependent-engineer-serial",
+      "agent": "engineer",
+      "executionMode": "ordinary-root",
+      "request": "Implement an API, then review its resulting diff. The review cannot start before implementation exists.",
+      "expectedAny": ["serial", "after", "then"],
+      "forbidden": ["parallel"]
+    },
+    {
+      "id": "build-child-result",
+      "agent": "build",
+      "executionMode": "ordinary-child",
+      "request": "Finish the delegated scope and explain the required terminal delivery action.",
+      "expectedAny": ["submit_child_result"],
+      "forbidden": ["free-text completion"]
+    },
+    {
+      "id": "ordinary-reviewer-result",
+      "agent": "reviewer",
+      "executionMode": "ordinary-child",
+      "request": "Verify the ordinary delegated review and explain the canonical submission action.",
+      "expectedAny": ["submit_child_result"],
+      "forbidden": ["finalize_review"]
+    },
+    {
+      "id": "goal-reviewer-finalize",
+      "agent": "reviewer",
+      "executionMode": "goal-review",
+      "request": "Verify the Goal review and explain the sole canonical finalization action.",
+      "expectedAny": ["finalize_review"],
+      "forbidden": ["submit_child_result"]
+    }
+  ]
+}

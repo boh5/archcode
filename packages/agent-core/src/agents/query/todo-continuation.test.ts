@@ -287,6 +287,7 @@ function stateWith(overrides: Partial<SessionStoreState>): SessionStoreState {
   todos: [],
   reminders: [],
   childSessionLinks: [],
+  childResultReceipts: [],
   toolBatches: [],
   isRunning: false,
   isStreamingModel: false,

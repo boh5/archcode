@@ -35,6 +35,7 @@ function config(): Record<string, unknown> {
             name: "Test model",
             limit: { context: 128000, output: 8192 },
             modalities: { input: ["text"], output: ["text"] },
+          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
             variants: { fast: { maxOutputTokens: 2048 } },
           },
         },

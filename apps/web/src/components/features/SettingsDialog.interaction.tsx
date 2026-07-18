@@ -13,7 +13,7 @@ let container: HTMLDivElement;
 const snapshot: ServerConfigSnapshot = {
   revision: "r1", configPath: "/home/a/.archcode/config.json", restartRequired: false,
   config: {
-    provider: { local: { npm: "@ai-sdk/openai-compatible", name: "Local", options: { baseURL: "http://localhost/v1", apiKey: { action: "preserve" }, headers: { Authorization: { action: "preserve" } } }, models: { demo: { name: "Demo", limit: { context: 1000, output: 500 }, modalities: { input: ["text"], output: ["text"] }, variants: { fast: { temperature: 0.1 } } } } } },
+    provider: { local: { npm: "@ai-sdk/openai-compatible", name: "Local", options: { baseURL: "http://localhost/v1", apiKey: { action: "preserve" }, headers: { Authorization: { action: "preserve" } } }, models: { demo: { name: "Demo", limit: { context: 1000, output: 500 }, modalities: { input: ["text"], output: ["text"] }, capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "rich" }, variants: { fast: { temperature: 0.1 } } } } } },
     agents: { engineer: { model: "local:demo" }, goal_lead: { model: "local:demo" }, plan: { model: "local:demo" }, build: { model: "local:demo" }, reviewer: { model: "local:demo" }, explore: { model: "local:demo" }, librarian: { model: "local:demo" }, shaper: { model: "local:demo" } },
     mcp: { servers: { custom: { url: "https://example.com/mcp", headers: { Authorization: { action: "preserve" } } } } },
   },
@@ -102,6 +102,9 @@ describe("SettingsDialog interactions", () => {
     expect(container.textContent).toContain("model-2");
     expect(input("Default options JSON")).not.toBeNull();
     expect(input("Variants JSON")).not.toBeNull();
+    expect(input("Multi-tool calls", 1).value).toBe("single");
+    expect(input("Structured tool calls", 1).value).toBe("best_effort");
+    expect(input("Instruction tier", 1).value).toBe("standard");
   });
 
   test("never overwrites sparse generated provider, model, or MCP identifiers", () => {
@@ -131,8 +134,32 @@ describe("SettingsDialog interactions", () => {
     expect(input("Output limit").value).toBe("500");
     expect(input("Input modalities").value).toBe("text");
     expect(input("Output modalities").value).toBe("text");
+    expect(input("Multi-tool calls").value).toBe("parallel");
+    expect(input("Structured tool calls").value).toBe("strict");
+    expect(input("Instruction tier").value).toBe("rich");
     expect(container.textContent).not.toContain("Pricing");
     expect([...container.querySelectorAll("label")].some((label) => label.querySelector("span")?.textContent === "maxOutputTokens")).toBe(false);
+  });
+
+  test("persists explicit model capability selections", async () => {
+    let request: Record<string, unknown> | undefined;
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async (_url: string, init?: RequestInit) => {
+      request = JSON.parse(String(init?.body));
+      return Response.json(successfulSaveResponse());
+    }) });
+    act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
+
+    change(input("Multi-tool calls"), "single");
+    change(input("Structured tool calls"), "best_effort");
+    change(input("Instruction tier"), "compact");
+    await act(async () => { click("Save changes"); await Promise.resolve(); });
+
+    const config = request?.config as typeof snapshot.config;
+    expect(config.provider.local.models.demo.capabilities).toEqual({
+      multiToolCallEmission: "single",
+      structuredToolCalls: "best_effort",
+      instructionTier: "compact",
+    });
   });
 
   test("keeps a dirty Models draft through navigation and enables save", () => {
@@ -248,9 +275,8 @@ describe("SettingsDialog interactions", () => {
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
     change(input("Variants JSON"), JSON.stringify({ deep: { temperature: 0.2 } }));
     click("Agents");
-    const selects = container.querySelectorAll("select");
-    expect((selects[0] as HTMLSelectElement).value).toBe("local:demo");
-    expect([...selects[1].querySelectorAll("option")].map((option) => option.value)).toContain("deep");
+    expect(input("Model").value).toBe("local:demo");
+    expect([...(input("Variant") as HTMLSelectElement).querySelectorAll("option")].map((option) => option.value)).toContain("deep");
   });
 
   test("locks secret-bearing identities and still renames entries without preserved secrets", () => {
@@ -378,7 +404,7 @@ describe("SettingsDialog interactions", () => {
 
 
   test("keeps built-in MCP rows locked in the rendered DOM", () => {
-    act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{ context7: { state: "ready", toolCount: 2 } }} onReload={async () => {}} /></DialogRoot>));
+    act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{ context7: { state: "ready", toolCount: 2, warningCount: 0 } }} onReload={async () => {}} /></DialogRoot>));
     click("MCP");
     expect(container.textContent).toContain("Built-in");
     expect(container.textContent).toContain("Ready");

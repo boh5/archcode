@@ -15,7 +15,8 @@
     "build": "bun run typecheck && bun run scripts/build.ts",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
-    "tool-contract:measure": "bun run --cwd packages/agent-core tool-contract:measure"
+    "tool-contract:measure": "bun run --cwd packages/agent-core tool-contract:measure",
+    "prompt:live-eval": "bun run packages/agent-core/scripts/prompt-live-eval.ts"
   },
   "dependencies": {
     "@archcode/agent-core": "workspace:*",

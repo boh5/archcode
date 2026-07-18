@@ -1,8 +1,11 @@
 import type {
+  ChildResultReceipt,
   GoalEvidenceRef as ProtocolGoalEvidenceRef,
   GoalReviewReceipt as ProtocolGoalReviewReceipt,
 } from "@archcode/protocol";
 import { z } from "zod/v4";
+
+import { ChildResultSchema } from "../delegation/schema";
 
 export const GoalEvidenceSummarySchema = z.string().trim().min(1).max(1_000);
 export const GoalReviewSummarySchema = z.string().trim().min(1).max(4_000);
@@ -20,6 +23,8 @@ export const GoalEvidenceRefSchema = z.strictObject({
 }) satisfies z.ZodType<ProtocolGoalEvidenceRef>;
 
 export const GoalReviewReceiptSchema = z.strictObject({
+  executionId: z.string().trim().min(1),
+  delegationContractHash: z.string().regex(/^[a-f0-9]{64}$/),
   reviewGeneration: z.number().int().nonnegative(),
   verdict: z.enum(["DONE", "NOT_DONE"]),
   summary: GoalReviewSummarySchema,
@@ -27,4 +32,15 @@ export const GoalReviewReceiptSchema = z.strictObject({
   unresolvedItems: z.array(z.string().trim().min(1).max(1_000)).max(20).optional(),
   reviewerSessionId: z.string().trim().min(1),
   decidedAt: z.string().datetime({ offset: true }),
+  result: ChildResultSchema,
 }) satisfies z.ZodType<ProtocolGoalReviewReceipt>;
+
+/** Deterministic non-authoritative Session projection of the Goal-owned receipt. */
+export function projectGoalReviewReceipt(receipt: ProtocolGoalReviewReceipt): ChildResultReceipt {
+  return {
+    executionId: receipt.executionId,
+    delegationContractHash: receipt.delegationContractHash,
+    submittedAt: Date.parse(receipt.decidedAt),
+    result: receipt.result,
+  };
+}

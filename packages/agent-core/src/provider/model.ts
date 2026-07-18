@@ -1,6 +1,7 @@
 import type { LanguageModelV3 } from "@ai-sdk/provider";
 import type {
   ModelConfig,
+  ModelCapabilities,
   ModelLimit,
   ModelModalities,
 } from "../config/index";
@@ -25,6 +26,9 @@ export class ModelInfo {
   /** Supported input/output modalities. */
   readonly modalities: ModelModalities;
 
+  /** Explicit model behavior used only by the small prompt overlay. */
+  readonly capabilities: ModelCapabilities;
+
   /** The provider ID this model belongs to (e.g. "xxx"). */
   readonly providerId: string;
 
@@ -41,6 +45,7 @@ export class ModelInfo {
     this.displayName = options.config.name;
     this.limit = options.config.limit;
     this.modalities = options.config.modalities;
+    this.capabilities = options.config.capabilities;
     this.providerId = options.providerId;
     this.modelId = options.modelId;
   }

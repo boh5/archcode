@@ -1,3 +1,5 @@
+import type { ChildResult, ChildResultReceipt, DelegationContract } from "./delegation";
+
 export interface ExecutionStartEvent {
   type: "execution-start";
   executionId?: string;
@@ -254,7 +256,6 @@ export interface ToolChildSessionLink {
   childSessionId: string;
   childAgentName: string;
   title: string;
-  description?: string;
   /** Display-only projection derived from the child's persisted parent chain. */
   depth: number;
   background: boolean;
@@ -263,13 +264,19 @@ export interface ToolChildSessionLink {
   startedAt?: number;
   endedAt?: number;
   durationMs?: number;
-  summary?: string;
+  resultReceipt?: ChildResultReceipt;
   error?: string;
 }
 
 export interface ToolChildSessionLinkEvent {
   type: "tool-child-session-link";
   link: ToolChildSessionLink;
+}
+
+/** Canonical durable result submission for one child execution. */
+export interface ChildResultEvent {
+  type: "child-result";
+  receipt: ChildResultReceipt;
 }
 
 export interface CompactEvent {
@@ -405,6 +412,37 @@ export interface ExecutionErrorEvent {
   error: string;
 }
 
+export type PromptSourceStatus = "present" | "absent" | "error";
+export type PromptMcpStatus = "pending" | "ready" | "ready-zero" | "partial-warning" | "failed";
+
+export interface PromptTraceSectionSnapshot {
+  name: string;
+  source: string;
+  hash: string;
+}
+
+/** Durable audit record for the exact system Prompt used by one model call. */
+export interface PromptTraceSnapshot {
+  version: "2";
+  status: "compiled" | "error";
+  hash: string;
+  sections: PromptTraceSectionSnapshot[];
+  skills: {
+    status: "present" | "absent" | "error";
+    active: { name: string; source: string }[];
+  };
+  visibleTools: string[];
+  agentsMd: PromptSourceStatus;
+  memory: PromptSourceStatus;
+  mcp: Record<string, PromptMcpStatus>;
+  warnings: string[];
+}
+
+export interface PromptTraceEvent {
+  type: "prompt-trace";
+  trace: PromptTraceSnapshot;
+}
+
 export type LlmRecoveryScope = "short" | "session";
 export type LlmRecoveryVisibility = "internal" | "session";
 
@@ -473,12 +511,14 @@ export type StreamEvent =
   | ToolAttemptEvent
   | ToolResultEvent
   | ToolChildSessionLinkEvent
+  | ChildResultEvent
   | TodoWriteEvent
   | ReminderEvent
   | ReminderConsumedEvent
   | StepStartEvent
   | StepEndEvent
   | ExecutionErrorEvent
+  | PromptTraceEvent
   | LlmRetryEvent
   | LlmRecoveryEvent
   | LlmRecoveryFailedEvent
@@ -554,10 +594,17 @@ export interface ConfigModelCallOptions {
   providerOptions?: Record<string, unknown>;
 }
 
+export interface ConfigModelCapabilities {
+  multiToolCallEmission: "single" | "parallel";
+  structuredToolCalls: "strict" | "best_effort";
+  instructionTier: "compact" | "standard" | "rich";
+}
+
 export interface ConfigModelSettings {
   name: string;
   limit: { context: number; output: number };
   modalities: { input: Array<"text" | "image" | "audio" | "video">; output: Array<"text" | "image" | "audio" | "video"> };
+  capabilities: ConfigModelCapabilities;
   options?: ConfigModelCallOptions;
   variants?: Record<string, ConfigModelCallOptions>;
 }
@@ -645,7 +692,7 @@ export interface ServerConfigValidationIssue {
 
 export type McpServerStatus =
   | { state: "pending" }
-  | { state: "ready"; toolCount: number }
+  | { state: "ready"; toolCount: number; warningCount: number }
   | { state: "failed"; error: string }
   | { state: "disabled" };
 
@@ -900,6 +947,8 @@ export interface SessionProjection {
   cwd: string;
   rootSessionId: string;
   parentSessionId?: string;
+  delegationContract?: DelegationContract;
+  delegationContractHash?: string;
   title: string | null;
   messages: SessionMessage[];
   pendingMessages: PendingSessionMessage[];
@@ -907,8 +956,10 @@ export interface SessionProjection {
   todos: SessionTodo[];
   reminders: Reminder[];
   childSessionLinks: ToolChildSessionLink[];
+  childResultReceipts: ChildResultReceipt[];
   stats: SessionStats;
   executions: SessionExecutionRecord[];
+  promptTraces?: PromptTraceSnapshot[];
   executionCount: number;
   isRunning: boolean;
   isStreamingModel: boolean;
@@ -957,6 +1008,8 @@ export interface SessionSummary {
   // Tree relationships derive from child session files, not childSessionIds/subAgentDescriptions caches.
   rootSessionId: string;
   parentSessionId?: string;
+  delegationContract?: DelegationContract;
+  delegationContractHash?: string;
   agentName: string;
   /** Persisted Skill identity; execution resolves these names against current policy. */
   activeSkillNames: string[];
@@ -1009,10 +1062,13 @@ export interface Session {
   todos: SessionTodo[];
   reminders: Reminder[];
   childSessionLinks: ToolChildSessionLink[];
+  childResultReceipts: ChildResultReceipt[];
   stats: SessionStats;
   executions: SessionExecutionRecord[];
   events?: SessionEventEnvelope[];
   parentSessionId?: string;
+  delegationContract?: DelegationContract;
+  delegationContractHash?: string;
   eventCursor?: number;
   modelInfo: SessionModelInfo | null;
   agentName: string;
@@ -1094,6 +1150,8 @@ export interface GoalEvidenceRef {
 }
 
 export interface GoalReviewReceipt {
+  executionId: string;
+  delegationContractHash: string;
   reviewGeneration: number;
   verdict: GoalReviewVerdict;
   summary: string;
@@ -1101,6 +1159,7 @@ export interface GoalReviewReceipt {
   unresolvedItems?: string[];
   reviewerSessionId: string;
   decidedAt: string;
+  result: ChildResult;
 }
 
 export interface GoalBudgetApproval {

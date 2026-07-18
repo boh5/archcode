@@ -69,7 +69,7 @@ describe("createServerApp", () => {
     const observed: GlobalSSEEvent[] = [];
     const unsubscribe = globalEventBus.subscribe((event) => observed.push(event));
     createServerApp(runtime, { dev: true });
-    listener!("context7", { state: "ready", toolCount: 1 });
+    listener!("context7", { state: "ready", toolCount: 1, warningCount: 0 });
     expect(observed[0]).toMatchObject({ type: "mcp_status", serverName: "context7" });
     unsubscribe();
   });

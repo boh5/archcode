@@ -7,6 +7,8 @@ import { __setSessionsDirForTest } from "./sessions-dir";
 import { createEmptySessionStats, type SessionExecutionRecord, type SessionStats, type ToolChildSessionLink } from "@archcode/protocol";
 import type { CompactionPart, Reminder, SessionRole, SessionStoreState, StepInfo, StoredMessage, StoredPart, StoredTodo, SystemNoticePart } from "./types";
 import { createEmptyCompressionState, type CompressionState } from "../compression";
+import { hashDelegationContract } from "../delegation/contract";
+import type { DelegationContract } from "@archcode/protocol";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "helpers", crypto.randomUUID());
 const sessionIds = new Set<string>();
@@ -166,7 +168,6 @@ function sampleChildSessionLinks(): ToolChildSessionLink[] {
       childSessionId: "child-session",
       childAgentName: "explore",
       title: "Explore task",
-      description: "Look up details",
       depth: 1,
       background: true,
       status: "completed",
@@ -174,7 +175,6 @@ function sampleChildSessionLinks(): ToolChildSessionLink[] {
       startedAt: 710,
       endedAt: 760,
       durationMs: 50,
-      summary: "Found answer",
     },
   ];
 }
@@ -199,6 +199,8 @@ type PersistedSessionState = Pick<
   | "todos"
   | "reminders"
   | "childSessionLinks"
+  | "delegationContract"
+  | "delegationContractHash"
   | "toolBatches"
   | "rootSessionId"
   | "parentSessionId"
@@ -221,6 +223,19 @@ function persistedState(
   sessionRole: SessionRole | undefined = undefined,
   compression: CompressionState = createEmptyCompressionState(),
 ): PersistedSessionState {
+  const delegationContract: DelegationContract = {
+    agent_type: "explore",
+    title: "Test child",
+    objective: "Exercise persisted child identity",
+    owned_scope: [],
+    non_goals: [],
+    acceptance_criteria: [{ id: "ac-1", condition: "Fixture works", requiredEvidence: "Test result" }],
+    evidence: [],
+    verification: [],
+    depends_on: [],
+    skills: [],
+    background: false,
+  };
   return {
     sessionId,
     createdAt: 99,
@@ -243,6 +258,10 @@ function persistedState(
     toolBatches: [],
     rootSessionId: rootSessionId ?? sessionId,
     parentSessionId,
+    ...(parentSessionId === undefined ? {} : {
+      delegationContract,
+      delegationContractHash: hashDelegationContract(delegationContract),
+    }),
     goalId,
     sessionRole,
   };
@@ -455,6 +474,22 @@ describe("session transcript serialization", () => {
     await writeRawSessionFile(sessionId, JSON.stringify(raw));
 
     await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
+  });
+
+  test("child Session without a V2 delegation identity fails closed", () => {
+    const child = persistedState(
+      crypto.randomUUID(),
+      sampleMessages(),
+      sampleSteps(),
+      sampleTodos(),
+      createEmptySessionStats(),
+      [],
+      [],
+      "root-session",
+      "parent-session",
+    );
+    const { delegationContract: _contract, delegationContractHash: _hash, ...legacyChild } = child;
+    expect(SessionFileSchema.safeParse(legacyChild).success).toBe(false);
   });
 
   test("Session event persistence rejects known payload types with missing or extra fields", async () => {

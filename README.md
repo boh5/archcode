@@ -43,7 +43,12 @@ Create `~/.archcode/config.json`. ArchCode reads this single server-wide file fo
         "glm-5": {
           "name": "GLM-5",
           "limit": { "context": 200000, "output": 128000 },
-          "modalities": { "input": ["text"], "output": ["text"] }
+          "modalities": { "input": ["text"], "output": ["text"] },
+          "capabilities": {
+            "multiToolCallEmission": "parallel",
+            "structuredToolCalls": "strict",
+            "instructionTier": "rich"
+          }
         }
       }
     }
@@ -194,12 +199,21 @@ Custom MCP servers use the current HTTP-only configuration shape without a trans
 - `~/.archcode/config.json` uses strict validation; unknown fields are rejected.
 - `$schema`, MCP `transport`, and GitHub `apiBaseUrl` are not configuration fields; HTTP and GitHub.com are fixed implementation choices.
 - The `agents` section must include `engineer`, `goal_lead`, `plan`, `build`, `reviewer`, `explore`, `librarian`, and `shaper`. Shaper has no model fallback.
+- Every model declares `capabilities.multiToolCallEmission`, `capabilities.structuredToolCalls`, and `capabilities.instructionTier`. ArchCode uses these explicit model facts to render a small Prompt overlay; it never guesses capabilities from the provider or model name.
 - Model options use AI SDK-style camelCase names, such as `maxOutputTokens`, `temperature`, `topP`, `topK`, `timeout`, and `providerOptions`.
 - Settings edits model options, complete variant maps, and per-Agent overrides as validated JSON objects; provider-specific call settings belong under `providerOptions`.
 - `maxRetries` is not configurable. ArchCode owns LLM recovery and always disables AI SDK retries internally.
 - Agent options are merged in this order: `model.options → variants[agent.variant] → agents[agent].options`.
 - `providerOptions` is shallow-replaced by later layers, not deep-merged.
 - MCP URLs and headers retain their existing `${VAR}` / `${VAR:-default}` expansion; Provider options do not use this expansion.
+
+Prompt live evaluation is explicit and opt-in. Copy `packages/agent-core/src/prompt/live-eval-manifest.example.json`, list only the configured `provider:model` IDs to run, then execute:
+
+```sh
+ARCHCODE_PROMPT_LIVE_EVAL=1 bun run prompt:live-eval -- --manifest ./prompt-live-eval.json
+```
+
+The command compiles the real Prompt V2 with each configured model's declared capabilities and writes machine-readable results to the manifest's `resultPath`. It never guesses or automatically selects models.
 
 ## Self-hosting notes
 

@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
+import { PROJECT_STATE_DIR_NAME, type DelegationContract } from "@archcode/protocol";
 
 import { silentLogger } from "../logger";
 import { createProcessRunner } from "../process/runner";
@@ -12,6 +12,7 @@ import { getSessionDir, getSessionPath } from "../store/sessions-dir";
 import { createTestTempRoot } from "../testing/test-temp-root";
 import { WorktreeService } from "../worktrees";
 import { SessionCwdReferenceMigrationService } from "./session-cwd-reference-migration";
+import { hashDelegationContract } from "../delegation/contract";
 
 const testTempRoot = createTestTempRoot("session-cwd-reference-migration");
 let TMP_DIR = testTempRoot.path;
@@ -586,7 +587,29 @@ async function persistAtCwd(
   cwd: string,
   identity: { readonly rootSessionId?: string; readonly parentSessionId?: string } = {},
 ): Promise<void> {
-  manager.create(sessionId, PROJECT_ROOT, { ...identity, agentName: "engineer" });
+  const delegationContract: DelegationContract | undefined = identity.parentSessionId === undefined
+    ? undefined
+    : {
+        agent_type: "explore",
+        title: "Track migrated child cwd",
+        objective: "Preserve a durable child identity while migrating cwd references.",
+        owned_scope: [],
+        non_goals: [],
+        acceptance_criteria: [{ id: "cwd", condition: "The child cwd is migrated with its root family.", requiredEvidence: "Persisted Session file" }],
+        evidence: [],
+        verification: [],
+        depends_on: [],
+        skills: [],
+        background: false,
+      };
+  manager.create(sessionId, PROJECT_ROOT, {
+    ...identity,
+    agentName: delegationContract === undefined ? "engineer" : "explore",
+    ...(delegationContract === undefined ? {} : {
+      delegationContract,
+      delegationContractHash: hashDelegationContract(delegationContract),
+    }),
+  });
   await manager.updateCwd(sessionId, PROJECT_ROOT, cwd, PROJECT_ROOT);
 }
 

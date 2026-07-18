@@ -14,7 +14,7 @@ describe("McpStatusStore", () => {
 
   test("setServers replaces all servers", () => {
     const servers: Record<string, McpServerStatus> = {
-      context7: { state: "ready", toolCount: 3 },
+      context7: { state: "ready", toolCount: 3, warningCount: 0 },
       grep: { state: "pending" },
     };
     useMcpStatusStore.getState().setServers(servers);
@@ -24,7 +24,7 @@ describe("McpStatusStore", () => {
 
   test("setServers replaces previous entries entirely", () => {
     useMcpStatusStore.getState().setServers({
-      old: { state: "ready", toolCount: 1 },
+      old: { state: "ready", toolCount: 1, warningCount: 0 },
     });
     useMcpStatusStore.getState().setServers({
       new: { state: "pending" },
@@ -40,18 +40,18 @@ describe("McpStatusStore", () => {
       context7: { state: "pending" },
     });
 
-    useMcpStatusStore.getState().updateServer("context7", { state: "ready", toolCount: 5 });
+    useMcpStatusStore.getState().updateServer("context7", { state: "ready", toolCount: 5, warningCount: 2 });
     useMcpStatusStore.getState().updateServer("exa", { state: "failed", error: "boom" });
 
     expect(useMcpStatusStore.getState().servers).toEqual({
-      context7: { state: "ready", toolCount: 5 },
+      context7: { state: "ready", toolCount: 5, warningCount: 2 },
       exa: { state: "failed", error: "boom" },
     });
   });
 
   test("updateServer overwrites existing server status", () => {
     useMcpStatusStore.getState().setServers({
-      context7: { state: "ready", toolCount: 3 },
+      context7: { state: "ready", toolCount: 3, warningCount: 0 },
     });
 
     useMcpStatusStore.getState().updateServer("context7", { state: "disabled" });
@@ -63,7 +63,7 @@ describe("McpStatusStore", () => {
 
   test("clear empties the servers map", () => {
     useMcpStatusStore.getState().setServers({
-      context7: { state: "ready", toolCount: 3 },
+      context7: { state: "ready", toolCount: 3, warningCount: 0 },
       grep: { state: "pending" },
     });
 

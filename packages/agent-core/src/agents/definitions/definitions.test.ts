@@ -123,7 +123,7 @@ describe("agentDefinitions", () => {
     for (const definition of agentDefinitions) {
       expectNoTools(definition.tools.tools, REMOVED_GOAL_EXECUTABLE_TOOL_NAMES);
       for (const toolName of REMOVED_GOAL_EXECUTABLE_TOOL_NAMES) {
-        expect(definition.rolePrompt).not.toContain(toolName);
+        expect(JSON.stringify(definition.roleContract)).not.toContain(toolName);
       }
     }
   });
@@ -239,10 +239,9 @@ describe("agentDefinitions", () => {
     expect(shaperAgentDefinition.tools.delegateTargets).toEqual(["explore", "librarian"]);
     expect(shaperAgentDefinition.hooks.memoryExtraction).toBe(false);
     expect(shaperAgentDefinition.hooks.memoryConsolidation).toBe(false);
-    expect(shaperAgentDefinition.rolePrompt).toContain("current Todo");
-    expect(shaperAgentDefinition.rolePrompt).toContain("explicitly requests or confirms");
-    expect(shaperAgentDefinition.rolePrompt).toContain("do not implement");
-    expect(shaperAgentDefinition.rolePrompt).toContain("without presenting an implementation plan");
+    expect(shaperAgentDefinition.roleContract.completionAuthority).toEqual(["bound-todo"]);
+    expect(shaperAgentDefinition.roleContract.allowedTransitions.default).toEqual(["todo.update"]);
+    expect(shaperAgentDefinition.roleContract.forbiddenBehaviors.join(" ")).toContain("Do not implement");
   });
 
   test("Goal lifecycle and evidence tools are limited to intended roles", () => {
@@ -302,6 +301,13 @@ describe("agentDefinitions", () => {
 
     expect("mcpTools" in exploreAgentDefinition).toBe(false);
     expect(librarianAgentDefinition.mcpTools).toEqual(["context7", "grep.app", "exa"]);
+  });
+
+  test("delegated roles expose the canonical child result submission tool", () => {
+    const withSubmit = agentDefinitions
+      .filter((definition) => (definition.tools.tools as readonly string[]).includes("submit_child_result"))
+      .map((definition) => definition.name);
+    expect(withSubmit).toEqual(["plan", "build", "reviewer", "explore", "librarian"]);
   });
 
   test("ask_user belongs to interactive working and shaping roles", () => {

@@ -3,6 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { ProjectContextResolver } from "../projects/context-resolver";
+import { testReviewExecutionFields } from "../goals/test-review-fixture";
 import { silentLogger } from "../logger";
 import { SessionStoreManager } from "../store/session-store-manager";
 import type { SessionRole } from "../store/types";
@@ -125,6 +126,7 @@ describe("SessionExecutionScopeValidator", () => {
     await fixture.context.goalState.finalizeReview(goal.id, {
       expectedReviewGeneration: 1,
       verdict: "NOT_DONE",
+      ...testReviewExecutionFields("NOT_DONE"),
       summary: "More work remains",
       evidenceRefs: [],
       unresolvedItems: ["fix it"],

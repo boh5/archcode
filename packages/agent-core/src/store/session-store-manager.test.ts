@@ -1,13 +1,14 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { createEmptySessionStats, type CompressionBlockSnapshot } from "@archcode/protocol";
+import { createEmptySessionStats, type CompressionBlockSnapshot, type DelegationContract } from "@archcode/protocol";
 import { createEmptyCompressionState } from "../compression";
 import { SessionStoreManager } from "./session-store-manager";
 import { NotRootSessionError, SessionInitialPersistenceError, SessionTreeIntegrityError } from "./errors";
 import { SessionFileIdentityConflictError } from "./session-store-manager";
 import { sessionFileInternals } from "./helpers";
 import { silentLogger } from "../logger";
+import { hashDelegationContract } from "../delegation/contract";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "session-store-manager", crypto.randomUUID());
 
@@ -47,6 +48,19 @@ describe("SessionStoreManager", () => {
     id: string,
     overrides: Partial<PersistedSessionState> = {},
   ): PersistedSessionState {
+    const delegationContract: DelegationContract = {
+      agent_type: "explore",
+      title: "Test child",
+      objective: "Exercise persisted child identity",
+      owned_scope: [],
+      non_goals: [],
+      acceptance_criteria: [{ id: "ac-1", condition: "Fixture works", requiredEvidence: "Test result" }],
+      evidence: [],
+      verification: [],
+      depends_on: [],
+      skills: [],
+      background: false,
+    };
     return {
       sessionId: id,
       createdAt: 1000,
@@ -68,6 +82,10 @@ describe("SessionStoreManager", () => {
     childSessionLinks: [],
     toolBatches: [],
       rootSessionId: id,
+      ...(overrides.parentSessionId === undefined ? {} : {
+        delegationContract,
+        delegationContractHash: hashDelegationContract(delegationContract),
+      }),
       ...overrides,
     };
   }
@@ -640,7 +658,6 @@ describe("SessionStoreManager", () => {
       childSessionId,
       childAgentName: "explore",
       title: "Background child",
-      description: "Run in the background",
       depth: 1,
       background: true,
       status: "completed" as const,
@@ -648,7 +665,6 @@ describe("SessionStoreManager", () => {
       startedAt: 110,
       endedAt: 210,
       durationMs: 100,
-      summary: "Background work completed",
     };
 
     store.getState().append({ type: "tool-child-session-link", link });
@@ -911,6 +927,32 @@ describe("SessionStoreManager", () => {
     const stepWithError = loaded.getState().steps.find((s) => s.error !== undefined);
     expect(stepWithError).toBeDefined();
     expect(stepWithError!.error).toBe(errorMsg);
+  });
+
+  test("persists and reloads dedicated Prompt trace events", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
+    const trace = {
+      version: "2" as const,
+      status: "compiled" as const,
+      hash: "a".repeat(64),
+      sections: [{ name: "Runtime Envelope", source: "runtime/snapshot", hash: "b".repeat(64) }],
+      skills: { status: "present" as const, active: [{ name: "review-work", source: "/skills/review-work/SKILL.md" }] },
+      visibleTools: ["file_read"],
+      agentsMd: "present" as const,
+      memory: "absent" as const,
+      mcp: { context7: "partial-warning" as const },
+      warnings: ["one MCP tool was skipped"],
+    };
+
+    store.getState().append({ type: "prompt-trace", trace });
+    await manager.flushSession(id, TMP_DIR);
+
+    const restarted = new SessionStoreManager({ logger: silentLogger });
+    const loaded = await restarted.getOrLoad(id, TMP_DIR);
+    expect(loaded.getState().promptTraces).toEqual([trace]);
+    expect(loaded.getState().events.some((event) => event.payload.type === "prompt-trace")).toBe(true);
   });
 
   test("recovery-notice part with statusCode reloads correctly", async () => {

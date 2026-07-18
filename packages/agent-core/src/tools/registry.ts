@@ -22,6 +22,7 @@ import {
   kindFromCode,
   normalizeToolErrorResult,
 } from "./errors";
+import { isStructuredResultSubmission } from "./structured-result-correction";
 
 export class ToolRegistry {
   private _descriptors: Map<string, AnyToolDescriptor>;
@@ -129,6 +130,21 @@ export class ToolRegistry {
 
     let parsed = descriptor.inputSchema.safeParse(rawInput);
     if (!parsed.success) {
+      if (
+        ctx.structuredResultCorrection !== undefined
+        && isStructuredResultSubmission(
+          descriptor.name,
+          rawInput,
+          ctx.structuredResultCorrection.submission,
+        )
+      ) {
+        const error = new Error(parsed.error.message);
+        error.name = "StructuredResultSchemaError";
+        return this.runGlobalAfterHooks(
+          ctx.structuredResultCorrection.recordFailure(error),
+          ctx,
+        );
+      }
       return this.runGlobalAfterHooks(
         createToolErrorResult({
           kind: "schema",

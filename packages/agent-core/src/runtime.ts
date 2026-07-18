@@ -590,6 +590,7 @@ export async function createRuntime(
       skillService,
       config,
       projectContextResolver: contextResolver,
+      resolveMcpStatuses: () => mcpManager.getStatus(),
       storeManager: sessionStoreManager,
       logger,
     });

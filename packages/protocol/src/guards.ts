@@ -85,6 +85,8 @@ export function isSessionEventPayload(value: unknown): value is SessionEventPayl
         && (event.meta === undefined || record(event.meta) !== undefined);
     case "tool-child-session-link":
       return exact(event, ["type", "link"]) && isToolChildSessionLink(event.link);
+    case "child-result":
+      return exact(event, ["type", "receipt"]) && isChildResultReceipt(event.receipt);
     case "todo-write":
       return exact(event, ["type", "todos"]) && arrayOf(event.todos, isSessionTodo);
     case "reminder":
@@ -99,6 +101,8 @@ export function isSessionEventPayload(value: unknown): value is SessionEventPayl
     case "execution-error":
       return exact(event, ["type", "error"], ["step"])
         && isString(event.error) && optionalFiniteNumber(event.step);
+    case "prompt-trace":
+      return exact(event, ["type", "trace"]) && isPromptTrace(event.trace);
     case "llm-retry":
       return isLlmRecoveryEvent(event, true, false);
     case "llm-recovery":
@@ -122,6 +126,41 @@ export function isSessionEventPayload(value: unknown): value is SessionEventPayl
     default:
       return false;
   }
+}
+
+function isPromptTrace(value: unknown): boolean {
+  const trace = record(value);
+  return trace !== undefined
+    && exact(trace, ["version", "status", "hash", "sections", "skills", "visibleTools", "agentsMd", "memory", "mcp", "warnings"])
+    && trace.version === "2"
+    && oneOf(trace.status, ["compiled", "error"])
+    && isString(trace.hash)
+    && arrayOf(trace.sections, (value) => {
+      const section = record(value);
+      return section !== undefined
+        && exact(section, ["name", "source", "hash"])
+        && isString(section.name) && isString(section.source) && isString(section.hash);
+    })
+    && isPromptTraceSkills(trace.skills)
+    && arrayOf(trace.visibleTools, isString)
+    && oneOf(trace.agentsMd, ["present", "absent", "error"])
+    && oneOf(trace.memory, ["present", "absent", "error"])
+    && record(trace.mcp) !== undefined
+    && Object.values(trace.mcp as UnknownRecord).every((status) => oneOf(status, ["pending", "ready", "ready-zero", "partial-warning", "failed"]))
+    && arrayOf(trace.warnings, isString);
+}
+
+function isPromptTraceSkills(value: unknown): boolean {
+  const skills = record(value);
+  return skills !== undefined
+    && exact(skills, ["status", "active"])
+    && oneOf(skills.status, ["present", "absent", "error"])
+    && arrayOf(skills.active, (value) => {
+      const active = record(value);
+      return active !== undefined
+        && exact(active, ["name", "source"])
+        && isString(active.name) && isString(active.source);
+    });
 }
 
 function isPendingSessionMessage(value: unknown): boolean {
@@ -231,15 +270,71 @@ function isToolChildSessionLink(value: unknown): boolean {
     && exact(
       link,
       ["parentSessionId", "parentToolCallId", "toolName", "childSessionId", "childAgentName", "title", "depth", "background", "status", "createdAt"],
-      ["description", "startedAt", "endedAt", "durationMs", "summary", "error"],
+      ["startedAt", "endedAt", "durationMs", "resultReceipt", "error"],
     )
     && isString(link.parentSessionId) && isString(link.parentToolCallId) && isString(link.toolName)
     && isString(link.childSessionId) && isString(link.childAgentName)
     && isFiniteNumber(link.depth) && typeof link.background === "boolean"
     && oneOf(link.status, ["linked", "running", "waiting_for_human", "cancelling", "completed", "failed", "timed_out", "cancelled", "interrupted"])
-    && isFiniteNumber(link.createdAt) && isString(link.title) && optionalString(link.description)
+    && isFiniteNumber(link.createdAt) && isString(link.title)
     && optionalFiniteNumber(link.startedAt) && optionalFiniteNumber(link.endedAt)
-    && optionalFiniteNumber(link.durationMs) && optionalString(link.summary) && optionalString(link.error);
+    && optionalFiniteNumber(link.durationMs)
+    && (link.resultReceipt === undefined || isChildResultReceipt(link.resultReceipt))
+    && optionalString(link.error);
+}
+
+function isChildResultReceipt(value: unknown): boolean {
+  const receipt = record(value);
+  return receipt !== undefined
+    && exact(receipt, ["executionId", "delegationContractHash", "submittedAt", "result"])
+    && isString(receipt.executionId)
+    && isString(receipt.delegationContractHash)
+    && isFiniteNumber(receipt.submittedAt)
+    && isChildResult(receipt.result);
+}
+
+function isChildResult(value: unknown): boolean {
+  const result = record(value);
+  return result !== undefined
+    && exact(result, ["status", "summary", "deliverables", "evidence", "criteria", "verification", "unresolved"])
+    && oneOf(result.status, ["completed", "partial", "blocked", "failed"])
+    && isString(result.summary)
+    && arrayOf(result.deliverables, (item) => {
+      const deliverable = record(item);
+      return deliverable !== undefined
+        && exact(deliverable, ["type", "ref", "description"])
+        && isString(deliverable.type) && isString(deliverable.ref) && isString(deliverable.description);
+    })
+    && arrayOf(result.evidence, (item) => {
+      const evidence = record(item);
+      return evidence !== undefined
+        && exact(evidence, ["claim", "ref"])
+        && isString(evidence.claim) && isString(evidence.ref);
+    })
+    && arrayOf(result.criteria, (item) => {
+      const criterion = record(item);
+      return criterion !== undefined
+        && exact(criterion, ["id", "status", "evidenceRefs"])
+        && isString(criterion.id)
+        && oneOf(criterion.status, ["passed", "failed", "unverified"])
+        && arrayOf(criterion.evidenceRefs, isString);
+    })
+    && arrayOf(result.verification, (item) => {
+      const verification = record(item);
+      return verification !== undefined
+        && exact(verification, ["check", "status"], ["outputRef"])
+        && isString(verification.check)
+        && oneOf(verification.status, ["passed", "failed", "not_run"])
+        && optionalString(verification.outputRef);
+    })
+    && arrayOf(result.unresolved, (item) => {
+      const unresolved = record(item);
+      return unresolved !== undefined
+        && exact(unresolved, ["issue", "blocking", "nextOwner"])
+        && isString(unresolved.issue)
+        && typeof unresolved.blocking === "boolean"
+        && oneOf(unresolved.nextOwner, ["parent", "user", "external"]);
+    });
 }
 
 function isReminder(value: unknown): boolean {

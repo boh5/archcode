@@ -75,6 +75,7 @@ function modelInfo(context = 1000): BeforeModelBuildContext["modelInfo"] {
     displayName: "Mock",
     limit: { context, output: 1000 },
     modalities: { input: ["text"], output: ["text"] },
+          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
     providerId: "test",
     modelId: "mock",
     qualifiedId: "test:mock",

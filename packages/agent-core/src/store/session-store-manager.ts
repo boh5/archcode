@@ -6,6 +6,7 @@ import type { AgentName } from "../agents/names";
 import { collectSessionTreeIds } from "../execution/session-tree";
 import { createEmptyCompressionState, resolveCompressionOriginalRange, type CompressionOriginalRangeResult } from "../compression";
 import type {
+  DelegationContract,
   SessionModelInfo,
   SessionTreeNode,
   SessionTreeResponse,
@@ -64,6 +65,8 @@ export interface CreateSessionOptions {
   readonly cwd?: string;
   readonly rootSessionId?: string;
   readonly parentSessionId?: string;
+  readonly delegationContract?: DelegationContract;
+  readonly delegationContractHash?: string;
   readonly goalId?: string;
   readonly sessionRole?: SessionRole;
   readonly modelInfo?: SessionModelInfo | null;
@@ -163,7 +166,9 @@ export class SessionStoreManager {
         || event.type === "llm-recovery-failed"
         || event.type === "compact"
         || event.type === "tool-child-session-link"
+        || event.type === "child-result"
         || event.type === "execution-error"
+        || event.type === "prompt-trace"
         || event.type === "compression.block_committed"
         || event.type === "compression.block_failed"
         || event.type === "compression.ref_map_updated"
@@ -187,10 +192,14 @@ export class SessionStoreManager {
       steps: [],
       stats: createEmptySessionStats(),
       executions: [],
+      promptTraces: [],
       compression: createEmptyCompressionState(),
       todos: [],
       reminders: [],
       childSessionLinks: [],
+      delegationContract: options.delegationContract,
+      delegationContractHash: options.delegationContractHash,
+      childResultReceipts: [],
       toolBatches: [],
       // Root/parent IDs are write-once session identity, not mutable tree state.
       rootSessionId,
@@ -1082,6 +1091,8 @@ export class SessionStoreManager {
         cwd: parsed.cwd,
         rootSessionId: parsed.rootSessionId,
         parentSessionId: parsed.parentSessionId,
+        delegationContract: parsed.delegationContract,
+        delegationContractHash: parsed.delegationContractHash,
         goalId: parsed.goalId,
         sessionRole: parsed.sessionRole,
         agentName: parsed.agentName,
@@ -1105,11 +1116,19 @@ export class SessionStoreManager {
         steps: parsed.steps,
         stats: parsed.stats,
         executions: parsed.executions,
+        promptTraces: (parsed.events ?? []).flatMap((event) =>
+          event.payload.type === "prompt-trace" ? [event.payload.trace] : []
+        ),
         compression: parsed.compression,
         executionCount: parsed.executions.length,
         todos: parsed.todos,
         reminders: parsed.reminders,
         childSessionLinks: parsed.childSessionLinks,
+        delegationContract: parsed.delegationContract,
+        delegationContractHash: parsed.delegationContractHash,
+        childResultReceipts: (parsed.events ?? []).flatMap((event) =>
+          event.payload.type === "child-result" ? [event.payload.receipt] : []
+        ),
         toolBatches: parsed.toolBatches,
         rootSessionId: parsed.rootSessionId,
         parentSessionId: parsed.parentSessionId,

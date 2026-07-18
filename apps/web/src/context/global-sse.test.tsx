@@ -307,7 +307,7 @@ describe("parseSSEEvent", () => {
   });
 
   test("parses mcp_status event with serverName, status, and createdAt", () => {
-    const status: McpServerStatus = { state: "ready", toolCount: 4 };
+    const status: McpServerStatus = { state: "ready", toolCount: 4, warningCount: 0 };
     const mcpEvent: GlobalSSEMcpStatusEvent = {
       type: "mcp_status",
       serverName: "context7",
@@ -781,7 +781,7 @@ describe("handleSSEEvent", () => {
   });
 
   test("updates mcp status store on mcp_status event", () => {
-    const status: McpServerStatus = { state: "ready", toolCount: 7 };
+    const status: McpServerStatus = { state: "ready", toolCount: 7, warningCount: 1 };
     const mcpEvent: GlobalSSEMcpStatusEvent = {
       type: "mcp_status",
       serverName: "context7",

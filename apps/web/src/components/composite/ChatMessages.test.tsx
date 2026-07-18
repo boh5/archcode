@@ -608,7 +608,12 @@ describe("CompressionBlock", () => {
       createdAt: 100,
       endedAt: 200,
       durationMs: 100,
-      summary: "Explored the codebase for patterns",
+      resultReceipt: {
+        executionId: "exec-1",
+        delegationContractHash: "hash-1",
+        submittedAt: 200,
+        result: { status: "completed", summary: "Explored the codebase for patterns", deliverables: [], evidence: [], criteria: [], verification: [], unresolved: [] },
+      },
       title: "Explore codebase",
     };
 
@@ -643,7 +648,12 @@ describe("CompressionBlock", () => {
                 state: "completed",
                 toolCallId: "tc-delegate-1",
                 toolName: "delegate",
-                input: { agent_type: "explore", title: "Explore codebase", task: "Explore codebase" },
+                input: {
+                  agent_type: "explore", title: "Explore codebase", objective: "Explore codebase",
+                  owned_scope: [{ kind: "tree", path: "src" }], non_goals: [],
+                  acceptance_criteria: [{ id: "ac-1", condition: "Map relevant code", requiredEvidence: "file refs" }],
+                  evidence: [], verification: [], depends_on: [], skills: [], background: false,
+                },
                 output: JSON.stringify({ sessionId: "child-sess-1", text: "Done" }),
                 createdAt: 1,
                 startedAt: 1,
@@ -687,7 +697,8 @@ describe("CompressionBlock", () => {
     expect(text).toContain("Explore codebase");
     expect(text).toContain("Code Explorer");
     expect(text).toContain("Explored the codebase for patterns");
-    expect(text).toContain("done");
+    expect(text).toContain("Execution: Completed");
+    expect(text).toContain("Task: Completed");
   });
 });
 

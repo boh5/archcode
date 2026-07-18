@@ -9,6 +9,7 @@ import { silentLogger } from "../logger";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { GoalLifecycleService } from "./lifecycle-service";
 import { GoalStateManager } from "./state";
+import { testReviewExecutionFields } from "./test-review-fixture";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-integration", crypto.randomUUID());
 const SOURCE_SESSION_ID = "11111111-1111-4111-8111-111111111111";
@@ -62,6 +63,7 @@ describe("Goal core lifecycle", () => {
     const done = await lifecycle.finalizeReview(goal.id, {
       expectedReviewGeneration: reviewing.reviewGeneration,
       verdict: "DONE",
+      ...testReviewExecutionFields("DONE"),
       summary: "Reviewer verified the durable state and tests.",
       evidenceRefs: [{ kind: "session", ref: goal.mainSessionId, summary: "Main Session completed implementation." }],
       authorization: reviewerAuth(goal.id),
@@ -84,6 +86,7 @@ describe("Goal core lifecycle", () => {
     await lifecycle.finalizeReview(goal.id, {
       expectedReviewGeneration: 1,
       verdict: "NOT_DONE",
+      ...testReviewExecutionFields("NOT_DONE"),
       summary: "Regression evidence is missing.",
       authorization: reviewerAuth(goal.id),
     });

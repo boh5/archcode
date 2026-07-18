@@ -3,18 +3,25 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { StoreApi } from "zustand";
 
-import { TOOL_GOAL_CREATE, TOOL_GOAL_MANAGE, type GoalReviewReceipt, type GoalState } from "@archcode/protocol";
+import { TOOL_GOAL_CREATE, TOOL_GOAL_MANAGE, type DelegationContract, type GoalReviewReceipt, type GoalState } from "@archcode/protocol";
+import { hashDelegationContract } from "../../delegation/contract";
 import { GoalStateManager } from "../../goals/state";
 import { GoalCancellationCleanupError } from "../../goals/cancellation";
+import { testReviewExecutionFields } from "../../goals/test-review-fixture";
 import { ProjectHitlQueue } from "../../hitl";
 import { MemoryFileManager } from "../../memory/file-manager";
 import type { ProjectContext } from "../../projects/types";
 import { SkillService } from "../../skills";
 import { createMockStore } from "../../store/test-helpers";
 import { storeManager } from "../../store/store";
-import type { SessionStoreState } from "../../store/types";
+import type { SessionStoreState, SessionToolBatch } from "../../store/types";
 import { createToolErrorResult, inferToolErrorKindFromResult } from "../errors";
 import { ProjectApprovalManager } from "../permission/project-approvals";
+import { createRegistry } from "../registry";
+import {
+  countStructuredResultFailures,
+  createStructuredResultCorrectionGate,
+} from "../structured-result-correction";
 import { createToolExecutionContext, type ToolExecutionContext, type ToolExecutionResult } from "../types";
 import { silentLogger } from "../../logger";
 import { createTestProjectTodoService } from "../test-project-context";
@@ -65,6 +72,9 @@ class SimplifiedGoalStateManagerMock {
     readonly expectedReviewGeneration: number;
     readonly verdict: "DONE" | "NOT_DONE";
     readonly summary: string;
+    readonly executionId: string;
+    readonly delegationContractHash: string;
+    readonly result: GoalReviewReceipt["result"];
     readonly evidenceRefs?: readonly GoalReviewReceipt["evidenceRefs"][number][];
     readonly unresolvedItems?: readonly string[];
     readonly finalSummary?: string;
@@ -74,6 +84,9 @@ class SimplifiedGoalStateManagerMock {
       reviewGeneration: input.expectedReviewGeneration,
       verdict: input.verdict,
       summary: input.summary,
+      executionId: input.executionId,
+      delegationContractHash: input.delegationContractHash,
+      result: input.result,
       evidenceRefs: [...(input.evidenceRefs ?? [])],
       reviewerSessionId: input.authorization.reviewerSessionId ?? "review-session",
       decidedAt: "2026-07-08T00:00:00.000Z",
@@ -123,11 +136,27 @@ function engineerStore(overrides: Partial<SessionStoreState> = {}): StoreApi<Ses
 }
 
 function reviewStore(goalId: string, overrides: Partial<SessionStoreState> = {}): StoreApi<SessionStoreState> {
+  const delegationContract: DelegationContract = {
+    agent_type: "reviewer",
+    title: "Review Goal",
+    objective: "Verify the Goal acceptance criteria",
+    owned_scope: [],
+    non_goals: [],
+    acceptance_criteria: [{ id: "acceptance", condition: "Goal is verified", requiredEvidence: "Review evidence" }],
+    evidence: [],
+    verification: [],
+    depends_on: [],
+    skills: [],
+    background: false,
+  };
   return createMockStore({
     sessionId: "review-session",
     agentName: "reviewer",
     sessionRole: "review",
     goalId,
+    currentExecutionId: "review-execution",
+    delegationContract,
+    delegationContractHash: hashDelegationContract(delegationContract),
     ...overrides,
   });
 }
@@ -278,6 +307,42 @@ function validEvidenceRef() {
   };
 }
 
+function finalizeReviewInput(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    action: "finalize_review",
+    goalId: DEFAULT_GOAL_ID,
+    expectedReviewGeneration: 1,
+    verdict: "DONE",
+    summary: "All acceptance criteria are verified.",
+    evidenceRefs: [validEvidenceRef()],
+    unresolvedItems: [],
+    finalSummary: "Goal completed.",
+    result: testReviewExecutionFields("DONE").result,
+    ...overrides,
+  };
+}
+
+async function executeGoalManageWithCorrection(
+  input: unknown,
+  store: StoreApi<SessionStoreState>,
+  policy: "strict" | "best_effort",
+  initialFailures = 0,
+): Promise<ToolExecutionResult> {
+  const ctx = makeCtx(input, store, makeProjectContext());
+  ctx.structuredResultCorrection = createStructuredResultCorrectionGate(
+    policy,
+    initialFailures,
+    "goal_manage.finalize_review",
+  );
+  return await createRegistry([goalManageTool]).execute({
+    toolName: TOOL_GOAL_MANAGE,
+    toolCallId: crypto.randomUUID(),
+    input,
+  }, ctx);
+}
+
 describe("goal_manage builtin tool", () => {
   it("exposes committed creation and managed lifecycle descriptors", () => {
     expect(goalCreateTool.name).toBe(TOOL_GOAL_CREATE);
@@ -290,7 +355,7 @@ describe("goal_manage builtin tool", () => {
     const goalId = "11111111-1111-4111-8111-111111111111";
     const validCases = [
       { action: "begin_review", goalId },
-      { action: "finalize_review", goalId, expectedReviewGeneration: 1, verdict: "DONE", summary: "Verified", evidenceRefs: [validEvidenceRef()], finalSummary: "Done" },
+      { action: "finalize_review", goalId, expectedReviewGeneration: 1, verdict: "DONE", summary: "Verified", evidenceRefs: [validEvidenceRef()], finalSummary: "Done", result: testReviewExecutionFields("DONE").result },
       { action: "retry", goalId },
       { action: "cancel", goalId, reason: "No longer needed" },
     ];
@@ -447,6 +512,7 @@ describe("goal_manage builtin tool", () => {
       return await manager.finalizeReview(committed.id, {
         expectedReviewGeneration: reviewing.reviewGeneration,
         verdict: "NOT_DONE",
+        ...testReviewExecutionFields("NOT_DONE"),
         summary: "More work remains.",
         authorization: {
           agentName: "reviewer",
@@ -593,6 +659,7 @@ describe("goal_manage builtin tool", () => {
       verdict: "NOT_DONE",
       summary: "Missing test evidence.",
       evidenceRefs: [],
+      result: testReviewExecutionFields("NOT_DONE").result,
     });
 
     expect(result.isError).toBe(true);
@@ -614,6 +681,7 @@ describe("goal_manage builtin tool", () => {
         evidenceRefs: [validEvidenceRef()],
         unresolvedItems: [],
         finalSummary: "Goal completed.",
+        result: testReviewExecutionFields("DONE").result,
       },
       { store: reviewStore(goalId) },
     );
@@ -630,6 +698,136 @@ describe("goal_manage builtin tool", () => {
     expect(goalState.calls[0]).toMatchObject({ method: "finalizeReview" });
   });
 
+  it("fails the first schema-invalid strict finalize_review with CHILD_RESULT_REQUIRED", async () => {
+    const result = await executeGoalManageWithCorrection({
+      action: "finalize_review",
+      goalId: DEFAULT_GOAL_ID,
+    }, reviewStore(DEFAULT_GOAL_ID), "strict");
+
+    expect(JSON.parse(result.output).code).toBe("CHILD_RESULT_REQUIRED");
+    expect(result.meta?.executionControl).toMatchObject({
+      action: "fail_execution",
+      reason: "child_result_required",
+    });
+  });
+
+  it("fails the first semantically invalid strict finalize_review with CHILD_RESULT_REQUIRED", async () => {
+    const invalidResult = testReviewExecutionFields("DONE").result;
+    invalidResult.criteria = [{ id: "wrong", status: "passed", evidenceRefs: [] }];
+
+    const result = await executeGoalManageWithCorrection(
+      finalizeReviewInput({ result: invalidResult }),
+      reviewStore(DEFAULT_GOAL_ID),
+      "strict",
+    );
+
+    expect(JSON.parse(result.output).code).toBe("CHILD_RESULT_REQUIRED");
+    expect(result.meta?.executionControl).toMatchObject({ action: "fail_execution" });
+  });
+
+  it("gives best-effort finalize_review one shared schema-to-semantic correction before failure", async () => {
+    const store = reviewStore(DEFAULT_GOAL_ID);
+    const gate = createStructuredResultCorrectionGate(
+      "best_effort",
+      0,
+      "goal_manage.finalize_review",
+    );
+    const ctx = makeCtx({}, store, makeProjectContext());
+    ctx.structuredResultCorrection = gate;
+    const registry = createRegistry([goalManageTool]);
+
+    const schemaFailure = await registry.execute({
+      toolName: TOOL_GOAL_MANAGE,
+      toolCallId: "goal-review-schema-failure",
+      input: { action: "finalize_review", goalId: DEFAULT_GOAL_ID },
+    }, ctx);
+    expect(JSON.parse(schemaFailure.output).code).toBe("STRUCTURED_RESULT_CORRECTION_REQUIRED");
+    expect(schemaFailure.meta?.executionControl).toBeUndefined();
+
+    const invalidResult = testReviewExecutionFields("DONE").result;
+    invalidResult.criteria = [{ id: "wrong", status: "passed", evidenceRefs: [] }];
+    const semanticFailure = await registry.execute({
+      toolName: TOOL_GOAL_MANAGE,
+      toolCallId: "goal-review-semantic-failure",
+      input: finalizeReviewInput({ result: invalidResult }),
+    }, ctx);
+    expect(JSON.parse(semanticFailure.output).code).toBe("CHILD_RESULT_REQUIRED");
+    expect(semanticFailure.meta?.executionControl).toMatchObject({ action: "fail_execution" });
+  });
+
+  it("does not spend the finalize_review correction on another goal_manage action", async () => {
+    const store = reviewStore(DEFAULT_GOAL_ID);
+    const gate = createStructuredResultCorrectionGate(
+      "best_effort",
+      0,
+      "goal_manage.finalize_review",
+    );
+    const ctx = makeCtx({}, store, makeProjectContext());
+    ctx.structuredResultCorrection = gate;
+    const registry = createRegistry([goalManageTool]);
+
+    const unrelated = await registry.execute({
+      toolName: TOOL_GOAL_MANAGE,
+      toolCallId: "invalid-begin-review",
+      input: { action: "begin_review" },
+    }, ctx);
+    expect(JSON.parse(unrelated.output).code).not.toBe("STRUCTURED_RESULT_CORRECTION_REQUIRED");
+
+    const firstFinalizeFailure = await registry.execute({
+      toolName: TOOL_GOAL_MANAGE,
+      toolCallId: "first-finalize-review",
+      input: { action: "finalize_review", goalId: DEFAULT_GOAL_ID },
+    }, ctx);
+    expect(JSON.parse(firstFinalizeFailure.output).code).toBe("STRUCTURED_RESULT_CORRECTION_REQUIRED");
+  });
+
+  it("rebuilds the finalize_review correction count from the durable current execution", async () => {
+    const store = reviewStore(DEFAULT_GOAL_ID);
+    const durableFailure = createStructuredResultCorrectionGate(
+      "best_effort",
+      0,
+      "goal_manage.finalize_review",
+    ).recordFailure(new Error("schema mismatch"));
+    const now = new Date().toISOString();
+    const batch: SessionToolBatch = {
+      batchId: "goal-review-batch",
+      executionId: "review-execution",
+      step: 1,
+      agentName: "reviewer",
+      allowedTools: [TOOL_GOAL_MANAGE],
+      agentSkills: [],
+      partitions: [{ type: "serial", callIds: ["failed-finalize"] }],
+      calls: [{
+        ordinal: 0,
+        partitionIndex: 0,
+        toolCallId: "failed-finalize",
+        toolName: TOOL_GOAL_MANAGE,
+        input: { action: "finalize_review", goalId: DEFAULT_GOAL_ID },
+        traits: { readOnly: false, destructive: false, concurrencySafe: false },
+        state: "failed",
+        attempt: 1,
+        result: durableFailure,
+      }],
+      createdAt: now,
+      updatedAt: now,
+    };
+    store.setState({ toolBatches: [batch] });
+
+    const failures = countStructuredResultFailures(
+      store.getState(),
+      "goal_manage.finalize_review",
+    );
+    expect(failures).toBe(1);
+    const recovered = await executeGoalManageWithCorrection(
+      { action: "finalize_review", goalId: DEFAULT_GOAL_ID },
+      store,
+      "best_effort",
+      failures,
+    );
+    expect(JSON.parse(recovered.output).code).toBe("CHILD_RESULT_REQUIRED");
+    expect(recovered.meta?.executionControl).toMatchObject({ action: "fail_execution" });
+  });
+
   it("denies finalize_review for wrong roles and wrong Goal-scoped review sessions", async () => {
     const goalId = "11111111-1111-4111-8111-111111111111";
     const otherGoalId = "22222222-2222-4222-8222-222222222222";
@@ -640,6 +838,7 @@ describe("goal_manage builtin tool", () => {
       verdict: "NOT_DONE",
       summary: "More work required.",
       evidenceRefs: [],
+      result: testReviewExecutionFields("NOT_DONE").result,
     };
 
     for (const store of [

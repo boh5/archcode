@@ -25,6 +25,11 @@ export class AgentsMdLoadError extends Error {
   }
 }
 
+export interface AgentsMdSnapshot {
+  readonly path: string;
+  readonly content: string;
+}
+
 /**
  * Search upward from `startDir` for an AGENTS.md file.
  * Returns the absolute file path if found, or undefined.
@@ -71,12 +76,12 @@ export async function findAgentsMd(startDir: string): Promise<string | undefined
  * Returns undefined if no AGENTS.md is found.
  * Throws AgentsMdLoadError if found but unreadable.
  */
-export async function loadAgentsMd(startDir: string): Promise<string | undefined> {
+export async function loadAgentsMd(startDir: string): Promise<AgentsMdSnapshot | undefined> {
   const filePath = await findAgentsMd(startDir);
   if (!filePath) return undefined;
 
   try {
-    return await Bun.file(filePath).text();
+    return { path: filePath, content: await Bun.file(filePath).text() };
   } catch (err) {
     throw new AgentsMdLoadError(
       `Failed to read AGENTS.md: ${filePath}`,

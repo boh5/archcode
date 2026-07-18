@@ -7,7 +7,7 @@ import { SkillService } from "../skills";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { createRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
-import { engineerAgentDefinition } from "./definitions";
+import { engineerAgentDefinition, exploreAgentDefinition } from "./definitions";
 import { SessionAgentManager } from "./session-agent-manager";
 import { silentLogger } from "../logger";
 import { mkdir, rm, writeFile } from "node:fs/promises";
@@ -18,6 +18,8 @@ import { setLlmAdapterForTest } from "../llm/adapter";
 import { DELEGATION_CORE_TOOLS } from "./constants";
 import type { AgentDefinition } from "./factory-types";
 import type { ToolExecutionContext } from "../tools/types";
+import { hashDelegationContract } from "../delegation/contract";
+import type { DelegationContract } from "@archcode/protocol";
 
 const TEST_WORKSPACE_ROOT = join(import.meta.dir, "__test_tmp__", `session-agent-manager-${crypto.randomUUID()}`);
 
@@ -46,6 +48,7 @@ function makeProviderRegistry(): ProviderRegistry {
       name: "Test Model",
       limit: { context: 128_000, output: 8_192 },
       modalities: { input: ["text"], output: ["text"] },
+          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
     },
     providerId: "test",
     modelId: "model",
@@ -82,10 +85,14 @@ function createManager(
 
 const IDENTITY_SKILL_NAME = "identity-skill";
 const IDENTITY_SKILL_BODY = "Canonical child identity instructions.";
-const identityAgentDefinition = {
+const identityEngineerDefinition = {
   ...engineerAgentDefinition,
+  roleContract: {
+    ...engineerAgentDefinition.roleContract,
+    delegateTargets: ["explore"],
+  },
   tools: {
-    tools: ["identity_probe", ...DELEGATION_CORE_TOOLS],
+    tools: ["file_read", "identity_probe", ...DELEGATION_CORE_TOOLS],
     delegateTargets: ["explore"],
   },
   hooks: {
@@ -97,6 +104,17 @@ const identityAgentDefinition = {
     memoryConsolidation: false,
     titleGeneration: "disabled",
   },
+  includeMemoryInPrompt: false,
+  enforceToolOutputQuota: false,
+  skills: [IDENTITY_SKILL_NAME],
+} as const satisfies AgentDefinition;
+
+const identityExploreDefinition = {
+  ...exploreAgentDefinition,
+  tools: {
+    tools: ["file_read", "identity_probe", "submit_child_result"],
+  },
+  hooks: identityEngineerDefinition.hooks,
   includeMemoryInPrompt: false,
   enforceToolOutputQuota: false,
   skills: [IDENTITY_SKILL_NAME],
@@ -133,6 +151,8 @@ function createIdentityManager(
   };
   const toolRegistry = createRegistry([
     identityProbe,
+    makeTool("file_read"),
+    makeTool("submit_child_result"),
     ...DELEGATION_CORE_TOOLS.map(makeTool),
   ]);
   const skillService = new SkillService({
@@ -149,7 +169,7 @@ function createIdentityManager(
   });
 
   return new SessionAgentManager({
-    definitions: [identityAgentDefinition],
+    definitions: [identityEngineerDefinition, identityExploreDefinition],
     providerRegistry,
     toolRegistry,
     skillService,
@@ -157,7 +177,10 @@ function createIdentityManager(
     projectContextResolver: createTestProjectContextResolver(storeManager),
     config: {
       provider: {},
-      agents: { engineer: { model: providerRegistry.modelIds[0]! } },
+      agents: {
+        engineer: { model: providerRegistry.modelIds[0]! },
+        explore: { model: providerRegistry.modelIds[0]! },
+      },
     } as unknown as ArchCodeConfig,
     logger: silentLogger,
   });
@@ -271,15 +294,37 @@ describe("SessionAgentManager", () => {
     const observedContexts: ToolExecutionContext[] = [];
     const manager = createIdentityManager(storeManager, observedContexts);
     const streamText = setupIdentityProbeStream();
-    const sessionIds = Array.from({ length: 4 }, () => crypto.randomUUID());
+    const sessionIds = Array.from({ length: 2 }, () => crypto.randomUUID());
     const rootSessionId = sessionIds[0]!;
+
+    const childContract: DelegationContract = {
+      agent_type: "explore",
+      title: "Probe durable child identity",
+      objective: "Verify that child identity survives cache and process restart.",
+      owned_scope: [],
+      non_goals: [],
+      acceptance_criteria: [{
+        id: "identity",
+        condition: "The reconstructed child keeps the same depth, tools, and Skill.",
+        requiredEvidence: "Observed execution context and compiled Prompt",
+      }],
+      evidence: [],
+      verification: [],
+      depends_on: [],
+      skills: [IDENTITY_SKILL_NAME],
+      background: false,
+    };
 
     for (const [depth, sessionId] of sessionIds.entries()) {
       storeManager.create(sessionId, workspaceRoot, {
-        agentName: "engineer",
+        agentName: depth === 0 ? "engineer" : "explore",
         activeSkillNames: [IDENTITY_SKILL_NAME],
         rootSessionId,
-        ...(depth === 0 ? {} : { parentSessionId: sessionIds[depth - 1]! }),
+        ...(depth === 0 ? {} : {
+          parentSessionId: rootSessionId,
+          delegationContract: childContract,
+          delegationContractHash: hashDelegationContract(childContract),
+        }),
       });
       await storeManager.flushSession(sessionId, workspaceRoot);
     }
@@ -336,10 +381,10 @@ describe("SessionAgentManager", () => {
 
       expect(warmIdentity).toEqual({
         depth: expectedDepth,
-        allowedTools: expectedDepth < 3
-          ? [...DELEGATION_CORE_TOOLS, "identity_probe"].sort()
-          : ["identity_probe"],
-        delegateTargets: expectedDepth < 3 ? ["explore"] : [],
+        allowedTools: expectedDepth === 0
+          ? ["file_read", ...DELEGATION_CORE_TOOLS, "identity_probe"].sort()
+          : ["file_read", "identity_probe", "submit_child_result"].sort(),
+        delegateTargets: expectedDepth === 0 ? ["explore"] : [],
         activeSkillNames: [IDENTITY_SKILL_NAME],
         hasActiveSkillBody: true,
       });

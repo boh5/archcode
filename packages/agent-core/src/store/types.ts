@@ -14,6 +14,9 @@ import type {
   ToolChildSessionLink,
   HitlDisplayPayload,
   HitlSource,
+  ChildResultReceipt,
+  DelegationContract,
+  PromptTraceSnapshot,
 } from "@archcode/protocol";
 import type { CompressionState } from "../compression";
 import type { AgentName } from "../agents/names";
@@ -43,6 +46,7 @@ export type {
   ToolResultEvent,
   ToolChildSessionLink,
   ToolChildSessionLinkEvent,
+  ChildResultEvent,
   ToolChildSessionLinkStatus,
   CompactEvent,
   TodoWriteEvent,
@@ -51,6 +55,7 @@ export type {
   StepStartEvent,
   StepEndEvent,
   ExecutionErrorEvent,
+  PromptTraceEvent,
   LlmRetryEvent,
   LlmRecoveryEvent,
   LlmRecoveryFailedEvent,
@@ -184,12 +189,19 @@ export interface SessionStoreState {
   steps: SessionStep[];
   stats: SessionStats;
   executions: SessionExecutionRecord[];
+  /** Durable audit records for every model-call Prompt compilation. */
+  promptTraces?: PromptTraceSnapshot[];
   compression: CompressionState;
 
   // Session-only state
   todos: SessionTodo[];
   reminders: Reminder[];
   childSessionLinks: ToolChildSessionLink[];
+  /** Immutable V2 parent-to-child handoff. Required for every child Session. */
+  delegationContract?: DelegationContract;
+  delegationContractHash?: string;
+  /** One canonical receipt per successfully submitted child execution. */
+  childResultReceipts: ChildResultReceipt[];
   /** Complete tool-batch audit history; at most one entry may be active (no archivedAt). */
   toolBatches: SessionToolBatch[];
   // Identity is assigned at creation/load and treated as immutable afterwards.

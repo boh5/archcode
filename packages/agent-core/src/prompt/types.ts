@@ -1,64 +1,136 @@
-import type { MemoryRoots } from "../memory";
+import type { AgentName } from "../agents/names";
+import type { ModelCapabilities } from "../config/provider";
+import type { BuiltinToolName, DelegationContract, ScopeRef } from "@archcode/protocol";
 import type { ResolvedSkill, SkillIndexEntry } from "../skills/types";
-import type { SessionRole } from "../store/types";
 import type { VersionControl } from "../version-control/detector";
 
-/**
- * Context provided to the system prompt builder.
- * All fields required except `agentsMd` (absent when no AGENTS.md found).
- */
-export interface PromptContext {
-  /** Ordered list of tool names the agent is allowed to use this session */
-  readonly allowedTools: readonly string[];
+export type CapabilityRef = BuiltinToolName;
+export type TransitionRef =
+  | "goal.begin_review"
+  | "goal.retry"
+  | "goal.cancel"
+  | "goal.finalize_review"
+  | "todo.update";
 
-  /** Identifier for the prompt profile used by the current role (e.g. "default", "test") */
-  readonly promptProfileId: string;
+export type CompletionAuthority =
+  | "ordinary-session"
+  | "goal-coordinator"
+  | "goal-reviewer"
+  | "ordinary-reviewer"
+  | "delegated-scope"
+  | "bound-todo";
 
-  /** Role-specific prompt content from the agent definition; absent when definition has no rolePrompt */
-  readonly rolePrompt?: string;
+export interface RoleContract {
+  readonly version: "2";
+  readonly name: AgentName;
+  readonly displayName: string;
+  readonly mission: string;
+  readonly inputs: readonly string[];
+  readonly requiredBehaviors: readonly string[];
+  readonly forbiddenBehaviors: readonly string[];
+  readonly outputs: readonly string[];
+  readonly requiredCapabilities: readonly CapabilityRef[];
+  readonly forbiddenCapabilities: readonly CapabilityRef[];
+  readonly allowedTransitions: {
+    readonly default: readonly TransitionRef[];
+    readonly ordinaryReview: readonly TransitionRef[];
+    readonly goalReview: readonly TransitionRef[];
+  };
+  readonly completionAuthority: readonly CompletionAuthority[];
+  readonly delegateTargets: readonly AgentName[];
+}
 
-  /** Loaded AGENTS.md content; undefined when file not found or unreadable */
-  readonly agentsMd?: string;
+export type GoalPromptStatus = "running" | "reviewing" | "not_done";
+export type ReviewPromptMode = "none" | "ordinary" | "goal";
+export type TodoPromptMode = "none" | "bound";
+export type McpPromptStatus = "pending" | "ready" | "ready-zero" | "partial-warning" | "failed";
 
-  /** Environment details injected into the prompt */
-  readonly env: PromptEnv;
+export interface RuntimePromptEnvelope {
+  readonly agentName: AgentName;
+  readonly sessionId: string;
+  readonly rootSessionId: string;
+  readonly parentSessionId: string | "none";
+  readonly parentAgentName: AgentName | "none";
+  readonly depth: number;
+  readonly allowedDelegateTargets: readonly AgentName[];
+  readonly goal: { readonly id: string; readonly status: GoalPromptStatus; readonly reviewGeneration: number | "none" } | "none";
+  readonly todo: { readonly id: string; readonly mode: "bound" } | "none";
+  readonly reviewMode: ReviewPromptMode;
+  readonly ownedScope: readonly ScopeRef[];
+  readonly remainingDepth: number;
+  readonly maxConcurrentChildren: number;
+  readonly mcp: Readonly<Record<string, McpPromptStatus>>;
+  readonly modelCapabilities: ModelCapabilities;
+}
 
-  /** Resolved filesystem roots for project and user memory directories */
-  readonly memoryRoots?: MemoryRoots;
-
-  /** Current Goal id for Goal-scoped prompt context, when this session belongs to a Goal. */
-  readonly goalId?: string;
-
-  /** Current session role; Goal memory is injected only for Plan/Build/Review roles. */
-  readonly sessionRole?: SessionRole;
-
-  /** Index of skills available to this agent (name, description, when_to_use, source, allowed_tools) */
-  readonly availableSkills?: readonly SkillIndexEntry[];
-
-  /** Fully resolved active skills with full body content */
-  readonly activeSkills?: readonly ResolvedSkill[];
-
+export interface PromptSource<T> {
+  readonly status: "present" | "absent" | "error";
+  readonly source: string;
+  readonly value?: T;
+  readonly error?: string;
 }
 
 export interface PromptEnv {
-  /** process.platform value: "darwin" | "linux" | "win32" etc. */
   readonly platform: string;
-
-  /** IANA timezone identifier (e.g. "America/Los_Angeles") */
   readonly timezone: string;
-
-  /** BCP-47 locale string (e.g. "en-US") */
   readonly locale: string;
-
-  /** Canonical project root that owns Session, Goal, Automation, HITL, and memory state. */
   readonly projectRoot: string;
-
-  /** Current working directory */
   readonly cwd: string;
-
-  /** Version-control capability detected for the current working directory. */
   readonly versionControl: VersionControl;
-
-  /** ISO 8601 date string (e.g. "2025-01-15") */
   readonly date: string;
+}
+
+export interface PromptMemorySnapshot {
+  readonly preferences: string | "none";
+  readonly index: string | "none";
+}
+
+export interface GuidanceAuthority {
+  readonly kind: "guidance-only";
+  readonly grants: "none";
+}
+
+export interface PromptContractV2 {
+  readonly version: "2";
+  readonly role: RoleContract;
+  readonly runtime: RuntimePromptEnvelope;
+  readonly allowedTools: readonly string[];
+  readonly availableSkills: readonly SkillIndexEntry[];
+  readonly activeSkills: readonly ResolvedSkill[];
+  readonly guidanceAuthority: {
+    readonly skills: GuidanceAuthority;
+    readonly projectInstructions: GuidanceAuthority;
+  };
+  readonly agentsMd: PromptSource<string>;
+  readonly memory: PromptSource<PromptMemorySnapshot>;
+  readonly currentContext: readonly string[];
+  readonly delegation: { readonly contract: DelegationContract; readonly hash: string } | "none";
+  readonly env: PromptEnv;
+}
+
+export interface PromptTraceSection {
+  readonly name: string;
+  readonly source: string;
+  readonly hash: string;
+}
+
+export interface PromptTrace {
+  readonly version: "2";
+  readonly status: "compiled" | "error";
+  readonly hash: string;
+  readonly sections: readonly PromptTraceSection[];
+  readonly skills: {
+    readonly status: "present" | "absent" | "error";
+    readonly active: readonly { readonly name: string; readonly source: string }[];
+  };
+  readonly visibleTools: readonly string[];
+  readonly agentsMd: PromptSource<never>["status"];
+  readonly memory: PromptSource<never>["status"];
+  readonly mcp: RuntimePromptEnvelope["mcp"];
+  readonly warnings: readonly string[];
+}
+
+export interface CompiledPromptContract {
+  readonly prompt: string;
+  readonly trace: PromptTrace;
 }

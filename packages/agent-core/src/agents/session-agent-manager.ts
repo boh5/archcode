@@ -1,4 +1,5 @@
 import type { ArchCodeConfig } from "../config/index";
+import type { McpServerStatus } from "@archcode/protocol";
 import type { ProjectContextResolver } from "../projects/context-resolver";
 import type { ProviderRegistry } from "../provider/index";
 import { SessionStoreManager } from "../store/session-store-manager";
@@ -28,6 +29,7 @@ export interface SessionAgentManagerConfig {
   readonly cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
   readonly resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
   readonly acquireSessionCwdTransition?: (workspaceRoot: string, sessionId: string) => () => void;
+  readonly resolveMcpStatuses?: () => ReadonlyMap<string, McpServerStatus>;
   readonly logger: Logger;
 }
 
@@ -94,6 +96,11 @@ export class SessionAgentManager {
     const promise = this.#createAndRegisterAgent(workspaceRoot, sessionId, key);
     this.#pendingAgents.set(key, promise);
     return promise;
+  }
+
+  /** Read-only cache probe used to preserve pre-existing warm Agents on failed activation. */
+  get(workspaceRoot: string, sessionId: string): Agent | undefined {
+    return this.#agents.get(scopedKey(workspaceRoot, sessionId));
   }
 
   async #createAndRegisterAgent(workspaceRoot: string, sessionId: string, key: string): Promise<Agent> {
@@ -228,6 +235,7 @@ export class SessionAgentManager {
         cancelChildSession: this.#cancelChildSession,
         resumeChildSession: this.#resumeChildSession,
         acquireSessionCwdTransition: this.#acquireSessionCwdTransition,
+        resolveMcpStatuses: this.#config.resolveMcpStatuses,
         logger: this.#logger,
       });
       this.#factories.set(workspaceRoot, factory);

@@ -641,9 +641,20 @@ function executionControlFromMeta(meta: Record<string, unknown> | undefined): To
   const value = meta?.executionControl;
   if (typeof value !== "object" || value === null) return undefined;
   const control = value as Partial<ToolExecutionControl>;
-  return control.action === "stop_session_family" && control.reason === "goal_cancelled"
-    ? { action: control.action, reason: control.reason }
-    : undefined;
+  if (
+    control.action === "stop_session_family"
+    && (control.reason === "goal_cancelled" || control.reason === "goal_cancelled_cleanup_incomplete")
+  ) return { action: control.action, reason: control.reason };
+  if (
+    control.action === "complete_execution"
+    && (control.reason === "child_result_submitted" || control.reason === "goal_review_finalized")
+  ) return { action: control.action, reason: control.reason };
+  if (
+    control.action === "fail_execution"
+    && control.reason === "child_result_required"
+    && typeof control.error === "string"
+  ) return { action: control.action, reason: control.reason, error: control.error };
+  return undefined;
 }
 
 function hasSettledToolPart(state: Pick<SessionStoreState, "messages">, toolCallId: string): boolean {

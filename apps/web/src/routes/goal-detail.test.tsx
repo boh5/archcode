@@ -306,6 +306,8 @@ describe("GoalDetailRoute", () => {
     const goal = makeGoal({
       status: "done",
       review: {
+        executionId: "review-exec-1",
+        delegationContractHash: "review-contract-1",
         reviewGeneration: 1,
         verdict: "DONE",
         summary: "All acceptance criteria met. Tests pass and diff is clean.",
@@ -315,6 +317,15 @@ describe("GoalDetailRoute", () => {
         ],
         reviewerSessionId: "review-session-1",
         decidedAt: "2026-01-02T00:00:00.000Z",
+        result: {
+          status: "completed",
+          summary: "All acceptance criteria met. Tests pass and diff is clean.",
+          deliverables: [],
+          evidence: [],
+          criteria: [],
+          verification: [],
+          unresolved: [],
+        },
       },
       finalSummary: "Auth module successfully refactored to JWT.",
     });

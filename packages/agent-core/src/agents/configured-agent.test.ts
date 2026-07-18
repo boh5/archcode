@@ -23,6 +23,7 @@ import { setLlmAdapterForTest } from "../llm/adapter";
 import type { MemoryExtractionConfig } from "../config";
 import { silentLogger } from "../logger";
 import { GoalStateManager } from "../goals/state";
+import { testReviewExecutionFields } from "../goals/test-review-fixture";
 import { createTestProjectContextResolver } from "./test-project-context-resolver";
 import type { AgentRunOptions } from "./types";
 
@@ -89,6 +90,7 @@ function makeProviderRegistry(): ProviderRegistry {
       name: "Fallback Model",
       limit: { context: 128_000, output: 8_192 },
       modalities: { input: ["text"], output: ["text"] },
+          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
     },
     providerId: "test",
     modelId: "fallback",
@@ -100,6 +102,7 @@ function makeProviderRegistry(): ProviderRegistry {
       name: "Configured Model",
       limit: { context: 64_000, output: 4_096 },
       modalities: { input: ["text"], output: ["text"] },
+          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
     },
     providerId: "test",
     modelId: "configured",
@@ -134,6 +137,9 @@ function makeToolRegistry() {
     makeTool("unknown_tool"),
     ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
     ...DELEGATION_CORE_TOOLS.map(makeTool),
+    makeTool("submit_child_result"),
+    makeTool("goal_manage"),
+    makeTool("project_todo_update"),
   ]);
 }
 
@@ -211,6 +217,12 @@ function createAgent(options: {
   const providerRegistry = options.providerRegistry ?? makeProviderRegistry();
   const projectRoot = options.projectRoot ?? tmpRoot;
   const cwd = options.cwd ?? projectRoot;
+  const store = options.store ?? storeManager.create(crypto.randomUUID(), projectRoot, { cwd, agentName: options.definition.name });
+  if (options.definition.name !== "engineer" && options.definition.name !== "goal_lead" && options.definition.name !== "shaper" && store.getState().parentSessionId === undefined) {
+    const parentSessionId = crypto.randomUUID();
+    storeManager.create(parentSessionId, projectRoot, { cwd, agentName: "engineer" });
+    store.setState({ parentSessionId, rootSessionId: parentSessionId });
+  }
   return new ConfiguredAgent({
     definition: options.definition,
     providerRegistry,
@@ -218,7 +230,7 @@ function createAgent(options: {
     modelOptions: { temperature: 0.3 },
     toolRegistry,
     skillService: options.skillService ?? createTestSkillService(),
-    store: options.store ?? storeManager.create(crypto.randomUUID(), projectRoot, { cwd, agentName: "engineer" }),
+    store,
     storeManager,
     projectContextResolver: createTestProjectContextResolver(storeManager),
     resolveVersionControl: async () => options.versionControl ?? "git",
@@ -230,7 +242,8 @@ function createAgent(options: {
     quotaEnforcer: options.quotaEnforcer,
     logger: silentLogger,
     resolveAllowedTools: (definition, depth) => {
-      const resolved = toolRegistry.resolveForAgent(definition.tools.tools).descriptors.map((tool) => tool.name);
+      const requested = [...definition.tools.tools, ...definition.roleContract.requiredCapabilities];
+      const resolved = toolRegistry.resolveForAgent(requested).descriptors.map((tool) => tool.name);
       if (depth >= MAX_SUB_AGENT_DEPTH) {
         return resolved.filter((name) => !(DELEGATION_CORE_TOOLS as readonly string[]).includes(name));
       }
@@ -356,7 +369,7 @@ describe("ConfiguredAgent", () => {
   test("engineer definition produces all configured lifecycle hooks", async () => {
     const streamFn = setupMockStreamText("root ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(`configured-root-${crypto.randomUUID()}`, tmpRoot, { agentName: "engineer" });
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "engineer" });
     store.setState({
       messages: [
         {
@@ -392,7 +405,7 @@ describe("ConfiguredAgent", () => {
 
   test("Goal Lead leaves next-Run continuation exclusively to the Goal driver", async () => {
     setupMockStreamText("goal turn complete");
-    const store = storeManager.create(`configured-goal-lead-${crypto.randomUUID()}`, tmpRoot, { agentName: "goal_lead" });
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "goal_lead" });
     store.setState({ todos: [{ id: "todo-1", content: "finish goal", status: "pending" }] });
 
     const agent = createAgent({ definition: goalLeadAgentDefinition, store });
@@ -435,6 +448,8 @@ describe("ConfiguredAgent", () => {
     const skillService = createTestSkillService();
     let capturedContext: { agentSkills: readonly string[]; skillService: SkillService } | undefined;
     const toolRegistry = createRegistry([
+      makeTool("file_read"),
+      makeTool("submit_child_result"),
       {
         name: "capture_context",
         description: "Capture context",
@@ -462,19 +477,23 @@ describe("ConfiguredAgent", () => {
 
   test("uses Session cwd for prompt and tools while resolving project state from the canonical root", async () => {
     let capturedContext: { cwd: string; projectRoot: string } | undefined;
-    const toolRegistry = createRegistry([{
-      name: "capture_workspace",
-      description: "Capture workspace roots",
-      inputSchema: z.object({}).strict(),
-      traits: { readOnly: true, destructive: false, concurrencySafe: false },
-      execute: (_input, ctx) => {
-        capturedContext = {
-          cwd: ctx.cwd,
-          projectRoot: ctx.projectContext.project.workspaceRoot,
-        };
-        return "captured";
-      },
-    } satisfies AnyToolDescriptor]);
+    const toolRegistry = createRegistry([
+      makeTool("file_read"),
+      makeTool("submit_child_result"),
+      {
+        name: "capture_workspace",
+        description: "Capture workspace roots",
+        inputSchema: z.object({}).strict(),
+        traits: { readOnly: true, destructive: false, concurrencySafe: false },
+        execute: (_input, ctx) => {
+          capturedContext = {
+            cwd: ctx.cwd,
+            projectRoot: ctx.projectContext.project.workspaceRoot,
+          };
+          return "captured";
+        },
+      } satisfies AnyToolDescriptor,
+    ]);
     const streamFn = setupToolCallStreamText("capture_workspace");
     const agent = createAgent({
       definition: definitionWith({ tools: { tools: ["capture_workspace"] } }),
@@ -513,7 +532,7 @@ describe("ConfiguredAgent", () => {
 
   test("explorer definition produces auto-compact, auto-inject, and todo-continuation hooks", async () => {
     const streamFn = setupMockStreamText("explore ok");
-    const store = storeManager.create(`configured-explore-${crypto.randomUUID()}`, tmpRoot, { agentName: "engineer" });
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "engineer" });
     store.setState({
       reminders: [
         {
@@ -539,7 +558,7 @@ describe("ConfiguredAgent", () => {
   test("engineer definition dispatches memory background hooks", async () => {
     setupMockStreamText("engineer memory ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(`configured-engineer-background-${crypto.randomUUID()}`, tmpRoot, { agentName: "engineer" });
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "engineer" });
     store.setState({
       messages: [
         {
@@ -577,7 +596,7 @@ describe("ConfiguredAgent", () => {
   test("memory config disabled skips memory background hooks", async () => {
     setupMockStreamText("memory disabled ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(`configured-memory-disabled-${crypto.randomUUID()}`, tmpRoot, { agentName: "engineer" });
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "engineer" });
     store.setState({
       messages: [
         {
@@ -613,7 +632,7 @@ describe("ConfiguredAgent", () => {
   test("memory config custom thresholds are used by extraction hook", async () => {
     setupMockStreamText("memory custom ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(`configured-memory-custom-${crypto.randomUUID()}`, tmpRoot, { agentName: "engineer" });
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "engineer" });
     store.setState({
       messages: [
         {
@@ -640,7 +659,7 @@ describe("ConfiguredAgent", () => {
   test("memory config absent uses default extraction thresholds", async () => {
     setupMockStreamText("memory defaults ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(`configured-memory-defaults-${crypto.randomUUID()}`, tmpRoot, { agentName: "engineer" });
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "engineer" });
     store.setState({
       messages: [
         {
@@ -662,7 +681,7 @@ describe("ConfiguredAgent", () => {
   test('titleGeneration "unless-supplied" skips when store title already exists', async () => {
     setupMockStreamText("titled ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(`configured-titled-${crypto.randomUUID()}`, tmpRoot, { agentName: "engineer" });
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "engineer" });
     store.setState({ title: "Supplied Title" });
 
     const agent = createAgent({ definition: exploreAgentDefinition, store, btm });
@@ -761,15 +780,22 @@ describe("ConfiguredAgent", () => {
   test("does not expose cwd transitions to Goal-owned root Sessions", async () => {
     const streamFn = setupMockStreamText("goal tools");
     const toolRegistry = createRegistry([
-      ...engineerAgentDefinition.tools.tools.map(makeTool),
+      ...goalLeadAgentDefinition.tools.tools.map(makeTool),
       worktreeEnterTool,
       worktreeExitTool,
     ]);
-    const store = storeManager.create(`configured-goal-worktree-${crypto.randomUUID()}`, tmpRoot, {
-      goalId: crypto.randomUUID(), agentName: "goal_lead"
+    const sessionId = crypto.randomUUID();
+    const goal = await new GoalStateManager(tmpRoot).commit({
+      id: crypto.randomUUID(),
+      projectSlug: "project-a",
+      createdFromSessionId: crypto.randomUUID(),
+      objective: "Keep Goal sessions out of ordinary worktree transitions.",
+      acceptanceCriteria: "The Goal Lead prompt exposes no cwd transition tool.",
+      mainSessionId: sessionId,
     });
+    const store = storeManager.create(sessionId, tmpRoot, { goalId: goal.id, agentName: "goal_lead" });
     await runAgent(createAgent({
-      definition: engineerAgentDefinition,
+      definition: goalLeadAgentDefinition,
       toolRegistry,
       store,
       projectRoot: tmpRoot,
@@ -781,6 +807,54 @@ describe("ConfiguredAgent", () => {
     expect(system).not.toContain("- worktree_exit");
   });
 
+  test("derives Goal Lead delegate targets from the current Goal phase", async () => {
+    const goalState = new GoalStateManager(tmpRoot);
+    const sessionId = crypto.randomUUID();
+    const goal = await goalState.commit({
+      id: crypto.randomUUID(),
+      projectSlug: "project-a",
+      createdFromSessionId: crypto.randomUUID(),
+      objective: "Expose only phase-valid Goal delegation targets.",
+      acceptanceCriteria: "The Runtime Envelope matches Goal admission.",
+      mainSessionId: sessionId,
+    });
+    const store = storeManager.create(sessionId, tmpRoot, {
+      goalId: goal.id,
+      sessionRole: "main",
+      agentName: "goal_lead",
+    });
+    const agent = createAgent({ definition: goalLeadAgentDefinition, store });
+
+    const running = setupMockStreamText("running");
+    await runAgent(agent, "running phase");
+    expect((running.mock.calls[0]![0] as { system: string }).system)
+      .toContain("Allowed delegate targets: plan, build, explore, librarian");
+
+    await goalState.beginReview(goal.id);
+    const reviewing = setupMockStreamText("reviewing");
+    await runAgent(agent, "reviewing phase");
+    expect((reviewing.mock.calls[0]![0] as { system: string }).system)
+      .toContain("Allowed delegate targets: reviewer");
+
+    await goalState.finalizeReview(goal.id, {
+      expectedReviewGeneration: 1,
+      verdict: "NOT_DONE",
+      summary: "More work remains.",
+      ...testReviewExecutionFields("NOT_DONE"),
+      authorization: {
+        agentName: "reviewer",
+        sessionRole: "review",
+        sessionGoalId: goal.id,
+        reviewerSessionId: crypto.randomUUID(),
+      },
+    });
+    const notDone = setupMockStreamText("not done");
+    await runAgent(agent, "not_done phase");
+    const notDonePrompt = (notDone.mock.calls[0]![0] as { system: string }).system;
+    expect(notDonePrompt).toContain("Allowed delegate targets: none");
+    expect(notDonePrompt).toContain("No delegate target is currently admissible");
+  });
+
   test("extraTools cannot grant cwd transitions to an ineligible Session", async () => {
     const streamFn = setupMockStreamText("should not run");
     const toolRegistry = createRegistry([
@@ -788,7 +862,7 @@ describe("ConfiguredAgent", () => {
       worktreeEnterTool,
       worktreeExitTool,
     ]);
-    const store = storeManager.create(`configured-goal-worktree-extra-${crypto.randomUUID()}`, tmpRoot, {
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, {
       goalId: crypto.randomUUID(), agentName: "goal_lead"
     });
     const agent = createAgent({
@@ -873,7 +947,7 @@ describe("ConfiguredAgent", () => {
   test("skill metadata allowed_tools is prompt metadata only and cannot grant missing tools", async () => {
     const streamFn = setupMockStreamText("skill metadata ok");
     const skillService = createSkillServiceWithToolGrant();
-    const store = storeManager.create(`configured-skill-${crypto.randomUUID()}`, tmpRoot, {
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, {
       agentName: "engineer",
       activeSkillNames: ["github-skill"],
     });
@@ -907,7 +981,7 @@ describe("ConfiguredAgent", () => {
       "Temporary instructions.",
     ].join("\n"));
 
-    const store = storeManager.create(`configured-deleted-skill-${crypto.randomUUID()}`, tmpRoot, {
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, {
       agentName: "engineer",
       activeSkillNames: [skillName],
     });
@@ -919,13 +993,42 @@ describe("ConfiguredAgent", () => {
 
     try {
       await runAgent(agent, "first run");
+      expect(store.getState().promptTraces?.at(-1)?.skills.active).toEqual([
+        { name: skillName, source: join(skillDir, "SKILL.md") },
+      ]);
       await rm(skillDir, { recursive: true, force: true });
+      const eventStart = store.getState().events.length;
       await expect(runAgent(agent, "second run")).rejects.toBeInstanceOf(SkillNotFoundError);
+      const secondRunEvents = store.getState().events.slice(eventStart).map((event) => event.payload);
+      const traceIndex = secondRunEvents.findIndex((event) => event.type === "prompt-trace");
+      const errorIndex = secondRunEvents.findIndex((event) => event.type === "execution-error");
+      expect(secondRunEvents[traceIndex]).toMatchObject({ type: "prompt-trace", trace: { status: "error", skills: { status: "error" } } });
+      expect(traceIndex).toBeGreaterThanOrEqual(0);
+      expect(errorIndex).toBeGreaterThan(traceIndex);
     } finally {
       await rm(skillDir, { recursive: true, force: true });
     }
 
     expect(streamFn).toHaveBeenCalledTimes(1);
+  });
+
+  test("persists an error Prompt trace before failing closed when Skill listing fails", async () => {
+    const streamFn = setupMockStreamText("must not run");
+    const skillService = {
+      listForAgent: mock(async () => { throw new Error("skill index unreadable"); }),
+    } as unknown as SkillService;
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "engineer" });
+    const agent = createAgent({ definition: engineerAgentDefinition, skillService, store });
+
+    await expect(runAgent(agent, "list skills")).rejects.toThrow("skill index unreadable");
+
+    const events = store.getState().events.map((event) => event.payload);
+    const traceIndex = events.findIndex((event) => event.type === "prompt-trace");
+    const errorIndex = events.findIndex((event) => event.type === "execution-error");
+    expect(events[traceIndex]).toMatchObject({ type: "prompt-trace", trace: { status: "error", skills: { status: "error", active: [] } } });
+    expect(traceIndex).toBeGreaterThanOrEqual(0);
+    expect(errorIndex).toBeGreaterThan(traceIndex);
+    expect(streamFn).not.toHaveBeenCalled();
   });
 
   test("enforceToolOutputQuota controls quota enforcement", async () => {
@@ -946,27 +1049,13 @@ describe("ConfiguredAgent", () => {
     const withMemoryStreamFn = setupMockStreamText("memory ok");
     await runAgent(createAgent({ definition: engineerAgentDefinition }), "with memory");
     const withMemory = withMemoryStreamFn.mock.calls[0]![0] as { system: string };
-    expect(withMemory.system).toContain("<archcode-memory-context>");
+    expect(withMemory.system).toContain("## Memory");
+    expect(withMemory.system).toContain("Memory is non-authoritative historical context");
 
     const withoutMemoryStreamFn = setupMockStreamText("memory off ok");
     await runAgent(createAgent({ definition: exploreAgentDefinition }), "without memory");
     const withoutMemory = withoutMemoryStreamFn.mock.calls[0]![0] as { system: string };
-    expect(withoutMemory.system).not.toContain("<archcode-memory-context>");
-  });
-
-  test("legacy active workflow context is omitted for agents", async () => {
-    const streamFn = setupMockStreamText("no workflow tools ok");
-    const goalId = crypto.randomUUID();
-    const store = storeManager.create(`configured-no-workflow-tools-${crypto.randomUUID()}`, tmpRoot, { goalId, agentName: "goal_lead" });
-    const agent = createAgent({
-      definition: definitionWith({ tools: { tools: ["unknown_tool"] } }),
-      store,
-    });
-
-    await expect(runAgent(agent, "run without workflow tools")).resolves.toEqual({ text: "no workflow tools ok", steps: 0, status: "completed" });
-    expect(streamFn).toHaveBeenCalled();
-    const callArgs = streamFn.mock.calls[0]![0] as { system: string };
-    expect(callArgs.system).not.toContain("## Active Workflow");
+    expect(withoutMemory.system).toContain("Status: absent. Memory is non-authoritative historical context.");
   });
 
   test("simplified Goal retry sessions do not inject legacy operator repair context", async () => {
@@ -981,12 +1070,12 @@ describe("ConfiguredAgent", () => {
       acceptanceCriteria: "Reviewer can decide from natural language acceptance criteria.",
       mainSessionId,
     });
-    const store = storeManager.create(`configured-repair-context-${crypto.randomUUID()}`, tmpRoot, {
+    const store = storeManager.create(mainSessionId, tmpRoot, {
       goalId: goal.id,
       sessionRole: "main", agentName: "goal_lead"
     });
 
-    await runAgent(createAgent({ definition: engineerAgentDefinition, store }), "retry goal");
+    await runAgent(createAgent({ definition: goalLeadAgentDefinition, store }), "retry goal");
 
     const callArgs = streamFn.mock.calls[0]![0] as { system: string };
     expect(callArgs.system).not.toContain("## Operator Repair Context");
@@ -1010,7 +1099,10 @@ describe("ConfiguredAgent", () => {
     });
 
     await runAgent(createAgent({
-      definition: { ...engineerAgentDefinition, tools: { tools: ["capture_context"] } },
+      definition: {
+        ...engineerAgentDefinition,
+        tools: { ...engineerAgentDefinition.tools, tools: ["capture_context"] },
+      },
       toolRegistry,
     }), "root context");
 

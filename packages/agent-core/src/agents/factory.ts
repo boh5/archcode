@@ -5,6 +5,7 @@ import type { ProjectContextResolver } from "../projects/context-resolver";
 import type { ProviderRegistry } from "../provider/index";
 import type { ModelInfo } from "../provider/model";
 import type { SessionModelInfo } from "@archcode/protocol";
+import type { McpServerStatus } from "@archcode/protocol";
 import type { SessionStoreManager } from "../store/session-store-manager";
 import type { SessionStoreState } from "../store/types";
 import type { Logger } from "../logger";
@@ -42,6 +43,7 @@ export interface AgentFactoryConfig {
   readonly cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
   readonly resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
   readonly acquireSessionCwdTransition?: (workspaceRoot: string, sessionId: string) => () => void;
+  readonly resolveMcpStatuses?: () => ReadonlyMap<string, McpServerStatus>;
   readonly logger: Logger;
 }
 
@@ -205,6 +207,7 @@ function createConfiguredAgent(
     cancelChildSession: config.cancelChildSession,
     resumeChildSession: config.resumeChildSession,
     acquireSessionCwdTransition: config.acquireSessionCwdTransition,
+    resolveMcpStatuses: config.resolveMcpStatuses,
   });
 }
 

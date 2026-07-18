@@ -3,7 +3,7 @@ import type { ChildExecutionHandle, ResumeChildRequest } from "../../delegation/
 import { storeManager } from "../../store/store";
 import type { ToolExecutionContext } from "../types";
 import { createTestProjectContext } from "../test-project-context";
-import { executeResumeSession, ResumeSessionInputSchema, resumeSessionTool } from "./resume-session";
+import { executeResumeSession, ResumeSessionInputSchema } from "./resume-session";
 
 const WORKSPACE_ROOT = import.meta.dir;
 
@@ -29,51 +29,45 @@ function handle(parentSessionId: string): ChildExecutionHandle {
   const store = storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT, {
     agentName: "build",
     parentSessionId,
-    activeSkillNames: ["git-master"],
     title: "Original title",
   });
   store.getState().append({ type: "execution-start", executionId: crypto.randomUUID() });
-  store.getState().append({ type: "execution-end", status: "completed" });
+  store.getState().append({ type: "execution-end", status: "failed" });
   return {
     sessionId: store.getState().sessionId,
     store,
-    result: Promise.resolve({ text: "resumed", steps: 1, status: "completed" }),
+    result: Promise.resolve({ executionStatus: "failed" }),
     abort: () => {},
   };
 }
 
-describe("resume_session tool", () => {
-  it("accepts only session_id, task, optional context, and background", () => {
-    const valid = { session_id: "child", task: "repair" };
+describe("resume_session V2 contract", () => {
+  it("accepts only session_id, instruction, new_evidence, and background", () => {
+    const valid = { session_id: "child", instruction: "repair", new_evidence: [] };
     expect(ResumeSessionInputSchema.safeParse(valid).success).toBe(true);
-    for (const override of ["agent_type", "persona", "skills", "title", "depth"]) {
-      expect(ResumeSessionInputSchema.safeParse({ ...valid, [override]: "override" }).success).toBe(false);
+    for (const field of ["task", "context", "agent_type", "persona", "skills", "title", "owned_scope"]) {
+      expect(ResumeSessionInputSchema.safeParse({ ...valid, [field]: "legacy" }).success).toBe(false);
     }
-    expect(resumeSessionTool.description).toContain("cannot be overridden");
   });
 
-  it("forwards no identity override fields and preserves the persisted display identity", async () => {
+  it("forwards no delegation identity overrides", async () => {
     let request: ResumeChildRequest | undefined;
     const ctx = context(async (_workspaceRoot, input) => {
       request = input;
       return handle(input.parentSessionId);
     });
-    const result = await executeResumeSession({
+    await executeResumeSession({
       session_id: "child",
-      task: "repair",
-      context: "keep identity",
+      instruction: "repair",
+      new_evidence: [{ claim: "Failure reproduced", ref: "test-output:1" }],
       background: false,
     }, ctx);
-
     expect(request).toMatchObject({
       sessionId: "child",
-      toolName: "resume_session",
-      prompt: "Task:\nrepair\n\nContext:\nkeep identity",
+      instruction: "repair",
+      newEvidence: [{ claim: "Failure reproduced", ref: "test-output:1" }],
     });
-    expect(request && "agent_type" in request).toBe(false);
-    expect(request && "targetAgentName" in request).toBe(false);
-    expect(request && "title" in request).toBe(false);
-    expect(request && "skills" in request).toBe(false);
-    expect(result).toContain("Agent type: build");
+    expect(request && "contract" in request).toBe(false);
+    expect(request && "prompt" in request).toBe(false);
   });
 });

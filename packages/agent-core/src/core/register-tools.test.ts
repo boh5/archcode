@@ -7,6 +7,7 @@ import { z } from "zod";
 import { TOOL_FILE_READ, TOOL_GREP, TOOL_GLOB, TOOL_GIT_STATUS, TOOL_GIT_DIFF, TOOL_AST_GREP_SEARCH, TOOL_LSP_DIAGNOSTICS, TOOL_LSP_GOTO_DEFINITION, TOOL_LSP_FIND_REFERENCES, TOOL_LSP_SYMBOLS, TOOL_WEB_FETCH } from "../tools/names";
 import { DELEGATION_CORE_TOOLS } from "../agents/constants";
 import type { ProjectContext } from "../projects/types";
+import { testReviewExecutionFields } from "../goals/test-review-fixture";
 import { SkillService } from "../skills";
 import { storeManager } from "../store/store";
 import { createBuiltinToolDescriptors } from "../tools/builtins";
@@ -103,7 +104,7 @@ function makeLogger(): Logger & { debug: ReturnType<typeof mock> } {
 }
 
 describe("registerBuiltinTools", () => {
-  it("registers all 29 builtins including Session resume and dynamic worktree transitions", () => {
+  it("registers all 30 builtins including canonical child result submission", () => {
     const descriptors = createBuiltinToolDescriptors();
     const names = descriptors.map((descriptor) => descriptor.name);
 
@@ -129,6 +130,7 @@ describe("registerBuiltinTools", () => {
       "delegate",
       "resume_session",
       "background_output",
+      "submit_child_result",
       "cancel_session",
       "skill_list",
       "skill_read",
@@ -313,6 +315,7 @@ describe("registerBuiltinTools", () => {
     await projectContext.goalState.finalizeReview(goal.id, {
       expectedReviewGeneration: reviewing.reviewGeneration,
       verdict: "DONE",
+      ...testReviewExecutionFields("DONE"),
       summary: "Verified todo cleanup after review.",
       evidenceRefs: [{ kind: "test_output", ref: "register-tools.test.ts", summary: "Todo cleanup regression passed." }],
       authorization: {

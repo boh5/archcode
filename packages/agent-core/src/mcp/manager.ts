@@ -168,7 +168,7 @@ export class McpManager {
             `MCP server "${serverName}" returned no tools`,
           ),
         });
-        this.setStatus(serverName, { state: "ready", toolCount: 0 });
+        this.setStatus(serverName, { state: "ready", toolCount: 0, warningCount: 1 });
         return;
       }
 
@@ -181,7 +181,11 @@ export class McpManager {
         onWarning(warning);
       }
       onDescriptors(result.descriptors);
-      this.setStatus(serverName, { state: "ready", toolCount: result.descriptors.length });
+      this.setStatus(serverName, {
+        state: "ready",
+        toolCount: result.descriptors.length,
+        warningCount: result.warnings.length,
+      });
     } catch (err) {
       if (this.#closed) {
         try {

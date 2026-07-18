@@ -3,6 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { createTestProjectContext } from "../tools/test-project-context";
+import { testReviewExecutionFields } from "../goals/test-review-fixture";
 import {
   RoleDrivenSessionGoalDelegationAdmission,
   SessionGoalDelegationDeniedError,
@@ -73,6 +74,7 @@ describe("RoleDrivenSessionGoalDelegationAdmission", () => {
     await fixture.context.goalState.finalizeReview(fixture.goal.id, {
       expectedReviewGeneration: 1,
       verdict: "NOT_DONE",
+      ...testReviewExecutionFields("NOT_DONE"),
       summary: "Needs fixes",
       evidenceRefs: [],
       authorization: {
@@ -97,6 +99,7 @@ describe("RoleDrivenSessionGoalDelegationAdmission", () => {
     await fixture.context.goalState.finalizeReview(fixture.goal.id, {
       expectedReviewGeneration: firstReview.reviewGeneration,
       verdict: "NOT_DONE",
+      ...testReviewExecutionFields("NOT_DONE"),
       summary: "First review found missing coverage",
       evidenceRefs: [],
       authorization: {

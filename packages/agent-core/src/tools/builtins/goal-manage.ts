@@ -10,7 +10,9 @@ import { defineTool } from "../define-tool";
 import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../types";
 import { GoalCancellationCleanupError } from "../../goals/cancellation";
 import { GoalUuidSchema } from "../../goals/state";
-import { GoalReviewReceiptSchema, GoalReviewSummarySchema } from "../../goals/review-schema";
+import { GoalReviewReceiptSchema, GoalReviewSummarySchema, projectGoalReviewReceipt } from "../../goals/review-schema";
+import { ChildResultSchema } from "../../delegation/schema";
+import { validateChildResultAgainstContract } from "../../delegation/contract";
 import { WorktreeService } from "../../worktrees";
 import {
   assertGoalManageActionAuthorized,
@@ -35,6 +37,7 @@ const GoalManageFinalizeReviewInputSchema = z.strictObject({
   evidenceRefs: GoalReviewReceiptSchema.shape.evidenceRefs.describe("Evidence references supporting the verdict."),
   unresolvedItems: GoalReviewReceiptSchema.shape.unresolvedItems,
   finalSummary: GoalReviewSummarySchema.optional(),
+  result: ChildResultSchema.describe("Canonical delegated-task result for this review execution."),
 });
 
 const GoalManageRetryInputSchema = z.strictObject({
@@ -97,20 +100,65 @@ export const goalManageTool: AnyToolDescriptor = defineTool({
         }
         case "finalize_review": {
           await assertGoalExecutionWorkspace(state, input.goalId, ctx);
-          return formatGoalToolResult(await lifecycle.finalizeReview(input.goalId, {
+          const session = ctx.store.getState();
+          const executionId = session.currentExecutionId;
+          const delegationContractHash = session.delegationContractHash;
+          const delegationContract = session.delegationContract;
+          if (executionId === undefined || delegationContractHash === undefined || delegationContract === undefined) {
+            throw new GoalToolAuthorizationError(
+              "GOAL_REVIEW_EXECUTION_IDENTITY_REQUIRED",
+              "goal_manage.finalize_review requires the current Reviewer execution and durable delegation contract",
+            );
+          }
+          try {
+            validateChildResultAgainstContract(input.result, delegationContract);
+            if (input.verdict === "DONE" && input.result.status !== "completed") {
+              throw new Error("goal_manage.finalize_review with DONE requires a completed ChildResult");
+            }
+          } catch (error) {
+            const resultError = new GoalToolAuthorizationError(
+              "GOAL_REVIEW_RESULT_INVALID",
+              error instanceof Error ? error.message : String(error),
+            );
+            if (ctx.structuredResultCorrection?.submission === "goal_manage.finalize_review") {
+              return ctx.structuredResultCorrection.recordFailure(resultError);
+            }
+            throw resultError;
+          }
+          const finalized = await lifecycle.finalizeReview(input.goalId, {
+            executionId,
+            delegationContractHash,
             expectedReviewGeneration: input.expectedReviewGeneration,
             verdict: input.verdict,
             summary: input.summary,
             evidenceRefs: input.evidenceRefs,
             ...(input.unresolvedItems === undefined ? {} : { unresolvedItems: input.unresolvedItems }),
             ...(input.finalSummary === undefined ? {} : { finalSummary: input.finalSummary }),
+            result: input.result,
             authorization: {
               agentName: authorization.agentName,
               sessionRole: authorization.sessionRole,
               sessionGoalId: authorization.sessionGoalId,
               reviewerSessionId: authorization.sessionId,
             },
-          }));
+          });
+          if (finalized.review === undefined) {
+            throw new Error(`Goal ${input.goalId} finalized without a canonical review receipt`);
+          }
+          ctx.store.getState().append({
+            type: "child-result",
+            receipt: projectGoalReviewReceipt(finalized.review),
+          });
+          return {
+            output: formatGoalToolResult(finalized),
+            isError: false,
+            meta: {
+              executionControl: {
+                action: "complete_execution",
+                reason: "goal_review_finalized",
+              },
+            },
+          };
         }
         case "retry": {
           await assertGoalExecutionWorkspace(state, input.goalId, ctx);

@@ -30,6 +30,7 @@ const VALID_CONFIG = {
             input: ["text", "image"],
             output: ["text"],
           },
+          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
         },
       },
     },
@@ -65,6 +66,40 @@ describe("parseConfig", () => {
     expect(config.agents.explore.model).toBe("xxx:gpt-5.2");
     expect(config.agents.librarian.model).toBe("xxx:gpt-5.2");
     expect(config.agents.shaper.model).toBe("xxx:gpt-5.2");
+  });
+
+  test("requires all three explicit model capabilities", () => {
+    const model = VALID_CONFIG_WITH_AGENTS.provider.xxx.models["gpt-5.2"];
+    const { capabilities: _removed, ...withoutCapabilities } = model;
+    expect(() => parseConfig({
+      ...VALID_CONFIG_WITH_AGENTS,
+      provider: {
+        ...VALID_CONFIG_WITH_AGENTS.provider,
+        xxx: {
+          ...VALID_CONFIG_WITH_AGENTS.provider.xxx,
+          models: { "gpt-5.2": withoutCapabilities },
+        },
+      },
+    })).toThrow(ConfigValidationError);
+  });
+
+  test("rejects invalid model capability enum values without inference", () => {
+    const model = VALID_CONFIG_WITH_AGENTS.provider.xxx.models["gpt-5.2"];
+    expect(() => parseConfig({
+      ...VALID_CONFIG_WITH_AGENTS,
+      provider: {
+        ...VALID_CONFIG_WITH_AGENTS.provider,
+        xxx: {
+          ...VALID_CONFIG_WITH_AGENTS.provider.xxx,
+          models: {
+            "gpt-5.2": {
+              ...model,
+              capabilities: { ...model.capabilities, instructionTier: "vendor-default" },
+            },
+          },
+        },
+      },
+    })).toThrow(ConfigValidationError);
   });
 
   test("rejects the removed $schema field", () => {
@@ -124,6 +159,7 @@ describe("parseConfig", () => {
               name: "GPT-5.2",
               limit: { context: 400000, output: 128000 },
               modalities: { input: ["text"], output: ["text"] },
+          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
             },
           },
         },
@@ -145,6 +181,7 @@ describe("parseConfig", () => {
               name: "GPT-5.2",
               limit: { context: 400000, output: 128000 },
               modalities: { input: ["telepathy"], output: ["text"] },
+          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
             },
           },
         },

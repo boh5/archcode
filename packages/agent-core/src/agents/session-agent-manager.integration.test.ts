@@ -94,6 +94,7 @@ function makeProviderRegistry(): ProviderRegistry {
       name: "Test Model",
       limit: { context: 128_000, output: 8_192 },
       modalities: { input: ["text"], output: ["text"] },
+          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
     },
     providerId: "test",
     modelId: "model",

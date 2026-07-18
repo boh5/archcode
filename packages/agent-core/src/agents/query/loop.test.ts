@@ -3,6 +3,7 @@ import { rm } from "node:fs/promises";
 import type { ModelMessage } from "ai";
 import type { StoreApi } from "zustand";
 import { z } from "zod";
+import { TOOL_GOAL_MANAGE } from "@archcode/protocol";
 import type { ModelInfo } from "../../provider/model";
 import { SkillService } from "../../skills";
 import { createSessionStore, storeManager } from "../../store/store";
@@ -73,6 +74,7 @@ const dummyModelInfo = {
   displayName: "Mock Model",
   limit: { context: 1000, output: 100 },
   modalities: { input: ["text"], output: ["text"] },
+          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
   providerId: "mock-provider",
   modelId: "mock-model",
   qualifiedId: "mock-provider:mock-model",
@@ -2218,6 +2220,21 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     expect(streamFn.mock.calls[0][0]).toMatchObject({ system: "Be helpful" });
   });
 
+  test("re-resolves the lifecycle-sensitive system prompt before every model call", async () => {
+    const streamFn = createMockStreamText([
+      { finishReason: "tool-calls", toolCalls: [{ toolCallId: "call-1", toolName: "echo", input: {} }] },
+      { text: "done" },
+    ]);
+    const prompts = ["goal=running", "goal=reviewing"];
+    let index = 0;
+    await runQueryLoop(makeOptions({
+      toolRegistry: createTestRegistry(),
+      allowedTools: ["echo"],
+      resolveSystemPrompt: async () => prompts[index++]!,
+    }), "Hi");
+    expect(streamFn.mock.calls.map((call) => call[0].system)).toEqual(prompts);
+  });
+
   test("omits system option when systemPrompt is empty", async () => {
     const streamFn = createMockStreamText([{ text: "ok" }]);
 
@@ -2605,6 +2622,223 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     expect(streamFn).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(assistantMessages(store)[0]?.parts)).toContain("SESSION_EXECUTION_STOPPED");
     expect(result.status).toBe("cancelled");
+  });
+
+  test("typed child-result failure ends the execution as failed and skips later calls", async () => {
+    const store = createStore();
+    const laterExecute = mock(async () => "must not run");
+    const registry = createRegistry([
+      defineTool({
+        name: "fail_child_result",
+        description: "Fail child result",
+        inputSchema: z.object({}).strict(),
+        traits: { readOnly: false, destructive: false, concurrencySafe: false },
+        execute: async () => ({
+          output: JSON.stringify({ code: "CHILD_RESULT_REQUIRED" }),
+          isError: true,
+          meta: {
+            executionControl: {
+              action: "fail_execution",
+              reason: "child_result_required",
+              error: "CHILD_RESULT_REQUIRED: invalid canonical result",
+            },
+          },
+        }),
+      }),
+      defineTool({
+        name: "later_write",
+        description: "Later write",
+        inputSchema: z.object({}).strict(),
+        traits: { readOnly: false, destructive: false, concurrencySafe: false },
+        execute: laterExecute,
+      }),
+    ]);
+    const streamFn = createMockStreamText([{
+      finishReason: "tool-calls",
+      chunks: [
+        { type: "tool-call", toolCallId: "fail-result-1", toolName: "fail_child_result", input: {} },
+        { type: "tool-call", toolCallId: "later-after-failure", toolName: "later_write", input: {} },
+      ],
+    }]);
+
+    const result = await runQueryLoop(
+      makeOptions({ store, toolRegistry: registry, allowedTools: ["fail_child_result", "later_write"] }),
+      "submit invalid result",
+    );
+
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("CHILD_RESULT_REQUIRED");
+    expect(result.executionControl).toMatchObject({
+      action: "fail_execution",
+      reason: "child_result_required",
+    });
+    expect(laterExecute).not.toHaveBeenCalled();
+    expect(streamFn).toHaveBeenCalledTimes(1);
+  });
+
+  test("best-effort submit_child_result gets one correction then fails and skips later calls", async () => {
+    const store = createStore();
+    const submitExecute = mock(async () => "must not execute invalid input");
+    const laterExecute = mock(async () => "must not run");
+    const registry = createRegistry([
+      defineTool({
+        name: "submit_child_result",
+        description: "Submit result",
+        inputSchema: z.object({ required: z.string() }).strict(),
+        traits: { readOnly: false, destructive: false, concurrencySafe: false },
+        execute: submitExecute,
+      }),
+      defineTool({
+        name: "later_write",
+        description: "Later write",
+        inputSchema: z.object({}).strict(),
+        traits: { readOnly: false, destructive: false, concurrencySafe: false },
+        execute: laterExecute,
+      }),
+    ]);
+    const bestEffortModelInfo = {
+      ...dummyModelInfo,
+      capabilities: {
+        ...dummyModelInfo.capabilities,
+        structuredToolCalls: "best_effort",
+      },
+    } as ModelInfo;
+    const streamFn = createMockStreamText([{
+      finishReason: "tool-calls",
+      chunks: [
+        { type: "tool-call", toolCallId: "submit-invalid-1", toolName: "submit_child_result", input: {} },
+        { type: "tool-call", toolCallId: "submit-invalid-2", toolName: "submit_child_result", input: {} },
+        { type: "tool-call", toolCallId: "later-after-submit", toolName: "later_write", input: {} },
+      ],
+    }]);
+
+    const result = await runQueryLoop(
+      makeOptions({
+        store,
+        modelInfo: bestEffortModelInfo,
+        toolRegistry: registry,
+        allowedTools: ["submit_child_result", "later_write"],
+      }),
+      "submit invalid result twice",
+    );
+
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("CHILD_RESULT_REQUIRED");
+    expect(result.executionControl).toMatchObject({ action: "fail_execution" });
+    expect(submitExecute).not.toHaveBeenCalled();
+    expect(laterExecute).not.toHaveBeenCalled();
+    expect(streamFn).toHaveBeenCalledTimes(1);
+    const outputs = store.getState().messages.flatMap((message) => message.parts)
+      .filter((part) => part.type === "tool")
+      .map((part) => JSON.stringify(part));
+    expect(outputs.join("\n")).toContain("STRUCTURED_RESULT_CORRECTION_REQUIRED");
+    expect(outputs.join("\n")).toContain("CHILD_RESULT_REQUIRED");
+  });
+
+  test("strict Goal Reviewer finalize_review schema failure ends on the first invalid submission", async () => {
+    const store = storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, {
+      agentName: "reviewer",
+      sessionRole: "review",
+      goalId: crypto.randomUUID(),
+    });
+    const finalizeExecute = mock(async () => "must not execute invalid input");
+    const laterExecute = mock(async () => "must not run");
+    const registry = createRegistry([
+      defineTool({
+        name: TOOL_GOAL_MANAGE,
+        description: "Finalize review",
+        inputSchema: z.strictObject({
+          action: z.literal("finalize_review"),
+          goalId: z.string(),
+          result: z.string(),
+        }),
+        traits: { readOnly: false, destructive: false, concurrencySafe: false },
+        execute: finalizeExecute,
+      }),
+      defineTool({
+        name: "later_write",
+        description: "Later write",
+        inputSchema: z.object({}).strict(),
+        traits: { readOnly: false, destructive: false, concurrencySafe: false },
+        execute: laterExecute,
+      }),
+    ]);
+    createMockStreamText([{
+      finishReason: "tool-calls",
+      chunks: [
+        { type: "tool-call", toolCallId: "goal-finalize-invalid", toolName: TOOL_GOAL_MANAGE, input: { action: "finalize_review", goalId: store.getState().goalId } },
+        { type: "tool-call", toolCallId: "later-after-goal-finalize", toolName: "later_write", input: {} },
+      ],
+    }]);
+
+    const result = await runQueryLoop(
+      makeOptions({
+        store,
+        agentName: "reviewer",
+        toolRegistry: registry,
+        allowedTools: [TOOL_GOAL_MANAGE, "later_write"],
+      }),
+      "finalize review with invalid input",
+    );
+
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("CHILD_RESULT_REQUIRED");
+    expect(finalizeExecute).not.toHaveBeenCalled();
+    expect(laterExecute).not.toHaveBeenCalled();
+  });
+
+  test("best-effort Goal Reviewer finalize_review gets exactly one correction", async () => {
+    const store = storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, {
+      agentName: "reviewer",
+      sessionRole: "review",
+      goalId: crypto.randomUUID(),
+    });
+    const finalizeExecute = mock(async () => "must not execute invalid input");
+    const registry = createRegistry([defineTool({
+      name: TOOL_GOAL_MANAGE,
+      description: "Finalize review",
+      inputSchema: z.strictObject({
+        action: z.literal("finalize_review"),
+        goalId: z.string(),
+        result: z.string(),
+      }),
+      traits: { readOnly: false, destructive: false, concurrencySafe: false },
+      execute: finalizeExecute,
+    })]);
+    const bestEffortModelInfo = {
+      ...dummyModelInfo,
+      capabilities: {
+        ...dummyModelInfo.capabilities,
+        structuredToolCalls: "best_effort",
+      },
+    } as ModelInfo;
+    createMockStreamText([{
+      finishReason: "tool-calls",
+      chunks: [
+        { type: "tool-call", toolCallId: "goal-finalize-invalid-1", toolName: TOOL_GOAL_MANAGE, input: { action: "finalize_review", goalId: store.getState().goalId } },
+        { type: "tool-call", toolCallId: "goal-finalize-invalid-2", toolName: TOOL_GOAL_MANAGE, input: { action: "finalize_review", goalId: store.getState().goalId } },
+      ],
+    }]);
+
+    const result = await runQueryLoop(
+      makeOptions({
+        store,
+        agentName: "reviewer",
+        modelInfo: bestEffortModelInfo,
+        toolRegistry: registry,
+        allowedTools: [TOOL_GOAL_MANAGE],
+      }),
+      "finalize review with invalid input twice",
+    );
+
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("CHILD_RESULT_REQUIRED");
+    expect(finalizeExecute).not.toHaveBeenCalled();
+    const outputs = store.getState().messages.flatMap((message) => message.parts)
+      .filter((part) => part.type === "tool")
+      .map((part) => JSON.stringify(part));
+    expect(outputs.join("\n")).toContain("STRUCTURED_RESULT_CORRECTION_REQUIRED");
+    expect(outputs.join("\n")).toContain("CHILD_RESULT_REQUIRED");
   });
 
   test("skips later tool calls emitted from the stale context after Session cwd changes", async () => {

@@ -93,7 +93,7 @@ packages/agent-core/src/
 ├── agents/constants.ts         # AgentType/depth defaults + Skill/delegation capability packages only
 ├── agents/errors.ts            # NoModelsConfiguredError, AgentRunningError, SubAgentError, ConcurrentLimitError, DepthLimitError, etc.
 ├── agents/model-resolver.ts    # Resolves provider:modelId + variant → AI SDK model instance
-├── agents/tool-filter.ts       # Definition-based tool filtering and delegation-depth enforcement
+├── agents/tool-filter.test.ts  # Architecture coverage for definition-based capability filtering
 ├── agents/query/               # runLlmStream + tool execution cycle (max 50 steps), doom detection
 ├── agents/query/loop-hooks.ts  # 4 hook points: beforeModelBuild, beforeModelCall, afterStepEnd, afterLoopEnd
 ├── agents/query/hooks/         # auto-compact, auto-inject-reminder, title-generation, todo-continuation, memory-extraction, memory-consolidation
@@ -121,9 +121,9 @@ packages/agent-core/src/
 ├── lsp/                        # LspClientPool (acquire/release, idle timeout, crash detection), StdioLspTransport, auto-installer, 18 language servers, 50+ ext mappings
 ├── llm/                        # Managed LLM runtime: runLlmStream/runLlmText/runLlmObject, retry/recovery, adapter test seam
 ├── projects/                   # ProjectRegistry + per-workspace Goal/HITL/memory/approval context resolver
-├── prompt/                     # buildSystemPrompt(): Identity → Guidelines → Tools → Environment → Memory → Project(AGENTS.md)
+├── prompt/                     # PromptContractCompiler V2: typed kernel/runtime/role/collaboration/context/overlay layers + trace/eval
 ├── mcp/                        # Built-in servers (context7, grep.app, exa) + HTTP discovery → ToolDescriptors
-├── delegation/                 # Delegation types (shared between agent delegation flow)
+├── delegation/                 # Canonical DelegationContract/ChildResult schema, scope validation, hash, and result checks
 ├── security/                   # 3 secret-detection regex patterns + containsSecretPattern()
 └── utils/                      # Error utilities, frontmatter parse/format, safe-file operations
 
@@ -160,7 +160,7 @@ packages/utils/src/
   → Hono server → Session-scoped Engineer or Goal Lead / Goal / Automation / HITL routes
   → SessionExecutionManager → ConfiguredAgent → query loop → store → SSE → Web UI
 
-Delegation: delegate creates a titled child; resume_session restarts a persisted direct child; both use SessionExecutionManager
+Delegation: `delegate(DelegationContract)` creates a durable direct child; `resume_session` preserves that identity; the child terminates through canonical `submit_child_result` (Goal Reviewer uses `goal_manage.finalize_review`). SessionExecutionManager owns admission, scope leases, execution, and receipt completion guards.
 ```
 
 **Server + Web UI:**
@@ -199,6 +199,7 @@ partitionToolCalls → global permissions
 
 **Model configuration** (`~/.archcode/config.json`):
 - Provider ids and model ids combine as `provider:modelId` (example: `"local:glm-5"`). Do **not** use `provider/model`.
+- Every model must explicitly declare `capabilities.{multiToolCallEmission, structuredToolCalls, instructionTier}`. Prompt overlays use these model facts and never infer behavior from provider or model names.
 - `provider.<id>.models.<modelId>.options` defines base AI SDK model-call options for that model. Use AI SDK camelCase names such as `maxOutputTokens`, `temperature`, `topP`, `topK`, `presencePenalty`, `frequencyPenalty`, `stopSequences`, `seed`, `timeout`, and `providerOptions`.
 - `provider.<id>.models.<modelId>.variants.<variantName>` defines named option profiles for the same model. An agent's `variant` references one of these names and is consumed during resolution; it is never passed to the AI SDK call.
 - `agents.<agentName>.model` is required for all eight agents: `engineer`, `goal_lead`, `plan`, `build`, `reviewer`, `explore`, `librarian`, and `shaper`. Missing any required agent fails fast with an actionable config error; Shaper never falls back to another Agent's model.
@@ -225,6 +226,11 @@ Minimal example:
           "name": "GLM-5",
           "limit": { "context": 200000, "output": 128000 },
           "modalities": { "input": ["text"], "output": ["text"] },
+          "capabilities": {
+            "multiToolCallEmission": "parallel",
+            "structuredToolCalls": "strict",
+            "instructionTier": "rich"
+          },
           "options": {
             "maxOutputTokens": 64000,
             "temperature": 0.2,
@@ -300,19 +306,19 @@ Minimal example:
 | **Engineer** (`"engineer"`) | auto-compact, auto-inject-reminder, title-generation, todo-continuation, memory-extraction, memory-consolidation | Default ordinary Session agent. Works directly, delegates to all five specialists, and may create a confirmed Goal or Automation through the corresponding creation Skill and tool. |
 | **Goal Lead** (`"goal_lead"`) | auto-compact, auto-inject-reminder, title-generation, todo-continuation, memory-extraction, memory-consolidation | Goal-only coordinator. Delegates implementation and verification, manages the bound Goal with `goal_manage`, and cannot directly mutate source or run shell commands. |
 | **Plan** (`"plan"`) | auto-compact, auto-inject-reminder, todo-continuation | Source read-only planning agent for ordinary or Goal work; delegates to `explore`/`librarian`. |
-| **Build** (`"build"`) | auto-compact, auto-inject-reminder, todo-continuation | Source write agent with file write/edit, bash, LSP, git diff/status, and `ast_grep_replace`. Implements the delegated scope and records verification in session output; delegates to `explore`. |
-| **Reviewer** (`"reviewer"`) | auto-compact, auto-inject-reminder, todo-continuation | Source read-only verifier for ordinary or Goal work. Only a matching Goal review Session uses `goal_manage.finalize_review`; ordinary reviews return findings without Goal finalization. |
+| **Build** (`"build"`) | auto-compact, auto-inject-reminder, todo-continuation | Source write agent with file write/edit, bash, LSP, git diff/status, and `ast_grep_replace`. Implements only its durable owned scope, submits a criterion-mapped ChildResult, and delegates research to `explore`. |
+| **Reviewer** (`"reviewer"`) | auto-compact, auto-inject-reminder, todo-continuation | Source read-only verifier. Ordinary review submits `submit_child_result`; only a matching Goal review Session sees `goal_manage.finalize_review`, whose Goal receipt is canonical. |
 | **Explore** (`"explore"`) | auto-compact, auto-inject-reminder, todo-continuation | Read-only local code search/LSP/git diff/status/AST search agent. No delegation and no memory extraction. |
 | **Librarian** (`"librarian"`) | auto-compact, auto-inject-reminder, todo-continuation | Read-only documentation/reference agent with local read/search, web_fetch, memory_read, and MCP docs/search tools. No delegation and no memory extraction. |
 | **Shaper** (`"shaper"`) | auto-compact, auto-inject-reminder, todo-continuation | Project Todo discussion agent. Investigates with read-only source tools and guarded Bash, updates only its bound Todo through `project_todo_update`, reads/writes Memory manually, and delegates research only to Explore/Librarian. No automatic memory extraction or execution-resource creation. |
 
-All eight implement `Agent`: `store: StoreApi<SessionStoreState>`, `run(userMessage, ...) → AgentResult { text, steps }`.
+All eight implement `Agent`: `store: StoreApi<SessionStoreState>`, `run(options) → AgentResult`; SessionExecutionManager commits input before invoking the Agent.
 
 **Delegation + tool filtering:**
-- Tool sets are hardcoded by `AgentDefinition`; persona changes prompt perspective only, never permissions.
+- Tool sets are hardcoded by `AgentDefinition`; typed RoleContract and Prompt layers describe behavior but never change runtime permissions.
 - `engineer` and `goal_lead` use `childPolicy.maxDepth = 3`; `plan`, `build`, `reviewer`, and `shaper` use `maxDepth = 2`.
 - `explore` and `librarian` have no `delegateTargets`; they are terminal read-only support agents.
-- `agents/tool-filter.ts` resolves definition-based allowed tools and enforces delegation-depth limits before each child run.
+- `agents/factory.ts` resolves definition-based allowed tools and removes delegation capabilities at the runtime depth boundary; SessionExecutionManager enforces each role's child policy before child creation.
 
 **MCP visibility by agent:**
 
@@ -350,7 +356,7 @@ beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-in
 | Interaction | ask_user✅❌not-concurrent, todo_write❌, project_todo_update❌ | ask_user serializes (interactive); `project_todo_update` derives its Todo from the current root Shaper Session and requires `expectedRevision` |
 | Web | web_fetch✅ | — |
 | LSP | lsp_diagnostics✅, lsp_goto_definition✅, lsp_find_references✅, lsp_symbols✅ | Guard: workspace |
-| Delegation / Skills | delegate❌, resume_session❌, background_output✅, wait_for_reminder✅, view_tool_output✅, cancel_session❌, skill_list✅, skill_read✅ | `delegate` only creates titled children; `resume_session` preserves persisted identity. Both are available only to delegation-capable agents. |
+| Delegation / Skills | delegate❌, resume_session❌, submit_child_result❌, background_output✅, wait_for_reminder✅, view_tool_output✅, cancel_session❌, skill_list✅, skill_read✅ | `delegate` accepts only the V2 contract; `resume_session` preserves it; delegated non-Goal-Reviewer roles must submit the execution-bound canonical result. |
 | Memory | memory_read✅, memory_write❌ | memory_write rejects secrets |
 | Goal / Automation creation | goal_create❌, goal_manage❌, automation_create❌ | After explicit user confirmation, Engineer uses `goal_create` to atomically commit and activate a Goal or `automation_create` to commit an Automation. Goal Lead manages an already-started Goal and Reviewer finalizes it through `goal_manage`; model-facing create/start actions are not part of `goal_manage`. |
 
@@ -370,11 +376,11 @@ ArchCode has two intentionally separate context-reduction paths. Dynamic DCP-lik
 
 ## Memory System
 
-Project: `.archcode/memory/`, User: `~/.archcode/memory/`. Structure: `index.md` (topic index), `preferences.md`, `knowledge/{topic}.md` (frontmatter + markdown). Types: `"user" | "feedback" | "project" | "reference"`. `MemoryFileManager`: atomic writes, path validation, frontmatter parse/format, index rebuild/search. Extraction (background task via `runLlmObject`) → writes topics. Consolidation (background task) → reorganizes index. Injection: `prompt/sections/memory.ts` reads + truncates + wraps in `<archcode-memory-context>` XML. `memory_write` rejects secrets.
+Project: `.archcode/memory/`, User: `~/.archcode/memory/`. Structure: `index.md` (topic index), `preferences.md`, `knowledge/{topic}.md` (frontmatter + markdown). Types: `"user" | "feedback" | "project" | "reference"`. `MemoryFileManager`: atomic writes, path validation, frontmatter parse/format, index rebuild/search. Extraction (background task via `runLlmObject`) → writes topics. Consolidation (background task) → reorganizes index. Injection: ConfiguredAgent resolves one immutable Execution snapshot; PromptContractCompiler labels it non-authoritative and emits its source/status in the durable Prompt trace. `memory_write` rejects secrets.
 
 ## Goal System
 
-Goal is the primary execution primitive; legacy workflow runtime/tools/routes, Goal Draft, manual initial Run, and removed Goal-specific artifact APIs are retired. `packages/agent-core/src/goals/` owns Goal state, activation/recovery, Reviewer checks, retry state/backoff, token budgets, and isolated Goal memory. Goal evidence comes from ordinary session output, diffs, tool results, approvals, budget state, retry metadata, and Reviewer summaries rather than separate Goal artifact APIs. After the user confirms the creation summary, an ordinary root Engineer Session calls `goal_create`; `GoalLifecycleService` atomically commits the running Goal and activates its stable, independent Goal Lead root Session. Reviewer finalization uses `goal_manage.finalize_review` to record external outcomes exactly as `DONE` or `NOT_DONE`; Goal Lead must not declare completion without Reviewer evidence.
+Goal is the primary execution primitive; legacy workflow runtime/tools/routes, Goal Draft, manual initial Run, and removed Goal-specific artifact APIs are retired. `packages/agent-core/src/goals/` owns Goal state, activation/recovery, Reviewer checks, retry state/backoff, token budgets, and managed worktree lifecycle. Goal evidence comes from Session output, canonical child receipts, diffs, tool results, approvals, budget state, retry metadata, and the canonical Reviewer receipt rather than separate Goal artifact APIs. After the user confirms the creation summary, an ordinary root Engineer Session calls `goal_create`; `GoalLifecycleService` atomically commits the running Goal and activates its stable, independent Goal Lead root Session. Reviewer finalization uses `goal_manage.finalize_review` to record external outcomes exactly as `DONE` or `NOT_DONE`; Goal Lead must not declare completion without Reviewer evidence.
 
 ## Project Todos
 
@@ -396,7 +402,7 @@ HITL is a durable project-scoped approval/question queue backed by `.archcode/hi
 
 HTTP Streamable only. Built-in: context7, grep.app, exa (hardcoded in `BUILTIN_MCP_SERVERS` and non-overridable). User servers are read from `~/.archcode/config.json → mcp.servers`. Tool names: `mcp__{server}__{tool}`. Failed discovery = warning, not crash.
 
-**Background loading** (non-blocking): `McpManager.startBackgroundDiscovery()` fires-and-forgets at `createRuntime()` — server boots immediately while MCP servers connect in background. Per-server status: `pending → ready | failed`. Status accessible via `AgentRuntime.getMcpServerStatuses()` and `AgentRuntime.subscribeMcpStatusChanges(listener)`.
+**Background loading** (non-blocking): `McpManager.startBackgroundDiscovery()` fires-and-forgets at `createRuntime()` — server boots immediately while MCP servers connect in background. Per-server status: `pending → ready(toolCount, warningCount) | failed`; Prompt projection distinguishes `ready`, `ready-zero`, and `partial-warning`. Status is accessible via `AgentRuntime.getMcpServerStatuses()` and `AgentRuntime.subscribeMcpStatusChanges(listener)`.
 
 **Agent visibility**: agents opt into MCP tools via `mcpTools: ["context7", "exa"]` (server names) in their `AgentDefinition`. `factoryResolveAllowedTools` merges `mcp__{server}__*` tools from `ToolRegistry.listByPrefix()` — picks up tools registered after background load completes. Tools become visible on the next `run()` call (per-message resolution at `ConfiguredAgent.run()` line 189), not mid-message.
 

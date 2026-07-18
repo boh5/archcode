@@ -19,6 +19,7 @@ const dummyModelInfo = {
   displayName: "Mock Model",
   limit: { context: 1000, output: 100 },
   modalities: { input: ["text"], output: ["text"] },
+          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
   providerId: "mock",
   modelId: "model",
   qualifiedId: "mock:model",

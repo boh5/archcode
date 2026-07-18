@@ -1,4 +1,19 @@
-export type { PromptContext, PromptEnv } from "./types";
-export { buildSystemPrompt } from "./builder";
-export { buildIdentitySection, buildToolSection, buildEnvSection, buildGuidelinesSection, buildSkillsSection, buildProjectSection } from "./sections";
+export type {
+  CapabilityRef,
+  CompiledPromptContract,
+  CompletionAuthority,
+  GoalPromptStatus,
+  McpPromptStatus,
+  PromptContractV2,
+  PromptEnv,
+  PromptMemorySnapshot,
+  PromptSource,
+  PromptTrace,
+  ReviewPromptMode,
+  RoleContract,
+  RuntimePromptEnvelope,
+  TransitionRef,
+} from "./types";
+export { PromptContractCompiler, createFailedPromptTrace } from "./compiler";
+export { assertLegalExecutionMode, lintRoleContract, IllegalPromptExecutionModeError, PromptContractLintError } from "./lint";
 export { findAgentsMd, loadAgentsMd, AgentsMdLoadError, AgentsMdNotFoundError } from "./agents-md";

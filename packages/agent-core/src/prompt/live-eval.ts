@@ -1,0 +1,142 @@
+import { z } from "zod/v4";
+import { buildRoleContract, engineerRoleContract, reviewerRoleContract } from "../agents/definitions/role-contracts";
+import type { ModelCapabilities } from "../config/provider";
+import { PromptContractCompiler } from "./compiler";
+import type { PromptContractV2, RuntimePromptEnvelope } from "./types";
+
+export const PromptLiveEvalManifestSchema = z.strictObject({
+  version: z.literal(1),
+  models: z.array(z.strictObject({ qualifiedId: z.string().regex(/^[^:]+:[^:]+$/) })).min(1),
+  resultPath: z.string().trim().min(1),
+});
+
+export const PromptLiveEvalScenariosSchema = z.strictObject({
+  version: z.literal(1),
+  scenarios: z.array(z.strictObject({
+    id: z.string().trim().min(1),
+    agent: z.enum(["engineer", "build", "reviewer"]),
+    executionMode: z.enum(["ordinary-root", "ordinary-child", "goal-review"]),
+    request: z.string().trim().min(1),
+    expectedAny: z.array(z.string().trim().min(1)).min(1),
+    forbidden: z.array(z.string().trim().min(1)),
+  })).min(1),
+});
+
+export type PromptLiveEvalManifest = z.infer<typeof PromptLiveEvalManifestSchema>;
+export type PromptLiveEvalScenarios = z.infer<typeof PromptLiveEvalScenariosSchema>;
+
+export interface PromptLiveEvalExecutor {
+  (qualifiedId: string, system: string, prompt: string): Promise<string>;
+}
+
+export interface PromptLiveEvalCapabilityResolver {
+  (qualifiedId: string): ModelCapabilities;
+}
+
+export interface PromptLiveEvalResult {
+  readonly version: 1;
+  readonly createdAt: string;
+  readonly models: readonly string[];
+  readonly scenarios: readonly {
+    model: string;
+    scenario: string;
+    passed: boolean;
+    matchedExpected: string[];
+    matchedForbidden: string[];
+    output: string;
+  }[];
+}
+
+export async function runPromptLiveEval(
+  manifest: PromptLiveEvalManifest,
+  fixture: PromptLiveEvalScenarios,
+  resolveCapabilities: PromptLiveEvalCapabilityResolver,
+  execute: PromptLiveEvalExecutor,
+): Promise<PromptLiveEvalResult> {
+  const scenarios: PromptLiveEvalResult["scenarios"][number][] = [];
+  for (const { qualifiedId } of manifest.models) {
+    for (const scenario of fixture.scenarios) {
+      const system = (await new PromptContractCompiler().compile(
+        buildLiveEvalContract(scenario, resolveCapabilities(qualifiedId)),
+      )).prompt;
+      const output = await execute(qualifiedId, system, scenario.request);
+      const normalized = output.toLowerCase();
+      const matchedExpected = scenario.expectedAny.filter((term) => normalized.includes(term.toLowerCase()));
+      const matchedForbidden = scenario.forbidden.filter((term) => normalized.includes(term.toLowerCase()));
+      scenarios.push({
+        model: qualifiedId,
+        scenario: scenario.id,
+        passed: matchedExpected.length > 0 && matchedForbidden.length === 0,
+        matchedExpected,
+        matchedForbidden,
+        output,
+      });
+    }
+  }
+  return {
+    version: 1,
+    createdAt: new Date().toISOString(),
+    models: manifest.models.map(({ qualifiedId }) => qualifiedId),
+    scenarios,
+  };
+}
+
+function buildLiveEvalContract(
+  scenario: PromptLiveEvalScenarios["scenarios"][number],
+  capabilities: ModelCapabilities,
+): PromptContractV2 {
+  const base: RuntimePromptEnvelope = {
+    agentName: scenario.agent,
+    sessionId: "live-eval-session",
+    rootSessionId: scenario.executionMode === "ordinary-root" ? "live-eval-session" : "live-eval-root",
+    parentSessionId: scenario.executionMode === "ordinary-root" ? "none" : "live-eval-root",
+    parentAgentName: scenario.executionMode === "ordinary-root"
+      ? "none"
+      : scenario.executionMode === "goal-review"
+        ? "goal_lead"
+        : "engineer",
+    depth: scenario.executionMode === "ordinary-root" ? 0 : 1,
+    allowedDelegateTargets: scenario.agent === "reviewer" ? ["explore", "librarian"] : scenario.agent === "engineer" ? ["plan", "build", "reviewer", "explore", "librarian"] : ["explore"],
+    goal: scenario.executionMode === "goal-review" ? { id: "live-eval-goal", status: "reviewing", reviewGeneration: 1 } : "none",
+    todo: "none",
+    reviewMode: scenario.agent === "reviewer" ? (scenario.executionMode === "goal-review" ? "goal" : "ordinary") : "none",
+    ownedScope: scenario.agent === "build" ? [{ kind: "tree", path: "src" }] : [],
+    remainingDepth: scenario.executionMode === "ordinary-root" ? 3 : 1,
+    maxConcurrentChildren: 4,
+    mcp: { context7: "ready" },
+    modelCapabilities: capabilities,
+  };
+  const role = scenario.agent === "engineer" ? engineerRoleContract : scenario.agent === "build" ? buildRoleContract : reviewerRoleContract;
+  const allowedTools = scenario.agent === "engineer"
+    ? ["file_read", "delegate"]
+    : scenario.agent === "build"
+      ? ["file_read", "file_edit", "delegate", "submit_child_result"]
+      : scenario.executionMode === "goal-review"
+        ? ["file_read", "delegate", "goal_manage"]
+        : ["file_read", "delegate", "submit_child_result"];
+  return {
+    version: "2",
+    role,
+    runtime: base,
+    allowedTools,
+    availableSkills: [],
+    activeSkills: [],
+    guidanceAuthority: {
+      skills: { kind: "guidance-only", grants: "none" },
+      projectInstructions: { kind: "guidance-only", grants: "none" },
+    },
+    agentsMd: { status: "absent", source: "live-eval fixture" },
+    memory: { status: "absent", source: "live-eval fixture" },
+    currentContext: [`liveEvalScenario=${scenario.id}`],
+    delegation: scenario.agent === "build" ? {
+      hash: "a".repeat(64),
+      contract: {
+        agent_type: "build", title: "Live eval child result", objective: scenario.request,
+        owned_scope: [{ kind: "tree", path: "src" }], non_goals: [],
+        acceptance_criteria: [{ id: "AC-1", condition: "Complete the delegated scope", requiredEvidence: "verification output" }],
+        evidence: [], verification: [], depends_on: [], skills: [], background: false,
+      },
+    } : "none",
+    env: { platform: "linux", timezone: "UTC", locale: "en-US", projectRoot: "/workspace", cwd: "/workspace", versionControl: "git", date: "2026-07-18" },
+  };
+}

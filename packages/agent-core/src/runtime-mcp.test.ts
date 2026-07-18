@@ -59,6 +59,7 @@ function makeProviderConfig() {
           name: "Test Model",
           limit: { context: 128000, output: 8192 },
           modalities: { input: ["text"], output: ["text"] },
+          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
         },
       },
     },
@@ -316,11 +317,11 @@ describe("createRuntime MCP background loading", () => {
       calls.push({ serverName, status });
     });
 
-    setStatus("docs", { state: "ready", toolCount: 3 });
+    setStatus("docs", { state: "ready", toolCount: 3, warningCount: 0 });
 
     expect(calls).toContainEqual({
       serverName: "docs",
-      status: { state: "ready", toolCount: 3 },
+      status: { state: "ready", toolCount: 3, warningCount: 0 },
     });
   });
 

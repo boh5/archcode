@@ -54,6 +54,7 @@ const config: ServerConfig = {
           name: "Demo model",
           limit: { context: 1000, output: 500 },
           modalities: { input: ["text"], output: ["text"] },
+          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "rich" },
           variants: { fast: { temperature: 0.1 } },
         },
       },
@@ -89,17 +90,21 @@ describe("SettingsDialog", () => {
     expect(editor).toHaveLength(1);
   });
 
-  test("keeps future model capability metadata but removes pricing and fine-grained call controls", () => {
+  test("shows required model capability controls but removes pricing and fine-grained call controls", () => {
     const tree = SettingsModelsPanel({ config, onChange: () => {} });
     const content = textContent(tree);
+    const editor = findAll(tree, (element) => element.props?.providerId === "local" && element.props?.modelId === "demo-model")[0];
 
     expect(content).not.toContain("Pricing");
     expect(content).not.toContain("maxRetries");
+    expect(editor?.props?.model).toMatchObject({
+      capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "rich" },
+    });
   });
 
   test("locks the three built-in MCP servers while showing live status", () => {
     const servers: Record<string, McpServerStatus> = {
-      context7: { state: "ready", toolCount: 4 },
+      context7: { state: "ready", toolCount: 4, warningCount: 0 },
       "grep.app": { state: "pending" },
       exa: { state: "failed", error: "unreachable" },
     };

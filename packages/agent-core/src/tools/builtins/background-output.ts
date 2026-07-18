@@ -1,89 +1,120 @@
-import { z } from "zod";
+import { z } from "zod/v4";
 import type { StoreApi } from "zustand";
-import type { SessionStoreState, StoredMessage, StoredPart, ToolPart } from "../../store/types";
+import type { ChildResultReceipt } from "@archcode/protocol";
+import type { SessionStoreState } from "../../store/types";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
-import { getLastAssistantText } from "./delegate";
+import { projectGoalReviewReceipt } from "../../goals/review-schema";
 
 const DEFAULT_TIMEOUT_MS = 1_800_000;
 const MAX_TIMEOUT_MS = 1_800_000;
-const DEFAULT_MESSAGE_LIMIT = 20;
-const MAX_MESSAGE_LIMIT = 100;
-const TOOL_RESULT_PART_CAP = 2_000;
-const REASONING_PART_CAP = 1_000;
-const GLOBAL_OUTPUT_CAP = 8_000;
 
-export const BackgroundOutputInputSchema = z
-  .object({
-    session_id: z.string().describe("Persisted Session ID copied from delegate, resume_session, a terminal reminder, or a prior child result; must not be the current Session ID."),
-    block: z.boolean().default(false).describe("true waits while the Session is running; false returns an immediate snapshot. Default false."),
-    timeout_ms: z.number().int().min(0).max(MAX_TIMEOUT_MS).default(DEFAULT_TIMEOUT_MS).describe("Max wait time in ms when blocking, from 0 to 1800000. Default 1800000 (30 minutes)."),
-    full_session: z.boolean().default(false).describe("Return filtered stored messages instead of only the latest assistant output. Use when the final answer alone lacks needed evidence or intermediate context. Default false."),
-    message_limit: z.number().int().min(1).max(MAX_MESSAGE_LIMIT).default(DEFAULT_MESSAGE_LIMIT).describe("Maximum messages returned from the beginning of the selected range in full_session mode. Default 20; max 100."),
-    since_message_id: z.string().optional().describe("Exclusive cursor for full_session mode. Return messages after this id; when omitted, selection starts at the first stored message."),
-    include_tool_results: z.boolean().default(false).describe("Include tool call results in full_session output. Hidden by default; effective only with full_session=true."),
-    include_reasoning: z.boolean().default(false).describe("Include assistant reasoning in full_session output. Hidden by default; effective only with full_session=true."),
-  })
-  .strict();
+export const BackgroundOutputInputSchema = z.strictObject({
+  session_id: z.string().trim().min(1),
+  block: z.boolean().default(false),
+  timeout_ms: z.number().int().min(0).max(MAX_TIMEOUT_MS).default(DEFAULT_TIMEOUT_MS),
+});
 
-export type BackgroundOutputInput = z.infer<typeof BackgroundOutputInputSchema>;
+export type BackgroundOutputInput = z.output<typeof BackgroundOutputInputSchema>;
 
 export async function executeBackgroundOutput(
   input: BackgroundOutputInput,
   ctx: ToolExecutionContext,
 ): Promise<string | ToolExecutionResult> {
-  if (input.session_id === ctx.store.getState().sessionId) {
+  const parentSessionId = ctx.store.getState().sessionId;
+  if (input.session_id === parentSessionId) {
     return createToolErrorResult({
       kind: "execution",
       code: "TOOL_INVALID_BACKGROUND_SESSION",
-      message: "background_output cannot read the current session; provide a delegated session_id.",
+      message: "background_output cannot read the current Session",
     });
   }
 
   let childStore: StoreApi<SessionStoreState> | undefined;
   try {
-    childStore = await getChildStore(input, ctx);
-  } catch (err) {
+    childStore = await getChildStore(input.session_id, ctx);
+  } catch (error) {
     return createToolErrorResult({
       kind: "execution",
       code: "TOOL_CHILD_SESSION_LOAD_FAILED",
-      message: err instanceof Error ? err.message : String(err),
+      message: error instanceof Error ? error.message : String(error),
     });
   }
   if (childStore === undefined) {
     return createToolErrorResult({
       kind: "execution",
       code: "TOOL_CHILD_SESSION_NOT_FOUND",
-      message: `Child session store not found: ${input.session_id}`,
+      message: `Child Session store not found: ${input.session_id}`,
     });
   }
+  if (childStore.getState().parentSessionId !== parentSessionId) {
+    return createToolErrorResult({
+      kind: "execution",
+      code: "TOOL_CHILD_SESSION_NOT_DIRECT",
+      message: `Session ${input.session_id} is not a direct child of ${parentSessionId}`,
+    });
+  }
+
+  await recoverGoalReviewResultProjection(childStore, ctx);
 
   const waitResult = input.block && childStore.getState().isRunning
     ? await waitForChildToStop(childStore, input.timeout_ms, ctx.abort)
     : "not_waited";
+  const state = childStore.getState();
+  const execution = state.executions.at(-1);
+  const receipt = receiptForExecution(state.childResultReceipts, execution?.id);
 
-  const output = input.full_session
-    ? renderFullSession(input, childStore.getState(), waitResult)
-    : renderLatest(input.session_id, childStore.getState(), waitResult);
+  return JSON.stringify({
+    session_id: state.sessionId,
+    execution_status: state.isRunning ? "running" : (execution?.status ?? "idle"),
+    wait_status: waitResult,
+    ...(receipt === undefined ? {} : { result_receipt: receipt }),
+    ...(execution?.error === undefined ? {} : { error: execution.error }),
+  });
+}
 
-  return truncateOutput(output);
+async function recoverGoalReviewResultProjection(
+  childStore: StoreApi<SessionStoreState>,
+  ctx: ToolExecutionContext,
+): Promise<void> {
+  const state = childStore.getState();
+  const execution = state.executions.at(-1);
+  if (
+    state.agentName !== "reviewer"
+    || state.sessionRole !== "review"
+    || state.goalId === undefined
+    || execution === undefined
+    || state.childResultReceipts.some((receipt) => receipt.executionId === execution.id)
+  ) return;
+
+  const goal = await ctx.projectContext.goalState.read(state.goalId);
+  const review = goal.review;
+  if (
+    review === undefined
+    || review.reviewerSessionId !== state.sessionId
+    || review.executionId !== execution.id
+    || review.delegationContractHash !== state.delegationContractHash
+  ) return;
+
+  const projection = projectGoalReviewReceipt(review);
+  await ctx.storeManager.commitDurableSessionMutation(
+    state.sessionId,
+    ctx.projectContext.project.workspaceRoot,
+    (current) => current.childResultReceipts.some((receipt) => receipt.executionId === projection.executionId)
+      ? { result: undefined }
+      : { result: undefined, events: [{ type: "child-result", receipt: projection }] },
+  );
 }
 
 async function getChildStore(
-  input: BackgroundOutputInput,
+  sessionId: string,
   ctx: ToolExecutionContext,
 ): Promise<StoreApi<SessionStoreState> | undefined> {
-  const projectRoot = ctx.projectContext.project.workspaceRoot;
-  const liveStore = ctx.storeManager.get(input.session_id, projectRoot);
+  const workspaceRoot = ctx.projectContext.project.workspaceRoot;
+  const liveStore = ctx.storeManager.get(sessionId, workspaceRoot);
   if (liveStore !== undefined) return liveStore;
-
-  try {
-    return await ctx.storeManager.getOrLoad(input.session_id, projectRoot);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to load child session ${input.session_id}: ${msg}`);
-  }
+  return await ctx.storeManager.getOrLoad(sessionId, workspaceRoot);
 }
 
 type WaitResult = "not_waited" | "stopped" | "timed_out" | "aborted";
@@ -99,168 +130,45 @@ function waitForChildToStop(
   return new Promise((resolve) => {
     let settled = false;
     let timeout: ReturnType<typeof setTimeout> | undefined;
-
     const cleanup = () => {
       if (timeout !== undefined) clearTimeout(timeout);
       unsubscribe();
       abortSignal.removeEventListener("abort", onAbort);
     };
-
     const settle = (result: WaitResult) => {
       if (settled) return;
       settled = true;
       cleanup();
       resolve(result);
     };
-
     const onAbort = () => settle("aborted");
     const unsubscribe = childStore.subscribe((state) => {
       if (!state.isRunning) settle("stopped");
     });
-
     abortSignal.addEventListener("abort", onAbort, { once: true });
     timeout = setTimeout(() => settle("timed_out"), timeoutMs);
-
     if (!childStore.getState().isRunning) settle("stopped");
   });
 }
 
-function renderLatest(sessionId: string, state: SessionStoreState, waitResult: WaitResult): string {
-  const lines = [
-    `# Background session ${sessionId}`,
-    "",
-    `Status: ${sessionStatus(state)}`,
-    "",
-    "## Latest assistant output",
-  ];
-
-  const text = getLastAssistantText(state.messages);
-  lines.push(text.length > 0 ? text : "_No assistant output yet._");
-
-  const note = statusNote(state, waitResult);
-  if (note.length > 0) {
-    lines.push("", note);
+function receiptForExecution(
+  receipts: readonly ChildResultReceipt[],
+  executionId: string | undefined,
+): ChildResultReceipt | undefined {
+  if (executionId === undefined) return undefined;
+  for (let index = receipts.length - 1; index >= 0; index -= 1) {
+    const receipt = receipts[index];
+    if (receipt?.executionId === executionId) return receipt;
   }
-
-  return lines.join("\n");
-}
-
-function renderFullSession(
-  input: BackgroundOutputInput,
-  state: SessionStoreState,
-  waitResult: WaitResult,
-): string {
-  const messages = selectMessages(state.messages, input.since_message_id, input.message_limit);
-  const lines = [
-    `# Background session ${state.sessionId}`,
-    "",
-    `Status: ${sessionStatus(state)}`,
-    `Messages: ${messages.length}`,
-  ];
-
-  const note = statusNote(state, waitResult);
-  if (note.length > 0) lines.push("", note);
-
-  if (messages.length === 0) {
-    lines.push("", "_No messages matched the requested cursor/limit._");
-    return lines.join("\n");
-  }
-
-  for (const message of messages) {
-    lines.push("", `## ${message.role} ${message.id}`);
-    const renderedParts = message.parts
-      .map((part) => renderPart(part, input))
-      .filter((part) => part.length > 0);
-    lines.push(renderedParts.length > 0 ? renderedParts.join("\n\n") : "_No visible parts._");
-  }
-
-  return lines.join("\n");
-}
-
-function selectMessages(
-  messages: readonly StoredMessage[],
-  sinceMessageId: string | undefined,
-  limit: number,
-): readonly StoredMessage[] {
-  const startIndex = sinceMessageId === undefined
-    ? 0
-    : Math.max(messages.findIndex((message) => message.id === sinceMessageId) + 1, 0);
-
-  return messages.slice(startIndex, startIndex + limit);
-}
-
-function renderPart(part: StoredPart, input: BackgroundOutputInput): string {
-  switch (part.type) {
-    case "text":
-      return part.text;
-    case "reasoning":
-      return input.include_reasoning
-        ? `### Reasoning\n${truncatePart(part.text, REASONING_PART_CAP)}`
-        : "";
-    case "tool":
-      return renderToolPart(part, input.include_tool_results);
-    case "compaction":
-      return `### Compaction\n${part.summary}`;
-    case "system-notice":
-      return `### System notice\n${part.notice}`;
-    case "recovery-notice":
-      return `### Recovery notice\n${part.message}`;
-  }
-}
-
-function renderToolPart(part: ToolPart, includeToolResults: boolean): string {
-  const lines = [`- Tool call: ${part.toolName} [${part.state}]`];
-
-  if (!includeToolResults) return lines.join("\n");
-
-  if (part.state === "completed") {
-    lines.push("", "```text", truncatePart(part.output, TOOL_RESULT_PART_CAP), "```");
-  } else if (part.state === "error") {
-    lines.push("", "```text", truncatePart(part.errorMessage, TOOL_RESULT_PART_CAP), "```");
-  }
-
-  return lines.join("\n");
-}
-
-function sessionStatus(state: SessionStoreState): string {
-  if (state.isRunning) return "running";
-  return state.executions.at(-1)?.status ?? "idle";
-}
-
-function statusNote(state: SessionStoreState, waitResult: WaitResult): string {
-  if (waitResult === "timed_out") {
-    return "Timed out waiting for the sub-agent. Current output is shown above.";
-  }
-
-  if (waitResult === "aborted") {
-    return "Stopped waiting because the parent run was aborted. Current output is shown above.";
-  }
-
-  if (state.isRunning) {
-    return "Sub-agent is still running. Use block=true to wait, or wait_for_reminder for completion notification.";
-  }
-
-  return "";
-}
-
-function truncatePart(value: string, maxLength: number): string {
-  if (value.length <= maxLength) return value;
-  return `${value.slice(0, maxLength)}\n[part truncated]`;
-}
-
-function truncateOutput(value: string): string {
-  if (value.length <= GLOBAL_OUTPUT_CAP) return value;
-  return `${value.slice(0, GLOBAL_OUTPUT_CAP)}\n\n[output truncated]`;
+  return undefined;
 }
 
 export const backgroundOutputTool = defineTool({
   name: "background_output",
   description: [
-    "Read status and output for a persisted Session in the current project, normally with the Session ID returned by delegate or resume_session. The current Session itself is rejected.",
-    "",
-    "For a final child result, normally wait for its terminal reminder and then call `background_output({\"session_id\":\"<session-id>\",\"block\":true,\"timeout_ms\":1800000})`. This returns status plus the latest assistant text. A timeout or parent abort returns the latest available snapshot; if status is still running, that snapshot is not a final deliverable and must not be treated as one.",
-    "",
-    "Use block=false only for an explicitly requested immediate snapshot. Use full_session=true when the latest answer lacks needed evidence or intermediate context, for example `background_output({\"session_id\":\"<session-id>\",\"block\":false,\"full_session\":true,\"message_limit\":20,\"include_tool_results\":false,\"include_reasoning\":false})`. since_message_id is an exclusive forward cursor. Reasoning and tool results remain hidden unless explicitly included. Output may be truncated.",
+    "Read the execution status and canonical result receipt of one direct child Session.",
+    "It never treats assistant text as a child result. A terminal execution without result_receipt did not satisfy the child result protocol.",
+    "Use block=true after a terminal reminder when the persisted receipt is required; do not poll.",
   ].join("\n"),
   inputSchema: BackgroundOutputInputSchema,
   traits: { readOnly: true, destructive: false, concurrencySafe: true },

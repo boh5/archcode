@@ -75,6 +75,37 @@ describe("current tool and config wire types", () => {
 
     expect(serializeRoundTrip(config)).toEqual(config);
   });
+
+  test("requires explicit model capability metadata on the config wire contract", () => {
+    const config = {
+      provider: {
+        local: {
+          npm: "@ai-sdk/openai-compatible",
+          name: "Local",
+          options: { baseURL: "http://localhost:8090/v1" },
+          models: {
+            demo: {
+              name: "Demo",
+              limit: { context: 128000, output: 16000 },
+              modalities: { input: ["text"], output: ["text"] },
+              capabilities: {
+                multiToolCallEmission: "single",
+                structuredToolCalls: "best_effort",
+                instructionTier: "standard",
+              },
+            },
+          },
+        },
+      },
+      agents: {} as ServerConfigUpdate["agents"],
+    } satisfies ServerConfigUpdate;
+
+    expect(serializeRoundTrip(config).provider.local.models.demo.capabilities).toEqual({
+      multiToolCallEmission: "single",
+      structuredToolCalls: "best_effort",
+      instructionTier: "standard",
+    });
+  });
 });
 
 describe("global SSE wire protocol types", () => {
@@ -404,6 +435,20 @@ describe("Goal types", () => {
           },
         ],
         reviewerSessionId: "session-review",
+        executionId: "execution-review-1",
+        delegationContractHash: "a".repeat(64),
+        result: {
+          status: "completed",
+          summary: "Reviewer confirmed the acceptance criteria are satisfied.",
+          criteria: [{ id: "acceptance", status: "passed", evidenceRefs: ["test-output-1", "diff-1"] }],
+          deliverables: [],
+          evidence: [
+            { claim: "Targeted protocol tests passed", ref: "test-output-1" },
+            { claim: "The old Goal DSL types were removed", ref: "diff-1" },
+          ],
+          verification: [{ check: "Protocol tests", status: "passed", outputRef: "test-output-1" }],
+          unresolved: [],
+        },
         decidedAt: "2026-01-01T00:05:00.000Z",
       },
       finalSummary: "Authentication flow completed and reviewed.",
@@ -454,6 +499,21 @@ describe("Goal types", () => {
         evidenceRefs: [],
         unresolvedItems: ["Clarify expected behavior"],
         reviewerSessionId: "session-review",
+        executionId: "execution-review-2",
+        delegationContractHash: "b".repeat(64),
+        result: {
+          status: "failed",
+          summary: "Cannot complete without the requested clarification.",
+          criteria: [{ id: "acceptance", status: "unverified", evidenceRefs: [] }],
+          deliverables: [],
+          evidence: [],
+          verification: [],
+          unresolved: [{
+            issue: "Clarify expected behavior",
+            blocking: true,
+            nextOwner: "user",
+          }],
+        },
         decidedAt: "2026-06-01T00:01:00.000Z",
       },
       createdAt: "2026-06-01T00:00:00.000Z",

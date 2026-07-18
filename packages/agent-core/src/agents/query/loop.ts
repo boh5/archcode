@@ -12,6 +12,13 @@ import { classifyLlmError, runLlmStream } from "../../llm";
 import { parseRetryAfter, realRetryScheduler, type RetryScheduler } from "../../llm/retry";
 import type { BeforeModelBuildContext, BeforeModelCallContext } from "./loop-hooks";
 import { SessionToolBatchScheduler, type SessionToolBatchAdvanceResult } from "../../execution/session-tool-batch-scheduler";
+import { TOOL_GOAL_MANAGE, TOOL_SUBMIT_CHILD_RESULT } from "@archcode/protocol";
+import {
+  countStructuredResultFailures,
+  createStructuredResultCorrectionGate,
+  isStructuredResultSubmission,
+  type StructuredResultSubmission,
+} from "../../tools/structured-result-correction";
 
 const DEFAULT_MAX_STEPS = 50;
 const ZERO_OUTPUT_SHORT_ATTEMPTS = 3;
@@ -185,7 +192,6 @@ export async function runQueryLoop(
     toolRegistry,
     allowedTools,
     confirmPermission,
-    systemPrompt,
     maxSteps = DEFAULT_MAX_STEPS,
     store,
     currentDepth,
@@ -211,6 +217,21 @@ export async function runQueryLoop(
   let lastRecoveryAttempt = 0;
   let continuationClaimed = false;
   const doomTracker = new DoomTracker();
+  const initialState = store.getState();
+  const structuredResultSubmission: StructuredResultSubmission | undefined = allowedTools.includes(TOOL_SUBMIT_CHILD_RESULT)
+    ? "submit_child_result"
+    : allowedTools.includes(TOOL_GOAL_MANAGE)
+      && initialState.agentName === "reviewer"
+      && initialState.sessionRole === "review"
+      ? "goal_manage.finalize_review"
+      : undefined;
+  const structuredResultCorrection = structuredResultSubmission === undefined
+    ? undefined
+    : createStructuredResultCorrectionGate(
+      modelInfo.capabilities.structuredToolCalls,
+      countStructuredResultFailures(initialState, structuredResultSubmission),
+      structuredResultSubmission,
+    );
   const toolBatchScheduler = new SessionToolBatchScheduler({
     store,
     storeManager: options.storeManager,
@@ -248,6 +269,14 @@ export async function runQueryLoop(
         ...(options.acquireSessionCwdTransition === undefined ? {} : { acquireSessionCwdTransition: options.acquireSessionCwdTransition }),
         agentName: options.agentName,
         ...(currentDepth === undefined ? {} : { currentDepth }),
+        ...(structuredResultCorrection !== undefined
+          && isStructuredResultSubmission(
+            toolCall.toolName,
+            toolCall.input,
+            structuredResultCorrection.submission,
+          )
+          ? { structuredResultCorrection }
+          : {}),
         onInputResolved(redactedInput) {
           store.getState().append({ type: "tool-input-resolved", toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, input: redactedInput });
         },
@@ -308,6 +337,9 @@ export async function runQueryLoop(
         }
       }
 
+      const systemPrompt = options.resolveSystemPrompt === undefined
+        ? options.systemPrompt
+        : await options.resolveSystemPrompt();
       const attempt = await runModelAttempt({
         step: steps,
         store,
@@ -476,7 +508,17 @@ export async function runQueryLoop(
       }
       if (toolExecution.executionControl !== undefined) {
         runEndStatus = executionEndStatusFromControl(toolExecution.executionControl);
-        return { text: lastText, steps, status: runEndStatus, executionControl: toolExecution.executionControl };
+        runEndError = executionErrorFromControl(toolExecution.executionControl);
+        if (runEndError !== undefined) {
+          store.getState().append({ type: "execution-error", step: steps, error: runEndError });
+        }
+        return {
+          text: lastText,
+          steps,
+          status: runEndStatus,
+          ...(runEndError === undefined ? {} : { error: runEndError }),
+          executionControl: toolExecution.executionControl,
+        };
       }
       if (toolExecution.waitingForHuman) {
         runEndStatus = "waiting_for_human";
@@ -949,9 +991,19 @@ function finishToolBatchAdvance(
     };
   }
   if (result.executionControl !== undefined) {
+    const error = executionErrorFromControl(result.executionControl);
+    if (error !== undefined) {
+      store.getState().append({ type: "execution-error", step: steps, error });
+    }
     return {
       runEndStatus: executionEndStatusFromControl(result.executionControl),
-      result: { text, steps, status: executionEndStatusFromControl(result.executionControl), executionControl: result.executionControl },
+      result: {
+        text,
+        steps,
+        status: executionEndStatusFromControl(result.executionControl),
+        ...(error === undefined ? {} : { error }),
+        executionControl: result.executionControl,
+      },
     };
   }
   if (result.status === "waiting_for_human") {
@@ -961,7 +1013,13 @@ function finishToolBatchAdvance(
 }
 
 function executionEndStatusFromControl(control: ToolExecutionControl): ExecutionEndEvent["status"] {
+  if (control.action === "complete_execution") return "completed";
+  if (control.action === "fail_execution") return "failed";
   return control.reason === "goal_cancelled" ? "cancelled" : "interrupted";
+}
+
+function executionErrorFromControl(control: ToolExecutionControl): string | undefined {
+  return control.action === "fail_execution" ? control.error : undefined;
 }
 
 function appendToolResult(

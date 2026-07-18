@@ -23,20 +23,20 @@ describe("getMcpStatus", () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL) => {
       expect(String(input)).toBe("/api/mcp/status");
-      return jsonResponse({ servers: { context7: { state: "ready", toolCount: 3 } } });
+      return jsonResponse({ servers: { context7: { state: "ready", toolCount: 3, warningCount: 0 } } });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     const result = await getMcpStatus();
 
-    expect(result).toEqual({ context7: { state: "ready", toolCount: 3 } });
+    expect(result).toEqual({ context7: { state: "ready", toolCount: 3, warningCount: 0 } });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   test("returns the servers object from the response", async () => {
     globalThis.document = { cookie: "" } as Document;
     const servers: Record<string, McpServerStatus> = {
-      context7: { state: "ready", toolCount: 2 },
+      context7: { state: "ready", toolCount: 2, warningCount: 1 },
       grep: { state: "pending" },
       exa: { state: "failed", error: "down" },
       disabled: { state: "disabled" },

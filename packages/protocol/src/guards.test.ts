@@ -70,6 +70,20 @@ const canonicalMessage = {
   executionId: "execution-1",
   clientRequestId: pendingMessage.clientRequestId,
 };
+const childResultReceipt = {
+  executionId: "execution-child-1",
+  delegationContractHash: "a".repeat(64),
+  submittedAt: 3,
+  result: {
+    status: "completed" as const,
+    summary: "Done",
+    deliverables: [],
+    evidence: [{ claim: "Done", ref: "src/a.ts:1" }],
+    criteria: [{ id: "ac-1", status: "passed" as const, evidenceRefs: ["src/a.ts:1"] }],
+    verification: [],
+    unresolved: [],
+  },
+};
 
 const validPayloads = [
   { type: "shutdown", reason: "restart" },
@@ -96,6 +110,7 @@ const validPayloads = [
   { type: "tool-attempt", toolCallId: "call-1", toolName: "file_write", attemptId: "attempt-1", timestamp: 1, destructive: false },
   { type: "tool-result", toolCallId: "call-1", toolName: "file_read", output: "ok", isError: false, meta: {} },
   { type: "tool-child-session-link", link: { parentSessionId: "parent", parentToolCallId: "call", toolName: "delegate", childSessionId: "child", childAgentName: "explore", title: "Explore child", depth: 1, background: false, status: "completed", createdAt: 1 } },
+  { type: "child-result", receipt: childResultReceipt },
   { type: "todo-write", todos: [{ id: "todo-1", content: "work", status: "in_progress" }] },
   { type: "reminder", reminder: { id: "reminder-1", source: { type: "subagent_completed", sessionId: "child" }, delivery: "auto_inject", content: "done", createdAt: 1, consumedAt: null } },
   { type: "reminder-consumed", reminderIds: ["reminder-1"] },
@@ -109,11 +124,13 @@ const validPayloads = [
   { type: "compression.block_committed", block: compressionBlock, state: compressionState },
   { type: "compression.block_failed", failure: { id: "failure-1", reason: "overlap", failedAt: 1 }, state: compressionState },
   { type: "compression.ref_map_updated", refMap, updatedAt: 1 },
+  { type: "prompt-trace", trace: { version: "2", status: "compiled", hash: "a".repeat(64), sections: [{ name: "Shared Kernel", source: "prompt/shared-kernel@2", hash: "b".repeat(64) }], skills: { status: "present", active: [{ name: "review-work", source: "/skills/review-work/SKILL.md" }] }, visibleTools: ["file_read"], agentsMd: "present", memory: "absent", mcp: { context7: "partial-warning" }, warnings: ["one tool was skipped"] } },
 ] satisfies SessionEventPayload[];
 
 describe("protocol event guards", () => {
   test("keeps one valid fixture for every current Session event payload type", () => {
     expect(validPayloads.map((event) => event.type).sort()).toEqual([
+      "child-result",
       "compact",
       "compression.block_committed",
       "compression.block_failed",
@@ -125,6 +142,7 @@ describe("protocol event guards", () => {
       "llm-recovery",
       "llm-recovery-failed",
       "llm-retry",
+      "prompt-trace",
       "reasoning-delta",
       "reasoning-end",
       "reasoning-start",
@@ -169,6 +187,7 @@ describe("protocol event guards", () => {
     expect(isSessionEventPayload({ type: "tool-child-session-link", link: { ...validPayloads[23]!.link, legacy: true } })).toBe(false);
     expect(isSessionEventPayload({ type: "compression.block_committed", block: { ...compressionBlock, range: { ...compressionBlock.range, endIndex: "0" } } })).toBe(false);
     expect(isSessionEventPayload({ type: "hitl.request" })).toBe(false);
+    expect(isSessionEventPayload({ ...validPayloads.at(-1), trace: { ...(validPayloads.at(-1) as any).trace, mcp: { docs: "unknown" } } })).toBe(false);
     expect(isSessionEventPayload({})).toBe(false);
     expect(isSessionEventPayload(null)).toBe(false);
     expect(isSessionEventPayload("text-start")).toBe(false);

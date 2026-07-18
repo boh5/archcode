@@ -15,6 +15,8 @@ import {
 } from "../compression";
 import { AGENT_NAMES, type AgentName } from "../agents/names";
 import { atomicWrite } from "../utils/safe-file";
+import { hashDelegationContract } from "../delegation/contract";
+import { ChildResultReceiptSchema, DelegationContractSchema } from "../delegation/schema";
 
 const SessionRoleSchema = z.enum(["main", "plan", "build", "review", "explore", "librarian", "standalone"]);
 const AgentNameSchema = z.enum(AGENT_NAMES);
@@ -162,7 +164,6 @@ const ToolChildSessionLinkSchema = z.strictObject({
   childSessionId: z.string(),
   childAgentName: z.string(),
   title: z.string().trim().min(1),
-  description: z.string().optional(),
   depth: z.number(),
   background: z.boolean(),
   status: z.enum([
@@ -180,7 +181,7 @@ const ToolChildSessionLinkSchema = z.strictObject({
   startedAt: z.number().optional(),
   endedAt: z.number().optional(),
   durationMs: z.number().optional(),
-  summary: z.string().optional(),
+  resultReceipt: ChildResultReceiptSchema.optional(),
   error: z.string().optional(),
 });
 
@@ -568,6 +569,8 @@ export const SessionFileSchema = z.strictObject({
     ),
   reminders: z.array(ReminderSchema),
   childSessionLinks: z.array(ToolChildSessionLinkSchema),
+  delegationContract: DelegationContractSchema.optional(),
+  delegationContractHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   toolBatches: z.array(SessionToolBatchSchema).superRefine((batches, ctx) => {
     if (batches.filter((batch) => batch.archivedAt === undefined).length > 1) {
       ctx.addIssue({ code: "custom", message: "At most one tool batch may be active" });
@@ -580,6 +583,31 @@ export const SessionFileSchema = z.strictObject({
   sessionRole: SessionRoleSchema.optional(),
   eventCursor: z.number().optional(),
 }).superRefine((session, ctx) => {
+  const isChild = session.parentSessionId !== undefined;
+  if (isChild !== (session.delegationContract !== undefined)) {
+    ctx.addIssue({ code: "custom", path: ["delegationContract"], message: "delegationContract must exist exactly for child Sessions" });
+  }
+  if (isChild !== (session.delegationContractHash !== undefined)) {
+    ctx.addIssue({ code: "custom", path: ["delegationContractHash"], message: "delegationContractHash must exist exactly for child Sessions" });
+  }
+  if (session.delegationContract !== undefined && session.delegationContractHash !== undefined) {
+    if (hashDelegationContract(session.delegationContract) !== session.delegationContractHash) {
+      ctx.addIssue({ code: "custom", path: ["delegationContractHash"], message: "delegationContractHash does not match delegationContract" });
+    }
+  }
+  const childResultReceipts = (session.events ?? []).flatMap((event) =>
+    event.payload.type === "child-result" ? [event.payload.receipt] : []
+  );
+  const receiptExecutionIds = childResultReceipts.map((receipt) => receipt.executionId);
+  if (new Set(receiptExecutionIds).size !== receiptExecutionIds.length) {
+    ctx.addIssue({ code: "custom", path: ["events"], message: "child-result events must have unique executionId values" });
+  }
+  for (const receipt of childResultReceipts) {
+    if (receipt.delegationContractHash !== session.delegationContractHash) {
+      ctx.addIssue({ code: "custom", path: ["events"], message: `Receipt ${receipt.executionId} does not match the Session delegation contract` });
+    }
+  }
+
   const canonicalById = new Map(session.messages.map((message) => [message.id, message]));
   const pendingById = new Map(session.pendingMessages.map((message) => [message.id, message]));
   const messageReceipts = session.inputRequestReceipts.filter((receipt) => receipt.kind === "message");
@@ -620,6 +648,8 @@ export interface SessionSummary {
   cwd: string;
   rootSessionId: string;
   parentSessionId?: string;
+  delegationContract?: z.output<typeof DelegationContractSchema>;
+  delegationContractHash?: string;
   goalId?: string;
   sessionRole?: SessionRole;
   agentName: string;
@@ -632,7 +662,7 @@ export interface SessionSummary {
 
 type PersistableSessionState = Pick<
   SessionStoreState,
-  "sessionId" | "createdAt" | "updatedAt" | "cwd" | "agentName" | "activeSkillNames" | "modelInfo" | "title" | "messages" | "pendingMessages" | "inputRequestReceipts" | "steps" | "stats" | "executions" | "compression" | "todos" | "reminders" | "childSessionLinks" | "toolBatches" | "rootSessionId"
+  "sessionId" | "createdAt" | "updatedAt" | "cwd" | "agentName" | "activeSkillNames" | "modelInfo" | "title" | "messages" | "pendingMessages" | "inputRequestReceipts" | "steps" | "stats" | "executions" | "compression" | "todos" | "reminders" | "childSessionLinks" | "delegationContract" | "delegationContractHash" | "toolBatches" | "rootSessionId"
 > & Partial<Pick<
   SessionStoreState,
   "parentSessionId" | "goalId" | "sessionRole" | "events" | "queueDispatchBarrierAt"
@@ -683,6 +713,8 @@ async function saveSessionTranscript(
     todos: state.todos,
     reminders: state.reminders,
     childSessionLinks: state.childSessionLinks,
+    ...(state.delegationContract === undefined ? {} : { delegationContract: state.delegationContract }),
+    ...(state.delegationContractHash === undefined ? {} : { delegationContractHash: state.delegationContractHash }),
     toolBatches: state.toolBatches,
     rootSessionId: state.rootSessionId,
     ...((state.events?.length ?? 0) === 0 ? {} : { events: state.events }),
@@ -735,6 +767,8 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
     todos: state.todos,
     reminders: state.reminders,
     childSessionLinks: state.childSessionLinks,
+    ...(state.delegationContract === undefined ? {} : { delegationContract: state.delegationContract }),
+    ...(state.delegationContractHash === undefined ? {} : { delegationContractHash: state.delegationContractHash }),
     toolBatches: state.toolBatches,
     rootSessionId: state.rootSessionId,
     eventCursor: state.nextEventId > 0 ? state.nextEventId - 1 : -1,
@@ -759,6 +793,8 @@ async function listSessionSummaries(workspaceRoot: string): Promise<SessionSumma
         cwd: parsed.cwd,
         rootSessionId: parsed.rootSessionId,
         ...(parsed.parentSessionId === undefined ? {} : { parentSessionId: parsed.parentSessionId }),
+        ...(parsed.delegationContract === undefined ? {} : { delegationContract: parsed.delegationContract }),
+        ...(parsed.delegationContractHash === undefined ? {} : { delegationContractHash: parsed.delegationContractHash }),
         ...(parsed.goalId === undefined ? {} : { goalId: parsed.goalId }),
         ...(parsed.sessionRole === undefined ? {} : { sessionRole: parsed.sessionRole }),
         agentName: parsed.agentName,

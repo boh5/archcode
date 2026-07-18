@@ -557,12 +557,11 @@ describe("Goal migration boundaries", () => {
     if (!reviewer) throw new Error("Missing reviewer definition");
 
     expect(reviewer.tools.tools).toContain(TOOL_GOAL_MANAGE);
-    expect(reviewer.rolePrompt).toContain("goal_manage.finalize_review");
-    expect(reviewer.rolePrompt).toContain("DONE requires evidence");
-    expect(reviewer.rolePrompt).toContain("Insufficient evidence means NOT_DONE");
+    expect(reviewer.roleContract.allowedTransitions.goalReview).toContain("goal.finalize_review");
+    expect(reviewer.roleContract.completionAuthority).toContain("goal-reviewer");
 
     for (const definition of agentDefinitions.filter((candidate) => candidate.name !== "reviewer")) {
-      expect(definition.rolePrompt).not.toContain("goal_manage.finalize_review");
+      expect(definition.roleContract.allowedTransitions.goalReview).not.toContain("goal.finalize_review");
     }
   });
 
@@ -570,7 +569,7 @@ describe("Goal migration boundaries", () => {
     for (const definition of agentDefinitions) {
       for (const toolName of removedGoalExecutableToolNames) {
         expect(definition.tools.tools).not.toContain(toolName);
-        expect(definition.rolePrompt).not.toContain(toolName);
+        expect(JSON.stringify(definition.roleContract)).not.toContain(toolName);
       }
     }
   });

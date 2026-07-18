@@ -4,12 +4,21 @@ import { formatElapsed } from "../../lib/time-format";
 import { Check, X } from "lucide-react";
 import { getToolSummary, getToolIcon } from "../../lib/tool-format";
 import { getToolCategory } from "@archcode/protocol";
-import type { DelegationCardViewModel, DelegationToolStatus } from "../../lib/delegation-card-model";
+import type { DelegationCardViewModel, DelegationTaskStatus, DelegationToolStatus } from "../../lib/delegation-card-model";
 
 const TOOL_CHIP_STATUS_CLASSES: Record<DelegationToolStatus, string> = {
   success: "text-success",
   error: "text-error",
   default: "text-text-tertiary",
+};
+
+const TASK_STATUS_META: Record<DelegationTaskStatus, { label: string; className: string }> = {
+  completed: { label: "Completed", className: "bg-success-muted text-success" },
+  partial: { label: "Partial", className: "bg-warning-muted text-warning" },
+  blocked: { label: "Blocked", className: "bg-error-muted text-error" },
+  failed: { label: "Failed", className: "bg-error-muted text-error" },
+  pending: { label: "Pending", className: "bg-bg-active text-text-muted" },
+  unavailable: { label: "Unavailable", className: "bg-bg-active text-text-muted" },
 };
 
 export function ToolChip({ name, status, input }: { name: string; status: DelegationToolStatus; input?: unknown }) {
@@ -40,10 +49,11 @@ export function DelegationCard({
   agentType,
   agentDisplayName,
   taskTitle,
-  status,
+  executionStatus,
+  taskStatus,
   depth,
   startedAt,
-  summary,
+  taskSummary,
   tools,
   projectSlug,
   canNavigate = true,
@@ -75,9 +85,17 @@ export function DelegationCard({
         </div>
 
         <span
-          className={`px-2 py-[2px] rounded-[10px] text-[10.5px] font-semibold ${BADGE_CLASSES[status]}`}
+          className={`px-2 py-[2px] rounded-[10px] text-[10.5px] font-semibold ${BADGE_CLASSES[executionStatus]}`}
+          aria-label={`Execution status: ${BADGE_LABELS[executionStatus]}`}
         >
-          {BADGE_LABELS[status]}
+          Execution: {BADGE_LABELS[executionStatus]}
+        </span>
+
+        <span
+          className={`px-2 py-[2px] rounded-[10px] text-[10.5px] font-semibold ${TASK_STATUS_META[taskStatus].className}`}
+          aria-label={`Task status: ${TASK_STATUS_META[taskStatus].label}`}
+        >
+          Task: {TASK_STATUS_META[taskStatus].label}
         </span>
 
         <div className="flex items-baseline gap-1.5 flex-1 min-w-0">
@@ -96,14 +114,11 @@ export function DelegationCard({
         </span>
 
         <div className="flex items-center gap-3 text-[11px] text-text-muted shrink-0">
-          {status === "running" && (
+          {executionStatus === "running" && (
             <span className="flex items-center gap-1">
               <span className="w-[5px] h-[5px] rounded-full bg-success animate-pulse" />
               {formatElapsed(startedAt)}
             </span>
-          )}
-          {status === "completed" && (
-            <span>done</span>
           )}
         </div>
 
@@ -118,9 +133,9 @@ export function DelegationCard({
         )}
       </div>
 
-      {summary && (
+      {taskSummary && (
         <div className="px-3.5 py-2.5 text-[12.5px] text-text-secondary leading-[1.55] whitespace-pre-wrap">
-          {summary}
+          {taskSummary}
         </div>
       )}
 

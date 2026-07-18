@@ -17,6 +17,7 @@ import {
 } from "./factory";
 import { ConfiguredAgent } from "./configured-agent";
 import type { AgentDefinition, AgentName } from "./factory-types";
+import { engineerRoleContract } from "./definitions/role-contracts";
 import { silentLogger } from "../logger";
 import { createTestProjectContextResolver } from "./test-project-context-resolver";
 import { createTestTempRoot } from "../testing/test-temp-root";
@@ -60,6 +61,7 @@ function makeProviderRegistry(): ProviderRegistry {
       name: "Fallback Model",
       limit: { context: 1000, output: 100 },
       modalities: { input: ["text"], output: ["text"] },
+          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
     },
     providerId: "test",
     modelId: "fallback",
@@ -71,6 +73,7 @@ function makeProviderRegistry(): ProviderRegistry {
       name: "Configured Model",
       limit: { context: 2000, output: 200 },
       modalities: { input: ["text"], output: ["text"] },
+          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
     },
     providerId: "test",
     modelId: "configured",
@@ -96,7 +99,7 @@ function makeProviderRegistry(): ProviderRegistry {
 function definition(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
   return { name: "engineer",
   displayName: "Engineer",
-  promptProfileId: "default",
+  roleContract: engineerRoleContract,
   tools: { tools: ["unknown_tool", ...explorerTools], delegateTargets: ["explore"] },
   hooks: {
     autoCompact: true,
@@ -181,7 +184,7 @@ describe("createAgentFactory", () => {
   test("rejects an Agent definition that conflicts with persisted Session identity", () => {
     const factory = makeFactory([
       definition(),
-      definition({ name: "explore", promptProfileId: "explorer", tools: { tools: nonDelegatingExplorerTools } }),
+      definition({ name: "explore", tools: { tools: nonDelegatingExplorerTools } }),
     ]);
     const store = storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, { agentName: "explore" });
 
@@ -290,7 +293,7 @@ describe("createAgentFactory", () => {
     const providerRegistry = makeProviderRegistry();
     const factory = createAgentFactory({ definitions: [
       definition(),
-      definition({ name: "explore", displayName: "Explore", promptProfileId: "explorer", tools: { tools: nonDelegatingExplorerTools } }),
+      definition({ name: "explore", displayName: "Explore", tools: { tools: nonDelegatingExplorerTools } }),
     ],
     providerRegistry,
     toolRegistry: createRegistry([
@@ -387,7 +390,7 @@ describe("createAgentFactory", () => {
   test("preserves the canonical title from the supplied Session store", () => {
     const factory = makeFactory([
       definition(),
-      definition({ name: "explore", promptProfileId: "explorer", tools: { tools: nonDelegatingExplorerTools } }),
+      definition({ name: "explore", tools: { tools: nonDelegatingExplorerTools } }),
     ]);
 
     const rootStore = storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, { agentName: "engineer", title: "Root Title" });
@@ -402,7 +405,7 @@ describe("createAgentFactory", () => {
   test("preserves parent session id from canonical store identity", () => {
     const factory = makeFactory([
       definition(),
-      definition({ name: "explore", promptProfileId: "explorer", tools: { tools: nonDelegatingExplorerTools } }),
+      definition({ name: "explore", tools: { tools: nonDelegatingExplorerTools } }),
     ]);
 
     const parentSessionId = "parent-session";
@@ -415,7 +418,7 @@ describe("createAgentFactory", () => {
   test("preserves goal id on supplied stores", () => {
     const factory = makeFactory([
       definition(),
-      definition({ name: "explore", promptProfileId: "explorer", tools: { tools: nonDelegatingExplorerTools } }),
+      definition({ name: "explore", tools: { tools: nonDelegatingExplorerTools } }),
     ]);
 
     const goalId = crypto.randomUUID();
@@ -478,7 +481,7 @@ describe("createAgentFactory", () => {
   });
 
   test("validates and deduplicates delegated Skill names before persistence", async () => {
-    const target = definition({ name: "explore", promptProfileId: "explorer", tools: { tools: nonDelegatingExplorerTools }, skills: ["codemap", "git-master"] });
+    const target = definition({ name: "explore", tools: { tools: nonDelegatingExplorerTools }, skills: ["codemap", "git-master"] });
     const factory = makeFactory([definition(), target], { skillService: createSkillServiceWithBuiltins() });
 
     const skillNames = await factory.resolveDelegatedSkillNames(target, ["codemap", "git-master", "codemap"], import.meta.dir);

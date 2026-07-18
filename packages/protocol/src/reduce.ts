@@ -446,6 +446,19 @@ export function reduceStreamEvent(
       };
     }
 
+    case "child-result": {
+      const existing = state.childResultReceipts.findIndex(
+        (receipt) => receipt.executionId === event.receipt.executionId,
+      );
+      return {
+        childResultReceipts: existing < 0
+          ? [...state.childResultReceipts, event.receipt]
+          : state.childResultReceipts.map((receipt, index) =>
+              index === existing ? event.receipt : receipt
+            ),
+      };
+    }
+
     case "todo-write": {
       if (!areTodosValid(event.todos)) return {};
       return { todos: [...event.todos] };
@@ -560,6 +573,9 @@ export function reduceStreamEvent(
         ],
       };
     }
+
+    case "prompt-trace":
+      return { promptTraces: [...(state.promptTraces ?? []), event.trace] };
 
     case "llm-retry": {
       if (event.visibility === "internal") return {};

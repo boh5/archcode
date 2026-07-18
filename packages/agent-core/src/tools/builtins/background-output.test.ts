@@ -1,22 +1,20 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { createEmptySessionStats } from "@archcode/protocol";
+import type { ChildResultReceipt, DelegationContract } from "@archcode/protocol";
+import { hashDelegationContract } from "../../delegation/contract";
 import { silentLogger } from "../../logger";
 import { SessionStoreManager } from "../../store/session-store-manager";
-import { sessionFileInternals } from "../../store/helpers";
-import { __setSessionsDirForTest, getSessionsDir } from "../../store/sessions-dir";
-import type { ToolExecutionContext } from "../types";
-import { BackgroundOutputInputSchema, executeBackgroundOutput } from "./background-output";
+import { __setSessionsDirForTest } from "../../store/sessions-dir";
+import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { createTestProjectContext } from "../test-project-context";
-import { createEmptyCompressionState } from "../../compression";
+import { BackgroundOutputInputSchema, executeBackgroundOutput } from "./background-output";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__", "background-output", crypto.randomUUID());
-const workspaceRoot = join(TMP_DIR, "workspace");
+const TMP_DIR = join(import.meta.dir, "__test_tmp__", "background-output-v2", crypto.randomUUID());
+const WORKSPACE_ROOT = join(TMP_DIR, "workspace");
 
 beforeEach(async () => {
-  await rm(TMP_DIR, { recursive: true, force: true });
-  await mkdir(workspaceRoot, { recursive: true });
+  await mkdir(WORKSPACE_ROOT, { recursive: true });
   __setSessionsDirForTest(() => join(TMP_DIR, "sessions"));
 });
 
@@ -25,16 +23,27 @@ afterEach(async () => {
   await rm(TMP_DIR, { recursive: true, force: true });
 });
 
-afterAll(async () => {
-  __setSessionsDirForTest(undefined);
-  await rm(TMP_DIR, { recursive: true, force: true });
-});
-
-function makeContext(parentId = crypto.randomUUID()): ToolExecutionContext {
-  const localManager = new SessionStoreManager({ logger: silentLogger });
+function contract(): DelegationContract {
   return {
-    store: localManager.create(parentId, workspaceRoot, { agentName: "engineer" }),
-    storeManager: localManager,
+    agent_type: "explore",
+    title: "Inspect",
+    objective: "Inspect one owner",
+    owned_scope: [],
+    non_goals: [],
+    acceptance_criteria: [{ id: "ac-1", condition: "Owner found", requiredEvidence: "File ref" }],
+    evidence: [],
+    verification: [],
+    depends_on: [],
+    skills: [],
+    background: true,
+  };
+}
+
+function makeContext(): ToolExecutionContext {
+  const storeManager = new SessionStoreManager({ logger: silentLogger });
+  return {
+    store: storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT, { agentName: "engineer" }),
+    storeManager,
     toolName: "background_output",
     toolCallId: "background-output-call",
     input: {},
@@ -42,419 +51,186 @@ function makeContext(parentId = crypto.randomUUID()): ToolExecutionContext {
     abort: new AbortController().signal,
     startedAt: 0,
     allowedTools: new Set(["background_output"]),
-    cwd: workspaceRoot,
-    projectContext: createTestProjectContext(workspaceRoot),
+    cwd: WORKSPACE_ROOT,
+    projectContext: createTestProjectContext(WORKSPACE_ROOT),
   };
 }
 
-function linkChild(ctx: ToolExecutionContext, childId = `background-child-${crypto.randomUUID()}`) {
-  const childStore = ctx.storeManager.create(childId, workspaceRoot, { agentName: "engineer" });
-  childStore.getState().setParentSessionId(ctx.store.getState().sessionId);
-  childStore.setState({ rootSessionId: ctx.store.getState().rootSessionId });
-  return childStore;
+function createChild(ctx: ToolExecutionContext) {
+  const value = contract();
+  return ctx.storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT, {
+    agentName: "explore",
+    parentSessionId: ctx.store.getState().sessionId,
+    rootSessionId: ctx.store.getState().rootSessionId,
+    delegationContract: value,
+    delegationContractHash: hashDelegationContract(value),
+    title: value.title,
+  });
 }
 
-function appendAssistantText(ctx: ToolExecutionContext, text: string): void {
-  ctx.store.getState().append({ type: "execution-start", executionId: crypto.randomUUID() });
-  ctx.store.getState().append({ type: "text-start" });
-  ctx.store.getState().append({ type: "text-delta", text });
-  ctx.store.getState().append({ type: "text-end" });
-  ctx.store.getState().append({ type: "execution-end", status: "completed" });
-}
-
-function appendUserText(store: ReturnType<typeof linkChild>, text: string): void {
-  const messageId = crypto.randomUUID();
-  const executionId = `test-${messageId}`;
-  store.getState().append({
-    type: "session.messages_committed",
+function appendReceipt(child: ReturnType<typeof createChild>): ChildResultReceipt {
+  const executionId = crypto.randomUUID();
+  const receipt: ChildResultReceipt = {
     executionId,
-    messages: [{
-      id: messageId,
-      role: "user",
-      parts: [{ type: "text", id: `${messageId}:text`, text, createdAt: 1, completedAt: 1 }],
-      createdAt: 1,
-      completedAt: 1,
-      executionId,
-      clientRequestId: `request-${messageId}`,
-    }],
-  });
+    delegationContractHash: child.getState().delegationContractHash!,
+    submittedAt: 10,
+    result: {
+      status: "completed",
+      summary: "Owner found",
+      deliverables: [],
+      evidence: [{ claim: "Owner found", ref: "src/owner.ts:1" }],
+      criteria: [{ id: "ac-1", status: "passed", evidenceRefs: ["src/owner.ts:1"] }],
+      verification: [],
+      unresolved: [],
+    },
+  };
+  child.getState().append({ type: "execution-start", executionId });
+  child.getState().append({ type: "text-start" });
+  child.getState().append({ type: "text-delta", text: "This text is not the result" });
+  child.getState().append({ type: "text-end" });
+  child.getState().append({ type: "child-result", receipt });
+  child.getState().append({ type: "execution-end", status: "completed" });
+  return receipt;
 }
 
-describe("BackgroundOutputInputSchema", () => {
-  it("accepts canonical parameters and applies defaults", () => {
-    const result = BackgroundOutputInputSchema.parse({ session_id: "child-1" });
-
-    expect(result).toEqual({
-      session_id: "child-1",
+describe("background_output V2", () => {
+  it("accepts only canonical status/wait parameters", () => {
+    expect(BackgroundOutputInputSchema.parse({ session_id: "child" })).toEqual({
+      session_id: "child",
       block: false,
       timeout_ms: 1_800_000,
-      full_session: false,
-      message_limit: 20,
-      include_tool_results: false,
-      include_reasoning: false,
     });
-
-    expect(BackgroundOutputInputSchema.parse({
-      session_id: "child-1",
-      block: true,
-      timeout_ms: 1_800_000,
-      full_session: true,
-      message_limit: 100,
-      since_message_id: "message-1",
-      include_tool_results: true,
-      include_reasoning: true,
-    })).toMatchObject({ block: true, full_session: true, since_message_id: "message-1" });
-  });
-
-  it("rejects old aliases and values above caps", () => {
-    for (const alias of ["task_id", "bg_id", "background_task_id", "timeout", "include_thinking"]) {
-      expect(BackgroundOutputInputSchema.safeParse({ session_id: "child-1", [alias]: true }).success).toBe(false);
-    }
-
-    expect(BackgroundOutputInputSchema.safeParse({ session_id: "child-1", timeout_ms: 1_800_001 }).success).toBe(false);
-    expect(BackgroundOutputInputSchema.safeParse({ session_id: "child-1", message_limit: 101 }).success).toBe(false);
-  });
-
-  it("rejects negative timeout_ms", () => {
-    expect(BackgroundOutputInputSchema.safeParse({ session_id: "child-1", timeout_ms: -1 }).success).toBe(false);
-  });
-
-  it("rejects float timeout_ms", () => {
-    expect(BackgroundOutputInputSchema.safeParse({ session_id: "child-1", timeout_ms: 1.5 }).success).toBe(false);
-  });
-
-  it("rejects zero message_limit", () => {
-    expect(BackgroundOutputInputSchema.safeParse({ session_id: "child-1", message_limit: 0 }).success).toBe(false);
-  });
-
-  it("rejects negative message_limit", () => {
-    expect(BackgroundOutputInputSchema.safeParse({ session_id: "child-1", message_limit: -1 }).success).toBe(false);
-  });
-
-  it("rejects float message_limit", () => {
-    expect(BackgroundOutputInputSchema.safeParse({ session_id: "child-1", message_limit: 1.5 }).success).toBe(false);
-  });
-});
-
-describe("background_output tool", () => {
-  it("returns latest assistant text and session status from a known child store", async () => {
-    const ctx = makeContext();
-    const childStore = linkChild(ctx);
-    const child = { ...ctx, store: childStore };
-    appendAssistantText(child, "first");
-    appendAssistantText(child, "latest");
-
-    const result = await executeBackgroundOutput({
-      session_id: childStore.getState().sessionId,
-      block: false,
-      timeout_ms: 60_000,
-      full_session: false,
-      message_limit: 20,
-      include_tool_results: false,
-      include_reasoning: false,
-    }, ctx);
-
-    expect(result).toContain(`# Background session ${childStore.getState().sessionId}`);
-    expect(result).toContain("Status: completed");
-    expect(result).toContain("latest");
-    expect(result).not.toContain("first");
-  });
-
-  it("returns partial/latest text and running guidance while child is running", async () => {
-    const ctx = makeContext();
-    const childStore = linkChild(ctx);
-    childStore.getState().append({ type: "execution-start", executionId: "run-1" });
-    childStore.getState().append({ type: "text-start" });
-    childStore.getState().append({ type: "text-delta", text: "partial" });
-
-    const result = await executeBackgroundOutput({
-      session_id: childStore.getState().sessionId,
-      block: false,
-      timeout_ms: 60_000,
-      full_session: false,
-      message_limit: 20,
-      include_tool_results: false,
-      include_reasoning: false,
-    }, ctx);
-
-    expect(result).toContain("Status: running");
-    expect(result).toContain("partial");
-    expect(result).toContain("Sub-agent is still running.");
-  });
-
-  it("returns unrelated sessions and grandchildren by session ID", async () => {
-    const ctx = makeContext();
-    const unrelated = ctx.storeManager.create(`unrelated-${crypto.randomUUID()}`, workspaceRoot, { agentName: "engineer" });
-    const childStore = linkChild(ctx);
-    const grandchild = ctx.storeManager.create(`grandchild-${crypto.randomUUID()}`, workspaceRoot, { agentName: "engineer" });
-    grandchild.getState().setParentSessionId(childStore.getState().sessionId);
-    grandchild.setState({ rootSessionId: childStore.getState().rootSessionId });
-
-    for (const sessionId of [unrelated.getState().sessionId, grandchild.getState().sessionId]) {
-      const result = await executeBackgroundOutput({
-        session_id: sessionId,
-        block: false,
-        timeout_ms: 60_000,
-        full_session: false,
-        message_limit: 20,
-        include_tool_results: false,
-        include_reasoning: false,
-      }, ctx);
-
-      expect(result).toContain(`# Background session ${sessionId}`);
+    for (const field of ["full_session", "message_limit", "since_message_id", "include_tool_results", "include_reasoning"]) {
+      expect(BackgroundOutputInputSchema.safeParse({ session_id: "child", [field]: true }).success).toBe(false);
     }
   });
 
-  it("keeps nested delegation stats isolated and reads by session ID", async () => {
+  it("returns the matching persisted receipt and never assistant text", async () => {
     const ctx = makeContext();
-    const childStore = linkChild(ctx);
-    const grandchild = ctx.storeManager.create(`grandchild-${crypto.randomUUID()}`, workspaceRoot, { agentName: "engineer" });
-    grandchild.getState().setParentSessionId(childStore.getState().sessionId);
-    grandchild.setState({ rootSessionId: childStore.getState().rootSessionId });
-
-    childStore.getState().append({ type: "execution-start", executionId: "child-run" });
-    childStore.getState().append({ type: "tool-call", toolCallId: "child-tool", toolName: "read", input: {} });
-    childStore.getState().append({ type: "tool-result", toolCallId: "child-tool", toolName: "read", output: "ok", isError: false });
-    childStore.getState().append({ type: "execution-end", status: "completed" });
-    grandchild.getState().append({ type: "execution-start", executionId: "grandchild-run" });
-    grandchild.getState().append({ type: "tool-call", toolCallId: "grandchild-tool", toolName: "bash", input: "false" });
-    grandchild.getState().append({ type: "tool-result", toolCallId: "grandchild-tool", toolName: "bash", output: "failed", isError: true });
-    grandchild.getState().append({ type: "execution-end", status: "failed" });
-
-    expect(childStore.getState().stats.tools).toEqual({ calls: 1, completed: 1, failed: 0 });
-    expect(grandchild.getState().stats.tools).toEqual({ calls: 1, completed: 0, failed: 1 });
-
-    const childResult = await executeBackgroundOutput({
-      session_id: childStore.getState().sessionId,
+    const child = createChild(ctx);
+    const receipt = appendReceipt(child);
+    const output = await executeBackgroundOutput({
+      session_id: child.getState().sessionId,
       block: false,
-      timeout_ms: 60_000,
-      full_session: false,
-      message_limit: 20,
-      include_tool_results: false,
-      include_reasoning: false,
-    }, ctx);
-    expect(childResult).toContain(`# Background session ${childStore.getState().sessionId}`);
-
-    const grandchildResult = await executeBackgroundOutput({
-      session_id: grandchild.getState().sessionId,
-      block: false,
-      timeout_ms: 60_000,
-      full_session: false,
-      message_limit: 20,
-      include_tool_results: false,
-      include_reasoning: false,
-    }, ctx);
-    expect(grandchildResult).toContain(`# Background session ${grandchild.getState().sessionId}`);
-  });
-
-  it("waits with block=true until the child stops", async () => {
-    const ctx = makeContext();
-    const childStore = linkChild(ctx);
-    childStore.getState().append({ type: "execution-start", executionId: "run-1" });
-    childStore.getState().append({ type: "text-start" });
-    childStore.getState().append({ type: "text-delta", text: "done after wait" });
-
-    const resultPromise = executeBackgroundOutput({
-      session_id: childStore.getState().sessionId,
-      block: true,
       timeout_ms: 1_000,
-      full_session: false,
-      message_limit: 20,
-      include_tool_results: false,
-      include_reasoning: false,
-    }, ctx);
-
-    setTimeout(() => childStore.getState().append({ type: "execution-end", status: "completed" }), 5);
-    const result = await resultPromise;
-
-    expect(result).toContain("Status: completed");
-    expect(result).toContain("done after wait");
-    expect(result).not.toContain("Timed out waiting");
+    }, ctx) as string;
+    expect(JSON.parse(output)).toEqual({
+      session_id: child.getState().sessionId,
+      execution_status: "completed",
+      wait_status: "not_waited",
+      result_receipt: receipt,
+    });
+    expect(output).not.toContain("This text is not the result");
   });
 
-  it("returns current output plus timeout note when block=true times out", async () => {
+  it("reports running without fabricating a receipt", async () => {
     const ctx = makeContext();
-    const childStore = linkChild(ctx);
-    childStore.getState().append({ type: "execution-start", executionId: "run-1" });
-    childStore.getState().append({ type: "text-start" });
-    childStore.getState().append({ type: "text-delta", text: "still working" });
-
-    const result = await executeBackgroundOutput({
-      session_id: childStore.getState().sessionId,
-      block: true,
-      timeout_ms: 1,
-      full_session: false,
-      message_limit: 20,
-      include_tool_results: false,
-      include_reasoning: false,
-    }, ctx);
-
-    expect(result).toContain("Status: running");
-    expect(result).toContain("still working");
-    expect(result).toContain("Timed out waiting for the sub-agent.");
-  });
-
-  it("renders full-session messages in stored order with exclusive cursor and limit", async () => {
-    const ctx = makeContext();
-    const childStore = linkChild(ctx);
-    appendUserText(childStore, "question one");
-    const firstMessageId = childStore.getState().messages[0]!.id;
-    appendAssistantText({ ...ctx, store: childStore }, "answer one");
-    appendUserText(childStore, "question two");
-    appendUserText(childStore, "question three");
-
-    const result = await executeBackgroundOutput({
-      session_id: childStore.getState().sessionId,
+    const child = createChild(ctx);
+    child.getState().append({ type: "execution-start", executionId: "running" });
+    const output = await executeBackgroundOutput({
+      session_id: child.getState().sessionId,
       block: false,
-      timeout_ms: 60_000,
-      full_session: true,
-      message_limit: 2,
-      since_message_id: firstMessageId,
-      include_tool_results: false,
-      include_reasoning: false,
-    }, ctx);
-
-    expect(result).not.toContain("question one");
-    expect(result).toContain("## assistant");
-    expect(result).toContain("answer one");
-    expect(result).toContain("## user");
-    expect(result).toContain("question two");
-    expect(result).not.toContain("question three");
+      timeout_ms: 1_000,
+    }, ctx) as string;
+    expect(JSON.parse(output)).toEqual({
+      session_id: child.getState().sessionId,
+      execution_status: "running",
+      wait_status: "not_waited",
+    });
   });
 
-  it("omits tool result payloads and reasoning by default", async () => {
+  it("recovers a missing Session projection from the canonical Goal review receipt", async () => {
     const ctx = makeContext();
-    const childStore = linkChild(ctx);
-    childStore.getState().append({ type: "execution-start", executionId: "run-1" });
-    childStore.getState().append({ type: "reasoning-start" });
-    childStore.getState().append({ type: "reasoning-delta", text: "private chain" });
-    childStore.getState().append({ type: "reasoning-end" });
-    childStore.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "grep", input: { pattern: "x" } });
-    childStore.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "grep", output: "secret payload", isError: false });
-    childStore.getState().append({ type: "execution-end", status: "completed" });
-
-    const result = await executeBackgroundOutput({
-      session_id: childStore.getState().sessionId,
-      block: false,
-      timeout_ms: 60_000,
-      full_session: true,
-      message_limit: 20,
-      include_tool_results: false,
-      include_reasoning: false,
-    }, ctx);
-
-    expect(result).toContain("- Tool call: grep [completed]");
-    expect(result).not.toContain("secret payload");
-    expect(result).not.toContain("private chain");
-  });
-
-  it("includes capped tool result and reasoning output when requested", async () => {
-    const ctx = makeContext();
-    const childStore = linkChild(ctx);
-    childStore.getState().append({ type: "execution-start", executionId: "run-1" });
-    childStore.getState().append({ type: "reasoning-start" });
-    childStore.getState().append({ type: "reasoning-delta", text: `${"r".repeat(1_100)}reasoning-tail` });
-    childStore.getState().append({ type: "reasoning-end" });
-    childStore.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "bash", input: { command: "x" } });
-    childStore.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "bash", output: `${"t".repeat(2_100)}tool-tail`, isError: false });
-    childStore.getState().append({ type: "execution-end", status: "completed" });
-
-    const result = await executeBackgroundOutput({
-      session_id: childStore.getState().sessionId,
-      block: false,
-      timeout_ms: 60_000,
-      full_session: true,
-      message_limit: 20,
-      include_tool_results: true,
-      include_reasoning: true,
-    }, ctx);
-
-    expect(result).toContain("### Reasoning");
-    expect(result).toContain("[part truncated]");
-    expect(result).toContain("```text");
-    expect(result).not.toContain("reasoning-tail");
-    expect(result).not.toContain("tool-tail");
-  });
-
-  it("loads a direct child session from disk when it is not in memory", async () => {
-    const ctx = makeContext();
-    const childId = crypto.randomUUID();
-
-    await sessionFileInternals.saveSessionTranscript({
-      sessionId: childId,
-      rootSessionId: ctx.store.getState().rootSessionId,
+    const goalId = crypto.randomUUID();
+    ctx.store.setState({
+      agentName: "goal_lead",
+      goalId,
+      sessionRole: "main",
+    });
+    const reviewContract: DelegationContract = {
+      ...contract(),
+      agent_type: "reviewer",
+      title: "Review Goal",
+      objective: "Verify the Goal acceptance criteria",
+      acceptance_criteria: [{
+        id: "goal-ac",
+        condition: "Goal acceptance criteria are satisfied",
+        requiredEvidence: "Review evidence",
+      }],
+    };
+    const child = ctx.storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT, {
+      agentName: "reviewer",
       parentSessionId: ctx.store.getState().sessionId,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      cwd: workspaceRoot,
-      agentName: "explore",
-      activeSkillNames: [],
-      modelInfo: null,
-      title: null,
-      messages: [
-        {
-          id: "disk-message-1",
-          role: "assistant",
-          createdAt: Date.now(),
-          completedAt: Date.now(),
-          parts: [{ type: "text", id: "disk-part-1", text: "loaded from disk", createdAt: Date.now(), completedAt: Date.now() }],
-        },
-      ],
-      pendingMessages: [],
-      inputRequestReceipts: [],
-      steps: [],
-      stats: {
-        ...createEmptySessionStats(),
-        tools: { calls: 1, completed: 1, failed: 0 },
+      rootSessionId: ctx.store.getState().rootSessionId,
+      delegationContract: reviewContract,
+      delegationContractHash: hashDelegationContract(reviewContract),
+      title: reviewContract.title,
+      goalId,
+      sessionRole: "review",
+    });
+    const executionId = crypto.randomUUID();
+    child.getState().append({ type: "execution-start", executionId });
+    child.getState().append({ type: "execution-end", status: "completed" });
+
+    const goal = await ctx.projectContext.goalState.commit({
+      id: goalId,
+      projectSlug: ctx.projectContext.project.slug,
+      createdFromSessionId: crypto.randomUUID(),
+      objective: "Recover the canonical review result",
+      acceptanceCriteria: "The parent can collect the result after a projection crash",
+      mainSessionId: ctx.store.getState().sessionId,
+    });
+    const reviewing = await ctx.projectContext.goalState.beginReview(goal.id);
+    const result = {
+      status: "completed" as const,
+      summary: "Goal verified",
+      criteria: [{ id: "goal-ac", status: "passed" as const, evidenceRefs: ["goal-test"] }],
+      deliverables: [],
+      evidence: [{ claim: "Goal verified", ref: "goal-test" }],
+      verification: [],
+      unresolved: [],
+    };
+    const finalized = await ctx.projectContext.goalState.finalizeReview(goal.id, {
+      expectedReviewGeneration: reviewing.reviewGeneration,
+      verdict: "DONE",
+      summary: result.summary,
+      evidenceRefs: [{ kind: "test_output", ref: "goal-test", summary: "Goal review passed" }],
+      executionId,
+      delegationContractHash: hashDelegationContract(reviewContract),
+      result,
+      authorization: {
+        agentName: "reviewer",
+        sessionRole: "review",
+        sessionGoalId: goalId,
+        reviewerSessionId: child.getState().sessionId,
       },
-      executions: [{ id: "run-1", startedAt: Date.now(), status: "completed", endedAt: Date.now() }],
-      compression: createEmptyCompressionState(),
-      todos: [],
-      reminders: [],
-      childSessionLinks: [],
-      toolBatches: [],
-    }, workspaceRoot);
+    });
+    expect(child.getState().childResultReceipts).toEqual([]);
 
-    expect(ctx.storeManager.get(childId, workspaceRoot)).toBeUndefined();
-
-    const result = await executeBackgroundOutput({
-      session_id: childId,
+    const output = await executeBackgroundOutput({
+      session_id: child.getState().sessionId,
       block: false,
-      timeout_ms: 60_000,
-      full_session: false,
-      message_limit: 20,
-      include_tool_results: false,
-      include_reasoning: false,
-    }, ctx);
+      timeout_ms: 1_000,
+    }, ctx) as string;
+    const recovered = JSON.parse(output);
 
-    expect(result).toContain("loaded from disk");
-    const loaded = ctx.storeManager.get(childId, workspaceRoot);
-    expect(loaded).toBeDefined();
-    expect(loaded!.getState().stats.tools).toEqual({ calls: 1, completed: 1, failed: 0 });
-    expect(loaded!.getState().executionCount).toBe(1);
+    expect(recovered.result_receipt).toMatchObject({
+      executionId,
+      delegationContractHash: hashDelegationContract(reviewContract),
+      result,
+    });
+    expect(recovered.result_receipt.submittedAt).toBe(Date.parse(finalized.review!.decidedAt));
+    expect(child.getState().childResultReceipts).toEqual([recovered.result_receipt]);
   });
 
-  it("returns descriptive error when getOrLoad fails with corrupt session file", async () => {
+  it("rejects non-direct Sessions", async () => {
     const ctx = makeContext();
-    const childId = `corrupt-child-${crypto.randomUUID()}`;
-
-    const sessionsDir = getSessionsDir(workspaceRoot);
-    await mkdir(sessionsDir, { recursive: true });
-    await writeFile(join(sessionsDir, `${childId}.json`), "{invalid json}", "utf-8");
-
+    const unrelated = ctx.storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT, { agentName: "engineer" });
     const result = await executeBackgroundOutput({
-      session_id: childId,
+      session_id: unrelated.getState().sessionId,
       block: false,
-      timeout_ms: 60_000,
-      full_session: false,
-      message_limit: 20,
-      include_tool_results: false,
-      include_reasoning: false,
-    }, ctx);
-
-    expect(typeof result).toBe("object");
-    expect((result as { isError: boolean }).isError).toBe(true);
-    expect((result as { output: string }).output).toContain("Failed to load child session");
-    expect((result as { output: string }).output).toContain(childId);
+      timeout_ms: 1_000,
+    }, ctx) as ToolExecutionResult;
+    expect(JSON.parse(result.output).code).toBe("TOOL_CHILD_SESSION_NOT_DIRECT");
   });
 });

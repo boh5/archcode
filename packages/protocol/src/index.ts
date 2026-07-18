@@ -6,3 +6,4 @@ export * from "./brand";
 export * from "./guards";
 export * from "./automation";
 export * from "./project-todos";
+export * from "./delegation";

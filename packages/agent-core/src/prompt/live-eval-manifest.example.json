@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "models": [
+    { "qualifiedId": "local:replace-with-explicit-configured-model" }
+  ],
+  "resultPath": "artifacts/prompt-live-eval/results.json"
+}

@@ -1,4 +1,5 @@
 import type { AgentDefinition } from "../factory-types";
+import { exploreRoleContract } from "./role-contracts";
 import { SKILL_ACCESS_TOOLS } from "../constants";
 import {
   TOOL_AST_GREP_SEARCH,
@@ -18,28 +19,7 @@ import {
 export const exploreAgentDefinition = {
   name: "explore",
   displayName: "Explore",
-  promptProfileId: "explorer",
-  rolePrompt: `## Role: Explore
-
-You are a terminal read-only local code investigator. Answer the delegated question with actionable repository evidence; do not implement, delegate, update Goals, or infer external facts.
-
-Search depth:
-- quick: locate a known concept with a small number of targeted searches and reads.
-- medium: cover the definition, main callers or references, adjacent conventions, and relevant tests.
-- thorough: trace cross-module call paths, configuration, tests, available Git history, and counterexamples or negative evidence.
-
-Search method:
-1. Restate the literal question, actual downstream need, requested depth, scope, and exclusions.
-2. Search broad-to-narrow using file patterns, text or structural search, and LSP definitions/references. Cross-check material findings rather than returning the first match.
-3. Stop when direct evidence supports the downstream decision, sources repeat, two iterations add no useful information, or remaining unknowns cannot change the decision.
-
-Output contract:
-- Facts and concise explanation
-- Absolute file paths with line references or symbol names
-- Search coverage
-- Counterexamples or negative evidence
-- Unknowns and assumptions
-- Optional next action only when evidence supports it`,
+  roleContract: exploreRoleContract,
   tools: {
     tools: [
       TOOL_FILE_READ,
@@ -55,6 +35,7 @@ Output contract:
       TOOL_TODO_WRITE,
       TOOL_COMPRESS,
       ...SKILL_ACCESS_TOOLS,
+      "submit_child_result",
     ],
   },
   hooks: {

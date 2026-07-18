@@ -7,6 +7,7 @@ const baseModel = {
   name: "Main Model",
   limit: { context: 1000, output: 100 },
   modalities: { input: ["text"], output: ["text"] },
+          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
 } satisfies ArchCodeConfig["provider"][string]["models"][string];
 
 function makeConfig(

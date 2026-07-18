@@ -347,7 +347,7 @@ describe("McpManager discovery", () => {
         warnings.push({ serverName: warning.serverName, message: warning.message });
       },
     );
-    await waitForStatus(manager, "empty", "ready");
+    const status = await waitForStatus(manager, "empty", "ready");
 
     expect(warnings).toEqual([
       {
@@ -355,6 +355,7 @@ describe("McpManager discovery", () => {
         message: 'MCP server "empty" returned no tools',
       },
     ]);
+    expect(status).toEqual({ state: "ready", toolCount: 0, warningCount: 1 });
   });
 
   test("invalid tool name skips only that tool", async () => {
@@ -398,6 +399,11 @@ describe("McpManager discovery", () => {
       toolName: "lookup",
     });
     expect(warnings[0].message).toContain("Duplicate tool");
+    expect(await waitForStatus(manager, "docs", "ready")).toEqual({
+      state: "ready",
+      toolCount: 2,
+      warningCount: 1,
+    });
   });
 
   test("continues adapting later tools after an invalid duplicate-like name", async () => {
@@ -508,7 +514,7 @@ describe("McpManager background discovery & status", () => {
     manager.startBackgroundDiscovery(() => {}, () => {});
     const status = await waitForStatus(manager, "docs", "ready");
 
-    expect(status).toEqual({ state: "ready", toolCount: 2 });
+    expect(status).toEqual({ state: "ready", toolCount: 2, warningCount: 0 });
   });
 
   test("emits failed status with redacted error on connect failure", async () => {
@@ -607,7 +613,7 @@ describe("McpManager background discovery & status", () => {
       (u) => u.serverName === "docs" && u.status.state === "ready",
     );
     expect(readyUpdate).toBeDefined();
-    expect(readyUpdate?.status).toEqual({ state: "ready", toolCount: 1 });
+    expect(readyUpdate?.status).toEqual({ state: "ready", toolCount: 1, warningCount: 0 });
 
     // Unsubscribe stops further updates
     const before = updates.length;
@@ -818,7 +824,7 @@ describe("McpManager setStatus listener isolation (M3)", () => {
     expect(calls).toContain("after");
     // Server status is ready, not failed.
     expect(status.state).toBe("ready");
-    expect(status).toEqual({ state: "ready", toolCount: 1 });
+    expect(status).toEqual({ state: "ready", toolCount: 1, warningCount: 0 });
   });
 });
 

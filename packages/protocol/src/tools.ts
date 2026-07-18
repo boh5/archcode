@@ -53,6 +53,7 @@ export const TOOL_DELEGATE = "delegate";
 export const TOOL_RESUME_SESSION = "resume_session";
 export const TOOL_WAIT_FOR_REMINDER = "wait_for_reminder";
 export const TOOL_BACKGROUND_OUTPUT = "background_output";
+export const TOOL_SUBMIT_CHILD_RESULT = "submit_child_result";
 export const TOOL_VIEW_TOOL_OUTPUT = "view_tool_output";
 export const TOOL_CANCEL_SESSION = "cancel_session";
 
@@ -106,6 +107,7 @@ export type BuiltinToolName =
   | typeof TOOL_RESUME_SESSION
   | typeof TOOL_WAIT_FOR_REMINDER
   | typeof TOOL_BACKGROUND_OUTPUT
+  | typeof TOOL_SUBMIT_CHILD_RESULT
   | typeof TOOL_VIEW_TOOL_OUTPUT
   | typeof TOOL_CANCEL_SESSION
   | typeof TOOL_SKILL_LIST
@@ -169,6 +171,7 @@ export const TOOL_CATEGORY_MAP = {
   [TOOL_RESUME_SESSION]: "delegation",
   [TOOL_WAIT_FOR_REMINDER]: "delegation",
   [TOOL_BACKGROUND_OUTPUT]: "delegation",
+  [TOOL_SUBMIT_CHILD_RESULT]: "delegation",
   [TOOL_VIEW_TOOL_OUTPUT]: "delegation",
   [TOOL_CANCEL_SESSION]: "delegation",
   [TOOL_SKILL_LIST]: "skill",

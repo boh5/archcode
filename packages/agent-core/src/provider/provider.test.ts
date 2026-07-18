@@ -24,6 +24,7 @@ const VALID_CONFIG = {
             input: ["text", "image"],
             output: ["text"],
           },
+          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
         },
         "gpt-4o-mini": {
           name: "GPT-4o Mini",
@@ -32,6 +33,7 @@ const VALID_CONFIG = {
             input: ["text"],
             output: ["text"],
           },
+          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
         },
       },
     },
@@ -49,6 +51,7 @@ const VALID_CONFIG = {
             input: ["text", "image"],
             output: ["text"],
           },
+          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
         },
       },
     },
@@ -149,6 +152,14 @@ describe("ModelInfo", () => {
   test("exposes modalities", () => {
     expect(info.modalities.input).toEqual(["text", "image"]);
     expect(info.modalities.output).toEqual(["text"]);
+  });
+
+  test("exposes the explicit prompt capability profile", () => {
+    expect(info.capabilities).toEqual({
+      multiToolCallEmission: "parallel",
+      structuredToolCalls: "strict",
+      instructionTier: "standard",
+    });
   });
 
   test("qualifiedId is providerId:modelId", () => {

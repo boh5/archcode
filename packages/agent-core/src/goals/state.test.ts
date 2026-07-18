@@ -16,6 +16,7 @@ import {
   GoalStateSchema,
   GoalTransitionError,
 } from "./state";
+import { testReviewExecutionFields } from "./test-review-fixture";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "goal-state", crypto.randomUUID());
 const GOAL_ID = "550e8400-e29b-41d4-a716-446655440000";
@@ -105,6 +106,7 @@ describe("GoalStateSchema", () => {
       reviewGeneration: 0,
       verdict: "DONE" as const,
       summary: "Verified.",
+      ...testReviewExecutionFields("DONE", "Verified."),
       evidenceRefs: [evidenceRef()],
       reviewerSessionId: "review-session",
       decidedAt: now,
@@ -254,6 +256,7 @@ describe("GoalStateManager", () => {
     const notDone = await manager.finalizeReview(goal.id, {
       expectedReviewGeneration: 1,
       verdict: "NOT_DONE",
+      ...testReviewExecutionFields("NOT_DONE"),
       summary: "Missing evidence.",
       authorization: reviewerAuth(goal.id),
     });
@@ -264,6 +267,7 @@ describe("GoalStateManager", () => {
     await expect(manager.finalizeReview(goal.id, {
       expectedReviewGeneration: 2,
       verdict: "DONE",
+      ...testReviewExecutionFields("DONE"),
       summary: "Wrong reviewer.",
       evidenceRefs: [evidenceRef()],
       authorization: { ...reviewerAuth(goal.id), agentName: "build" },
@@ -271,6 +275,7 @@ describe("GoalStateManager", () => {
     await expect(manager.finalizeReview(goal.id, {
       expectedReviewGeneration: 2,
       verdict: "DONE",
+      ...testReviewExecutionFields("DONE"),
       summary: "No evidence.",
       evidenceRefs: [],
       authorization: reviewerAuth(goal.id),
@@ -279,6 +284,7 @@ describe("GoalStateManager", () => {
     const done = await manager.finalizeReview(goal.id, {
       expectedReviewGeneration: 2,
       verdict: "DONE",
+      ...testReviewExecutionFields("DONE"),
       summary: "All criteria verified.",
       evidenceRefs: [evidenceRef()],
       authorization: reviewerAuth(goal.id),

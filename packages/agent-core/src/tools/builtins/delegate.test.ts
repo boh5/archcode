@@ -1,12 +1,48 @@
 import { describe, expect, it, mock } from "bun:test";
+import type { ChildResultReceipt, DelegationContract } from "@archcode/protocol";
 import type { ChildExecutionHandle, ChildExecutionRequest } from "../../delegation/types";
+import { hashDelegationContract } from "../../delegation/contract";
 import { SkillNotAllowedError } from "../../agents/errors";
 import { storeManager } from "../../store/store";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { createTestProjectContext } from "../test-project-context";
-import { DelegateInputSchema, delegateTool, executeDelegate } from "./delegate";
+import { DelegateInputSchema, executeDelegate } from "./delegate";
 
 const WORKSPACE_ROOT = import.meta.dir;
+
+function contract(overrides: Partial<DelegationContract> = {}): DelegationContract {
+  return {
+    agent_type: "explore",
+    title: "Inspect ownership",
+    objective: "Trace the owner and report exact references",
+    owned_scope: [],
+    non_goals: ["Do not edit"],
+    acceptance_criteria: [{ id: "ac-1", condition: "Owner identified", requiredEvidence: "File reference" }],
+    evidence: [],
+    verification: [],
+    depends_on: [],
+    skills: [],
+    background: false,
+    ...overrides,
+  };
+}
+
+function receipt(contractValue: DelegationContract, executionId: string): ChildResultReceipt {
+  return {
+    executionId,
+    delegationContractHash: hashDelegationContract(contractValue),
+    submittedAt: 100,
+    result: {
+      status: "completed",
+      summary: "Owner found",
+      deliverables: [],
+      evidence: [{ claim: "Owner identified", ref: "src/owner.ts:1" }],
+      criteria: [{ id: "ac-1", status: "passed", evidenceRefs: ["src/owner.ts:1"] }],
+      verification: [],
+      unresolved: [],
+    },
+  };
+}
 
 function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   return {
@@ -26,153 +62,83 @@ function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecuti
   };
 }
 
-function childHandle(parentSessionId: string): ChildExecutionHandle {
+function childHandle(parentSessionId: string, contractValue: DelegationContract): ChildExecutionHandle {
+  const executionId = crypto.randomUUID();
   const store = storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT, {
     agentName: "explore",
     parentSessionId,
-    activeSkillNames: ["codemap"],
-    title: "Inspect ownership",
+    delegationContract: contractValue,
+    delegationContractHash: hashDelegationContract(contractValue),
+    title: contractValue.title,
   });
-  store.getState().append({ type: "execution-start", executionId: crypto.randomUUID() });
-  store.getState().append({ type: "text-start" });
-  store.getState().append({ type: "text-delta", text: "done" });
-  store.getState().append({ type: "text-end" });
+  const resultReceipt = receipt(contractValue, executionId);
+  store.getState().append({ type: "execution-start", executionId });
+  store.getState().append({ type: "child-result", receipt: resultReceipt });
   store.getState().append({ type: "execution-end", status: "completed" });
   return {
     sessionId: store.getState().sessionId,
     store,
-    result: Promise.resolve({ text: "done", steps: 1, status: "completed" }),
+    result: Promise.resolve({ executionStatus: "completed", resultReceipt }),
     abort: () => {},
   };
 }
 
-describe("delegate tool hard cut", () => {
-  it("requires a non-empty title and rejects the removed session_id branch", () => {
-    const valid = {
-      agent_type: "explore",
-      task: "inspect",
-      skills: [],
-      title: "Inspect ownership",
-    };
-    expect(DelegateInputSchema.safeParse(valid).success).toBe(true);
-    expect(DelegateInputSchema.safeParse({ ...valid, title: " " }).success).toBe(false);
-    expect(DelegateInputSchema.safeParse({ ...valid, session_id: "child" }).success).toBe(false);
-    expect(delegateTool.description).toContain("Use resume_session");
+describe("delegate V2 contract", () => {
+  it("requires structured arrays and rejects every removed free-text field", () => {
+    expect(DelegateInputSchema.safeParse(contract()).success).toBe(true);
+    expect(DelegateInputSchema.safeParse(contract({ agent_type: "build", owned_scope: [] })).success).toBe(false);
+    expect(DelegateInputSchema.safeParse({ ...contract(), agent_type: "engineer" }).success).toBe(false);
+    for (const field of ["persona", "description", "task", "context", "session_id"]) {
+      expect(DelegateInputSchema.safeParse({ ...contract(), [field]: "legacy" }).success).toBe(false);
+    }
   });
 
-  it("passes the explicit title without a description fallback or caller depth", async () => {
+  it("passes one canonical contract and returns its receipt", async () => {
     const parentStore = storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT, { agentName: "engineer" });
-    const handle = childHandle(parentStore.getState().sessionId);
+    const contractValue = contract();
+    const handle = childHandle(parentStore.getState().sessionId, contractValue);
     let request: ChildExecutionRequest | undefined;
-    const result = await executeDelegate({
-      agent_type: "explore",
-      task: "inspect",
-      context: "verify boundaries",
-      skills: ["codemap"],
-      title: "Inspect ownership",
-      description: "Display detail",
-      background: false,
-    }, makeContext({
+
+    const output = await executeDelegate(contractValue, makeContext({
       store: parentStore,
-      currentDepth: 99,
       startChildExecution: async (input) => {
         request = input;
         return handle;
       },
     }));
 
-    expect(request).toMatchObject({
-      parentSessionId: parentStore.getState().sessionId,
-      toolName: "delegate",
-      targetAgentName: "explore",
-      title: "Inspect ownership",
-      description: "Display detail",
-      skills: ["codemap"],
-      prompt: "Task:\ninspect\n\nContext:\nverify boundaries",
+    expect(request).toMatchObject({ toolName: "delegate", contract: contractValue });
+    expect(request && "prompt" in request).toBe(false);
+    expect(JSON.parse(output as string)).toMatchObject({
+      session_id: handle.sessionId,
+      execution_status: "completed",
+      result_receipt: { result: { status: "completed" } },
     });
-    expect(request && "currentDepth" in request).toBe(false);
-    expect(result).toContain("Agent type: explore");
-    expect(result).toContain("Result:\ndone");
   });
 
-  it("returns a structured error when child execution is unavailable", async () => {
-    const result = await executeDelegate({
-      agent_type: "explore",
-      task: "inspect",
-      skills: [],
-      title: "Inspect ownership",
-      background: false,
-    }, makeContext()) as ToolExecutionResult;
-    expect(result.isError).toBe(true);
-    expect(JSON.parse(result.output).code).toBe("TOOL_DELEGATE_EXECUTOR_UNAVAILABLE");
-  });
-
-  it("returns the target Agent Skill allow-list when delegation rejects a Skill", async () => {
-    const result = await executeDelegate({
-      agent_type: "explore",
-      task: "inspect",
-      skills: ["research-docs"],
-      title: "Inspect ownership",
-      background: false,
-    }, makeContext({
+  it("returns target Skill recovery details", async () => {
+    const result = await executeDelegate(contract({ skills: ["research-docs"] }), makeContext({
       startChildExecution: async () => {
         throw new SkillNotAllowedError("explore", "research-docs", ["codemap"]);
       },
     })) as ToolExecutionResult;
-
-    expect(result.isError).toBe(true);
-    expect(JSON.parse(result.output)).toMatchObject({
-      code: "TOOL_DELEGATE_FAILED",
-      name: "SkillNotAllowedError",
-      details: {
-        target_agent: "explore",
-        rejected_skill: "research-docs",
-        allowed_skills: ["codemap"],
-      },
-      hint: expect.stringContaining("details.allowed_skills"),
+    expect(JSON.parse(result.output).details).toMatchObject({
+      target_agent: "explore",
+      rejected_skill: "research-docs",
+      allowed_skills: ["codemap"],
     });
   });
 
-  it("omits Skill recovery fields for unrelated child execution errors", async () => {
-    const result = await executeDelegate({
-      agent_type: "explore",
-      task: "inspect",
-      skills: [],
-      title: "Inspect ownership",
-      background: false,
-    }, makeContext({
-      startChildExecution: async () => {
-        throw new Error("launch failed");
-      },
-    })) as ToolExecutionResult;
-    const parsed = JSON.parse(result.output) as {
-      code: string;
-      name: string;
-      details: Record<string, unknown>;
-      hint: string;
-    };
-
-    expect(result.isError).toBe(true);
-    expect(parsed.code).toBe("TOOL_DELEGATE_FAILED");
-    expect(parsed.name).toBe("Error");
-    expect("target_agent" in parsed.details).toBe(false);
-    expect("rejected_skill" in parsed.details).toBe(false);
-    expect("allowed_skills" in parsed.details).toBe(false);
-    expect(parsed.hint).not.toContain("details.allowed_skills");
-  });
-
-  it("returns launch guidance for background children", async () => {
-    const parentStore = storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT, { agentName: "engineer" });
-    const handle = childHandle(parentStore.getState().sessionId);
+  it("returns only launch metadata for a background child", async () => {
+    const parent = makeContext();
+    const contractValue = contract({ background: true });
+    const handle = childHandle(parent.store.getState().sessionId, contractValue);
     const startChildExecution = mock(async (_request: ChildExecutionRequest) => handle);
-    const result = await executeDelegate({
+    const output = await executeDelegate(contractValue, { ...parent, startChildExecution });
+    expect(JSON.parse(output as string)).toEqual({
+      session_id: handle.sessionId,
       agent_type: "explore",
-      task: "inspect",
-      skills: [],
-      title: "Inspect ownership",
-      background: true,
-    }, makeContext({ store: parentStore, startChildExecution }));
-    expect(result).toContain("Sub-agent started.");
-    expect(result).toContain(`background_output(session_id="${handle.sessionId}")`);
+      execution_status: "running",
+    });
   });
 });

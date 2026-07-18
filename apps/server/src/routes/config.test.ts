@@ -8,7 +8,28 @@ import { createConfigRoutes } from "./config";
 import { errorHandler } from "../error-handler";
 
 const snapshot = {
-  config: { provider: {}, agents: {} },
+  config: {
+    provider: {
+      local: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "Local",
+        options: { baseURL: "http://localhost:8090/v1" },
+        models: {
+          demo: {
+            name: "Demo",
+            limit: { context: 128000, output: 16000 },
+            modalities: { input: ["text"], output: ["text"] },
+            capabilities: {
+              multiToolCallEmission: "single",
+              structuredToolCalls: "best_effort",
+              instructionTier: "standard",
+            },
+          },
+        },
+      },
+    },
+    agents: {},
+  },
   revision: "revision-1",
   configPath: "/Users/test/.archcode/config.json",
   restartRequired: false,
@@ -35,6 +56,11 @@ describe("config routes", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(snapshot);
+    expect(snapshot.config.provider.local.models.demo.capabilities).toEqual({
+      multiToolCallEmission: "single",
+      structuredToolCalls: "best_effort",
+      instructionTier: "standard",
+    });
   });
 
   test("rejects malformed PUT input with 400", async () => {
