@@ -1,5 +1,6 @@
-import type { AfterHook, ToolExecutionContext, ToolExecutionResult } from "../types";
-import { redactValue } from "../security";
+import type { FinalizedToolResult } from "@archcode/protocol";
+import type { FinalizedResultHook, ToolExecutionContext } from "../types";
+import { redactValue } from "../../security";
 
 export interface AuditEvent {
   toolName: string;
@@ -8,11 +9,8 @@ export interface AuditEvent {
   permissionOutcome?: "allow" | "deny" | "ask";
   durationMs?: number;
   status: "success" | "error";
-  exitCode?: number;
-  truncation?: {
-    truncated: boolean;
-    fullOutputPath?: string;
-  };
+  exitCode?: number | null;
+  output: { completeness: "complete" | "partial"; storedBytes: number; omittedBytes: number; recovery: "none" | "source" | "artifact" };
 }
 
 export type AuditSink = (event: AuditEvent) => void | Promise<void>;
@@ -21,11 +19,11 @@ export interface AuditHookOptions {
   sink?: AuditSink;
 }
 
-export function createAuditHook(options: AuditHookOptions = {}): AfterHook {
+export function createAuditHook(options: AuditHookOptions = {}): FinalizedResultHook {
   const sink = options.sink ?? (async () => {});
 
   return async function auditAfterHook(
-    result: ToolExecutionResult,
+    result: FinalizedToolResult,
     ctx: ToolExecutionContext,
   ): Promise<void> {
     const event: AuditEvent = {
@@ -35,17 +33,13 @@ export function createAuditHook(options: AuditHookOptions = {}): AfterHook {
       ...(ctx.permissionOutcome ? { permissionOutcome: ctx.permissionOutcome } : {}),
       ...(ctx.durationMs !== undefined ? { durationMs: ctx.durationMs } : {}),
       status: result.isError ? "error" : "success",
-      ...(typeof result.meta?.exitCode === "number" ? { exitCode: result.meta.exitCode } : {}),
-      ...(result.meta?.truncated === true
-        ? {
-            truncation: {
-              truncated: true,
-              ...(typeof result.meta.fullOutputPath === "string"
-                ? { fullOutputPath: result.meta.fullOutputPath }
-                : {}),
-            },
-          }
-        : {}),
+      ...(result.details?.process ? { exitCode: result.details.process.exitCode } : {}),
+      output: {
+        completeness: result.output.completeness,
+        storedBytes: result.output.stored.bytes,
+        omittedBytes: result.output.omitted.bytes,
+        recovery: result.output.recovery.kind,
+      },
     };
 
     await sink(event);

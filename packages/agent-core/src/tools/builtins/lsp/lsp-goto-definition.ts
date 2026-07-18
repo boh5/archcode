@@ -5,7 +5,8 @@ import { createWorkspacePermission } from "../../permission";
 import { isRecord } from "./shared";
 import { getLspToolLogger } from "./tool-logger";
 import { resolveAndValidatePath } from "../../security/path-validator";
-import type { ToolExecutionResult } from "../../types";
+import { createTextToolResult } from "../../results";
+import type { RawToolResult } from "../../types";
 import { formatDefinition } from "./format-output";
 
 interface LspPosition {
@@ -36,8 +37,9 @@ export const lspGotoDefinitionTool = defineTool({
     destructive: false,
     concurrencySafe: true,
   },
+  outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
   permissions: [createWorkspacePermission({ pathKey: "filePath" })],
-  async execute(input, ctx): Promise<string | ToolExecutionResult> {
+  async execute(input, ctx): Promise<RawToolResult> {
     // Workspace access is enforced by createWorkspacePermission() guard.
     // Out-of-workspace paths may have been explicitly approved.
     const { resolved: resolvedPath } = resolveAndValidatePath(
@@ -60,7 +62,6 @@ export const lspGotoDefinitionTool = defineTool({
         kind: "lsp-server-not-found",
         code: "TOOL_LSP_SERVER_NOT_FOUND",
         message: `No language server is available for language "${languageId}". Install or configure a compatible server, then retry.`,
-        meta: { languageId },
       });
     }
 
@@ -89,7 +90,7 @@ export const lspGotoDefinitionTool = defineTool({
           },
         });
 
-        return formatDefinition(parseDefinitionResult(result));
+        return createTextToolResult(formatDefinition(parseDefinitionResult(result)));
       } finally {
         documentHandle?.release();
         pool.release(poolKey);
@@ -106,7 +107,6 @@ export const lspGotoDefinitionTool = defineTool({
           code: error.kind === "lsp-timeout" ? "TOOL_LSP_TIMEOUT" : "TOOL_LSP_ERROR",
           error,
           message: error.message,
-          meta: { lspCode: error.code, lspData: error.data },
         });
       }
 

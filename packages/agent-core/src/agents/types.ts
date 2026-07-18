@@ -1,6 +1,6 @@
 import type { StoreApi } from "zustand";
 import type { ExecutionEndEvent, SessionStoreState } from "../store/types";
-import type { AskUserCallback, ToolConfirmationCallback, ToolExecutionControl } from "../tools/index";
+import type { ToolExecutionControl } from "../tools/index";
 
 export interface AgentCommand {
   readonly name: string;
@@ -13,8 +13,6 @@ export type AgentCommandResult =
 
 export interface AgentRunOptions {
   abort?: AbortSignal;
-  confirmPermission?: ToolConfirmationCallback;
-  askUser?: AskUserCallback;
   maxSteps?: number;
   extraTools?: readonly string[];
   /** Commits any steering messages to the canonical transcript before a model build. */

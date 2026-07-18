@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { codeFromKind, formatToolError, kindFromCode } from "../../tools/errors";
+import { setProcessRunnerForTest } from "../../process/runner";
 import type { ProcessRunner, ProcessRunnerInput, ProcessRunnerResult } from "../../process/types";
 import {
   BinaryChecksumMismatchError,
@@ -10,10 +11,13 @@ import {
   BinaryUnsupportedPlatformError,
   BinaryValidationError,
   createBinaryManager,
+  createDefaultBinaryManagerSeam,
   type BinaryDownloadParams,
   type BinaryInstallParams,
   type BinaryManagerSeam,
 } from "../manager";
+
+afterEach(() => setProcessRunnerForTest(undefined));
 
 describe("BinaryManager", () => {
   test("dedupes concurrent resolves for the same binary to one install", async () => {
@@ -58,12 +62,12 @@ describe("BinaryManager", () => {
   });
 
   test("falls through to cache when PATH binary fails validation", async () => {
-    const seam = createSeam({ pathHits: { "ast-grep": "/broken/ast-grep" }, validateBinaryResult: false, cacheHit: true });
+    const seam = createSeam({ pathHits: { "ast-grep": "/broken/ast-grep" }, validateBinaryResults: [false, true], cacheHit: true });
     const manager = new BinaryManager(seam);
 
     const resolved = await manager.resolve("ast-grep");
     expect(resolved).toEndWith("/ast-grep");
-    expect(seam.calls.validateBinary).toBe(1);
+    expect(seam.calls.validateBinary).toBe(2);
     expect(seam.calls.exists).toBeGreaterThanOrEqual(1);
   });
 
@@ -77,13 +81,22 @@ describe("BinaryManager", () => {
   });
 
   test("falls through to download when all PATH binaries fail validation", async () => {
-    const seam = createSeam({ pathHits: { "ast-grep": "/broken/ast-grep", sg: "/broken/sg" }, validateBinaryResult: false });
+    let downloadedVersion: string | undefined;
+    const seam = createSeam({
+      pathHits: { "ast-grep": "/broken/ast-grep", sg: "/broken/sg" },
+      validateBinaryResults: [false, false, true],
+      download: async ({ spec }) => {
+        downloadedVersion = spec.version;
+        return new Uint8Array([1, 2, 3]);
+      },
+    });
     const manager = new BinaryManager(seam);
 
     const resolved = await manager.resolve("ast-grep");
     expect(resolved).toEndWith("/ast-grep");
     expect(seam.calls.download).toBe(1);
-    expect(seam.calls.validateBinary).toBe(2);
+    expect(seam.calls.validateBinary).toBe(3);
+    expect(downloadedVersion).toBe("0.42.3");
   });
 
   test("returns executable cache hit without download", async () => {
@@ -95,7 +108,43 @@ describe("BinaryManager", () => {
     expect(resolved).toEndWith("/rg");
     expect(seam.calls.exists).toBe(1);
     expect(seam.calls.isExecutable).toBe(1);
+    expect(seam.calls.validateBinary).toBe(1);
     expect(seam.calls.download).toBe(0);
+  });
+
+  test("rejects an executable ast-grep cache candidate without json stream capability", async () => {
+    const seam = createSeam({ cacheHit: true, validateBinaryResults: [false, false] });
+    const manager = new BinaryManager(seam);
+
+    const error = await expectRejects(() => manager.resolve("ast-grep"));
+
+    expect(error).toBeInstanceOf(BinaryValidationError);
+    expect(seam.calls.validateBinary).toBe(2);
+    expect(seam.calls.download).toBe(1);
+    expect(seam.calls.install).toBe(1);
+  });
+
+  test("probes the exact ast-grep json stream capability instead of trusting version text", async () => {
+    let argv: readonly string[] = [];
+    let stdin: unknown;
+    setProcessRunnerForTest(mock((cmd: readonly [string, ...string[]], options: { stdin?: unknown }) => {
+      argv = cmd;
+      stdin = options.stdin;
+      return {
+        stdout: new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode('{"text":"foo"}\n')); controller.close(); } }),
+        stderr: new ReadableStream({ start(controller) { controller.close(); } }),
+        exited: Promise.resolve(0),
+        exitCode: 0,
+        signalCode: undefined,
+        kill: mock(() => undefined),
+      };
+    }));
+
+    const valid = await createDefaultBinaryManagerSeam().validateBinary!("/bin/ast-grep", "ast-grep");
+
+    expect(valid).toBe(true);
+    expect(argv).toEqual(["/bin/ast-grep", "run", "--pattern", "foo", "--lang", "JavaScript", "--stdin", "--json=stream"]);
+    expect(stdin).toBe("foo");
   });
 
   test("throws unsupported platform as typed binary error", async () => {
@@ -214,7 +263,7 @@ function createSeam(options: {
   processRunner?: ProcessRunner;
   download?: (params: BinaryDownloadParams) => Promise<Uint8Array>;
   install?: (params: BinaryInstallParams) => Promise<string>;
-  validateBinaryResult?: boolean;
+  validateBinaryResults?: boolean[];
 } = {}): TestSeam {
   const calls = { which: 0, exists: 0, isExecutable: 0, download: 0, verifySha256: 0, install: 0, validateBinary: 0 };
 
@@ -249,7 +298,7 @@ function createSeam(options: {
     },
     async validateBinary(_path: string, _binaryId: string) {
       calls.validateBinary++;
-      return options.validateBinaryResult ?? true;
+      return options.validateBinaryResults?.[calls.validateBinary - 1] ?? true;
     },
   };
 }
@@ -274,6 +323,9 @@ class RecordingRunner implements ProcessRunner {
         stdoutTruncated: false,
         stderrTruncated: false,
         combinedTruncated: false,
+        stdoutBytes: 0,
+        stderrBytes: 0,
+        sinkStatus: "unused",
       },
     };
   }

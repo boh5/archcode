@@ -1,12 +1,12 @@
 import { ENV_CLI } from "@archcode/protocol";
 import { z } from "zod";
 import { defineTool } from "../define-tool";
-import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import type { RawToolResult, ToolExecutionContext } from "../types";
 import { createToolErrorResult } from "../errors";
 import { createBashPermission } from "../permission";
 import { PathValidator } from "../security";
 import { createProcessRunner } from "../../process/runner";
-import type { ProcessRunnerResult } from "../../process/types";
+import type { ProcessOutputSink, ProcessOutputStream, ProcessRunnerResult } from "../../process/types";
 
 export const BashInputSchema = z
   .object({
@@ -51,9 +51,18 @@ function resolveCwd(executionCwd: string, cwd?: string): string {
 export async function runBashCommand(
   input: BashInput,
   ctx: ToolExecutionContext,
-): Promise<ToolExecutionResult> {
+): Promise<RawToolResult> {
   const cwd = resolveCwd(ctx.cwd, input.cwd);
   const env = buildBashEnv();
+  const capture = ctx.outputCapture;
+  if (capture === undefined) {
+    return createToolErrorResult({
+      kind: "execution",
+      code: "TOOL_OUTPUT_UNAVAILABLE",
+      message: "bash requires a Registry-owned output capture",
+    });
+  }
+  const adapter = new BashCanonicalOutputSink(capture.write.bind(capture));
   const result = await createProcessRunner().run({
     argv: ["bash", "-c", input.command],
     cwd,
@@ -61,54 +70,109 @@ export async function runBashCommand(
     stdin: null,
     timeoutMs: input.timeoutMs,
     signal: ctx.abort,
+    outputSink: adapter,
   });
 
-  return formatProcessRunnerResult(result, input.timeoutMs);
+  if (result.kind !== "spawn-failure") {
+    await adapter.finish(result.kind === "success" || result.kind === "nonzero" ? result.exitCode : result.exitCode ?? null);
+  }
+  return formatProcessRunnerResult(result);
 }
 
 function formatProcessRunnerResult(
   result: ProcessRunnerResult,
-  timeoutMs: number | undefined,
-): ToolExecutionResult {
+): RawToolResult {
   switch (result.kind) {
     case "success":
       return {
-        output: formatBashOutput(result.output.stdout, result.output.stderr, result.exitCode),
         isError: false,
-        meta: { exitCode: result.exitCode },
+        draft: { kind: "capture" },
+        details: { process: processDetails(result, false, false) },
       };
     case "nonzero":
-      return createToolErrorResult({
-        kind: "bash-nonzero",
-        message: formatBashOutput(result.output.stdout, result.output.stderr, result.exitCode),
-        meta: { exitCode: result.exitCode },
-      });
+      return captureError("bash-nonzero", "TOOL_BASH_NONZERO_EXIT", "Command exited nonzero", processDetails(result, false, false));
     case "timeout":
-      return createToolErrorResult({
-        kind: "bash-timeout",
-        message: `Command timed out after ${result.timeoutMs}ms`,
-        meta: { timedOut: true, timeoutMs: result.timeoutMs },
-      });
+      return captureError("bash-timeout", "TOOL_BASH_TIMEOUT", `Command timed out after ${result.timeoutMs}ms`, processDetails(result, true, false));
     case "aborted":
-      return createToolErrorResult({
-        kind: "bash-aborted",
-        message: "Command was aborted",
-        meta: { aborted: true },
-      });
+      return captureError("bash-aborted", "TOOL_BASH_ABORTED", "Command was aborted", processDetails(result, false, true));
     case "signal":
-      return createToolErrorResult({
-        kind: "bash-aborted",
-        message: "Command was aborted",
-        meta: { aborted: true, signal: result.signal, exitCode: result.exitCode },
-      });
+      return captureError("bash-aborted", "TOOL_BASH_ABORTED", "Command was terminated by a signal", processDetails(result, false, true));
     case "spawn-failure":
       return createToolErrorResult({
         kind: "execution",
         message: result.error.message,
         name: result.error.name,
-        details: result.error,
-        meta: { argv: result.argv, cwd: result.cwd, timeoutMs },
       });
+  }
+}
+
+function processDetails(
+  result: Exclude<ProcessRunnerResult, { kind: "spawn-failure" }>,
+  timedOut: boolean,
+  aborted: boolean,
+) {
+  return {
+    exitCode: result.exitCode ?? null,
+    signal: result.kind === "signal" ? String(result.signal) : null,
+    timedOut,
+    aborted,
+    durationMs: result.durationMs,
+  };
+}
+
+function captureError(
+  kind: Parameters<typeof createToolErrorResult>[0]["kind"],
+  code: string,
+  message: string,
+  process: ReturnType<typeof processDetails>,
+): RawToolResult {
+  const error = createToolErrorResult({ kind, code, message });
+  return {
+    ...error,
+    draft: { kind: "capture" },
+    details: { ...error.details, process },
+  };
+}
+
+class BashCanonicalOutputSink implements ProcessOutputSink {
+  #lastStream: ProcessOutputStream | undefined;
+  #seenStreams = new Set<ProcessOutputStream>();
+  #tail: Promise<void> = Promise.resolve();
+
+  constructor(private readonly writeCapture: (chunk: string | Uint8Array) => Promise<"accepted" | "discarded">) {}
+
+  write(stream: ProcessOutputStream, chunk: Uint8Array): Promise<void> {
+    this.#tail = this.#tail.then(async () => {
+      const writes: Array<Promise<"accepted" | "discarded">> = [];
+      if (this.#lastStream !== stream) {
+        writes.push(this.writeCapture(`${this.#lastStream === undefined ? "" : "\n"}${stream.toUpperCase()}:\n`));
+        this.#lastStream = stream;
+      }
+      this.#seenStreams.add(stream);
+      writes.push(this.writeCapture(chunk));
+      for (const write of writes) await write;
+    });
+    return this.#tail;
+  }
+
+  discard(stream: ProcessOutputStream, chunk: Uint8Array): void {
+    if (this.#lastStream !== stream) {
+      void this.writeCapture(`${this.#lastStream === undefined ? "" : "\n"}${stream.toUpperCase()}:\n`).catch(() => undefined);
+      this.#lastStream = stream;
+    }
+    this.#seenStreams.add(stream);
+    void this.writeCapture(chunk).catch(() => undefined);
+  }
+
+  async finish(exitCode: number | null): Promise<void> {
+    await this.#tail;
+    for (const stream of ["stdout", "stderr"] as const) {
+      if (!this.#seenStreams.has(stream)) {
+        await this.writeCapture(`${this.#lastStream === undefined ? "" : "\n"}${stream.toUpperCase()}:\n`);
+        this.#lastStream = stream;
+      }
+    }
+    await this.writeCapture(`\nEXIT_CODE: ${exitCode === null ? "unknown" : exitCode}\n`);
   }
 }
 
@@ -127,6 +191,7 @@ export const bashTool = defineTool({
   ].join("\n"),
   inputSchema: BashInputSchema,
   traits: { readOnly: false, destructive: true, concurrencySafe: false },
+  outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
   prepareInput: (raw, ctx) => {
     if (raw && typeof raw === "object" && "cwd" in raw && typeof raw.cwd === "string") {
       resolveCwd(ctx.cwd, raw.cwd);

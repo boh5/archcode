@@ -23,6 +23,7 @@ import { createMcpRoutes } from "./routes/mcp";
 import { createProjectsRoutes } from "./routes/projects";
 import { createSessionsRoutes } from "./routes/sessions";
 import { createTodosRoutes } from "./routes/todos";
+import { createToolOutputRoutes } from "./routes/tool-outputs";
 import { createEmbeddedAssetHandler } from "./serve-web";
 import { globalEventBus } from "./events/global-event-bus";
 
@@ -106,6 +107,7 @@ export function createServerApp(
     },
   });
   const compression = createCompressionRoutes(serverRuntime);
+  const toolOutputs = createToolOutputRoutes(serverRuntime);
   const agents = createAgentsRoutes(serverRuntime);
   const files = createFilesRoutes(serverRuntime);
   const directories = createDirectoriesRoutes();
@@ -121,6 +123,7 @@ export function createServerApp(
   app.route("/api/projects/:slug/sessions", sessions);
   app.route("/api/projects/:slug/sessions/:sessionId", messages);
   app.route("/api/projects/:slug/sessions/:sessionId/compression", compression);
+  app.route("/api/projects/:slug/sessions/:sessionId/tool-outputs", toolOutputs);
   app.route("/api/events", globalEvents);
   app.route("/api/projects", files);
   app.route("/api/mcp", mcp);

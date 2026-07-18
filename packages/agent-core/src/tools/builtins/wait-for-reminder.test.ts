@@ -1,13 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import type { StoreApi } from "zustand";
 import { storeManager } from "../../store/store";
 import type { Reminder, SessionStoreState } from "../../store/types";
 import type { ToolExecutionContext } from "../types";
 import { createBuiltinToolDescriptors, waitForReminderTool, WaitForReminderInputSchema } from "./index";
 import { createTestProjectContext } from "../test-project-context";
+import { expectTextDraft } from "../test-results";
 
-const testDir = join(import.meta.dir, "__test_tmp__", "wait-for-reminder", crypto.randomUUID());
+const testDir = join(tmpdir(), "archcode-wait-for-reminder", crypto.randomUUID());
 
 function makeStore(): StoreApi<SessionStoreState> {
   const store = storeManager.create(`wait-reminder-test-${crypto.randomUUID()}`, testDir, { agentName: "engineer" });
@@ -45,8 +47,8 @@ function makeReminder(overrides: Partial<Reminder> & { sessionId: string; id: st
   };
 }
 
-function parseResult(output: string): Record<string, unknown> {
-  return JSON.parse(output) as Record<string, unknown>;
+function parseResult(output: Awaited<ReturnType<typeof waitForReminderTool.execute>>): Record<string, unknown> {
+  return JSON.parse(expectTextDraft(output)) as Record<string, unknown>;
 }
 
 describe("WaitForReminderInputSchema", () => {

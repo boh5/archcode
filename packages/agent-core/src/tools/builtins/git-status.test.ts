@@ -1,31 +1,25 @@
 import { describe, expect, test } from "bun:test";
-import { parseGitStatusOutput } from "./git-status";
+import { createGitStatusCaptureSink } from "./git-status";
 
-describe("parseGitStatusOutput", () => {
-  test("parses NUL-delimited porcelain output", () => {
-    const raw = "M  src/foo.ts\0A  bar.ts\0?? untracked.ts\0";
-    expect(parseGitStatusOutput(raw)).toBe("M  src/foo.ts\nA  bar.ts\n?? untracked.ts");
-  });
-
-  test("handles empty output (clean working tree)", () => {
-    expect(parseGitStatusOutput("")).toBe("");
-  });
-
-  test("handles single entry without trailing NUL", () => {
-    expect(parseGitStatusOutput("M  file.ts")).toBe("M  file.ts");
-  });
-
-  test("handles only NUL characters", () => {
-    expect(parseGitStatusOutput("\0\0\0")).toBe("");
-  });
-
-  test("preserves all status prefix variants", () => {
-    const raw =
-      " M staged.ts\0MM both.ts\0A  added.ts\0 D deleted.ts\0?? untracked.ts\0" +
-      "R  renamed.ts\0C  copied.ts\0U unmerged.ts";
-    expect(parseGitStatusOutput(raw)).toBe(
-      " M staged.ts\nMM both.ts\nA  added.ts\n D deleted.ts\n?? untracked.ts\n" +
-      "R  renamed.ts\nC  copied.ts\nU unmerged.ts",
-    );
+describe("git status canonical capture sink", () => {
+  test("converts NUL porcelain separators across arbitrary process chunks", async () => {
+    const chunks: Uint8Array[] = [];
+    const capture = { write: async (chunk: string | Uint8Array) => {
+      chunks.push(typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk);
+      return "accepted" as const;
+    } };
+    const sink = createGitStatusCaptureSink(capture as never);
+    await sink.write("stdout", new TextEncoder().encode("M  src/a.ts\0?? "));
+    await sink.write("stdout", new TextEncoder().encode("new.ts\0"));
+    await sink.write("stderr", new TextEncoder().encode("ignored"));
+    expect(new TextDecoder().decode(concat(chunks))).toBe("M  src/a.ts\n?? new.ts\n");
   });
 });
+
+function concat(chunks: Uint8Array[]): Uint8Array {
+  const size = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+  const output = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) { output.set(chunk, offset); offset += chunk.byteLength; }
+  return output;
+}

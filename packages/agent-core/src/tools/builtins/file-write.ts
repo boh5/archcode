@@ -5,10 +5,11 @@ import { sharedMutationQueue } from "../concurrency/mutation-queue";
 import { defineTool } from "../define-tool";
 import { computeToolDiff } from "../diff";
 import { createToolErrorResult } from "../errors";
+import { createTextToolResult } from "../results";
 import { createFileExistsPermission, createProtectedPathPermission, createSensitiveFilePermission, createWorkspacePermission } from "../permission";
 import { createPostEditDiagnosticsHook, refreshReadSnapshot } from "../hooks";
 import { resolveAndValidatePath } from "../security";
-import type { ToolExecutionResult } from "../types";
+import type { RawToolResult } from "../types";
 
 // ─── Input Schema ───
 
@@ -30,9 +31,10 @@ export const fileWriteTool = defineTool({
   ].join("\n"),
   inputSchema: FileWriteInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
+  outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
   permissions: [createWorkspacePermission(), createFileExistsPermission(), createSensitiveFilePermission(), createProtectedPathPermission()],
   hooks: { after: [createPostEditDiagnosticsHook()] },
-  execute: async (input, ctx): Promise<string | ToolExecutionResult> => {
+  execute: async (input, ctx): Promise<RawToolResult> => {
     // Workspace access is enforced by createWorkspacePermission() guard.
     // If the permission pipeline allows execution, out-of-workspace paths
     // may have been explicitly approved and should not be re-checked here.
@@ -51,18 +53,17 @@ export const fileWriteTool = defineTool({
         await atomicWrite(resolvedPath, input.content);
 
         refreshReadSnapshot(resolvedPath, ctx.store, ctx.cwd);
-        return {
-          output: `File written to ${input.path}`,
-          isError: false,
-          meta: {
-            diffs: computeToolDiff({
-              path: input.path,
-              before: "",
-              after: input.content,
-              status: "created",
-            }),
-          },
-        };
+        const diff = computeToolDiff({
+          path: input.path,
+          before: "",
+          after: input.content,
+          status: "created",
+        });
+        return createTextToolResult(`File written to ${input.path}`, {
+          details: diff.files.length === 0
+            ? undefined
+            : { presentations: [{ kind: "diff", files: diff.files, ...(diff.truncated ? { truncated: true } : {}) }] },
+        });
       });
     } catch (error) {
       return createToolErrorResult({

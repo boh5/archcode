@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import path from "node:path";
+import { tmpdir } from "node:os";
 import { mkdir, rm } from "node:fs/promises";
 
 import { LspClient, setLspClientPoolForTest, type LspClientPool, type PoolKey } from "../../../lsp";
@@ -9,9 +10,10 @@ import { storeManager } from "../../../store/store";
 import { createMockStore } from "../../../store/test-helpers";
 import type { ToolExecutionContext } from "../../types";
 import { createTestProjectContext } from "../../test-project-context";
+import { expectTextDraft } from "../../test-results";
 import { lspDiagnosticsTool } from "./lsp-diagnostics";
 
-const testRoot = path.join(import.meta.dir, "__test_tmp__", `lsp-diagnostics-integration-${crypto.randomUUID()}`);
+const testRoot = path.join(tmpdir(), `archcode-lsp-diagnostics-integration-${crypto.randomUUID()}`);
 const testDir = path.join(testRoot, "workspace");
 const canonicalProjectDir = path.join(testRoot, "project");
 
@@ -46,7 +48,7 @@ describe("lspDiagnosticsTool integration", () => {
     const pool = await installFakeServerPool(server);
 
     try {
-      const result = await lspDiagnosticsTool.execute({ filePath: "problem.ts" }, makeCtx());
+      const result = expectTextDraft(await lspDiagnosticsTool.execute({ filePath: "problem.ts" }, makeCtx()));
 
       expect(result).toBe(
         "Diagnostics: problem.ts:1:7 error TS2322: Type 'number' is not assignable to type 'string'.",
@@ -68,7 +70,7 @@ describe("lspDiagnosticsTool integration", () => {
     await installFakeServerPool(server);
 
     try {
-      const result = await lspDiagnosticsTool.execute({ filePath: "clean.ts" }, makeCtx());
+      const result = expectTextDraft(await lspDiagnosticsTool.execute({ filePath: "clean.ts" }, makeCtx()));
 
       expect(result).toBe("No diagnostics found.");
     } finally {
@@ -94,10 +96,10 @@ describe("lspDiagnosticsTool integration", () => {
     await installFakeServerPool(server);
 
     try {
-      const result = await lspDiagnosticsTool.execute(
+      const result = expectTextDraft(await lspDiagnosticsTool.execute(
         { filePath: "mixed.ts", severity: "warning" },
         makeCtx(),
-      );
+      ));
 
       expect(result).toBe("Diagnostics: mixed.ts:1:7 warning: Unused variable");
     } finally {
@@ -118,7 +120,7 @@ describe("lspDiagnosticsTool integration", () => {
     await installFakeServerPool(server);
 
     try {
-      const result = await lspDiagnosticsTool.execute({ filePath: "src" }, makeCtx());
+      const result = expectTextDraft(await lspDiagnosticsTool.execute({ filePath: "src" }, makeCtx()));
 
       expect(result).toContain(`${testDir}/src/a.ts:1:7 error: Type error`);
       expect(result).toContain(`${testDir}/src/b.ts:1:7 error: Type error`);
@@ -149,7 +151,7 @@ describe("lspDiagnosticsTool integration", () => {
     await installFakeServerPool(server);
 
     try {
-      const result = await lspDiagnosticsTool.execute({ filePath: testDir }, makeCtx());
+      const result = expectTextDraft(await lspDiagnosticsTool.execute({ filePath: testDir }, makeCtx()));
 
       expect(result).toContain(`${testDir}/src/valid.ts`);
       expect(result).not.toContain("node_modules/pkg");
@@ -172,7 +174,7 @@ describe("lspDiagnosticsTool integration", () => {
     await installFakeServerPool(server);
 
     try {
-      const result = await lspDiagnosticsTool.execute({ filePath: "empty" }, makeCtx());
+      const result = expectTextDraft(await lspDiagnosticsTool.execute({ filePath: "empty" }, makeCtx()));
 
       expect(result).toBe("No diagnostics found.");
     } finally {
@@ -187,7 +189,7 @@ describe("lspDiagnosticsTool integration", () => {
     await installFakeServerPool(server);
 
     try {
-      const result = await lspDiagnosticsTool.execute({ filePath: testDir }, makeCtx());
+      const result = expectTextDraft(await lspDiagnosticsTool.execute({ filePath: testDir }, makeCtx()));
 
       expect(result).toBe("No diagnostics found (no supported language files).");
     } finally {
@@ -213,7 +215,7 @@ describe("lspDiagnosticsTool integration", () => {
     await installFakeServerPool(server);
 
     try {
-      const result = await lspDiagnosticsTool.execute({ filePath: testDir }, makeCtx()) as string;
+      const result = expectTextDraft(await lspDiagnosticsTool.execute({ filePath: testDir }, makeCtx()));
       const aErrorIdx = result.indexOf(`${testDir}/a.ts:1:7 error: First error`);
       const aWarningIdx = result.indexOf(`${testDir}/a.ts:1:9 warning: First warning`);
       const bErrorIdx = result.indexOf(`${testDir}/b.ts:1:7 error: First error`);
@@ -237,7 +239,7 @@ describe("lspDiagnosticsTool integration", () => {
     await installFakeServerPool(server);
 
     try {
-      const result = await lspDiagnosticsTool.execute({ filePath: "src" }, makeCtx());
+      const result = expectTextDraft(await lspDiagnosticsTool.execute({ filePath: "src" }, makeCtx()));
 
       expect(result).toBe("No diagnostics found.");
     } finally {
@@ -259,7 +261,7 @@ describe("lspDiagnosticsTool integration", () => {
     await installFakeServerPool(server);
 
     try {
-      const result = await lspDiagnosticsTool.execute({ filePath: "src" }, makeCtx()) as string;
+      const result = expectTextDraft(await lspDiagnosticsTool.execute({ filePath: "src" }, makeCtx()));
 
       expect(result).toContain("[Directory diagnostics limited to 200 files. 250 total files found.]");
       expect(result.startsWith("Diagnostics:\n")).toBe(true);

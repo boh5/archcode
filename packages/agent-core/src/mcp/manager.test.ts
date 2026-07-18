@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { ResolvedMcpServerConfig } from "../config/mcp";
-import { REDACTION_MARKER } from "../tools/security";
+import { REDACTION_MARKER, SecretRedactionPolicy } from "../security";
 import type { McpServerStatus } from "@archcode/protocol";
 import type {
   McpClientFactories,
@@ -9,7 +9,10 @@ import type {
   McpTransportLike,
 } from "./client";
 import { BUILTIN_MCP_SERVERS } from "./builtin-servers";
-import { BuiltinMcpServerCollisionError, McpManager } from "./manager";
+import {
+  BuiltinMcpServerCollisionError,
+  McpManager as RuntimeMcpManager,
+} from "./manager";
 
 // ─── Builtin Servers ──────────────────────────────────────────────────────────
 
@@ -41,6 +44,32 @@ const BASE_SERVER: ResolvedMcpServerConfig = {
   url: "https://mcp.example.test/rpc",
   timeout: 50,
 };
+
+class McpManager extends RuntimeMcpManager {
+  constructor(
+    builtinServers: Record<string, ResolvedMcpServerConfig>,
+    userServers: Record<string, ResolvedMcpServerConfig>,
+    factories: McpClientFactories,
+  ) {
+    super(
+      builtinServers,
+      userServers,
+      policyForUserServers(userServers),
+      factories,
+    );
+  }
+}
+
+function policyForUserServers(
+  servers: Record<string, ResolvedMcpServerConfig>,
+): SecretRedactionPolicy {
+  return new SecretRedactionPolicy(
+    Object.values(servers).flatMap((server) => [
+      server.url,
+      ...Object.values(server.headers ?? {}),
+    ]),
+  );
+}
 
 interface FakeServer {
   sdkClient: McpSdkClientLike;
@@ -280,7 +309,7 @@ describe("McpManager discovery", () => {
     expect(warnings[0].message).not.toContain(secret);
   });
 
-  test("public server URL (no auth headers) is not redacted in error messages", async () => {
+  test("user server URLs are runtime literals even without auth headers", async () => {
     const publicUrl = "https://public.example.test/mcp";
     const failing = makeFakeServer([], {
       connect: mock(async () => {
@@ -303,8 +332,8 @@ describe("McpManager discovery", () => {
     await waitForStatus(manager, "public", "failed");
 
     expect(warnings).toHaveLength(1);
-    expect(warnings[0].message).toContain(publicUrl);
-    expect(warnings[0].message).not.toContain(REDACTION_MARKER);
+    expect(warnings[0].message).not.toContain(publicUrl);
+    expect(warnings[0].message).toContain(REDACTION_MARKER);
   });
 
   test("server with auth headers has its URL redacted", async () => {

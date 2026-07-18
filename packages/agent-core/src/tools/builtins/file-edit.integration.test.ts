@@ -8,13 +8,15 @@ import { FakeLspServer, installFakeLspServerPool } from "../../lsp/test-utils";
 import { storeManager } from "../../store/store";
 import { createMockStore } from "../../store/test-helpers";
 import { createTestTempRoot } from "../../testing/test-temp-root";
-import { ToolRegistry } from "../registry";
 import { createTestProjectContext } from "../test-project-context";
+import { createTestToolRegistryFixture } from "../test-registry";
+import { expectSettledResult } from "../test-results";
 import type { ToolExecutionContext } from "../types";
 import { fileEditTool } from "./file-edit";
 
 const tempRoot = createTestTempRoot("file-edit-integration");
 const testDir = path.join(tempRoot.path, "workspace");
+const registryFixture = createTestToolRegistryFixture({ descriptors: [fileEditTool] });
 
 beforeEach(async () => {
   await tempRoot.cleanup();
@@ -22,7 +24,10 @@ beforeEach(async () => {
 });
 
 afterEach(() => setLspClientPoolForTest(undefined));
-afterAll(() => tempRoot.cleanup());
+afterAll(async () => {
+  await registryFixture.dispose();
+  await tempRoot.cleanup();
+});
 
 describe("fileEditTool integration", () => {
   test("appends LSP diagnostics after successful registry edit when lsp_diagnostics is allowed", async () => {
@@ -30,11 +35,11 @@ describe("fileEditTool integration", () => {
     const server = new FakeLspServer({ autoDiagnostics: [diagnostic("Type 'number' is not assignable to type 'string'.", "TS2322")] });
     const pool = await installFakeLspServerPool(server, testDir);
     try {
-      const result = await execute("problem.ts", new Set(["file_edit", "lsp_diagnostics"]));
+      const result = expectSettledResult(await execute("problem.ts", new Set(["file_edit", "lsp_diagnostics"])));
       expect(result.isError).toBe(false);
-      expect(result.output).toContain("Successfully applied 1 edit(s) to problem.ts");
-      expect(result.output).toContain("Post-edit diagnostics:");
-      expect(result.output).toContain("problem.ts:1:7 error TS2322: Type 'number' is not assignable to type 'string'.");
+      expect(result.output.preview).toContain("Successfully applied 1 edit(s) to problem.ts");
+      expect(result.output.preview).toContain("Post-edit diagnostics:");
+      expect(result.output.preview).toContain("problem.ts:1:7 error TS2322: Type 'number' is not assignable to type 'string'.");
       expect(pool.releaseKeys).toEqual([{ workspaceRoot: testDir, serverId: "typescript" }]);
     } finally {
       await server.stop();
@@ -46,9 +51,8 @@ describe("fileEditTool integration", () => {
     const server = new FakeLspServer({ autoDiagnostics: [] });
     await installFakeLspServerPool(server, testDir);
     try {
-      const result = await execute("clean.ts", new Set(["file_edit", "lsp_diagnostics"]));
-      expect(result.output).toBe("Successfully applied 1 edit(s) to clean.ts");
-      expect(result.meta?.postEditDiagnostics).toBeUndefined();
+      const result = expectSettledResult(await execute("clean.ts", new Set(["file_edit", "lsp_diagnostics"])));
+      expect(result.output.preview).toBe("Successfully applied 1 edit(s) to clean.ts");
     } finally {
       await server.stop();
     }
@@ -59,9 +63,8 @@ describe("fileEditTool integration", () => {
     const server = new FakeLspServer({ autoDiagnostics: [diagnostic("Type error")] });
     const pool = await installFakeLspServerPool(server, testDir);
     try {
-      const result = await execute("not-allowed.ts", new Set(["file_edit"]));
-      expect(result.output).toBe("Successfully applied 1 edit(s) to not-allowed.ts");
-      expect(result.meta?.postEditDiagnostics).toBeUndefined();
+      const result = expectSettledResult(await execute("not-allowed.ts", new Set(["file_edit"])));
+      expect(result.output.preview).toBe("Successfully applied 1 edit(s) to not-allowed.ts");
       expect(pool.acquireOptions).toEqual([]);
       expect(pool.releaseKeys).toEqual([]);
     } finally {
@@ -75,9 +78,7 @@ async function execute(file: string, allowedTools: Set<string>) {
   const fileStat = await stat(filePath);
   const store = createMockStore({ readSnapshots: new Map([[realpathSync.native(filePath), fileStat.mtimeMs]]) });
   const context = makeCtx({ store, allowedTools });
-  const registry = new ToolRegistry();
-  registry.register(fileEditTool);
-  return registry.execute(
+  return registryFixture.registry.execute(
     { toolCallId: context.toolCallId, toolName: "file_edit", input: { path: file, edits: [{ oldString: "1", newString: "2" }] } },
     context,
   );

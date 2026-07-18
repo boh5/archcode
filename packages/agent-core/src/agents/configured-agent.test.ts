@@ -1,14 +1,17 @@
 import { afterAll, afterEach, beforeAll, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { z } from "zod";
 import { ModelInfo } from "../provider/model";
 import type { ProviderRegistry } from "../provider/index";
 import { SkillNotFoundError, SkillService } from "../skills";
 import { storeManager } from "../store/store";
 import { __setSessionsDirForTest } from "../store/sessions-dir";
-import { createRegistry } from "../tools/registry";
+import type { ToolRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
+import { createTextToolResult } from "../tools/results";
+import { createTestToolRegistryFixture, type TestToolRegistryFixture } from "../tools/test-registry";
 import { worktreeEnterTool, worktreeExitTool } from "../tools/builtins/worktree";
 import { DELEGATION_CORE_TOOLS, MAX_SUB_AGENT_DEPTH } from "./constants";
 import {
@@ -26,8 +29,16 @@ import { GoalStateManager } from "../goals/state";
 import { createTestProjectContextResolver } from "./test-project-context-resolver";
 import type { AgentRunOptions } from "./types";
 
-const tmpRoot = join(import.meta.dir, "__test_tmp__", "configured-agent", crypto.randomUUID());
-const worktreeRoot = join(import.meta.dir, "__test_tmp__", "configured-agent-worktree", crypto.randomUUID());
+const tmpRoot = join(tmpdir(), "archcode-configured-agent", crypto.randomUUID());
+const worktreeRoot = join(tmpdir(), "archcode-configured-agent-worktree", crypto.randomUUID());
+const registryFixtures: TestToolRegistryFixture[] = [];
+const outputAccessFixture = createTestToolRegistryFixture();
+
+function createTestRegistry(descriptors: AnyToolDescriptor[]): ToolRegistry {
+  const fixture = createTestToolRegistryFixture({ descriptors });
+  registryFixtures.push(fixture);
+  return fixture.registry;
+}
 
 function createTestSkillService(): SkillService {
   return new SkillService({ builtinSkills: {} });
@@ -78,7 +89,8 @@ function makeTool(name: string): AnyToolDescriptor {
     description: `${name} tool`,
     inputSchema: z.object({}).strict(),
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
-    execute: () => `${name} result`,
+    outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
+    execute: () => createTextToolResult(`${name} result`),
   };
 }
 
@@ -130,7 +142,7 @@ const READ_ONLY_FIXTURE_TOOLS = [
 ] as const;
 
 function makeToolRegistry() {
-  return createRegistry([
+  return createTestRegistry([
     makeTool("unknown_tool"),
     ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
     ...DELEGATION_CORE_TOOLS.map(makeTool),
@@ -196,7 +208,6 @@ function createAgent(options: {
   definition: AgentDefinition;
   store?: ReturnType<typeof storeManager.create>;
   btm?: RecordingBackgroundTaskManager;
-  quotaEnforcer?: (directory: string) => Promise<void>;
   projectRoot?: string;
   cwd?: string;
   depth?: number;
@@ -227,7 +238,7 @@ function createAgent(options: {
     depth: options.depth,
     backgroundTaskManager: options.btm as never,
     memoryConfig: options.memoryConfig,
-    quotaEnforcer: options.quotaEnforcer,
+    toolOutputAccess: outputAccessFixture.createToolOutputAccess(projectRoot, options.store?.getState().rootSessionId ?? "test-root"),
     logger: silentLogger,
     resolveAllowedTools: (definition, depth) => {
       const resolved = toolRegistry.resolveForAgent(definition.tools.tools).descriptors.map((tool) => tool.name);
@@ -281,6 +292,7 @@ describe("ConfiguredAgent", () => {
     __setSessionsDirForTest(undefined);
     await rm(tmpRoot, { recursive: true, force: true });
     await rm(worktreeRoot, { recursive: true, force: true });
+    await Promise.all([...registryFixtures, outputAccessFixture].map((fixture) => fixture.dispose()));
   });
 
   test("classifies slash commands without treating command arguments as model input", () => {
@@ -356,7 +368,7 @@ describe("ConfiguredAgent", () => {
   test("engineer definition produces all configured lifecycle hooks", async () => {
     const streamFn = setupMockStreamText("root ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(`configured-root-${crypto.randomUUID()}`, tmpRoot, { agentName: "engineer" });
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "engineer" });
     store.setState({
       messages: [
         {
@@ -387,12 +399,12 @@ describe("ConfiguredAgent", () => {
     expect(JSON.stringify(callArgs.messages)).toContain("remember this");
     expect(agent.store.getState().reminders.some((reminder) => reminder.source.type === "todo_loop_continuation")).toBe(true);
     expect(btm.dispatched).toContain("title-generation");
-    expect(btm.drainCalls).toBe(1);
+    expect(btm.drainCalls).toBe(0);
   });
 
   test("Goal Lead leaves next-Run continuation exclusively to the Goal driver", async () => {
     setupMockStreamText("goal turn complete");
-    const store = storeManager.create(`configured-goal-lead-${crypto.randomUUID()}`, tmpRoot, { agentName: "goal_lead" });
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "goal_lead" });
     store.setState({ todos: [{ id: "todo-1", content: "finish goal", status: "pending" }] });
 
     const agent = createAgent({ definition: goalLeadAgentDefinition, store });
@@ -434,16 +446,17 @@ describe("ConfiguredAgent", () => {
   test("passes definition skills and SkillService into tool execution context", async () => {
     const skillService = createTestSkillService();
     let capturedContext: { agentSkills: readonly string[]; skillService: SkillService } | undefined;
-    const toolRegistry = createRegistry([
+    const toolRegistry = createTestRegistry([
       {
         name: "capture_context",
         description: "Capture context",
         inputSchema: z.object({ agentSkills: z.array(z.string()).optional() }).strict(),
         traits: { readOnly: true, destructive: false, concurrencySafe: false },
+        outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
         execute: (_input, ctx) => {
           if (!ctx.agentSkills || !ctx.skillService) throw new Error("missing skill context");
           capturedContext = { agentSkills: ctx.agentSkills, skillService: ctx.skillService };
-          return "captured";
+          return createTextToolResult("captured");
         },
       } satisfies AnyToolDescriptor,
     ]);
@@ -462,17 +475,18 @@ describe("ConfiguredAgent", () => {
 
   test("uses Session cwd for prompt and tools while resolving project state from the canonical root", async () => {
     let capturedContext: { cwd: string; projectRoot: string } | undefined;
-    const toolRegistry = createRegistry([{
+    const toolRegistry = createTestRegistry([{
       name: "capture_workspace",
       description: "Capture workspace roots",
       inputSchema: z.object({}).strict(),
       traits: { readOnly: true, destructive: false, concurrencySafe: false },
+      outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
       execute: (_input, ctx) => {
         capturedContext = {
           cwd: ctx.cwd,
           projectRoot: ctx.projectContext.project.workspaceRoot,
         };
-        return "captured";
+        return createTextToolResult("captured");
       },
     } satisfies AnyToolDescriptor]);
     const streamFn = setupToolCallStreamText("capture_workspace");
@@ -513,7 +527,7 @@ describe("ConfiguredAgent", () => {
 
   test("explorer definition produces auto-compact, auto-inject, and todo-continuation hooks", async () => {
     const streamFn = setupMockStreamText("explore ok");
-    const store = storeManager.create(`configured-explore-${crypto.randomUUID()}`, tmpRoot, { agentName: "engineer" });
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "engineer" });
     store.setState({
       reminders: [
         {
@@ -539,7 +553,7 @@ describe("ConfiguredAgent", () => {
   test("engineer definition dispatches memory background hooks", async () => {
     setupMockStreamText("engineer memory ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(`configured-engineer-background-${crypto.randomUUID()}`, tmpRoot, { agentName: "engineer" });
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "engineer" });
     store.setState({
       messages: [
         {
@@ -577,7 +591,7 @@ describe("ConfiguredAgent", () => {
   test("memory config disabled skips memory background hooks", async () => {
     setupMockStreamText("memory disabled ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(`configured-memory-disabled-${crypto.randomUUID()}`, tmpRoot, { agentName: "engineer" });
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "engineer" });
     store.setState({
       messages: [
         {
@@ -613,7 +627,7 @@ describe("ConfiguredAgent", () => {
   test("memory config custom thresholds are used by extraction hook", async () => {
     setupMockStreamText("memory custom ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(`configured-memory-custom-${crypto.randomUUID()}`, tmpRoot, { agentName: "engineer" });
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "engineer" });
     store.setState({
       messages: [
         {
@@ -640,7 +654,7 @@ describe("ConfiguredAgent", () => {
   test("memory config absent uses default extraction thresholds", async () => {
     setupMockStreamText("memory defaults ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(`configured-memory-defaults-${crypto.randomUUID()}`, tmpRoot, { agentName: "engineer" });
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "engineer" });
     store.setState({
       messages: [
         {
@@ -662,7 +676,7 @@ describe("ConfiguredAgent", () => {
   test('titleGeneration "unless-supplied" skips when store title already exists', async () => {
     setupMockStreamText("titled ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(`configured-titled-${crypto.randomUUID()}`, tmpRoot, { agentName: "engineer" });
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "engineer" });
     store.setState({ title: "Supplied Title" });
 
     const agent = createAgent({ definition: exploreAgentDefinition, store, btm });
@@ -715,7 +729,7 @@ describe("ConfiguredAgent", () => {
 
   test("non-loop runs keep definition tools unchanged and do not expose profile-only GitHub tools", async () => {
     const streamFn = setupMockStreamText("default tools ok");
-    const toolRegistry = createRegistry(engineerAgentDefinition.tools.tools.map(makeTool));
+    const toolRegistry = createTestRegistry(engineerAgentDefinition.tools.tools.map(makeTool));
     const agent = createAgent({ definition: engineerAgentDefinition, toolRegistry });
 
     await runAgent(agent, "default run");
@@ -729,7 +743,7 @@ describe("ConfiguredAgent", () => {
   });
 
   test("exposes exactly one cwd transition to eligible interactive root Sessions", async () => {
-    const toolRegistry = createRegistry([
+    const toolRegistry = createTestRegistry([
       ...engineerAgentDefinition.tools.tools.map(makeTool),
       worktreeEnterTool,
       worktreeExitTool,
@@ -760,12 +774,12 @@ describe("ConfiguredAgent", () => {
 
   test("does not expose cwd transitions to Goal-owned root Sessions", async () => {
     const streamFn = setupMockStreamText("goal tools");
-    const toolRegistry = createRegistry([
+    const toolRegistry = createTestRegistry([
       ...engineerAgentDefinition.tools.tools.map(makeTool),
       worktreeEnterTool,
       worktreeExitTool,
     ]);
-    const store = storeManager.create(`configured-goal-worktree-${crypto.randomUUID()}`, tmpRoot, {
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, {
       goalId: crypto.randomUUID(), agentName: "goal_lead"
     });
     await runAgent(createAgent({
@@ -783,12 +797,12 @@ describe("ConfiguredAgent", () => {
 
   test("extraTools cannot grant cwd transitions to an ineligible Session", async () => {
     const streamFn = setupMockStreamText("should not run");
-    const toolRegistry = createRegistry([
+    const toolRegistry = createTestRegistry([
       ...engineerAgentDefinition.tools.tools.map(makeTool),
       worktreeEnterTool,
       worktreeExitTool,
     ]);
-    const store = storeManager.create(`configured-goal-worktree-extra-${crypto.randomUUID()}`, tmpRoot, {
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, {
       goalId: crypto.randomUUID(), agentName: "goal_lead"
     });
     const agent = createAgent({
@@ -807,7 +821,7 @@ describe("ConfiguredAgent", () => {
 
   test("extraTools add registered tools without narrowing baseline prompt tools", async () => {
     const streamFn = setupMockStreamText("extra tools ok");
-    const toolRegistry = createRegistry([
+    const toolRegistry = createTestRegistry([
       ...engineerAgentDefinition.tools.tools.map(makeTool),
       makeTool("github_get_pull_request"),
       makeTool("github_create_issue_comment"),
@@ -831,7 +845,7 @@ describe("ConfiguredAgent", () => {
   test("extraTools effective tools are enforced in tool execution context", async () => {
     setupToolCallStreamText("github_create_issue_comment");
     let capturedAllowedTools: string[] = [];
-    const toolRegistry = createRegistry([
+    const toolRegistry = createTestRegistry([
       ...engineerAgentDefinition.tools.tools.map(makeTool),
     ]);
     toolRegistry.register({
@@ -839,9 +853,10 @@ describe("ConfiguredAgent", () => {
       description: "Create a GitHub issue comment placeholder",
       inputSchema: z.object({}).strict(),
       traits: { readOnly: false, destructive: false, concurrencySafe: false },
+      outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
       execute: (_input, ctx) => {
         capturedAllowedTools = [...ctx.allowedTools];
-        return "commented";
+        return createTextToolResult("commented");
       },
     });
     const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "engineer" });
@@ -852,7 +867,6 @@ describe("ConfiguredAgent", () => {
 
     await runAgent(agent, "comment on PR", {
       maxSteps: 1,
-      confirmPermission: async () => "approve",
       extraTools: ["github_create_issue_comment"],
     });
 
@@ -873,7 +887,7 @@ describe("ConfiguredAgent", () => {
   test("skill metadata allowed_tools is prompt metadata only and cannot grant missing tools", async () => {
     const streamFn = setupMockStreamText("skill metadata ok");
     const skillService = createSkillServiceWithToolGrant();
-    const store = storeManager.create(`configured-skill-${crypto.randomUUID()}`, tmpRoot, {
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, {
       agentName: "engineer",
       activeSkillNames: ["github-skill"],
     });
@@ -907,7 +921,7 @@ describe("ConfiguredAgent", () => {
       "Temporary instructions.",
     ].join("\n"));
 
-    const store = storeManager.create(`configured-deleted-skill-${crypto.randomUUID()}`, tmpRoot, {
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, {
       agentName: "engineer",
       activeSkillNames: [skillName],
     });
@@ -928,20 +942,6 @@ describe("ConfiguredAgent", () => {
     expect(streamFn).toHaveBeenCalledTimes(1);
   });
 
-  test("enforceToolOutputQuota controls quota enforcement", async () => {
-    setupMockStreamText("quota ok");
-    const quotaEnforcer = mock(async (_directory: string) => {});
-
-    await runAgent(createAgent({ definition: engineerAgentDefinition, quotaEnforcer }), "root run");
-    expect(quotaEnforcer).toHaveBeenCalledTimes(1);
-
-    await runAgent(createAgent({ definition: exploreAgentDefinition, quotaEnforcer }), "explore run");
-    expect(quotaEnforcer).toHaveBeenCalledTimes(1);
-
-    await runAgent(createAgent({ definition: definitionWith({ enforceToolOutputQuota: false }), quotaEnforcer }), "no quota");
-    expect(quotaEnforcer).toHaveBeenCalledTimes(1);
-  });
-
   test("includeMemoryInPrompt controls memory roots in prompt context", async () => {
     const withMemoryStreamFn = setupMockStreamText("memory ok");
     await runAgent(createAgent({ definition: engineerAgentDefinition }), "with memory");
@@ -957,7 +957,7 @@ describe("ConfiguredAgent", () => {
   test("legacy active workflow context is omitted for agents", async () => {
     const streamFn = setupMockStreamText("no workflow tools ok");
     const goalId = crypto.randomUUID();
-    const store = storeManager.create(`configured-no-workflow-tools-${crypto.randomUUID()}`, tmpRoot, { goalId, agentName: "goal_lead" });
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { goalId, agentName: "goal_lead" });
     const agent = createAgent({
       definition: definitionWith({ tools: { tools: ["unknown_tool"] } }),
       store,
@@ -981,7 +981,7 @@ describe("ConfiguredAgent", () => {
       acceptanceCriteria: "Reviewer can decide from natural language acceptance criteria.",
       mainSessionId,
     });
-    const store = storeManager.create(`configured-repair-context-${crypto.randomUUID()}`, tmpRoot, {
+    const store = storeManager.create(crypto.randomUUID(), tmpRoot, {
       goalId: goal.id,
       sessionRole: "main", agentName: "goal_lead"
     });
@@ -1002,10 +1002,11 @@ describe("ConfiguredAgent", () => {
       description: "Capture execution context",
       inputSchema: z.object({}).strict(),
       traits: { readOnly: true, destructive: false, concurrencySafe: false },
+      outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
       execute: (_input, ctx) => {
         capturedAgentName = ctx.agentName;
         capturedDepth = ctx.currentDepth;
-        return "captured";
+        return createTextToolResult("captured");
       },
     });
 
@@ -1028,10 +1029,11 @@ describe("ConfiguredAgent", () => {
       description: "Capture execution context",
       inputSchema: z.object({}).strict(),
       traits: { readOnly: true, destructive: false, concurrencySafe: false },
+      outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
       execute: (_input, ctx) => {
         capturedAgentName = ctx.agentName;
         capturedDepth = ctx.currentDepth;
-        return "captured";
+        return createTextToolResult("captured");
       },
     });
 

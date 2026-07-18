@@ -9,6 +9,7 @@ import { storeManager } from "../../../store/store";
 import { createMockStore } from "../../../store/test-helpers";
 import { createTestTempRoot } from "../../../testing/test-temp-root";
 import { createTestProjectContext } from "../../test-project-context";
+import { expectTextDraft } from "../../test-results";
 import type { ToolExecutionContext } from "../../types";
 import { lspGotoDefinitionTool } from "./lsp-goto-definition";
 
@@ -25,7 +26,7 @@ describe("lspGotoDefinitionTool integration", () => {
     const server = new FakeLspServer({ responses: { "textDocument/definition": location("target.ts", 0, 16) } });
     const pool = await install(server);
     try {
-      expect(await execute()).toBe(`Definition: ${testDir}/target.ts:1:17`);
+      expect(expectTextDraft(await execute())).toBe(`Definition: ${testDir}/target.ts:1:17`);
       expect(pool.releaseKeys).toEqual([{ workspaceRoot: testDir, serverId: "typescript" }]);
       expect(pool.acquireOptions[0]).toMatchObject({ command: "typescript-language-server", args: ["--stdio"], cwd: testDir });
     } finally { await server.stop(); }
@@ -35,7 +36,7 @@ describe("lspGotoDefinitionTool integration", () => {
     await writeFile("source.ts", "callTarget();\n"); await writeFile("a.ts", "export const a = 1;\n"); await writeFile("b.ts", "export const b = 2;\n");
     const server = new FakeLspServer({ responses: { "textDocument/definition": [location("a.ts", 1, 3), location("b.ts", 4, 8)] } });
     await install(server);
-    try { expect(await execute()).toBe(`Definition: ${testDir}/a.ts:2:4\n${testDir}/b.ts:5:9`); } finally { await server.stop(); }
+    try { expect(expectTextDraft(await execute())).toBe(`Definition: ${testDir}/a.ts:2:4\n${testDir}/b.ts:5:9`); } finally { await server.stop(); }
   });
 
   test("handles LocationLink responses using target range", async () => {
@@ -43,13 +44,13 @@ describe("lspGotoDefinitionTool integration", () => {
     const range = { start: { line: 2, character: 5 }, end: { line: 2, character: 11 } };
     const server = new FakeLspServer({ responses: { "textDocument/definition": [{ originSelectionRange: { start: { line: 0, character: 0 }, end: { line: 0, character: 10 } }, targetUri: pathToFileUri(path.join(testDir, "linked.ts")), targetRange: range, targetSelectionRange: range }] } });
     await install(server);
-    try { expect(await execute()).toBe(`Definition: ${testDir}/linked.ts:3:6`); } finally { await server.stop(); }
+    try { expect(expectTextDraft(await execute())).toBe(`Definition: ${testDir}/linked.ts:3:6`); } finally { await server.stop(); }
   });
 
   test("returns no definitions message for null response", async () => {
     await writeFile("source.ts", "const value = 1;\n");
     const server = new FakeLspServer({ responses: { "textDocument/definition": null } }); await install(server);
-    try { expect(await execute()).toBe("No definitions found."); } finally { await server.stop(); }
+    try { expect(expectTextDraft(await execute())).toBe("No definitions found."); } finally { await server.stop(); }
   });
 
   test("converts input position to zero-based LSP position", async () => {

@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { createEmptySessionStats, type CompressionBlockSnapshot } from "@archcode/protocol";
+import { createEmptySessionStats, type CompressionBlockSnapshot, type FinalizedToolResult } from "@archcode/protocol";
 import { BusyError, InvalidTodoStateError, type CompactionPart, type ReasoningPart, type Reminder, type StepInfo, type StoredMessage, type StoredTodo, type TextPart, type ToolPart } from "./types";
 import { createSessionStore, storeManager } from "./store";
 import { SessionStoreManager } from "./session-store-manager";
@@ -49,6 +49,31 @@ function createFreshStore(label: string) {
   usesInMemoryPersistence = true;
   sessionFileInternals.saveSessionTranscript = async () => {};
   return storeManager.create(uniqueSessionId(label), TMP_DIR, { agentName: "engineer" });
+}
+
+function finalizedResult(
+  preview: string,
+  isError = false,
+  exitCode?: number,
+): FinalizedToolResult {
+  const bytes = new TextEncoder().encode(preview).byteLength;
+  return {
+    isError,
+    output: {
+      preview,
+      completeness: "complete",
+      observed: { bytes, lines: 1 },
+      canonical: { bytes, lines: 1 },
+      stored: { bytes, lines: 1 },
+      omitted: { bytes: 0, lines: 0 },
+      recovery: { kind: "none" },
+    },
+    ...(exitCode === undefined ? {} : {
+      details: {
+        process: { exitCode, signal: null, timedOut: false, aborted: false, durationMs: 1 },
+      },
+    }),
+  };
 }
 
 function compressionBlockSnapshot(): CompressionBlockSnapshot {
@@ -319,13 +344,13 @@ describe("SessionStoreManager", () => {
     appendUserMessage(store, "collect stats");
     state.append({ type: "step-start", step: 0 });
     state.append({ type: "tool-call", toolCallId: "tool-ok", toolName: "read", input: { path: "a.ts" } });
-    state.append({ type: "tool-result", toolCallId: "tool-ok", toolName: "read", output: "ok", isError: false });
+    state.append({ type: "tool-result", toolCallId: "tool-ok", toolName: "read", result: finalizedResult("ok") });
     state.append({ type: "step-end", step: 0, finishReason: "tool-calls", usage: { inputTokens: 2, outputTokens: 3 } });
     state.append({ type: "execution-end", status: "completed" });
     state.append({ type: "execution-start", executionId: "run-two" });
     state.append({ type: "step-start", step: 0 });
     state.append({ type: "tool-call", toolCallId: "tool-fail", toolName: "bash", input: "false" });
-    state.append({ type: "tool-result", toolCallId: "tool-fail", toolName: "bash", output: "failed", isError: true });
+    state.append({ type: "tool-result", toolCallId: "tool-fail", toolName: "bash", result: finalizedResult("failed", true) });
     state.append({ type: "step-end", step: 0, finishReason: "stop", usage: { inputTokens: 5, outputTokens: 7 } });
     state.append({ type: "execution-end", status: "failed", error: "child failed" });
 
@@ -921,35 +946,35 @@ describe("tool streaming", () => {
     expect(part.startedAt).toBeGreaterThan(0);
   });
 
-  test("successful tool-result completes the part, stores output, and removes streaming entry", () => {
+  test("successful tool-result completes the part with a finalized result", () => {
     const store = createFreshStore("tool-result-success");
     store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "read", input: { path: "a" } });
-    store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "read", output: "content", isError: false });
+    store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "read", result: finalizedResult("content") });
 
     const state = store.getState();
     const part = toolPart(onlyMessage(state.messages));
     expect(part.state).toBe("completed");
     if (part.state !== "completed") throw new Error("Expected completed tool");
-    expect(part.output).toBe("content");
+    expect(part.result.output.preview).toBe("content");
     expect(part.endedAt).toBeGreaterThan(0);
   });
 
-  test("error tool-result records errorMessage and endedAt", () => {
+  test("error tool-result records a finalized error result and endedAt", () => {
     const store = createFreshStore("tool-result-error");
     store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "bash", input: "bad" });
-    store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "bash", output: "failed", isError: true });
+    store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "bash", result: finalizedResult("failed", true) });
 
     const part = toolPart(onlyMessage(store.getState().messages));
     expect(part.state).toBe("error");
     if (part.state !== "error") throw new Error("Expected error tool");
-    expect(part.errorMessage).toBe("failed");
+    expect(part.result.output.preview).toBe("failed");
     expect(part.endedAt).toBeGreaterThan(0);
   });
 
   test("tool-result updates the stored tool part when it already exists", () => {
     const store = createFreshStore("tool-result-fallback");
     store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "read", input: "input" });
-    store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "read", output: "ok", isError: false });
+    store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "read", result: finalizedResult("ok") });
 
     const part = toolPart(onlyMessage(store.getState().messages));
     expect(part.state).toBe("completed");
@@ -960,7 +985,7 @@ describe("tool streaming", () => {
     store.getState().append({ type: "tool-input-start", toolCallId: "a", toolName: "first" });
     store.getState().append({ type: "tool-input-start", toolCallId: "b", toolName: "second" });
     store.getState().append({ type: "tool-call", toolCallId: "b", toolName: "second", input: 2 });
-    store.getState().append({ type: "tool-result", toolCallId: "b", toolName: "second", output: "two", isError: false });
+    store.getState().append({ type: "tool-result", toolCallId: "b", toolName: "second", result: finalizedResult("two") });
 
     const message = onlyMessage(store.getState().messages);
     const first = toolPart(message, 0);
@@ -993,7 +1018,7 @@ describe("settleIncompleteState behavior", () => {
     expect(message.completedAt).toBeGreaterThan(0);
   });
 
-  test("interrupted execution settles attempted effectful tool as unknown-result", () => {
+  test("interrupted execution leaves an attempted tool unfinalized for the Registry recovery lane", () => {
     const store = createFreshStore("unknown-result-store");
     store.getState().append({ type: "execution-start", executionId: "run" });
     store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { filePath: "a.ts" } });
@@ -1009,11 +1034,10 @@ describe("settleIncompleteState behavior", () => {
     store.getState().append({ type: "execution-end", status: "interrupted" });
 
     const tool = toolPart(onlyMessage(store.getState().messages));
-    expect(tool.state).toBe("error");
-    if (tool.state !== "error") throw new Error("Expected error tool");
-    expect(tool.errorMessage).toBe("Tool execution result unknown: execution was interrupted");
-    expect(tool.meta).toEqual({ unknownResult: true });
+    expect(tool.state).toBe("running");
+    if (tool.state !== "running") throw new Error("Expected running tool");
     expect(tool.attemptId).toBe("attempt-1");
+    expect(JSON.parse(JSON.stringify(tool))).not.toHaveProperty("result");
   });
 });
 
@@ -1142,7 +1166,7 @@ describe("Oracle regression tests", () => {
     store.getState().append({ type: "tool-call", toolCallId: "tc-1", toolName: "bash", input: "ls" });
     store.getState().append({ type: "step-end", step: 0, finishReason: "tool-calls" });
 
-    store.getState().append({ type: "tool-result", toolCallId: "tc-1", toolName: "bash", output: "file.txt", isError: false });
+    store.getState().append({ type: "tool-result", toolCallId: "tc-1", toolName: "bash", result: finalizedResult("file.txt") });
 
     // Step 1: should create a NEW assistant message (not merge into step 0's)
     store.getState().append({ type: "step-start", step: 1 });
@@ -1243,7 +1267,7 @@ describe("Oracle regression tests", () => {
     expect(textParts[0]!.completedAt).toBeDefined();
   });
 
-  test("failed execution settles pending/running tools as error", () => {
+  test("failed execution leaves a running tool unfinalized for the Registry recovery lane", () => {
     const store = createFreshStore("failed-execution-tools");
     store.getState().append({ type: "execution-start" });
     appendUserMessage(store, "use tool");
@@ -1260,65 +1284,58 @@ describe("Oracle regression tests", () => {
     expect(assistantMsg).toBeDefined();
     const toolParts = assistantMsg!.parts.filter(p => p.type === "tool");
     expect(toolParts.length).toBe(1);
-    expect(toolParts[0]!.state).toBe("error");
-    if (toolParts[0]!.type === "tool" && toolParts[0]!.state === "error") {
-      expect(toolParts[0]!.errorMessage).toBe("Execution ended before tool result");
-    }
+    expect(toolParts[0]!.state).toBe("running");
+    expect(JSON.parse(JSON.stringify(toolParts[0]))).not.toHaveProperty("result");
   });
 });
 
-describe("meta propagation through tool-result event", () => {
-  test("tool-result with meta propagates to CompletedToolPart", () => {
+describe("strict details propagation through tool-result event", () => {
+  test("process details propagate to CompletedToolPart", () => {
     const store = createFreshStore("meta-completed");
     store.getState().append({ type: "tool-call", toolCallId: "call-meta-1", toolName: "bash", input: "ls" });
     store.getState().append({
       type: "tool-result",
       toolCallId: "call-meta-1",
       toolName: "bash",
-      output: "file.txt",
-      isError: false,
-      meta: { exitCode: 0 },
+      result: finalizedResult("file.txt", false, 0),
     });
 
     const part = toolPart(onlyMessage(store.getState().messages));
     expect(part.state).toBe("completed");
     if (part.state !== "completed") throw new Error("Expected completed");
-    expect(part.meta).toEqual({ exitCode: 0 });
+    expect(part.result.details?.process?.exitCode).toBe(0);
   });
 
-  test("tool-result with meta propagates to ErrorToolPart", () => {
+  test("process details propagate to ErrorToolPart", () => {
     const store = createFreshStore("meta-error");
     store.getState().append({ type: "tool-call", toolCallId: "call-meta-2", toolName: "bash", input: "bad" });
     store.getState().append({
       type: "tool-result",
       toolCallId: "call-meta-2",
       toolName: "bash",
-      output: "command not found",
-      isError: true,
-      meta: { exitCode: 127 },
+      result: finalizedResult("command not found", true, 127),
     });
 
     const part = toolPart(onlyMessage(store.getState().messages));
     expect(part.state).toBe("error");
     if (part.state !== "error") throw new Error("Expected error");
-    expect(part.meta).toEqual({ exitCode: 127 });
+    expect(part.result.details?.process?.exitCode).toBe(127);
   });
 
-  test("tool-result without meta does not add meta field", () => {
+  test("tool-result without details does not add details", () => {
     const store = createFreshStore("meta-absent");
     store.getState().append({ type: "tool-call", toolCallId: "call-no-meta", toolName: "read", input: {} });
     store.getState().append({
       type: "tool-result",
       toolCallId: "call-no-meta",
       toolName: "read",
-      output: "ok",
-      isError: false,
+      result: finalizedResult("ok"),
     });
 
     const part = toolPart(onlyMessage(store.getState().messages));
     expect(part.state).toBe("completed");
     if (part.state !== "completed") throw new Error("Expected completed");
-    expect(part.meta).toBeUndefined();
+    expect(part.result.details).toBeUndefined();
   });
 });
 

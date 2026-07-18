@@ -1,16 +1,18 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TOOL_ERROR_META_KEY } from "../errors";
 import { SkillService } from "../../skills";
 import { storeManager } from "../../store/store";
 import { createMockStore } from "../../store/test-helpers";
 import { createTestProjectContext } from "../test-project-context";
-import { createToolExecutionContext, type ToolExecutionContext, type ToolExecutionResult } from "../types";
+import { expectTextDraft } from "../test-results";
+import { createToolExecutionContext, type ToolExecutionContext } from "../types";
 import { createBuiltinToolDescriptors } from "./index";
 import { SkillReadInputSchema, skillReadTool } from "./skill-read";
+import { ONE_SHOT_FILE_READ_MAX_BYTES } from "../../utils/safe-file";
 
-const tmpRoot = join(import.meta.dir, "__test_tmp__", "skill-read-tool", crypto.randomUUID());
+const tmpRoot = join(tmpdir(), "archcode-skill-read-tool", crypto.randomUUID());
 const projectRoot = join(tmpRoot, "project");
 const projectSkillsRoot = join(projectRoot, ".archcode", "skills");
 const executionCwd = join(tmpRoot, "project.worktrees", "session-skill");
@@ -57,12 +59,12 @@ describe("skill_read tool", () => {
   test("allowed skill returns full metadata and body content", async () => {
     const result = await skillReadTool.execute({ name: "codemap" }, makeContext(["codemap"]));
 
-    expect(typeof result).toBe("string");
-    expect(result as string).toContain("---\nname: codemap");
-    expect(result as string).toContain("description:");
-    expect(result as string).toContain("when_to_use:");
-    expect(result as string).toContain("source: builtin");
-    expect(result as string).toContain("Trace entry points");
+    const output = expectTextDraft(result);
+    expect(output).toContain("---\nname: codemap");
+    expect(output).toContain("description:");
+    expect(output).toContain("when_to_use:");
+    expect(output).toContain("source: builtin");
+    expect(output).toContain("Trace entry points");
   });
 
   test("resolves project-local Skills from execution cwd, not canonical project root", async () => {
@@ -88,43 +90,42 @@ WORKTREE_SKILL_BODY
       makeContext(["codemap"], executionCwd),
     );
 
-    expect(typeof result).toBe("string");
-    if (typeof result !== "string") throw new Error(result.output);
-    expect(result).toContain("WORKTREE_SKILL_BODY");
-    expect(result).not.toContain("CANONICAL_SKILL_BODY");
+    const output = expectTextDraft(result);
+    expect(output).toContain("WORKTREE_SKILL_BODY");
+    expect(output).not.toContain("CANONICAL_SKILL_BODY");
   });
 
   test("not-allowed skill returns structured error", async () => {
     const result = await skillReadTool.execute(
       { name: "git-master" },
       makeContext(["codemap"]),
-    ) as ToolExecutionResult;
+    );
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain("Skill not found or not allowed for current agent: git-master");
-    expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
+    expect(expectTextDraft(result)).toContain("Skill not found or not allowed for current agent: git-master");
+    expect(result.details?.error).toBeDefined();
   });
 
   test("unknown skill name returns structured error", async () => {
     const result = await skillReadTool.execute(
       { name: "missing-skill" },
       makeContext(["missing-skill"]),
-    ) as ToolExecutionResult;
+    );
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain("Skill not found or not allowed for current agent: missing-skill");
-    expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
+    expect(expectTextDraft(result)).toContain("Skill not found or not allowed for current agent: missing-skill");
+    expect(result.details?.error).toBeDefined();
   });
 
   test("invalid skill name returns structured error", async () => {
     const result = await skillReadTool.execute(
       { name: "../bad" },
       makeContext(["../bad"]),
-    ) as ToolExecutionResult;
+    );
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain("Invalid Skill name");
-    expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
+    expect(expectTextDraft(result)).toContain("Invalid Skill name");
+    expect(result.details?.error).toBeDefined();
   });
 
   test("invalid skill file returns structured error", async () => {
@@ -136,11 +137,24 @@ description: invalid override
 Broken body.
 `);
 
-    const result = await skillReadTool.execute({ name: "codemap" }, makeContext(["codemap"])) as ToolExecutionResult;
+    const result = await skillReadTool.execute({ name: "codemap" }, makeContext(["codemap"]));
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain("Invalid project skill");
-    expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
+    expect(expectTextDraft(result)).toContain("Invalid project skill");
+    expect(result.details?.error).toBeDefined();
+  });
+
+  test("rejects a Skill one byte over the one-shot file cap without partial fallback", async () => {
+    const header = `---\nname: codemap\ndescription: oversized\nwhen_to_use: boundary test\n---\n\n`;
+    await writeProjectSkill(
+      "codemap",
+      header + "x".repeat(ONE_SHOT_FILE_READ_MAX_BYTES - new TextEncoder().encode(header).byteLength + 1),
+    );
+
+    const result = await skillReadTool.execute({ name: "codemap" }, makeContext(["codemap"]));
+    expect(result.isError).toBe(true);
+    expect(result.details?.error?.code).toBe("TOOL_OUTPUT_POLICY_VIOLATION");
+    expect(expectTextDraft(result)).not.toContain("x".repeat(1_024));
   });
 
   test("input schema rejects unknown keys including agent, role, source, and path", () => {

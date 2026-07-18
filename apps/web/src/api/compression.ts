@@ -9,22 +9,10 @@ import type {
   SessionPart,
 } from "@archcode/protocol";
 
-// ─── Original-range response types ───
-// These mirror the server's CompressionOriginalRangeResult success shape from
-// agent-core. Web cannot depend on agent-core, so the types are defined locally
-// and kept structurally compatible with the JSON returned by
-// GET /api/projects/:slug/sessions/:sessionId/compression/:blockRef/original.
-
-export interface PersistedOutputReference {
-  readonly kind: "tool-output";
-  readonly ref: string;
-  readonly truncated: true;
-  readonly preview: string;
-}
-
-export type OriginalRangePart = SessionPart & {
-  persistedOutput?: PersistedOutputReference;
-};
+// These mirror the server's CompressionOriginalRangeResult success shape.
+// Original tool parts use the same strict FinalizedToolResult contract as the
+// live transcript; artifact bodies and storage paths never enter this response.
+export type OriginalRangePart = SessionPart;
 
 export interface OriginalRangeMessage {
   readonly id: string;

@@ -1,6 +1,4 @@
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { LanguageModelV3 } from "@ai-sdk/provider";
 import { silentLogger } from "../logger";
 import type { StoredMessage } from "../store/types";
@@ -16,12 +14,6 @@ import {
 } from "./compact";
 
 const TEST_WORKSPACE_ROOT = `/tmp/archcode-agent-core-compact-${crypto.randomUUID()}`;
-const TEST_TOOL_OUTPUT_DIR = join(import.meta.dir, "__test_tmp__", "compact-tool-output", crypto.randomUUID());
-
-afterAll(async () => {
-  await rm(TEST_TOOL_OUTPUT_DIR, { recursive: true, force: true });
-});
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -103,7 +95,7 @@ function makeAssistantMessageWithTool(
           ...basePart,
           state: "completed" as const,
           input: {},
-          output: output ?? "tool result",
+          result: finalizedResult(output ?? "tool result", false),
           startedAt: Date.now(),
           endedAt: Date.now(),
         },
@@ -122,7 +114,7 @@ function makeAssistantMessageWithTool(
           ...basePart,
           state: "error" as const,
           input: {},
-          errorMessage: output ?? "tool error",
+          result: finalizedResult(output ?? "tool error", true),
           startedAt: Date.now(),
           endedAt: Date.now(),
         },
@@ -162,6 +154,25 @@ function makeAssistantMessageWithTool(
   };
 }
 
+function finalizedResult(preview: string, isError: boolean) {
+  const counts = {
+    bytes: new TextEncoder().encode(preview).byteLength,
+    lines: preview.length === 0 ? 0 : preview.split("\n").length,
+  };
+  return {
+    isError,
+    output: {
+      preview,
+      completeness: "complete" as const,
+      observed: counts,
+      canonical: counts,
+      stored: counts,
+      omitted: { bytes: 0, lines: 0 },
+      recovery: { kind: "none" as const },
+    },
+  };
+}
+
 function makeCompactionMessage(id: string, summary: string, tailStartId: string): StoredMessage {
   return {
     id,
@@ -186,9 +197,7 @@ function makeInput(messages: StoredMessage[], overrides?: Partial<CompactInput>)
   return { messages,
   contextLimit: 100000,
   model: mockModel,
-  sessionId: "test-session",
   logger: silentLogger,
-  toolOutputDir: TEST_TOOL_OUTPUT_DIR,
   retryScheduler: createFakeRetryScheduler(),
   ...overrides,  };
 }
@@ -409,10 +418,10 @@ describe("compact", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Tool output pruning: prefix ToolParts get fullOutputPath set
+  // Tool results are already bounded before compaction
   // -------------------------------------------------------------------------
 
-  test("tool output pruning: prefix ToolParts get fullOutputPath set", async () => {
+  test("bounded finalized tool results need no second persistence pass", async () => {
     createMockStreamText("## Current Objective\nTest");
 
     const messages: StoredMessage[] = [
@@ -429,14 +438,12 @@ describe("compact", () => {
       makeUserMessage("u6", "Sixth message (incomplete)"),
     ];
 
-    const result = await compact(makeInput(messages, { sessionId: "prune-test-session" }));
+    const original = structuredClone(messages);
+    const result = await compact(makeInput(messages));
 
     expect(result).not.toBeNull();
-    expect(result!.prunedToolOutputs.length).toBeGreaterThan(0);
-
-    // The pruned path should contain the session ID
-    const prunedPath = result!.prunedToolOutputs[0]!;
-    expect(prunedPath).toContain("prune-test-session");
+    expect(result).not.toHaveProperty("prunedToolOutputs");
+    expect(messages).toEqual(original);
   });
 
   // -------------------------------------------------------------------------
@@ -536,7 +543,8 @@ describe("compact", () => {
     expect(capturedSystemPrompt).toBeDefined();
     expect(capturedSystemPrompt).toContain("conversation summarizer");
     expect(capturedSystemPrompt).toContain("Current Objective");
-    expect(capturedSystemPrompt).toContain("Tool Output References");
+    expect(capturedSystemPrompt).toContain("Tool Output Recovery");
+    expect(capturedSystemPrompt).not.toContain("full output saved to");
     // Should NOT contain Memory section text from runtime systemPrompt
     expect(capturedSystemPrompt).not.toContain("## Memory");
   });
@@ -588,7 +596,6 @@ describe("compact", () => {
     const result: CompactResult = {
       summary: "Test summary of conversation",
       tailStartId: store.getState().messages[1]!.id,
-      prunedToolOutputs: [],
     };
 
     commitCompact(store, result);
@@ -697,7 +704,7 @@ describe("compact", () => {
     // Deep clone the messages to compare later
     const originalCopy = structuredClone(messages);
 
-    await compact(makeInput(messages, { sessionId: "clone-test-session" }));
+    await compact(makeInput(messages));
 
     // Original messages should not be mutated
     for (let i = 0; i < messages.length; i++) {
@@ -711,7 +718,7 @@ describe("compact", () => {
         const copyPart = copy.parts[j]!;
         if (origPart.type === "tool" && copyPart.type === "tool") {
           if (origPart.state === "completed" && copyPart.state === "completed") {
-            expect(origPart.output).toBe(copyPart.output);
+            expect(origPart.result).toEqual(copyPart.result);
           }
         }
       }
@@ -747,10 +754,10 @@ describe("compact", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Error tool parts are also pruned
+  // Error tool parts use their bounded finalized preview
   // -------------------------------------------------------------------------
 
-  test("error tool parts in prefix are pruned", async () => {
+  test("error tool parts in prefix compact without legacy persistence", async () => {
     createMockStreamText("## Current Objective\nTest");
 
     const messages: StoredMessage[] = [
@@ -767,10 +774,10 @@ describe("compact", () => {
       makeUserMessage("u6", "Sixth message (incomplete)"),
     ];
 
-    const result = await compact(makeInput(messages, { sessionId: "error-tool-test" }));
+    const result = await compact(makeInput(messages));
 
     expect(result).not.toBeNull();
-    expect(result!.prunedToolOutputs.length).toBeGreaterThan(0);
+    expect(result).not.toHaveProperty("prunedToolOutputs");
   });
 
   // -------------------------------------------------------------------------

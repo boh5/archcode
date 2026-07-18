@@ -5,8 +5,10 @@ import { ModelInfo } from "../provider/model";
 import { UnknownQualifiedIdError, type ProviderRegistry } from "../provider/index";
 import { SkillService } from "../skills";
 import { storeManager } from "../store/store";
-import { createRegistry } from "../tools/registry";
+import type { ToolRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
+import { createTextToolResult } from "../tools/results";
+import { createTestToolRegistryFixture, type TestToolRegistryFixture } from "../tools/test-registry";
 import { DELEGATION_CORE_TOOLS } from "./constants";
 import { MissingAgentModelConfigError, NoModelsConfiguredError, SkillNotAllowedError } from "./errors";
 import {
@@ -23,10 +25,19 @@ import { createTestTempRoot } from "../testing/test-temp-root";
 
 const testTempRoot = createTestTempRoot("agent-factory");
 const TEST_WORKSPACE_ROOT = testTempRoot.path;
+const registryFixtures: TestToolRegistryFixture[] = [];
+const outputAccessFixture = createTestToolRegistryFixture();
+
+function createTestRegistry(descriptors: AnyToolDescriptor[]): ToolRegistry {
+  const fixture = createTestToolRegistryFixture({ descriptors });
+  registryFixtures.push(fixture);
+  return fixture.registry;
+}
 
 afterAll(async () => {
   await Bun.sleep(0);
   storeManager.clearAll();
+  await Promise.all([...registryFixtures, outputAccessFixture].map((fixture) => fixture.dispose()));
   await testTempRoot.cleanup();
 });
 
@@ -36,7 +47,8 @@ function makeTool(name: string): AnyToolDescriptor {
     description: `${name} tool`,
     inputSchema: z.object({}).strict(),
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
-    execute: () => `${name} result`,
+    outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
+    execute: () => createTextToolResult(`${name} result`),
   };
 }
 
@@ -128,7 +140,7 @@ function makeFactory(
 
   return createAgentFactory({ definitions,
   providerRegistry,
-  toolRegistry: createRegistry([
+  toolRegistry: createTestRegistry([
     makeTool("unknown_tool"),
     ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
     ...DELEGATION_CORE_TOOLS.map(makeTool),
@@ -137,7 +149,9 @@ function makeFactory(
   storeManager,
   projectContextResolver: createTestProjectContextResolver(storeManager),
   workspaceRoot: TEST_WORKSPACE_ROOT,
-  config, logger: silentLogger });
+  config,
+  createToolOutputAccess: outputAccessFixture.createToolOutputAccess,
+  logger: silentLogger });
 }
 
 const READ_ONLY_FIXTURE_TOOLS = [
@@ -203,7 +217,7 @@ describe("createAgentFactory", () => {
     const providerRegistry = makeProviderRegistry();
     const factory = createAgentFactory({ definitions: [definition()],
     providerRegistry,
-    toolRegistry: createRegistry([
+    toolRegistry: createTestRegistry([
       makeTool("unknown_tool"),
       ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
       ...DELEGATION_CORE_TOOLS.map(makeTool),
@@ -212,6 +226,7 @@ describe("createAgentFactory", () => {
     storeManager,
     projectContextResolver: createTestProjectContextResolver(storeManager),
     workspaceRoot: TEST_WORKSPACE_ROOT,
+    createToolOutputAccess: outputAccessFixture.createToolOutputAccess,
     config: {
       provider: {},
       agents: {
@@ -234,7 +249,7 @@ describe("createAgentFactory", () => {
     const providerRegistry = makeProviderRegistry();
     const factory = createAgentFactory({ definitions: [definition()],
     providerRegistry,
-    toolRegistry: createRegistry([
+    toolRegistry: createTestRegistry([
       makeTool("unknown_tool"),
       ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
       ...DELEGATION_CORE_TOOLS.map(makeTool),
@@ -243,6 +258,7 @@ describe("createAgentFactory", () => {
     storeManager,
     projectContextResolver: createTestProjectContextResolver(storeManager),
     workspaceRoot: TEST_WORKSPACE_ROOT,
+    createToolOutputAccess: outputAccessFixture.createToolOutputAccess,
     config: {
       provider: {},
       agents: {
@@ -260,7 +276,7 @@ describe("createAgentFactory", () => {
     const providerRegistry = makeProviderRegistry();
     const factory = createAgentFactory({ definitions: [definition()],
     providerRegistry,
-    toolRegistry: createRegistry([
+    toolRegistry: createTestRegistry([
       makeTool("unknown_tool"),
       ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
       ...DELEGATION_CORE_TOOLS.map(makeTool),
@@ -269,6 +285,7 @@ describe("createAgentFactory", () => {
     storeManager,
     projectContextResolver: createTestProjectContextResolver(storeManager),
     workspaceRoot: TEST_WORKSPACE_ROOT,
+    createToolOutputAccess: outputAccessFixture.createToolOutputAccess,
     config: {
       provider: {},
       agents: {},
@@ -293,7 +310,7 @@ describe("createAgentFactory", () => {
       definition({ name: "explore", displayName: "Explore", promptProfileId: "explorer", tools: { tools: nonDelegatingExplorerTools } }),
     ],
     providerRegistry,
-    toolRegistry: createRegistry([
+    toolRegistry: createTestRegistry([
       makeTool("unknown_tool"),
       ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
       ...DELEGATION_CORE_TOOLS.map(makeTool),
@@ -302,6 +319,7 @@ describe("createAgentFactory", () => {
     storeManager,
     projectContextResolver: createTestProjectContextResolver(storeManager),
     workspaceRoot: TEST_WORKSPACE_ROOT,
+    createToolOutputAccess: outputAccessFixture.createToolOutputAccess,
     config: {
       provider: {},
       agents: {
@@ -333,7 +351,7 @@ describe("createAgentFactory", () => {
 
     const factory = createAgentFactory({ definitions: [definition()],
     providerRegistry: emptyProviderRegistry,
-    toolRegistry: createRegistry([
+    toolRegistry: createTestRegistry([
       makeTool("unknown_tool"),
       ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
       ...DELEGATION_CORE_TOOLS.map(makeTool),
@@ -342,6 +360,7 @@ describe("createAgentFactory", () => {
     storeManager,
     projectContextResolver: createTestProjectContextResolver(storeManager),
     workspaceRoot: TEST_WORKSPACE_ROOT,
+    createToolOutputAccess: outputAccessFixture.createToolOutputAccess,
     config: {
       provider: {},
       agents: {
@@ -356,7 +375,7 @@ describe("createAgentFactory", () => {
     const providerRegistry = makeProviderRegistry();
     const factory = createAgentFactory({ definitions: [definition()],
     providerRegistry,
-    toolRegistry: createRegistry([
+    toolRegistry: createTestRegistry([
       makeTool("unknown_tool"),
       ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
       ...DELEGATION_CORE_TOOLS.map(makeTool),
@@ -365,6 +384,7 @@ describe("createAgentFactory", () => {
     storeManager,
     projectContextResolver: createTestProjectContextResolver(storeManager),
     workspaceRoot: TEST_WORKSPACE_ROOT,
+    createToolOutputAccess: outputAccessFixture.createToolOutputAccess,
     config: {
       provider: {},
       agents: {
@@ -504,7 +524,7 @@ describe("factoryResolveAllowedTools with MCP tools", () => {
     return createAgentFactory({
       definitions: [def],
       providerRegistry,
-      toolRegistry: createRegistry([
+      toolRegistry: createTestRegistry([
         makeTool("unknown_tool"),
         ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
         ...DELEGATION_CORE_TOOLS.map(makeTool),
@@ -514,6 +534,7 @@ describe("factoryResolveAllowedTools with MCP tools", () => {
       storeManager,
       projectContextResolver: createTestProjectContextResolver(storeManager),
       workspaceRoot: TEST_WORKSPACE_ROOT,
+      createToolOutputAccess: outputAccessFixture.createToolOutputAccess,
       config: {
         provider: {},
         agents: { [def.name]: { model: providerRegistry.modelIds[0]! } },
@@ -559,7 +580,7 @@ describe("factoryResolveAllowedTools with MCP tools", () => {
   test("picks up tools registered after initial resolution (simulates background loading)", () => {
     const def = definition({ mcpTools: ["lazy"] });
     const providerRegistry = makeProviderRegistry();
-    const registry = createRegistry([
+    const registry = createTestRegistry([
       makeTool("unknown_tool"),
       ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
       ...DELEGATION_CORE_TOOLS.map(makeTool),
@@ -572,6 +593,7 @@ describe("factoryResolveAllowedTools with MCP tools", () => {
       storeManager,
       projectContextResolver: createTestProjectContextResolver(storeManager),
       workspaceRoot: TEST_WORKSPACE_ROOT,
+      createToolOutputAccess: outputAccessFixture.createToolOutputAccess,
       config: {
         provider: {},
         agents: { [def.name]: { model: providerRegistry.modelIds[0]! } },

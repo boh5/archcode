@@ -2,7 +2,8 @@
 export type {
   MaybePromise,
   ToolTraits,
-  ToolExecutionResult,
+  RawToolResult,
+  RegistryExecutionOutcome,
   ToolBlockedRequest,
   ToolExecutionContext,
   ToolExecutionControl,
@@ -12,31 +13,16 @@ export type {
   ToolCallLike,
   PermissionDecision,
   ToolPermission,
-  ToolConfirmationRequest,
-  ToolConfirmationCallback,
-  ToolConfirmationResult,
   PermissionErrorCode,
-  AskUserQuestionOption,
-  AskUserQuestion,
-  AskUserRequest,
-  AskUserAnswer,
-  AskUserCallback,
 } from "./types";
+export type { FinalizedToolResult } from "@archcode/protocol";
 
 // ─── Values ───
 export { createToolExecutionContext, DuplicateToolError, DestructiveToolPermissionError } from "./types";
 export { defineTool } from "./define-tool";
 export { ToolRegistry, ResolvedToolSet, createRegistry } from "./registry";
-export { createOutputTruncator, type TruncatorOptions } from "./hooks";
-export {
-  persistToolOutput,
-  persistToolOutputValue,
-  TOOL_OUTPUT_DIR,
-} from "./persist-output";
-export type { PersistOptions, PersistableToolPart } from "./persist-output";
 export { createExecutionLogger } from "./hooks";
-export { redactString, redactValue, REDACTION_MARKER } from "./security";
-export { createRedactionHook, createAuditHook } from "./hooks";
+export { createAuditHook } from "./hooks";
 export type { AuditEvent, AuditHookOptions, AuditSink } from "./hooks";
 export {
   combinePermissionDecisions,
@@ -54,7 +40,6 @@ export {
 } from "./permission";
 export type { WorkspacePermissionOptions } from "./permission";
 export {
-  TOOL_ERROR_META_KEY,
   createToolErrorResult,
   extractCode,
   formatToolError,
@@ -82,14 +67,6 @@ export type {
   PathValidationResult,
   ResolveAndValidatePathResult,
 } from "./security";
-
-// ─── Tool Output Cache (LRU Cleanup) ───
-export {
-  DEFAULT_QUOTA_MB,
-  enforceQuota,
-  getCacheStats,
-} from "./tool-output-cache";
-export type { CacheStats } from "./tool-output-cache";
 
 // ─── Concurrency ───
 export { createMutationQueue, sharedMutationQueue } from "./concurrency/mutation-queue";
@@ -155,7 +132,8 @@ export {
   TOOL_DELEGATE,
   TOOL_WAIT_FOR_REMINDER,
   TOOL_BACKGROUND_OUTPUT,
-  TOOL_VIEW_TOOL_OUTPUT,
+  TOOL_OUTPUT_READ,
+  TOOL_OUTPUT_SEARCH,
   TOOL_SKILL_LIST,
   TOOL_SKILL_READ,
   TOOL_MEMORY_READ,

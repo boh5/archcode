@@ -24,6 +24,7 @@ import { DELEGATION_CORE_TOOLS, MAX_SUB_AGENT_DEPTH } from "./constants";
 import type { Agent } from "./types";
 import { resolveAgentModel } from "./model-resolver";
 import { detectVersionControl, type VersionControlDetector } from "../version-control/detector";
+import type { ToolOutputAccessService } from "../tool-output/access-service";
 
 export type { ChildExecutionHandle, ChildExecutionRequest } from "./factory-types";
 
@@ -33,6 +34,7 @@ export interface AgentFactoryConfig {
   readonly toolRegistry: ToolRegistry;
   readonly skillService: SkillService;
   readonly storeManager: SessionStoreManager;
+  readonly createToolOutputAccess: (workspaceRoot: string, rootSessionId: string) => ToolOutputAccessService;
   readonly workspaceRoot: string;
   readonly config?: ArchCodeConfig;
   readonly backgroundTaskManager?: BackgroundTaskManager;
@@ -191,6 +193,10 @@ function createConfiguredAgent(
     toolRegistry: config.toolRegistry,
     skillService: config.skillService,
     storeManager: config.storeManager,
+    toolOutputAccess: config.createToolOutputAccess(
+      config.workspaceRoot,
+      store.getState().rootSessionId,
+    ),
     projectRoot: config.workspaceRoot,
     cwd: store.getState().cwd,
     store,

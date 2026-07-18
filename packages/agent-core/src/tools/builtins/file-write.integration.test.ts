@@ -7,20 +7,25 @@ import { FakeLspServer, installFakeLspServerPool } from "../../lsp/test-utils";
 import { storeManager } from "../../store/store";
 import { createMockStore } from "../../store/test-helpers";
 import { createTestTempRoot } from "../../testing/test-temp-root";
-import { ToolRegistry } from "../registry";
 import { createTestProjectContext } from "../test-project-context";
+import { createTestToolRegistryFixture } from "../test-registry";
+import { expectSettledResult } from "../test-results";
 import type { ToolExecutionContext } from "../types";
 import { fileWriteTool } from "./file-write";
 
 const tempRoot = createTestTempRoot("file-write-integration");
 const testDir = path.join(tempRoot.path, "workspace");
+const registryFixture = createTestToolRegistryFixture({ descriptors: [fileWriteTool] });
 
 beforeEach(async () => {
   await tempRoot.cleanup();
   await mkdir(testDir, { recursive: true });
 });
 afterEach(() => setLspClientPoolForTest(undefined));
-afterAll(() => tempRoot.cleanup());
+afterAll(async () => {
+  await registryFixture.dispose();
+  await tempRoot.cleanup();
+});
 
 describe("fileWriteTool integration", () => {
   test("appends LSP diagnostics after successful registry write when lsp_diagnostics is allowed", async () => {
@@ -31,16 +36,14 @@ describe("fileWriteTool integration", () => {
     const pool = await installFakeLspServerPool(server, testDir);
     try {
       const context = makeCtx();
-      const registry = new ToolRegistry();
-      registry.register(fileWriteTool);
-      const result = await registry.execute(
+      const result = expectSettledResult(await registryFixture.registry.execute(
         { toolCallId: context.toolCallId, toolName: "file_write", input: { path: "created.ts", content: "const value: string = 1;\n" } },
         context,
-      );
+      ));
       expect(result.isError).toBe(false);
-      expect(result.output).toContain("File written to created.ts");
-      expect(result.output).toContain("Post-edit diagnostics:");
-      expect(result.output).toContain("created.ts:1:7 error TS2322: Type 'number' is not assignable to type 'string'.");
+      expect(result.output.preview).toContain("File written to created.ts");
+      expect(result.output.preview).toContain("Post-edit diagnostics:");
+      expect(result.output.preview).toContain("created.ts:1:7 error TS2322: Type 'number' is not assignable to type 'string'.");
       expect(pool.releaseKeys).toEqual([{ workspaceRoot: testDir, serverId: "typescript" }]);
     } finally {
       await server.stop();

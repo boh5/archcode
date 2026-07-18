@@ -160,7 +160,8 @@ const rawBuiltinToolNames = [
   "skill_list",
   "skill_read",
   "todo_write",
-  "view_tool_output",
+  "output_read",
+  "output_search",
   "wait_for_reminder",
   "web_fetch",
 ] as const;

@@ -9,6 +9,7 @@ import { storeManager } from "../../../store/store";
 import { createMockStore } from "../../../store/test-helpers";
 import { createTestTempRoot } from "../../../testing/test-temp-root";
 import { createTestProjectContext } from "../../test-project-context";
+import { expectTextDraft } from "../../test-results";
 import type { ToolExecutionContext } from "../../types";
 import { lspSymbolsTool } from "./lsp-symbols";
 
@@ -26,7 +27,7 @@ describe("lspSymbolsTool integration", () => {
     const pool = await installFakeLspServerPool(server, testDir);
     try {
       const realFile = path.join(realpathSync.native(testDir), "example.ts");
-      expect(await lspSymbolsTool.execute({ scope: "document", filePath: "example.ts" }, makeCtx())).toBe(`Symbols: Class Greeter (${realFile}:1:1), Method greet (${realFile}:1:17)`);
+      expect(expectTextDraft(await lspSymbolsTool.execute({ scope: "document", filePath: "example.ts" }, makeCtx()))).toBe(`Symbols: Class Greeter (${realFile}:1:1), Method greet (${realFile}:1:17)`);
       expect(pool.releaseKeys).toEqual([{ workspaceRoot: testDir, serverId: "typescript" }]);
       expect(pool.acquireOptions[0]).toMatchObject({ command: "typescript-language-server", args: ["--stdio"], cwd: testDir });
     } finally { await server.stop(); }
@@ -36,7 +37,7 @@ describe("lspSymbolsTool integration", () => {
     await writeFile("flat.ts", "function makeThing() {}\n"); const absoluteFile = path.join(testDir, "flat.ts");
     const server = new FakeLspServer({ responses: { "textDocument/documentSymbol": [{ name: "makeThing", kind: 12, location: { uri: pathToFileUri(absoluteFile), range: range(0, 9) } }] } });
     await installFakeLspServerPool(server, testDir);
-    try { expect(await lspSymbolsTool.execute({ scope: "document", filePath: "flat.ts" }, makeCtx())).toBe(`Symbols: Function makeThing (${absoluteFile}:1:10)`); } finally { await server.stop(); }
+    try { expect(expectTextDraft(await lspSymbolsTool.execute({ scope: "document", filePath: "flat.ts" }, makeCtx()))).toBe(`Symbols: Function makeThing (${absoluteFile}:1:10)`); } finally { await server.stop(); }
   });
 
   test("workspace scope returns matching symbols for query", async () => {
@@ -44,7 +45,7 @@ describe("lspSymbolsTool integration", () => {
     const server = new FakeLspServer({ responses: { "workspaceSymbol/symbol": [{ name: "WorkspaceThing", kind: 5, location: { uri: pathToFileUri(absoluteFile), range: range(2, 4) } }] } });
     const pool = await installFakeLspServerPool(server, testDir);
     try {
-      expect(await lspSymbolsTool.execute({ scope: "workspace", query: "Thing" }, makeCtx())).toBe(`Symbols: Class WorkspaceThing (${absoluteFile}:3:5)`);
+      expect(expectTextDraft(await lspSymbolsTool.execute({ scope: "workspace", query: "Thing" }, makeCtx()))).toBe(`Symbols: Class WorkspaceThing (${absoluteFile}:3:5)`);
       expect(pool.releaseKeys).toEqual([{ workspaceRoot: testDir, serverId: "typescript" }]);
     } finally { await server.stop(); }
   });
@@ -52,9 +53,9 @@ describe("lspSymbolsTool integration", () => {
   test("returns no symbols found for empty and null responses", async () => {
     await writeFile("empty.ts", "const ok = true;\n");
     const documentServer = new FakeLspServer({ responses: { "textDocument/documentSymbol": [] } }); await installFakeLspServerPool(documentServer, testDir);
-    try { expect(await lspSymbolsTool.execute({ scope: "document", filePath: "empty.ts" }, makeCtx())).toBe("No symbols found."); } finally { await documentServer.stop(); }
+    try { expect(expectTextDraft(await lspSymbolsTool.execute({ scope: "document", filePath: "empty.ts" }, makeCtx()))).toBe("No symbols found."); } finally { await documentServer.stop(); }
     const workspaceServer = new FakeLspServer({ responses: { "workspaceSymbol/symbol": null } }); await installFakeLspServerPool(workspaceServer, testDir);
-    try { expect(await lspSymbolsTool.execute({ scope: "workspace", query: "missing" }, makeCtx())).toBe("No symbols found."); } finally { await workspaceServer.stop(); }
+    try { expect(expectTextDraft(await lspSymbolsTool.execute({ scope: "workspace", query: "missing" }, makeCtx()))).toBe("No symbols found."); } finally { await workspaceServer.stop(); }
   });
 });
 

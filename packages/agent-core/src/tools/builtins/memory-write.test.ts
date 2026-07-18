@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryFileManager } from "../../memory/file-manager";
 import type { ProjectContext } from "../../projects/types";
@@ -7,10 +8,11 @@ import { SkillService } from "../../skills";
 import { storeManager } from "../../store/store";
 import { createMemoryWriteTool, MemoryWriteInputSchema } from "./memory-write";
 import { createMockStore } from "../../store/test-helpers";
-import { createToolExecutionContext, type ToolExecutionContext, type ToolExecutionResult } from "../types";
+import { expectTextDraft } from "../test-results";
+import { createToolExecutionContext, type RawToolResult, type ToolExecutionContext } from "../types";
 import { createTestProjectContext } from "../test-project-context";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__", crypto.randomUUID());
+const TMP_DIR = join(tmpdir(), "archcode-memory-write", crypto.randomUUID());
 const testSkillService = new SkillService({ builtinSkills: {} });
 
 function makeFileManager(): MemoryFileManager {
@@ -39,10 +41,8 @@ function makeCtx(fileManager: MemoryFileManager, toolCallId = "call-1"): ToolExe
   cwd: projectContext.project.workspaceRoot, });
 }
 
-function parseErrorResult(result: string | ToolExecutionResult): ToolExecutionResult {
-  if (typeof result === "string") {
-    throw new Error(`Expected error result, got success: ${result}`);
-  }
+function parseErrorResult(result: RawToolResult): RawToolResult {
+  if (!result.isError) throw new Error(`Expected error result, got success: ${expectTextDraft(result)}`);
   return result;
 }
 
@@ -175,8 +175,7 @@ describe("memory_write tool", () => {
       makeCtx(fileManager),
     );
 
-    expect(typeof result).toBe("string");
-    expect(result).toContain("test_topic");
+    expect(expectTextDraft(result)).toContain("test_topic");
 
     const topic = await fileManager.readTopic("test_topic");
     expect(topic).not.toBeNull();
@@ -206,7 +205,7 @@ describe("memory_write tool", () => {
     );
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain("index");
+    expect(expectTextDraft(result)).toContain("index");
   });
 
   it("rejects content containing API keys", async () => {
@@ -225,7 +224,7 @@ describe("memory_write tool", () => {
     );
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain("secret");
+    expect(expectTextDraft(result)).toContain("secret");
   });
 
   it("rejects content containing passwords", async () => {
@@ -244,7 +243,7 @@ describe("memory_write tool", () => {
     );
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain("secret");
+    expect(expectTextDraft(result)).toContain("secret");
   });
 
   it("updates existing file on duplicate name (idempotent)", async () => {
@@ -272,7 +271,7 @@ describe("memory_write tool", () => {
       makeCtx(fileManager, "call-7"),
     );
 
-    expect(typeof result).toBe("string");
+    expect(result.isError).toBe(false);
 
     const topic = await fileManager.readTopic("duplicate");
     expect(topic).not.toBeNull();
@@ -317,8 +316,7 @@ describe("memory_write tool", () => {
       makeCtx(fileManager, "call-9"),
     );
 
-    expect(typeof result).toBe("string");
-    expect(result).toContain("user preferences");
+    expect(expectTextDraft(result)).toContain("user preferences");
 
     const prefs = await fileManager.readPreferences();
     expect(prefs).toBe("I prefer dark mode\n");
@@ -336,7 +334,7 @@ describe("memory_write tool", () => {
       makeCtx(fileManager, "call-10"),
     );
 
-    expect(typeof result).toBe("string");
+    expect(result.isError).toBe(false);
     const prefs = await fileManager.readPreferences();
     expect(prefs).toContain("Existing preference");
     expect(prefs).toContain("New preference");
@@ -356,7 +354,7 @@ describe("memory_write tool", () => {
     );
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain("user level");
+    expect(expectTextDraft(result)).toContain("user level");
   });
 
   it("defaults scope to user for preferences when scope not specified", async () => {
@@ -369,8 +367,7 @@ describe("memory_write tool", () => {
       makeCtx(fileManager, "call-12"),
     );
 
-    expect(typeof result).toBe("string");
-    expect(result).toContain("user preferences");
+    expect(expectTextDraft(result)).toContain("user preferences");
 
     const prefs = await fileManager.readPreferences();
     expect(prefs).toBe("I like vim\n");
@@ -386,8 +383,7 @@ describe("memory_write tool", () => {
       makeCtx(fileManager, "call-13"),
     );
 
-    expect(typeof result).toBe("string");
-    expect(result).toContain("architecture");
+    expect(expectTextDraft(result)).toContain("architecture");
 
     const topic = await fileManager.readTopic("architecture");
     expect(topic).not.toBeNull();
@@ -408,8 +404,8 @@ describe("memory_write tool", () => {
     );
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain("Only");
-    expect(result.output).toContain("preferences");
-    expect(result.output).toContain("user level");
+    expect(expectTextDraft(result)).toContain("Only");
+    expect(expectTextDraft(result)).toContain("preferences");
+    expect(expectTextDraft(result)).toContain("user level");
   });
 });

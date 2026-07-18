@@ -12,11 +12,11 @@ import type {
   PendingSessionMessage,
   SessionInputReceipt,
   ToolChildSessionLink,
-  HitlDisplayPayload,
-  HitlSource,
+  FinalizedToolResult,
 } from "@archcode/protocol";
 import type { CompressionState } from "../compression";
 import type { AgentName } from "../agents/names";
+import type { PersistedSessionToolCallBlocker } from "../hitl/boundary-codec";
 
 export type {
   StreamEvent,
@@ -41,6 +41,9 @@ export type {
   ToolInputResolvedEvent,
   ToolAttemptEvent,
   ToolResultEvent,
+  FinalizedToolResult,
+  ToolOutput,
+  ToolResultDetails,
   ToolChildSessionLink,
   ToolChildSessionLinkEvent,
   ToolChildSessionLinkStatus,
@@ -97,28 +100,20 @@ export type SessionToolCallState =
   | "failed"
   | "manual_inspection_required";
 
-export interface SessionToolCallResult {
-  readonly output: string;
-  readonly isError: boolean;
-  readonly meta?: Record<string, unknown>;
-}
+export type SessionToolCallBlocker = PersistedSessionToolCallBlocker;
 
-export interface SessionToolCallBlocker {
-  readonly requestKey: string;
-  readonly hitlId?: string;
-  readonly source: Extract<HitlSource, { type: "ask_user" | "tool_permission" }>;
-  readonly displayPayload: HitlDisplayPayload;
-  readonly permissionFingerprint?: string;
-  readonly persistentApprovalEligible?: boolean;
-  readonly permission?: {
-    readonly description: string;
-    readonly reason?: string;
-    readonly decisionDisplay?: string;
-    readonly ruleId?: string;
-  };
-  readonly responseAppliedAt?: string;
-  readonly permissionDecision?: "approve_once" | "approve_always" | "deny";
-}
+export type SessionToolRecoveryFailure =
+  | { readonly kind: "read_retry_exhausted" }
+  | { readonly kind: "effectful_outcome_unknown" }
+  | { readonly kind: "effectful_cancelled_unknown" };
+
+export type SessionToolManualInspectionReason =
+  | { readonly kind: "continuation_interrupted"; readonly batchId: string }
+  | {
+      readonly kind: "effectful_outcome_unknown" | "effectful_cancelled_unknown";
+      readonly toolCallId: string;
+      readonly toolName: string;
+    };
 
 export interface SessionToolBatchCall {
   readonly ordinal: number;
@@ -133,9 +128,9 @@ export interface SessionToolBatchCall {
   };
   readonly state: SessionToolCallState;
   readonly attempt: number;
-  readonly result?: SessionToolCallResult;
+  readonly result?: FinalizedToolResult;
   readonly blocker?: SessionToolCallBlocker;
-  readonly recoveryFailure?: string;
+  readonly recoveryFailure?: SessionToolRecoveryFailure;
 }
 
 export interface SessionToolBatchPartition {
@@ -159,7 +154,7 @@ export interface SessionToolBatch {
   readonly continuationStartedAt?: string;
   readonly continuationCompletedAt?: string;
   readonly archivedAt?: string;
-  readonly manualInspectionReason?: string;
+  readonly manualInspectionReason?: SessionToolManualInspectionReason;
 }
 
 export interface SessionStoreState {

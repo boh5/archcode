@@ -11,13 +11,15 @@ import { SkillService } from "../../../skills";
 import { storeManager } from "../../../store/store";
 import { createMockStore } from "../../../store/test-helpers";
 import { createTestTempRoot } from "../../../testing/test-temp-root";
-import { ToolRegistry } from "../../registry";
 import { createTestProjectContext } from "../../test-project-context";
+import { createTestToolRegistryFixture } from "../../test-registry";
+import { expectSettledResult } from "../../test-results";
 import type { ToolExecutionContext } from "../../types";
 import { astGrepReplaceTool } from "./replace";
 
 const tempRoot = createTestTempRoot("ast-grep-replace-integration");
 const workspace = join(tempRoot.path, "workspace");
+const registryFixture = createTestToolRegistryFixture({ descriptors: [astGrepReplaceTool] });
 
 beforeEach(async () => {
   await tempRoot.cleanup();
@@ -37,7 +39,10 @@ afterEach(() => {
   setProcessRunnerForTest(undefined);
   setLspClientPoolForTest(undefined);
 });
-afterAll(() => tempRoot.cleanup());
+afterAll(async () => {
+  await registryFixture.dispose();
+  await tempRoot.cleanup();
+});
 
 describe("ast_grep_replace tool integration", () => {
   test("apply mode appends LSP diagnostics after successful registry replacement when lsp_diagnostics is allowed", async () => {
@@ -55,16 +60,14 @@ describe("ast_grep_replace tool integration", () => {
 
     try {
       const context = makeCtx(file);
-      const registry = new ToolRegistry();
-      registry.register(astGrepReplaceTool);
-      const result = await registry.execute(
+      const result = expectSettledResult(await registryFixture.registry.execute(
         { toolCallId: context.toolCallId, toolName: "ast_grep_replace", input: { pattern: "console.log($MSG)", rewrite: "logger.info($MSG)", dryRun: false } },
         context,
-      );
+      ));
       expect(result.isError).toBe(false);
-      expect(result.output).toContain('"applied": true');
-      expect(result.output).toContain("Post-edit diagnostics:");
-      expect(result.output).toContain("success.ts:1:7 error TS2322: Type 'number' is not assignable to type 'string'.");
+      expect(result.output.preview).toContain('"file":"success.ts"');
+      expect(result.output.preview).toContain("Post-edit diagnostics:");
+      expect(result.output.preview).toContain("success.ts:1:7 error TS2322: Type 'number' is not assignable to type 'string'.");
       expect(pool.releaseKeys).toEqual([{ workspaceRoot: workspace, serverId: "typescript" }]);
     } finally {
       await server.stop();
@@ -93,5 +96,5 @@ function spawnResult(stdout: string) {
 }
 
 function replacementJsonFor(file: string): string {
-  return JSON.stringify([{ text: "console.log(message)", range: { byteOffset: { start: 0, end: 20 }, start: { line: 0, column: 0 }, end: { line: 0, column: 20 } }, file, lines: "console.log(message)", replacement: "logger.info(message)", replacementOffsets: { start: 0, end: 20 } }]);
+  return `${JSON.stringify({ text: "console.log(message)", range: { byteOffset: { start: 0, end: 20 }, start: { line: 0, column: 0 }, end: { line: 0, column: 20 } }, file, lines: "console.log(message)", replacement: "logger.info(message)", replacementOffsets: { start: 0, end: 20 } })}\n`;
 }

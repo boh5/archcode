@@ -2,12 +2,14 @@ import type { ModelMessage, StreamTextResult, ToolSet } from "ai";
 import type { StoreApi } from "zustand";
 import type { Logger } from "../../logger";
 import { toDurableToolInput } from "../../store/durable-tool-input";
-import type { ErrorToolPart, ExecutionEndEvent, SessionStoreState, StreamEvent } from "../../store/types";
+import type { ExecutionEndEvent, SessionStoreState } from "../../store/types";
+import type { SessionToolManualInspectionReason } from "../../store/types";
 import { createToolExecutionContext } from "../../tools/index";
-import type { ToolExecutionControl } from "../../tools/index";
+import type { RawToolResult, ToolCallLike, ToolExecutionContext, ToolExecutionControl } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
+import { createToolErrorResult } from "../../tools/errors";
 import { DOOM_LOOP_MESSAGE, type NormalizedToolCall, type QueryLoopOptions, type QueryLoopResult } from "./types";
-import { redactValue } from "../../tools/security";
+import { redactValue } from "../../security";
 import { classifyLlmError, runLlmStream } from "../../llm";
 import { parseRetryAfter, realRetryScheduler, type RetryScheduler } from "../../llm/retry";
 import type { BeforeModelBuildContext, BeforeModelCallContext } from "./loop-hooks";
@@ -42,6 +44,7 @@ interface ModelAttemptOptions {
   beforeModelBuild: HookList<BeforeModelBuildContext>;
   beforeModelCall: HookList<BeforeModelCallContext>;
   consumeSteers?: () => Promise<void>;
+  settleUnfinalizedToolParts: () => Promise<void>;
 }
 
 type ModelAttemptResult =
@@ -131,6 +134,7 @@ async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttem
     beforeModelBuild,
     beforeModelCall,
     consumeSteers,
+    settleUnfinalizedToolParts,
   } = options;
 
   store.getState().append({ type: "step-start", step });
@@ -162,7 +166,10 @@ async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttem
 
     const { streamError } = await consumeFullStream(result.fullStream as AsyncIterable<TextStreamPart>, store, abort);
     const finalized = await finalizeModelResult(result as AnyStreamTextResult, streamError, store, step, abort);
-    if (finalized.outcome !== "success") return finalized;
+    if (finalized.outcome !== "success") {
+      if (finalized.outcome === "retry") await settleUnfinalizedToolParts();
+      return finalized;
+    }
     return { outcome: "success", finalized: finalized.finalized, streamError };
   } catch (err) {
     const failure = buildRetryOrTerminalFailure(err, store, step, abort);
@@ -171,7 +178,7 @@ async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttem
       step,
       finishReason: failure.outcome === "retry" ? "interrupted" : "error",
     });
-    if (failure.outcome === "retry") settleUnfinalizedToolPartsForRecovery(store);
+    if (failure.outcome === "retry") await settleUnfinalizedToolParts();
     return failure;
   }
 }
@@ -184,7 +191,6 @@ export async function runQueryLoop(
     modelInfo,
     toolRegistry,
     allowedTools,
-    confirmPermission,
     systemPrompt,
     maxSteps = DEFAULT_MAX_STEPS,
     store,
@@ -211,6 +217,43 @@ export async function runQueryLoop(
   let lastRecoveryAttempt = 0;
   let continuationClaimed = false;
   const doomTracker = new DoomTracker();
+  const createContext = async (toolCall: ToolCallLike, step: number): Promise<ToolExecutionContext> => createToolExecutionContext({
+    store,
+    toolName: toolCall.toolName,
+    toolCallId: toolCall.toolCallId,
+    input: toolCall.input,
+    redactedInput: redactValue(toolCall.input),
+    step,
+    abort,
+    startedAt: Date.now(),
+    allowedTools: new Set(allowedTools),
+    projectContext: options.projectContext,
+    cwd: executionCwd,
+    agentSkills: options.agentSkills,
+    skillService: options.skillService,
+    storeManager: options.storeManager,
+    outputArtifacts: options.toolOutputAccess,
+    ...(options.startChildExecution === undefined ? {} : { startChildExecution: options.startChildExecution }),
+    ...(options.cancelChildSession === undefined ? {} : { cancelChildSession: options.cancelChildSession }),
+    ...(options.resumeChildSession === undefined ? {} : { resumeChildSession: options.resumeChildSession }),
+    ...(options.acquireSessionCwdTransition === undefined ? {} : { acquireSessionCwdTransition: options.acquireSessionCwdTransition }),
+    agentName: options.agentName,
+    ...(currentDepth === undefined ? {} : { currentDepth }),
+    onInputResolved(redactedInput) {
+      store.getState().append({ type: "tool-input-resolved", toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, input: redactedInput });
+    },
+    async onToolAttempt(attempt) {
+      store.getState().append({
+        type: "tool-attempt",
+        toolCallId: attempt.toolCallId,
+        toolName: attempt.toolName,
+        attemptId: attempt.attemptId,
+        timestamp: attempt.timestamp,
+        destructive: attempt.destructive,
+      });
+      await options.storeManager.flushSession(sessionId, options.projectContext.project.workspaceRoot);
+    },
+  });
   const toolBatchScheduler = new SessionToolBatchScheduler({
     store,
     storeManager: options.storeManager,
@@ -220,51 +263,7 @@ export async function runQueryLoop(
     agentName: store.getState().agentName,
     allowedTools,
     agentSkills: options.agentSkills,
-    async executeCall(toolCall, batchContext) {
-      const batch = toolBatchScheduler.activeBatch();
-      const ctx = createToolExecutionContext({
-        store,
-        toolName: toolCall.toolName,
-        toolCallId: toolCall.toolCallId,
-        input: toolCall.input,
-        redactedInput: redactValue(toolCall.input),
-        step: batch?.step ?? steps,
-        abort,
-        startedAt: Date.now(),
-        allowedTools: new Set(allowedTools),
-        projectContext: options.projectContext,
-        cwd: executionCwd,
-        agentSkills: options.agentSkills,
-        skillService: options.skillService,
-        storeManager: options.storeManager,
-        ...(confirmPermission === undefined ? {} : { confirmPermission }),
-        ...(batchContext.deferredPermissionResponse === undefined
-          ? {}
-          : { deferredPermissionResponse: batchContext.deferredPermissionResponse }),
-        ...(options.askUser === undefined ? {} : { askUser: options.askUser }),
-        ...(options.startChildExecution === undefined ? {} : { startChildExecution: options.startChildExecution }),
-        ...(options.cancelChildSession === undefined ? {} : { cancelChildSession: options.cancelChildSession }),
-        ...(options.resumeChildSession === undefined ? {} : { resumeChildSession: options.resumeChildSession }),
-        ...(options.acquireSessionCwdTransition === undefined ? {} : { acquireSessionCwdTransition: options.acquireSessionCwdTransition }),
-        agentName: options.agentName,
-        ...(currentDepth === undefined ? {} : { currentDepth }),
-        onInputResolved(redactedInput) {
-          store.getState().append({ type: "tool-input-resolved", toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, input: redactedInput });
-        },
-        async onToolAttempt(attempt) {
-          store.getState().append({
-            type: "tool-attempt",
-            toolCallId: attempt.toolCallId,
-            toolName: attempt.toolName,
-            attemptId: attempt.attemptId,
-            timestamp: attempt.timestamp,
-            destructive: attempt.destructive,
-          });
-          await options.storeManager.flushSession(sessionId, options.projectContext.project.workspaceRoot);
-        },
-      });
-      return await toolRegistry.execute(toolCall, ctx);
-    },
+    createContext,
   });
 
   try {
@@ -276,6 +275,9 @@ export async function runQueryLoop(
         runEndStatus = startupResult.runEndStatus;
         return startupResult.result;
       }
+    } else {
+      await settleUnfinalizedToolPartsForRecovery(store, toolRegistry, createContext, steps);
+      await options.storeManager.flushSession(sessionId, options.projectContext.project.workspaceRoot);
     }
 
     while (steps < maxSteps) {
@@ -324,6 +326,10 @@ export async function runQueryLoop(
         beforeModelBuild,
         beforeModelCall,
         consumeSteers: options.consumeSteers,
+        settleUnfinalizedToolParts: async () => {
+          await settleUnfinalizedToolPartsForRecovery(store, toolRegistry, createContext, steps);
+          await options.storeManager.flushSession(sessionId, options.projectContext.project.workspaceRoot);
+        },
       });
 
       if (attempt.outcome === "retry") {
@@ -387,7 +393,8 @@ export async function runQueryLoop(
       if (attempt.outcome === "terminal") {
         if (attempt.finalizationKind) {
           appendPostStreamTerminalFailure(store, attempt.error, steps, attempt.finalizationKind);
-          settleUnfinalizedToolPartsForRecovery(store);
+          await settleUnfinalizedToolPartsForRecovery(store, toolRegistry, createContext, steps);
+          await options.storeManager.flushSession(sessionId, options.projectContext.project.workspaceRoot);
           markCurrentAssistantModelOutputDiscardedFromContext(store);
         } else {
           store.getState().append({
@@ -457,7 +464,6 @@ export async function runQueryLoop(
       const toolExecution = await executeToolCalls(
         toolCalls,
         toolBatchScheduler,
-        store,
         steps,
         doomTracker,
       );
@@ -676,7 +682,6 @@ function handleFinalizationFailure(
     if (isStepOpen(store, step)) {
       store.getState().append({ type: "step-end", step, finishReason: "interrupted" });
     }
-    settleUnfinalizedToolPartsForRecovery(store);
     return failure;
   }
 
@@ -840,47 +845,40 @@ function markCurrentAssistantModelOutputDiscardedFromContext(store: StoreApi<Ses
   });
 }
 
-function settleUnfinalizedToolPartsForRecovery(store: StoreApi<SessionStoreState>): void {
-  const currentAssistantMessageId = store.getState().currentAssistantMessageId;
-  if (!currentAssistantMessageId) return;
-  const timestamp = Date.now();
-
-  store.setState((state) => {
-    let changed = false;
-    const messages = state.messages.map((message) => {
-      if (message.id !== currentAssistantMessageId) return message;
-
-      const parts = message.parts.map((part) => {
-        if (part.type !== "tool" || (part.state !== "pending" && part.state !== "running")) return part;
-
-        changed = true;
-        const hasAttempt = part.attemptId !== undefined;
-        const settledPart: ErrorToolPart = {
-          type: "tool",
-          id: part.id,
-          state: "error",
-          toolCallId: part.toolCallId,
-          toolName: part.toolName,
-          input: toDurableToolInput("input" in part ? part.input : undefined),
-          errorMessage: hasAttempt
-            ? "Tool execution result unknown: execution was interrupted"
-            : "Execution ended before tool result",
-          createdAt: part.createdAt,
-          startedAt: "startedAt" in part ? part.startedAt : timestamp,
-          endedAt: timestamp,
-          ...(hasAttempt ? { meta: { unknownResult: true } } : {}),
-          ...(part.attemptId !== undefined ? { attemptId: part.attemptId } : {}),
-          ...(part.attemptTimestamp !== undefined ? { attemptTimestamp: part.attemptTimestamp } : {}),
-          ...(part.attemptDestructive !== undefined ? { attemptDestructive: part.attemptDestructive } : {}),
-        };
-        return settledPart;
-      });
-
-      return changed ? { ...message, parts } : message;
+async function settleUnfinalizedToolPartsForRecovery(
+  store: StoreApi<SessionStoreState>,
+  registry: ToolRegistry,
+  createContext: (call: ToolCallLike, step: number) => Promise<ToolExecutionContext>,
+  step: number,
+): Promise<void> {
+  const parts = store.getState().messages.flatMap((message) => message.parts.filter(
+    (part) => part.type === "tool" && (part.state === "pending" || part.state === "running"),
+  ));
+  for (const part of parts) {
+    const hasAttempt = part.attemptId !== undefined;
+    const call: ToolCallLike = {
+      toolCallId: part.toolCallId,
+      toolName: part.toolName,
+      input: toDurableToolInput("input" in part ? part.input : undefined),
+    };
+    const raw = createToolErrorResult({
+      kind: "execution",
+      code: hasAttempt ? "TOOL_RESULT_UNKNOWN" : "TOOL_NOT_EXECUTED",
+      message: hasAttempt
+        ? "Tool execution result is unknown because execution was interrupted"
+        : "Execution ended before the tool ran",
     });
-
-    return changed ? { messages } : {};
-  });
+    const outcome = await registry.settleSystem(call, await createContext(call, step), hasAttempt
+      ? { ...raw, details: { ...raw.details, unknownResult: true } }
+      : raw);
+    if (outcome.kind !== "settled") throw new Error("Recovery system result unexpectedly blocked");
+    store.getState().append({
+      type: "tool-result",
+      toolCallId: call.toolCallId,
+      toolName: call.toolName,
+      result: outcome.result,
+    });
+  }
 }
 
 function hasRecoveryAttempts(attempts: {
@@ -902,27 +900,28 @@ function computeSessionRetryDelayMs(attempt: number, error: unknown, retrySchedu
 async function executeToolCalls(
   toolCalls: ToolCallArray,
   scheduler: SessionToolBatchScheduler,
-  store: StoreApi<SessionStoreState>,
   step: number,
   doomTracker?: DoomTracker,
 ): Promise<ToolBatchExecutionResult> {
-  const executableToolCalls: ToolCallArray = [];
-
+  const doomCallIds = new Set<string>();
   for (const toolCall of toolCalls) {
-    if (doomTracker?.check(toolCall)) {
-      appendToolResult(store, toolCall, DOOM_LOOP_MESSAGE, true, undefined);
-    } else {
-      executableToolCalls.push(toolCall);
-    }
+    if (doomTracker?.check(toolCall)) doomCallIds.add(toolCall.toolCallId);
   }
-  if (executableToolCalls.length === 0) return { sessionCwdChanged: false };
-  await scheduler.createBatch(executableToolCalls, step);
+  if (toolCalls.length === 0) return { sessionCwdChanged: false };
+  await scheduler.createBatch(toolCalls, step);
+  for (const toolCallId of doomCallIds) {
+    await scheduler.settleQueuedCall(toolCallId, createToolErrorResult({
+      kind: "execution",
+      code: "TOOL_DOOM_LOOP",
+      message: DOOM_LOOP_MESSAGE,
+    }));
+  }
   return toolBatchExecutionResult(await scheduler.advance());
 }
 
 function toolBatchExecutionResult(result: SessionToolBatchAdvanceResult): ToolBatchExecutionResult {
   if (result.status === "manual_inspection_required") {
-    return { sessionCwdChanged: false, manualInspectionReason: result.reason };
+    return { sessionCwdChanged: false, manualInspectionReason: manualInspectionMessage(result.reason) };
   }
   return {
     sessionCwdChanged: result.sessionCwdChanged,
@@ -939,8 +938,9 @@ function finishToolBatchAdvance(
   steps: number,
 ): { runEndStatus: ExecutionEndEvent["status"]; result: QueryLoopResult } | undefined {
   if (result.status === "manual_inspection_required") {
-    store.getState().append({ type: "execution-error", step: steps, error: result.reason });
-    return { runEndStatus: "failed", result: { text, steps, status: "failed", error: result.reason } };
+    const reason = manualInspectionMessage(result.reason);
+    store.getState().append({ type: "execution-error", step: steps, error: reason });
+    return { runEndStatus: "failed", result: { text, steps, status: "failed", error: reason } };
   }
   if (result.sessionCwdChanged) {
     return {
@@ -964,22 +964,13 @@ function executionEndStatusFromControl(control: ToolExecutionControl): Execution
   return control.reason === "goal_cancelled" ? "cancelled" : "interrupted";
 }
 
-function appendToolResult(
-  store: StoreApi<SessionStoreState>,
-  toolCall: ToolCallArray[number],
-  output: string,
-  isError: boolean,
-  meta?: Record<string, unknown>,
-): void {
-  const event: StreamEvent = {
-    type: "tool-result",
-    toolCallId: toolCall.toolCallId,
-    toolName: toolCall.toolName,
-    output,
-    isError,
-    ...(meta ? { meta } : {}),
-  };
-  store.getState().append(event);
+function manualInspectionMessage(reason: SessionToolManualInspectionReason): string {
+  if (reason.kind === "continuation_interrupted") {
+    return `LLM continuation for tool batch ${reason.batchId} was interrupted`;
+  }
+  return reason.kind === "effectful_cancelled_unknown"
+    ? `Effectful tool ${reason.toolName} (${reason.toolCallId}) was interrupted during cancellation; its outcome requires manual inspection`
+    : `Effectful tool ${reason.toolName} (${reason.toolCallId}) has an unknown outcome and requires manual inspection`;
 }
 
 function errorMessage(err: unknown): string {

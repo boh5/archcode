@@ -6,9 +6,20 @@ import { storeManager } from "../../../store/store";
 import type { CompactionPart, SessionStoreState, StoredMessage } from "../../../store/types";
 import { silentLogger } from "../../../logger";
 import type { BeforeModelBuildContext, BeforeModelCallContext } from "../loop-hooks";
-import { createHybridCompressionHook } from "./hybrid-compression";
+import type { ToolOutputAccessService } from "../../../tool-output/access-service";
+import { createHybridCompressionHook as createHybridCompressionHookWithAccess } from "./hybrid-compression";
 
 const TEST_WORKSPACE_ROOT = `/tmp/archcode-agent-core-hybrid-compression-${crypto.randomUUID()}`;
+const countRecoverable = mock(async () => 3);
+const toolOutputAccess = {
+  countRecoverable,
+  read: async () => { throw new Error("not used"); },
+  search: async () => { throw new Error("not used"); },
+} satisfies ToolOutputAccessService;
+
+function createHybridCompressionHook(logger: typeof silentLogger) {
+  return createHybridCompressionHookWithAccess(logger, toolOutputAccess);
+}
 
 const generateText = mock(async () => ({ text: "", toolCalls: [{ toolName: "compression_summary", input: summary() }] }));
 const streamText = mock(() => ({
@@ -23,6 +34,7 @@ const streamText = mock(() => ({
 beforeEach(() => {
   generateText.mockReset();
   streamText.mockReset();
+  countRecoverable.mockClear();
   generateText.mockImplementation(async () => ({ text: "", toolCalls: [{ toolName: "compression_summary", input: summary() }] }) as never);
   streamText.mockImplementation(() => ({
     text: Promise.resolve("## Current Objective\nContinue the current task"),
@@ -96,6 +108,25 @@ function callCtx(store: StoreApi<SessionStoreState>, inputTokens: number): Befor
 }
 
 describe("hybrid compression hooks", () => {
+  test("manual hard compact scheduling injects the same bounded one-shot recovery notice", async () => {
+    const store = makeStore();
+    const hook = createHybridCompressionHook(silentLogger);
+    const eventCount = store.getState().events.length;
+
+    await hook.scheduleToolOutputRecoveryNotice();
+    const first = callCtx(store, 100);
+    await hook.beforeModelCall(first);
+    const notice = JSON.stringify(first.messages);
+    expect(notice).toContain("3 recoverable tool-output artifacts");
+    expect(notice).toContain("output_search without outputRef");
+    expect(new TextEncoder().encode(notice).byteLength).toBeLessThan(1_024);
+
+    const second = callCtx(store, 100);
+    await hook.beforeModelCall(second);
+    expect(second.messages).toEqual([]);
+    expect(store.getState().events).toHaveLength(eventCount);
+  });
+
   test("injects no nudge at 54%, soft nudge at exactly 55%, and strong nudge at exactly 70%", async () => {
     const hook = createHybridCompressionHook(silentLogger);
 
@@ -137,7 +168,13 @@ describe("hybrid compression hooks", () => {
 
     expect(store.getState().events.filter((event) => event.payload.type === "compact")).toHaveLength(1);
     expect(store.getState().events.filter((event) => event.payload.type === "compression.block_committed")).toHaveLength(0);
-    expect(call.messages).toHaveLength(0);
+    expect(JSON.stringify(call.messages)).toContain("3 recoverable tool-output artifacts");
+    expect(JSON.stringify(call.messages)).toContain("output_search without outputRef");
+    expect(countRecoverable).toHaveBeenCalledTimes(1);
+    const eventCount = store.getState().events.length;
+    await hook.beforeModelCall(call);
+    expect(call.messages.filter((message) => JSON.stringify(message).includes("Hard compact completed"))).toHaveLength(1);
+    expect(store.getState().events).toHaveLength(eventCount);
   });
 
   test("forced hard compact preserves latest two complete rounds and current incomplete round", async () => {
@@ -178,7 +215,7 @@ describe("hybrid compression hooks", () => {
 
     expect(store.getState().events.filter((event) => event.payload.type === "compact")).toHaveLength(1);
     expect(store.getState().events.filter((event) => event.payload.type === "compression.block_committed")).toHaveLength(0);
-    expect(call.messages).toHaveLength(0);
+    expect(JSON.stringify(call.messages)).toContain("3 recoverable tool-output artifacts");
   });
 
   test("records no compact event and no compression failure when forced compact has no safe range", async () => {

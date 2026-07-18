@@ -5,7 +5,13 @@ import { PROJECT_STATE_DIR_NAME, USER_DATA_DIR_NAME } from "@archcode/protocol";
 import { BUILTIN_SKILL_BODIES } from "./builtin/manifest";
 import { assertSkillName, parseSkillMarkdown } from "./schema";
 import type { ResolvedSkill, SkillIndexEntry, SkillSource } from "./types";
-import { resolveContainedPath, SafePathError } from "../utils/safe-file";
+import {
+  ONE_SHOT_FILE_READ_MAX_BYTES,
+  assertUtf8TextWithinLimit,
+  readUtf8FileBounded,
+  resolveContainedPath,
+  SafePathError,
+} from "../utils/safe-file";
 
 const PROJECT_SKILLS_DIR = join(PROJECT_STATE_DIR_NAME, "skills");
 const SKILL_FILE = "SKILL.md";
@@ -155,6 +161,7 @@ export class SkillService {
     try {
       const content = candidate.content;
       if (content === undefined) throw new Error("Skill content is missing");
+      assertUtf8TextWithinLimit(content, ONE_SHOT_FILE_READ_MAX_BYTES);
       const { metadata, body } = parseSkillMarkdown(content);
       if (metadata.name !== requestedName) {
         throw new Error(
@@ -221,7 +228,7 @@ export class SkillService {
 
   async #readFileOrUndefined(filePath: string): Promise<string | undefined> {
     try {
-      return await Bun.file(filePath).text();
+      return await readUtf8FileBounded(filePath, ONE_SHOT_FILE_READ_MAX_BYTES);
     } catch (error) {
       if (isNoEntryError(error)) return undefined;
       throw error;

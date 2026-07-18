@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { defineTool } from "../define-tool";
+import { createTextToolResult } from "../results";
 import type { Reminder } from "../../store/types";
 import type { ToolExecutionContext } from "../types";
 
@@ -187,5 +188,6 @@ export const waitForReminderTool = defineTool({
   ].join("\n"),
   inputSchema: WaitForReminderInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: true },
-  execute: executeWaitForReminder,
+  outputPolicy: { kind: "inline", previewDirection: "head" },
+  execute: async (input, ctx) => createTextToolResult(await executeWaitForReminder(input, ctx)),
 });

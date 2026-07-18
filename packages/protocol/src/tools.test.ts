@@ -31,7 +31,8 @@ import {
   TOOL_DELEGATE,
   TOOL_WAIT_FOR_REMINDER,
   TOOL_BACKGROUND_OUTPUT,
-  TOOL_VIEW_TOOL_OUTPUT,
+  TOOL_OUTPUT_READ,
+  TOOL_OUTPUT_SEARCH,
   TOOL_SKILL_LIST,
   TOOL_SKILL_READ,
   TOOL_MEMORY_READ,
@@ -77,7 +78,8 @@ const ALL_BUILTIN_NAMES = [
   TOOL_DELEGATE,
   TOOL_WAIT_FOR_REMINDER,
   TOOL_BACKGROUND_OUTPUT,
-  TOOL_VIEW_TOOL_OUTPUT,
+  TOOL_OUTPUT_READ,
+  TOOL_OUTPUT_SEARCH,
   TOOL_SKILL_LIST,
   TOOL_SKILL_READ,
   TOOL_MEMORY_READ,
@@ -121,7 +123,8 @@ describe("tool name constants", () => {
     expect(TOOL_DELEGATE).toBe("delegate");
     expect(TOOL_WAIT_FOR_REMINDER).toBe("wait_for_reminder");
     expect(TOOL_BACKGROUND_OUTPUT).toBe("background_output");
-    expect(TOOL_VIEW_TOOL_OUTPUT).toBe("view_tool_output");
+    expect(TOOL_OUTPUT_READ).toBe("output_read");
+    expect(TOOL_OUTPUT_SEARCH).toBe("output_search");
     expect(TOOL_SKILL_LIST).toBe("skill_list");
     expect(TOOL_SKILL_READ).toBe("skill_read");
     expect(TOOL_MEMORY_READ).toBe("memory_read");

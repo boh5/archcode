@@ -74,7 +74,7 @@ export async function resolveServerBinary(serverId: string, options: LspInstalle
     return binaryPath;
   } catch (error) {
     logger.warn("lsp.installer.resolve.failed", {
-      context: { serverId, error: error instanceof Error ? error.message : String(error) },
+      context: { serverId, code: "LSP_INSTALLER_RESOLVE_FAILED" },
     });
     throw error;
   } finally {

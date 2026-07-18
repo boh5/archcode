@@ -160,7 +160,7 @@ export function formatSearchResult(
  * Uses --files-with-matches for accurate file listing without match truncation.
  */
 export function buildFileListArgs(pattern: string, include?: string, path?: string): string[] {
-  const cmdArgs: string[] = ["--files-with-matches", "-e", pattern];
+  const cmdArgs: string[] = ["--files-with-matches", "--sort", "path", "-e", pattern];
   if (include) {
     cmdArgs.push("--glob", include);
   }
@@ -175,7 +175,7 @@ export function buildFileListArgs(pattern: string, include?: string, path?: stri
  * Uses --count for accurate per-file match counts without truncation.
  */
 export function buildCountArgs(pattern: string, include?: string, path?: string): string[] {
-  const cmdArgs: string[] = ["--count", "-e", pattern];
+  const cmdArgs: string[] = ["--count", "--sort", "path", "-e", pattern];
   if (include) {
     cmdArgs.push("--glob", include);
   }
@@ -192,9 +192,8 @@ export function buildCountArgs(pattern: string, include?: string, path?: string)
 export function buildSearchArgs(args: SearchArgs): string[] {
   const cmdArgs: string[] = [];
 
-  cmdArgs.push("--json");
+  cmdArgs.push("--json", "--sort", "path");
   cmdArgs.push("-e", args.pattern);
-  cmdArgs.push("--max-count", "100");
 
   if (args.include) {
     cmdArgs.push("--glob", args.include);

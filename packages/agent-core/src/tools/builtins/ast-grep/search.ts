@@ -5,8 +5,10 @@ import { createProcessRunner } from "../../../process/runner";
 import type { ProcessRunnerResult } from "../../../process/types";
 import { defineTool } from "../../define-tool";
 import { createToolErrorResult } from "../../errors";
-import type { ToolExecutionContext, ToolExecutionResult, ToolPermission, PermissionDecision } from "../../types";
+import { createTextToolResult } from "../../results";
+import type { RawToolResult, ToolExecutionContext, ToolPermission, PermissionDecision } from "../../types";
 import { resolveAndValidatePath } from "../../security";
+import { AstGrepNdjsonCollector } from "./ndjson";
 
 export const AstGrepSearchInputSchema = z
   .object({
@@ -17,77 +19,7 @@ export const AstGrepSearchInputSchema = z
   })
   .strict();
 
-const AstGrepRangePositionSchema = z
-  .object({
-    line: z.number(),
-    column: z.number(),
-  })
-  .passthrough();
-
-const AstGrepRangeSchema = z
-  .object({
-    byteOffset: z
-      .object({
-        start: z.number(),
-        end: z.number(),
-      })
-      .passthrough(),
-    start: AstGrepRangePositionSchema,
-    end: AstGrepRangePositionSchema,
-  })
-  .passthrough();
-
-/**
- * Match node in metaVariables — ast-grep outputs { text, range } where
- * the key in the record IS the variable name (no "name" field).
- * Uses passthrough to accept future fields from newer ast-grep versions.
- */
-const AstGrepMatchNodeSchema = z
-  .object({
-    text: z.string(),
-    range: AstGrepRangeSchema.optional(),
-  })
-  .passthrough();
-
-const AstGrepMatchSchema = z
-  .object({
-    text: z.string(),
-    range: AstGrepRangeSchema,
-    file: z.string(),
-    lines: z.string(),
-    /** ast-grep v0.42+ outputs charCount for context character counts */
-    charCount: z
-      .object({
-        leading: z.number(),
-        trailing: z.number(),
-      })
-      .passthrough()
-      .optional(),
-    /** ast-grep v0.42+ outputs the matched language */
-    language: z.string().optional(),
-    replacement: z.string().optional(),
-    replacementOffsets: z
-      .object({
-        start: z.number(),
-        end: z.number(),
-      })
-      .passthrough()
-      .optional(),
-    metaVariables: z
-      .object({
-        single: z.record(z.string(), AstGrepMatchNodeSchema).optional(),
-        multi: z.record(z.string(), z.array(AstGrepMatchNodeSchema)).optional(),
-        transformed: z.record(z.string(), z.string()).optional(),
-      })
-      .passthrough()
-      .optional(),
-  })
-  .passthrough();
-
-const AstGrepMatchesSchema = z.array(AstGrepMatchSchema);
-
 type AstGrepSearchInput = z.infer<typeof AstGrepSearchInputSchema>;
-type AstGrepMatch = z.infer<typeof AstGrepMatchSchema>;
 
 export class AstGrepToolError extends Error {
   readonly exitCode?: number;
@@ -101,29 +33,36 @@ export class AstGrepToolError extends Error {
 
 export const astGrepSearchTool = defineTool({
   name: "ast_grep_search",
-  description: "Search parsed code by AST structure, not text regex. Use grep for comments, string contents, file names, or byte-oriented regex. The pattern must be a parseable code node: `$VAR` captures one AST node and `$$$` captures zero or more nodes. Returns normalized JSON matches.",
+  description: "Search parsed code by AST structure, not text regex. Use grep for comments, string contents, file names, or byte-oriented regex. The pattern must be a parseable code node: `$VAR` captures one AST node and `$$$` captures zero or more nodes. Returns canonical NDJSON from ast-grep --json=stream.",
   inputSchema: AstGrepSearchInputSchema,
   traits: {
     readOnly: true,
     destructive: false,
     concurrencySafe: true,
   },
+  outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
   permissions: [createAstGrepWorkspacePermission()],
-  async execute(input, ctx): Promise<string | ToolExecutionResult> {
+  async execute(input, ctx): Promise<RawToolResult> {
     try {
       const astGrepPath = await createBinaryManager().resolve("ast-grep");
+      const collector = new AstGrepNdjsonCollector(
+        () => undefined,
+      );
       const result = await createProcessRunner().run({
         argv: [astGrepPath, ...buildAstGrepSearchArgs(input)],
         cwd: ctx.cwd,
         env: { ...process.env },
         signal: ctx.abort,
+        outputSink: createAstGrepSink(collector, ctx.outputCapture),
       });
 
       const output = getAstGrepStdout(result);
       if (output.ok === false) return output.error;
 
-      const matches = parseAstGrepMatches(output.stdout);
-      return JSON.stringify(normalizeAstGrepSearchResult(matches), null, 2);
+      collector.finish();
+      return ctx.outputCapture === undefined
+        ? createTextToolResult(output.stdout)
+        : { isError: false, draft: { kind: "capture" } };
     } catch (error) {
       const maybeBinaryError = toBinaryToolError(error);
       if (maybeBinaryError) return maybeBinaryError;
@@ -137,7 +76,7 @@ export const astGrepSearchTool = defineTool({
 });
 
 export function buildAstGrepSearchArgs(input: AstGrepSearchInput): string[] {
-  const args = ["run", "--pattern", input.pattern, "--json"];
+  const args = ["run", "--pattern", input.pattern, "--json=stream"];
 
   if (input.lang) args.push("--lang", input.lang);
   for (const glob of input.globs ?? []) {
@@ -148,45 +87,9 @@ export function buildAstGrepSearchArgs(input: AstGrepSearchInput): string[] {
   return args;
 }
 
-function parseAstGrepMatches(stdout: string): AstGrepMatch[] {
-  const trimmed = stdout.trim();
-  if (!trimmed) return [];
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(trimmed);
-  } catch (error) {
-    throw new AstGrepToolError("Failed to parse ast-grep JSON output", { cause: error });
-  }
-
-  const validation = AstGrepMatchesSchema.safeParse(parsed);
-  if (!validation.success) {
-    throw new AstGrepToolError("ast-grep returned invalid JSON match output", { cause: validation.error });
-  }
-
-  return validation.data;
-}
-
-function normalizeAstGrepSearchResult(matches: AstGrepMatch[]) {
-  return {
-    count: matches.length,
-    matches: matches.map((match) => ({
-      file: match.file,
-      text: match.text,
-      lines: match.lines,
-      range: {
-        byteOffset: match.range.byteOffset,
-        start: match.range.start,
-        end: match.range.end,
-      },
-      ...(match.metaVariables ? { metaVariables: match.metaVariables } : {}),
-    })),
-  };
-}
-
 function getAstGrepStdout(
   result: ProcessRunnerResult,
-): { ok: true; stdout: string } | { ok: false; error: ToolExecutionResult } {
+): { ok: true; stdout: string } | { ok: false; error: RawToolResult } {
   switch (result.kind) {
     case "success":
       return { ok: true, stdout: result.output.stdout };
@@ -197,7 +100,6 @@ function getAstGrepStdout(
         error: createAstGrepErrorResult({
           error: new AstGrepToolError(formatAstGrepExitMessage(result.exitCode, result.output.stderr), { exitCode: result.exitCode }),
           message: formatAstGrepExitMessage(result.exitCode, result.output.stderr),
-          meta: { exitCode: result.exitCode },
         }),
       };
     case "timeout":
@@ -205,7 +107,6 @@ function getAstGrepStdout(
         ok: false,
         error: createAstGrepErrorResult({
           message: `ast-grep timed out after ${result.timeoutMs}ms`,
-          meta: { timeoutMs: result.timeoutMs },
         }),
       };
     case "aborted":
@@ -213,7 +114,6 @@ function getAstGrepStdout(
         ok: false,
         error: createAstGrepErrorResult({
           message: "ast-grep was aborted",
-          meta: { astGrepAborted: true, reason: result.reason },
         }),
       };
     case "signal":
@@ -221,7 +121,6 @@ function getAstGrepStdout(
         ok: false,
         error: createAstGrepErrorResult({
           message: `ast-grep was terminated by signal ${result.signal}`,
-          meta: { signal: result.signal, exitCode: result.exitCode },
         }),
       };
     case "spawn-failure":
@@ -230,7 +129,6 @@ function getAstGrepStdout(
         error: createAstGrepErrorResult({
           error: new Error(result.error.message),
           message: result.error.message,
-          meta: { argv: result.argv, cwd: result.cwd },
         }),
       };
   }
@@ -276,21 +174,31 @@ function formatAstGrepExitMessage(exitCode: number, stderr: string): string {
 function createAstGrepErrorResult(options: {
   error?: Error;
   message: string;
-  meta?: Record<string, unknown>;
-}): ToolExecutionResult {
+}): RawToolResult {
   return createToolErrorResult({
     kind: "ast-grep-error",
     code: "TOOL_AST_GREP_ERROR",
     error: options.error,
     message: options.message,
-    meta: options.meta,
   });
 }
 
-function toBinaryToolError(error: unknown): ToolExecutionResult | undefined {
+function toBinaryToolError(error: unknown): RawToolResult | undefined {
   if (!error || typeof error !== "object" || !("toToolError" in error) || typeof error.toToolError !== "function") {
     return undefined;
   }
 
   return createToolErrorResult(error.toToolError());
+}
+
+function createAstGrepSink(
+  collector: AstGrepNdjsonCollector,
+  capture: ToolExecutionContext["outputCapture"],
+) {
+  return {
+    async write(stream: "stdout" | "stderr", chunk: Uint8Array): Promise<void> {
+      collector.write(stream, chunk);
+      if (stream === "stdout" && capture !== undefined) await capture.write(chunk);
+    },
+  };
 }

@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { createEmptySessionStats } from "@archcode/protocol";
 import type { Agent, AgentCommand, AgentCommandResult, AgentResult, AgentRunOptions } from "../agents/types";
 import { ConfiguredAgent } from "../agents/configured-agent";
@@ -9,7 +10,7 @@ import type { ProviderRegistry } from "../provider";
 import { ModelInfo } from "../provider/model";
 import { SkillService } from "../skills";
 import { createTestProjectContextResolver } from "../agents/test-project-context-resolver";
-import { createRegistry } from "../tools";
+import { createTestToolRegistryFixture } from "../tools/test-registry";
 import { setLlmAdapterForTest } from "../llm/adapter";
 import { AgentRunningError, ConcurrentLimitError, DelegateTargetNotAllowedError, DepthLimitError, ChildSessionNotFoundError, ChildSessionParentMismatchError, ChildSessionNotDescendantError, ChildSessionCwdMismatchError, SessionCwdTransitionConflictError, SessionCwdTransitionInProgressError, SessionToolBatchActiveError } from "../agents/errors";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
@@ -31,10 +32,10 @@ import type { SessionGoalDelegationContext } from "./session-goal-delegation-con
 import { SessionInputConflictError, SessionInputService } from "../session-input/service";
 
 const testRoot = join(
-  import.meta.dir,
-  "__test_tmp__",
+  tmpdir(),
   `session-execution-manager-${crypto.randomUUID()}`,
 );
+const toolRegistryFixture = createTestToolRegistryFixture();
 let workspaceRoot = join(testRoot, "bootstrap");
 let defaultAgentWorkspaceRoot = workspaceRoot;
 const storeManager = new SessionStoreManager({ logger: silentLogger });
@@ -396,6 +397,7 @@ describe("SessionExecutionManager", () => {
   });
 
   afterAll(async () => {
+    await toolRegistryFixture.dispose();
     await rm(testRoot, { recursive: true, force: true });
   });
 
@@ -1385,10 +1387,11 @@ describe("SessionExecutionManager", () => {
       definition,
       providerRegistry: {} as ProviderRegistry,
       modelInfo,
-      toolRegistry: createRegistry([]),
+      toolRegistry: toolRegistryFixture.registry,
       skillService: new SkillService({ builtinSkills: {} }),
       storeManager,
       store,
+      toolOutputAccess: toolRegistryFixture.createToolOutputAccess(workspaceRoot, store.getState().rootSessionId),
       projectRoot: workspaceRoot,
       cwd: workspaceRoot,
       projectContextResolver: createTestProjectContextResolver(storeManager),
@@ -1580,7 +1583,7 @@ describe("SessionExecutionManager", () => {
     await expect(pendingManager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId, input: { kind: "direct", text: "two" } })).rejects.toThrow(SessionFamilyActiveError);
   });
 
-  test("family stop cancels execution and ignores late tool result after current execution is settled", async () => {
+  test("family stop cancels execution without fabricating a query-loop tool result", async () => {
     const run = deferred<MockAgentResult>();
     const sessionId = crypto.randomUUID();
     const agent = new MockAgent(sessionId, run.promise, workspaceRoot);
@@ -1594,13 +1597,11 @@ describe("SessionExecutionManager", () => {
     run.resolve({ text: "done", steps: 1 });
     await execution.promise;
     await stopping;
-    agent.store.getState().append({ type: "tool-result", toolCallId: "late-tool", toolName: "bash", output: "late", isError: false });
-
     const state = agent.store.getState();
     expect(state.executions).toHaveLength(1);
     expect(state.executions[0]?.status).toBe("cancelled");
     const tool = state.messages.flatMap((message) => message.parts).find((part) => part.type === "tool");
-    expect(tool).toMatchObject({ type: "tool", state: "error", errorMessage: "Execution ended before tool result" });
+    expect(tool).toMatchObject({ type: "tool", state: "running", toolCallId: "late-tool" });
   });
 
   test("session runs do not inject legacy deferred permission or question callbacks", async () => {
@@ -1623,8 +1624,6 @@ describe("SessionExecutionManager", () => {
     const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId, input: { kind: "direct", text: "work" } });
     await waitFor(() => runOptions !== undefined);
     if (!runOptions) throw new Error("Expected AgentRunOptions");
-    expect(runOptions.confirmPermission).toBeUndefined();
-    expect(runOptions.askUser).toBeUndefined();
     const stopping = manager.stopSessionFamily(workspaceRoot, sessionId);
     run.resolve({ text: "done", steps: 1 });
     await execution.promise;
@@ -1635,7 +1634,7 @@ describe("SessionExecutionManager", () => {
 
   test("family stop is isolated by workspace root for identical session ids", async () => {
     const sessionId = crypto.randomUUID();
-    const otherWorkspaceRoot = join(import.meta.dir, "__test_tmp__", "session-execution-manager-other-workspace", crypto.randomUUID());
+    const otherWorkspaceRoot = join(tmpdir(), "archcode-session-execution-manager-other-workspace", crypto.randomUUID());
     await mkdir(otherWorkspaceRoot, { recursive: true });
     const runA = deferred<MockAgentResult>();
     const runB = deferred<MockAgentResult>();
@@ -1775,8 +1774,6 @@ describe("SessionExecutionManager", () => {
     await execution.promise;
     const options = agent.runMock.mock.calls[0]?.[0];
     if (!options) throw new Error("Expected AgentRunOptions");
-    expect(options.confirmPermission).toBeUndefined();
-    expect(options.askUser).toBeUndefined();
   });
 
   test("startChildExecution validates through factory and runs a child session", async () => {

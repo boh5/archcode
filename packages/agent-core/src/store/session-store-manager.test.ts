@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { createEmptySessionStats, type CompressionBlockSnapshot } from "@archcode/protocol";
+import { createEmptySessionStats, type CompressionBlockSnapshot, type FinalizedToolResult } from "@archcode/protocol";
 import { createEmptyCompressionState } from "../compression";
 import { SessionStoreManager } from "./session-store-manager";
 import { NotRootSessionError, SessionInitialPersistenceError, SessionTreeIntegrityError } from "./errors";
@@ -38,6 +38,22 @@ describe("SessionStoreManager", () => {
       tokenEstimate: { originalTokens: 100, summaryTokens: 25, savedTokens: 75, estimatedAt: 1234 },
       createdAt: 1000,
       updatedAt: 1001,
+    };
+  }
+
+  function finalizedResult(preview: string, isError = false): FinalizedToolResult {
+    const bytes = new TextEncoder().encode(preview).byteLength;
+    return {
+      isError,
+      output: {
+        preview,
+        completeness: "complete",
+        observed: { bytes, lines: 1 },
+        canonical: { bytes, lines: 1 },
+        stored: { bytes, lines: 1 },
+        omitted: { bytes: 0, lines: 0 },
+        recovery: { kind: "none" },
+      },
     };
   }
 
@@ -664,7 +680,7 @@ describe("SessionStoreManager", () => {
     expect(loaded.getState().childSessionLinks).toEqual([link]);
   });
 
-  test("persists tool attempts and reconciles missing effectful results as unknown", async () => {
+  test("persists attempted tools without fabricating a result during load reconciliation", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
     const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
@@ -689,14 +705,14 @@ describe("SessionStoreManager", () => {
     const tool = loaded.getState().messages[0]?.parts[0];
     expect(tool).toMatchObject({
       type: "tool",
-      state: "error",
+      state: "running",
       toolCallId: "call-1",
-      errorMessage: "Tool execution result unknown: execution was interrupted",
-      meta: { unknownResult: true },
+      attemptId: "attempt-1",
     });
+    expect(tool).not.toHaveProperty("result");
   });
 
-  test("persists and reloads a cancelled partial tool input", async () => {
+  test("persists and reloads partial tool input for Registry recovery", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
     const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
@@ -712,23 +728,19 @@ describe("SessionStoreManager", () => {
     const filePath = canonicalSessionPath(id);
     const raw = await waitForSessionJson(
       filePath,
-      (json) => JSON.stringify(json).includes("Execution ended before tool result"),
+      (json) => JSON.stringify(json).includes("call-partial"),
     );
     const rawMessages = raw.messages as Array<{ parts: Array<Record<string, unknown>> }>;
     expect(rawMessages[0]?.parts[0]).toMatchObject({
       type: "tool",
-      state: "error",
-      input: null,
-      errorMessage: "Execution ended before tool result",
+      state: "pending",
     });
 
     const restarted = new SessionStoreManager({ logger: silentLogger });
     const loaded = await restarted.getOrLoad(id, TMP_DIR);
     expect(loaded.getState().messages[0]?.parts[0]).toMatchObject({
       type: "tool",
-      state: "error",
-      input: null,
-      errorMessage: "Execution ended before tool result",
+      state: "pending",
     });
   });
 
@@ -760,7 +772,7 @@ describe("SessionStoreManager", () => {
     const loaded = await restarted.getOrLoad(id, TMP_DIR);
     expect(loaded.getState().messages[0]?.parts[0]).toMatchObject({
       type: "tool",
-      state: "error",
+      state: "running",
       input: null,
     });
   });
@@ -860,7 +872,7 @@ describe("SessionStoreManager", () => {
       timestamp: 123,
       destructive: true,
     });
-    store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "file_write", output: "written", isError: false });
+    store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "file_write", result: finalizedResult("written") });
 
     const filePath = canonicalSessionPath(id);
     await waitForSessionJson(filePath, (json) => JSON.stringify(json).includes("written"));
@@ -872,7 +884,7 @@ describe("SessionStoreManager", () => {
       type: "tool",
       state: "completed",
       toolCallId: "call-1",
-      output: "written",
+      result: { output: { preview: "written" } },
       attemptId: "attempt-1",
     });
     expect(JSON.stringify(tool)).not.toContain("unknownResult");

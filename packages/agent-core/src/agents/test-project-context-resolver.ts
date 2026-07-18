@@ -1,13 +1,14 @@
 import { silentLogger } from "../logger";
 import { ProjectContextResolver } from "../projects/context-resolver";
 import type { SessionStoreManager } from "../store/session-store-manager";
-import { createTestGoalLifecycle, createTestProjectTodoService } from "../tools/test-project-context";
+import { createTestGoalLifecycle, createTestHitlCodec, createTestProjectTodoService } from "../tools/test-project-context";
 
 /** Builds the complete project-context composition required by Agent tests. */
 export function createTestProjectContextResolver(
   sessionStoreManager: SessionStoreManager,
 ): ProjectContextResolver {
   return new ProjectContextResolver({
+    hitlCodec: createTestHitlCodec(),
     projectInfoFactory: (workspaceRoot) => ({
       slug: "test-project",
       name: "Test Project",

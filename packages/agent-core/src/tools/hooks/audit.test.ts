@@ -2,10 +2,27 @@ import { describe, expect, it } from "bun:test";
 import { storeManager } from "../../store/store";
 import type { ToolExecutionContext } from "../types";
 import { createAuditHook, type AuditEvent } from "./audit";
-import { REDACTION_MARKER } from "../security";
+import { REDACTION_MARKER } from "../../security";
 import { createTestProjectContext } from "../test-project-context";
+import type { FinalizedToolResult } from "@archcode/protocol";
 
 const RAW_SECRET = "sk_test_1234567890abcdef";
+
+function finalizedResult(preview: string): FinalizedToolResult {
+  return {
+    isError: false,
+    output: {
+      preview,
+      completeness: "partial",
+      observed: { bytes: 17, lines: 1 },
+      canonical: { bytes: 17, lines: 1 },
+      stored: { bytes: 7, lines: 1 },
+      omitted: { bytes: 10, lines: 0 },
+      recovery: { kind: "artifact", outputRef: "output_ref_1234567890", expiresAt: Date.now() + 1_000, canRead: true, canSearch: true },
+    },
+    details: { process: { exitCode: 7, signal: null, timedOut: false, aborted: false, durationMs: 25 } },
+  };
+}
 
 function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   return { store: {} as ToolExecutionContext["store"],
@@ -31,11 +48,7 @@ describe("createAuditHook", () => {
     const hook = createAuditHook({ sink: auditSink });
 
     await hook(
-      {
-        output: `raw output ${RAW_SECRET}`,
-        isError: false,
-        meta: { exitCode: 7, truncated: true, fullOutputPath: "/tmp/full.txt" },
-      },
+      finalizedResult(`raw output ${RAW_SECRET}`),
       makeCtx(),
     );
 
@@ -48,7 +61,7 @@ describe("createAuditHook", () => {
         durationMs: 25,
         status: "success",
         exitCode: 7,
-        truncation: { truncated: true, fullOutputPath: "/tmp/full.txt" },
+        output: { completeness: "partial", storedBytes: 7, omittedBytes: 10, recovery: "artifact" },
       },
     ]);
     expect(JSON.stringify(events)).not.toContain(RAW_SECRET);

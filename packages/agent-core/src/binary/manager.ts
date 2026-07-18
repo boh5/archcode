@@ -15,11 +15,7 @@ const ALTERNATE_BINARY_NAMES: Record<SupportedBinaryId, readonly string[]> = {
   "ast-grep": ["sg"],
 };
 
-/** Substrings expected in `--version` output for each binary. */
-const VALIDATION_PATTERNS: Record<SupportedBinaryId, string> = {
-  rg: "ripgrep",
-  "ast-grep": "ast-grep",
-};
+const VALIDATION_PATTERNS: Partial<Record<SupportedBinaryId, string>> = { rg: "ripgrep" };
 
 export type BinaryManagerRunOptions = Omit<ProcessRunnerInput, "argv">;
 
@@ -204,9 +200,17 @@ export class BinaryManager {
 
     const platform = this.resolvePlatform(binaryId, spec);
     const cachePath = getBinaryCachePath({ spec, targetTriple: platform.targetTriple });
-    if ((await this.seam.exists(cachePath)) && (await this.seam.isExecutable(cachePath))) return cachePath;
+    if (
+      (await this.seam.exists(cachePath))
+      && (await this.seam.isExecutable(cachePath))
+      && (await this.validateBinary(cachePath, binaryId))
+    ) return cachePath;
 
-    return this.downloadAndInstall(spec, platform, cachePath);
+    const installed = await this.downloadAndInstall(spec, platform, cachePath);
+    if (!(await this.validateBinary(installed, binaryId))) {
+      throw new BinaryValidationError({ binaryId, path: installed });
+    }
+    return installed;
   }
 
   private async resolveValidPathBinary(binaryId: SupportedBinaryId, spec: BinarySpec): Promise<string | undefined> {
@@ -337,6 +341,7 @@ export function createDefaultBinaryManagerSeam(): BinaryManagerSeam {
 }
 
 async function defaultValidateBinary(path: string, binaryId: SupportedBinaryId): Promise<boolean> {
+  if (binaryId === "ast-grep") return probeAstGrepJsonStream(path);
   const pattern = VALIDATION_PATTERNS[binaryId];
   if (!pattern) return true;
   const runner = createProcessRunner();
@@ -352,6 +357,26 @@ async function defaultValidateBinary(path: string, binaryId: SupportedBinaryId):
   }
 }
 
+async function probeAstGrepJsonStream(path: string): Promise<boolean> {
+  const runner = createProcessRunner();
+  try {
+    const result = await runner.run({
+      argv: [path, "run", "--pattern", "foo", "--lang", "JavaScript", "--stdin", "--json=stream"],
+      stdin: "foo",
+      timeoutMs: 5000,
+      maxOutputBytes: 64 * 1024,
+    });
+    if (result.kind !== "success" || result.output.stdoutTruncated) return false;
+    const lines = result.output.stdout.split("\n").filter((line) => line.trim().length > 0);
+    if (lines.length !== 1) return false;
+    const parsed: unknown = JSON.parse(lines[0]!);
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed);
+  } catch {
+    return false;
+  }
+}
+
 function binaryToolError(error: Error, kind: ToolErrorKind, details: Record<string, unknown>): FormatToolErrorOptions {
-  return { error, kind, details };
+  void details;
+  return { error, kind };
 }

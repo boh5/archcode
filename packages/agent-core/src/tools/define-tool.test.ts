@@ -1,15 +1,24 @@
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
 import { defineTool } from "./define-tool";
+import { createTextToolResult } from "./results";
 import { SkillService } from "../skills";
 import { storeManager } from "../store/store";
 import { createTestProjectContext } from "./test-project-context";
 import type {
+  RawToolResult,
   ToolDescriptor,
   ToolExecutionContext,
   ToolPermission,
   PermissionDecision,
 } from "./types";
+
+const artifactPolicy = { kind: "artifact", previewDirection: "head-tail" } as const;
+
+function draftText(result: RawToolResult): string {
+  if (result.draft.kind !== "text") throw new Error("Expected text draft");
+  return result.draft.text;
+}
 
 // Minimal mock for ToolExecutionContext
 function mockCtx(): ToolExecutionContext {
@@ -43,8 +52,9 @@ describe("defineTool", () => {
         destructive: false,
         concurrencySafe: true,
       },
+      outputPolicy: artifactPolicy,
       async execute(input, _ctx) {
-        return `contents of ${input.path}`;
+        return createTextToolResult(`contents of ${input.path}`);
       },
     });
 
@@ -74,9 +84,10 @@ describe("defineTool", () => {
         destructive: false,
         concurrencySafe: true,
       },
+      outputPolicy: artifactPolicy,
       async execute(input, _ctx) {
         // input.path is inferred as string
-        return `read: ${input.path}`;
+        return createTextToolResult(`read: ${input.path}`);
       },
     });
 
@@ -84,7 +95,7 @@ describe("defineTool", () => {
       { path: "/tmp/test.txt" },
       mockCtx(),
     );
-    expect(result).toBe("read: /tmp/test.txt");
+    expect(draftText(result)).toBe("read: /tmp/test.txt");
   });
 
   test("preserves per-tool hooks", () => {
@@ -92,12 +103,8 @@ describe("defineTool", () => {
     const beforeFn = async (_input: unknown, _ctx: ToolExecutionContext) => {
       return { x: 42 };
     };
-    const afterFn = async (
-      result: { output: string; isError: boolean },
-      _ctx: ToolExecutionContext,
-    ) => {
-      return { ...result, output: result.output.toUpperCase() };
-    };
+    const afterFn = async (result: RawToolResult, _ctx: ToolExecutionContext) =>
+      createTextToolResult(draftText(result).toUpperCase(), { isError: result.isError, details: result.details });
 
     const descriptor = defineTool({
       name: "compute",
@@ -108,12 +115,13 @@ describe("defineTool", () => {
         destructive: false,
         concurrencySafe: false,
       },
+      outputPolicy: artifactPolicy,
       hooks: {
         before: [beforeFn],
         after: [afterFn],
       },
       async execute(input, _ctx) {
-        return `result: ${input.x}`;
+        return createTextToolResult(`result: ${input.x}`);
       },
     });
 
@@ -135,13 +143,14 @@ describe("defineTool", () => {
         destructive: false,
         concurrencySafe: true,
       },
+      outputPolicy: artifactPolicy,
       execute(input, _ctx) {
-        return input.msg;
+        return createTextToolResult(input.msg);
       },
     });
 
     const result = await descriptor.execute({ msg: "hello" }, mockCtx());
-    expect(result).toBe("hello");
+    expect(draftText(result)).toBe("hello");
   });
 
   test("executor can throw and error propagates", async () => {
@@ -156,6 +165,7 @@ describe("defineTool", () => {
         destructive: false,
         concurrencySafe: true,
       },
+      outputPolicy: artifactPolicy,
       async execute(_input, _ctx) {
         throw new Error("tool failed");
       },
@@ -178,9 +188,10 @@ describe("defineTool", () => {
         destructive: false,
         concurrencySafe: true,
       },
+      outputPolicy: artifactPolicy,
       async execute(input, _ctx) {
         // @ts-expect-error — 'nonexistent' does not exist on '{ path: string }'
-        return input.nonexistent;
+        return createTextToolResult(input.nonexistent);
       },
     });
   });
@@ -207,9 +218,10 @@ describe("defineTool", () => {
         destructive: false,
         concurrencySafe: true,
       },
+      outputPolicy: artifactPolicy,
       prepareInput,
       async execute(input, _ctx) {
-        return `read: ${input.path}`;
+        return createTextToolResult(`read: ${input.path}`);
       },
     });
 
@@ -239,9 +251,10 @@ describe("defineTool", () => {
         destructive: false,
         concurrencySafe: true,
       },
+      outputPolicy: artifactPolicy,
       permissions: [permissionFn],
       async execute(input, _ctx) {
-        return `read: ${input.path}`;
+        return createTextToolResult(`read: ${input.path}`);
       },
     });
 
@@ -282,11 +295,12 @@ describe("defineTool", () => {
         destructive: false,
         concurrencySafe: false,
       },
+      outputPolicy: artifactPolicy,
       hooks: { before: [beforeFn] },
       prepareInput,
       permissions: [permissionFn],
       async execute(input, _ctx) {
-        return `result: ${input.x}`;
+        return createTextToolResult(`result: ${input.x}`);
       },
     });
 
@@ -305,8 +319,9 @@ describe("defineTool", () => {
         destructive: false,
         concurrencySafe: true,
       },
+      outputPolicy: artifactPolicy,
       async execute(input, _ctx) {
-        return `ok ${input.x}`;
+        return createTextToolResult(`ok ${input.x}`);
       },
     });
 
@@ -327,8 +342,9 @@ describe("defineTool", () => {
         destructive: false,
         concurrencySafe: true,
       },
+      outputPolicy: artifactPolicy,
       async execute(input, _ctx) {
-        return `fetched ${input.url}`;
+        return createTextToolResult(`fetched ${input.url}`);
       },
     });
 
@@ -358,9 +374,10 @@ describe("Permission API contract — defineTool", () => {
         destructive: false,
         concurrencySafe: true,
       },
+      outputPolicy: artifactPolicy,
       permissions: [permissionFn],
       async execute(input, _ctx) {
-        return `read: ${input.path}`;
+        return createTextToolResult(`read: ${input.path}`);
       },
     });
 
@@ -383,8 +400,9 @@ describe("Permission API contract — defineTool", () => {
         destructive: false,
         concurrencySafe: true,
       },
+      outputPolicy: artifactPolicy,
       async execute(input, _ctx) {
-        return `read: ${input.path}`;
+        return createTextToolResult(`read: ${input.path}`);
       },
     });
 
@@ -406,9 +424,10 @@ describe("Permission API contract — defineTool", () => {
         destructive: true,
         concurrencySafe: false,
       },
+      outputPolicy: artifactPolicy,
       permissions: [perm1, perm2],
       async execute(input, _ctx) {
-        return `wrote: ${input.path}`;
+        return createTextToolResult(`wrote: ${input.path}`);
       },
     });
 
@@ -456,9 +475,10 @@ describe("Permission API contract — defineTool", () => {
         destructive: false,
         concurrencySafe: true,
       },
+      outputPolicy: artifactPolicy,
       permissions: [perm],
       async execute(input, _ctx) {
-        return `read: ${input.path}`;
+        return createTextToolResult(`read: ${input.path}`);
       },
     });
 
@@ -477,8 +497,9 @@ describe("Permission API contract — defineTool", () => {
         destructive: true,
         concurrencySafe: false,
       },
+      outputPolicy: artifactPolicy,
       async execute() {
-        return "nuked";
+        return createTextToolResult("nuked");
       },
     });
 
@@ -498,9 +519,10 @@ describe("Permission API contract — defineTool", () => {
         destructive: true,
         concurrencySafe: false,
       },
+      outputPolicy: artifactPolicy,
       permissions: [perm],
       async execute() {
-        return "ok";
+        return createTextToolResult("ok");
       },
     });
 

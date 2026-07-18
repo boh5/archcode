@@ -1,6 +1,7 @@
 import type { BeforeModelBuildContext } from "../loop-hooks";
 import type { CircuitBreaker } from "../../../compact/circuit-breaker";
 import type { Logger } from "../../../logger";
+import type { ToolOutputAccessService } from "../../../tool-output/access-service";
 import { createHybridCompressionHook } from "./hybrid-compression";
 
 // ---------------------------------------------------------------------------
@@ -16,7 +17,10 @@ export interface AutoCompactHookResult {
 // Hook factory
 // ---------------------------------------------------------------------------
 
-export function createAutoCompactHook(logger: Logger): AutoCompactHookResult {
-  const hybrid = createHybridCompressionHook(logger);
+export function createAutoCompactHook(
+  logger: Logger,
+  toolOutputAccess: ToolOutputAccessService,
+): AutoCompactHookResult {
+  const hybrid = createHybridCompressionHook(logger, toolOutputAccess);
   return { hook: hybrid.beforeModelBuild, circuitBreaker: hybrid.circuitBreaker };
 }

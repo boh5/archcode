@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { ReadableStreamMessageReader } from "vscode-jsonrpc";
 import {
   DEFAULT_LSP_TRANSPORT_TIMEOUTS,
+  MAX_LSP_TRANSPORT_FRAME_BYTES,
   adaptReader,
   adaptWriter,
   setLspTransportForTest,
@@ -66,6 +67,52 @@ describe("RAL adapters", () => {
 
     await waitFor(() => received.length === 1);
     expect(received).toEqual([{ jsonrpc: "2.0", method: "test/split", params: { value: true } }]);
+  });
+
+  it("accepts one large chunk containing multiple legal frames whose aggregate exceeds 8 MiB", async () => {
+    const first = encodeFrame({ jsonrpc: "2.0", method: "test/first", params: { data: "a".repeat(4_300_000) } });
+    const second = encodeFrame({ jsonrpc: "2.0", method: "test/second", params: { data: "b".repeat(4_300_000) } });
+    const chunk = concatBytes(first, second);
+    expect(chunk.byteLength).toBeGreaterThan(MAX_LSP_TRANSPORT_FRAME_BYTES);
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(chunk);
+        controller.close();
+      },
+    });
+    const readable = adaptReader(stream);
+    const lengths: number[] = [];
+    readable.onData((frame) => lengths.push(frame.byteLength));
+
+    await waitFor(() => lengths.length === 2);
+    expect(lengths).toEqual([first.byteLength, second.byteLength]);
+  });
+
+  it("propagates an oversized frame as a transport error", async () => {
+    const header = encoder.encode(`Content-Length: ${MAX_LSP_TRANSPORT_FRAME_BYTES + 1}\r\n\r\n`);
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(header);
+      },
+    });
+    const readable = adaptReader(stream);
+    const errorPromise = new Promise<unknown>((resolve) => readable.onError(resolve));
+    readable.onData(() => undefined);
+
+    await expect(errorPromise).resolves.toMatchObject({ message: "LSP transport frame exceeded 8 MiB" });
+  });
+
+  it("propagates an oversized header as a transport error without raw input", async () => {
+    const secret = "runtime-secret-in-header";
+    const oversized = encoder.encode(`${secret}${"x".repeat(16 * 1024)}\r\n\r\n`);
+    const stream = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(oversized); } });
+    const readable = adaptReader(stream);
+    const errorPromise = new Promise<unknown>((resolve) => readable.onError(resolve));
+    readable.onData(() => undefined);
+
+    const error = await errorPromise as Error;
+    expect(error.message).toBe("LSP transport header exceeded 16 KiB");
+    expect(error.message).not.toContain(secret);
   });
 
   it("adapts a Bun file sink into vscode-jsonrpc RAL writable", async () => {

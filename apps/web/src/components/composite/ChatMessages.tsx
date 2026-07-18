@@ -208,7 +208,7 @@ export function MsgAgent({
           {groupReadOnlyToolParts(message.parts).map((entry) => {
             const partKind = entry.type === "grouped-tools" || entry.type === "tool" ? "tool" : "content";
             if (entry.type === "grouped-tools") {
-              return <div key={entry.id} className="conversation-part" data-conversation-part={partKind}><GroupedToolCard tools={entry.tools} /></div>;
+              return <div key={entry.id} className="conversation-part" data-conversation-part={partKind}><GroupedToolCard tools={entry.tools} projectSlug={projectSlug} sessionId={focusStoreSessionId} /></div>;
             }
             const part = entry as SessionPart;
             return <div key={part.id} className="conversation-part" data-conversation-part={partKind}><PartRenderer part={part} projectSlug={projectSlug} focusStoreSessionId={focusStoreSessionId} childSessionLinks={childSessionLinks} agentDescriptors={agents} /></div>;
@@ -249,11 +249,6 @@ function CompactionBlock({ part }: { part: { type: "compaction"; summary: string
       </div>
     </div>
   );
-}
-
-export function parseToolOutput(output: string | undefined): Record<string, unknown> | null {
-  if (!output) return null;
-  try { return JSON.parse(output); } catch { return null; }
 }
 
 function DelegateToolCard({
@@ -312,7 +307,7 @@ export function PartRenderer({ part, projectSlug, focusStoreSessionId, childSess
       if (part.toolName === TOOL_DELEGATE) {
         return <DelegateToolCard part={part} projectSlug={projectSlug} focusStoreSessionId={focusStoreSessionId} childSessionLinks={childSessionLinks} agentDescriptors={agentDescriptors} />;
       }
-      return <ToolCard part={part} />;
+      return <ToolCard part={part} projectSlug={projectSlug} sessionId={focusStoreSessionId} />;
     case "system-notice":
       return <SystemNoticeBlock part={part} />;
     case "compaction":

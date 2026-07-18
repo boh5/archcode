@@ -7,8 +7,12 @@ import { SkillService } from "../../skills";
 import { silentLogger } from "../../logger";
 import { storeManager } from "../../store/store";
 import type { SessionEventPayload, SessionStoreState, StoredMessage } from "../../store/types";
-import { createRegistry, defineTool } from "../../tools";
+import { defineTool } from "../../tools";
 import type { ToolExecutionContext } from "../../tools";
+import { createTextToolResult } from "../../tools/results";
+import { createTestToolRegistryFixture, type TestToolRegistryFixture } from "../../tools/test-registry";
+import type { AnyToolDescriptor } from "../../tools/types";
+import type { ToolRegistry } from "../../tools/registry";
 import { createTestProjectContext } from "../../tools/test-project-context";
 import { setLlmAdapterForTest } from "../../llm";
 import type { RetryScheduler } from "../../llm/retry";
@@ -21,6 +25,14 @@ import { createTestTempRoot } from "../../testing/test-temp-root";
 const testTempRoot = createTestTempRoot("query-recovery");
 const TEST_WORKSPACE_ROOT = testTempRoot.path;
 const realSaveSessionTranscript = sessionFileInternals.saveSessionTranscript;
+const registryFixtures: TestToolRegistryFixture[] = [];
+const outputAccessFixture = createTestToolRegistryFixture();
+
+function createTestRegistry(descriptors: AnyToolDescriptor[] = []): ToolRegistry {
+  const fixture = createTestToolRegistryFixture({ descriptors });
+  registryFixtures.push(fixture);
+  return fixture.registry;
+}
 
 type StreamTextFn = typeof import("ai").streamText;
 
@@ -72,7 +84,7 @@ function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOption
   return {
     modelInfo: dummyModelInfo,
     logger: silentLogger,
-    toolRegistry: createRegistry([]),
+    toolRegistry: createTestRegistry(),
     store: createStore(),
     allowedTools: [],
     agentSkills: [],
@@ -80,6 +92,7 @@ function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOption
     storeManager,
     projectContext: createTestProjectContext(workspaceRoot),
     cwd: workspaceRoot,
+    toolOutputAccess: outputAccessFixture.createToolOutputAccess(workspaceRoot, "test-root"),
     agentName: "engineer",
     ...overrides,
   };
@@ -191,6 +204,7 @@ afterEach(async () => {
 
 afterAll(async () => {
   sessionFileInternals.saveSessionTranscript = realSaveSessionTranscript;
+  await Promise.all([...registryFixtures, outputAccessFixture].map((fixture) => fixture.dispose()));
   await testTempRoot.cleanup();
 });
 
@@ -256,13 +270,14 @@ describe("query loop LLM stream recovery", () => {
   test("generic outer-catch failures are not labeled as model-call failures", async () => {
     const store = createStore();
     const events = captureEvents(store);
-    const registry = createRegistry([
+    const registry = createTestRegistry([
       defineTool({
         name: "explode",
         description: "Explode outside registry handling",
         inputSchema,
         traits: { readOnly: true, destructive: false, concurrencySafe: false },
-        execute: async () => "unreachable",
+        outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
+        execute: async () => createTextToolResult("unreachable"),
       }),
     ]);
     registry.execute = mock(async () => {
@@ -325,7 +340,7 @@ describe("query loop LLM stream recovery", () => {
   test("internal model-prep unknown errors are not retried as provider failures", async () => {
     const store = createStore();
     const events = captureEvents(store);
-    const registry = createRegistry([]);
+    const registry = createTestRegistry();
     registry.resolveForAgent = mock(() => {
       throw new Error("internal registry resolve bug");
     }) as typeof registry.resolveForAgent;
@@ -394,13 +409,14 @@ describe("query loop LLM stream recovery", () => {
 
   test("tool-input-start without tool-call before EOF is not executed and transcript is legalized", async () => {
     const store = createStore();
-    const executor = mock(async () => "should not run");
-    const registry = createRegistry([
+    const executor = mock(async () => createTextToolResult("should not run"));
+    const registry = createTestRegistry([
       defineTool({
         name: "echo",
         description: "Echo",
         inputSchema,
         traits: { readOnly: true, destructive: false, concurrencySafe: true },
+        outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
         execute: executor,
       }),
     ]);
@@ -413,8 +429,11 @@ describe("query loop LLM stream recovery", () => {
 
     expect(executor).not.toHaveBeenCalled();
     const tool = assistantMessages(store).flatMap((message) => message.parts).find((part) => part.type === "tool");
-    expect(tool).toMatchObject({ type: "tool", state: "error", errorMessage: "Execution ended before tool result" });
-    expect(store.getState().toModelMessages()).toEqual([
+    expect(tool).toMatchObject({ type: "tool", state: "error", result: { details: { error: { code: "TOOL_NOT_EXECUTED" } } } });
+    if (tool?.type !== "tool" || tool.state !== "error") throw new Error("Expected strict tool error");
+    expect((JSON.parse(tool.result.output.preview) as { message: string }).message).toBe("Execution ended before the tool ran");
+    const modelMessages = store.getState().toModelMessages();
+    expect(modelMessages.slice(0, 2)).toEqual([
       { role: "user", content: wrappedMessage("m0001", "Use tool") },
       { role: "assistant", content: [
         { type: "text", text: '<message ref="m0002">' },
@@ -422,25 +441,29 @@ describe("query loop LLM stream recovery", () => {
         { type: "text", text: "Recovered" },
         { type: "text", text: "</message>" },
       ] },
-      { role: "tool", content: [{ type: "tool-result", toolCallId: "tc-pending", toolName: "echo", output: { type: "error-text", value: "Execution ended before tool result" } }] },
     ]);
+    expect(modelMessages[2]).toMatchObject({
+      role: "tool",
+      content: [{ type: "tool-result", toolCallId: "tc-pending", toolName: "echo", output: { type: "error-text" } }],
+    });
+    expect(JSON.stringify(modelMessages[2])).toContain("Execution ended before the tool ran");
   });
 
   test("effectful tool attempt without result becomes unknown-result warning and is not replayed", async () => {
     const store = createStore();
     const executor = mock(async (_input: z.infer<typeof inputSchema>, ctx: ToolExecutionContext) => {
-      store.getState().append({ type: "execution-end", status: "interrupted" });
-      void ctx;
       abort.abort();
-      return "late result ignored";
+      ctx.abort.throwIfAborted();
+      return createTextToolResult("unreachable");
     });
     const abort = new AbortController();
-    const registry = createRegistry([
+    const registry = createTestRegistry([
       defineTool({
         name: "writeThing",
         description: "Effectful write",
         inputSchema,
         traits: { readOnly: false, destructive: false, concurrencySafe: true },
+        outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
         execute: executor,
       }),
     ]);
@@ -452,19 +475,20 @@ describe("query loop LLM stream recovery", () => {
 
     expect(executor).toHaveBeenCalledTimes(1);
     const tool = assistantMessages(store).flatMap((message) => message.parts).find((part) => part.type === "tool");
-    expect(tool).toMatchObject({ type: "tool", state: "error", meta: { unknownResult: true } });
-    expect(JSON.stringify(store.getState().toModelMessages())).toContain("Tool execution result unknown");
+    expect(tool).toMatchObject({ type: "tool", state: "error", result: { details: { unknownResult: true } } });
+    expect(JSON.stringify(store.getState().toModelMessages())).toContain('\\"unknownResult\\":true');
   });
 
   test("completed tool result is preserved when later EOF triggers recovery", async () => {
     const store = createStore();
-    const registry = createRegistry([
+    const registry = createTestRegistry([
       defineTool({
         name: "writeThing",
         description: "Effectful write",
         inputSchema,
         traits: { readOnly: false, destructive: false, concurrencySafe: true },
-        execute: async () => "written once",
+        outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
+        execute: async () => createTextToolResult("written once"),
       }),
     ]);
     createMockStreamText([
@@ -476,8 +500,8 @@ describe("query loop LLM stream recovery", () => {
     await runQueryLoop(makeOptions({ store, toolRegistry: registry, allowedTools: ["writeThing"] }), "Mutate then answer");
 
     const tool = assistantMessages(store).flatMap((message) => message.parts).find((part) => part.type === "tool");
-    expect(tool).toMatchObject({ type: "tool", state: "completed", output: "written once" });
-    if (tool?.type === "tool" && tool.state === "completed") expect(tool.meta?.unknownResult).toBeUndefined();
+    expect(tool).toMatchObject({ type: "tool", state: "completed", result: { output: { preview: "written once" } } });
+    if (tool?.type === "tool" && tool.state === "completed") expect(tool.result.details?.unknownResult).toBeUndefined();
   });
 
   test("abort during session retry backoff cancels quickly", async () => {

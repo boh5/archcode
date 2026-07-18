@@ -5,7 +5,9 @@ import type { MemoryFrontmatter } from "./schemas";
 import { MemoryFrontmatterSchema } from "./schemas";
 import {
   atomicWrite,
+  ONE_SHOT_FILE_READ_MAX_BYTES,
   isContained,
+  readUtf8FileBounded,
   resolveContainedPath,
   SafePathError,
 } from "../utils/safe-file";
@@ -261,12 +263,12 @@ export class MemoryFileManager {
 
   async #readFileOrNull(filePath: string): Promise<string | null> {
     try {
-      const file = Bun.file(filePath);
-      const exists = await file.exists();
-      if (!exists) return null;
-      return await file.text();
-    } catch {
-      return null;
+      return await readUtf8FileBounded(filePath, ONE_SHOT_FILE_READ_MAX_BYTES);
+    } catch (error) {
+      if (error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+        return null;
+      }
+      throw error;
     }
   }
 }

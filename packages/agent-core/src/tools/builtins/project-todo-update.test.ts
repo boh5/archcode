@@ -5,7 +5,8 @@ import { z } from "zod/v4";
 import { createMockStore } from "../../store/test-helpers";
 import { storeManager } from "../../store/store";
 import type { SessionStoreState } from "../../store/types";
-import { createToolExecutionContext, type ToolExecutionContext, type ToolExecutionResult } from "../types";
+import { expectTextDraft } from "../test-results";
+import { createToolExecutionContext, type ToolExecutionContext } from "../types";
 import { ProjectTodoUpdateInputSchema, projectTodoUpdateTool } from "./project-todo-update";
 
 const sessionId = "22222222-2222-4222-8222-222222222222";
@@ -138,7 +139,7 @@ describe("project_todo_update", () => {
 
     const result = await projectTodoUpdateTool.execute(input, ctx);
 
-    expect(typeof result).toBe("string");
+    expect(result.isError).toBe(false);
     expect(updateFromDiscussion).toHaveBeenCalledWith({
       authorization: {
         sessionId,
@@ -153,7 +154,7 @@ describe("project_todo_update", () => {
         status: "ready",
       },
     });
-    expect(JSON.parse(result as string)).toMatchObject({ revision: 5, status: "ready" });
+    expect(JSON.parse(expectTextDraft(result))).toMatchObject({ revision: 5, status: "ready" });
   });
 
   test("maps Idea without leaking its rationale into the rejection reason", async () => {
@@ -238,10 +239,10 @@ describe("project_todo_update", () => {
     ]) {
       const { ctx, updateFromDiscussion } = makeContext(overrides);
 
-      const result = await projectTodoUpdateTool.execute(input, ctx) as ToolExecutionResult;
+      const result = await projectTodoUpdateTool.execute(input, ctx);
 
       expect(result.isError).toBe(true);
-      expect(result.output).toContain("PROJECT_TODO_UPDATE_DENIED");
+      expect(expectTextDraft(result)).toContain("PROJECT_TODO_UPDATE_DENIED");
       expect(updateFromDiscussion).not.toHaveBeenCalled();
     }
   });
@@ -251,9 +252,9 @@ describe("project_todo_update", () => {
       throw new Error("Project Todo discussion binding not found");
     }));
 
-    const result = await projectTodoUpdateTool.execute(input, ctx) as ToolExecutionResult;
+    const result = await projectTodoUpdateTool.execute(input, ctx);
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain("Project Todo discussion binding not found");
+    expect(expectTextDraft(result)).toContain("Project Todo discussion binding not found");
   });
 });

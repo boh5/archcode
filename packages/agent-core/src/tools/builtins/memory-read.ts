@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
-import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../types";
+import { createTextToolResult } from "../results";
+import type { AnyToolDescriptor, RawToolResult, ToolExecutionContext } from "../types";
 import {
   DEFAULT_MAX_INDEX_LINES,
   DEFAULT_MAX_PREFERENCES_BYTES,
@@ -13,6 +14,7 @@ import {
   PREFERENCES_MARKER_END,
   PREFERENCES_MARKER_START,
 } from "../../memory";
+import { BoundedFileReadError, ONE_SHOT_FILE_READ_MAX_BYTES } from "../../utils/safe-file";
 
 // ─── Input Schema ───
 
@@ -27,6 +29,21 @@ type MemoryReadInput = z.infer<typeof MemoryReadInputSchema>;
 // ─── Helpers ───
 
 const NAME_REGEX = /^[a-zA-Z0-9_]+$/;
+
+function memoryReadFailure(error: unknown): RawToolResult {
+  if (error instanceof BoundedFileReadError) {
+    return createToolErrorResult({
+      kind: "execution",
+      code: "TOOL_OUTPUT_POLICY_VIOLATION",
+      message: `Memory file exceeds the ${ONE_SHOT_FILE_READ_MAX_BYTES}-byte one-shot read limit`,
+      name: error.name,
+    });
+  }
+  return createToolErrorResult({
+    kind: "execution",
+    error: error instanceof Error ? error : new Error(String(error)),
+  });
+}
 
 function truncateIndex(content: string, maxLines: number): string {
   const lines = content.split("\n");
@@ -74,7 +91,7 @@ async function buildCombinedContext(
 async function readTopicFile(
   fileManager: MemoryFileManager,
   name: string,
-): Promise<string | ToolExecutionResult> {
+): Promise<RawToolResult> {
   if (!NAME_REGEX.test(name)) {
     return createToolErrorResult({
       kind: "workspace",
@@ -94,7 +111,7 @@ async function readTopicFile(
     }
 
     const header = `---\nname: ${topic.name}\ndescription: ${topic.description}\ntype: ${topic.type}\n---`;
-    return [MEMORY_CONTEXT_START, header, topic.content, MEMORY_CONTEXT_END].join("\n");
+    return createTextToolResult([MEMORY_CONTEXT_START, header, topic.content, MEMORY_CONTEXT_END].join("\n"));
   } catch (error) {
     if (error instanceof MemoryPathError) {
       return createToolErrorResult({
@@ -105,10 +122,7 @@ async function readTopicFile(
     }
 
     // Frontmatter parsing failed — return structured error instead of falling back to raw content
-    return createToolErrorResult({
-      kind: "execution",
-      error: error instanceof Error ? error : new Error(String(error)),
-    });
+    return memoryReadFailure(error);
   }
 }
 
@@ -124,40 +138,45 @@ export function createMemoryReadTool(): AnyToolDescriptor {
       "This tool reads known entries and does not perform semantic search; read the index first when the topic name is unknown.",
     inputSchema: MemoryReadInputSchema,
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
+    outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
     execute: async (
       input: MemoryReadInput,
       ctx: ToolExecutionContext,
-    ): Promise<string | ToolExecutionResult> => {
-      const fileManager = ctx.projectContext.memory;
-      if (!input.name) {
-        return buildCombinedContext(fileManager);
-      }
-
-      if (input.name === "preferences") {
-        const content = await fileManager.readPreferences();
-        if (content === null) {
-          return createToolErrorResult({
-            kind: "file-not-found",
-            code: "TOOL_FILE_NOT_FOUND",
-            message: "Memory preferences not found",
-          });
+    ) => {
+      try {
+        const fileManager = ctx.projectContext.memory;
+        if (!input.name) {
+          return createTextToolResult(await buildCombinedContext(fileManager));
         }
-        return content;
-      }
 
-      if (input.name === "index") {
-        const content = await fileManager.readIndex();
-        if (content === null) {
-          return createToolErrorResult({
-            kind: "file-not-found",
-            code: "TOOL_FILE_NOT_FOUND",
-            message: "Memory index not found",
-          });
+        if (input.name === "preferences") {
+          const content = await fileManager.readPreferences();
+          if (content === null) {
+            return createToolErrorResult({
+              kind: "file-not-found",
+              code: "TOOL_FILE_NOT_FOUND",
+              message: "Memory preferences not found",
+            });
+          }
+          return createTextToolResult(content);
         }
-        return content;
-      }
 
-      return readTopicFile(fileManager, input.name);
+        if (input.name === "index") {
+          const content = await fileManager.readIndex();
+          if (content === null) {
+            return createToolErrorResult({
+              kind: "file-not-found",
+              code: "TOOL_FILE_NOT_FOUND",
+              message: "Memory index not found",
+            });
+          }
+          return createTextToolResult(content);
+        }
+
+        return await readTopicFile(fileManager, input.name);
+      } catch (error) {
+        return memoryReadFailure(error);
+      }
     },
   });
 }

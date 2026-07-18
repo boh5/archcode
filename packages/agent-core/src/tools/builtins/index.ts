@@ -5,11 +5,11 @@ export { fileWriteTool } from "./file-write";
 export { fileEditTool } from "./file-edit";
 export { grepTool, setRipgrepService as setGrepRipgrepService, GrepInputSchema } from "./grep";
 export { globTool, setRipgrepService as setGlobRipgrepService, GlobInputSchema } from "./glob";
-export { gitStatusTool, parseGitStatusOutput, runGitStatus } from "./git-status";
+export { gitStatusTool, createGitStatusCaptureSink } from "./git-status";
 export { gitDiffTool, buildArgs as buildGitDiffArgs } from "./git-diff";
 export { bashTool, BashInputSchema, runBashCommand } from "./bash";
 export { todoWriteTool, TodoWriteInputSchema } from "./todo-write";
-export { askUserTool, AskUserInputSchema, executeAskUser } from "./ask-user";
+export { askUserTool, AskUserInputSchema, prepareAskUserBlock, resumeAskUser } from "./ask-user";
 export { lspDiagnosticsTool, lspGotoDefinitionTool, lspFindReferencesTool, lspSymbolsTool, createLspToolDescriptors } from "./lsp";
 export { webFetchTool, WebFetchInputSchema, runWebFetch, validateUrl } from "./web-fetch";
 export { waitForReminderTool, WaitForReminderInputSchema, executeWaitForReminder } from "./wait-for-reminder";
@@ -20,7 +20,7 @@ export { cancelSessionTool, CancelSessionInputSchema, executeCancelSession } fro
 export { memoryWriteTool, MemoryWriteInputSchema } from "./memory-write";
 export { skillListTool, createSkillListTool, SkillListInputSchema } from "./skill-list";
 export { skillReadTool, createSkillReadTool, SkillReadInputSchema } from "./skill-read";
-export { viewToolOutputTool } from "./view-tool-output";
+export { outputReadTool, outputSearchTool, OutputReadInputSchema, OutputSearchInputSchema } from "./output-artifacts";
 export { astGrepSearchTool, astGrepReplaceTool } from "./ast-grep";
 export { compressTool, CompressInputSchema } from "./compress";
 export { worktreeEnterTool, worktreeExitTool, WorktreeEnterInputSchema, WorktreeExitInputSchema } from "./worktree";
@@ -44,7 +44,7 @@ import { delegateTool } from "./delegate";
 import { resumeSessionTool } from "./resume-session";
 import { backgroundOutputTool } from "./background-output";
 import { cancelSessionTool } from "./cancel-session";
-import { viewToolOutputTool } from "./view-tool-output";
+import { outputReadTool, outputSearchTool } from "./output-artifacts";
 import { astGrepSearchTool, astGrepReplaceTool } from "./ast-grep";
 import { skillListTool } from "./skill-list";
 import { skillReadTool } from "./skill-read";
@@ -78,7 +78,8 @@ export function createBuiltinToolDescriptors(): AnyToolDescriptor[] {
     cancelSessionTool,
     skillListTool,
     skillReadTool,
-    viewToolOutputTool,
+    outputReadTool,
+    outputSearchTool,
     compressTool,
     worktreeEnterTool,
     worktreeExitTool,

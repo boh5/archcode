@@ -15,6 +15,13 @@ import type { AnyToolDescriptor } from "./tools/types";
 import { defineTool } from "./tools/index";
 import { createRuntime as createProductionRuntime } from "./runtime";
 import { ServerConfigService, resolveServerConfigPath } from "./config";
+import { ToolOutputArtifactStore } from "./tool-output/artifact-store";
+import { REDACTION_MARKER, type SecretRedactionPolicy } from "./security";
+import { createInMemoryLogger } from "./logger";
+
+type RuntimeTestOptions = NonNullable<Parameters<typeof createProductionRuntime>[0]> & {
+  toolOutputStoreFactory?: (rootDir: string) => ToolOutputArtifactStore;
+};
 
 const tmpRoots: string[] = [];
 
@@ -31,10 +38,10 @@ async function makeTempRoot(): Promise<string> {
 }
 
 async function createRuntime(
-  options: Parameters<typeof createProductionRuntime>[0] = {},
+  options: RuntimeTestOptions = {},
 ): ReturnType<typeof createProductionRuntime> {
   const projectRegistryHomeDir = options.projectRegistryHomeDir ?? await makeTempRoot();
-  return createProductionRuntime({ ...options, projectRegistryHomeDir });
+  return createProductionRuntime({ ...options, projectRegistryHomeDir } as Parameters<typeof createProductionRuntime>[0]);
 }
 
 async function writeConfig(config: Record<string, unknown>): Promise<ServerConfigService> {
@@ -87,8 +94,9 @@ function makeMcpDescriptor(name = "mcp__context7__lookup"): AnyToolDescriptor {
     name,
     description: "Fake MCP lookup tool",
     inputSchema: z.object({}).catchall(z.unknown()),
+    outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
-    execute: async () => "mcp output",
+    execute: async () => ({ isError: false, draft: { kind: "text", text: "mcp output" } }),
   });
 }
 
@@ -178,6 +186,78 @@ function makeMockMcpManager(options: MockMcpManagerOptions = {}): {
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe("createRuntime MCP background loading", () => {
+  test("owns MCP shutdown and records only stable safe failure data", async () => {
+    const secret = "shutdown-secret-123456";
+    const url = "https://shutdown.example.test/private";
+    const path = "/private/tmp/archcode-mcp-shutdown/stderr.log";
+    const rawStderr = `stderr=${secret} ${url} ${path}`;
+    const { manager } = makeMockMcpManager();
+    (manager as unknown as { closeAll: ReturnType<typeof mock> }).closeAll = mock(async () => [{
+      serverName: `server-${rawStderr}`,
+      message: `close failed ${rawStderr}`,
+    }]);
+    const { logger, entries } = createInMemoryLogger();
+
+    const runtime = await createRuntime({
+      configService: await writeConfig(makeConfig({ servers: {} })),
+      externalSecretLiterals: [secret],
+      logger,
+      mcpManagerFactory: () => manager,
+    });
+
+    await runtime.shutdown();
+    await runtime.shutdown();
+
+    expect((manager as unknown as { closeAll: ReturnType<typeof mock> }).closeAll).toHaveBeenCalledTimes(1);
+    expect(runtime.warnings).toContainEqual({ message: "MCP shutdown failed" });
+    const warning = entries.find((entry) => entry.event === "mcp.shutdown.warning");
+    expect(warning).toMatchObject({
+      event: "mcp.shutdown.warning",
+      message: "MCP shutdown failed",
+      meta: { failure: { name: "McpShutdownError", code: "MCP_SHUTDOWN_FAILED" } },
+    });
+    const serialized = JSON.stringify({ warnings: runtime.warnings, entries });
+    expect(serialized).not.toContain(secret);
+    expect(serialized).not.toContain(url);
+    expect(serialized).not.toContain(path);
+    expect(serialized).not.toContain("stderr=");
+    expect(serialized).not.toContain(REDACTION_MARKER);
+  });
+
+  test("passes one immutable runtime policy containing resolved secret literals", async () => {
+    const mcpUrl = "https://private.example.test/mcp";
+    const mcpHeader = "Bearer mcp-secret";
+    const externalSecret = "server-password";
+    const configService = await writeConfig(makeConfig({
+      servers: {
+        private: {
+          url: mcpUrl,
+          headers: { Authorization: mcpHeader },
+        },
+      },
+    }));
+    const { manager } = makeMockMcpManager();
+    let policy: SecretRedactionPolicy | undefined;
+
+    const runtime = await createRuntime({
+      configService,
+      externalSecretLiterals: [externalSecret],
+      mcpManagerFactory: (_config, runtimePolicy) => {
+        policy = runtimePolicy;
+        return manager;
+      },
+    });
+
+    expect(policy).toBeDefined();
+    const leaked = `test-key ${mcpUrl} ${mcpHeader} ${externalSecret}`;
+    const redacted = policy?.redactString(leaked) ?? leaked;
+    expect(redacted).not.toContain("test-key");
+    expect(redacted).not.toContain(mcpUrl);
+    expect(redacted).not.toContain(mcpHeader);
+    expect(redacted).not.toContain(externalSecret);
+    await runtime.disposeToolOutputs();
+  });
+
   test("createRuntime returns with all MCP servers in pending state", async () => {
     const configService = await writeConfig(makeConfig({ servers: {} }));
     const { manager } = makeMockMcpManager({
@@ -373,5 +453,64 @@ describe("createRuntime MCP background loading", () => {
     // Release the gate so background can complete (cleanup).
     releaseConnect();
     for (let i = 0; i < 5; i++) await Promise.resolve();
+  });
+});
+
+describe("createRuntime tool output lifecycle", () => {
+  test("initializes the configured store and exposes awaited disposal", async () => {
+    const configService = await writeConfig(makeConfig({ servers: {} }));
+    const { manager } = makeMockMcpManager();
+    const root = await makeTempRoot();
+    let receivedRoot = "";
+    let disposeCalls = 0;
+
+    class TrackingStore extends ToolOutputArtifactStore {
+      override async dispose(): Promise<void> {
+        disposeCalls += 1;
+        await super.dispose();
+      }
+    }
+
+    const runtime = await createRuntime({
+      configService,
+      mcpManagerFactory: () => manager,
+      toolOutputRootDir: root,
+      toolOutputStoreFactory: (rootDir) => {
+        receivedRoot = rootDir;
+        return new TrackingStore({ rootDir });
+      },
+    });
+
+    expect(receivedRoot).toBe(root);
+    await runtime.disposeToolOutputs();
+    expect(disposeCalls).toBe(1);
+  });
+
+  test("disposes the store and closes MCP when store initialization fails", async () => {
+    const configService = await writeConfig(makeConfig({ servers: {} }));
+    const { manager } = makeMockMcpManager();
+    const root = await makeTempRoot();
+    let disposeCalls = 0;
+
+    class FailingStore extends ToolOutputArtifactStore {
+      override async ready(): Promise<void> {
+        throw new Error("artifact init failed");
+      }
+
+      override async dispose(): Promise<void> {
+        disposeCalls += 1;
+        await super.dispose();
+      }
+    }
+
+    await expect(createRuntime({
+      configService,
+      mcpManagerFactory: () => manager,
+      toolOutputRootDir: root,
+      toolOutputStoreFactory: (rootDir) => new FailingStore({ rootDir }),
+    })).rejects.toThrow("artifact init failed");
+
+    expect(disposeCalls).toBe(1);
+    expect((manager as unknown as { closeAll: ReturnType<typeof mock> }).closeAll).toHaveBeenCalledTimes(1);
   });
 });

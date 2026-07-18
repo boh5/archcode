@@ -6,6 +6,25 @@ import type { CompressionSummary } from "./types";
 import type { SessionFile } from "../store/helpers";
 import type { SessionStoreState, StoredMessage } from "../store/types";
 
+function finalizedResult(
+  preview: string,
+  recovery: { kind: "none" } | { kind: "artifact"; outputRef: string; expiresAt: number; canRead: true; canSearch: true } = { kind: "none" },
+) {
+  const counts = { bytes: new TextEncoder().encode(preview).byteLength, lines: preview.length === 0 ? 0 : preview.split("\n").length };
+  return {
+    isError: false,
+    output: {
+      preview,
+      completeness: recovery.kind === "none" ? "complete" as const : "partial" as const,
+      observed: counts,
+      canonical: counts,
+      stored: counts,
+      omitted: { bytes: 0, lines: 0 },
+      recovery,
+    },
+  };
+}
+
 function summary(childBlockRefs: CompressionSummary["childBlockRefs"] = []): CompressionSummary {
   return {
     childBlockRefs,
@@ -42,7 +61,7 @@ function messagesWithTools(): StoredMessage[] {
       toolCallId: "call-small",
       toolName: "grep",
       input: { pattern: "needle" },
-      output: "small output",
+      result: finalizedResult("small output"),
       createdAt: 100,
       startedAt: 100,
       endedAt: 101,
@@ -55,11 +74,16 @@ function messagesWithTools(): StoredMessage[] {
       toolCallId: "call-big",
       toolName: "bash",
       input: "generate lots",
-      output: "preview line\n[Output truncated; full output saved to: /private/tmp/secret/full.txt]",
+      result: finalizedResult("preview line", {
+        kind: "artifact",
+        outputRef: "abcdefghijklmnopqrstuv",
+        expiresAt: 10_000,
+        canRead: true,
+        canSearch: true,
+      }),
       createdAt: 100,
       startedAt: 100,
       endedAt: 101,
-      meta: { fullOutputPath: "/private/tmp/secret/full.txt" },
     }]),
     message("msg-5", "user", [text("t5", "tail user")]),
     message("msg-6", "assistant", [text("t6", "tail assistant")]),
@@ -222,10 +246,14 @@ describe("resolveCompressionOriginalRange", () => {
     expect(result.coveredMessageIds).toEqual(["msg-1", "msg-2", "msg-3", "msg-4"]);
     expect(result.messages.map((entry) => entry.message.id)).toEqual(["msg-1", "msg-2", "msg-3", "msg-4"]);
     expect(result.messages[0]?.message.parts[0]).toMatchObject({ type: "text", text: "one" });
-    expect(result.messages[1]?.message.parts[0]).toMatchObject({ type: "tool", state: "completed", output: "small output" });
+    expect(result.messages[1]?.message.parts[0]).toMatchObject({
+      type: "tool",
+      state: "completed",
+      result: { output: { preview: "small output", recovery: { kind: "none" } } },
+    });
   });
 
-  test("represents persisted giant tool output as preview plus safe ref without leaking paths", () => {
+  test("returns bounded preview plus opaque artifact ref without filesystem paths", () => {
     const result = resolveCompressionOriginalRange(compressedSession(), "b1");
 
     expect(result.ok).toBe(true);
@@ -234,12 +262,14 @@ describe("resolveCompressionOriginalRange", () => {
     expect(part).toMatchObject({
       type: "tool",
       state: "completed",
-      output: "preview line",
-      persistedOutput: {
-        kind: "tool-output",
-        ref: "session-1:bash:call-big",
-        truncated: true,
-        preview: "preview line",
+      result: {
+        output: {
+          preview: "preview line",
+          recovery: {
+            kind: "artifact",
+            outputRef: "abcdefghijklmnopqrstuv",
+          },
+        },
       },
     });
     expect(JSON.stringify(part)).not.toContain("/private/tmp/secret/full.txt");

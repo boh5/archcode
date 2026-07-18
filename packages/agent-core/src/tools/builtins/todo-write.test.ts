@@ -1,16 +1,33 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import type { StoreApi } from "zustand";
 import { storeManager } from "../../store/store";
 import type { SessionStoreState } from "../../store/types";
-import { createRegistry } from "../registry";
-import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../errors";
-import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import { inferToolErrorKindFromResult } from "../errors";
+import type { RawToolResult, RegistryExecutionOutcome, ToolExecutionContext } from "../types";
+import { createTestToolRegistryFixture } from "../test-registry";
 import { todoWriteTool, TodoWriteInputSchema } from "./todo-write";
 import { createTestProjectContext } from "../test-project-context";
 
-const testDir = join(import.meta.dir, "__test_tmp__", "todo-write", crypto.randomUUID());
+const testDir = join(tmpdir(), "archcode-todo-write", crypto.randomUUID());
+const registryFixture = createTestToolRegistryFixture({ descriptors: [todoWriteTool] });
+
+afterAll(async () => {
+  await registryFixture.dispose();
+  await rm(testDir, { recursive: true, force: true });
+});
+
+function rawText(result: RawToolResult): string {
+  if (result.draft.kind !== "text") throw new Error("Expected text draft");
+  return result.draft.text;
+}
+
+function settled(outcome: RegistryExecutionOutcome) {
+  if (outcome.kind !== "settled") throw new Error("Expected settled Registry outcome");
+  return outcome.result;
+}
 
 function makeStore(): StoreApi<SessionStoreState> {
   return storeManager.create(`todo-test-${crypto.randomUUID()}`, testDir, { agentName: "engineer" });
@@ -100,10 +117,10 @@ describe("todoWriteTool", () => {
     expect(todos[2]?.id).toBe("todo-3");
     expect(todos[2]?.content).toBe("third");
     expect(todos[2]?.status).toBe("completed");
-    expect(output).toContain("Todos updated");
-    expect(output).toContain("1 pending");
-    expect(output).toContain("1 in_progress");
-    expect(output).toContain("1 completed");
+    expect(rawText(output)).toContain("Todos updated");
+    expect(rawText(output)).toContain("1 pending");
+    expect(rawText(output)).toContain("1 in_progress");
+    expect(rawText(output)).toContain("1 completed");
   });
 
   test("second call replaces full list", async () => {
@@ -133,7 +150,7 @@ describe("todoWriteTool", () => {
   test("more than one in_progress returns isError and leaves previous todos unchanged", async () => {
     const store = makeStore();
     const ctx = makeCtx(store);
-    const registry = createRegistry([todoWriteTool]);
+    const registry = registryFixture.registry;
 
     const prevResult = await registry.execute(
       {
@@ -143,7 +160,7 @@ describe("todoWriteTool", () => {
       },
       ctx,
     );
-    expect(prevResult.isError).toBe(false);
+    expect(settled(prevResult).isError).toBe(false);
 
     const before = store.getState().todos;
 
@@ -161,10 +178,10 @@ describe("todoWriteTool", () => {
       ctx,
     );
 
-    expect(result.isError).toBe(true);
-    expect(inferToolErrorKindFromResult(result)).toBe("todo-validation");
-    expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
-    expect(result.output).toContain("Only one todo");
+    const finalized = settled(result);
+    expect(finalized.isError).toBe(true);
+    expect(finalized.details?.error?.kind).toBe("todo-validation");
+    expect(finalized.output.preview).toContain("Only one todo");
 
     const after = store.getState().todos;
     expect(after).toEqual(before);
@@ -191,11 +208,11 @@ describe("todoWriteTool", () => {
         ],
       },
       ctx,
-    )) as ToolExecutionResult;
+    ));
     expect(result.isError).toBe(true);
     expect(inferToolErrorKindFromResult(result)).toBe("todo-validation");
-    expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
-    expect(result.output).toContain("Duplicate todo IDs");
+    expect(result.details?.error).toBeDefined();
+    expect(rawText(result)).toContain("Duplicate todo IDs");
 
     const after = store.getState().todos;
     expect(after).toEqual(before);
@@ -236,7 +253,7 @@ describe("todoWriteTool", () => {
       ctx,
     );
 
-    expect(output).toBe(
+    expect(rawText(output)).toBe(
       "Todos updated — 0 pending, 0 in_progress, 1 completed, 1 cancelled",
     );
   });
@@ -255,10 +272,10 @@ describe("todoWriteTool", () => {
       ctx,
     );
 
-    expect(output).toContain(
+    expect(rawText(output)).toContain(
       "Todos updated — 1 pending, 1 in_progress, 0 completed, 0 cancelled",
     );
-    expect(output).toContain('Current: "active task"');
+    expect(rawText(output)).toContain('Current: "active task"');
   });
 
   test("output summary with all statuses", async () => {
@@ -278,11 +295,11 @@ describe("todoWriteTool", () => {
       ctx,
     );
 
-    expect(output).toContain("1 pending");
-    expect(output).toContain("1 in_progress");
-    expect(output).toContain("2 completed");
-    expect(output).toContain("1 cancelled");
-    expect(output).toContain('Current: "inp"');
+    expect(rawText(output)).toContain("1 pending");
+    expect(rawText(output)).toContain("1 in_progress");
+    expect(rawText(output)).toContain("2 completed");
+    expect(rawText(output)).toContain("1 cancelled");
+    expect(rawText(output)).toContain('Current: "inp"');
   });
 });
 
@@ -290,7 +307,7 @@ describe("todoWriteTool via registry", () => {
   test("schema validation via registry returns isError for unknown fields", async () => {
     const store = makeStore();
     const ctx = makeCtx(store);
-    const registry = createRegistry([todoWriteTool]);
+    const registry = registryFixture.registry;
 
     const result = await registry.execute(
       {
@@ -301,14 +318,14 @@ describe("todoWriteTool via registry", () => {
       ctx,
     );
 
-    expect(result.isError).toBe(true);
-    expect(result.output).toContain("Unrecognized key");
+    expect(settled(result).isError).toBe(true);
+    expect(settled(result).output.preview).toContain("Unrecognized key");
   });
 
   test("schema validation via registry returns isError for invalid status", async () => {
     const store = makeStore();
     const ctx = makeCtx(store);
-    const registry = createRegistry([todoWriteTool]);
+    const registry = registryFixture.registry;
 
     const result = await registry.execute(
       {
@@ -319,8 +336,8 @@ describe("todoWriteTool via registry", () => {
       ctx,
     );
 
-    expect(result.isError).toBe(true);
-    expect(result.output).toContain("Invalid option");
+    expect(settled(result).isError).toBe(true);
+    expect(settled(result).output.preview).toContain("Invalid option");
   });
 });
 

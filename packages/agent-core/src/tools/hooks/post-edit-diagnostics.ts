@@ -1,8 +1,8 @@
 import { handleFileDiagnostics } from "../builtins/lsp/lsp-diagnostics";
-import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult, type FormattedToolError } from "../errors";
+import { inferToolErrorKindFromResult, type FormattedToolError } from "../errors";
 import { TOOL_LSP_DIAGNOSTICS } from "../names";
 import { resolveAndValidatePath } from "../security";
-import type { AfterHook, ToolExecutionContext, ToolExecutionResult } from "../types";
+import type { AfterHook, RawToolResult, ToolExecutionContext } from "../types";
 
 const POST_EDIT_DIAGNOSTICS_HEADER = "Post-edit diagnostics:";
 const DEFAULT_INPUT_PATH_KEYS = ["path"] as const;
@@ -37,7 +37,7 @@ export function createPostEditDiagnosticsHook(options: PostEditDiagnosticsHookOp
     const skipped = paths.length > MAX_DIAGNOSTIC_FILES
       ? paths.length - MAX_DIAGNOSTIC_FILES
       : 0;
-    return appendPostEditDiagnostics(result, diagnostics, unavailable, skipped);
+    return await appendPostEditDiagnostics(result, diagnostics, unavailable, skipped, ctx);
   };
 }
 
@@ -45,18 +45,13 @@ function appendDiagnosticsEntry(
   diagnosticOutputs: string[],
   unavailable: string[],
   path: string,
-  diagnosticResult: string | ToolExecutionResult,
+  diagnosticResult: RawToolResult,
   totalPaths: number,
 ): void {
-  if (typeof diagnosticResult === "string") {
-    if (isEmptyDiagnosticsOutput(diagnosticResult)) return;
-    diagnosticOutputs.push(formatDiagnosticsEntry(path, diagnosticResult, totalPaths));
-    return;
-  }
-
   if (!diagnosticResult.isError) {
-    if (isEmptyDiagnosticsOutput(diagnosticResult.output)) return;
-    diagnosticOutputs.push(formatDiagnosticsEntry(path, diagnosticResult.output, totalPaths));
+    const output = rawText(diagnosticResult);
+    if (isEmptyDiagnosticsOutput(output)) return;
+    diagnosticOutputs.push(formatDiagnosticsEntry(path, output, totalPaths));
     return;
   }
 
@@ -66,12 +61,13 @@ function appendDiagnosticsEntry(
   unavailable.push(`${path}: ${diagnosticErrorMessage(diagnosticResult)}`);
 }
 
-function appendPostEditDiagnostics(
-  result: ToolExecutionResult,
+async function appendPostEditDiagnostics(
+  result: RawToolResult,
   diagnostics: string[],
   unavailable: string[],
   skipped: number,
-): ToolExecutionResult | undefined {
+  ctx: ToolExecutionContext,
+): Promise<RawToolResult | undefined> {
   if (diagnostics.length === 0 && unavailable.length === 0 && skipped === 0) return undefined;
 
   const sections: string[] = [];
@@ -85,17 +81,15 @@ function appendPostEditDiagnostics(
     sections.push(`Post-edit diagnostics skipped ${skipped} additional file(s).`);
   }
 
+  const appendix = sections.join("\n");
+  if (result.draft.kind === "capture") {
+    await ctx.outputCapture?.write(`\n\n${appendix}`);
+    return undefined;
+  }
+  if (result.draft.kind !== "text") return undefined;
   return {
     ...result,
-    output: `${result.output}\n\n${sections.join("\n")}`,
-    meta: {
-      ...result.meta,
-      postEditDiagnostics: {
-        diagnostics,
-        unavailable,
-        skipped,
-      },
-    },
+    draft: { kind: "text", text: `${result.draft.text}\n\n${appendix}` },
   };
 }
 
@@ -109,7 +103,7 @@ function isEmptyDiagnosticsOutput(output: string): boolean {
 }
 
 function collectCandidatePaths(
-  result: ToolExecutionResult,
+  result: RawToolResult,
   ctx: ToolExecutionContext,
   options: PostEditDiagnosticsHookOptions,
 ): string[] {
@@ -130,13 +124,12 @@ function collectCandidatePaths(
   return [...new Set(paths)];
 }
 
-function diffPathsFromResult(result: ToolExecutionResult): string[] {
-  const diffs = result.meta?.diffs;
-  if (!isRecord(diffs) || !Array.isArray(diffs.files)) return [];
+function diffPathsFromResult(result: RawToolResult): string[] {
+  const diffs = result.details?.presentations?.find((item) => item.kind === "diff");
+  if (diffs?.kind !== "diff") return [];
 
   const paths: string[] = [];
   for (const file of diffs.files) {
-    if (!isRecord(file) || typeof file.path !== "string") continue;
     if (file.status === "deleted") continue;
     paths.push(file.path);
   }
@@ -144,20 +137,22 @@ function diffPathsFromResult(result: ToolExecutionResult): string[] {
   return paths;
 }
 
-function diagnosticErrorMessage(result: ToolExecutionResult): string {
-  const error = result.meta?.[TOOL_ERROR_META_KEY];
-  if (isRecord(error) && typeof error.message === "string") {
-    return error.message;
-  }
-
+function diagnosticErrorMessage(result: RawToolResult): string {
+  const output = rawText(result);
   try {
-    const parsed = JSON.parse(result.output) as Partial<FormattedToolError>;
+    const parsed = JSON.parse(output) as Partial<FormattedToolError>;
     if (typeof parsed.message === "string") return parsed.message;
   } catch {
     // Fall back to the raw tool output below.
   }
 
-  return result.output;
+  return output;
+}
+
+function rawText(result: RawToolResult): string {
+  return result.draft.kind === "text" || result.draft.kind === "source"
+    ? result.draft.text
+    : "Tool output capture unavailable";
 }
 
 function errorMessage(error: unknown): string {

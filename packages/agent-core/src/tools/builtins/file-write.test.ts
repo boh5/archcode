@@ -15,15 +15,18 @@ import {
   stat,
 } from "node:fs/promises";
 import path, { join } from "node:path";
+import { tmpdir } from "node:os";
 import { createMockStore } from "../../store/test-helpers";
-import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../errors";
-import { ToolRegistry } from "../registry";
-import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import { inferToolErrorKindFromResult } from "../errors";
+import type { RawToolResult, ToolExecutionContext } from "../types";
+import { createTestToolRegistryFixture } from "../test-registry";
+import { expectSettledResult, expectTextDraft } from "../test-results";
 import { fileWriteTool } from "./file-write";
 import { createTestProjectContext } from "../test-project-context";
 
-const testDir = join(import.meta.dir, "__test_tmp__", "file-write", crypto.randomUUID());
-const canonicalProjectDir = join(import.meta.dir, "__test_tmp__", "file-write-canonical-project", crypto.randomUUID());
+const testDir = join(tmpdir(), "archcode-file-write", crypto.randomUUID());
+const canonicalProjectDir = join(tmpdir(), "archcode-file-write-canonical-project", crypto.randomUUID());
+const registryFixture = createTestToolRegistryFixture({ descriptors: [fileWriteTool] });
 
 function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   return { store: createMockStore(),
@@ -50,10 +53,7 @@ async function executeThroughRegistry(
   input: { path: string; content: string },
   ctx: ToolExecutionContext = makeCtx(),
 ) {
-  const registry = new ToolRegistry();
-  registry.register(fileWriteTool);
-
-  return registry.execute(
+  return registryFixture.registry.execute(
     { toolCallId: ctx.toolCallId, toolName: "file_write", input },
     ctx,
   );
@@ -67,6 +67,7 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  await registryFixture.dispose();
   await rm(testDir, { recursive: true, force: true });
   await rm(canonicalProjectDir, { recursive: true, force: true });
 });
@@ -74,22 +75,17 @@ afterAll(async () => {
 describe("fileWriteTool", () => {
   test("hard-denies an absolute canonical project-state path from a worktree Session", async () => {
     const target = join(canonicalProjectDir, ".archcode", "blocked.json");
-    const confirmPermission = mock(async () => "approve_once" as const);
 
     const result = await executeThroughRegistry(
       { path: target, content: "{}" },
       makeCtx({
         projectContext: createTestProjectContext(canonicalProjectDir),
-        confirmPermission,
       }),
     );
 
-    expect(result.isError).toBe(true);
-    expect(inferToolErrorKindFromResult(result)).toBe("permission-denied");
-    expect(result.meta?.[TOOL_ERROR_META_KEY]).toMatchObject({
-      code: "PROTECTED_PATH_WRITE_DENIED",
-    });
-    expect(confirmPermission).not.toHaveBeenCalled();
+    const finalized = expectSettledResult(result);
+    expect(finalized.isError).toBe(true);
+    expect(finalized.details?.error).toMatchObject({ kind: "permission-denied", code: "PROTECTED_PATH_WRITE_DENIED" });
     expect(existsSync(target)).toBe(false);
   });
 
@@ -99,20 +95,20 @@ describe("fileWriteTool", () => {
       makeCtx(),
     );
 
-    expect(typeof output).not.toBe("string");
-    const result = output as ToolExecutionResult;
-    expect(result.output).toBe("File written to sample.txt");
+    const result = output;
+    expect(expectTextDraft(result)).toBe("File written to sample.txt");
     expect(result.isError).toBe(false);
-    expect(result.meta?.diffs).toMatchObject({
-      files: [
-        {
+    expect(result.details?.presentations).toContainEqual(expect.objectContaining({
+      kind: "diff",
+      files: expect.arrayContaining([
+        expect.objectContaining({
           path: "sample.txt",
           status: "created",
           additions: 2,
           deletions: 0,
-        },
-      ],
-    });
+        }),
+      ]),
+    }));
     const content = await Bun.file(join(testDir, "sample.txt")).text();
     expect(content).toBe("hello\nworld\n");
   });
@@ -123,11 +119,13 @@ describe("fileWriteTool", () => {
       content: "line one\nline two\n",
     });
 
-    expect(result.isError).toBe(false);
-    expect(result.output).toBe("File written to registry-new.txt");
-    expect(result.meta?.diffs).toMatchObject({
-      files: [{ path: "registry-new.txt", status: "created" }],
-    });
+    const finalized = expectSettledResult(result);
+    expect(finalized.isError).toBe(false);
+    expect(finalized.output.preview).toBe("File written to registry-new.txt");
+    expect(finalized.details?.presentations).toContainEqual(expect.objectContaining({
+      kind: "diff",
+      files: [expect.objectContaining({ path: "registry-new.txt", status: "created" })],
+    }));
   });
 
   test("file-exists permission denies existing files", async () => {
@@ -149,16 +147,15 @@ describe("fileWriteTool", () => {
   test("execute returns an error when the file already exists", async () => {
     await writeWorkspaceFile("execute-existing.txt", "old");
 
-    const result = (await fileWriteTool.execute(
+    const result = await fileWriteTool.execute(
       { path: "execute-existing.txt", content: "new" },
       makeCtx(),
-    )) as ToolExecutionResult;
+    );
 
     expect(result.isError).toBe(true);
     expect(inferToolErrorKindFromResult(result)).toBe("file-already-exists");
-    expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
-    expect(result.meta?.diffs).toBeUndefined();
-    expect(result.output).toContain("already exists");
+    expect(result.details?.error).toBeDefined();
+    expect(expectTextDraft(result)).toContain("already exists");
 
     const content = await Bun.file(join(testDir, "execute-existing.txt")).text();
     expect(content).toBe("old");
@@ -208,7 +205,7 @@ describe("fileWriteTool", () => {
       makeCtx(),
     );
 
-    expect((output as ToolExecutionResult).output).toBe("File written to nested/deep/file.txt");
+    expect(expectTextDraft(output)).toBe("File written to nested/deep/file.txt");
     const content = await Bun.file(join(testDir, "nested/deep/file.txt")).text();
     expect(content).toBe("nested");
   });
@@ -219,7 +216,7 @@ describe("fileWriteTool", () => {
       makeCtx(),
     );
 
-    expect((output as ToolExecutionResult).output).toBe("File written to atomic.txt");
+    expect(expectTextDraft(output)).toBe("File written to atomic.txt");
     expect(existsSync(join(testDir, "atomic.txt"))).toBe(true);
     expect(existsSync(join(testDir, `.tmp-${process.pid}-${Date.now()}`))).toBe(false);
     const parentEntries = await Array.fromAsync(
@@ -236,9 +233,9 @@ describe("fileWriteTool", () => {
       fileWriteTool.execute({ path: "parallel-b.txt", content: "b" }, ctx),
     ]);
 
-    expect(outputs).toEqual([
-      expect.objectContaining({ output: "File written to parallel-a.txt", isError: false }),
-      expect.objectContaining({ output: "File written to parallel-b.txt", isError: false }),
+    expect(outputs.map(expectTextDraft)).toEqual([
+      "File written to parallel-a.txt",
+      "File written to parallel-b.txt",
     ]);
     const contentA = await Bun.file(join(testDir, "parallel-a.txt")).text();
     const contentB = await Bun.file(join(testDir, "parallel-b.txt")).text();
@@ -259,8 +256,8 @@ describe("fileWriteTool", () => {
         r.status === "fulfilled" &&
         typeof r.value === "object" &&
         r.value !== null &&
-        "output" in r.value &&
-        r.value.output === "File written to same.txt",
+        "draft" in r.value &&
+        expectTextDraft(r.value as RawToolResult) === "File written to same.txt",
     );
     const failed = results.filter(
       (r) =>
@@ -269,7 +266,7 @@ describe("fileWriteTool", () => {
         r.value !== null &&
         "isError" in r.value &&
         r.value.isError === true &&
-        (r.value as ToolExecutionResult).output.includes("already exists"),
+        expectTextDraft(r.value as RawToolResult).includes("already exists"),
     );
     expect(succeeded).toHaveLength(1);
     expect(failed).toHaveLength(1);
@@ -287,7 +284,7 @@ describe("fileWriteTool", () => {
       ctx,
     );
 
-    expect((output as ToolExecutionResult).output).toBe("File written to snapshot.txt");
+    expect(expectTextDraft(output)).toBe("File written to snapshot.txt");
     const resolved = await realpath(filePath);
     const fileStat = await stat(filePath);
     expect(store.getState().readSnapshots.get(resolved)).toBe(fileStat.mtimeMs);
@@ -301,9 +298,10 @@ describe("fileWriteTool", () => {
       content: "new",
     });
 
-    expect(result.isError).toBe(true);
-    expect(inferToolErrorKindFromResult(result)).toBe("file-already-exists");
-    expect(result.output).toContain("already exists");
+    const finalized = expectSettledResult(result);
+    expect(finalized.isError).toBe(true);
+    expect(finalized.details?.error?.kind).toBe("file-already-exists");
+    expect(finalized.output.preview).toContain("already exists");
     const content = await Bun.file(join(testDir, "registry-existing.txt")).text();
     expect(content).toBe("old");
   });

@@ -2,19 +2,18 @@ import { describe, expect, test } from "bun:test";
 import type {
   MaybePromise,
   ToolTraits,
-  ToolExecutionResult,
+  RawToolResult,
   ToolExecutionContext,
   BeforeHook,
   AfterHook,
   ToolDescriptor,
   ToolCallLike,
-  ToolConfirmationRequest,
-  ToolConfirmationCallback,
   PermissionErrorCode,
   PermissionDecision,
   ToolPermission,
 } from "./types";
 import { createToolExecutionContext, DuplicateToolError } from "./types";
+import { createTextToolResult } from "./results";
 import type { ProjectContext } from "../projects/types";
 import { storeManager } from "../store/store";
 import { SkillService } from "../skills";
@@ -71,18 +70,14 @@ test("ToolTraits requires all fields at compile time", () => {
   expect(_good.readOnly).toBe(true);
 });
 
-test("ToolExecutionResult has required and optional fields", () => {
-  // Minimal valid result
-  const minimal: ToolExecutionResult = { output: "ok", isError: false };
-  expect(minimal.output).toBe("ok");
+test("RawToolResult has a strict draft and details boundary", () => {
+  const minimal: RawToolResult = createTextToolResult("ok");
+  expect(minimal.draft).toEqual({ kind: "text", text: "ok" });
 
-  // With optional meta
-  const withMeta: ToolExecutionResult = {
-    output: "done",
-    isError: false,
-    meta: { tokens: 42 },
-  };
-  expect(withMeta.meta?.tokens).toBe(42);
+  const withDetails: RawToolResult = createTextToolResult("done", {
+    details: { process: { exitCode: 0, signal: null, timedOut: false, aborted: false, durationMs: 42 } },
+  });
+  expect(withDetails.details?.process?.durationMs).toBe(42);
 });
 
 test("ToolCallLike shape", () => {
@@ -105,7 +100,7 @@ test("BeforeHook and AfterHook accept void return", () => {
     // returns void — means unchanged
   };
   const afterReplace: AfterHook = (result, _ctx) => {
-    return { ...result, output: "replaced" };
+    return createTextToolResult("replaced", { isError: result.isError, details: result.details });
   };
 
   expect(beforeVoid).toBeDefined();
@@ -115,12 +110,12 @@ test("BeforeHook and AfterHook accept void return", () => {
 });
 
 test("ToolDescriptor requires all fields", () => {
-  // @ts-expect-error — missing `traits`
+  // @ts-expect-error — missing `traits` and `outputPolicy`
   const _bad: ToolDescriptor = {
     name: "test",
     description: "A test tool",
     inputSchema: {} as any,
-    execute: async (_input, _ctx) => "ok",
+    execute: async (_input, _ctx) => createTextToolResult("ok"),
   };
 
   // Valid descriptor
@@ -129,7 +124,8 @@ test("ToolDescriptor requires all fields", () => {
     description: "A test tool",
     inputSchema: {} as any,
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
-    execute: async (_input, _ctx) => "ok",
+    outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
+    execute: async (_input, _ctx) => createTextToolResult("ok"),
   };
 
   expect(_good.name).toBe("test");
@@ -177,33 +173,6 @@ describe("ToolPermission", () => {
   });
 });
 
-describe("ToolConfirmationRequest", () => {
-  test("has all required fields", () => {
-    const request: ToolConfirmationRequest = {
-      toolName: "file_write",
-      toolCallId: "call_1",
-      input: { path: "/tmp/test.txt" },
-      description: "Write to /tmp/test.txt",
-    };
-    expect(request.toolName).toBe("file_write");
-    expect(request.toolCallId).toBe("call_1");
-    expect(request.description).toBe("Write to /tmp/test.txt");
-  });
-});
-
-describe("ToolConfirmationCallback", () => {
-  test("returns a promise with approval result", async () => {
-    const cb: ToolConfirmationCallback = async (_request) => "approve";
-    const result = await cb({
-      toolName: "test",
-      toolCallId: "call_1",
-      input: {},
-      description: "test",
-    });
-    expect(result).toBe("approve");
-  });
-});
-
 describe("PermissionErrorCode", () => {
   test("includes all expected error codes", () => {
     const codes: PermissionErrorCode[] = [
@@ -244,21 +213,6 @@ test("ToolExecutionContext accepts allowedTools and cwd", () => {
   expect(ctx.cwd).toBe("/tmp/workspace");
 });
 
-test("ToolExecutionContext confirmPermission is optional", () => {
-  const ctx = createToolExecutionContext({ store: {} as any, storeManager, toolName: "test",
-  toolCallId: "call_1",
-  input: {},
-  step: 1,
-  abort: new AbortController().signal,
-  startedAt: Date.now(),
-  allowedTools: new Set(),
-  agentSkills: [],
-  skillService: testSkillService,
-  projectContext: makeProjectContext("/tmp"),
-  cwd: "/tmp", });
-  expect(ctx.confirmPermission).toBeUndefined();
-});
-
 // ─── Extended ToolDescriptor ───
 
 test("ToolDescriptor accepts prepareInput and permissions", () => {
@@ -267,11 +221,12 @@ test("ToolDescriptor accepts prepareInput and permissions", () => {
     description: "A test tool",
     inputSchema: {} as any,
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
+    outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
     prepareInput: async (raw, _ctx) => raw,
     permissions: [
       async (_input, _ctx) => ({ outcome: "allow" as const }),
     ],
-    execute: async (_input, _ctx) => "ok",
+    execute: async (_input, _ctx) => createTextToolResult("ok"),
   };
   expect(_desc.prepareInput).toBeDefined();
   expect(_desc.permissions).toHaveLength(1);
@@ -283,7 +238,8 @@ test("ToolDescriptor prepareInput and permissions are optional", () => {
     description: "A test tool",
     inputSchema: {} as any,
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
-    execute: async (_input, _ctx) => "ok",
+    outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
+    execute: async (_input, _ctx) => createTextToolResult("ok"),
   };
   expect(_desc.prepareInput).toBeUndefined();
   expect(_desc.permissions).toBeUndefined();
@@ -352,10 +308,11 @@ describe("ToolDescriptor — permissions field", () => {
       description: "A test tool",
       inputSchema: {} as any,
       traits: { readOnly: true, destructive: false, concurrencySafe: true },
+      outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
       permissions: [
         async (_input, _ctx) => ({ outcome: "allow" as const }),
       ],
-      execute: async (_input, _ctx) => "ok",
+      execute: async (_input, _ctx) => createTextToolResult("ok"),
     };
     expect(_desc.permissions).toHaveLength(1);
   });
@@ -366,7 +323,8 @@ describe("ToolDescriptor — permissions field", () => {
       description: "A test tool",
       inputSchema: {} as any,
       traits: { readOnly: true, destructive: false, concurrencySafe: true },
-      execute: async (_input, _ctx) => "ok",
+      outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
+      execute: async (_input, _ctx) => createTextToolResult("ok"),
     };
     expect(_desc.permissions).toBeUndefined();
   });

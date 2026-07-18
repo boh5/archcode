@@ -1,14 +1,18 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { access, mkdir, readFile, rm } from "node:fs/promises";
 import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { storeManager } from "../../store/store";
+import { createMockStore } from "../../store/test-helpers";
 import { createTestProjectContext } from "../test-project-context";
-import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import { createTestToolRegistryFixture } from "../test-registry";
+import { expectSettledResult } from "../test-results";
+import type { ToolExecutionContext } from "../types";
 import { bashTool, runBashCommand } from "./bash";
 
 const ownedRoots = new Set<string>();
+const registryFixture = createTestToolRegistryFixture({ descriptors: [bashTool] });
 
 function createWorkspace(label: string): string {
   const workspace = realpathSync.native(mkdtempSync(join(tmpdir(), `bash-${label}-`)));
@@ -21,7 +25,7 @@ function executionContext(
   overrides: Partial<ToolExecutionContext> = {},
 ): ToolExecutionContext {
   return {
-    store: {} as ToolExecutionContext["store"],
+    store: createMockStore(),
     toolName: "bash",
     toolCallId: "bash_integration",
     input: {},
@@ -59,14 +63,28 @@ function expectProcessExited(pid: number): void {
   expect(() => process.kill(pid, 0)).toThrow();
 }
 
-function parseToolError(result: ToolExecutionResult): Record<string, unknown> {
-  return JSON.parse(result.output) as Record<string, unknown>;
-}
-
 afterEach(async () => {
   await Promise.all([...ownedRoots].map((root) => rm(root, { recursive: true, force: true })));
   ownedRoots.clear();
 });
+
+async function executeBash(
+  input: Parameters<typeof runBashCommand>[0],
+  context: ToolExecutionContext,
+) {
+  const toolCall = { toolCallId: context.toolCallId, toolName: "bash", input };
+  const first = await registryFixture.registry.execute(toolCall, context);
+  const outcome = first.kind === "blocked"
+    ? await registryFixture.registry.resumeBlocked({
+        toolCall,
+        request: first.request,
+        requestKey: first.requestKey,
+        response: { type: "permission_decision", decision: "approve_once" },
+        context,
+      })
+    : first;
+  return expectSettledResult(outcome);
+}
 
 describe("bash real process integration", () => {
   test("runs with the minimal environment instead of inheriting unrelated variables", async () => {
@@ -76,7 +94,7 @@ describe("bash real process integration", () => {
     Bun.env[key] = "must-not-leak";
 
     try {
-      const result = await runBashCommand(
+      const result = await executeBash(
         {
           description: "Inspect the Bash environment",
           command: `printf '%s|%s|%s' "$ARCHCODE_CLI" "\${${key}-unset}" "\${PATH:+set}"`,
@@ -85,7 +103,7 @@ describe("bash real process integration", () => {
       );
 
       expect(result.isError).toBe(false);
-      expect(result.output).toContain("STDOUT:\n1|unset|set\nSTDERR:\n\nEXIT_CODE: 0");
+      expect(result.output.preview).toContain("STDOUT:\n1|unset|set\nSTDERR:\n\nEXIT_CODE: 0");
     } finally {
       if (previous === undefined) delete Bun.env[key];
       else Bun.env[key] = previous;
@@ -94,7 +112,7 @@ describe("bash real process integration", () => {
 
   test("closes stdin so a read observes EOF without hanging", async () => {
     const workspace = createWorkspace("stdin");
-    const result = await runBashCommand(
+    const result = await executeBash(
       {
         description: "Read from closed stdin",
         command: "if IFS= read -r value; then printf 'unexpected:%s' \"$value\"; else printf 'stdin-closed'; fi",
@@ -104,7 +122,7 @@ describe("bash real process integration", () => {
     );
 
     expect(result.isError).toBe(false);
-    expect(result.output).toContain("STDOUT:\nstdin-closed\nSTDERR:\n\nEXIT_CODE: 0");
+    expect(result.output.preview).toContain("STDOUT:\nstdin-closed\nSTDERR:\n\nEXIT_CODE: 0");
   });
 
   test("resolves structured cwd through bashTool and executes there", async () => {
@@ -112,7 +130,7 @@ describe("bash real process integration", () => {
     const nested = join(workspace, "nested directory");
     await mkdir(nested);
 
-    const result = await bashTool.execute(
+    const result = await executeBash(
       {
         description: "Print the structured working directory",
         command: "pwd",
@@ -122,14 +140,14 @@ describe("bash real process integration", () => {
     );
 
     expect(result.isError).toBe(false);
-    expect(result.output).toContain(`STDOUT:\n${realpathSync.native(nested)}\n`);
-    expect(result.meta?.exitCode).toBe(0);
+    expect(result.output.preview).toContain(`STDOUT:\n${realpathSync.native(nested)}\n`);
+    expect(result.details?.process?.exitCode).toBe(0);
   });
 
   test("times out a real Bash process and waits for it to exit", async () => {
     const workspace = createWorkspace("timeout");
     const pidPath = join(workspace, "bash.pid");
-    const resultPromise = runBashCommand(
+    const resultPromise = executeBash(
       {
         description: "Run until the timeout terminates Bash",
         command: "echo $$ > bash.pid; trap 'exit 0' TERM; while :; do :; done",
@@ -141,11 +159,8 @@ describe("bash real process integration", () => {
     const result = await resultPromise;
 
     expect(result.isError).toBe(true);
-    expect(parseToolError(result)).toMatchObject({
-      code: "TOOL_BASH_TIMEOUT",
-      message: "Command timed out after 1000ms",
-    });
-    expect(result.meta).toMatchObject({ timedOut: true, timeoutMs: 1_000 });
+    expect(result.details?.error?.code).toBe("TOOL_BASH_TIMEOUT");
+    expect(result.details?.process).toMatchObject({ timedOut: true });
     expectProcessExited(pid);
   });
 
@@ -153,7 +168,7 @@ describe("bash real process integration", () => {
     const workspace = createWorkspace("abort");
     const pidPath = join(workspace, "bash.pid");
     const abortController = new AbortController();
-    const resultPromise = runBashCommand(
+    const resultPromise = executeBash(
       {
         description: "Run until AbortSignal terminates Bash",
         command: "echo $$ > bash.pid; trap 'exit 0' TERM; while :; do :; done",
@@ -165,17 +180,14 @@ describe("bash real process integration", () => {
     const result = await resultPromise;
 
     expect(result.isError).toBe(true);
-    expect(parseToolError(result)).toMatchObject({
-      code: "TOOL_BASH_ABORTED",
-      message: "Command was aborted",
-    });
-    expect(result.meta?.aborted).toBe(true);
+    expect(result.details?.error?.code).toBe("TOOL_BASH_ABORTED");
+    expect(result.details?.process?.aborted).toBe(true);
     expectProcessExited(pid);
   });
 
   test("maps a real signal exit to a structured Bash abort", async () => {
     const workspace = createWorkspace("signal");
-    const result = await runBashCommand(
+    const result = await executeBash(
       {
         description: "Terminate Bash with SIGTERM",
         command: "kill -TERM $$",
@@ -184,10 +196,11 @@ describe("bash real process integration", () => {
     );
 
     expect(result.isError).toBe(true);
-    expect(parseToolError(result)).toMatchObject({
-      code: "TOOL_BASH_ABORTED",
-      message: "Command was aborted",
-    });
-    expect(result.meta).toMatchObject({ aborted: true, signal: "SIGTERM", exitCode: 143 });
+    expect(result.details?.error?.code).toBe("TOOL_BASH_ABORTED");
+    expect(result.details?.process).toMatchObject({ aborted: true, signal: "SIGTERM", exitCode: 143 });
   });
+});
+
+afterAll(async () => {
+  await registryFixture.dispose();
 });

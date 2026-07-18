@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import {
   GITHUB_REST_API_VERSION,
+  MAX_GITHUB_RESPONSE_BYTES,
   GitHubConnector,
   GitHubRestProvider,
   IntegrationError,
@@ -157,6 +158,55 @@ describe("GitHubRestProvider token resolution", () => {
 });
 
 describe("GitHubConnector REST methods", () => {
+  test("parses a no-content-length response delivered as one-byte chunks", async () => {
+    const bytes = new TextEncoder().encode('{"number":42,"title":"one-byte"}');
+    let index = 0;
+    const fetchAdapter = mock(async () => new Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (index >= bytes.byteLength) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(bytes.subarray(index, index + 1));
+        index += 1;
+      },
+    }), { headers: { "content-type": "application/json" } })) as unknown as GitHubFetchAdapter;
+    const connector = new GitHubConnector({
+      config: {},
+      env: { GITHUB_TOKEN: "ghp_one_byte_secret" },
+      fetchAdapter,
+    });
+
+    const result = await connector.getPullRequest("owner", "repo", 42);
+
+    expect(result.data).toMatchObject({ number: 42, title: "one-byte" });
+  });
+
+  test("cancels a no-content-length response immediately after the 8 MiB pre-parse cap", async () => {
+    let emitted = 0;
+    let cancelled = 0;
+    const chunk = new Uint8Array(64 * 1024).fill(0x61);
+    const fetchAdapter = mock(async () => new Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        emitted += chunk.byteLength;
+        controller.enqueue(chunk);
+      },
+      cancel() { cancelled += 1; },
+    }, { highWaterMark: 0 }), { headers: { "content-type": "application/json" } })) as unknown as GitHubFetchAdapter;
+    const connector = new GitHubConnector({
+      config: {},
+      env: { GITHUB_TOKEN: "ghp_cap_secret" },
+      fetchAdapter,
+    });
+
+    const error = await captureIntegrationError(() => connector.getPullRequest("owner", "repo", 42));
+
+    expect(error.message).toContain("8 MiB");
+    expect(emitted).toBe(MAX_GITHUB_RESPONSE_BYTES + chunk.byteLength);
+    expect(cancelled).toBe(1);
+    expect(JSON.stringify(error)).not.toContain("ghp_cap_secret");
+  });
+
   test("getPullRequest sends GitHub REST headers", async () => {
     const fetcher = new MockGitHubFetch();
     fetcher.queueJson({ number: 42, title: "Add connector" });

@@ -4,7 +4,6 @@ import type { SessionStoreState } from "../../store/index";
 import { resolveAndValidatePath } from "../security";
 import type {
   AfterHook,
-  ToolExecutionResult,
   ToolExecutionContext,
 } from "../types";
 
@@ -25,7 +24,7 @@ const MAX_SNAPSHOTS = 1024;
  * entries the oldest (first-inserted) entry is dropped.
  */
 export function createReadSnapshotAfterHook(): AfterHook {
-  return (result: ToolExecutionResult, ctx: ToolExecutionContext) => {
+  return (result, ctx: ToolExecutionContext) => {
     if (result.isError) return;
 
     const inputRecord = ctx.input as { path: string };

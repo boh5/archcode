@@ -21,7 +21,7 @@ Responsibilities:
 
 - Create and cache Session-scoped agents with persisted identities.
 - Run the query loop and delegation workflow.
-- Execute tools through guards, hooks, partitioning, and audit/truncation/redaction after-hooks.
+- Execute tools through guards, hooks, partitioning, and the Tool Output Plane: Registry finalizes each raw result once, while the Finalizer owns redaction, bounded projection, and artifact recovery metadata before audit/logger consume it.
 - Persist and project session state through the store.
 - Maintain isomorphic stream event reduction via `src/store/reduce.ts`.
 

@@ -53,7 +53,9 @@ function normalizedToolOutputKey(part: CompletedToolPart): string {
   return stableStringify({
     toolName: part.toolName,
     input: normalizeValue(part.input),
-    output: normalizeText(part.output),
+    output: normalizeText(part.result.output.preview),
+    completeness: part.result.output.completeness,
+    recovery: part.result.output.recovery,
   });
 }
 

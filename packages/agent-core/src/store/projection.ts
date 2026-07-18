@@ -1,6 +1,10 @@
 import type { ModelMessage } from "ai";
 import type { StoredMessage, StoredPart } from "./types";
-import { redactValue } from "../tools/security";
+import type { FinalizedToolResult } from "@archcode/protocol";
+import { redactValue } from "../security";
+import { TOOL_OUTPUT_PREVIEW_MAX_BYTES, TOOL_OUTPUT_PREVIEW_MAX_LINES } from "../tool-output/constants";
+import { projectCanonicalText } from "../tool-output/projection";
+import { utf8ByteLength } from "../tool-output/utf8";
 import {
   buildMessageRefMap,
   renderCompressionSummary,
@@ -122,7 +126,10 @@ export function projectModelMessagesFromStoredMessages(
             type: "tool-result",
             toolCallId: part.toolCallId,
             toolName: part.toolName,
-            output: { type: "text", value: part.output },
+            output: {
+              type: "text",
+              value: renderToolResultForModel(part.result, part.toolCallId, part.toolName, "text"),
+            },
           });
         }
 
@@ -137,7 +144,10 @@ export function projectModelMessagesFromStoredMessages(
             type: "tool-result",
             toolCallId: part.toolCallId,
             toolName: part.toolName,
-            output: { type: "error-text", value: part.errorMessage },
+            output: {
+              type: "error-text",
+              value: renderToolResultForModel(part.result, part.toolCallId, part.toolName, "error-text"),
+            },
           });
         }
       }
@@ -186,7 +196,10 @@ export function projectModelMessagesFromStoredMessages(
           type: "tool-result",
           toolCallId: part.toolCallId,
           toolName: part.toolName,
-          output: { type: "text", value: part.output },
+          output: {
+            type: "text",
+            value: renderToolResultForModel(part.result, part.toolCallId, part.toolName, "text"),
+          },
         });
       }
 
@@ -201,7 +214,10 @@ export function projectModelMessagesFromStoredMessages(
           type: "tool-result",
           toolCallId: part.toolCallId,
           toolName: part.toolName,
-          output: { type: "error-text", value: part.errorMessage },
+          output: {
+            type: "error-text",
+            value: renderToolResultForModel(part.result, part.toolCallId, part.toolName, "error-text"),
+          },
         });
       }
     }
@@ -296,6 +312,70 @@ function formatProjectionMessageRef(index: number): MessageRef {
 function isDiscardedFromContext(part: StoredPart): boolean {
   if (part.type !== "text" && part.type !== "reasoning") return false;
   return part.meta?.interrupted === true || part.meta?.discardedFromContext === true;
+}
+
+function renderToolResultForModel(
+  result: FinalizedToolResult,
+  toolCallId: string,
+  toolName: string,
+  outputType: "text" | "error-text",
+): string {
+  const visibleDetails = result.details === undefined
+    ? undefined
+    : {
+      ...(result.details.error === undefined ? {} : { error: result.details.error }),
+      ...(result.details.process === undefined ? {} : { process: result.details.process }),
+      ...(result.details.unknownResult === undefined ? {} : { unknownResult: true as const }),
+    };
+  const hasVisibleDetails = visibleDetails !== undefined && Object.keys(visibleDetails).length > 0;
+  const recovery = result.output.recovery.kind === "artifact"
+    ? {
+      kind: "artifact" as const,
+      outputRef: result.output.recovery.outputRef,
+      readTool: "output_read" as const,
+      searchTool: "output_search" as const,
+    }
+    : result.output.recovery;
+
+  const render = (preview: string): string => [
+    preview,
+    ...(hasVisibleDetails ? [`[tool-result-details] ${JSON.stringify(visibleDetails)}`] : []),
+    ...(recovery.kind === "none" ? [] : [`[tool-output-recovery] ${JSON.stringify(recovery)}`]),
+  ].filter((section) => section.length > 0).join("\n");
+  const serializedBytes = (value: string): number => utf8ByteLength(JSON.stringify({
+    type: "tool-result",
+    toolCallId,
+    toolName,
+    output: { type: outputType, value },
+  }));
+
+  const complete = render(result.output.preview);
+  if (serializedBytes(complete) <= TOOL_OUTPUT_PREVIEW_MAX_BYTES) return complete;
+
+  const previewBytes = new TextEncoder().encode(result.output.preview);
+  let lower = 0;
+  let upper = previewBytes.byteLength;
+  let best = render("");
+  if (serializedBytes(best) > TOOL_OUTPUT_PREVIEW_MAX_BYTES) {
+    throw new Error("Strict tool result metadata exceeds the model projection budget");
+  }
+
+  while (lower <= upper) {
+    const candidateBytes = Math.floor((lower + upper) / 2);
+    const projected = projectCanonicalText(previewBytes, "head-tail", {
+      maxBytes: candidateBytes,
+      maxLines: TOOL_OUTPUT_PREVIEW_MAX_LINES,
+    }).preview;
+    const candidate = render(projected);
+    if (serializedBytes(candidate) <= TOOL_OUTPUT_PREVIEW_MAX_BYTES) {
+      best = candidate;
+      lower = candidateBytes + 1;
+    } else {
+      upper = candidateBytes - 1;
+    }
+  }
+
+  return best;
 }
 
 function pushRecoveryMarker(modelMessages: ModelMessage[]): void {

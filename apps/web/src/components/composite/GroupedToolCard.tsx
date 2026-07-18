@@ -33,7 +33,11 @@ const ICON_BY_TOOL: Record<string, typeof FileText> = {
   git_diff: GitBranch,
 };
 
-export function GroupedToolCard({ tools }: { tools: ToolPart[] }) {
+export function GroupedToolCard({ tools, projectSlug, sessionId }: {
+  tools: ToolPart[];
+  projectSlug: string;
+  sessionId: string;
+}) {
   const [expanded, setExpanded] = useState(false);
 
   const count = tools.length;
@@ -71,7 +75,7 @@ export function GroupedToolCard({ tools }: { tools: ToolPart[] }) {
       {expanded && (
         <div className="mt-1 ml-2 border-l border-border-subtle pl-2 flex flex-col gap-1">
           {tools.map((tool) => (
-            <ToolCard key={tool.id} part={tool} />
+            <ToolCard key={tool.id} part={tool} projectSlug={projectSlug} sessionId={sessionId} />
           ))}
         </div>
       )}

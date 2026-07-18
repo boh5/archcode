@@ -68,3 +68,8 @@ export {
   mcpServerConfigSchema,
   mcpServerNameSchema,
 } from "./mcp";
+export {
+  SecretLiteralRegistry,
+  collectRuntimeSecretLiterals,
+  type RuntimeSecretLiteralInput,
+} from "./runtime-secret-literals";

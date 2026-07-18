@@ -2,7 +2,8 @@ import { z } from "zod/v4";
 import type { ChildExecutionHandle } from "../../delegation/types";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
-import type { ToolExecutionContext } from "../types";
+import { createTextToolResult } from "../results";
+import type { RawToolResult, ToolExecutionContext } from "../types";
 import {
   formatAsyncChildOutput,
   formatSyncChildOutput,
@@ -18,14 +19,13 @@ export const ResumeSessionInputSchema = z.strictObject({
 
 export type ResumeSessionInput = z.infer<typeof ResumeSessionInputSchema>;
 
-export async function executeResumeSession(input: ResumeSessionInput, ctx: ToolExecutionContext) {
+export async function executeResumeSession(input: ResumeSessionInput, ctx: ToolExecutionContext): Promise<RawToolResult> {
   if (ctx.resumeChildSession === undefined) {
     return createToolErrorResult({
       kind: "execution",
       code: "TOOL_RESUME_SESSION_EXECUTOR_UNAVAILABLE",
       name: "SubAgentError",
       message: "Child session resume is not available in this execution context",
-      details: { ok: false, session_id: input.session_id },
     });
   }
 
@@ -49,16 +49,11 @@ export async function executeResumeSession(input: ResumeSessionInput, ctx: ToolE
       name: safeError.name,
       message: safeError.message,
       error: safeError,
-      details: {
-        ok: false,
-        session_id: input.session_id,
-        error: { name: safeError.name, message: safeError.message },
-      },
     });
   }
 
-  if (input.background ?? false) return formatAsyncChildOutput(handle);
-  return formatSyncChildOutput(handle, await waitForChildOutcome(handle));
+  if (input.background ?? false) return createTextToolResult(formatAsyncChildOutput(handle));
+  return createTextToolResult(formatSyncChildOutput(handle, await waitForChildOutcome(handle)));
 }
 
 function buildResumePrompt(input: ResumeSessionInput): string {
@@ -80,5 +75,6 @@ export const resumeSessionTool = defineTool({
   ].join("\n"),
   inputSchema: ResumeSessionInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
+  outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
   execute: executeResumeSession,
 });

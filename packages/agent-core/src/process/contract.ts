@@ -29,7 +29,8 @@ export interface ProcessRunnerContractDescriptor {
     readonly env: "optional environment overrides with undefined values omitted by implementation";
     readonly stdin: "optional stdin payload passed to the child process";
     readonly timeoutMs: "optional wall-clock timeout in milliseconds";
-    readonly maxOutputBytes: "optional combined stdout/stderr capture budget in bytes";
+    readonly maxOutputBytes: "optional retained head-tail budget per stdout/stderr stream, capped at 1 MiB";
+    readonly outputSink: "optional bounded raw-byte sink that cannot prevent stdout/stderr from draining";
     readonly signal: "optional AbortSignal that cancels the run";
   };
   readonly semantics: {
@@ -41,9 +42,9 @@ export interface ProcessRunnerContractDescriptor {
     readonly spawnFailure: "Process could not be spawned or started.";
   };
   readonly output: {
-    readonly stdout: "UTF-8 decoded stdout captured from the process";
-    readonly stderr: "UTF-8 decoded stderr captured from the process";
-    readonly combined: "best-effort user-facing output assembled from stdout and stderr";
+    readonly stdout: "UTF-8 decoded bounded head-tail stdout retained from the process";
+    readonly stderr: "UTF-8 decoded bounded head-tail stderr retained from the process";
+    readonly combined: "bounded best-effort user-facing output assembled from retained stdout and stderr";
     readonly stdoutTruncated: "true when stdout was clipped by maxOutputBytes";
     readonly stderrTruncated: "true when stderr was clipped by maxOutputBytes";
     readonly combinedTruncated: "true when the combined output was clipped by maxOutputBytes";
@@ -61,7 +62,8 @@ export const PROCESS_RUNNER_CONTRACT: ProcessRunnerContractDescriptor = {
     env: "optional environment overrides with undefined values omitted by implementation",
     stdin: "optional stdin payload passed to the child process",
     timeoutMs: "optional wall-clock timeout in milliseconds",
-    maxOutputBytes: "optional combined stdout/stderr capture budget in bytes",
+    maxOutputBytes: "optional retained head-tail budget per stdout/stderr stream, capped at 1 MiB",
+    outputSink: "optional bounded raw-byte sink that cannot prevent stdout/stderr from draining",
     signal: "optional AbortSignal that cancels the run",
   },
   semantics: {
@@ -73,9 +75,9 @@ export const PROCESS_RUNNER_CONTRACT: ProcessRunnerContractDescriptor = {
     spawnFailure: "Process could not be spawned or started.",
   },
   output: {
-    stdout: "UTF-8 decoded stdout captured from the process",
-    stderr: "UTF-8 decoded stderr captured from the process",
-    combined: "best-effort user-facing output assembled from stdout and stderr",
+    stdout: "UTF-8 decoded bounded head-tail stdout retained from the process",
+    stderr: "UTF-8 decoded bounded head-tail stderr retained from the process",
+    combined: "bounded best-effort user-facing output assembled from retained stdout and stderr",
     stdoutTruncated: "true when stdout was clipped by maxOutputBytes",
     stderrTruncated: "true when stderr was clipped by maxOutputBytes",
     combinedTruncated: "true when the combined output was clipped by maxOutputBytes",

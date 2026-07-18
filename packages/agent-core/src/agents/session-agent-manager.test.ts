@@ -5,8 +5,10 @@ import { ModelInfo } from "../provider/model";
 import type { ProviderRegistry } from "../provider/index";
 import { SkillService } from "../skills";
 import { SessionStoreManager } from "../store/session-store-manager";
-import { createRegistry } from "../tools/registry";
+import type { ToolRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
+import { createTextToolResult } from "../tools/results";
+import { createTestToolRegistryFixture, type TestToolRegistryFixture } from "../tools/test-registry";
 import { engineerAgentDefinition } from "./definitions";
 import { SessionAgentManager } from "./session-agent-manager";
 import { silentLogger } from "../logger";
@@ -20,8 +22,17 @@ import type { AgentDefinition } from "./factory-types";
 import type { ToolExecutionContext } from "../tools/types";
 
 const TEST_WORKSPACE_ROOT = join(import.meta.dir, "__test_tmp__", `session-agent-manager-${crypto.randomUUID()}`);
+const registryFixtures: TestToolRegistryFixture[] = [];
+const outputAccessFixture = createTestToolRegistryFixture();
+
+function createTestRegistry(descriptors: AnyToolDescriptor[]): ToolRegistry {
+  const fixture = createTestToolRegistryFixture({ descriptors });
+  registryFixtures.push(fixture);
+  return fixture.registry;
+}
 
 afterAll(async () => {
+  await Promise.all([...registryFixtures, outputAccessFixture].map((fixture) => fixture.dispose()));
   await rm(TEST_WORKSPACE_ROOT, { recursive: true, force: true });
 });
 
@@ -35,7 +46,8 @@ function makeTool(name: string): AnyToolDescriptor {
     description: `${name} tool`,
     inputSchema: z.object({}).strict(),
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
-    execute: () => `${name} result`,
+    outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
+    execute: () => createTextToolResult(`${name} result`),
   };
 }
 
@@ -67,9 +79,10 @@ function createManager(
   return new SessionAgentManager({
     definitions: [engineerAgentDefinition],
     providerRegistry,
-    toolRegistry: createRegistry([makeTool("unknown_tool")]),
+    toolRegistry: createTestRegistry([makeTool("unknown_tool")]),
     skillService: new SkillService({ builtinSkills: {} }),
     storeManager,
+    createToolOutputAccess: outputAccessFixture.createToolOutputAccess,
     projectContextResolver: createTestProjectContextResolver(storeManager),
     config: {
       provider: {},
@@ -98,7 +111,6 @@ const identityAgentDefinition = {
     titleGeneration: "disabled",
   },
   includeMemoryInPrompt: false,
-  enforceToolOutputQuota: false,
   skills: [IDENTITY_SKILL_NAME],
 } as const satisfies AgentDefinition;
 
@@ -128,10 +140,10 @@ function createIdentityManager(
     ...makeTool("identity_probe"),
     execute: (_input, context) => {
       observedContexts.push(context);
-      return "identity recorded";
+      return createTextToolResult("identity recorded");
     },
   };
-  const toolRegistry = createRegistry([
+  const toolRegistry = createTestRegistry([
     identityProbe,
     ...DELEGATION_CORE_TOOLS.map(makeTool),
   ]);
@@ -154,6 +166,7 @@ function createIdentityManager(
     toolRegistry,
     skillService,
     storeManager,
+    createToolOutputAccess: outputAccessFixture.createToolOutputAccess,
     projectContextResolver: createTestProjectContextResolver(storeManager),
     config: {
       provider: {},

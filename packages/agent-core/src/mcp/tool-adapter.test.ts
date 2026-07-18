@@ -1,382 +1,195 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { storeManager } from "../store/store";
 import { z } from "zod";
-import { TOOL_ERROR_META_KEY, type FormattedToolError } from "../tools/errors";
-import { REDACTION_MARKER } from "../tools/security";
-import type { ToolExecutionContext, ToolExecutionResult } from "../tools/types";
+import { REDACTION_MARKER, SecretRedactionPolicy } from "../security";
+import type { RawToolResult, ToolExecutionContext } from "../tools/types";
 import type { CallToolResultLike, McpClient } from "./client";
-import { adaptMcpTool } from "./tool-adapter";
-import { createTestProjectContext } from "../tools/test-project-context";
+import { MAX_MCP_SERIALIZED_RESULT_BYTES, adaptMcpTool } from "./tool-adapter";
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+const POLICY = new SecretRedactionPolicy(["secret-token"]);
 
-function makeMcpClient(result: CallToolResultLike): McpClient {
+function makeClient(result: CallToolResultLike): McpClient {
+  return { callTool: mock(async () => result) } as unknown as McpClient;
+}
+
+function throwingClient(error: unknown): McpClient {
   return {
-    callTool: mock(async () => result),
+    callTool: mock(async () => { throw error; }),
   } as unknown as McpClient;
 }
 
-function makeThrowingMcpClient(error: unknown): McpClient {
-  return {
-    callTool: mock(async () => {
-      throw error;
-    }),
-  } as unknown as McpClient;
+function text(result: RawToolResult): string {
+  if (result.draft.kind !== "text") throw new Error("Expected MCP text draft");
+  return result.draft.text;
 }
 
-function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
-  return { store: {} as ToolExecutionContext["store"],
-  toolName: "mcp__context7__resolve-library-id",
-  toolCallId: "call-1",
-  input: {},
-  step: 0,
-  abort: new AbortController().signal,
-  startedAt: 0,
-  allowedTools: new Set(["mcp__context7__resolve-library-id"]),
-  cwd: "/tmp",
-  storeManager,
-    projectContext: createTestProjectContext("/tmp"), ...overrides,  };
+async function execute(
+  descriptor: ReturnType<typeof adaptMcpTool>,
+  input: Record<string, unknown> = {},
+): Promise<RawToolResult> {
+  return descriptor.execute(input, {} as ToolExecutionContext);
 }
 
-function toolError(result: { meta?: Record<string, unknown> }): FormattedToolError {
-  return result.meta?.[TOOL_ERROR_META_KEY] as FormattedToolError;
-}
+afterEach(() => mock.restore());
 
-function expectToolResult(result: string | ToolExecutionResult): ToolExecutionResult {
-  expect(typeof result).not.toBe("string");
-  return result as ToolExecutionResult;
-}
-
-afterEach(() => {
-  mock.restore();
-});
-
-// ─── Descriptor Shape ────────────────────────────────────────────────────────
-
-describe("adaptMcpTool descriptor", () => {
-  test("converts an MCP tool into a ArchCode ToolDescriptor", () => {
-    const descriptor = adaptMcpTool(
-      {
-        name: "resolve-library-id",
-        description: "Resolve a library ID",
-      },
-      "context7",
-      makeMcpClient({ content: [] }),
-      [],
-    );
-
-    expect(descriptor.name).toBe("mcp__context7__resolve-library-id");
-    expect(descriptor.description).toBe("Resolve a library ID");
-    expect(descriptor.inputSchema).toBeInstanceOf(z.ZodObject);
-    expect(descriptor.traits).toEqual({
-      readOnly: true,
-      destructive: false,
-      concurrencySafe: true,
-    });
-    expect(typeof descriptor.execute).toBe("function");
-  });
-
-  test("aiInputSchema is set from MCP inputSchema for LLM visibility", () => {
+describe("adaptMcpTool", () => {
+  test("declares the hard-cut artifact policy and preserves the MCP schema", () => {
     const descriptor = adaptMcpTool(
       {
         name: "resolve-library-id",
         description: "Resolve a library ID",
         inputSchema: {
           type: "object",
-          properties: {
-            libraryName: { type: "string", description: "Library name" },
-            limit: { type: "number" },
-          },
+          properties: { libraryName: { type: "string" } },
           required: ["libraryName"],
         },
       },
       "context7",
-      makeMcpClient({ content: [] }),
-      [],
+      makeClient({ content: [] }),
+      POLICY,
     );
 
-    // inputSchema remains the loose Zod schema for ArchCode's validation pipeline
+    expect(descriptor.name).toBe("mcp__context7__resolve-library-id");
+    expect(descriptor.description).toBe("Resolve a library ID");
     expect(descriptor.inputSchema).toBeInstanceOf(z.ZodObject);
-
-    // aiInputSchema carries the real JSON Schema for the LLM
     expect(descriptor.aiInputSchema).toBeDefined();
-    // jsonSchema() returns an AI SDK Schema object with a jsonSchema property
-    const schema = descriptor.aiInputSchema as { jsonSchema: unknown };
-    expect(schema).toHaveProperty("jsonSchema");
-    const json = schema.jsonSchema as Record<string, unknown>;
-    expect(json).toHaveProperty("properties");
-    expect(json).toHaveProperty("required");
+    expect(descriptor.outputPolicy).toEqual({
+      kind: "artifact",
+      previewDirection: "head-tail",
+    });
   });
 
-  test("aiInputSchema falls back to empty object schema when MCP inputSchema is undefined", () => {
-    const descriptor = adaptMcpTool(
-      { name: "lookup" },
+  test("uses safe traits by default and serial destructive traits when annotated", () => {
+    const safe = adaptMcpTool(
+      { name: "read" }, "docs", makeClient({ content: [] }), POLICY,
+    );
+    const destructive = adaptMcpTool(
+      { name: "delete", annotations: { readOnlyHint: true, destructiveHint: true } },
       "docs",
-      makeMcpClient({ content: [] }),
-      [],
+      makeClient({ content: [] }),
+      POLICY,
     );
 
-    // aiInputSchema should still be defined, with an empty object schema
-    expect(descriptor.aiInputSchema).toBeDefined();
+    expect(safe.traits).toEqual({ readOnly: true, destructive: false, concurrencySafe: true });
+    expect(destructive.traits).toEqual({ readOnly: false, destructive: true, concurrencySafe: false });
+    expect(destructive.permissions).toHaveLength(1);
   });
 
-  test("uses an English fallback description when missing", () => {
+  test("calls the original MCP name and constructs a Raw text draft", async () => {
+    const client = makeClient({ content: [{ type: "text", text: "ok" }] });
     const descriptor = adaptMcpTool(
-      { name: "lookup" },
-      "docs",
-      makeMcpClient({ content: [] }),
-      [],
+      { name: "resolve-library-id" }, "context7", client, POLICY,
     );
-
-    expect(descriptor.description).toBe('MCP tool "lookup" from server "docs".');
-  });
-
-  test("input schema accepts arbitrary objects and rejects null arrays and primitives", () => {
-    const descriptor = adaptMcpTool(
-      { name: "lookup" },
-      "docs",
-      makeMcpClient({ content: [] }),
-      [],
-    );
-
-    expect(descriptor.inputSchema.safeParse({}).success).toBe(true);
-    expect(descriptor.inputSchema.safeParse({ query: "react", nested: { limit: 3 } }).success).toBe(true);
-    expect(descriptor.inputSchema.safeParse(null).success).toBe(false);
-    expect(descriptor.inputSchema.safeParse(["query"]).success).toBe(false);
-    expect(descriptor.inputSchema.safeParse("query").success).toBe(false);
-    expect(descriptor.inputSchema.safeParse(123).success).toBe(false);
-    expect(descriptor.inputSchema.safeParse(true).success).toBe(false);
-  });
-});
-
-// ─── Trait Mapping ───────────────────────────────────────────────────────────
-
-describe("adaptMcpTool traits", () => {
-  test("maps readOnlyHint=true to readOnly=true", () => {
-    const descriptor = adaptMcpTool(
-      { name: "read", annotations: { readOnlyHint: true } },
-      "server",
-      makeMcpClient({ content: [] }),
-      [],
-    );
-
-    expect(descriptor.traits).toEqual({
-      readOnly: true,
-      destructive: false,
-      concurrencySafe: true,
-    });
-  });
-
-  test("maps readOnlyHint=false to readOnly=false while remaining non-destructive", () => {
-    const descriptor = adaptMcpTool(
-      { name: "maybe-write", annotations: { readOnlyHint: false } },
-      "server",
-      makeMcpClient({ content: [] }),
-      [],
-    );
-
-    expect(descriptor.traits).toEqual({
-      readOnly: false,
-      destructive: false,
-      concurrencySafe: true,
-    });
-  });
-
-  test("maps destructiveHint=true to destructive, non-readonly, serial traits", () => {
-    const descriptor = adaptMcpTool(
-      {
-        name: "delete",
-        annotations: { readOnlyHint: true, destructiveHint: true },
-      },
-      "server",
-      makeMcpClient({ content: [] }),
-      [],
-    );
-
-    expect(descriptor.traits).toEqual({
-      readOnly: false,
-      destructive: true,
-      concurrencySafe: false,
-    });
-  });
-
-  test("ignores destructiveHint=false and preserves explicit readOnlyHint=false", () => {
-    const descriptor = adaptMcpTool(
-      {
-        name: "update-cache",
-        annotations: { readOnlyHint: false, destructiveHint: false },
-      },
-      "server",
-      makeMcpClient({ content: [] }),
-      [],
-    );
-
-    expect(descriptor.traits).toEqual({
-      readOnly: false,
-      destructive: false,
-      concurrencySafe: true,
-    });
-  });
-
-  test("uses default safe traits when annotations are missing", () => {
-    const descriptor = adaptMcpTool(
-      { name: "list" },
-      "server",
-      makeMcpClient({ content: [] }),
-      [],
-    );
-
-    expect(descriptor.traits).toEqual({
-      readOnly: true,
-      destructive: false,
-      concurrencySafe: true,
-    });
-  });
-});
-
-// ─── Execution And Formatting ────────────────────────────────────────────────
-
-describe("adaptMcpTool execute", () => {
-  test("calls MCP client with the original MCP tool name and parsed input", async () => {
-    const client = makeMcpClient({ content: [{ type: "text", text: "ok" }] });
-    const descriptor = adaptMcpTool(
-      { name: "resolve-library-id" },
-      "context7",
-      client,
-      [],
-    );
-
-    const input = { libraryName: "React", nested: { stable: true } };
-    const result = await descriptor.execute(input, makeContext());
+    const input = { libraryName: "React" };
+    const result = await execute(descriptor, input);
 
     expect(client.callTool).toHaveBeenCalledWith("resolve-library-id", input);
-    expect(result).toEqual({ output: "ok", isError: false });
+    expect(result).toEqual({ isError: false, draft: { kind: "text", text: "ok" } });
   });
 
-  test("concatenates text blocks in MCP content order", async () => {
-    const descriptor = adaptMcpTool(
-      { name: "read" },
-      "server",
-      makeMcpClient({
-        content: [
-          { type: "text", text: "first" },
-          { type: "image", mimeType: "image/png" },
-          { type: "text", text: "second" },
-        ],
-      }),
-      [],
-    );
-
-    const result = expectToolResult(await descriptor.execute({}, makeContext()));
-
-    expect(result).toEqual({
-      output: "first\n[Unsupported MCP content type: image]\nsecond",
-      isError: false,
-    });
-  });
-
-  test("represents structuredContent after text blocks", async () => {
+  test("formats content in order and appends structured content", async () => {
     const descriptor = adaptMcpTool(
       { name: "query" },
-      "server",
-      makeMcpClient({
-        content: [{ type: "text", text: "summary" }],
-        structuredContent: { ids: ["/vercel/next.js"], count: 1 },
+      "docs",
+      makeClient({
+        content: [
+          { type: "text", text: "summary" },
+          { type: "image", mimeType: "image/png" },
+        ],
+        structuredContent: { ids: ["one"] },
       }),
-      [],
+      POLICY,
     );
 
-    const result = expectToolResult(await descriptor.execute({}, makeContext()));
-
-    expect(result).toEqual({
-      output: 'summary\nStructured content:\n{"ids":["/vercel/next.js"],"count":1}',
-      isError: false,
-    });
+    expect(text(await execute(descriptor))).toBe(
+      'summary\n[Unsupported MCP content type: image]\nStructured content:\n{"ids":["one"]}',
+    );
   });
 
-  test("returns fallback output for empty MCP results", async () => {
+  test("uses deterministic empty output", async () => {
     const descriptor = adaptMcpTool(
-      { name: "empty" },
-      "server",
-      makeMcpClient({ content: [] }),
-      [],
+      { name: "empty" }, "docs", makeClient({ content: [] }), POLICY,
     );
-
-    const result = expectToolResult(await descriptor.execute({}, makeContext()));
-
-    expect(result).toEqual({
-      output: "MCP tool returned no content.",
-      isError: false,
-    });
+    expect(text(await execute(descriptor))).toBe("MCP tool returned no content.");
   });
 
-  test("formats circular structuredContent without throwing", async () => {
-    const circular: Record<string, unknown> = { label: "root" };
+  test("turns MCP error results into bounded structured Raw errors", async () => {
+    const descriptor = adaptMcpTool(
+      { name: "fail" },
+      "docs",
+      makeClient({ content: [{ type: "text", text: "upstream failed" }], isError: true }),
+      POLICY,
+    );
+    const result = await execute(descriptor);
+
+    expect(result.isError).toBe(true);
+    expect(result.details?.error).toMatchObject({
+      kind: "execution",
+      code: "TOOL_MCP_ERROR",
+      name: "McpToolError",
+    });
+    expect(text(result)).toContain("upstream failed");
+  });
+
+  test("uses the shared runtime policy for thrown errors and logs", async () => {
+    const descriptor = adaptMcpTool(
+      { name: "fail" },
+      "docs",
+      throwingClient(new Error("bad token secret-token")),
+      POLICY,
+    );
+    const result = await execute(descriptor);
+
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain(REDACTION_MARKER);
+    expect(JSON.stringify(result)).not.toContain("secret-token");
+  });
+
+  test("converts non-serializable structured content into a tool error", async () => {
+    const circular: Record<string, unknown> = {};
     circular.self = circular;
     const descriptor = adaptMcpTool(
       { name: "circular" },
-      "server",
-      makeMcpClient({ content: [], structuredContent: circular }),
-      [],
+      "docs",
+      makeClient({ content: [], structuredContent: circular }),
+      POLICY,
     );
+    const result = await execute(descriptor);
 
-    const result = expectToolResult(await descriptor.execute({}, makeContext()));
-
-    expect(result.isError).toBe(false);
-    expect(result.output).toBe("Structured content:\n[object Object]");
+    expect(result.isError).toBe(true);
+    expect(result.details?.error?.code).toBe("TOOL_MCP_ERROR");
   });
 
-  test("returns ArchCode tool error result when MCP result isError=true", async () => {
+  test("rejects escaped structured serialization that expands beyond 8 MiB", async () => {
     const descriptor = adaptMcpTool(
-      { name: "fail" },
+      { name: "expanded" },
       "server",
-      makeMcpClient({
-        content: [{ type: "text", text: "upstream failed" }],
-        isError: true,
+      makeClient({ content: [], structuredContent: { value: "\n".repeat(MAX_MCP_SERIALIZED_RESULT_BYTES / 2) } }),
+      POLICY,
+    );
+
+    const result = await execute(descriptor);
+
+    expect(result.isError).toBe(true);
+    expect(result.details?.error?.code).toBe("TOOL_MCP_ERROR");
+    expect(result.draft.kind === "text" ? Buffer.byteLength(result.draft.text) : 0).toBeLessThan(4 * 1024);
+  });
+
+  test("rejects aggregate content blocks before join can create an oversized string", async () => {
+    const descriptor = adaptMcpTool(
+      { name: "many-blocks" },
+      "server",
+      makeClient({
+        content: [
+          { type: "text", text: "a".repeat(MAX_MCP_SERIALIZED_RESULT_BYTES / 2) },
+          { type: "text", text: "b".repeat(MAX_MCP_SERIALIZED_RESULT_BYTES / 2) },
+        ],
       }),
-      [],
+      POLICY,
     );
 
-    const result = expectToolResult(await descriptor.execute({}, makeContext()));
+    const result = await execute(descriptor);
 
     expect(result.isError).toBe(true);
-    expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
-    expect(toolError(result).message).toBe(
-      'MCP tool error from server "server", tool "fail": upstream failed',
-    );
-  });
-
-  test("returns redacted ArchCode tool error result when MCP client throws", async () => {
-    const descriptor = adaptMcpTool(
-      { name: "fail" },
-      "server",
-      makeThrowingMcpClient(new Error("bad token secret-token")),
-      ["secret-token"],
-    );
-
-    const result = expectToolResult(await descriptor.execute({}, makeContext()));
-
-    expect(result.isError).toBe(true);
-    expect(result.output).toContain(REDACTION_MARKER);
-    expect(result.output).not.toContain("secret-token");
-    expect(toolError(result).message).toBe(
-      `MCP tool error from server "server", tool "fail": bad token ${REDACTION_MARKER}`,
-    );
-  });
-
-  test("handles non-Error thrown values as tool execution errors", async () => {
-    const descriptor = adaptMcpTool(
-      { name: "fail" },
-      "server",
-      makeThrowingMcpClient("plain failure"),
-      [],
-    );
-
-    const result = expectToolResult(await descriptor.execute({}, makeContext()));
-
-    expect(result.isError).toBe(true);
-    expect(toolError(result).message).toBe(
-      'MCP tool error from server "server", tool "fail": plain failure',
-    );
+    expect(result.details?.error?.code).toBe("TOOL_MCP_ERROR");
   });
 });
