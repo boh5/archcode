@@ -184,11 +184,6 @@ export function SettingsModelsPanel({ config, adapterCatalog, onChange, errors =
             name: "New model",
             limit: { context: 128000, output: 16000 },
             modalities: { input: ["text"], output: ["text"] },
-            capabilities: {
-              multiToolCallEmission: "single",
-              structuredToolCalls: "best_effort",
-              instructionTier: "standard",
-            },
           };
         }))} className={subtleActionClass}><Plus size={12} aria-hidden="true" />Add model</button></div>
         {Object.entries(provider.models).map(([modelId, model]) => <ModelEditor key={modelId} config={config} onChange={onChange} providerId={providerId} modelId={modelId} model={model} errors={errors} onJsonValidationChange={onJsonValidationChange} jsonResetVersion={jsonResetVersion} />)}
@@ -239,9 +234,6 @@ function ModelEditor({ config, onChange, providerId, modelId, model, errors, onJ
         <Field label="Output limit"><NumberField value={model.limit.output} onChange={(next) => update((draft) => { draft.limit.output = next ?? 0; })} /></Field>
         <Field label="Input modalities"><TextInput value={model.modalities.input.join(", ")} onChange={(next) => update((draft) => { draft.modalities.input = next.split(",").map((entry) => entry.trim()).filter(Boolean) as ServerModelConfig["modalities"]["input"]; })} /></Field>
         <Field label="Output modalities"><TextInput value={model.modalities.output.join(", ")} onChange={(next) => update((draft) => { draft.modalities.output = next.split(",").map((entry) => entry.trim()).filter(Boolean) as ServerModelConfig["modalities"]["output"]; })} /></Field>
-        <Field label="Multi-tool calls" error={errors[`${path}.capabilities.multiToolCallEmission`]}><select className={selectClass} value={model.capabilities.multiToolCallEmission} onChange={(event) => update((draft) => { draft.capabilities.multiToolCallEmission = event.target.value as ServerModelConfig["capabilities"]["multiToolCallEmission"]; })}><option value="single">Single</option><option value="parallel">Parallel</option></select></Field>
-        <Field label="Structured tool calls" error={errors[`${path}.capabilities.structuredToolCalls`]}><select className={selectClass} value={model.capabilities.structuredToolCalls} onChange={(event) => update((draft) => { draft.capabilities.structuredToolCalls = event.target.value as ServerModelConfig["capabilities"]["structuredToolCalls"]; })}><option value="best_effort">Best effort</option><option value="strict">Strict</option></select></Field>
-        <Field label="Instruction tier" error={errors[`${path}.capabilities.instructionTier`]}><select className={selectClass} value={model.capabilities.instructionTier} onChange={(event) => update((draft) => { draft.capabilities.instructionTier = event.target.value as ServerModelConfig["capabilities"]["instructionTier"]; })}><option value="compact">Compact</option><option value="standard">Standard</option><option value="rich">Rich</option></select></Field>
       </div>
       <JsonObjectField label="Default options JSON" value={model.options as Record<string, unknown> | undefined} onChange={(next) => update((draft) => { draft.options = next as ModelCallOptions | undefined; })} error={errorAtOrBelow(errors, `${path}.options`)} validationPath={`${path}.options`} onValidationChange={onJsonValidationChange} resetVersion={jsonResetVersion} />
       <JsonObjectField label="Variants JSON" value={model.variants as Record<string, unknown> | undefined} onChange={(next) => update((draft) => { draft.variants = next as Record<string, ModelCallOptions> | undefined; })} error={errorAtOrBelow(errors, `${path}.variants`)} validationPath={`${path}.variants`} onValidationChange={onJsonValidationChange} resetVersion={jsonResetVersion} />

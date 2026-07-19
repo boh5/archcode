@@ -14,7 +14,7 @@ let container: HTMLDivElement;
 const snapshot: ServerConfigSnapshot = {
   revision: "r1", modelRuntimeRevision: "m1", configPath: "/home/a/.archcode/config.json", restartRequiredSections: [],
   config: {
-    provider: { local: { npm: "@ai-sdk/openai-compatible", name: "Local", options: { baseURL: "http://localhost/v1", apiKey: { action: "preserve" }, headers: { Authorization: { action: "preserve" } } }, models: { demo: { name: "Demo", limit: { context: 1000, output: 500 }, modalities: { input: ["text"], output: ["text"] }, capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "rich" }, variants: { fast: { temperature: 0.1 } } } } } },
+    provider: { local: { npm: "@ai-sdk/openai-compatible", name: "Local", options: { baseURL: "http://localhost/v1", apiKey: { action: "preserve" }, headers: { Authorization: { action: "preserve" } } }, models: { demo: { name: "Demo", limit: { context: 1000, output: 500 }, modalities: { input: ["text"], output: ["text"] }, variants: { fast: { temperature: 0.1 } } } } } },
     agents: { engineer: { model: "local:demo" }, goal_lead: { model: "local:demo" }, plan: { model: "local:demo" }, build: { model: "local:demo" }, reviewer: { model: "local:demo" }, explore: { model: "local:demo" }, librarian: { model: "local:demo" }, shaper: { model: "local:demo" } },
     mcp: { servers: { custom: { url: "https://example.com/mcp", headers: { Authorization: { action: "preserve" } } } } },
   },
@@ -134,9 +134,9 @@ describe("SettingsDialog interactions", () => {
     expect(container.textContent).toContain("model-2");
     expect(input("Default options JSON")).not.toBeNull();
     expect(input("Variants JSON")).not.toBeNull();
-    expect(input("Multi-tool calls", 1).value).toBe("single");
-    expect(input("Structured tool calls", 1).value).toBe("best_effort");
-    expect(input("Instruction tier", 1).value).toBe("standard");
+    expect(container.textContent).not.toContain("Multi-tool calls");
+    expect(container.textContent).not.toContain("Structured tool calls");
+    expect(container.textContent).not.toContain("Instruction tier");
   });
 
   test("never overwrites sparse generated provider, model, or MCP identifiers", () => {
@@ -166,32 +166,11 @@ describe("SettingsDialog interactions", () => {
     expect(input("Output limit").value).toBe("500");
     expect(input("Input modalities").value).toBe("text");
     expect(input("Output modalities").value).toBe("text");
-    expect(input("Multi-tool calls").value).toBe("parallel");
-    expect(input("Structured tool calls").value).toBe("strict");
-    expect(input("Instruction tier").value).toBe("rich");
+    expect(container.textContent).not.toContain("Multi-tool calls");
+    expect(container.textContent).not.toContain("Structured tool calls");
+    expect(container.textContent).not.toContain("Instruction tier");
     expect(container.textContent).not.toContain("Pricing");
     expect([...container.querySelectorAll("label")].some((label) => label.querySelector("span")?.textContent === "maxOutputTokens")).toBe(false);
-  });
-
-  test("persists explicit model capability selections", async () => {
-    let request: Record<string, unknown> | undefined;
-    Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async (_url: string, init?: RequestInit) => {
-      request = JSON.parse(String(init?.body));
-      return Response.json(successfulSaveResponse());
-    }) });
-    act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
-
-    change(input("Multi-tool calls"), "single");
-    change(input("Structured tool calls"), "best_effort");
-    change(input("Instruction tier"), "compact");
-    await act(async () => { click("Save changes"); await Promise.resolve(); });
-
-    const config = request?.config as typeof snapshot.config;
-    expect(config.provider.local.models.demo.capabilities).toEqual({
-      multiToolCallEmission: "single",
-      structuredToolCalls: "best_effort",
-      instructionTier: "compact",
-    });
   });
 
   test("selects packages from the server catalog and preserves adapter-specific advanced options", () => {

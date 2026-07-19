@@ -261,7 +261,6 @@ export async function runQueryLoop(
   const structuredResultCorrection = structuredResultSubmission === undefined
     ? undefined
     : createStructuredResultCorrectionGate(
-      binding.modelInfo.capabilities.structuredToolCalls,
       countStructuredResultFailures(initialState, structuredResultSubmission),
       structuredResultSubmission,
     );

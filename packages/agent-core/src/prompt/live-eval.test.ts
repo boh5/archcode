@@ -17,9 +17,7 @@ describe("Prompt live eval contract", () => {
     }] });
     const calls: string[] = [];
     const systems: string[] = [];
-    const result = await runPromptLiveEval(manifest, fixture, () => ({
-      multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "rich",
-    }), async (model, system) => {
+    const result = await runPromptLiveEval(manifest, fixture, async (model, system) => {
       calls.push(model);
       systems.push(system);
       return "Work directly";
@@ -30,7 +28,8 @@ describe("Prompt live eval contract", () => {
     expect(result.scenarios.map(({ passed }) => passed)).toEqual([true, true]);
     expect(systems.every((system) => system.includes("## Shared Kernel"))).toBe(true);
     expect(systems.every((system) => system.includes("Agent: engineer"))).toBe(true);
-    expect(systems.every((system) => system.includes("multiToolCallEmission=parallel"))).toBe(true);
+    expect(systems.every((system) => !system.includes("Model Overlay"))).toBe(true);
+    expect(systems[0]).toBe(systems[1]);
   });
 
   test("fixed fixture compiles Engineer, child-result, and Reviewer scenarios through the sole V2 compiler", async () => {
@@ -39,9 +38,7 @@ describe("Prompt live eval contract", () => {
     );
     const manifest = PromptLiveEvalManifestSchema.parse({ version: 1, models: [{ qualifiedId: "local:test" }], resultPath: "results.json" });
     const calls: Array<{ system: string; prompt: string }> = [];
-    await runPromptLiveEval(manifest, fixture, () => ({
-      multiToolCallEmission: "single", structuredToolCalls: "best_effort", instructionTier: "compact",
-    }), async (_model, system, prompt) => {
+    await runPromptLiveEval(manifest, fixture, async (_model, system, prompt) => {
       calls.push({ system, prompt });
       if (prompt.includes("typo")) return "direct";
       if (prompt.includes("independent")) return "parallel";

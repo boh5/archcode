@@ -102,7 +102,6 @@ function makeModelInfo(modelId = "configured"): ModelInfo {
       name: `${modelId} Model`,
       limit: { context: 64_000, output: 4_096 },
       modalities: { input: ["text"], output: ["text"] },
-      capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
     },
     providerId: "test",
     providerDisplayName: "Test Provider",
@@ -444,7 +443,7 @@ describe("ConfiguredAgent", () => {
       temperature: 0.6,
     }));
     expect((streamText.mock.calls[0]![0] as { system: string }).system)
-      .toContain("multiToolCallEmission=parallel");
+      .not.toContain("Model Overlay");
   });
 
   test("passes definition skills and SkillService into tool execution context", async () => {

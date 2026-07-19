@@ -20,7 +20,7 @@ const manifest = PromptLiveEvalManifestSchema.parse(JSON.parse(await readFile(ma
 const fixture = PromptLiveEvalScenariosSchema.parse(JSON.parse(await readFile(fixturePath, "utf8")));
 const config = await new ServerConfigService().loadForStartup();
 const registry = createRegistry(config.provider);
-const result = await runPromptLiveEval(manifest, fixture, (qualifiedId) => registry.getModel(qualifiedId).capabilities, async (qualifiedId, system, prompt) => {
+const result = await runPromptLiveEval(manifest, fixture, async (qualifiedId, system, prompt) => {
   const model = registry.getModel(qualifiedId);
   const provider = config.provider[model.providerId];
   if (provider === undefined) throw new Error(`Manifest model provider is not configured: ${model.providerId}`);

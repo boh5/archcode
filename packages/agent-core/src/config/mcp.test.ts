@@ -539,7 +539,6 @@ describe("archcodeConfigSchema with mcp", () => {
             name: "M",
             limit: { context: 1000, output: 1000 },
             modalities: { input: ["text"], output: ["text"] },
-          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
           },
         },
       },

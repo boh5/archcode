@@ -1,5 +1,4 @@
 import type { AgentName } from "../agents/names";
-import type { ModelCapabilities } from "../config/provider";
 import type { BuiltinToolName, DelegationContract, ScopeRef } from "@archcode/protocol";
 import type { ResolvedSkill, SkillIndexEntry } from "../skills/types";
 import type { VersionControl } from "../version-control/detector";
@@ -60,7 +59,6 @@ export interface RuntimePromptEnvelope {
   readonly remainingDepth: number;
   readonly maxConcurrentChildren: number;
   readonly mcp: Readonly<Record<string, McpPromptStatus>>;
-  readonly modelCapabilities: ModelCapabilities;
 }
 
 export interface PromptSource<T> {

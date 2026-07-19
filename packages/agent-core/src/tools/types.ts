@@ -45,7 +45,6 @@ export interface ToolAttemptMetadata {
 }
 
 export interface StructuredResultCorrectionGate {
-  readonly policy: "strict" | "best_effort";
   readonly submission: "submit_child_result" | "goal_manage.finalize_review";
   recordFailure(error: Error): RawToolResult;
 }

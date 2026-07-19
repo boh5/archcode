@@ -5,15 +5,8 @@ import {
 } from "../agents/definitions/role-contracts";
 import { PromptContractCompiler, createFailedPromptTrace } from "./compiler";
 import { IllegalPromptExecutionModeError, PromptContractLintError, lintRoleContract } from "./lint";
-import type { ModelCapabilities } from "../config";
 import type { AgentName } from "../agents/names";
 import type { PromptContractV2, RuntimePromptEnvelope } from "./index";
-
-const rich: ModelCapabilities = {
-  multiToolCallEmission: "parallel",
-  structuredToolCalls: "strict",
-  instructionTier: "rich",
-};
 
 function runtime(overrides: Partial<RuntimePromptEnvelope> = {}): RuntimePromptEnvelope {
   return {
@@ -31,7 +24,6 @@ function runtime(overrides: Partial<RuntimePromptEnvelope> = {}): RuntimePromptE
     remainingDepth: 3,
     maxConcurrentChildren: 4,
     mcp: { context7: "ready", exa: "pending" },
-    modelCapabilities: rich,
     ...overrides,
   };
 }
@@ -66,7 +58,7 @@ describe("PromptContractCompiler", () => {
     const headings = [
       "## Shared Kernel", "## Runtime Envelope", "## Role Contract", "## Collaboration Contract",
       "## Skills", "## Tool Visibility", "## Current Context", "## Memory",
-      "## Project Instructions", "## Model Overlay", "## Environment",
+      "## Project Instructions", "## Environment",
     ];
     let previous = -1;
     for (const heading of headings) {
@@ -74,26 +66,12 @@ describe("PromptContractCompiler", () => {
       expect(next).toBeGreaterThan(previous);
       previous = next;
     }
-    expect(result.trace.sections).toHaveLength(11);
+    expect(result.trace.sections).toHaveLength(10);
     expect(result.trace.hash).toHaveLength(64);
     expect(result.prompt).toContain("Review mode: none");
     expect(result.prompt).toContain("Parent Agent: none");
     expect(result.prompt).toContain("Goal: none");
     expect(result.prompt).toContain("Todo: none");
-  });
-
-  test("changes only the overlay guidance for model capability profiles", async () => {
-    const compiler = new PromptContractCompiler();
-    const single = await compiler.compile(contract({ runtime: runtime({ modelCapabilities: {
-      multiToolCallEmission: "single", structuredToolCalls: "best_effort", instructionTier: "compact",
-    } }) }));
-    const parallel = await compiler.compile(contract());
-    expect(single.prompt).toContain("Emit one tool call at a time");
-    expect(single.prompt).toContain("never fall back to free-text completion");
-    expect(parallel.prompt).toContain("emit independent tool calls together");
-    const invariantNames = new Set(["Shared Kernel", "Role Contract", "Collaboration Contract"]);
-    expect(single.trace.sections.filter((item) => invariantNames.has(item.name)).map((item) => item.hash))
-      .toEqual(parallel.trace.sections.filter((item) => invariantNames.has(item.name)).map((item) => item.hash));
   });
 
   test("rejects an illegal role and runtime mode before rendering", async () => {

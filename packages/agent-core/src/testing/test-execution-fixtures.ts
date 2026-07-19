@@ -22,11 +22,6 @@ export function createTestModelInfo(overrides: {
       name: overrides.displayName ?? "Test Model",
       limit: overrides.limit ?? { context: 4096, output: 1024 },
       modalities: { input: ["text"], output: ["text"] },
-      capabilities: {
-        multiToolCallEmission: "parallel",
-        structuredToolCalls: "strict",
-        instructionTier: "standard",
-      },
     },
     providerId: overrides.providerId ?? "test",
     providerDisplayName: overrides.providerDisplayName ?? "Test Provider",

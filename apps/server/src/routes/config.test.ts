@@ -19,11 +19,6 @@ const snapshot = {
             name: "Demo",
             limit: { context: 128000, output: 16000 },
             modalities: { input: ["text"], output: ["text"] },
-            capabilities: {
-              multiToolCallEmission: "single",
-              structuredToolCalls: "best_effort",
-              instructionTier: "standard",
-            },
           },
         },
       },
@@ -82,11 +77,6 @@ describe("config routes", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(snapshot);
-    expect(snapshot.config.provider.local.models.demo.capabilities).toEqual({
-      multiToolCallEmission: "single",
-      structuredToolCalls: "best_effort",
-      instructionTier: "standard",
-    });
   });
 
   test("returns the secret-free model runtime catalog", async () => {

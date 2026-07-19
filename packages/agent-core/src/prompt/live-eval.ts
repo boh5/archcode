@@ -1,6 +1,5 @@
 import { z } from "zod/v4";
 import { buildRoleContract, engineerRoleContract, reviewerRoleContract } from "../agents/definitions/role-contracts";
-import type { ModelCapabilities } from "../config/provider";
 import { PromptContractCompiler } from "./compiler";
 import type { PromptContractV2, RuntimePromptEnvelope } from "./types";
 
@@ -29,10 +28,6 @@ export interface PromptLiveEvalExecutor {
   (qualifiedId: string, system: string, prompt: string): Promise<string>;
 }
 
-export interface PromptLiveEvalCapabilityResolver {
-  (qualifiedId: string): ModelCapabilities;
-}
-
 export interface PromptLiveEvalResult {
   readonly version: 1;
   readonly createdAt: string;
@@ -50,14 +45,13 @@ export interface PromptLiveEvalResult {
 export async function runPromptLiveEval(
   manifest: PromptLiveEvalManifest,
   fixture: PromptLiveEvalScenarios,
-  resolveCapabilities: PromptLiveEvalCapabilityResolver,
   execute: PromptLiveEvalExecutor,
 ): Promise<PromptLiveEvalResult> {
   const scenarios: PromptLiveEvalResult["scenarios"][number][] = [];
   for (const { qualifiedId } of manifest.models) {
     for (const scenario of fixture.scenarios) {
       const system = (await new PromptContractCompiler().compile(
-        buildLiveEvalContract(scenario, resolveCapabilities(qualifiedId)),
+        buildLiveEvalContract(scenario),
       )).prompt;
       const output = await execute(qualifiedId, system, scenario.request);
       const normalized = output.toLowerCase();
@@ -83,7 +77,6 @@ export async function runPromptLiveEval(
 
 function buildLiveEvalContract(
   scenario: PromptLiveEvalScenarios["scenarios"][number],
-  capabilities: ModelCapabilities,
 ): PromptContractV2 {
   const base: RuntimePromptEnvelope = {
     agentName: scenario.agent,
@@ -104,7 +97,6 @@ function buildLiveEvalContract(
     remainingDepth: scenario.executionMode === "ordinary-root" ? 3 : 1,
     maxConcurrentChildren: 4,
     mcp: { context7: "ready" },
-    modelCapabilities: capabilities,
   };
   const role = scenario.agent === "engineer" ? engineerRoleContract : scenario.agent === "build" ? buildRoleContract : reviewerRoleContract;
   const allowedTools = scenario.agent === "engineer"

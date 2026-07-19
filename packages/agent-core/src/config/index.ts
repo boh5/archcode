@@ -32,7 +32,6 @@ export {
 } from "./server-config-service";
 export {
   type ModelCallOptions,
-  type ModelCapabilities,
   type ModelConfig,
   type ModelLimit,
   type ModelModalities,
@@ -48,7 +47,6 @@ export {
   getModelConfig,
   getProviderConfig,
   modelCallOptionsSchema,
-  modelCapabilitiesSchema,
   modelConfigSchema,
   modelLimitSchema,
   modelModalitiesSchema,

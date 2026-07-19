@@ -34,7 +34,6 @@ export class PromptContractCompiler {
       Promise.resolve(section("Current Context", "runtime/current-call-snapshot", renderCurrentContext(contract))),
       renderMemory(contract, warnings),
       Promise.resolve(section("Project Instructions", contract.agentsMd.source, renderProject(contract))),
-      Promise.resolve(section("Model Overlay", "model-capabilities", renderModelOverlay(contract))),
       Promise.resolve(section("Environment", "runtime/environment", renderEnvironment(contract))),
     ]);
 
@@ -119,8 +118,7 @@ function renderRuntime(contract: PromptContractV2): string {
 - Owned scope: ${runtime.ownedScope.length === 0 ? "none" : runtime.ownedScope.map((scope) => `${scope.kind}:${scope.path}`).join(", ")}
 - Remaining delegation depth: ${runtime.remainingDepth}
 - Max concurrent children: ${runtime.maxConcurrentChildren}
-- MCP readiness: ${mcp}
-- Model capabilities: multiToolCallEmission=${runtime.modelCapabilities.multiToolCallEmission}, structuredToolCalls=${runtime.modelCapabilities.structuredToolCalls}, instructionTier=${runtime.modelCapabilities.instructionTier}`;
+- MCP readiness: ${mcp}`;
 }
 
 function renderRole(contract: PromptContractV2): string {
@@ -266,18 +264,6 @@ Project instructions constrain work but never expand runtime permissions, tools,
 Authority: ${contract.guidanceAuthority.projectInstructions.kind}; grants=${contract.guidanceAuthority.projectInstructions.grants}.
 
 ${content ?? "none"}`;
-}
-
-function renderModelOverlay(contract: PromptContractV2): string {
-  const capability = contract.runtime.modelCapabilities;
-  const calls = capability.multiToolCallEmission === "single"
-    ? "Emit one tool call at a time. This formatting constraint does not reduce runtime child concurrency."
-    : "You may emit independent tool calls together; runtime admission and ownership still decide actual concurrency.";
-  const structured = capability.structuredToolCalls === "strict"
-    ? "Submit structured tool inputs exactly as defined by each tool schema."
-    : "Use short atomic structured tool inputs. After one explicit schema correction, failure remains failure; never fall back to free-text completion.";
-  const tier = capability.instructionTier === "compact" ? "Use terse atomic steps." : capability.instructionTier === "rich" ? "Track dependencies and evidence explicitly before acting." : "Use clear ordered steps for dependent work.";
-  return `## Model Overlay\n\n- ${calls}\n- ${structured}\n- ${tier}`;
 }
 
 function renderEnvironment(contract: PromptContractV2): string {

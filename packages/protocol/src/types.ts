@@ -707,17 +707,10 @@ export interface ConfigModelCallOptions {
   providerOptions?: Record<string, ConfigJsonValue>;
 }
 
-export interface ConfigModelCapabilities {
-  multiToolCallEmission: "single" | "parallel";
-  structuredToolCalls: "strict" | "best_effort";
-  instructionTier: "compact" | "standard" | "rich";
-}
-
 export interface ConfigModelSettings {
   name: string;
   limit: { context: number; output: number };
   modalities: { input: Array<"text" | "image" | "audio" | "video">; output: Array<"text" | "image" | "audio" | "video"> };
-  capabilities: ConfigModelCapabilities;
   options?: ConfigModelCallOptions;
   variants?: Record<string, ConfigModelCallOptions>;
 }

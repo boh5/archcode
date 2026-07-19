@@ -1,7 +1,6 @@
 import type { LanguageModelV3 } from "@ai-sdk/provider";
 import type {
   ModelConfig,
-  ModelCapabilities,
   ModelLimit,
   ModelModalities,
 } from "../config/index";
@@ -12,7 +11,7 @@ import { SensitiveValueRedactor, type StreamingSensitiveTextRedactor } from "./s
  * from the config file (display name, context/output limits, modalities).
  *
  * Downstream modules (agents, core) receive `ModelInfo` objects so they can
- * inspect capabilities without reaching back into the raw config.
+ * inspect static model metadata without reaching back into the raw config.
  */
 export class ModelInfo {
   /** The AI SDK language model — pass directly to `generateText` / `streamText`. */
@@ -26,9 +25,6 @@ export class ModelInfo {
 
   /** Supported input/output modalities. */
   readonly modalities: ModelModalities;
-
-  /** Explicit model behavior used only by the small prompt overlay. */
-  readonly capabilities: ModelCapabilities;
 
   /** The provider ID this model belongs to (e.g. "xxx"). */
   readonly providerId: string;
@@ -56,7 +52,6 @@ export class ModelInfo {
       input: Object.freeze([...options.config.modalities.input]),
       output: Object.freeze([...options.config.modalities.output]),
     }) as unknown as ModelModalities;
-    this.capabilities = Object.freeze({ ...options.config.capabilities });
     this.providerId = options.providerId;
     this.providerDisplayName = options.providerDisplayName ?? options.providerId;
     this.modelId = options.modelId;

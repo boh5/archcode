@@ -12,7 +12,7 @@
 - Plan Goal copied into the isolated worktree.
 - Plan review completed through fix/review cycles; final result: `APPROVED`.
 - Implementation started from `main` at `ca5ffaf` and is complete in this worktree.
-- Prompt/compiler, delegation/result contract, Execution ownership, Goal review, model capabilities, Web projection, Prompt trace, and deterministic eval surfaces are implemented.
+- Prompt/compiler, delegation/result contract, Execution ownership, Goal review, Web projection, Prompt trace, and deterministic eval surfaces are implemented.
 - Worktree dependencies installed with Bun 1.3.13. The sandboxed attempt could not create worktree symlinks; the same frozen-lockfile install succeeded with worktree filesystem permission.
 - Final independent implementation review: `APPROVED`; AC-01 through AC-08 all pass.
 
@@ -21,7 +21,7 @@
 - Prompt contract/compiler and eight role contracts: implemented.
 - Delegation contract and canonical child result: implemented; targeted contract/tool tests pass.
 - Execution ownership and Goal Reviewer handoff: implemented; final runtime-focused suite passes 306 tests.
-- Model capability overlay, Settings surface, and deterministic live-eval command: implemented.
+- Unified cross-model Prompt and deterministic live-eval command: implemented.
 - Full verification after the first review fixes: passed. Independent second review: `APPROVED`.
 
 ## Locked Decisions
@@ -29,6 +29,24 @@
 - Hard cut only: no legacy Prompt builder, old delegate fields, persisted-child migration, free-text result fallback, or provider-specific full Prompt variants.
 - Eight Agent roles remain; Prompt, Skill, runtime, and Tool Contract ownership stay separate.
 - Real-model live eval is a later release gate, not this Goal's `DONE` condition.
+
+## 2026-07-19 Simplification Revision
+
+- Removed the required model `capabilities` configuration and Settings controls as an overdesigned user-facing boundary.
+- Removed Model Overlay compilation; all models now receive the same Prompt contracts.
+- Replaced model-dependent structured-result correction with one universal rule: one correction attempt, then `CHILD_RESULT_REQUIRED`.
+- Kept provider/model differences confined to API call options and immutable Execution model binding.
+- Verification: `bun run typecheck`, the complete `bun run test`, and `bun run build` all passed; the production-source hard-cut search found no retired capability field or Prompt overlay input.
+- Browser QA with an isolated valid config passed: Models settings rendered without the three retired controls, a model-name edit saved through `PUT /api/config`, the saved state was acknowledged, and the browser console had no errors.
+- The real user config was not modified. Startup correctly rejects it because two configured models still contain the retired `capabilities` object; those objects must be deleted before the local server can start on the new hard-cut schema.
+
+## 2026-07-19 Simplification Review Cycle
+
+- Independent `sol(xhigh)` review initially returned `NOT_APPROVED`: correction failures were counted only inside the current physical Execution, so a HITL `tool_batch` continuation with a new Execution id could incorrectly reset the one-correction quota. It also found two stale Goal acceptance statements referring to the removed model capability profile.
+- Fixed the quota around the logical execution lineage: a `tool_batch` continuation inherits failures through its preceding continuation chain, while an explicit non-continuation `resume_session` Execution starts a fresh quota.
+- Added ordinary child, Goal Reviewer, explicit-resume reset, and cross-model identical-Prompt assertions; corrected the locked decisions and AC-01 wording.
+- Post-fix validation: 28 focused tests passed, uncached five-workspace typecheck passed, the complete eight-task test graph passed, production build passed, and `git diff --check` passed.
+- Second independent `sol(xhigh)` review returned `APPROVED`; it confirmed both findings are closed and found no new blocker.
 
 ## Verification
 
@@ -52,10 +70,10 @@
 - Canonical child receipts are persisted only as `child-result` events and projected during hydration. This preserves one authority source while still hard-failing legacy child Sessions that lack V2 delegation identity.
 - A first acceptance-gap audit rejected the initial implementation as not done. It found stale Web delegate DTO parsing, missing Skill-load error traces, phase-insensitive Goal Lead transitions, post-create admission checks, task/execution status conflation, and an unenforced best-effort result correction limit. Those gaps were fixed before full validation; the earlier targeted green tests were not treated as Goal acceptance.
 - `AGENTS.md` is itself injected Project Instructions, so stale architecture descriptions are a behavioral bug rather than cosmetic documentation. Its old builder, persona, delegation, memory injection, and model configuration descriptions were updated to the V2/runtime facts.
-- Full test execution exposed stale fixtures that targeted the removed contract: non-UUID Session ids, models without required capabilities, child Sessions without V2 delegation identity, and old delegate/background/resume schema assertions. These were hard-cut to the new contract instead of adding runtime compatibility.
+- Full test execution exposed stale fixtures that targeted the removed contract: non-UUID Session ids, child Sessions without V2 delegation identity, and old delegate/background/resume schema assertions. These were hard-cut to the new contract instead of adding runtime compatibility.
 - Environment rendering retains concise Git/non-Git operating guidance, and Skill metadata keeps `allowed_tools` visible while explicitly remaining guidance-only; both help models understand capabilities without granting authority.
 - Existing-child activation now has one shared admission path for direct, Queue, tool-batch, and resume. It revalidates the exact parent, target, depth, Goal phase, Skill identity, dependency status, and durable contract before activation; failed admission releases only a newly created Agent cache.
 - Runtime Envelope now includes the exact parent Agent. Goal-phase delegate targets come from the same Goal delegation policy, and lint accepts only a phase-aware subset of the Role contract. All 27 exact legal child/root combinations plus the full child parent-role matrix are tested.
 - `depends_on` now requires both Execution `completed` and ChildResult task `completed`; `partial`, `blocked`, and `failed` receipts cannot unlock downstream work.
-- Goal Reviewer `finalize_review` and ordinary `submit_child_result` share one canonical structured-result correction gate. Strict fails on the first invalid submission; best-effort allows one durable correction and then fails with `CHILD_RESULT_REQUIRED`.
+- Goal Reviewer `finalize_review` and ordinary `submit_child_result` share one canonical structured-result correction gate. Every model receives one correction attempt; a repeated invalid result fails with `CHILD_RESULT_REQUIRED`.
 - Child creation/link/start rollback now removes newly activated Agent caches without disposing a pre-existing warm Agent.

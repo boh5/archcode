@@ -34,7 +34,7 @@ afterAll(() => { for (const root of tmpRoots) rmSync(root, { recursive: true, fo
 afterEach(() => setLlmAdapterForTest(undefined));
 
 function makeProviderConfig() {
-  return { local: { npm: "@ai-sdk/openai-compatible", name: "Local LLM", options: { baseURL: "http://localhost:8090/v1", apiKey: "test-key" }, models: { "test-model": { name: "Test Model", limit: { context: 128000, output: 8192 }, modalities: { input: ["text"], output: ["text"] }, capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" } } } } };
+  return { local: { npm: "@ai-sdk/openai-compatible", name: "Local LLM", options: { baseURL: "http://localhost:8090/v1", apiKey: "test-key" }, models: { "test-model": { name: "Test Model", limit: { context: 128000, output: 8192 }, modalities: { input: ["text"], output: ["text"] } } } } };
 }
 async function makeTempRoot(): Promise<string> { const root = await mkdtemp(join(tmpdir(), "archcode-main-")); tmpRoots.push(root); return root; }
 async function writeConfig(config: Record<string, unknown>): Promise<ServerConfigService> { const root = await makeTempRoot(); const path = resolveServerConfigPath(root); await mkdir(join(root, ".archcode"), { recursive: true }); await Bun.write(path, JSON.stringify(config)); return new ServerConfigService({ homeDir: root }); }
@@ -199,7 +199,6 @@ describe("createRuntime", () => {
       name: "New",
       limit: { context: 128000, output: 8192 },
       modalities: { input: ["text"], output: ["text"] },
-      capabilities: { multiToolCallEmission: "single", structuredToolCalls: "best_effort", instructionTier: "standard" },
     };
 
     const saved = await runtime.configService.save({

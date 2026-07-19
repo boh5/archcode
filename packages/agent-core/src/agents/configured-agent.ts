@@ -498,7 +498,6 @@ export class ConfiguredAgent implements Agent {
       remainingDepth: Math.max(0, (this.definition.childPolicy?.maxDepth ?? this.depth) - this.depth),
       maxConcurrentChildren: this.definition.childPolicy?.maxConcurrent ?? 0,
       mcp: Object.fromEntries((this.definition.mcpTools ?? []).map((server) => [server, mapMcpServerStatusForPrompt(input.mcpStatuses.get(server))])),
-      modelCapabilities: input.binding.modelInfo.capabilities,
     };
     return {
       version: "2",

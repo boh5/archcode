@@ -129,9 +129,9 @@ describe("submit_child_result", () => {
     expect(JSON.parse(expectTextDraft(result)).message).toContain("delegated child");
   });
 
-  it("allows one best-effort semantic correction and fails the second attempt", async () => {
+  it("allows one semantic correction and fails the second attempt", async () => {
     const { ctx } = context();
-    ctx.structuredResultCorrection = createStructuredResultCorrectionGate("best_effort");
+    ctx.structuredResultCorrection = createStructuredResultCorrectionGate();
     const invalid = childResult();
     invalid.criteria = [{ id: "wrong", status: "passed", evidenceRefs: [] }];
 
@@ -148,9 +148,9 @@ describe("submit_child_result", () => {
     });
   });
 
-  it("accepts one valid best-effort correction after the first failure", async () => {
+  it("accepts one valid correction after the first failure", async () => {
     const { child, ctx } = context();
-    ctx.structuredResultCorrection = createStructuredResultCorrectionGate("best_effort");
+    ctx.structuredResultCorrection = createStructuredResultCorrectionGate();
     const invalid = childResult();
     invalid.criteria = [{ id: "wrong", status: "passed", evidenceRefs: [] }];
 
@@ -166,9 +166,9 @@ describe("submit_child_result", () => {
     expect(child.getState().childResultReceipts).toHaveLength(1);
   });
 
-  it("shares one best-effort correction across schema and semantic failures", async () => {
+  it("shares one correction across schema and semantic failures", async () => {
     const { ctx } = context();
-    ctx.structuredResultCorrection = createStructuredResultCorrectionGate("best_effort");
+    ctx.structuredResultCorrection = createStructuredResultCorrectionGate();
     const fixture = createTestToolRegistryFixture({ descriptors: [submitChildResultTool] });
     const registry = fixture.registry;
 
@@ -196,23 +196,9 @@ describe("submit_child_result", () => {
     }
   });
 
-  it("fails the first invalid strict submission", async () => {
-    const { ctx } = context();
-    ctx.structuredResultCorrection = createStructuredResultCorrectionGate("strict");
-    const invalid = childResult();
-    invalid.criteria = [{ id: "wrong", status: "passed", evidenceRefs: [] }];
-
-    const result = await executeSubmitChildResult(invalid, ctx);
-    expect(JSON.parse(expectTextDraft(result)).code).toBe("CHILD_RESULT_REQUIRED");
-    expect(result.sidecar?.executionControl).toMatchObject({
-      action: "fail_execution",
-      reason: "child_result_required",
-    });
-  });
-
-  it("rebuilds the correction count from the durable current-execution tool batch", async () => {
+  it("carries one correction across a durable tool-batch continuation and resets on explicit resume", async () => {
     const { child, ctx } = context();
-    const firstGate = createStructuredResultCorrectionGate("best_effort");
+    const firstGate = createStructuredResultCorrectionGate();
     const durableFailure = firstGate.recordFailure(new Error("schema mismatch"));
     const now = new Date().toISOString();
     const batch: SessionToolBatch = {
@@ -238,8 +224,9 @@ describe("submit_child_result", () => {
       updatedAt: now,
     };
     child.setState({ toolBatches: [batch] });
+    child.getState().append({ type: "execution-end", status: "waiting_for_human" });
+    child.getState().append(testExecutionStart("execution-2", "tool_batch"));
     ctx.structuredResultCorrection = createStructuredResultCorrectionGate(
-      "best_effort",
       countStructuredResultFailures(child.getState()),
     );
     const invalid = childResult();
@@ -248,6 +235,10 @@ describe("submit_child_result", () => {
     const recoveredAttempt = await executeSubmitChildResult(invalid, ctx);
     expect(JSON.parse(expectTextDraft(recoveredAttempt)).code).toBe("CHILD_RESULT_REQUIRED");
     expect(recoveredAttempt.sidecar?.executionControl).toMatchObject({ action: "fail_execution" });
+
+    child.getState().append({ type: "execution-end", status: "failed" });
+    child.getState().append(testExecutionStart("execution-3", "tool_call"));
+    expect(countStructuredResultFailures(child.getState())).toBe(0);
   });
 });
 

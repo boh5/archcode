@@ -54,7 +54,6 @@ const config: ServerConfig = {
           name: "Demo model",
           limit: { context: 1000, output: 500 },
           modalities: { input: ["text"], output: ["text"] },
-          capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "rich" },
           variants: { fast: { temperature: 0.1 } },
         },
       },
@@ -99,16 +98,17 @@ describe("SettingsDialog", () => {
     expect(editor).toHaveLength(1);
   });
 
-  test("shows required model capability controls but removes pricing and fine-grained call controls", () => {
+  test("keeps model configuration minimal without behavior capability controls", () => {
     const tree = SettingsModelsPanel({ config, adapterCatalog, onChange: () => {} });
     const content = textContent(tree);
     const editor = findAll(tree, (element) => element.props?.providerId === "local" && element.props?.modelId === "demo-model")[0];
 
     expect(content).not.toContain("Pricing");
     expect(content).not.toContain("maxRetries");
-    expect(editor?.props?.model).toMatchObject({
-      capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "rich" },
-    });
+    expect(content).not.toContain("Multi-tool calls");
+    expect(content).not.toContain("Structured tool calls");
+    expect(content).not.toContain("Instruction tier");
+    expect(editor?.props?.model).toBe(config.provider.local.models["demo-model"]);
   });
 
   test("locks the three built-in MCP servers while showing live status", () => {

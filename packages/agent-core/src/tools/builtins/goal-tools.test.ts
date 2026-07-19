@@ -27,6 +27,7 @@ import { createToolExecutionContext, type RawToolResult, type RegistryExecutionO
 import { silentLogger } from "../../logger";
 import { createTestHitlCodec, createTestProjectTodoService } from "../test-project-context";
 import { GoalCreateInputSchema, GoalManageInputSchema, goalCreateTool, goalManageTool } from "./goal-tools";
+import { testExecutionRecord } from "../../testing/test-execution-fixtures";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "goal-tools", crypto.randomUUID());
 const testSkillService = new SkillService({ builtinSkills: {} });
@@ -348,12 +349,10 @@ function finalizeReviewInput(
 async function executeGoalManageWithCorrection(
   input: unknown,
   store: StoreApi<SessionStoreState>,
-  policy: "strict" | "best_effort",
   initialFailures = 0,
 ): Promise<Extract<RegistryExecutionOutcome, { kind: "settled" }>> {
   const ctx = makeCtx(input, store, makeProjectContext());
   ctx.structuredResultCorrection = createStructuredResultCorrectionGate(
-    policy,
     initialFailures,
     "goal_manage.finalize_review",
   );
@@ -727,37 +726,9 @@ describe("goal_manage builtin tool", () => {
     expect(goalState.calls[0]).toMatchObject({ method: "finalizeReview" });
   });
 
-  it("fails the first schema-invalid strict finalize_review with CHILD_RESULT_REQUIRED", async () => {
-    const result = await executeGoalManageWithCorrection({
-      action: "finalize_review",
-      goalId: DEFAULT_GOAL_ID,
-    }, reviewStore(DEFAULT_GOAL_ID), "strict");
-
-    expect(JSON.parse(result.result.output.preview).code).toBe("CHILD_RESULT_REQUIRED");
-    expect(result.sidecar?.executionControl).toMatchObject({
-      action: "fail_execution",
-      reason: "child_result_required",
-    });
-  });
-
-  it("fails the first semantically invalid strict finalize_review with CHILD_RESULT_REQUIRED", async () => {
-    const invalidResult = testReviewExecutionFields("DONE").result;
-    invalidResult.criteria = [{ id: "wrong", status: "passed", evidenceRefs: [] }];
-
-    const result = await executeGoalManageWithCorrection(
-      finalizeReviewInput({ result: invalidResult }),
-      reviewStore(DEFAULT_GOAL_ID),
-      "strict",
-    );
-
-    expect(JSON.parse(result.result.output.preview).code).toBe("CHILD_RESULT_REQUIRED");
-    expect(result.sidecar?.executionControl).toMatchObject({ action: "fail_execution" });
-  });
-
-  it("gives best-effort finalize_review one shared schema-to-semantic correction before failure", async () => {
+  it("gives finalize_review one shared schema-to-semantic correction before failure", async () => {
     const store = reviewStore(DEFAULT_GOAL_ID);
     const gate = createStructuredResultCorrectionGate(
-      "best_effort",
       0,
       "goal_manage.finalize_review",
     );
@@ -789,7 +760,6 @@ describe("goal_manage builtin tool", () => {
   it("does not spend the finalize_review correction on another goal_manage action", async () => {
     const store = reviewStore(DEFAULT_GOAL_ID);
     const gate = createStructuredResultCorrectionGate(
-      "best_effort",
       0,
       "goal_manage.finalize_review",
     );
@@ -814,10 +784,18 @@ describe("goal_manage builtin tool", () => {
     expect(JSON.parse(firstFinalizeFailure.result.output.preview).code).toBe("STRUCTURED_RESULT_CORRECTION_REQUIRED");
   });
 
-  it("rebuilds the finalize_review correction count from the durable current execution", async () => {
-    const store = reviewStore(DEFAULT_GOAL_ID);
+  it("carries the finalize_review correction across a durable tool-batch continuation", async () => {
+    const store = reviewStore(DEFAULT_GOAL_ID, {
+      currentExecutionId: "review-continuation",
+      executions: [
+        testExecutionRecord("review-execution", "waiting_for_human"),
+        {
+          ...testExecutionRecord("review-continuation", "running"),
+          origin: "tool_batch",
+        },
+      ],
+    });
     const durableFailure = createStructuredResultCorrectionGate(
-      "best_effort",
       0,
       "goal_manage.finalize_review",
     ).recordFailure(new Error("schema mismatch"));
@@ -854,7 +832,6 @@ describe("goal_manage builtin tool", () => {
     const recovered = await executeGoalManageWithCorrection(
       { action: "finalize_review", goalId: DEFAULT_GOAL_ID },
       store,
-      "best_effort",
       failures,
     );
     expect(JSON.parse(recovered.result.output.preview).code).toBe("CHILD_RESULT_REQUIRED");

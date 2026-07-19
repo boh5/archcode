@@ -417,7 +417,6 @@ function makeModelRuntime(
     name: "Test Model",
     limit: { context: 100_000, output: 10_000 },
     modalities: { input: ["text"], output: ["text"] },
-    capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
   };
   const otherModel: ModelConfig = {
     ...model,

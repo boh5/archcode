@@ -17,14 +17,6 @@ export const modelModalitiesSchema = z
   })
   .strict();
 
-export const modelCapabilitiesSchema = z
-  .object({
-    multiToolCallEmission: z.enum(["single", "parallel"]),
-    structuredToolCalls: z.enum(["strict", "best_effort"]),
-    instructionTier: z.enum(["compact", "standard", "rich"]),
-  })
-  .strict();
-
 const terminalSecretBearingOptionSegments = [
   "apikey",
   "authorization",
@@ -129,7 +121,6 @@ export const modelConfigSchema = z
     name: z.string().min(1),
     limit: modelLimitSchema,
     modalities: modelModalitiesSchema,
-    capabilities: modelCapabilitiesSchema,
     options: modelCallOptionsSchema.optional(),
     variants: z.record(z.string(), modelCallOptionsSchema).optional(),
   })
@@ -169,7 +160,6 @@ export const providersConfigSchema = z
 export type ModelModality = z.infer<typeof modelModalitySchema>;
 export type ModelLimit = z.infer<typeof modelLimitSchema>;
 export type ModelModalities = z.infer<typeof modelModalitiesSchema>;
-export type ModelCapabilities = z.infer<typeof modelCapabilitiesSchema>;
 export type ModelConfig = z.infer<typeof modelConfigSchema>;
 export type ProviderOptions = z.infer<typeof providerOptionsSchema>;
 export type ProviderConfig = z.infer<typeof providerConfigSchema>;

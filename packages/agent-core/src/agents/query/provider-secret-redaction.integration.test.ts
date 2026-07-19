@@ -53,7 +53,6 @@ describe("Provider secret redaction integration", () => {
                 name: "Echo Model",
                 limit: { context: 8192, output: 1024 },
                 modalities: { input: ["text"], output: ["text"] },
-                capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
               },
             },
           },

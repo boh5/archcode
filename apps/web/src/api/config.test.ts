@@ -68,11 +68,6 @@ describe("config API", () => {
                 name: "Demo",
                 limit: { context: 128000, output: 16000 },
                 modalities: { input: ["text"], output: ["text"] },
-                capabilities: {
-                  multiToolCallEmission: "single",
-                  structuredToolCalls: "best_effort",
-                  instructionTier: "standard",
-                },
               },
             },
           },
@@ -85,11 +80,6 @@ describe("config API", () => {
     }, adapterCatalog);
 
     expect(draft.config.provider.local!.options.apiKey).toEqual({ action: "preserve" });
-    expect(draft.config.provider.local!.models.demo.capabilities).toEqual({
-      multiToolCallEmission: "single",
-      structuredToolCalls: "best_effort",
-      instructionTier: "standard",
-    });
     expect(draft.config.provider.local!.options.queryParams).toEqual({
       token: { action: "preserve" },
       region: "test",

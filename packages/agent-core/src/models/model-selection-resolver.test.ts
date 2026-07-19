@@ -29,7 +29,6 @@ function makeModelConfig(
     name,
     limit: { context: 100_000, output: 10_000 },
     modalities: { input: ["text"], output: ["text"] },
-    capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
     options,
     variants,
   };

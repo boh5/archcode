@@ -203,7 +203,7 @@ Every descriptor declares an explicit `outputPolicy`. Registry is the sole Raw-t
 
 **Model configuration** (`~/.archcode/config.json`):
 - Provider ids and model ids combine as `provider:modelId` (example: `"local:glm-5"`). Do **not** use `provider/model`.
-- Every model must explicitly declare `capabilities.{multiToolCallEmission, structuredToolCalls, instructionTier}`. Prompt overlays use these model facts and never infer behavior from provider or model names.
+- All configured models use the same Prompt contracts. Provider and model differences stay in API call options rather than branching Prompt behavior.
 - `provider.<id>.models.<modelId>.options` defines base AI SDK model-call options for that model. Use AI SDK camelCase names such as `maxOutputTokens`, `temperature`, `topP`, `topK`, `presencePenalty`, `frequencyPenalty`, `stopSequences`, `seed`, `timeout`, and `providerOptions`.
 - `provider.<id>.models.<modelId>.variants.<variantName>` defines named option profiles for the same model. An agent's `variant` references one of these names and is consumed during resolution; it is never passed to the AI SDK call.
 - `agents.<agentName>.model` is required for all eight agents: `engineer`, `goal_lead`, `plan`, `build`, `reviewer`, `explore`, `librarian`, and `shaper`. Missing any required agent fails fast with an actionable config error; Shaper never falls back to another Agent's model.
@@ -230,11 +230,6 @@ Minimal example:
           "name": "GLM-5",
           "limit": { "context": 200000, "output": 128000 },
           "modalities": { "input": ["text"], "output": ["text"] },
-          "capabilities": {
-            "multiToolCallEmission": "parallel",
-            "structuredToolCalls": "strict",
-            "instructionTier": "rich"
-          },
           "options": {
             "maxOutputTokens": 64000,
             "temperature": 0.2,

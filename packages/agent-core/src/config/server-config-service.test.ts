@@ -36,7 +36,6 @@ function config(): Record<string, unknown> {
             name: "Test model",
             limit: { context: 128000, output: 8192 },
             modalities: { input: ["text"], output: ["text"] },
-            capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
             variants: { fast: { maxOutputTokens: 2048 } },
           },
         },
@@ -131,7 +130,6 @@ function adapterConfig(adapter: ProviderAdapter): Record<string, any> {
             name: "Test model",
             limit: { context: 128000, output: 8192 },
             modalities: { input: ["text"], output: ["text"] },
-            capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
           },
         },
       },
@@ -802,7 +800,6 @@ describe("ServerConfigService", () => {
       name: "New model",
       limit: { context: 64_000, output: 4_096 },
       modalities: { input: ["text"], output: ["text"] },
-      capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
     };
     update.mcp!.servers.custom.url = "https://changed.example.test";
     update.memory = { enabled: false };

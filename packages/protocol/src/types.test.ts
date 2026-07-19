@@ -110,7 +110,7 @@ describe("current tool and config wire types", () => {
     expect(serializeRoundTrip(config)).toEqual(config);
   });
 
-  test("requires explicit model capability metadata on the config wire contract", () => {
+  test("represents model settings without Prompt behavior capability metadata", () => {
     const config = {
       provider: {
         local: {
@@ -122,11 +122,6 @@ describe("current tool and config wire types", () => {
               name: "Demo",
               limit: { context: 128000, output: 16000 },
               modalities: { input: ["text"], output: ["text"] },
-              capabilities: {
-                multiToolCallEmission: "single",
-                structuredToolCalls: "best_effort",
-                instructionTier: "standard",
-              },
             },
           },
         },
@@ -134,11 +129,7 @@ describe("current tool and config wire types", () => {
       agents: {} as ServerConfigUpdate["agents"],
     } satisfies ServerConfigUpdate;
 
-    expect(serializeRoundTrip(config).provider.local.models.demo.capabilities).toEqual({
-      multiToolCallEmission: "single",
-      structuredToolCalls: "best_effort",
-      instructionTier: "standard",
-    });
+    expect(serializeRoundTrip(config)).toEqual(config);
   });
 });
 

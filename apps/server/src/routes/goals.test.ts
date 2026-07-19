@@ -156,7 +156,6 @@ function createFixture(goals: GoalState[], activity: "idle" | "running" = "idle"
             name: "Test",
             limit: { context: 64_000, output: 4_096 },
             modalities: { input: ["text"], output: ["text"] },
-            capabilities: { multiToolCallEmission: "parallel", structuredToolCalls: "strict", instructionTier: "standard" },
           },
         },
       },

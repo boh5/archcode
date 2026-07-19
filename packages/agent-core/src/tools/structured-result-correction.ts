@@ -1,4 +1,3 @@
-import type { ModelCapabilities } from "../config";
 import { createToolErrorResult } from "./errors";
 import type {
   RawToolResult,
@@ -23,18 +22,16 @@ const SUBMISSION_COPY: Record<StructuredResultSubmission, {
 };
 
 export function createStructuredResultCorrectionGate(
-  policy: ModelCapabilities["structuredToolCalls"],
   initialFailures = 0,
   submission: StructuredResultSubmission = "submit_child_result",
 ): StructuredResultCorrectionGate {
   let failures = initialFailures;
   const copy = SUBMISSION_COPY[submission];
   return {
-    policy,
     submission,
     recordFailure(error: Error): RawToolResult {
       failures += 1;
-      const terminate = policy === "strict" || failures > 1;
+      const terminate = failures > 1;
       const result = createToolErrorResult({
         kind: "execution",
         code: terminate
@@ -66,14 +63,29 @@ export function createStructuredResultCorrectionGate(
 }
 
 export function countStructuredResultFailures(
-  state: Pick<SessionStoreState, "currentExecutionId" | "toolBatches">,
+  state: Pick<SessionStoreState, "currentExecutionId" | "executions" | "toolBatches">,
   submission: StructuredResultSubmission = "submit_child_result",
 ): number {
   const executionId = state.currentExecutionId;
   if (executionId === undefined) return 0;
+  const lineageExecutionIds = new Set([executionId]);
+  let currentExecutionIndex = -1;
+  for (let index = state.executions.length - 1; index >= 0; index -= 1) {
+    if (state.executions[index]?.id !== executionId) continue;
+    currentExecutionIndex = index;
+    break;
+  }
+  if (currentExecutionIndex >= 0 && state.executions[currentExecutionIndex]?.origin === "tool_batch") {
+    for (let index = currentExecutionIndex - 1; index >= 0; index -= 1) {
+      const execution = state.executions[index];
+      if (execution === undefined) continue;
+      lineageExecutionIds.add(execution.id);
+      if (execution.origin !== "tool_batch") break;
+    }
+  }
   let failures = 0;
   for (const batch of state.toolBatches) {
-    if (batch.executionId !== executionId) continue;
+    if (!lineageExecutionIds.has(batch.executionId)) continue;
     for (const call of batch.calls) {
       if (!isStructuredResultSubmission(call.toolName, call.input, submission) || call.result?.isError !== true) continue;
       const code = toolErrorCode(call.result.output.preview);
