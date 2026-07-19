@@ -18,7 +18,7 @@ import {
 import { hitlStore } from "../store/hitl-store";
 import { focusedSessionQueryOptions } from "../api/queries";
 import { SessionRoute } from "./session";
-import { WorkbenchLayoutProvider } from "../context/workbench-layout";
+import { WorkbenchLayoutProvider, useWorkbenchLayout } from "../context/workbench-layout";
 import { SettingsModalProvider } from "../context/settings-modal";
 
 function createSession(input: {
@@ -176,6 +176,11 @@ function LocationProbe() {
   );
 }
 
+function LayoutProbe() {
+  const layout = useWorkbenchLayout();
+  return <output data-testid="inspector-expanded">{String(layout.inspectorExpanded)}</output>;
+}
+
 describe("SessionRoute store-level behavior", () => {
   beforeEach(() => {
     __resetWebSessionStoresForTest();
@@ -250,6 +255,101 @@ describe("SessionRoute focused view store behavior", () => {
   afterEach(() => {
     restoreGlobals();
     mock.restore();
+  });
+
+  test("opens the Context inspector when an invalidated message requests model details", async () => {
+    const dom = installDom();
+    dom.window.localStorage.setItem("archcode.workbench.layout", JSON.stringify({
+      sidebarWidth: 280,
+      inspectorWidth: 360,
+      sidebarCollapsed: false,
+      inspectorCollapsed: true,
+      focusMode: false,
+    }));
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+
+    const rootSession = createSession({
+      id: "root-session",
+      rootSessionId: "root-session",
+      title: "Model audit",
+      messages: [{
+        id: "message-invalidated",
+        role: "user",
+        executionId: "execution-1",
+        parts: [{ type: "text", id: "part-1", text: "Use the old model", createdAt: 1, completedAt: 1 }],
+        modelAudit: {
+          requested: { mode: "session_override", selection: { model: "test:old" } },
+          actual: { model: "test:model" },
+          reason: "config_invalidated",
+        },
+        createdAt: 1,
+        completedAt: 1,
+      }],
+    });
+    rootSession.executions = [{
+      id: "execution-1",
+      origin: "user_message",
+      status: "completed",
+      startedAt: 1,
+      endedAt: 2,
+      binding: rootSession.nextModelSelection.resolved,
+    }];
+
+    const fetchMock = mock(async (input: Parameters<typeof fetch>[0]) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const path = new URL(url, "http://localhost").pathname;
+      if (path === "/api/projects") return Response.json({ projects: [] });
+      if (path === "/api/agents") return Response.json({ agents: [] });
+      if (path === "/api/projects/demo/todos") return Response.json({ todos: [] });
+      if (path === "/api/projects/demo/sessions/root-session") return Response.json(rootSession);
+      return new Response("Not found", { status: 404 });
+    });
+    Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await act(async () => {
+        reactRoot.render(
+          <SettingsModalProvider>
+            <WorkbenchLayoutProvider>
+              <QueryClientProvider client={queryClient}>
+                <MemoryRouter initialEntries={["/projects/demo/sessions/root-session"]}>
+                  <Routes>
+                    <Route
+                      path="/projects/:slug/sessions/:sessionId"
+                      element={<><SessionRoute /><LocationProbe /><LayoutProbe /></>}
+                    />
+                  </Routes>
+                </MemoryRouter>
+              </QueryClientProvider>
+            </WorkbenchLayoutProvider>
+          </SettingsModalProvider>,
+        );
+      });
+
+      await waitFor(() => expect(container.textContent).toContain("Model changed: test:old → test:model"));
+      expect(container.querySelector('[data-testid="inspector-expanded"]')?.textContent).toBe("false");
+      const details = Array.from(container.querySelectorAll("button"))
+        .find((button) => button.textContent === "Details");
+      if (!details) throw new Error("Missing model audit Details button");
+      await act(async () => details.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+
+      await waitFor(() => {
+        expect(container.querySelector('[data-testid="location"]')?.textContent).toBe(
+          "/projects/demo/sessions/root-session?message=message-invalidated&inspector=context|PUSH",
+        );
+        expect(container.querySelector('[data-testid="inspector-expanded"]')?.textContent).toBe("true");
+      });
+    } finally {
+      await act(async () => reactRoot.unmount());
+      queryClient.clear();
+      dom.window.close();
+    }
   });
 
   test("clicking DelegationCard focuses child session and back breadcrumb clears focus", async () => {

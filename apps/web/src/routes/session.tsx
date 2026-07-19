@@ -49,7 +49,7 @@ export function SessionRoute() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const layout = useWorkbenchLayout();
-  const { toggleInspectorSurface } = layout;
+  const { openInspectorSurface, toggleInspectorSurface } = layout;
   const canvasView = searchParams.get("view");
   const selectedFile = searchParams.get("file") ?? undefined;
 
@@ -73,6 +73,13 @@ export function SessionRoute() {
     scope: "session",
     ownerId: focusSessionId ?? undefined,
   });
+  const inspectModelAudit = (messageId: string) => {
+    const next = new URLSearchParams(searchParams);
+    next.set("message", messageId);
+    next.set("inspector", "context");
+    openInspectorSurface();
+    navigate(`?${next.toString()}`);
+  };
 
   // Initialize child session store from focused session snapshot
   useEffect(() => {
@@ -284,7 +291,12 @@ export function SessionRoute() {
           </div>
         ) : (
           <>
-            <ChatMessages slug={slug} sessionId={focusSessionId} agents={agents} />
+            <ChatMessages
+              slug={slug}
+              sessionId={focusSessionId}
+              agents={agents}
+              onInspectModelAudit={inspectModelAudit}
+            />
             <FocusedSessionHitlSurface views={focusedHitl} projectSlug={slug} />
           </>
         )}
@@ -341,7 +353,12 @@ export function SessionRoute() {
         </div>
       ) : (
         <>
-          <ChatMessages slug={slug} sessionId={rootSessionId} agents={agents} />
+          <ChatMessages
+            slug={slug}
+            sessionId={rootSessionId}
+            agents={agents}
+            onInspectModelAudit={inspectModelAudit}
+          />
           <SessionComposerDock slug={slug} sessionId={rootSessionId} />
         </>
       )}

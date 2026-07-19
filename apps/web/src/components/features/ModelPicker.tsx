@@ -106,7 +106,7 @@ export function ModelPicker({
     onManageModels();
   };
   const runningDifferentModel = active !== undefined && !sameSelection(active.selection, next.resolved.selection);
-  const nextLabel = `${bindingLabel(next.resolved)} · ${modeLabel(next.requested)}`;
+  const nextLabel = bindingLabel(next.resolved);
 
   if (catalog.revision !== next.resolved.modelRuntimeRevision) {
     return <span className="max-w-[180px] truncate" data-testid="model-picker-refreshing">Refreshing model configuration…</span>;
@@ -136,18 +136,21 @@ export function ModelPicker({
           className="absolute bottom-[calc(100%+8px)] left-0 z-50 flex max-h-[min(70vh,480px)] w-[min(360px,calc(100vw-24px))] flex-col overflow-hidden rounded-[12px] border border-border-default bg-bg-elevated shadow-lg max-[390px]:fixed max-[390px]:bottom-[72px] max-[390px]:left-3 max-[390px]:right-3 max-[390px]:w-auto"
           data-testid="model-picker-popover"
         >
-          {active && (
-            <div className="grid gap-1 border-b border-border-subtle bg-bg-surface px-3 py-2.5 text-[11px]">
+          <div className="grid gap-1 border-b border-border-subtle bg-bg-surface px-3 py-2.5 text-[11px]">
+            {active && (
               <div className="flex min-w-0 items-center justify-between gap-3">
                 <span className="text-text-muted">Running with</span>
                 <span className="truncate font-medium text-text-secondary">{bindingLabel(active)}</span>
               </div>
-              <div className="flex min-w-0 items-center justify-between gap-3">
-                <span className="text-text-muted">Next</span>
-                <span className="truncate font-medium text-text-primary">{bindingLabel(next.resolved)}</span>
+            )}
+            <div className="flex min-w-0 items-center justify-between gap-3">
+              <span className="text-text-muted">Next</span>
+              <div className="flex min-w-0 items-center gap-1.5 font-medium text-text-primary">
+                <span className="truncate">{bindingLabel(next.resolved)}</span>
+                <span className="shrink-0 text-text-muted" data-testid="model-picker-next-mode">· {modeLabel(next.requested)}</span>
               </div>
             </div>
-          )}
+          </div>
 
           <label className="relative block border-b border-border-subtle p-2">
             <Search size={13} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-text-muted" aria-hidden="true" />

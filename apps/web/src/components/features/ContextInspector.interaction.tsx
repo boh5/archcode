@@ -100,7 +100,7 @@ afterEach(() => {
 
 describe("ContextInspector interactions", () => {
   test("inspects the selected message by executionId without substituting the current next model", async () => {
-    const dom = installDom("/projects/demo/sessions/root?message=user-old");
+    const dom = installDom("/projects/demo/sessions/root?message=user-old&inspector=context");
     const historicalBinding = { ...binding, selection: { model: "openai:gpt-4" }, modelId: "gpt-4", modelDisplayName: "GPT-4", modelRuntimeRevision: "m-old" };
     const session: Session = {
       sessionId: "root", rootSessionId: "root", cwd: "/workspace/demo", title: "Audit", createdAt: 1, updatedAt: 2,
@@ -119,10 +119,11 @@ describe("ContextInspector interactions", () => {
     }) });
     const container = document.getElementById("root")!;
     const root = createRoot(container);
-    const client = await renderInspector(root, "/projects/demo/sessions/root?message=user-old", "session");
+    const client = await renderInspector(root, "/projects/demo/sessions/root?message=user-old&inspector=context", "session");
     try {
-      await act(async () => { (Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Context") as HTMLButtonElement).click(); });
       await waitFor(() => expect(container.textContent).toContain("Inspected message model audit"));
+      expect(container.querySelector('button[role="tab"][aria-selected="true"]')?.textContent).toBe("Context");
+      await waitFor(() => expect(document.activeElement?.id).toBe("inspected-message-model-audit"));
       expect(container.textContent).toContain("execution-old");
       expect(container.textContent).toContain("Originuser_message");
       expect(container.textContent).toContain("openai:gpt-4 · deep");
@@ -136,7 +137,7 @@ describe("ContextInspector interactions", () => {
   });
 
   test("shows every queued request when inspecting a batched assistant execution", async () => {
-    const dom = installDom("/projects/demo/sessions/root?message=assistant-batched");
+    const dom = installDom("/projects/demo/sessions/root?message=assistant-batched&inspector=context");
     const batchedBinding = {
       ...binding,
       selection: { model: "provider-z:model-z" },
@@ -186,9 +187,8 @@ describe("ContextInspector interactions", () => {
     }) });
     const container = document.getElementById("root")!;
     const root = createRoot(container);
-    const client = await renderInspector(root, "/projects/demo/sessions/root?message=assistant-batched", "session");
+    const client = await renderInspector(root, "/projects/demo/sessions/root?message=assistant-batched&inspector=context", "session");
     try {
-      await act(async () => { (Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Context") as HTMLButtonElement).click(); });
       await waitFor(() => expect(container.textContent).toContain("Inspected message model audit"));
       expect(container.textContent).toContain("Request 1user-x · Session override · provider-x:model-x · Requested model invalidated by configuration");
       expect(container.textContent).toContain("Request 2user-y · Session override · provider-y:model-y · deep · Requested model invalidated by configuration");

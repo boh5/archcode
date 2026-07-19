@@ -6,6 +6,7 @@ import {
   clampInspectorWidth,
   clampSidebarWidth,
   getInspectorKind,
+  getWorkbenchSurfaceNavigationKey,
   readWorkbenchPreferences,
   resolveInspectorGeometry,
 } from "./workbench-layout";
@@ -36,6 +37,17 @@ describe("workbench layout", () => {
     expect(getInspectorKind("/projects/archcode/goals")).toBeNull();
     expect(getInspectorKind("/projects/archcode/sessions/session-1")).toBe("session");
     expect(getInspectorKind("/projects/archcode/goals/goal-1")).toBe("goal");
+  });
+
+  test("keeps inspector detail selection from closing mobile workbench surfaces", () => {
+    expect(getWorkbenchSurfaceNavigationKey(
+      "/projects/archcode/sessions/session-1",
+      "?focus=child&message=message-1&inspector=context",
+    )).toBe("/projects/archcode/sessions/session-1?focus=child");
+    expect(getWorkbenchSurfaceNavigationKey(
+      "/projects/archcode/sessions/session-1",
+      "?message=message-1&inspector=context",
+    )).toBe("/projects/archcode/sessions/session-1");
   });
 
   test("falls back safely when persisted preferences are missing or malformed", () => {

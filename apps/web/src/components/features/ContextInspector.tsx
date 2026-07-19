@@ -1,5 +1,6 @@
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { PanelRightClose } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import type { InspectorKind } from "../../lib/workbench-layout";
 import { GoalInspector, type GoalInspectorTab } from "./context-inspector/GoalInspector";
 import { SessionInspector, type SessionInspectorTab } from "./context-inspector/SessionInspector";
@@ -56,7 +57,15 @@ function InspectorShell<T extends string>({
   onCollapse?: () => void;
   renderPanel: (activeTab: T) => ReactNode;
 }) {
-  const [activeTab, setActiveTab] = useState(tabs[0].id);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTab = searchParams.get("inspector");
+  const activeTab = tabs.find((tab) => tab.id === requestedTab)?.id ?? tabs[0].id;
+  const setActiveTab = (tabId: T) => {
+    const next = new URLSearchParams(searchParams);
+    if (tabId === tabs[0].id) next.delete("inspector");
+    else next.set("inspector", tabId);
+    setSearchParams(next, { replace: true });
+  };
   const selectTab = (index: number) => {
     const tab = tabs[(index + tabs.length) % tabs.length];
     setActiveTab(tab.id);

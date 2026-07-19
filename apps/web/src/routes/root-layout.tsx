@@ -15,6 +15,7 @@ import {
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
   getInspectorKind,
+  getWorkbenchSurfaceNavigationKey,
   resolveInspectorGeometry,
 } from "../lib/workbench-layout";
 import { focusElementAfterLayoutChange } from "../lib/focus-control";
@@ -49,7 +50,9 @@ function WorkbenchShell() {
   const setRenderedInspectorWidth = (width: number) => {
     panelSizes.setInspectorWidth(Math.min(inspectorGeometry.max, Math.max(inspectorGeometry.min, width)));
   };
-  useCloseMobileSurfacesOnNavigation(`${location.pathname}${location.search}`);
+  useCloseMobileSurfacesOnNavigation(
+    getWorkbenchSurfaceNavigationKey(location.pathname, location.search),
+  );
 
   const collapseSidebar = () => {
     layout.toggleSidebar();

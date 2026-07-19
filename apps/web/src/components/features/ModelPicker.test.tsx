@@ -121,7 +121,8 @@ describe("ModelPicker", () => {
 
   test("shows controlled next and active bindings in an upward, narrow-safe popover", () => {
     renderPicker();
-    expect(container.querySelector('[data-testid="model-picker-trigger"]')?.textContent).toContain("Next: Claude Sonnet · deep · Override");
+    expect(container.querySelector('[data-testid="model-picker-trigger"]')?.textContent).toContain("Next: Claude Sonnet · deep");
+    expect(container.querySelector('[data-testid="model-picker-trigger"]')?.textContent).not.toContain("Override");
 
     openPicker();
     const popover = container.querySelector('[data-testid="model-picker-popover"]');
@@ -130,6 +131,7 @@ describe("ModelPicker", () => {
     expect(popover?.className).toContain("max-[390px]:left-3");
     expect(container.textContent).toContain("Running withGPT-5");
     expect(container.textContent).toContain("NextClaude Sonnet · deep");
+    expect(container.querySelector('[data-testid="model-picker-next-mode"]')?.textContent).toBe("· Override");
   });
 
   test("searches provider, model, and variant while preserving Provider groups", () => {
@@ -162,7 +164,8 @@ describe("ModelPicker", () => {
 
     expect(onSelect).toHaveBeenCalledWith({ mode: "session_override", selection: { model: "openai:gpt-5", variant: "fast" } });
     expect(container.querySelector('[data-testid="model-picker-popover"]')).toBeNull();
-    expect(container.querySelector('[data-testid="model-picker-trigger"]')?.textContent).toContain("Next: Claude Sonnet · deep · Override");
+    expect(container.querySelector('[data-testid="model-picker-trigger"]')?.textContent).toContain("Next: Claude Sonnet · deep");
+    expect(container.querySelector('[data-testid="model-picker-trigger"]')?.textContent).not.toContain("Override");
   });
 
   test("keeps an internal option pointerdown inside the picker", () => {
@@ -199,7 +202,7 @@ describe("ModelPicker", () => {
     expect(onSelect).toHaveBeenCalledWith({ mode: "agent_default", selection: { model: "openai:gpt-5", variant: "fast" } });
   });
 
-  test("uses requested mode for the trigger and exactly one selected option", () => {
+  test("keeps requested mode in the popover and exactly one selected option", () => {
     const defaultBinding = {
       ...active,
       selection: { model: "openai:gpt-5", variant: "fast" },
@@ -207,15 +210,19 @@ describe("ModelPicker", () => {
       modelRuntimeRevision: catalog.revision,
     };
     renderPicker({ next: { requested: { mode: "agent_default", selection: defaultBinding.selection }, resolved: defaultBinding }, active: undefined });
-    expect(container.querySelector('[data-testid="model-picker-trigger"]')?.textContent).toContain("GPT-5 · fast · Agent default");
+    expect(container.querySelector('[data-testid="model-picker-trigger"]')?.textContent).toContain("GPT-5 · fast");
+    expect(container.querySelector('[data-testid="model-picker-trigger"]')?.textContent).not.toContain("Agent default");
     openPicker();
+    expect(container.querySelector('[data-testid="model-picker-next-mode"]')?.textContent).toBe("· Agent default");
     expect(container.querySelector('[data-testid="model-picker-agent-default"] [aria-label="Selected"]')).not.toBeNull();
     expect(container.querySelector('button[data-model="openai:gpt-5"][data-variant="fast"] [aria-label="Selected"]')).toBeNull();
     act(() => document.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
 
     renderPicker({ next: { requested: { mode: "session_override", selection: defaultBinding.selection }, resolved: { ...defaultBinding, resolution: "session_override" } }, active: undefined });
-    expect(container.querySelector('[data-testid="model-picker-trigger"]')?.textContent).toContain("GPT-5 · fast · Override");
+    expect(container.querySelector('[data-testid="model-picker-trigger"]')?.textContent).toContain("GPT-5 · fast");
+    expect(container.querySelector('[data-testid="model-picker-trigger"]')?.textContent).not.toContain("Override");
     openPicker();
+    expect(container.querySelector('[data-testid="model-picker-next-mode"]')?.textContent).toBe("· Override");
     expect(container.querySelector('[data-testid="model-picker-agent-default"] [aria-label="Selected"]')).toBeNull();
     expect(container.querySelector('button[data-model="openai:gpt-5"][data-variant="fast"] [aria-label="Selected"]')).not.toBeNull();
   });

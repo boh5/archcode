@@ -85,7 +85,7 @@ afterEach(() => {
 });
 
 describe("ChatMessages transcript ownership", () => {
-  test("shows request/actual audit and keeps assistant model bound to its historical execution", async () => {
+  test("shows model audit only for an invalidated request and keeps the assistant label neutral", async () => {
     const store = createWebSessionStore("session-1", "project-1");
     store.getState().initializeFromSnapshot({
       rootSessionId: "session-1",
@@ -102,12 +102,41 @@ describe("ChatMessages transcript ownership", () => {
       nextModelSelection: { requested: { mode: "session_override", selection: { model: "test:new" } }, resolved: { ...binding, selection: { model: "test:new" }, modelId: "new", modelDisplayName: "New Model" } },
     });
     const client = createClient();
-    await act(async () => { root.render(<QueryClientProvider client={client}><ChatMessages slug="project-1" sessionId="session-1" agents={[]} /></QueryClientProvider>); });
-    expect(container.textContent).toContain("Override: test:removed");
-    expect(container.textContent).toContain("Actual: test:model");
-    expect(container.textContent).toContain("invalidated by configuration");
-    expect(container.querySelector('[data-testid="assistant-model-assistant-a"]')?.textContent).toContain("Test Model");
+    const inspectModelAudit = mock((_messageId: string) => {});
+    await act(async () => { root.render(<QueryClientProvider client={client}><ChatMessages slug="project-1" sessionId="session-1" agents={[]} onInspectModelAudit={inspectModelAudit} /></QueryClientProvider>); });
+    expect(container.querySelector('[data-testid="message-model-change-user-a"]')?.textContent).toBe("Model changed: test:removed → test:model");
+    expect(container.textContent).not.toContain("Override:");
+    expect(container.textContent).not.toContain("Actual:");
+    expect(container.textContent).not.toContain("Inspect");
+    expect(container.querySelector('[data-testid="assistant-model-assistant-a"]')?.textContent).toBe("Test Model");
     expect(container.textContent).not.toContain("New Model");
+    const details = Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Details")!;
+    await act(async () => details.click());
+    expect(inspectModelAudit).toHaveBeenCalledWith("user-a");
+  });
+
+  test("does not render request-versus-actual audit chrome for a normal canonical message", async () => {
+    const store = createWebSessionStore("session-1", "project-1");
+    store.getState().initializeFromSnapshot({
+      rootSessionId: "session-1",
+      eventCursor: -1,
+      messages: [{
+        id: "user-normal", role: "user", executionId: "execution-a", createdAt: 1, completedAt: 1,
+        parts: [{ type: "text", id: "text-normal", text: "Normal request", createdAt: 1, completedAt: 1 }],
+        modelAudit: { requested: requestedModelSelection, actual: { model: "test:model" } },
+      }, {
+        id: "assistant-normal", role: "assistant", executionId: "execution-a", createdAt: 2, completedAt: 2,
+        parts: [{ type: "text", id: "text-answer", text: "Normal answer", createdAt: 2, completedAt: 2 }],
+      }],
+      executions: [{ id: "execution-a", startedAt: 1, endedAt: 2, status: "completed", binding, origin: "user_message" }],
+    });
+    const client = createClient();
+    await act(async () => { root.render(<QueryClientProvider client={client}><ChatMessages slug="project-1" sessionId="session-1" agents={[]} /></QueryClientProvider>); });
+    expect(container.textContent).not.toContain("Agent default:");
+    expect(container.textContent).not.toContain("Actual:");
+    expect(container.textContent).not.toContain("Inspect");
+    expect(container.textContent).not.toContain("Details");
+    expect(container.querySelector('[data-testid="assistant-model-assistant-normal"]')?.textContent).toBe("Test Model");
   });
 
   test("offers Steer only when the queued request resolves to the active binding", async () => {
@@ -153,10 +182,10 @@ describe("ChatMessages transcript ownership", () => {
     const client = createClient();
     await act(async () => { root.render(<QueryClientProvider client={client}><ChatMessages slug="project-1" sessionId="session-1" agents={[]} /></QueryClientProvider>); });
 
-    expect(container.querySelector('[data-testid="pending-requested-model-queued-x"]')?.textContent).toContain("test:x-invalid");
-    expect(container.querySelector('[data-testid="pending-requested-model-queued-y"]')?.textContent).toContain("test:y-invalid");
-    expect(container.querySelector('[data-testid="pending-model-invalidation-queued-x"]')?.textContent).toBe("Will use test:model · requested model invalidated by configuration");
-    expect(container.querySelector('[data-testid="pending-model-invalidation-queued-y"]')?.textContent).toBe("Will use test:model · requested model invalidated by configuration");
+    expect(container.querySelector('[data-testid="pending-requested-model-queued-x"]')).toBeNull();
+    expect(container.querySelector('[data-testid="pending-requested-model-queued-y"]')).toBeNull();
+    expect(container.querySelector('[data-testid="pending-model-invalidation-queued-x"]')?.textContent).toBe("Model changed: test:x-invalid → test:model");
+    expect(container.querySelector('[data-testid="pending-model-invalidation-queued-y"]')?.textContent).toBe("Model changed: test:y-invalid → test:model");
   });
 
   test("does not infer queue invalidation or Steer while the catalog is loading", async () => {
@@ -218,7 +247,7 @@ describe("ChatMessages transcript ownership", () => {
       await refresh;
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    expect(container.querySelector('[data-testid="pending-model-invalidation-queued-x"]')?.textContent).toContain("Will use test:model");
+    expect(container.querySelector('[data-testid="pending-model-invalidation-queued-x"]')?.textContent).toBe("Model changed: test:x → test:model");
     expect(container.textContent).toContain("Steer");
   });
 
@@ -243,7 +272,7 @@ describe("ChatMessages transcript ownership", () => {
     await act(async () => {
       store.setState({ nextModelSelection: { requested: requestedModelSelection, resolved: { ...binding, modelRuntimeRevision: "m2" } } });
     });
-    expect(container.querySelector('[data-testid="pending-model-invalidation-queued-x"]')?.textContent).toContain("Will use test:model");
+    expect(container.querySelector('[data-testid="pending-model-invalidation-queued-x"]')?.textContent).toBe("Model changed: test:x → test:model");
     expect(container.textContent).toContain("Steer");
   });
 

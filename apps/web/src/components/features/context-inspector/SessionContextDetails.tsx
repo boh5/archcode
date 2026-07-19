@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useAutomations, useGoals, useSession } from "../../../api/queries";
 import { useSessionStore } from "../../../store/session-store";
@@ -61,8 +62,9 @@ export function SessionContextDetails() {
           ? <InspectorValue>{nextModelSelection.resolved.modelDisplayName}{nextModelSelection.resolved.selection.variant ? ` · ${nextModelSelection.resolved.selection.variant}` : ""}</InspectorValue>
           : <InspectorNotice>Syncing model selection…</InspectorNotice>}
       </InspectorSection>
-      {inspectedMessageId && <InspectorSection title="Inspected message model audit">
-        {inspectedMessage && inspectedMessage.executionId && inspectedExecution ? <InspectorRows rows={[
+      {inspectedMessageId && <InspectedMessageModelAudit
+        messageId={inspectedMessageId}
+        rows={inspectedMessage && inspectedMessage.executionId && inspectedExecution ? [
           ["Message", inspectedMessage.id],
           ["Execution", inspectedMessage.executionId],
           ["Origin", inspectedExecution.origin],
@@ -72,8 +74,8 @@ export function SessionContextDetails() {
           ["Model", inspectedExecution.binding.modelDisplayName],
           ["Resolution", inspectedExecution.binding.resolution],
           ["Runtime revision", inspectedExecution.binding.modelRuntimeRevision],
-        ]} /> : <InspectorNotice>Model audit unavailable for this message</InspectorNotice>}
-      </InspectorSection>}
+        ] : undefined}
+      />}
       <InspectorSection title="Execution">
         <InspectorRows rows={[
           ["Messages", String(stats.messages.total)],
@@ -111,6 +113,40 @@ export function SessionContextDetails() {
           </div>
         </InspectorSection>
       )}
+    </div>
+  );
+}
+
+function InspectedMessageModelAudit({
+  messageId,
+  rows,
+}: {
+  messageId: string;
+  rows: Array<[string, string]> | undefined;
+}) {
+  const sectionRef = useRef<HTMLDivElement>(null);
+  const available = rows !== undefined;
+  useEffect(() => {
+    if (!available) return;
+    const timeout = window.setTimeout(() => {
+      sectionRef.current?.scrollIntoView?.({ block: "nearest" });
+      sectionRef.current?.focus();
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [available, messageId]);
+
+  return (
+    <div
+      ref={sectionRef}
+      id="inspected-message-model-audit"
+      tabIndex={-1}
+      className="rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-accent"
+    >
+      <InspectorSection title="Inspected message model audit">
+        {rows
+          ? <InspectorRows rows={rows} />
+          : <InspectorNotice>Model audit unavailable for this message</InspectorNotice>}
+      </InspectorSection>
     </div>
   );
 }

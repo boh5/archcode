@@ -19,6 +19,7 @@ export interface WorkbenchLayoutValue {
   toggleSidebar: () => void;
   toggleInspector: () => void;
   toggleInspectorSurface: () => void;
+  openInspectorSurface: () => void;
   toggleFocusMode: () => void;
   setMobileNavigationOpen: (open: boolean) => void;
   setMobileInspectorOpen: (open: boolean) => void;
@@ -137,6 +138,19 @@ export function WorkbenchLayoutProvider({ children }: { children: ReactNode }) {
     }
     toggleInspector();
   }, [isMobile, mobileInspectorOpen, toggleInspector]);
+  const openInspectorSurface = useCallback(() => {
+    if (isMobile) {
+      if (document.activeElement instanceof HTMLElement) {
+        mobileInspectorReturnFocusRef.current = document.activeElement;
+      }
+      setMobileNavigationOpen(false);
+      setMobileInspectorOpen(true);
+      return;
+    }
+    setPreferences((current) => current.inspectorCollapsed
+      ? { ...current, inspectorCollapsed: false }
+      : current);
+  }, [isMobile]);
 
   const layoutValue = useMemo<WorkbenchLayoutValue>(() => ({
     sidebarCollapsed: preferences.sidebarCollapsed,
@@ -150,6 +164,7 @@ export function WorkbenchLayoutProvider({ children }: { children: ReactNode }) {
     toggleSidebar,
     toggleInspector,
     toggleInspectorSurface,
+    openInspectorSurface,
     toggleFocusMode,
     setMobileNavigationOpen,
     setMobileInspectorOpen: updateMobileInspectorOpen,
@@ -160,6 +175,7 @@ export function WorkbenchLayoutProvider({ children }: { children: ReactNode }) {
     preferences.focusMode,
     preferences.inspectorCollapsed,
     preferences.sidebarCollapsed,
+    openInspectorSurface,
     toggleFocusMode,
     toggleInspector,
     toggleInspectorSurface,

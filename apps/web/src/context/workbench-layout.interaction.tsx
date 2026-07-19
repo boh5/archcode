@@ -62,6 +62,7 @@ function Probe() {
   return (
     <>
       <button type="button" aria-expanded={layout.inspectorExpanded} onClick={() => layout.setMobileInspectorOpen(true)}>Open</button>
+      <button type="button" onClick={layout.openInspectorSurface}>Open inspector surface</button>
       {layout.mobileInspectorOpen && <button type="button" onClick={() => layout.setMobileInspectorOpen(false)}>Close</button>}
       <output data-testid="return-focus">{layout.mobileInspectorReturnFocusRef.current?.textContent ?? "none"}</output>
       <output data-testid="mobile-mode">{String(layout.isMobile)}</output>
@@ -103,6 +104,26 @@ describe("WorkbenchLayout mobile inspector", () => {
     await act(async () => close.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
     expect(open.getAttribute("aria-expanded")).toBe("false");
     expect(container.querySelector('[data-testid="return-focus"]')?.textContent).toBe("Open");
+
+    await act(async () => root.unmount());
+    dom.window.close();
+  });
+
+  test("opens the inspector surface idempotently on mobile", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root")!;
+    const root = createRoot(container);
+    await act(async () => root.render(<WorkbenchLayoutProvider><Probe /></WorkbenchLayoutProvider>));
+
+    const opener = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent === "Open inspector surface")!;
+    opener.focus();
+    await act(async () => opener.click());
+    expect(container.querySelector('[data-testid="inspector-open"]')?.textContent).toBe("true");
+    expect(container.querySelector('[data-testid="return-focus"]')?.textContent).toBe("Open inspector surface");
+
+    await act(async () => opener.click());
+    expect(container.querySelector('[data-testid="inspector-open"]')?.textContent).toBe("true");
 
     await act(async () => root.unmount());
     dom.window.close();

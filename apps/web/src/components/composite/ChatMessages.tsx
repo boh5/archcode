@@ -65,10 +65,6 @@ function selectionLabel(selection: ModelSelectionRef): string {
   return selection.variant ? `${selection.model} · ${selection.variant}` : selection.model;
 }
 
-function requestedSelectionLabel(requested: RequestedModelSelection): string {
-  return `${requested.mode === "agent_default" ? "Agent default" : "Override"}: ${selectionLabel(requested.selection)}`;
-}
-
 function sameSelection(left: ModelSelectionRef, right: ModelSelectionRef): boolean {
   return left.model === right.model && left.variant === right.variant;
 }
@@ -90,16 +86,16 @@ function resolvePendingSelection(
   return nextModelSelection?.resolved.selection;
 }
 
-function inspectMessage(messageId: string): void {
-  const url = new URL(window.location.href);
-  url.searchParams.set("message", messageId);
-  window.history.pushState({}, "", url);
-  window.dispatchEvent(new window.PopStateEvent("popstate"));
-}
-
-export function MsgUser({ message }: { message: SessionMessage }) {
+export function MsgUser({
+  message,
+  onInspectModelAudit,
+}: {
+  message: SessionMessage;
+  onInspectModelAudit?: (messageId: string) => void;
+}) {
   const textParts = message.parts.filter((p): p is TextPart => p.type === "text");
   const systemNoticeParts = message.parts.filter((p): p is SystemNoticePart => p.type === "system-notice");
+  const modelChanged = message.modelAudit?.reason === "config_invalidated";
 
   if (textParts.length === 0 && systemNoticeParts.length > 0) {
     return (
@@ -118,12 +114,20 @@ export function MsgUser({ message }: { message: SessionMessage }) {
           </div>
         ))}
         <div className="flex flex-wrap items-center justify-end gap-x-2 text-[11px] text-text-muted">
-          {message.modelAudit && <>
-            <span data-testid={`message-requested-model-${message.id}`}>{requestedSelectionLabel(message.modelAudit.requested)}</span>
-            <span data-testid={`message-actual-model-${message.id}`}>Actual: {selectionLabel(message.modelAudit.actual)}</span>
-            {message.modelAudit.reason === "config_invalidated" && <span className="text-warning">Requested model was invalidated by configuration</span>}
-          </>}
-          {message.executionId && <button type="button" className="hover:text-accent" onClick={() => inspectMessage(message.id)}>Inspect</button>}
+          {modelChanged && message.modelAudit && (
+            <span className="text-warning" data-testid={`message-model-change-${message.id}`}>
+              Model changed: {selectionLabel(message.modelAudit.requested.selection)} → {selectionLabel(message.modelAudit.actual)}
+            </span>
+          )}
+          {modelChanged && onInspectModelAudit && (
+            <button
+              type="button"
+              className="text-text-tertiary hover:text-accent"
+              onClick={() => onInspectModelAudit(message.id)}
+            >
+              Details
+            </button>
+          )}
           <span>{formatRelativeTime(message.createdAt)}</span>
         </div>
       </div>
@@ -156,7 +160,7 @@ function PendingMessageBubble({
   const resolvedPendingSelection = resolvePendingSelection(message.requestedModelSelection, modelRuntime, nextModelSelection);
   const invalidationLabel = resolvedPendingSelection !== undefined
     && !sameSelection(message.requestedModelSelection.selection, resolvedPendingSelection)
-    ? `Will use ${selectionLabel(resolvedPendingSelection)} · requested model invalidated by configuration`
+    ? `Model changed: ${selectionLabel(message.requestedModelSelection.selection)} → ${selectionLabel(resolvedPendingSelection)}`
     : undefined;
   const canSteer = message.state === "queued"
     && typeof steerTargetExecutionId === "string"
@@ -202,7 +206,11 @@ function PendingMessageBubble({
         )}
         <div className="flex items-center gap-2 text-[11px] text-text-muted">
           <span>{message.state === "steering" ? "Steering…" : "Queued"}</span>
-          <span data-testid={`pending-requested-model-${message.id}`}>{requestedSelectionLabel(message.requestedModelSelection)}</span>
+          {!invalidationLabel && (
+            <span data-testid={`pending-requested-model-${message.id}`}>
+              {selectionLabel(message.requestedModelSelection.selection)}
+            </span>
+          )}
           {invalidationLabel && (
             <span className="text-warning" data-testid={`pending-model-invalidation-${message.id}`}>
               {invalidationLabel}
@@ -295,8 +303,7 @@ export function MsgAgent({
         <span className="sr-only">Sent </span>{formatRelativeTime(message.createdAt)}
       </time>
       {binding && <div className="mt-0.5 flex items-center gap-2 text-[11px] text-text-muted" data-testid={`assistant-model-${message.id}`}>
-        <span>Actual: {binding.modelDisplayName}{binding.selection.variant ? ` · ${binding.selection.variant}` : ""}</span>
-        <button type="button" className="hover:text-accent" onClick={() => inspectMessage(message.id)}>Inspect</button>
+        <span>{binding.modelDisplayName}{binding.selection.variant ? ` · ${binding.selection.variant}` : ""}</span>
       </div>}
     </div>
   );
@@ -400,6 +407,7 @@ interface ChatMessagesProps {
   slug: string;
   sessionId: string;
   agents: readonly AgentDescriptor[];
+  onInspectModelAudit?: (messageId: string) => void;
 }
 
 interface LocalSendingMessage {
@@ -458,7 +466,7 @@ function LocalSendingMessageBubble({
         </div>
         <div className="flex items-center gap-2 text-[11px] text-text-muted">
           <span>{retryable ? "Send status unknown" : "Sending…"}</span>
-          <span>{requestedSelectionLabel(message.requestedModelSelection)}</span>
+          <span>{selectionLabel(message.requestedModelSelection.selection)}</span>
           {retryable && (
             <button
               type="button"
@@ -475,7 +483,7 @@ function LocalSendingMessageBubble({
   );
 }
 
-export function ChatMessages({ slug, sessionId, agents }: ChatMessagesProps) {
+export function ChatMessages({ slug, sessionId, agents, onInspectModelAudit }: ChatMessagesProps) {
   const messages = useSessionStore(sessionId, (s) => s.messages, slug);
   const pendingMessages = useSessionStore(sessionId, (s) => s.pendingMessages, slug);
   const localSendingMessages = useSessionStore(sessionId, (s) => s.localSendingMessages, slug);
@@ -624,7 +632,7 @@ export function ChatMessages({ slug, sessionId, agents }: ChatMessagesProps) {
         }
         const msg = entry.message;
         if (msg.role === "user") {
-          return <MsgUser key={msg.id} message={msg} />;
+          return <MsgUser key={msg.id} message={msg} onInspectModelAudit={onInspectModelAudit} />;
         }
         return <MsgAgent key={msg.id} message={msg} agentName={agentName} projectSlug={slug} focusStoreSessionId={focusStoreSessionId} childSessionLinks={childSessionLinks} agents={agents} binding={executions.find((execution) => execution.id === msg.executionId)?.binding} />;
         })}

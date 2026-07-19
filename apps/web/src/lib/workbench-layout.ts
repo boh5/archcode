@@ -56,6 +56,14 @@ export function getInspectorKind(pathname: string): InspectorKind | null {
   return null;
 }
 
+export function getWorkbenchSurfaceNavigationKey(pathname: string, search: string): string {
+  const params = new URLSearchParams(search);
+  params.delete("message");
+  params.delete("inspector");
+  const stableSearch = params.toString();
+  return stableSearch.length > 0 ? `${pathname}?${stableSearch}` : pathname;
+}
+
 export function readWorkbenchPreferences(raw: string | null): WorkbenchPreferences {
   if (raw === null) return DEFAULT_WORKBENCH_PREFERENCES;
   try {
