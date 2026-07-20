@@ -111,7 +111,7 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
       { path: selectedPath },
       {
         onSuccess: (project) => {
-          navigate(`/projects/${project.slug}/todos`);
+          navigate(`/projects/${project.slug}`);
           onClose();
         },
       },

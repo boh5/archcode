@@ -1,8 +1,10 @@
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Plus } from "lucide-react";
-import { useAutomations } from "../api/queries";
+import { useAutomationInvocations, useAutomations } from "../api/queries";
 import { useCreateSession, usePostMessage } from "../api/mutations";
 import type { Automation, AutomationTrigger } from "../api/types";
+import { automationHitlSessionCount, deriveAutomationHitlAttention } from "../lib/automation-hitl-attention";
+import { hitlAttentionPath, useAttentionVisibleScopedHitl } from "../store/hitl-store";
 
 export function AutomationsRoute() {
   const { slug = "" } = useParams<{ slug: string }>();
@@ -29,7 +31,33 @@ export function AutomationsRoute() {
 }
 
 function AutomationRow({ slug, automation }: { slug: string; automation: Automation }) {
-  return <Link to={`/projects/${slug}/automations/${automation.id}`} className="block border-b border-border-subtle px-4 py-3 hover:bg-bg-hover"><div className="flex items-center justify-between gap-3"><span className="font-medium">{automation.name}</span><span className="text-xs text-text-tertiary">{automation.status}</span></div><div className="mt-1 text-xs text-text-muted">{formatTrigger(automation.trigger)} · {automation.action.kind === "start_session" ? "Start Session" : "Send message"}{automation.nextFireAt ? ` · next ${new Date(automation.nextFireAt).toLocaleString()}` : ""}</div></Link>;
+  const invocations = useAutomationInvocations(slug, automation.id);
+  const scopedHitl = useAttentionVisibleScopedHitl([slug]);
+  const attention = deriveAutomationHitlAttention(automation, invocations.data ?? [], scopedHitl);
+  const attentionCount = automationHitlSessionCount(attention);
+  const firstEntry = attention.kind === "start_session"
+    ? attention.sessions[0]?.entries[0]
+    : attention.entries[0];
+
+  return (
+    <div className="border-b border-border-subtle px-4 py-3 hover:bg-bg-hover">
+      <div className="flex items-center justify-between gap-3">
+        <Link className="font-medium hover:text-accent" to={`/projects/${slug}/automations/${automation.id}`}>
+          {automation.name}
+        </Link>
+        <span className="text-xs text-text-tertiary">{automation.status}</span>
+      </div>
+      <div className="mt-1 text-xs text-text-muted">
+        {formatTrigger(automation.trigger)} · {automation.action.kind === "start_session" ? "Start Session" : "Send message"}
+        {automation.nextFireAt ? ` · next ${new Date(automation.nextFireAt).toLocaleString()}` : ""}
+      </div>
+      {attentionCount > 0 && firstEntry ? (
+        <Link className="mt-1.5 inline-flex text-xs font-medium text-warning hover:text-text-primary" to={hitlAttentionPath(firstEntry)}>
+          {attention.kind === "start_session" ? `${attentionCount} Sessions need attention` : "Target Session needs attention"}
+        </Link>
+      ) : null}
+    </div>
+  );
 }
 
 export function formatTrigger(trigger: AutomationTrigger): string {

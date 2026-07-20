@@ -518,6 +518,8 @@ describe("SessionRoute focused view store behavior", () => {
       type: "hitl.event",
       projectSlug: "demo",
       hitlId: view.hitlId,
+      ownerSessionId: "root-session",
+      rootSessionId: "root-session",
       createdAt: 1,
       payload: { type: "hitl.request" },
       view,
@@ -545,8 +547,8 @@ describe("SessionRoute focused view store behavior", () => {
         const surface = container.querySelector('[data-testid="session-composer-dock"]');
         const rail = container.querySelector('[data-testid="conversation-composer-rail"]');
         const attention = container.querySelector('[data-testid="composer-attention-stack"]');
-        const inbox = container.querySelector('[data-testid="hitl-inbox"]');
-        expect(inbox).not.toBeNull();
+        const decision = container.querySelector('[data-testid="hitl-decision-card"]');
+        expect(decision).not.toBeNull();
         expect(surface?.classList.contains("border-t")).toBe(false);
         expect(surface?.classList.contains("px-5")).toBe(false);
         expect(rail?.className).toContain("max-w-[880px]");
@@ -726,7 +728,7 @@ describe("SessionRoute focused view store behavior", () => {
         expect(container.textContent).toContain("← Back to Root Session");
       });
 
-      expect(container.querySelector("textarea")).toBeNull();
+        expect(container.querySelector("textarea")).not.toBeNull();
       expect(container.querySelector('button[title="Stop"]')).toBeNull();
     } finally {
       await act(async () => reactRoot.unmount());

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { invalidateAutomation } from "./mutations";
-import { activeAutomationsQueryOptions, automationInvocationsQueryOptions, automationQueryOptions, automationsQueryOptions, queryKeys } from "./queries";
+import { automationInvocationsQueryOptions, automationQueryOptions, automationsQueryOptions, queryKeys } from "./queries";
 
 const originalFetch = globalThis.fetch;
 const originalDocument = globalThis.document;
@@ -28,13 +28,11 @@ describe("Automation API queries", () => {
     await automationsQueryOptions("demo space").queryFn!({} as never);
     await automationQueryOptions("demo space", "a1").queryFn!({} as never);
     await automationInvocationsQueryOptions("demo space", "a1").queryFn!({} as never);
-    await activeAutomationsQueryOptions().queryFn!({} as never);
 
     expect(requests).toEqual([
       "/api/projects/demo%20space/automations",
       "/api/projects/demo%20space/automations/a1",
       "/api/projects/demo%20space/automations/a1/invocations",
-      "/api/automations?status=active",
     ]);
   });
 });
@@ -44,7 +42,8 @@ test("Automation invalidation refreshes list, dashboard, detail, and history", a
   await invalidateAutomation({ invalidateQueries: async (input) => { calls.push(input.queryKey); } }, "demo", "a1");
   expect(calls).toEqual([
     queryKeys.projectAutomations("demo"),
-    queryKeys.activeAutomations,
+    queryKeys.dashboardProjection({ kind: "global" }),
+    queryKeys.dashboardProjection({ kind: "project", projectSlug: "demo" }),
     queryKeys.automation("demo", "a1"),
     queryKeys.automationInvocations("demo", "a1"),
   ]);

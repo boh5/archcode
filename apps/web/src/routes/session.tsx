@@ -2,44 +2,14 @@ import { useEffect } from "react";
 import { ArrowLeft } from "lucide-react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ChatMessages } from "../components/composite/ChatMessages";
-import { HitlInbox } from "../components/features/HitlCard";
 import { ChatHeader } from "../components/features/ChatHeader";
 import { SessionComposerDock } from "../components/features/SessionComposerDock";
 import { DiffTab } from "../components/features/DiffTab";
 import { TodoProgressButton } from "../components/features/TodoProgressButton";
 import { InspectorToggleButton } from "../components/features/InspectorToggleButton";
 import { useAgents, useFocusedSession, useProjects, useProjectTodos, useSession } from "../api/queries";
-import { useRealtimeHitl } from "../store/hitl-store";
 import { getWebSessionStore, markSessionForeground } from "../store/session-store";
 import { useWorkbenchLayout } from "../context/workbench-layout";
-import { ConversationRail } from "../components/primitives/ConversationRail";
-
-function FocusedSessionHitlSurface({
-  views,
-  projectSlug,
-}: {
-  views: Parameters<typeof HitlInbox>[0]["views"];
-  projectSlug: string;
-}) {
-  if (!views || views.length === 0) return null;
-
-  return (
-    <div className="shrink-0 bg-bg-base" data-testid="conversation-hitl-surface">
-      <ConversationRail className="pb-[12px] pt-[8px]" data-testid="conversation-hitl-rail">
-        <div className="rounded-[14px] border border-border-subtle bg-bg-surface p-[10px] shadow-sm">
-          <HitlInbox
-            views={views}
-            projectSlug={projectSlug}
-            hideWhenEmpty
-            className="gap-[8px]"
-            title="Needs attention"
-            showOwnerLink={false}
-          />
-        </div>
-      </ConversationRail>
-    </div>
-  );
-}
 
 export function SessionRoute() {
   const { slug = "", sessionId = "" } = useParams<{
@@ -68,11 +38,7 @@ export function SessionRoute() {
     : "Activation source Todo";
   const focusSessionId = searchParams.get("focus");
   const { data: focusedSession, isLoading: isFocusedLoading, error: focusedError } = useFocusedSession(slug, focusSessionId);
-  const focusedHitl = useRealtimeHitl({
-    slug,
-    scope: "session",
-    ownerId: focusSessionId ?? undefined,
-  });
+  const focusHitlId = searchParams.get("hitl");
   const inspectModelAudit = (messageId: string) => {
     const next = new URLSearchParams(searchParams);
     next.set("message", messageId);
@@ -293,7 +259,12 @@ export function SessionRoute() {
               agents={agents}
               onInspectModelAudit={inspectModelAudit}
             />
-            <FocusedSessionHitlSurface views={focusedHitl} projectSlug={slug} />
+            <SessionComposerDock
+              slug={slug}
+              sessionId={rootSessionId}
+              goal={(session as import("../api/types").SessionWithGoal).goal}
+              focusHitlId={focusHitlId}
+            />
           </>
         )}
       </div>
@@ -355,7 +326,12 @@ export function SessionRoute() {
             agents={agents}
             onInspectModelAudit={inspectModelAudit}
           />
-          <SessionComposerDock slug={slug} sessionId={rootSessionId} goal={(session as import("../api/types").SessionWithGoal).goal} />
+          <SessionComposerDock
+            slug={slug}
+            sessionId={rootSessionId}
+            goal={(session as import("../api/types").SessionWithGoal).goal}
+            focusHitlId={focusHitlId}
+          />
         </>
       )}
     </div>

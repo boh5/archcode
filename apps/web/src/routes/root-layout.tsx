@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Focus, Menu, PanelLeftOpen, PanelRightOpen, X } from "lucide-react";
-import { Outlet, useLocation } from "react-router-dom";
+import { Link, Outlet, useLocation } from "react-router-dom";
+import { useStore } from "zustand/react";
 import { useAddProjectModal } from "../context/add-project-modal";
 import { useSettingsModal } from "../context/settings-modal";
 import { WorkbenchLayoutProvider, useCloseMobileSurfacesOnNavigation, useWorkbenchLayout, useWorkbenchPanelSizes } from "../context/workbench-layout";
@@ -9,6 +10,9 @@ import { ProjectBar } from "../components/features/ProjectBar";
 import { Sidebar } from "../components/features/Sidebar";
 import { ContextInspector } from "../components/features/ContextInspector";
 import { ResizeHandle } from "../components/features/ResizeHandle";
+import { HitlBell } from "../components/features/HitlBell";
+import { hitlAttentionPath, hitlStore, scopedHitlIdentity } from "../store/hitl-store";
+import { resolveHitlNoticeEntries, useGlobalSSE } from "../context/global-sse";
 import {
   INSPECTOR_MAX_WIDTH,
   INSPECTOR_MIN_WIDTH,
@@ -33,6 +37,9 @@ function WorkbenchShell() {
   const { openAddProjectModal } = useAddProjectModal();
   const { openSettingsModal } = useSettingsModal();
   const layout = useWorkbenchLayout();
+  const { hitlNoticeIdentities } = useGlobalSSE();
+  const hitlViews = useStore(hitlStore, (state) => state.views);
+  const hitlNotices = resolveHitlNoticeEntries(hitlNoticeIdentities, hitlViews);
   const panelSizes = useWorkbenchPanelSizes();
   const viewportWidth = useViewportWidth();
   const inspectorKind = getInspectorKind(location.pathname);
@@ -134,6 +141,26 @@ function WorkbenchShell() {
         </div>
       </main>
 
+      {hitlNotices.length > 0 && (
+        <div className="fixed bottom-4 right-4 z-[60] flex w-[min(360px,calc(100vw-2rem))] flex-col gap-2" aria-live="polite">
+          {hitlNotices.map((entry) => (
+            <Link
+              key={scopedHitlIdentity(entry)}
+              to={hitlAttentionPath(entry)}
+              className="flex items-start gap-2 rounded-lg border border-warning/50 bg-bg-elevated p-3 shadow-lg transition-colors hover:border-warning hover:bg-bg-hover"
+              data-testid="hitl-live-toast"
+            >
+              <span className="mt-0.5 text-warning" aria-hidden="true">●</span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-xs font-medium text-text-primary">{entry.view.displayPayload.title}</span>
+                <span className="mt-0.5 block text-[11px] text-text-muted">{entry.projectSlug} · {entry.view.source.type === "ask_user" ? "Question waiting" : "Permission waiting"}</span>
+              </span>
+              <span className="text-xs font-medium text-accent">Open</span>
+            </Link>
+          ))}
+        </div>
+      )}
+
       {showInspector && inspectorKind && !layout.isMobile && (
         <>
           <div className="hidden min-[1280px]:block">
@@ -178,7 +205,7 @@ function WorkbenchShell() {
           >
             <div className="flex h-full min-w-0">
               <div className="w-[52px] shrink-0 border-r border-border-default bg-bg-surface">
-                <ProjectBar onAddProject={openAddProjectModal} onSettings={openSettingsModal} />
+                <ProjectBar onAddProject={openAddProjectModal} onSettings={openSettingsModal} showBell={false} />
               </div>
               {hasProject && <div className="min-w-0 flex-1 bg-bg-surface"><Sidebar /></div>}
             </div>
@@ -229,21 +256,24 @@ function CompactToolbar({
         {layout.focusMode ? <Focus size={17} /> : <Menu size={17} />}
       </button>
       <span className="text-xs font-semibold text-text-secondary">ArchCode</span>
-      <button
-        ref={inspectorTriggerRef}
-        type="button"
-        aria-label="Open context inspector"
-        aria-expanded={layout.mobileInspectorOpen}
-        aria-controls="mobile-context-inspector"
-        disabled={!inspectorAvailable}
-        className="flex h-8 w-8 items-center justify-center rounded-sm text-text-secondary hover:bg-bg-hover hover:text-text-primary disabled:invisible"
-        onClick={() => {
-          layout.setMobileNavigationOpen(false);
-          layout.setMobileInspectorOpen(true);
-        }}
-      >
-        <PanelRightOpen size={17} />
-      </button>
+      <div className="flex items-center gap-1">
+        <HitlBell mobile />
+        <button
+          ref={inspectorTriggerRef}
+          type="button"
+          aria-label="Open context inspector"
+          aria-expanded={layout.mobileInspectorOpen}
+          aria-controls="mobile-context-inspector"
+          disabled={!inspectorAvailable}
+          className="flex h-8 w-8 items-center justify-center rounded-sm text-text-secondary hover:bg-bg-hover hover:text-text-primary disabled:invisible"
+          onClick={() => {
+            layout.setMobileNavigationOpen(false);
+            layout.setMobileInspectorOpen(true);
+          }}
+        >
+          <PanelRightOpen size={17} />
+        </button>
+      </div>
     </div>
   );
 }

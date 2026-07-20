@@ -1,9 +1,7 @@
 import { queryOptions, useQuery } from "@tanstack/react-query";
 import { apiFetch } from "./client";
-import type { AgentDescriptor, ModelRuntimeCatalog } from "@archcode/protocol";
+import type { AgentDescriptor, DashboardProjection, DashboardScope, ModelRuntimeCatalog } from "@archcode/protocol";
 import type {
-  DashboardSessionGoal,
-  DashboardAutomation,
   DiffFile,
   DirectoryListResponse,
   DirectorySearchResponse,
@@ -20,7 +18,9 @@ export const queryKeys = {
   agents: ["agents"] as const,
   modelRuntime: ["config", "model-runtime"] as const,
   projects: ["projects"] as const,
-  sessionGoals: ["session-goals"] as const,
+  dashboardProjection: (scope: DashboardScope) => scope.kind === "global"
+    ? ["dashboard", "global"] as const
+    : ["dashboard", "project", scope.projectSlug] as const,
   sessions: (slug: string) => ["projects", slug, "sessions"] as const,
   session: (slug: string, sessionId: string) => ["projects", slug, "sessions", sessionId] as const,
   tree: (slug: string, rootSessionId: string) => ["projects", slug, "sessions", rootSessionId, "tree"] as const,
@@ -32,7 +32,6 @@ export const queryKeys = {
   projectAutomations: (slug: string) => ["projects", slug, "automations"] as const,
   automation: (slug: string, automationId: string) => ["projects", slug, "automations", automationId] as const,
   automationInvocations: (slug: string, automationId: string) => ["projects", slug, "automations", automationId, "invocations"] as const,
-  activeAutomations: ["automations", "active"] as const,
   projectTodos: (slug: string) => ["projects", slug, "todos"] as const,
   projectTodo: (slug: string, todoId: string) => ["projects", slug, "todos", todoId] as const,
 };
@@ -101,13 +100,12 @@ export function focusedSessionQueryOptions(slug: string, focusSessionId: string 
   });
 }
 
-export function sessionGoalsQueryOptions() {
+export function dashboardProjectionQueryOptions(scope: DashboardScope) {
   return queryOptions({
-    queryKey: queryKeys.sessionGoals,
-    queryFn: async () => {
-      const response = await apiFetch<{ sessionGoals: DashboardSessionGoal[] }>("/api/session-goals");
-      return response.sessionGoals;
-    },
+    queryKey: queryKeys.dashboardProjection(scope),
+    queryFn: () => apiFetch<DashboardProjection>(scope.kind === "global"
+      ? "/api/dashboard"
+      : `/api/projects/${encodeURIComponent(scope.projectSlug)}/dashboard`),
   });
 }
 
@@ -170,8 +168,9 @@ export function useSessionTree(slug: string, rootSessionId: string) {
   return useQuery(sessionTreeQueryOptions(slug, rootSessionId));
 }
 
-export function useSessionGoals() {
-  return useQuery(sessionGoalsQueryOptions());
+/** Fetches the raw server read projection; UI composition remains local and transient. */
+export function useDashboardReadProjection(scope: DashboardScope) {
+  return useQuery(dashboardProjectionQueryOptions(scope));
 }
 
 export function useDiff(
@@ -252,16 +251,6 @@ export function automationInvocationsQueryOptions(slug: string, automationId: st
   });
 }
 
-export function activeAutomationsQueryOptions() {
-  return queryOptions({
-    queryKey: queryKeys.activeAutomations,
-    queryFn: async () => {
-      const response = await apiFetch<{ automations: DashboardAutomation[] }>("/api/automations?status=active");
-      return response.automations;
-    },
-  });
-}
-
 // ─── Automation hooks ───
 
 export function useAutomations(slug: string) {
@@ -274,10 +263,6 @@ export function useAutomation(slug: string, automationId: string) {
 
 export function useAutomationInvocations(slug: string, automationId: string) {
   return useQuery(automationInvocationsQueryOptions(slug, automationId));
-}
-
-export function useActiveAutomations() {
-  return useQuery(activeAutomationsQueryOptions());
 }
 
 export function projectTodosQueryOptions(slug: string) {

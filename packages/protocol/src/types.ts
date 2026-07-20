@@ -830,8 +830,21 @@ export interface GlobalSSEHitlSnapshotEvent {
   type: "hitl.snapshot";
   projectSlugs: string[];
   /** Complete active HITL view set for the listed projects. */
-  entries: Array<{ projectSlug: string; view: HitlView }>;
+  entries: GlobalSSEHitlEntry[];
   createdAt: number;
+}
+
+/**
+ * Scoped, presentation-only HITL identity for global consumers.
+ * `rootSessionId` is derived from the owning Session at projection time and is
+ * deliberately never persisted back into the project HITL Queue.
+ */
+export interface GlobalSSEHitlEntry {
+  projectSlug: string;
+  hitlId: string;
+  ownerSessionId: string;
+  rootSessionId: string;
+  view: HitlView;
 }
 
 export type GlobalSSEHitlEventPayload =
@@ -843,6 +856,8 @@ export interface GlobalSSEHitlRealtimeEvent {
   type: "hitl.event";
   projectSlug: string;
   hitlId: string;
+  ownerSessionId: string;
+  rootSessionId: string;
   createdAt: number;
   payload: GlobalSSEHitlEventPayload;
   view: HitlView;

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import type { AgentDescriptor, SessionGoal, SessionSummary } from "@archcode/protocol";
-import { agentsQueryOptions, diffQueryOptions, queryKeys, sessionGoalsQueryOptions, sessionsQueryOptions } from "./queries";
+import type { AgentDescriptor, DashboardProjection, SessionGoal, SessionSummary } from "@archcode/protocol";
+import { agentsQueryOptions, dashboardProjectionQueryOptions, diffQueryOptions, queryKeys, sessionsQueryOptions } from "./queries";
 
 const originalFetch = globalThis.fetch;
 const originalDocument = globalThis.document;
@@ -48,18 +48,30 @@ describe("web Session Goal query contracts", () => {
     expect(await (sessionsQueryOptions(slug) as unknown as QueryOptionWithFn<SessionSummary[]>).queryFn()).toEqual(sessions);
   });
 
-  test("projects dashboard Goal state from Sessions, not a Goal resource", async () => {
+  test("fetches the shared Dashboard projection in global scope", async () => {
     globalThis.document = { cookie: "" } as Document;
-    const sessionGoals = [{ sessionId: "root", sessionTitle: "Root", updatedAt: 2, projectSlug: slug, projectName: "Test", goal: { objective: "Complete it", status: "active", tokensUsed: 3, timeUsedSeconds: 1 } }];
+    const projection: DashboardProjection = { scope: { kind: "global" }, sessions: [], automations: [], errors: [] };
     globalThis.fetch = mock(async (input) => {
-      expect(String(input)).toBe("/api/session-goals");
-      return jsonResponse({ sessionGoals });
+      expect(String(input)).toBe("/api/dashboard");
+      return jsonResponse(projection);
     }) as unknown as typeof fetch;
-    const options = sessionGoalsQueryOptions();
-    expect([...options.queryKey]).toEqual(["session-goals"]);
-    expect(await (options as unknown as QueryOptionWithFn<typeof sessionGoals>).queryFn()).toEqual(sessionGoals);
-    expect(queryKeys).not.toHaveProperty("goal");
-    expect(queryKeys).not.toHaveProperty("projectGoals");
+    const options = dashboardProjectionQueryOptions({ kind: "global" });
+    expect([...options.queryKey]).toEqual(["dashboard", "global"]);
+    expect(await (options as unknown as QueryOptionWithFn<DashboardProjection>).queryFn()).toEqual(projection);
+  });
+
+  test("fetches the same Dashboard projection contract in project scope", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const projection: DashboardProjection = { scope: { kind: "project", projectSlug: "demo space" }, sessions: [], automations: [], errors: [] };
+    globalThis.fetch = mock(async (input) => {
+      expect(String(input)).toBe("/api/projects/demo%20space/dashboard");
+      return jsonResponse(projection);
+    }) as unknown as typeof fetch;
+    const options = dashboardProjectionQueryOptions({ kind: "project", projectSlug: "demo space" });
+    expect([...options.queryKey]).toEqual(["dashboard", "project", "demo space"]);
+    expect(await (options as unknown as QueryOptionWithFn<DashboardProjection>).queryFn()).toEqual(projection);
+    expect(queryKeys).not.toHaveProperty("sessionGoals");
+    expect(queryKeys).not.toHaveProperty("activeAutomations");
   });
 
   test("keeps Diff scoped to a Session", async () => {

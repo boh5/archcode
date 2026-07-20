@@ -18,21 +18,25 @@ import type {
 } from "@archcode/protocol";
 import type { WebSessionStoreState } from "../store/session-store";
 import { queryKeys } from "../api/queries";
-import { hitlStore, scopedHitlKey } from "../store/hitl-store";
+import { hitlStore, scopedHitlIdentity, scopedHitlKey, type ScopedHitlView } from "../store/hitl-store";
 import { useMcpStatusStore } from "../store/mcp-status-store";
 import { runtimeFamilyKey, sessionRuntimeStore } from "../store/session-runtime-store";
 import {
   SSE_WATCHDOG_TIMEOUT_MS,
   SSE_SHUTDOWN_RECONNECT_DELAY_MS,
   cancelSSEShutdownReconnect,
+  createHitlNotificationGate,
   createSSEWatchdog,
   handleSSEEvent,
+  isHitlOwnerForeground,
   isProjectTodoQueryKey,
   isSessionSnapshotQueryKey,
   parseSSEEvent,
   refreshProjectTodoQueriesAfterSSEOpen,
+  resolveHitlNoticeEntries,
   requestSSEReconnectOnce,
   requestSSEShutdownReconnectOnce,
+  showHiddenBrowserHitlNotification,
   type SSEReconnectState,
 } from "./global-sse";
 
@@ -388,7 +392,7 @@ describe("parseSSEEvent", () => {
     const event = {
       type: "hitl.snapshot" as const,
       projectSlugs: ["proj"],
-      entries: [{ projectSlug: "proj", view }],
+      entries: [hitlSnapshotEntry(hitlRealtimeEvent({ projectSlug: "proj", hitlId: "hitl-1" }))],
       createdAt: 1700000000000,
     };
 
@@ -499,7 +503,8 @@ describe("handleSSEEvent", () => {
     expect(mockInvalidateQueries.mock.calls.map(([options]) => options.queryKey)).toEqual([
       queryKeys.session("my-project", "session-1"),
       queryKeys.sessions("my-project"),
-      queryKeys.sessionGoals,
+      queryKeys.dashboardProjection({ kind: "global" }),
+      queryKeys.dashboardProjection({ kind: "project", projectSlug: "my-project" }),
     ]);
   });
 
@@ -630,7 +635,7 @@ describe("handleSSEEvent", () => {
 
     handleSSEEvent({ event: "hitl.event", data: JSON.stringify(event) }, deps);
 
-    expect(hitlStore.getState().views[scopedHitlKey("proj", event.view)]).toEqual({ projectSlug: "proj", view: event.view });
+    expect(hitlStore.getState().views[scopedHitlKey(event)]).toEqual({ projectSlug: "proj", ownerSessionId: event.ownerSessionId, rootSessionId: event.rootSessionId, view: event.view });
     expect(mockInvalidateQueries).not.toHaveBeenCalled();
   });
 
@@ -644,13 +649,13 @@ describe("handleSSEEvent", () => {
       data: JSON.stringify({
         type: "hitl.snapshot",
         projectSlugs: ["proj"],
-        entries: [{ projectSlug: "proj", view: fresh.view }],
+        entries: [hitlSnapshotEntry(fresh)],
         createdAt: 1700000000001,
       }),
     }, deps);
 
-    expect(hitlStore.getState().views[scopedHitlKey("proj", stale.view)]).toBeUndefined();
-    expect(hitlStore.getState().views[scopedHitlKey("proj", fresh.view)]).toEqual({ projectSlug: "proj", view: fresh.view });
+    expect(hitlStore.getState().views[scopedHitlKey(stale)]).toBeUndefined();
+    expect(hitlStore.getState().views[scopedHitlKey(fresh)]).toEqual({ projectSlug: "proj", ownerSessionId: fresh.ownerSessionId, rootSessionId: fresh.rootSessionId, view: fresh.view });
     expect(hitlStore.getState().isProjectInitialized("proj")).toBe(true);
     expect(mockInvalidateQueries).not.toHaveBeenCalled();
   });
@@ -672,6 +677,8 @@ describe("handleSSEEvent", () => {
     expect(mockInvalidateQueries).toHaveBeenCalledWith({
       queryKey: ["projects", "my-project", "sessions", "session-1"],
     });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.dashboardProjection({ kind: "global" }) });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.dashboardProjection({ kind: "project", projectSlug: "my-project" }) });
   });
 
   test("refreshes MCP status snapshot on reset event", () => {
@@ -710,7 +717,7 @@ describe("handleSSEEvent", () => {
     handleSSEEvent({ event: "lagged", data: JSON.stringify(laggedEvent) }, deps);
 
     expect(mockOnShutdown).not.toHaveBeenCalled();
-    expect(mockInvalidateQueries).not.toHaveBeenCalled();
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["dashboard"] });
     expect(mockFindWebSessionStore).not.toHaveBeenCalled();
     expect(mockRequestReconnect).toHaveBeenCalledTimes(1);
     expect(mockRefreshSessionSnapshots).toHaveBeenCalledTimes(1);
@@ -876,6 +883,129 @@ describe("handleSSEEvent", () => {
   });
 });
 
+describe("HITL live notification gate", () => {
+  test("uses the snapshot as a baseline and emits only one new live request", () => {
+    const gate = createHitlNotificationGate();
+    const existing = hitlRealtimeEvent({ projectSlug: "proj", hitlId: "existing" });
+    const live = hitlRealtimeEvent({ projectSlug: "proj", hitlId: "live" });
+
+    gate.beginConnection();
+    gate.observeSnapshot({ type: "hitl.snapshot", projectSlugs: ["proj"], entries: [hitlSnapshotEntry(existing)], createdAt: 1 });
+
+    expect(gate.observeRealtimeEvent(existing)).toBeNull();
+    expect(gate.observeRealtimeEvent(live)).toEqual({
+      projectSlug: "proj",
+      ownerSessionId: live.ownerSessionId,
+      rootSessionId: live.rootSessionId,
+      view: live.view,
+    });
+    expect(gate.observeRealtimeEvent(live)).toBeNull();
+    expect(gate.observeRealtimeEvent({ ...live, payload: { type: "hitl.updated" } })).toBeNull();
+  });
+});
+
+describe("HITL live notification presentation", () => {
+  const foregroundEnvironment = (search: string) => ({
+    visibilityState: "visible" as const,
+    hasFocus: true,
+    pathname: "/projects/proj/sessions/root-session",
+    search,
+  });
+
+  test("treats exactly one root or focused child owner as foreground", () => {
+    const root = scopedHitlView("root-session");
+    const childA = scopedHitlView("child-a");
+    const childB = scopedHitlView("child-b");
+
+    expect([
+      isHitlOwnerForeground(root, foregroundEnvironment("")),
+      isHitlOwnerForeground(childA, foregroundEnvironment("")),
+      isHitlOwnerForeground(childB, foregroundEnvironment("")),
+    ]).toEqual([true, false, false]);
+    expect([
+      isHitlOwnerForeground(root, foregroundEnvironment("?focus=child-a")),
+      isHitlOwnerForeground(childA, foregroundEnvironment("?focus=child-a")),
+      isHitlOwnerForeground(childB, foregroundEnvironment("?focus=child-a")),
+    ]).toEqual([false, true, false]);
+    expect([
+      isHitlOwnerForeground(root, foregroundEnvironment("?focus=child-b")),
+      isHitlOwnerForeground(childA, foregroundEnvironment("?focus=child-b")),
+      isHitlOwnerForeground(childB, foregroundEnvironment("?focus=child-b")),
+    ]).toEqual([false, false, true]);
+  });
+
+  test("does not suppress announcements for a hidden, unfocused, or different Session page", () => {
+    const root = scopedHitlView("root-session");
+    expect(isHitlOwnerForeground(root, { ...foregroundEnvironment(""), visibilityState: "hidden" })).toBe(false);
+    expect(isHitlOwnerForeground(root, { ...foregroundEnvironment(""), hasFocus: false })).toBe(false);
+    expect(isHitlOwnerForeground(root, { ...foregroundEnvironment(""), pathname: "/projects/proj/sessions/other" })).toBe(false);
+  });
+
+  test("opens the precise HITL deep link from a granted hidden-page browser notification", () => {
+    const entry = scopedHitlView("child-a");
+    let onClick: (() => void) | undefined;
+    const createNotification = mock((title: string, body: string, handler: () => void) => {
+      expect(title).toBe("ArchCode needs your attention");
+      expect(body).toBe("Need input");
+      onClick = handler;
+    });
+    const focusWindow = mock(() => {});
+    const navigate = mock((_path: string) => {});
+
+    expect(showHiddenBrowserHitlNotification(entry, {
+      visibilityState: "hidden",
+      permission: "granted",
+      createNotification,
+      focusWindow,
+      navigate,
+    })).toBe(true);
+    onClick?.();
+
+    expect(createNotification).toHaveBeenCalledTimes(1);
+    expect(focusWindow).toHaveBeenCalledTimes(1);
+    expect(navigate).toHaveBeenCalledWith("/projects/proj/sessions/root-session?hitl=hitl-child-a&focus=child-a");
+  });
+
+  test("does not create a browser notification when permission is denied", () => {
+    const createNotification = mock((_title: string, _body: string, _onClick: () => void) => {});
+    expect(showHiddenBrowserHitlNotification(scopedHitlView("root-session"), {
+      visibilityState: "hidden",
+      permission: "denied",
+      createNotification,
+      focusWindow: () => {},
+      navigate: () => {},
+    })).toBe(false);
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  test("dereferences toast identities from the authoritative store and drops resolved HITL immediately", () => {
+    hitlStore.getState().reset();
+    const request = hitlRealtimeEvent({ projectSlug: "proj", hitlId: "live" });
+    hitlStore.getState().applyRealtimeEvent(request);
+    const identity = scopedHitlIdentity(scopedHitlView("session-1", "live"));
+
+    expect(resolveHitlNoticeEntries([identity], hitlStore.getState().views)).toHaveLength(1);
+
+    hitlStore.getState().applyRealtimeEvent({
+      ...request,
+      payload: { type: "hitl.resolved" },
+      view: { ...request.view, status: "resolved", allowedActions: [] },
+    });
+
+    expect(resolveHitlNoticeEntries([identity], hitlStore.getState().views)).toEqual([]);
+  });
+});
+
+function hitlSnapshotEntry(event: GlobalSSEHitlRealtimeEvent) {
+  return {
+    projectSlug: event.projectSlug,
+    hitlId: event.hitlId,
+    ownerSessionId: event.ownerSessionId,
+    rootSessionId: event.rootSessionId,
+    view: event.view,
+  };
+}
+
 function hitlRealtimeEvent(input: { projectSlug: string; hitlId: string; status?: HitlView["status"] }): GlobalSSEHitlRealtimeEvent {
   const status = input.status ?? "pending";
   const view: HitlView = {
@@ -888,5 +1018,23 @@ function hitlRealtimeEvent(input: { projectSlug: string; hitlId: string; status?
     createdAt: "2026-07-08T00:00:00.000Z",
     updatedAt: "2026-07-08T00:00:00.000Z",
   };
-  return { type: "hitl.event", projectSlug: input.projectSlug, hitlId: input.hitlId, createdAt: 1700000000000, payload: { type: "hitl.request" }, view };
+  return { type: "hitl.event", projectSlug: input.projectSlug, hitlId: input.hitlId, ownerSessionId: view.owner.id, rootSessionId: "root-session", createdAt: 1700000000000, payload: { type: "hitl.request" }, view };
+}
+
+function scopedHitlView(ownerSessionId: string, hitlId = `hitl-${ownerSessionId}`): ScopedHitlView {
+  return {
+    projectSlug: "proj",
+    ownerSessionId,
+    rootSessionId: "root-session",
+    view: {
+      hitlId,
+      owner: { type: "session", id: ownerSessionId },
+      source: { type: "ask_user", toolCallId: "call-1" },
+      status: "pending",
+      displayPayload: { title: "Need input", redacted: true },
+      allowedActions: ["answer", "cancel"],
+      createdAt: "2026-07-08T00:00:00.000Z",
+      updatedAt: "2026-07-08T00:00:00.000Z",
+    },
+  };
 }

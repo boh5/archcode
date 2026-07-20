@@ -1,5 +1,6 @@
 import type {
   GlobalSSEHitlRealtimeEvent,
+  GlobalSSEHitlSnapshotEvent,
   GlobalSSEResourceChangedEvent,
   FinalizedToolResult,
   SessionEventPayload,
@@ -291,16 +292,48 @@ export function isStreamEvent(event: unknown): event is StreamEvent | SessionGoa
 export function isGlobalSSEHitlRealtimeEvent(value: unknown): value is GlobalSSEHitlRealtimeEvent {
   const event = record(value);
   if (event === undefined
-    || !exact(event, ["type", "projectSlug", "hitlId", "createdAt", "payload", "view"])
+    || !exact(event, ["type", "projectSlug", "hitlId", "ownerSessionId", "rootSessionId", "createdAt", "payload", "view"])
     || event.type !== "hitl.event"
     || !isString(event.projectSlug)
     || !isString(event.hitlId)
+    || !isString(event.ownerSessionId)
+    || !isString(event.rootSessionId)
     || !isFiniteNumber(event.createdAt)
     || !isGlobalHitlPayload(event.payload)
     || !isHitlView(event.view)) return false;
 
   const view = event.view as UnknownRecord;
-  return view.hitlId === event.hitlId;
+  return view.hitlId === event.hitlId
+    && view.owner !== undefined
+    && record(view.owner)?.id === event.ownerSessionId;
+}
+
+export function isGlobalSSEHitlSnapshotEvent(value: unknown): value is GlobalSSEHitlSnapshotEvent {
+  const event = record(value);
+  return event !== undefined
+    && exact(event, ["type", "projectSlugs", "entries", "createdAt"])
+    && event.type === "hitl.snapshot"
+    && Array.isArray(event.projectSlugs)
+    && event.projectSlugs.every(isString)
+    && isFiniteNumber(event.createdAt)
+    && Array.isArray(event.entries)
+    && event.entries.every(isGlobalSSEHitlEntry);
+}
+
+function isGlobalSSEHitlEntry(value: unknown): boolean {
+  const entry = record(value);
+  if (entry === undefined
+    || !exact(entry, ["projectSlug", "hitlId", "ownerSessionId", "rootSessionId", "view"])
+    || !isString(entry.projectSlug)
+    || !isString(entry.hitlId)
+    || !isString(entry.ownerSessionId)
+    || !isString(entry.rootSessionId)
+    || !isHitlView(entry.view)) return false;
+
+  const view = entry.view as UnknownRecord;
+  return view.hitlId === entry.hitlId
+    && view.owner !== undefined
+    && record(view.owner)?.id === entry.ownerSessionId;
 }
 
 export function isGlobalSSEResourceChangedEvent(value: unknown): value is GlobalSSEResourceChangedEvent {

@@ -132,7 +132,7 @@ describe("SessionComposerDock", () => {
     hitlStore.getState().applySnapshot({
       type: "hitl.snapshot",
       projectSlugs: ["project-1"],
-      entries: [{ projectSlug: "project-1", view: hitlView }],
+      entries: [{ projectSlug: "project-1", hitlId: hitlView.hitlId, ownerSessionId: "session-1", rootSessionId: "session-1", view: hitlView }],
       createdAt: 1,
     });
     const client = new QueryClient({
@@ -227,7 +227,7 @@ describe("SessionComposerDock", () => {
     hitlStore.getState().applySnapshot({
       type: "hitl.snapshot",
       projectSlugs: ["project-1"],
-      entries: [{ projectSlug: "project-1", view: hitlView }],
+      entries: [{ projectSlug: "project-1", hitlId: hitlView.hitlId, ownerSessionId: "session-2", rootSessionId: "session-2", view: hitlView }],
       createdAt: 1,
     });
     const client = new QueryClient({
@@ -272,11 +272,7 @@ describe("SessionComposerDock", () => {
     expect(container.textContent).toContain("Direct");
     expect(container.textContent).toContain("UI");
 
-    fetchMock.mockImplementationOnce(async () => Response.json({
-      hitlId: hitlView.hitlId,
-      status: "answered",
-      view: { ...hitlView, status: "answered", allowedActions: [] },
-    }));
+    fetchMock.mockImplementationOnce(async () => Response.json({ message: "This request was already resolved" }, { status: 409 }));
     const confirm = container.querySelector('[data-testid="hitl-approve-button"]');
     if (!(confirm instanceof dom.window.HTMLButtonElement)) throw new Error("Missing Confirm Answers button");
     expect(confirm.textContent).toContain("Confirm Answers");
@@ -295,5 +291,7 @@ describe("SessionComposerDock", () => {
       type: "question_answer",
       answers: ["Direct", "UI"],
     });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Request failed with status 409");
+    expect(container.querySelector('[data-testid="hitl-decision-card"]')).not.toBeNull();
   });
 });

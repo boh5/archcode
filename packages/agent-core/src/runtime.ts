@@ -40,6 +40,7 @@ import type {
   ExecutionModelBindingSummary,
   GlobalSSEEvent,
   GlobalSSEHitlRealtimeEvent,
+  GlobalSSEHitlEntry,
   GlobalSSEHitlSnapshotEvent,
   GlobalSSEModelRuntimeChangedEvent,
   GlobalSSEResourceChangedEvent,
@@ -523,6 +524,7 @@ export async function createRuntime(
     const projectReconcileRetries = new Map<string, { attempt: number; timer?: ReturnType<typeof setTimeout> }>();
     const projectReconcileInFlight = new Set<string>();
     const hitlDispatches = new Map<string, Promise<HitlRecord>>();
+    const hitlProjectionDispatches = new Map<string, Promise<void>>();
     const cancelledReconcileWorkspaces = new Set<string>();
     let reconciliationShuttingDown = false;
     const publishHitlEvent = (event: GlobalSSEHitlRealtimeEvent): void => {
@@ -540,7 +542,18 @@ export async function createRuntime(
         }
       }
     };
-    const publishProjectHitlEvent = (workspaceRoot: string, event: ProjectHitlQueueEvent): void => {
+    const publishProjectHitlEvent = (workspaceRoot: string, event: ProjectHitlQueueEvent): Promise<void> => {
+      const previous = hitlProjectionDispatches.get(workspaceRoot) ?? Promise.resolve();
+      const current = previous.catch(() => undefined).then(async () => {
+        await publishProjectHitlEventNow(workspaceRoot, event);
+      });
+      hitlProjectionDispatches.set(workspaceRoot, current);
+      void current.finally(() => {
+        if (hitlProjectionDispatches.get(workspaceRoot) === current) hitlProjectionDispatches.delete(workspaceRoot);
+      });
+      return current;
+    };
+    const publishProjectHitlEventNow = async (workspaceRoot: string, event: ProjectHitlQueueEvent): Promise<void> => {
       const projectSlug = projectSlugsByWorkspace.get(workspaceRoot);
       if (projectSlug === undefined) {
         runtimeLogger.warn("hitl.event.project_missing", {
@@ -549,6 +562,8 @@ export async function createRuntime(
         });
         return;
       }
+      const ownerSessionId = event.view.owner.id;
+      const rootSessionId = (await sessionStoreManager.getSessionFile(workspaceRoot, ownerSessionId)).rootSessionId;
       const payload = event.type === "hitl.created"
         ? { type: "hitl.request" as const }
         : event.type === "hitl.resolved" || event.type === "hitl.cancelled"
@@ -558,11 +573,22 @@ export async function createRuntime(
         type: "hitl.event",
         projectSlug,
         hitlId: event.view.hitlId,
+        ownerSessionId,
+        rootSessionId,
         createdAt: Date.now(),
         payload,
         view: event.view,
       });
     };
+    const toGlobalHitlEntries = async (
+      workspaceRoot: string,
+      projectSlug: string,
+      views: readonly HitlView[],
+    ): Promise<GlobalSSEHitlEntry[]> => await Promise.all(views.map(async (view) => {
+      const ownerSessionId = view.owner.id;
+      const rootSessionId = (await sessionStoreManager.getSessionFile(workspaceRoot, ownerSessionId)).rootSessionId;
+      return { projectSlug, hitlId: view.hitlId, ownerSessionId, rootSessionId, view };
+    }));
     let contextResolver!: ProjectContextResolver;
     let executionScopeValidator!: SessionExecutionScopeValidator;
     contextResolver = new ProjectContextResolver({
@@ -1608,6 +1634,7 @@ export async function createRuntime(
       const views = (await context.hitl.list({ statuses: ["pending", "answered"] }))
         .filter((record) => record.status === "pending" || requiresInspection(record))
         .map(toHitlView);
+      const entries = await toGlobalHitlEntries(workspaceRoot, projectSlug, views);
       const families = executionManager.listSessionFamilyActivities().flatMap((family) => (
         family.workspaceRoot === workspaceRoot
           ? [{
@@ -1631,7 +1658,7 @@ export async function createRuntime(
         hitl: {
           type: "hitl.snapshot",
           projectSlugs: [projectSlug],
-          entries: views.map((view) => ({ projectSlug, view })),
+          entries,
           createdAt,
         },
       };
@@ -1744,13 +1771,13 @@ export async function createRuntime(
       cancelHitl,
       listHitlSnapshotEvents: async () => {
         const projects = await projectRegistry.list();
-        const entries: Array<{ projectSlug: string; view: HitlView }> = [];
+        const entries: GlobalSSEHitlEntry[] = [];
         for (const project of projects) {
           const context = await contextResolver.resolve(project.workspaceRoot);
           const views = (await context.hitl.list({ statuses: ["pending", "answered"] }))
             .filter((record) => record.status === "pending" || requiresInspection(record))
             .map(toHitlView);
-          entries.push(...views.map((view) => ({ projectSlug: project.slug, view })));
+          entries.push(...await toGlobalHitlEntries(project.workspaceRoot, project.slug, views));
         }
         return [{
           type: "hitl.snapshot",

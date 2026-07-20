@@ -1,17 +1,42 @@
-import { isVisibleHitlView, useHitlProjectInitialized, useRealtimeHitl } from "../../store/hitl-store";
+import { useEffect, useMemo, useRef } from "react";
+import { selectSessionFamilyHitl, useAttentionVisibleScopedHitl, useHitlProjectInitialized } from "../../store/hitl-store";
 import { useSessionFamilyActivity } from "../../store/session-runtime-store";
 import { ConversationRail } from "../primitives/ConversationRail";
 import { ChatInput } from "./ChatInput";
-import { HitlInbox } from "./HitlCard";
+import { HitlDecisionCard } from "./HitlCard";
 import type { SessionGoalView } from "../../api/types";
 import { SessionGoalProgressRow } from "./SessionGoalProgressRow";
 
-export function SessionComposerDock({ slug, sessionId, goal }: { slug: string; sessionId: string; goal?: SessionGoalView }) {
+export function SessionComposerDock({
+  slug,
+  sessionId,
+  goal,
+  focusHitlId,
+}: {
+  slug: string;
+  sessionId: string;
+  goal?: SessionGoalView;
+  focusHitlId?: string | null;
+}) {
   const activity = useSessionFamilyActivity(slug, sessionId);
   const hitlReady = useHitlProjectInitialized(slug);
-  const hitlViews = useRealtimeHitl({ slug, scope: "session", ownerId: sessionId });
-  const visibleHitlViews = hitlViews.filter(isVisibleHitlView);
-  const hasPendingHitl = visibleHitlViews.length > 0;
+  const attentionVisibleHitl = useAttentionVisibleScopedHitl([slug]);
+  const familyHitl = useMemo(
+    () => selectSessionFamilyHitl(attentionVisibleHitl, slug, sessionId),
+    [attentionVisibleHitl, sessionId, slug],
+  );
+  const hasPendingHitl = familyHitl.length > 0;
+  const focusApplied = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!hitlReady || !focusHitlId || focusApplied.current === focusHitlId) return;
+    const target = document.getElementById(`hitl-decision-${focusHitlId}`);
+    if (!target) return;
+    focusApplied.current = focusHitlId;
+    target.scrollIntoView({ block: "nearest" });
+    target.setAttribute("tabindex", "-1");
+    target.focus({ preventScroll: true });
+  }, [focusHitlId, hitlReady, familyHitl]);
 
   return (
     <div className="shrink-0 bg-bg-base" data-testid="session-composer-dock">
@@ -23,14 +48,9 @@ export function SessionComposerDock({ slug, sessionId, goal }: { slug: string; s
               className="max-h-[min(64vh,560px)] min-w-0 overflow-x-hidden overflow-y-auto rounded-[14px] border border-border-subtle bg-bg-surface p-[10px] shadow-sm"
               data-testid="composer-attention-stack"
             >
-              <HitlInbox
-                views={visibleHitlViews}
-                projectSlug={slug}
-                hideWhenEmpty
-                className="gap-[8px]"
-                title="Needs attention"
-                showOwnerLink={false}
-              />
+              <div className="flex flex-col gap-[8px]" aria-label="Requests needing attention">
+                {familyHitl.map((entry) => <HitlDecisionCard key={`${entry.projectSlug}:${entry.ownerSessionId}:${entry.view.hitlId}`} entry={entry} />)}
+              </div>
             </div>
           )}
           <ChatInput

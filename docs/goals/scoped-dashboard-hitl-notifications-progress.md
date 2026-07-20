@@ -1,0 +1,42 @@
+# Scoped Dashboard And HITL Notifications Progress
+
+## 2026-07-20
+
+- 完成当前 Dashboard、Project Rail、Compact Toolbar、Global SSE、HITL Store、Session Composer、Automation dispatch/详情的源码与真实页面核对。
+- 写入 `scoped-dashboard-hitl-notifications-plan-goal.md` 初稿；尚未开始产品代码实现。
+- 启动独立 `gpt-5.6-sol(xhigh)` Reviewer。首轮结论为 `CHANGES_REQUESTED`：总体方向正确，但 Dashboard section 成员仍有产品歧义；另发现 root family 聚合、精确 `hitlId` 深链、对外 SSE 事件名与 baseline 去重、Automation 多 Invocation、前台谓词、Notification 权限入口和 320px QA 契约不完整。
+- 已修订所有不依赖产品选择的技术契约：引入含 `rootSessionId` 的只读 scoped projection；root family Badge；`focus + hitl` 精确深链；`hitl.snapshot` baseline 与 `hitl.request` live 去重；Bell footer 单一授权入口；Automation 多 Invocation 展示；attention-visible 术语；320px 与交互 QA。
+- 当前唯一阻塞决策：`Needs attention`/Bell 是否仅承载 Session-owned HITL。推荐保持 HITL-only，从而保证每条通知都进入具体 Session；未得到用户确认前不进入实现或最终复审。
+- 同一产品决策连续三个 Goal turn 未获确认；按 Goal blocked audit 停止继续修改计划，等待用户明确选择 HITL-only 或通用 attention 后恢复 fix -> review 循环。
+- 用户确认 Bell 仅承载 HITL。进一步从第一性原理更正了原二选一：Bell 是即时 HITL 通知，Dashboard `Needs attention` 是综合工作恢复队列，不应强制共用成员集合。
+- 计划已锁定四个 section 的成员、互斥优先级、排序、上限、CTA 与消失条件：HITL/Goal/Session failure/Automation failure 进入综合 attention；Bell、Project Badge、Session Badge、Toast 和系统通知仍严格 HITL-only。
+- 完成现有数据投影可实现性审计：四类 attention 都可从现有 HITL、Session Goal、root latest Execution 和 Automation latest Invocation 机械派生；SessionSummary 与 Automation 本体缺少后两项，因此计划新增无持久状态的 `DashboardProjectionService` 只读边界，并硬切现有分裂 Dashboard aggregate API。
+- 根据审计收窄 Automation failure：只看最新 Invocation，任意后续 Invocation 取代旧 failure，避免永久历史告警和额外 dismiss/unread 状态。child Execution failure、waiting_for_human、旧失败历史与配置错误继续由原 owner 处理，不进入综合 attention。
+- 第二轮独立 `gpt-5.6-sol(xhigh)` 复审为 `CHANGES_REQUESTED`，仅剩机械契约：root-family/Automation `sectionOwnerKey`、统一 `attentionSinceMs`、latest Invocation 唯一谓词、global scope 单项目故障隔离。
+- 已逐项修订；第三轮独立 `gpt-5.6-sol(xhigh)` 复审为 `APPROVED`，无剩余 P1/P2。
+- 用户已将 Goal 推进为完整实现。开始并行实现：后端 scoped read projection、复用 Dashboard UI、HITL Bell/Badge/通知/精确深链；各子任务使用互斥文件 owner，主 Agent 负责集成、验证与浏览器 QA。
+- 后端实现完成：新增无状态 `DashboardProjectionService` 与 shared protocol read model；提供 global/project API，逐项目错误隔离；硬删除旧 Session Goals/Active Automations aggregate API。Global SSE HITL 新增只读 `ownerSessionId/rootSessionId`，Queue schema 不变。
+- Dashboard UI 完成：`/` 与 `/projects/:slug` 复用同一组件；四 section 分类、sectionOwnerKey 互斥、确定性排序/上限、综合 attention 与 scoped error 已落地；旧 Project/Sessions placeholder 和 Dashboard mutation HITL 卡已删除。
+- HITL UI/通知进入收尾：共享 Store 统一 scoped identity；Bell/Project/root family Badge 均 HITL-only；摘要列表与 Session 决策卡硬拆；精确 `focus + hitl` 深链、baseline/seen 去重、前台抑制、Toast/Browser Notification 已实现。
+- 主 Agent 补齐 Automation linked-Session attention 与 Invocation 精确深链：`start_session` 按 Invocation family 聚合，`send_message` 只陈述 target Session；不新增 Automation HITL owner/status。
+- HITL 专项独立 `gpt-5.6-sol(xhigh)` Review 首轮发现两个 P2：4xx 响应错误未留在卡片内、SSE reset/lagged/reconnect 未刷新 Dashboard read projection。两项均已修复并增加回归测试；复审为 `APPROVED`，无剩余 P1/P2。
+- 整仓验证通过：`bun run typecheck` 5/5、`bun run test` 8/8、`bun run build`、`git diff --check` 均退出码 0。
+- 完成真实浏览器 QA：确认 Home/Project 复用 Dashboard 且 scope 文案正确；桌面 Bell 位于 Settings 上方；320px/390px 无横向溢出；mobile bottom sheet 可 Escape 关闭并将焦点归还 Bell；console error 为 0。
+- 通过真实 Engineer Session 触发一个 `ask_user` HITL：Bell、Project Badge、root Session Badge 同步为 1；Bell 与 Dashboard 仅显示摘要/Open；精确 `?hitl=` 深链将焦点落到对应 `HitlDecisionCard`；在 Session 回答后卡片、Bell/Project/Session Badge 和 Dashboard attention 立即清零。
+- 当前 in-app Browser 不暴露 Web Notification API，且真实 fixture 只有一个项目、无 child HITL/失败态，因此 Notification permission/hidden/click、跨项目同 ID、root/child/同 owner 双 HITL、Goal/Session/Automation failure 等组合矩阵由专项自动化测试覆盖；未将其冒充为人工浏览器结果。
+- 开始最终整体验收：由独立 `gpt-5.6-sol(xhigh)` Reviewer 对完整 Dashboard + HITL + Automation diff 按 AC-01 至 AC-09 审查；若发现 P1/P2，进入 fix -> review 循环。
+- 最终独立 Review 首轮为 `CHANGES_REQUESTED`，发现 4 个 P2：child focus 下 root 前台谓词错误；Toast 复制完整 HITL view 并在 resolved 后短暂滞留；mobile sheet 内按 Escape 未统一恢复 Bell 焦点；Notification/前台/Badge/failure recovery/320px 的自动化与真实 fixture 验收矩阵不足。
+- 同意上述结论并进入 fix -> review：前台/Toast 单一来源、Bell focus + interaction test、Dashboard/Automation/Badge 恢复测试分三组并行修复；主 Agent 负责可构造浏览器 fixture、集成验证和最终复审。
+- 从第一性原理修正 AC-09 的验收方式：公开产品流程能构造的核心链路继续要求真实浏览器；同 owner 多 HITL、故障恢复矩阵及当前 in-app Browser 不支持的 Notification API 用真实 React/JSDOM fixture + 纯投影测试确定性覆盖。明确禁止为人工 QA 往生产代码加入 debug/seed/mock 入口。
+- 完成首轮最终 Review 的四项 P2 修复：root/child 前台谓词改为精确 owner 匹配；Toast 只保存瞬时 scoped identity 并实时解引用权威 HITL Store；Bell 所有关闭路径统一归还触发器焦点；扩充 Bell/Notification/Badge/Dashboard/Automation 恢复与隔离验收矩阵。
+- 修复后整仓验证再次通过：`bun run test` 8/8、`bun run build`（含 typecheck 5/5 与生产 Web/Binary 构建）均退出码 0；定向交互和投影测试同时覆盖 Reviewer 指出的组合态。
+- 修复后真实浏览器复验通过：非 owner Dashboard 收到新的真实 `ask_user` 时 Toast 仅出现一次；服务端取消该 HITL 后 150ms 内 Toast、Bell/Project/Session Badge 与 Dashboard attention 同步消失；320px bottom sheet 在焦点位于内部 Close 按钮时按 Escape 关闭，焦点回到 Bell；修复后交互时段新增 console error 为 0。
+- 已取消全部人工 QA HITL，并删除仅为本轮创建的临时 QA Session `1607aecb-b50b-4ee6-9298-1d81a09194c6`；Project Dashboard 已确认无遗留 attention 或 QA Session。
+- 准备启动同一个独立 `gpt-5.6-sol(xhigh)` Reviewer 复审更新后的完整 diff、修订后的 AC-09 与验证证据；若仍有 P1/P2，继续 fix -> review。
+- 独立 `gpt-5.6-sol(xhigh)` 复审为 `CHANGES_REQUESTED`，仅发现 1 个 P2：Bell 内 `Open` 导航未关闭浮层，移动端会让 bottom sheet 继续覆盖目标 Session；原 interaction matrix 也遗漏了这一导航关闭路径。其余架构与上一轮四项修复均确认通过。
+- 已做最小修复：`HitlAttentionList` 增加可选的 `onOpen` 展示回调，Bell 复用唯一 `close()` 在导航时关闭并归还焦点；Dashboard 等其他摘要表面不受影响。新增真实 React Router interaction 验证精确 href、导航关闭和焦点恢复，Web interaction 67/67、全量 typecheck 5/5 通过。
+- 修复后整仓测试重跑遇到 1 个与本 Goal diff 无关的既有 Tool Output 集成偶发失败：全量并发下 stderr sentinel 未进入 process preview；同一整仓测试此前已两次通过，失败文件单独隔离运行 3/3 通过。该事实保留在进度中，不以重试通过冒充本轮全量成功，也不扩大 Dashboard Goal 去修改独立 Tool Output 领域。
+- 对最后一个 P2 完成真实浏览器复验：在 320px 通过公开产品流程新建 Session、触发真实 `ask_user`、打开 mobile Bell 并点击其中唯一 `Open`；bottom sheet 立即关闭，URL 精确进入 `?hitl=47e749c8-3cb9-4db8-ad00-63cc814a7961`，焦点落在同 ID 的 `HitlDecisionCard`，无新增 console error。随后取消 HITL 并删除临时 Session，确认无遗留 attention。
+- 最后生产构建与 `git diff --check` 再次通过；准备由同一独立 `gpt-5.6-sol(xhigh)` Reviewer 复审唯一 P2 修复及新增交互/浏览器证据。
+- 同一独立 `gpt-5.6-sol(xhigh)` 最终复审为 `APPROVED`：确认 Bell `Open` 的浮层关闭与精确导航链路完整，整仓偶发 Tool Output 失败与本 diff 无关；完整实现无剩余 P1/P2，可以完成 Goal。
+- 用户在完成后追加展示决策：Dashboard 四个栏位必须始终列出，无数据时保留该栏并显示专属轻量占位。已同步修订计划与 AC，取消空 section 隐藏和全局单一空状态。

@@ -68,6 +68,7 @@ const navigate = mock((_path: string) => {});
 const onAddProject = mock(() => {});
 const onSettings = mock(() => {});
 const setState = mock((_value: unknown) => {});
+let attentionVisibleHitl: readonly unknown[] = [];
 const useState = mock(<T,>(initial: T): [T, (value: T | ((previous: T) => T)) => void] => [
   initial,
   setState as (value: T | ((previous: T) => T)) => void,
@@ -127,6 +128,14 @@ mock.module("../../hooks/use-theme", () => ({
   useTheme,
 }));
 
+mock.module("../../store/hitl-store", () => ({
+  useAttentionVisibleScopedHitl: () => attentionVisibleHitl,
+}));
+
+mock.module("./HitlBell", () => ({
+  HitlBell: "HitlBell",
+}));
+
 mock.module("../ui/DropdownMenu", () => ({
   DropdownMenuRoot: "DropdownMenuRoot",
   DropdownMenuTrigger: "DropdownMenuTrigger",
@@ -170,6 +179,7 @@ function projectNode(tree: unknown) {
 
 describe("ProjectBar", () => {
   beforeEach(() => {
+    attentionVisibleHitl = [];
     for (const fn of [navigate, onAddProject, onSettings, setState, useState, useCallback, useNavigate, useParams, useProjects, toggleTheme, useTheme]) {
       fn.mockClear();
     }
@@ -205,7 +215,7 @@ describe("ProjectBar", () => {
     expect(textContent(node)).toContain("de");
 
     node.props.onClick({ ctrlKey: false, metaKey: false });
-    expect(navigate).toHaveBeenCalledWith("/projects/demo-project/todos");
+    expect(navigate).toHaveBeenCalledWith("/projects/demo-project");
   });
 
   test("add project affordance is a native button", () => {
@@ -239,6 +249,17 @@ describe("ProjectBar", () => {
     );
 
     expect(approvalsNode).toHaveLength(0);
+  });
+
+  test("counts only this project's attention-visible root family entries on its badge", () => {
+    attentionVisibleHitl = [
+      { projectSlug: "demo-project", ownerSessionId: "root", rootSessionId: "root", view: { hitlId: "same" } },
+      { projectSlug: "demo-project", ownerSessionId: "child", rootSessionId: "root", view: { hitlId: "same" } },
+      { projectSlug: "other-project", ownerSessionId: "root", rootSessionId: "root", view: { hitlId: "same" } },
+    ];
+
+    const badges = findAll(render(), (element) => element.props?.["aria-label"] === "2 requests need attention");
+    expect(badges).toHaveLength(1);
   });
 
   test("settings affordance opens the settings modal", () => {

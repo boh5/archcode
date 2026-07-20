@@ -1,9 +1,8 @@
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
-import { Bell, Check, ChevronRight, CircleQuestionMark, Loader2 } from "lucide-react";
+import { Check, ChevronRight, CircleQuestionMark, Loader2 } from "lucide-react";
 import { useCancelHitl, useRespondHitl } from "../../api/mutations";
-import { hitlIdentityKey, isVisibleHitlView, type ScopedHitlView } from "../../store/hitl-store";
-import type { HitlDisplayPayload, HitlQuestionDisplayItem, HitlResponse, HitlSource, HitlView } from "../../api/types";
+import type { ScopedHitlView } from "../../store/hitl-store";
+import type { HitlDisplayPayload, HitlQuestionDisplayItem, HitlResponse, HitlSource } from "../../api/types";
 
 const PRIMARY_ACTION_CLASS = "rounded-md bg-text-primary px-2.5 py-1.5 text-xs font-medium text-bg-base transition-colors hover:bg-accent-hover hover:text-white disabled:cursor-not-allowed disabled:opacity-40";
 const SECONDARY_ACTION_CLASS = "rounded-md border border-border-default bg-transparent px-2.5 py-1.5 text-xs text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40";
@@ -20,16 +19,14 @@ function answerForQuestion(item: HitlQuestionDisplayItem, selected: readonly str
   return values.at(-1) ?? "";
 }
 
-function ownerLink(view: HitlView, projectSlug: string): string {
-  return `/projects/${projectSlug}/sessions/${view.owner.id}`;
-}
-
 export function responseFor(source: HitlSource, answers: string[], decision: "approved" | "denied" | "approve_once" | "approve_always" | "deny", comment?: string): Exclude<HitlResponse, { type: "cancel" }> {
   if (source.type === "ask_user") return { type: "question_answer", answers, comment: comment || undefined };
   return { type: "permission_decision", decision: decision as "approve_once" | "approve_always" | "deny", comment: comment || undefined };
 }
 
-export function HitlCard({ view, projectSlug, showOwnerLink = true }: { view: HitlView; projectSlug: string; showOwnerLink?: boolean }) {
+/** The only HITL mutation surface: rendered in the owning root Session composer. */
+export function HitlDecisionCard({ entry }: { entry: ScopedHitlView }) {
+  const { projectSlug, view } = entry;
   const respond = useRespondHitl();
   const cancel = useCancelHitl();
   const [comment, setComment] = useState("");
@@ -42,6 +39,7 @@ export function HitlCard({ view, projectSlug, showOwnerLink = true }: { view: Hi
     [answers, customAnswers, items],
   );
   const busy = respond.isPending || cancel.isPending;
+  const mutationError = respond.error ?? cancel.error;
   const actionable = view.allowedActions.length > 0;
   const isMultiQuestion = items.length > 1;
   const confirmStep = items.length;
@@ -156,13 +154,12 @@ export function HitlCard({ view, projectSlug, showOwnerLink = true }: { view: Hi
 
   const sourceLabel = view.source.type === "ask_user" ? "Question" : "Permission";
   return (
-    <article className="min-w-0 overflow-hidden rounded-[10px] border border-border-subtle bg-bg-elevated p-3" data-testid="hitl-card" data-hitl-id={view.hitlId}>
+    <article id={`hitl-decision-${view.hitlId}`} className="min-w-0 overflow-hidden rounded-[10px] border border-border-subtle bg-bg-elevated p-3" data-testid="hitl-decision-card" data-hitl-id={view.hitlId}>
       <div className="mb-2 flex min-w-0 items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="text-[12px] uppercase tracking-wider text-text-muted">{sourceLabel}</div>
           <h4 className="break-words text-sm font-medium text-text-primary">{view.displayPayload.title}</h4>
         </div>
-        {showOwnerLink && <Link data-testid="hitl-owner-link" className="text-xs text-accent hover:text-accent-hover" to={ownerLink(view, projectSlug)}>Open</Link>}
       </div>
       {showSummary && <p className="mb-2 break-words text-xs text-text-secondary">{view.displayPayload.summary}</p>}
       {view.displayPayload.fields?.length && view.source.type !== "ask_user" ? (
@@ -273,35 +270,10 @@ export function HitlCard({ view, projectSlug, showOwnerLink = true }: { view: Hi
           <button data-testid="hitl-cancel-button" disabled={busy} onClick={() => cancel.mutate({ projectSlug, hitlId: view.hitlId })} className={SECONDARY_ACTION_CLASS}>Cancel</button>
         </div>
         {busy && <Loader2 size={13} className="animate-spin mt-2" aria-label="Working" />}
+        {mutationError && <p className="mt-2 text-xs text-error" role="alert">{mutationError instanceof Error ? mutationError.message : "Could not update this request. Please try again."}</p>}
       </> : (
         <p className="text-xs text-warning" role="status">Manual inspection is required. This request can no longer accept actions.</p>
       )}
     </article>
   );
-}
-
-export interface HitlInboxProps {
-  views?: HitlView[];
-  entries?: ScopedHitlView[];
-  projectSlug?: string;
-  isLoading?: boolean;
-  emptyMessage?: string;
-  hideWhenEmpty?: boolean;
-  className?: string;
-  testId?: string;
-  title?: string;
-  showOwnerLink?: boolean;
-}
-
-export function HitlInbox({ views = [], entries, projectSlug = "", isLoading, emptyMessage = "No pending requests", hideWhenEmpty = false, className = "gap-2", testId = "hitl-inbox", title = "Requests", showOwnerLink = true }: HitlInboxProps) {
-  const scopedEntries = entries ?? views.map((view) => ({ projectSlug, view }));
-  const visible = useMemo(() => {
-    const seen = new Set<string>();
-    return scopedEntries.filter((entry) => isVisibleHitlView(entry.view)).filter((entry) => { const key = hitlIdentityKey(entry.view); if (seen.has(key)) return false; seen.add(key); return true; });
-  }, [scopedEntries]);
-  if (hideWhenEmpty && !isLoading && visible.length === 0) return null;
-  return <div data-testid={testId} className={`flex flex-col ${className}`}>
-    <div className="flex items-center gap-2"><Bell size={13} className="text-warning" aria-hidden="true" /><h3 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">{title}</h3>{visible.length > 0 && <span className="text-xs">{visible.length}</span>}</div>
-    {isLoading ? <div className="text-xs py-3"><Loader2 size={13} className="animate-spin inline" /> Loading…</div> : visible.length === 0 ? <div className="text-xs py-3">{emptyMessage}</div> : <div className="flex flex-col gap-2">{visible.map((entry) => <HitlCard key={hitlIdentityKey(entry.view)} view={entry.view} projectSlug={entry.projectSlug} showOwnerLink={showOwnerLink} />)}</div>}
-  </div>;
 }

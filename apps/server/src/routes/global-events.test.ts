@@ -105,7 +105,12 @@ function hitlSnapshot(
   views: HitlView[] = [],
   projectSlugs: string[] = ["proj"],
 ): Extract<GlobalSSEEvent, { type: "hitl.snapshot" }> {
-  return { type: "hitl.snapshot", projectSlugs, entries: views.map((view) => ({ projectSlug: "proj", view })), createdAt: 0 };
+  return {
+    type: "hitl.snapshot",
+    projectSlugs,
+    entries: views.map((view) => ({ projectSlug: "proj", hitlId: view.hitlId, ownerSessionId: view.owner.id, rootSessionId: "root-1", view })),
+    createdAt: 0,
+  };
 }
 
 function sessionRuntimeSnapshot(): Extract<GlobalSSEEvent, { type: "session.runtime.snapshot" }> {

@@ -20,6 +20,7 @@ import {
   useSessionRuntimeFamilies,
   useSessionRuntimeInitialized,
 } from "../../store/session-runtime-store";
+import { selectSessionFamilyHitl, useAttentionVisibleScopedHitl } from "../../store/hitl-store";
 
 // Helpers
 
@@ -78,11 +79,13 @@ function AutomationStatusDot({ status }: { status: Automation["status"] }) {
 function SessionItem({
   session,
   activity,
+  attentionCount,
   isActive,
   onClick,
 }: {
   session: SessionSummaryWithGoal;
   activity: SessionFamilyActivity | undefined;
+  attentionCount: number;
   isActive: boolean;
   onClick: () => void;
 }) {
@@ -115,6 +118,7 @@ function SessionItem({
           {session.goal && <span className="rounded-sm bg-accent-muted px-1 py-px text-[10px] font-medium text-accent">Goal · {session.goal.status}</span>}
         </div>
       </div>
+      {attentionCount > 0 && <span className="grid min-h-4 min-w-4 place-items-center rounded-full bg-warning px-1 text-[9px] font-bold text-bg-base" aria-label={`${attentionCount} requests need attention`}>{attentionCount > 99 ? "99+" : attentionCount}</span>}
     </div>
   );
 }
@@ -233,29 +237,6 @@ function DashboardLinkButton({
   );
 }
 
-function PlaceholderDashboardButton({
-  label,
-  description,
-}: {
-  label: string;
-  description: string;
-}) {
-  return (
-    <div
-      className="rounded-sm border border-dashed border-warning/50 bg-warning/10 px-3 py-2"
-      aria-label={`${label} placeholder`}
-    >
-      <div className="flex items-center gap-2 text-[12px] font-medium text-warning">
-        <span className="min-w-0 flex-1 truncate">{label}</span>
-        <span className="rounded-sm border border-warning/40 bg-bg-base px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-warning">
-          Placeholder
-        </span>
-      </div>
-      <p className="mt-1 text-[11px] leading-4 text-text-muted">{description}</p>
-    </div>
-  );
-}
-
 // Sidebar
 
 export function Sidebar({
@@ -289,6 +270,7 @@ export function Sidebar({
   const { data: automations } = useAutomations(slug);
   const runtimeInitialized = useSessionRuntimeInitialized(slug);
   const runtimeFamilies = useSessionRuntimeFamilies();
+  const attentionVisibleHitl = useAttentionVisibleScopedHitl([slug]);
 
   const routeTab: SidebarTab = deriveTabFromPath(location.pathname);
   const activeTab = selectedTab;
@@ -477,10 +459,6 @@ export function Sidebar({
           hidden={activeTab !== "sessions"}
         >
           <div className="px-3 py-2 space-y-2">
-            <PlaceholderDashboardButton
-              label="Sessions Dashboard"
-              description="Reserved for a future sessions overview. Use the list below to open or create a session for now."
-            />
             <div className="flex items-center gap-2">
               <input
                 type="text"
@@ -507,6 +485,7 @@ export function Sidebar({
                   key={session.sessionId}
                   session={session}
                   activity={activityForSession(session)}
+                  attentionCount={selectSessionFamilyHitl(attentionVisibleHitl, slug, session.sessionId).length}
                   isActive={session.sessionId === sessionId}
                   onClick={() => handleSessionClick(session.sessionId)}
                 />
@@ -522,6 +501,7 @@ export function Sidebar({
                   key={session.sessionId}
                   session={session}
                   activity={activityForSession(session)}
+                  attentionCount={selectSessionFamilyHitl(attentionVisibleHitl, slug, session.sessionId).length}
                   isActive={session.sessionId === sessionId}
                   onClick={() => handleSessionClick(session.sessionId)}
                 />
@@ -601,7 +581,7 @@ export function Sidebar({
             setClosingProject(null);
             const remaining = projects?.filter(p => p.slug !== slug) ?? [];
             if (remaining.length > 0) {
-              navigate(`/projects/${remaining[0].slug}/todos`);
+              navigate(`/projects/${remaining[0].slug}`);
             } else {
               navigate("/");
             }

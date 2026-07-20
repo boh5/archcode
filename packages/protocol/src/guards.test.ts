@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   isGlobalSSEHitlRealtimeEvent,
+  isGlobalSSEHitlSnapshotEvent,
   isGlobalSSEResourceChangedEvent,
   isSessionEventPayload,
   isStreamEvent,
@@ -338,6 +339,8 @@ describe("protocol event guards", () => {
       type: "hitl.event",
       projectSlug: "project",
       hitlId: "hitl-1",
+      ownerSessionId: "session-1",
+      rootSessionId: "root-1",
       createdAt: 1,
       payload: { type: "hitl.request" },
       view,
@@ -354,6 +357,20 @@ describe("protocol event guards", () => {
     expect(isGlobalSSEHitlRealtimeEvent({ ...hitlEvent, payload: { type: "hitl.request", status: "pending" } })).toBe(false);
     expect(isGlobalSSEHitlRealtimeEvent({ ...hitlEvent, hitlId: "other" })).toBe(false);
     expect(isGlobalSSEHitlRealtimeEvent({ type: "hitl.event" })).toBe(false);
+    const hitlSnapshot = {
+      type: "hitl.snapshot",
+      projectSlugs: ["project"],
+      entries: [{
+        projectSlug: "project",
+        hitlId: "hitl-1",
+        ownerSessionId: "session-1",
+        rootSessionId: "root-1",
+        view,
+      }],
+      createdAt: 1,
+    };
+    expect(isGlobalSSEHitlSnapshotEvent(hitlSnapshot)).toBe(true);
+    expect(isGlobalSSEHitlSnapshotEvent({ ...hitlSnapshot, entries: [{ projectSlug: "project", view }] })).toBe(false);
     expect(isGlobalSSEResourceChangedEvent(resourceEvent)).toBe(true);
     expect(isGlobalSSEResourceChangedEvent({ ...resourceEvent, resourceType: "todo", resourceId: "todo-1" })).toBe(true);
     expect(isGlobalSSEResourceChangedEvent({ ...resourceEvent, resourceType: "goal", resourceId: "goal-1" })).toBe(false);

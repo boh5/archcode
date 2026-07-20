@@ -22,6 +22,8 @@ describe("Automation navigation and detail actions", () => {
     expect(detail).toContain("Resume");
     expect(detail).toContain("Invocation History");
     expect(detail).toContain("Open Session");
+    expect(detail).toContain('searchParams.get("invocation")');
+    expect(detail).toContain("scrollIntoView");
     expect(detail).not.toContain("Global kill");
     expect(detail).not.toContain("Budget");
     expect(detail).not.toContain("collision");

@@ -17,7 +17,8 @@ describe("global SSE Automation invalidation", () => {
       queryKeys.automation("demo", "a1"),
       queryKeys.automationInvocations("demo", "a1"),
       queryKeys.projectAutomations("demo"),
-      queryKeys.activeAutomations,
+      queryKeys.dashboardProjection({ kind: "global" }),
+      queryKeys.dashboardProjection({ kind: "project", projectSlug: "demo" }),
     ]);
   });
 
@@ -36,7 +37,7 @@ describe("global SSE Automation invalidation", () => {
       queryKeys.projectTodo("demo", "t1"),
     ]);
     expect(calls).not.toContainEqual(queryKeys.sessions("demo"));
-    expect(calls).not.toContainEqual(queryKeys.sessionGoals);
+    expect(calls).not.toContainEqual(queryKeys.dashboardProjection({ kind: "global" }));
     expect(calls).not.toContainEqual(queryKeys.projectAutomations("demo"));
   });
 });

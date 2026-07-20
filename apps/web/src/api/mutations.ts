@@ -257,7 +257,7 @@ async function invalidateSessionGoalQueries(queryClient: QueryClient, slug: stri
   await Promise.all([
     queryClient.invalidateQueries({ queryKey: queryKeys.session(slug, sessionId) }),
     queryClient.invalidateQueries({ queryKey: queryKeys.sessions(slug) }),
-    queryClient.invalidateQueries({ queryKey: queryKeys.sessionGoals }),
+    ...invalidateDashboardProjection(queryClient, slug),
   ]);
 }
 
@@ -270,7 +270,7 @@ export interface HitlMutationResponse {
 }
 
 export function applyHitlMutationResult(projectSlug: string, result: HitlMutationResponse): void {
-  hitlStore.getState().applyScopedView(projectSlug, result.view);
+  hitlStore.getState().reconcileView(projectSlug, result.view);
 }
 
 export function useRespondHitl() {
@@ -316,7 +316,7 @@ export function invalidateAutomation(
 ): Promise<void[]> {
   return Promise.all([
     qc.invalidateQueries({ queryKey: queryKeys.projectAutomations(slug) }),
-    qc.invalidateQueries({ queryKey: queryKeys.activeAutomations }),
+    ...invalidateDashboardProjection(qc, slug),
     ...(automationId === undefined ? [] : [
       qc.invalidateQueries({ queryKey: queryKeys.automation(slug, automationId) }),
       qc.invalidateQueries({ queryKey: queryKeys.automationInvocations(slug, automationId) }),
@@ -420,9 +420,19 @@ async function invalidateProjectTodoExecution(
   await Promise.all([
     invalidateProjectTodo(queryClient, slug, todoId),
     queryClient.invalidateQueries({ queryKey: queryKeys.sessions(slug) }),
-    queryClient.invalidateQueries({ queryKey: queryKeys.sessionGoals }),
+    ...invalidateDashboardProjection(queryClient, slug),
     queryClient.invalidateQueries({ queryKey: queryKeys.projectAutomations(slug) }),
   ]);
+}
+
+function invalidateDashboardProjection(
+  qc: { invalidateQueries: (opts: { queryKey: readonly unknown[] }) => Promise<void> },
+  slug: string,
+): Promise<void>[] {
+  return [
+    qc.invalidateQueries({ queryKey: queryKeys.dashboardProjection({ kind: "global" }) }),
+    qc.invalidateQueries({ queryKey: queryKeys.dashboardProjection({ kind: "project", projectSlug: slug }) }),
+  ];
 }
 
 export function useCreateProjectTodo() {

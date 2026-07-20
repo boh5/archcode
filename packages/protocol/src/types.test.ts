@@ -281,6 +281,8 @@ describe("global SSE wire protocol types", () => {
         type: "hitl.event",
         projectSlug: "proj-a",
         hitlId: "hitl-1",
+        ownerSessionId: "session-1",
+        rootSessionId: "root-1",
         createdAt: 4,
         payload: { type: "hitl.request" },
         view: {} as HitlView,
