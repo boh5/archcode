@@ -1,5 +1,5 @@
 import { DEFAULT_MAX_INDEX_LINES, DEFAULT_MAX_PREFERENCES_BYTES } from "../memory/constants";
-import { assertLegalExecutionMode, lintGuidanceAuthority, lintRoleContract, resolveAllowedTransitions, resolveCompletionAuthorities, resolveRequiredCapabilities } from "./lint";
+import { assertLegalExecutionMode, lintGuidanceAuthority, lintRoleContract } from "./lint";
 import type { CompiledPromptContract, PromptContractV2, PromptTrace, PromptTraceSection } from "./types";
 
 const SHARED_KERNEL = `## Shared Kernel
@@ -14,8 +14,9 @@ const COLLABORATION = `## Collaboration Contract
 - Prefer direct work on the critical path when the scope is already clear and locally verifiable.
 - Delegate only an independent, acceptance-testable unit with separable ownership or a genuinely specialized evidence need.
 - Parallelize only units with no dependency and no overlapping write ownership. Runtime concurrency remains authoritative.
-- Resume the same child for corrections or additional work within the same responsibility; create a new child only for a distinct ownership contract.
-- Treat every child result as a claim to validate. Check its acceptance criteria, evidence, verification, unresolved items, and relevant diff before relying on it. A completed child does not complete the parent task or Goal.`;
+- Resume the same child for corrections or additional work within the same responsibility; create a new child only for a distinct objective.
+- Treat every child final report as a claim to validate against the workspace and relevant diff. A completed child does not complete the parent task or Goal.
+- Finish your own delegated scope with a normal assistant response that clearly reports the outcome, verification, and unresolved issues.`;
 
 export class PromptContractCompiler {
   async compile(contract: PromptContractV2): Promise<CompiledPromptContract> {
@@ -114,8 +115,7 @@ function renderRuntime(contract: PromptContractV2): string {
 - Parent Agent: ${runtime.parentAgentName}
 - Depth: ${runtime.depth}
 - Allowed delegate targets: ${display(runtime.allowedDelegateTargets)}
-- Completion authority: ${display(resolveCompletionAuthorities(role, runtime))}
-- Review mode: ${runtime.reviewMode}
+- Completion authority: ${display(role.completionAuthority)}
 - Goal: ${goal}
 - Todo: ${todo}
 - Owned scope: ${runtime.ownedScope.length === 0 ? "none" : runtime.ownedScope.map((scope) => `${scope.kind}:${scope.path}`).join(", ")}
@@ -137,7 +137,7 @@ ${bullets(role.inputs)}
 Required behavior:
 ${bullets(role.requiredBehaviors)}
 
-Required capabilities: ${display(resolveRequiredCapabilities(role, contract.runtime))}
+Required capabilities: ${display(role.requiredCapabilities)}
 
 Forbidden behavior:
 ${bullets(role.forbiddenBehaviors)}
@@ -145,22 +145,17 @@ ${bullets(role.forbiddenBehaviors)}
 Output:
 ${bullets(role.outputs)}
 
-Allowed transitions: ${display(resolveAllowedTransitions(role, contract.runtime))}
-Completion authority: ${display(resolveCompletionAuthorities(role, contract.runtime))}`;
+Allowed transitions: ${display(role.allowedTransitions)}
+Completion authority: ${display(role.completionAuthority)}`;
 }
 
 function renderCollaboration(contract: PromptContractV2): string {
-  if (contract.role.name === "reviewer" && contract.runtime.reviewMode === "goal") {
+  if (contract.role.name === "reviewer") {
     return `## Collaboration Contract
 
-- Verify every Goal acceptance criterion against attributable evidence.
-- Submit the canonical structured result through submit_child_result. Runtime alone decides whether that evidence completes the Goal.`;
-  }
-  if (contract.role.name === "reviewer" && contract.runtime.reviewMode === "ordinary") {
-    return `## Collaboration Contract
-
-- Verify the delegated ordinary review contract and submit the canonical result through submit_child_result.
-- Goal transitions, including finalize_review, are not visible in this mode.`;
+- Independently inspect the delegated work and its verification evidence.
+- Return a normal final response whose first non-empty line is exactly VERDICT: APPROVED or VERDICT: CHANGES_REQUESTED.
+- Follow the verdict with concise Markdown findings and residual risks. Do not modify source or transition a Goal.`;
   }
   if (contract.allowedTools.includes("delegate") && contract.runtime.allowedDelegateTargets.length > 0) return COLLABORATION;
   if (contract.allowedTools.includes("delegate")) {
@@ -171,9 +166,9 @@ function renderCollaboration(contract: PromptContractV2): string {
   if (contract.runtime.parentSessionId !== "none") {
     return `## Collaboration Contract
 
-- Work only the durable delegated scope and acceptance criteria in Current Context.
+- Work only the delegated objective and owned scope in Current Context.
 - Delegation and resume are not visible in this execution.
-- Submit the canonical structured child result before finishing; free text is not a delivery substitute.`;
+- Finish with a normal assistant response that clearly reports the outcome, verification, and unresolved issues.`;
   }
   return "## Collaboration Contract\n\n- Work within this role directly; delegation is not visible in this execution.";
 }
@@ -191,9 +186,11 @@ function renderActiveGoal(contract: PromptContractV2): string {
 This Goal is the durable outcome for the current root Session. Keep working across Executions until it is verified or Runtime stops continuation.
 - Own the critical path and delegate only separable, non-overlapping scopes.
 - Preserve and aggregate concrete implementation and verification evidence.
-- Use update_goal with status=complete only to request independent review; it cannot complete the Goal.
+- When the work is ready, delegate an independent Reviewer and read its final result through the ordinary child output flow.
+- If the Reviewer returns VERDICT: CHANGES_REQUESTED, address the findings and review again.
+- Only after a Reviewer returns VERDICT: APPROVED, call update_goal with status=complete and that direct Reviewer child Session ID as review_session_id.
 - Do not self-review, weaken the objective, or treat an implementation claim as acceptance.
-- Use update_goal with status=blocked only after the same real blocker has prevented meaningful progress for three consecutive Goal turns.`;
+- Use update_goal with status=blocked only for a genuine blocker that prevents meaningful progress.`;
 }
 
 function renderSkills(contract: PromptContractV2): string {
@@ -228,20 +225,13 @@ ${mcp.length === 0 ? "- none" : mcp.join("\n")}`;
 }
 
 function renderCurrentContext(contract: PromptContractV2): string {
-  const delegation = contract.delegation === "none"
-    ? "Delegation contract: none"
-    : `Delegation contract hash: ${contract.delegation.hash}
-Delegation objective: ${contract.delegation.contract.objective}
-Owned scope: ${contract.delegation.contract.owned_scope.length === 0 ? "none" : contract.delegation.contract.owned_scope.map((scope) => `${scope.kind}:${scope.path}`).join(", ")}
-Non-goals: ${display(contract.delegation.contract.non_goals)}
-Acceptance criteria:
-${contract.delegation.contract.acceptance_criteria.map((criterion) => `- ${criterion.id}: ${criterion.condition} (required evidence: ${criterion.requiredEvidence})`).join("\n")}
-Upstream evidence:
-${contract.delegation.contract.evidence.length === 0 ? "- none" : contract.delegation.contract.evidence.map((item) => `- ${item.claim} -> ${item.ref}`).join("\n")}
-Required verification:
-${contract.delegation.contract.verification.length === 0 ? "- none" : contract.delegation.contract.verification.map((item) => `- ${item.command} => ${item.expected}`).join("\n")}
-Dependencies: ${display(contract.delegation.contract.depends_on)}
-Delegated Skills: ${display(contract.delegation.contract.skills)}`;
+  const delegation = contract.delegationRequest === "none"
+    ? "Delegation request: none"
+    : `Delegation title: ${contract.delegationRequest.title}
+Delegation objective: ${contract.delegationRequest.objective}
+Owned scope: ${contract.delegationRequest.owned_scope.length === 0 ? "none" : contract.delegationRequest.owned_scope.map((scope) => `${scope.kind}:${scope.path}`).join(", ")}
+Delegated Skills: ${display(contract.delegationRequest.skills)}
+Background: ${contract.delegationRequest.background}`;
   return `## Current Context
 
 This section is a current-call runtime snapshot and is authoritative until superseded by a later domain tool result.

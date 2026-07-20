@@ -97,21 +97,6 @@ const finalizedResult = {
     recovery: { kind: "none" as const },
   },
 };
-const childResultReceipt = {
-  executionId: "execution-child-1",
-  delegationContractHash: "a".repeat(64),
-  submittedAt: 3,
-  result: {
-    status: "completed" as const,
-    summary: "Done",
-    deliverables: [],
-    evidence: [{ claim: "Done", ref: "src/a.ts:1" }],
-    criteria: [{ id: "ac-1", status: "passed" as const, evidenceRefs: ["src/a.ts:1"] }],
-    verification: [],
-    unresolved: [],
-  },
-};
-
 const validPayloads = [
   { type: "shutdown", reason: "restart" },
   { type: "execution-start", executionId: "execution-1", binding, origin: "user_message" },
@@ -120,17 +105,16 @@ const validPayloads = [
   { type: "session.model_selection_changed", modelSelection: { revision: 1, override: { model: "test:model" } } },
   {
     type: "session.goal_changed",
-    action: "runtime_failed",
+    action: "usage_recorded",
     instanceId: crypto.randomUUID(),
     generation: 1,
     goal: {
       instanceId: crypto.randomUUID(), generation: 1, objective: "Finish it", status: "active",
       usage: { tokens: { inputTokens: 0, outputTokens: 0, totalTokens: 0, reasoningTokens: 0, cachedInputTokens: 0 }, executionTimeMs: 0, executionCount: 0 },
-      evaluatorCount: 0, noProgressCount: 0, failureCount: 1, nextRetryAt: 250, userInputCursor: 0, sourceMutationEpoch: 0,
       createdAt: 1, activatedAt: 1, updatedAt: 1,
     },
     status: "active",
-    reason: "Goal runtime orchestration failed",
+    reason: "Usage changed",
     occurredAt: 1,
   },
   { type: "session.message_accepted", message: pendingMessage },
@@ -153,7 +137,6 @@ const validPayloads = [
   { type: "tool-attempt", toolCallId: "call-1", toolName: "file_write", attemptId: "attempt-1", timestamp: 1, destructive: false },
   { type: "tool-result", toolCallId: "call-1", toolName: "file_read", result: finalizedResult },
   { type: "tool-child-session-link", link: { parentSessionId: "parent", parentToolCallId: "call", toolName: "delegate", childSessionId: "child", childAgentName: "explore", title: "Explore child", depth: 1, background: false, status: "completed", createdAt: 1 } },
-  { type: "child-result", receipt: childResultReceipt },
   { type: "todo-write", todos: [{ id: "todo-1", content: "work", status: "in_progress" }] },
   { type: "reminder", reminder: { id: "reminder-1", source: { type: "subagent_completed", sessionId: "child" }, delivery: "auto_inject", content: "done", createdAt: 1, consumedAt: null } },
   { type: "reminder-consumed", reminderIds: ["reminder-1"] },
@@ -173,7 +156,6 @@ const validPayloads = [
 describe("protocol event guards", () => {
   test("keeps one valid fixture for every current Session event payload type", () => {
     expect(validPayloads.map((event) => event.type).sort()).toEqual([
-      "child-result",
       "compact",
       "compression.block_committed",
       "compression.block_failed",

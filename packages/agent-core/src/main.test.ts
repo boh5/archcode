@@ -318,10 +318,11 @@ describe("createRuntime", () => {
           ? createGoalActivationStream()
           : createStoppedStream();
       }) as never,
-      generateText: mock(async () => ({ text: "", toolCalls: [{
-        toolName: "goal_evaluation",
-        input: { decision: "continue", reason: "More implementation is required", madeProgress: true },
-      }], usage: { inputTokens: 1, outputTokens: 0, totalTokens: 1 } })) as never,
+      generateText: mock(async () => ({
+        text: "",
+        toolCalls: [],
+        usage: { inputTokens: 1, outputTokens: 0, totalTokens: 1 },
+      })) as never,
     });
     const runtime1 = await createRuntime({
       configService: await writeConfig(makeConfig()),
@@ -357,13 +358,10 @@ describe("createRuntime", () => {
         return createAbortableStream(options.abortSignal);
       }) as never,
       generateText: mock(async () => ({
-          text: "",
-          toolCalls: [{
-            toolName: "goal_evaluation",
-            input: { decision: "continue", reason: "More implementation is required", madeProgress: true },
-          }],
-          usage: { inputTokens: 1, outputTokens: 0, totalTokens: 1 },
-        })) as never,
+        text: "",
+        toolCalls: [],
+        usage: { inputTokens: 1, outputTokens: 0, totalTokens: 1 },
+      })) as never,
     });
     const runtime2 = await createRuntime({
       configService: await writeConfig(makeConfig()),
@@ -378,6 +376,92 @@ describe("createRuntime", () => {
     expect(runtime2.getSessionFamilyActivity(workspaceRoot, session.sessionId)).toBe("running");
     await runtime2.updateSessionGoalControl({ workspaceRoot, sessionId: session.sessionId, action: "pause" });
     await runtime2.shutdown();
+  });
+
+  test("continues an active Goal after a completed root Execution without a workflow state machine", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const registryHome = await makeTempRoot();
+    let streams = 0;
+    setLlmAdapterForTest({
+      streamText: mock((options: { abortSignal: AbortSignal }) => {
+        streams += 1;
+        if (streams === 1) return createGoalActivationStream();
+        if (streams === 2) return createStoppedStream();
+        return createAbortableStream(options.abortSignal);
+      }) as never,
+      generateText: mock(async () => ({ text: "", toolCalls: [] })) as never,
+    });
+    const runtime = await createRuntime({
+      configService: await writeConfig(makeConfig()),
+      projectRegistryHomeDir: registryHome,
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Goal continuation" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "engineer" });
+
+    await runtime.acceptSessionMessage({
+      slug: project.slug,
+      workspaceRoot,
+      sessionId: session.sessionId,
+      text: "Keep working until the migration is complete.",
+      clientRequestId: crypto.randomUUID(),
+      source: "user",
+      requestedModelSelection,
+    });
+
+    await waitFor(() => streams >= 3);
+    await waitFor(() => runtime.getSessionFamilyActivity(workspaceRoot, session.sessionId) === "running");
+    const file = await runtime.getSessionFile(workspaceRoot, session.sessionId);
+    expect(file.goal?.status).toBe("active");
+    expect(file.executions.at(-1)?.origin).toBe("goal_continuation");
+
+    await runtime.updateSessionGoalControl({ workspaceRoot, sessionId: session.sessionId, action: "pause" });
+    await runtime.abortAllSessionExecutions();
+    await runtime.shutdown();
+  });
+
+  test("does not retry an active Goal after a failed root Execution", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const registryHome = await makeTempRoot();
+    let streams = 0;
+    setLlmAdapterForTest({
+      streamText: mock(() => {
+        streams += 1;
+        if (streams === 1) return createGoalActivationStream();
+        throw Object.assign(new Error("provider failed after Goal activation"), { status: 400 });
+      }) as never,
+      generateText: mock(async () => ({ text: "", toolCalls: [] })) as never,
+    });
+    const runtime = await createRuntime({
+      configService: await writeConfig(makeConfig()),
+      projectRegistryHomeDir: registryHome,
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Goal failure" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "engineer" });
+
+    await runtime.acceptSessionMessage({
+      slug: project.slug,
+      workspaceRoot,
+      sessionId: session.sessionId,
+      text: "Keep working until the migration is complete.",
+      clientRequestId: crypto.randomUUID(),
+      source: "user",
+      requestedModelSelection,
+    });
+
+    await waitFor(async () => (
+      (await runtime.getSessionFile(workspaceRoot, session.sessionId)).executions.at(-1)?.status === "failed"
+    ));
+    const before = await runtime.getSessionFile(workspaceRoot, session.sessionId);
+    expect(before.goal?.status).toBe("active");
+    await Bun.sleep(40);
+    const after = await runtime.getSessionFile(workspaceRoot, session.sessionId);
+    expect(after.executions).toHaveLength(before.executions.length);
+    expect(runtime.getSessionFamilyActivity(workspaceRoot, session.sessionId)).toBe("idle");
+
+    await runtime.updateSessionGoalControl({ workspaceRoot, sessionId: session.sessionId, action: "pause" });
+    await runtime.shutdown();
   });
 
   test("reconciles an answered Session HITL to its exact blocked call after restart", async () => {

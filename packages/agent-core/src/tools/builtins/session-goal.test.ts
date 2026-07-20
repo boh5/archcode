@@ -4,8 +4,9 @@ import { mkdir } from "node:fs/promises";
 import { SessionGoalService } from "../../session-goal";
 import { storeManager } from "../../store/store";
 import { createTestTempRoot } from "../../testing/test-temp-root";
+import { testExecutionRecord } from "../../testing/test-execution-fixtures";
 import type { ToolExecutionContext } from "../types";
-import { CreateGoalInputSchema, UpdateGoalInputSchema, createGoalTool, getGoalTool, updateGoalTool } from "./session-goal";
+import { CreateGoalInputSchema, UpdateGoalInputSchema, createGoalTool, updateGoalTool } from "./session-goal";
 
 const tempRoot = createTestTempRoot("session-goal-tools");
 
@@ -71,6 +72,57 @@ function text(result: Awaited<ReturnType<typeof createGoalTool.execute>>): strin
   return result.draft.text;
 }
 
+function attachReviewer(
+  ctx: ToolExecutionContext,
+  runs: readonly { status: Parameters<typeof testExecutionRecord>[1]; output?: string }[],
+): string {
+  const rootState = ctx.store.getState();
+  const reviewerSessionId = crypto.randomUUID();
+  const reviewerStore = storeManager.create(reviewerSessionId, tempRoot.path, {
+    agentName: "reviewer",
+    rootSessionId: rootState.sessionId,
+    parentSessionId: rootState.sessionId,
+  });
+  const executions = runs.map((run) => testExecutionRecord(crypto.randomUUID(), run.status));
+  reviewerStore.setState({
+    executions,
+    messages: runs.flatMap((run, index) => {
+      if (run.output === undefined) return [];
+      const executionId = executions[index]!.id;
+      const messageId = crypto.randomUUID();
+      return [{
+        id: messageId,
+        role: "assistant" as const,
+        parts: [{
+          type: "text" as const,
+          id: `${messageId}:text`,
+          text: run.output,
+          createdAt: index + 1,
+          completedAt: index + 1,
+        }],
+        createdAt: index + 1,
+        completedAt: index + 1,
+        executionId,
+      }];
+    }),
+  });
+  ctx.store.setState({
+    childSessionLinks: [{
+      parentSessionId: rootState.sessionId,
+      parentToolCallId: crypto.randomUUID(),
+      toolName: "delegate",
+      childSessionId: reviewerSessionId,
+      childAgentName: "reviewer",
+      title: "Independent Goal review",
+      depth: 1,
+      background: true,
+      status: runs.at(-1)?.status === "completed" ? "completed" : "running",
+      createdAt: 1,
+    }],
+  });
+  return reviewerSessionId;
+}
+
 describe("Session Goal model tools", () => {
   test("create_goal exposes the conversational activation boundary without a Skill ceremony", () => {
     expect(createGoalTool.description).toContain("keep working through multiple rounds or delegated work until a verifiable outcome");
@@ -97,7 +149,6 @@ describe("Session Goal model tools", () => {
       sessionId: ctx.store.getState().sessionId,
       rootSessionId: ctx.store.getState().rootSessionId,
       toolCallId: ctx.toolCallId,
-      action: "create",
     });
     expect((consumed[0] as { validate?: unknown }).validate).toBeInstanceOf(Function);
     const goal = await ctx.sessionGoalService!.get({
@@ -172,46 +223,153 @@ describe("Session Goal model tools", () => {
     expect(consumed).toBe(false);
   });
 
-  test("update_goal edits through fresh authority and increments generation", async () => {
-    const actions: string[] = [];
-    const ctx = context({ consumeFreshUserInput: ({ action }) => {
-      actions.push(action);
-      return { text: action === "create" ? "Finish migration and pass tests." : "Also preserve behavior." };
-    } });
-    await createGoalTool.execute({}, ctx);
+  test("update_goal accepts only Agent-owned terminal statuses", () => {
+    expect(UpdateGoalInputSchema.safeParse({
+      status: "complete",
+      reason: "Approved.",
+      review_session_id: "reviewer-session",
+    }).success).toBe(true);
+    expect(UpdateGoalInputSchema.safeParse({
+      status: "blocked",
+      reason: "Waiting for an external decision.",
+    }).success).toBe(true);
 
-    const edited = await updateGoalTool.execute({
-      action: "edit",
-      expected_generation: 1,
-      mode: "amend",
-    }, ctx);
-
-    expect(edited.isError).toBe(false);
-    expect(actions).toEqual(["create", "edit"]);
-    const read = await getGoalTool.execute({}, ctx);
-    expect(JSON.parse(text(read))).toMatchObject({
-      generation: 2,
-      objective: expect.stringContaining("Also preserve behavior."),
-    });
+    for (const input of [
+      { action: "edit", expected_generation: 1, mode: "amend" },
+      { action: "pause" },
+      { action: "resume" },
+      { action: "clear" },
+      { action: "set_budget" },
+      { action: "complete", status: "complete", reason: "Approved.", review_session_id: "reviewer-session" },
+    ]) {
+      expect(UpdateGoalInputSchema.safeParse(input).success).toBe(false);
+    }
   });
 
-  test("complete is only a Runtime review request and never writes complete", async () => {
+  test("complete requires a direct Reviewer whose latest completed Execution approves", async () => {
     const ctx = context({ consumeFreshUserInput: () => ({ text: "Finish migration and pass tests." }) });
     await createGoalTool.execute({}, ctx);
+    const reviewSessionId = attachReviewer(ctx, [{
+      status: "completed",
+      output: "\nVERDICT: APPROVED\n\nAll acceptance criteria pass.",
+    }]);
 
-    const claim = await updateGoalTool.execute({ status: "complete", reason: "Implementation and tests are ready." }, ctx);
-
-    expect(claim.isError).toBe(false);
-    expect(claim.sidecar?.executionControl).toEqual({
-      action: "request_goal_review",
+    const result = await updateGoalTool.execute({
+      status: "complete",
       reason: "Implementation and tests are ready.",
-    });
+      review_session_id: reviewSessionId,
+    }, ctx);
+
+    expect(result.isError).toBe(false);
     const goal = await ctx.sessionGoalService!.get({
       workspaceRoot: tempRoot.path,
       sessionId: ctx.store.getState().sessionId,
     });
-    expect(goal?.status).toBe("active");
-    expect(goal?.review).toBeUndefined();
+    expect(goal?.status).toBe("complete");
+    expect(goal?.completedAt).toBeNumber();
+    expect(goal).not.toHaveProperty("review");
+  });
+
+  test("complete rejects missing review id, non-approved output, and stale approved output", async () => {
+    expect(UpdateGoalInputSchema.safeParse({ status: "complete", reason: "done" }).success).toBe(false);
+
+    const changed = context({ consumeFreshUserInput: () => ({ text: "Finish migration." }) });
+    await createGoalTool.execute({}, changed);
+    const changedId = attachReviewer(changed, [{ status: "completed", output: "VERDICT: CHANGES_REQUESTED\nMissing evidence." }]);
+    const changedResult = await updateGoalTool.execute({
+      status: "complete",
+      reason: "done",
+      review_session_id: changedId,
+    }, changed);
+    expect(changedResult.isError).toBe(true);
+    expect(text(changedResult)).toContain("VERDICT: APPROVED");
+
+    const stale = context({ consumeFreshUserInput: () => ({ text: "Finish migration." }) });
+    await createGoalTool.execute({}, stale);
+    const staleId = attachReviewer(stale, [
+      { status: "completed", output: "VERDICT: APPROVED" },
+      { status: "completed", output: "VERDICT: CHANGES_REQUESTED" },
+    ]);
+    const staleResult = await updateGoalTool.execute({
+      status: "complete",
+      reason: "done",
+      review_session_id: staleId,
+    }, stale);
+    expect(staleResult.isError).toBe(true);
+    expect((await stale.sessionGoalService!.get({
+      workspaceRoot: tempRoot.path,
+      sessionId: stale.store.getState().sessionId,
+    }))?.status).toBe("active");
+  });
+
+  test("complete deterministically rejects every non-qualifying Reviewer identity and latest outcome", async () => {
+    const cases = [
+      { name: "completed empty output", runs: [{ status: "completed" as const }] },
+      { name: "malformed verdict", runs: [{ status: "completed" as const, output: "APPROVED" }] },
+      { name: "latest running after approval", runs: [
+        { status: "completed" as const, output: "VERDICT: APPROVED" },
+        { status: "running" as const, output: "VERDICT: APPROVED" },
+      ] },
+      { name: "latest empty after approval", runs: [
+        { status: "completed" as const, output: "VERDICT: APPROVED" },
+        { status: "completed" as const },
+      ] },
+      { name: "latest malformed after approval", runs: [
+        { status: "completed" as const, output: "VERDICT: APPROVED" },
+        { status: "completed" as const, output: "Result: approved" },
+      ] },
+    ];
+
+    for (const candidate of cases) {
+      const ctx = context({ consumeFreshUserInput: () => ({ text: `Finish migration: ${candidate.name}.` }) });
+      await createGoalTool.execute({}, ctx);
+      const reviewSessionId = attachReviewer(ctx, candidate.runs);
+      const result = await updateGoalTool.execute({
+        status: "complete",
+        reason: candidate.name,
+        review_session_id: reviewSessionId,
+      }, ctx);
+      expect(result.isError, candidate.name).toBe(true);
+      expect((await ctx.sessionGoalService!.get({
+        workspaceRoot: tempRoot.path,
+        sessionId: ctx.store.getState().sessionId,
+      }))?.status, candidate.name).toBe("active");
+    }
+
+    const missing = context({ consumeFreshUserInput: () => ({ text: "Finish migration." }) });
+    await createGoalTool.execute({}, missing);
+    const missingResult = await updateGoalTool.execute({
+      status: "complete",
+      reason: "done",
+      review_session_id: crypto.randomUUID(),
+    }, missing);
+    expect(missingResult.isError).toBe(true);
+
+    const wrongIdentity = context({ consumeFreshUserInput: () => ({ text: "Finish migration." }) });
+    await createGoalTool.execute({}, wrongIdentity);
+    const wrongIdentityId = attachReviewer(wrongIdentity, [{ status: "completed", output: "VERDICT: APPROVED" }]);
+    wrongIdentity.storeManager.get(wrongIdentityId, tempRoot.path)!.setState({ agentName: "explore" });
+    const wrongIdentityResult = await updateGoalTool.execute({
+      status: "complete",
+      reason: "done",
+      review_session_id: wrongIdentityId,
+    }, wrongIdentity);
+    expect(wrongIdentityResult.isError).toBe(true);
+
+    const wrongRoot = context({ consumeFreshUserInput: () => ({ text: "Finish migration." }) });
+    await createGoalTool.execute({}, wrongRoot);
+    const wrongRootId = attachReviewer(wrongRoot, [{ status: "completed", output: "VERDICT: APPROVED" }]);
+    const unrelatedRootId = crypto.randomUUID();
+    wrongRoot.storeManager.get(wrongRootId, tempRoot.path)!.setState({
+      rootSessionId: unrelatedRootId,
+      parentSessionId: unrelatedRootId,
+    });
+    const wrongRootResult = await updateGoalTool.execute({
+      status: "complete",
+      reason: "done",
+      review_session_id: wrongRootId,
+    }, wrongRoot);
+    expect(wrongRootResult.isError).toBe(true);
   });
 
   test("create_goal retains an omitted user constraint in the persisted and Reviewer objective", async () => {
@@ -226,8 +384,7 @@ describe("Session Goal model tools", () => {
       sessionId: ctx.store.getState().sessionId,
     });
     expect(goal?.objective).toBe(rawUserRequest);
-    const { buildGoalReviewContract } = await import("../../session-goal/review-gate");
-    expect(buildGoalReviewContract(goal!.objective).objective).toContain("do not use any");
+    expect(goal?.objective).toContain("do not use any");
   });
 
   test("fresh user objectives at 3900 and 4000 characters remain valid", async () => {
@@ -245,85 +402,4 @@ describe("Session Goal model tools", () => {
     expect(nearLimit.isError).toBe(false);
   });
 
-  test("a verbatim amendment preserves prior requirements and states its later conflict", async () => {
-    const sourceByAction = ["Do not use any and pass tests.", "Allow any in generated fixtures while preserving all other requirements."];
-    let index = 0;
-    const ctx = context({ consumeFreshUserInput: () => ({ text: sourceByAction[index++]! }) });
-    await createGoalTool.execute({}, ctx);
-    const edited = await updateGoalTool.execute({
-      action: "edit",
-      expected_generation: 1,
-      mode: "amend",
-    }, ctx);
-    expect(edited.isError).toBe(false);
-    const goal = await ctx.sessionGoalService!.get({ workspaceRoot: tempRoot.path, sessionId: ctx.store.getState().sessionId });
-    expect(goal?.objective).toContain("Do not use any");
-    expect(goal?.objective).toContain("Allow any in generated fixtures");
-    const { buildGoalReviewContract } = await import("../../session-goal/review-gate");
-    const contract = buildGoalReviewContract(goal!.objective);
-    expect(contract.objective).toContain("Allow any in generated fixtures");
-  });
-
-  test("replace uses only the fresh user objective and removes prior constraints", async () => {
-    const requests = ["Do not use any; pass every test.", "Replace the legacy module and permit any in generated fixtures."];
-    let index = 0;
-    const ctx = context({ consumeFreshUserInput: () => ({ text: requests[index++]! }) });
-    await createGoalTool.execute({}, ctx);
-    const replaced = await updateGoalTool.execute({ action: "edit", mode: "replace", expected_generation: 1 }, ctx);
-
-    expect(replaced.isError).toBe(false);
-    const goal = await ctx.sessionGoalService!.get({ workspaceRoot: tempRoot.path, sessionId: ctx.store.getState().sessionId });
-    expect(goal?.objective).toBe(requests[1]);
-    expect(goal?.objective).not.toContain("Do not use any");
-  });
-
-  test("repeated amendments fail rather than exceed the one-objective limit", async () => {
-    const requests = ["a".repeat(3_900), "b".repeat(80)];
-    let index = 0;
-    const ctx = context({ consumeFreshUserInput: () => ({ text: requests[index++]! }) });
-    await createGoalTool.execute({}, ctx);
-    const result = await updateGoalTool.execute({ action: "edit", mode: "amend", expected_generation: 1 }, ctx);
-
-    expect(result.isError).toBe(true);
-    expect(text(result)).toContain("would exceed 4000");
-  });
-
-  test("set_budget immediately limits an active Goal when usage already reaches the new cap", async () => {
-    expect(UpdateGoalInputSchema.safeParse({ action: "set_budget", token_budget: 10 }).success).toBe(false);
-    const requests = ["Keep working until every test passes.", "Set the Goal token budget to 10 tokens."];
-    let index = 0;
-    const ctx = context({ consumeFreshUserInput: () => ({ text: requests[index++]! }) });
-    await createGoalTool.execute({}, ctx);
-    await ctx.sessionGoalService!.recordUsage({
-      workspaceRoot: tempRoot.path,
-      sessionId: ctx.store.getState().sessionId,
-      authority: { kind: "runtime" },
-      usage: { inputTokens: 6, outputTokens: 4, totalTokens: 10, reasoningTokens: 0, cachedInputTokens: 0 },
-      executionTimeMs: 1,
-    });
-
-    const result = await updateGoalTool.execute({ action: "set_budget" }, ctx);
-
-    expect(result.isError).toBe(false);
-    expect(await ctx.sessionGoalService!.get({
-      workspaceRoot: tempRoot.path,
-      sessionId: ctx.store.getState().sessionId,
-    })).toMatchObject({ status: "budget_limited", tokenBudget: 10 });
-  });
-
-  test("set_budget rejects a budget that was not explicitly authorized by fresh user input", async () => {
-    const requests = ["Keep working until every test passes.", "Please keep going with the same Goal."];
-    let index = 0;
-    const ctx = context({ consumeFreshUserInput: () => ({ text: requests[index++]! }) });
-    await createGoalTool.execute({}, ctx);
-
-    const result = await updateGoalTool.execute({ action: "set_budget" }, ctx);
-
-    expect(result.isError).toBe(true);
-    expect(text(result)).toContain("requires an explicit token budget request");
-    expect(await ctx.sessionGoalService!.get({
-      workspaceRoot: tempRoot.path,
-      sessionId: ctx.store.getState().sessionId,
-    })).not.toHaveProperty("tokenBudget");
-  });
 });

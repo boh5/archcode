@@ -20,7 +20,6 @@ const SOURCE = [
 ] as const;
 
 const INLINE = [
-  "submit_child_result",
   "todo_write",
   "wait_for_reminder",
   "cancel_session",

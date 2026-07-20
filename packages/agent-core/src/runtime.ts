@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { defaultAgentDefinitions } from "./agents";
 import type { AgentName } from "./agents";
-import { SessionCwdTransitionConflictError, SessionCwdTransitionInProgressError } from "./agents/errors";
+import { AgentRunningError, SessionCwdTransitionConflictError, SessionCwdTransitionInProgressError } from "./agents/errors";
 import { SessionAgentManager } from "./agents/session-agent-manager";
 import { ServerConfigService } from "./config/server-config-service";
 import { configureDefaultLspClientPoolLogger } from "./lsp/client-pool";
@@ -53,6 +53,8 @@ import type {
   SessionModelState,
   RequestedModelSelection,
   SessionFamilyActivity,
+  SessionExecutionRecord,
+  SessionGoal,
   SessionTreeResponse,
 } from "@archcode/protocol";
 import { createRegistry as createToolRegistry, createToolExecutionContext, DuplicateToolError, type ToolRegistry } from "./tools/index";
@@ -101,12 +103,7 @@ import {
 } from "./session-input/model-selection-service";
 import { WorktreeService } from "./worktrees";
 import { ProjectTodoService, ProjectTodoStateManager } from "./todos";
-import {
-  SessionGoalCoordinator,
-  SessionGoalService,
-  SessionGoalServiceError,
-  isBenignGoalReconcileError,
-} from "./session-goal";
+import { SessionGoalService } from "./session-goal";
 import {
   createScopeBoundToolOutputAccess,
   type ScopedOutputReadInput,
@@ -120,6 +117,51 @@ import { USER_DATA_DIR_NAME } from "@archcode/protocol";
 
 type SessionToolBatchExecutionInput = Omit<StartSessionExecutionInput, "input" | "origin">;
 type SessionToolBatchExecutor = (input: SessionToolBatchExecutionInput) => Promise<ActiveSessionExecution>;
+
+interface ActiveGoalReconciliationSnapshot {
+  readonly isRootEngineer: boolean;
+  readonly goalStatus?: SessionGoal["status"];
+  readonly lastRootExecutionStatus?: SessionExecutionRecord["status"];
+}
+
+interface ActiveGoalReconciliationDependencies {
+  readonly getFamilyActivity: () => SessionFamilyActivity;
+  readonly hasUnresolvedToolBatchHitl: () => Promise<boolean>;
+  readonly startQueuedExecution: () => Promise<boolean>;
+  readonly loadSnapshot: () => Promise<ActiveGoalReconciliationSnapshot>;
+  readonly startContinuation: () => Promise<void>;
+}
+
+/**
+ * One stateless Goal-continuation predicate shared by idle-family and startup
+ * recovery triggers. Runtime-owned admission remains the final concurrency gate.
+ */
+export async function reconcileActiveSessionGoal(
+  input: { readonly forceStartupRecovery: boolean },
+  dependencies: ActiveGoalReconciliationDependencies,
+): Promise<void> {
+  if (dependencies.getFamilyActivity() !== "idle") return;
+  if (await dependencies.hasUnresolvedToolBatchHitl()) return;
+  if (await dependencies.startQueuedExecution()) return;
+
+  const snapshot = await dependencies.loadSnapshot();
+  if (!snapshot.isRootEngineer || snapshot.goalStatus !== "active") return;
+  if (!input.forceStartupRecovery
+    && snapshot.lastRootExecutionStatus !== "completed"
+    && snapshot.lastRootExecutionStatus !== "max_steps") return;
+
+  try {
+    await dependencies.startContinuation();
+  } catch (error) {
+    if (
+      error instanceof AgentRunningError
+      || error instanceof SessionFamilyActiveError
+      || error instanceof SessionFamilyStopInProgressError
+      || error instanceof SessionDeleteInProgressError
+    ) return;
+    throw error;
+  }
+}
 
 export interface AcceptSessionMessageInput {
   readonly slug: string;
@@ -622,7 +664,6 @@ export async function createRuntime(
     });
     executionScopeValidator = new SessionExecutionScopeValidator();
     let executionManager!: SessionExecutionManager;
-    let sessionGoalCoordinator!: SessionGoalCoordinator;
     const sessionAgentManager = new SessionAgentManager({
       definitions: defaultAgentDefinitions,
       toolRegistry,
@@ -672,20 +713,12 @@ export async function createRuntime(
       trackSession,
       untrackSession,
       executionScopeValidator,
-      onFreshUserInput: async ({ workspaceRoot, rootSessionId }) => {
-        await sessionGoalService.advanceUserInputCursor({
-          workspaceRoot,
-          sessionId: rootSessionId,
-          authority: { kind: "runtime" },
-        });
-      },
       onSessionInputMutationReleased: ({ workspaceRoot, rootSessionId }) => {
         const projectSlug = projectSlugsByWorkspace.get(workspaceRoot);
         if (projectSlug === undefined) return;
         if (executionManager.getSessionFamilyActivity(workspaceRoot, rootSessionId) !== "idle") return;
-        void sessionGoalCoordinator.reconcile({ workspaceRoot, projectSlug, rootSessionId })
+        void reconcileActiveGoal({ workspaceRoot, projectSlug, rootSessionId, force: false })
           .catch((error) => {
-            if (isBenignGoalReconcileError(error)) return;
             runtimeLogger.warn("session.input-mutation.release-reconcile_failed", {
               error,
               context: { rootSessionId },
@@ -693,106 +726,16 @@ export async function createRuntime(
             });
           });
       },
-      onGoalReviewRequested: async ({ workspaceRoot, rootSessionId, reason }) => {
-        const projectSlug = projectSlugsByWorkspace.get(workspaceRoot);
-        if (projectSlug === undefined) throw new Error(`Project is not registered: ${workspaceRoot}`);
-        await sessionGoalCoordinator.requestReview({
-          workspaceRoot,
-          projectSlug,
-          rootSessionId,
-          requestedBy: "engineer",
-          reason,
-        });
-      },
-      onExecutionUsage: async ({ workspaceRoot, rootSessionId, usage, executionTimeMs, outcome }) => {
+      onExecutionUsage: async ({ workspaceRoot, rootSessionId, usage, executionTimeMs }) => {
         const goal = await sessionGoalService.get({ workspaceRoot, sessionId: rootSessionId });
-        if (goal === undefined || goal.status === "complete") return;
+        if (goal === undefined) return;
         await sessionGoalService.recordUsage({
           workspaceRoot,
           sessionId: rootSessionId,
           authority: { kind: "runtime" },
           usage,
           executionTimeMs,
-          outcome,
         });
-      },
-      validateGoalReviewClaim: async ({
-        workspaceRoot,
-        rootSessionId,
-        reviewClaimId,
-        reviewerSessionId,
-        reviewerExecutionId,
-      }) => {
-        const goal = await sessionGoalService.get({ workspaceRoot, sessionId: rootSessionId });
-        return goal?.status === "active"
-          && goal.review?.phase === "review_running"
-          && goal.review.claim.claimId === reviewClaimId
-          && goal.review.reviewerSessionId === reviewerSessionId
-          && goal.review.reviewerExecutionId === reviewerExecutionId;
-      },
-      prepareGoalReviewToolBatchResume: async ({
-        workspaceRoot,
-        rootSessionId,
-        reviewClaimId,
-        reviewerSessionId,
-        reviewerExecutionId,
-      }) => {
-        try {
-          await sessionGoalService.continueReviewAttempt({
-            workspaceRoot,
-            sessionId: rootSessionId,
-            authority: { kind: "runtime" },
-            claimId: reviewClaimId,
-            reviewerSessionId,
-            reviewerExecutionId,
-          });
-          const projectSlug = projectSlugsByWorkspace.get(workspaceRoot);
-          if (projectSlug === undefined) return false;
-          return await sessionGoalCoordinator.ensureReviewMonitor({
-            workspaceRoot,
-            projectSlug,
-            rootSessionId,
-            claimId: reviewClaimId,
-            reviewerSessionId,
-            reviewerExecutionId,
-          });
-        } catch (error) {
-          if (error instanceof SessionGoalServiceError) return false;
-          throw error;
-        }
-      },
-      prepareGoalRemediationToolBatchResume: async ({
-        workspaceRoot,
-        rootSessionId,
-        previousExecutionId,
-        proposedExecutionId,
-      }) => {
-        const store = await sessionStoreManager.getOrLoad(rootSessionId, workspaceRoot);
-        const state = store.getState();
-        const review = state.goal?.review;
-        if (state.goal?.status !== "active" || review?.phase !== "remediation_running") {
-          return { kind: "not_remediation" as const };
-        }
-        const currentExecutionId = review.remediationExecutionId;
-        if (currentExecutionId === undefined) return { kind: "stale" as const };
-        if (currentExecutionId === previousExecutionId) {
-          await sessionGoalService.continueRemediationExecution({
-            workspaceRoot,
-            sessionId: rootSessionId,
-            authority: { kind: "runtime" },
-            claimId: review.claim.claimId,
-            previousExecutionId,
-            executionId: proposedExecutionId,
-          });
-          return { kind: "prepared" as const, executionId: proposedExecutionId };
-        }
-        // A prior wake may have durably rebound the Goal and then failed before
-        // SessionExecutionManager could claim the Execution. Reuse that exact
-        // id so repeated wake/reconcile paths cannot fork the remediation.
-        if (!state.executions.some((execution) => execution.id === currentExecutionId)) {
-          return { kind: "prepared" as const, executionId: currentExecutionId };
-        }
-        return { kind: "stale" as const };
       },
       deletionLifecycle: new SessionLifecycleService({
         storeManager: sessionStoreManager,
@@ -815,17 +758,71 @@ export async function createRuntime(
       }),
       logger: runtimeLogger.child({ module: "sessions.execution" }),
     });
-    sessionGoalCoordinator = new SessionGoalCoordinator({
-      service: sessionGoalService,
-      storeManager: sessionStoreManager,
-      executionManager,
-      modelRuntime,
-      modelSelectionResolver,
-      logger: runtimeLogger.child({ module: "session-goal.coordinator" }),
-    });
     const startCheckedSessionExecution = (
       input: StartSessionExecutionInput,
     ): Promise<ActiveSessionExecution> => executionManager.startCheckedExecution(input);
+
+    async function reconcileActiveGoal(input: {
+      readonly workspaceRoot: string;
+      readonly projectSlug: string;
+      readonly rootSessionId: string;
+      readonly force: boolean;
+    }): Promise<void> {
+      await reconcileActiveSessionGoal({ forceStartupRecovery: input.force }, {
+        getFamilyActivity: () => (
+          executionManager.getSessionFamilyActivity(input.workspaceRoot, input.rootSessionId)
+        ),
+        hasUnresolvedToolBatchHitl: async () => (
+          (await sessionStoreManager.listSessionFamilyToolBatchHitlIds(
+            input.workspaceRoot,
+            input.rootSessionId,
+          )).length > 0
+        ),
+        startQueuedExecution: async () => (
+          await executionManager.tryStartQueuedExecution({
+            slug: input.projectSlug,
+            workspaceRoot: input.workspaceRoot,
+            sessionId: input.rootSessionId,
+          })
+        ) !== undefined,
+        loadSnapshot: async () => {
+          const state = (await sessionStoreManager.getOrLoad(
+            input.rootSessionId,
+            input.workspaceRoot,
+          )).getState();
+          return {
+            isRootEngineer: state.parentSessionId === undefined
+              && state.rootSessionId === state.sessionId
+              && state.agentName === "engineer",
+            goalStatus: state.goal?.status,
+            lastRootExecutionStatus: state.executions.at(-1)?.status,
+          };
+        },
+        startContinuation: async () => {
+          await startCheckedSessionExecution({
+            slug: input.projectSlug,
+            workspaceRoot: input.workspaceRoot,
+            sessionId: input.rootSessionId,
+            input: { kind: "continuation" },
+            origin: "goal_continuation",
+          });
+        },
+      });
+    }
+
+    async function reconcileAllActiveGoals(workspaceRoot: string, projectSlug: string): Promise<void> {
+      const summaries = await sessionStoreManager.listAllSessionSummaries(workspaceRoot);
+      for (const summary of summaries) {
+        if (summary.sessionId !== summary.rootSessionId || summary.goal?.status !== "active") continue;
+        await reconcileActiveGoal({
+          workspaceRoot,
+          projectSlug,
+          rootSessionId: summary.sessionId,
+          force: true,
+        });
+      }
+    }
+
     const sessionToolBatchExecutor: SessionToolBatchExecutor = (input) => (
       executionManager.startSessionToolBatchExecution(input)
     );
@@ -1272,14 +1269,14 @@ export async function createRuntime(
         )
           .then(async () => {
             if (executionManager.getSessionFamilyActivity(change.workspaceRoot, change.rootSessionId) !== "idle") return;
-            await sessionGoalCoordinator.reconcile({
+            await reconcileActiveGoal({
               projectSlug,
               workspaceRoot: change.workspaceRoot,
               rootSessionId: change.rootSessionId,
+              force: false,
             });
           })
           .catch((error) => {
-            if (isBenignGoalReconcileError(error)) return;
             runtimeLogger.warn("session.idle.reconcile_failed", {
               error,
               context: { rootSessionId: change.rootSessionId },
@@ -1506,7 +1503,7 @@ export async function createRuntime(
           await reconcileAnsweredHitl(project.workspaceRoot, project.slug);
           await continueRunnableToolBatches(project.workspaceRoot, project.slug);
           await recoverQueuedSessionInputs(project.workspaceRoot, project.slug);
-          await sessionGoalCoordinator.reconcileAll(project.workspaceRoot, project.slug);
+          await reconcileAllActiveGoals(project.workspaceRoot, project.slug);
         }),
       );
       results.forEach((result, index) => {
@@ -1542,7 +1539,7 @@ export async function createRuntime(
         await reconcileAnsweredHitl(workspaceRoot, projectSlug);
         await continueRunnableToolBatches(workspaceRoot, projectSlug);
         await recoverQueuedSessionInputs(workspaceRoot, projectSlug);
-        await sessionGoalCoordinator.reconcileAll(workspaceRoot, projectSlug);
+        await reconcileAllActiveGoals(workspaceRoot, projectSlug);
         projectReconcileRetries.delete(key);
       } catch (error) {
         if (reconciliationShuttingDown || cancelledReconcileWorkspaces.has(workspaceRoot)) {
@@ -1683,7 +1680,6 @@ export async function createRuntime(
         projectReconcileRetries.delete(projectRetryKey);
         projectSlugsByWorkspace.delete(project.workspaceRoot);
         automationRuntimeServices.delete(project.workspaceRoot);
-        await sessionGoalCoordinator.disposeWorkspace(project.workspaceRoot);
         await contextResolver.dispose(project.workspaceRoot);
         sessionAgentManager.releaseWorkspace(project.workspaceRoot);
         sessionStoreManager.releaseWorkspace(project.workspaceRoot);
@@ -1726,7 +1722,6 @@ export async function createRuntime(
         await Promise.all([
           stopAutomationSchedulers(),
           abortAllSessionExecutions(),
-          sessionGoalCoordinator.dispose(),
           toolOutputArtifactStore.dispose(),
           closeMcpManager(activeMcpManager, warnings, runtimeLogger),
         ]);
@@ -1841,10 +1836,11 @@ export async function createRuntime(
           const projectSlug = projectSlugsByWorkspace.get(input.workspaceRoot);
           if (projectSlug !== undefined
             && executionManager.getSessionFamilyActivity(input.workspaceRoot, input.sessionId) === "idle") {
-            void sessionGoalCoordinator.reconcile({
+            void reconcileActiveGoal({
               workspaceRoot: input.workspaceRoot,
               projectSlug,
               rootSessionId: input.sessionId,
+              force: true,
             }).catch((error) => runtimeLogger.warn("session-goal.control.reconcile_failed", {
               error,
               context: { sessionId: input.sessionId, action: input.action },

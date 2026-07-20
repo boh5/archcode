@@ -20,7 +20,6 @@ function goal(): SessionGoal {
   return {
     instanceId: "goal-1", generation: 1, objective: "Complete the migration and run tests.", status: "active",
     usage: { tokens: { inputTokens: 1, outputTokens: 2, totalTokens: 3, reasoningTokens: 0, cachedInputTokens: 0 }, executionTimeMs: 500, executionCount: 1 },
-    evaluatorCount: 0, noProgressCount: 0, failureCount: 0, userInputCursor: 1, sourceMutationEpoch: 0,
     createdAt: 1, activatedAt: 1, updatedAt: 1,
   };
 }

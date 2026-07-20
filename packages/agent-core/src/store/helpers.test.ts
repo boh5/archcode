@@ -19,8 +19,7 @@ import type {
   SystemNoticePart,
 } from "./types";
 import { createEmptyCompressionState, type CompressionState } from "../compression";
-import { hashDelegationContract } from "../delegation/contract";
-import type { DelegationContract } from "@archcode/protocol";
+import type { DelegationRequest } from "@archcode/protocol";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "helpers", crypto.randomUUID());
 const TEST_BINDING = {
@@ -244,8 +243,7 @@ type PersistedSessionState = Pick<
   | "todos"
   | "reminders"
   | "childSessionLinks"
-  | "delegationContract"
-  | "delegationContractHash"
+  | "delegationRequest"
   | "toolBatches"
   | "rootSessionId"
   | "parentSessionId"
@@ -264,16 +262,11 @@ function persistedState(
   childSessionLinks: ToolChildSessionLink[] = [],
   compression: CompressionState = createEmptyCompressionState(),
 ): PersistedSessionState {
-  const delegationContract: DelegationContract = {
+  const delegationRequest: DelegationRequest = {
     agent_type: "explore",
     title: "Test child",
     objective: "Exercise persisted child identity",
     owned_scope: [],
-    non_goals: [],
-    acceptance_criteria: [{ id: "ac-1", condition: "Fixture works", requiredEvidence: "Test result" }],
-    evidence: [],
-    verification: [],
-    depends_on: [],
     skills: [],
     background: false,
   };
@@ -282,7 +275,7 @@ function persistedState(
     createdAt: 99,
     updatedAt: 99,
     cwd: TMP_DIR,
-    agentName: "engineer",
+    agentName: parentSessionId === undefined ? "engineer" : "explore",
     activeSkillNames: [],
     modelSelection: { revision: 0 },
     title: null,
@@ -300,8 +293,7 @@ function persistedState(
     rootSessionId: rootSessionId ?? sessionId,
     parentSessionId,
     ...(parentSessionId === undefined ? {} : {
-      delegationContract,
-      delegationContractHash: hashDelegationContract(delegationContract),
+      delegationRequest,
     }),
   };
 }
@@ -641,7 +633,7 @@ describe("session transcript serialization", () => {
       "root-session",
       "parent-session",
     );
-    const { delegationContract: _contract, delegationContractHash: _hash, ...legacyChild } = child;
+    const { delegationRequest: _request, ...legacyChild } = child;
     expect(SessionFileSchema.safeParse(legacyChild).success).toBe(false);
   });
 

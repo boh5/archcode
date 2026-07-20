@@ -1,11 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import type { DelegationContract, FinalizedToolResult } from "@archcode/protocol";
+import type { DelegationRequest, FinalizedToolResult } from "@archcode/protocol";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createHybridCompressionHook } from "../agents/query/hooks/hybrid-compression";
-import { hashDelegationContract } from "../delegation/contract";
 import type { ExecutionModelBinding } from "../models";
 import { HitlBoundaryCodec } from "../hitl/boundary-codec";
 import { setLlmAdapterForTest } from "../llm";
@@ -63,16 +62,11 @@ beforeEach(async () => {
   const sessions = new SessionStoreManager({ logger: silentLogger });
   const rootSessionId = crypto.randomUUID();
   const childSessionId = crypto.randomUUID();
-  const delegationContract: DelegationContract = {
+  const delegationRequest: DelegationRequest = {
     agent_type: "build",
     title: "Exercise the output artifact plane",
     objective: "Produce and recover a large tool output artifact",
-    owned_scope: [],
-    non_goals: [],
-    acceptance_criteria: [{ id: "artifact-recovered", condition: "The artifact is recoverable", requiredEvidence: "Recovered sentinel output" }],
-    evidence: [],
-    verification: [],
-    depends_on: [],
+    owned_scope: [{ kind: "tree", path: "." }],
     skills: [],
     background: false,
   };
@@ -85,8 +79,7 @@ beforeEach(async () => {
     cwd: workspace,
     rootSessionId,
     parentSessionId: rootSessionId,
-    delegationContract,
-    delegationContractHash: hashDelegationContract(delegationContract),
+    delegationRequest,
   });
   await Promise.all([
     sessions.flushSession(rootSessionId, workspace),

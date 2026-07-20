@@ -32,7 +32,7 @@ describe("Prompt live eval contract", () => {
     expect(systems[0]).toBe(systems[1]);
   });
 
-  test("fixed fixture compiles Engineer, child-result, and Reviewer scenarios through the sole V2 compiler", async () => {
+  test("fixed fixture compiles Engineer, delegated final-output, and Reviewer scenarios through the sole V2 compiler", async () => {
     const fixture = PromptLiveEvalScenariosSchema.parse(
       await Bun.file(new URL("./live-eval-scenarios.json", import.meta.url)).json(),
     );
@@ -43,23 +43,23 @@ describe("Prompt live eval contract", () => {
       if (prompt.includes("typo")) return "direct";
       if (prompt.includes("independent")) return "parallel";
       if (prompt.includes("resulting diff")) return "then review after implementation";
-      if (prompt.includes("ordinary delegated")) return "submit_child_result";
-      if (prompt.includes("Goal review")) return "submit_child_result";
+      if (prompt.includes("Finish the delegated scope")) return "normal final response";
+      if (prompt.includes("ordinary delegated")) return "VERDICT: APPROVED";
+      if (prompt.includes("Independently review")) return "VERDICT: CHANGES_REQUESTED";
       if (prompt.includes("working autonomously") || prompt.includes("Take ownership")) return "CREATE_GOAL";
       if (prompt.includes("until it is better")) return "ASK_CLARIFY";
       if (prompt.includes("Classify the following")) return "NO_GOAL";
-      return "submit_child_result";
+      return "normal final response";
     });
 
     expect(calls).toHaveLength(14);
     expect(calls.every(({ system }) => system.includes("## Shared Kernel"))).toBe(true);
     expect(calls.slice(0, 3).every(({ system }) => system.includes("Agent: engineer"))).toBe(true);
     expect(calls[3]!.system).toContain("Role Contract: Build");
-    expect(calls[3]!.system).toContain("submit_child_result");
-    expect(calls[4]!.system).toContain("Completion authority: ordinary-reviewer");
-    expect(calls[5]!.system).toContain("Completion authority: goal-reviewer");
-    expect(calls[5]!.system).toContain("submit_child_result");
-    expect(calls[5]!.system).not.toContain("goal_manage");
+    expect(calls[3]!.system).toContain("normal assistant response");
+    expect(calls[4]!.system).toContain("Completion authority: reviewer");
+    expect(calls[5]!.system).toContain("VERDICT: APPROVED");
+    expect(calls[5]!.system).not.toContain("submit_child_result");
     expect(calls.slice(6).every(({ system }) => system.includes("create_goal"))).toBe(true);
     expect(calls.slice(6).every(({ prompt }) => prompt.includes("Reply with exactly CREATE_GOAL"))).toBe(true);
   });

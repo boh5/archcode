@@ -29,7 +29,6 @@ export const librarianAgentDefinition = {
       TOOL_TODO_WRITE,
       TOOL_COMPRESS,
       ...SKILL_ACCESS_TOOLS,
-      "submit_child_result",
     ],
   },
   mcpTools: ["context7", "grep.app", "exa"],

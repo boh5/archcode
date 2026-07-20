@@ -451,19 +451,6 @@ export function reduceStreamEvent(
       };
     }
 
-    case "child-result": {
-      const existing = state.childResultReceipts.findIndex(
-        (receipt) => receipt.executionId === event.receipt.executionId,
-      );
-      return {
-        childResultReceipts: existing < 0
-          ? [...state.childResultReceipts, event.receipt]
-          : state.childResultReceipts.map((receipt, index) =>
-              index === existing ? event.receipt : receipt
-            ),
-      };
-    }
-
     case "todo-write": {
       if (!areTodosValid(event.todos)) return {};
       return { todos: [...event.todos] };

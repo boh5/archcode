@@ -74,12 +74,6 @@ describe("delegation card view-model", () => {
       focusStoreSessionId: "root-1",
       childSessionLinks: [makeLink({
         title: "Child title",
-        resultReceipt: {
-          executionId: "exec-1",
-          delegationContractHash: "hash-1",
-          submittedAt: 200,
-          result: { status: "completed", summary: "Child summary", deliverables: [], evidence: [], criteria: [], verification: [], unresolved: [] },
-        },
         depth: 3,
       })],
       agentDescriptors: agents,
@@ -90,9 +84,8 @@ describe("delegation card view-model", () => {
       agentType: "explore",
       agentDisplayName: "Explore",
       taskTitle: "Child title",
-      taskSummary: "Child summary",
+      taskSummary: "Inspect the source",
       executionStatus: "running",
-      taskStatus: "completed",
       depth: 3,
       startedAt: 140,
       canNavigate: true,
@@ -115,37 +108,13 @@ describe("delegation card view-model", () => {
       taskTitle: "Inspect source",
       taskSummary: "Inspect the source",
       executionStatus: "error",
-      taskStatus: "unavailable",
       depth: 1,
       startedAt: 120,
       canNavigate: false,
     });
   });
 
-  test("keeps execution and canonical task status orthogonal", () => {
-    for (const taskStatus of ["completed", "partial", "blocked", "failed"] as const) {
-      const model = buildDelegationCardViewModel({
-        part: makePart({ state: "completed" }),
-        projectSlug: "demo",
-        focusStoreSessionId: "root-1",
-        childSessionLinks: [makeLink({
-          status: "completed",
-          resultReceipt: {
-            executionId: `exec-${taskStatus}`,
-            delegationContractHash: "hash-1",
-            submittedAt: 200,
-            result: { status: taskStatus, summary: taskStatus, deliverables: [], evidence: [], criteria: [], verification: [], unresolved: [] },
-          },
-        })],
-        agentDescriptors: agents,
-      });
-
-      expect(model.executionStatus).toBe("completed");
-      expect(model.taskStatus).toBe(taskStatus);
-    }
-  });
-
-  test("does not infer task completion from terminal execution states without a receipt", () => {
+  test("maps terminal child execution states without a second task status", () => {
     const terminalCases = [
       ["completed", "completed"],
       ["failed", "error"],
@@ -163,26 +132,24 @@ describe("delegation card view-model", () => {
         agentDescriptors: agents,
       });
       expect(model.executionStatus).toBe(executionStatus);
-      expect(model.taskStatus).toBe("unavailable");
     }
   });
 
-  test("shows task pending only while execution is non-terminal and receipt is absent", () => {
+  test("maps non-terminal child execution states", () => {
     for (const linkStatus of ["linked", "running", "waiting_for_human", "cancelling"] as const) {
       const model = buildDelegationCardViewModel({
         part: makePart(), projectSlug: "demo", focusStoreSessionId: "root-1",
         childSessionLinks: [makeLink({ status: linkStatus })], agentDescriptors: agents,
       });
-      expect(model.taskStatus).toBe("pending");
+      expect(model.executionStatus).toBe(linkStatus === "waiting_for_human" ? "pending" : "running");
     }
   });
 
-  test("uses tool execution state without inventing a task result when the child link is absent", () => {
+  test("uses tool execution state when the child link is absent", () => {
     const completed = buildDelegationCardViewModel({
       part: makePart({ state: "completed" }), projectSlug: "demo", focusStoreSessionId: "root-1",
       childSessionLinks: [], agentDescriptors: agents,
     });
     expect(completed.executionStatus).toBe("completed");
-    expect(completed.taskStatus).toBe("unavailable");
   });
 });

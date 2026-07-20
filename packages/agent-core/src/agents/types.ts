@@ -1,7 +1,6 @@
 import type { StoreApi } from "zustand";
 import type { ExecutionEndEvent, SessionStoreState } from "../store/types";
 import type { ExecutionModelBinding } from "../models";
-import type { ToolExecutionControl } from "../tools/index";
 
 export interface AgentCommand {
   readonly name: string;
@@ -45,7 +44,6 @@ export interface AgentResult {
   readonly steps: number;
   readonly status: ExecutionEndEvent["status"];
   readonly error?: string;
-  readonly executionControl?: ToolExecutionControl;
   readonly cwdChanged?: {
     readonly previousCwd: string;
     readonly cwd: string;

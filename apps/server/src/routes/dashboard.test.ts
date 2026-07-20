@@ -7,8 +7,6 @@ function goal(status: SessionGoal["status"]): SessionGoal {
   return {
     instanceId: "goal", generation: 1, objective: "Finish the migration and run all tests.", status,
     usage: { tokens: { inputTokens: 10, outputTokens: 20, totalTokens: 30, reasoningTokens: 0, cachedInputTokens: 0 }, executionTimeMs: 90_000, executionCount: 2 },
-    evaluatorCount: 1, noProgressCount: 0, failureCount: 0, userInputCursor: 1, sourceMutationEpoch: 0,
-    lastEvaluator: { decision: "continue", reason: "Tests are still running", evaluatedAt: 4 },
     createdAt: 1, activatedAt: 1, updatedAt: 2,
   };
 }
@@ -29,7 +27,7 @@ describe("dashboard Session Goal projection", () => {
     expect(await response.json()).toEqual({
       sessionGoals: [{
         sessionId: "root", sessionTitle: "Migration", updatedAt: 2, projectSlug: "demo", projectName: "Demo",
-        goal: { objective: "Finish the migration and run all tests.", status: "active", tokensUsed: 30, timeUsedSeconds: 90, latestReason: "Tests are still running" },
+        goal: { objective: "Finish the migration and run all tests.", status: "active", tokensUsed: 30, timeUsedSeconds: 90 },
       }],
       errors: [],
     });

@@ -1,7 +1,6 @@
-import { createHash } from "node:crypto";
 import { lstat, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, posix, relative, resolve, sep, win32 } from "node:path";
-import type { ChildResult, DelegationContract, ScopeRef } from "@archcode/protocol";
+import type { DelegationRequest, ScopeRef } from "@archcode/protocol";
 
 const GLOB_META = /[*?\[\]{}]/;
 
@@ -12,13 +11,6 @@ export class InvalidScopeRefError extends Error {
   ) {
     super(`Invalid ${scope.kind} scope "${scope.path}": ${reason}`);
     this.name = "InvalidScopeRefError";
-  }
-}
-
-export class InvalidChildResultError extends Error {
-  constructor(public readonly reason: string) {
-    super(`Invalid child result: ${reason}`);
-    this.name = "InvalidChildResultError";
   }
 }
 
@@ -74,13 +66,13 @@ export async function validateScopeRefInWorkspace(
 }
 
 export async function validateDelegationScopes(
-  contract: DelegationContract,
+  request: DelegationRequest,
   workspaceRoot: string,
-): Promise<DelegationContract> {
+): Promise<DelegationRequest> {
   const ownedScope = await Promise.all(
-    contract.owned_scope.map((scope) => validateScopeRefInWorkspace(scope, workspaceRoot)),
+    request.owned_scope.map((scope) => validateScopeRefInWorkspace(scope, workspaceRoot)),
   );
-  return { ...contract, owned_scope: ownedScope };
+  return { ...request, owned_scope: ownedScope };
 }
 
 /** True for exact path equality or when either tree owns the other's path. */
@@ -97,51 +89,6 @@ export function delegationScopesOverlap(
   right: readonly ScopeRef[],
 ): boolean {
   return left.some((a) => right.some((b) => scopeRefsOverlap(a, b)));
-}
-
-export function hashDelegationContract(contract: DelegationContract): string {
-  return createHash("sha256").update(stableJson(contract)).digest("hex");
-}
-
-export function validateChildResultAgainstContract(
-  result: ChildResult,
-  contract: DelegationContract,
-): void {
-  const expectedIds = contract.acceptance_criteria.map((criterion) => criterion.id).sort();
-  const actualIds = result.criteria.map((criterion) => criterion.id).sort();
-  if (JSON.stringify(actualIds) !== JSON.stringify(expectedIds)) {
-    throw new InvalidChildResultError(
-      `criteria ids must exactly match delegation acceptance criteria; expected ${expectedIds.join(", ") || "none"}`,
-    );
-  }
-
-  if (result.status !== "completed") return;
-  const nonPassing = result.criteria.filter((criterion) => criterion.status !== "passed");
-  if (nonPassing.length > 0) {
-    throw new InvalidChildResultError(
-      `completed result requires every criterion to pass; non-passing: ${nonPassing.map((item) => item.id).join(", ")}`,
-    );
-  }
-  const missingEvidence = result.criteria.filter((criterion) => criterion.evidenceRefs.length === 0);
-  if (missingEvidence.length > 0) {
-    throw new InvalidChildResultError(
-      `completed result requires evidence refs for every criterion; missing: ${missingEvidence.map((item) => item.id).join(", ")}`,
-    );
-  }
-  if (result.unresolved.some((item) => item.blocking)) {
-    throw new InvalidChildResultError("completed result cannot contain blocking unresolved items");
-  }
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    return `{${Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value);
 }
 
 async function nearestExistingAncestor(

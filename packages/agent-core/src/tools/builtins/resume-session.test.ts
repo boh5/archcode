@@ -43,12 +43,14 @@ function handle(parentSessionId: string): ChildExecutionHandle {
 }
 
 describe("resume_session V2 contract", () => {
-  it("accepts only session_id, instruction, new_evidence, and background", () => {
-    const valid = { session_id: "child", instruction: "repair", new_evidence: [] };
+  it("accepts only required session_id, instruction, and background", () => {
+    const valid = { session_id: "child", instruction: "repair", background: false };
     expect(ResumeSessionInputSchema.safeParse(valid).success).toBe(true);
     for (const field of ["task", "context", "agent_type", "persona", "skills", "title", "owned_scope"]) {
       expect(ResumeSessionInputSchema.safeParse({ ...valid, [field]: "legacy" }).success).toBe(false);
     }
+    expect(ResumeSessionInputSchema.safeParse({ ...valid, new_evidence: [] }).success).toBe(false);
+    expect(ResumeSessionInputSchema.safeParse({ session_id: "child", instruction: "repair" }).success).toBe(false);
   });
 
   it("forwards no delegation identity overrides", async () => {
@@ -60,13 +62,11 @@ describe("resume_session V2 contract", () => {
     await executeResumeSession({
       session_id: "child",
       instruction: "repair",
-      new_evidence: [{ claim: "Failure reproduced", ref: "test-output:1" }],
       background: false,
     }, ctx);
     expect(request).toMatchObject({
       sessionId: "child",
       instruction: "repair",
-      newEvidence: [{ claim: "Failure reproduced", ref: "test-output:1" }],
     });
     expect(request && "contract" in request).toBe(false);
     expect(request && "prompt" in request).toBe(false);

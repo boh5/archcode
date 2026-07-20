@@ -49,6 +49,10 @@ describe("Automation architecture boundaries", () => {
       runtime.indexOf("async function recoverProjectTodos"),
       runtime.indexOf("async function reconcileRegisteredProject"),
     );
+    const familyIdleReconciliation = runtime.slice(
+      runtime.indexOf("executionManager.subscribeSessionRuntimeChanges"),
+      runtime.indexOf("type AutomationRuntimeServices"),
+    );
 
     expect(schedule).not.toMatch(/from\s+["']\.\/(?:state-manager|dispatcher|scheduler|runtime-session-gateway)["']/);
     expect(state).not.toMatch(/from\s+["']\.\/(?:dispatcher|scheduler|runtime-session-gateway)["']/);
@@ -70,8 +74,14 @@ describe("Automation architecture boundaries", () => {
     expect(todoRecovery).not.toContain("continuationService");
     expect(runtime).not.toContain("directSessionToolBatchExecutor");
     expect(runtime).not.toContain("activeSessionToolBatchExecutor");
-    expect(runtime).toContain("sessionGoalCoordinator.reconcileAll");
-    expect(runtime).toContain("sessionGoalCoordinator.requestReview");
+    expect(runtime).toContain("reconcileAllActiveGoals");
+    expect(runtime).toContain("reconcileActiveGoal");
+    // Root and child terminals both release the same root-family activity to
+    // idle; this listener is their single Goal continuation trigger.
+    expect(familyIdleReconciliation).toContain('if (change.activity === "idle")');
+    expect(familyIdleReconciliation).toContain("await reconcileActiveGoal({");
+    expect(sessionRecovery).toContain("await reconcileAllActiveGoals");
+    expect(runtime).not.toContain("sessionGoalCoordinator");
     expect(runtime).not.toContain("startCheckedExecutionWithinGoalClaim");
     expect(runtime).not.toContain('input.origin === "goal_claim"');
   });

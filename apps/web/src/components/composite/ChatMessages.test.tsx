@@ -612,12 +612,6 @@ describe("CompressionBlock", () => {
       createdAt: 100,
       endedAt: 200,
       durationMs: 100,
-      resultReceipt: {
-        executionId: "exec-1",
-        delegationContractHash: "hash-1",
-        submittedAt: 200,
-        result: { status: "completed", summary: "Explored the codebase for patterns", deliverables: [], evidence: [], criteria: [], verification: [], unresolved: [] },
-      },
       title: "Explore codebase",
     };
 
@@ -654,9 +648,7 @@ describe("CompressionBlock", () => {
                 toolName: "delegate",
                 input: {
                   agent_type: "explore", title: "Explore codebase", objective: "Explore codebase",
-                  owned_scope: [{ kind: "tree", path: "src" }], non_goals: [],
-                  acceptance_criteria: [{ id: "ac-1", condition: "Map relevant code", requiredEvidence: "file refs" }],
-                  evidence: [], verification: [], depends_on: [], skills: [], background: false,
+                  owned_scope: [], skills: [], background: false,
                 },
                 result: {
                   isError: false,
@@ -711,9 +703,8 @@ describe("CompressionBlock", () => {
 
     expect(text).toContain("Explore codebase");
     expect(text).toContain("Code Explorer");
-    expect(text).toContain("Explored the codebase for patterns");
     expect(text).toContain("Execution: Completed");
-    expect(text).toContain("Task: Completed");
+    expect(text).not.toContain("Task:");
   });
 });
 

@@ -84,7 +84,6 @@ function sessionFileFixture(overrides: Record<string, unknown> = {}) {
     todos: [],
     reminders: [],
     childSessionLinks: [],
-    childResultReceipts: [],
     toolBatches: [],
     rootSessionId: "session-1",
     ...overrides,

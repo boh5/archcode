@@ -51,7 +51,6 @@ export const planAgentDefinition = {
       TOOL_OUTPUT_SEARCH,
       TOOL_COMPRESS,
       ...SKILL_ACCESS_TOOLS,
-      "submit_child_result",
     ],
     delegateTargets: ["explore", "librarian"],
   },

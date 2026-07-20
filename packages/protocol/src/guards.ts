@@ -29,7 +29,7 @@ export function isSessionEventPayload(value: unknown): value is SessionEventPayl
     case "execution-start":
       return exact(event, ["type", "executionId", "binding", "origin"])
         && isString(event.executionId) && isExecutionModelBinding(event.binding)
-        && oneOf(event.origin, ["user_message", "tool_call", "tool_batch", "goal_continuation", "goal_remediation", "goal_review"]);
+        && oneOf(event.origin, ["user_message", "tool_call", "tool_batch", "goal_continuation"]);
     case "execution-end":
       return exact(event, ["type", "status"], ["error", "blockedByHitlIds", "blockedToolCallId"])
         && oneOf(event.status, ["completed", "max_steps", "failed", "aborted", "cancelled", "timed_out", "interrupted", "waiting_for_human"])
@@ -46,10 +46,7 @@ export function isSessionEventPayload(value: unknown): value is SessionEventPayl
       return exact(event, ["type", "action", "instanceId", "generation", "goal", "occurredAt"], ["status", "reason"])
         && oneOf(event.action, [
           "created", "edited", "paused", "resumed", "cleared", "budget_updated",
-          "blocked", "blocked_evidence_recorded", "usage_recorded", "evaluator_recorded", "review_requested",
-          "review_started", "review_restarted", "review_rejected",
-          "remediation_started", "remediation_rebound", "remediation_retry_requested",
-          "remediation_finished", "runtime_failed", "completed",
+          "blocked", "usage_recorded", "completed",
         ])
         && isString(event.instanceId)
         && isNonNegativeInteger(event.generation)
@@ -106,8 +103,6 @@ export function isSessionEventPayload(value: unknown): value is SessionEventPayl
         && isFinalizedToolResult(event.result);
     case "tool-child-session-link":
       return exact(event, ["type", "link"]) && isToolChildSessionLink(event.link);
-    case "child-result":
-      return exact(event, ["type", "receipt"]) && isChildResultReceipt(event.receipt);
     case "todo-write":
       return exact(event, ["type", "todos"]) && arrayOf(event.todos, isSessionTodo);
     case "reminder":
@@ -340,7 +335,7 @@ function isToolChildSessionLink(value: unknown): boolean {
     && exact(
       link,
       ["parentSessionId", "parentToolCallId", "toolName", "childSessionId", "childAgentName", "title", "depth", "background", "status", "createdAt"],
-      ["startedAt", "endedAt", "durationMs", "resultReceipt", "error"],
+      ["startedAt", "endedAt", "durationMs", "error"],
     )
     && isString(link.parentSessionId) && isString(link.parentToolCallId) && isString(link.toolName)
     && isString(link.childSessionId) && isString(link.childAgentName)
@@ -349,62 +344,7 @@ function isToolChildSessionLink(value: unknown): boolean {
     && isFiniteNumber(link.createdAt) && isString(link.title)
     && optionalFiniteNumber(link.startedAt) && optionalFiniteNumber(link.endedAt)
     && optionalFiniteNumber(link.durationMs)
-    && (link.resultReceipt === undefined || isChildResultReceipt(link.resultReceipt))
     && optionalString(link.error);
-}
-
-function isChildResultReceipt(value: unknown): boolean {
-  const receipt = record(value);
-  return receipt !== undefined
-    && exact(receipt, ["executionId", "delegationContractHash", "submittedAt", "result"])
-    && isString(receipt.executionId)
-    && isString(receipt.delegationContractHash)
-    && isFiniteNumber(receipt.submittedAt)
-    && isChildResult(receipt.result);
-}
-
-function isChildResult(value: unknown): boolean {
-  const result = record(value);
-  return result !== undefined
-    && exact(result, ["status", "summary", "deliverables", "evidence", "criteria", "verification", "unresolved"])
-    && oneOf(result.status, ["completed", "partial", "blocked", "failed"])
-    && isString(result.summary)
-    && arrayOf(result.deliverables, (item) => {
-      const deliverable = record(item);
-      return deliverable !== undefined
-        && exact(deliverable, ["type", "ref", "description"])
-        && isString(deliverable.type) && isString(deliverable.ref) && isString(deliverable.description);
-    })
-    && arrayOf(result.evidence, (item) => {
-      const evidence = record(item);
-      return evidence !== undefined
-        && exact(evidence, ["claim", "ref"])
-        && isString(evidence.claim) && isString(evidence.ref);
-    })
-    && arrayOf(result.criteria, (item) => {
-      const criterion = record(item);
-      return criterion !== undefined
-        && exact(criterion, ["id", "status", "evidenceRefs"])
-        && isString(criterion.id)
-        && oneOf(criterion.status, ["passed", "failed", "unverified"])
-        && arrayOf(criterion.evidenceRefs, isString);
-    })
-    && arrayOf(result.verification, (item) => {
-      const verification = record(item);
-      return verification !== undefined
-        && exact(verification, ["check", "status"], ["outputRef"])
-        && isString(verification.check)
-        && oneOf(verification.status, ["passed", "failed", "not_run"])
-        && optionalString(verification.outputRef);
-    })
-    && arrayOf(result.unresolved, (item) => {
-      const unresolved = record(item);
-      return unresolved !== undefined
-        && exact(unresolved, ["issue", "blocking", "nextOwner"])
-        && isString(unresolved.issue)
-        && typeof unresolved.blocking === "boolean"
-        && oneOf(unresolved.nextOwner, ["parent", "user", "external"]);
-    });
 }
 
 export function isFinalizedToolResult(value: unknown): value is FinalizedToolResult {
@@ -821,22 +761,13 @@ function isHitlResponse(value: unknown): boolean {
   }
 }
 
-/**
- * Session Goal changes are replayed by both the server and browser stores, so
- * validate the serializable snapshot at the protocol boundary. Review details
- * are opaque to this event guard: their canonical schema is enforced when a
- * Session is persisted, while the shared projection only needs a safe Goal
- * envelope to render and invalidate correctly.
- */
+/** Session Goal changes are replayed by both server and browser stores. */
 function isSessionGoalSnapshot(value: unknown): boolean {
   const goal = record(value);
   if (goal === undefined || !exact(goal, [
-    "instanceId", "generation", "objective", "status", "usage", "evaluatorCount",
-    "noProgressCount", "failureCount", "userInputCursor", "sourceMutationEpoch",
-    "createdAt", "activatedAt", "updatedAt",
+    "instanceId", "generation", "objective", "status", "usage", "createdAt", "activatedAt", "updatedAt",
   ], [
-    "tokenBudget", "lastEvaluator", "blockerCandidate", "nextRetryAt", "review",
-    "lastReviewReceipt", "blockedReason", "pausedAt", "completedAt",
+    "tokenBudget", "blockedReason", "pausedAt", "completedAt",
   ])) return false;
 
   const usage = record(goal.usage);
@@ -853,22 +784,12 @@ function isSessionGoalSnapshot(value: unknown): boolean {
     && Object.values(tokens).every(isNonNegativeSafeInteger)
     && isNonNegativeSafeInteger(usage.executionTimeMs)
     && isNonNegativeSafeInteger(usage.executionCount)
-    && isNonNegativeSafeInteger(goal.evaluatorCount)
-    && isNonNegativeSafeInteger(goal.noProgressCount)
-    && isNonNegativeSafeInteger(goal.failureCount)
-    && isNonNegativeSafeInteger(goal.userInputCursor)
-    && isNonNegativeSafeInteger(goal.sourceMutationEpoch)
     && isNonNegativeSafeInteger(goal.createdAt)
     && isNonNegativeSafeInteger(goal.activatedAt)
     && isNonNegativeSafeInteger(goal.updatedAt)
-    && (goal.nextRetryAt === undefined || isNonNegativeSafeInteger(goal.nextRetryAt))
     && (goal.pausedAt === undefined || isNonNegativeSafeInteger(goal.pausedAt))
     && (goal.completedAt === undefined || isNonNegativeSafeInteger(goal.completedAt))
-    && optionalString(goal.blockedReason)
-    && optionalRecord(goal.lastEvaluator)
-    && optionalRecord(goal.blockerCandidate)
-    && optionalRecord(goal.review)
-    && optionalRecord(goal.lastReviewReceipt);
+    && optionalString(goal.blockedReason);
 }
 
 function record(value: unknown): UnknownRecord | undefined {

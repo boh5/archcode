@@ -29,13 +29,13 @@
       "forbidden": ["parallel"]
     },
     {
-      "id": "build-child-result",
+      "id": "build-normal-final",
       "agent": "build",
       "executionMode": "ordinary-child",
       "probe": "terminal-action",
       "request": "Finish the delegated scope and explain the required terminal delivery action.",
-      "expectedAny": ["submit_child_result"],
-      "forbidden": ["free-text completion"]
+      "expectedAny": ["normal final response"],
+      "forbidden": ["terminal tool submission"]
     },
     {
       "id": "ordinary-reviewer-result",
@@ -43,17 +43,17 @@
       "executionMode": "ordinary-child",
       "probe": "terminal-action",
       "request": "Verify the ordinary delegated review and explain the canonical submission action.",
-      "expectedAny": ["submit_child_result"],
-      "forbidden": ["finalize_review"]
+      "expectedAny": ["VERDICT: APPROVED", "VERDICT: CHANGES_REQUESTED"],
+      "forbidden": ["complete the Goal"]
     },
     {
-      "id": "goal-reviewer-result",
+      "id": "second-reviewer-result",
       "agent": "reviewer",
-      "executionMode": "goal-review",
+      "executionMode": "ordinary-child",
       "probe": "terminal-action",
-      "request": "Verify the Goal review and explain the sole canonical result submission action.",
-      "expectedAny": ["submit_child_result"],
-      "forbidden": ["finalize_review"]
+      "request": "Independently review the work and explain the required first line of the final report.",
+      "expectedAny": ["VERDICT: APPROVED", "VERDICT: CHANGES_REQUESTED"],
+      "forbidden": ["complete the Goal"]
     },
     {
       "id": "goal-activation-explicit-until-complete",

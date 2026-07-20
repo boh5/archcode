@@ -39,7 +39,6 @@ export const exploreAgentDefinition = {
       TOOL_TODO_WRITE,
       TOOL_COMPRESS,
       ...SKILL_ACCESS_TOOLS,
-      "submit_child_result",
     ],
   },
   hooks: {

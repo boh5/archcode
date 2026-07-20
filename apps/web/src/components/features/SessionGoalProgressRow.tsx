@@ -138,7 +138,7 @@ function formatDuration(seconds: number): string {
 }
 
 function latestReason(goal: SessionGoalView): string | undefined {
-  return goal.blockedReason ?? goal.lastReviewReceipt?.summary ?? goal.lastEvaluator?.reason;
+  return goal.blockedReason;
 }
 
 function goalLabel(status: SessionGoalView["status"]): string {

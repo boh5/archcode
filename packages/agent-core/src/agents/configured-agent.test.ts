@@ -137,7 +137,6 @@ function makeToolRegistry() {
     makeTool("unknown_tool"),
     ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
     ...DELEGATION_CORE_TOOLS.map(makeTool),
-    makeTool("submit_child_result"),
     makeTool("project_todo_update"),
   ]);
 }
@@ -412,7 +411,9 @@ describe("ConfiguredAgent", () => {
     const system = (streamFn.mock.calls[0]![0] as { system: string }).system;
     expect(system).toContain("## Active Goal");
     expect(system).toContain("Finish the authentication migration and make every authentication test pass.");
-    expect(system).toContain("update_goal with status=complete only to request independent review");
+    expect(system).toContain("delegate an independent Reviewer");
+    expect(system).toContain("VERDICT: APPROVED");
+    expect(system).toContain("review_session_id");
     expect(system).not.toContain("Goal Lead");
     expect(system).not.toContain("goal_manage");
   });
@@ -459,7 +460,6 @@ describe("ConfiguredAgent", () => {
     let capturedContext: { agentSkills: readonly string[]; skillService: SkillService } | undefined;
     const toolRegistry = createTestRegistry([
       makeTool("file_read"),
-      makeTool("submit_child_result"),
       {
         name: "capture_context",
         description: "Capture context",
@@ -490,7 +490,6 @@ describe("ConfiguredAgent", () => {
     let capturedContext: { cwd: string; projectRoot: string } | undefined;
     const toolRegistry = createTestRegistry([
       makeTool("file_read"),
-      makeTool("submit_child_result"),
       {
         name: "capture_workspace",
         description: "Capture workspace roots",

@@ -26,7 +26,6 @@ export function createMockStore(
     todos: [],
     reminders: [],
     childSessionLinks: [],
-    childResultReceipts: [],
     toolBatches: [],
     rootSessionId: "test",
     isRunning: false,

@@ -54,7 +54,6 @@ function createSession(input: {
     todos: [],
     reminders: [],
     childSessionLinks: input.childSessionLinks ?? [],
-    childResultReceipts: [],
     stats: createEmptySessionStats(),
     executions: [],
     eventCursor: 0,
@@ -375,9 +374,7 @@ describe("SessionRoute focused view store behavior", () => {
               toolName: TOOL_DELEGATE,
               input: {
                 agent_type: "explore", title: "Explore child session", objective: "Explore child session",
-                owned_scope: [{ kind: "tree", path: "src" }], non_goals: [],
-                acceptance_criteria: [{ id: "ac-1", condition: "Inspect child output", requiredEvidence: "file refs" }],
-                evidence: [], verification: [], depends_on: [], skills: [], background: false,
+                owned_scope: [], skills: [], background: false,
               },
               result: {
                 isError: false,

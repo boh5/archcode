@@ -1,5 +1,5 @@
 import type { AgentName } from "../agents/names";
-import type { BuiltinToolName, DelegationContract, ScopeRef } from "@archcode/protocol";
+import type { BuiltinToolName, DelegationRequest, ScopeRef } from "@archcode/protocol";
 import type { ResolvedSkill, SkillIndexEntry } from "../skills/types";
 import type { VersionControl } from "../version-control/detector";
 
@@ -9,8 +9,7 @@ export type TransitionRef =
 
 export type CompletionAuthority =
   | "ordinary-session"
-  | "goal-reviewer"
-  | "ordinary-reviewer"
+  | "reviewer"
   | "delegated-scope"
   | "bound-todo";
 
@@ -25,17 +24,12 @@ export interface RoleContract {
   readonly outputs: readonly string[];
   readonly requiredCapabilities: readonly CapabilityRef[];
   readonly forbiddenCapabilities: readonly CapabilityRef[];
-  readonly allowedTransitions: {
-    readonly default: readonly TransitionRef[];
-    readonly ordinaryReview: readonly TransitionRef[];
-    readonly goalReview: readonly TransitionRef[];
-  };
+  readonly allowedTransitions: readonly TransitionRef[];
   readonly completionAuthority: readonly CompletionAuthority[];
   readonly delegateTargets: readonly AgentName[];
 }
 
 export type GoalPromptStatus = "active" | "paused" | "blocked" | "budget_limited" | "complete";
-export type ReviewPromptMode = "none" | "ordinary" | "goal";
 export type TodoPromptMode = "none" | "bound";
 export type McpPromptStatus = "pending" | "ready" | "ready-zero" | "partial-warning" | "failed";
 
@@ -54,7 +48,6 @@ export interface RuntimePromptEnvelope {
     readonly status: GoalPromptStatus;
   } | "none";
   readonly todo: { readonly id: string; readonly mode: "bound" } | "none";
-  readonly reviewMode: ReviewPromptMode;
   readonly ownedScope: readonly ScopeRef[];
   readonly remainingDepth: number;
   readonly maxConcurrentChildren: number;
@@ -102,7 +95,7 @@ export interface PromptContractV2 {
   readonly agentsMd: PromptSource<string>;
   readonly memory: PromptSource<PromptMemorySnapshot>;
   readonly currentContext: readonly string[];
-  readonly delegation: { readonly contract: DelegationContract; readonly hash: string } | "none";
+  readonly delegationRequest: DelegationRequest | "none";
   readonly env: PromptEnv;
 }
 

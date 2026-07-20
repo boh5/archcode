@@ -1,6 +1,5 @@
 import type {
   AgentDescriptor,
-  ChildResultStatus,
   ToolChildSessionLink,
   ToolChildSessionLinkStatus,
   ToolPart,
@@ -8,8 +7,6 @@ import type {
 import { resolveAgentDisplayName, type BadgeStatus } from "./agent-constants";
 
 export type DelegationToolStatus = "success" | "error" | "default";
-export type DelegationTaskStatus = ChildResultStatus | "pending" | "unavailable";
-
 export interface DelegationCardViewModel {
   sessionId: string;
   focusStoreSessionId: string;
@@ -17,7 +14,6 @@ export interface DelegationCardViewModel {
   agentDisplayName: string;
   taskTitle?: string;
   executionStatus: BadgeStatus;
-  taskStatus: DelegationTaskStatus;
   depth: number;
   startedAt: number;
   taskSummary: string;
@@ -75,18 +71,13 @@ export function buildDelegationCardViewModel({
   const agentType = link?.childAgentName ?? (parsedInput?.agent_type as string) ?? "unknown";
   const agentDisplayName = resolveAgentDisplayName(agentType, agentDescriptors);
   const taskTitle = link?.title ?? (parsedInput?.title as string);
-  const taskSummary = link?.resultReceipt?.result.summary
-    ?? (typeof parsedInput?.objective === "string" ? parsedInput.objective : "");
+  const taskSummary = typeof parsedInput?.objective === "string" ? parsedInput.objective : "";
   const executionStatus: BadgeStatus = link
     ? mapDelegationLinkStatusToBadge(link.status)
     : part.state === "error" ? "error"
       : part.state === "completed" ? "completed"
         : part.state === "pending" ? "pending"
           : "running";
-  const taskStatus: DelegationTaskStatus = link?.resultReceipt?.result.status
-    ?? (link
-      ? (link.status === "linked" || link.status === "running" || link.status === "waiting_for_human" || link.status === "cancelling" ? "pending" : "unavailable")
-      : (part.state === "running" || part.state === "pending" ? "pending" : "unavailable"));
   const depth = link?.depth ?? 1;
   const startedAt = link?.startedAt
     ?? ("startedAt" in part ? (part as { startedAt: number }).startedAt : part.createdAt);
@@ -98,7 +89,6 @@ export function buildDelegationCardViewModel({
     agentDisplayName,
     taskTitle,
     executionStatus,
-    taskStatus,
     depth,
     startedAt,
     taskSummary,

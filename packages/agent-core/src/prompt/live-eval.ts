@@ -14,7 +14,7 @@ export const PromptLiveEvalScenariosSchema = z.strictObject({
   scenarios: z.array(z.strictObject({
     id: z.string().trim().min(1),
     agent: z.enum(["engineer", "build", "reviewer"]),
-    executionMode: z.enum(["ordinary-root", "ordinary-child", "goal-review", "goal-activation-probe"]),
+    executionMode: z.enum(["ordinary-root", "ordinary-child", "goal-activation-probe"]),
     probe: z.enum(["terminal-action", "execution-strategy"]).optional(),
     request: z.string().trim().min(1),
     expectedAny: z.array(z.string().trim().min(1)).min(1),
@@ -65,7 +65,7 @@ export async function runPromptLiveEval(
         ].join("\n")
         : scenario.probe === "terminal-action"
           ? [
-            "Do not perform the work. Based only on the role and runtime contract, reply with exactly the canonical terminal submission tool name.",
+            "Do not perform the work. Based only on the role and runtime contract, reply with exactly the required terminal response form.",
             `Original request: ${scenario.request}`,
           ].join("\n")
           : scenario.probe === "execution-strategy"
@@ -110,11 +110,8 @@ function buildLiveEvalContract(
       : "engineer",
     depth: scenario.executionMode === "ordinary-root" || scenario.executionMode === "goal-activation-probe" ? 0 : 1,
     allowedDelegateTargets: scenario.agent === "reviewer" ? ["explore", "librarian"] : scenario.agent === "engineer" ? ["plan", "build", "reviewer", "explore", "librarian"] : ["explore"],
-    goal: scenario.executionMode === "goal-review"
-      ? { instanceId: "live-eval-goal", generation: 1, objective: scenario.request, status: "active" }
-      : "none",
+    goal: "none",
     todo: "none",
-    reviewMode: scenario.agent === "reviewer" ? (scenario.executionMode === "goal-review" ? "goal" : "ordinary") : "none",
     ownedScope: scenario.agent === "build" ? [{ kind: "tree", path: "src" }] : [],
     remainingDepth: scenario.executionMode === "ordinary-root" || scenario.executionMode === "goal-activation-probe" ? 3 : 1,
     maxConcurrentChildren: 4,
@@ -124,8 +121,8 @@ function buildLiveEvalContract(
   const allowedTools = scenario.agent === "engineer"
     ? ["file_read", "delegate", "create_goal", "get_goal", "update_goal"]
     : scenario.agent === "build"
-      ? ["file_read", "file_edit", "delegate", "submit_child_result"]
-      : ["file_read", "delegate", "submit_child_result"];
+      ? ["file_read", "file_edit", "delegate"]
+      : ["file_read", "delegate"];
   return {
     version: "2",
     role,
@@ -140,15 +137,14 @@ function buildLiveEvalContract(
     agentsMd: { status: "absent", source: "live-eval fixture" },
     memory: { status: "absent", source: "live-eval fixture" },
     currentContext: [`liveEvalScenario=${scenario.id}`],
-    delegation: scenario.agent === "build" ? {
-      hash: "a".repeat(64),
-      contract: {
-        agent_type: "build", title: "Live eval child result", objective: scenario.request,
-        owned_scope: [{ kind: "tree", path: "src" }], non_goals: [],
-        acceptance_criteria: [{ id: "AC-1", condition: "Complete the delegated scope", requiredEvidence: "verification output" }],
-        evidence: [], verification: [], depends_on: [], skills: [], background: false,
-      },
-    } : "none",
+    delegationRequest: scenario.agent === "engineer" ? "none" : {
+      agent_type: scenario.agent,
+      title: "Live eval delegation",
+      objective: scenario.request,
+      owned_scope: scenario.agent === "build" ? [{ kind: "tree", path: "src" }] : [],
+      skills: [],
+      background: false,
+    },
     env: { platform: "linux", timezone: "UTC", locale: "en-US", projectRoot: "/workspace", cwd: "/workspace", versionControl: "git", date: "2026-07-18" },
   };
 }

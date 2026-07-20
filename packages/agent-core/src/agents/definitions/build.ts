@@ -61,7 +61,6 @@ export const buildAgentDefinition = {
       TOOL_MEMORY_READ,
       TOOL_MEMORY_WRITE,
       ...SKILL_ACCESS_TOOLS,
-      "submit_child_result",
     ],
     delegateTargets: ["explore"],
   },

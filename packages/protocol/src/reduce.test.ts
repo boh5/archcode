@@ -68,7 +68,6 @@ function createProjection(overrides: Partial<SessionProjection> = {}): SessionPr
     todos: [],
     reminders: [],
     childSessionLinks: [],
-    childResultReceipts: [],
     stats: createEmptySessionStats(),
     executions: [],
     executionCount: 0,
@@ -633,25 +632,6 @@ describe("reduceStreamEvent", () => {
     ]);
 
     expect(state.childSessionLinks).toEqual([completed]);
-  });
-
-  test("stores one canonical child result receipt per execution", () => {
-    const receipt = {
-      executionId: "execution-child-1",
-      delegationContractHash: "a".repeat(64),
-      submittedAt: 210,
-      result: {
-        status: "completed" as const,
-        summary: "Done",
-        deliverables: [],
-        evidence: [],
-        criteria: [{ id: "ac-1", status: "passed" as const, evidenceRefs: ["diff:1"] }],
-        verification: [],
-        unresolved: [],
-      },
-    };
-    const state = applyEvents(createProjection(), [{ type: "child-result", receipt }]);
-    expect(state.childResultReceipts).toEqual([receipt]);
   });
 
   test("does not collapse links that share childSessionId but have different parent tool calls", () => {

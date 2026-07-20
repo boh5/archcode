@@ -160,7 +160,6 @@ describe("DelegationCard", () => {
     agentDisplayName: "Explore",
     taskTitle: "Find relevant files",
     executionStatus: "running" as const,
-    taskStatus: "pending" as const,
     depth: 1,
     startedAt: Date.now() - 60000,
     taskSummary: "Searching for relevant files",
@@ -195,23 +194,13 @@ describe("DelegationCard", () => {
     const result = DelegationCard(baseProps);
     const text = textContent(result);
     expect(text).toContain("Execution: Running");
-    expect(text).toContain("Task: Pending");
   });
 
-  test("renders execution completion independently from partial task completion", () => {
-    const result = DelegationCard({ ...baseProps, executionStatus: "completed", taskStatus: "partial" });
+  test("renders execution completion", () => {
+    const result = DelegationCard({ ...baseProps, executionStatus: "completed" });
     const text = textContent(result);
     expect(text).toContain("Execution: Completed");
-    expect(text).toContain("Task: Partial");
-    expect(text).not.toContain("done");
-  });
-
-  test("renders every canonical task result status and unavailable separately", () => {
-    for (const [taskStatus, label] of [["completed", "Completed"], ["partial", "Partial"], ["blocked", "Blocked"], ["failed", "Failed"], ["unavailable", "Unavailable"]] as const) {
-      const text = textContent(DelegationCard({ ...baseProps, executionStatus: "completed", taskStatus }));
-      expect(text).toContain(`Execution: Completed`);
-      expect(text).toContain(`Task: ${label}`);
-    }
+    expect(text).not.toContain("Task:");
   });
 
   test("renders depth indicator", () => {

@@ -379,8 +379,6 @@ export class ConfiguredAgent implements Agent {
         }
 
         if (result.cwdChanged !== undefined) return result;
-        if (result.executionControl !== undefined) return result;
-
         if (!this.hasUnconsumedTodoContinuation() || abort?.aborted) {
           return result;
         }
@@ -438,28 +436,12 @@ export class ConfiguredAgent implements Agent {
     readonly binding: ExecutionModelBinding;
   }): Promise<PromptContractV2> {
     const state = this.store.getState();
-    const rootState = state.rootSessionId === state.sessionId
-      ? state
-      : (await this.storeManager.getOrLoad(state.rootSessionId, this.projectRoot)).getState();
-    const rootGoal = rootState.goal;
-    const goalReviewerSessionId = rootGoal?.review?.phase === "review_running"
-      ? rootGoal.review.reviewerSessionId
-      : undefined;
-    const inGoalReview = goalReviewerSessionId !== undefined && (
-      state.sessionId === goalReviewerSessionId
-      || state.parentSessionId === goalReviewerSessionId
-    );
     const goal = state.sessionId === state.rootSessionId && this.definition.name === "engineer"
       ? state.goal
-      : inGoalReview
-        ? rootGoal
-        : undefined;
+      : undefined;
     const todo = this.definition.name === "shaper"
       ? await input.projectContext.todos.state.findByDiscussionSessionId(state.sessionId)
       : undefined;
-    const reviewMode: RuntimePromptEnvelope["reviewMode"] = this.definition.name === "reviewer"
-      ? (inGoalReview ? "goal" : "ordinary")
-      : (inGoalReview && (this.definition.name === "explore" || this.definition.name === "librarian") ? "goal" : "none");
     const parentAgentName = state.parentSessionId === undefined
       ? "none"
       : this.storeManager.get(state.parentSessionId, this.projectRoot)?.getState().agentName;
@@ -487,8 +469,7 @@ export class ConfiguredAgent implements Agent {
             status: goal.status satisfies GoalPromptStatus,
           },
       todo: todo === undefined ? "none" : { id: todo.id, mode: "bound" },
-      reviewMode,
-      ownedScope: state.delegationContract?.owned_scope ?? [],
+      ownedScope: state.delegationRequest?.owned_scope ?? [],
       remainingDepth: Math.max(0, (this.definition.childPolicy?.maxDepth ?? this.depth) - this.depth),
       maxConcurrentChildren: this.definition.childPolicy?.maxConcurrent ?? 0,
       mcp: Object.fromEntries((this.definition.mcpTools ?? []).map((server) => [server, mapMcpServerStatusForPrompt(input.mcpStatuses.get(server))])),
@@ -507,9 +488,7 @@ export class ConfiguredAgent implements Agent {
       agentsMd: this.agentsMd,
       memory: input.memory,
       currentContext: buildLifecycleCurrentContext(goal, todo),
-      delegation: state.delegationContract === undefined || state.delegationContractHash === undefined
-        ? "none"
-        : { contract: state.delegationContract, hash: state.delegationContractHash },
+      delegationRequest: state.delegationRequest ?? "none",
       env: input.env,
     };
   }

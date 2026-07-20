@@ -104,9 +104,11 @@ describe("background_output source pages", () => {
   test("pages through a huge latest assistant part at UTF-8 boundaries", async () => {
     const ctx = context();
     const store = child(ctx);
+    store.getState().append(testExecutionStart("huge"));
     setMessages(store, [{
       id: "assistant-huge",
       role: "assistant",
+      executionId: "huge",
       createdAt: 1,
       completedAt: 2,
       parts: [{
@@ -117,6 +119,7 @@ describe("background_output source pages", () => {
         completedAt: 2,
       }],
     }]);
+    store.getState().append({ type: "execution-end", status: "completed" });
 
     const { pages, nextInputs } = await readAllPages(input(store.getState().sessionId), ctx);
     expect(pages.length).toBeGreaterThan(2);
@@ -148,6 +151,43 @@ describe("background_output source pages", () => {
     const result = await executeBackgroundOutput(input(store.getState().sessionId), ctx);
     expect(sourceDraftText(result)).toContain("Snapshot: false (live Session)");
     expect(sourceDraftText(result)).toContain("not a final deliverable");
+  });
+
+  test("waiting Session output is explicitly non-final even though the execution is not running", async () => {
+    const ctx = context();
+    const store = child(ctx);
+    store.getState().append(testExecutionStart("waiting"));
+    store.getState().append({ type: "text-start" });
+    store.getState().append({ type: "text-delta", text: "I need one decision before continuing." });
+    store.getState().append({ type: "text-end" });
+    store.getState().append({
+      type: "execution-end",
+      status: "waiting_for_human",
+      blockedByHitlIds: ["hitl-1"],
+    });
+
+    const result = await executeBackgroundOutput(input(store.getState().sessionId), ctx);
+    expect(sourceDraftText(result)).toContain("Status: waiting_for_human");
+    expect(sourceDraftText(result)).toContain("I need one decision before continuing.");
+    expect(sourceDraftText(result)).toContain("waiting for human input");
+    expect(sourceDraftText(result)).toContain("not a final deliverable");
+  });
+
+  test("does not fall back to output from an older completed execution", async () => {
+    const ctx = context();
+    const store = child(ctx);
+    store.getState().append(testExecutionStart("old"));
+    store.getState().append({ type: "text-start" });
+    store.getState().append({ type: "text-delta", text: "VERDICT: APPROVED" });
+    store.getState().append({ type: "text-end" });
+    store.getState().append({ type: "execution-end", status: "completed" });
+    store.getState().append(testExecutionStart("latest"));
+    store.getState().append({ type: "execution-end", status: "failed", error: "boom" });
+
+    const result = await executeBackgroundOutput(input(store.getState().sessionId), ctx);
+    expect(sourceDraftText(result)).not.toContain("VERDICT: APPROVED");
+    expect(sourceDraftText(result)).toContain("No final output is available");
+    expect(sourceDraftText(result)).toContain("Execution error: boom");
   });
 
   test("hard-cuts legacy message cursors and limits from the strict schema", () => {

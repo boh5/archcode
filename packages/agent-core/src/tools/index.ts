@@ -6,7 +6,6 @@ export type {
   RegistryExecutionOutcome,
   ToolBlockedRequest,
   ToolExecutionContext,
-  ToolExecutionControl,
   BeforeHook,
   AfterHook,
   ToolDescriptor,

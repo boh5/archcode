@@ -5,7 +5,7 @@ import { toDurableToolInput } from "../../store/durable-tool-input";
 import type { ExecutionEndEvent, SessionStoreState } from "../../store/types";
 import type { SessionToolManualInspectionReason } from "../../store/types";
 import { createToolExecutionContext } from "../../tools/index";
-import type { RawToolResult, ToolCallLike, ToolExecutionContext, ToolExecutionControl } from "../../tools/index";
+import type { RawToolResult, ToolCallLike, ToolExecutionContext } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
 import { createToolErrorResult } from "../../tools/errors";
 import { DOOM_LOOP_MESSAGE, type NormalizedToolCall, type QueryLoopOptions, type QueryLoopResult } from "./types";
@@ -15,13 +15,6 @@ import { redactSensitiveValue, sanitizeProviderError, type SensitiveTextRedactor
 import { parseRetryAfter, realRetryScheduler, type RetryScheduler } from "../../llm/retry";
 import type { BeforeModelBuildContext, BeforeModelCallContext } from "./loop-hooks";
 import { SessionToolBatchScheduler, type SessionToolBatchAdvanceResult } from "../../execution/session-tool-batch-scheduler";
-import { TOOL_SUBMIT_CHILD_RESULT } from "@archcode/protocol";
-import {
-  countStructuredResultFailures,
-  createStructuredResultCorrectionGate,
-  isStructuredResultSubmission,
-  type StructuredResultSubmission,
-} from "../../tools/structured-result-correction";
 
 const DEFAULT_MAX_STEPS = 50;
 const ZERO_OUTPUT_SHORT_ATTEMPTS = 3;
@@ -95,7 +88,6 @@ type ToolCallArray = Array<{
 
 interface ToolBatchExecutionResult {
   readonly sessionCwdChanged: boolean;
-  readonly executionControl?: ToolExecutionControl;
   readonly waitingForHuman?: boolean;
   readonly manualInspectionReason?: string;
 }
@@ -250,16 +242,6 @@ export async function runQueryLoop(
   let lastRecoveryAttempt = 0;
   let continuationClaimed = false;
   const doomTracker = new DoomTracker();
-  const initialState = store.getState();
-  const structuredResultSubmission: StructuredResultSubmission | undefined = allowedTools.includes(TOOL_SUBMIT_CHILD_RESULT)
-    ? "submit_child_result"
-    : undefined;
-  const structuredResultCorrection = structuredResultSubmission === undefined
-    ? undefined
-    : createStructuredResultCorrectionGate(
-      countStructuredResultFailures(initialState, structuredResultSubmission),
-      structuredResultSubmission,
-    );
   const createContext = async (toolCall: ToolCallLike, step: number): Promise<ToolExecutionContext> => createToolExecutionContext({
     store,
     toolName: toolCall.toolName,
@@ -284,14 +266,6 @@ export async function runQueryLoop(
     ...(options.acquireSessionCwdTransition === undefined ? {} : { acquireSessionCwdTransition: options.acquireSessionCwdTransition }),
     agentName: options.agentName,
     ...(currentDepth === undefined ? {} : { currentDepth }),
-    ...(structuredResultCorrection !== undefined
-      && isStructuredResultSubmission(
-        toolCall.toolName,
-        toolCall.input,
-        structuredResultCorrection.submission,
-      )
-      ? { structuredResultCorrection }
-      : {}),
     onInputResolved(redactedInput) {
       store.getState().append({ type: "tool-input-resolved", toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, input: redactedInput });
     },
@@ -305,15 +279,6 @@ export async function runQueryLoop(
         destructive: attempt.destructive,
       });
       await options.storeManager.flushSession(sessionId, options.projectContext.project.workspaceRoot);
-      if (options.sessionGoalService !== undefined && (
-        SOURCE_MUTATING_TOOLS.has(attempt.toolName)
-      )) {
-        await options.sessionGoalService.recordSourceMutation({
-          workspaceRoot: options.projectContext.project.workspaceRoot,
-          sessionId: store.getState().rootSessionId,
-          authority: { kind: "runtime" },
-        });
-      }
     },
   });
   const toolBatchScheduler = new SessionToolBatchScheduler({
@@ -544,20 +509,6 @@ export async function runQueryLoop(
           },
         };
       }
-      if (toolExecution.executionControl !== undefined) {
-        runEndStatus = executionEndStatusFromControl(toolExecution.executionControl);
-        runEndError = executionErrorFromControl(toolExecution.executionControl);
-        if (runEndError !== undefined) {
-          store.getState().append({ type: "execution-error", step: steps, error: runEndError });
-        }
-        return {
-          text: lastText,
-          steps,
-          status: runEndStatus,
-          ...(runEndError === undefined ? {} : { error: runEndError }),
-          executionControl: toolExecution.executionControl,
-        };
-      }
       if (toolExecution.waitingForHuman) {
         runEndStatus = "waiting_for_human";
         return { text: lastText, steps, status: runEndStatus };
@@ -623,14 +574,6 @@ export async function runQueryLoop(
     await runHooks("afterLoopEnd", afterLoopEnd, { store, binding, logger, abort, loopEndStatus: runEndStatus, projectContext: options.projectContext }, logger, { sessionId, agentName });
   }
 }
-
-const SOURCE_MUTATING_TOOLS = new Set([
-  "file_write",
-  "file_edit",
-  "ast_grep_replace",
-  "worktree_enter",
-  "worktree_exit",
-]);
 
 async function runHooks<T>(
   phase: string,
@@ -1049,7 +992,6 @@ function toolBatchExecutionResult(result: SessionToolBatchAdvanceResult): ToolBa
   }
   return {
     sessionCwdChanged: result.sessionCwdChanged,
-    ...(result.executionControl === undefined ? {} : { executionControl: result.executionControl }),
     ...(result.status === "waiting_for_human" ? { waitingForHuman: true } : {}),
   };
 }
@@ -1072,36 +1014,10 @@ function finishToolBatchAdvance(
       result: { text, steps, status: "completed", cwdChanged: { previousCwd: executionCwd, cwd: store.getState().cwd } },
     };
   }
-  if (result.executionControl !== undefined) {
-    const error = executionErrorFromControl(result.executionControl);
-    if (error !== undefined) {
-      store.getState().append({ type: "execution-error", step: steps, error });
-    }
-    return {
-      runEndStatus: executionEndStatusFromControl(result.executionControl),
-      result: {
-        text,
-        steps,
-        status: executionEndStatusFromControl(result.executionControl),
-        ...(error === undefined ? {} : { error }),
-        executionControl: result.executionControl,
-      },
-    };
-  }
   if (result.status === "waiting_for_human") {
     return { runEndStatus: "waiting_for_human", result: { text, steps, status: "waiting_for_human" } };
   }
   return undefined;
-}
-
-function executionEndStatusFromControl(control: ToolExecutionControl): ExecutionEndEvent["status"] {
-  if (control.action === "complete_execution" || control.action === "request_goal_review") return "completed";
-  if (control.action === "fail_execution") return "failed";
-  return "interrupted";
-}
-
-function executionErrorFromControl(control: ToolExecutionControl): string | undefined {
-  return control.action === "fail_execution" ? control.error : undefined;
 }
 
 function manualInspectionMessage(reason: SessionToolManualInspectionReason): string {

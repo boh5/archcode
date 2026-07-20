@@ -222,7 +222,7 @@ describe("agentDefinitions", () => {
     expect(shaperAgentDefinition.hooks.memoryExtraction).toBe(false);
     expect(shaperAgentDefinition.hooks.memoryConsolidation).toBe(false);
     expect(shaperAgentDefinition.roleContract.completionAuthority).toEqual(["bound-todo"]);
-    expect(shaperAgentDefinition.roleContract.allowedTransitions.default).toEqual(["todo.update"]);
+    expect(shaperAgentDefinition.roleContract.allowedTransitions).toEqual(["todo.update"]);
     expect(shaperAgentDefinition.roleContract.forbiddenBehaviors.join(" ")).toContain("Do not implement");
   });
 
@@ -287,11 +287,12 @@ describe("agentDefinitions", () => {
     expect(librarianAgentDefinition.mcpTools).toEqual(["context7", "grep.app", "exa"]);
   });
 
-  test("delegated roles expose the canonical child result submission tool", () => {
-    const withSubmit = agentDefinitions
-      .filter((definition) => (definition.tools.tools as readonly string[]).includes("submit_child_result"))
-      .map((definition) => definition.name);
-    expect(withSubmit).toEqual(["plan", "build", "reviewer", "explore", "librarian"]);
+  test("delegated roles finish with normal final responses", () => {
+    for (const definition of agentDefinitions) {
+      expect(definition.tools.tools).not.toContain("submit_child_result");
+      expect(JSON.stringify(definition.roleContract)).not.toContain("ChildResult");
+    }
+    expect(reviewerAgentDefinition.roleContract.requiredBehaviors.join(" ")).toContain("VERDICT: APPROVED");
   });
 
   test("ask_user belongs to interactive working and shaping roles", () => {

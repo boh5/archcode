@@ -34,12 +34,7 @@ function delegateV2(overrides: Record<string, unknown> = {}): Record<string, unk
     agent_type: "explore",
     title: "Explore codebase",
     objective: "Inspect the source",
-    owned_scope: [{ kind: "tree", path: "src" }],
-    non_goals: [],
-    acceptance_criteria: [{ id: "ac-1", condition: "Map the code", requiredEvidence: "file refs" }],
-    evidence: [],
-    verification: [],
-    depends_on: [],
+    owned_scope: [],
     skills: [],
     background: false,
     ...overrides,
@@ -118,7 +113,7 @@ describe("getToolSummary", () => {
   });
 
   test("resume_session shows session_id with instruction secondary", () => {
-    const result = getToolSummary("resume_session", { session_id: "ses_abc123", instruction: "Continue the investigation", new_evidence: [], background: false });
+    const result = getToolSummary("resume_session", { session_id: "ses_abc123", instruction: "Continue the investigation", background: false });
     expect(result.primary).toBe("ses_abc123");
     expect(result.secondary).toBe("Continue the investigation");
   });
@@ -272,12 +267,7 @@ describe("formatToolInputDetails", () => {
       agent_type: "explore",
       title: "Explore codebase",
       objective: "Inspect the source",
-      owned_scope: "[1 items]",
-      non_goals: "[]",
-      acceptance_criteria: "[1 items]",
-      evidence: "[]",
-      verification: "[]",
-      depends_on: "[]",
+      owned_scope: "[]",
       skills: "[]",
       background: "false",
     });
@@ -288,10 +278,10 @@ describe("formatToolInputDetails", () => {
 
   test("resume and background details reject all retired display fields", () => {
     const resume = formatToolInputDetails("resume_session", {
-      session_id: "ses_abc123", instruction: "Continue", new_evidence: [], background: false,
+      session_id: "ses_abc123", instruction: "Continue", background: false,
       task: "removed", context: "removed",
     });
-    expect(resume).toEqual({ session_id: "ses_abc123", instruction: "Continue", new_evidence: "[]", background: "false" });
+    expect(resume).toEqual({ session_id: "ses_abc123", instruction: "Continue", background: "false" });
 
     const background = formatToolInputDetails("background_output", {
       session_id: "ses_abc123", block: true, timeout_ms: 1000,
@@ -498,14 +488,16 @@ describe("getToolInvalidInputMessage", () => {
   test("delegate validates the complete required V2 contract", () => {
     expect(getToolInvalidInputMessage("delegate", delegateV2({ objective: undefined }))).toBe("Invalid delegate input: missing required objective");
     expect(getToolInvalidInputMessage("delegate", delegateV2({ owned_scope: undefined }))).toBe("Invalid delegate input: missing required owned_scope");
-    expect(getToolInvalidInputMessage("delegate", delegateV2({ acceptance_criteria: undefined }))).toBe("Invalid delegate input: missing required acceptance_criteria");
+    expect(getToolInvalidInputMessage("delegate", delegateV2({ skills: undefined }))).toBe("Invalid delegate input: missing required skills");
     expect(getToolInvalidInputMessage("delegate", delegateV2({ background: undefined }))).toBe("Invalid delegate input: missing required background");
+    expect(getToolInvalidInputMessage("delegate", delegateV2({ evidence: [] }))).toBe("Invalid delegate input: unexpected field evidence");
   });
 
-  test("resume_session validates session_id, instruction, and new_evidence", () => {
-    expect(getToolInvalidInputMessage("resume_session", { instruction: "Continue", new_evidence: [] })).toBe("Invalid resume_session input: missing required session_id");
-    expect(getToolInvalidInputMessage("resume_session", { session_id: "ses_abc123", new_evidence: [] })).toBe("Invalid resume_session input: missing required instruction");
-    expect(getToolInvalidInputMessage("resume_session", { session_id: "ses_abc123", instruction: "Continue" })).toBe("Invalid resume_session input: missing required new_evidence");
+  test("resume_session validates only session_id, instruction, and background", () => {
+    expect(getToolInvalidInputMessage("resume_session", { instruction: "Continue", background: false })).toBe("Invalid resume_session input: missing required session_id");
+    expect(getToolInvalidInputMessage("resume_session", { session_id: "ses_abc123", background: false })).toBe("Invalid resume_session input: missing required instruction");
+    expect(getToolInvalidInputMessage("resume_session", { session_id: "ses_abc123", instruction: "Continue" })).toBe("Invalid resume_session input: missing required background");
+    expect(getToolInvalidInputMessage("resume_session", { session_id: "ses_abc123", instruction: "Continue", background: false, new_evidence: [] })).toBe("Invalid resume_session input: unexpected field new_evidence");
   });
 
   test("background_output validates canonical session_id", () => {

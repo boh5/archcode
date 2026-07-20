@@ -132,7 +132,7 @@ function toDashboardGoalView(goal: SessionGoal): DashboardSessionGoalView {
     status: goal.status,
     tokensUsed: goal.usage.tokens.totalTokens,
     timeUsedSeconds: Math.round(goal.usage.executionTimeMs / 1_000),
-    latestReason: goal.blockedReason ?? goal.lastReviewReceipt?.summary ?? goal.lastEvaluator?.reason,
+    latestReason: goal.blockedReason,
   };
 }
 

@@ -13,7 +13,6 @@ import type { SkillService } from "../skills";
 import type {
   RawToolResult,
   ToolBlockedRequest,
-  ToolExecutionControl,
   ToolOutputPolicy,
 } from "../tool-output/types";
 import type { ToolOutputCapture } from "../tool-output/capture";
@@ -24,7 +23,6 @@ export type {
   RawToolResult,
   RegistryExecutionOutcome,
   ToolBlockedRequest,
-  ToolExecutionControl,
   ToolExecutionSidecar,
   ToolOutputPolicy,
 } from "../tool-output/types";
@@ -45,20 +43,11 @@ export interface ToolAttemptMetadata {
   destructive: boolean;
 }
 
-export type SessionGoalFreshUserAction =
-  | "create"
-  | "edit"
-  | "pause"
-  | "resume"
-  | "clear"
-  | "set_budget";
-
 export interface ConsumeFreshUserInputRequest {
   readonly workspaceRoot: string;
   readonly sessionId: string;
   readonly rootSessionId: string;
   readonly toolCallId: string;
-  readonly action: SessionGoalFreshUserAction;
   /** Runs synchronously inside the one-use consumption critical section. */
   readonly validate?: (grant: FreshUserInputGrant) => void;
 }
@@ -71,10 +60,6 @@ export interface FreshUserInputGrant {
   readonly text: string;
 }
 
-export interface StructuredResultCorrectionGate {
-  readonly submission: "submit_child_result";
-  recordFailure(error: Error): RawToolResult;
-}
 export interface ToolExecutionContext {
   store: StoreApi<SessionStoreState>;
   storeManager: SessionStoreManager;
@@ -115,8 +100,6 @@ export interface ToolExecutionContext {
   onInputResolved?: (redactedInput: unknown) => void;
   /** Called immediately before an effectful tool's execute() can perform side effects. */
   onToolAttempt?: (attempt: ToolAttemptMetadata) => MaybePromise<void>;
-  /** Execution-scoped correction gate for the canonical structured result submission. */
-  structuredResultCorrection?: StructuredResultCorrectionGate;
 }
 
 type ToolExecutionContextInput = ToolExecutionContext;
@@ -152,7 +135,6 @@ export type PermissionDecision = {
   source?: "builtin-policy" | "tool-guard" | "project-approval" | "mcp";
   ruleId?: string;
   display?: string;
-  executionControl?: ToolExecutionControl;
 };
 
 export type ToolPermission = (

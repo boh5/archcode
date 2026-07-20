@@ -19,8 +19,7 @@ import { setLlmAdapterForTest } from "../llm/adapter";
 import { DELEGATION_CORE_TOOLS } from "./constants";
 import type { AgentDefinition } from "./factory-types";
 import type { ToolExecutionContext } from "../tools/types";
-import { hashDelegationContract } from "../delegation/contract";
-import type { DelegationContract } from "@archcode/protocol";
+import type { DelegationRequest } from "@archcode/protocol";
 
 const TEST_WORKSPACE_ROOT = join(import.meta.dir, "__test_tmp__", `session-agent-manager-${crypto.randomUUID()}`);
 const registryFixtures: TestToolRegistryFixture[] = [];
@@ -124,7 +123,7 @@ const identityEngineerDefinition = {
 const identityExploreDefinition = {
   ...exploreAgentDefinition,
   tools: {
-    tools: ["file_read", "identity_probe", "submit_child_result"],
+    tools: ["file_read", "identity_probe"],
   },
   hooks: identityEngineerDefinition.hooks,
   includeMemoryInPrompt: false,
@@ -162,7 +161,6 @@ function createIdentityManager(
   const toolRegistry = createTestRegistry([
     identityProbe,
     makeTool("file_read"),
-    makeTool("submit_child_result"),
     ...DELEGATION_CORE_TOOLS.map(makeTool),
   ]);
   const skillService = new SkillService({
@@ -300,20 +298,11 @@ describe("SessionAgentManager", () => {
     const sessionIds = Array.from({ length: 2 }, () => crypto.randomUUID());
     const rootSessionId = sessionIds[0]!;
 
-    const childContract: DelegationContract = {
+    const childRequest: DelegationRequest = {
       agent_type: "explore",
       title: "Probe durable child identity",
       objective: "Verify that child identity survives cache and process restart.",
       owned_scope: [],
-      non_goals: [],
-      acceptance_criteria: [{
-        id: "identity",
-        condition: "The reconstructed child keeps the same depth, tools, and Skill.",
-        requiredEvidence: "Observed execution context and compiled Prompt",
-      }],
-      evidence: [],
-      verification: [],
-      depends_on: [],
       skills: [IDENTITY_SKILL_NAME],
       background: false,
     };
@@ -325,8 +314,7 @@ describe("SessionAgentManager", () => {
         rootSessionId,
         ...(depth === 0 ? {} : {
           parentSessionId: rootSessionId,
-          delegationContract: childContract,
-          delegationContractHash: hashDelegationContract(childContract),
+          delegationRequest: childRequest,
         }),
       });
       await storeManager.flushSession(sessionId, workspaceRoot);
@@ -399,7 +387,7 @@ describe("SessionAgentManager", () => {
         depth: expectedDepth,
         allowedTools: expectedDepth === 0
           ? ["file_read", ...DELEGATION_CORE_TOOLS, "identity_probe"].sort()
-          : ["file_read", "identity_probe", "submit_child_result"].sort(),
+          : ["file_read", "identity_probe"].sort(),
         delegateTargets: expectedDepth === 0 ? ["explore"] : [],
         activeSkillNames: [IDENTITY_SKILL_NAME],
         hasActiveSkillBody: true,

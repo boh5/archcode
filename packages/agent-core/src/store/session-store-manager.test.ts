@@ -1,14 +1,13 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { createEmptySessionStats, type CompressionBlockSnapshot, type DelegationContract, type FinalizedToolResult } from "@archcode/protocol";
+import { createEmptySessionStats, type CompressionBlockSnapshot, type DelegationRequest, type FinalizedToolResult } from "@archcode/protocol";
 import { createEmptyCompressionState } from "../compression";
 import { SessionStoreManager } from "./session-store-manager";
 import { NotRootSessionError, SessionInitialPersistenceError, SessionTreeIntegrityError } from "./errors";
 import { SessionFileIdentityConflictError } from "./session-store-manager";
 import { sessionFileInternals } from "./helpers";
 import { silentLogger } from "../logger";
-import { hashDelegationContract } from "../delegation/contract";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "session-store-manager", crypto.randomUUID());
 const TEST_REQUESTED_MODEL_SELECTION = { mode: "agent_default" as const, selection: { model: "test:model" } };
@@ -73,16 +72,11 @@ describe("SessionStoreManager", () => {
     id: string,
     overrides: Partial<PersistedSessionState> = {},
   ): PersistedSessionState {
-    const delegationContract: DelegationContract = {
+    const delegationRequest: DelegationRequest = {
       agent_type: "explore",
       title: "Test child",
       objective: "Exercise persisted child identity",
       owned_scope: [],
-      non_goals: [],
-      acceptance_criteria: [{ id: "ac-1", condition: "Fixture works", requiredEvidence: "Test result" }],
-      evidence: [],
-      verification: [],
-      depends_on: [],
       skills: [],
       background: false,
     };
@@ -91,7 +85,7 @@ describe("SessionStoreManager", () => {
       createdAt: 1000,
       updatedAt: 1000,
       cwd: TMP_DIR,
-      agentName: "engineer",
+      agentName: overrides.parentSessionId === undefined ? "engineer" : "explore",
       activeSkillNames: [],
       modelSelection: { revision: 0 },
       title: null,
@@ -108,8 +102,7 @@ describe("SessionStoreManager", () => {
     toolBatches: [],
       rootSessionId: id,
       ...(overrides.parentSessionId === undefined ? {} : {
-        delegationContract,
-        delegationContractHash: hashDelegationContract(delegationContract),
+        delegationRequest,
       }),
       ...overrides,
     };

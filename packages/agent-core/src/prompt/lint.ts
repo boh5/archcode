@@ -22,7 +22,7 @@ export function lintRoleContract(
 
   if (role.name !== runtime.agentName) violations.push("role identity conflicts with runtime agent");
 
-  for (const capability of resolveRequiredCapabilities(role, runtime)) {
+  for (const capability of role.requiredCapabilities) {
     if (!visible.has(capability)) violations.push(`required capability is not visible: ${capability}`);
   }
   for (const capability of role.forbiddenCapabilities) {
@@ -34,7 +34,7 @@ export function lintRoleContract(
   if (runtime.allowedDelegateTargets.length > 0 && !visible.has("delegate")) {
     violations.push("runtime exposes delegate targets without the delegate capability");
   }
-  for (const transition of resolveAllowedTransitions(role, runtime)) {
+  for (const transition of role.allowedTransitions) {
     const capability = TRANSITION_CAPABILITIES[transition];
     if (!visible.has(capability)) violations.push(`transition has no visible runtime action: ${transition}`);
   }
@@ -54,29 +54,10 @@ export function lintGuidanceAuthority(contract: Pick<PromptContractV2, "guidance
   if (violations.length > 0) throw new PromptContractLintError(violations);
 }
 
-export function resolveRequiredCapabilities(role: RoleContract, runtime: RuntimePromptEnvelope): readonly CapabilityRef[] {
-  if (role.name !== "reviewer") return role.requiredCapabilities;
-  const required = runtime.reviewMode === "goal"
-    ? role.requiredCapabilities.filter((capability) => capability !== "delegate")
-    : role.requiredCapabilities;
-  return [...required, "submit_child_result"];
-}
-
-export function resolveCompletionAuthorities(role: RoleContract, runtime: RuntimePromptEnvelope): readonly CompletionAuthority[] {
-  if (role.name !== "reviewer") return role.completionAuthority;
-  return [runtime.reviewMode === "goal" ? "goal-reviewer" : "ordinary-reviewer"];
-}
-
-export function resolveAllowedTransitions(role: RoleContract, runtime: RuntimePromptEnvelope): readonly TransitionRef[] {
-  if (runtime.reviewMode === "ordinary") return role.allowedTransitions.ordinaryReview;
-  if (runtime.reviewMode === "goal") return role.allowedTransitions.goalReview;
-  return role.allowedTransitions.default;
-}
-
 function completionAuthorityFor(runtime: RuntimePromptEnvelope): CompletionAuthority {
   if (runtime.agentName === "engineer") return "ordinary-session";
   if (runtime.agentName === "shaper") return "bound-todo";
-  if (runtime.agentName === "reviewer") return runtime.reviewMode === "goal" ? "goal-reviewer" : "ordinary-reviewer";
+  if (runtime.agentName === "reviewer") return "reviewer";
   return "delegated-scope";
 }
 
@@ -97,33 +78,25 @@ export function assertLegalExecutionMode(runtime: RuntimePromptEnvelope): void {
   if (runtime.agentName !== "shaper" && runtime.todo !== "none") reject("only Shaper may have a bound Todo");
 
   switch (runtime.agentName) {
-    case "engineer": if (!isRoot || runtime.reviewMode !== "none") reject("Engineer requires a root Session"); break;
-    case "shaper": if (!isRoot || hasGoal || runtime.reviewMode !== "none" || runtime.todo === "none") reject("Shaper requires an ordinary bound Todo root"); break;
+    case "engineer": if (!isRoot) reject("Engineer requires a root Session"); break;
+    case "shaper": if (!isRoot || hasGoal || runtime.todo === "none") reject("Shaper requires an ordinary bound Todo root"); break;
     case "plan":
     case "build": {
-      if (isRoot || hasGoal || runtime.reviewMode !== "none" || runtime.parentAgentName !== "engineer") reject(`${runtime.agentName} requires an Engineer parent and an ordinary DelegationContract`);
+      if (isRoot || hasGoal || runtime.parentAgentName !== "engineer") reject(`${runtime.agentName} requires an Engineer parent and a DelegationRequest`);
       break;
     }
     case "reviewer": {
-      const legalMode = runtime.parentAgentName === "engineer" && (
-        (hasGoal && runtime.reviewMode === "goal")
-        || (!hasGoal && runtime.reviewMode === "ordinary")
-      );
-      if (isRoot || !legalMode) reject("Reviewer mode or parent does not match runtime review state");
+      if (isRoot || hasGoal || runtime.parentAgentName !== "engineer") reject("Reviewer requires an Engineer parent and a DelegationRequest");
       break;
     }
     case "explore": {
-      const legalParent = !hasGoal
-        ? runtime.reviewMode === "none" && ["engineer", "plan", "build", "reviewer", "shaper"].includes(runtime.parentAgentName)
-        : runtime.reviewMode === "goal" && runtime.parentAgentName === "reviewer";
-      if (isRoot || !legalParent) reject("Explore requires a legal parent role and lifecycle state");
+      const legalParent = !hasGoal && ["engineer", "plan", "build", "reviewer", "shaper"].includes(runtime.parentAgentName);
+      if (isRoot || !legalParent) reject("Explore requires a legal parent role");
       break;
     }
     case "librarian": {
-      const legalParent = !hasGoal
-        ? runtime.reviewMode === "none" && ["engineer", "plan", "reviewer", "shaper"].includes(runtime.parentAgentName)
-        : runtime.reviewMode === "goal" && runtime.parentAgentName === "reviewer";
-      if (isRoot || !legalParent) reject("Librarian requires a legal parent role and lifecycle state");
+      const legalParent = !hasGoal && ["engineer", "plan", "reviewer", "shaper"].includes(runtime.parentAgentName);
+      if (isRoot || !legalParent) reject("Librarian requires a legal parent role");
       break;
     }
   }

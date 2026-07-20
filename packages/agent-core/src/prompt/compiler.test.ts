@@ -30,7 +30,6 @@ function runtime(overrides: Partial<RuntimePromptEnvelope> = {}): RuntimePromptE
     allowedDelegateTargets: ["plan", "build", "reviewer", "explore", "librarian"],
     goal: "none",
     todo: "none",
-    reviewMode: "none",
     ownedScope: [],
     remainingDepth: 3,
     maxConcurrentChildren: 4,
@@ -72,7 +71,7 @@ function contract(overrides: Partial<PromptContractV2> = {}): PromptContractV2 {
     agentsMd: { status: "absent", source: "/workspace/AGENTS.md" },
     memory: { status: "absent", source: "agent-definition" },
     currentContext: [],
-    delegation: "none",
+    delegationRequest: "none",
     env: {
       platform: "darwin",
       timezone: "Asia/Shanghai",
@@ -118,40 +117,58 @@ describe("PromptContractCompiler", () => {
     expect(result.prompt).toContain(`Instance: ${ACTIVE_GOAL.instanceId}`);
     expect(result.prompt).toContain(`Generation: ${ACTIVE_GOAL.generation}`);
     expect(result.prompt).toContain(`Objective: ${ACTIVE_GOAL.objective}`);
-    expect(result.prompt).toContain("update_goal with status=complete only to request independent review");
+    expect(result.prompt).toContain("delegate an independent Reviewer");
+    expect(result.prompt).toContain("review_session_id");
     expect(result.prompt).toContain("Do not self-review");
     expect(result.prompt).not.toContain("goal_manage");
     expect(result.trace.sections.filter(({ name }) => name === "Active Goal")).toHaveLength(1);
   });
 
-  test("keeps Goal completion Reviewer on canonical ChildResult without transition authority", async () => {
+  test("gives every Reviewer one normal final verdict contract", async () => {
     const result = await new PromptContractCompiler().compile(contract({
       role: reviewerRoleContract,
-      runtime: child("reviewer", "engineer", {
-        reviewMode: "goal",
-        goal: ACTIVE_GOAL,
-        allowedDelegateTargets: [],
-      }),
-      allowedTools: ["file_read", "submit_child_result"],
+      runtime: child("reviewer", "engineer", { allowedDelegateTargets: ["explore", "librarian"] }),
+      allowedTools: ["file_read", "delegate"],
     }));
 
-    expect(result.prompt).toContain("Completion authority: goal-reviewer");
-    expect(result.prompt).toContain("submit_child_result");
-    expect(result.prompt).toContain("Runtime alone decides whether that evidence completes the Goal");
+    expect(result.prompt).toContain("Completion authority: reviewer");
+    expect(result.prompt).toContain("VERDICT: APPROVED");
+    expect(result.prompt).toContain("VERDICT: CHANGES_REQUESTED");
+    expect(result.prompt).not.toContain("submit_child_result");
     expect(result.prompt).not.toContain("## Active Goal");
-    expect(result.prompt).not.toContain("goal_manage");
+  });
+
+  test("renders only the strict DelegationRequest fields", async () => {
+    const result = await new PromptContractCompiler().compile(contract({
+      role: buildRoleContract,
+      runtime: child("build", "engineer", { ownedScope: [{ kind: "tree", path: "src" }], allowedDelegateTargets: ["explore"] }),
+      allowedTools: ["file_read", "file_edit", "delegate"],
+      delegationRequest: {
+        agent_type: "build",
+        title: "Implement parser",
+        objective: "Implement the parser and verify the change.",
+        owned_scope: [{ kind: "tree", path: "src" }],
+        skills: [],
+        background: true,
+      },
+    }));
+
+    expect(result.prompt).toContain("Delegation title: Implement parser");
+    expect(result.prompt).toContain("Delegation objective: Implement the parser and verify the change.");
+    expect(result.prompt).toContain("Background: true");
+    expect(result.prompt).not.toContain("contract hash");
+    expect(result.prompt).not.toContain("Acceptance criteria:");
   });
 
   test("compiles every formal Agent in a legal mode", async () => {
     const cases: Array<Pick<PromptContractV2, "role" | "allowedTools"> & { runtime: RuntimePromptEnvelope }> = [
       { role: engineerRoleContract, allowedTools: ["file_read", "delegate"], runtime: runtime() },
       { role: engineerRoleContract, allowedTools: ["file_read", "delegate"], runtime: runtime({ goal: ACTIVE_GOAL }) },
-      { role: planRoleContract, allowedTools: ["file_read", "delegate", "submit_child_result"], runtime: child("plan", "engineer", { allowedDelegateTargets: ["explore", "librarian"] }) },
-      { role: buildRoleContract, allowedTools: ["file_read", "file_edit", "delegate", "submit_child_result"], runtime: child("build", "engineer", { allowedDelegateTargets: ["explore"] }) },
-      { role: reviewerRoleContract, allowedTools: ["file_read", "delegate", "submit_child_result"], runtime: child("reviewer", "engineer", { reviewMode: "ordinary", allowedDelegateTargets: ["explore", "librarian"] }) },
-      { role: reviewerRoleContract, allowedTools: ["file_read", "submit_child_result"], runtime: child("reviewer", "engineer", { reviewMode: "goal", goal: ACTIVE_GOAL, allowedDelegateTargets: [] }) },
-      { role: exploreRoleContract, allowedTools: ["file_read", "submit_child_result"], runtime: child("explore", "engineer") },
-      { role: librarianRoleContract, allowedTools: ["web_fetch", "submit_child_result"], runtime: child("librarian", "engineer") },
+      { role: planRoleContract, allowedTools: ["file_read", "delegate"], runtime: child("plan", "engineer", { allowedDelegateTargets: ["explore", "librarian"] }) },
+      { role: buildRoleContract, allowedTools: ["file_read", "file_edit", "delegate"], runtime: child("build", "engineer", { allowedDelegateTargets: ["explore"] }) },
+      { role: reviewerRoleContract, allowedTools: ["file_read", "delegate"], runtime: child("reviewer", "engineer", { allowedDelegateTargets: ["explore", "librarian"] }) },
+      { role: exploreRoleContract, allowedTools: ["file_read"], runtime: child("explore", "engineer") },
+      { role: librarianRoleContract, allowedTools: ["web_fetch"], runtime: child("librarian", "engineer") },
       { role: shaperRoleContract, allowedTools: ["project_todo_update", "delegate"], runtime: runtime({ agentName: "shaper", todo: { id: "todo-1", mode: "bound" }, allowedDelegateTargets: ["explore", "librarian"] }) },
     ];
 
@@ -164,8 +181,8 @@ describe("PromptContractCompiler", () => {
   test("rejects illegal role/runtime combinations", async () => {
     await expect(new PromptContractCompiler().compile(contract({
       role: reviewerRoleContract,
-      runtime: runtime({ agentName: "reviewer", reviewMode: "ordinary" }),
-      allowedTools: ["file_read", "delegate", "submit_child_result"],
+      runtime: runtime({ agentName: "reviewer" }),
+      allowedTools: ["file_read", "delegate"],
     }))).rejects.toBeInstanceOf(IllegalPromptExecutionModeError);
   });
 

@@ -24,7 +24,6 @@ import {
   DestructiveToolPermissionError,
   DuplicateToolError,
 } from "./types";
-import { isStructuredResultSubmission } from "./structured-result-correction";
 
 export interface ToolRegistryOptions {
   readonly finalizer: ToolOutputFinalizer;
@@ -363,21 +362,6 @@ export class ToolRegistry {
     }
     const parsed = descriptor.inputSchema.safeParse(candidate);
     if (!parsed.success) {
-      if (
-        context.structuredResultCorrection !== undefined
-        && isStructuredResultSubmission(
-          descriptor.name,
-          candidate,
-          context.structuredResultCorrection.submission,
-        )
-      ) {
-        const error = new Error(parsed.error.message);
-        error.name = "StructuredResultSchemaError";
-        return {
-          kind: "error",
-          raw: context.structuredResultCorrection.recordFailure(error),
-        };
-      }
       return {
         kind: "error",
         raw: createToolErrorResult({
@@ -640,9 +624,7 @@ function denyResult(decision: PermissionDecision, context: ToolExecutionContext)
     code,
     message: decision.reason ?? `Tool "${context.toolName}" permission denied`,
   });
-  return decision.executionControl === undefined
-    ? raw
-    : { ...raw, sidecar: { executionControl: decision.executionControl } };
+  return raw;
 }
 
 function permissionDisplayPayload(

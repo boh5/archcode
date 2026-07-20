@@ -116,7 +116,7 @@ packages/agent-core/src/
 ├── compression/                # DCP-like dynamic range compression: model tool action, refs, block state, soft/strong nudges below hard threshold
 ├── compact/                    # Mandatory hard compact safety path at >=85% context pressure plus /compact command
 ├── memory/                     # MemoryFileManager (atomic writes, frontmatter, index), schemas, types, constants
-├── session-goal/               # Session.goal schema, ownership service, review state, budgets
+├── session-goal/               # Session.goal schema, ownership service, status, budget, and usage
 ├── hitl/                       # Durable project-scoped approval/question queue and redacted display payloads
 ├── automations/                # Canonical Automation schemas, schedule, durable Invocation, Session dispatch
 ├── todos/                      # ProjectTodo schema, state transitions, atomic state, recoverable Session coordination
@@ -125,7 +125,7 @@ packages/agent-core/src/
 ├── projects/                   # ProjectRegistry + per-workspace HITL/memory/approval context resolver
 ├── prompt/                     # PromptContractCompiler V2: typed kernel/runtime/role/collaboration/context/overlay layers + trace/eval
 ├── mcp/                        # Built-in servers (context7, grep.app, exa) + HTTP discovery → ToolDescriptors
-├── delegation/                 # Canonical DelegationContract/ChildResult schema, scope validation, hash, and result checks
+├── delegation/                 # DelegationRequest scope validation and Build ownership checks
 ├── security/                   # 3 secret-detection regex patterns + containsSecretPattern()
 └── utils/                      # Error utilities, frontmatter parse/format, safe-file operations
 
@@ -162,7 +162,7 @@ packages/utils/src/
   → Hono server → Session-scoped Engineer / Automation / HITL routes
   → SessionExecutionManager → ConfiguredAgent → query loop → store → SSE → Web UI
 
-Delegation: `delegate(DelegationContract)` creates a durable direct child; `resume_session` preserves that identity; the child terminates through canonical `submit_child_result`. The Session Goal runtime creates a dedicated Reviewer child for a requested Goal review; SessionExecutionManager owns admission, scope leases, execution, and receipt completion guards.
+Delegation: `delegate(DelegationRequest)` creates a durable direct child; `resume_session` preserves that identity and owned scope. Every child finishes with a normal assistant response; synchronous delegation returns that final response directly, while background work is read through `background_output`. SessionExecutionManager owns admission, scope leases, execution, and terminal records.
 ```
 
 **Server + Web UI:**
@@ -297,10 +297,10 @@ Minimal example:
 
 | Role | Hooks | Notes |
 |------|-------|-------|
-| **Engineer** (`"engineer"`) | auto-compact, auto-inject-reminder, title-generation, todo-continuation, memory-extraction, memory-consolidation | Default root Session Agent. Works directly, delegates to all five specialists, and may create a Session Goal after a fresh explicit user request. It can request an independent review, but only runtime may complete the Goal. |
+| **Engineer** (`"engineer"`) | auto-compact, auto-inject-reminder, title-generation, todo-continuation, memory-extraction, memory-consolidation | Default root Session Agent. Works directly, delegates to all five specialists, and may create a Session Goal after a fresh explicit user request. It completes an active Goal only by passing a direct approved Reviewer child to `update_goal`. |
 | **Plan** (`"plan"`) | auto-compact, auto-inject-reminder, todo-continuation | Source read-only planning agent for ordinary or Goal work; delegates to `explore`/`librarian`. |
-| **Build** (`"build"`) | auto-compact, auto-inject-reminder, todo-continuation | Source write agent with file write/edit, bash, LSP, git diff/status, and `ast_grep_replace`. Implements only its durable owned scope, submits a criterion-mapped ChildResult, and delegates research to `explore`. |
-| **Reviewer** (`"reviewer"`) | auto-compact, auto-inject-reminder, todo-continuation | Source read-only verifier. Ordinary review submits `submit_child_result`; a runtime-created Session Goal review returns the same canonical child result and is accepted or rejected by runtime. |
+| **Build** (`"build"`) | auto-compact, auto-inject-reminder, todo-continuation | Source write agent with file write/edit, bash, LSP, git diff/status, and `ast_grep_replace`. Implements only its durable owned scope, returns a normal final report, and delegates research to `explore`. |
+| **Reviewer** (`"reviewer"`) | auto-compact, auto-inject-reminder, todo-continuation | Source read-only verifier. Returns a normal final report whose first non-empty line is exactly `VERDICT: APPROVED` or `VERDICT: CHANGES_REQUESTED`; it never controls Goal state. |
 | **Explore** (`"explore"`) | auto-compact, auto-inject-reminder, todo-continuation | Read-only local code search/LSP/git diff/status/AST search agent. No delegation and no memory extraction. |
 | **Librarian** (`"librarian"`) | auto-compact, auto-inject-reminder, todo-continuation | Read-only documentation/reference agent with local read/search, web_fetch, memory_read, and MCP docs/search tools. No delegation and no memory extraction. |
 | **Shaper** (`"shaper"`) | auto-compact, auto-inject-reminder, todo-continuation | Project Todo discussion agent. Investigates with read-only source tools and guarded Bash, updates only its bound Todo through `project_todo_update`, reads/writes Memory manually, and delegates research only to Explore/Librarian. No automatic memory extraction or execution-resource creation. |
@@ -348,10 +348,10 @@ beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-in
 | Interaction | ask_user✅❌not-concurrent, todo_write❌, project_todo_update❌ | ask_user serializes (interactive); `project_todo_update` derives its Todo from the current root Shaper Session and requires `expectedRevision` |
 | Web | web_fetch✅ | — |
 | LSP | lsp_diagnostics✅, lsp_goto_definition✅, lsp_find_references✅, lsp_symbols✅ | Guard: workspace |
-| Delegation / Skills | delegate❌, resume_session❌, submit_child_result❌, background_output✅, wait_for_reminder✅, cancel_session❌, skill_list✅, skill_read✅ | `delegate` accepts only the V2 contract; `resume_session` preserves persisted identity and the V2 continuation contract; delegated roles submit the execution-bound canonical result. Runtime-created Goal Reviewer children use distinct review provenance. |
+| Delegation / Skills | delegate❌, resume_session❌, background_output✅, wait_for_reminder✅, cancel_session❌, skill_list✅, skill_read✅ | `delegate` accepts only strict `{ agent_type, title, objective, owned_scope, skills, background }`; `resume_session` accepts only `{ session_id, instruction, background }`; delegated roles return ordinary final assistant text. |
 | Tool output recovery | output_read✅, output_search✅ | All agents may retrieve only authorized, bounded artifact pages or search results; `view_tool_output` is removed. |
 | Memory | memory_read✅, memory_write❌ | memory_write rejects secrets |
-| Goal / Automation creation | create_goal❌, get_goal✅, update_goal❌, automation_create❌ | An Engineer may call `create_goal` only after a fresh explicit user request. `get_goal` reads the root Session Goal. `update_goal` may record a genuine blocker or request independent review; it cannot complete or mutate the Goal. User controls edit, pause, resume, clear, and budget through the Session API/UI. |
+| Goal / Automation creation | create_goal❌, get_goal✅, update_goal❌, automation_create❌ | An Engineer may call `create_goal` only after a fresh explicit user request. `get_goal` reads the root Session Goal. `update_goal` records a genuine blocker or completes only after mechanically validating a direct Reviewer's latest `VERDICT: APPROVED`; no Review workflow state is stored. User controls edit, pause, resume, clear, and budget through the Session API/UI. |
 
 (✅ = readOnly, ❌ = not readOnly, ✅destructive = only destructive tool)
 
@@ -373,7 +373,7 @@ Project: `.archcode/memory/`, User: `~/.archcode/memory/`. Structure: `index.md`
 
 ## Session Goal System
 
-`Session.goal` is an optional persistent execution protocol for a root Engineer Session. `packages/agent-core/src/session-goal/` owns its strict schema, user/Agent/runtime authority checks, objective state, usage, review claim, and canonical review receipt. A fresh explicit user request lets the Engineer call `create_goal`; ordinary conversation remains ordinary Session work. The current Goal is injected before every model call. At an idle family boundary, runtime resolves waiting tool/HITL work and queued user input before evaluator, continuation, or review work. Completion is runtime-only: the Engineer requests review, a dedicated independent Reviewer child validates the current objective and source basis, and only an accepted matching receipt completes the Goal. Goal edits, new user input, or source mutation invalidate stale review work. Goal owns neither a dedicated Session nor a worktree; HITL, worktree, evidence, and child Sessions retain their normal Session ownership.
+`Session.goal` is an optional persistent status record for a root Engineer Session. `packages/agent-core/src/session-goal/` owns its strict schema, user/Agent authority checks, objective, status, budget, usage, and timestamps. A fresh explicit user request lets the Engineer call `create_goal`; ordinary conversation remains ordinary Session work. The current Goal is injected before every root Engineer model call. While an active Goal family is idle and runnable, the server continues the same Engineer without a Goal-specific workflow engine. The Engineer owns the work loop: it delegates an independent Reviewer, reads the ordinary final report, fixes requested changes, and calls `update_goal({ status: "complete", review_session_id })` only after a direct Reviewer child returns `VERDICT: APPROVED`. The completion tool performs that narrow mechanical check and writes the Goal complete; it does not create Reviewers or remediation work. Goal owns neither a dedicated Session nor a worktree; HITL, worktree, and child Sessions retain their normal Session ownership.
 
 ## Project Todos
 

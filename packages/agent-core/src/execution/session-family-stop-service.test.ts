@@ -5,8 +5,7 @@ import { join } from "node:path";
 import { silentLogger } from "../logger";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { SessionFamilyStopService } from "./session-family-stop-service";
-import { hashDelegationContract } from "../delegation/contract";
-import type { DelegationContract } from "@archcode/protocol";
+import type { DelegationRequest } from "@archcode/protocol";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "session-family-stop-service", crypto.randomUUID());
 
@@ -24,16 +23,11 @@ describe("SessionFamilyStopService", () => {
     const sessions = new SessionStoreManager({ logger: silentLogger });
     const rootSessionId = crypto.randomUUID();
     const childSessionId = crypto.randomUUID();
-    const delegationContract: DelegationContract = {
+    const delegationRequest: DelegationRequest = {
       agent_type: "explore",
       title: "Inspect family stop",
       objective: "Provide a durable child identity for family-stop cleanup.",
       owned_scope: [],
-      non_goals: [],
-      acceptance_criteria: [{ id: "stopped", condition: "The child batch is cancelled.", requiredEvidence: "Cancellation call" }],
-      evidence: [],
-      verification: [],
-      depends_on: [],
       skills: [],
       background: false,
     };
@@ -42,8 +36,7 @@ describe("SessionFamilyStopService", () => {
       agentName: "explore",
       rootSessionId,
       parentSessionId: rootSessionId,
-      delegationContract,
-      delegationContractHash: hashDelegationContract(delegationContract),
+      delegationRequest,
     });
     await Promise.all([
       sessions.flushSession(rootSessionId, TMP_ROOT),

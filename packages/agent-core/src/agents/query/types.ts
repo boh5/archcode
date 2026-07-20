@@ -2,7 +2,6 @@ import type { StoreApi } from "zustand";
 import type { ExecutionModelBinding } from "../../models";
 import type { SessionStoreManager } from "../../store/session-store-manager";
 import type { ExecutionEndEvent, SessionStoreState } from "../../store/types";
-import type { ToolExecutionControl } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
 import type { ToolOutputAccessService } from "../../tool-output/access-service";
 import type { ProjectContext } from "../../projects/types";
@@ -51,7 +50,6 @@ export interface QueryLoopResult {
   steps: number;
   status: ExecutionEndEvent["status"];
   error?: string;
-  executionControl?: ToolExecutionControl;
   cwdChanged?: {
     previousCwd: string;
     cwd: string;

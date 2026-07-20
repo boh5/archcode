@@ -1,12 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { ChildResult, DelegationContract } from "@archcode/protocol";
 import {
   delegationScopesOverlap,
-  hashDelegationContract,
   normalizeScopeRef,
-  validateChildResultAgainstContract,
   validateScopeRefInWorkspace,
 } from "./contract";
 
@@ -23,41 +20,6 @@ beforeEach(async () => {
 afterEach(async () => {
   await rm(TMP, { recursive: true, force: true });
 });
-
-function contract(): DelegationContract {
-  return {
-    agent_type: "build",
-    title: "Build",
-    objective: "Change one file",
-    owned_scope: [{ kind: "file", path: "src/file.ts" }],
-    non_goals: [],
-    acceptance_criteria: [
-      { id: "ac-1", condition: "Changed", requiredEvidence: "Diff" },
-      { id: "ac-2", condition: "Verified", requiredEvidence: "Test output" },
-    ],
-    evidence: [],
-    verification: [],
-    depends_on: [],
-    skills: [],
-    background: false,
-  };
-}
-
-function result(overrides: Partial<ChildResult> = {}): ChildResult {
-  return {
-    status: "completed",
-    summary: "Done",
-    deliverables: [],
-    evidence: [],
-    criteria: [
-      { id: "ac-1", status: "passed", evidenceRefs: ["diff:1"] },
-      { id: "ac-2", status: "passed", evidenceRefs: ["test:1"] },
-    ],
-    verification: [],
-    unresolved: [],
-    ...overrides,
-  };
-}
 
 describe("delegation contract", () => {
   it("normalizes relative paths and rejects absolute, traversal, glob, and Windows separators", () => {
@@ -95,24 +57,4 @@ describe("delegation contract", () => {
     expect(delegationScopesOverlap([{ kind: "file", path: "src/a.ts" }], [{ kind: "file", path: "src/ab.ts" }])).toBe(false);
   });
 
-  it("hashes contracts deterministically across object key insertion order", () => {
-    const value = contract();
-    expect(hashDelegationContract(value)).toBe(hashDelegationContract({ ...value }));
-  });
-
-  it("requires exact criterion ids and strict completed semantics", () => {
-    expect(() => validateChildResultAgainstContract(result(), contract())).not.toThrow();
-    expect(() => validateChildResultAgainstContract(result({ criteria: result().criteria.slice(0, 1) }), contract())).toThrow("exactly match");
-    expect(() => validateChildResultAgainstContract(result({ criteria: [
-      { id: "ac-1", status: "failed", evidenceRefs: [] },
-      { id: "ac-2", status: "passed", evidenceRefs: [] },
-    ] }), contract())).toThrow("every criterion");
-    expect(() => validateChildResultAgainstContract(result({ criteria: [
-      { id: "ac-1", status: "passed", evidenceRefs: [] },
-      { id: "ac-2", status: "passed", evidenceRefs: ["test:1"] },
-    ] }), contract())).toThrow("evidence refs for every criterion");
-    expect(() => validateChildResultAgainstContract(result({ unresolved: [
-      { issue: "Need user input", blocking: true, nextOwner: "user" },
-    ] }), contract())).toThrow("blocking unresolved");
-  });
 });

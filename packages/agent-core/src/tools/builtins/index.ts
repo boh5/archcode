@@ -16,7 +16,6 @@ export { waitForReminderTool, WaitForReminderInputSchema, executeWaitForReminder
 export { delegateTool, DelegateInputSchema, executeDelegate } from "./delegate";
 export { resumeSessionTool, ResumeSessionInputSchema, executeResumeSession } from "./resume-session";
 export { backgroundOutputTool, BackgroundOutputInputSchema, executeBackgroundOutput } from "./background-output";
-export { submitChildResultTool, SubmitChildResultInputSchema, executeSubmitChildResult } from "./submit-child-result";
 export { cancelSessionTool, CancelSessionInputSchema, executeCancelSession } from "./cancel-session";
 export { memoryWriteTool, MemoryWriteInputSchema } from "./memory-write";
 export { skillListTool, createSkillListTool, SkillListInputSchema } from "./skill-list";
@@ -45,7 +44,6 @@ import { waitForReminderTool } from "./wait-for-reminder";
 import { delegateTool } from "./delegate";
 import { resumeSessionTool } from "./resume-session";
 import { backgroundOutputTool } from "./background-output";
-import { submitChildResultTool } from "./submit-child-result";
 import { cancelSessionTool } from "./cancel-session";
 import { outputReadTool, outputSearchTool } from "./output-artifacts";
 import { astGrepSearchTool, astGrepReplaceTool } from "./ast-grep";
@@ -78,7 +76,6 @@ export function createBuiltinToolDescriptors(): AnyToolDescriptor[] {
     delegateTool,
     resumeSessionTool,
     backgroundOutputTool,
-    submitChildResultTool,
     cancelSessionTool,
     skillListTool,
     skillReadTool,

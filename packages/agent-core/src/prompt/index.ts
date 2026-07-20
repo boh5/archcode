@@ -9,7 +9,6 @@ export type {
   PromptMemorySnapshot,
   PromptSource,
   PromptTrace,
-  ReviewPromptMode,
   RoleContract,
   RuntimePromptEnvelope,
   TransitionRef,

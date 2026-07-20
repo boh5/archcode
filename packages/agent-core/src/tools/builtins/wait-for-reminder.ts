@@ -184,7 +184,7 @@ export const waitForReminderTool = defineTool({
     "",
     "Example: `wait_for_reminder({\"session_ids\":[\"<session-a>\",\"<session-b>\"],\"condition\":\"all\",\"timeout_ms\":1800000})`. Use `any` when the first completed child unblocks work, `all` when every child is required, or `{\"count\":2}` for the first two distinct Sessions.",
     "",
-    "The call consumes only the reminders used to satisfy the condition and returns terminal metadata, not the canonical child receipts. After success, call background_output with block=true for every returned Session ID whose result matters. Timeout or abort returns status without consuming reminders; do not poll.",
+    "The call consumes only the reminders used to satisfy the condition and returns terminal metadata, not child output. After success, call background_output with block=true for every returned Session ID whose final response matters. Timeout or abort returns status without consuming reminders; do not poll.",
   ].join("\n"),
   inputSchema: WaitForReminderInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: true },

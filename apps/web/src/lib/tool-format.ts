@@ -286,7 +286,7 @@ const DETAIL_FIELDS_BY_TOOL: Partial<Record<BuiltinToolName, string[]>> = {
   [TOOL_LSP_GOTO_DEFINITION]: ["filePath", "path", "line", "character"],
   [TOOL_LSP_FIND_REFERENCES]: ["filePath", "path", "line", "character"],
   [TOOL_LSP_SYMBOLS]: ["filePath", "query", "scope"],
-  [TOOL_DELEGATE]: ["agent_type", "title", "objective", "owned_scope", "non_goals", "acceptance_criteria", "evidence", "verification", "depends_on", "skills", "background"],
+  [TOOL_DELEGATE]: ["agent_type", "title", "objective", "owned_scope", "skills", "background"],
   [TOOL_TODO_WRITE]: [],
   [TOOL_ASK_USER]: ["question"],
   [TOOL_MEMORY_READ]: ["topic", "path"],
@@ -295,7 +295,7 @@ const DETAIL_FIELDS_BY_TOOL: Partial<Record<BuiltinToolName, string[]>> = {
   [TOOL_SKILL_READ]: ["name"],
   [TOOL_WAIT_FOR_REMINDER]: [],
   [TOOL_BACKGROUND_OUTPUT]: ["session_id", "block", "timeout_ms", "full_session", "include_tool_results", "include_reasoning"],
-  [TOOL_RESUME_SESSION]: ["session_id", "instruction", "new_evidence", "background"],
+  [TOOL_RESUME_SESSION]: ["session_id", "instruction", "background"],
 };
 
 const CONTENT_FIELDS = new Set(["content", "oldString", "newString", "edits"]);
@@ -516,12 +516,15 @@ export function getToolInvalidInputMessage(toolName: string, input: unknown): st
     if (!obj.objective || typeof obj.objective !== "string") {
       return `Invalid delegate input: missing required objective`;
     }
-    for (const field of ["owned_scope", "non_goals", "acceptance_criteria", "evidence", "verification", "depends_on", "skills"] as const) {
+    for (const field of ["owned_scope", "skills"] as const) {
       if (!Array.isArray(obj[field])) return `Invalid delegate input: missing required ${field}`;
     }
     if (typeof obj.background !== "boolean") {
       return `Invalid delegate input: missing required background`;
     }
+    const allowed = new Set(["agent_type", "title", "objective", "owned_scope", "skills", "background"]);
+    const unexpected = Object.keys(obj).find((field) => !allowed.has(field));
+    if (unexpected) return `Invalid delegate input: unexpected field ${unexpected}`;
   }
 
   if (toolName === TOOL_RESUME_SESSION) {
@@ -531,9 +534,10 @@ export function getToolInvalidInputMessage(toolName: string, input: unknown): st
     if (!obj.instruction || typeof obj.instruction !== "string") {
       return `Invalid resume_session input: missing required instruction`;
     }
-    if (!Array.isArray(obj.new_evidence)) {
-      return `Invalid resume_session input: missing required new_evidence`;
-    }
+    if (typeof obj.background !== "boolean") return `Invalid resume_session input: missing required background`;
+    const allowed = new Set(["session_id", "instruction", "background"]);
+    const unexpected = Object.keys(obj).find((field) => !allowed.has(field));
+    if (unexpected) return `Invalid resume_session input: unexpected field ${unexpected}`;
   }
 
   if (toolName === TOOL_BACKGROUND_OUTPUT && (!obj.session_id || typeof obj.session_id !== "string")) {

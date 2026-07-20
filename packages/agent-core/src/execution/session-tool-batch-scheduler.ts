@@ -18,7 +18,6 @@ import type {
   ToolBlockedRequest,
   ToolCallLike,
   ToolExecutionContext,
-  ToolExecutionControl,
 } from "../tools/types";
 
 export interface SessionToolBatchQueue {
@@ -46,8 +45,8 @@ export interface SessionToolBatchSchedulerOptions {
 }
 
 export type SessionToolBatchAdvanceResult =
-  | { readonly status: "ready_for_continuation"; readonly sessionCwdChanged: boolean; readonly executionControl?: ToolExecutionControl }
-  | { readonly status: "waiting_for_human"; readonly hitlIds: string[]; readonly sessionCwdChanged: boolean; readonly executionControl?: ToolExecutionControl }
+  | { readonly status: "ready_for_continuation"; readonly sessionCwdChanged: boolean }
+  | { readonly status: "waiting_for_human"; readonly hitlIds: string[]; readonly sessionCwdChanged: boolean }
   | { readonly status: "manual_inspection_required"; readonly reason: SessionToolManualInspectionReason };
 
 const TERMINAL_CALL_STATES = new Set<SessionToolBatchCall["state"]>(["completed", "failed"]);
@@ -163,7 +162,6 @@ export class SessionToolBatchScheduler {
 
   async advance(): Promise<SessionToolBatchAdvanceResult> {
     let sessionCwdChanged = false;
-    let executionControl: ToolExecutionControl | undefined;
     let batch = this.#requireActiveBatch();
     for (let partitionIndex = 0; partitionIndex < batch.partitions.length; partitionIndex += 1) {
       batch = this.#requireActiveBatch();
@@ -176,20 +174,10 @@ export class SessionToolBatchScheduler {
         const outcomes = await Promise.all(queued.map((call) => this.#runCall(batch.batchId, call.toolCallId)));
         for (const outcome of outcomes) {
           sessionCwdChanged ||= outcome.sessionCwdChanged;
-          executionControl ??= outcome.executionControl;
         }
       } else if (queued[0] !== undefined) {
         const outcome = await this.#runCall(batch.batchId, queued[0].toolCallId);
         sessionCwdChanged ||= outcome.sessionCwdChanged;
-        executionControl ??= outcome.executionControl;
-      }
-
-      if (executionControl !== undefined) {
-        return {
-          status: "ready_for_continuation",
-          sessionCwdChanged,
-          executionControl,
-        };
       }
 
       batch = this.#requireActiveBatch();
@@ -220,13 +208,11 @@ export class SessionToolBatchScheduler {
         status: "waiting_for_human",
         hitlIds: blockers.flatMap((call) => call.blocker?.hitlId === undefined ? [] : [call.blocker.hitlId]).sort(),
         sessionCwdChanged,
-        ...(executionControl === undefined ? {} : { executionControl }),
       };
     }
     return {
       status: "ready_for_continuation",
       sessionCwdChanged,
-      ...(executionControl === undefined ? {} : { executionControl }),
     };
   }
 
@@ -243,7 +229,7 @@ export class SessionToolBatchScheduler {
     await this.#updateBatch(batch.batchId, (current) => ({ ...current, continuationCompletedAt: now, archivedAt: now }));
   }
 
-  async #runCall(batchId: string, toolCallId: string): Promise<{ sessionCwdChanged: boolean; executionControl?: ToolExecutionControl }> {
+  async #runCall(batchId: string, toolCallId: string): Promise<{ sessionCwdChanged: boolean }> {
     let call = requiredCall(this.#requireActiveBatch(), toolCallId);
     if (call.state !== "queued") return { sessionCwdChanged: false };
     await this.#updateBatch(batchId, (batch) => ({
@@ -270,78 +256,10 @@ export class SessionToolBatchScheduler {
       await this.#blockCall(batchId, call, outcome.requestKey, outcome.request);
       return { sessionCwdChanged: false };
     }
-    if (outcome.sidecar?.executionControl !== undefined) {
-      await this.#commitExecutionControlBoundary(batch, call, outcome);
-    } else {
-      await this.#commitSettled(batchId, call, outcome);
-    }
+    await this.#commitSettled(batchId, call, outcome);
     return {
       sessionCwdChanged: outcome.sidecar?.sessionCwdChanged === true,
-      ...(outcome.sidecar?.executionControl === undefined ? {} : { executionControl: outcome.sidecar.executionControl }),
     };
-  }
-
-  /**
-   * A successful terminal tool result and the fact that its batch needs no LLM
-   * continuation are one durable transition. Keeping those as separate writes
-   * can revive a completed child through the runtime Tool Batch reconciler.
-   */
-  async #commitExecutionControlBoundary(
-    batch: SessionToolBatch,
-    call: SessionToolBatchCall,
-    outcome: Extract<RegistryExecutionOutcome, { kind: "settled" }>,
-  ): Promise<void> {
-    const partition = batch.partitions[call.partitionIndex];
-    if (partition?.type !== "serial") {
-      throw new Error(`Execution-control tool call ${call.toolCallId} must own a serial Tool Batch partition`);
-    }
-
-    const skipped = batch.calls.filter((candidate) => (
-      candidate.toolCallId !== call.toolCallId && !TERMINAL_CALL_STATES.has(candidate.state)
-    ));
-    const skippedOutcomes = new Map<string, Extract<RegistryExecutionOutcome, { kind: "settled" }>>();
-    for (const candidate of skipped) {
-      skippedOutcomes.set(candidate.toolCallId, await this.#settleSystem(
-        candidate,
-        batch.step,
-        createToolErrorResult({
-          kind: "execution",
-          code: "SESSION_EXECUTION_STOPPED",
-          message: "Tool call skipped because Session execution stopped",
-        }),
-      ));
-    }
-
-    const now = new Date().toISOString();
-    await this.#updateBatch(batch.batchId, (current) => ({
-      ...current,
-      archivedAt: now,
-      calls: current.calls.map((candidate) => {
-        if (candidate.toolCallId === call.toolCallId) {
-          return {
-            ...candidate,
-            state: outcome.result.isError ? "failed" as const : "completed" as const,
-            result: outcome.result,
-          };
-        }
-        const skippedOutcome = skippedOutcomes.get(candidate.toolCallId);
-        if (skippedOutcome === undefined) return candidate;
-        return {
-          ...candidate,
-          state: skippedOutcome.result.isError ? "failed" as const : "completed" as const,
-          result: skippedOutcome.result,
-        };
-      }),
-    }));
-    for (const candidate of batch.calls) {
-      if (candidate.toolCallId === call.toolCallId) {
-        this.#appendResult(candidate, outcome.result);
-        continue;
-      }
-      const skippedOutcome = skippedOutcomes.get(candidate.toolCallId);
-      if (skippedOutcome !== undefined) this.#appendResult(candidate, skippedOutcome.result);
-    }
-    await this.#flush();
   }
 
   async #blockCall(

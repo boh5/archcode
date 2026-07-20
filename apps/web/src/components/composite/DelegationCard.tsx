@@ -4,21 +4,12 @@ import { formatElapsed } from "../../lib/time-format";
 import { Check, X } from "lucide-react";
 import { getToolSummary, getToolIcon } from "../../lib/tool-format";
 import { getToolCategory } from "@archcode/protocol";
-import type { DelegationCardViewModel, DelegationTaskStatus, DelegationToolStatus } from "../../lib/delegation-card-model";
+import type { DelegationCardViewModel, DelegationToolStatus } from "../../lib/delegation-card-model";
 
 const TOOL_CHIP_STATUS_CLASSES: Record<DelegationToolStatus, string> = {
   success: "text-success",
   error: "text-error",
   default: "text-text-tertiary",
-};
-
-const TASK_STATUS_META: Record<DelegationTaskStatus, { label: string; className: string }> = {
-  completed: { label: "Completed", className: "bg-success-muted text-success" },
-  partial: { label: "Partial", className: "bg-warning-muted text-warning" },
-  blocked: { label: "Blocked", className: "bg-error-muted text-error" },
-  failed: { label: "Failed", className: "bg-error-muted text-error" },
-  pending: { label: "Pending", className: "bg-bg-active text-text-muted" },
-  unavailable: { label: "Unavailable", className: "bg-bg-active text-text-muted" },
 };
 
 export function ToolChip({ name, status, input }: { name: string; status: DelegationToolStatus; input?: unknown }) {
@@ -50,7 +41,6 @@ export function DelegationCard({
   agentDisplayName,
   taskTitle,
   executionStatus,
-  taskStatus,
   depth,
   startedAt,
   taskSummary,
@@ -89,13 +79,6 @@ export function DelegationCard({
           aria-label={`Execution status: ${BADGE_LABELS[executionStatus]}`}
         >
           Execution: {BADGE_LABELS[executionStatus]}
-        </span>
-
-        <span
-          className={`px-2 py-[2px] rounded-[10px] text-[10.5px] font-semibold ${TASK_STATUS_META[taskStatus].className}`}
-          aria-label={`Task status: ${TASK_STATUS_META[taskStatus].label}`}
-        >
-          Task: {TASK_STATUS_META[taskStatus].label}
         </span>
 
         <div className="flex items-baseline gap-1.5 flex-1 min-w-0">

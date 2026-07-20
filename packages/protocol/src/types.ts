@@ -1,4 +1,4 @@
-import type { ChildResultReceipt, DelegationContract } from "./delegation";
+import type { DelegationRequest } from "./delegation";
 import type { SessionGoal, SessionGoalChangedEvent } from "./session-goal";
 import type {
   ExecutionModelBindingSummary,
@@ -26,9 +26,7 @@ export type SessionExecutionOrigin =
   | "user_message"
   | "tool_call"
   | "tool_batch"
-  | "goal_continuation"
-  | "goal_remediation"
-  | "goal_review";
+  | "goal_continuation";
 
 export interface ExecutionEndEvent {
   type: "execution-end";
@@ -370,19 +368,12 @@ export interface ToolChildSessionLink {
   startedAt?: number;
   endedAt?: number;
   durationMs?: number;
-  resultReceipt?: ChildResultReceipt;
   error?: string;
 }
 
 export interface ToolChildSessionLinkEvent {
   type: "tool-child-session-link";
   link: ToolChildSessionLink;
-}
-
-/** Canonical durable result submission for one child execution. */
-export interface ChildResultEvent {
-  type: "child-result";
-  receipt: ChildResultReceipt;
 }
 
 export interface CompactEvent {
@@ -618,7 +609,6 @@ export type StreamEvent =
   | ToolAttemptEvent
   | ToolResultEvent
   | ToolChildSessionLinkEvent
-  | ChildResultEvent
   | TodoWriteEvent
   | ReminderEvent
   | ReminderConsumedEvent
@@ -1047,8 +1037,7 @@ export interface SessionProjection {
   cwd: string;
   rootSessionId: string;
   parentSessionId?: string;
-  delegationContract?: DelegationContract;
-  delegationContractHash?: string;
+  delegationRequest?: DelegationRequest;
   /** Optional long-running execution contract owned by this root Engineer Session. */
   goal?: SessionGoal;
   title: string | null;
@@ -1058,7 +1047,6 @@ export interface SessionProjection {
   todos: SessionTodo[];
   reminders: Reminder[];
   childSessionLinks: ToolChildSessionLink[];
-  childResultReceipts: ChildResultReceipt[];
   stats: SessionStats;
   executions: SessionExecutionRecord[];
   promptTraces?: PromptTraceSnapshot[];
@@ -1110,8 +1098,7 @@ export interface SessionSummary {
   // Tree relationships derive from child session files, not childSessionIds/subAgentDescriptions caches.
   rootSessionId: string;
   parentSessionId?: string;
-  delegationContract?: DelegationContract;
-  delegationContractHash?: string;
+  delegationRequest?: DelegationRequest;
   agentName: string;
   /** Persisted Skill identity; execution resolves these names against current policy. */
   activeSkillNames: string[];
@@ -1164,13 +1151,11 @@ export interface Session {
   todos: SessionTodo[];
   reminders: Reminder[];
   childSessionLinks: ToolChildSessionLink[];
-  childResultReceipts: ChildResultReceipt[];
   stats: SessionStats;
   executions: SessionExecutionRecord[];
   events?: SessionEventEnvelope[];
   parentSessionId?: string;
-  delegationContract?: DelegationContract;
-  delegationContractHash?: string;
+  delegationRequest?: DelegationRequest;
   eventCursor?: number;
   modelSelection: SessionModelSelection;
   nextModelSelection: SessionNextModelSelection;

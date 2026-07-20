@@ -1,21 +1,13 @@
 import { z } from "zod/v4";
-import type { ChildResultReceipt, SessionExecutionRecord } from "@archcode/protocol";
-import { DelegationContractSchema } from "../../delegation/schema";
+import type { SessionExecutionRecord } from "@archcode/protocol";
+import { DelegationRequestSchema } from "../../delegation/schema";
 import type { ChildExecutionHandle, ChildExecutionOutcome } from "../../delegation/types";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import { createTextToolResult } from "../results";
 import type { RawToolResult, ToolExecutionContext } from "../types";
 
-export const DelegateInputSchema = DelegationContractSchema.superRefine((contract, ctx) => {
-  if (contract.agent_type === "build" && contract.owned_scope.length === 0) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["owned_scope"],
-      message: "Build delegation requires at least one owned_scope entry",
-    });
-  }
-});
+export const DelegateInputSchema = DelegationRequestSchema;
 
 export type DelegateInput = z.output<typeof DelegateInputSchema>;
 
@@ -45,7 +37,7 @@ export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionCo
       parentSessionId: ctx.store.getState().sessionId,
       parentToolCallId: ctx.toolCallId,
       toolName: "delegate",
-      contract: input,
+      request: input,
       parentAbort: ctx.abort,
     });
   } catch (error) {
@@ -59,7 +51,7 @@ export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionCo
     });
   }
 
-  if (input.background ?? false) {
+  if (input.background) {
     return createTextToolResult(formatAsyncChildOutput(handle));
   }
 
@@ -83,7 +75,7 @@ export function formatSyncChildOutput(
     session_id: handle.sessionId,
     agent_type: handle.store.getState().agentName,
     execution_status: outcome.executionStatus,
-    ...(outcome.resultReceipt === undefined ? {} : { result_receipt: outcome.resultReceipt }),
+    ...(outcome.output === undefined ? {} : { output: outcome.output }),
     ...(errorMessage(outcome.terminalError) === undefined ? {} : { error: errorMessage(outcome.terminalError) }),
   });
 }
@@ -96,22 +88,9 @@ export async function waitForChildOutcome(handle: ChildExecutionHandle): Promise
     const run = state.executions.at(-1);
     return {
       executionStatus: terminalStatus(run, error),
-      resultReceipt: receiptForExecution(state.childResultReceipts, run?.id),
       terminalError: error,
     };
   }
-}
-
-function receiptForExecution(
-  receipts: readonly ChildResultReceipt[],
-  executionId: string | undefined,
-): ChildResultReceipt | undefined {
-  if (executionId === undefined) return undefined;
-  for (let index = receipts.length - 1; index >= 0; index -= 1) {
-    const receipt = receipts[index];
-    if (receipt?.executionId === executionId) return receipt;
-  }
-  return undefined;
 }
 
 function terminalStatus(
@@ -135,10 +114,10 @@ function errorMessage(error: unknown): string | undefined {
 export const delegateTool = defineTool({
   name: "delegate",
   description: [
-    "Create one direct child Session from a complete DelegationContract.",
-    "Delegate only independently owned, independently verifiable work. Parallel children must have no dependency and no overlapping owned scope.",
-    "The child receives only this durable contract as its handoff. Use resume_session for corrections or follow-up on the same responsibility.",
-    "background=false waits and returns the canonical result receipt. background=true returns the Session ID; wait for its terminal reminder, then use background_output for the receipt.",
+    "Create one direct child Session from a strict DelegationRequest.",
+    "Put all task requirements in objective. Build requires non-empty owned_scope; other roles require an empty owned_scope.",
+    "The child returns a normal final response. Use resume_session for corrections or follow-up on the same responsibility.",
+    "background=false waits and returns the completed execution's final output. background=true returns the Session ID; wait for its terminal reminder, then use background_output.",
   ].join("\n"),
   inputSchema: DelegateInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },

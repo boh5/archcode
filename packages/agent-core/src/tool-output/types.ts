@@ -34,25 +34,9 @@ export type ToolOutputDraft = TextDraft | SourcePageDraft | CaptureDraft;
 /** Details before final redaction and size validation. */
 export type RawToolDetails = ToolResultDetails;
 
-export type ToolExecutionControl =
-  | {
-      readonly action: "complete_execution";
-      readonly reason: "child_result_submitted";
-    }
-  | {
-      readonly action: "request_goal_review";
-      readonly reason: string;
-    }
-  | {
-      readonly action: "fail_execution";
-      readonly reason: "child_result_required";
-      readonly error: string;
-    };
-
 /** Runtime-only effects. This object must never enter Session persistence or SSE. */
 export interface ToolExecutionSidecar {
   readonly sessionCwdChanged?: true;
-  readonly executionControl?: ToolExecutionControl;
 }
 
 export interface RawToolResult {

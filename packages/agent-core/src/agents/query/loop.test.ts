@@ -177,35 +177,6 @@ describe("QueryLoop Tool Output Plane hard cut", () => {
     });
   });
 
-  test("terminal execution control completes without leaving a resumable Tool Batch", async () => {
-    const harness = await createHarness();
-    registerInline(
-      harness,
-      "finish_child",
-      async () => createTextToolResult("submitted", {
-        sidecar: {
-          executionControl: { action: "complete_execution", reason: "child_result_submitted" },
-        },
-      }),
-      { readOnly: false, destructive: false, concurrencySafe: false },
-    );
-    harness.appendUser("finish");
-    let modelCalls = 0;
-    installRounds([{
-      finishReason: "tool-calls",
-      toolCalls: [{ toolCallId: "finish-1", toolName: "finish_child", input: {} }],
-    }], () => { modelCalls += 1; });
-
-    expect(await runQueryLoop(harness.options)).toMatchObject({
-      status: "completed",
-      executionControl: { action: "complete_execution", reason: "child_result_submitted" },
-    });
-    expect(modelCalls).toBe(1);
-    expect(harness.store.getState().toolBatches).toEqual([
-      expect.objectContaining({ archivedAt: expect.any(String) }),
-    ]);
-  });
-
   test("injects the scope-bound output accessor without exposing authorization fields", async () => {
     const harness = await createHarness();
     let received: ToolExecutionContext["outputArtifacts"];

@@ -1,7 +1,8 @@
 import { z } from "zod";
-import type { ChildResultReceipt, JsonObject, ToolResultDetails } from "@archcode/protocol";
+import type { JsonObject, ToolResultDetails } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 import type { SessionStoreState, StoredMessage, StoredPart, ToolPart } from "../../store/types";
+import { finalOutputForExecution, latestExecution } from "../../delegation/final-output";
 import { sliceUtf8Head, utf8ByteLength } from "../../tool-output/utf8";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
@@ -111,7 +112,6 @@ export async function executeBackgroundOutput(
     ? await waitForChildToStop(childStore, input.timeout_ms, ctx.abort)
     : "not_waited";
   const state = childStore.getState();
-  const execution = state.executions.at(-1);
   try {
     const page = createBackgroundOutputPage(input, childStore.getState(), waitResult);
     const nextInput: JsonObject | undefined = page.nextCursor === undefined
@@ -173,18 +173,6 @@ function waitForChildToStop(
   });
 }
 
-function receiptForExecution(
-  receipts: readonly ChildResultReceipt[],
-  executionId: string | undefined,
-): ChildResultReceipt | undefined {
-  if (executionId === undefined) return undefined;
-  for (let index = receipts.length - 1; index >= 0; index -= 1) {
-    const receipt = receipts[index];
-    if (receipt?.executionId === executionId) return receipt;
-  }
-  return undefined;
-}
-
 function createBackgroundOutputPage(
   input: BackgroundOutputInput,
   state: SessionStoreState,
@@ -198,22 +186,28 @@ function createBackgroundOutputPage(
     throw new Error("background_output page header exceeds the source-page limit");
   }
 
-  let cursor = initialCursor(input, state.messages);
+  let cursor = initialCursor(input, state);
   if (cursor === undefined) {
-    const empty = input.full_session ? "_No messages are available._" : "_No assistant output yet._";
+    const empty = input.full_session
+      ? "_No messages are available._"
+      : state.isRunning || latestExecution(state)?.status === "waiting_for_human"
+        ? "_No assistant output yet for the current execution._"
+        : latestExecution(state)?.status === "completed"
+          ? "_The completed execution returned an empty final output._"
+          : "_No final output is available for this execution status._";
     return { text: `${text}\n\n${empty}` };
   }
 
   let emittedBody = false;
   while (cursor !== undefined) {
-    const location = locateCursor(input, state.messages, cursor);
+    const location = locateCursor(input, state, cursor);
     const unit = location.units[cursor.unit_index];
     if (unit === undefined || cursor.text_offset > unit.text.length) {
       throw new InvalidBackgroundCursorError();
     }
 
     if (cursor.text_offset === unit.text.length) {
-      cursor = nextUnitCursor(input, state.messages, location.messageIndex, cursor.unit_index);
+      cursor = nextUnitCursor(input, state, location.messageIndex, cursor.unit_index);
       continue;
     }
 
@@ -236,7 +230,7 @@ function createBackgroundOutputPage(
       cursor = { ...cursor, text_offset: slice.nextOffset };
       break;
     }
-    cursor = nextUnitCursor(input, state.messages, location.messageIndex, cursor.unit_index);
+    cursor = nextUnitCursor(input, state, location.messageIndex, cursor.unit_index);
   }
 
   if (!emittedBody && cursor !== undefined) {
@@ -263,12 +257,7 @@ function renderHeader(
     snapshot,
     `Mode: ${input.full_session ? "full_session" : "latest"}`,
   ];
-  const execution = state.executions.at(-1);
-  const receipt = receiptForExecution(state.childResultReceipts, execution?.id);
-  if (receipt !== undefined) lines.push(`Canonical result receipt: ${JSON.stringify(receipt)}`);
-  else if (!state.isRunning && execution !== undefined) {
-    lines.push("Canonical result receipt: missing. Assistant text does not satisfy the child result protocol.");
-  }
+  const execution = latestExecution(state);
   if (execution?.error !== undefined) lines.push(`Execution error: ${execution.error}`);
   const note = statusNote(state, waitResult);
   if (note.length > 0) lines.push(note);
@@ -277,48 +266,46 @@ function renderHeader(
 
 function initialCursor(
   input: BackgroundOutputInput,
-  messages: readonly StoredMessage[],
+  state: SessionStoreState,
 ): BackgroundOutputCursor | undefined {
   if (input.cursor !== undefined) return input.cursor;
   if (input.full_session) {
-    const first = messages[0];
+    const first = state.messages[0];
     return first === undefined
       ? undefined
       : { mode: "full_session", message_id: first.id, unit_index: 0, text_offset: 0 };
   }
-
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]!;
-    if (message.role !== "assistant") continue;
-    if (latestUnits(message).length === 0) continue;
-    return { mode: "latest", message_id: message.id, unit_index: 0, text_offset: 0 };
-  }
-  return undefined;
+  const message = latestOutputMessage(state);
+  return message === undefined || latestUnits(state, message).length === 0
+    ? undefined
+    : { mode: "latest", message_id: message.id, unit_index: 0, text_offset: 0 };
 }
 
 function locateCursor(
   input: BackgroundOutputInput,
-  messages: readonly StoredMessage[],
+  state: SessionStoreState,
   cursor: BackgroundOutputCursor,
 ): { readonly messageIndex: number; readonly units: readonly OutputUnit[] } {
-  const messageIndex = messages.findIndex((message) => message.id === cursor.message_id);
+  const messageIndex = state.messages.findIndex((message) => message.id === cursor.message_id);
   if (messageIndex < 0) throw new InvalidBackgroundCursorError();
-  const message = messages[messageIndex]!;
-  if (cursor.mode === "latest" && message.role !== "assistant") throw new InvalidBackgroundCursorError();
+  const message = state.messages[messageIndex]!;
+  if (cursor.mode === "latest" && latestOutputMessage(state)?.id !== message.id) {
+    throw new InvalidBackgroundCursorError();
+  }
   return {
     messageIndex,
-    units: cursor.mode === "latest" ? latestUnits(message) : fullSessionUnits(message, input),
+    units: cursor.mode === "latest" ? latestUnits(state, message) : fullSessionUnits(message, input),
   };
 }
 
 function nextUnitCursor(
   input: BackgroundOutputInput,
-  messages: readonly StoredMessage[],
+  state: SessionStoreState,
   messageIndex: number,
   unitIndex: number,
 ): BackgroundOutputCursor | undefined {
-  const message = messages[messageIndex]!;
-  const units = input.full_session ? fullSessionUnits(message, input) : latestUnits(message);
+  const message = state.messages[messageIndex]!;
+  const units = input.full_session ? fullSessionUnits(message, input) : latestUnits(state, message);
   if (unitIndex + 1 < units.length) {
     return {
       mode: input.full_session ? "full_session" : "latest",
@@ -328,13 +315,32 @@ function nextUnitCursor(
     };
   }
   if (!input.full_session) return undefined;
-  const nextMessage = messages[messageIndex + 1];
+  const nextMessage = state.messages[messageIndex + 1];
   return nextMessage === undefined
     ? undefined
     : { mode: "full_session", message_id: nextMessage.id, unit_index: 0, text_offset: 0 };
 }
 
-function latestUnits(message: StoredMessage): OutputUnit[] {
+function latestOutputMessage(state: SessionStoreState): StoredMessage | undefined {
+  const execution = latestExecution(state);
+  if (execution === undefined) return undefined;
+  const canExpose = execution.status === "completed"
+    || execution.status === "running"
+    || execution.status === "waiting_for_human";
+  if (!canExpose) return undefined;
+  for (let index = state.messages.length - 1; index >= 0; index -= 1) {
+    const message = state.messages[index];
+    if (message?.role === "assistant" && message.executionId === execution.id) return message;
+  }
+  return undefined;
+}
+
+function latestUnits(state: SessionStoreState, message: StoredMessage): OutputUnit[] {
+  const execution = latestExecution(state);
+  if (execution?.status === "completed") {
+    const output = finalOutputForExecution(state, execution.id);
+    return output === undefined || output.length === 0 ? [] : [{ text: output }];
+  }
   return message.parts.flatMap((part) => part.type === "text" && part.text.length > 0
     ? [{ text: part.text }]
     : []);
@@ -396,6 +402,9 @@ function statusNote(state: SessionStoreState, waitResult: WaitResult): string {
   if (waitResult === "timed_out") return "Timed out waiting; this page is the current non-final snapshot.";
   if (waitResult === "aborted") return "Parent wait was aborted; this page is the current non-final snapshot.";
   if (state.isRunning) return "The Session is still running; this snapshot is not a final deliverable.";
+  if (latestExecution(state)?.status === "waiting_for_human") {
+    return "The Session is waiting for human input; this snapshot is not a final deliverable.";
+  }
   return "";
 }
 
@@ -409,11 +418,11 @@ function lineCount(value: string): number {
 export const backgroundOutputTool = defineTool({
   name: "background_output",
   description: [
-    "Read a bounded status/output page and canonical result receipt for one direct child Session.",
-    "It never treats assistant text as a child result. A terminal execution without result_receipt did not satisfy the child result protocol.",
-    "Use block=true after a terminal reminder when the persisted receipt is required; do not poll.",
+    "Read a bounded status/output page for one direct child Session.",
+    "The latest completed execution's final assistant response is the child result. Failed, cancelled, timed-out, and interrupted executions expose status/error but no final output.",
+    "Use block=true after a terminal reminder when the final output is required; do not poll.",
     "",
-    "For a final child result, wait for its terminal reminder and call `background_output({\"session_id\":\"<session-id>\",\"block\":true,\"timeout_ms\":1800000})`. If status is still running, the returned live page is explicitly not a final deliverable.",
+    "For a final child result, wait for its terminal reminder and call `background_output({\"session_id\":\"<session-id>\",\"block\":true,\"timeout_ms\":1800000})`. If status is running or waiting_for_human, the returned live page is explicitly not a final deliverable.",
     "",
     "Every page is at most 50 KiB and 2,000 lines. When more content exists, call background_output again with the exact schema-valid nextInput returned by the tool; the cursor advances inside oversized text parts and across messages without an artifact or silent truncation. Use full_session=true for intermediate context. Reasoning and unified tool results remain hidden unless explicitly included.",
   ].join("\n"),

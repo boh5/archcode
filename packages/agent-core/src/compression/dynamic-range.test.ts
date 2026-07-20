@@ -67,7 +67,6 @@ function baseState(messages: StoredMessage[]): SessionStoreState {
     todos: [],
     reminders: [],
     childSessionLinks: [],
-    childResultReceipts: [],
     toolBatches: [],
     rootSessionId: "session-1",
     executionCount: 0,

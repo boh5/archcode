@@ -12,8 +12,7 @@ import type {
   PendingSessionMessage,
   SessionInputReceipt,
   ToolChildSessionLink,
-  ChildResultReceipt,
-  DelegationContract,
+  DelegationRequest,
   PromptTraceSnapshot,
   FinalizedToolResult,
   SessionGoal,
@@ -50,7 +49,6 @@ export type {
   ToolResultDetails,
   ToolChildSessionLink,
   ToolChildSessionLinkEvent,
-  ChildResultEvent,
   ToolChildSessionLinkStatus,
   CompactEvent,
   TodoWriteEvent,
@@ -191,11 +189,8 @@ export interface SessionStoreState {
   todos: SessionTodo[];
   reminders: Reminder[];
   childSessionLinks: ToolChildSessionLink[];
-  /** Immutable V2 parent-to-child handoff. Required for every child Session. */
-  delegationContract?: DelegationContract;
-  delegationContractHash?: string;
-  /** One canonical receipt per successfully submitted child execution. */
-  childResultReceipts: ChildResultReceipt[];
+  /** Immutable parent-to-child handoff. Required for every child Session. */
+  delegationRequest?: DelegationRequest;
   /** Complete tool-batch audit history; at most one entry may be active (no archivedAt). */
   toolBatches: SessionToolBatch[];
   // Identity is assigned at creation/load and treated as immutable afterwards.
