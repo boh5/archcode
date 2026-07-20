@@ -60,7 +60,7 @@ const config: ServerConfig = {
     },
   },
   agents: {
-    engineer: { model: "local:demo-model" }, goal_lead: { model: "local:demo-model" },
+    engineer: { model: "local:demo-model" },
     plan: { model: "local:demo-model" }, build: { model: "local:demo-model" },
     reviewer: { model: "local:demo-model" }, explore: { model: "local:demo-model" },
     librarian: { model: "local:demo-model" }, shaper: { model: "local:demo-model" },

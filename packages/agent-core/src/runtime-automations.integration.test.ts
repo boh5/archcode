@@ -61,7 +61,7 @@ describe("AgentRuntime Automation worktree wiring", () => {
     expect(invocation.status).toBe("dispatched");
     expect(worktree.isManaged).toBe(true);
     expect(worktree.branchName).toBe(managedWorktreeNames({
-      owner: { type: "session", id: invocation.sessionId! },
+      owner: { id: invocation.sessionId! },
     }).branchName);
     await waitForInvocationExecution(fixture.runtime, fixture.workspaceRoot, invocation);
     await waitFor(async () => (
@@ -117,7 +117,6 @@ function config(): Record<string, unknown> {
     },
     agents: {
       engineer: { model: "local:test" },
-      goal_lead: { model: "local:test" },
       plan: { model: "local:test" },
       build: { model: "local:test" },
       reviewer: { model: "local:test" },

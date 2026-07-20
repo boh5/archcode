@@ -21,14 +21,11 @@ function answerForQuestion(item: HitlQuestionDisplayItem, selected: readonly str
 }
 
 function ownerLink(view: HitlView, projectSlug: string): string {
-  return view.owner.type === "session"
-    ? `/projects/${projectSlug}/sessions/${view.owner.id}`
-    : `/projects/${projectSlug}/goals/${view.owner.id}`;
+  return `/projects/${projectSlug}/sessions/${view.owner.id}`;
 }
 
 export function responseFor(source: HitlSource, answers: string[], decision: "approved" | "denied" | "approve_once" | "approve_always" | "deny", comment?: string): Exclude<HitlResponse, { type: "cancel" }> {
   if (source.type === "ask_user") return { type: "question_answer", answers, comment: comment || undefined };
-  if (source.type === "goal_budget") return { type: "budget_decision", decision: decision === "approved" ? "approved" : "denied", comment: comment || undefined };
   return { type: "permission_decision", decision: decision as "approve_once" | "approve_always" | "deny", comment: comment || undefined };
 }
 
@@ -157,7 +154,7 @@ export function HitlCard({ view, projectSlug, showOwnerLink = true }: { view: Hi
     </div>
   );
 
-  const sourceLabel = view.source.type === "ask_user" ? "Question" : view.source.type === "tool_permission" ? "Permission" : "Budget decision";
+  const sourceLabel = view.source.type === "ask_user" ? "Question" : "Permission";
   return (
     <article className="min-w-0 overflow-hidden rounded-[10px] border border-border-subtle bg-bg-elevated p-3" data-testid="hitl-card" data-hitl-id={view.hitlId}>
       <div className="mb-2 flex min-w-0 items-start justify-between gap-2">
@@ -269,10 +266,6 @@ export function HitlCard({ view, projectSlug, showOwnerLink = true }: { view: Hi
             <button disabled={busy} onClick={() => submit("approve_once")} className={PRIMARY_ACTION_CLASS}>Allow once</button>
             {view.persistentApprovalEligible === true && <button disabled={busy} onClick={() => submit("approve_always")} className={SECONDARY_ACTION_CLASS}>Always allow</button>}
             <button disabled={busy} onClick={() => submit("deny")} className={SECONDARY_ACTION_CLASS}>Deny</button>
-          </>}
-          {view.source.type === "goal_budget" && <>
-            <button disabled={busy} onClick={() => submit("approved")} className={PRIMARY_ACTION_CLASS}>Approve budget</button>
-            <button disabled={busy} onClick={() => submit("denied")} className={SECONDARY_ACTION_CLASS}>Deny</button>
           </>}
           {view.source.type === "ask_user" && !isMultiQuestion && <button data-testid="hitl-approve-button" disabled={busy || !allAnswered} onClick={() => submit("approved")} className={PRIMARY_ACTION_CLASS}>Submit answer</button>}
           {view.source.type === "ask_user" && isMultiQuestion && !isConfirmStep && <button data-testid="hitl-question-next-button" disabled={busy || !activeQuestionAnswered} onClick={() => advanceQuestion(activeQuestionStep)} className={PRIMARY_ACTION_CLASS}>{activeQuestionStep === items.length - 1 ? "Review answers" : "Next"}</button>}

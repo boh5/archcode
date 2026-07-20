@@ -7,6 +7,7 @@ import { pickModelCallOptions } from "./options";
 import { withLlmRetry } from "./retry";
 import { silentLogger } from "../logger";
 import { redactSensitiveValue } from "./provider-error-sanitizer";
+import { normalizeUsage } from "@archcode/protocol";
 
 export async function runLlmObject<T>(input: LlmObjectInput<T>): Promise<T> {
   const logger = input.logger ?? silentLogger;
@@ -35,6 +36,7 @@ export async function runLlmObject<T>(input: LlmObjectInput<T>): Promise<T> {
       retryScheduler: input.retryScheduler,
       redactSensitiveText: input.redactSensitiveText,
     });
+    input.onUsage?.(normalizeUsage(result.usage));
 
     try {
       return parseObjectResult(

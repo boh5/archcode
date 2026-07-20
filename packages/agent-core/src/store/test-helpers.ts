@@ -83,12 +83,6 @@ export function createMockStore(
     setParentSessionId: (parentSessionId) => {
       state.parentSessionId = parentSessionId;
     },
-    setGoalId: (goalId) => {
-      state.goalId = goalId;
-    },
-    setSessionRole: (sessionRole) => {
-      state.sessionRole = sessionRole;
-    },
     toModelMessages: () => [],
   };
 

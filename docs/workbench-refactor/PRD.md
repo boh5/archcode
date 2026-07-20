@@ -5,11 +5,9 @@
 
 **术语**:本文档中的"架构师"指** ArchCode 的用户**(资深工程师/技术 lead,见 §2),不是 AI agent。文档里的"AI""agent"指 ArchCode 编排的编码执行者。
 
-**本文档是 PRD(产品需求)** —— 定义"做什么、为谁做、为什么、成功标准"。
-**配套技术设计在 `docs/workbench-refactor/TDD.md`** —— 那里定义"怎么实现"(类型/schema/路由/组件)。
-**状态**:产品规格,描述完整产品意图。实施按 5 阶段(先 Goal 后 Loop)分步,由用户根据本 PRD 拆任务执行。Phase 2 Goal 语义以 §5.2 为当前实现边界。
+**状态**:历史产品设计记录，不是当前产品规格。本文保留当时的一级 Goal/Loop 工作台论证，旧术语和接口只用于理解决策演进，不得作为实现依据。
 
-> **Current implementation note (2026-07):** The detailed Goal design below predates the simplified Goal integration. Current runtime uses natural-language objectives/acceptance criteria, `goal_manage` lifecycle/finalization, ordinary session output and verification logs as evidence, and no separate Goal artifact/evidence tools or typed validation DSL. Historical wording has been normalized to avoid documenting removed APIs as current behavior.
+> **Current implementation (2026-07):** Goal 已硬切为普通根 Engineer Session 上的可选持久执行协议；当前边界见 `docs/goals/session-goal-runtime-hard-cut-plan-goal.md`、根 `README.md` 与 `AGENTS.md`。Automation 的当前语义见活跃 Automation 文档。
 
 ---
 

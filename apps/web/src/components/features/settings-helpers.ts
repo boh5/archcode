@@ -6,7 +6,7 @@ export type SettingsSection = "models" | "agents" | "mcp" | "memory" | "github";
 export type FieldErrors = Record<string, string>;
 
 export const AGENT_NAMES = [
-  "engineer", "goal_lead", "plan", "build", "reviewer", "explore", "librarian", "shaper",
+  "engineer", "plan", "build", "reviewer", "explore", "librarian", "shaper",
 ] as const;
 
 export const BUILT_IN_MCP_NAMES = BUILTIN_MCP_SERVER_NAMES;

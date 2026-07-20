@@ -1,22 +1,19 @@
 import { Hono } from "hono";
 import { z } from "zod/v4";
 import type { AgentRuntime, ProjectInfo } from "@archcode/agent-core";
-import type { Automation, GoalState, GoalStatus } from "@archcode/protocol";
+import type { Automation, SessionGoal, SessionSummary } from "@archcode/protocol";
 import { zValidator } from "../validation";
 
-const DashboardGoalStatusSchema = z.enum([
-  "running",
-  "reviewing",
-  "done",
-  "not_done",
-  "failed",
-  "cancelled",
+const SessionGoalStatusSchema = z.enum([
   "active",
-  "terminal",
-], { error: "status must be active, terminal, or a valid goal status" });
+  "paused",
+  "blocked",
+  "budget_limited",
+  "complete",
+]);
 
-const DashboardGoalQuerySchema = z.object({
-  status: DashboardGoalStatusSchema.optional(),
+const DashboardSessionGoalQuerySchema = z.object({
+  status: SessionGoalStatusSchema.optional(),
 }).strict();
 
 const DashboardAutomationStatusSchema = z.enum([
@@ -29,20 +26,27 @@ const DashboardAutomationQuerySchema = z.object({
   status: DashboardAutomationStatusSchema.optional(),
 }).strict();
 
-const ActiveGoalStatuses = new Set<GoalStatus>([
-  "running",
-  "reviewing",
-  "not_done",
-  "failed",
-]);
+export type SessionGoalStatus = z.infer<typeof SessionGoalStatusSchema>;
 
-const TerminalGoalStatuses = new Set<GoalStatus>([
-  "done",
-  "cancelled",
-]);
-
-type DashboardGoal = GoalState & {
+/**
+ * Dashboard is a projection over root Sessions. It deliberately has no Goal
+ * resource ID or backing store: Session.goal remains the sole owner.
+ */
+export type DashboardSessionGoal = {
+  sessionId: string;
+  sessionTitle: string | null;
+  updatedAt: number;
+  projectSlug: string;
   projectName: string;
+  goal: DashboardSessionGoalView;
+};
+
+export type DashboardSessionGoalView = {
+  objective: string;
+  status: SessionGoalStatus;
+  tokensUsed?: number;
+  timeUsedSeconds?: number;
+  latestReason?: string;
 };
 
 type DashboardProjectError = {
@@ -58,28 +62,28 @@ type DashboardAutomation = Automation & {
 export function createDashboardRoutes(runtime: AgentRuntime): Hono {
   const app = new Hono();
 
-  app.get("/goals", zValidator("query", DashboardGoalQuerySchema), async (c) => {
+  app.get("/session-goals", zValidator("query", DashboardSessionGoalQuerySchema), async (c) => {
     const { status } = c.req.valid("query");
-    const goals: DashboardGoal[] = [];
+    const sessionGoals: DashboardSessionGoal[] = [];
     const errors: DashboardProjectError[] = [];
 
     for (const project of await listProjects(runtime)) {
       try {
-        const context = await runtime.contextResolver.resolve(project.workspaceRoot);
-        const projectGoals = await context.goalState.listGoals(project.slug);
-        goals.push(
-          ...projectGoals
-            .filter((goal) => matchesGoalStatus(goal, status))
-            .map((goal) => withProject(goal, project)),
+        const sessions = await runtime.listSessions(project.workspaceRoot);
+        sessionGoals.push(
+          ...sessions
+            .map((session) => toDashboardSessionGoal(session, project))
+            .filter((entry): entry is DashboardSessionGoal => entry !== undefined)
+            .filter((entry) => status === undefined || entry.goal.status === status),
         );
       } catch (error) {
         // Dashboard aggregation is best-effort: one corrupt project must not
-        // prevent other project goals from rendering.
+        // prevent other project Sessions from rendering.
         errors.push(withProjectError(project, error));
       }
     }
 
-    return c.json({ goals, errors });
+    return c.json({ sessionGoals, errors });
   });
 
   app.get("/automations", zValidator("query", DashboardAutomationQuerySchema), async (c) => {
@@ -110,25 +114,32 @@ export function createDashboardRoutes(runtime: AgentRuntime): Hono {
   return app;
 }
 
-function matchesGoalStatus(goal: GoalState, status: GoalStatus | "active" | "terminal" | undefined): boolean {
-  if (status === undefined) return true;
-  if (status === "active") return ActiveGoalStatuses.has(goal.status);
-  if (status === "terminal") return TerminalGoalStatuses.has(goal.status);
-  return goal.status === status;
+function toDashboardSessionGoal(session: SessionSummary, project: ProjectInfo): DashboardSessionGoal | undefined {
+  if (session.parentSessionId !== undefined || session.goal === undefined) return undefined;
+  return {
+    sessionId: session.sessionId,
+    sessionTitle: session.title,
+    updatedAt: session.updatedAt,
+    projectSlug: project.slug,
+    projectName: project.name,
+    goal: toDashboardGoalView(session.goal),
+  };
+}
+
+function toDashboardGoalView(goal: SessionGoal): DashboardSessionGoalView {
+  return {
+    objective: goal.objective,
+    status: goal.status,
+    tokensUsed: goal.usage.tokens.totalTokens,
+    timeUsedSeconds: Math.round(goal.usage.executionTimeMs / 1_000),
+    latestReason: goal.blockedReason ?? goal.lastReviewReceipt?.summary ?? goal.lastEvaluator?.reason,
+  };
 }
 
 function matchesAutomationStatus(automation: Automation, status: Automation["status"] | undefined): boolean {
   if (status === undefined) return true;
   if (status === "active") return automation.status === "active";
   return automation.status === status;
-}
-
-function withProject(goal: GoalState, project: ProjectInfo): DashboardGoal {
-  return {
-    ...goal,
-    projectSlug: project.slug,
-    projectName: project.name,
-  };
 }
 
 function withProjectError(project: ProjectInfo, error: unknown): DashboardProjectError {

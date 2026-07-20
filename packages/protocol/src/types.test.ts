@@ -7,8 +7,6 @@ import type {
   CompressionBlockSnapshot,
   CompressionRefMapUpdatedEvent,
   CompressionStateSnapshot,
-  GoalState,
-  GoalStatus,
   HitlView,
   HitlResponse,
   GlobalSSEEvent,
@@ -134,12 +132,12 @@ describe("current tool and config wire types", () => {
 });
 
 describe("global SSE wire protocol types", () => {
-  test("uses an unreasoned resource.changed contract for Goals, Automations, and Project Todos", () => {
+  test("uses an unreasoned resource.changed contract for Automations and Project Todos", () => {
     const events: GlobalSSEResourceChangedEvent[] = [{
       type: "resource.changed",
       projectSlug: "project-a",
-      resourceType: "goal",
-      resourceId: "goal-1",
+      resourceType: "todo",
+      resourceId: "todo-1",
       createdAt: 1,
     }, {
       type: "resource.changed",
@@ -397,169 +395,6 @@ describe("compression protocol types", () => {
   });
 });
 
-describe("Goal types", () => {
-  test("GoalStatus is the simplified durable execution envelope", () => {
-    const statuses: GoalStatus[] = [
-      "running",
-      "reviewing",
-      "done",
-      "not_done",
-      "failed",
-      "cancelled",
-    ];
-
-    expect(statuses).toEqual([
-      "running",
-      "reviewing",
-      "done",
-      "not_done",
-      "failed",
-      "cancelled",
-    ]);
-  });
-
-  test("GoalState serializes the natural-language contract with review evidence", () => {
-    const state: GoalState = {
-      id: "goal-1",
-      projectSlug: "my-project",
-      createdFromSessionId: "session-source",
-      title: "Implement auth",
-      objective: "Build the requested authentication flow.",
-      acceptanceCriteria: "Users can sign in and invalid credentials are rejected.",
-      useWorktree: false,
-      status: "done",
-      attempt: 2,
-      reviewGeneration: 1,
-      budget: {
-        status: "ok",
-        usedTokens: 1200,
-        maxTokens: 5000,
-        updatedAt: "2026-01-01T00:04:00.000Z",
-      },
-      appliedBudgetHitlIds: ["hitl-approval-1"],
-      mainSessionId: "session-main",
-      childSessionIds: ["session-build", "session-review"],
-      review: {
-        reviewGeneration: 1,
-        verdict: "DONE",
-        summary: "Reviewer confirmed the acceptance criteria are satisfied.",
-        evidenceRefs: [
-          {
-            kind: "test_output",
-            ref: "test-output-1",
-            summary: "Targeted protocol tests passed and cover the new contract.",
-            sessionId: "session-review",
-            toolCallId: "tool-call-1",
-            createdAt: "2026-01-01T00:03:00.000Z",
-          },
-          {
-            kind: "diff",
-            ref: "diff-1",
-            summary: "The diff shows old Goal DSL types were removed.",
-            path: "packages/protocol/src/types.ts",
-          },
-        ],
-        reviewerSessionId: "session-review",
-        executionId: "execution-review-1",
-        delegationContractHash: "a".repeat(64),
-        result: {
-          status: "completed",
-          summary: "Reviewer confirmed the acceptance criteria are satisfied.",
-          criteria: [{ id: "acceptance", status: "passed", evidenceRefs: ["test-output-1", "diff-1"] }],
-          deliverables: [],
-          evidence: [
-            { claim: "Targeted protocol tests passed", ref: "test-output-1" },
-            { claim: "The old Goal DSL types were removed", ref: "diff-1" },
-          ],
-          verification: [{ check: "Protocol tests", status: "passed", outputRef: "test-output-1" }],
-          unresolved: [],
-        },
-        decidedAt: "2026-01-01T00:05:00.000Z",
-      },
-      finalSummary: "Authentication flow completed and reviewed.",
-      createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:05:00.000Z",
-      startedAt: "2026-01-01T00:01:00.000Z",
-      completedAt: "2026-01-01T00:05:00.000Z",
-    };
-
-    const parsed = serializeRoundTrip(state);
-
-    expect(parsed).toEqual(state);
-    expect(parsed.objective).toContain("authentication");
-    expect(parsed.acceptanceCriteria).toContain("invalid credentials");
-    expect(parsed.review?.verdict).toBe("DONE");
-    expect(parsed.review?.evidenceRefs[0]?.summary).toContain("Targeted protocol tests");
-  });
-
-  test("Goal budget approvals and NOT_DONE receipts round-trip", () => {
-    const state: GoalState = {
-      id: "goal-2",
-      projectSlug: "my-project",
-      createdFromSessionId: "session-source",
-      title: "Fix bug",
-      objective: "Resolve the reported bug.",
-      acceptanceCriteria: "The bug no longer reproduces.",
-      useWorktree: false,
-      status: "running",
-      budget: {
-        status: "warning",
-        updatedAt: "2026-06-01T00:00:00.000Z",
-      },
-      budgetApproval: {
-        hitlId: "hitl-1",
-        approvalPoint: "warning-1",
-        createdAt: "2026-06-01T00:00:00.000Z",
-      },
-      attempt: 1,
-      reviewGeneration: 1,
-      appliedBudgetHitlIds: [],
-      mainSessionId: "session-main",
-      childSessionIds: [],
-      startedAt: "2026-06-01T00:00:00.000Z",
-      review: {
-        reviewGeneration: 1,
-        verdict: "NOT_DONE",
-        summary: "Cannot complete without the requested clarification.",
-        evidenceRefs: [],
-        unresolvedItems: ["Clarify expected behavior"],
-        reviewerSessionId: "session-review",
-        executionId: "execution-review-2",
-        delegationContractHash: "b".repeat(64),
-        result: {
-          status: "failed",
-          summary: "Cannot complete without the requested clarification.",
-          criteria: [{ id: "acceptance", status: "unverified", evidenceRefs: [] }],
-          deliverables: [],
-          evidence: [],
-          verification: [],
-          unresolved: [{
-            issue: "Clarify expected behavior",
-            blocking: true,
-            nextOwner: "user",
-          }],
-        },
-        decidedAt: "2026-06-01T00:01:00.000Z",
-      },
-      createdAt: "2026-06-01T00:00:00.000Z",
-      updatedAt: "2026-06-01T00:01:00.000Z",
-      lastError: {
-        name: "QuestionBlockedError",
-        message: "Awaiting user clarification",
-        at: "2026-06-01T00:01:00.000Z",
-      },
-    };
-
-    const parsed = serializeRoundTrip(state);
-
-    expect(parsed.status).toBe("running");
-    expect(parsed.budgetApproval?.approvalPoint).toBe("warning-1");
-    expect(parsed.review?.verdict).toBe("NOT_DONE");
-    expect(parsed.review?.unresolvedItems).toEqual(["Clarify expected behavior"]);
-    expect(parsed.lastError?.name).toBe("QuestionBlockedError");
-  });
-});
-
 describe("HITL types", () => {
   test("uses a bounded recent-terminal retention limit", () => {
     expect(HITL_RECENT_TERMINAL_LIMIT).toBe(20);
@@ -599,18 +434,6 @@ describe("HITL types", () => {
     const parsed = serializeRoundTrip(response);
     expect(parsed).toEqual(response);
     expect(parsed.decision).toBe("approve_once");
-  });
-
-  test("serializes HitlResponse budget variant", () => {
-    const response: HitlResponse = {
-      type: "budget_decision",
-      decision: "denied",
-      comment: "Needs more tests",
-    };
-
-    const parsed = serializeRoundTrip(response);
-    expect(parsed).toEqual(response);
-    expect(parsed.decision).toBe("denied");
   });
 
   test("HitlView remains display-safe", () => {

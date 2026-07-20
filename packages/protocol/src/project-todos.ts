@@ -3,7 +3,7 @@ export const PROJECT_TODO_BODY_MAX_LENGTH = 20_000;
 export const PROJECT_TODO_REJECTION_REASON_MAX_LENGTH = 4_000;
 
 export type ProjectTodoStatus = "idea" | "ready" | "done" | "rejected";
-export type ProjectTodoActivationKind = "session" | "goal" | "automation";
+export type ProjectTodoActivationKind = "session" | "automation";
 
 export interface ProjectTodoActivation {
   readonly kind: ProjectTodoActivationKind;

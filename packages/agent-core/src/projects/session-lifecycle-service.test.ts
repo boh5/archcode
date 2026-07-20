@@ -9,8 +9,6 @@ import { SessionLifecycleService, type SessionLifecycleServiceOptions } from "./
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "session-lifecycle-service", crypto.randomUUID());
 const ORDINARY_SESSION_ID = "11111111-1111-4111-8111-111111111111";
-const GOAL_SESSION_ID = "22222222-2222-4222-8222-222222222222";
-const GOAL_OWNER_ID = "55555555-5555-4555-8555-555555555555";
 const TODO_OWNER_ID = "66666666-6666-4666-8666-666666666666";
 
 beforeEach(async () => {
@@ -23,24 +21,6 @@ afterAll(async () => {
 });
 
 describe("SessionLifecycleService", () => {
-  test("preflight rejects Goal ownership", async () => {
-    const fixture = createFixture();
-    fixture.sessions.create(GOAL_SESSION_ID, TMP_ROOT, { goalId: GOAL_OWNER_ID, agentName: "goal_lead" });
-    await fixture.sessions.flushSession(GOAL_SESSION_ID, TMP_ROOT);
-
-    await expect(fixture.service.assertDeletable({
-      workspaceRoot: TMP_ROOT,
-      rootSessionId: GOAL_SESSION_ID,
-      sessionIds: [GOAL_SESSION_ID],
-    })).rejects.toMatchObject({
-      name: "SessionDeleteOwnerConflictError",
-      code: "SESSION_DELETE_OWNER_CONFLICT",
-      sessionIds: [GOAL_SESSION_ID],
-      owners: [{ sessionId: GOAL_SESSION_ID, ownerType: "goal", ownerId: GOAL_OWNER_ID }],
-    } satisfies Partial<SessionDeleteOwnerConflictError>);
-    expect(fixture.cancelSessionToolBatch).not.toHaveBeenCalled();
-  });
-
   test("preflight rejects ProjectTodo ownership without Session metadata", async () => {
     const fixture = createFixture({
       findProjectTodoOwners: mock(async () => [{

@@ -5,15 +5,10 @@ import type { VersionControl } from "../version-control/detector";
 
 export type CapabilityRef = BuiltinToolName;
 export type TransitionRef =
-  | "goal.begin_review"
-  | "goal.retry"
-  | "goal.cancel"
-  | "goal.finalize_review"
   | "todo.update";
 
 export type CompletionAuthority =
   | "ordinary-session"
-  | "goal-coordinator"
   | "goal-reviewer"
   | "ordinary-reviewer"
   | "delegated-scope"
@@ -39,7 +34,7 @@ export interface RoleContract {
   readonly delegateTargets: readonly AgentName[];
 }
 
-export type GoalPromptStatus = "running" | "reviewing" | "not_done";
+export type GoalPromptStatus = "active" | "paused" | "blocked" | "budget_limited" | "complete";
 export type ReviewPromptMode = "none" | "ordinary" | "goal";
 export type TodoPromptMode = "none" | "bound";
 export type McpPromptStatus = "pending" | "ready" | "ready-zero" | "partial-warning" | "failed";
@@ -52,7 +47,12 @@ export interface RuntimePromptEnvelope {
   readonly parentAgentName: AgentName | "none";
   readonly depth: number;
   readonly allowedDelegateTargets: readonly AgentName[];
-  readonly goal: { readonly id: string; readonly status: GoalPromptStatus; readonly reviewGeneration: number | "none" } | "none";
+  readonly goal: {
+    readonly instanceId: string;
+    readonly generation: number;
+    readonly objective: string;
+    readonly status: GoalPromptStatus;
+  } | "none";
   readonly todo: { readonly id: string; readonly mode: "bound" } | "none";
   readonly reviewMode: ReviewPromptMode;
   readonly ownedScope: readonly ScopeRef[];

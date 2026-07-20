@@ -15,10 +15,6 @@ const SUBMISSION_COPY: Record<StructuredResultSubmission, {
     label: "Canonical child result",
     tool: "submit_child_result",
   },
-  "goal_manage.finalize_review": {
-    label: "Canonical Goal review result",
-    tool: "goal_manage.finalize_review",
-  },
 };
 
 export function createStructuredResultCorrectionGate(
@@ -103,12 +99,7 @@ export function isStructuredResultSubmission(
   input: unknown,
   submission: StructuredResultSubmission,
 ): boolean {
-  if (submission === "submit_child_result") return toolName === "submit_child_result";
-  return toolName === "goal_manage"
-    && typeof input === "object"
-    && input !== null
-    && "action" in input
-    && input.action === "finalize_review";
+  return toolName === "submit_child_result";
 }
 
 function toolErrorCode(output: string): string | undefined {

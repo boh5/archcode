@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildLifecycleCurrentContext, filterRoleVisibleTools, mapMcpServerStatusForPrompt } from "./configured-agent";
+import { buildLifecycleCurrentContext, mapMcpServerStatusForPrompt } from "./configured-agent";
 
 describe("mapMcpServerStatusForPrompt", () => {
   test("projects real frozen runtime states without guessing from tool names", () => {
@@ -13,27 +13,15 @@ describe("mapMcpServerStatusForPrompt", () => {
   });
 });
 
-describe("filterRoleVisibleTools", () => {
-  test("separates ordinary child submission from Goal Reviewer finalization", () => {
-    const base = ["file_read", "goal_manage", "submit_child_result"];
-    expect(filterRoleVisibleTools("reviewer", undefined, base)).toEqual(["file_read", "submit_child_result"]);
-    expect(filterRoleVisibleTools("reviewer", "goal-1", base)).toEqual(["file_read", "goal_manage"]);
-    expect(filterRoleVisibleTools("explore", "goal-1", base)).toEqual(base);
-  });
-});
-
 test("buildLifecycleCurrentContext snapshots available Goal and Todo intent without manager dependencies", () => {
   expect(buildLifecycleCurrentContext(
-    { sessionRole: "review", goalId: "goal-1" },
-    { status: "reviewing", reviewGeneration: 3, objective: "Ship Prompt V2", acceptanceCriteria: "AC-01 through AC-08 pass" },
+    { instanceId: "goal-1", generation: 3, status: "active", objective: "Ship Prompt V2 and pass AC-01 through AC-08" },
     { id: "todo-1", title: "Prompt architecture", body: "Keep compiler pure" },
   )).toEqual([
-    "sessionRole=review",
-    "goalId=goal-1",
-    "goalStatus=reviewing",
-    "reviewGeneration=3",
-    'goalObjective="Ship Prompt V2"',
-    'goalAcceptanceCriteria="AC-01 through AC-08 pass"',
+    "goalInstanceId=goal-1",
+    "goalStatus=active",
+    "goalGeneration=3",
+    'goalObjective="Ship Prompt V2 and pass AC-01 through AC-08"',
     "todoId=todo-1",
     'todoTitle="Prompt architecture"',
     'todoBody="Keep compiler pure"',

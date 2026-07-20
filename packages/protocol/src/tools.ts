@@ -66,9 +66,10 @@ export const TOOL_SKILL_READ = "skill_read";
 export const TOOL_MEMORY_READ = "memory_read";
 export const TOOL_MEMORY_WRITE = "memory_write";
 
-// Goal lifecycle tools
-export const TOOL_GOAL_CREATE = "goal_create";
-export const TOOL_GOAL_MANAGE = "goal_manage";
+// Session Goal tools
+export const TOOL_CREATE_GOAL = "create_goal";
+export const TOOL_GET_GOAL = "get_goal";
+export const TOOL_UPDATE_GOAL = "update_goal";
 export const TOOL_AUTOMATION_CREATE = "automation_create";
 
 // Compression
@@ -116,8 +117,9 @@ export type BuiltinToolName =
   | typeof TOOL_SKILL_READ
   | typeof TOOL_MEMORY_READ
   | typeof TOOL_MEMORY_WRITE
-  | typeof TOOL_GOAL_CREATE
-  | typeof TOOL_GOAL_MANAGE
+  | typeof TOOL_CREATE_GOAL
+  | typeof TOOL_GET_GOAL
+  | typeof TOOL_UPDATE_GOAL
   | typeof TOOL_AUTOMATION_CREATE
   | typeof TOOL_COMPRESS;
 
@@ -181,8 +183,9 @@ export const TOOL_CATEGORY_MAP = {
   [TOOL_SKILL_READ]: "skill",
   [TOOL_MEMORY_READ]: "memory",
   [TOOL_MEMORY_WRITE]: "memory",
-  [TOOL_GOAL_CREATE]: "goal",
-  [TOOL_GOAL_MANAGE]: "goal",
+  [TOOL_CREATE_GOAL]: "goal",
+  [TOOL_GET_GOAL]: "goal",
+  [TOOL_UPDATE_GOAL]: "goal",
   [TOOL_AUTOMATION_CREATE]: "automation",
   [TOOL_COMPRESS]: "other",
 } as const satisfies Record<BuiltinToolName, ToolCategory>;

@@ -235,35 +235,6 @@ describe("SessionStoreManager", () => {
     expect(state.nextEventId).toBe(0);
   });
 
-  test("create with goalId and sessionRole sets them on state", () => {
-    const sessionId = uniqueSessionId("with-goal");
-    const goalId = crypto.randomUUID();
-    const store = storeManager.create(sessionId, TMP_DIR, {
-      goalId,
-      sessionRole: "explore", agentName: "explore"
-    });
-    const state = store.getState();
-
-    expect(state.goalId).toBe(goalId);
-    expect(state.sessionRole).toBe("explore");
-  });
-
-  test("setGoalId and setSessionRole persist changes", async () => {
-    __setSessionsDirForTest(() => TMP_DIR);
-    const sessionId = uniqueSessionId("goal-persist");
-    const store = storeManager.create(sessionId, TMP_DIR, {
-      sessionRole: "main", agentName: "engineer"
-    });
-    const goalId = crypto.randomUUID();
-
-    store.getState().setGoalId(goalId);
-    expect(store.getState().goalId).toBe(goalId);
-
-    const persisted = await waitForPersistedSession(sessionId, (session) => session.goalId === goalId);
-    expect(persisted.goalId).toBe(goalId);
-    expect(persisted.sessionRole).toBe("main");
-  });
-
   test("createSessionStore persists a new session file", async () => {
     __setSessionsDirForTest(() => TMP_DIR);
     const sessionId = uniqueSessionId("persist-create");

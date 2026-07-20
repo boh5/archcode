@@ -5,7 +5,6 @@ import { createEmptySessionStats } from "./usage";
 import type {
   CompressionBlockSnapshot,
   CompressionRefMapSnapshot,
-  GoalState,
   Reminder,
   SessionMessage,
   SessionPart,
@@ -211,6 +210,44 @@ describe("reduceStreamEvent", () => {
     }, createDeterministicContext());
 
     expect(result).toEqual({ cwd: "/repo/.archcode/worktrees/session-1" });
+  });
+
+  test("projects a Session Goal snapshot and its explicit clear", () => {
+    const goal = {
+      instanceId: "00000000-0000-4000-8000-000000000001",
+      generation: 1,
+      objective: "Finish the implementation",
+      status: "active" as const,
+      usage: { tokens: createEmptySessionStats().usage, executionTimeMs: 0, executionCount: 0 },
+      evaluatorCount: 0,
+      noProgressCount: 0,
+      failureCount: 0,
+      userInputCursor: 0,
+      sourceMutationEpoch: 0,
+      createdAt: 1,
+      activatedAt: 1,
+      updatedAt: 1,
+    };
+    const state = createProjection();
+
+    expect(reduceStreamEvent(state, {
+      type: "session.goal_changed",
+      action: "created",
+      instanceId: goal.instanceId,
+      generation: goal.generation,
+      goal,
+      status: goal.status,
+      occurredAt: 1,
+    }, createDeterministicContext())).toEqual({ goal });
+
+    expect(reduceStreamEvent({ ...state, goal }, {
+      type: "session.goal_changed",
+      action: "cleared",
+      instanceId: goal.instanceId,
+      generation: goal.generation,
+      goal: null,
+      occurredAt: 2,
+    }, createDeterministicContext())).toEqual({ goal: undefined });
   });
 
   test("defaults stats to all zeros and executions to empty for never-run sessions", () => {

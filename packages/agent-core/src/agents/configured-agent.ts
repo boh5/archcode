@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { PROJECT_STATE_DIR_NAME, USER_DATA_DIR_NAME, type GoalState, type McpServerStatus, type ProjectTodo, type PromptTraceSnapshot } from "@archcode/protocol";
+import { PROJECT_STATE_DIR_NAME, USER_DATA_DIR_NAME, type McpServerStatus, type ProjectTodo, type PromptTraceSnapshot, type SessionGoal } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 import type { BackgroundTaskManager } from "../background/manager";
 import { BackgroundTaskManager as DefaultBackgroundTaskManager } from "../background/manager";
@@ -11,7 +11,6 @@ import type { MemoryRoots } from "../memory";
 import { MemoryFileManager } from "../memory/file-manager";
 import type { ProjectContextResolver } from "../projects/context-resolver";
 import type { ProjectContext } from "../projects/types";
-import { createGoalBudgetEnforcementHooks } from "../goals/budget-enforcement";
 import { SkillNotFoundError, type SkillService } from "../skills";
 import type { ResolvedSkill } from "../skills/types";
 import { AgentsMdLoadError, PromptContractCompiler, createFailedPromptTrace, loadAgentsMd } from "../prompt/index";
@@ -22,9 +21,10 @@ import type { SessionStoreState } from "../store/types";
 import type { Logger } from "../logger";
 import type { ToolRegistry } from "../tools/index";
 import type { ToolOutputAccessService } from "../tool-output/access-service";
-import { TOOL_GOAL_MANAGE, TOOL_WORKTREE_ENTER, TOOL_WORKTREE_EXIT } from "../tools/names";
+import type { ConsumeFreshUserInputRequest, FreshUserInputGrant } from "../tools/types";
+import type { SessionGoalService } from "../session-goal";
+import { TOOL_WORKTREE_ENTER, TOOL_WORKTREE_EXIT } from "../tools/names";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
-import { isGoalDelegationAllowed } from "../execution/goal-session-phase-policy";
 import type { VersionControl, VersionControlDetector } from "../version-control/detector";
 import type { AgentDefinition } from "./factory-types";
 import {
@@ -67,6 +67,8 @@ export interface ConfiguredAgentOptions {
   readonly depth?: number;
   readonly backgroundTaskManager?: BackgroundTaskManager;
   readonly projectContextResolver: ProjectContextResolver;
+  readonly sessionGoalService?: SessionGoalService;
+  readonly consumeFreshUserInput?: (input: ConsumeFreshUserInputRequest) => Promise<FreshUserInputGrant> | FreshUserInputGrant;
   readonly resolveVersionControl: VersionControlDetector;
   readonly resolveAllowedTools: (definition: AgentDefinition, depth: number) => readonly string[];
   readonly startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
@@ -116,32 +118,18 @@ function durablePromptTrace(trace: CompiledPromptContract["trace"]): PromptTrace
 }
 
 export function buildLifecycleCurrentContext(
-  state: Pick<SessionStoreState, "sessionRole" | "goalId">,
-  goal: Pick<GoalState, "status" | "reviewGeneration" | "objective" | "acceptanceCriteria"> | undefined,
+  goal: Pick<SessionGoal, "instanceId" | "generation" | "status" | "objective"> | undefined,
   todo: Pick<ProjectTodo, "id" | "title" | "body"> | undefined,
 ): string[] {
   return [
-    `sessionRole=${state.sessionRole ?? "none"}`,
-    `goalId=${state.goalId ?? "none"}`,
+    `goalInstanceId=${goal?.instanceId ?? "none"}`,
     `goalStatus=${goal?.status ?? "none"}`,
-    `reviewGeneration=${goal?.reviewGeneration ?? "none"}`,
+    `goalGeneration=${goal?.generation ?? "none"}`,
     `goalObjective=${goal === undefined ? "none" : JSON.stringify(goal.objective)}`,
-    `goalAcceptanceCriteria=${goal === undefined ? "none" : JSON.stringify(goal.acceptanceCriteria)}`,
     `todoId=${todo?.id ?? "none"}`,
     `todoTitle=${todo === undefined ? "none" : JSON.stringify(todo.title)}`,
     `todoBody=${todo === undefined ? "none" : JSON.stringify(todo.body)}`,
   ];
-}
-
-export function filterRoleVisibleTools(
-  agentName: AgentDefinition["name"],
-  goalId: string | undefined,
-  tools: readonly string[],
-): string[] {
-  if (agentName !== "reviewer") return [...tools];
-  return goalId === undefined
-    ? tools.filter((tool) => tool !== TOOL_GOAL_MANAGE)
-    : tools.filter((tool) => tool !== "submit_child_result");
 }
 
 export class ConfiguredAgent implements Agent {
@@ -154,6 +142,8 @@ export class ConfiguredAgent implements Agent {
   private readonly projectRoot: string;
   readonly cwd: string;
   private readonly projectContextResolver: ProjectContextResolver;
+  private readonly sessionGoalService: SessionGoalService | undefined;
+  private readonly consumeFreshUserInput: ((input: ConsumeFreshUserInputRequest) => Promise<FreshUserInputGrant> | FreshUserInputGrant) | undefined;
   private readonly resolveVersionControl: VersionControlDetector;
   private readonly depth: number;
   private readonly memoryRoots: MemoryRoots;
@@ -191,6 +181,8 @@ export class ConfiguredAgent implements Agent {
     this.projectRoot = options.projectRoot;
     this.cwd = options.cwd;
     this.projectContextResolver = options.projectContextResolver;
+    this.sessionGoalService = options.sessionGoalService;
+    this.consumeFreshUserInput = options.consumeFreshUserInput;
     this.resolveVersionControl = options.resolveVersionControl;
     this.depth = options.depth ?? 0;
     this.backgroundTaskManager = options.backgroundTaskManager ?? new DefaultBackgroundTaskManager({
@@ -280,6 +272,7 @@ export class ConfiguredAgent implements Agent {
       abort,
       maxSteps,
       extraTools,
+      toolProjection,
       consumeSteers,
     } = options;
 
@@ -293,11 +286,7 @@ export class ConfiguredAgent implements Agent {
         ...this.resolveAllowedTools(this.definition, this.depth),
         ...this.resolveSessionWorktreeTools(),
       ];
-      const allowedTools = filterRoleVisibleTools(
-        this.definition.name,
-        this.store.getState().goalId,
-        this.resolveEffectiveTools(definitionAllowedTools, extraTools),
-      );
+      const allowedTools = this.resolveEffectiveTools(definitionAllowedTools, extraTools, toolProjection);
       const agentSkills = this.definition.skills;
       const projectContext: ProjectContext = await this.projectContextResolver.resolve(this.projectRoot);
       const memory = await this.resolveMemorySnapshot();
@@ -366,6 +355,8 @@ export class ConfiguredAgent implements Agent {
             skillService: this.skillService,
             storeManager: this.storeManager,
             projectContext,
+            ...(this.sessionGoalService === undefined ? {} : { sessionGoalService: this.sessionGoalService }),
+            ...(this.consumeFreshUserInput === undefined ? {} : { consumeFreshUserInput: this.consumeFreshUserInput }),
             cwd: this.cwd,
             toolOutputAccess: this.toolOutputAccess,
             abort,
@@ -447,17 +438,28 @@ export class ConfiguredAgent implements Agent {
     readonly binding: ExecutionModelBinding;
   }): Promise<PromptContractV2> {
     const state = this.store.getState();
-    const goal = state.goalId === undefined ? undefined : await input.projectContext.goalState.read(state.goalId);
+    const rootState = state.rootSessionId === state.sessionId
+      ? state
+      : (await this.storeManager.getOrLoad(state.rootSessionId, this.projectRoot)).getState();
+    const rootGoal = rootState.goal;
+    const goalReviewerSessionId = rootGoal?.review?.phase === "review_running"
+      ? rootGoal.review.reviewerSessionId
+      : undefined;
+    const inGoalReview = goalReviewerSessionId !== undefined && (
+      state.sessionId === goalReviewerSessionId
+      || state.parentSessionId === goalReviewerSessionId
+    );
+    const goal = state.sessionId === state.rootSessionId && this.definition.name === "engineer"
+      ? state.goal
+      : inGoalReview
+        ? rootGoal
+        : undefined;
     const todo = this.definition.name === "shaper"
       ? await input.projectContext.todos.state.findByDiscussionSessionId(state.sessionId)
       : undefined;
-    const goalStatus = goal?.status;
-    const supportedGoalStatus = goalStatus === "running" || goalStatus === "reviewing" || goalStatus === "not_done"
-      ? goalStatus satisfies GoalPromptStatus
-      : undefined;
     const reviewMode: RuntimePromptEnvelope["reviewMode"] = this.definition.name === "reviewer"
-      ? (goal === undefined ? "ordinary" : "goal")
-      : (goalStatus === "reviewing" && (this.definition.name === "explore" || this.definition.name === "librarian") ? "goal" : "none");
+      ? (inGoalReview ? "goal" : "ordinary")
+      : (inGoalReview && (this.definition.name === "explore" || this.definition.name === "librarian") ? "goal" : "none");
     const parentAgentName = state.parentSessionId === undefined
       ? "none"
       : this.storeManager.get(state.parentSessionId, this.projectRoot)?.getState().agentName;
@@ -467,20 +469,7 @@ export class ConfiguredAgent implements Agent {
     const definitionTargets = input.allowedTools.includes("delegate")
       ? [...(this.definition.tools.delegateTargets ?? [])]
       : [];
-    const allowedDelegateTargets = goal === undefined
-      ? definitionTargets
-      : definitionTargets.filter((targetAgentName) => isGoalDelegationAllowed({
-        goal,
-        parent: {
-          sessionId: state.sessionId,
-          rootSessionId: state.rootSessionId,
-          parentSessionId: state.parentSessionId,
-          agentName: state.agentName,
-          sessionRole: state.sessionRole,
-          isDescendantOfRoot: state.parentSessionId === undefined ? undefined : true,
-        },
-        targetAgentName,
-      }));
+    const allowedDelegateTargets = definitionTargets;
     const runtime: RuntimePromptEnvelope = {
       agentName: this.definition.name,
       sessionId: state.sessionId,
@@ -489,9 +478,14 @@ export class ConfiguredAgent implements Agent {
       parentAgentName,
       depth: this.depth,
       allowedDelegateTargets,
-      goal: goal === undefined || supportedGoalStatus === undefined
+      goal: goal === undefined
         ? "none"
-        : { id: goal.id, status: supportedGoalStatus, reviewGeneration: goal.reviewGeneration },
+        : {
+            instanceId: goal.instanceId,
+            generation: goal.generation,
+            objective: goal.objective,
+            status: goal.status satisfies GoalPromptStatus,
+          },
       todo: todo === undefined ? "none" : { id: todo.id, mode: "bound" },
       reviewMode,
       ownedScope: state.delegationContract?.owned_scope ?? [],
@@ -512,7 +506,7 @@ export class ConfiguredAgent implements Agent {
       },
       agentsMd: this.agentsMd,
       memory: input.memory,
-      currentContext: buildLifecycleCurrentContext(state, goal, todo),
+      currentContext: buildLifecycleCurrentContext(goal, todo),
       delegation: state.delegationContract === undefined || state.delegationContractHash === undefined
         ? "none"
         : { contract: state.delegationContract, hash: state.delegationContractHash },
@@ -561,8 +555,6 @@ export class ConfiguredAgent implements Agent {
     ) {
       beforeModelCall.push(createTitleGenerationHook(btm, this.projectRoot, isCancelled));
     }
-    const budgetEnforcement = createGoalBudgetEnforcementHooks();
-    beforeModelCall.push(budgetEnforcement.beforeModelCall);
     if (beforeModelCall.length > 0) {
       hooks.beforeModelCall = beforeModelCall;
     }
@@ -571,12 +563,9 @@ export class ConfiguredAgent implements Agent {
     if (policy.todoStepReminder || policy.todoQueryLoopContinuation) {
       const todoContinuation = createTodoContinuationHook();
       hooks.afterStepEnd = [
-        budgetEnforcement.afterStepEnd,
         ...(policy.todoStepReminder ? [todoContinuation.afterStepEnd] : []),
       ];
       if (policy.todoQueryLoopContinuation) afterLoopEnd.push(todoContinuation.afterLoopEnd);
-    } else {
-      hooks.afterStepEnd = [budgetEnforcement.afterStepEnd];
     }
     // Memory hooks only run on a root principal Agent (depth 0).
     // Sub-agents at depth > 0 must not write to project/user memory independently.
@@ -598,6 +587,7 @@ export class ConfiguredAgent implements Agent {
   private resolveEffectiveTools(
     definitionAllowedTools: readonly string[],
     extraTools: readonly string[] | undefined,
+    toolProjection: readonly string[] | undefined,
   ): string[] {
     const seen = new Set<string>();
     const eligible = new Set(definitionAllowedTools);
@@ -624,7 +614,14 @@ export class ConfiguredAgent implements Agent {
       merged.push(toolName);
     }
 
-    return merged;
+    if (toolProjection === undefined) return merged;
+    const allowed = new Set(merged);
+    for (const toolName of toolProjection) {
+      if (!allowed.has(toolName)) {
+        throw new UnknownExtraToolError(toolName);
+      }
+    }
+    return [...new Set(toolProjection)];
   }
 
   private resolveSessionWorktreeTools(): string[] {
@@ -633,7 +630,6 @@ export class ConfiguredAgent implements Agent {
       this.depth !== 0
       || this.definition.name !== "engineer"
       || state.parentSessionId !== undefined
-      || state.goalId !== undefined
     ) return [];
 
     const toolName = this.cwd === this.projectRoot ? TOOL_WORKTREE_ENTER : TOOL_WORKTREE_EXIT;

@@ -1,9 +1,6 @@
 import { isAbsolute } from "node:path";
 import { z } from "zod/v4";
-import type { GoalStateManager } from "../goals/state";
 import type { Automation, AutomationAction, AutomationTrigger } from "@archcode/protocol";
-import type { GoalLifecycleService } from "../goals/lifecycle-service";
-import type { GoalCancellationCapability } from "../goals/cancellation";
 import type { ProjectHitlQueue } from "../hitl";
 import type { MemoryFileManager } from "../memory/file-manager";
 import type { ProjectApprovalManager } from "../tools/permission/project-approvals";
@@ -25,8 +22,6 @@ export interface ProjectInfo {
 /** Runtime context injected into tool execution — contains live Manager instances */
 export interface ProjectContext {
   project: ProjectInfo;
-  goalState: GoalStateManager;
-  goalLifecycle: GoalLifecycleService;
   createAutomation(input: {
     readonly name: string;
     readonly trigger: AutomationTrigger;
@@ -34,7 +29,6 @@ export interface ProjectContext {
     readonly createdFromSessionId: string;
   }): Promise<Automation>;
   todos: ProjectTodoService;
-  goalCancellation: GoalCancellationCapability;
   hitl: ProjectHitlQueue;
   memory: MemoryFileManager;
   approvals: ProjectApprovalManager;

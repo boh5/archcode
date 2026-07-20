@@ -8,3 +8,4 @@ export * from "./automation";
 export * from "./project-todos";
 export * from "./delegation";
 export * from "./model-runtime";
+export * from "./session-goal";

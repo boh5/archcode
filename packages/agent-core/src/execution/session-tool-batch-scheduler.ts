@@ -184,20 +184,28 @@ export class SessionToolBatchScheduler {
         executionControl ??= outcome.executionControl;
       }
 
+      if (executionControl !== undefined) {
+        return {
+          status: "ready_for_continuation",
+          sessionCwdChanged,
+          executionControl,
+        };
+      }
+
       batch = this.#requireActiveBatch();
       const refreshed = partition.callIds.map((callId) => requiredCall(batch, callId));
       const manual = refreshed.find((call) => call.state === "manual_inspection_required");
       if (manual !== undefined) {
         return await this.#archiveManual(manualReasonFromCall(manual));
       }
-      if (sessionCwdChanged || executionControl !== undefined) {
-        await this.#failCallsAfterControlBoundary(batch.batchId, partitionIndex, sessionCwdChanged
-          ? { code: "SESSION_CWD_CHANGED", message: "Tool call skipped because the Session cwd changed" }
-          : { code: "SESSION_EXECUTION_STOPPED", message: "Tool call skipped because Session execution stopped" });
+      if (sessionCwdChanged) {
+        await this.#failCallsAfterControlBoundary(batch.batchId, partitionIndex, {
+          code: "SESSION_CWD_CHANGED",
+          message: "Tool call skipped because the Session cwd changed",
+        });
         return {
           status: "ready_for_continuation",
           sessionCwdChanged,
-          ...(executionControl === undefined ? {} : { executionControl }),
         };
       }
       if (!refreshed.every((call) => TERMINAL_CALL_STATES.has(call.state))) break;
@@ -262,11 +270,78 @@ export class SessionToolBatchScheduler {
       await this.#blockCall(batchId, call, outcome.requestKey, outcome.request);
       return { sessionCwdChanged: false };
     }
-    await this.#commitSettled(batchId, call, outcome);
+    if (outcome.sidecar?.executionControl !== undefined) {
+      await this.#commitExecutionControlBoundary(batch, call, outcome);
+    } else {
+      await this.#commitSettled(batchId, call, outcome);
+    }
     return {
       sessionCwdChanged: outcome.sidecar?.sessionCwdChanged === true,
       ...(outcome.sidecar?.executionControl === undefined ? {} : { executionControl: outcome.sidecar.executionControl }),
     };
+  }
+
+  /**
+   * A successful terminal tool result and the fact that its batch needs no LLM
+   * continuation are one durable transition. Keeping those as separate writes
+   * can revive a completed child through the runtime Tool Batch reconciler.
+   */
+  async #commitExecutionControlBoundary(
+    batch: SessionToolBatch,
+    call: SessionToolBatchCall,
+    outcome: Extract<RegistryExecutionOutcome, { kind: "settled" }>,
+  ): Promise<void> {
+    const partition = batch.partitions[call.partitionIndex];
+    if (partition?.type !== "serial") {
+      throw new Error(`Execution-control tool call ${call.toolCallId} must own a serial Tool Batch partition`);
+    }
+
+    const skipped = batch.calls.filter((candidate) => (
+      candidate.toolCallId !== call.toolCallId && !TERMINAL_CALL_STATES.has(candidate.state)
+    ));
+    const skippedOutcomes = new Map<string, Extract<RegistryExecutionOutcome, { kind: "settled" }>>();
+    for (const candidate of skipped) {
+      skippedOutcomes.set(candidate.toolCallId, await this.#settleSystem(
+        candidate,
+        batch.step,
+        createToolErrorResult({
+          kind: "execution",
+          code: "SESSION_EXECUTION_STOPPED",
+          message: "Tool call skipped because Session execution stopped",
+        }),
+      ));
+    }
+
+    const now = new Date().toISOString();
+    await this.#updateBatch(batch.batchId, (current) => ({
+      ...current,
+      archivedAt: now,
+      calls: current.calls.map((candidate) => {
+        if (candidate.toolCallId === call.toolCallId) {
+          return {
+            ...candidate,
+            state: outcome.result.isError ? "failed" as const : "completed" as const,
+            result: outcome.result,
+          };
+        }
+        const skippedOutcome = skippedOutcomes.get(candidate.toolCallId);
+        if (skippedOutcome === undefined) return candidate;
+        return {
+          ...candidate,
+          state: skippedOutcome.result.isError ? "failed" as const : "completed" as const,
+          result: skippedOutcome.result,
+        };
+      }),
+    }));
+    for (const candidate of batch.calls) {
+      if (candidate.toolCallId === call.toolCallId) {
+        this.#appendResult(candidate, outcome.result);
+        continue;
+      }
+      const skippedOutcome = skippedOutcomes.get(candidate.toolCallId);
+      if (skippedOutcome !== undefined) this.#appendResult(candidate, skippedOutcome.result);
+    }
+    await this.#flush();
   }
 
   async #blockCall(

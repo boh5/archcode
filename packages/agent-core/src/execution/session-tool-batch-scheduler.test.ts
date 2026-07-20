@@ -21,6 +21,7 @@ import {
   SessionToolBatchScheduler,
   applySessionToolBatchResponse,
   cancelSessionToolBatch,
+  hasRunnableSessionToolBatch,
   validateSessionToolBatchResponse,
   type SessionToolBatchQueue,
 } from "./session-tool-batch-scheduler";
@@ -80,6 +81,18 @@ async function createHarness() {
     outputPolicy: { kind: "inline", previewDirection: "head" },
     execute: async () => createTextToolResult("changed", { sidecar: { sessionCwdChanged: true } }),
   }));
+  registry.register(defineTool({
+    name: "terminal_tool",
+    description: "terminal",
+    inputSchema: z.object({}).strict(),
+    traits: { readOnly: false, destructive: false, concurrencySafe: false },
+    outputPolicy: { kind: "inline", previewDirection: "head" },
+    execute: async () => createTextToolResult("done", {
+      sidecar: {
+        executionControl: { action: "complete_execution", reason: "child_result_submitted" },
+      },
+    }),
+  }));
   registry.register(askUserTool);
 
   const queueRecords = new Map<string, string>();
@@ -101,7 +114,7 @@ async function createHarness() {
     step,
     abort: new AbortController().signal,
     startedAt: Date.now(),
-    allowedTools: new Set(["read_tool", "effect_tool", "cwd_tool", "permission_tool", "ask_user"]),
+    allowedTools: new Set(["read_tool", "effect_tool", "cwd_tool", "permission_tool", "terminal_tool", "ask_user"]),
     projectContext,
     cwd: TMP_DIR,
   });
@@ -112,7 +125,7 @@ async function createHarness() {
     registry,
     hitlQueue,
     agentName: "engineer",
-    allowedTools: ["read_tool", "effect_tool", "cwd_tool", "permission_tool", "ask_user"],
+    allowedTools: ["read_tool", "effect_tool", "cwd_tool", "permission_tool", "terminal_tool", "ask_user"],
     agentSkills: [],
     createContext,
   });
@@ -282,6 +295,29 @@ describe("SessionToolBatchScheduler hard-cut output ownership", () => {
     ], 0);
     expect(await harness.scheduler.advance()).toMatchObject({ sessionCwdChanged: true });
     expect(harness.scheduler.activeBatch()!.calls.map((call) => call.state)).toEqual(["completed", "failed"]);
+    expect(eventResults(harness)).toHaveLength(2);
+  });
+
+  test("atomically archives a terminal execution-control batch without an LLM continuation", async () => {
+    const harness = await createHarness();
+    await harness.scheduler.createBatch([
+      { toolCallId: "terminal-1", toolName: "terminal_tool", input: {} },
+      { toolCallId: "read-after-terminal", toolName: "read_tool", input: {} },
+    ], 0);
+
+    expect(await harness.scheduler.advance()).toMatchObject({
+      status: "ready_for_continuation",
+      executionControl: { action: "complete_execution", reason: "child_result_submitted" },
+    });
+    expect(harness.scheduler.activeBatch()).toBeUndefined();
+    expect(hasRunnableSessionToolBatch(harness.store.getState())).toBe(false);
+    expect(harness.store.getState().toolBatches[0]).toMatchObject({
+      archivedAt: expect.any(String),
+      calls: [
+        { toolCallId: "terminal-1", state: "completed", result: { isError: false } },
+        { toolCallId: "read-after-terminal", state: "failed", result: { isError: true } },
+      ],
+    });
     expect(eventResults(harness)).toHaveLength(2);
   });
 

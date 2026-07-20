@@ -59,23 +59,21 @@ describe("SkillService", () => {
     expect(skill?.metadata.description).toBe("user review");
   });
 
-  test("reserved creation skills cannot be shadowed by project or user skills", async () => {
-    for (const name of ["goal-create", "automation-create"] as const) {
-      await writeSkill(projectSkillsRoot, name, skillMarkdown(name, `project ${name}`));
-      await writeSkill(userSkillsRoot, name, skillMarkdown(name, `user ${name}`));
-    }
+  test("the reserved Automation creation skill cannot be shadowed", async () => {
+    const name = "automation-create";
+    await writeSkill(projectSkillsRoot, name, skillMarkdown(name, `project ${name}`));
+    await writeSkill(userSkillsRoot, name, skillMarkdown(name, `user ${name}`));
 
     const service = new SkillService({ userSkillsRoot });
 
-    expect((await service.readForAgent(projectRoot, "goal-create"))?.source).toBe("builtin");
     expect((await service.readForAgent(projectRoot, "automation-create"))?.source).toBe("builtin");
   });
 
-  test("reserved creation names remain unavailable rather than falling through when a test manifest omits them", async () => {
+  test("the removed goal-create name has no builtin reservation", async () => {
     await writeSkill(projectSkillsRoot, "goal-create", skillMarkdown("goal-create", "project override"));
     const service = new SkillService({ userSkillsRoot, builtinSkills: {} });
 
-    expect(await service.readForAgent(projectRoot, "goal-create")).toBeNull();
+    expect((await service.readForAgent(projectRoot, "goal-create"))?.source).toBe("project");
   });
 
   test("falls back to statically bundled builtin manifest", async () => {

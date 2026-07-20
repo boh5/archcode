@@ -15,7 +15,7 @@ import { redactSensitiveValue, sanitizeProviderError, type SensitiveTextRedactor
 import { parseRetryAfter, realRetryScheduler, type RetryScheduler } from "../../llm/retry";
 import type { BeforeModelBuildContext, BeforeModelCallContext } from "./loop-hooks";
 import { SessionToolBatchScheduler, type SessionToolBatchAdvanceResult } from "../../execution/session-tool-batch-scheduler";
-import { TOOL_GOAL_MANAGE, TOOL_SUBMIT_CHILD_RESULT } from "@archcode/protocol";
+import { TOOL_SUBMIT_CHILD_RESULT } from "@archcode/protocol";
 import {
   countStructuredResultFailures,
   createStructuredResultCorrectionGate,
@@ -253,11 +253,7 @@ export async function runQueryLoop(
   const initialState = store.getState();
   const structuredResultSubmission: StructuredResultSubmission | undefined = allowedTools.includes(TOOL_SUBMIT_CHILD_RESULT)
     ? "submit_child_result"
-    : allowedTools.includes(TOOL_GOAL_MANAGE)
-      && initialState.agentName === "reviewer"
-      && initialState.sessionRole === "review"
-      ? "goal_manage.finalize_review"
-      : undefined;
+    : undefined;
   const structuredResultCorrection = structuredResultSubmission === undefined
     ? undefined
     : createStructuredResultCorrectionGate(
@@ -275,6 +271,8 @@ export async function runQueryLoop(
     startedAt: Date.now(),
     allowedTools: new Set(allowedTools),
     projectContext: options.projectContext,
+    ...(options.sessionGoalService === undefined ? {} : { sessionGoalService: options.sessionGoalService }),
+    ...(options.consumeFreshUserInput === undefined ? {} : { consumeFreshUserInput: options.consumeFreshUserInput }),
     cwd: executionCwd,
     agentSkills: options.agentSkills,
     skillService: options.skillService,
@@ -307,6 +305,15 @@ export async function runQueryLoop(
         destructive: attempt.destructive,
       });
       await options.storeManager.flushSession(sessionId, options.projectContext.project.workspaceRoot);
+      if (options.sessionGoalService !== undefined && (
+        SOURCE_MUTATING_TOOLS.has(attempt.toolName)
+      )) {
+        await options.sessionGoalService.recordSourceMutation({
+          workspaceRoot: options.projectContext.project.workspaceRoot,
+          sessionId: store.getState().rootSessionId,
+          authority: { kind: "runtime" },
+        });
+      }
     },
   });
   const toolBatchScheduler = new SessionToolBatchScheduler({
@@ -616,6 +623,14 @@ export async function runQueryLoop(
     await runHooks("afterLoopEnd", afterLoopEnd, { store, binding, logger, abort, loopEndStatus: runEndStatus, projectContext: options.projectContext }, logger, { sessionId, agentName });
   }
 }
+
+const SOURCE_MUTATING_TOOLS = new Set([
+  "file_write",
+  "file_edit",
+  "ast_grep_replace",
+  "worktree_enter",
+  "worktree_exit",
+]);
 
 async function runHooks<T>(
   phase: string,
@@ -1080,9 +1095,9 @@ function finishToolBatchAdvance(
 }
 
 function executionEndStatusFromControl(control: ToolExecutionControl): ExecutionEndEvent["status"] {
-  if (control.action === "complete_execution") return "completed";
+  if (control.action === "complete_execution" || control.action === "request_goal_review") return "completed";
   if (control.action === "fail_execution") return "failed";
-  return control.reason === "goal_cancelled" ? "cancelled" : "interrupted";
+  return "interrupted";
 }
 
 function executionErrorFromControl(control: ToolExecutionControl): string | undefined {

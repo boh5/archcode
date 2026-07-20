@@ -4,8 +4,6 @@ import { Dashboard } from "./routes/dashboard";
 import { ProjectRoute } from "./routes/project";
 import { ProjectTodosRoute } from "./routes/project-todos";
 import { SessionRoute } from "./routes/session";
-import { GoalsRoute } from "./routes/goals";
-import { GoalDetailRoute } from "./routes/goal-detail";
 import { AutomationsRoute } from "./routes/automations";
 import { AutomationDetailRoute } from "./routes/automation-detail";
 import { NotFoundRoute } from "./routes/not-found";
@@ -28,8 +26,6 @@ export const router = createBrowserRouter([
           { path: "/", element: <Dashboard /> },
           { path: "/projects/:slug", element: <ProjectRoute /> },
           { path: "/projects/:slug/todos", element: <ProjectTodosRoute /> },
-          { path: "/projects/:slug/goals", element: <GoalsRoute /> },
-          { path: "/projects/:slug/goals/:goalId", element: <GoalDetailRoute /> },
           { path: "/projects/:slug/automations", element: <AutomationsRoute /> },
           { path: "/projects/:slug/automations/:automationId", element: <AutomationDetailRoute /> },
           { path: "/projects/:slug/sessions/:sessionId", element: <SessionRoute /> },

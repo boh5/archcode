@@ -1,6 +1,5 @@
 export const AGENT_NAMES = [
   "engineer",
-  "goal_lead",
   "plan",
   "build",
   "reviewer",

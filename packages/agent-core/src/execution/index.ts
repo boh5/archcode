@@ -14,10 +14,6 @@ export {
 export { SessionCwdReferenceMigrationService } from "./session-cwd-reference-migration";
 export { SessionFamilyStopService } from "./session-family-stop-service";
 export { collectSessionTreeIds } from "./session-tree";
-export {
-  RoleDrivenSessionGoalDelegationAdmission,
-  SessionGoalDelegationDeniedError,
-} from "./session-goal-delegation-admission";
 export { SessionWorkspaceClosingError } from "./session-workspace-control";
 export type { SessionWorkspaceCloseLease } from "./session-workspace-control";
 export {
@@ -56,10 +52,6 @@ export type {
   SessionCwdRemovalLifecycle,
   SessionCwdRemovalResult,
 } from "./session-cwd-reference-migration";
-export type {
-  SessionGoalDelegationAdmission,
-  SessionGoalDelegationAdmissionInput,
-} from "./session-goal-delegation-admission";
 export type {
   CancelSessionToolBatch,
   SessionFamilyStopServiceOptions,

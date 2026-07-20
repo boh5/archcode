@@ -15,6 +15,8 @@ import type { Logger } from "../logger";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
 import { assertValidSessionCwd } from "../store/session-cwd";
 import type { ToolOutputAccessService } from "../tool-output/access-service";
+import type { SessionGoalService } from "../session-goal";
+import type { ConsumeFreshUserInputRequest, FreshUserInputGrant } from "../tools/types";
 
 export interface SessionAgentManagerConfig {
   readonly definitions: readonly AgentDefinition[];
@@ -22,6 +24,8 @@ export interface SessionAgentManagerConfig {
   readonly skillService: SkillService;
   readonly memoryConfig?: MemoryExtractionConfig;
   readonly projectContextResolver: ProjectContextResolver;
+  readonly sessionGoalService?: SessionGoalService;
+  readonly consumeFreshUserInput?: (input: ConsumeFreshUserInputRequest) => Promise<FreshUserInputGrant> | FreshUserInputGrant;
   readonly tombstoneTtlMs?: number;
   readonly storeManager: SessionStoreManager;
   readonly createToolOutputAccess: (workspaceRoot: string, rootSessionId: string) => ToolOutputAccessService;
@@ -226,6 +230,8 @@ export class SessionAgentManager {
         workspaceRoot,
         memoryConfig: this.#config.memoryConfig,
         projectContextResolver: this.#config.projectContextResolver,
+        sessionGoalService: this.#config.sessionGoalService,
+        consumeFreshUserInput: this.#config.consumeFreshUserInput,
         startChildExecution: (request) => {
           if (this.#startChildExecution === undefined) {
             return Promise.reject(new Error("Child execution is not available in this session agent manager"));

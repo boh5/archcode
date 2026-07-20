@@ -31,7 +31,7 @@ The server layer exposes Hono REST and SSE endpoints. It handles request logging
 
 Responsibilities:
 
-- Serve health, agent catalog, project, session, message, event, Goal, Loop, HITL, command, and file routes.
+- Serve health, agent catalog, project, session, message, event, Automation, HITL, command, and file routes.
 - Scope API requests to registered projects.
 - Manage server startup and graceful shutdown.
 - Coordinate permission and question workflows across network boundaries.
@@ -72,11 +72,11 @@ Responsibilities:
 
 ### Single server, multi-project model
 
-ArchCode runs one server process that can manage multiple registered workspace roots. The project registry stores known projects, derives stable slugs, and routes API calls through project-scoped contexts. Each workspace gets its own runtime context. Ordinary root Sessions persist `engineer`; Goal execution creates a dedicated root Session that persists `goal_lead`.
+ArchCode runs one server process that can manage multiple registered workspace roots. The project registry stores known projects, derives stable slugs, and routes API calls through project-scoped contexts. Each workspace gets its own runtime context. Ordinary root Sessions persist `engineer`; a long-running Goal is an optional execution protocol stored directly on that same root Session.
 
 ### Global SSE plus authoritative snapshots
 
-One global SSE connection carries live Session, Goal, Loop, HITL, resource, and runtime changes. REST snapshots remain authoritative; reconnect and lag handling refresh affected queries instead of inventing client-side state.
+One global SSE connection carries live Session, Session Goal, Automation, HITL, resource, and runtime changes. REST snapshots remain authoritative; reconnect and lag handling refresh affected queries instead of inventing client-side state.
 
 ### Durable HITL for permissions and questions
 

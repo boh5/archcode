@@ -59,7 +59,6 @@ describe("Provider secret redaction integration", () => {
         },
         agents: {
           engineer: agent,
-          goal_lead: agent,
           plan: agent,
           build: agent,
           reviewer: agent,

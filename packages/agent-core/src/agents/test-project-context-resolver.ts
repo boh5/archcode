@@ -1,11 +1,11 @@
 import { silentLogger } from "../logger";
 import { ProjectContextResolver } from "../projects/context-resolver";
 import type { SessionStoreManager } from "../store/session-store-manager";
-import { createTestGoalLifecycle, createTestHitlCodec, createTestProjectTodoService } from "../tools/test-project-context";
+import { createTestHitlCodec, createTestProjectTodoService } from "../tools/test-project-context";
 
 /** Builds the complete project-context composition required by Agent tests. */
 export function createTestProjectContextResolver(
-  sessionStoreManager: SessionStoreManager,
+  _sessionStoreManager: SessionStoreManager,
 ): ProjectContextResolver {
   return new ProjectContextResolver({
     hitlCodec: createTestHitlCodec(),
@@ -15,12 +15,6 @@ export function createTestProjectContextResolver(
       workspaceRoot,
       addedAt: new Date().toISOString(),
     }),
-    goalCancellationFactory: ({ goalState }) => ({
-      cancel: async (goalId, request) => await goalState.cancel(goalId, request.reason),
-    }),
-    goalLifecycleFactory: ({ workspaceRoot, goalState }) => (
-      createTestGoalLifecycle(workspaceRoot, goalState, sessionStoreManager)
-    ),
     projectTodoFactory: ({ workspaceRoot, project }) => (
       createTestProjectTodoService(workspaceRoot, project.slug)
     ),

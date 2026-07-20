@@ -34,9 +34,8 @@ describe("workbench layout", () => {
   test("only object detail routes expose a context inspector", () => {
     expect(getInspectorKind("/")).toBeNull();
     expect(getInspectorKind("/projects/archcode")).toBeNull();
-    expect(getInspectorKind("/projects/archcode/goals")).toBeNull();
     expect(getInspectorKind("/projects/archcode/sessions/session-1")).toBe("session");
-    expect(getInspectorKind("/projects/archcode/goals/goal-1")).toBe("goal");
+    expect(getInspectorKind("/projects/archcode/goals/goal-1")).toBeNull();
   });
 
   test("keeps inspector detail selection from closing mobile workbench surfaces", () => {

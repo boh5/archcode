@@ -112,7 +112,7 @@ export class RuntimeSessionDispatchGateway implements SessionDispatchGateway {
 
   async #prepareWorktree(workspaceRoot: string, sessionId: string): Promise<string> {
     const worktrees = this.#worktreeServiceFactory(workspaceRoot);
-    const owner = { type: "session" as const, id: sessionId };
+    const owner = { id: sessionId };
     const existing = await worktrees.findManaged({ owner });
     if (existing === undefined) {
       return (await worktrees.create({ owner, label: "automation" })).worktreePath;
@@ -136,7 +136,6 @@ export class RuntimeSessionDispatchGateway implements SessionDispatchGateway {
     if (
       session.rootSessionId !== session.sessionId
       || session.parentSessionId !== undefined
-      || session.goalId !== undefined
       || session.agentName !== "engineer"
     ) {
       throw new AutomationSessionIdentityError(
@@ -183,5 +182,5 @@ export class RuntimeSessionDispatchGateway implements SessionDispatchGateway {
 
 function isAutomationSessionWorktree(worktree: WorktreeInfo, sessionId: string): boolean {
   return !worktree.isCanonical
-    && isManagedWorktreeFor(worktree, { owner: { type: "session", id: sessionId } });
+    && isManagedWorktreeFor(worktree, { owner: { id: sessionId } });
 }

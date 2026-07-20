@@ -7,6 +7,7 @@ import {
   SessionFamilyStopConflictError,
   SessionFamilyStopInProgressError,
   SessionFileNotFoundError,
+  SessionGoalServiceError,
   SessionModelSelectionConflictError,
   SessionModelSelectionInvalidError,
 } from "@archcode/agent-core";
@@ -35,6 +36,13 @@ const ModelSelectionSchema = z.strictObject({
 const PatchModelSelectionSchema = z.strictObject({
   expectedRevision: z.number().int().nonnegative(),
   requestedModelSelection: ModelSelectionSchema,
+});
+const EditSessionGoalSchema = z.strictObject({
+  objective: z.string().trim().min(1).max(4000),
+  expectedGeneration: z.number().int().positive(),
+});
+const SessionGoalBudgetSchema = z.strictObject({
+  tokenBudget: z.number().int().positive().nullable(),
 });
 
 export function createSessionsRoutes(runtime: AgentRuntime): Hono {
@@ -132,6 +140,66 @@ export function createSessionsRoutes(runtime: AgentRuntime): Hono {
     }
   });
 
+  app.patch(
+    "/:sessionId/goal",
+    zValidator("param", SessionParamsSchema),
+    zValidator("json", EditSessionGoalSchema),
+    async (c) => {
+      const { slug, sessionId } = c.req.valid("param");
+      const project = await resolveProject(runtime, slug);
+      await applySessionGoalControl(runtime, {
+        workspaceRoot: project.workspaceRoot,
+        sessionId,
+        action: "edit",
+        ...c.req.valid("json"),
+      });
+      return c.json(await runtime.getSessionFile(project.workspaceRoot, sessionId));
+    },
+  );
+
+  for (const action of ["pause", "resume"] as const) {
+    app.post(`/:sessionId/goal/${action}`, zValidator("param", SessionParamsSchema), async (c) => {
+      await rejectRequestBody(c.req.text());
+      const { slug, sessionId } = c.req.valid("param");
+      const project = await resolveProject(runtime, slug);
+      await applySessionGoalControl(runtime, {
+        workspaceRoot: project.workspaceRoot,
+        sessionId,
+        action,
+      });
+      return c.json(await runtime.getSessionFile(project.workspaceRoot, sessionId));
+    });
+  }
+
+  app.post(
+    "/:sessionId/goal/budget",
+    zValidator("param", SessionParamsSchema),
+    zValidator("json", SessionGoalBudgetSchema),
+    async (c) => {
+      const { slug, sessionId } = c.req.valid("param");
+      const project = await resolveProject(runtime, slug);
+      const { tokenBudget } = c.req.valid("json");
+      await applySessionGoalControl(runtime, {
+        workspaceRoot: project.workspaceRoot,
+        sessionId,
+        action: "budget",
+        tokenBudget: tokenBudget ?? undefined,
+      });
+      return c.json(await runtime.getSessionFile(project.workspaceRoot, sessionId));
+    },
+  );
+
+  app.delete("/:sessionId/goal", zValidator("param", SessionParamsSchema), async (c) => {
+    const { slug, sessionId } = c.req.valid("param");
+    const project = await resolveProject(runtime, slug);
+    await applySessionGoalControl(runtime, {
+      workspaceRoot: project.workspaceRoot,
+      sessionId,
+      action: "clear",
+    });
+    return c.json({ ok: true });
+  });
+
   app.post("/:rootSessionId/stop", zValidator("param", RootSessionParamsSchema), async (c) => {
     await rejectRequestBody(c.req.text());
     const { slug, rootSessionId } = c.req.valid("param");
@@ -207,4 +275,24 @@ async function rejectRequestBody(bodyPromise: Promise<string>): Promise<void> {
 
 function isMissingFileError(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+async function applySessionGoalControl(
+  runtime: AgentRuntime,
+  input: Parameters<AgentRuntime["updateSessionGoalControl"]>[0],
+): Promise<void> {
+  try {
+    await runtime.updateSessionGoalControl(input);
+  } catch (error) {
+    if (error instanceof SessionGoalServiceError) {
+      if (error.code === "GENERATION_CONFLICT") {
+        throw new ServerError("BAD_REQUEST", error.message, 409, { scopeCode: error.code });
+      }
+      throw new ServerError("BAD_REQUEST", error.message, 422, { scopeCode: error.code });
+    }
+    if (error instanceof SessionFileNotFoundError || isMissingFileError(error)) {
+      throw new SessionNotFoundError(input.sessionId);
+    }
+    throw error;
+  }
 }

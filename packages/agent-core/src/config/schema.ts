@@ -42,7 +42,6 @@ export const archcodeConfigSchema = z
     integrations: integrationsConfigSchema.optional(),
     agents: z.strictObject({
       engineer: agentConfigSchema,
-      goal_lead: agentConfigSchema,
       plan: agentConfigSchema,
       build: agentConfigSchema,
       reviewer: agentConfigSchema,

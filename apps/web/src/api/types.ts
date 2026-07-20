@@ -15,13 +15,8 @@ export type {
   PendingSessionMessage,
   SessionStep,
   SessionTodo,
-  GoalState,
-  GoalStatus,
-  GoalEvidenceRefKind,
-  GoalEvidenceRef,
-  GoalReviewReceipt,
-  GoalReviewVerdict,
-  GoalBudgetSummary,
+  SessionGoal,
+  SessionGoalStatus,
   HitlResponse,
   HitlDisplayPayload,
   HitlQuestionDisplayItem,
@@ -49,15 +44,32 @@ export type {
 } from "@archcode/protocol";
 
 // ─── Dashboard aggregate types ───
-// Server augments GoalState/HITL records with project metadata and exposes
+// Server augments Session goal/HITL records with project metadata and exposes
 // redacted displayPayload (never raw payload) for HITL items.
 
-import type { Automation, AutomationAction, AutomationTrigger, GoalState, HitlView } from "@archcode/protocol";
+import type { Automation, AutomationAction, AutomationTrigger, HitlView, Session, SessionGoal, SessionGoalStatus, SessionSummary } from "@archcode/protocol";
 
-/** Goal with project metadata, returned by GET /api/goals?status=active. */
-export type DashboardGoal = GoalState & {
+/** Visible Session-owned Goal projection, returned by Session and dashboard APIs. */
+export type SessionGoalView = SessionGoal;
+
+export type SessionWithGoal = Session & { goal?: SessionGoalView };
+export type SessionSummaryWithGoal = SessionSummary & { goal?: SessionGoalView };
+
+/** Session-owned Goal projection with project metadata, returned by GET /api/session-goals. */
+export interface DashboardSessionGoal {
+  sessionId: string;
+  sessionTitle: string | null;
+  updatedAt: number;
   projectName: string;
-};
+  projectSlug: string;
+  goal: {
+    objective: string;
+    status: SessionGoalStatus;
+    tokensUsed?: number;
+    timeUsedSeconds?: number;
+    latestReason?: string;
+  };
+}
 
 export interface DashboardAutomation extends Automation {
   projectName: string;

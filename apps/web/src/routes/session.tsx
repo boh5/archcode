@@ -309,7 +309,7 @@ export function SessionRoute() {
       <ChatHeader
         slug={slug}
         sessionId={rootSessionId}
-        goalId={session?.goalId}
+        goal={(session as import("../api/types").SessionWithGoal).goal}
         projectRoot={projectRoot}
         onToggleInspector={toggleInspectorSurface}
         inspectorExpanded={layout.inspectorExpanded}
@@ -359,7 +359,7 @@ export function SessionRoute() {
             agents={agents}
             onInspectModelAudit={inspectModelAudit}
           />
-          <SessionComposerDock slug={slug} sessionId={rootSessionId} />
+          <SessionComposerDock slug={slug} sessionId={rootSessionId} goal={(session as import("../api/types").SessionWithGoal).goal} />
         </>
       )}
     </div>

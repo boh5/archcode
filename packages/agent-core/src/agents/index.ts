@@ -29,7 +29,6 @@ export {
   exploreAgentDefinition,
   librarianAgentDefinition,
   engineerAgentDefinition,
-  goalLeadAgentDefinition,
   planAgentDefinition,
   reviewerAgentDefinition,
   shaperAgentDefinition,

@@ -197,13 +197,25 @@ const CONTRACTS: readonly ModelVisibleContract[] = [
     ],
   },
   {
-    tool: "goal_create",
+    tool: "create_goal",
     competitorEvidenceIds: ["CX-LOCAL:create_goal"],
-    runtimeSourceIds: ["tools/builtins/goal-create.ts:14-42", "tools/builtins/goal-tools/helpers.ts:24-53"],
-    descriptionPatterns: [/explicitly requests or accepts/i, /separate confirmation/i, /goal-create Skill/, /Do not infer Goal creation from an ordinary/i, /Engineer root Session/i],
+    runtimeSourceIds: ["tools/builtins/session-goal.ts", "session-goal/service.ts"],
+    descriptionPatterns: [/fresh user input/i, /multiple rounds or delegated work/i, /verifiable outcome/i, /do not use for.*one-step.*question.*diagnosis.*one-time research/i, /fresh user input itself as the entire objective/i, /cannot rewrite/i, /without a Skill or confirmation ceremony/i, /root Engineer Session/i],
+  },
+  {
+    tool: "get_goal",
+    competitorEvidenceIds: ["CX-LOCAL:get_goal"],
+    runtimeSourceIds: ["tools/builtins/session-goal.ts", "session-goal/service.ts"],
+    descriptionPatterns: [/current Session Goal/i, /status, objective, usage, budget, evaluator, and review state/i, /read-only/i],
+  },
+  {
+    tool: "update_goal",
+    competitorEvidenceIds: ["CX-LOCAL:update_goal"],
+    runtimeSourceIds: ["tools/builtins/session-goal.ts", "session-goal/service.ts"],
+    descriptionPatterns: [/edit, pause, resume, clear, or change.*budget/i, /fresh user input/i, /complete.*requests independent review/i, /cannot complete the Goal/i, /blocked.*same.*blocker.*three consecutive Goal turns/i],
     schema: [
-      { path: ["properties", "objective"], descriptionPatterns: [/confirmed/i, /objective/] },
-      { path: ["properties", "acceptanceCriteria"], descriptionPatterns: [/completion criteria/, /Reviewer/] },
+      { path: ["anyOf", "0", "properties", "action"] },
+      { path: ["anyOf", "5", "properties", "status"], expectedEnum: ["complete", "blocked"] },
     ],
   },
   {
@@ -326,9 +338,9 @@ const resolved = registry.resolveForAgent(engineerAgentDefinition.tools.tools);
 const aiTools = resolved.toAITools();
 
 describe("Engineer model-visible Tool Contract", () => {
-  it("preserves the exact 31-tool Engineer definition order", () => {
+  it("preserves the exact 33-tool Engineer definition order", () => {
     const expected = [...engineerAgentDefinition.tools.tools];
-    expect(expected).toHaveLength(31);
+    expect(expected).toHaveLength(33);
     expect(resolved.descriptors.map((descriptor) => descriptor.name)).toEqual(expected);
     expect(Object.keys(aiTools)).toEqual(expected);
   });

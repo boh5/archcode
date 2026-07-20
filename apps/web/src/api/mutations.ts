@@ -7,7 +7,6 @@ import {
 } from "../store/control-plane-readiness";
 import { hitlStore } from "../store/hitl-store";
 import type {
-  GoalState,
   HitlResponse,
   HitlStatus,
   HitlView,
@@ -205,36 +204,61 @@ export function useStopSessionFamily() {
   return useMutation({ mutationFn: stopSessionFamily });
 }
 
-// ─── Goal Mutations ───
+// ─── Session Goal Controls ───
 
-export function useRetryGoal() {
+export type SessionGoalControlAction = "pause" | "resume" | "clear";
+
+export interface EditSessionGoalInput {
+  slug: string;
+  sessionId: string;
+  objective: string;
+  expectedGeneration: number;
+}
+
+export function useEditSessionGoal() {
   const queryClient = useQueryClient();
-
   return useMutation({
-    mutationFn: async ({ slug, goalId }: { slug: string; goalId: string }) =>
-      apiFetch<GoalState>(`/api/projects/${encodeURIComponent(slug)}/goals/${encodeURIComponent(goalId)}/retry`, {
-        method: "POST",
+    mutationFn: ({ slug, sessionId, objective, expectedGeneration }: EditSessionGoalInput) =>
+      apiFetch<Session>(`/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(sessionId)}/goal`, {
+        method: "PATCH",
+        body: { objective, expectedGeneration },
       }),
-    onSuccess: async (_data, variables) => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.goal(variables.slug, variables.goalId) });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.projectGoals(variables.slug) });
-    },
+    onSuccess: async (_session, variables) => invalidateSessionGoalQueries(queryClient, variables.slug, variables.sessionId),
   });
 }
 
-export function useCancelGoal() {
+export function useSessionGoalControl() {
   const queryClient = useQueryClient();
-
   return useMutation({
-    mutationFn: async ({ slug, goalId }: { slug: string; goalId: string }) =>
-      apiFetch<GoalState>(`/api/projects/${encodeURIComponent(slug)}/goals/${encodeURIComponent(goalId)}/cancel`, {
-        method: "POST",
-      }),
-    onSuccess: async (_data, variables) => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.goal(variables.slug, variables.goalId) });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.projectGoals(variables.slug) });
-    },
+    mutationFn: ({ slug, sessionId, action }: { slug: string; sessionId: string; action: SessionGoalControlAction }): Promise<Session | { ok: true }> =>
+      action === "clear"
+        ? apiFetch<{ ok: true }>(`/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(sessionId)}/goal`, { method: "DELETE" })
+        : apiFetch<Session>(`/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(sessionId)}/goal/${action}`, { method: "POST" }),
+    onSuccess: async (_result, variables) => invalidateSessionGoalQueries(queryClient, variables.slug, variables.sessionId),
   });
+}
+
+export function useSetSessionGoalBudget() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: setSessionGoalBudget,
+    onSuccess: async (_session, variables) => invalidateSessionGoalQueries(queryClient, variables.slug, variables.sessionId),
+  });
+}
+
+export function setSessionGoalBudget({ slug, sessionId, tokenBudget }: { slug: string; sessionId: string; tokenBudget: number | null }): Promise<Session> {
+  return apiFetch<Session>(`/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(sessionId)}/goal/budget`, {
+    method: "POST",
+    body: { tokenBudget },
+  });
+}
+
+async function invalidateSessionGoalQueries(queryClient: QueryClient, slug: string, sessionId: string): Promise<void> {
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: queryKeys.session(slug, sessionId) }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.sessions(slug) }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.sessionGoals }),
+  ]);
 }
 
 // ─── HITL Mutations ───
@@ -396,7 +420,7 @@ async function invalidateProjectTodoExecution(
   await Promise.all([
     invalidateProjectTodo(queryClient, slug, todoId),
     queryClient.invalidateQueries({ queryKey: queryKeys.sessions(slug) }),
-    queryClient.invalidateQueries({ queryKey: queryKeys.projectGoals(slug) }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.sessionGoals }),
     queryClient.invalidateQueries({ queryKey: queryKeys.projectAutomations(slug) }),
   ]);
 }

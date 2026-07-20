@@ -6,7 +6,7 @@ export const INSPECTOR_MIN_WIDTH = 300;
 export const INSPECTOR_MAX_WIDTH = 560;
 export const WORKBENCH_PREFERENCES_KEY = "archcode.workbench.layout";
 
-export type InspectorKind = "session" | "goal";
+export type InspectorKind = "session";
 
 export interface WorkbenchPreferences {
   sidebarWidth: number;
@@ -52,7 +52,6 @@ export function getInspectorKind(pathname: string): InspectorKind | null {
   const segments = pathname.split("/").filter(Boolean);
   if (segments.length !== 4 || segments[0] !== "projects") return null;
   if (segments[2] === "sessions") return "session";
-  if (segments[2] === "goals") return "goal";
   return null;
 }
 

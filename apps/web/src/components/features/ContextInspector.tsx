@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import { PanelRightClose } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import type { InspectorKind } from "../../lib/workbench-layout";
-import { GoalInspector, type GoalInspectorTab } from "./context-inspector/GoalInspector";
 import { SessionInspector, type SessionInspectorTab } from "./context-inspector/SessionInspector";
 
 interface InspectorTab<T extends string> {
@@ -16,12 +15,6 @@ const SESSION_TABS = [
   { id: "context", label: "Context" },
 ] satisfies [InspectorTab<SessionInspectorTab>, ...InspectorTab<SessionInspectorTab>[]];
 
-const GOAL_TABS = [
-  { id: "overview", label: "Criteria" },
-  { id: "evidence", label: "Evidence" },
-  { id: "sessions", label: "Sessions" },
-] satisfies [InspectorTab<GoalInspectorTab>, ...InspectorTab<GoalInspectorTab>[]];
-
 export function ContextInspector({
   kind,
   id = "context-inspector",
@@ -31,17 +24,7 @@ export function ContextInspector({
   id?: string;
   onCollapse?: () => void;
 }) {
-  if (kind === "goal") {
-    return <InspectorShell key="goal" id={id} kind={kind} tabs={GOAL_TABS} onCollapse={onCollapse} renderPanel={(activeTab) => <GoalInspector activeTab={activeTab} />} />;
-  }
-  if (kind === "session") {
-    return <InspectorShell key="session" id={id} kind={kind} tabs={SESSION_TABS} onCollapse={onCollapse} renderPanel={(activeTab) => <SessionInspector activeTab={activeTab} />} />;
-  }
-  return assertNever(kind);
-}
-
-function assertNever(value: never): never {
-  throw new Error(`Unsupported inspector kind: ${String(value)}`);
+  return <InspectorShell key="session" id={id} kind={kind} tabs={SESSION_TABS} onCollapse={onCollapse} renderPanel={(activeTab) => <SessionInspector activeTab={activeTab} />} />;
 }
 
 function InspectorShell<T extends string>({

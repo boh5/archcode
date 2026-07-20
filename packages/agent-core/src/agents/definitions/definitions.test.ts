@@ -9,7 +9,6 @@ import {
   buildAgentDefinition,
   engineerAgentDefinition,
   exploreAgentDefinition,
-  goalLeadAgentDefinition,
   librarianAgentDefinition,
   planAgentDefinition,
   reviewerAgentDefinition,
@@ -25,7 +24,9 @@ import {
   TOOL_FILE_EDIT,
   TOOL_FILE_READ,
   TOOL_FILE_WRITE,
-  TOOL_GOAL_MANAGE,
+  TOOL_CREATE_GOAL,
+  TOOL_GET_GOAL,
+  TOOL_UPDATE_GOAL,
   TOOL_PROJECT_TODO_UPDATE,
   TOOL_GLOB,
   TOOL_GREP,
@@ -38,7 +39,6 @@ import {
 
 const REQUIRED_AGENT_NAMES = [
   "engineer",
-  "goal_lead",
   "plan",
   "build",
   "reviewer",
@@ -88,11 +88,10 @@ function expectNoTools(tools: readonly string[], forbidden: readonly string[]) {
 }
 
 describe("agentDefinitions", () => {
-  test("exports the closed eight-agent registry with stable display names", () => {
+  test("exports the closed seven-agent registry with stable display names", () => {
     expect(agentDefinitions.map((definition) => definition.name)).toEqual([...REQUIRED_AGENT_NAMES]);
     expect(agentDefinitions.map(({ name, displayName }) => ({ name, displayName }))).toEqual([
       { name: "engineer", displayName: "Engineer" },
-      { name: "goal_lead", displayName: "Goal Lead" },
       { name: "plan", displayName: "Plan" },
       { name: "build", displayName: "Build" },
       { name: "reviewer", displayName: "Reviewer" },
@@ -134,15 +133,16 @@ describe("agentDefinitions", () => {
     }
   });
 
-  test("Engineer owns ordinary engineering sessions and can create Goals", () => {
+  test("Engineer owns ordinary and active-Goal Sessions", () => {
     const tools = engineerAgentDefinition.tools.tools;
 
     for (const tool of SOURCE_WRITE_TOOLS) expect(tools).toContain(tool);
-    expect(tools).toContain("goal_create");
+    expect(tools).toContain(TOOL_CREATE_GOAL);
+    expect(tools).toContain(TOOL_GET_GOAL);
+    expect(tools).toContain(TOOL_UPDATE_GOAL);
     expect(tools).toContain("automation_create");
-    expect(engineerAgentDefinition.skills).toContain("goal-create");
+    expect(engineerAgentDefinition.skills).not.toContain("goal-create");
     expect(engineerAgentDefinition.skills).toContain("automation-create");
-    expect(tools).not.toContain(TOOL_GOAL_MANAGE);
     expect(tools).toContain(TOOL_COMPRESS);
     expect(tools).toContain(TOOL_DELEGATE);
     expect(engineerAgentDefinition.tools.delegateTargets).toEqual([
@@ -152,25 +152,6 @@ describe("agentDefinitions", () => {
       "explore",
       "librarian",
     ]);
-  });
-
-  test("Goal Lead is Goal-only, delegates all specialist work, and cannot mutate source", () => {
-    const tools = goalLeadAgentDefinition.tools.tools;
-
-    expect(tools).toContain(TOOL_GOAL_MANAGE);
-    expect(tools).toContain(TOOL_COMPRESS);
-    expect(tools).toContain(TOOL_DELEGATE);
-    expectNoTools(tools, SOURCE_WRITE_TOOLS);
-    expect(goalLeadAgentDefinition.tools.delegateTargets).toEqual([
-      "plan",
-      "build",
-      "reviewer",
-      "explore",
-      "librarian",
-    ]);
-    expect(goalLeadAgentDefinition.mcpTools).toEqual(["context7", "exa"]);
-    expect(goalLeadAgentDefinition.hooks.todoStepReminder).toBe(true);
-    expect(goalLeadAgentDefinition.hooks.todoQueryLoopContinuation).toBe(false);
   });
 
   test("Plan has read-only planning tools, Context7 MCP, and research-only delegation", () => {
@@ -191,7 +172,6 @@ describe("agentDefinitions", () => {
     const tools = buildAgentDefinition.tools.tools;
 
     for (const tool of SOURCE_WRITE_TOOLS) expect(tools).toContain(tool);
-    expectNoTools(tools, [TOOL_GOAL_MANAGE]);
     expect(tools).toContain(TOOL_COMPRESS);
     expect("mcpTools" in buildAgentDefinition).toBe(false);
     expect(buildAgentDefinition.tools.delegateTargets).toEqual(["explore"]);
@@ -200,7 +180,7 @@ describe("agentDefinitions", () => {
   test("Reviewer can verify goals with non-mutating Bash but cannot ask or mutate source", () => {
     const tools = reviewerAgentDefinition.tools.tools;
 
-    expect(tools).toContain(TOOL_GOAL_MANAGE);
+    expect(tools).not.toContain("goal_manage");
     expect(tools).toContain("git_diff");
     expect(tools).toContain("grep");
     expect(tools).toContain("glob");
@@ -232,9 +212,11 @@ describe("agentDefinitions", () => {
       TOOL_FILE_WRITE,
       TOOL_FILE_EDIT,
       TOOL_AST_GREP_REPLACE,
-      "goal_create",
+      "create_goal",
+      "get_goal",
+      "update_goal",
       "automation_create",
-      TOOL_GOAL_MANAGE,
+      "goal_manage",
     ]);
     expect(shaperAgentDefinition.tools.delegateTargets).toEqual(["explore", "librarian"]);
     expect(shaperAgentDefinition.hooks.memoryExtraction).toBe(false);
@@ -244,12 +226,15 @@ describe("agentDefinitions", () => {
     expect(shaperAgentDefinition.roleContract.forbiddenBehaviors.join(" ")).toContain("Do not implement");
   });
 
-  test("Goal lifecycle and evidence tools are limited to intended roles", () => {
-    const goalManageAgents = agentDefinitions
-      .filter((definition) => (definition.tools.tools as readonly string[]).includes(TOOL_GOAL_MANAGE))
-      .map((definition) => definition.name);
-
-    expect(goalManageAgents).toEqual(["goal_lead", "reviewer"]);
+  test("only Engineer sees Session Goal control tools", () => {
+    for (const definition of agentDefinitions) {
+      const tools = definition.tools.tools as readonly string[];
+      for (const tool of [TOOL_CREATE_GOAL, TOOL_GET_GOAL, TOOL_UPDATE_GOAL]) {
+        expect(tools.includes(tool), `${definition.name}/${tool}`).toBe(definition.name === "engineer");
+      }
+      expect(tools).not.toContain("goal_create");
+      expect(tools).not.toContain("goal_manage");
+    }
   });
 
   test("audits the complete role-sensitive capability matrix from real definitions", () => {
@@ -263,18 +248,18 @@ describe("agentDefinitions", () => {
       "file_write",
       "file_edit",
       "ast_grep_replace",
-      "goal_create",
-      "goal_manage",
+      "create_goal",
+      "get_goal",
+      "update_goal",
       "delegate",
       "skill_list",
       "skill_read",
     ] as const;
     const expected = {
-      engineer: ["output_read", "output_search", "cancel_session", "bash", "memory_read", "memory_write", "file_write", "file_edit", "ast_grep_replace", "goal_create", "delegate", "skill_list", "skill_read"],
-      goal_lead: ["output_read", "output_search", "cancel_session", "memory_read", "memory_write", "goal_manage", "delegate", "skill_list", "skill_read"],
+      engineer: ["output_read", "output_search", "cancel_session", "bash", "memory_read", "memory_write", "file_write", "file_edit", "ast_grep_replace", "create_goal", "get_goal", "update_goal", "delegate", "skill_list", "skill_read"],
       plan: ["output_read", "output_search", "memory_read", "delegate", "skill_list", "skill_read"],
       build: ["output_read", "output_search", "bash", "memory_read", "memory_write", "file_write", "file_edit", "ast_grep_replace", "delegate", "skill_list", "skill_read"],
-      reviewer: ["output_read", "output_search", "bash", "memory_read", "goal_manage", "delegate", "skill_list", "skill_read"],
+      reviewer: ["output_read", "output_search", "bash", "memory_read", "delegate", "skill_list", "skill_read"],
       explore: ["output_read", "output_search", "skill_list", "skill_read"],
       librarian: ["output_read", "output_search", "memory_read", "skill_list", "skill_read"],
       shaper: ["output_read", "output_search", "bash", "memory_read", "memory_write", "delegate", "skill_list", "skill_read"],
@@ -291,9 +276,7 @@ describe("agentDefinitions", () => {
   test("Explore and Librarian are ancillary read-only agents with no delegation", () => {
     for (const definition of [exploreAgentDefinition, librarianAgentDefinition]) {
       expectNoTools(definition.tools.tools, SOURCE_WRITE_TOOLS);
-      expectNoTools(definition.tools.tools, [
-        TOOL_GOAL_MANAGE,
-      ]);
+      expectNoTools(definition.tools.tools, ["goal_manage"]);
       expect(definition.tools.tools).toContain(TOOL_COMPRESS);
       expect("delegateTargets" in definition.tools).toBe(false);
       expect("childPolicy" in definition).toBe(false);
@@ -312,7 +295,7 @@ describe("agentDefinitions", () => {
   });
 
   test("ask_user belongs to interactive working and shaping roles", () => {
-    for (const definition of [engineerAgentDefinition, goalLeadAgentDefinition, planAgentDefinition, buildAgentDefinition, shaperAgentDefinition]) {
+    for (const definition of [engineerAgentDefinition, planAgentDefinition, buildAgentDefinition, shaperAgentDefinition]) {
       expect(definition.tools.tools).toContain(TOOL_ASK_USER);
     }
 
@@ -325,7 +308,6 @@ describe("agentDefinitions", () => {
     expect(exploreAgentDefinition.includeMemoryInPrompt).toBe(false);
     for (const definition of [
       engineerAgentDefinition,
-      goalLeadAgentDefinition,
       planAgentDefinition,
       buildAgentDefinition,
       reviewerAgentDefinition,
@@ -337,7 +319,7 @@ describe("agentDefinitions", () => {
   });
 
   test("principal delegation depth policies match principal → core → ancillary", () => {
-    for (const definition of [engineerAgentDefinition, goalLeadAgentDefinition]) {
+    for (const definition of [engineerAgentDefinition]) {
       expect(definition.childPolicy).toEqual({
         maxDepth: 3,
         maxConcurrent: MAX_CONCURRENT_SUB_AGENTS,
@@ -379,7 +361,6 @@ describe("agentDefinitions", () => {
     "codemap",
     "review-work",
     "research-docs",
-    "goal-create",
     "automation-create",
   ] as const;
 
@@ -394,20 +375,14 @@ describe("agentDefinitions", () => {
       }
     });
 
-    test("allocation matrix matches the eight-agent architecture", () => {
+    test("allocation matrix matches the seven-agent architecture", () => {
       expect(engineerAgentDefinition.skills).toEqual([
         "git-master",
         "safe-refactor",
         "codemap",
         "review-work",
         "research-docs",
-        "goal-create",
         "automation-create",
-      ]);
-      expect(goalLeadAgentDefinition.skills).toEqual([
-        "codemap",
-        "review-work",
-        "research-docs",
       ]);
       expect(planAgentDefinition.skills).toEqual(["codemap", "research-docs"]);
       expect(buildAgentDefinition.skills).toEqual([

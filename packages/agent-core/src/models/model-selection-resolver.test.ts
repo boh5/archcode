@@ -11,7 +11,6 @@ import { ModelSelectionResolver } from "./model-selection-resolver";
 
 const AGENT_NAMES = [
   "engineer",
-  "goal_lead",
   "plan",
   "build",
   "reviewer",
@@ -80,7 +79,6 @@ function makeConfig(): ArchCodeConfig {
     },
     agents: {
       engineer: structuredClone(defaultAgent),
-      goal_lead: structuredClone(defaultAgent),
       plan: structuredClone(defaultAgent),
       build: structuredClone(defaultAgent),
       reviewer: structuredClone(defaultAgent),

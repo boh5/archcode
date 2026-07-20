@@ -6,8 +6,6 @@ import { createProcessRunner } from "../process/runner";
 import type { ProcessRunner, ProcessRunnerResult } from "../process/types";
 import { isContained } from "../utils/safe-file";
 
-export type WorktreeOwnerType = "session" | "goal";
-
 export type WorktreeServiceErrorCode =
   | "INVALID_CANONICAL_ROOT"
   | "BARE_REPOSITORY"
@@ -33,7 +31,6 @@ export interface WorktreeServiceOptions {
 
 export interface WorktreeCreateInput {
   readonly owner: {
-    readonly type: WorktreeOwnerType;
     readonly id: string;
   };
   readonly label?: string;
@@ -848,14 +845,14 @@ export class WorktreeService {
 }
 
 export function managedWorktreeNames(input: WorktreeCreateInput): { worktreeName: string; branchName: string } {
-  const owner = safeSegment(input.owner.id, input.owner.type, MAX_SEGMENT_LENGTH);
-  const rawUnique = safeSegment(input.uniqueId ?? input.owner.id, input.owner.type, UNIQUE_ID_LENGTH);
+  const owner = safeSegment(input.owner.id, "session", MAX_SEGMENT_LENGTH);
+  const rawUnique = safeSegment(input.uniqueId ?? input.owner.id, "session", UNIQUE_ID_LENGTH);
   const unique = rawUnique.length >= MIN_UNIQUE_ID_LENGTH
     ? rawUnique
     : `${rawUnique}${"0".repeat(MIN_UNIQUE_ID_LENGTH - rawUnique.length)}`;
-  const label = safeSegment(input.label ?? input.owner.type, input.owner.type, MAX_SEGMENT_LENGTH);
-  const branchName = `archcode/${input.owner.type}/${unique}`;
-  const worktreeName = `${input.owner.type}-${label}-${unique}`
+  const label = safeSegment(input.label ?? owner, "session", MAX_SEGMENT_LENGTH);
+  const branchName = `archcode/session/${unique}`;
+  const worktreeName = `session-${label}-${unique}`
     .slice(0, MAX_NAME_LENGTH)
     .replace(/-+$/g, "");
   return { worktreeName, branchName };

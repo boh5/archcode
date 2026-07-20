@@ -2,8 +2,6 @@ import { join } from "node:path";
 import { PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 
-import { GoalStateManager } from "../goals/state";
-import { GoalLifecycleService } from "../goals/lifecycle-service";
 import { HitlBoundaryCodec, ProjectHitlQueue } from "../hitl";
 import { MemoryFileManager } from "../memory/file-manager";
 import { silentLogger } from "../logger";
@@ -23,7 +21,7 @@ export function createTestHitlCodec(): HitlBoundaryCodec {
 
 export function createTestProjectContext(
   workspaceRoot: string,
-  sessions = new SessionStoreManager({ logger: silentLogger }),
+  _sessions = new SessionStoreManager({ logger: silentLogger }),
 ): ProjectContext {
   const project = {
     slug: "test-project",
@@ -31,16 +29,12 @@ export function createTestProjectContext(
     workspaceRoot,
     addedAt: new Date().toISOString(),
   };
-  const goalState = new GoalStateManager(workspaceRoot);
   const hitl = new ProjectHitlQueue({ workspaceRoot, codec: TEST_HITL_CODEC });
   const todos = createTestProjectTodoService(workspaceRoot, project.slug);
   return {
     project,
-    goalState,
-    goalLifecycle: createTestGoalLifecycle(workspaceRoot, goalState, sessions),
     createAutomation: async () => { throw new Error("Automation creation is not configured for this test context"); },
     todos,
-    goalCancellation: createTestGoalCancellation(goalState),
     hitl,
     memory: new MemoryFileManager({
       project: join(workspaceRoot, PROJECT_STATE_DIR_NAME, "memory"),
@@ -51,7 +45,7 @@ export function createTestProjectContext(
 }
 
 export function createTestProjectContextResolverOptions(
-  sessionStoreManager: SessionStoreManager,
+  _sessionStoreManager: SessionStoreManager,
 ): ProjectContextResolverOptions {
   return {
     hitlCodec: TEST_HITL_CODEC,
@@ -61,10 +55,6 @@ export function createTestProjectContextResolverOptions(
       workspaceRoot,
       addedAt: new Date().toISOString(),
     }),
-    goalCancellationFactory: ({ goalState }) => createTestGoalCancellation(goalState),
-    goalLifecycleFactory: ({ workspaceRoot, goalState }) => (
-      createTestGoalLifecycle(workspaceRoot, goalState, sessionStoreManager)
-    ),
     projectTodoFactory: ({ workspaceRoot, project }) => createTestProjectTodoService(workspaceRoot, project.slug),
     createAutomation: async () => { throw new Error("Automation creation is not configured for this test resolver"); },
   };
@@ -102,24 +92,4 @@ export async function createDurableTestSessionContext(
   const projectContext = createTestProjectContext(workspaceRoot, storeManager);
 
   return { projectContext, store, storeManager };
-}
-
-function createTestGoalCancellation(goalState: GoalStateManager): ProjectContext["goalCancellation"] {
-  return {
-    cancel: async (goalId, request) => await goalState.cancel(goalId, request.reason),
-  };
-}
-
-export function createTestGoalLifecycle(
-  workspaceRoot: string,
-  goalState: GoalStateManager,
-  sessions: SessionStoreManager,
-): GoalLifecycleService {
-  return new GoalLifecycleService({
-    workspaceRoot,
-    goalStateManager: goalState,
-    readSourceSession: (root, sessionId) => sessions.getSessionFile(root, sessionId),
-    ensureSessionFile: (root, sessionId, options) => sessions.ensureSessionFile(root, sessionId, options),
-    startCheckedExecutionWithinGoalClaim: async () => ({}) as never,
-  });
 }

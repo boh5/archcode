@@ -4,6 +4,10 @@ import { join } from "node:path";
 import type { ChildResult, DelegationContract, FinalizedToolResult } from "@archcode/protocol";
 import { hashDelegationContract } from "../../delegation/contract";
 import { silentLogger } from "../../logger";
+import {
+  RUNTIME_OBJECTIVE_CRITERION_ID,
+  buildGoalReviewContract,
+} from "../../session-goal/review-gate";
 import { SessionStoreManager } from "../../store/session-store-manager";
 import { __setSessionsDirForTest } from "../../store/sessions-dir";
 import { testExecutionStart } from "../../testing/test-execution-fixtures";
@@ -59,19 +63,22 @@ function childResult(): ChildResult {
   };
 }
 
-function context() {
+function context(options: {
+  contract?: DelegationContract;
+  executionOrigin?: "tool_call" | "goal_review";
+} = {}) {
   const manager = new SessionStoreManager({ logger: silentLogger });
   const parent = manager.create(crypto.randomUUID(), WORKSPACE, { agentName: "engineer" });
-  const value = contract();
+  const value = options.contract ?? contract();
   const child = manager.create(crypto.randomUUID(), WORKSPACE, {
-    agentName: "explore",
+    agentName: value.agent_type,
     parentSessionId: parent.getState().sessionId,
     rootSessionId: parent.getState().rootSessionId,
     delegationContract: value,
     delegationContractHash: hashDelegationContract(value),
     title: value.title,
   });
-  child.getState().append(testExecutionStart("execution-1"));
+  child.getState().append(testExecutionStart("execution-1", options.executionOrigin ?? "tool_call"));
   const ctx: ToolExecutionContext = {
     store: child,
     storeManager: manager,
@@ -166,6 +173,50 @@ describe("submit_child_result", () => {
     expect(child.getState().childResultReceipts).toHaveLength(1);
   });
 
+  it("corrects invented Goal-review tool aliases before terminal submission", async () => {
+    const goalContract = buildGoalReviewContract("Implement and verify the complete objective");
+    const { child, ctx } = context({ contract: goalContract, executionOrigin: "goal_review" });
+    ctx.structuredResultCorrection = createStructuredResultCorrectionGate();
+    child.getState().append({ type: "tool-input-start", toolCallId: "call-real-test", toolName: "bash" });
+    child.getState().append({ type: "tool-call", toolCallId: "call-real-test", toolName: "bash", input: { command: "bun test" } });
+    child.getState().append({
+      type: "tool-result",
+      toolCallId: "call-real-test",
+      toolName: "bash",
+      result: finalizedSuccess("1 pass, 0 fail"),
+    });
+
+    const inventedAlias: ChildResult = {
+      status: "completed",
+      summary: "Independent review passed",
+      deliverables: [],
+      evidence: [{ claim: "Tests passed", ref: "tool:functions.bash" }],
+      criteria: [{
+        id: RUNTIME_OBJECTIVE_CRITERION_ID,
+        status: "passed",
+        evidenceRefs: ["tool:functions.bash"],
+      }],
+      verification: [{ check: "bun test", status: "passed", outputRef: "tool:functions.bash" }],
+      unresolved: [],
+    };
+    const rejectedAlias = await executeSubmitChildResult(inventedAlias, ctx);
+    const correction = JSON.parse(expectTextDraft(rejectedAlias));
+    expect(correction.code).toBe("STRUCTURED_RESULT_CORRECTION_REQUIRED");
+    expect(correction.message).toContain("tool:functions.bash");
+    expect(correction.message).toContain("tool:call-real-test (bash)");
+    expect(rejectedAlias.sidecar?.executionControl).toBeUndefined();
+    expect(child.getState().childResultReceipts).toHaveLength(0);
+
+    const exactRefs: ChildResult = structuredClone(inventedAlias);
+    exactRefs.evidence[0]!.ref = "tool:call-real-test";
+    exactRefs.criteria[0]!.evidenceRefs = ["tool:call-real-test"];
+    exactRefs.verification[0]!.outputRef = "tool:call-real-test";
+    const accepted = await executeSubmitChildResult(exactRefs, ctx);
+    expect(accepted.isError).toBe(false);
+    expect(accepted.sidecar?.executionControl).toMatchObject({ action: "complete_execution" });
+    expect(child.getState().childResultReceipts).toHaveLength(1);
+  });
+
   it("shares one correction across schema and semantic failures", async () => {
     const { ctx } = context();
     ctx.structuredResultCorrection = createStructuredResultCorrectionGate();
@@ -257,5 +308,22 @@ function finalizedInlineResult(result: RawToolResult): FinalizedToolResult {
       recovery: { kind: "none" },
     },
     ...(result.details === undefined ? {} : { details: result.details }),
+  };
+}
+
+function finalizedSuccess(preview: string): FinalizedToolResult {
+  const bytes = new TextEncoder().encode(preview).byteLength;
+  const count = { bytes, lines: preview.length === 0 ? 0 : preview.split("\n").length };
+  return {
+    isError: false,
+    output: {
+      preview,
+      completeness: "complete",
+      observed: count,
+      canonical: count,
+      stored: count,
+      omitted: { bytes: 0, lines: 0 },
+      recovery: { kind: "none" },
+    },
   };
 }

@@ -6,7 +6,6 @@ import type { AgentDescriptor } from "@archcode/protocol";
 
 export const AGENT_TYPES = [
   "engineer",
-  "goal_lead",
   "plan",
   "build",
   "reviewer",
@@ -19,7 +18,6 @@ export type AgentType = (typeof AGENT_TYPES)[number];
 
 export const AGENT_ICON_COLORS: Record<AgentType, string> = {
   engineer: "bg-agent-engineer/20 text-agent-engineer",
-  goal_lead: "bg-agent-goal-lead/20 text-agent-goal-lead",
   plan: "bg-agent-plan/20 text-agent-plan",
   build: "bg-agent-build/20 text-agent-build",
   reviewer: "bg-agent-reviewer/20 text-agent-reviewer",
@@ -32,7 +30,6 @@ export const AGENT_BADGE_COLORS: Record<AgentType, string> = AGENT_ICON_COLORS;
 
 export const AGENT_BORDER_CLASS: Record<AgentType, string> = {
   engineer: "border-agent-engineer",
-  goal_lead: "border-agent-goal-lead",
   plan: "border-agent-plan",
   build: "border-agent-build",
   reviewer: "border-agent-reviewer",

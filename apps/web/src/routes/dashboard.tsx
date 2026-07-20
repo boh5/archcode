@@ -1,20 +1,20 @@
 import { Target, Loader2, CircleDot, RotateCcw } from "lucide-react";
-import { useActiveAutomations, useActiveGoals, useProjects } from "../api/queries";
+import { Link } from "react-router-dom";
+import { useActiveAutomations, useProjects, useSessionGoals } from "../api/queries";
 import { useRealtimeHitlEntries } from "../store/hitl-store";
 import { HitlInbox } from "../components/features/HitlCard";
-import type { DashboardAutomation, DashboardGoal, GoalStatus } from "../api/types";
+import type { DashboardAutomation, DashboardSessionGoal, SessionGoalStatus } from "../api/types";
 
-const STATUS_BADGE: Partial<Record<GoalStatus, string>> = {
-  running: "bg-success-muted text-success",
-  reviewing: "bg-info-muted text-info",
-  done: "bg-accent-muted text-accent",
-  not_done: "bg-error-muted text-error",
-  failed: "bg-error-muted text-error",
-  cancelled: "bg-bg-active text-text-tertiary",
+const STATUS_BADGE: Record<SessionGoalStatus, string> = {
+  active: "bg-success-muted text-success",
+  paused: "bg-warning-muted text-warning",
+  blocked: "bg-error-muted text-error",
+  budget_limited: "bg-warning-muted text-warning",
+  complete: "bg-accent-muted text-accent",
 };
 
 export function Dashboard() {
-  const { data: goals, isLoading: goalsLoading } = useActiveGoals();
+  const { data: sessionGoals, isLoading: goalsLoading } = useSessionGoals();
   const { data: automations, isLoading: automationsLoading } = useActiveAutomations();
   const { data: projects, isLoading: projectsLoading } = useProjects();
   const entries = useRealtimeHitlEntries((projects ?? []).map((project) => project.slug));
@@ -30,10 +30,10 @@ export function Dashboard() {
         <section data-testid="dashboard-active-goals" className="flex flex-col gap-2.5">
           <div className="flex items-center gap-2">
             <CircleDot size={15} className="text-success" aria-hidden="true" />
-            <h2 className="text-[15px] font-semibold text-text-primary">Active Goals</h2>
-            {goals && goals.length > 0 && (
+            <h2 className="text-[15px] font-semibold text-text-primary">Session Goals</h2>
+            {sessionGoals && sessionGoals.length > 0 && (
               <span className="bg-success-muted text-success px-[7px] py-[1px] rounded-[10px] text-[11px] font-semibold">
-                {goals.length}
+                {sessionGoals.length}
               </span>
             )}
           </div>
@@ -41,16 +41,16 @@ export function Dashboard() {
           {goalsLoading ? (
             <div className="flex items-center gap-2 text-[13px] text-text-tertiary py-4">
               <Loader2 size={14} className="animate-spin" aria-hidden="true" />
-              Loading active goals…
+              Loading session goals…
             </div>
-          ) : !goals || goals.length === 0 ? (
+          ) : !sessionGoals || sessionGoals.length === 0 ? (
             <div className="text-[13px] text-text-tertiary py-4 border border-border-subtle rounded-md px-4 bg-bg-surface">
-              No active goals across projects
+              No session goals across projects
             </div>
           ) : (
             <div className="flex flex-col gap-1.5">
-              {goals.map((goal) => (
-                <GoalRow key={goal.id} goal={goal} />
+              {sessionGoals.map((sessionGoal) => (
+                <SessionGoalRow key={`${sessionGoal.projectSlug}:${sessionGoal.sessionId}`} sessionGoal={sessionGoal} />
               ))}
             </div>
           )}
@@ -133,25 +133,34 @@ function formatDashboardDate(value: string | undefined): string {
   return new Date(value).toLocaleString();
 }
 
-function GoalRow({ goal }: { goal: DashboardGoal }) {
+function SessionGoalRow({ sessionGoal }: { sessionGoal: DashboardSessionGoal }) {
+  const { goal } = sessionGoal;
   return (
     <div className="flex items-center gap-3 bg-bg-surface border border-border-default rounded-md px-3.5 py-2.5 hover:border-border-strong transition-colors duration-150">
       <div className="flex flex-col min-w-0 flex-1 gap-0.5">
         <div className="flex items-center gap-2">
-          <span className="text-[13px] font-medium text-text-primary truncate">{goal.title || "Untitled"}</span>
-          <span className="text-[11px] text-text-muted shrink-0">{goal.projectName}</span>
+          <Link
+            to={`/projects/${sessionGoal.projectSlug}/sessions/${sessionGoal.sessionId}`}
+            className="text-[13px] font-medium text-text-primary truncate hover:text-accent"
+          >
+            {goal.objective}
+          </Link>
+          <span className="text-[11px] text-text-muted shrink-0">{sessionGoal.projectName}</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <span className={`text-[10.5px] px-1.5 py-[1px] rounded font-medium ${STATUS_BADGE[goal.status] ?? "bg-bg-active text-text-secondary"}`}>
+          <span className={`text-[10.5px] px-1.5 py-[1px] rounded font-medium ${STATUS_BADGE[goal.status]}`}>
             {goal.status}
           </span>
-          {goal.attempt > 1 && (
-            <span className="flex items-center gap-0.5 text-[10.5px] text-text-tertiary">
-              <RotateCcw size={10} aria-hidden="true" /> attempt {goal.attempt}
-            </span>
-          )}
+          {goal.tokensUsed !== undefined && <span className="text-[10.5px] text-text-tertiary">{goal.tokensUsed.toLocaleString()} tokens</span>}
+          {goal.timeUsedSeconds !== undefined && <span className="text-[10.5px] text-text-tertiary">{formatSeconds(goal.timeUsedSeconds)}</span>}
+          {goal.latestReason && <span className="min-w-0 truncate text-[10.5px] text-text-tertiary">{goal.latestReason}</span>}
         </div>
       </div>
     </div>
   );
+}
+
+function formatSeconds(seconds: number): string {
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  return `${Math.floor(seconds / 60)}m`;
 }

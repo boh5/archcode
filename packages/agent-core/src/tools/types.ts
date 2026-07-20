@@ -18,6 +18,7 @@ import type {
 } from "../tool-output/types";
 import type { ToolOutputCapture } from "../tool-output/capture";
 import type { ToolOutputAccessService } from "../tool-output/access-service";
+import type { SessionGoalService } from "../session-goal";
 
 export type {
   RawToolResult,
@@ -44,8 +45,34 @@ export interface ToolAttemptMetadata {
   destructive: boolean;
 }
 
+export type SessionGoalFreshUserAction =
+  | "create"
+  | "edit"
+  | "pause"
+  | "resume"
+  | "clear"
+  | "set_budget";
+
+export interface ConsumeFreshUserInputRequest {
+  readonly workspaceRoot: string;
+  readonly sessionId: string;
+  readonly rootSessionId: string;
+  readonly toolCallId: string;
+  readonly action: SessionGoalFreshUserAction;
+  /** Runs synchronously inside the one-use consumption critical section. */
+  readonly validate?: (grant: FreshUserInputGrant) => void;
+}
+
+/**
+ * A single-use capability minted by the execution runtime for one actual user
+ * input. The text is immutable provenance, not model-supplied Goal content.
+ */
+export interface FreshUserInputGrant {
+  readonly text: string;
+}
+
 export interface StructuredResultCorrectionGate {
-  readonly submission: "submit_child_result" | "goal_manage.finalize_review";
+  readonly submission: "submit_child_result";
   recordFailure(error: Error): RawToolResult;
 }
 export interface ToolExecutionContext {
@@ -68,6 +95,10 @@ export interface ToolExecutionContext {
   /** Shared Skill service for agent-scoped skill lookup. */
   skillService?: SkillService;
   projectContext: ProjectContext;
+  /** Runtime-wide Session Goal owner. Tools never mutate Session state directly. */
+  sessionGoalService?: SessionGoalService;
+  /** Runtime-owned one-use capability minted from current direct/queue/steer input. */
+  consumeFreshUserInput?: (input: ConsumeFreshUserInputRequest) => MaybePromise<FreshUserInputGrant>;
   /** Current Session execution directory. This may be a worktree and is independent of the canonical project context. */
   readonly cwd: string;
   /** Registry-owned capture for artifact-policy tools. Descriptors may only write; Registry owns finalize/abort. */

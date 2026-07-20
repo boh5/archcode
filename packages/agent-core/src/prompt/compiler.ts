@@ -29,6 +29,9 @@ export class PromptContractCompiler {
       Promise.resolve(section("Runtime Envelope", "runtime/snapshot", renderRuntime(contract))),
       Promise.resolve(section("Role Contract", `agent-definition/${contract.role.name}@2`, renderRole(contract))),
       Promise.resolve(section("Collaboration Contract", "prompt/collaboration@2", renderCollaboration(contract))),
+      ...(contract.role.name === "engineer" && contract.runtime.goal !== "none"
+        ? [Promise.resolve(section("Active Goal", "session-goal/runtime-overlay", renderActiveGoal(contract)))]
+        : []),
       Promise.resolve(section("Skills", "skill-service/execution-snapshot", renderSkills(contract))),
       Promise.resolve(section("Tool Visibility", "tool-registry/execution-snapshot", renderTools(contract))),
       Promise.resolve(section("Current Context", "runtime/current-call-snapshot", renderCurrentContext(contract))),
@@ -99,7 +102,7 @@ function display(value: string | number | readonly string[] | undefined): string
 
 function renderRuntime(contract: PromptContractV2): string {
   const { runtime, role } = contract;
-  const goal = runtime.goal === "none" ? "none" : `${runtime.goal.id} (${runtime.goal.status}, reviewGeneration=${runtime.goal.reviewGeneration})`;
+  const goal = runtime.goal === "none" ? "none" : `${runtime.goal.instanceId} (${runtime.goal.status}, generation=${runtime.goal.generation})`;
   const todo = runtime.todo === "none" ? "none" : `${runtime.todo.id} (${runtime.todo.mode})`;
   const mcp = Object.keys(runtime.mcp).length === 0 ? "none" : Object.entries(runtime.mcp).map(([name, status]) => `${name}=${status}`).join(", ");
   return `## Runtime Envelope
@@ -151,7 +154,7 @@ function renderCollaboration(contract: PromptContractV2): string {
     return `## Collaboration Contract
 
 - Verify every Goal acceptance criterion against attributable evidence.
-- Submit the canonical Goal verdict only through goal_manage.finalize_review; submit_child_result is not visible in this mode.`;
+- Submit the canonical structured result through submit_child_result. Runtime alone decides whether that evidence completes the Goal.`;
   }
   if (contract.role.name === "reviewer" && contract.runtime.reviewMode === "ordinary") {
     return `## Collaboration Contract
@@ -173,6 +176,24 @@ function renderCollaboration(contract: PromptContractV2): string {
 - Submit the canonical structured child result before finishing; free text is not a delivery substitute.`;
   }
   return "## Collaboration Contract\n\n- Work within this role directly; delegation is not visible in this execution.";
+}
+
+function renderActiveGoal(contract: PromptContractV2): string {
+  const goal = contract.runtime.goal;
+  if (goal === "none") throw new Error("Active Goal overlay requires a Session Goal");
+  return `## Active Goal
+
+- Instance: ${goal.instanceId}
+- Generation: ${goal.generation}
+- Status: ${goal.status}
+- Objective: ${goal.objective}
+
+This Goal is the durable outcome for the current root Session. Keep working across Executions until it is verified or Runtime stops continuation.
+- Own the critical path and delegate only separable, non-overlapping scopes.
+- Preserve and aggregate concrete implementation and verification evidence.
+- Use update_goal with status=complete only to request independent review; it cannot complete the Goal.
+- Do not self-review, weaken the objective, or treat an implementation claim as acceptance.
+- Use update_goal with status=blocked only after the same real blocker has prevented meaningful progress for three consecutive Goal turns.`;
 }
 
 function renderSkills(contract: PromptContractV2): string {

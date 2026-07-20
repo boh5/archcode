@@ -247,7 +247,7 @@ describe("SessionStoreManager", () => {
       const manager = new SessionStoreManager({ logger: silentLogger });
       let captured: unknown;
       try {
-        await manager.createSessionFile(TMP_DIR, { goalId: crypto.randomUUID(), sessionRole: "main", agentName: "goal_lead" });
+        await manager.createSessionFile(TMP_DIR, { agentName: "engineer" });
       } catch (error) {
         captured = error;
       }
@@ -265,22 +265,16 @@ describe("SessionStoreManager", () => {
   test("ensureSessionFile creates a caller-selected durable Session identity", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
-    const goalId = sessionId();
-
     const created = await manager.ensureSessionFile(TMP_DIR, id, {
-      agentName: "goal_lead",
+      agentName: "engineer",
       rootSessionId: id,
-      goalId,
-      sessionRole: "main",
       cwd: TMP_DIR,
     });
 
     expect(created).toMatchObject({
       sessionId: id,
       rootSessionId: id,
-      agentName: "goal_lead",
-      goalId,
-      sessionRole: "main",
+      agentName: "engineer",
       cwd: TMP_DIR,
     });
     expect((await manager.getSessionFile(TMP_DIR, id)).sessionId).toBe(id);
@@ -289,12 +283,9 @@ describe("SessionStoreManager", () => {
   test("ensureSessionFile verifies an existing stable identity without overwriting it", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
-    const goalId = sessionId();
     const options = {
-      agentName: "goal_lead" as const,
+      agentName: "engineer" as const,
       rootSessionId: id,
-      goalId,
-      sessionRole: "main" as const,
       cwd: TMP_DIR,
     };
     const first = await manager.ensureSessionFile(TMP_DIR, id, options);
@@ -302,10 +293,9 @@ describe("SessionStoreManager", () => {
     await expect(manager.ensureSessionFile(TMP_DIR, id, options)).resolves.toEqual(first);
     await expect(manager.ensureSessionFile(TMP_DIR, id, {
       ...options,
-      goalId: sessionId(),
+      cwd: join(TMP_DIR, "other"),
     })).rejects.toBeInstanceOf(SessionFileIdentityConflictError);
-
-    expect((await manager.getSessionFile(TMP_DIR, id)).goalId).toBe(goalId);
+    expect((await manager.getSessionFile(TMP_DIR, id)).cwd).toBe(TMP_DIR);
   });
 
   test("a background persistence failure poisons the Session until it is reloaded", async () => {

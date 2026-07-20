@@ -4,12 +4,12 @@
 > **配套的产品需求文档(PRD)在 `docs/workbench-refactor/PRD.md`** —— 那里定义"做什么、为谁做、为什么",这里定义"怎么实现"。
 > 阅读顺序:先读 PRD(产品意图)→ 再读本 TDD(技术方案)。
 
-**状态**:技术设计,描述完整实现方案。实施按 5 阶段(先 Goal 后 Loop)分步,由用户根据 PRD 拆任务执行。Phase 2 Goal 当前实现边界见 §11.2。
+**状态**:历史技术设计记录，不是当前实现方案。旧类型、路由、Agent 和工具名只用于理解决策演进，不得作为实现依据。
 **取代**:`docs/plan/session-loop-goal-design.md`(本 TDD 是其超集+定位升级+Workflow 全退役决策)。
 **约定**:Talk in chinese, code in english(含注释)。
 **术语**:"架构师"指 ArchCode 的用户(见 PRD §2),不是 AI agent;"AI""agent"指 ArchCode 编排的编码执行者。
 
-> **Current implementation note (2026-07):** The detailed Goal design below predates the simplified Goal integration. Current runtime uses natural-language objectives/acceptance criteria, `goal_manage` lifecycle/finalization, ordinary session output and verification logs as evidence, and no separate Goal artifact/evidence tools or typed validation DSL. Historical wording has been normalized to avoid documenting removed APIs as current behavior.
+> **Current implementation (2026-07):** Goal 已硬切为普通根 Engineer Session 上的可选持久执行协议；当前边界见 `docs/goals/session-goal-runtime-hard-cut-plan-goal.md`、根 `README.md` 与 `AGENTS.md`。本文以下设计均为历史材料。
 
 ---
 

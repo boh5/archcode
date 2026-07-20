@@ -2,13 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { ChevronRight, Focus, LayoutDashboard, PanelLeftClose, Plus } from "lucide-react";
 import { useCreateSession, usePostMessage } from "../../api/mutations";
-import { useAutomations, useGoals, useProjects, useSessions } from "../../api/queries";
+import { useAutomations, useProjects, useSessions } from "../../api/queries";
 import type {
-  GoalState,
-  GoalStatus,
   Automation,
   Project,
   SessionSummary,
+  SessionSummaryWithGoal,
 } from "../../api/types";
 import type { SessionFamilyActivity } from "@archcode/protocol";
 import { ProjectActionDropdown } from "./ProjectActionMenu";
@@ -38,17 +37,15 @@ function toSearchable(value: unknown): string {
 
 // Tab model
 
-type SidebarTab = "sessions" | "goals" | "automations";
+type SidebarTab = "sessions" | "automations";
 
 const TABS: Array<{ id: SidebarTab; label: string }> = [
   { id: "sessions", label: "Sessions" },
-  { id: "goals", label: "Goals" },
   { id: "automations", label: "Automations" },
 ];
 
 function deriveTabFromPath(pathname: string): SidebarTab {
   if (pathname.includes("/sessions/")) return "sessions";
-  if (pathname.includes("/goals")) return "goals";
   if (pathname.includes("/automations")) return "automations";
   return "sessions";
 }
@@ -64,19 +61,6 @@ const STATUS_DOT_COLORS: Record<SessionFamilyActivity | "unknown", string> = {
 
 function SessionStatusDot({ activity }: { activity: SessionFamilyActivity | undefined }) {
   return <div className={`w-[7px] h-[7px] rounded-full shrink-0 ${STATUS_DOT_COLORS[activity ?? "unknown"]}`} />;
-}
-
-const GOAL_STATUS_DOT_COLORS: Partial<Record<GoalStatus, string>> = {
-  running: "bg-success shadow-[0_0_6px_var(--success)] animate-pulse",
-  reviewing: "bg-info",
-  done: "bg-accent",
-  not_done: "bg-error",
-  failed: "bg-error",
-  cancelled: "bg-text-muted",
-};
-
-function GoalStatusDot({ status }: { status: GoalStatus }) {
-  return <div className={`w-[7px] h-[7px] rounded-full shrink-0 ${GOAL_STATUS_DOT_COLORS[status] ?? ""}`} />;
 }
 
 const AUTOMATION_STATUS_DOT_COLORS: Record<Automation["status"], string> = {
@@ -97,7 +81,7 @@ function SessionItem({
   isActive,
   onClick,
 }: {
-  session: SessionSummary;
+  session: SessionSummaryWithGoal;
   activity: SessionFamilyActivity | undefined;
   isActive: boolean;
   onClick: () => void;
@@ -128,48 +112,7 @@ function SessionItem({
           <span>
             {activity ?? "status unavailable"} · {formatRelativeTime(updatedAt)}
           </span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function GoalItem({
-  goal,
-  isActive,
-  onClick,
-}: {
-  goal: GoalState;
-  isActive: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <div
-      className={`flex items-center gap-2 px-3.5 py-[7px] cursor-pointer transition-colors duration-150 relative ${
-        isActive ? "bg-accent-subtle" : "hover:bg-bg-hover"
-      }`}
-      onClick={onClick}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") onClick();
-      }}
-    >
-      {isActive && (
-        <div className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r-sm bg-accent" />
-      )}
-      <GoalStatusDot status={goal.status} />
-      <div className="flex-1 min-w-0">
-        <div className="text-[12.5px] font-medium text-text-primary whitespace-nowrap overflow-hidden text-ellipsis">
-          {goal.title || "Untitled"}
-        </div>
-        <div className="flex items-center gap-1.5 text-[11px] text-text-muted mt-px">
-          <span className="capitalize">{goal.status}</span>
-          {goal.attempt > 1 && (
-            <span className="text-warning">
-              attempt {goal.attempt}
-            </span>
-          )}
+          {session.goal && <span className="rounded-sm bg-accent-muted px-1 py-px text-[10px] font-medium text-accent">Goal · {session.goal.status}</span>}
         </div>
       </div>
     </div>
@@ -324,10 +267,9 @@ export function Sidebar({
 } = {}) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { slug = "", sessionId = "", goalId = "", automationId = "" } = useParams<{
+  const { slug = "", sessionId = "", automationId = "" } = useParams<{
     slug: string;
     sessionId: string;
-    goalId: string;
     automationId: string;
   }>();
   const createSession = useCreateSession();
@@ -338,14 +280,12 @@ export function Sidebar({
   const [closingProject, setClosingProject] = useState<Project | null>(null);
 
   const [sessionsSearch, setSessionsSearch] = useState("");
-  const [goalsSearch, setGoalsSearch] = useState("");
   const [automationsSearch, setAutomationsSearch] = useState("");
   const [selectedTab, setSelectedTab] = useState<SidebarTab>(deriveTabFromPath(location.pathname));
 
   const { data: projects } = useProjects();
   const activeProject = projects?.find(p => p.slug === slug) ?? null;
   const { data: sessions } = useSessions(slug);
-  const { data: goals } = useGoals(slug);
   const { data: automations } = useAutomations(slug);
   const runtimeInitialized = useSessionRuntimeInitialized(slug);
   const runtimeFamilies = useSessionRuntimeFamilies();
@@ -367,7 +307,7 @@ export function Sidebar({
     });
   };
 
-  const handleNewSkillSession = (skill: "goal-create" | "automation-create") => {
+  const handleNewSkillSession = (skill: "automation-create") => {
     createSession.mutate({ slug }, {
       onSuccess: (session) => {
         navigate(`/projects/${slug}/sessions/${session.sessionId}`);
@@ -385,17 +325,13 @@ export function Sidebar({
     navigate(`/projects/${slug}/sessions/${clickedSessionId}`);
   };
 
-  const handleGoalClick = (clickedGoalId: string) => {
-    navigate(`/projects/${slug}/goals/${clickedGoalId}`);
-  };
-
   const handleAutomationClick = (clickedAutomationId: string) => {
     navigate(`/projects/${slug}/automations/${clickedAutomationId}`);
   };
 
   // Filtered lists
 
-  const filteredSessions = useMemo(() => {
+  const filteredSessions = useMemo<SessionSummaryWithGoal[]>(() => {
     if (!sessions) return [];
     const rootSessions = sessions.filter(s => !s.parentSessionId);
     if (!sessionsSearch.trim()) return rootSessions;
@@ -407,14 +343,14 @@ export function Sidebar({
     });
   }, [sessions, sessionsSearch]);
 
-  const activityForSession = (session: SessionSummary): SessionFamilyActivity | undefined => {
+  const activityForSession = (session: SessionSummaryWithGoal): SessionFamilyActivity | undefined => {
     if (!runtimeInitialized) return undefined;
     return runtimeFamilies[runtimeFamilyKey(slug, session.sessionId)]?.activity ?? "idle";
   };
 
   const { activeSessions, inactiveSessions } = useMemo(() => {
-    const active: SessionSummary[] = [];
-    const inactive: SessionSummary[] = [];
+    const active: SessionSummaryWithGoal[] = [];
+    const inactive: SessionSummaryWithGoal[] = [];
     for (const session of filteredSessions) {
       const activity = runtimeInitialized
         ? runtimeFamilies[runtimeFamilyKey(slug, session.sessionId)]?.activity ?? "idle"
@@ -427,18 +363,6 @@ export function Sidebar({
     }
     return { activeSessions: active, inactiveSessions: inactive };
   }, [filteredSessions, runtimeFamilies, runtimeInitialized, slug]);
-
-  const filteredGoals = useMemo(() => {
-    const goalsList = goals ?? [];
-    if (!goalsSearch.trim()) return goalsList;
-    const q = goalsSearch.toLowerCase();
-    return goalsList.filter((g) => {
-      const title = toSearchable(g.title).toLowerCase();
-      const id = toSearchable(g.id).toLowerCase();
-      const status = toSearchable(g.status).toLowerCase();
-      return title.includes(q) || id.includes(q) || status.includes(q);
-    });
-  }, [goals, goalsSearch]);
 
   const filteredAutomations = useMemo(() => {
     const list = automations ?? [];
@@ -611,52 +535,6 @@ export function Sidebar({
             </EmptyRow>
           )}
 
-        </section>
-
-        <section
-          id="sidebar-panel-goals"
-          role="tabpanel"
-          aria-labelledby="sidebar-tab-goals"
-          hidden={activeTab !== "goals"}
-        >
-          <div className="px-3 py-2 space-y-2">
-            <DashboardLinkButton
-              to={`/projects/${slug}/goals`}
-              label="Goals Dashboard"
-              isActive={location.pathname === `/projects/${slug}/goals`}
-            />
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                aria-label="Search goals"
-                placeholder="Search goals..."
-                value={goalsSearch}
-                onChange={(e) => setGoalsSearch(e.target.value)}
-                className={SEARCH_INPUT_CLASS}
-              />
-              <CreateButton
-                onClick={() => handleNewSkillSession("goal-create")}
-                title="New goal"
-                label="New goal"
-                disabled={!slug || createSession.isPending}
-              />
-            </div>
-          </div>
-
-          {filteredGoals.length === 0 ? (
-            <EmptyRow>
-              {goalsSearch ? "No matching goals" : "No goals yet"}
-            </EmptyRow>
-          ) : (
-            filteredGoals.map((goal) => (
-              <GoalItem
-                key={goal.id}
-                goal={goal}
-                isActive={goal.id === goalId}
-                onClick={() => handleGoalClick(goal.id)}
-              />
-            ))
-          )}
         </section>
 
         <section

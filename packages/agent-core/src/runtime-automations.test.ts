@@ -86,58 +86,6 @@ describe("RuntimeSessionDispatchGateway", () => {
 });
 
 describe("AgentRuntime Automation wiring", () => {
-  test("routes Goal activation through its typed execution path", async () => {
-    const fixture = await runtimeFixture();
-    const context = await fixture.runtime.contextResolver.resolve(fixture.workspaceRoot);
-
-    const goal = await context.goalLifecycle.create({
-      projectSlug: "automation-one",
-      createdFromSessionId: fixture.sourceSessionId,
-      objective: "Verify managed Goal activation.",
-      acceptanceCriteria: "The Goal start is forwarded with its existing claim.",
-    });
-
-    await waitFor(async () => {
-      const session = await fixture.runtime.getSessionFile(fixture.workspaceRoot, goal.mainSessionId);
-      return session.executions.some((execution) => execution.id === `goal-initial:${goal.id}`);
-    });
-    await fixture.runtime.abortAllSessionExecutions();
-  });
-
-  test("publishes every Goal commit and schedules Goal title generation only on creation", async () => {
-    const fixture = await runtimeFixture();
-    const events: unknown[] = [];
-    const unsubscribe = fixture.runtime.subscribeResourceChanges?.((event) => { events.push(event); });
-    const context = await fixture.runtime.contextResolver.resolve(fixture.workspaceRoot);
-
-    const goal = await context.goalLifecycle.create({
-      projectSlug: "automation-one",
-      createdFromSessionId: fixture.sourceSessionId,
-      objective: "Prove runtime Goal commit notifications.",
-      acceptanceCriteria: "Creation and every later commit publish one resource event.",
-    });
-    await waitFor(async () => (await context.goalState.read(goal.id)).title !== null);
-    const goalTitlePromptsAfterCreation = generatedTitlePrompts.filter((prompt) => prompt.includes("concise Goal title"));
-    expect(goalTitlePromptsAfterCreation).toHaveLength(1);
-
-    await context.goalLifecycle.beginReview(goal.id);
-    await Bun.sleep(10);
-    unsubscribe?.();
-
-    const goalEvents = events.filter((event) => (
-      event !== null
-      && typeof event === "object"
-      && "resourceType" in event
-      && event.resourceType === "goal"
-      && "resourceId" in event
-      && event.resourceId === goal.id
-    ));
-    expect(goalEvents).toHaveLength(3);
-    expect(goalEvents.every((event) => !(event && typeof event === "object" && "reason" in event))).toBe(true);
-    expect(generatedTitlePrompts.filter((prompt) => prompt.includes("concise Goal title"))).toHaveLength(1);
-    await fixture.runtime.abortAllSessionExecutions();
-  });
-
   test("creates a normal Engineer Session with the preallocated dispatch identities", async () => {
     const fixture = await runtimeFixture();
     const automation = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
@@ -355,11 +303,6 @@ describe("AgentRuntime Automation wiring", () => {
       rootSessionId: fixture.sourceSessionId,
       parentSessionId: fixture.sourceSessionId,
     });
-    const goalBound = await stores.createSessionFile(fixture.workspaceRoot, {
-      agentName: "goal_lead",
-      goalId: crypto.randomUUID(),
-      sessionRole: "main",
-    });
     const wrongAgent = await stores.createSessionFile(fixture.workspaceRoot, {
       agentName: "plan",
     });
@@ -380,7 +323,7 @@ describe("AgentRuntime Automation wiring", () => {
       createdFromSessionId: fixture.secondSourceSessionId!,
     })).rejects.toMatchObject({ name: "ResourceCreationSourceError", sessionId: fixture.secondSourceSessionId });
 
-    for (const source of [child, goalBound, wrongAgent]) {
+    for (const source of [child, wrongAgent]) {
       await expect(fixture.runtime.createAutomation(fixture.workspaceRoot, {
         ...input,
         createdFromSessionId: source.sessionId,
@@ -476,7 +419,6 @@ function config(): Record<string, unknown> {
     },
     agents: {
       engineer: { model: "local:test" },
-      goal_lead: { model: "local:test" },
       plan: { model: "local:test" },
       build: { model: "local:test" },
       reviewer: { model: "local:test" },

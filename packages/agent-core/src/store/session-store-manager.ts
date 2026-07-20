@@ -32,7 +32,6 @@ import {
   type ReasoningPart,
   type SessionEventEnvelope,
   type SessionEventPayload,
-  type SessionRole,
   type SessionStoreState,
   type SessionToolBatch,
   type TextPart,
@@ -67,8 +66,6 @@ export interface CreateSessionOptions {
   readonly parentSessionId?: string;
   readonly delegationContract?: DelegationContract;
   readonly delegationContractHash?: string;
-  readonly goalId?: string;
-  readonly sessionRole?: SessionRole;
   readonly modelSelection?: SessionModelSelection;
   readonly title?: string;
 }
@@ -145,8 +142,6 @@ export class SessionStoreManager {
     if (!isAbsolute(cwd)) throw new InvalidSessionCwdError(cwd, "must be an absolute path");
     if (!this.#hydrating.has(key)) this.#assertCwdTargetAllowed(cwd);
     const parentSessionId = options.parentSessionId;
-    const goalId = options.goalId;
-    const sessionRole = options.sessionRole;
     let store: StoreApi<SessionStoreState>;
 
     const persist = () => {
@@ -205,8 +200,6 @@ export class SessionStoreManager {
       // Root/parent IDs are write-once session identity, not mutable tree state.
       rootSessionId,
       parentSessionId,
-      goalId,
-      sessionRole,
       isRunning: false,
       isStreamingModel: false,
       readSnapshots: new Map(),
@@ -293,14 +286,6 @@ export class SessionStoreManager {
         const current = get().parentSessionId;
         if (current !== undefined) return; // Identity is immutable after creation
         set({ parentSessionId });
-        persist();
-      },
-      setGoalId: (goalId: string | undefined) => {
-        set({ goalId });
-        persist();
-      },
-      setSessionRole: (sessionRole: SessionRole | undefined) => {
-        set({ sessionRole });
         persist();
       },
       toModelMessages: (): ModelMessage[] => {
@@ -471,8 +456,6 @@ export class SessionStoreManager {
       sessionId,
       rootSessionId: options.rootSessionId ?? sessionId,
       parentSessionId: options.parentSessionId,
-      goalId: options.goalId,
-      sessionRole: options.sessionRole,
       agentName: options.agentName,
       activeSkillNames: [...new Set(options.activeSkillNames ?? [])],
       cwd: options.cwd ?? workspaceRoot,
@@ -481,8 +464,6 @@ export class SessionStoreManager {
       sessionId: session.sessionId,
       rootSessionId: session.rootSessionId,
       parentSessionId: session.parentSessionId,
-      goalId: session.goalId,
-      sessionRole: session.sessionRole,
       agentName: session.agentName,
       activeSkillNames: session.activeSkillNames,
       cwd: session.cwd,
@@ -516,12 +497,6 @@ export class SessionStoreManager {
   ): Promise<CompressionOriginalRangeResult> {
     const session = await this.getSessionFile(workspaceRoot, sessionId);
     return resolveCompressionOriginalRange(session, blockRef);
-  }
-
-  async setGoalId(sessionId: string, goalId: string | undefined, workspaceRoot: string): Promise<SessionStoreState> {
-    const store = await this.getOrLoad(sessionId, workspaceRoot);
-    store.getState().setGoalId(goalId);
-    return store.getState();
   }
 
   /**
@@ -1094,8 +1069,6 @@ export class SessionStoreManager {
         parentSessionId: parsed.parentSessionId,
         delegationContract: parsed.delegationContract,
         delegationContractHash: parsed.delegationContractHash,
-        goalId: parsed.goalId,
-        sessionRole: parsed.sessionRole,
         agentName: parsed.agentName,
         activeSkillNames: parsed.activeSkillNames,
         modelSelection: parsed.modelSelection,
@@ -1133,8 +1106,7 @@ export class SessionStoreManager {
         toolBatches: parsed.toolBatches,
         rootSessionId: parsed.rootSessionId,
         parentSessionId: parsed.parentSessionId,
-        goalId: parsed.goalId,
-        sessionRole: parsed.sessionRole,
+        goal: parsed.goal,
         isRunning: false,
         isStreamingModel: false,
         currentExecutionId: undefined,
@@ -1362,8 +1334,7 @@ function toSessionSummary(file: HydratedSessionFile): SessionSummary {
     cwd: file.cwd,
     rootSessionId: file.rootSessionId,
     ...(file.parentSessionId === undefined ? {} : { parentSessionId: file.parentSessionId }),
-    ...(file.goalId === undefined ? {} : { goalId: file.goalId }),
-    ...(file.sessionRole === undefined ? {} : { sessionRole: file.sessionRole }),
+    ...(file.goal === undefined ? {} : { goal: file.goal }),
     agentName: file.agentName,
     activeSkillNames: file.activeSkillNames,
     modelSelection: file.modelSelection,

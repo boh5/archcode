@@ -8,7 +8,6 @@ import { createEmptySessionStats, type FinalizedToolResult, type SessionExecutio
 import type {
   CompactionPart,
   Reminder,
-  SessionRole,
   SessionStoreState,
   SessionToolBatch,
   SessionToolCallBlocker,
@@ -250,8 +249,6 @@ type PersistedSessionState = Pick<
   | "toolBatches"
   | "rootSessionId"
   | "parentSessionId"
-  | "goalId"
-  | "sessionRole"
 >;
 
 function persistedState(
@@ -265,8 +262,6 @@ function persistedState(
   rootSessionId?: string,
   parentSessionId: string | undefined = undefined,
   childSessionLinks: ToolChildSessionLink[] = [],
-  goalId: string | undefined = undefined,
-  sessionRole: SessionRole | undefined = undefined,
   compression: CompressionState = createEmptyCompressionState(),
 ): PersistedSessionState {
   const delegationContract: DelegationContract = {
@@ -308,8 +303,6 @@ function persistedState(
       delegationContract,
       delegationContractHash: hashDelegationContract(delegationContract),
     }),
-    goalId,
-    sessionRole,
   };
 }
 
@@ -727,21 +720,6 @@ describe("session transcript serialization", () => {
     expect(summaries[0]?.parentSessionId).toBeUndefined();
   });
 
-  test("listSessionSummaries includes goalId when present", async () => {
-    const sessionId = uniqueSessionId("goal-summary");
-    const goalId = crypto.randomUUID();
-
-    await sessionFileInternals.saveSessionTranscript(
-      persistedState(sessionId, [], [], [], createEmptySessionStats(), [], [], undefined, undefined, [], goalId),
-      TMP_DIR,
-    );
-
-    const summaries = await sessionFileInternals.listSessionSummaries(TMP_DIR);
-
-    expect(summaries).toHaveLength(1);
-    expect(summaries[0]).toMatchObject({ sessionId, goalId });
-  });
-
   test("scanDescendants returns child session to root session mappings", async () => {
     const rootSessionId = uniqueSessionId("root-scan");
     const childA = uniqueSessionId("child-a");
@@ -932,102 +910,6 @@ describe("session transcript serialization", () => {
     expect(parsed.parentSessionId).toBe(parentSessionId);
     expect(loaded.getState().rootSessionId).toBe(rootSessionId);
     expect(loaded.getState().parentSessionId).toBe(parentSessionId);
-  });
-
-  test("load rejects non-UUID goalId", async () => {
-    const sessionId = uniqueSessionId("invalid-goal-id");
-    await writeSessionFile(sessionId, {
-      ...persistedState(sessionId),
-      goalId: "not-a-uuid",
-    });
-
-    await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
-  });
-
-  test("save/load serializes goalId when set", async () => {
-    const sessionId = uniqueSessionId("goal-roundtrip");
-    const goalId = crypto.randomUUID();
-    const state = persistedState(
-      sessionId,
-      sampleMessages(),
-      sampleSteps(),
-      sampleTodos(),
-      createEmptySessionStats(),
-      [],
-      sampleReminders(),
-      undefined,
-      undefined,
-      [],
-      goalId,
-    );
-
-    await sessionFileInternals.saveSessionTranscript(state, TMP_DIR);
-    const raw = await Bun.file(sessionFilePath(sessionId)).text();
-    const parsed: Record<string, unknown> = JSON.parse(raw);
-    const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
-
-    expect(parsed.goalId).toBe(goalId);
-    expect(loaded.getState().goalId).toBe(goalId);
-  });
-
-  test("save omits goalId when undefined", async () => {
-    const sessionId = uniqueSessionId("goal-undefined");
-
-    await sessionFileInternals.saveSessionTranscript(persistedState(sessionId), TMP_DIR);
-    const raw = await Bun.file(sessionFilePath(sessionId)).text();
-    const parsed: Record<string, unknown> = JSON.parse(raw);
-
-    expect("goalId" in parsed).toBe(false);
-  });
-
-  test("save/load serializes sessionRole when set", async () => {
-    const sessionId = uniqueSessionId("sessionrole-roundtrip");
-    const state = persistedState(
-      sessionId,
-      sampleMessages(),
-      sampleSteps(),
-      sampleTodos(),
-      createEmptySessionStats(),
-      [],
-      sampleReminders(),
-      undefined,
-      undefined,
-      [],
-      undefined,
-      "explore",
-    );
-
-    await sessionFileInternals.saveSessionTranscript(state, TMP_DIR);
-    const raw = await Bun.file(sessionFilePath(sessionId)).text();
-    const parsed: Record<string, unknown> = JSON.parse(raw);
-    const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
-
-    expect(parsed.sessionRole).toBe("explore");
-    expect(loaded.getState().sessionRole).toBe("explore");
-  });
-
-  test("child session inherits goalId with different sessionRole", async () => {
-    const rootSessionId = uniqueSessionId("root-inherit");
-    const childSessionId = uniqueSessionId("child-inherit");
-    const goalId = crypto.randomUUID();
-
-    await sessionFileInternals.saveSessionTranscript(
-      persistedState(rootSessionId, [], [], [], createEmptySessionStats(), [], [], undefined, undefined, [], goalId, "main"),
-      TMP_DIR,
-    );
-
-    await sessionFileInternals.saveSessionTranscript(
-      persistedState(childSessionId, [], [], [], createEmptySessionStats(), [], [], rootSessionId, rootSessionId, [], goalId, "explore"),
-      TMP_DIR,
-    );
-
-    const rootLoaded = await storeManager.getOrLoad(rootSessionId, TMP_DIR);
-    const childLoaded = await storeManager.getOrLoad(childSessionId, TMP_DIR);
-
-    expect(rootLoaded.getState().goalId).toBe(goalId);
-    expect(rootLoaded.getState().sessionRole).toBe("main");
-    expect(childLoaded.getState().goalId).toBe(goalId);
-    expect(childLoaded.getState().sessionRole).toBe("explore");
   });
 
   test("loaded store preserves methods and can continue appending", async () => {
@@ -1621,7 +1503,7 @@ describe("compaction and meta transcript round-trip", () => {
     ];
     const compression = richCompressionState();
 
-    await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, messages, [], [], createEmptySessionStats(), [], [], undefined, undefined, [], undefined, undefined, compression), TMP_DIR);
+    await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, messages, [], [], createEmptySessionStats(), [], [], undefined, undefined, [], compression), TMP_DIR);
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
 
     const loadedCompression = loaded.getState().compression;

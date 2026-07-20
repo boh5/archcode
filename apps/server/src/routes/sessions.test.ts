@@ -71,6 +71,14 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
     createSession: 0,
     getSessionFile: 0,
     listSessions: 0,
+    updateSessionGoalControl: [] as Array<{
+      workspaceRoot: string;
+      sessionId: string;
+      action: "edit" | "pause" | "resume" | "clear" | "budget";
+      objective?: string;
+      expectedGeneration?: number;
+      tokenBudget?: number;
+    }>,
     stopSessionFamily: [] as Array<{ workspaceRoot: string; rootSessionId: string }>,
     deleteSession: [] as Array<{ workspaceRoot: string; sessionId: string }>,
   };
@@ -126,6 +134,18 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
       const revision = (modelSelectionRevisions.get(key) ?? input.expectedRevision) + 1;
       modelSelectionRevisions.set(key, revision);
       return testModelState(revision);
+    },
+    updateSessionGoalControl: async (input: {
+      workspaceRoot: string;
+      sessionId: string;
+      action: "edit" | "pause" | "resume" | "clear" | "budget";
+      objective?: string;
+      expectedGeneration?: number;
+      tokenBudget?: number;
+    }) => {
+      if (!sessions.has(`${input.workspaceRoot}\0${input.sessionId}`)) throw new MissingSessionFileError();
+      calls.updateSessionGoalControl.push(input);
+      return sessions.get(`${input.workspaceRoot}\0${input.sessionId}`)!;
     },
     listSessionTree: async (workspaceRoot: string, rootSessionId: string) => {
       const key = `${workspaceRoot}\0${rootSessionId}`;
@@ -190,7 +210,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
       }
       if (sessionId === "owned-session") {
         throw new SessionDeleteOwnerConflictError([
-          { sessionId, ownerType: "goal", ownerId: "goal-1" },
+          { sessionId, ownerType: "project_todo", ownerId: "11111111-1111-4111-8111-111111111111" },
         ]);
       }
       if (sessionId === "todo-owned-session") {
@@ -448,6 +468,38 @@ describe("sessions routes", () => {
     expect(calls.getSessionFile).toBe(1);
   });
 
+  test("Session Goal controls delegate to the runtime-owned control plane", async () => {
+    const { app, project, workspaceRoot, calls, sessions } = await createTestApp("session-goal-controls");
+    saveEmptySession(workspaceRoot, sessions, "root-session", 1_000);
+
+    const edit = await app.request(`/api/projects/${project.slug}/sessions/root-session/goal`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ objective: "Finish the migration and pass all tests.", expectedGeneration: 2 }),
+    });
+    const pause = await app.request(`/api/projects/${project.slug}/sessions/root-session/goal/pause`, { method: "POST" });
+    const budget = await app.request(`/api/projects/${project.slug}/sessions/root-session/goal/budget`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tokenBudget: 50_000 }),
+    });
+    const clear = await app.request(`/api/projects/${project.slug}/sessions/root-session/goal`, { method: "DELETE" });
+
+    expect([edit.status, pause.status, budget.status, clear.status]).toEqual([200, 200, 200, 200]);
+    expect(calls.updateSessionGoalControl).toEqual([
+      {
+        workspaceRoot,
+        sessionId: "root-session",
+        action: "edit",
+        objective: "Finish the migration and pass all tests.",
+        expectedGeneration: 2,
+      },
+      { workspaceRoot, sessionId: "root-session", action: "pause" },
+      { workspaceRoot, sessionId: "root-session", action: "budget", tokenBudget: 50_000 },
+      { workspaceRoot, sessionId: "root-session", action: "clear" },
+    ]);
+  });
+
   test("GET/PATCH model selection returns the complete next model before first send", async () => {
     const { app, project } = await createTestApp("session-model-selection");
     const created = await app.request(`/api/projects/${project.slug}/sessions`, { method: "POST" });
@@ -645,7 +697,7 @@ describe("sessions routes", () => {
     });
   });
 
-  test("DELETE returns stable 409 details while Goal cancellation stops the Session family", async () => {
+  test("DELETE returns stable 409 details while the Session family is stopping", async () => {
     const { app, project } = await createTestApp("family-stop-in-progress");
 
     const res = await app.request(`/api/projects/${project.slug}/sessions/stopping-session`, {
@@ -666,7 +718,7 @@ describe("sessions routes", () => {
     });
   });
 
-  test("DELETE returns stable 409 owner details for managed Sessions", async () => {
+  test("DELETE returns stable 409 owner details for Todo-managed Sessions", async () => {
     const { app, project } = await createTestApp("delete-owner-conflict");
 
     const res = await app.request(`/api/projects/${project.slug}/sessions/owned-session`, {
@@ -682,7 +734,7 @@ describe("sessions routes", () => {
           sessionIds: ["owned-session"],
           scopeCode: "SESSION_DELETE_OWNER_CONFLICT",
           owners: [
-            { sessionId: "owned-session", ownerType: "goal", ownerId: "goal-1" },
+            { sessionId: "owned-session", ownerType: "project_todo", ownerId: "11111111-1111-4111-8111-111111111111" },
           ],
         },
       },

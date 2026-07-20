@@ -40,7 +40,6 @@ const VALID_CONFIG_WITH_AGENTS = {
   ...VALID_CONFIG,
   agents: {
     engineer: { model: "xxx:gpt-5.2" },
-    goal_lead: { model: "xxx:gpt-5.2" },
     plan: { model: "xxx:gpt-5.2" },
     build: { model: "xxx:gpt-5.2" },
     reviewer: { model: "xxx:gpt-5.2" },
@@ -51,14 +50,13 @@ const VALID_CONFIG_WITH_AGENTS = {
 };
 
 describe("parseConfig", () => {
-  test("parses a valid config with all 8 required agents", () => {
+  test("parses a valid config with all 7 required agents", () => {
     const config = parseConfig(VALID_CONFIG_WITH_AGENTS);
     expect(config.provider).toBeDefined();
     expect(config.provider["xxx"].name).toBe("xxx");
     expect(config.provider["xxx"].models["gpt-5.2"].name).toBe("GPT-5.2");
     expect(config.agents).toBeDefined();
     expect(config.agents.engineer.model).toBe("xxx:gpt-5.2");
-    expect(config.agents.goal_lead.model).toBe("xxx:gpt-5.2");
     expect(config.agents.plan.model).toBe("xxx:gpt-5.2");
     expect(config.agents.build.model).toBe("xxx:gpt-5.2");
     expect(config.agents.reviewer.model).toBe("xxx:gpt-5.2");
@@ -341,7 +339,7 @@ describe("parseConfig", () => {
     expect(() => parseConfig(agent)).toThrow(ConfigValidationError);
   });
 
-  test("parses config with all 8 agents and per-agent options", () => {
+  test("parses config with all 7 agents and per-agent options", () => {
     const config = {
       ...VALID_CONFIG_WITH_AGENTS,
       agents: {
@@ -350,7 +348,6 @@ describe("parseConfig", () => {
           variant: "creative",
           options: { temperature: 0.3 },
         },
-        goal_lead: { model: "xxx:gpt-5.2" },
         plan: { model: "xxx:gpt-5.2" },
         build: { model: "xxx:gpt-5.2" },
         reviewer: { model: "xxx:gpt-5.2" },
@@ -367,7 +364,6 @@ describe("parseConfig", () => {
     expect(parsed.agents.engineer.model).toBe("xxx:gpt-5.2");
     expect(parsed.agents.engineer.variant).toBe("creative");
     expect(parsed.agents.engineer.options!.temperature).toBe(0.3);
-    expect(parsed.agents.goal_lead.model).toBe("xxx:gpt-5.2");
     expect(parsed.agents.explore.model).toBe("xxx:gpt-5.2");
     expect(parsed.agents.explore.options!.temperature).toBe(0.5);
     expect(parsed.agents.plan.model).toBe("xxx:gpt-5.2");
@@ -488,7 +484,6 @@ describe("parseConfig", () => {
       ...VALID_CONFIG_WITH_AGENTS,
       agents: {
         engineer: { model: "xxx:gpt-5.2" },
-        goal_lead: { model: "xxx:gpt-5.2" },
         plan: { model: "xxx:gpt-5.2" },
         build: { model: "xxx:gpt-5.2" },
         // reviewer is missing

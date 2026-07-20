@@ -64,7 +64,7 @@ describe("SessionCwdReferenceMigrationService", () => {
     await initializeGitRepo(PROJECT_ROOT);
     const worktrees = new WorktreeService({ canonicalRoot: PROJECT_ROOT });
     const created = await worktrees.create({
-      owner: { type: "session", id: "crash-retry-e2e" },
+      owner: { id: "crash-retry-e2e" },
       label: "cleanup",
       uniqueId: "crash-retry-job-123456",
     });
@@ -103,7 +103,7 @@ describe("SessionCwdReferenceMigrationService", () => {
     await initializeGitRepo(PROJECT_ROOT);
     const worktrees = new WorktreeService({ canonicalRoot: PROJECT_ROOT });
     const created = await worktrees.create({
-      owner: { type: "session", id: "rollback-e2e" },
+      owner: { id: "rollback-e2e" },
       label: "cleanup",
       uniqueId: "rollback-job-123456",
     });
@@ -134,7 +134,7 @@ describe("SessionCwdReferenceMigrationService", () => {
     await initializeGitRepo(PROJECT_ROOT);
     const creator = new WorktreeService({ canonicalRoot: PROJECT_ROOT });
     const created = await creator.create({
-      owner: { type: "session", id: "detach-failure-e2e" },
+      owner: { id: "detach-failure-e2e" },
       uniqueId: "detach-failure-job-123456",
     });
     const delegate = createProcessRunner();
@@ -178,7 +178,7 @@ describe("SessionCwdReferenceMigrationService", () => {
     await initializeGitRepo(PROJECT_ROOT);
     const creator = new WorktreeService({ canonicalRoot: PROJECT_ROOT });
     const created = await creator.create({
-      owner: { type: "session", id: "branch-delete-failure-e2e" },
+      owner: { id: "branch-delete-failure-e2e" },
       uniqueId: "branch-delete-failure-job-123456",
     });
     await git(PROJECT_ROOT, ["commit", "--allow-empty", "-m", "advance canonical"]);

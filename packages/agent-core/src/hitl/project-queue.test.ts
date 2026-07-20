@@ -27,17 +27,17 @@ afterAll(async () => {
 });
 
 describe("ProjectHitlQueue", () => {
-  test("persists every owner in the one project queue", async () => {
+  test("persists every Session-owned request in the one project queue", async () => {
     const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT, codec });
     const session = await queue.create(questionInput("question-1"));
-    const goal = await queue.create(budgetInput("budget-1"));
+    const permission = await queue.create(permissionInput("permission-1"));
 
     expect(session.created).toBe(true);
-    expect(goal.created).toBe(true);
+    expect(permission.created).toBe(true);
     expect(await Bun.file(projectHitlQueuePath(TMP_ROOT)).exists()).toBe(true);
     expect(await Bun.file(join(TMP_ROOT, ".archcode", "sessions", "session-1", "hitl.json")).exists()).toBe(false);
     expect(await Bun.file(join(TMP_ROOT, ".archcode", "goals", "goal-1", "hitl.json")).exists()).toBe(false);
-    expect((await queue.list()).map((record) => record.requestKey)).toEqual(["question-1", "budget-1"]);
+    expect((await queue.list()).map((record) => record.requestKey)).toEqual(["question-1", "permission-1"]);
   });
 
   test("create is idempotent by requestKey and rejects a changed intent", async () => {
@@ -62,18 +62,6 @@ describe("ProjectHitlQueue", () => {
 
     const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT, codec });
     await expect(queue.list()).rejects.toThrow();
-  });
-
-  test("strict creation enforces owner-source boundaries", async () => {
-    const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT, codec });
-    await expect(queue.create({
-      ...questionInput("wrong-owner"),
-      owner: { type: "goal", id: "goal-1" },
-    })).rejects.toThrow("does not belong");
-    await expect(queue.create({
-      ...budgetInput("wrong-budget-owner"),
-      owner: { type: "session", id: "session-1" },
-    })).rejects.toThrow("does not belong");
   });
 
   test("persists redacted persistent-approval eligibility and rejects forged approve always", async () => {
@@ -113,12 +101,12 @@ describe("ProjectHitlQueue", () => {
 
   test("validates response variant against source", async () => {
     const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT, codec });
-    const { record } = await queue.create(budgetInput("budget-response"));
+    const { record } = await queue.create(questionInput("question-response"));
 
     await expect(queue.respond(record.hitlId, {
       type: "permission_decision",
       decision: "approve_once",
-    })).rejects.toThrow("does not answer goal_budget");
+    })).rejects.toThrow("does not answer ask_user");
   });
 
   test("persists dispatch attempts and derives inspection after the third failure", async () => {
@@ -272,14 +260,5 @@ function permissionInput(requestKey: string): CreateHitlInput {
     owner: { type: "session", id: "session-1" },
     source: { type: "tool_permission", toolCallId: "bash-1", toolName: "bash" },
     displayPayload: { title: "Allow bash", redacted: true },
-  };
-}
-
-function budgetInput(requestKey: string): CreateHitlInput {
-  return {
-    requestKey,
-    owner: { type: "goal", id: "goal-1" },
-    source: { type: "goal_budget", approvalPoint: "warning-1" },
-    displayPayload: { title: "Approve budget", redacted: true },
   };
 }

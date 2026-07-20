@@ -211,19 +211,6 @@ describe("createAgentFactory", () => {
     expect(child.store.getState().parentSessionId).toBe(parentSessionId);
   });
 
-  test("preserves goal id on supplied stores", () => {
-    const factory = makeFactory([
-      definition(),
-      definition({ name: "explore", tools: { tools: nonDelegatingExplorerTools } }),
-    ]);
-
-    const goalId = crypto.randomUUID();
-    const store = storeManager.create(crypto.randomUUID(), "/test", { goalId, agentName: "explore" });
-    const child = factory.createAgent("explore", { store });
-
-    expect(child.store.getState().goalId).toBe(goalId);
-  });
-
   test("resolves explicit tool lists and strips delegation tools at depth three", () => {
     const factory = makeFactory();
     const customDefinition = definition({ tools: { tools: ["grep", "missing", "delegate"] } });
@@ -261,16 +248,16 @@ describe("createAgentFactory", () => {
     const factory = makeFactory();
     const depthFilteredDefinition = definition({
       name: "explore",
-      tools: { tools: explorerTools, delegateTargets: ["explore", "goal_lead"] },
+      tools: { tools: explorerTools, delegateTargets: ["explore", "reviewer"] },
     });
     const explicitWithoutDelegate = definition({
-      name: "goal_lead",
+      name: "reviewer",
       tools: { tools: ["grep"], delegateTargets: ["explore"] },
     });
 
-    expect(factory.getDelegateTargetsFor(depthFilteredDefinition, 1)).toEqual(["explore", "goal_lead"]);
+    expect(factory.getDelegateTargetsFor(depthFilteredDefinition, 1)).toEqual(["explore", "reviewer"]);
     // depth 2 (< MAX_SUB_AGENT_DEPTH=3): delegation still allowed, targets returned
-    expect(factory.getDelegateTargetsFor(depthFilteredDefinition, 2)).toEqual(["explore", "goal_lead"]);
+    expect(factory.getDelegateTargetsFor(depthFilteredDefinition, 2)).toEqual(["explore", "reviewer"]);
     // depth 3 (>= MAX_SUB_AGENT_DEPTH): delegation stripped, targets empty
     expect(factory.getDelegateTargetsFor(depthFilteredDefinition, 3)).toEqual([]);
     expect(factory.getDelegateTargetsFor(explicitWithoutDelegate, 0)).toEqual([]);

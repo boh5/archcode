@@ -67,6 +67,26 @@ describe("runLlmObject", () => {
     });
   });
 
+  test("reports normalized usage to internal maintenance callers", async () => {
+    const schema = z.strictObject({ name: z.string() });
+    const seen: unknown[] = [];
+    mockGenerateText.mockResolvedValueOnce({
+      text: "",
+      toolCalls: [{ toolName: "result", input: { name: "Alice" } }],
+      usage: { inputTokens: 11, outputTokens: 7, reasoningTokens: 3, cachedInputTokens: 2 },
+    } as never);
+
+    await runLlmObject(makeInput({ schema, onUsage: (usage) => seen.push(usage) }));
+
+    expect(seen).toEqual([{
+      inputTokens: 11,
+      outputTokens: 7,
+      totalTokens: 18,
+      reasoningTokens: 3,
+      cachedInputTokens: 2,
+    }]);
+  });
+
   test("repairs schema failures for 2 total object attempts", async () => {
     const schema = z.strictObject({ name: z.string() });
     mockGenerateText

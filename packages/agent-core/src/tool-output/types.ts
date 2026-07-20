@@ -36,12 +36,12 @@ export type RawToolDetails = ToolResultDetails;
 
 export type ToolExecutionControl =
   | {
-      readonly action: "stop_session_family";
-      readonly reason: "goal_cancelled";
+      readonly action: "complete_execution";
+      readonly reason: "child_result_submitted";
     }
   | {
-      readonly action: "complete_execution";
-      readonly reason: "child_result_submitted" | "goal_review_finalized";
+      readonly action: "request_goal_review";
+      readonly reason: string;
     }
   | {
       readonly action: "fail_execution";

@@ -2,8 +2,6 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
 
-import { GoalStateManager } from "../goals/state";
-import { GoalLifecycleService } from "../goals/lifecycle-service";
 import { HitlBoundaryCodec, ProjectHitlQueue } from "../hitl";
 import { MemoryFileManager } from "../memory/file-manager";
 import { SessionStoreManager } from "../store/session-store-manager";
@@ -46,16 +44,6 @@ function createResolver(overrides: Partial<ProjectContextResolverOptions> = {}):
       const name = basename(workspaceRoot);
       return { slug: name, name, workspaceRoot, addedAt: new Date().toISOString() };
     }),
-    goalCancellationFactory: overrides.goalCancellationFactory ?? (({ goalState }) => ({
-      cancel: async (goalId, request) => await goalState.cancel(goalId, request.reason),
-    })),
-    goalLifecycleFactory: overrides.goalLifecycleFactory ?? (({ workspaceRoot, goalState }) => new GoalLifecycleService({
-      workspaceRoot,
-      goalStateManager: goalState,
-      readSourceSession: (root, sessionId) => sessions.getSessionFile(root, sessionId),
-      ensureSessionFile: (root, sessionId, options) => sessions.ensureSessionFile(root, sessionId, options),
-      startCheckedExecutionWithinGoalClaim: async () => ({}) as never,
-    })),
     projectTodoFactory: overrides.projectTodoFactory ?? (({ workspaceRoot, project }) => new ProjectTodoService({
       workspaceRoot,
       projectSlug: project.slug,
@@ -101,7 +89,6 @@ describe("ProjectContextResolver", () => {
     const second = await resolver.resolve(workspace);
 
     expect(second).not.toBe(first);
-    expect(second.goalState).not.toBe(first.goalState);
     expect(second.hitl).not.toBe(first.hitl);
     expect(second.memory).not.toBe(first.memory);
     expect(second.todos).not.toBe(first.todos);
@@ -131,7 +118,6 @@ describe("ProjectContextResolver", () => {
     const workspace = await makeWorkspace("defaults");
     const context = await createResolver().resolve(workspace);
     const record = context as unknown as Record<string, unknown>;
-    expect(context.goalState).toBeInstanceOf(GoalStateManager);
     expect(context.hitl).toBeInstanceOf(ProjectHitlQueue);
     expect(context.memory).toBeInstanceOf(MemoryFileManager);
     expect(context.todos).toBeInstanceOf(ProjectTodoService);
@@ -147,12 +133,10 @@ describe("ProjectContextResolver", () => {
     expect((await resolver.resolve(workspace)).project).toEqual(projectInfo);
   });
 
-  test("custom queue and goal factories are used per resolved context", async () => {
+  test("custom queue factory is used per resolved context", async () => {
     const workspace = await makeWorkspace("custom-factories");
-    const goalState = new GoalStateManager(workspace);
     const queues: ProjectHitlQueue[] = [];
     const resolver = createResolver({
-      goalStateFactory: mock(() => goalState),
       hitlFactory: mock((input) => {
         const queue = new ProjectHitlQueue(input);
         queues.push(queue);
@@ -160,7 +144,6 @@ describe("ProjectContextResolver", () => {
       }),
     });
     const context = await resolver.resolve(workspace);
-    expect(context.goalState).toBe(goalState);
     expect(context.hitl).toBe(queues[0]);
   });
 });

@@ -40,7 +40,7 @@ const ProjectTodoUpdateBodySchema = z.strictObject({
 });
 const ProjectTodoActivateBodySchema = z.strictObject({
   expectedRevision: z.number().int().positive(),
-  kind: z.enum(["session", "goal", "automation"]),
+  kind: z.enum(["session", "automation"]),
 });
 
 export interface ProjectTodoServiceLike {

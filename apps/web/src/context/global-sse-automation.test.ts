@@ -36,7 +36,7 @@ describe("global SSE Automation invalidation", () => {
       queryKeys.projectTodo("demo", "t1"),
     ]);
     expect(calls).not.toContainEqual(queryKeys.sessions("demo"));
-    expect(calls).not.toContainEqual(queryKeys.projectGoals("demo"));
+    expect(calls).not.toContainEqual(queryKeys.sessionGoals);
     expect(calls).not.toContainEqual(queryKeys.projectAutomations("demo"));
   });
 });

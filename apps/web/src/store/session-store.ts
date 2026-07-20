@@ -22,6 +22,7 @@ import type {
   SessionStats,
   SessionStep,
   SessionTodo,
+  SessionGoal,
 } from "@archcode/protocol";
 
 const MAX_IDLE_SESSION_STORES = 20;
@@ -86,6 +87,8 @@ export interface WebSessionStoreState extends Omit<SessionProjection, "cwd" | "a
     activeModelBinding?: ExecutionModelBindingSummary;
     compression?: CompressionStateSnapshot;
     compressionBlocks?: CompressionBlockPart[];
+    /** `undefined` is a legitimate clear from the authoritative Session snapshot. */
+    goal?: SessionGoal | undefined;
   }) => void;
 }
 
@@ -402,6 +405,9 @@ export function createWebSessionStore(
         }
         if (data.compressionBlocks !== undefined && !stale) {
           updates.compressionBlocks = data.compressionBlocks;
+        }
+        if ("goal" in data && !stale) {
+          updates.goal = data.goal;
         }
         if (data.events !== undefined && !stale) {
           updates.events = data.events;

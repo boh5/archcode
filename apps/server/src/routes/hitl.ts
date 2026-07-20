@@ -23,7 +23,7 @@ interface HitlMutationResponse {
 }
 
 const HitlListStatusSchema = z.enum(["pending", "recent", "all"]);
-const HitlOwnerTypeSchema = z.enum(["session", "goal"]);
+const HitlOwnerTypeSchema = z.literal("session");
 const HitlListParamsSchema = z.strictObject({ slug: z.string().min(1) });
 const HitlMutationParamsSchema = z.strictObject({
   slug: z.string().min(1),
@@ -115,7 +115,7 @@ export function createHitlRoutes(runtime: AgentRuntime): Hono {
   return app;
 }
 
-function matchesOwnerFilter(owner: HitlOwner, ownerType: "session" | "goal" | undefined, ownerId: string | undefined): boolean {
+function matchesOwnerFilter(owner: HitlOwner, ownerType: "session" | undefined, ownerId: string | undefined): boolean {
   return ownerType === undefined || (owner.type === ownerType && (ownerId === undefined || owner.id === ownerId));
 }
 

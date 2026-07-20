@@ -315,8 +315,7 @@ function allowedActions(record: HitlRecord): HitlAllowedAction[] {
   if (record.status !== "pending") return [];
   switch (record.source.type) {
     case "ask_user": return ["answer", "cancel"];
-    case "tool_permission":
-    case "goal_budget": return ["approve", "deny", "cancel"];
+    case "tool_permission": return ["approve", "deny", "cancel"];
   }
 }
 

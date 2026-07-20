@@ -9,7 +9,7 @@ import {
 } from "../tools/hooks";
 import { createMemoryReadTool } from "../tools/builtins/memory-read";
 import { createMemoryWriteTool } from "../tools/builtins/memory-write";
-import { goalCreateTool, goalManageTool } from "../tools/builtins/goal-tools";
+import { createGoalTool, getGoalTool, updateGoalTool } from "../tools/builtins/session-goal";
 import { automationCreateTool } from "../tools/builtins/automation-create";
 import { createGitHubToolDescriptors } from "../tools/github";
 
@@ -28,8 +28,9 @@ export function registerBuiltinTools(
   registry.register(createMemoryReadTool());
   registry.register(createMemoryWriteTool());
 
-  registry.register(goalCreateTool);
-  registry.register(goalManageTool);
+  registry.register(createGoalTool);
+  registry.register(getGoalTool);
+  registry.register(updateGoalTool);
   registry.register(automationCreateTool);
 
   const githubConnector = createGitHubConnector({ resolvedConfig: options.github });

@@ -2,8 +2,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { PROJECT_STATE_DIR_NAME, USER_DATA_DIR_NAME } from "@archcode/protocol";
 
-import { GoalStateManager } from "../goals/state";
-import type { GoalCancellationCapability } from "../goals/cancellation";
 import { HitlBoundaryCodec, ProjectHitlQueue, type ProjectHitlQueueOptions } from "../hitl";
 import { MemoryFileManager } from "../memory/file-manager";
 import { silentLogger } from "../logger";
@@ -11,7 +9,6 @@ import type { Logger } from "../logger";
 import { ProjectApprovalManager } from "../tools/permission/project-approvals";
 import type { ProjectContext, ProjectInfo } from "./types";
 import type { Automation, AutomationAction, AutomationTrigger } from "@archcode/protocol";
-import type { GoalLifecycleService } from "../goals/lifecycle-service";
 import type { ProjectTodoService } from "../todos";
 
 export interface ProjectContextResolverOptions {
@@ -19,35 +16,10 @@ export interface ProjectContextResolverOptions {
   hitlCodec: HitlBoundaryCodec;
   /** Registry-backed ProjectInfo lookup. Missing projects must fail resolution. */
   projectInfoFactory: (workspaceRoot: string) => Promise<ProjectInfo> | ProjectInfo;
-  /** Factory primarily for testing alternate GoalStateManager construction. */
-  goalStateFactory?: (
-    workspaceRoot: string,
-    onCommitted: (goal: import("@archcode/protocol").GoalState) => void | Promise<void>,
-  ) => GoalStateManager;
-  /** Narrow post-commit observer; Goal persistence remains domain-owned. */
-  goalCommitted?: (input: {
-    readonly workspaceRoot: string;
-    readonly project: ProjectInfo;
-    readonly goal: import("@archcode/protocol").GoalState;
-  }) => void | Promise<void>;
-  /** Application-level Goal cancellation capability supplied by runtime composition. */
-  goalCancellationFactory: (input: {
-    workspaceRoot: string;
-    project: ProjectInfo;
-    goalState: GoalStateManager;
-    hitl: ProjectHitlQueue;
-  }) => GoalCancellationCapability;
-  /** Application-level Goal orchestration supplied by runtime composition. */
-  goalLifecycleFactory: (input: {
-    workspaceRoot: string;
-    project: ProjectInfo;
-    goalState: GoalStateManager;
-  }) => GoalLifecycleService;
   /** Project-owned Todo service composed with narrow runtime capabilities. */
   projectTodoFactory: (input: {
     workspaceRoot: string;
     project: ProjectInfo;
-    goalState: GoalStateManager;
   }) => ProjectTodoService;
   /** Runtime-owned Automation creation path used by the model-facing tool. */
   createAutomation: (workspaceRoot: string, input: {
@@ -70,10 +42,6 @@ export class ProjectContextResolver {
   readonly #logger: Logger;
   readonly #hitlCodec: HitlBoundaryCodec;
   readonly #projectInfoFactory: (workspaceRoot: string) => Promise<ProjectInfo> | ProjectInfo;
-  readonly #goalStateFactory: NonNullable<ProjectContextResolverOptions["goalStateFactory"]>;
-  readonly #goalCommitted: NonNullable<ProjectContextResolverOptions["goalCommitted"]>;
-  readonly #goalCancellationFactory: ProjectContextResolverOptions["goalCancellationFactory"];
-  readonly #goalLifecycleFactory: ProjectContextResolverOptions["goalLifecycleFactory"];
   readonly #projectTodoFactory: ProjectContextResolverOptions["projectTodoFactory"];
   readonly #createAutomation: ProjectContextResolverOptions["createAutomation"];
   readonly #hitlFactory: (options: ProjectHitlQueueOptions) => ProjectHitlQueue;
@@ -84,12 +52,6 @@ export class ProjectContextResolver {
     this.#logger = (options.logger ?? silentLogger).child({ module: "projects.context" });
     this.#hitlCodec = options.hitlCodec;
     this.#projectInfoFactory = options.projectInfoFactory;
-    this.#goalStateFactory = options.goalStateFactory ?? ((workspaceRoot, onCommitted) => {
-      return new GoalStateManager(workspaceRoot, this.#logger.child({ module: "goals.state" }), onCommitted);
-    });
-    this.#goalCommitted = options.goalCommitted ?? (() => {});
-    this.#goalCancellationFactory = options.goalCancellationFactory;
-    this.#goalLifecycleFactory = options.goalLifecycleFactory;
     this.#projectTodoFactory = options.projectTodoFactory;
     this.#createAutomation = options.createAutomation;
     this.#hitlFactory = options.hitlFactory ?? ((input) => new ProjectHitlQueue(input));
@@ -133,19 +95,12 @@ export class ProjectContextResolver {
     const approvals = this.#approvalsFactory();
     await approvals.load(workspaceRoot);
     const project = await this.#projectInfoFactory(workspaceRoot);
-    const goalState = this.#goalStateFactory(
-      workspaceRoot,
-      (goal) => this.#goalCommitted({ workspaceRoot, project, goal }),
-    );
     const hitl = this.#hitlFactory({ workspaceRoot, codec: this.#hitlCodec });
-    const todos = this.#projectTodoFactory({ workspaceRoot, project, goalState });
+    const todos = this.#projectTodoFactory({ workspaceRoot, project });
     const context: ProjectContext = {
       project,
-      goalState,
-      goalLifecycle: this.#goalLifecycleFactory({ workspaceRoot, project, goalState }),
       createAutomation: (input) => this.#createAutomation(workspaceRoot, input),
       todos,
-      goalCancellation: this.#goalCancellationFactory({ workspaceRoot, project, goalState, hitl }),
       hitl,
       memory: this.#memoryFactory(workspaceRoot),
       approvals,

@@ -19,16 +19,15 @@ import {
   IneligibleSessionWorktreeToolError,
   UnknownExtraToolError,
 } from "./configured-agent";
-import { exploreAgentDefinition, engineerAgentDefinition, goalLeadAgentDefinition } from "./definitions";
+import { exploreAgentDefinition, engineerAgentDefinition } from "./definitions";
 import type { AgentDefinition } from "./factory-types";
 import type { VersionControl } from "../version-control/detector";
 import { setLlmAdapterForTest } from "../llm/adapter";
 import type { MemoryExtractionConfig } from "../config";
 import { silentLogger } from "../logger";
-import { GoalStateManager } from "../goals/state";
-import { testReviewExecutionFields } from "../goals/test-review-fixture";
 import { createTestProjectContextResolver } from "./test-project-context-resolver";
 import type { AgentRunOptions } from "./types";
+import { SessionGoalService } from "../session-goal";
 
 const tmpRoot = join(tmpdir(), "archcode-configured-agent", crypto.randomUUID());
 const worktreeRoot = join(tmpdir(), "archcode-configured-agent-worktree", crypto.randomUUID());
@@ -139,7 +138,6 @@ function makeToolRegistry() {
     ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
     ...DELEGATION_CORE_TOOLS.map(makeTool),
     makeTool("submit_child_result"),
-    makeTool("goal_manage"),
     makeTool("project_todo_update"),
   ]);
 }
@@ -215,7 +213,7 @@ function createAgent(options: {
   const projectRoot = options.projectRoot ?? tmpRoot;
   const cwd = options.cwd ?? projectRoot;
   const store = options.store ?? storeManager.create(crypto.randomUUID(), projectRoot, { cwd, agentName: options.definition.name });
-  if (options.definition.name !== "engineer" && options.definition.name !== "goal_lead" && options.definition.name !== "shaper" && store.getState().parentSessionId === undefined) {
+  if (options.definition.name !== "engineer" && options.definition.name !== "shaper" && store.getState().parentSessionId === undefined) {
     const parentSessionId = crypto.randomUUID();
     storeManager.create(parentSessionId, projectRoot, { cwd, agentName: "engineer" });
     store.setState({ parentSessionId, rootSessionId: parentSessionId });
@@ -398,15 +396,25 @@ describe("ConfiguredAgent", () => {
     expect(btm.drainCalls).toBe(0);
   });
 
-  test("Goal Lead leaves next-Run continuation exclusively to the Goal driver", async () => {
-    setupMockStreamText("goal turn complete");
-    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "goal_lead" });
-    store.setState({ todos: [{ id: "todo-1", content: "finish goal", status: "pending" }] });
+  test("injects the active Session Goal overlay only from the root Engineer state", async () => {
+    const streamFn = setupMockStreamText("continue goal");
+    const sessionId = crypto.randomUUID();
+    const store = storeManager.create(sessionId, tmpRoot, { agentName: "engineer" });
+    await new SessionGoalService(storeManager).create({
+      workspaceRoot: tmpRoot,
+      sessionId,
+      objective: "Finish the authentication migration and make every authentication test pass.",
+      authority: { kind: "user_control" },
+    });
 
-    const agent = createAgent({ definition: goalLeadAgentDefinition, store });
-    await runAgent(agent, "continue goal");
+    await runAgent(createAgent({ definition: engineerAgentDefinition, store }), "continue");
 
-    expect(agent.store.getState().reminders.some((reminder) => reminder.source.type === "todo_loop_continuation")).toBe(false);
+    const system = (streamFn.mock.calls[0]![0] as { system: string }).system;
+    expect(system).toContain("## Active Goal");
+    expect(system).toContain("Finish the authentication migration and make every authentication test pass.");
+    expect(system).toContain("update_goal with status=complete only to request independent review");
+    expect(system).not.toContain("Goal Lead");
+    expect(system).not.toContain("goal_manage");
   });
 
   test("dispose does not cancel a provided shared background task manager", () => {
@@ -781,84 +789,6 @@ describe("ConfiguredAgent", () => {
     expect(worktreeSystem).toContain("- worktree_exit");
   });
 
-  test("does not expose cwd transitions to Goal-owned root Sessions", async () => {
-    const streamFn = setupMockStreamText("goal tools");
-    const toolRegistry = createTestRegistry([
-      ...goalLeadAgentDefinition.tools.tools.map(makeTool),
-      worktreeEnterTool,
-      worktreeExitTool,
-    ]);
-    const sessionId = crypto.randomUUID();
-    const goal = await new GoalStateManager(tmpRoot).commit({
-      id: crypto.randomUUID(),
-      projectSlug: "project-a",
-      createdFromSessionId: crypto.randomUUID(),
-      objective: "Keep Goal sessions out of ordinary worktree transitions.",
-      acceptanceCriteria: "The Goal Lead prompt exposes no cwd transition tool.",
-      mainSessionId: sessionId,
-    });
-    const store = storeManager.create(sessionId, tmpRoot, { goalId: goal.id, agentName: "goal_lead" });
-    await runAgent(createAgent({
-      definition: goalLeadAgentDefinition,
-      toolRegistry,
-      store,
-      projectRoot: tmpRoot,
-      cwd: tmpRoot,
-    }), "show goal tools");
-
-    const system = (streamFn.mock.calls[0]![0] as { system: string }).system;
-    expect(system).not.toContain("- worktree_enter");
-    expect(system).not.toContain("- worktree_exit");
-  });
-
-  test("derives Goal Lead delegate targets from the current Goal phase", async () => {
-    const goalState = new GoalStateManager(tmpRoot);
-    const sessionId = crypto.randomUUID();
-    const goal = await goalState.commit({
-      id: crypto.randomUUID(),
-      projectSlug: "project-a",
-      createdFromSessionId: crypto.randomUUID(),
-      objective: "Expose only phase-valid Goal delegation targets.",
-      acceptanceCriteria: "The Runtime Envelope matches Goal admission.",
-      mainSessionId: sessionId,
-    });
-    const store = storeManager.create(sessionId, tmpRoot, {
-      goalId: goal.id,
-      sessionRole: "main",
-      agentName: "goal_lead",
-    });
-    const agent = createAgent({ definition: goalLeadAgentDefinition, store });
-
-    const running = setupMockStreamText("running");
-    await runAgent(agent, "running phase");
-    expect((running.mock.calls[0]![0] as { system: string }).system)
-      .toContain("Allowed delegate targets: plan, build, explore, librarian");
-
-    await goalState.beginReview(goal.id);
-    const reviewing = setupMockStreamText("reviewing");
-    await runAgent(agent, "reviewing phase");
-    expect((reviewing.mock.calls[0]![0] as { system: string }).system)
-      .toContain("Allowed delegate targets: reviewer");
-
-    await goalState.finalizeReview(goal.id, {
-      expectedReviewGeneration: 1,
-      verdict: "NOT_DONE",
-      summary: "More work remains.",
-      ...testReviewExecutionFields("NOT_DONE"),
-      authorization: {
-        agentName: "reviewer",
-        sessionRole: "review",
-        sessionGoalId: goal.id,
-        reviewerSessionId: crypto.randomUUID(),
-      },
-    });
-    const notDone = setupMockStreamText("not done");
-    await runAgent(agent, "not_done phase");
-    const notDonePrompt = (notDone.mock.calls[0]![0] as { system: string }).system;
-    expect(notDonePrompt).toContain("Allowed delegate targets: none");
-    expect(notDonePrompt).toContain("No delegate target is currently admissible");
-  });
-
   test("extraTools cannot grant cwd transitions to an ineligible Session", async () => {
     const streamFn = setupMockStreamText("should not run");
     const toolRegistry = createTestRegistry([
@@ -866,11 +796,15 @@ describe("ConfiguredAgent", () => {
       worktreeEnterTool,
       worktreeExitTool,
     ]);
+    const parentSessionId = crypto.randomUUID();
+    storeManager.create(parentSessionId, tmpRoot, { agentName: "engineer" });
     const store = storeManager.create(crypto.randomUUID(), tmpRoot, {
-      goalId: crypto.randomUUID(), agentName: "goal_lead"
+      rootSessionId: parentSessionId,
+      parentSessionId,
+      agentName: "explore",
     });
     const agent = createAgent({
-      definition: engineerAgentDefinition,
+      definition: exploreAgentDefinition,
       toolRegistry,
       store,
       projectRoot: tmpRoot,
@@ -1045,52 +979,6 @@ describe("ConfiguredAgent", () => {
     await runAgent(createAgent({ definition: exploreAgentDefinition }), "without memory");
     const withoutMemory = withoutMemoryStreamFn.mock.calls[0]![0] as { system: string };
     expect(withoutMemory.system).toContain("Status: absent. Memory is non-authoritative historical context.");
-  });
-
-  test("legacy active workflow context is omitted for agents", async () => {
-    const streamFn = setupMockStreamText("no workflow tools ok");
-    const sessionId = crypto.randomUUID();
-    const goal = await new GoalStateManager(tmpRoot).commit({
-      id: crypto.randomUUID(),
-      projectSlug: "project-a",
-      createdFromSessionId: crypto.randomUUID(),
-      objective: "Keep retired workflow context out of Goal prompts.",
-      acceptanceCriteria: "The Prompt contains no Active Workflow section.",
-      mainSessionId: sessionId,
-    });
-    const store = storeManager.create(sessionId, tmpRoot, { goalId: goal.id, agentName: "goal_lead" });
-    const agent = createAgent({
-      definition: goalLeadAgentDefinition,
-      store,
-    });
-
-    await expect(runAgent(agent, "run without workflow tools")).resolves.toEqual({ text: "no workflow tools ok", steps: 0, status: "completed" });
-    expect(streamFn).toHaveBeenCalled();
-    const callArgs = streamFn.mock.calls[0]![0] as { system: string };
-    expect(callArgs.system).not.toContain("## Active Workflow");
-  });
-
-  test("simplified Goal retry sessions do not inject legacy operator repair context", async () => {
-    const streamFn = setupMockStreamText("simplified retry ok");
-    const goalState = new GoalStateManager(tmpRoot);
-    const mainSessionId = crypto.randomUUID();
-    const goal = await goalState.commit({
-      id: crypto.randomUUID(),
-      projectSlug: "project-a",
-      createdFromSessionId: crypto.randomUUID(),
-      objective: "Retry from natural language Goal state.",
-      acceptanceCriteria: "Reviewer can decide from natural language acceptance criteria.",
-      mainSessionId,
-    });
-    const store = storeManager.create(mainSessionId, tmpRoot, {
-      goalId: goal.id,
-      sessionRole: "main", agentName: "goal_lead"
-    });
-
-    await runAgent(createAgent({ definition: goalLeadAgentDefinition, store }), "retry goal");
-
-    const callArgs = streamFn.mock.calls[0]![0] as { system: string };
-    expect(callArgs.system).not.toContain("## Operator Repair Context");
   });
 
   test("engineer tool execution context uses Engineer attribution at depth zero", async () => {

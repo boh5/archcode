@@ -38,28 +38,19 @@ export interface ProjectTodoSessionCapability {
   }): Promise<{ release(): void } | undefined>;
 }
 
-export type ProjectTodoGoalResourceStatus = "running" | "reviewing" | "done" | "not_done" | "failed" | "cancelled";
 export type ProjectTodoAutomationResourceStatus = "active" | "paused" | "disabled";
 
-export type ProjectTodoResourceSnapshot =
-  | {
-      readonly kind: "goal";
-      readonly id: string;
-      readonly createdFromSessionId: string;
-      readonly createdAt: string | number;
-      readonly status: ProjectTodoGoalResourceStatus;
-    }
-  | {
-      readonly kind: "automation";
-      readonly id: string;
-      readonly createdFromSessionId: string;
-      readonly createdAt: string | number;
-      readonly status: ProjectTodoAutomationResourceStatus;
-    };
+export interface ProjectTodoResourceSnapshot {
+  readonly kind: "automation";
+  readonly id: string;
+  readonly createdFromSessionId: string;
+  readonly createdAt: string | number;
+  readonly status: ProjectTodoAutomationResourceStatus;
+}
 
 export interface ProjectTodoProvenanceCapability {
   listResources(input: {
-    readonly kind: "goal" | "automation";
+    readonly kind: "automation";
     readonly sourceSessionId: string;
   }): Promise<readonly ProjectTodoResourceSnapshot[]>;
 }
@@ -78,7 +69,7 @@ export interface ProjectTodoDiscussionUpdateInput {
 }
 
 export interface ProjectTodoResourceCreatedInput {
-  readonly kind: "goal" | "automation";
+  readonly kind: "automation";
   readonly sourceSessionId: string;
   readonly resourceId: string;
 }
@@ -339,9 +330,6 @@ function activationMessage(todo: ProjectTodo, kind: ProjectTodoActivationKind): 
   const activation = todo.activation;
   if (activation === undefined) throw new ProjectTodoActivationConflictError(todo.id, undefined, "Project Todo has no Activation snapshot");
   const snapshot = activationSnapshot(todo.id, activation.todoRevision, activation.snapshot);
-  if (kind === "goal") {
-    return `/skill use goal-create Create a Goal from the following Project Todo snapshot. Preserve the existing clarification and explicit confirmation flow; do not call goal_create before confirmation.\n\n${snapshot}`;
-  }
   if (kind === "automation") {
     return `/skill use automation-create Create an Automation from the following Project Todo snapshot. Preserve the existing clarification and explicit confirmation flow; do not call automation_create before confirmation.\n\n${snapshot}`;
   }
@@ -385,11 +373,7 @@ function resourceTimestamp(value: string | number): number {
 }
 
 function isInactiveResource(resource: ProjectTodoResourceSnapshot): boolean {
-  if (resource.kind === "automation") return resource.status === "paused" || resource.status === "disabled";
-  return resource.status === "done"
-    || resource.status === "not_done"
-    || resource.status === "failed"
-    || resource.status === "cancelled";
+  return resource.status === "paused" || resource.status === "disabled";
 }
 
 function requireProjectSlug(projectSlug: string): string {

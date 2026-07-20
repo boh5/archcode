@@ -280,13 +280,13 @@ describe("ProjectTodoService", () => {
     })).rejects.toBeInstanceOf(ProjectTodoRevisionConflictError);
   });
 
-  test("Activation sends immutable snapshots and forces existing creation Skills", async () => {
+  test("Activation sends immutable snapshots through ordinary Sessions and the Automation Skill", async () => {
     const { service, sessions } = fixture();
     const ready = await readyTodo(service, "Original title", "Original body");
     sessions.failEnsureSession = 1;
-    await expect(service.activateTodo(ready.id, { expectedRevision: ready.revision, kind: "goal" })).rejects.toThrow("injected ensure Session failure");
+    await expect(service.activateTodo(ready.id, { expectedRevision: ready.revision, kind: "session" })).rejects.toThrow("injected ensure Session failure");
     sessions.failEnsureExecution = 1;
-    await expect(service.activateTodo(ready.id, { expectedRevision: ready.revision, kind: "goal" })).rejects.toThrow();
+    await expect(service.activateTodo(ready.id, { expectedRevision: ready.revision, kind: "session" })).rejects.toThrow();
     const checkpoint = await service.readTodo(ready.id);
     expect(checkpoint.activation?.snapshot).toEqual({ title: "Original title", body: "Original body" });
 
@@ -294,11 +294,11 @@ describe("ProjectTodoService", () => {
       expectedRevision: checkpoint.revision,
       patch: { title: "Later title", body: "Later body" },
     });
-    const recovered = await service.activateTodo(ready.id, { expectedRevision: ready.revision, kind: "goal" });
+    const recovered = await service.activateTodo(ready.id, { expectedRevision: ready.revision, kind: "session" });
     const sourceSessionId = recovered.activation!.sourceSessionId;
     const execution = sessions.executions.get(sourceSessionId)!;
     expect(execution.executionId).toBe(activationExecutionId(ready.id));
-    expect(execution.userMessage).toStartWith("/skill use goal-create ");
+    expect(execution.userMessage).toStartWith("Implement the following Project Todo");
     expect(execution.userMessage).toContain("Original title");
     expect(execution.userMessage).toContain("Original body");
     expect(execution.userMessage).not.toContain("Later title");
@@ -327,16 +327,16 @@ describe("ProjectTodoService", () => {
     expect(sessions.executions.get(left.activation!.sourceSessionId)?.executionId).toBe(activationExecutionId(ready.id));
   });
 
-  test("binds the canonical earliest exact resource once and recovers after restart", async () => {
+  test("binds the canonical earliest Automation resource once and recovers after restart", async () => {
     const { service, provenance, sessions } = fixture();
     const ready = await readyTodo(service);
-    const active = await service.activateTodo(ready.id, { expectedRevision: ready.revision, kind: "goal" });
+    const active = await service.activateTodo(ready.id, { expectedRevision: ready.revision, kind: "automation" });
     const source = active.activation!.sourceSessionId;
     const laterId = crypto.randomUUID();
     const earlierId = crypto.randomUUID();
     provenance.resources = [
-      { kind: "goal", id: laterId, createdFromSessionId: source, createdAt: 20, status: "running" },
-      { kind: "goal", id: earlierId, createdFromSessionId: source, createdAt: 10, status: "done" },
+      { kind: "automation", id: laterId, createdFromSessionId: source, createdAt: 20, status: "active" },
+      { kind: "automation", id: earlierId, createdFromSessionId: source, createdAt: 10, status: "paused" },
     ];
 
     const restarted = new ProjectTodoService({
@@ -349,21 +349,19 @@ describe("ProjectTodoService", () => {
     const reconciled = await restarted.reconcileTodo(ready.id);
     expect(reconciled.activation?.resourceId).toBe(earlierId);
     const revision = reconciled.revision;
-    expect((await restarted.handleResourceCreated({ kind: "goal", sourceSessionId: source, resourceId: laterId }))?.activation?.resourceId).toBe(earlierId);
+    expect((await restarted.handleResourceCreated({ kind: "automation", sourceSessionId: source, resourceId: laterId }))?.activation?.resourceId).toBe(earlierId);
     expect((await restarted.readTodo(ready.id)).revision).toBe(revision);
   });
 
-  test("recovers exact Goal and Automation binding after post-commit notification failure", async () => {
+  test("recovers exact Automation binding after post-commit notification failure", async () => {
     const { service, provenance, sessions } = fixture();
 
-    for (const kind of ["goal", "automation"] as const) {
+    for (const kind of ["automation"] as const) {
       const ready = await readyTodo(service, `${kind} binding`);
       const active = await service.activateTodo(ready.id, { expectedRevision: ready.revision, kind });
       const sourceSessionId = active.activation!.sourceSessionId;
       const resourceId = crypto.randomUUID();
-      provenance.resources.push(kind === "goal"
-        ? { kind, id: resourceId, createdFromSessionId: sourceSessionId, createdAt: 10, status: "running" }
-        : { kind, id: resourceId, createdFromSessionId: sourceSessionId, createdAt: 20, status: "active" });
+      provenance.resources.push({ kind, id: resourceId, createdFromSessionId: sourceSessionId, createdAt: 20, status: "active" });
       provenance.failListResources = 1;
 
       await expect(service.handleResourceCreated({ kind, sourceSessionId, resourceId }))
@@ -391,19 +389,6 @@ describe("ProjectTodoService", () => {
     sessions.activity.set(source, "idle");
     expect((await service.returnToReady(sessionReady.id, sessionActive.revision)).activation).toBeUndefined();
     expect(sessions.releasedIdleLeases.get(source)).toBe(1);
-
-    const goalReady = await readyTodo(service, "Goal");
-    const goalActive = await service.activateTodo(goalReady.id, { expectedRevision: goalReady.revision, kind: "goal" });
-    const goalSource = goalActive.activation!.sourceSessionId;
-    const goalId = crypto.randomUUID();
-    provenance.resources = [{ kind: "goal", id: goalId, createdFromSessionId: goalSource, createdAt: 1, status: "running" }];
-    const ensureCallsBefore = sessions.ensureSessionCalls.get(goalSource);
-    await expect(service.returnToReady(goalReady.id, goalActive.revision)).rejects.toBeInstanceOf(ProjectTodoRevisionConflictError);
-    expect(sessions.ensureSessionCalls.get(goalSource)).toBe(ensureCallsBefore);
-    const bound = await service.readTodo(goalReady.id);
-    await expect(service.returnToReady(goalReady.id, bound.revision)).rejects.toBeInstanceOf(ProjectTodoReturnToReadyConflictError);
-    provenance.resources = [{ kind: "goal", id: goalId, createdFromSessionId: goalSource, createdAt: 1, status: "done" }];
-    expect((await service.returnToReady(goalReady.id, bound.revision)).activation).toBeUndefined();
 
     const automationReady = await readyTodo(service, "Automation");
     const automationActive = await service.activateTodo(automationReady.id, { expectedRevision: automationReady.revision, kind: "automation" });

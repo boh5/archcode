@@ -81,7 +81,7 @@ export async function executeWorktreeEnter(
   const service = new WorktreeService({ canonicalRoot: projectRoot });
   let created: Awaited<ReturnType<WorktreeService["create"]>> | undefined;
   try {
-    const owner = { type: "session" as const, id: state.sessionId };
+    const owner = { id: state.sessionId };
     const targetInfo = input.path === undefined
       ? await service.findManaged({ owner })
       : await service.validate(input.path);
@@ -149,14 +149,14 @@ export async function executeWorktreeEnter(
 
 function validateExplicitTargetOwnership(
   target: WorktreeInfo,
-  owner: { readonly type: "session"; readonly id: string },
+  owner: { readonly id: string },
 ): RawToolResult | undefined {
   const isOwnedBySession = isManagedWorktreeFor(target, { owner });
   if ((target.isManaged || isArchCodeManagedBranch(target.branchName)) && !isOwnedBySession) {
     return createToolErrorResult({
       kind: "permission-denied",
       code: "WORKTREE_TARGET_NOT_OWNED",
-      message: "A Session may enter only its own ArchCode-managed worktree. Goal and other Session worktrees keep their lifecycle ownership.",
+      message: "A Session may enter only its own ArchCode-managed worktree. Other Session worktrees keep their lifecycle ownership.",
     });
   }
   return undefined;
@@ -218,13 +218,12 @@ function validateInteractiveRootSession(ctx: ToolExecutionContext): RawToolResul
   if (
     ctx.agentName !== "engineer"
     || state.parentSessionId !== undefined
-    || state.goalId !== undefined
     || (ctx.currentDepth ?? 0) !== 0
   ) {
     return createToolErrorResult({
       kind: "permission-denied",
       code: "WORKTREE_SESSION_NOT_ELIGIBLE",
-      message: "Worktree transitions are available only to ordinary interactive root Engineer Sessions. Goal, child, and other Agent Sessions inherit their execution directory.",
+      message: "Worktree transitions are available only to root Engineer Sessions; child and other Agent Sessions inherit their execution directory.",
     });
   }
   return undefined;

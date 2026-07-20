@@ -24,6 +24,7 @@ import { createInMemoryLogger, silentLogger } from "./logger";
 import { ServerConfigService, resolveServerConfigPath } from "./config";
 import { setLlmAdapterForTest } from "./llm";
 import { getLspClientPool } from "./lsp/client-pool";
+import { SessionGoalService } from "./session-goal";
 
 const tmpRoots: string[] = [];
 const requestedModelSelection: RequestedModelSelection = {
@@ -39,7 +40,7 @@ function makeProviderConfig() {
 async function makeTempRoot(): Promise<string> { const root = await mkdtemp(join(tmpdir(), "archcode-main-")); tmpRoots.push(root); return root; }
 async function writeConfig(config: Record<string, unknown>): Promise<ServerConfigService> { const root = await makeTempRoot(); const path = resolveServerConfigPath(root); await mkdir(join(root, ".archcode"), { recursive: true }); await Bun.write(path, JSON.stringify(config)); return new ServerConfigService({ homeDir: root }); }
 function makeConfig(mcp?: Record<string, unknown>): Record<string, unknown> {
-  const config = { provider: makeProviderConfig(), agents: Object.fromEntries(["engineer", "goal_lead", "plan", "build", "reviewer", "explore", "librarian", "shaper"].map((name) => [name, { model: "local:test-model" }])) };
+  const config = { provider: makeProviderConfig(), agents: Object.fromEntries(["engineer", "plan", "build", "reviewer", "explore", "librarian", "shaper"].map((name) => [name, { model: "local:test-model" }])) };
   return mcp === undefined ? config : { ...config, mcp };
 }
 function makeMcpDescriptor(name = "mcp__context7__lookup"): AnyToolDescriptor { return defineTool({ name, description: "Fake MCP lookup tool", inputSchema: z.object({}).catchall(z.unknown()), outputPolicy: { kind: "artifact", previewDirection: "head-tail" }, traits: { readOnly: true, destructive: false, concurrencySafe: true }, execute: async () => ({ isError: false, draft: { kind: "text", text: "mcp output with sk_test_main_secret" } }) }); }
@@ -49,9 +50,51 @@ function makeFakeMcpManager(result: McpDiscoveryResult | Error, secrets: readonl
 }
 function makeContext(toolName: string, input: unknown): ToolExecutionContext { const workspaceRoot = import.meta.dir; return { store: storeManager.create(`main-test-${crypto.randomUUID()}`, workspaceRoot, { agentName: "engineer" }), storeManager, toolName, toolCallId: `${toolName}-call`, input, step: 0, abort: new AbortController().signal, startedAt: 0, allowedTools: new Set([toolName]), cwd: workspaceRoot, projectContext: createTestProjectContext(workspaceRoot) }; }
 async function createRuntime(options: Parameters<typeof createProductionRuntime>[0] = {}) { return createProductionRuntime({ ...options, projectRegistryHomeDir: options.projectRegistryHomeDir ?? await makeTempRoot() }); }
+async function waitFor(assertion: () => boolean | Promise<boolean>, timeoutMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!await assertion()) {
+    if (Date.now() >= deadline) throw new Error("Timed out waiting for runtime state");
+    await Bun.sleep(5);
+  }
+}
+
+function createGoalActivationStream(): unknown {
+  return {
+    fullStream: (async function* () {
+      yield { type: "tool-input-start", id: "create-goal", toolName: "create_goal" };
+      yield { type: "tool-call", toolCallId: "create-goal", toolName: "create_goal", input: {} };
+    })(),
+    finishReason: Promise.resolve("tool-calls"),
+    usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+    text: Promise.resolve("I will keep working until it is verified."),
+    toolCalls: Promise.resolve([{ toolCallId: "create-goal", toolName: "create_goal", input: {} }]),
+  };
+}
+
+function createAbortableStream(abortSignal: AbortSignal): unknown {
+  return {
+    fullStream: (async function* () {
+      while (!abortSignal.aborted) await Bun.sleep(5);
+    })(),
+    finishReason: Promise.resolve("stop"),
+    usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+    text: Promise.resolve(""),
+    toolCalls: Promise.resolve([]),
+  };
+}
+
+function createStoppedStream(): unknown {
+  return {
+    fullStream: (async function* () {})(),
+    finishReason: Promise.resolve("stop"),
+    usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+    text: Promise.resolve(""),
+    toolCalls: Promise.resolve([]),
+  };
+}
 
 describe("createRuntime", () => {
-  test("constructs runtime without booting server concerns", async () => { const runtime = await createRuntime({ configService: await writeConfig(makeConfig({ servers: {} })), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }) }); expect(runtime.toolRegistry).toBeDefined(); expect(runtime.acceptSessionMessage).toBeDefined(); expect(runtime.startGoalSessionExecution).toBeDefined(); });
+  test("constructs runtime without booting server concerns", async () => { const runtime = await createRuntime({ configService: await writeConfig(makeConfig({ servers: {} })), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }) }); expect(runtime.toolRegistry).toBeDefined(); expect(runtime.acceptSessionMessage).toBeDefined(); });
   test("injects the runtime log safety boundary into the default LSP pool", async () => {
     const literal = "runtime-secret-literal-123456";
     const workspaceRoot = "/private/tmp/archcode-runtime-log-workspace";
@@ -262,6 +305,79 @@ describe("createRuntime", () => {
     expect(serialized).not.toContain("stack");
     expect(deliveryLogs.every((entry) => entry.error === undefined)).toBe(true);
     expect(deliveryLogs.every((entry) => typeof entry.meta?.failure === "object")).toBe(true);
+  });
+
+  test("recovers one persisted active Session Goal through the public Runtime boundary", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const registryHome = await makeTempRoot();
+    let firstRuntimeStreams = 0;
+    setLlmAdapterForTest({
+      streamText: mock(() => {
+        firstRuntimeStreams += 1;
+        return firstRuntimeStreams === 1
+          ? createGoalActivationStream()
+          : createStoppedStream();
+      }) as never,
+      generateText: mock(async () => ({ text: "", toolCalls: [{
+        toolName: "goal_evaluation",
+        input: { decision: "continue", reason: "More implementation is required", madeProgress: true },
+      }], usage: { inputTokens: 1, outputTokens: 0, totalTokens: 1 } })) as never,
+    });
+    const runtime1 = await createRuntime({
+      configService: await writeConfig(makeConfig()),
+      projectRegistryHomeDir: registryHome,
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    const project = await runtime1.projectRegistry.add({ workspaceRoot, name: "Goal restart" });
+    const session = await runtime1.createSession(workspaceRoot, { agentName: "engineer" });
+
+    await runtime1.acceptSessionMessage({
+      slug: project.slug,
+      workspaceRoot,
+      sessionId: session.sessionId,
+      text: "Keep working through the authentication migration until every test passes.",
+      clientRequestId: crypto.randomUUID(),
+      source: "user",
+      requestedModelSelection,
+    });
+    await waitFor(async () => (await runtime1.getSessionFile(workspaceRoot, session.sessionId)).goal?.status === "active");
+    // Persist a quiescent Goal before disposing Runtime 1. This prevents its
+    // ordinary idle listener from starting a new turn during shutdown, while
+    // still proving that activation itself came through create_goal execution.
+    await runtime1.updateSessionGoalControl({ workspaceRoot, sessionId: session.sessionId, action: "pause" });
+    await waitFor(() => runtime1.getSessionFamilyActivity(workspaceRoot, session.sessionId) === "idle");
+    await runtime1.shutdown();
+    const restartGoals = new SessionGoalService(new SessionStoreManager({ logger: silentLogger }));
+    await restartGoals.resume({ workspaceRoot, sessionId: session.sessionId, authority: { kind: "user_control" } });
+
+    let recoveredContinuations = 0;
+    setLlmAdapterForTest({
+      streamText: mock((options: { abortSignal: AbortSignal }) => {
+        recoveredContinuations += 1;
+        return createAbortableStream(options.abortSignal);
+      }) as never,
+      generateText: mock(async () => ({
+          text: "",
+          toolCalls: [{
+            toolName: "goal_evaluation",
+            input: { decision: "continue", reason: "More implementation is required", madeProgress: true },
+          }],
+          usage: { inputTokens: 1, outputTokens: 0, totalTokens: 1 },
+        })) as never,
+    });
+    const runtime2 = await createRuntime({
+      configService: await writeConfig(makeConfig()),
+      projectRegistryHomeDir: registryHome,
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+
+    await runtime2.recoverSessionContinuations();
+    await waitFor(() => recoveredContinuations === 1);
+    await Bun.sleep(25);
+    expect(recoveredContinuations).toBe(1);
+    expect(runtime2.getSessionFamilyActivity(workspaceRoot, session.sessionId)).toBe("running");
+    await runtime2.updateSessionGoalControl({ workspaceRoot, sessionId: session.sessionId, action: "pause" });
+    await runtime2.shutdown();
   });
 
   test("reconciles an answered Session HITL to its exact blocked call after restart", async () => {

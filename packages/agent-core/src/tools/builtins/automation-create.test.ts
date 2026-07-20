@@ -65,7 +65,7 @@ describe("automation_create", () => {
   });
 
   test("derives provenance from an ordinary Engineer root Session", async () => {
-    const { ctx, createAutomation } = makeContext({ sessionRole: "standalone" });
+    const { ctx, createAutomation } = makeContext();
 
     const result = await automationCreateTool.execute(input, ctx);
 
@@ -76,13 +76,11 @@ describe("automation_create", () => {
     });
   });
 
-  test("rejects child, Goal-bound, non-Engineer, and non-standalone Sessions", async () => {
+  test("rejects child and non-Engineer Sessions", async () => {
     for (const override of [
       { rootSessionId: crypto.randomUUID() },
       { parentSessionId: crypto.randomUUID() },
-      { goalId: crypto.randomUUID() },
-      { agentName: "goal_lead" as const },
-      { sessionRole: "main" as const },
+      { agentName: "explore" as const },
     ]) {
       const { ctx, createAutomation } = makeContext(override);
       const result = await automationCreateTool.execute(input, ctx);

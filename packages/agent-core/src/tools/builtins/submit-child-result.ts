@@ -1,6 +1,11 @@
 import type { ChildResult, ChildResultReceipt } from "@archcode/protocol";
+import { InvalidChildResultError, validateChildResultAgainstContract } from "../../delegation/contract";
 import { ChildResultSchema } from "../../delegation/schema";
-import { validateChildResultAgainstContract } from "../../delegation/contract";
+import {
+  collectGoalReviewerToolEvidence,
+  goalReviewEvidenceFailure,
+  isRuntimeGoalReviewContract,
+} from "../../session-goal/review-gate";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import { createTextToolResult } from "../results";
@@ -34,6 +39,18 @@ export async function executeSubmitChildResult(
         }
 
         validateChildResultAgainstContract(input, state.delegationContract);
+        if (input.status === "completed" && isRuntimeGoalReviewContract(state.delegationContract)) {
+          const toolEvidence = collectGoalReviewerToolEvidence(state);
+          const evidenceFailure = goalReviewEvidenceFailure(input, toolEvidence);
+          if (evidenceFailure !== undefined) {
+            const available = [...toolEvidence]
+              .map(([ref, toolName]) => `${ref} (${toolName})`)
+              .join(", ");
+            throw new InvalidChildResultError(
+              `${evidenceFailure}. Use exact refs from successful calls: ${available || "none"}`,
+            );
+          }
+        }
         const receipt: ChildResultReceipt = {
           executionId: state.currentExecutionId,
           delegationContractHash: state.delegationContractHash,
@@ -76,6 +93,7 @@ export const submitChildResultTool = defineTool({
     "Submit the canonical result for the current delegated child Execution.",
     "This is a terminal action: after a successful submission the Execution completes immediately, so emit no more text or tool calls.",
     "Report every original acceptance criterion exactly once in criteria. completed requires every criterion to pass and no blocking unresolved item.",
+    "For a Runtime Goal review, evidence refs and verification outputRefs must be exact tool:<toolCallId> values from successful calls in this Reviewer Session; tool names or human-readable aliases are rejected and must be corrected before completion.",
   ].join("\n"),
   inputSchema: SubmitChildResultInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },

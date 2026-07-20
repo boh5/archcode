@@ -10,7 +10,6 @@ import {
   type SessionModelSelection,
 } from "@archcode/protocol";
 import { getSessionPath, getSessionsDir } from "./sessions-dir";
-import type { SessionRole } from "./types";
 import {
   COMPRESSION_BLOCK_STATUSES,
   COMPRESSION_STRATEGIES,
@@ -24,8 +23,8 @@ import { HitlBoundaryCodec } from "../hitl/boundary-codec";
 import { atomicWrite } from "../utils/safe-file";
 import { hashDelegationContract } from "../delegation/contract";
 import { ChildResultReceiptSchema, DelegationContractSchema } from "../delegation/schema";
+import { SessionGoalSchema } from "../session-goal/schema";
 
-const SessionRoleSchema = z.enum(["main", "plan", "build", "review", "explore", "librarian", "standalone"]);
 const AgentNameSchema = z.enum(AGENT_NAMES);
 const ToolLifecycleIdSchema = z.string().min(1).refine(
   (value) => new TextEncoder().encode(value).byteLength <= 128,
@@ -208,7 +207,7 @@ const SessionExecutionRecordSchema = z.strictObject({
   error: z.string().optional(),
   stopRequestedAt: z.number().optional(),
   binding: ExecutionModelBindingSchema,
-  origin: z.enum(["user_message", "tool_call", "tool_batch", "goal_claim"]),
+  origin: z.enum(["user_message", "tool_call", "tool_batch", "goal_continuation", "goal_remediation", "goal_review"]),
 });
 
 const PendingSessionMessageSchema = z.strictObject({
@@ -709,8 +708,7 @@ export const SessionFileSchema = z.strictObject({
   // Tree edges are read from each child file; parent files intentionally keep no child cache.
   rootSessionId: z.string(),
   parentSessionId: z.string().optional(),
-  goalId: z.string().uuid().optional(),
-  sessionRole: SessionRoleSchema.optional(),
+  goal: SessionGoalSchema.optional(),
   eventCursor: z.number().optional(),
 }).superRefine((session, ctx) => {
   const isChild = session.parentSessionId !== undefined;
@@ -719,6 +717,12 @@ export const SessionFileSchema = z.strictObject({
   }
   if (isChild !== (session.delegationContractHash !== undefined)) {
     ctx.addIssue({ code: "custom", path: ["delegationContractHash"], message: "delegationContractHash must exist exactly for child Sessions" });
+  }
+  if (session.goal !== undefined
+    && (session.parentSessionId !== undefined
+      || session.rootSessionId !== session.sessionId
+      || session.agentName !== "engineer")) {
+    ctx.addIssue({ code: "custom", path: ["goal"], message: "Only root Engineer Sessions may own a Goal" });
   }
   if (session.delegationContract !== undefined && session.delegationContractHash !== undefined) {
     if (hashDelegationContract(session.delegationContract) !== session.delegationContractHash) {
@@ -795,8 +799,7 @@ export interface SessionSummary {
   parentSessionId?: string;
   delegationContract?: z.output<typeof DelegationContractSchema>;
   delegationContractHash?: string;
-  goalId?: string;
-  sessionRole?: SessionRole;
+  goal?: z.output<typeof SessionGoalSchema>;
   agentName: string;
   activeSkillNames: string[];
   modelSelection: SessionModelSelection;
@@ -810,7 +813,7 @@ type PersistableSessionState = Pick<
   "sessionId" | "createdAt" | "updatedAt" | "cwd" | "agentName" | "activeSkillNames" | "modelSelection" | "title" | "messages" | "pendingMessages" | "inputRequestReceipts" | "steps" | "stats" | "executions" | "compression" | "todos" | "reminders" | "childSessionLinks" | "delegationContract" | "delegationContractHash" | "toolBatches" | "rootSessionId"
 > & Partial<Pick<
   SessionStoreState,
-  "parentSessionId" | "goalId" | "sessionRole" | "events" | "queueDispatchBarrierAt"
+  "parentSessionId" | "goal" | "events" | "queueDispatchBarrierAt"
 >>;
 
 export function getAssistantText(messages: StoredMessage[]): string {
@@ -902,8 +905,7 @@ async function saveSessionTranscript(
     rootSessionId: state.rootSessionId,
     ...((state.events?.length ?? 0) === 0 ? {} : { events: state.events }),
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
-    ...(state.goalId === undefined ? {} : { goalId: state.goalId }),
-    ...(state.sessionRole === undefined ? {} : { sessionRole: state.sessionRole }),
+    ...(state.goal === undefined ? {} : { goal: state.goal }),
   };
 
   const json = JSON.stringify(data, null, 2);
@@ -957,8 +959,7 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
     eventCursor: state.nextEventId > 0 ? state.nextEventId - 1 : -1,
     ...((state.events?.length ?? 0) === 0 ? {} : { events: state.events }),
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
-    ...(state.goalId === undefined ? {} : { goalId: state.goalId }),
-    ...(state.sessionRole === undefined ? {} : { sessionRole: state.sessionRole }),
+    ...(state.goal === undefined ? {} : { goal: state.goal }),
   };
 }
 
@@ -978,8 +979,7 @@ async function listSessionSummaries(workspaceRoot: string): Promise<SessionSumma
         ...(parsed.parentSessionId === undefined ? {} : { parentSessionId: parsed.parentSessionId }),
         ...(parsed.delegationContract === undefined ? {} : { delegationContract: parsed.delegationContract }),
         ...(parsed.delegationContractHash === undefined ? {} : { delegationContractHash: parsed.delegationContractHash }),
-        ...(parsed.goalId === undefined ? {} : { goalId: parsed.goalId }),
-        ...(parsed.sessionRole === undefined ? {} : { sessionRole: parsed.sessionRole }),
+        ...(parsed.goal === undefined ? {} : { goal: parsed.goal }),
         agentName: parsed.agentName,
         activeSkillNames: parsed.activeSkillNames,
         modelSelection: parsed.modelSelection,
@@ -1031,8 +1031,7 @@ async function scanAllSessionSummaries(workspaceRoot: string): Promise<SessionSu
       cwd: parsed.cwd,
       rootSessionId: parsed.rootSessionId,
       ...(parsed.parentSessionId === undefined ? {} : { parentSessionId: parsed.parentSessionId }),
-      ...(parsed.goalId === undefined ? {} : { goalId: parsed.goalId }),
-      ...(parsed.sessionRole === undefined ? {} : { sessionRole: parsed.sessionRole }),
+      ...(parsed.goal === undefined ? {} : { goal: parsed.goal }),
       agentName: parsed.agentName,
       activeSkillNames: parsed.activeSkillNames,
       modelSelection: parsed.modelSelection,

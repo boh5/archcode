@@ -1,38 +1,53 @@
 # Multi-Agent Architecture
 
-ArchCode has eight closed Agent identities. An Agent identity determines prompt, tools, delegation targets, model configuration, and UI display metadata. A Session persists exactly one identity in `agentName`; execution always reconstructs that Agent and cannot override it per turn.
+ArchCode has seven closed Agent identities. An identity determines prompt,
+tools, delegation targets, model configuration, and display metadata. A Session
+persists one `agentName`; an Execution reconstructs that Agent and never changes
+the identity per turn.
 
 | ID | Display name | Purpose |
 |---|---|---|
-| `engineer` | Engineer | Default ordinary Session Agent; investigates, implements, reviews, and may create confirmed Goals or Automations. |
-| `goal_lead` | Goal Lead | Root Agent for an already-created and server-started Goal; coordinates lifecycle and specialists without direct source mutation. |
-| `plan` | Plan | Read-only planning for ordinary, Loop, or Goal work. |
+| `engineer` | Engineer | Root Session Agent. Owns the user conversation, implements directly or delegates, and may create a Session Goal from an explicit user request. |
+| `plan` | Plan | Read-only planning specialist. |
 | `build` | Build | Source-writing implementation specialist. |
-| `reviewer` | Reviewer | Read-only independent review; finalizes only Goal-bound reviews. |
-| `explore` | Explore | Terminal read-only local code investigation. |
+| `reviewer` | Reviewer | Read-only independent verifier. Runtime creates a dedicated Reviewer child when a Session Goal needs a completion gate. |
+| `explore` | Explore | Terminal read-only local-code investigation. |
 | `librarian` | Librarian | Terminal read-only documentation and reference research. |
+| `shaper` | Shaper | Refines a bound Project Todo without starting implementation. |
 
-## Root Session selection
+## Sessions and Goals
 
-- `POST /sessions` creates an `engineer` Session.
-- `GoalLifecycleService` creates or recovers the stable `goal_lead` root Session with `sessionRole: "main"` and the Goal binding; retry reuses that identity.
-- Child delegation persists the selected specialist identity before execution.
-- Loaded Session files must contain a valid current Agent ID. There are no aliases or legacy-name fallbacks.
+`Session.goal` is an optional, durable execution protocol owned by a root
+Engineer Session. It is not an Agent identity, independent resource, worktree,
+or route family.
 
-`SessionRole` remains execution-topology metadata used by Goal and delegation flows. It does not select capabilities; `agentName` is the sole Agent identity.
+- An Engineer creates it only after a fresh, explicit user request; ordinary
+  conversation is still the default.
+- The Goal stores one objective, status, budget/usage, evaluator outcome, and
+  review state. The objective includes the intended result, constraints, and
+  verification expectation rather than splitting them into model-editable
+  acceptance fields.
+- The user control plane may edit, pause, resume, clear, or adjust its budget.
+  An edit takes effect at the next model-call boundary; pause is the immediate
+  stop control.
+- The Engineer may read the Goal, mark a genuine blocker, or request review. It
+  cannot complete, edit, pause, resume, clear, or increase its Goal.
+- Runtime owns completion: it evaluates the objective, then runs an independent
+  Reviewer gate. Only an accepted current review receipt completes the Goal.
 
-## Goal authority
+## Runtime sequencing
 
-Goal creation is one product action with an internal recoverable commit/activate boundary:
+When a root Session family becomes idle, the runtime resolves work in this
+order: durable tool/HITL waits, queued user input, an already requested review,
+review remediation, evaluator, then Goal continuation. The current Goal is
+injected before every model call, so edits and resumes are observed without a
+second coordinator Session.
 
-- After the user confirms the creation Skill summary, an unbound ordinary Engineer root may call `goal_create` with the confirmed objective, acceptance criteria, and worktree choice.
-- `GoalLifecycleService` is the sole initial creation/activation owner: it atomically commits the running Goal with stable Goal and main Session IDs, then idempotently prepares the workspace, persists the independent Goal Lead root Session, and starts execution.
-- There is no Goal Draft state, Draft update API, or manual initial Run route. Retry applies only to an existing failed or not-done Goal and reuses its stable execution identity.
-- Model-facing `goal_manage` has no `create` or `start` action.
-- Goal Lead uses `goal_manage` for the lifecycle of its already-started Goal.
-- Reviewer may call `goal_manage.finalize_review` only from the matching Goal review Session.
-
-The committed Goal publishes a resource change immediately and queues asynchronous title generation, so Web consumers see the running Goal without waiting for an incidental refetch.
+Reviewer work is a runtime-created child with explicit review provenance and a
+snapshot of the objective and source basis. It uses the normal read-only
+Reviewer capability surface, returns the canonical child result, and cannot use
+Goal transition tools. A changed objective, new user input, or source mutation
+invalidates a stale review basis.
 
 ## Delegation
 
@@ -42,22 +57,25 @@ Engineer ─┬─ Plan ───────┬─ Explore
           ├─ Reviewer ───┴─ Librarian
           ├─ Explore
           └─ Librarian
-
-Goal Lead uses the same specialist set.
 ```
 
-- Engineer and Goal Lead may delegate to all five specialists.
+- Engineer may delegate to all five specialists.
 - Plan and Reviewer may delegate to Explore and Librarian.
 - Build may delegate to Explore.
 - Explore and Librarian are terminal.
 - Delegation depth and concurrency are enforced by definitions, not prompts.
 
-Specialist prompts are context-neutral by default: ordinary Sessions and Loops do not inherit Goal ceremony. Reviewer calls Goal finalization only when an explicit Goal identity and contract are present.
+Specialist prompts stay context-neutral. A dedicated runtime Reviewer receives
+the Goal review contract explicitly; ordinary Reviewer delegations do not gain
+Goal-completion authority.
 
-## UI metadata
+## UI metadata and configuration
 
-`AgentDefinition.displayName` is the single display-name source. Runtime exposes the definitions through `GET /api/agents`; the Web uses that catalog for message headers, Agent inspectors, and delegation cards. Task titles remain separate from Agent display names. Unknown IDs are shown neutrally as their raw value and are never relabeled as a known Agent.
+`AgentDefinition.displayName` is the single display-name source. Runtime
+exposes the definitions through `GET /api/agents`; the Web uses that catalog for
+message headers, inspectors, and delegation cards. Task titles remain separate
+from Agent display names.
 
-## Configuration
-
-The server-wide `~/.archcode/config.json` requires exactly the eight current Agent keys under `agents`. Missing, unknown, or legacy keys fail validation. Display names are not configurable there; they belong to the definitions and catalog.
+The server-wide `~/.archcode/config.json` requires exactly the seven current
+Agent keys under `agents`. Missing, unknown, or legacy keys fail validation.
+Display names are definition-owned and are not configurable.

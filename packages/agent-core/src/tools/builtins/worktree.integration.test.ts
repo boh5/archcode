@@ -74,35 +74,6 @@ describe("worktree Session tools", () => {
     expect(JSON.parse(expectTextDraft(reentered))).toMatchObject({ cwd: worktreeCwd, created: false });
   });
 
-  test("rejects worktree transitions for Goal-owned Sessions", async () => {
-    const projectRoot = await createGitRepo("goal-owned");
-    const manager = new SessionStoreManager({ logger: silentLogger });
-    const store = manager.create(crypto.randomUUID(), projectRoot, { goalId: crypto.randomUUID(), agentName: "goal_lead" });
-    const ctx = createToolExecutionContext({
-      store,
-      storeManager: manager,
-      toolName: "worktree_enter",
-      toolCallId: "enter-goal",
-      input: {},
-      step: 0,
-      abort: new AbortController().signal,
-      startedAt: Date.now(),
-      allowedTools: new Set(["worktree_enter"]),
-      agentSkills: [],
-      skillService: new SkillService({ builtinSkills: {} }),
-      projectContext: createTestProjectContext(projectRoot),
-      cwd: projectRoot,
-      agentName: "engineer",
-      currentDepth: 0,
-      acquireSessionCwdTransition: () => () => undefined,
-    });
-
-    const result = await executeWorktreeEnter({}, ctx);
-    if (typeof result === "string") throw new Error("Expected error result");
-    expect(result).toMatchObject({ isError: true, details: { error: { code: "WORKTREE_SESSION_NOT_ELIGIBLE" } } });
-    expect(store.getState().cwd).toBe(projectRoot);
-  });
-
   test("fails closed before creating a worktree when a descendant execution is active", async () => {
     const projectRoot = await createGitRepo("active-descendant");
     const manager = new SessionStoreManager({ logger: silentLogger });
@@ -138,7 +109,7 @@ describe("worktree Session tools", () => {
       details: { error: { code: "WORKTREE_ACTIVE_DESCENDANTS" } },
     });
     expect(store.getState().cwd).toBe(projectRoot);
-    expect(await new WorktreeService({ canonicalRoot: projectRoot }).findManaged({ owner: { type: "session", id: sessionId } })).toBeUndefined();
+    expect(await new WorktreeService({ canonicalRoot: projectRoot }).findManaged({ owner: { id: sessionId } })).toBeUndefined();
   });
 
   test("rejects an explicit canonical target without changing Session cwd", async () => {
@@ -203,7 +174,7 @@ describe("worktree Session tools", () => {
     expect(store.getState().cwd).toBe(projectRoot);
   });
 
-  test("rejects explicit Goal, Loop, and other-Session ArchCode worktrees", async () => {
+  test("rejects explicit foreign ArchCode-managed Session worktrees", async () => {
     const projectRoot = await createGitRepo("reject-foreign-managed-targets");
     const manager = new SessionStoreManager({ logger: silentLogger });
     const sessionId = crypto.randomUUID();
@@ -228,9 +199,9 @@ describe("worktree Session tools", () => {
     });
     const service = new WorktreeService({ canonicalRoot: projectRoot });
     const foreignTargets = await Promise.all([
-      service.create({ owner: { type: "goal", id: crypto.randomUUID() } }),
-      service.create({ owner: { type: "session", id: crypto.randomUUID() }, uniqueId: crypto.randomUUID() }),
-      service.create({ owner: { type: "session", id: crypto.randomUUID() } }),
+      service.create({ owner: { id: crypto.randomUUID() } }),
+      service.create({ owner: { id: crypto.randomUUID() }, uniqueId: crypto.randomUUID() }),
+      service.create({ owner: { id: crypto.randomUUID() } }),
     ]);
 
     for (const target of foreignTargets) {
@@ -251,7 +222,7 @@ describe("worktree Session tools", () => {
     const sessionId = crypto.randomUUID();
     const store = manager.create(sessionId, projectRoot, { agentName: "engineer" });
     const own = await new WorktreeService({ canonicalRoot: projectRoot }).create({
-      owner: { type: "session", id: sessionId },
+      owner: { id: sessionId },
     });
     const ctx = createToolExecutionContext({
       store,

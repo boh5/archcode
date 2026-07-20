@@ -80,10 +80,7 @@ const ActorSchema = boundedString(256);
 const CommentSchema = boundedString(4 * KIB);
 const TimestampSchema = boundedString(MAX_IDENTIFIER_BYTES, { nonempty: true });
 
-const HitlOwnerSchema = z.discriminatedUnion("type", [
-  z.strictObject({ type: z.literal("session"), id: IdentifierSchema }),
-  z.strictObject({ type: z.literal("goal"), id: IdentifierSchema }),
-]);
+const HitlOwnerSchema = z.strictObject({ type: z.literal("session"), id: IdentifierSchema });
 
 const AskUserSourceSchema = z.strictObject({ type: z.literal("ask_user"), toolCallId: IdentifierSchema });
 const PermissionSourceSchema = z.strictObject({
@@ -91,12 +88,9 @@ const PermissionSourceSchema = z.strictObject({
   toolCallId: IdentifierSchema,
   toolName: IdentifierSchema,
 });
-const GoalBudgetSourceSchema = z.strictObject({ type: z.literal("goal_budget"), approvalPoint: IdentifierSchema });
-
 const HitlSourceSchema: z.ZodType<HitlSource> = z.discriminatedUnion("type", [
   AskUserSourceSchema,
   PermissionSourceSchema,
-  GoalBudgetSourceSchema,
 ]);
 
 const HitlQuestionDisplayOptionSchema = z.strictObject({
@@ -173,16 +167,6 @@ const PermissionDecisionResponseSchema = z.strictObject({
   `Permission response exceeds ${MAX_DECISION_RESPONSE_BYTES} UTF-8 bytes`,
 );
 
-const BudgetDecisionResponseSchema = z.strictObject({
-  type: z.literal("budget_decision"),
-  decision: z.enum(["approved", "denied"]),
-  comment: CommentSchema.optional(),
-  decidedBy: ActorSchema.optional(),
-}).refine(
-  (value) => serializedWithin(value, MAX_DECISION_RESPONSE_BYTES),
-  `Budget response exceeds ${MAX_DECISION_RESPONSE_BYTES} UTF-8 bytes`,
-);
-
 const CancelResponseSchema = z.strictObject({
   type: z.literal("cancel"),
   reason: boundedString(4 * KIB, { nonempty: true }),
@@ -195,7 +179,6 @@ const CancelResponseSchema = z.strictObject({
 const HitlResponseSchema: z.ZodType<HitlResponse> = z.union([
   QuestionAnswerResponseSchema,
   PermissionDecisionResponseSchema,
-  BudgetDecisionResponseSchema,
   CancelResponseSchema,
 ]);
 
@@ -253,7 +236,6 @@ const CreateHitlInputSchema = z.strictObject({
   hitlId: IdentifierSchema.optional(),
   createdAt: TimestampSchema.optional(),
 }).superRefine((value, ctx) => {
-  validateOwnerSource(value.owner, value.source, ctx);
   if (value.persistentApprovalEligible !== undefined && value.source.type !== "tool_permission") {
     ctx.addIssue({ code: "custom", path: ["persistentApprovalEligible"], message: "Persistent approval eligibility belongs only to tool_permission HITL" });
   }
@@ -273,7 +255,6 @@ const HitlRecordSchema = z.strictObject({
   updatedAt: TimestampSchema,
   resolvedAt: TimestampSchema.optional(),
 }).superRefine((record, ctx) => {
-  validateOwnerSource(record.owner, record.source, ctx);
   if (record.persistentApprovalEligible !== undefined && record.source.type !== "tool_permission") {
     ctx.addIssue({ code: "custom", path: ["persistentApprovalEligible"], message: "Persistent approval eligibility belongs only to tool_permission HITL" });
   }
@@ -512,22 +493,10 @@ function toolBlockedRequestFromSessionBlocker(blocker: PersistedSessionToolCallB
   };
 }
 
-function validateOwnerSource(
-  owner: { type: "session" | "goal" },
-  source: HitlSource,
-  ctx: z.core.$RefinementCtx,
-): void {
-  const sessionSource = source.type === "ask_user" || source.type === "tool_permission";
-  if ((owner.type === "session") !== sessionSource) {
-    ctx.addIssue({ code: "custom", path: ["source"], message: `${source.type} does not belong to ${owner.type}` });
-  }
-}
-
 function responseMatchesSource(source: HitlSource, response: HitlResponse): boolean {
   return response.type === "cancel"
     || (source.type === "ask_user" && response.type === "question_answer")
-    || (source.type === "tool_permission" && response.type === "permission_decision")
-    || (source.type === "goal_budget" && response.type === "budget_decision");
+    || (source.type === "tool_permission" && response.type === "permission_decision");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

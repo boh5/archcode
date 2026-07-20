@@ -5,7 +5,6 @@ import { automationCreateTool } from "../tools/builtins/automation-create";
 import { createBuiltinToolDescriptors } from "../tools/builtins";
 import { createMemoryReadTool } from "../tools/builtins/memory-read";
 import { createMemoryWriteTool } from "../tools/builtins/memory-write";
-import { goalCreateTool, goalManageTool } from "../tools/builtins/goal-tools";
 import { createGitHubToolDescriptors } from "../tools/github";
 import { adaptMcpTool } from "../mcp/tool-adapter";
 import type { McpClient } from "../mcp/client";
@@ -27,8 +26,6 @@ const INLINE = [
   "cancel_session",
   "skill_list",
   "memory_write",
-  "goal_create",
-  "goal_manage",
   "automation_create",
   "compress",
   "worktree_enter",
@@ -70,8 +67,6 @@ describe("Tool Output Plane architecture matrix", () => {
       ...createBuiltinToolDescriptors(),
       createMemoryReadTool(),
       createMemoryWriteTool(),
-      goalCreateTool,
-      goalManageTool,
       automationCreateTool,
       ...createGitHubToolDescriptors({ connector: {} as never }),
     ];
@@ -97,8 +92,8 @@ describe("Tool Output Plane architecture matrix", () => {
     expect(descriptor.outputPolicy).toEqual({ kind: "artifact", previewDirection: "head-tail" });
   });
 
-  test("all eight agents expose both recovery tools and no retired viewer", () => {
-    expect(defaultAgentDefinitions).toHaveLength(8);
+  test("all seven agents expose both recovery tools and no retired viewer", () => {
+    expect(defaultAgentDefinitions).toHaveLength(7);
     for (const definition of defaultAgentDefinitions) {
       expect(definition.tools.tools).toContain("output_read");
       expect(definition.tools.tools).toContain("output_search");

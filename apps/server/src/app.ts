@@ -15,7 +15,6 @@ import { createDirectoriesRoutes } from "./routes/directories";
 import { createDashboardRoutes } from "./routes/dashboard";
 import { createFilesRoutes } from "./routes/files";
 import { createGlobalEventsRoutes } from "./routes/global-events";
-import { createGoalsRoutes } from "./routes/goals";
 import { createHitlRoutes } from "./routes/hitl";
 import { createAutomationsRoutes } from "./routes/automations";
 import { createMessagesRoutes } from "./routes/messages";
@@ -91,7 +90,6 @@ export function createServerApp(
     },
   });
   const dashboard = createDashboardRoutes(serverRuntime);
-  const goals = createGoalsRoutes(serverRuntime);
   const projectHitl = createHitlRoutes(serverRuntime);
   const automations = createAutomationsRoutes(serverRuntime);
   const todos = createTodosRoutes(serverRuntime);
@@ -116,7 +114,6 @@ export function createServerApp(
 
   app.route("/api", dashboard);
   app.route("/api/projects", projects);
-  app.route("/api/projects", goals);
   app.route("/api/projects", automations);
   app.route("/api/projects", todos);
   app.route("/api/projects", projectHitl);

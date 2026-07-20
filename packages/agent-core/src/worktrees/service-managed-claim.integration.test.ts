@@ -24,7 +24,7 @@ afterAll(() => testTempRoot.cleanup());
 
 test("validates a persisted managed claim when HEAD descends from its recorded base", async () => {
   const service = new WorktreeService({ canonicalRoot: repo });
-  const created = await service.create({ owner: { type: "goal", id: "goal-claim-descendant" } });
+  const created = await service.create({ owner: { id: "session-claim-descendant" } });
   await writeFile(join(created.worktreePath, "committed.txt"), "descendant\n");
   await git(created.worktreePath, ["add", "committed.txt"]);
   await git(created.worktreePath, ["commit", "-m", "descendant commit"]);

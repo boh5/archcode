@@ -118,6 +118,21 @@ const validPayloads = [
   { type: "execution-end", status: "waiting_for_human", blockedByHitlIds: ["hitl-1"] },
   { type: "session.cwd_changed", previousCwd: "/old", cwd: "/new" },
   { type: "session.model_selection_changed", modelSelection: { revision: 1, override: { model: "test:model" } } },
+  {
+    type: "session.goal_changed",
+    action: "runtime_failed",
+    instanceId: crypto.randomUUID(),
+    generation: 1,
+    goal: {
+      instanceId: crypto.randomUUID(), generation: 1, objective: "Finish it", status: "active",
+      usage: { tokens: { inputTokens: 0, outputTokens: 0, totalTokens: 0, reasoningTokens: 0, cachedInputTokens: 0 }, executionTimeMs: 0, executionCount: 0 },
+      evaluatorCount: 0, noProgressCount: 0, failureCount: 1, nextRetryAt: 250, userInputCursor: 0, sourceMutationEpoch: 0,
+      createdAt: 1, activatedAt: 1, updatedAt: 1,
+    },
+    status: "active",
+    reason: "Goal runtime orchestration failed",
+    occurredAt: 1,
+  },
   { type: "session.message_accepted", message: pendingMessage },
   { type: "session.message_edited", message: { ...pendingMessage, content: "edited", revision: 1 } },
   { type: "session.message_deleted", messageId: pendingMessage.id, clientRequestId: pendingMessage.clientRequestId, revision: 1, deletedAt: 2 },
@@ -177,6 +192,7 @@ describe("protocol event guards", () => {
       "reminder",
       "reminder-consumed",
       "session.cwd_changed",
+      "session.goal_changed",
       "session.message_accepted",
       "session.message_deleted",
       "session.message_edited",
@@ -347,8 +363,8 @@ describe("protocol event guards", () => {
     const resourceEvent = {
       type: "resource.changed",
       projectSlug: "project",
-      resourceType: "goal",
-      resourceId: "goal-1",
+      resourceType: "automation",
+      resourceId: "automation-1",
       createdAt: 1,
     };
 
@@ -358,6 +374,7 @@ describe("protocol event guards", () => {
     expect(isGlobalSSEHitlRealtimeEvent({ type: "hitl.event" })).toBe(false);
     expect(isGlobalSSEResourceChangedEvent(resourceEvent)).toBe(true);
     expect(isGlobalSSEResourceChangedEvent({ ...resourceEvent, resourceType: "todo", resourceId: "todo-1" })).toBe(true);
+    expect(isGlobalSSEResourceChangedEvent({ ...resourceEvent, resourceType: "goal", resourceId: "goal-1" })).toBe(false);
     expect(isGlobalSSEResourceChangedEvent({ ...resourceEvent, reason: "created" })).toBe(false);
     expect(isGlobalSSEResourceChangedEvent({ type: "resource.changed" })).toBe(false);
   });

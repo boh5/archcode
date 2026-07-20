@@ -36,7 +36,6 @@ function makeContext(
     sessionId,
     rootSessionId: sessionId,
     agentName: "shaper",
-    sessionRole: "standalone",
     ...overrides,
   });
   const projectContext = {

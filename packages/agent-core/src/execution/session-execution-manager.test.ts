@@ -2,18 +2,21 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { z } from "zod";
 import { createEmptySessionStats, type DelegationContract } from "@archcode/protocol";
 import type { LanguageModelV3 } from "@ai-sdk/provider";
 import type { Agent, AgentCommand, AgentCommandResult, AgentResult, AgentRunOptions } from "../agents/types";
 import type { AgentName } from "../agents/names";
 import { ConfiguredAgent } from "../agents/configured-agent";
-import { buildAgentDefinition, engineerAgentDefinition, exploreAgentDefinition } from "../agents/definitions";
+import { buildAgentDefinition, engineerAgentDefinition, exploreAgentDefinition, reviewerAgentDefinition } from "../agents/definitions";
 import { ProviderRegistry } from "../provider";
 import { ModelInfo } from "../provider/model";
 import { SkillService } from "../skills";
 import { createTestProjectContextResolver } from "../agents/test-project-context-resolver";
 import { createTestToolRegistryFixture } from "../tools/test-registry";
-import { testExecutionStart } from "../testing/test-execution-fixtures";
+import { createTextToolResult } from "../tools/results";
+import type { AnyToolDescriptor } from "../tools/types";
+import { testExecutionRecord, testExecutionStart } from "../testing/test-execution-fixtures";
 import { setLlmAdapterForTest } from "../llm/adapter";
 import { AgentRunningError, ConcurrentLimitError, DelegateTargetNotAllowedError, DepthLimitError, ChildSessionNotFoundError, ChildSessionParentMismatchError, ChildSessionNotDescendantError, ChildSessionCwdMismatchError, SessionCwdTransitionConflictError, SessionCwdTransitionInProgressError, SessionToolBatchActiveError } from "../agents/errors";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
@@ -32,12 +35,12 @@ import type { SessionStoreState, SessionToolBatch, ToolChildSessionLink } from "
 import type { AgentFactory } from "../agents/factory";
 import type { AgentDefinition } from "../agents/factory-types";
 import { createEmptyCompressionState } from "../compression";
-import type { SessionGoalDelegationContext } from "./session-goal-delegation-context";
 import { SessionInputConflictError, SessionInputService } from "../session-input/service";
 import { hashDelegationContract } from "../delegation/contract";
 import type { ArchCodeConfig, ModelConfig } from "../config";
 import type { ExecutionModelBinding } from "../models";
 import { ModelRuntime, ModelRuntimeSnapshot, ModelSelectionResolver } from "../models";
+import { SessionGoalService } from "../session-goal";
 
 const testRoot = join(
   tmpdir(),
@@ -52,9 +55,7 @@ class TestSessionStoreManager extends SessionStoreManager {
     root: string,
     options: Parameters<SessionStoreManager["create"]>[2],
   ) {
-    const normalizedOptions = options.parentSessionId === undefined || options.sessionRole !== undefined
-      ? options
-      : { ...options, sessionRole: testSessionRoleForAgent(options.agentName) };
+    const normalizedOptions = options;
     if (normalizedOptions.parentSessionId === undefined || normalizedOptions.delegationContract !== undefined) {
       return super.create(sessionId, root, normalizedOptions);
     }
@@ -138,10 +139,33 @@ function delegationContract(overrides: Partial<DelegationContract> = {}): Delega
   };
 }
 
-function testSessionRoleForAgent(agentName: AgentName): SessionStoreState["sessionRole"] {
-  if (agentName === "reviewer") return "review";
-  if (agentName === "plan" || agentName === "build" || agentName === "explore" || agentName === "librarian") return agentName;
-  return undefined;
+const GOAL_REVIEW_TEST_TOOLS = [
+  "file_read",
+  "grep",
+  "glob",
+  "git_status",
+  "git_diff",
+  "bash",
+  "ast_grep_search",
+  "lsp_diagnostics",
+  "lsp_goto_definition",
+  "lsp_find_references",
+  "lsp_symbols",
+  "output_read",
+  "output_search",
+  "compress",
+  "submit_child_result",
+] as const;
+
+function goalReviewToolDescriptors(): AnyToolDescriptor[] {
+  return GOAL_REVIEW_TEST_TOOLS.map((name) => ({
+    name,
+    description: `Test-only ${name} descriptor`,
+    inputSchema: z.object({}).strict(),
+    traits: { readOnly: true, destructive: false, concurrencySafe: true },
+    outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
+    execute: () => createTextToolResult(`${name} result`),
+  }));
 }
 
 function createTestSession(
@@ -150,9 +174,7 @@ function createTestSession(
   root: string,
   options: Parameters<SessionStoreManager["create"]>[2],
 ) {
-  const normalizedOptions = options.parentSessionId === undefined || options.sessionRole !== undefined
-    ? options
-    : { ...options, sessionRole: testSessionRoleForAgent(options.agentName) };
+  const normalizedOptions = options;
   if (normalizedOptions.parentSessionId === undefined || normalizedOptions.delegationContract !== undefined) {
     return manager.create(sessionId, root, normalizedOptions);
   }
@@ -250,7 +272,6 @@ interface FakeManagerOptions {
   getAgent?: (sessionId: string) => Agent;
   onReleaseAgent?: (sessionId: string) => void;
   executionScopeValidator?: ConstructorParameters<typeof SessionExecutionManager>[0]["executionScopeValidator"];
-  goalDelegationAdmission?: ConstructorParameters<typeof SessionExecutionManager>[0]["goalDelegationAdmission"];
   deletionLifecycle?: ConstructorParameters<typeof SessionExecutionManager>[0]["deletionLifecycle"];
   flushSessionStore?: ConstructorParameters<typeof SessionExecutionManager>[0]["flushSessionStore"];
   createSessionStore?: ConstructorParameters<typeof SessionExecutionManager>[0]["createSessionStore"];
@@ -258,6 +279,18 @@ interface FakeManagerOptions {
   sessionInputService?: ConstructorParameters<typeof SessionExecutionManager>[0]["sessionInputService"];
   sessionFamilyStopTimeoutMs?: number;
   modelRuntime?: ModelRuntime;
+  validateGoalReviewClaim?: ConstructorParameters<typeof SessionExecutionManager>[0]["validateGoalReviewClaim"];
+  prepareGoalRemediationToolBatchResume?: ConstructorParameters<typeof SessionExecutionManager>[0]["prepareGoalRemediationToolBatchResume"];
+  /**
+   * Lets the small execution harness use a real ConfiguredAgent for a child
+   * while retaining the rest of its intentionally narrow fake runtime.
+   */
+  childAgentFactory?: (input: {
+    workspaceRoot: string;
+    sessionId: string;
+    store: MockAgent["store"];
+    depth: number;
+  }) => MockAgent;
 }
 
 const allowExecutionScope = { validate: async () => undefined };
@@ -304,8 +337,8 @@ function createFakeManager(agents: Record<string, MockAgent>, options: FakeManag
     }),
     get: mock((_root: string, sessionId: string) => cachedAgents.get(sessionId)),
     getFactory: mock(() => options.factory ?? makeFactory()),
-    createChildAgent: mock((input: { workspaceRoot: string; sessionId: string; store: MockAgent["store"] }) => {
-      const childAgent = {
+    createChildAgent: mock((input: { workspaceRoot: string; sessionId: string; store: MockAgent["store"]; depth: number }) => {
+      const childAgent = options.childAgentFactory?.(input) ?? {
         store: input.store,
         classifyCommand: mock((_input: string) => null),
         executeCommand: mock(async (_command: AgentCommand): Promise<AgentCommandResult> => ({ kind: "handled" })),
@@ -381,6 +414,17 @@ function makeFactoryWithChildPolicy(
   });
 }
 
+function makeRuntimeReviewFactory(): AgentFactory {
+  const base = makeFactory();
+  return makeFactory({
+    getDefinition: mock((name: string) => {
+      if (name === "reviewer") return reviewerAgentDefinition;
+      return base.getDefinition(name);
+    }),
+    listAgentNames: mock(() => ["engineer", "explore", "reviewer"]),
+  });
+}
+
 function makeBuildFactory(
   policy: Partial<NonNullable<AgentDefinition["childPolicy"]>> = {},
 ): AgentFactory {
@@ -433,7 +477,7 @@ function makeModelRuntime(
       },
     },
     agents: {
-      engineer: { ...agent }, goal_lead: { ...agent }, plan: { ...agent }, build: { ...agent },
+      engineer: { ...agent }, plan: { ...agent }, build: { ...agent },
       reviewer: { ...agent }, explore: { ...agent }, librarian: { ...agent }, shaper: { ...agent },
     },
   };
@@ -479,14 +523,15 @@ function createManager(agents: Record<string, MockAgent>, options: FakeManagerOp
     ...storeCallbacks(executionStoreManager),
     ...(options.createSessionStore === undefined ? {} : { createSessionStore: options.createSessionStore }),
     flushSessionStore: options.flushSessionStore ?? (async () => undefined),
-    ...(options.listSessionFamilyToolBatchHitlIds === undefined ? {} : {
-      listSessionFamilyToolBatchHitlIds: options.listSessionFamilyToolBatchHitlIds,
-    }),
+    listSessionFamilyToolBatchHitlIds: options.listSessionFamilyToolBatchHitlIds ?? (async () => []),
     trackSession,
     untrackSession,
     executionScopeValidator: options.executionScopeValidator ?? allowExecutionScope,
     sessionInputService: options.sessionInputService ?? new SessionInputService(executionStoreManager),
-    ...(options.goalDelegationAdmission === undefined ? {} : { goalDelegationAdmission: options.goalDelegationAdmission }),
+    onGoalReviewRequested: async () => undefined,
+    validateGoalReviewClaim: options.validateGoalReviewClaim ?? (async () => true),
+    prepareGoalReviewToolBatchResume: async () => true,
+    prepareGoalRemediationToolBatchResume: options.prepareGoalRemediationToolBatchResume ?? (async () => ({ kind: "not_remediation" })),
     ...(options.deletionLifecycle === undefined ? {} : { deletionLifecycle: options.deletionLifecycle }),
     ...(options.sessionFamilyStopTimeoutMs === undefined ? {} : { sessionFamilyStopTimeoutMs: options.sessionFamilyStopTimeoutMs }),
     logger: silentLogger,
@@ -506,26 +551,6 @@ function inputServicePort(service: SessionInputService): NonNullable<FakeManager
   };
 }
 
-function goalDelegationContext(
-  goalId: string,
-  overrides: Partial<SessionGoalDelegationContext> = {},
-): SessionGoalDelegationContext {
-  return {
-    goalId,
-    objective: "Ship Goal-scoped work",
-    acceptanceCriteria: "Delegated work uses the current Goal state",
-    status: "running",
-    attempt: 1,
-    reviewGeneration: 0,
-    lastFailureSummary: null,
-    ...overrides,
-  };
-}
-
-function admitGoal(context: SessionGoalDelegationContext): NonNullable<FakeManagerOptions["goalDelegationAdmission"]> {
-  return { run: async (_input, action) => await action(context) };
-}
-
 async function writeSessionFile(input: {
   sessionId: string;
   rootSessionId?: string;
@@ -535,9 +560,7 @@ async function writeSessionFile(input: {
   executions?: SessionFile["executions"];
   childSessionLinks?: SessionFile["childSessionLinks"];
   toolBatches?: SessionFile["toolBatches"];
-  goalId?: string;
   agentName?: AgentName;
-  sessionRole?: SessionStoreState["sessionRole"];
   delegationContract?: DelegationContract;
 }): Promise<void> {
   const rootSessionId = input.rootSessionId ?? input.sessionId;
@@ -568,14 +591,10 @@ async function writeSessionFile(input: {
     childSessionLinks: input.childSessionLinks ?? [],
     toolBatches: input.toolBatches ?? [],
     rootSessionId,
-    ...(input.parentSessionId === undefined
-      ? (input.sessionRole === undefined ? {} : { sessionRole: input.sessionRole })
-      : { sessionRole: input.sessionRole ?? testSessionRoleForAgent(input.agentName ?? "explore") }),
     ...(contract === undefined ? {} : {
       delegationContract: contract,
       delegationContractHash: hashDelegationContract(contract),
     }),
-    ...(input.goalId === undefined ? {} : { goalId: input.goalId }),
     ...(input.parentSessionId === undefined ? {} : { parentSessionId: input.parentSessionId }),
   };
   await mkdir(getSessionDir(workspaceRoot, input.sessionId), { recursive: true });
@@ -723,6 +742,178 @@ describe("SessionExecutionManager", () => {
       selection: { model: "test:other" },
       modelRuntimeRevision: "runtime-b",
     });
+  });
+
+  test("mints one-use fresh user capabilities for direct and queued root input", async () => {
+    const directId = crypto.randomUUID();
+    const directGate = deferred<MockAgentResult>();
+    const directAgent = new MockAgent(directId, directGate.promise, workspaceRoot);
+    const directManager = createManager({ [directId]: directAgent }).manager;
+    const direct = await directManager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: directId,
+      input: { kind: "direct", text: "pursue this goal", source: "user" },
+    });
+    await direct.started;
+    const directCapability = {
+      workspaceRoot,
+      sessionId: directId,
+      rootSessionId: directId,
+      toolCallId: "create-goal-direct",
+      action: "create" as const,
+    };
+    expect(directManager.consumeFreshUserInput(directCapability)).toEqual({ text: "pursue this goal" });
+    expect(() => directManager.consumeFreshUserInput(directCapability)).toThrow("unconsumed fresh user input");
+    directGate.resolve({ text: "done", steps: 1 });
+    await direct.promise;
+
+    const queuedId = crypto.randomUUID();
+    const queuedGate = deferred<MockAgentResult>();
+    const queuedAgent = new MockAgent(queuedId, queuedGate.promise, workspaceRoot);
+    const queuedManager = createManager({ [queuedId]: queuedAgent }).manager;
+    const inputs = new SessionInputService(storeManager);
+    await inputs.acceptMessage({
+      sessionId: queuedId,
+      workspaceRoot,
+      text: "edit the current goal",
+      clientRequestId: crypto.randomUUID(),
+      source: "user",
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
+    });
+    const queued = await queuedManager.tryStartQueuedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: queuedId,
+    });
+    expect(queued).toBeDefined();
+    await queued!.started;
+    expect(queuedManager.consumeFreshUserInput({
+      workspaceRoot,
+      sessionId: queuedId,
+      rootSessionId: queuedId,
+      toolCallId: "edit-goal-queue",
+      action: "edit",
+    })).toEqual({ text: "edit the current goal" });
+    queuedGate.resolve({ text: "done", steps: 1 });
+    await queued!.promise;
+  });
+
+  test("fresh user validation failure does not consume authority and successful consumption remains one-use", async () => {
+    const sessionId = crypto.randomUUID();
+    const gate = deferred<MockAgentResult>();
+    const agent = new MockAgent(sessionId, gate.promise, workspaceRoot);
+    const manager = createManager({ [sessionId]: agent }).manager;
+    const execution = await manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId,
+      input: { kind: "direct", text: "keep working without a budget", source: "user" },
+    });
+    await execution.started;
+    const request = {
+      workspaceRoot,
+      sessionId,
+      rootSessionId: sessionId,
+      toolCallId: "create-goal",
+      action: "create" as const,
+    };
+
+    expect(() => manager.consumeFreshUserInput({
+      ...request,
+      validate: () => { throw new Error("unauthorized budget"); },
+    })).toThrow("unauthorized budget");
+    const concurrent = await Promise.allSettled([
+      Promise.resolve().then(() => manager.consumeFreshUserInput(request)),
+      Promise.resolve().then(() => manager.consumeFreshUserInput({ ...request, toolCallId: "duplicate-create-goal" })),
+    ]);
+    expect(concurrent.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(concurrent.filter((result) => result.status === "rejected")).toHaveLength(1);
+    expect(concurrent.find((result) => result.status === "fulfilled")).toMatchObject({
+      value: { text: "keep working without a budget" },
+    });
+    expect(() => manager.consumeFreshUserInput(request)).toThrow("unconsumed fresh user input");
+
+    gate.resolve({ text: "done", steps: 1 });
+    await execution.promise;
+  });
+
+  test("rejects fresh user capabilities for continuation, automation, child, and Goal Reviewer executions", async () => {
+    const cases: Array<{
+      name: string;
+      input: StartSessionExecutionInput["input"];
+      origin?: StartSessionExecutionInput["origin"];
+    }> = [
+      { name: "continuation", input: { kind: "continuation" }, origin: "goal_continuation" },
+      { name: "automation", input: { kind: "direct", text: "scheduled", source: "automation" } },
+    ];
+    for (const scenario of cases) {
+      const sessionId = crypto.randomUUID();
+      const gate = deferred<MockAgentResult>();
+      const agent = new MockAgent(sessionId, gate.promise, workspaceRoot);
+      const manager = createManager({ [sessionId]: agent }).manager;
+      const execution = await manager.startCheckedExecution({
+        slug: "project",
+        workspaceRoot,
+        sessionId,
+        input: scenario.input,
+        ...(scenario.origin === undefined ? {} : { origin: scenario.origin }),
+      });
+      await execution.started;
+      expect(() => manager.consumeFreshUserInput({
+        workspaceRoot,
+        sessionId,
+        rootSessionId: sessionId,
+        toolCallId: `goal-${scenario.name}`,
+        action: "create",
+      })).toThrow("unconsumed fresh user input");
+      gate.resolve({ text: "done", steps: 1 });
+      await execution.promise;
+    }
+
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
+    const childGate = deferred<MockAgentResult>();
+    const childManager = createManager({}, { factory: makeRuntimeReviewFactory(), childRun: childGate.promise }).manager;
+    const child = await childManager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "child-no-fresh-input",
+      toolName: "delegate",
+      contract: delegationContract(),
+    });
+    expect(() => childManager.consumeFreshUserInput({
+      workspaceRoot,
+      sessionId: child.sessionId,
+      rootSessionId: parentId,
+      toolCallId: "child-goal",
+      action: "create",
+    })).toThrow("only to a root Session");
+    childGate.resolve({ text: "done", steps: 1 });
+    await child.result;
+
+    const reviewerGate = deferred<MockAgentResult>();
+    const reviewerManager = createManager({}, {
+      factory: makeRuntimeReviewFactory(),
+      childRun: reviewerGate.promise,
+    }).manager;
+    const reviewer = await reviewerManager.startRuntimeReviewChild(workspaceRoot, {
+      provenance: { kind: "goal_review", reviewClaimId: crypto.randomUUID() },
+      parentStore,
+      parentSessionId: parentId,
+      reviewerSessionId: crypto.randomUUID(),
+      reviewerExecutionId: crypto.randomUUID(),
+      contract: delegationContract({ agent_type: "reviewer" }),
+    });
+    expect(() => reviewerManager.consumeFreshUserInput({
+      workspaceRoot,
+      sessionId: reviewer.sessionId,
+      rootSessionId: parentId,
+      toolCallId: "reviewer-goal",
+      action: "create",
+    })).toThrow("only to a root Session");
+    reviewerGate.resolve({ text: "done", steps: 1 });
+    await reviewer.result;
   });
 
   test("dispatches X,X,Y as two FIFO executions and X,Y,X as three", async () => {
@@ -1521,6 +1712,83 @@ describe("SessionExecutionManager", () => {
     expect(store.getState().pendingMessages).toEqual([]);
   });
 
+  test("refreshes one-use fresh user capability when a user Steer reaches a safe point", async () => {
+    const sessionId = crypto.randomUUID();
+    const store = storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" });
+    const enteredRun = deferred<void>();
+    const releaseSafePoint = deferred<void>();
+    const steerCommitted = deferred<void>();
+    const releaseRun = deferred<void>();
+    let manager!: SessionExecutionManager;
+    const agent: Agent = {
+      store,
+      cwd: workspaceRoot,
+      classifyCommand: () => null,
+      executeCommand: async () => ({ kind: "handled" }),
+      run: async (_binding, options) => {
+        enteredRun.resolve(undefined);
+        await releaseSafePoint.promise;
+        await options?.consumeSteers?.();
+        steerCommitted.resolve(undefined);
+        await releaseRun.promise;
+        return { text: "done", steps: 1, status: "completed" };
+      },
+      dispose: () => undefined,
+    };
+    manager = createManager({ [sessionId]: agent as unknown as MockAgent }, { getAgent: () => agent }).manager;
+    const inputs = new SessionInputService(storeManager);
+    const execution = await manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId,
+      input: { kind: "direct", text: "ordinary first request" },
+    });
+    await enteredRun.promise;
+    // Consume the direct input grant first; the Steer must mint a distinct grant.
+    expect(manager.consumeFreshUserInput({
+      workspaceRoot,
+      sessionId,
+      rootSessionId: sessionId,
+      toolCallId: "consume-direct",
+      action: "create",
+    })).toEqual({ text: "ordinary first request" });
+    const accepted = await inputs.acceptMessage({
+      sessionId,
+      workspaceRoot,
+      text: "pause the goal instead",
+      clientRequestId: crypto.randomUUID(),
+      source: "user",
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
+    });
+    await manager.steerQueuedMessage({
+      workspaceRoot,
+      sessionId,
+      messageId: accepted.messageId,
+      expectedRevision: 0,
+      expectedExecutionId: execution.executionId,
+    });
+    releaseSafePoint.resolve(undefined);
+    await steerCommitted.promise;
+
+    expect(manager.consumeFreshUserInput({
+      workspaceRoot,
+      sessionId,
+      rootSessionId: sessionId,
+      toolCallId: "consume-steer",
+      action: "pause",
+    })).toEqual({ text: "pause the goal instead" });
+    expect(() => manager.consumeFreshUserInput({
+      workspaceRoot,
+      sessionId,
+      rootSessionId: sessionId,
+      toolCallId: "consume-steer-again",
+      action: "pause",
+    })).toThrow("unconsumed fresh user input");
+
+    releaseRun.resolve(undefined);
+    await execution.promise;
+  });
+
   test("commits an accepted Steer before yielding to a HITL tool-batch continuation", async () => {
     const sessionId = crypto.randomUUID();
     const store = storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" });
@@ -1776,64 +2044,6 @@ describe("SessionExecutionManager", () => {
       expect.objectContaining({ id: accepted.messageId, state: "queued" }),
     ]);
     expect(store.getState().pendingMessages[0]).not.toHaveProperty("targetExecutionId");
-  });
-
-  test("preserves the managed Goal claim execution origin", async () => {
-    const run = deferred<MockAgentResult>();
-    const sessionId = crypto.randomUUID();
-    const agent = new MockAgent(sessionId, run.promise);
-    const { manager } = createManager({ [sessionId]: agent });
-
-    const execution = await manager.startCheckedExecution({
-      slug: "project",
-      workspaceRoot,
-      sessionId,
-      input: { kind: "direct", text: "continue goal" },
-      origin: "goal_claim",
-    });
-
-    expect(execution.origin).toBe("goal_claim");
-    run.resolve({ text: "done", steps: 1 });
-    await execution.promise;
-  });
-
-  test("a Goal claim yields when Queue input arrives during async validation", async () => {
-    const sessionId = crypto.randomUUID();
-    const agent = new MockAgent(sessionId, Promise.resolve({ text: "must not run", steps: 1 }));
-    const validationEntered = deferred<void>();
-    const releaseValidation = deferred<void>();
-    const { manager } = createManager({ [sessionId]: agent }, {
-      executionScopeValidator: {
-        validate: async () => {
-          validationEntered.resolve(undefined);
-          await releaseValidation.promise;
-        },
-      },
-    });
-    const inputs = new SessionInputService(storeManager);
-    const starting = manager.startCheckedExecution({
-      slug: "project",
-      workspaceRoot,
-      sessionId,
-      input: { kind: "direct", text: "continue goal" },
-      origin: "goal_claim",
-    });
-    await validationEntered.promise;
-    await inputs.acceptMessage({
-      sessionId,
-      workspaceRoot,
-      text: "user wins",
-      clientRequestId: crypto.randomUUID(),
-      source: "user",
-      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
-    });
-    releaseValidation.resolve(undefined);
-
-    await expect(starting).rejects.toMatchObject({
-      name: "SessionInputConflictError",
-      reason: "state",
-    });
-    expect(agent.runMock).toHaveBeenCalledTimes(0);
   });
 
   test("keeps Todo query-loop continuations inside one durable execution", async () => {
@@ -2093,6 +2303,48 @@ describe("SessionExecutionManager", () => {
     ]);
   });
 
+  test("uses the atomically prepared remediation execution id for a root ToolBatch resume", async () => {
+    const sessionId = crypto.randomUUID();
+    const waitingExecutionId = crypto.randomUUID();
+    const store = storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" });
+    store.setState({
+      executions: [testExecutionRecord(waitingExecutionId, "waiting_for_human")],
+      toolBatches: [blockedToolBatch("remediation-hitl")],
+    });
+    const agent = {
+      store,
+      cwd: workspaceRoot,
+      classifyCommand: mock((_input: string) => null),
+      executeCommand: mock(async (_command: AgentCommand): Promise<AgentCommandResult> => ({ kind: "handled" })),
+      run: mock(async (): Promise<AgentResult> => ({ text: "remediation resumed", steps: 1, status: "completed" })),
+      dispose: mock(() => undefined),
+    } as Agent;
+    const prepared: Array<{ previousExecutionId: string; proposedExecutionId: string }> = [];
+    const { manager } = createManager({ [sessionId]: agent as MockAgent }, {
+      getAgent: () => agent,
+      prepareGoalRemediationToolBatchResume: async (input) => {
+        prepared.push(input);
+        return { kind: "prepared", executionId: input.proposedExecutionId };
+      },
+    });
+
+    const resumed = await manager.startSessionToolBatchExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId,
+    });
+    await resumed.promise;
+
+    expect(prepared).toHaveLength(1);
+    expect(prepared[0]?.previousExecutionId).toBe(waitingExecutionId);
+    expect(resumed.executionId).toBe(prepared[0]?.proposedExecutionId);
+    expect(store.getState().executions.at(-1)).toMatchObject({
+      id: resumed.executionId,
+      status: "completed",
+      origin: "tool_batch",
+    });
+  });
+
   test("checked execution forwards maxSteps to agent.run", async () => {
     const sessionId = crypto.randomUUID();
     const agent = new MockAgent(sessionId, Promise.resolve({ text: "done", steps: 1 }));
@@ -2145,10 +2397,15 @@ describe("SessionExecutionManager", () => {
       modelRuntime: makeModelRuntime(),
       modelSelectionResolver: new ModelSelectionResolver(),
       ...storeCallbacks(storeManager),
+      listSessionFamilyToolBatchHitlIds: async () => [],
       sessionInputService: new SessionInputService(storeManager),
       trackSession: mock(() => undefined),
       untrackSession: mock(() => undefined),
       executionScopeValidator: allowExecutionScope,
+      onGoalReviewRequested: async () => undefined,
+      validateGoalReviewClaim: async () => true,
+      prepareGoalReviewToolBatchResume: async () => true,
+      prepareGoalRemediationToolBatchResume: async () => ({ kind: "not_remediation" }),
       logger: silentLogger,
     });
 
@@ -2221,10 +2478,15 @@ describe("SessionExecutionManager", () => {
       modelRuntime: makeModelRuntime(),
       modelSelectionResolver: new ModelSelectionResolver(),
       ...storeCallbacks(storeManager),
+      listSessionFamilyToolBatchHitlIds: async () => [],
       sessionInputService: new SessionInputService(storeManager),
       trackSession: mock(() => undefined),
       untrackSession: mock(() => undefined),
       executionScopeValidator: allowExecutionScope,
+      onGoalReviewRequested: async () => undefined,
+      validateGoalReviewClaim: async () => true,
+      prepareGoalReviewToolBatchResume: async () => true,
+      prepareGoalRemediationToolBatchResume: async () => ({ kind: "not_remediation" }),
       logger: silentLogger,
     });
     const executionA = await manager.startCheckedExecution({ slug: "project-a", workspaceRoot, sessionId, input: { kind: "direct", text: "a" } });
@@ -2348,14 +2610,12 @@ describe("SessionExecutionManager", () => {
 
   test("startChildExecution validates through factory and runs a child session", async () => {
     const parentId = crypto.randomUUID();
-    const goalId = crypto.randomUUID();
     const worktreeCwd = `${workspaceRoot}.worktrees/child-inheritance`;
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer", goalId, cwd: worktreeCwd });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer", cwd: worktreeCwd });
     const factory = makeFactory();
     const { manager, sessionAgentManager } = createManager({}, {
       factory,
       listSessionFamilyToolBatchHitlIds: async () => [],
-      goalDelegationAdmission: admitGoal(goalDelegationContext(goalId)),
     });
 
     const handle = await manager.startChildExecution(workspaceRoot, {
@@ -2371,7 +2631,6 @@ describe("SessionExecutionManager", () => {
 
     expect(sessionAgentManager.createChildAgent).toHaveBeenCalled();
     expect(handle.store.getState().parentSessionId).toBe(parentId);
-    expect(handle.store.getState().goalId).toBe(goalId);
     expect(handle.store.getState().cwd).toBe(worktreeCwd);
     expect(handle.store.getState().agentName).toBe("explore");
     expect(parentStore.getState().events
@@ -2678,305 +2937,6 @@ describe("SessionExecutionManager", () => {
     }
   });
 
-  test("startChildExecution prepends the admitted Goal snapshot to the delegated prompt", async () => {
-    const parentId = crypto.randomUUID();
-    const goalId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer", goalId });
-    const context = goalDelegationContext(goalId, { reviewGeneration: 3 });
-    const { manager } = createManager({}, {
-      factory: makeFactory(),
-      goalDelegationAdmission: admitGoal(context),
-      listSessionFamilyToolBatchHitlIds: async () => [],
-    });
-
-    const child = await manager.startChildExecution(workspaceRoot, {
-      parentStore,
-      parentSessionId: parentId,
-      parentToolCallId: "goal-delegate",
-      toolName: "delegate",
-      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "Inspect the implementation", skills: [], background: false }),
-    });
-    await child.result;
-
-    const [message] = getUserMessageTexts(child.store.getState());
-    expect(message).toStartWith("<goal-delegation-context>\n");
-    expect(message).toContain(`"goalId": "${goalId}"`);
-    expect(message).toContain('"reviewGeneration": 3');
-    expect(message).toEndWith("</goal-delegation-context>\n\nInspect the implementation");
-    expect(getUserMessageTexts(child.store.getState())).toHaveLength(1);
-  });
-
-  test("startChildExecution leaves ordinary non-Goal delegation prompts unchanged", async () => {
-    const parentId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
-    const admissionRun = mock(async () => { throw new Error("ordinary delegation must bypass Goal admission"); });
-    const { manager } = createManager({}, {
-      factory: makeFactory(),
-      goalDelegationAdmission: { run: admissionRun },
-    });
-
-    const child = await manager.startChildExecution(workspaceRoot, {
-      parentStore,
-      parentSessionId: parentId,
-      parentToolCallId: "ordinary-delegate",
-      toolName: "delegate",
-      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "Keep this prompt byte-for-byte", skills: [], background: false }),
-    });
-    await child.result;
-
-    expect(admissionRun).not.toHaveBeenCalled();
-    expect(getUserMessageTexts(child.store.getState())).toEqual(["Keep this prompt byte-for-byte"]);
-  });
-
-  test("Goal delegation fails closed when runtime admission provides no snapshot", async () => {
-    const parentId = crypto.randomUUID();
-    const goalId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer", goalId });
-    let childRunStarted = false;
-    const createSessionStore = mock((sessionId: string, root: string, createOptions: Parameters<SessionStoreManager["create"]>[2]) =>
-      createTestSession(storeManager, sessionId, root, createOptions));
-    const flushSessionStore = mock(async () => undefined);
-    const { manager, sessionAgentManager } = createManager({}, {
-      factory: makeFactory(),
-      listSessionFamilyToolBatchHitlIds: async () => [],
-      childRunStarted: () => { childRunStarted = true; },
-      createSessionStore,
-      flushSessionStore,
-    });
-
-    await expect(manager.startChildExecution(workspaceRoot, {
-      parentStore,
-      parentSessionId: parentId,
-      parentToolCallId: "missing-goal-admission",
-      toolName: "delegate",
-      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "Must not run without Goal context", skills: [], background: false }),
-    })).rejects.toThrow(`Goal ${goalId} delegation requires its latest admitted snapshot`);
-    expect(childRunStarted).toBe(false);
-    expect(createSessionStore).not.toHaveBeenCalled();
-    expect(flushSessionStore).not.toHaveBeenCalled();
-    expect(sessionAgentManager.createChildAgent).not.toHaveBeenCalled();
-  });
-
-  test("blocks new Goal child execution while any sibling has durable HITL", async () => {
-    const parentId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, {
-      agentName: "engineer",
-      goalId: crypto.randomUUID(),
-    });
-    const { manager, sessionAgentManager } = createManager({}, {
-      factory: makeFactory(),
-      listSessionFamilyToolBatchHitlIds: async () => ["sibling-hitl"],
-    });
-
-    await expect(manager.startChildExecution(workspaceRoot, {
-      parentStore,
-      parentSessionId: parentId,
-      parentToolCallId: "blocked-delegate",
-      toolName: "delegate",
-      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "must not start", skills: [], background: false }),
-      parentAbort: undefined,
-    })).rejects.toMatchObject({ name: "SessionToolBatchActiveError", hitlIds: ["sibling-hitl"] });
-    expect(sessionAgentManager.createChildAgent).not.toHaveBeenCalled();
-  });
-
-  test("rechecks Goal family HITL immediately before a new child starts", async () => {
-    const parentId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, {
-      agentName: "engineer",
-      goalId: crypto.randomUUID(),
-    });
-    let checks = 0;
-    const createSessionStore = mock((sessionId: string, root: string, createOptions: Parameters<SessionStoreManager["create"]>[2]) =>
-      createTestSession(storeManager, sessionId, root, createOptions));
-    const flushSessionStore = mock(async () => undefined);
-    const { manager, sessionAgentManager } = createManager({}, {
-      factory: makeFactory(),
-      listSessionFamilyToolBatchHitlIds: async () => (++checks === 1 ? [] : ["raced-hitl"]),
-      createSessionStore,
-      flushSessionStore,
-    });
-
-    await expect(manager.startChildExecution(workspaceRoot, {
-      parentStore,
-      parentSessionId: parentId,
-      parentToolCallId: "raced-delegate",
-      toolName: "delegate",
-      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "must not start", skills: [], background: false }),
-      parentAbort: undefined,
-    })).rejects.toMatchObject({ name: "SessionToolBatchActiveError", hitlIds: ["raced-hitl"] });
-    expect(parentStore.getState().childSessionLinks).toEqual([]);
-    expect(createSessionStore).not.toHaveBeenCalled();
-    expect(flushSessionStore).not.toHaveBeenCalled();
-    expect(sessionAgentManager.createChildAgent).not.toHaveBeenCalled();
-  });
-
-  test("applies Goal phase admission to both new delegation and stale child resume", async () => {
-    const goalId = crypto.randomUUID();
-    const parentSessionId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentSessionId, workspaceRoot, {
-      agentName: "engineer",
-      goalId,
-      sessionRole: "main",
-    });
-    const resumableChildId = crypto.randomUUID();
-    const resumableContract = delegationContract();
-    storeManager.create(resumableChildId, workspaceRoot, {
-      rootSessionId: parentSessionId,
-      parentSessionId,
-      agentName: "explore",
-      goalId,
-      title: "Delegated child",
-      delegationContract: resumableContract,
-      delegationContractHash: hashDelegationContract(resumableContract),
-    });
-    const denied = new Error("phase denied");
-    const run = mock(async () => { throw denied; });
-    const { manager } = createManager({}, {
-      factory: makeFactory(),
-      goalDelegationAdmission: { run },
-    });
-    const base = {
-      parentStore,
-      parentSessionId,
-      parentToolCallId: "call-1",
-      toolName: "delegate",
-      contract: delegationContract({ objective: "inspect" }),
-    } as const;
-
-    await expect(manager.startChildExecution(workspaceRoot, base)).rejects.toBe(denied);
-    await expect(manager.resumeChildExecution(workspaceRoot, {
-      parentStore,
-      parentSessionId,
-      parentToolCallId: "call-1",
-      toolName: "resume_session",
-      sessionId: resumableChildId,
-      instruction: "inspect",
-      newEvidence: [],
-      background: false,
-    })).rejects.toBe(denied);
-    expect(run).toHaveBeenCalledTimes(2);
-  });
-
-  test("legacy active workflow child prompt is omitted during Goal migration", async () => {
-    const parentId = crypto.randomUUID();
-    const goalId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer", goalId });
-    const factory = makeFactory({
-      getDefinition: mock((name: string) => {
-        const base = makeFactory().getDefinition(name);
-        if (name === "explore") return { ...base, tools: { tools: ["file_read"] } };
-        return base;
-      }),
-    });
-    const { manager } = createManager({}, {
-      factory,
-      goalDelegationAdmission: admitGoal(goalDelegationContext(goalId)),
-      listSessionFamilyToolBatchHitlIds: async () => [],
-    });
-
-    const handle = await manager.startChildExecution(workspaceRoot, {
-      parentStore,
-      parentSessionId: parentId,
-      parentToolCallId: "tool-call",
-      toolName: "delegate",
-      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "inspect files", skills: [], background: false }),
-      parentAbort: undefined,
-    });
-    await handle.result;
-
-    const [childPrompt] = getUserMessageTexts(handle.store.getState());
-    expect(childPrompt).toEndWith("</goal-delegation-context>\n\ninspect files");
-    expect(handle.store.getState().goalId).toBe(goalId);
-    expect(childPrompt).not.toContain("## Active Workflow");
-  });
-
-  test("active workflow child prompt is omitted for agents without workflow tools", async () => {
-    const parentId = crypto.randomUUID();
-    const goalId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer", goalId });
-    const { manager } = createManager({}, {
-      factory: makeFactory(),
-      goalDelegationAdmission: admitGoal(goalDelegationContext(goalId)),
-      listSessionFamilyToolBatchHitlIds: async () => [],
-    });
-
-    const handle = await manager.startChildExecution(workspaceRoot, {
-      parentStore,
-      parentSessionId: parentId,
-      parentToolCallId: "tool-call",
-      toolName: "delegate",
-      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "inspect without workflow tools", skills: [], background: false }),
-      parentAbort: undefined,
-    });
-    await handle.result;
-
-    const [childPrompt] = getUserMessageTexts(handle.store.getState());
-    expect(childPrompt).toEndWith("</goal-delegation-context>\n\ninspect without workflow tools");
-    expect(handle.store.getState().goalId).toBe(goalId);
-    expect(childPrompt).not.toContain("## Active Workflow");
-    expect(childPrompt).not.toContain("Omitted Workflow");
-  });
-
-  test("goal id is inherited for deeper delegate paths without legacy active workflow prompt", async () => {
-    const rootSessionId = crypto.randomUUID();
-    const parentId = crypto.randomUUID();
-    const goalId = crypto.randomUUID();
-    storeManager.create(rootSessionId, workspaceRoot, {
-      agentName: "engineer",
-      goalId,
-    });
-    const parentStore = storeManager.create(parentId, workspaceRoot, {
-      rootSessionId,
-      parentSessionId: rootSessionId,
-      agentName: "explore",
-      goalId,
-    });
-    const parentDefinition: AgentDefinition = {
-      ...exploreAgentDefinition,
-      tools: { tools: ["delegate", "file_read"], delegateTargets: ["explore"] },
-      hooks: { autoCompact: false, autoInjectReminder: false, todoStepReminder: false, todoQueryLoopContinuation: false, memoryExtraction: false, memoryConsolidation: false, titleGeneration: "disabled" },
-      childPolicy: { maxDepth: 2, maxConcurrent: 1, timeoutMs: 0, abortCascade: true, terminalReminders: true },
-      includeMemoryInPrompt: false,
-      skills: [],
-    };
-    const targetDefinition: AgentDefinition = {
-      ...parentDefinition,
-      tools: { tools: ["file_read"] },
-      childPolicy: undefined,
-    };
-    const factory = makeFactory({
-      getDefinition: mock((name: string) => {
-        if (name === "explore") return parentDefinition;
-        throw new Error(`Unknown agent definition: ${name}`);
-      }),
-      resolveAllowedTools: mock((definition: AgentDefinition, depth: number): string[] => {
-        if (definition === parentDefinition && depth >= 2) return [...targetDefinition.tools.tools];
-        return [...definition.tools.tools];
-      }),
-      getDelegateTargetsFor: mock(() => ["explore"]),
-    });
-    const { manager } = createManager({}, {
-      factory,
-      goalDelegationAdmission: admitGoal(goalDelegationContext(goalId)),
-      listSessionFamilyToolBatchHitlIds: async () => [],
-    });
-
-    const handle = await manager.startChildExecution(workspaceRoot, {
-      parentStore,
-      parentSessionId: parentId,
-      parentToolCallId: "grandchild-call",
-      toolName: "delegate",
-      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "grandchild inspect", skills: [], background: false }),
-      parentAbort: undefined,
-    });
-    await handle.result;
-
-    const [childPrompt] = getUserMessageTexts(handle.store.getState());
-    expect(handle.store.getState().goalId).toBe(goalId);
-    expect(childPrompt).toEndWith("</goal-delegation-context>\n\ngrandchild inspect");
-    expect(childPrompt).not.toContain("## Active Workflow");
-  });
-
   test("running-link write failure prevents child run and releases reserved slot", async () => {
     const parentId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
@@ -3075,6 +3035,202 @@ describe("SessionExecutionManager", () => {
     expect(linkStatusesAtRunStart).toEqual(["running"]);
     expect(promptsAtRunStart).toEqual(["inspect"]);
     expect(childCanonicalMessage).toBe("inspect");
+  });
+
+  test("runtime Goal review uses explicit provenance, fixed identities, and a read-only projection", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
+    const claimId = crypto.randomUUID();
+    const reviewerSessionId = crypto.randomUUID();
+    const reviewerExecutionId = crypto.randomUUID();
+    let projection: readonly string[] | undefined;
+    const { manager } = createManager({}, {
+      factory: makeRuntimeReviewFactory(),
+      childRunOptions: (options) => { projection = [...(options?.toolProjection ?? [])]; },
+    });
+    const contract = delegationContract({
+      agent_type: "reviewer",
+      title: "Verify Goal",
+      objective: "Verify the complete objective",
+      acceptance_criteria: [{ id: "runtime-objective", condition: "Everything passes", requiredEvidence: "Evidence" }],
+    });
+
+    const handle = await manager.startRuntimeReviewChild(workspaceRoot, {
+      provenance: { kind: "goal_review", reviewClaimId: claimId },
+      parentStore,
+      parentSessionId: parentId,
+      reviewerSessionId,
+      reviewerExecutionId,
+      contract,
+    });
+    await handle.result;
+
+    expect(handle.sessionId).toBe(reviewerSessionId);
+    expect(handle.store.getState().executions.at(-1)).toMatchObject({ id: reviewerExecutionId, origin: "goal_review" });
+    expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({
+      parentToolCallId: claimId,
+      toolName: "goal_review",
+      childAgentName: "reviewer",
+    });
+    expect(projection).toContain("submit_child_result");
+    expect(projection).not.toContain("file_write");
+    expect(projection).not.toContain("file_edit");
+    expect(projection).not.toContain("todo_write");
+    expect(projection).not.toContain("delegate");
+  });
+
+  test("runtime Goal review reaches a real Reviewer model call with the goal-only prompt contract", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
+    const goalService = new SessionGoalService(storeManager);
+    const objective = "Ship the authentication migration and make every authentication test pass.";
+    const goal = await goalService.create({
+      workspaceRoot,
+      sessionId: parentId,
+      authority: { kind: "user_control" },
+      objective,
+    });
+    const contract = delegationContract({
+      agent_type: "reviewer",
+      title: "Independently review the Session Goal",
+      objective,
+      acceptance_criteria: [{
+        id: "runtime-objective",
+        condition: objective,
+        requiredEvidence: "Attributable implementation and verification evidence",
+      }],
+    });
+    const requested = await goalService.requestReview({
+      workspaceRoot,
+      sessionId: parentId,
+      authority: { kind: "agent" },
+      requestedBy: "engineer",
+      reason: "The implementation is ready for independent review.",
+      reviewContract: contract,
+      reviewContractHash: hashDelegationContract(contract),
+      userInputCursor: goal.userInputCursor,
+      sourceMutationEpoch: goal.sourceMutationEpoch,
+      sourceFingerprint: "a".repeat(64),
+    });
+    const reviewClaimId = requested.review!.claim.claimId;
+    const reviewerSessionId = crypto.randomUUID();
+    const reviewerExecutionId = crypto.randomUUID();
+    await goalService.markReviewRunning({
+      workspaceRoot,
+      sessionId: parentId,
+      authority: { kind: "runtime" },
+      claimId: reviewClaimId,
+      reviewerSessionId,
+      reviewerExecutionId,
+    });
+
+    const registryFixture = createTestToolRegistryFixture({ descriptors: goalReviewToolDescriptors() });
+    const streamText = mock((_options: unknown) => ({
+      fullStream: (async function* () {
+        yield { type: "text-delta", text: "I will inspect the supplied Goal evidence." };
+      })(),
+      finishReason: Promise.resolve("stop"),
+      text: Promise.resolve("I will inspect the supplied Goal evidence."),
+      toolCalls: Promise.resolve([]),
+      usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+    }));
+    setLlmAdapterForTest({ streamText: streamText as unknown as typeof import("ai").streamText });
+
+    let configuredReviewer: ConfiguredAgent | undefined;
+    const goalReviewerDefinition = {
+      ...reviewerAgentDefinition,
+      tools: { tools: [...GOAL_REVIEW_TEST_TOOLS] },
+      skills: [],
+      hooks: {
+        ...reviewerAgentDefinition.hooks,
+        autoCompact: false,
+        autoInjectReminder: false,
+        todoStepReminder: false,
+        todoQueryLoopContinuation: false,
+        memoryExtraction: false,
+        memoryConsolidation: false,
+        titleGeneration: "disabled" as const,
+      },
+    } satisfies AgentDefinition;
+
+    try {
+      const { manager } = createManager({}, {
+        factory: makeRuntimeReviewFactory(),
+        childAgentFactory: ({ sessionId, store, depth }) => {
+          configuredReviewer = new ConfiguredAgent({
+            definition: goalReviewerDefinition,
+            toolRegistry: registryFixture.registry,
+            skillService: new SkillService({ builtinSkills: {} }),
+            storeManager,
+            store,
+            toolOutputAccess: registryFixture.createToolOutputAccess(workspaceRoot, parentId),
+            projectRoot: workspaceRoot,
+            cwd: workspaceRoot,
+            depth,
+            projectContextResolver: createTestProjectContextResolver(storeManager),
+            resolveVersionControl: async () => "git",
+            resolveAllowedTools: () => GOAL_REVIEW_TEST_TOOLS,
+            logger: silentLogger,
+          });
+          return configuredReviewer as unknown as MockAgent;
+        },
+      });
+
+      const handle = await manager.startRuntimeReviewChild(workspaceRoot, {
+        provenance: { kind: "goal_review", reviewClaimId },
+        parentStore,
+        parentSessionId: parentId,
+        reviewerSessionId,
+        reviewerExecutionId,
+        contract,
+      });
+      await handle.result;
+
+      expect(configuredReviewer).toBeInstanceOf(ConfiguredAgent);
+      expect(streamText).toHaveBeenCalledTimes(1);
+      const modelCall = streamText.mock.calls[0]![0] as { system: string; tools: Record<string, unknown> };
+      expect(modelCall.system).toContain("- Review mode: goal");
+      expect(modelCall.system).toContain("- Parent Agent: engineer");
+      expect(modelCall.system).toContain(`- Goal: ${goal.instanceId} (active, generation=1)`);
+      expect(modelCall.system).toContain("Required capabilities: file_read, submit_child_result");
+      expect(modelCall.system).toContain("Runtime alone decides whether that evidence completes the Goal.");
+      expect(modelCall.system).not.toContain("Required capabilities: file_read, delegate");
+      expect(Object.keys(modelCall.tools).sort()).toEqual([...GOAL_REVIEW_TEST_TOOLS].sort());
+      expect(handle.store.getState().promptTraces?.at(-1)).toMatchObject({
+        status: "compiled",
+        visibleTools: [...GOAL_REVIEW_TEST_TOOLS],
+      });
+    } finally {
+      setLlmAdapterForTest(undefined);
+      configuredReviewer?.dispose();
+      await registryFixture.dispose();
+    }
+  });
+
+  test("runtime Goal review rejects non-Reviewer and stale claim launches", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer" });
+    const request = {
+      provenance: { kind: "goal_review" as const, reviewClaimId: crypto.randomUUID() },
+      parentStore,
+      parentSessionId: parentId,
+      reviewerSessionId: crypto.randomUUID(),
+      reviewerExecutionId: crypto.randomUUID(),
+    };
+    const stale = createManager({}, {
+      factory: makeRuntimeReviewFactory(),
+      validateGoalReviewClaim: async () => false,
+    }).manager;
+    await expect(stale.startRuntimeReviewChild(workspaceRoot, {
+      ...request,
+      contract: delegationContract({ agent_type: "reviewer" }),
+    })).rejects.toThrow("stale");
+
+    const valid = createManager({}, { factory: makeRuntimeReviewFactory() }).manager;
+    await expect(valid.startRuntimeReviewChild(workspaceRoot, {
+      ...request,
+      contract: delegationContract({ agent_type: "explore" }),
+    })).rejects.toThrow("Reviewer");
   });
 
   test("startChildExecution persists child identity before exposing its parent link or running it", async () => {
@@ -3410,6 +3566,37 @@ describe("SessionExecutionManager", () => {
     expect(manager.listPendingSessionInputMutations(workspaceRoot)).toEqual([]);
   });
 
+  test("family control and input mutation have one linearization point", async () => {
+    const rootId = crypto.randomUUID();
+    storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
+    await storeManager.flushSession(rootId, workspaceRoot);
+    const controlEntered = deferred<void>();
+    const releaseControl = deferred<void>();
+    const inputEntered = deferred<void>();
+    const { manager } = createManager({});
+
+    const control = manager.tryRunSessionFamilyControl({ workspaceRoot, rootSessionId: rootId }, async () => {
+      controlEntered.resolve(undefined);
+      await releaseControl.promise;
+      return "settled";
+    });
+    await controlEntered.promise;
+    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("running");
+
+    const input = manager.runSessionInputMutation({ workspaceRoot, rootSessionId: rootId }, async () => {
+      inputEntered.resolve(undefined);
+    });
+    await Bun.sleep(0);
+    expect(manager.listPendingSessionInputMutations(workspaceRoot)).toEqual([]);
+
+    releaseControl.resolve(undefined);
+    await expect(control).resolves.toEqual({ kind: "executed", result: "settled" });
+    await inputEntered.promise;
+    await input;
+    expect(manager.listPendingSessionInputMutations(workspaceRoot)).toEqual([]);
+    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("idle");
+  });
+
   test("delete performs lifecycle preparation after an in-flight execution quiesces", async () => {
     const rootId = crypto.randomUUID();
     const store = storeManager.create(rootId, workspaceRoot, { agentName: "engineer" });
@@ -3445,7 +3632,7 @@ describe("SessionExecutionManager", () => {
           if (ownerCreatedDuringAbort) {
             throw new SessionDeleteOwnerConflictError([{
               sessionId: rootId,
-              ownerType: "goal",
+              ownerType: "project_todo",
               ownerId: rootId,
             }]);
           }
@@ -3679,55 +3866,6 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "resume-tool-call",
       status: "completed",
     });
-  });
-
-  test("resumeChildExecution prepends the newly admitted Goal snapshot", async () => {
-    const parentId = crypto.randomUUID();
-    const goalId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer", goalId });
-    await storeManager.flushSession(parentId, workspaceRoot);
-    let context = goalDelegationContext(goalId, { reviewGeneration: 1 });
-    const messages: string[] = [];
-    const { manager } = createManager({}, {
-      factory: makeFactory(),
-      goalDelegationAdmission: {
-        run: async (_input, action) => await action(context),
-      },
-      listSessionFamilyToolBatchHitlIds: async () => [],
-      childCanonicalMessage: (value) => { messages.push(value); },
-    });
-
-    const first = await manager.startChildExecution(workspaceRoot, {
-      parentStore,
-      parentSessionId: parentId,
-      parentToolCallId: "initial-goal-delegate",
-      toolName: "delegate",
-      contract: delegationContract({ agent_type: "explore", title: "Delegated child", objective: "Initial work", skills: [], background: false }),
-    });
-    await first.result;
-
-    context = goalDelegationContext(goalId, {
-      attempt: 2,
-      reviewGeneration: 2,
-      lastFailureSummary: "Reviewer requested another assertion",
-    });
-    const resumed = await manager.resumeChildExecution(workspaceRoot, {
-      parentStore,
-      parentSessionId: parentId,
-      parentToolCallId: "resume-goal-delegate",
-      toolName: "resume_session",
-      sessionId: first.sessionId,
-      instruction: "Address the review",
-    newEvidence: [],
-    background: false,
-    });
-    await resumed.result;
-
-    expect(messages).toHaveLength(2);
-    expect(messages[1]).toContain('"attempt": 2');
-    expect(messages[1]).toContain('"reviewGeneration": 2');
-    expect(messages[1]).toContain('"lastFailureSummary": "Reviewer requested another assertion"');
-    expect(messages[1]).toEndWith("</goal-delegation-context>\n\nAddress the review");
   });
 
   test("blocks cwd transitions for active descendants and never resumes an old child across checkouts", async () => {
@@ -4056,50 +4194,6 @@ describe("SessionExecutionManager", () => {
     }
   });
 
-  test("re-enters Goal parent role and phase admission before cold child activation", async () => {
-    const rootId = crypto.randomUUID();
-    const childId = crypto.randomUUID();
-    const goalId = crypto.randomUUID();
-    storeManager.create(rootId, workspaceRoot, {
-      agentName: "engineer",
-      goalId,
-      sessionRole: "main",
-    });
-    storeManager.create(childId, workspaceRoot, {
-      rootSessionId: rootId,
-      parentSessionId: rootId,
-      agentName: "explore",
-      goalId,
-      title: "phase checked",
-    });
-    const phaseDenied = new Error("Goal phase denied for persisted parent role");
-    const admissionRun = mock(async (input: Parameters<NonNullable<FakeManagerOptions["goalDelegationAdmission"]>["run"]>[0]) => {
-      expect(input.parent).toMatchObject({
-        sessionId: rootId,
-        rootSessionId: rootId,
-        goalId,
-        agentName: "engineer",
-        sessionRole: "main",
-      });
-      expect(input.targetAgentName).toBe("explore");
-      throw phaseDenied;
-    });
-    const { manager, sessionAgentManager } = createManager({}, {
-      factory: makeFactory(),
-      goalDelegationAdmission: { run: admissionRun },
-    });
-
-    await expect(manager.startCheckedExecution({
-      slug: "project",
-      workspaceRoot,
-      sessionId: childId,
-      input: { kind: "direct", text: "must not activate" },
-      origin: "user_message",
-    })).rejects.toBe(phaseDenied);
-    expect(admissionRun).toHaveBeenCalledTimes(1);
-    expect(sessionAgentManager.getOrCreate).not.toHaveBeenCalled();
-  });
-
   test("releases only a newly activated child Agent when post-activation start validation fails", async () => {
     for (const warm of [false, true]) {
       const rootId = crypto.randomUUID();
@@ -4167,33 +4261,6 @@ describe("SessionExecutionManager", () => {
       hitlIds: ["hitl-pending"],
     });
     expect(manager.getSessionFamilyActivity(workspaceRoot, sessionId)).toBe("idle");
-  });
-
-  test("checked Goal start rejects a blocked sibling tool batch at the final family barrier", async () => {
-    const rootId = crypto.randomUUID();
-    const childId = crypto.randomUUID();
-    const siblingHitlId = crypto.randomUUID();
-    await writeSessionFile({ sessionId: rootId, goalId: crypto.randomUUID() });
-    await writeSessionFile({
-      sessionId: childId,
-      rootSessionId: rootId,
-      parentSessionId: rootId,
-      toolBatches: [blockedToolBatch(siblingHitlId)],
-    });
-    const coldStores = new SessionStoreManager({ logger: silentLogger });
-    const { manager } = createManager({}, { storeManager: coldStores });
-
-    await expect(manager.startCheckedExecution({
-      slug: "project",
-      workspaceRoot,
-      sessionId: rootId,
-      input: { kind: "direct", text: "must not bypass child HITL" },
-    })).rejects.toMatchObject({
-      name: "SessionToolBatchActiveError",
-      sessionId: rootId,
-      hitlIds: [siblingHitlId],
-    });
-    expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("idle");
   });
 
   test("fails closed when Session cwd changes during asynchronous scope validation", async () => {
@@ -4286,10 +4353,8 @@ describe("SessionExecutionManager", () => {
     });
     await validationStarted.promise;
     store.setState({
-      goalId: crypto.randomUUID(),
       rootSessionId: "different-root",
       parentSessionId: "different-parent",
-      sessionRole: "build",
     });
     allowValidation.resolve();
 
@@ -4298,7 +4363,7 @@ describe("SessionExecutionManager", () => {
       code: "SESSION_EXECUTION_SCOPE_CHANGED",
       sessionId,
       details: {
-        changedFields: ["goalId", "rootSessionId", "parentSessionId", "sessionRole"],
+        changedFields: ["rootSessionId", "parentSessionId"],
       },
     });
     expect(manager.getSessionFamilyActivity(workspaceRoot, sessionId)).toBe("idle");
@@ -4333,6 +4398,10 @@ describe("SessionExecutionManager", () => {
       trackSession: () => undefined,
       untrackSession: () => undefined,
       executionScopeValidator: allowExecutionScope,
+      onGoalReviewRequested: async () => undefined,
+      validateGoalReviewClaim: async () => true,
+      prepareGoalReviewToolBatchResume: async () => true,
+      prepareGoalRemediationToolBatchResume: async () => ({ kind: "not_remediation" }),
       logger: silentLogger,
     });
 
@@ -4647,62 +4716,6 @@ describe("SessionExecutionManager", () => {
     });
     cascadingAbort.abort();
     expect((await cascaded.result).executionStatus).toBe("cancelled");
-  });
-
-  test("rechecks Goal family HITL immediately before a child resume starts", async () => {
-    const parentId = crypto.randomUUID();
-    const childSessionId = crypto.randomUUID();
-    const goalId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "engineer", goalId });
-    const childStore = storeManager.create(childSessionId, workspaceRoot, {
-      rootSessionId: parentId,
-      parentSessionId: parentId,
-      agentName: "explore",
-      goalId,
-      title: "Delegated child",
-    });
-    parentStore.getState().append({
-      type: "tool-child-session-link",
-      link: {
-        parentSessionId: parentId,
-        parentToolCallId: "initial-call",
-        toolName: "delegate",
-        childSessionId,
-        childAgentName: "explore",
-        title: "Delegated child",
-        depth: 1,
-        background: false,
-        status: "completed",
-        createdAt: 1,
-      },
-    });
-    await storeManager.flushSession(parentId, workspaceRoot);
-    await storeManager.flushSession(childSessionId, workspaceRoot);
-    const childAgent = new MockAgent(childSessionId, Promise.resolve({ text: "must not run", steps: 1 }), workspaceRoot);
-    childAgent.store.setState(childStore.getState());
-    let checks = 0;
-    const { manager, sessionAgentManager } = createManager({ [childSessionId]: childAgent }, {
-      factory: makeFactory(),
-      executionScopeValidator: allowExecutionScope,
-      goalDelegationAdmission: admitGoal(goalDelegationContext(goalId)),
-      listSessionFamilyToolBatchHitlIds: async () => (++checks === 1 ? [] : ["raced-resume-hitl"]),
-    });
-
-    await expect(manager.resumeChildExecution(workspaceRoot, {
-      parentStore,
-      parentSessionId: parentId,
-      parentToolCallId: "resume-call",
-      toolName: "resume_session",
-      sessionId: childSessionId,
-      instruction: "must not resume",
-      newEvidence: [],
-      background: false,
-      parentAbort: undefined,
-    })).rejects.toMatchObject({ name: "SessionToolBatchActiveError", hitlIds: ["raced-resume-hitl"] });
-    expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({ status: "completed" });
-    expect(sessionAgentManager.getOrCreate).not.toHaveBeenCalled();
-    expect(manager.getExecution(workspaceRoot, childSessionId)).toBeUndefined();
-    expect(childAgent.runMock).not.toHaveBeenCalled();
   });
 
   test("resumeChildExecution supports background links and terminal reminders", async () => {

@@ -90,8 +90,6 @@ function baseState(messages: StoredMessage[]): SessionStoreState {
     setCwd: () => {},
     setTitle: () => {},
     setParentSessionId: () => {},
-    setGoalId: () => {},
-    setSessionRole: () => {},
     toModelMessages: () => [],
   };
 }

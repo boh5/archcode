@@ -5,6 +5,7 @@ import type { ModelCallOptions } from "../config/provider";
 import type { Logger } from "../logger";
 import type { RetryScheduler } from "./retry";
 import type { SensitiveTextRedactor } from "./provider-error-sanitizer";
+import type { NormalizedUsage } from "@archcode/protocol";
 
 export interface LlmStreamInput<TTools extends ToolSet = ToolSet> {
   model: LanguageModelV3;
@@ -43,6 +44,8 @@ export interface LlmObjectInput<T> {
   logger?: Logger;
   retryScheduler?: RetryScheduler;
   redactSensitiveText: SensitiveTextRedactor;
+  /** Observes normalized model usage without changing the structured result contract. */
+  onUsage?: (usage: NormalizedUsage) => void;
   /** Schema name used in tool definition (defaults to "result") */
   schemaName?: string;
   /** Schema description used in tool definition */

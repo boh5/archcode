@@ -9,7 +9,7 @@ export interface SessionDeletionLifecycle {
   prepareForDeletion(input: SessionDeletionPreflightInput): Promise<void>;
 }
 
-export type SessionDeletionOwnerType = "goal" | "project_todo";
+export type SessionDeletionOwnerType = "project_todo";
 
 export interface SessionDeletionOwnerDetail {
   readonly sessionId: string;

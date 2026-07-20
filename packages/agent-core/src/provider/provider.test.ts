@@ -55,7 +55,6 @@ const VALID_CONFIG = {
   },
   agents: {
     engineer: { model: "xxx:gpt-5.2" },
-    goal_lead: { model: "xxx:gpt-5.2" },
     plan: { model: "xxx:gpt-5.2" },
     build: { model: "xxx:gpt-5.2" },
     reviewer: { model: "xxx:gpt-5.2" },

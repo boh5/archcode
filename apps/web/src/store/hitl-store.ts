@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { hitlIdentityKey, type GlobalSSEHitlRealtimeEvent, type GlobalSSEHitlSnapshotEvent, type HitlView } from "@archcode/protocol";
 
 export { hitlIdentityKey };
-export type HitlScope = "project" | "session" | "goal";
+export type HitlScope = "project" | "session";
 export interface ScopedHitlView { projectSlug: string; view: HitlView }
 
 interface HitlStoreState {

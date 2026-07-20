@@ -1,23 +1,21 @@
-import { useGoal } from "../../api/queries";
+import type { SessionGoalView } from "../../api/types";
 import { useSessionStore } from "../../store/session-store";
 import { TodoProgressButton } from "./TodoProgressButton";
 import { InspectorToggleButton } from "./InspectorToggleButton";
-import { getGoalStatusBadgeClass } from "../../lib/goal-status";
 
 interface ChatHeaderProps {
   slug: string;
   sessionId: string;
-  goalId?: string;
+  goal?: SessionGoalView;
   projectRoot?: string;
   onToggleInspector: () => void;
   inspectorExpanded: boolean;
 }
 
-export function ChatHeader({ slug, sessionId, goalId, projectRoot, onToggleInspector, inspectorExpanded }: ChatHeaderProps) {
+export function ChatHeader({ slug, sessionId, goal, projectRoot, onToggleInspector, inspectorExpanded }: ChatHeaderProps) {
   const title = useSessionStore(sessionId, (s) => s.title, slug);
   const stats = useSessionStore(sessionId, (s) => s.stats, slug);
   const cwd = useSessionStore(sessionId, (s) => s.cwd, slug);
-  const { data: goal } = useGoal(slug, goalId ?? "");
 
   const hasStats = stats && (stats.messages.total > 0 || stats.tools.calls > 0 || stats.usage.totalTokens > 0);
 
@@ -30,7 +28,7 @@ export function ChatHeader({ slug, sessionId, goalId, projectRoot, onToggleInspe
             data-testid="goal-status-badge"
             className="text-[11px] px-2 py-0.5 rounded-sm font-medium whitespace-nowrap"
           >
-            <span className={`px-1.5 py-0.5 rounded-sm ${getGoalStatusBadgeClass(goal.status)}`}>
+            <span className="rounded-sm bg-accent-muted px-1.5 py-0.5 text-accent">
               {goal.status}
             </span>
           </span>

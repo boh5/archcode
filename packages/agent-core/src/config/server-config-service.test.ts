@@ -43,7 +43,6 @@ function config(): Record<string, unknown> {
     },
     agents: {
       engineer: agent,
-      goal_lead: agent,
       plan: agent,
       build: { ...agent, variant: "fast" },
       reviewer: agent,
@@ -136,7 +135,6 @@ function adapterConfig(adapter: ProviderAdapter): Record<string, any> {
     },
     agents: {
       engineer: agent,
-      goal_lead: agent,
       plan: agent,
       build: agent,
       reviewer: agent,

@@ -20,16 +20,13 @@ export const automationCreateTool: AnyToolDescriptor = defineTool({
   execute: async (input: AutomationCreateInput, ctx: ToolExecutionContext) => {
     const state = ctx.store.getState();
     const agentName = ctx.agentName ?? state.agentName;
-    const isStandaloneRole = state.sessionRole === undefined || state.sessionRole === "standalone";
     const isOrdinaryRoot = state.sessionId === state.rootSessionId
-      && state.parentSessionId === undefined
-      && state.goalId === undefined
-      && isStandaloneRole;
+      && state.parentSessionId === undefined;
     if (agentName !== "engineer" || !isOrdinaryRoot) {
       return createToolErrorResult({
         kind: "permission-denied",
         code: "AUTOMATION_CREATE_DENIED",
-        message: `automation_create requires an unbound engineer root session, got ${agentName ?? "unknown"}/${state.sessionRole ?? "none"}`,
+        message: `automation_create requires an Engineer root Session, got ${agentName ?? "unknown"}`,
       });
     }
 

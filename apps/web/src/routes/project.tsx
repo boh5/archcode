@@ -14,7 +14,7 @@ export function ProjectRoute() {
         </h2>
         <p className="mt-2 text-sm leading-6 text-text-tertiary">
           This project dashboard is not implemented yet. Use the sidebar sections to open sessions,
-          goals, or automations while the dashboard is being designed.
+          project todos, or automations while the dashboard is being designed.
         </p>
       </div>
     </div>

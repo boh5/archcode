@@ -112,34 +112,7 @@ export type {
   ProjectHitlQueueOptions,
   ResolveHitlOutcome,
 } from "./hitl";
-export { GoalBudgetHandler } from "./goals/budget-handler";
-export type { GoalBudgetHandlerOptions, GoalBudgetHitlRecord } from "./goals/budget-handler";
-export { GoalLifecycleService, GoalLifecycleServiceError } from "./goals/lifecycle-service";
-export {
-  GoalEvidenceRefSchema,
-  GoalEvidenceSummarySchema,
-  GoalReviewReceiptSchema,
-  GoalReviewSummarySchema,
-} from "./goals/review-schema";
-export type {
-  GoalActivationOutcome,
-  GoalLifecycleCreateInput,
-  GoalLifecycleServiceOptions,
-} from "./goals/lifecycle-service";
-export { GoalCancellationInProgressError, withGoalExecutionClaimLock } from "./goals/execution-claim";
-export {
-  GoalCancellationCleanupError,
-  GoalCancellationError,
-  GoalCancellationService,
-} from "./goals/cancellation";
-export type {
-  GoalCancellationCapability,
-  GoalCancellationRequest,
-  GoalCancellationServiceOptions,
-  GoalCancellationSource,
-} from "./goals/cancellation";
-export { GoalWorkspaceError, GoalWorkspaceService } from "./goals/workspace";
-export type { GoalWorkspaceServiceOptions, GoalWorkspaceStateManager, PreparedGoalWorkspace } from "./goals/workspace";
+export * from "./session-goal";
 export { WorktreeService, WorktreeServiceError } from "./worktrees";
 export type {
   ManagedWorktreeLookup,
@@ -185,6 +158,7 @@ export type {
   ResolvedSessionInputSnapshot,
 } from "./session-input/service";
 export { reduceStreamEvent } from "./store/reduce";
+export * from "./session-goal";
 export { assertValidSessionCwd, resolveValidSessionCwd } from "./store/session-cwd";
 export type {
   BusyError,

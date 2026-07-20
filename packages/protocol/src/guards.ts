@@ -6,6 +6,7 @@ import type {
   StreamEvent,
   ToolChildSessionLinkStatus,
 } from "./types";
+import type { SessionGoalChangedEvent } from "./session-goal";
 
 const TERMINAL_CHILD_SESSION_STATUSES = new Set<ToolChildSessionLinkStatus>([
   "completed", "failed", "timed_out", "cancelled", "interrupted",
@@ -28,7 +29,7 @@ export function isSessionEventPayload(value: unknown): value is SessionEventPayl
     case "execution-start":
       return exact(event, ["type", "executionId", "binding", "origin"])
         && isString(event.executionId) && isExecutionModelBinding(event.binding)
-        && oneOf(event.origin, ["user_message", "tool_call", "tool_batch", "goal_claim"]);
+        && oneOf(event.origin, ["user_message", "tool_call", "tool_batch", "goal_continuation", "goal_remediation", "goal_review"]);
     case "execution-end":
       return exact(event, ["type", "status"], ["error", "blockedByHitlIds", "blockedToolCallId"])
         && oneOf(event.status, ["completed", "max_steps", "failed", "aborted", "cancelled", "timed_out", "interrupted", "waiting_for_human"])
@@ -41,6 +42,21 @@ export function isSessionEventPayload(value: unknown): value is SessionEventPayl
     case "session.model_selection_changed":
       return exact(event, ["type", "modelSelection"])
         && isSessionModelSelection(event.modelSelection);
+    case "session.goal_changed":
+      return exact(event, ["type", "action", "instanceId", "generation", "goal", "occurredAt"], ["status", "reason"])
+        && oneOf(event.action, [
+          "created", "edited", "paused", "resumed", "cleared", "budget_updated",
+          "blocked", "blocked_evidence_recorded", "usage_recorded", "evaluator_recorded", "review_requested",
+          "review_started", "review_restarted", "review_rejected",
+          "remediation_started", "remediation_rebound", "remediation_retry_requested",
+          "remediation_finished", "runtime_failed", "completed",
+        ])
+        && isString(event.instanceId)
+        && isNonNegativeInteger(event.generation)
+        && (event.goal === null || isSessionGoalSnapshot(event.goal))
+        && (event.status === undefined || oneOf(event.status, ["active", "paused", "blocked", "budget_limited", "complete"]))
+        && optionalString(event.reason)
+        && isFiniteNumber(event.occurredAt);
     case "session.message_accepted":
     case "session.message_edited":
     case "session.message_steer_claimed":
@@ -272,7 +288,8 @@ function isCommittedUserTextPart(value: unknown): boolean {
     && (part.meta === undefined || record(part.meta) !== undefined);
 }
 
-export function isStreamEvent(event: unknown): event is StreamEvent {
+/** Every session event that is safe to replay through the shared projection reducer. */
+export function isStreamEvent(event: unknown): event is StreamEvent | SessionGoalChangedEvent {
   return isSessionEventPayload(event) && event.type !== "shutdown";
 }
 
@@ -297,7 +314,7 @@ export function isGlobalSSEResourceChangedEvent(value: unknown): value is Global
     && exact(event, ["type", "projectSlug", "resourceType", "resourceId", "createdAt"])
     && event.type === "resource.changed"
     && isString(event.projectSlug)
-    && oneOf(event.resourceType, ["goal", "automation", "todo"])
+    && oneOf(event.resourceType, ["automation", "todo"])
     && isString(event.resourceId)
     && isFiniteNumber(event.createdAt);
 }
@@ -741,7 +758,7 @@ function isHitlOwner(value: unknown): boolean {
   const owner = record(value);
   return owner !== undefined
     && exact(owner, ["type", "id"])
-    && oneOf(owner.type, ["session", "goal"]) && isString(owner.id);
+    && owner.type === "session" && isString(owner.id);
 }
 
 function isHitlSource(value: unknown): boolean {
@@ -754,9 +771,6 @@ function isHitlSource(value: unknown): boolean {
     case "tool_permission":
       return exact(source, ["type", "toolCallId", "toolName"])
         && isString(source.toolCallId) && isString(source.toolName);
-    case "goal_budget":
-      return exact(source, ["type", "approvalPoint"])
-        && isString(source.approvalPoint);
     default:
       return false;
   }
@@ -799,10 +813,6 @@ function isHitlResponse(value: unknown): boolean {
       return exact(response, ["type", "decision"], ["comment", "decidedBy"])
         && oneOf(response.decision, ["approve_once", "approve_always", "deny"])
         && optionalString(response.comment) && optionalString(response.decidedBy);
-    case "budget_decision":
-      return exact(response, ["type", "decision"], ["comment", "decidedBy"])
-        && oneOf(response.decision, ["approved", "denied"])
-        && optionalString(response.comment) && optionalString(response.decidedBy);
     case "cancel":
       return exact(response, ["type", "reason"], ["cancelledBy"])
         && isString(response.reason) && optionalString(response.cancelledBy);
@@ -811,31 +821,64 @@ function isHitlResponse(value: unknown): boolean {
   }
 }
 
-function isGoalReviewReceipt(value: unknown): boolean {
-  const receipt = record(value);
-  return receipt !== undefined
-    && exact(receipt, ["reviewGeneration", "verdict", "summary", "evidenceRefs", "reviewerSessionId", "decidedAt"], ["unresolvedItems"])
-    && isFiniteNumber(receipt.reviewGeneration) && oneOf(receipt.verdict, ["DONE", "NOT_DONE"])
-    && isString(receipt.summary) && arrayOf(receipt.evidenceRefs, isGoalEvidenceRef)
-    && optionalArray(receipt.unresolvedItems, isString)
-    && isString(receipt.reviewerSessionId) && isString(receipt.decidedAt);
-}
+/**
+ * Session Goal changes are replayed by both the server and browser stores, so
+ * validate the serializable snapshot at the protocol boundary. Review details
+ * are opaque to this event guard: their canonical schema is enforced when a
+ * Session is persisted, while the shared projection only needs a safe Goal
+ * envelope to render and invalidate correctly.
+ */
+function isSessionGoalSnapshot(value: unknown): boolean {
+  const goal = record(value);
+  if (goal === undefined || !exact(goal, [
+    "instanceId", "generation", "objective", "status", "usage", "evaluatorCount",
+    "noProgressCount", "failureCount", "userInputCursor", "sourceMutationEpoch",
+    "createdAt", "activatedAt", "updatedAt",
+  ], [
+    "tokenBudget", "lastEvaluator", "blockerCandidate", "nextRetryAt", "review",
+    "lastReviewReceipt", "blockedReason", "pausedAt", "completedAt",
+  ])) return false;
 
-function isGoalEvidenceRef(value: unknown): boolean {
-  const evidence = record(value);
-  return evidence !== undefined
-    && exact(evidence, ["kind", "ref", "summary"], ["sessionId", "messageId", "toolCallId", "path", "url", "createdAt"])
-    && oneOf(evidence.kind, ["session", "message", "tool_call", "diff", "test_output", "file", "url", "hitl"])
-    && isString(evidence.ref) && isString(evidence.summary)
-    && optionalString(evidence.sessionId) && optionalString(evidence.messageId)
-    && optionalString(evidence.toolCallId) && optionalString(evidence.path)
-    && optionalString(evidence.url) && optionalString(evidence.createdAt);
+  const usage = record(goal.usage);
+  const tokens = usage === undefined ? undefined : record(usage.tokens);
+  return isString(goal.instanceId)
+    && isPositiveSafeInteger(goal.generation)
+    && isString(goal.objective) && goal.objective.trim().length > 0
+    && oneOf(goal.status, ["active", "paused", "blocked", "budget_limited", "complete"])
+    && (goal.tokenBudget === undefined || isPositiveSafeInteger(goal.tokenBudget))
+    && usage !== undefined
+    && exact(usage, ["tokens", "executionTimeMs", "executionCount"])
+    && tokens !== undefined
+    && exact(tokens, ["inputTokens", "outputTokens", "totalTokens", "reasoningTokens", "cachedInputTokens"])
+    && Object.values(tokens).every(isNonNegativeSafeInteger)
+    && isNonNegativeSafeInteger(usage.executionTimeMs)
+    && isNonNegativeSafeInteger(usage.executionCount)
+    && isNonNegativeSafeInteger(goal.evaluatorCount)
+    && isNonNegativeSafeInteger(goal.noProgressCount)
+    && isNonNegativeSafeInteger(goal.failureCount)
+    && isNonNegativeSafeInteger(goal.userInputCursor)
+    && isNonNegativeSafeInteger(goal.sourceMutationEpoch)
+    && isNonNegativeSafeInteger(goal.createdAt)
+    && isNonNegativeSafeInteger(goal.activatedAt)
+    && isNonNegativeSafeInteger(goal.updatedAt)
+    && (goal.nextRetryAt === undefined || isNonNegativeSafeInteger(goal.nextRetryAt))
+    && (goal.pausedAt === undefined || isNonNegativeSafeInteger(goal.pausedAt))
+    && (goal.completedAt === undefined || isNonNegativeSafeInteger(goal.completedAt))
+    && optionalString(goal.blockedReason)
+    && optionalRecord(goal.lastEvaluator)
+    && optionalRecord(goal.blockerCandidate)
+    && optionalRecord(goal.review)
+    && optionalRecord(goal.lastReviewReceipt);
 }
 
 function record(value: unknown): UnknownRecord | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as UnknownRecord
     : undefined;
+}
+
+function optionalRecord(value: unknown): boolean {
+  return value === undefined || record(value) !== undefined;
 }
 
 function exact(value: UnknownRecord, required: readonly string[], optional: readonly string[] = []): boolean {
@@ -880,6 +923,10 @@ function isNonNegativeInteger(value: unknown): value is number {
 
 function isNonNegativeSafeInteger(value: unknown): value is number {
   return isNonNegativeInteger(value) && Number.isSafeInteger(value);
+}
+
+function isPositiveSafeInteger(value: unknown): value is number {
+  return isNonNegativeSafeInteger(value) && value > 0;
 }
 
 function isSafeInteger(value: unknown): value is number {

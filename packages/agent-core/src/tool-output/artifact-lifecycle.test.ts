@@ -131,7 +131,7 @@ async function writeConfig(homeDir: string): Promise<ServerConfigService> {
     },
   };
   const agents = Object.fromEntries(
-    ["engineer", "goal_lead", "plan", "build", "reviewer", "explore", "librarian", "shaper"]
+    ["engineer", "plan", "build", "reviewer", "explore", "librarian", "shaper"]
       .map((name) => [name, { model: "local:test-model" }]),
   );
   await writeFile(path, JSON.stringify({ provider, agents }));

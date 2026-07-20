@@ -545,7 +545,6 @@ describe("archcodeConfigSchema with mcp", () => {
     },
     agents: {
       engineer: { model: "p:m" },
-      goal_lead: { model: "p:m" },
       plan: { model: "p:m" },
       build: { model: "p:m" },
       reviewer: { model: "p:m" },

@@ -260,6 +260,17 @@ export function handleSSEEvent(
         deps.invalidateQueries({ queryKey: queryKeys.sessions(envelope.slug) });
       }
 
+      if (envelope.payload.type === "session.goal_changed") {
+        // The event itself keeps any open Session projection live. These REST
+        // projections feed the Session rail and Dashboard, so invalidate them
+        // as one atomic user-visible Goal transition.
+        deps.invalidateQueries({
+          queryKey: queryKeys.session(envelope.slug, envelope.sessionId),
+        });
+        deps.invalidateQueries({ queryKey: queryKeys.sessions(envelope.slug) });
+        deps.invalidateQueries({ queryKey: queryKeys.sessionGoals });
+      }
+
       if (
         envelope.payload.type === "session.model_selection_changed"
         ||
@@ -339,14 +350,6 @@ export function handleSSEEvent(
 }
 
 function invalidateResourceQueries(deps: SSEEventHandlerDeps, event: GlobalSSEResourceChangedEvent): void {
-  if (event.resourceType === "goal") {
-    deps.invalidateQueries({ queryKey: queryKeys.goals });
-    deps.invalidateQueries({ queryKey: queryKeys.activeGoals });
-    deps.invalidateQueries({ queryKey: queryKeys.projectGoals(event.projectSlug) });
-    deps.invalidateQueries({ queryKey: queryKeys.goal(event.projectSlug, event.resourceId) });
-    return;
-  }
-
   if (event.resourceType === "automation") {
     invalidateAutomationQueries(deps, event.projectSlug, event.resourceId);
     return;

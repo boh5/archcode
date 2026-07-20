@@ -14,7 +14,8 @@ export const PromptLiveEvalScenariosSchema = z.strictObject({
   scenarios: z.array(z.strictObject({
     id: z.string().trim().min(1),
     agent: z.enum(["engineer", "build", "reviewer"]),
-    executionMode: z.enum(["ordinary-root", "ordinary-child", "goal-review"]),
+    executionMode: z.enum(["ordinary-root", "ordinary-child", "goal-review", "goal-activation-probe"]),
+    probe: z.enum(["terminal-action", "execution-strategy"]).optional(),
     request: z.string().trim().min(1),
     expectedAny: z.array(z.string().trim().min(1)).min(1),
     forbidden: z.array(z.string().trim().min(1)),
@@ -53,7 +54,28 @@ export async function runPromptLiveEval(
       const system = (await new PromptContractCompiler().compile(
         buildLiveEvalContract(scenario),
       )).prompt;
-      const output = await execute(qualifiedId, system, scenario.request);
+      const prompt = scenario.executionMode === "goal-activation-probe"
+        ? [
+          "Classify the following user request using the Engineer Goal activation contract.",
+          "Reply with exactly CREATE_GOAL when the request explicitly asks for persistent autonomous work until a defined endpoint.",
+          "Reply with exactly ASK_CLARIFY when persistent work is requested but the verifiable endpoint is unclear.",
+          "Reply with exactly NO_GOAL otherwise. Do not solve the request.",
+          "",
+          `User request: ${scenario.request}`,
+        ].join("\n")
+        : scenario.probe === "terminal-action"
+          ? [
+            "Do not perform the work. Based only on the role and runtime contract, reply with exactly the canonical terminal submission tool name.",
+            `Original request: ${scenario.request}`,
+          ].join("\n")
+          : scenario.probe === "execution-strategy"
+            ? [
+              "Do not perform the work. Classify the required execution strategy from the role contract and request.",
+              "Reply with exactly DIRECT, PARALLEL, or SERIAL.",
+              `Original request: ${scenario.request}`,
+            ].join("\n")
+          : scenario.request;
+      const output = await execute(qualifiedId, system, prompt);
       const normalized = output.toLowerCase();
       const matchedExpected = scenario.expectedAny.filter((term) => normalized.includes(term.toLowerCase()));
       const matchedForbidden = scenario.forbidden.filter((term) => normalized.includes(term.toLowerCase()));
@@ -81,31 +103,29 @@ function buildLiveEvalContract(
   const base: RuntimePromptEnvelope = {
     agentName: scenario.agent,
     sessionId: "live-eval-session",
-    rootSessionId: scenario.executionMode === "ordinary-root" ? "live-eval-session" : "live-eval-root",
-    parentSessionId: scenario.executionMode === "ordinary-root" ? "none" : "live-eval-root",
-    parentAgentName: scenario.executionMode === "ordinary-root"
+    rootSessionId: scenario.executionMode === "ordinary-root" || scenario.executionMode === "goal-activation-probe" ? "live-eval-session" : "live-eval-root",
+    parentSessionId: scenario.executionMode === "ordinary-root" || scenario.executionMode === "goal-activation-probe" ? "none" : "live-eval-root",
+    parentAgentName: scenario.executionMode === "ordinary-root" || scenario.executionMode === "goal-activation-probe"
       ? "none"
-      : scenario.executionMode === "goal-review"
-        ? "goal_lead"
-        : "engineer",
-    depth: scenario.executionMode === "ordinary-root" ? 0 : 1,
+      : "engineer",
+    depth: scenario.executionMode === "ordinary-root" || scenario.executionMode === "goal-activation-probe" ? 0 : 1,
     allowedDelegateTargets: scenario.agent === "reviewer" ? ["explore", "librarian"] : scenario.agent === "engineer" ? ["plan", "build", "reviewer", "explore", "librarian"] : ["explore"],
-    goal: scenario.executionMode === "goal-review" ? { id: "live-eval-goal", status: "reviewing", reviewGeneration: 1 } : "none",
+    goal: scenario.executionMode === "goal-review"
+      ? { instanceId: "live-eval-goal", generation: 1, objective: scenario.request, status: "active" }
+      : "none",
     todo: "none",
     reviewMode: scenario.agent === "reviewer" ? (scenario.executionMode === "goal-review" ? "goal" : "ordinary") : "none",
     ownedScope: scenario.agent === "build" ? [{ kind: "tree", path: "src" }] : [],
-    remainingDepth: scenario.executionMode === "ordinary-root" ? 3 : 1,
+    remainingDepth: scenario.executionMode === "ordinary-root" || scenario.executionMode === "goal-activation-probe" ? 3 : 1,
     maxConcurrentChildren: 4,
     mcp: { context7: "ready" },
   };
   const role = scenario.agent === "engineer" ? engineerRoleContract : scenario.agent === "build" ? buildRoleContract : reviewerRoleContract;
   const allowedTools = scenario.agent === "engineer"
-    ? ["file_read", "delegate"]
+    ? ["file_read", "delegate", "create_goal", "get_goal", "update_goal"]
     : scenario.agent === "build"
       ? ["file_read", "file_edit", "delegate", "submit_child_result"]
-      : scenario.executionMode === "goal-review"
-        ? ["file_read", "delegate", "goal_manage"]
-        : ["file_read", "delegate", "submit_child_result"];
+      : ["file_read", "delegate", "submit_child_result"];
   return {
     version: "2",
     role,

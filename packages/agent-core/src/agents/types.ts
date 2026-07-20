@@ -16,6 +16,8 @@ export interface AgentRunOptions {
   abort?: AbortSignal;
   maxSteps?: number;
   extraTools?: readonly string[];
+  /** Runtime-owned strict subset of the role's normal tool projection. */
+  toolProjection?: readonly string[];
   /** Commits any steering messages to the canonical transcript before a model build. */
   consumeSteers?: () => Promise<void>;
 }

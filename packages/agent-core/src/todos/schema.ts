@@ -13,7 +13,7 @@ export const ProjectTodoRejectionReasonSchema = z.string().trim().min(1).max(PRO
 export const ProjectTodoStatusSchema = z.enum(["idea", "ready", "done", "rejected"]);
 
 export const ProjectTodoActivationSchema = z.strictObject({
-  kind: z.enum(["session", "goal", "automation"]),
+  kind: z.enum(["session", "automation"]),
   sourceSessionId: z.uuid(),
   todoRevision: z.number().int().positive(),
   snapshot: z.strictObject({

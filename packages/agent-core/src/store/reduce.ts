@@ -5,6 +5,7 @@ import {
   type SessionTodo,
   type StreamEvent,
 } from "./types";
+import type { SessionGoalChangedEvent } from "@archcode/protocol";
 import {
   reduceStreamEvent as protocolReduceStreamEvent,
   type CompressionBlockSnapshot,
@@ -33,7 +34,7 @@ const TODO_STATUSES = new Set<SessionTodo["status"]>([
  */
 export function reduceStreamEvent(
   state: SessionStoreState,
-  event: StreamEvent,
+  event: StreamEvent | SessionGoalChangedEvent,
 ): Partial<SessionStoreState> {
   // Runtime-specific guards
   if (event.type === "execution-start" && state.isRunning) {

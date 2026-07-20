@@ -84,17 +84,15 @@ describe("HITL hard-cut architecture", () => {
     expect(storeHelpers).not.toMatch(/const\s+SessionToolCallBlockerSchema/);
   });
 
-  test("Goal budget handler owns no tool, Session, or LLM execution", () => {
-    const text = source("packages/agent-core/src/goals/budget-handler.ts");
-    expect(text).not.toMatch(/from\s+["'][^"']*(?:agents\/query|execution|store|tools)\//);
-    expect(text).not.toMatch(/runLlm|ToolRegistry|SessionExecution/);
+  test("retired Goal budget HITL handler stays deleted", () => {
+    expect(existsSync(join(projectRoot, "packages/agent-core/src/goals/budget-handler.ts"))).toBe(false);
   });
 
-  test("Runtime dispatch remains an explicit two-owner switch", () => {
+  test("Runtime dispatch has a single Session HITL owner", () => {
     const text = source("packages/agent-core/src/runtime.ts");
-    expect(text).toContain("switch (dispatching.owner.type)");
-    expect(text).toContain('case "session"');
-    expect(text).toContain('case "goal"');
+    expect(text).toContain("sessionId: dispatching.owner.id");
+    expect(text).not.toContain("switch (dispatching.owner.type)");
+    expect(text).not.toContain('case "goal"');
     expect(text).not.toMatch(/hitlHandlerRegistry|registerHitlHandler|hitlHandlers\s*=\s*new Map/);
   });
 
@@ -115,7 +113,6 @@ describe("HITL hard-cut architecture", () => {
       /\bdurableHitlMode\b/,
       /\bgoal_question\b/,
       /\bgoal_approval\b/,
-      /\bgoal_review\b/,
       /\bprojectionPath\b/,
     ])).toEqual([]);
   });

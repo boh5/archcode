@@ -5,6 +5,7 @@
       "id": "small-engineer-direct",
       "agent": "engineer",
       "executionMode": "ordinary-root",
+      "probe": "execution-strategy",
       "request": "Correct one obvious typo in a single known file and verify it.",
       "expectedAny": ["direct"],
       "forbidden": ["delegate", "child"]
@@ -13,6 +14,7 @@
       "id": "independent-engineer-parallel",
       "agent": "engineer",
       "executionMode": "ordinary-root",
+      "probe": "execution-strategy",
       "request": "Collect independent local-code and external-documentation evidence; neither depends on the other and neither writes files.",
       "expectedAny": ["parallel"],
       "forbidden": ["serial"]
@@ -21,6 +23,7 @@
       "id": "dependent-engineer-serial",
       "agent": "engineer",
       "executionMode": "ordinary-root",
+      "probe": "execution-strategy",
       "request": "Implement an API, then review its resulting diff. The review cannot start before implementation exists.",
       "expectedAny": ["serial", "after", "then"],
       "forbidden": ["parallel"]
@@ -29,6 +32,7 @@
       "id": "build-child-result",
       "agent": "build",
       "executionMode": "ordinary-child",
+      "probe": "terminal-action",
       "request": "Finish the delegated scope and explain the required terminal delivery action.",
       "expectedAny": ["submit_child_result"],
       "forbidden": ["free-text completion"]
@@ -37,17 +41,83 @@
       "id": "ordinary-reviewer-result",
       "agent": "reviewer",
       "executionMode": "ordinary-child",
+      "probe": "terminal-action",
       "request": "Verify the ordinary delegated review and explain the canonical submission action.",
       "expectedAny": ["submit_child_result"],
       "forbidden": ["finalize_review"]
     },
     {
-      "id": "goal-reviewer-finalize",
+      "id": "goal-reviewer-result",
       "agent": "reviewer",
       "executionMode": "goal-review",
-      "request": "Verify the Goal review and explain the sole canonical finalization action.",
-      "expectedAny": ["finalize_review"],
-      "forbidden": ["submit_child_result"]
+      "probe": "terminal-action",
+      "request": "Verify the Goal review and explain the sole canonical result submission action.",
+      "expectedAny": ["submit_child_result"],
+      "forbidden": ["finalize_review"]
+    },
+    {
+      "id": "goal-activation-explicit-until-complete",
+      "agent": "engineer",
+      "executionMode": "goal-activation-probe",
+      "request": "Keep working autonomously until the authentication migration is complete and every auth test passes.",
+      "expectedAny": ["CREATE_GOAL"],
+      "forbidden": ["NO_GOAL"]
+    },
+    {
+      "id": "goal-activation-explicit-persistent-outcome",
+      "agent": "engineer",
+      "executionMode": "goal-activation-probe",
+      "request": "Take ownership of this refactor and continue across as many turns as needed until the build and typecheck are green.",
+      "expectedAny": ["CREATE_GOAL"],
+      "forbidden": ["NO_GOAL"]
+    },
+    {
+      "id": "goal-no-activation-one-fix",
+      "agent": "engineer",
+      "executionMode": "goal-activation-probe",
+      "request": "Fix the typo in README.md.",
+      "expectedAny": ["NO_GOAL"],
+      "forbidden": ["CREATE_GOAL"]
+    },
+    {
+      "id": "goal-no-activation-question",
+      "agent": "engineer",
+      "executionMode": "goal-activation-probe",
+      "request": "Why is the dashboard loading slowly?",
+      "expectedAny": ["NO_GOAL"],
+      "forbidden": ["CREATE_GOAL"]
+    },
+    {
+      "id": "goal-no-activation-diagnosis",
+      "agent": "engineer",
+      "executionMode": "goal-activation-probe",
+      "request": "Diagnose why the authentication tests fail and report the cause; do not implement a fix.",
+      "expectedAny": ["NO_GOAL"],
+      "forbidden": ["CREATE_GOAL"]
+    },
+    {
+      "id": "goal-no-activation-research-report",
+      "agent": "engineer",
+      "executionMode": "goal-activation-probe",
+      "request": "Research how Claude Code handles permissions and report your findings; do not change code.",
+      "expectedAny": ["NO_GOAL"],
+      "forbidden": ["CREATE_GOAL"]
+    },
+    {
+      "id": "goal-no-activation-complex-without-persistence",
+      "agent": "engineer",
+      "executionMode": "goal-activation-probe",
+      "request": "Refactor the parser, update tests, and summarize the changes.",
+      "expectedAny": ["NO_GOAL"],
+      "forbidden": ["CREATE_GOAL"]
+    },
+    {
+      "id": "goal-activation-unclear-endpoint",
+      "agent": "engineer",
+      "executionMode": "goal-activation-probe",
+      "request": "Keep working on this until it is better.",
+      "expectedAny": ["ASK_CLARIFY"],
+      "forbidden": ["CREATE_GOAL"]
     }
   ]
 }

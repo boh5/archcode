@@ -16,6 +16,24 @@ export interface ChildExecutionRequest {
   readonly parentAbort?: AbortSignal;
 }
 
+/**
+ * Runtime-only provenance for the mandatory Session Goal completion review.
+ * Unlike a normal delegation this does not pretend that a model-visible
+ * `delegate` tool call exists. The caller pre-mints both durable identities so
+ * the Goal claim can be checkpointed before the child is started.
+ */
+export interface RuntimeGoalReviewChildRequest {
+  readonly provenance: {
+    readonly kind: "goal_review";
+    readonly reviewClaimId: string;
+  };
+  readonly parentStore: StoreApi<SessionStoreState>;
+  readonly parentSessionId: string;
+  readonly reviewerSessionId: string;
+  readonly reviewerExecutionId: string;
+  readonly contract: DelegationContract;
+}
+
 /** Parent-facing execution outcome. Task status lives only in resultReceipt. */
 export interface ChildExecutionOutcome {
   readonly executionStatus: SessionExecutionRecord["status"];

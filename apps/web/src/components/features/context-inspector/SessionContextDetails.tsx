@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { useAutomations, useGoals, useSession } from "../../../api/queries";
+import { useAutomations, useSession } from "../../../api/queries";
 import { useSessionStore } from "../../../store/session-store";
 import { InspectorNotice, InspectorRows, InspectorSection, InspectorValue } from "./InspectorPrimitives";
 
@@ -9,7 +9,6 @@ export function SessionContextDetails() {
   const [searchParams] = useSearchParams();
   const focused = searchParams.get("focus") ?? sessionId;
   const { data: session, isLoading } = useSession(slug, focused);
-  const { data: goals } = useGoals(slug);
   const { data: automations } = useAutomations(slug);
   const hydrationStatus = useSessionStore(focused, (state) => state.hydrationStatus, slug);
   const liveCwd = useSessionStore(focused, (state) => state.cwd, slug);
@@ -50,7 +49,6 @@ export function SessionContextDetails() {
           `${message.id} · ${formatMode(message.modelAudit!.requested.mode)} · ${formatSelection(message.modelAudit!.requested.selection)} · ${formatReason(message.modelAudit!.reason)}`,
         ])
       : [["Requests", "No associated user requests"]];
-  const relatedGoals = (goals ?? []).filter((goal) => (goal as unknown as { createdFromSessionId: string }).createdFromSessionId === focused);
   const relatedAutomations = (automations ?? []).filter((automation) => (automation as unknown as { createdFromSessionId: string }).createdFromSessionId === focused);
   return (
     <div className="space-y-4">
@@ -84,21 +82,10 @@ export function SessionContextDetails() {
           ["Executions", String(executions.length)],
         ]} />
       </InspectorSection>
-      {session.goalId && <InspectorSection title="Executing Goal"><Link className="block text-xs text-accent hover:underline" to={`/projects/${slug}/goals/${session.goalId}`}>Open executing goal</Link></InspectorSection>}
-      {(relatedGoals.length > 0 || relatedAutomations.length > 0) && (
+      {relatedAutomations.length > 0 && (
         <InspectorSection title="Related work">
           <div className="space-y-1">
             <div className="px-2 text-[10px] font-semibold uppercase tracking-wide text-text-muted">Created here</div>
-            {relatedGoals.map((goal) => (
-              <Link
-                key={`goal-${goal.id}`}
-                className="block rounded-sm px-2 py-1.5 text-xs hover:bg-bg-hover focus-visible:outline-2 focus-visible:outline-accent"
-                to={`/projects/${slug}/goals/${goal.id}`}
-              >
-                <span className="font-medium text-text-primary">{goal.title || "Untitled goal"}</span>
-                <span className="ml-2 text-text-muted">Goal · {goal.status}</span>
-              </Link>
-            ))}
             {relatedAutomations.map((automation) => (
               <Link
                 key={`automation-${automation.id}`}

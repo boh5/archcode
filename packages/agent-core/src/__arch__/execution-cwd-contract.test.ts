@@ -64,7 +64,11 @@ describe("Session execution cwd architecture", () => {
       expect(text, `${file} must expose an explicit cwd contract`).toMatch(/\bcwd\??:\s*(?:readonly\s+)?string\b|readonly\s+cwd\??:\s*string\b/);
     }
 
-    expect(source("tools/types.ts")).not.toMatch(/\bworkspaceRoot:\s*string\s*;/);
+    const toolExecutionContext = source("tools/types.ts").match(
+      /export interface ToolExecutionContext\s*\{([\s\S]*?)\n\}/,
+    )?.[1];
+    expect(toolExecutionContext).toBeDefined();
+    expect(toolExecutionContext).not.toMatch(/\bworkspaceRoot:\s*string\s*;/);
     expect(source("agents/query/types.ts")).not.toMatch(/\bworkspaceRoot\??:\s*string\s*;/);
     expect(source("commands/types.ts")).not.toMatch(/\bworkspaceRoot\??:\s*string\s*;/);
     expect(source("tools/permission/scopes.ts")).not.toMatch(/\bworkspaceRoot:\s*string\s*;/);

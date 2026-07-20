@@ -587,7 +587,7 @@ describe("SessionRoute focused view store behavior", () => {
       revision: 3,
       discussionSessionId: "root-session",
       activation: {
-        kind: "goal",
+        kind: "session",
         sourceSessionId: "root-session",
         todoRevision: 3,
         snapshot: { title: "Add resilient offline mode", body: "" },

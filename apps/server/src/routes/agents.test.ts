@@ -8,7 +8,7 @@ describe("GET /api/agents", () => {
     const app = createAgentsRoutes({
       listAgentDescriptors: () => [
         { name: "engineer", displayName: "Engineer" },
-        { name: "goal_lead", displayName: "Goal Lead" },
+        { name: "reviewer", displayName: "Reviewer" },
       ],
     } as Pick<AgentRuntime, "listAgentDescriptors">);
 
@@ -18,7 +18,7 @@ describe("GET /api/agents", () => {
     expect(await response.json()).toEqual({
       agents: [
         { name: "engineer", displayName: "Engineer" },
-        { name: "goal_lead", displayName: "Goal Lead" },
+        { name: "reviewer", displayName: "Reviewer" },
       ],
     });
   });

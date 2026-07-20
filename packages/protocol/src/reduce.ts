@@ -23,6 +23,7 @@ import type {
   ExecutionEndEvent,
   FinalizedToolResult,
 } from "./types";
+import type { SessionGoalChangedEvent } from "./session-goal";
 import { addUsage, createEmptySessionStats, normalizeUsage } from "./usage";
 
 const TODO_STATUSES = new Set<SessionTodo["status"]>([
@@ -50,7 +51,7 @@ export interface ReduceContext {
 
 export function reduceStreamEvent(
   state: SessionProjection,
-  event: StreamEvent,
+  event: StreamEvent | SessionGoalChangedEvent,
   ctx: ReduceContext,
 ): Partial<SessionProjection> {
   const timestamp = ctx.timestamp;
@@ -92,6 +93,9 @@ export function reduceStreamEvent(
 
     case "session.model_selection_changed":
       return { modelSelection: event.modelSelection };
+
+    case "session.goal_changed":
+      return { goal: event.goal ?? undefined };
 
     case "session.message_accepted":
       return { pendingMessages: [...state.pendingMessages, event.message] };

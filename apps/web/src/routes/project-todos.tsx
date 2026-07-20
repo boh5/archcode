@@ -29,7 +29,7 @@ import {
   useReturnProjectTodoToReady,
   useUpdateProjectTodo,
 } from "../api/mutations";
-import { useAutomations, useGoals, useProjectTodos, useSessions } from "../api/queries";
+import { useAutomations, useProjectTodos, useSessions } from "../api/queries";
 import type { ProjectTodo, ProjectTodoActivationKind, ProjectTodoUpdateInput } from "../api/types";
 import { useSessionRuntimeFamilies, useSessionRuntimeInitialized, runtimeFamilyKey } from "../store/session-runtime-store";
 
@@ -104,7 +104,6 @@ export function ProjectTodosRoute() {
   const navigate = useNavigate();
   const { data: todos, isLoading, error } = useProjectTodos(slug);
   const { data: sessions, isLoading: sessionsLoading } = useSessions(slug);
-  const { data: goals, isLoading: goalsLoading } = useGoals(slug);
   const { data: automations, isLoading: automationsLoading } = useAutomations(slug);
   const runtimeFamilies = useSessionRuntimeFamilies();
   const runtimeInitialized = useSessionRuntimeInitialized(slug);
@@ -211,10 +210,10 @@ export function ProjectTodosRoute() {
       <main className="flex-1 overflow-auto px-5 pb-6 pt-4">
         {view === "board" ? (
           <div className="mx-auto grid min-w-[880px] max-w-[1500px] grid-cols-4 items-start gap-3">
-            <TodoGroup lane="idea" todos={groups.idea} expandedId={expandedId} onExpand={setExpandedId} slug={slug} navigate={navigate} sessions={sessions} goals={goals} automations={automations} runtimeFamilies={runtimeFamilies} sessionsLoading={sessionsLoading} goalsLoading={goalsLoading} automationsLoading={automationsLoading} runtimeInitialized={runtimeInitialized} />
-            <TodoGroup lane="ready" todos={groups.ready} expandedId={expandedId} onExpand={setExpandedId} slug={slug} navigate={navigate} sessions={sessions} goals={goals} automations={automations} runtimeFamilies={runtimeFamilies} sessionsLoading={sessionsLoading} goalsLoading={goalsLoading} automationsLoading={automationsLoading} runtimeInitialized={runtimeInitialized} />
-            <TodoGroup lane="in_progress" todos={groups.in_progress} expandedId={expandedId} onExpand={setExpandedId} slug={slug} navigate={navigate} sessions={sessions} goals={goals} automations={automations} runtimeFamilies={runtimeFamilies} sessionsLoading={sessionsLoading} goalsLoading={goalsLoading} automationsLoading={automationsLoading} runtimeInitialized={runtimeInitialized} />
-            <TodoGroup lane="done" todos={groups.done} expandedId={expandedId} onExpand={setExpandedId} slug={slug} navigate={navigate} sessions={sessions} goals={goals} automations={automations} runtimeFamilies={runtimeFamilies} sessionsLoading={sessionsLoading} goalsLoading={goalsLoading} automationsLoading={automationsLoading} runtimeInitialized={runtimeInitialized} />
+            <TodoGroup lane="idea" todos={groups.idea} expandedId={expandedId} onExpand={setExpandedId} slug={slug} navigate={navigate} sessions={sessions} automations={automations} runtimeFamilies={runtimeFamilies} sessionsLoading={sessionsLoading} automationsLoading={automationsLoading} runtimeInitialized={runtimeInitialized} />
+            <TodoGroup lane="ready" todos={groups.ready} expandedId={expandedId} onExpand={setExpandedId} slug={slug} navigate={navigate} sessions={sessions} automations={automations} runtimeFamilies={runtimeFamilies} sessionsLoading={sessionsLoading} automationsLoading={automationsLoading} runtimeInitialized={runtimeInitialized} />
+            <TodoGroup lane="in_progress" todos={groups.in_progress} expandedId={expandedId} onExpand={setExpandedId} slug={slug} navigate={navigate} sessions={sessions} automations={automations} runtimeFamilies={runtimeFamilies} sessionsLoading={sessionsLoading} automationsLoading={automationsLoading} runtimeInitialized={runtimeInitialized} />
+            <TodoGroup lane="done" todos={groups.done} expandedId={expandedId} onExpand={setExpandedId} slug={slug} navigate={navigate} sessions={sessions} automations={automations} runtimeFamilies={runtimeFamilies} sessionsLoading={sessionsLoading} automationsLoading={automationsLoading} runtimeInitialized={runtimeInitialized} />
           </div>
         ) : (
           <div className="mx-auto max-w-5xl">
@@ -236,7 +235,7 @@ export function ProjectTodosRoute() {
                 </div>
               ) : (
                 <div className="grid gap-2.5 md:grid-cols-2">
-                  {visibleTodos.map((todo) => <TodoCard key={todo.id} todo={todo} expanded={expandedId === todo.id} onExpand={() => setExpandedId(expandedId === todo.id ? null : todo.id)} slug={slug} navigate={navigate} sessions={sessions} goals={goals} automations={automations} runtimeFamilies={runtimeFamilies} sessionsLoading={sessionsLoading} goalsLoading={goalsLoading} automationsLoading={automationsLoading} runtimeInitialized={runtimeInitialized} />)}
+                  {visibleTodos.map((todo) => <TodoCard key={todo.id} todo={todo} expanded={expandedId === todo.id} onExpand={() => setExpandedId(expandedId === todo.id ? null : todo.id)} slug={slug} navigate={navigate} sessions={sessions} automations={automations} runtimeFamilies={runtimeFamilies} sessionsLoading={sessionsLoading} automationsLoading={automationsLoading} runtimeInitialized={runtimeInitialized} />)}
                 </div>
               )}
             </section>
@@ -298,11 +297,9 @@ interface TodoGroupProps {
   slug: string;
   navigate: ReturnType<typeof useNavigate>;
   sessions?: import("../api/types").SessionSummary[];
-  goals?: import("../api/types").GoalState[];
   automations?: import("../api/types").Automation[];
   runtimeFamilies: ReturnType<typeof useSessionRuntimeFamilies>;
   sessionsLoading: boolean;
-  goalsLoading: boolean;
   automationsLoading: boolean;
   runtimeInitialized: boolean;
 }
@@ -313,7 +310,7 @@ interface TodoCardProps extends Omit<TodoGroupProps, "lane" | "todos" | "expande
   onExpand: () => void;
 }
 
-function TodoCard({ todo, expanded, onExpand, slug, navigate, sessions, goals, automations, runtimeFamilies, sessionsLoading, goalsLoading, automationsLoading, runtimeInitialized }: TodoCardProps) {
+function TodoCard({ todo, expanded, onExpand, slug, navigate, sessions, automations, runtimeFamilies, sessionsLoading, automationsLoading, runtimeInitialized }: TodoCardProps) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(todo.title);
   const [body, setBody] = useState(todo.body);
@@ -332,7 +329,6 @@ function TodoCard({ todo, expanded, onExpand, slug, navigate, sessions, goals, a
   const isArchived = todo.archivedAt !== undefined;
   const inProgress = todo.activation !== undefined && todo.status !== "done" && !isArchived;
   const linkedSession = todo.activation?.kind === "session" && todo.activation.resourceId ? sessions?.find((session) => session.sessionId === todo.activation?.resourceId) : undefined;
-  const linkedGoal = todo.activation?.kind === "goal" && todo.activation.resourceId ? goals?.find((goal) => goal.id === todo.activation?.resourceId) : undefined;
   const linkedAutomation = todo.activation?.kind === "automation" && todo.activation.resourceId ? automations?.find((automation) => automation.id === todo.activation?.resourceId) : undefined;
   const sessionActivity = linkedSession ? runtimeFamilies[runtimeFamilyKey(slug, linkedSession.sessionId)]?.activity : undefined;
 
@@ -400,11 +396,9 @@ function TodoCard({ todo, expanded, onExpand, slug, navigate, sessions, goals, a
             todo={todo}
             slug={slug}
             linkedSession={linkedSession}
-            linkedGoal={linkedGoal}
             linkedAutomation={linkedAutomation}
             sessionActivity={sessionActivity}
             sessionsLoading={sessionsLoading}
-            goalsLoading={goalsLoading}
             automationsLoading={automationsLoading}
             runtimeInitialized={runtimeInitialized}
           />
@@ -443,8 +437,6 @@ function TodoCard({ todo, expanded, onExpand, slug, navigate, sessions, goals, a
                   <><Link className="inline-flex items-center gap-1 text-accent hover:underline" to={`/projects/${slug}/sessions/${todo.activation.sourceSessionId}`}>Source Session <ExternalLink size={10} /></Link><span>Preparing resource…</span></>
                 ) : todo.activation.kind === "session" ? (
                   linkedSession ? <Link className="inline-flex items-center gap-1 text-accent hover:underline" to={`/projects/${slug}/sessions/${linkedSession.sessionId}`}>Session · {runtimeInitialized ? sessionActivity ?? "idle" : "loading"}<ExternalLink size={10} /></Link> : <span>{sessionsLoading ? "Loading resource…" : "Deleted"}</span>
-                ) : todo.activation.kind === "goal" ? (
-                  linkedGoal ? <Link className="inline-flex items-center gap-1 text-accent hover:underline" to={`/projects/${slug}/goals/${linkedGoal.id}`}>Goal · {linkedGoal.status}<ExternalLink size={10} /></Link> : <span>{goalsLoading ? "Loading resource…" : "Deleted"}</span>
                 ) : linkedAutomation ? (
                   <Link className="inline-flex items-center gap-1 text-accent hover:underline" to={`/projects/${slug}/automations/${linkedAutomation.id}`}>Automation · {linkedAutomation.status}<ExternalLink size={10} /></Link>
                 ) : <span>{automationsLoading ? "Loading resource…" : "Deleted"}</span>}
@@ -464,7 +456,6 @@ function TodoCard({ todo, expanded, onExpand, slug, navigate, sessions, goals, a
           {!isArchived && todo.status === "ready" && !todo.activation && (
             <div className="flex flex-wrap gap-1.5">
               <TodoActionButton onClick={() => startActivation("session")} disabled={activate.isPending} variant="primary"><Send size={12} /> Start Session</TodoActionButton>
-              <TodoActionButton onClick={() => startActivation("goal")} disabled={activate.isPending}>Start Goal</TodoActionButton>
               <TodoActionButton onClick={() => startActivation("automation")} disabled={activate.isPending}>Create Automation</TodoActionButton>
               <TodoActionButton onClick={() => setStatus("idea")}><RotateCcw size={12} /> Move to Idea</TodoActionButton>
               <RejectButton onClick={beginRejecting} />
@@ -498,15 +489,13 @@ function CompactPrimaryAction({ label, onClick, disabled = false }: { label: str
   return <TodoActionButton onClick={onClick} disabled={disabled} variant="accent">{label}</TodoActionButton>;
 }
 
-function CollapsedTodoAssociations({ todo, slug, linkedSession, linkedGoal, linkedAutomation, sessionActivity, sessionsLoading, goalsLoading, automationsLoading, runtimeInitialized }: {
+function CollapsedTodoAssociations({ todo, slug, linkedSession, linkedAutomation, sessionActivity, sessionsLoading, automationsLoading, runtimeInitialized }: {
   todo: ProjectTodo;
   slug: string;
   linkedSession?: import("../api/types").SessionSummary;
-  linkedGoal?: import("../api/types").GoalState;
   linkedAutomation?: import("../api/types").Automation;
   sessionActivity?: import("@archcode/protocol").SessionFamilyActivity;
   sessionsLoading: boolean;
-  goalsLoading: boolean;
   automationsLoading: boolean;
   runtimeInitialized: boolean;
 }) {
@@ -518,8 +507,6 @@ function CollapsedTodoAssociations({ todo, slug, linkedSession, linkedGoal, link
           <Link className="inline-flex items-center gap-1 rounded-sm bg-accent-subtle px-1.5 py-1 text-accent transition-colors hover:bg-accent-muted" to={`/projects/${slug}/sessions/${todo.activation.sourceSessionId}`}><Play size={10} /> Activation · {todo.activation.kind} · preparing</Link>
         ) : todo.activation.kind === "session" ? (
           linkedSession ? <Link className="inline-flex items-center gap-1 rounded-sm bg-accent-subtle px-1.5 py-1 text-accent transition-colors hover:bg-accent-muted" to={`/projects/${slug}/sessions/${linkedSession.sessionId}`}><Play size={10} /> Activation · Session · {runtimeInitialized ? sessionActivity ?? "idle" : "loading"}</Link> : <span><Play size={10} className="inline" /> Activation · Session · {sessionsLoading ? "loading" : "deleted"}</span>
-        ) : todo.activation.kind === "goal" ? (
-          linkedGoal ? <Link className="inline-flex items-center gap-1 rounded-sm bg-accent-subtle px-1.5 py-1 text-accent transition-colors hover:bg-accent-muted" to={`/projects/${slug}/goals/${linkedGoal.id}`}><Play size={10} /> Activation · Goal · {linkedGoal.status}</Link> : <span><Play size={10} className="inline" /> Activation · Goal · {goalsLoading ? "loading" : "deleted"}</span>
         ) : linkedAutomation ? (
           <Link className="inline-flex items-center gap-1 rounded-sm bg-accent-subtle px-1.5 py-1 text-accent transition-colors hover:bg-accent-muted" to={`/projects/${slug}/automations/${linkedAutomation.id}`}><Play size={10} /> Activation · Automation · {linkedAutomation.status}</Link>
         ) : <span><Play size={10} className="inline" /> Activation · Automation · {automationsLoading ? "loading" : "deleted"}</span>

@@ -44,17 +44,23 @@ describe("Prompt live eval contract", () => {
       if (prompt.includes("independent")) return "parallel";
       if (prompt.includes("resulting diff")) return "then review after implementation";
       if (prompt.includes("ordinary delegated")) return "submit_child_result";
-      if (prompt.includes("Goal review")) return "finalize_review";
+      if (prompt.includes("Goal review")) return "submit_child_result";
+      if (prompt.includes("working autonomously") || prompt.includes("Take ownership")) return "CREATE_GOAL";
+      if (prompt.includes("until it is better")) return "ASK_CLARIFY";
+      if (prompt.includes("Classify the following")) return "NO_GOAL";
       return "submit_child_result";
     });
 
-    expect(calls).toHaveLength(6);
+    expect(calls).toHaveLength(14);
     expect(calls.every(({ system }) => system.includes("## Shared Kernel"))).toBe(true);
     expect(calls.slice(0, 3).every(({ system }) => system.includes("Agent: engineer"))).toBe(true);
     expect(calls[3]!.system).toContain("Role Contract: Build");
     expect(calls[3]!.system).toContain("submit_child_result");
     expect(calls[4]!.system).toContain("Completion authority: ordinary-reviewer");
     expect(calls[5]!.system).toContain("Completion authority: goal-reviewer");
-    expect(calls[5]!.system).toContain("goal_manage.finalize_review");
+    expect(calls[5]!.system).toContain("submit_child_result");
+    expect(calls[5]!.system).not.toContain("goal_manage");
+    expect(calls.slice(6).every(({ system }) => system.includes("create_goal"))).toBe(true);
+    expect(calls.slice(6).every(({ prompt }) => prompt.includes("Reply with exactly CREATE_GOAL"))).toBe(true);
   });
 });

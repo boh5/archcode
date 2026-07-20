@@ -659,18 +659,18 @@ describe("ToolRegistry permission and durable HITL boundary", () => {
     expect(execute).toHaveBeenCalledTimes(2);
   });
 
-  test("deny execution control leaves persistence through the runtime-only sidecar", async () => {
+  test("Goal review execution control leaves persistence through the runtime-only sidecar", async () => {
     const created = fixture({ descriptors: [descriptor({ permissions: [async () => ({
       outcome: "deny",
-      reason: "stop",
-      executionControl: { action: "stop_session_family", reason: "goal_cancelled" },
+      reason: "review",
+      executionControl: { action: "request_goal_review", reason: "candidate complete" },
     })] })] });
     const outcome = await created.registry.execute(
       { toolName: "echo", toolCallId: "sidecar-deny", input: {} }, context("echo"),
     );
     expect(outcome.kind).toBe("settled");
     expect(outcome.kind === "settled" ? outcome.sidecar : undefined).toEqual({
-      executionControl: { action: "stop_session_family", reason: "goal_cancelled" },
+      executionControl: { action: "request_goal_review", reason: "candidate complete" },
     });
   });
 

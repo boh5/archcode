@@ -90,7 +90,7 @@ describe("ProjectTodoStateManager", () => {
     const manager = new ProjectTodoStateManager(TMP_ROOT);
     const idea = await manager.createTodo({ title: "Build it" });
     const ready = await manager.updateTodo(idea.id, { expectedRevision: idea.revision, patch: { status: "ready" } });
-    const active = await manager.checkpointActivation(ready.id, ready.revision, "goal", crypto.randomUUID());
+    const active = await manager.checkpointActivation(ready.id, ready.revision, "session", crypto.randomUUID());
 
     await expect(manager.updateTodo(active.id, {
       expectedRevision: active.revision,
@@ -102,13 +102,13 @@ describe("ProjectTodoStateManager", () => {
     await expect(manager.checkpointActivation(
       stillActive.id,
       stillActive.revision,
-      "goal",
+      "session",
       crypto.randomUUID(),
     )).rejects.toBeInstanceOf(ProjectTodoActivationConflictError);
     await expect(manager.checkpointActivation(
       stillActive.id,
       active.activation!.todoRevision,
-      "goal",
+      "session",
       crypto.randomUUID(),
     )).resolves.toEqual(stillActive);
 
@@ -126,7 +126,7 @@ describe("ProjectTodoStateManager", () => {
     await expect(manager.checkpointActivation(
       done.id,
       done.activation!.todoRevision,
-      "goal",
+      "session",
       crypto.randomUUID(),
     )).rejects.toBeInstanceOf(ProjectTodoActivationConflictError);
     const archived = await manager.archiveTodo(done.id, done.revision);
@@ -152,8 +152,8 @@ describe("ProjectTodoStateManager", () => {
 
     const ready = await manager.updateTodo(idea.id, { expectedRevision: discussion.revision, patch: { status: "ready" } });
     const sourceSessionId = crypto.randomUUID();
-    const active = await manager.checkpointActivation(idea.id, ready.revision, "goal", sourceSessionId);
-    const retried = await manager.checkpointActivation(idea.id, ready.revision, "goal", crypto.randomUUID());
+    const active = await manager.checkpointActivation(idea.id, ready.revision, "automation", sourceSessionId);
+    const retried = await manager.checkpointActivation(idea.id, ready.revision, "automation", crypto.randomUUID());
     expect(retried).toEqual(active);
 
     const resourceId = crypto.randomUUID();

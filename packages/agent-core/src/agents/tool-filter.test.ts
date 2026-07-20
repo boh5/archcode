@@ -4,7 +4,6 @@ import {
   exploreAgentDefinition,
   librarianAgentDefinition,
   engineerAgentDefinition,
-  goalLeadAgentDefinition,
   planAgentDefinition,
   reviewerAgentDefinition,
   shaperAgentDefinition,
@@ -15,7 +14,6 @@ describe("compress tool access matrix", () => {
   test("all agents use autoCompact hooks and expose DCP-style compress for context management", () => {
     for (const definition of [
       engineerAgentDefinition,
-      goalLeadAgentDefinition,
       planAgentDefinition,
       buildAgentDefinition,
       reviewerAgentDefinition,

@@ -35,17 +35,6 @@ export class SessionLifecycleService implements SessionDeletionLifecycle {
   async assertDeletable(input: SessionDeletionPreflightInput): Promise<void> {
     const owners: SessionDeletionOwnerDetail[] = [];
 
-    // The root owner also governs a child-only deletion request. Inspect it even
-    // when the selected subtree does not contain the root itself.
-    for (const sessionId of [...new Set([input.rootSessionId, ...input.sessionIds])].sort()) {
-      const store = await this.#storeManager.getOrLoad(sessionId, input.workspaceRoot);
-      const state = store.getState();
-
-      if (state.goalId !== undefined) {
-        owners.push({ sessionId, ownerType: "goal", ownerId: state.goalId });
-      }
-    }
-
     owners.push(...await this.#findProjectTodoOwners({
       ...input,
       sessionIds: [...new Set([input.rootSessionId, ...input.sessionIds])].sort(),

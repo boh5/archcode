@@ -16,6 +16,7 @@ import type {
   DelegationContract,
   PromptTraceSnapshot,
   FinalizedToolResult,
+  SessionGoal,
 } from "@archcode/protocol";
 import type { CompressionState } from "../compression";
 import type { AgentName } from "../agents/names";
@@ -94,8 +95,6 @@ export type {
   SessionTodoStatus as StoredTodoStatus,
 } from "@archcode/protocol";
 export { MAX_EVENTS } from "@archcode/protocol";
-
-export type SessionRole = "main" | "plan" | "build" | "review" | "explore" | "librarian" | "standalone";
 
 export type SessionToolCallState =
   | "queued"
@@ -203,8 +202,8 @@ export interface SessionStoreState {
   // Descendant relationships are derived from child files, not parent-side caches.
   rootSessionId: string;
   parentSessionId?: string;
-  goalId?: string;
-  sessionRole?: SessionRole;
+  /** Only root Engineer Sessions may own a Goal. */
+  goal?: SessionGoal;
 
   // Running state
   executionCount: number;
@@ -239,8 +238,6 @@ export interface SessionStoreState {
   setCwd: (cwd: string) => void;
   setTitle: (title: string | null) => void;
   setParentSessionId: (parentSessionId: string | undefined) => void;
-  setGoalId: (goalId: string | undefined) => void;
-  setSessionRole: (sessionRole: SessionRole | undefined) => void;
   toModelMessages: () => ModelMessage[];
 }
 

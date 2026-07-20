@@ -1,4 +1,5 @@
-import type { ChildResult, ChildResultReceipt, DelegationContract } from "./delegation";
+import type { ChildResultReceipt, DelegationContract } from "./delegation";
+import type { SessionGoal, SessionGoalChangedEvent } from "./session-goal";
 import type {
   ExecutionModelBindingSummary,
   GlobalSSEModelRuntimeChangedEvent,
@@ -21,7 +22,13 @@ export interface ExecutionStartEvent {
   origin: SessionExecutionOrigin;
 }
 
-export type SessionExecutionOrigin = "user_message" | "tool_call" | "tool_batch" | "goal_claim";
+export type SessionExecutionOrigin =
+  | "user_message"
+  | "tool_call"
+  | "tool_batch"
+  | "goal_continuation"
+  | "goal_remediation"
+  | "goal_review";
 
 export interface ExecutionEndEvent {
   type: "execution-end";
@@ -753,7 +760,6 @@ export interface ServerConfigDocument<Secret> {
   provider: Record<string, ConfigProviderSettings<Secret>>;
   agents: {
     engineer: ConfigAgentSettings;
-    goal_lead: ConfigAgentSettings;
     plan: ConfigAgentSettings;
     build: ConfigAgentSettings;
     reviewer: ConfigAgentSettings;
@@ -856,7 +862,7 @@ export type GlobalSSEResourceChangedEvent =
   {
     type: "resource.changed";
     projectSlug: string;
-    resourceType: "goal" | "automation" | "todo";
+    resourceType: "automation" | "todo";
     resourceId: string;
     createdAt: number;
   };
@@ -882,6 +888,7 @@ export interface ShutdownEvent {
 
 export type SessionEventPayload =
   | StreamEvent
+  | SessionGoalChangedEvent
   | ShutdownEvent;
 
 export interface TextPart {
@@ -1042,6 +1049,8 @@ export interface SessionProjection {
   parentSessionId?: string;
   delegationContract?: DelegationContract;
   delegationContractHash?: string;
+  /** Optional long-running execution contract owned by this root Engineer Session. */
+  goal?: SessionGoal;
   title: string | null;
   messages: SessionMessage[];
   pendingMessages: PendingSessionMessage[];
@@ -1108,8 +1117,8 @@ export interface SessionSummary {
   activeSkillNames: string[];
   modelSelection: SessionModelSelection;
   title: string | null;
-  /** Goal this session belongs to. */
-  goalId?: string;
+  /** Present only on a root Engineer Session with a current Goal. */
+  goal?: SessionGoal;
   createdAt: number;
   updatedAt: number;
 }
@@ -1145,8 +1154,8 @@ export interface Session {
   cwd: string;
   rootSessionId: string;
   title: string | null;
-  /** Goal this session belongs to. */
-  goalId?: string;
+  /** Present only on a root Engineer Session with a current Goal. */
+  goal?: SessionGoal;
   createdAt: number;
   updatedAt: number;
   messages: SessionMessage[];
@@ -1203,117 +1212,13 @@ export interface ToolDiffMetadata {
   warning?: string;
 }
 
-// ─── Goal Types ───
-
-export type GoalStatus =
-  | "running"
-  | "reviewing"
-  | "done"
-  | "not_done"
-  | "failed"
-  | "cancelled";
-
-export type GoalEvidenceRefKind =
-  | "session"
-  | "message"
-  | "tool_call"
-  | "diff"
-  | "test_output"
-  | "file"
-  | "url"
-  | "hitl";
-
-export type GoalReviewVerdict = "DONE" | "NOT_DONE";
-
-export interface GoalEvidenceRef {
-  kind: GoalEvidenceRefKind;
-  ref: string;
-  summary: string;
-  sessionId?: string;
-  messageId?: string;
-  toolCallId?: string;
-  path?: string;
-  url?: string;
-  createdAt?: string;
-}
-
-export interface GoalReviewReceipt {
-  executionId: string;
-  delegationContractHash: string;
-  reviewGeneration: number;
-  verdict: GoalReviewVerdict;
-  summary: string;
-  evidenceRefs: GoalEvidenceRef[];
-  unresolvedItems?: string[];
-  reviewerSessionId: string;
-  decidedAt: string;
-  result: ChildResult;
-}
-
-export interface GoalBudgetApproval {
-  hitlId: string;
-  approvalPoint: string;
-  createdAt: string;
-}
-
-export interface GoalBudgetSummary {
-  status: "ok" | "warning" | "blocked";
-  usedTokens?: number;
-  maxTokens?: number;
-  reason?: string;
-  updatedAt: string;
-}
-
-export interface GoalWorktree {
-  path: string;
-  branchName: string;
-  baseSha: string;
-  createdAt: string;
-}
-
-export interface GoalState {
-  id: string;
-  projectSlug: string;
-  /** Ordinary Engineer Session in which the user confirmed this Goal. */
-  createdFromSessionId: string;
-  title: string | null;
-  objective: string;
-  acceptanceCriteria: string;
-  useWorktree: boolean;
-  worktree?: GoalWorktree;
-  status: GoalStatus;
-  budgetApproval?: GoalBudgetApproval;
-  attempt: number;
-  reviewGeneration: number;
-  lastFailureSummary?: string;
-  budget?: GoalBudgetSummary;
-  /** Budget HITL ids whose Goal-side decision committed atomically. */
-  appliedBudgetHitlIds: string[];
-  mainSessionId: string;
-  childSessionIds: string[];
-  review?: GoalReviewReceipt;
-  finalSummary?: string;
-  createdAt: string;
-  updatedAt: string;
-  startedAt: string;
-  completedAt?: string;
-  cancelledAt?: string;
-  lastError?: {
-    name: string;
-    message: string;
-    at: string;
-  };
-}
-
 export type HitlAttentionStatus = "clear" | "waiting_for_human";
 
 // ─── HITL Types ───
 
 export const HITL_RECENT_TERMINAL_LIMIT = 20;
 
-export type HitlOwner =
-  | { type: "session"; id: string }
-  | { type: "goal"; id: string };
+export type HitlOwner = { type: "session"; id: string };
 
 export function hitlIdentityKey(identity: { owner: HitlOwner; hitlId: string }): string {
   return JSON.stringify([
@@ -1327,8 +1232,7 @@ export type HitlStatus = "pending" | "answered" | "resolved" | "cancelled";
 
 export type HitlSource =
   | { type: "ask_user"; toolCallId: string }
-  | { type: "tool_permission"; toolCallId: string; toolName: string }
-  | { type: "goal_budget"; approvalPoint: string };
+  | { type: "tool_permission"; toolCallId: string; toolName: string };
 
 export interface HitlQuestionDisplayOption {
   label: string;
@@ -1354,7 +1258,6 @@ export interface HitlDisplayPayload {
 export type HitlResponse =
   | { type: "question_answer"; answers: string[]; comment?: string; answeredBy?: string }
   | { type: "permission_decision"; decision: "approve_once" | "approve_always" | "deny"; comment?: string; decidedBy?: string }
-  | { type: "budget_decision"; decision: "approved" | "denied"; comment?: string; decidedBy?: string }
   | { type: "cancel"; reason: string; cancelledBy?: string };
 
 export type HitlAllowedAction = "answer" | "approve" | "deny" | "cancel";

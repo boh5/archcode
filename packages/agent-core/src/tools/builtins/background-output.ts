@@ -2,7 +2,6 @@ import { z } from "zod";
 import type { ChildResultReceipt, JsonObject, ToolResultDetails } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 import type { SessionStoreState, StoredMessage, StoredPart, ToolPart } from "../../store/types";
-import { projectGoalReviewReceipt } from "../../goals/review-schema";
 import { sliceUtf8Head, utf8ByteLength } from "../../tool-output/utf8";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
@@ -108,8 +107,6 @@ export async function executeBackgroundOutput(
     });
   }
 
-  await recoverGoalReviewResultProjection(childStore, ctx);
-
   const waitResult = input.block && childStore.getState().isRunning
     ? await waitForChildToStop(childStore, input.timeout_ms, ctx.abort)
     : "not_waited";
@@ -132,39 +129,6 @@ export async function executeBackgroundOutput(
     }
     throw error;
   }
-}
-
-async function recoverGoalReviewResultProjection(
-  childStore: StoreApi<SessionStoreState>,
-  ctx: ToolExecutionContext,
-): Promise<void> {
-  const state = childStore.getState();
-  const execution = state.executions.at(-1);
-  if (
-    state.agentName !== "reviewer"
-    || state.sessionRole !== "review"
-    || state.goalId === undefined
-    || execution === undefined
-    || state.childResultReceipts.some((receipt) => receipt.executionId === execution.id)
-  ) return;
-
-  const goal = await ctx.projectContext.goalState.read(state.goalId);
-  const review = goal.review;
-  if (
-    review === undefined
-    || review.reviewerSessionId !== state.sessionId
-    || review.executionId !== execution.id
-    || review.delegationContractHash !== state.delegationContractHash
-  ) return;
-
-  const projection = projectGoalReviewReceipt(review);
-  await ctx.storeManager.commitDurableSessionMutation(
-    state.sessionId,
-    ctx.projectContext.project.workspaceRoot,
-    (current) => current.childResultReceipts.some((receipt) => receipt.executionId === projection.executionId)
-      ? { result: undefined }
-      : { result: undefined, events: [{ type: "child-result", receipt: projection }] },
-  );
 }
 
 async function getChildStore(

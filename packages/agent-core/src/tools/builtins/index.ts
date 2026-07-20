@@ -26,6 +26,7 @@ export { astGrepSearchTool, astGrepReplaceTool } from "./ast-grep";
 export { compressTool, CompressInputSchema } from "./compress";
 export { worktreeEnterTool, worktreeExitTool, WorktreeEnterInputSchema, WorktreeExitInputSchema } from "./worktree";
 export { automationCreateTool } from "./automation-create";
+export { createGoalTool, getGoalTool, updateGoalTool } from "./session-goal";
 export { projectTodoUpdateTool, ProjectTodoUpdateInputSchema } from "./project-todo-update";
 
 import { fileReadTool } from "./file-read";

@@ -3,6 +3,7 @@ import type {
   CompressionBlockSnapshot,
   CompressionStateSnapshot,
   GlobalSessionEventEnvelope,
+  SessionGoal,
   SessionEventPayload,
   SessionMessage,
 } from "@archcode/protocol";
@@ -19,6 +20,21 @@ const requestedModelSelection = {
   selection: { model: "test:model" },
 };
 const binding = { selection: { model: "test:model" }, providerId: "test", modelId: "model", providerDisplayName: "Test", modelDisplayName: "Test Model", resolution: "agent_default" as const, modelRuntimeRevision: "m1" };
+const sessionGoal: SessionGoal = {
+  instanceId: "00000000-0000-4000-8000-000000000001",
+  generation: 1,
+  objective: "Finish the implementation",
+  status: "active",
+  usage: { tokens: { inputTokens: 0, outputTokens: 0, totalTokens: 0, reasoningTokens: 0, cachedInputTokens: 0 }, executionTimeMs: 0, executionCount: 0 },
+  evaluatorCount: 0,
+  noProgressCount: 0,
+  failureCount: 0,
+  userInputCursor: 0,
+  sourceMutationEpoch: 0,
+  createdAt: 1,
+  activatedAt: 1,
+  updatedAt: 1,
+};
 
 function event(eventId: number, payload: SessionEventPayload): GlobalSessionEventEnvelope {
   return {
@@ -256,6 +272,31 @@ describe("applyRemoteEnvelope", () => {
     expect(store.getState().nextEventId).toBe(1);
   });
 
+  test("replays Session Goal snapshots without crashing and applies an explicit clear", () => {
+    const store = createWebSessionStore("session-1", "demo");
+
+    expect(() => store.getState().applyRemoteEnvelope(event(0, {
+      type: "session.goal_changed",
+      action: "created",
+      instanceId: sessionGoal.instanceId,
+      generation: sessionGoal.generation,
+      goal: sessionGoal,
+      status: sessionGoal.status,
+      occurredAt: 1,
+    }))).not.toThrow();
+    expect(store.getState().goal).toEqual(sessionGoal);
+
+    expect(() => store.getState().applyRemoteEnvelope(event(1, {
+      type: "session.goal_changed",
+      action: "cleared",
+      instanceId: sessionGoal.instanceId,
+      generation: sessionGoal.generation,
+      goal: null,
+      occurredAt: 2,
+    }))).not.toThrow();
+    expect(store.getState().goal).toBeUndefined();
+  });
+
   test("buffers gaps and drains only contiguous remote envelopes", () => {
     const store = createWebSessionStore("gap", "demo");
 
@@ -373,6 +414,16 @@ describe("applyRemoteEnvelope", () => {
 describe("initializeFromSnapshot", () => {
   beforeEach(() => {
     __resetWebSessionStoresForTest();
+  });
+
+  test("hydrates and explicitly clears the Session Goal from a current snapshot", () => {
+    const store = createWebSessionStore("goal-snapshot", "demo");
+
+    store.getState().initializeFromSnapshot({ goal: sessionGoal, eventCursor: -1 });
+    expect(store.getState().goal).toEqual(sessionGoal);
+
+    store.getState().initializeFromSnapshot({ goal: undefined, eventCursor: -1 });
+    expect(store.getState().goal).toBeUndefined();
   });
 
   test("durable snapshot takes over an optimistic bubble by clientRequestId", () => {

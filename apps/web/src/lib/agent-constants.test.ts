@@ -16,12 +16,12 @@ import {
 describe("AGENT_TYPES", () => {
   test("contains all expected agent types", () => {
     expect(AGENT_TYPES).toEqual([
-      "engineer", "goal_lead", "plan", "build", "reviewer", "explore", "librarian", "shaper",
+      "engineer", "plan", "build", "reviewer", "explore", "librarian", "shaper",
     ]);
   });
 
   test("is a readonly tuple", () => {
-    expect(AGENT_TYPES.length).toBe(8);
+    expect(AGENT_TYPES.length).toBe(7);
   });
 });
 
@@ -69,7 +69,6 @@ describe("AGENT_BORDER_CLASS", () => {
   test("preserves the semantic border token for every built-in Agent", () => {
     expect(AGENT_BORDER_CLASS).toEqual({
       engineer: "border-agent-engineer",
-      goal_lead: "border-agent-goal-lead",
       plan: "border-agent-plan",
       build: "border-agent-build",
       reviewer: "border-agent-reviewer",
@@ -92,7 +91,6 @@ describe("AGENT_BORDER_CLASS", () => {
 describe("isValidAgentType", () => {
   test("returns true for valid agent types", () => {
     expect(isValidAgentType("engineer")).toBe(true);
-    expect(isValidAgentType("goal_lead")).toBe(true);
     expect(isValidAgentType("plan")).toBe(true);
     expect(isValidAgentType("build")).toBe(true);
     expect(isValidAgentType("explore")).toBe(true);
@@ -108,10 +106,10 @@ describe("isValidAgentType", () => {
   });
 
   test("narrows the type", () => {
-    const value: string = "goal_lead";
+    const value: string = "engineer";
     if (isValidAgentType(value)) {
       const typed: AgentType = value;
-      expect(typed).toBe("goal_lead");
+      expect(typed).toBe("engineer");
     }
   });
 });
@@ -119,12 +117,10 @@ describe("isValidAgentType", () => {
 describe("agent catalog presentation", () => {
   const descriptors = [
     { name: "engineer", displayName: "Engineer" },
-    { name: "goal_lead", displayName: "Goal Lead" },
   ];
 
   test("resolves display names from the server catalog", () => {
     expect(resolveAgentDisplayName("engineer", descriptors)).toBe("Engineer");
-    expect(resolveAgentDisplayName("goal_lead", descriptors)).toBe("Goal Lead");
   });
 
   test("preserves an unknown Agent name instead of substituting a known role", () => {

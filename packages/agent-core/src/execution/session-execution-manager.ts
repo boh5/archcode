@@ -12,6 +12,7 @@ import {
   type SessionExecutionRecord,
   type SessionFamilyActivity,
   type SessionMessageSource,
+  type NormalizedUsage,
   type SessionTreeNode,
   type SessionTreeResponse,
   type ToolChildSessionLink,
@@ -41,13 +42,20 @@ import {
   validateChildResultAgainstContract,
   validateDelegationScopes,
 } from "../delegation/contract";
-import type { ChildExecutionHandle, ChildExecutionOutcome, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
+import type {
+  ChildExecutionHandle,
+  ChildExecutionOutcome,
+  ChildExecutionRequest,
+  ResumeChildRequest,
+  RuntimeGoalReviewChildRequest,
+} from "../delegation/types";
 import { getSessionDir } from "../store/sessions-dir";
 import { NotRootSessionError, SessionDeleteConflictError } from "../store/errors";
 import { scopedKey } from "../store/key";
-import type { Reminder, SessionRole, SessionStoreState } from "../store/types";
+import type { Reminder, SessionStoreState } from "../store/types";
 import type { AgentName } from "../agents/names";
 import type { Logger } from "../logger";
+import type { ConsumeFreshUserInputRequest, FreshUserInputGrant } from "../tools/types";
 import { nextSessionTimestamp, SessionInputConflictError, type ResolvedSessionInputSnapshot, type SessionInputService } from "../session-input/service";
 import type { ExecutionModelBinding, ModelRuntime, ModelRuntimeSnapshot } from "../models";
 import type { ModelSelectionResolver } from "../models/model-selection-resolver";
@@ -73,11 +81,6 @@ import {
   SessionWorkspaceClosingError,
   type SessionWorkspaceCloseLease,
 } from "./session-workspace-control";
-import type { SessionGoalDelegationAdmission } from "./session-goal-delegation-admission";
-import {
-  prependSessionGoalDelegationContext,
-  type SessionGoalDelegationContext,
-} from "./session-goal-delegation-context";
 import { collectSessionTreeIds } from "./session-tree";
 import {
   BuildOwnershipLeaseRegistry,
@@ -86,6 +89,23 @@ import {
 
 const ABORT_AND_WAIT_TIMEOUT_MS = 10000;
 const MAX_CWD_TRANSITIONS_PER_EXECUTION = 4;
+const GOAL_REVIEW_TOOL_PROJECTION = [
+  "file_read",
+  "grep",
+  "glob",
+  "git_status",
+  "git_diff",
+  "bash",
+  "ast_grep_search",
+  "lsp_diagnostics",
+  "lsp_goto_definition",
+  "lsp_find_references",
+  "lsp_symbols",
+  "output_read",
+  "output_search",
+  "compress",
+  "submit_child_result",
+] as const;
 
 export interface ActiveSessionExecution {
   readonly sessionId: string;
@@ -136,6 +156,12 @@ export interface StartSessionExecutionInput {
   readonly executionId?: string;
 }
 
+interface InternalStartSessionExecutionInput extends StartSessionExecutionInput {
+  readonly toolProjection?: readonly string[];
+}
+
+type ManagedChildExecutionRequest = ChildExecutionRequest | RuntimeGoalReviewChildRequest;
+
 interface PendingSessionExecution extends Omit<ActiveSessionExecution, "promise"> {
   promise?: Promise<void>;
   buildOwnershipLease?: BuildOwnershipLease;
@@ -143,6 +169,7 @@ interface PendingSessionExecution extends Omit<ActiveSessionExecution, "promise"
   familyStopLease?: SessionFamilyStopLease;
   readonly queueSnapshots?: readonly ResolvedSessionInputSnapshot[];
   readonly directRequestedModelSelection?: RequestedModelSelection;
+  readonly initialUsage: NormalizedUsage;
   ready: boolean;
   steerGateOpen: boolean;
   readonly steerMailbox: ResolvedSessionInputSnapshot[];
@@ -194,6 +221,19 @@ interface PendingSessionInputMutationFamilyState {
   readonly mutations: Set<symbol>;
 }
 
+/**
+ * A very short root-family control section used for durable state transitions
+ * which must not race an as-yet-uncommitted user input mutation.  It is not a
+ * scheduler: it only supplies a linearization point between the two owners.
+ */
+interface SessionFamilyControlState {
+  readonly token: symbol;
+  readonly workspaceRoot: string;
+  readonly rootSessionId: string;
+  readonly completion: Promise<void>;
+  readonly resolveCompletion: () => void;
+}
+
 export interface SessionRuntimeChange {
   readonly workspaceRoot: string;
   readonly rootSessionId: string;
@@ -214,8 +254,6 @@ interface SessionExecutionManagerConfig {
       readonly rootSessionId?: string;
       readonly parentSessionId?: string;
       readonly cwd?: string;
-      readonly goalId?: string;
-      readonly sessionRole?: SessionStoreState["sessionRole"];
       readonly agentName: AgentName;
       readonly title?: string;
       readonly activeSkillNames?: readonly string[];
@@ -244,9 +282,53 @@ interface SessionExecutionManagerConfig {
   readonly untrackSession: (workspaceRoot: string, sessionId: string) => void;
   readonly executionScopeValidator: Pick<SessionExecutionScopeValidator, "validate">;
   readonly executionClaimCoordinator?: SessionExecutionClaimCoordinator;
-  readonly goalDelegationAdmission?: SessionGoalDelegationAdmission;
   readonly deletionLifecycle?: SessionDeletionLifecycle;
   readonly sessionFamilyStopTimeoutMs?: number;
+  readonly onGoalReviewRequested: (input: {
+    readonly workspaceRoot: string;
+    readonly rootSessionId: string;
+    readonly reason: string;
+  }) => Promise<void>;
+  readonly onFreshUserInput?: (input: {
+    readonly workspaceRoot: string;
+    readonly rootSessionId: string;
+  }) => Promise<void>;
+  /** Wakes an idle-family owner after its last durable input mutation settles. */
+  readonly onSessionInputMutationReleased?: (input: {
+    readonly workspaceRoot: string;
+    readonly rootSessionId: string;
+  }) => void | Promise<void>;
+  readonly onExecutionUsage?: (input: {
+    readonly workspaceRoot: string;
+    readonly rootSessionId: string;
+    readonly usage: NormalizedUsage;
+    readonly executionTimeMs: number;
+    readonly outcome: ExecutionEndEvent["status"];
+  }) => Promise<void>;
+  readonly validateGoalReviewClaim: (input: {
+    readonly workspaceRoot: string;
+    readonly rootSessionId: string;
+    readonly reviewClaimId: string;
+    readonly reviewerSessionId: string;
+    readonly reviewerExecutionId: string;
+  }) => Promise<boolean>;
+  readonly prepareGoalReviewToolBatchResume: (input: {
+    readonly workspaceRoot: string;
+    readonly rootSessionId: string;
+    readonly reviewClaimId: string;
+    readonly reviewerSessionId: string;
+    readonly reviewerExecutionId: string;
+  }) => Promise<boolean>;
+  readonly prepareGoalRemediationToolBatchResume: (input: {
+    readonly workspaceRoot: string;
+    readonly rootSessionId: string;
+    readonly previousExecutionId: string;
+    readonly proposedExecutionId: string;
+  }) => Promise<
+    | { readonly kind: "not_remediation" }
+    | { readonly kind: "prepared"; readonly executionId: string }
+    | { readonly kind: "stale" }
+  >;
   readonly logger: Logger;
 }
 
@@ -261,7 +343,6 @@ interface ExistingChildActivationAdmission {
   readonly parentDepth: number;
   readonly childDepth: number;
   readonly childPolicy: AgentChildPolicy;
-  readonly goalContext?: SessionGoalDelegationContext;
 }
 
 export class SessionSteerUnavailableError extends Error {
@@ -297,6 +378,11 @@ export class ChildResultRequiredError extends Error {
 
 export class SessionExecutionManager {
   readonly #active = new Map<string, PendingSessionExecution>();
+  readonly #freshUserInputs = new Map<string, {
+    executionId: string;
+    consumed: boolean;
+    readonly text: string;
+  }>();
   readonly #activeCommands = new Map<string, ActiveSessionCommand>();
   readonly #childSlots = new Map<string, number>();
   readonly #cwdTransitions = new Map<string, SessionCwdTransitionLeaseState>();
@@ -306,6 +392,7 @@ export class SessionExecutionManager {
   readonly #workspaceClosures = new Map<string, symbol>();
   readonly #pendingCheckedStarts = new Map<symbol, { workspaceRoot: string; sessionId: string }>();
   readonly #pendingSessionInputMutations = new Map<string, PendingSessionInputMutationFamilyState>();
+  readonly #familyControls = new Map<string, SessionFamilyControlState>();
   readonly #runtimeChangeListeners = new Set<SessionRuntimeChangeListener>();
   readonly #publishedRuntime = new Map<string, Pick<SessionRuntimeChange, "activity" | "steerTargetExecutionId">>();
   readonly #buildOwnership = new BuildOwnershipLeaseRegistry();
@@ -318,7 +405,7 @@ export class SessionExecutionManager {
   }
 
   #claimExecution(
-    input: StartSessionExecutionInput,
+    input: InternalStartSessionExecutionInput,
     preclaimedBuildOwnership?: BuildOwnershipLease,
     newlyActivatedAgent?: Agent,
   ): ActiveSessionExecution {
@@ -382,6 +469,7 @@ export class SessionExecutionManager {
       startedAt: Date.now(),
       executionId: input.executionId ?? crypto.randomUUID(),
       binding: resolved.binding,
+      initialUsage: { ...sessionState.stats.usage },
       ...(input.input.kind === "queue" ? { queueSnapshots: resolved.snapshots } : {}),
       ...(directRequestedModelSelection === undefined ? {} : { directRequestedModelSelection }),
       started,
@@ -409,7 +497,7 @@ export class SessionExecutionManager {
    * abandoned by its root Session.
    */
   async startCheckedExecution(input: StartSessionExecutionInput): Promise<ActiveSessionExecution> {
-    return await this.#startCheckedExecution(input, true);
+    return await this.#startCheckedExecution(input);
   }
 
   /** Attempts one FIFO batch start. Busy/ineligible roots simply retain their durable Queue. */
@@ -434,7 +522,7 @@ export class SessionExecutionManager {
         ...input,
         origin: "user_message",
         input: { kind: "queue" },
-      }, true);
+      });
     } catch (error) {
       if (
         error instanceof AgentRunningError
@@ -450,7 +538,7 @@ export class SessionExecutionManager {
   /**
    * Runs a root Session command under the same family admission owner as model
    * executions. Commands do not create Execution records, but they block model,
-   * Goal, and sibling command starts and participate in Stop cancellation.
+   * other root starts and sibling commands and participate in Stop cancellation.
    */
   async runSessionCommand<T>(input: {
     readonly workspaceRoot: string;
@@ -533,7 +621,53 @@ export class SessionExecutionManager {
 
   /** Wakes an already-persisted batch through the ordinary execution claim and abort path. */
   async startSessionToolBatchExecution(input: Omit<StartSessionExecutionInput, "input" | "origin">): Promise<ActiveSessionExecution> {
-    const execution = await this.#startCheckedExecution({ ...input, input: { kind: "continuation" }, origin: "tool_batch" }, true);
+    const childStore = await this.#config.loadSessionStore(input.sessionId, input.workspaceRoot);
+    const childState = childStore.getState();
+    const parentSessionId = childState.parentSessionId;
+    const activeBatch = childState.toolBatches.find((batch) => batch.archivedAt === undefined);
+    if (activeBatch === undefined) {
+      throw new Error(`Session "${input.sessionId}" has no canonical active tool batch to resume`);
+    }
+    const parentStore = parentSessionId === undefined
+      ? undefined
+      : await this.#config.loadSessionStore(parentSessionId, input.workspaceRoot);
+    const reviewLink = [...(parentStore?.getState().childSessionLinks ?? [])].reverse().find((link) => (
+      link.childSessionId === input.sessionId && link.toolName === "goal_review"
+    ));
+    const runtimeReviewExecutionId = reviewLink === undefined ? undefined : crypto.randomUUID();
+    if (reviewLink !== undefined && !await this.#config.prepareGoalReviewToolBatchResume({
+      workspaceRoot: input.workspaceRoot,
+      rootSessionId: childState.rootSessionId,
+      reviewClaimId: reviewLink.parentToolCallId,
+      reviewerSessionId: input.sessionId,
+      reviewerExecutionId: runtimeReviewExecutionId!,
+    })) {
+      throw new Error("Goal completion review claim is stale and cannot resume its Tool Batch");
+    }
+    const remediationPreparation = parentSessionId === undefined
+      ? await this.#config.prepareGoalRemediationToolBatchResume({
+          workspaceRoot: input.workspaceRoot,
+          rootSessionId: childState.rootSessionId,
+          previousExecutionId: childState.executions.at(-1)?.id ?? activeBatch.executionId,
+          proposedExecutionId: crypto.randomUUID(),
+        })
+      : { kind: "not_remediation" as const };
+    if (remediationPreparation.kind === "stale") {
+      throw new Error("Goal remediation lineage is stale and cannot resume its Tool Batch");
+    }
+    const runtimeExecutionId = runtimeReviewExecutionId
+      ?? (remediationPreparation.kind === "prepared" ? remediationPreparation.executionId : undefined);
+    const execution = await this.#startCheckedExecution({
+      ...input,
+      input: { kind: "continuation" },
+      origin: "tool_batch",
+      ...(runtimeExecutionId === undefined ? {} : {
+        executionId: runtimeExecutionId,
+      }),
+      ...(runtimeReviewExecutionId === undefined ? {} : {
+        toolProjection: GOAL_REVIEW_TOOL_PROJECTION,
+      }),
+    });
     await this.#updateChildSessionLinkForExecution(input.workspaceRoot, input.sessionId, "running");
     void execution.promise.finally(async () => {
       const store = await this.#config.loadSessionStore(input.sessionId, input.workspaceRoot);
@@ -553,15 +687,7 @@ export class SessionExecutionManager {
     return await this.#config.listSessionFamilyToolBatchHitlIds(workspaceRoot, rootSessionId);
   }
 
-  /** Checked Goal start for callers already holding the Goal execution claim lock. */
-  async startCheckedExecutionWithinGoalClaim(input: StartSessionExecutionInput): Promise<ActiveSessionExecution> {
-    return await this.#startCheckedExecution(input, false);
-  }
-
-  async #startCheckedExecution(
-    input: StartSessionExecutionInput,
-    acquireGoalClaim: boolean,
-  ): Promise<ActiveSessionExecution> {
+  async #startCheckedExecution(input: InternalStartSessionExecutionInput): Promise<ActiveSessionExecution> {
     this.#assertWorkspaceOpen(input.workspaceRoot);
     const pendingToken = Symbol(`checked-session-start:${input.sessionId}`);
     this.#pendingCheckedStarts.set(pendingToken, {
@@ -576,7 +702,6 @@ export class SessionExecutionManager {
         await this.#validateExistingChildActivation(input.workspaceRoot, store);
       }
       const claimedScope = executionScopeSnapshot(store.getState());
-      const claimGoalId = claimedScope.goalId;
       const validateAndStart = async (): Promise<ActiveSessionExecution> => {
         const validationState = store.getState();
         const validationScope = executionScopeSnapshot(validationState);
@@ -600,7 +725,7 @@ export class SessionExecutionManager {
           if (activity === "running") {
             throw new SessionFamilyActiveError(input.sessionId, currentState.rootSessionId, activity);
           }
-          if (currentState.goalId !== undefined && input.origin !== "tool_batch") {
+          if (input.origin !== "tool_batch") {
             const toolBatchHitlIds = await this.#config.listSessionFamilyToolBatchHitlIds(input.workspaceRoot, currentState.rootSessionId);
             if (toolBatchHitlIds.length > 0) {
               throw new SessionToolBatchActiveError(input.sessionId, [...toolBatchHitlIds]);
@@ -644,12 +769,7 @@ export class SessionExecutionManager {
         return await claimAfterValidation();
       };
 
-      return loadedState.parentSessionId !== undefined
-        || !acquireGoalClaim
-        || claimGoalId === undefined
-        || this.#config.executionClaimCoordinator === undefined
-        ? await validateAndStart()
-        : await this.#config.executionClaimCoordinator.run(claimGoalId, validateAndStart);
+      return await validateAndStart();
     } finally {
       this.#pendingCheckedStarts.delete(pendingToken);
     }
@@ -779,11 +899,61 @@ export class SessionExecutionManager {
     readonly workspaceRoot: string;
     readonly rootSessionId: string;
   }, mutate: () => Promise<T>): Promise<T> {
-    const release = this.#acquireSessionInputMutation(input.workspaceRoot, input.rootSessionId);
+    let release: () => void;
+    while (true) {
+      const admission = this.#tryAcquireSessionInputMutation(input.workspaceRoot, input.rootSessionId);
+      if (admission.kind === "acquired") {
+        release = admission.release;
+        break;
+      }
+      await admission.control.completion;
+    }
     try {
       return await mutate();
     } finally {
       release();
+    }
+  }
+
+  /**
+   * Runs a root-scoped control transition only when no user-input mutation has
+   * already claimed the family.  Conversely, a later input waits for this
+   * short section to settle.  This gives review completion and input admission
+   * one explicit ordering point without creating a second execution owner.
+   */
+  async tryRunSessionFamilyControl<T>(input: {
+    readonly workspaceRoot: string;
+    readonly rootSessionId: string;
+  }, operation: () => Promise<T>): Promise<{ readonly kind: "executed"; readonly result: T } | { readonly kind: "blocked" }> {
+    this.#assertWorkspaceOpen(input.workspaceRoot);
+    const key = scopedKey(input.workspaceRoot, input.rootSessionId);
+    if ((this.#pendingSessionInputMutations.get(key)?.mutations.size ?? 0) > 0) {
+      return { kind: "blocked" };
+    }
+    if (this.getSessionFamilyActivity(input.workspaceRoot, input.rootSessionId) !== "idle") {
+      return { kind: "blocked" };
+    }
+
+    const token = Symbol(`session-family-control:${key}`);
+    let resolveCompletion!: () => void;
+    const completion = new Promise<void>((resolve) => { resolveCompletion = resolve; });
+    this.#familyControls.set(key, {
+      token,
+      workspaceRoot: input.workspaceRoot,
+      rootSessionId: input.rootSessionId,
+      completion,
+      resolveCompletion,
+    });
+    this.#publishSessionRuntimeChange(input.workspaceRoot, input.rootSessionId);
+    try {
+      return { kind: "executed", result: await operation() };
+    } finally {
+      if (this.#familyControls.get(key)?.token === token) {
+        const control = this.#familyControls.get(key)!;
+        this.#familyControls.delete(key);
+        control.resolveCompletion();
+        this.#publishSessionRuntimeChange(input.workspaceRoot, input.rootSessionId);
+      }
     }
   }
 
@@ -802,6 +972,7 @@ export class SessionExecutionManager {
     const key = scopedKey(workspaceRoot, rootSessionId);
     if (this.#familyStops.has(key)) return "stopping";
     if ((this.#pendingChildLaunches.get(key)?.launches.size ?? 0) > 0) return "running";
+    if (this.#familyControls.has(key)) return "running";
     if (this.#activeCommands.has(key)) return "running";
     for (const execution of this.#active.values()) {
       if (execution.workspaceRoot === workspaceRoot && execution.rootSessionId === rootSessionId) return "running";
@@ -827,6 +998,9 @@ export class SessionExecutionManager {
     for (const stop of this.#familyStops.values()) {
       const key = scopedKey(stop.workspaceRoot, stop.rootSessionId);
       families.set(key, { workspaceRoot: stop.workspaceRoot, rootSessionId: stop.rootSessionId });
+    }
+    for (const [key, control] of this.#familyControls) {
+      families.set(key, { workspaceRoot: control.workspaceRoot, rootSessionId: control.rootSessionId });
     }
     return [...families.values()]
       .map(({ workspaceRoot, rootSessionId }) => ({
@@ -864,6 +1038,22 @@ export class SessionExecutionManager {
   getExecution(workspaceRoot: string, sessionId: string): ActiveSessionExecution | undefined {
     const execution = this.#active.get(scopedKey(workspaceRoot, sessionId));
     return execution?.promise ? execution as ActiveSessionExecution : undefined;
+  }
+
+  consumeFreshUserInput(input: ConsumeFreshUserInputRequest): FreshUserInputGrant {
+    if (input.sessionId !== input.rootSessionId) {
+      throw new Error("Fresh user input is available only to a root Session");
+    }
+    const key = scopedKey(input.workspaceRoot, input.sessionId);
+    const execution = this.#active.get(key);
+    const grant = this.#freshUserInputs.get(key);
+    if (execution === undefined || grant === undefined || grant.executionId !== execution.executionId || grant.consumed) {
+      throw new Error("This Goal control requires unconsumed fresh user input from the current Execution");
+    }
+    const result = { text: grant.text };
+    input.validate?.(result);
+    grant.consumed = true;
+    return result;
   }
 
   getSteerTargetExecutionId(workspaceRoot: string, rootSessionId: string): string | undefined {
@@ -1024,30 +1214,55 @@ export class SessionExecutionManager {
   }
 
   async startChildExecution(workspaceRoot: string, request: ChildExecutionRequest): Promise<ChildExecutionHandle> {
-    const parentState = request.parentStore.getState();
-    const admission = this.#config.goalDelegationAdmission;
-    const start = async (goalContext?: SessionGoalDelegationContext): Promise<ChildExecutionHandle> => {
-      await this.#assertGoalFamilyToolBatchReady(workspaceRoot, parentState);
-      return await this.#startChildExecution(workspaceRoot, request, goalContext);
-    };
-    if (admission !== undefined && parentState.goalId !== undefined) {
-      return await admission.run({
-        workspaceRoot,
-        parent: parentState,
-        isParentDescendantOfRoot: parentState.parentSessionId === undefined
-          ? undefined
-          : this.#isDescendantOf(workspaceRoot, parentState.sessionId, parentState.rootSessionId),
-        targetAgentName: request.contract.agent_type as AgentName,
-      }, start);
+    await this.#assertFamilyToolBatchReady(workspaceRoot, request.parentStore.getState());
+    return await this.#startChildExecution(workspaceRoot, request);
+  }
+
+  /**
+   * Runtime-only entry point for the mandatory completion gate. It deliberately
+   * bypasses model delegation admission while retaining durable child identity,
+   * child concurrency, canonical receipt validation and the ordinary abort path.
+   */
+  async startRuntimeReviewChild(
+    workspaceRoot: string,
+    request: RuntimeGoalReviewChildRequest,
+  ): Promise<ChildExecutionHandle> {
+    const parent = request.parentStore.getState();
+    if (
+      parent.sessionId !== request.parentSessionId
+      || parent.rootSessionId !== request.parentSessionId
+      || parent.parentSessionId !== undefined
+      || parent.agentName !== "engineer"
+    ) {
+      throw new Error("Goal completion review requires the canonical root Engineer Session");
     }
-    return await start();
+    if (request.contract.agent_type !== "reviewer") {
+      throw new Error("Goal completion review can only launch a Reviewer child");
+    }
+    if (request.provenance.reviewClaimId.trim().length === 0) {
+      throw new Error("Goal completion review requires a review claim id");
+    }
+    if (!await this.#config.validateGoalReviewClaim({
+      workspaceRoot,
+      rootSessionId: request.parentSessionId,
+      reviewClaimId: request.provenance.reviewClaimId,
+      reviewerSessionId: request.reviewerSessionId,
+      reviewerExecutionId: request.reviewerExecutionId,
+    })) {
+      throw new Error("Goal completion review claim is stale or does not own this Reviewer attempt");
+    }
+    if (this.getSessionFamilyActivity(workspaceRoot, parent.rootSessionId) !== "idle") {
+      throw new SessionFamilyActiveError(request.parentSessionId, parent.rootSessionId, "running");
+    }
+    await this.#assertFamilyToolBatchReady(workspaceRoot, parent);
+    return await this.#startChildExecution(workspaceRoot, request);
   }
 
   async #startChildExecution(
     workspaceRoot: string,
-    request: ChildExecutionRequest,
-    goalContext?: SessionGoalDelegationContext,
+    request: ManagedChildExecutionRequest,
   ): Promise<ChildExecutionHandle> {
+    const runtimeReview = "provenance" in request && request.provenance.kind === "goal_review";
     const factory = this.#config.sessionAgentManager.getFactory(workspaceRoot);
     const currentDepth = await this.#config.resolveSessionDepth(workspaceRoot, request.parentSessionId);
     const parentAgentName = request.parentStore.getState().agentName;
@@ -1055,12 +1270,12 @@ export class SessionExecutionManager {
     const parentDefinition = factory.getDefinition(parentAgentName);
     const allowedTools = factory.resolveAllowedTools(parentDefinition, currentDepth);
 
-    if (!allowedTools.includes("delegate")) {
+    if (!runtimeReview && !allowedTools.includes("delegate")) {
       throw new DelegationToolNotAllowedError(parentAgentName, currentDepth);
     }
 
     const delegateTargets = factory.getDelegateTargetsFor(parentDefinition, currentDepth);
-    if (!delegateTargets.includes(targetAgentName)) {
+    if (!runtimeReview && !delegateTargets.includes(targetAgentName)) {
       throw new DelegateTargetNotAllowedError(parentAgentName, targetAgentName, currentDepth);
     }
 
@@ -1082,7 +1297,7 @@ export class SessionExecutionManager {
         "Build delegation requires at least one owned_scope entry",
       );
     }
-    const childSessionId = crypto.randomUUID();
+    const childSessionId = runtimeReview ? request.reviewerSessionId : crypto.randomUUID();
     const releaseChildLaunch = this.#reserveChildLaunch(
       workspaceRoot,
       parentState.rootSessionId,
@@ -1103,8 +1318,7 @@ export class SessionExecutionManager {
         childSessionId,
         targetDefinition.name,
       );
-      await this.#assertGoalFamilyToolBatchReady(workspaceRoot, parentState);
-      assertGoalDelegationContext(parentState, goalContext);
+      await this.#assertFamilyToolBatchReady(workspaceRoot, parentState);
     } catch (error) {
       releaseChildLaunch();
       childLaunchReserved = false;
@@ -1119,7 +1333,7 @@ export class SessionExecutionManager {
         ownedScope: validatedContract.owned_scope,
       })
       : undefined;
-    const childPrompt = prependSessionGoalDelegationContext(validatedContract.objective, goalContext);
+    const childPrompt = validatedContract.objective;
     let childSlotReserved = false;
     const background = validatedContract.background;
     const childTitle = validatedContract.title;
@@ -1136,8 +1350,6 @@ export class SessionExecutionManager {
         cwd: parentState.cwd,
         rootSessionId: parentState.rootSessionId,
         parentSessionId: request.parentSessionId,
-        goalId: parentState.goalId,
-        sessionRole: sessionRoleForAgent(targetDefinition.name),
         agentName: targetDefinition.name,
         title: childTitle,
         activeSkillNames,
@@ -1164,7 +1376,11 @@ export class SessionExecutionManager {
           kind: "direct",
           text: childPrompt,
         },
-        origin: "tool_call",
+        origin: runtimeReview ? "goal_review" : "tool_call",
+        ...(runtimeReview ? {
+          executionId: request.reviewerExecutionId,
+          toolProjection: GOAL_REVIEW_TOOL_PROJECTION,
+        } : {}),
       }, buildOwnershipLease, newlyActivatedAgent);
       buildOwnershipLease = undefined;
       newlyActivatedAgent = undefined;
@@ -1205,7 +1421,7 @@ export class SessionExecutionManager {
       ? setTimeout(() => execution.abortController.abort(new Error("Sub-agent timed out")), childPolicy.timeoutMs)
       : undefined;
     const removeParentAbort = childPolicy.abortCascade
-      ? wireAbortCascade(request.parentAbort, execution.abortController)
+      ? wireAbortCascade("provenance" in request ? undefined : request.parentAbort, execution.abortController)
       : () => {};
 
     const result = execution.promise
@@ -1323,8 +1539,7 @@ export class SessionExecutionManager {
     return await this.#resumeChildExecution(workspaceRoot, request);
   }
 
-  async #assertGoalFamilyToolBatchReady(workspaceRoot: string, state: SessionStoreState): Promise<void> {
-    if (state.goalId === undefined) return;
+  async #assertFamilyToolBatchReady(workspaceRoot: string, state: SessionStoreState): Promise<void> {
     const toolBatchHitlIds = await this.#config.listSessionFamilyToolBatchHitlIds(workspaceRoot, state.rootSessionId);
     if (toolBatchHitlIds.length > 0) throw new SessionToolBatchActiveError(state.sessionId, toolBatchHitlIds);
   }
@@ -1340,7 +1555,7 @@ export class SessionExecutionManager {
       .catch(() => { throw new ChildSessionNotFoundError(workspaceRoot, request.sessionId); });
     const initialAdmission = await this.#validateExistingChildActivation(workspaceRoot, childStore);
     let childState = initialAdmission.childState;
-    await this.#assertGoalFamilyToolBatchReady(workspaceRoot, initialAdmission.parentState);
+    await this.#assertFamilyToolBatchReady(workspaceRoot, initialAdmission.parentState);
     this.#assertSessionToolBatchReady(request.sessionId, childState);
     if (childState.title === null || childState.title.trim().length === 0) {
       throw new Error(`Child Session "${request.sessionId}" has no canonical title`);
@@ -1371,7 +1586,6 @@ export class SessionExecutionManager {
     let childSlotReserved = false;
     let buildOwnershipLease: BuildOwnershipLease | undefined;
     let newlyActivatedAgent: Agent | undefined;
-    let goalContext = initialAdmission.goalContext;
     let execution: ActiveSessionExecution | undefined;
     try {
       await this.#validateExistingChildActivation(workspaceRoot, childStore, async (finalAdmission) => {
@@ -1382,8 +1596,7 @@ export class SessionExecutionManager {
           );
         }
         childState = finalAdmission.childState;
-        goalContext = finalAdmission.goalContext;
-        await this.#assertGoalFamilyToolBatchReady(workspaceRoot, finalAdmission.parentState);
+        await this.#assertFamilyToolBatchReady(workspaceRoot, finalAdmission.parentState);
         buildOwnershipLease = childState.agentName === "build"
           ? this.#acquireBuildOwnership(workspaceRoot, childState)
           : undefined;
@@ -1398,10 +1611,7 @@ export class SessionExecutionManager {
           sessionId: request.sessionId,
           input: {
             kind: "direct",
-            text: prependSessionGoalDelegationContext(
-              buildResumeInstruction(request.instruction, request.newEvidence),
-              goalContext,
-            ),
+            text: buildResumeInstruction(request.instruction, request.newEvidence),
           },
           origin: "tool_call",
         }, buildOwnershipLease, newlyActivatedAgent);
@@ -1516,7 +1726,7 @@ export class SessionExecutionManager {
     }
   }
 
-  async #runExecution(input: StartSessionExecutionInput, execution: PendingSessionExecution): Promise<void> {
+  async #runExecution(input: InternalStartSessionExecutionInput, execution: PendingSessionExecution): Promise<void> {
     const key = scopedKey(input.workspaceRoot, input.sessionId);
     let store = this.#config.getSessionStore(input.sessionId, input.workspaceRoot);
     let terminalStatus: ExecutionEndEvent["status"] = "completed";
@@ -1566,12 +1776,28 @@ export class SessionExecutionManager {
 
       execution.ready = true;
       execution.steerGateOpen = store.getState().rootSessionId === store.getState().sessionId;
+      const freshUserText = freshUserInputText(input, execution);
+      if (freshUserText !== undefined) {
+        this.#freshUserInputs.set(key, {
+          executionId: execution.executionId,
+          consumed: false,
+          text: freshUserText,
+        });
+        await this.#config.onFreshUserInput?.({
+          workspaceRoot: input.workspaceRoot,
+          rootSessionId: execution.rootSessionId,
+        });
+      }
       execution.resolveStarted();
       this.#publishSessionRuntimeChange(input.workspaceRoot, execution.rootSessionId);
 
       for (let transitionCount = 0; transitionCount <= MAX_CWD_TRANSITIONS_PER_EXECUTION; transitionCount += 1) {
         const activationStore = this.#config.getSessionStore(input.sessionId, input.workspaceRoot);
-        if (activationStore?.getState().parentSessionId !== undefined) {
+        if (
+          activationStore?.getState().parentSessionId !== undefined
+          && execution.origin !== "goal_review"
+          && input.toolProjection === undefined
+        ) {
           await this.#validateExistingChildActivation(input.workspaceRoot, activationStore);
         }
         const cachedAgent = this.#config.sessionAgentManager.get(input.workspaceRoot, input.sessionId);
@@ -1593,27 +1819,23 @@ export class SessionExecutionManager {
           abort: execution.abortController.signal,
           ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
           ...(input.extraTools === undefined ? {} : { extraTools: input.extraTools }),
+          ...(input.toolProjection === undefined ? {} : { toolProjection: input.toolProjection }),
           consumeSteers: async () => await this.#consumeSteers(execution),
         });
         execution.newlyActivatedAgent = undefined;
         if (result.status === "completed") {
           this.#assertChildCompletionReceipt(agent.store.getState(), execution.executionId);
         }
-        if (result.executionControl?.action === "stop_session_family") {
+        if (result.executionControl?.action === "request_goal_review") {
           terminalStatus = result.status;
           terminalError = result.error === undefined
             ? undefined
             : execution.binding.modelInfo.redactSensitiveText(result.error);
-          const rootSessionId = execution.rootSessionId;
-          const familyKey = scopedKey(input.workspaceRoot, rootSessionId);
-          if (!this.#familyStops.has(familyKey)) {
-            execution.familyStopLease = this.acquireSessionFamilyStop({
-              workspaceRoot: input.workspaceRoot,
-              rootSessionId,
-              exemptSessionId: execution.sessionId,
-            });
-            await execution.familyStopLease.stopAndWait();
-          }
+          await this.#config.onGoalReviewRequested({
+            workspaceRoot: input.workspaceRoot,
+            rootSessionId: execution.rootSessionId,
+            reason: result.executionControl.reason,
+          });
           return;
         }
         if (result.cwdChanged === undefined) {
@@ -1661,6 +1883,14 @@ export class SessionExecutionManager {
             ...(terminalError === undefined ? {} : { error: terminalError }),
           });
           await this.#config.flushSessionStore(input.sessionId, input.workspaceRoot);
+          const finalUsage = store.getState().stats.usage;
+          await this.#config.onExecutionUsage?.({
+            workspaceRoot: input.workspaceRoot,
+            rootSessionId: execution.rootSessionId,
+            usage: subtractUsage(finalUsage, execution.initialUsage),
+            executionTimeMs: Math.max(0, Date.now() - execution.startedAt),
+            outcome: terminalStatus,
+          });
         }
       }
     }
@@ -1693,6 +1923,17 @@ export class SessionExecutionManager {
     });
     execution.steerOperations.add(operation);
     await operation;
+    const freshUserInputText = userInputTextFromSnapshots(messages);
+    if (freshUserInputText !== undefined) {
+      this.#freshUserInputs.set(
+        scopedKey(execution.workspaceRoot, execution.sessionId),
+        { executionId: execution.executionId, consumed: false, text: freshUserInputText },
+      );
+      await this.#config.onFreshUserInput?.({
+        workspaceRoot: execution.workspaceRoot,
+        rootSessionId: execution.rootSessionId,
+      });
+    }
   }
 
   #closeSteerGate(execution: PendingSessionExecution): void {
@@ -1739,6 +1980,9 @@ export class SessionExecutionManager {
     const isCurrentExecution = current?.executionToken === execution.executionToken;
     if (isCurrentExecution) {
       this.#active.delete(key);
+      if (this.#freshUserInputs.get(key)?.executionId === execution.executionId) {
+        this.#freshUserInputs.delete(key);
+      }
       if (execution.ready) {
         this.#publishSessionRuntimeChange(execution.workspaceRoot, execution.rootSessionId);
       }
@@ -1976,10 +2220,13 @@ export class SessionExecutionManager {
   }
 
   #assertExecutionOriginReady(input: StartSessionExecutionInput, state: SessionStoreState): void {
-    if (input.origin === "goal_claim" && state.pendingMessages.length > 0) {
+    if (
+      (input.origin === "goal_continuation" || input.origin === "goal_remediation")
+      && state.pendingMessages.length > 0
+    ) {
       throw new SessionInputConflictError(
         "state",
-        `Goal continuation cannot bypass ${state.pendingMessages.length} pending Session input message(s)`,
+        `Session continuation cannot bypass ${state.pendingMessages.length} pending input message(s)`,
       );
     }
     if (input.origin !== "tool_batch") return;
@@ -2122,12 +2369,17 @@ export class SessionExecutionManager {
     };
   }
 
-  #acquireSessionInputMutation(workspaceRoot: string, rootSessionId: string): () => void {
+  #tryAcquireSessionInputMutation(
+    workspaceRoot: string,
+    rootSessionId: string,
+  ): { readonly kind: "acquired"; readonly release: () => void } | { readonly kind: "wait"; readonly control: SessionFamilyControlState } {
     this.#assertWorkspaceOpen(workspaceRoot);
     const key = scopedKey(workspaceRoot, rootSessionId);
     if (this.#deletions.has(key)) {
       throw new SessionDeleteInProgressError(rootSessionId, rootSessionId);
     }
+    const control = this.#familyControls.get(key);
+    if (control !== undefined) return { kind: "wait", control };
 
     const token = Symbol(`session-input-mutation:${key}`);
     const pending = this.#pendingSessionInputMutations.get(key) ?? {
@@ -2139,13 +2391,22 @@ export class SessionExecutionManager {
     this.#pendingSessionInputMutations.set(key, pending);
 
     let released = false;
-    return () => {
+    return { kind: "acquired", release: () => {
       if (released) return;
       released = true;
       const current = this.#pendingSessionInputMutations.get(key);
       current?.mutations.delete(token);
-      if (current?.mutations.size === 0) this.#pendingSessionInputMutations.delete(key);
-    };
+      if (current?.mutations.size !== 0) return;
+      this.#pendingSessionInputMutations.delete(key);
+      void Promise.resolve(this.#config.onSessionInputMutationReleased?.({ workspaceRoot, rootSessionId }))
+        .catch((error) => {
+          this.#logger.warn("session.input-mutation.release-notify_failed", {
+            error,
+            context: { rootSessionId },
+            meta: { workspaceRoot },
+          });
+        });
+    } };
   }
 
   #reserveChildSlot(workspaceRoot: string, parentSessionId: string, maxConcurrent: number): void {
@@ -2166,7 +2427,7 @@ export class SessionExecutionManager {
 
   #appendChildLinkStatus(
     workspaceRoot: string,
-    request: ChildExecutionRequest,
+    request: ManagedChildExecutionRequest,
     childSessionId: string,
     childAgentName: string,
     depth: number,
@@ -2182,8 +2443,8 @@ export class SessionExecutionManager {
       type: "tool-child-session-link",
       link: {
         parentSessionId: request.parentSessionId,
-        parentToolCallId: request.parentToolCallId,
-        toolName: request.toolName,
+        parentToolCallId: runtimeChildLinkId(request),
+        toolName: runtimeChildLinkTool(request),
         childSessionId,
         childAgentName,
         title,
@@ -2322,9 +2583,7 @@ export class SessionExecutionManager {
     const claimedParent = childActivationIdentitySnapshot(parentStore.getState());
     const claimedRoot = childActivationIdentitySnapshot(rootStore.getState());
 
-    const validate = async (
-      goalContext?: SessionGoalDelegationContext,
-    ): Promise<ExistingChildActivationAdmission | T> => {
+    const validate = async (): Promise<ExistingChildActivationAdmission | T> => {
       const childState = childStore.getState();
       const parentState = parentStore.getState();
       const rootState = rootStore.getState();
@@ -2361,21 +2620,6 @@ export class SessionExecutionManager {
           childState.cwd,
         );
       }
-      if (childState.goalId !== parentState.goalId || childState.goalId !== rootState.goalId) {
-        throw new DelegationExecutionAdmissionError(
-          "DELEGATION_IDENTITY_REQUIRED",
-          `Child Session "${childState.sessionId}" does not match its durable family Goal identity`,
-        );
-      }
-      const expectedRole = sessionRoleForAgent(childState.agentName);
-      if (expectedRole === undefined || childState.sessionRole !== expectedRole) {
-        throw new DelegationExecutionAdmissionError(
-          "DELEGATION_IDENTITY_REQUIRED",
-          `Child Session "${childState.sessionId}" role does not match Agent ${childState.agentName}`,
-        );
-      }
-      assertGoalDelegationContext(parentState, goalContext);
-
       const factory = this.#config.sessionAgentManager.getFactory(workspaceRoot);
       const parentDefinition = factory.getDefinition(parentState.agentName);
       const parentDepth = await this.#config.resolveSessionDepth(workspaceRoot, parentState.sessionId);
@@ -2420,34 +2664,11 @@ export class SessionExecutionManager {
         parentDepth,
         childDepth,
         childPolicy,
-        ...(goalContext === undefined ? {} : { goalContext }),
       };
       return action === undefined ? result : await action(result);
     };
 
-    const childState = childStore.getState();
-    if (childState.goalId === undefined) return await validate();
-    const admission = this.#config.goalDelegationAdmission;
-    if (admission === undefined) {
-      throw new DelegationExecutionAdmissionError(
-        "DELEGATION_IDENTITY_REQUIRED",
-        `Goal child Session "${childState.sessionId}" requires role and phase admission`,
-      );
-    }
-    const parentIdentity = await resolveSessionExecutionIdentity({
-      workspaceRoot,
-      sessionId: parentStore.getState().sessionId,
-      sessions: {
-        getOrLoad: this.#config.loadSessionStore,
-        buildSessionTree: this.#config.buildSessionTree,
-      },
-    });
-    return await admission.run({
-      workspaceRoot,
-      parent: parentStore.getState(),
-      isParentDescendantOfRoot: parentIdentity.isDescendantOfRoot,
-      targetAgentName: childState.agentName,
-    }, validate);
+    return await validate();
   }
 
   async #validateChildExecutionScope(
@@ -2456,7 +2677,6 @@ export class SessionExecutionManager {
     freshlyCreated: boolean,
   ): Promise<void> {
     const claimedState = store.getState();
-    if (claimedState.goalId === undefined) return;
     const claimedScope = executionScopeSnapshot(claimedState);
     await this.#config.executionScopeValidator.validate({
       projectRoot: workspaceRoot,
@@ -2566,9 +2786,7 @@ export class SessionExecutionManager {
         rootSessionId: parentState.rootSessionId,
         parentSessionId: parentState.sessionId,
         parentAgentName: parentState.agentName,
-        ...(parentState.goalId === undefined ? {} : { isDescendantOfRoot: true, goalId: parentState.goalId }),
         cwd: parentState.cwd,
-        sessionRole: sessionRoleForAgent(agentName),
         agentName,
       },
     });
@@ -2622,10 +2840,8 @@ function sanitizeBindingError(error: unknown, binding: ExecutionModelBinding): E
 
 interface ExecutionScopeSnapshot {
   readonly cwd: string;
-  readonly goalId: string | undefined;
   readonly rootSessionId: string;
   readonly parentSessionId: string | undefined;
-  readonly sessionRole: SessionRole | undefined;
 }
 
 interface ChildActivationIdentitySnapshot extends ExecutionScopeSnapshot {
@@ -2670,10 +2886,8 @@ function assertStableChildActivationIdentity(
 function executionScopeSnapshot(state: SessionStoreState): ExecutionScopeSnapshot {
   return {
     cwd: state.cwd,
-    goalId: state.goalId,
     rootSessionId: state.rootSessionId,
     parentSessionId: state.parentSessionId,
-    sessionRole: state.sessionRole,
   };
 }
 
@@ -2704,10 +2918,8 @@ function executionScopeChangedFields(
 ): string[] {
   const fields: Array<keyof ExecutionScopeSnapshot> = [
     "cwd",
-    "goalId",
     "rootSessionId",
     "parentSessionId",
-    "sessionRole",
   ];
   return fields.filter((field) => previous[field] !== current[field]);
 }
@@ -2748,8 +2960,48 @@ function childTerminalStatus(run: SessionExecutionRecord | undefined, signal: Ab
 }
 
 function sessionExecutionOrigin(origin: SessionExecutionOrigin | undefined): SessionExecutionOrigin {
-  if (origin === "tool_call" || origin === "tool_batch" || origin === "goal_claim") return origin;
+  if (
+    origin === "tool_call"
+    || origin === "tool_batch"
+    || origin === "goal_continuation"
+    || origin === "goal_remediation"
+    || origin === "goal_review"
+  ) return origin;
   return "user_message";
+}
+
+function runtimeChildLinkId(request: ManagedChildExecutionRequest): string {
+  return "provenance" in request ? request.provenance.reviewClaimId : request.parentToolCallId;
+}
+
+function runtimeChildLinkTool(request: ManagedChildExecutionRequest): string {
+  return "provenance" in request ? "goal_review" : request.toolName;
+}
+
+function freshUserInputText(input: StartSessionExecutionInput, execution: PendingSessionExecution): string | undefined {
+  if (execution.origin !== "user_message") return undefined;
+  if (input.input.kind === "direct") return input.input.source !== "automation" ? input.input.text : undefined;
+  if (input.input.kind === "queue") {
+    return execution.queueSnapshots === undefined ? undefined : userInputTextFromSnapshots(execution.queueSnapshots);
+  }
+  return undefined;
+}
+
+function userInputTextFromSnapshots(snapshots: readonly ResolvedSessionInputSnapshot[]): string | undefined {
+  const userTexts = snapshots
+    .filter((snapshot) => snapshot.pending.source === "user")
+    .map((snapshot) => snapshot.pending.content);
+  return userTexts.length === 0 ? undefined : userTexts.join("\n\n");
+}
+
+function subtractUsage(current: NormalizedUsage, initial: NormalizedUsage): NormalizedUsage {
+  return {
+    inputTokens: Math.max(0, current.inputTokens - initial.inputTokens),
+    outputTokens: Math.max(0, current.outputTokens - initial.outputTokens),
+    totalTokens: Math.max(0, current.totalTokens - initial.totalTokens),
+    reasoningTokens: Math.max(0, current.reasoningTokens - initial.reasoningTokens),
+    cachedInputTokens: Math.max(0, current.cachedInputTokens - initial.cachedInputTokens),
+  };
 }
 
 function resolveSingleBinding(
@@ -2846,12 +3098,6 @@ function queueDispatchEligible(
   return pendingMessages.some((message) => message.acceptedAt > dispatchBarrier);
 }
 
-function sessionRoleForAgent(agentName: AgentName): SessionRole | undefined {
-  if (agentName === "plan" || agentName === "build" || agentName === "explore" || agentName === "librarian") return agentName;
-  if (agentName === "reviewer") return "review";
-  return undefined;
-}
-
 function abortExecutionStatus(signal: AbortSignal): "aborted" | "cancelled" | "timed_out" {
   const reason = signal.reason;
   if (reason instanceof Error) {
@@ -2945,13 +3191,4 @@ async function waitForCommandToStop(command: ActiveSessionCommand): Promise<void
     setTimeout(() => reject(new Error(`Timed out waiting for session command "${command.clientRequestId}" to abort`)), ABORT_AND_WAIT_TIMEOUT_MS);
   });
   await Promise.race([Promise.allSettled([command.completion]).then(() => undefined), timeout]);
-}
-
-function assertGoalDelegationContext(
-  parentState: SessionStoreState,
-  context: SessionGoalDelegationContext | undefined,
-): void {
-  if (parentState.goalId === undefined) return;
-  if (context?.goalId === parentState.goalId) return;
-  throw new Error(`Goal ${parentState.goalId} delegation requires its latest admitted snapshot`);
 }

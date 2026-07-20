@@ -15,7 +15,7 @@ import {
 
 const PROJECT_SKILLS_DIR = join(PROJECT_STATE_DIR_NAME, "skills");
 const SKILL_FILE = "SKILL.md";
-const RESERVED_BUILTIN_SKILLS = new Set(["goal-create", "automation-create"]);
+const RESERVED_BUILTIN_SKILLS = new Set(["automation-create"]);
 
 export class SkillPathError extends Error {
   public readonly path: string;

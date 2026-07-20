@@ -77,7 +77,6 @@ function makeConfig(mcp?: Record<string, unknown>): Record<string, unknown> {
     provider: makeProviderConfig(),
     agents: {
       engineer: { model: "local:test-model" },
-      goal_lead: { model: "local:test-model" },
       plan: { model: "local:test-model" },
       build: { model: "local:test-model" },
       reviewer: { model: "local:test-model" },

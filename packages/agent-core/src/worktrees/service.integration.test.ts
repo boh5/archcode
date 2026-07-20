@@ -28,7 +28,7 @@ describe("WorktreeService", () => {
     const service = new WorktreeService({ canonicalRoot: repo });
 
     const created = await service.create({
-      owner: { type: "session", id: "session-1234567890" },
+      owner: { id: "session-1234567890" },
       baseSha,
       label: "auth fix",
     });
@@ -47,7 +47,7 @@ describe("WorktreeService", () => {
   test("self-heals an unregistered deterministic branch left at the requested base", async () => {
     const repo = await createGitRepo("branch-only-self-heal");
     const baseSha = await git(repo, ["rev-parse", "HEAD"]);
-    const input = { owner: { type: "session" as const, id: "session-self-heal" }, uniqueId: "job-123456789", baseSha };
+    const input = { owner: { id: "session-self-heal" }, uniqueId: "job-123456789", baseSha };
     const names = managedWorktreeNames(input);
     await git(repo, ["branch", names.branchName, baseSha]);
 
@@ -60,7 +60,7 @@ describe("WorktreeService", () => {
   test("preserves an unregistered deterministic branch that advanced beyond the requested base", async () => {
     const repo = await createGitRepo("branch-only-preserve");
     const baseSha = await git(repo, ["rev-parse", "HEAD"]);
-    const input = { owner: { type: "session" as const, id: "session-preserve" }, uniqueId: "job-123456789", baseSha };
+    const input = { owner: { id: "session-preserve" }, uniqueId: "job-123456789", baseSha };
     const names = managedWorktreeNames(input);
     await git(repo, ["branch", names.branchName, baseSha]);
     await git(repo, ["commit", "--allow-empty", "-m", "advance orphan"]);
@@ -101,7 +101,7 @@ describe("WorktreeService", () => {
     await git(repo, ["commit", "-m", "second commit"]);
     const baseSha = await git(repo, ["rev-parse", "HEAD"]);
     const service = new WorktreeService({ canonicalRoot: repo });
-    const created = await service.create({ owner: { type: "goal", id: "goal-claim-reset" }, baseSha });
+    const created = await service.create({ owner: { id: "session-claim-reset" }, baseSha });
 
     await git(created.worktreePath, ["reset", "--hard", firstSha]);
     await expect(service.validateManagedClaim({
@@ -125,7 +125,7 @@ describe("WorktreeService", () => {
   test("validates crash-orphan claims only at a clean canonical HEAD", async () => {
     const repo = await createGitRepo("validate-orphan-claim");
     const service = new WorktreeService({ canonicalRoot: repo });
-    const created = await service.create({ owner: { type: "goal", id: "goal-orphan-claim" } });
+    const created = await service.create({ owner: { id: "session-orphan-claim" } });
 
     await expect(service.validateManagedClaim({
       path: created.worktreePath,
@@ -156,13 +156,13 @@ describe("WorktreeService", () => {
     const repo = await createGitRepo("safe-remove");
     const baseSha = await git(repo, ["rev-parse", "HEAD"]);
     const service = new WorktreeService({ canonicalRoot: repo });
-    const clean = await service.create({ owner: { type: "goal", id: "goal-clean-123456" }, baseSha });
+    const clean = await service.create({ owner: { id: "session-clean-123456" }, baseSha });
 
     await expect(service.remove({ path: clean.worktreePath, branchName: clean.branchName, baseSha }))
       .resolves.toEqual({ detached: true, branchDeleted: true });
     expect(await pathExists(clean.worktreePath)).toBe(false);
 
-    const changed = await service.create({ owner: { type: "goal", id: "goal-dirty-123456" }, baseSha });
+    const changed = await service.create({ owner: { id: "session-dirty-123456" }, baseSha });
     await writeFile(join(changed.worktreePath, "dirty.txt"), "keep me\n");
     await expect(service.remove({ path: changed.worktreePath, branchName: changed.branchName, baseSha })).rejects.toMatchObject({
       code: "WORKTREE_CHANGED",
@@ -176,7 +176,7 @@ describe("WorktreeService", () => {
     await git(repo, ["add", ".gitignore"]);
     await git(repo, ["commit", "-m", "ignore dependencies"]);
     const service = new WorktreeService({ canonicalRoot: repo });
-    const created = await service.create({ owner: { type: "session", id: "ignored-remove-session" } });
+    const created = await service.create({ owner: { id: "ignored-remove-session" } });
     const ignoredFile = join(created.worktreePath, "node_modules", "cache.bin");
     await mkdir(dirname(ignoredFile), { recursive: true });
     await writeFile(ignoredFile, "must survive cleanup\n");
@@ -204,7 +204,7 @@ describe("WorktreeService", () => {
     const service = new WorktreeService({ canonicalRoot: repo });
 
     await expect(service.create({
-      owner: { type: "session", id: "canonical-ignored-session" },
+      owner: { id: "canonical-ignored-session" },
       requireCleanCanonical: true,
     })).resolves.toMatchObject({ canonicalStatus: { dirty: false } });
   });
@@ -212,7 +212,7 @@ describe("WorktreeService", () => {
   test("admin removal without owner metadata deletes only branches with no unique commits", async () => {
     const repo = await createGitRepo("admin-remove");
     const service = new WorktreeService({ canonicalRoot: repo });
-    const unchanged = await service.create({ owner: { type: "session", id: "session-admin-clean" } });
+    const unchanged = await service.create({ owner: { id: "session-admin-clean" } });
     await writeFile(join(repo, "later.txt"), "canonical advanced\n");
     await git(repo, ["add", "later.txt"]);
     await git(repo, ["commit", "-m", "advance canonical"]);
@@ -221,7 +221,7 @@ describe("WorktreeService", () => {
       .resolves.toEqual({ detached: true, branchDeleted: true });
     expect(await pathExists(unchanged.worktreePath)).toBe(false);
 
-    const changed = await service.create({ owner: { type: "session", id: "session-admin-changed" } });
+    const changed = await service.create({ owner: { id: "session-admin-changed" } });
     await writeFile(join(changed.worktreePath, "commit.txt"), "unique commit\n");
     await git(changed.worktreePath, ["add", "commit.txt"]);
     await git(changed.worktreePath, ["commit", "-m", "unique worktree commit"]);
@@ -232,7 +232,7 @@ describe("WorktreeService", () => {
   test("runs beforeRemove after final validation and before lifecycle deletion", async () => {
     const repo = await createGitRepo("before-remove");
     const service = new WorktreeService({ canonicalRoot: repo });
-    const created = await service.create({ owner: { type: "session", id: "session-before-remove" } });
+    const created = await service.create({ owner: { id: "session-before-remove" } });
     const beforeRemove = mock(async () => {
       expect(await pathExists(created.worktreePath)).toBe(true);
       expect(await git(repo, ["rev-parse", `refs/heads/${created.branchName}`])).toBe(created.baseSha);
@@ -252,7 +252,7 @@ describe("WorktreeService", () => {
   test("preserves the worktree and branch when beforeRemove fails", async () => {
     const repo = await createGitRepo("before-remove-failure");
     const service = new WorktreeService({ canonicalRoot: repo });
-    const created = await service.create({ owner: { type: "session", id: "session-before-remove-failure" } });
+    const created = await service.create({ owner: { id: "session-before-remove-failure" } });
 
     await expect(service.remove({
       path: created.worktreePath,
@@ -271,7 +271,7 @@ describe("WorktreeService", () => {
     await git(repo, ["add", ".gitignore"]);
     await git(repo, ["commit", "-m", "ignore generated state"]);
     const service = new WorktreeService({ canonicalRoot: repo });
-    const created = await service.create({ owner: { type: "session", id: "session-revalidation" } });
+    const created = await service.create({ owner: { id: "session-revalidation" } });
     const events: string[] = [];
     const generated = join(created.worktreePath, "generated", "late.bin");
 
@@ -299,7 +299,7 @@ describe("WorktreeService", () => {
   test("invokes the pre-detach failure callback exactly once when git worktree remove fails", async () => {
     const repo = await createGitRepo("remove-command-failure");
     const created = await new WorktreeService({ canonicalRoot: repo }).create({
-      owner: { type: "session", id: "remove-command-failure-session" },
+      owner: { id: "remove-command-failure-session" },
     });
     const delegate = createProcessRunner();
     const runner: ProcessRunner = {
@@ -359,8 +359,8 @@ describe("WorktreeService", () => {
     const right = new WorktreeService({ canonicalRoot: alternateCanonical, git: runner });
 
     await Promise.all([
-      left.create({ owner: { type: "session", id: "left-session-lock" } }),
-      right.create({ owner: { type: "session", id: "right-session-lock" } }),
+      left.create({ owner: { id: "left-session-lock" } }),
+      right.create({ owner: { id: "right-session-lock" } }),
     ]);
 
     expect(maxActiveAdds).toBe(1);
@@ -444,7 +444,7 @@ describe("WorktreeService", () => {
     const repo = await createGitRepo("remove-cas");
     const baseSha = await git(repo, ["rev-parse", "HEAD"]);
     const created = await new WorktreeService({ canonicalRoot: repo }).create({
-      owner: { type: "session", id: "session-remove-cas" },
+      owner: { id: "session-remove-cas" },
       baseSha,
     });
     await git(repo, ["commit", "--allow-empty", "-m", "advance with identical tree"]);
@@ -493,7 +493,7 @@ describe("WorktreeService", () => {
   test("reconciles only safe prunable managed worktrees without an Agent tool", async () => {
     const repo = await createGitRepo("reconcile-prunable");
     const service = new WorktreeService({ canonicalRoot: repo });
-    const created = await service.create({ owner: { type: "session", id: "session-prunable" } });
+    const created = await service.create({ owner: { id: "session-prunable" } });
     await rm(created.worktreePath, { recursive: true, force: true });
 
     expect(await service.list()).toContainEqual(expect.objectContaining({
@@ -515,7 +515,7 @@ describe("WorktreeService", () => {
   test("reports a detached prunable registration when its branch deletion fails", async () => {
     const repo = await createGitRepo("reconcile-prunable-branch-warning");
     const created = await new WorktreeService({ canonicalRoot: repo }).create({
-      owner: { type: "session", id: "session-prunable-branch-warning" },
+      owner: { id: "session-prunable-branch-warning" },
     });
     await rm(created.worktreePath, { recursive: true, force: true });
     const delegate = createProcessRunner();
@@ -561,7 +561,7 @@ describe("WorktreeService", () => {
   test("preserves prunable managed worktrees whose branches contain unique commits", async () => {
     const repo = await createGitRepo("reconcile-prunable-changed");
     const service = new WorktreeService({ canonicalRoot: repo });
-    const created = await service.create({ owner: { type: "session", id: "session-prunable-changed" } });
+    const created = await service.create({ owner: { id: "session-prunable-changed" } });
     await writeFile(join(created.worktreePath, "unique.txt"), "preserve\n");
     await git(created.worktreePath, ["add", "unique.txt"]);
     await git(created.worktreePath, ["commit", "-m", "unique worktree commit"]);

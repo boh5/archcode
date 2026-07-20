@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { apiFetch } from "./client";
-import { createSession, invalidateSessionModelSelectionQuery, patchSessionModelSelection, postMessage, stopSessionFamily } from "./mutations";
+import { createSession, invalidateSessionModelSelectionQuery, patchSessionModelSelection, postMessage, setSessionGoalBudget, stopSessionFamily } from "./mutations";
 
 const originalFetch = globalThis.fetch;
 const originalDocument = globalThis.document;
@@ -17,37 +16,6 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
     headers: { "Content-Type": "application/json", ...(init.headers ?? {}) },
   });
 }
-
-describe("web goal mutation API calls", () => {
-  test("retryGoal calls POST /api/projects/:slug/goals/:goalId/retry", async () => {
-    globalThis.document = { cookie: "" } as Document;
-    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/goals/goal-1/retry`);
-      expect(init?.method).toBe("POST");
-      expect(init?.body).toBeUndefined();
-      return jsonResponse({ id: "goal-1", status: "running" });
-    });
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
-
-    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/goals/goal-1/retry`, { method: "POST" });
-    expect(result).toMatchObject({ id: "goal-1" });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  test("cancelGoal calls POST /api/projects/:slug/goals/:goalId/cancel", async () => {
-    globalThis.document = { cookie: "" } as Document;
-    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/goals/goal-1/cancel`);
-      expect(init?.method).toBe("POST");
-      return jsonResponse({ id: "goal-1", status: "cancelled" });
-    });
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
-
-    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/goals/goal-1/cancel`, { method: "POST" });
-    expect(result).toMatchObject({ id: "goal-1" });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-});
 
 describe("web session runtime mutation API calls", () => {
   const requestedModelSelection = { mode: "session_override" as const, selection: { model: "openai:gpt-5", variant: "deep" } };
@@ -78,6 +46,20 @@ describe("web session runtime mutation API calls", () => {
 
     await stopSessionFamily({ slug: TEST_PROJECT_SLUG, rootSessionId: "root-session" });
 
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("setSessionGoalBudget increases or removes the Session-owned budget", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/sessions/root-session/goal/budget`);
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(String(init?.body))).toEqual({ tokenBudget: 50_000 });
+      return jsonResponse({ sessionId: "root-session" });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await setSessionGoalBudget({ slug: TEST_PROJECT_SLUG, sessionId: "root-session", tokenBudget: 50_000 });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

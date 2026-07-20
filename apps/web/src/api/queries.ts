@@ -2,12 +2,11 @@ import { queryOptions, useQuery } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 import type { AgentDescriptor, ModelRuntimeCatalog } from "@archcode/protocol";
 import type {
-  DashboardGoal,
+  DashboardSessionGoal,
   DashboardAutomation,
   DiffFile,
   DirectoryListResponse,
   DirectorySearchResponse,
-  GoalState,
   Automation,
   AutomationInvocation,
   Project,
@@ -21,10 +20,7 @@ export const queryKeys = {
   agents: ["agents"] as const,
   modelRuntime: ["config", "model-runtime"] as const,
   projects: ["projects"] as const,
-  goals: ["goals"] as const,
-  activeGoals: ["goals", "active"] as const,
-  projectGoals: (slug: string) => ["projects", slug, "goals"] as const,
-  goal: (slug: string, goalId: string) => ["projects", slug, "goals", goalId] as const,
+  sessionGoals: ["session-goals"] as const,
   sessions: (slug: string) => ["projects", slug, "sessions"] as const,
   session: (slug: string, sessionId: string) => ["projects", slug, "sessions", sessionId] as const,
   tree: (slug: string, rootSessionId: string) => ["projects", slug, "sessions", rootSessionId, "tree"] as const,
@@ -105,38 +101,12 @@ export function focusedSessionQueryOptions(slug: string, focusSessionId: string 
   });
 }
 
-export function goalsQueryOptions(slug: string) {
+export function sessionGoalsQueryOptions() {
   return queryOptions({
-    queryKey: queryKeys.projectGoals(slug),
+    queryKey: queryKeys.sessionGoals,
     queryFn: async () => {
-      const response = await apiFetch<{ goals: GoalState[] }>(
-        `/api/projects/${encodeURIComponent(slug)}/goals`,
-      );
-      return response.goals;
-    },
-    enabled: slug.length > 0,
-  });
-}
-
-export function goalQueryOptions(slug: string, goalId: string) {
-  return queryOptions({
-    queryKey: queryKeys.goal(slug, goalId),
-    queryFn: async () => {
-      const response = await apiFetch<GoalState>(
-        `/api/projects/${encodeURIComponent(slug)}/goals/${encodeURIComponent(goalId)}`,
-      );
-      return response;
-    },
-    enabled: slug.length > 0 && goalId.length > 0,
-  });
-}
-
-export function activeGoalsQueryOptions() {
-  return queryOptions({
-    queryKey: queryKeys.activeGoals,
-    queryFn: async () => {
-      const response = await apiFetch<{ goals: DashboardGoal[] }>("/api/goals?status=active");
-      return response.goals;
+      const response = await apiFetch<{ sessionGoals: DashboardSessionGoal[] }>("/api/session-goals");
+      return response.sessionGoals;
     },
   });
 }
@@ -200,16 +170,8 @@ export function useSessionTree(slug: string, rootSessionId: string) {
   return useQuery(sessionTreeQueryOptions(slug, rootSessionId));
 }
 
-export function useGoals(slug: string) {
-  return useQuery(goalsQueryOptions(slug));
-}
-
-export function useGoal(slug: string, goalId: string) {
-  return useQuery(goalQueryOptions(slug, goalId));
-}
-
-export function useActiveGoals() {
-  return useQuery(activeGoalsQueryOptions());
+export function useSessionGoals() {
+  return useQuery(sessionGoalsQueryOptions());
 }
 
 export function useDiff(

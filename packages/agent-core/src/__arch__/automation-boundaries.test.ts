@@ -70,7 +70,9 @@ describe("Automation architecture boundaries", () => {
     expect(todoRecovery).not.toContain("continuationService");
     expect(runtime).not.toContain("directSessionToolBatchExecutor");
     expect(runtime).not.toContain("activeSessionToolBatchExecutor");
-    expect(runtime.match(/executionManager\.startCheckedExecutionWithinGoalClaim/g)).toHaveLength(1);
+    expect(runtime).toContain("sessionGoalCoordinator.reconcileAll");
+    expect(runtime).toContain("sessionGoalCoordinator.requestReview");
+    expect(runtime).not.toContain("startCheckedExecutionWithinGoalClaim");
     expect(runtime).not.toContain('input.origin === "goal_claim"');
   });
 });

@@ -14,6 +14,7 @@ import type {
   GlobalSSEShutdownEvent,
   HitlView,
   McpServerStatus,
+  SessionGoal,
 } from "@archcode/protocol";
 import type { WebSessionStoreState } from "../store/session-store";
 import { queryKeys } from "../api/queries";
@@ -36,6 +37,21 @@ import {
 } from "./global-sse";
 
 const binding = { selection: { model: "test:model" }, providerId: "test", modelId: "model", providerDisplayName: "Test", modelDisplayName: "Test Model", resolution: "agent_default" as const, modelRuntimeRevision: "m1" };
+const sessionGoal: SessionGoal = {
+  instanceId: "00000000-0000-4000-8000-000000000001",
+  generation: 1,
+  objective: "Finish the implementation",
+  status: "active",
+  usage: { tokens: { inputTokens: 0, outputTokens: 0, totalTokens: 0, reasoningTokens: 0, cachedInputTokens: 0 }, executionTimeMs: 0, executionCount: 0 },
+  evaluatorCount: 0,
+  noProgressCount: 0,
+  failureCount: 0,
+  userInputCursor: 0,
+  sourceMutationEpoch: 0,
+  createdAt: 1,
+  activatedAt: 1,
+  updatedAt: 1,
+};
 import type { SSEEventHandlerDeps } from "./global-sse";
 
 function createMockStore(): StoreApi<WebSessionStoreState> {
@@ -461,6 +477,37 @@ describe("handleSSEEvent", () => {
     expect(mockApplyRemoteEnvelope).toHaveBeenCalledWith(envelope);
   });
 
+  test("keeps Session Goal projections live and invalidates all Goal consumers", () => {
+    const store = createMockStore();
+    mockFindWebSessionStore.mockReturnValue(store);
+    const envelope: GlobalSessionEventEnvelope = {
+      type: "event",
+      slug: "my-project",
+      sessionId: "session-1",
+      eventId: 42,
+      createdAt: 1,
+      agentName: "engineer",
+      payload: {
+        type: "session.goal_changed",
+        action: "usage_recorded",
+        instanceId: sessionGoal.instanceId,
+        generation: sessionGoal.generation,
+        goal: sessionGoal,
+        status: sessionGoal.status,
+        occurredAt: 1,
+      },
+    };
+
+    handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
+
+    expect(mockApplyRemoteEnvelope).toHaveBeenCalledWith(envelope);
+    expect(mockInvalidateQueries.mock.calls.map(([options]) => options.queryKey)).toEqual([
+      queryKeys.session("my-project", "session-1"),
+      queryKeys.sessions("my-project"),
+      queryKeys.sessionGoals,
+    ]);
+  });
+
   test("creates a store when no matching session store exists", () => {
     mockFindWebSessionStore.mockReturnValue(undefined);
     const mockStore = createMockStore();
@@ -574,28 +621,6 @@ describe("handleSSEEvent", () => {
       title: "Explore files",
       createdAt: 123,
     });
-  });
-
-  test("refreshes Goal list, active list, and detail without invalidating Sessions", () => {
-    handleSSEEvent({ event: "resource.changed", data: JSON.stringify({
-      type: "resource.changed",
-      projectSlug: "proj",
-      resourceType: "goal",
-      resourceId: "goal-123",
-      createdAt: Date.now(),
-    }) }, deps);
-
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["goals"] });
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["goals", "active"] });
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({
-      queryKey: ["projects", "proj", "goals"],
-    });
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({
-      queryKey: ["projects", "proj", "goals", "goal-123"],
-    });
-    expect(mockInvalidateQueries.mock.calls.every(([options]) => (
-      !Array.isArray(options.queryKey) || !options.queryKey.includes("sessions")
-    ))).toBe(true);
   });
 
   test("session-local HITL stream events are no longer accepted", () => {
