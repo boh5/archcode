@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { AgentRuntime } from "@archcode/agent-core";
-import { NotRootSessionError, ProjectRegistry, SessionDeleteConflictError, SessionDeleteInProgressError, SessionDeleteOwnerConflictError, SessionFamilyStopConflictError, SessionFamilyStopInProgressError, silentLogger } from "@archcode/agent-core";
+import { NotRootSessionError, ProjectRegistry, SessionDeleteConflictError, SessionDeleteInProgressError, SessionDeleteOwnerConflictError, SessionFamilyStopConflictError, SessionFamilyStopInProgressError, SessionModelSelectionNotAllowedError, silentLogger } from "@archcode/agent-core";
 import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "sessions-routes");
@@ -130,7 +130,11 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
       expectedRevision: number;
     }) => {
       const key = `${input.workspaceRoot}\0${input.sessionId}`;
-      if (!sessions.has(key)) throw new MissingSessionFileError();
+      const session = sessions.get(key);
+      if (!session) throw new MissingSessionFileError();
+      if (session.parentSessionId !== undefined || session.rootSessionId !== session.sessionId) {
+        throw new SessionModelSelectionNotAllowedError(session.sessionId, "not_root_lead");
+      }
       const revision = (modelSelectionRevisions.get(key) ?? input.expectedRevision) + 1;
       modelSelectionRevisions.set(key, revision);
       return testModelState(revision);
@@ -233,7 +237,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
 
 function testModelState(revision: number) {
   const requested = {
-    mode: "agent_default" as const,
+    mode: "profile_default" as const,
     selection: { model: "local:test", variant: "fast" },
   };
   return {
@@ -246,7 +250,7 @@ function testModelState(revision: number) {
         modelId: "test",
         providerDisplayName: "Local",
         modelDisplayName: "Test Model",
-        resolution: "agent_default" as const,
+        resolution: "profile_default" as const,
         modelRuntimeRevision: "runtime-1",
       },
     },
@@ -511,8 +515,8 @@ describe("sessions routes", () => {
     expect(await initial.json()).toMatchObject({
       modelSelection: { revision: 0 },
       nextModelSelection: {
-        requested: { mode: "agent_default", selection: { model: "local:test", variant: "fast" } },
-        resolved: { modelDisplayName: "Test Model", resolution: "agent_default" },
+        requested: { mode: "profile_default", selection: { model: "local:test", variant: "fast" } },
+        resolved: { modelDisplayName: "Test Model", resolution: "profile_default" },
       },
     });
 
@@ -529,6 +533,43 @@ describe("sessions routes", () => {
     });
     expect(patched.status).toBe(200);
     expect(await patched.json()).toMatchObject({ modelSelection: { revision: 1 } });
+  });
+
+  test("PATCH model selection rejects a child Session at the API boundary", async () => {
+    const { app, project, workspaceRoot, sessions } = await createTestApp("child-model-selection");
+    sessions.set(`${workspaceRoot}\0child-session`, createStoredSession({
+      sessionId: "child-session",
+      rootSessionId: "root-session",
+      parentSessionId: "root-session",
+    }));
+
+    const response = await app.request(
+      `/api/projects/${project.slug}/sessions/child-session/model-selection`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          expectedRevision: 0,
+          requestedModelSelection: {
+            mode: "session_override",
+            selection: { model: "local:test", variant: "fast" },
+          },
+        }),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "BAD_REQUEST",
+        message: expect.stringContaining("root Lead Session"),
+        details: {
+          scopeCode: "SESSION_MODEL_SELECTION_NOT_ALLOWED",
+          sessionId: "child-session",
+          reason: "not_root_lead",
+        },
+      },
+    });
   });
 
   test("DELETE /api/projects/:slug/sessions/:sessionId returns ok", async () => {

@@ -5,7 +5,7 @@ import { getProviderAdapterCatalog, getServerConfig, saveServerConfig, toConfigD
 import { useMcpStatusStore } from "../../store/mcp-status-store";
 import { DialogContent, DialogDescription, DialogRoot, DialogTitle } from "../ui/Dialog";
 import { cloneConfig, hasConfigChanges, toFieldErrors, type SettingsSection } from "./settings-helpers";
-import { SettingsAgentsPanel, SettingsGithubPanel, SettingsMcpPanel, SettingsMemoryPanel, SettingsModelsPanel, SettingsNavigation } from "./settings-panels";
+import { SettingsProfilesPanel, SettingsGithubPanel, SettingsMcpPanel, SettingsMemoryPanel, SettingsModelsPanel, SettingsNavigation } from "./settings-panels";
 
 export { SettingsMcpPanel, SettingsModelsPanel, SettingsNavigation } from "./settings-panels";
 
@@ -20,7 +20,7 @@ const restartSectionLabels: Record<RestartRequiredSection, string> = {
 export function SettingsApplyNotice({ modelsAppliedLive, restartRequiredSections }: { modelsAppliedLive: boolean; restartRequiredSections: readonly RestartRequiredSection[] }) {
   if (!modelsAppliedLive && restartRequiredSections.length === 0) return null;
   return <div role="status" className={`border-b px-5 py-2 text-sm ${restartRequiredSections.length > 0 ? "border-warning/30 bg-warning-muted text-warning" : "border-success/30 bg-success-muted text-success"}`}>
-    {modelsAppliedLive && <span>Model and Agent changes applied live.</span>}
+    {modelsAppliedLive && <span>Model and Profile changes applied live.</span>}
     {modelsAppliedLive && restartRequiredSections.length > 0 ? " " : null}
     {restartRequiredSections.length > 0 && <span>Restart required for: {restartRequiredSections.map((section) => restartSectionLabels[section]).join(", ")}.</span>}
   </div>;
@@ -76,7 +76,7 @@ export function SettingsBody({ snapshot, adapterCatalog, servers, onReload, sect
     setSaveError(undefined);
     try {
       const modelSettingsChanged = JSON.stringify(draft.provider) !== JSON.stringify(snapshot.config.provider)
-        || JSON.stringify(draft.agents) !== JSON.stringify(snapshot.config.agents);
+        || JSON.stringify(draft.profiles) !== JSON.stringify(snapshot.config.profiles);
       const next = toConfigDraft(
         await saveServerConfig({ expectedRevision: snapshot.revision, config: draft }),
         adapterCatalog,
@@ -100,7 +100,7 @@ export function SettingsBody({ snapshot, adapterCatalog, servers, onReload, sect
     <aside className="flex shrink-0 flex-col border-b border-border-subtle bg-bg-surface sm:w-52 sm:border-b-0 sm:border-r"><div className="border-b border-border-subtle px-4 py-4"><h2 className="text-[15px] font-semibold tracking-tight text-text-primary">Settings</h2><p className="mt-0.5 text-[11.5px] text-text-muted">Server configuration</p></div><SettingsNavigation activeSection={section} onSelect={setSection} /></aside>
     <div className="flex min-h-0 flex-1 flex-col"><main className="min-h-0 flex-1 overflow-y-auto bg-bg-base px-5 py-5 sm:px-6">
       <div hidden={section !== "models"}><SettingsModelsPanel config={draft} adapterCatalog={adapterCatalog} onChange={setDraft} errors={fieldErrors} onJsonValidationChange={onJsonValidationChange} jsonResetVersion={jsonResetVersion} /></div>
-      <div hidden={section !== "agents"}><SettingsAgentsPanel config={draft} onChange={setDraft} errors={fieldErrors} onJsonValidationChange={onJsonValidationChange} jsonResetVersion={jsonResetVersion} /></div>
+      <div hidden={section !== "profiles"}><SettingsProfilesPanel config={draft} onChange={setDraft} errors={fieldErrors} onJsonValidationChange={onJsonValidationChange} jsonResetVersion={jsonResetVersion} /></div>
       <div hidden={section !== "mcp"}><SettingsMcpPanel config={draft} servers={servers} onChange={setDraft} errors={errors} /></div>
       <div hidden={section !== "memory"}><SettingsMemoryPanel config={draft} onChange={setDraft} errors={errors} /></div>
       <div hidden={section !== "github"}><SettingsGithubPanel config={draft} onChange={setDraft} errors={errors} /></div>

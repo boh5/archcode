@@ -37,6 +37,8 @@ export type RawToolDetails = ToolResultDetails;
 /** Runtime-only effects. This object must never enter Session persistence or SSE. */
 export interface ToolExecutionSidecar {
   readonly sessionCwdChanged?: true;
+  /** Successful tool result is a terminal control boundary for the current Execution. */
+  readonly executionCompleted?: true;
 }
 
 export interface RawToolResult {

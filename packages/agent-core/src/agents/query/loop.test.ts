@@ -43,7 +43,7 @@ const dummyBinding: ExecutionModelBinding = {
     modelId: dummyModelInfo.modelId,
     providerDisplayName: dummyModelInfo.providerDisplayName,
     modelDisplayName: dummyModelInfo.displayName,
-    resolution: "agent_default",
+    resolution: "profile_default",
     modelRuntimeRevision: "test-revision",
   },
 };
@@ -87,7 +87,7 @@ async function createHarness() {
   await mkdir(workspaceRoot, { recursive: true });
   const storeManager = new SessionStoreManager({ logger: silentLogger });
   const sessionId = crypto.randomUUID();
-  const store = storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" });
+  const store = storeManager.create(sessionId, workspaceRoot, { agentName: "lead" });
   const projectContext = createTestProjectContext(workspaceRoot, storeManager);
   const redactionPolicy = new SecretRedactionPolicy([]);
   const artifactStore = new ToolOutputArtifactStore({ rootDir: join(workspaceRoot, "outputs") });
@@ -114,7 +114,7 @@ async function createHarness() {
     projectContext,
     toolOutputAccess,
     store,
-    agentName: "engineer",
+    agentName: "lead",
   };
   const appendUser = (text: string) => {
     const id = crypto.randomUUID();
@@ -175,6 +175,59 @@ describe("QueryLoop Tool Output Plane hard cut", () => {
       toolCallId: "call-1",
       result: { isError: false, output: { preview: "hello" } },
     });
+  });
+
+  test("completion boundary rejects a later effectful call in the same model batch", async () => {
+    const harness = await createHarness();
+    let writes = 0;
+    registerInline(
+      harness,
+      "update_goal",
+      async () => createTextToolResult("complete", { sidecar: { executionCompleted: true } }),
+      { readOnly: false, destructive: false, concurrencySafe: false },
+    );
+    registerInline(
+      harness,
+      "file_edit",
+      async () => { writes += 1; return createTextToolResult("wrote"); },
+      { readOnly: false, destructive: false, concurrencySafe: false },
+    );
+    harness.appendUser("complete safely");
+    installRounds([{ finishReason: "tool-calls", toolCalls: [
+      { toolCallId: "complete-1", toolName: "update_goal", input: {} },
+      { toolCallId: "write-2", toolName: "file_edit", input: {} },
+    ] }]);
+
+    expect(await runQueryLoop(harness.options)).toMatchObject({ status: "completed", steps: 1 });
+    expect(writes).toBe(0);
+    expect(toolEvents(harness).map((event) => event.result.isError)).toEqual([false, true]);
+  });
+
+  test("completion boundary ends the loop before a later model step can write", async () => {
+    const harness = await createHarness();
+    let writes = 0;
+    let modelCalls = 0;
+    registerInline(
+      harness,
+      "update_goal",
+      async () => createTextToolResult("complete", { sidecar: { executionCompleted: true } }),
+      { readOnly: false, destructive: false, concurrencySafe: false },
+    );
+    registerInline(
+      harness,
+      "file_edit",
+      async () => { writes += 1; return createTextToolResult("wrote"); },
+      { readOnly: false, destructive: false, concurrencySafe: false },
+    );
+    harness.appendUser("complete safely");
+    installRounds([
+      { finishReason: "tool-calls", toolCalls: [{ toolCallId: "complete-1", toolName: "update_goal", input: {} }] },
+      { finishReason: "tool-calls", toolCalls: [{ toolCallId: "write-2", toolName: "file_edit", input: {} }] },
+    ], () => { modelCalls += 1; });
+
+    expect(await runQueryLoop(harness.options)).toMatchObject({ status: "completed", steps: 1 });
+    expect(modelCalls).toBe(1);
+    expect(writes).toBe(0);
   });
 
   test("injects the scope-bound output accessor without exposing authorization fields", async () => {

@@ -29,7 +29,7 @@ function makeLink(overrides: Partial<ToolChildSessionLink> = {}): ToolChildSessi
     parentToolCallId: "call-1",
     toolName: "delegate",
     childSessionId: "child-1",
-    childAgentName: "explore",
+    childAgentName: "explore", childProfile: "fast", childSkillNames: [],
     title: "Child title",
     depth: 2,
     background: false,

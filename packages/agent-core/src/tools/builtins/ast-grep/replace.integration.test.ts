@@ -80,7 +80,7 @@ function makeCtx(file: string): ToolExecutionContext {
   return {
     store: createMockStore({ readSnapshots: new Map([[resolved, statSync(resolved).mtimeMs]]) }),
     toolName: "ast_grep_replace", toolCallId: "call-id", input: {}, step: 1,
-    abort: new AbortController().signal, agentName: "engineer-agent", startedAt: Date.now(),
+    abort: new AbortController().signal, agentName: "lead-agent", startedAt: Date.now(),
     allowedTools: new Set(["ast_grep_replace", "lsp_diagnostics"]), agentSkills: [],
     skillService: new SkillService({ builtinSkills: {} }), cwd: workspace, storeManager,
     projectContext: createTestProjectContext(workspace),

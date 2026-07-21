@@ -92,10 +92,10 @@ mock.module("../../api/mutations", () => ({
   useStopSessionFamily: () => ({ mutate: stopSessionMutate, isPending: stopPending }),
 }));
 
-const requestedModelSelection = { mode: "agent_default" as const, selection: { model: "test:model" } };
-const nextBinding = { selection: { model: "test:model" }, providerId: "test", modelId: "model", providerDisplayName: "Test", modelDisplayName: "Test Model", resolution: "agent_default" as const, modelRuntimeRevision: "m1" };
+const requestedModelSelection = { mode: "profile_default" as const, selection: { model: "test:model" } };
+const nextBinding = { selection: { model: "test:model" }, providerId: "test", modelId: "model", providerDisplayName: "Test", modelDisplayName: "Test Model", resolution: "profile_default" as const, modelRuntimeRevision: "m1" };
 let nextModelSelection: SessionNextModelSelection = { requested: requestedModelSelection, resolved: nextBinding };
-let modelCatalog: ModelRuntimeCatalog = { revision: "m1", providers: [], agentDefaults: { engineer: { model: "test:model" } } };
+let modelCatalog: ModelRuntimeCatalog = { revision: "m1", providers: [], profileDefaults: { principal: { model: "test:model" }, deep: { model: "test:model" }, fast: { model: "test:model" } } };
 
 mock.module("../../api/queries", () => ({
   useModelRuntime: () => ({ data: modelCatalog, isFetching: modelRuntimeFetching }),
@@ -111,7 +111,7 @@ mock.module("../../store/session-store", () => ({
       modelSelection: { revision: 0 },
       nextModelSelection,
       activeModelBinding: activity === "running" ? { ...nextBinding, selection: { model: "test:running" }, modelDisplayName: "Running Model" } : undefined,
-      agentName: "engineer",
+      agentName: "lead",
     }),
 }));
 
@@ -135,7 +135,7 @@ describe("ChatInput runtime controls", () => {
     stopPending = false;
     modelRuntimeFetching = false;
     nextModelSelection = { requested: requestedModelSelection, resolved: nextBinding };
-    modelCatalog = { revision: "m1", providers: [], agentDefaults: { engineer: { model: "test:model" } } };
+    modelCatalog = { revision: "m1", providers: [], profileDefaults: { principal: { model: "test:model" }, deep: { model: "test:model" }, fast: { model: "test:model" } } };
     hookCursor = 0;
     stateValues.length = 0;
     setState.mockClear();
@@ -167,7 +167,7 @@ describe("ChatInput runtime controls", () => {
     hitlReady = true;
     let tree = renderChatInput();
     let picker = findAll(tree, (element) => typeof element.type === "function" && (element.type as { name?: string }).name === "ModelPicker")[0];
-    expect((picker?.props?.next as { requested: { mode: string }; resolved: { modelDisplayName: string } }).requested.mode).toBe("agent_default");
+    expect((picker?.props?.next as { requested: { mode: string }; resolved: { modelDisplayName: string } }).requested.mode).toBe("profile_default");
     expect((picker?.props?.next as { resolved: { modelDisplayName: string } }).resolved.modelDisplayName).toBe("Test Model");
     expect(picker?.props?.active).toBeUndefined();
 
@@ -195,7 +195,7 @@ describe("ChatInput runtime controls", () => {
 
     // Session-first response: new next remains hidden until the matching catalog arrives.
     nextModelSelection = {
-      requested: { mode: "agent_default", selection: { model: "test:new" } },
+      requested: { mode: "profile_default", selection: { model: "test:new" } },
       resolved: { ...nextBinding, selection: { model: "test:new" }, modelId: "new", modelDisplayName: "New Model", modelRuntimeRevision: "m2" },
     };
     modelRuntimeFetching = false;
@@ -203,19 +203,19 @@ describe("ChatInput runtime controls", () => {
     tree = renderChatInput();
     expect(findAll(tree, (element) => typeof element.type === "function" && (element.type as { name?: string }).name === "ModelPicker")).toHaveLength(0);
 
-    modelCatalog = { revision: "m2", providers: [], agentDefaults: { engineer: { model: "test:new" } } };
+    modelCatalog = { revision: "m2", providers: [], profileDefaults: { principal: { model: "test:new" }, deep: { model: "test:new" }, fast: { model: "test:new" } } };
     hookCursor = 0;
     tree = renderChatInput();
     let picker = findAll(tree, (element) => typeof element.type === "function" && (element.type as { name?: string }).name === "ModelPicker")[0];
     expect((picker?.props?.next as SessionNextModelSelection).resolved.modelDisplayName).toBe("New Model");
 
     // Catalog-first response is also neutral until Session next catches up.
-    modelCatalog = { revision: "m3", providers: [], agentDefaults: { engineer: { model: "test:newer" } } };
+    modelCatalog = { revision: "m3", providers: [], profileDefaults: { principal: { model: "test:newer" }, deep: { model: "test:newer" }, fast: { model: "test:newer" } } };
     hookCursor = 0;
     tree = renderChatInput();
     expect(findAll(tree, (element) => typeof element.type === "function" && (element.type as { name?: string }).name === "ModelPicker")).toHaveLength(0);
     nextModelSelection = {
-      requested: { mode: "agent_default", selection: { model: "test:newer" } },
+      requested: { mode: "profile_default", selection: { model: "test:newer" } },
       resolved: { ...nextBinding, selection: { model: "test:newer" }, modelId: "newer", modelDisplayName: "Newer Model", modelRuntimeRevision: "m3" },
     };
     hookCursor = 0;

@@ -45,7 +45,7 @@ function context(
   const workspaceRoot = join(tmpdir(), `archcode-registry-context-${workspaceIndex++}-${crypto.randomUUID()}`);
   contextRoots.push(workspaceRoot);
   mkdirSync(workspaceRoot, { recursive: true });
-  const store = storeManager.create(`registry-${crypto.randomUUID()}`, workspaceRoot, { agentName: "engineer" });
+  const store = storeManager.create(`registry-${crypto.randomUUID()}`, workspaceRoot, { agentName: "lead" });
   return createToolExecutionContext({
     store,
     storeManager,

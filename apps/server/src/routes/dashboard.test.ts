@@ -15,7 +15,7 @@ function goal(status: SessionGoal["status"] = "blocked"): SessionGoal {
 
 function rootSummary(sessionId = "root"): SessionSummary {
   return {
-    sessionId, cwd: workspaceRoot, rootSessionId: sessionId, agentName: "engineer", activeSkillNames: [],
+    sessionId, cwd: workspaceRoot, rootSessionId: sessionId, agentName: "lead", profile: "principal", activeSkillNames: [],
     modelSelection: { revision: 0 }, title: "Migration", goal: goal(), createdAt: 1, updatedAt: 2,
   };
 }
@@ -25,7 +25,7 @@ function execution(status: SessionExecutionRecord["status"] = "failed"): Session
     id: "execution-1", status, startedAt: 10, endedAt: 20,
     binding: {
       selection: { model: "test:model" }, providerId: "test", modelId: "model",
-      providerDisplayName: "Test", modelDisplayName: "Model", resolution: "agent_default", modelRuntimeRevision: "test-revision",
+      providerDisplayName: "Test", modelDisplayName: "Model", resolution: "profile_default", modelRuntimeRevision: "test-revision",
     },
     origin: "user_message",
   };
@@ -53,7 +53,7 @@ function runtime(overrides: Record<string, unknown> = {}) {
       get: mock(async (slug: string) => slug === project.slug ? project : undefined),
       list: mock(async () => [project]),
     },
-    listSessions: mock(async () => [rootSummary(), { ...rootSummary("child"), parentSessionId: "root", rootSessionId: "root", agentName: "reviewer" }]),
+    listSessions: mock(async () => [rootSummary(), { ...rootSummary("child"), parentSessionId: "root", rootSessionId: "root", agentName: "analyst" }]),
     getSessionFile: mock(async () => ({ ...rootSummary(), executions: [execution()] })),
     listAutomations: mock(async () => [automation()]),
     listAutomationInvocations: mock(async () => [invocation()]),

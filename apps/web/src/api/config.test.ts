@@ -5,7 +5,7 @@ import { getModelRuntimeCatalog, getProviderAdapterCatalog, getServerConfig, sav
 
 const config: ServerConfig = {
   provider: {},
-  agents: {} as ServerConfig["agents"],
+  profiles: {} as ServerConfig["profiles"],
   memory: { enabled: true, minMessages: 5, minContentLength: 1000, cooldownMs: 300000 },
 };
 
@@ -94,7 +94,7 @@ describe("config API", () => {
         return Response.json([{ npmPackage: "@ai-sdk/openai", displayName: "OpenAI", fields: [] }]);
       }
       if (String(input) === "/api/config/model-runtime") {
-        return Response.json({ revision: "m1", providers: [], agentDefaults: {} });
+        return Response.json({ revision: "m1", providers: [], profileDefaults: { principal: { model: "test:model" }, deep: { model: "test:model" }, fast: { model: "test:model" } } });
       }
       return new Response(null, { status: 404 });
     });
@@ -103,6 +103,6 @@ describe("config API", () => {
     await expect(getProviderAdapterCatalog()).resolves.toEqual([
       { npmPackage: "@ai-sdk/openai", displayName: "OpenAI", fields: [] },
     ]);
-    await expect(getModelRuntimeCatalog()).resolves.toEqual({ revision: "m1", providers: [], agentDefaults: {} });
+    await expect(getModelRuntimeCatalog()).resolves.toEqual({ revision: "m1", providers: [], profileDefaults: { principal: { model: "test:model" }, deep: { model: "test:model" }, fast: { model: "test:model" } } });
   });
 });

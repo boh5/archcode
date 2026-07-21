@@ -1,20 +1,16 @@
-/** Canonical workspace-relative ownership reference carried by a delegation request. */
-export interface ScopeRef {
-  kind: "file" | "tree";
-  path: string;
-}
+import type { ProfileName } from "./types";
 
-export type DelegatedAgentType = "plan" | "build" | "reviewer" | "explore" | "librarian";
+export type DelegatedAgentType = "analyst" | "build" | "explore" | "librarian";
 
 /**
- * Durable parent-to-child handoff. Business constraints belong in objective;
- * owned_scope is retained solely for Build write-ownership enforcement.
+ * Durable parent-to-child handoff. The selected Profile and Skills are immutable
+ * child identity, while task constraints belong in the natural-language objective.
  */
 export interface DelegationRequest {
   agent_type: DelegatedAgentType;
+  profile: Exclude<ProfileName, "principal">;
   title: string;
   objective: string;
-  owned_scope: ScopeRef[];
   skills: string[];
   background: boolean;
 }

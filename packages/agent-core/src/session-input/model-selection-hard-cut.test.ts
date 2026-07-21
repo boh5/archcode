@@ -17,8 +17,9 @@ import { SessionInputService } from "./service";
 
 const WORKSPACE = join(import.meta.dir, "__test_tmp__", crypto.randomUUID());
 const SESSION_ID = "00000000-0000-4000-8000-000000000101";
+const CHILD_SESSION_ID = "00000000-0000-4000-8000-000000000102";
 const requested: RequestedModelSelection = {
-  mode: "agent_default",
+  mode: "profile_default",
   selection: { model: "test:model" },
 };
 const overrideRequested: RequestedModelSelection = {
@@ -31,7 +32,7 @@ const binding: ExecutionModelBindingSummary = {
   modelId: "model",
   providerDisplayName: "Test",
   modelDisplayName: "Model",
-  resolution: "agent_default",
+  resolution: "profile_default",
   modelRuntimeRevision: "runtime-1",
 };
 const audit: MessageModelAudit = { requested, actual: binding.selection };
@@ -46,14 +47,14 @@ describe("strict Session model selection protocol", () => {
     manager = new SessionStoreManager({ logger: silentLogger });
     input = new SessionInputService(manager);
     selections = new SessionModelSelectionService(manager);
-    await manager.createSessionFile(WORKSPACE, { agentName: "engineer" }, SESSION_ID);
+    await manager.createSessionFile(WORKSPACE, { agentName: "lead" }, SESSION_ID);
   });
 
   afterEach(async () => {
     await rm(WORKSPACE, { recursive: true, force: true });
   });
 
-  test("uses revision CAS and agent default deletes the override", async () => {
+  test("uses revision CAS and Profile default deletes the override", async () => {
     expect(await selections.get(SESSION_ID, WORKSPACE)).toEqual({ revision: 0 });
     expect(await selections.patch({
       sessionId: SESSION_ID,
@@ -90,6 +91,77 @@ describe("strict Session model selection protocol", () => {
       revision: 1,
       override: overrideRequested.selection,
     });
+  });
+
+  test("allows only a root Lead to set or clear a durable override", async () => {
+    await manager.createSessionFile(WORKSPACE, {
+      agentName: "explore",
+      rootSessionId: SESSION_ID,
+      parentSessionId: SESSION_ID,
+      title: "Inspect model selection",
+      activeSkillNames: [],
+      delegationRequest: {
+        agent_type: "explore",
+        profile: "fast",
+        title: "Inspect model selection",
+        objective: "Inspect the relevant model selection code.",
+        skills: [],
+        background: false,
+      },
+    }, CHILD_SESSION_ID);
+
+    for (const requestedModelSelection of [overrideRequested, requested]) {
+      await expect(selections.patch({
+        sessionId: CHILD_SESSION_ID,
+        workspaceRoot: WORKSPACE,
+        expectedRevision: 0,
+        requestedModelSelection,
+      })).rejects.toMatchObject({
+        name: "SessionModelSelectionNotAllowedError",
+        reason: "not_root_lead",
+      });
+    }
+    expect(await selections.get(CHILD_SESSION_ID, WORKSPACE)).toEqual({ revision: 0 });
+
+    expect(await selections.patch({
+      sessionId: SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      expectedRevision: 0,
+      requestedModelSelection: overrideRequested,
+    })).toEqual({ revision: 1, override: overrideRequested.selection });
+    expect(await selections.patch({
+      sessionId: SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      expectedRevision: 1,
+      requestedModelSelection: requested,
+    })).toEqual({ revision: 2 });
+  });
+
+  test("cold load rejects mutable model selection state on a child Session", async () => {
+    await manager.createSessionFile(WORKSPACE, {
+      agentName: "explore",
+      rootSessionId: SESSION_ID,
+      parentSessionId: SESSION_ID,
+      title: "Cold child",
+      activeSkillNames: [],
+      delegationRequest: {
+        agent_type: "explore",
+        profile: "fast",
+        title: "Cold child",
+        objective: "Inspect the persisted child identity.",
+        skills: [],
+        background: false,
+      },
+    }, CHILD_SESSION_ID);
+    const path = getSessionPath(WORKSPACE, CHILD_SESSION_ID);
+    const corrupted = JSON.parse(await Bun.file(path).text()) as Record<string, unknown>;
+    corrupted.modelSelection = { revision: 1, override: overrideRequested.selection };
+    await Bun.write(path, JSON.stringify(corrupted));
+
+    const restarted = new SessionStoreManager({ logger: silentLogger });
+    await expect(restarted.getSessionFile(WORKSPACE, CHILD_SESSION_ID)).rejects.toThrow(
+      "Child modelSelection must remain initial",
+    );
   });
 
   test("fingerprints the requested selection and commits only an exact contiguous prefix", async () => {

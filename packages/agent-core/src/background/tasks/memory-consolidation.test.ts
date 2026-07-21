@@ -47,12 +47,12 @@ function makeBinding(options?: ExecutionModelBinding["options"]): ExecutionModel
   return { modelInfo, options, summary: {
     selection: { model: modelInfo.qualifiedId }, providerId: modelInfo.providerId, modelId: modelInfo.modelId,
     providerDisplayName: modelInfo.providerDisplayName, modelDisplayName: modelInfo.displayName,
-    resolution: "agent_default", modelRuntimeRevision: "test-revision",
+    resolution: "profile_default", modelRuntimeRevision: "test-revision",
   } };
 }
 
 function makeTaskContext(overrides: Partial<BackgroundTaskContext> = {}): BackgroundTaskContext {
-  return { store: storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "engineer" }),
+  return { store: storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "lead" }),
   binding: makeBinding(),
   logger: silentLogger,
   retryScheduler: createFakeRetryScheduler(),

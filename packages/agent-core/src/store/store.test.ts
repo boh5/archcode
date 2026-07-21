@@ -20,11 +20,11 @@ const TEST_BINDING = {
   modelId: "model",
   providerDisplayName: "Test",
   modelDisplayName: "Model",
-  resolution: "agent_default" as const,
+  resolution: "profile_default" as const,
   modelRuntimeRevision: "runtime-1",
 };
 const TEST_REQUESTED_MODEL_SELECTION = {
-  mode: "agent_default" as const,
+  mode: "profile_default" as const,
   selection: TEST_BINDING.selection,
 };
 const TEST_MODEL_AUDIT = {
@@ -69,7 +69,7 @@ function uniqueSessionId(label: string): string {
 function createFreshStore(label: string) {
   usesInMemoryPersistence = true;
   sessionFileInternals.saveSessionTranscript = async () => {};
-  return storeManager.create(uniqueSessionId(label), TMP_DIR, { agentName: "engineer" });
+  return storeManager.create(uniqueSessionId(label), TMP_DIR, { agentName: "lead" });
 }
 
 function finalizedResult(
@@ -215,7 +215,7 @@ function onlyStep(steps: StepInfo[]): StepInfo {
 describe("SessionStoreManager", () => {
   test("create returns initialized session state with empty events log", () => {
     const sessionId = uniqueSessionId("creation");
-    const store = storeManager.create(sessionId, TMP_DIR, { agentName: "engineer" });
+    const store = storeManager.create(sessionId, TMP_DIR, { agentName: "lead" });
     const state = store.getState();
 
     expect(state.sessionId).toBe(sessionId);
@@ -363,13 +363,13 @@ describe("SessionStoreManager", () => {
 
   test("create returns the same store for the same session id", () => {
     const sessionId = uniqueSessionId("same-store");
-    expect(storeManager.create(sessionId, TMP_DIR, { agentName: "engineer" })).toBe(storeManager.create(sessionId, TMP_DIR, { agentName: "engineer" }));
+    expect(storeManager.create(sessionId, TMP_DIR, { agentName: "lead" })).toBe(storeManager.create(sessionId, TMP_DIR, { agentName: "lead" }));
   });
 
   test("create scopes stores by workspace root", () => {
     const sessionId = uniqueSessionId("scoped-store");
-    const left = storeManager.create(sessionId, "/workspace/left", { agentName: "engineer" });
-    const right = storeManager.create(sessionId, "/workspace/right", { agentName: "engineer" });
+    const left = storeManager.create(sessionId, "/workspace/left", { agentName: "lead" });
+    const right = storeManager.create(sessionId, "/workspace/right", { agentName: "lead" });
 
     expect(left).not.toBe(right);
     expect(storeManager.get(sessionId, "/workspace/left")).toBe(left);
@@ -379,20 +379,20 @@ describe("SessionStoreManager", () => {
   test("get returns undefined for unknown sessions and existing stores after creation", () => {
     const sessionId = uniqueSessionId("registry");
     expect(storeManager.get(sessionId, TMP_DIR)).toBeUndefined();
-    const store = storeManager.create(sessionId, TMP_DIR, { agentName: "engineer" });
+    const store = storeManager.create(sessionId, TMP_DIR, { agentName: "lead" });
     expect(storeManager.get(sessionId, TMP_DIR)).toBe(store);
   });
 
   test("has returns true for registered stores and false for unknown ones", () => {
     const sessionId = uniqueSessionId("has-check");
     expect(storeManager.has(sessionId, TMP_DIR)).toBe(false);
-    storeManager.create(sessionId, TMP_DIR, { agentName: "engineer" });
+    storeManager.create(sessionId, TMP_DIR, { agentName: "lead" });
     expect(storeManager.has(sessionId, TMP_DIR)).toBe(true);
   });
 
   test("delete removes a store from the registry", () => {
     const sessionId = uniqueSessionId("delete-store");
-    storeManager.create(sessionId, TMP_DIR, { agentName: "engineer" });
+    storeManager.create(sessionId, TMP_DIR, { agentName: "lead" });
     expect(storeManager.has(sessionId, TMP_DIR)).toBe(true);
 
     const result = storeManager.delete(sessionId, TMP_DIR);
@@ -411,7 +411,7 @@ describe("SessionStoreManager", () => {
       uniqueSessionId("clear-b"),
       uniqueSessionId("clear-c"),
     ];
-    for (const sessionId of sessionIds) storeManager.create(sessionId, TMP_DIR, { agentName: "engineer" });
+    for (const sessionId of sessionIds) storeManager.create(sessionId, TMP_DIR, { agentName: "lead" });
 
     storeManager.clearAll();
 
@@ -423,7 +423,7 @@ describe("SessionStoreManager", () => {
   test("clearAll on a fresh manager leaves no stores", () => {
     const fresh = new SessionStoreManager({ logger: silentLogger });
     const sessionId = uniqueSessionId("fresh-store");
-    fresh.create(sessionId, TMP_DIR, { agentName: "engineer" });
+    fresh.create(sessionId, TMP_DIR, { agentName: "lead" });
     fresh.clearAll();
     expect(fresh.has(sessionId, TMP_DIR)).toBe(false);
   });

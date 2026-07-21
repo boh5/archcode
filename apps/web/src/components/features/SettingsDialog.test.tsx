@@ -59,11 +59,10 @@ const config: ServerConfig = {
       },
     },
   },
-  agents: {
-    engineer: { model: "local:demo-model" },
-    plan: { model: "local:demo-model" }, build: { model: "local:demo-model" },
-    reviewer: { model: "local:demo-model" }, explore: { model: "local:demo-model" },
-    librarian: { model: "local:demo-model" }, shaper: { model: "local:demo-model" },
+  profiles: {
+    principal: { model: "local:demo-model" },
+    deep: { model: "local:demo-model" },
+    fast: { model: "local:demo-model" },
   },
   memory: { enabled: true, minMessages: 5, minContentLength: 1000, cooldownMs: 300000 },
 };
@@ -83,7 +82,7 @@ describe("SettingsDialog", () => {
     const labels = findAll(tree, (element) => element.type === "button").map(textContent);
 
     expect(textContent(tree)).toContain("Server");
-    expect(labels).toEqual(["Models", "Agents", "MCP", "Memory", "GitHub"]);
+    expect(labels).toEqual(["Models", "Profiles", "MCP", "Memory", "GitHub"]);
     expect(textContent(tree)).not.toContain("General");
     expect(textContent(tree)).not.toContain("MCP Status");
     expect(textContent(tree)).not.toContain("Providers");

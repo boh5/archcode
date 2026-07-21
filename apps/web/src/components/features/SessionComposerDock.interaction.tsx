@@ -15,14 +15,14 @@ let root: Root;
 let container: HTMLDivElement;
 let fetchMock: ReturnType<typeof mock>;
 
-const requestedModelSelection = { mode: "agent_default" as const, selection: { model: "test:model" } };
+const requestedModelSelection = { mode: "profile_default" as const, selection: { model: "test:model" } };
 const binding = {
   selection: { model: "test:model" },
   providerId: "test",
   modelId: "model",
   providerDisplayName: "Test",
   modelDisplayName: "Test Model",
-  resolution: "agent_default" as const,
+  resolution: "profile_default" as const,
   modelRuntimeRevision: "m1",
 };
 const modelState = {
@@ -54,7 +54,7 @@ beforeEach(() => {
   fetchMock = mock(async (input: RequestInfo | URL) => String(input).endsWith("/api/config/model-runtime") ? Response.json({
     revision: "m1",
     providers: [{ id: "test", displayName: "Test", models: [{ id: "model", qualifiedId: "test:model", displayName: "Test Model", variants: [] }] }],
-    agentDefaults: { engineer: { model: "test:model" } },
+    profileDefaults: { principal: { model: "test:model" }, deep: { model: "test:model" }, fast: { model: "test:model" } },
   }) : Response.json({
     clientRequestId: "request-retry",
     messageId: "message-retry",
@@ -83,7 +83,7 @@ describe("SessionComposerDock", () => {
     store.getState().initializeFromSnapshot({
       rootSessionId: "session-1",
       eventCursor: -1,
-      agentName: "engineer",
+      agentName: "lead",
       ...modelState,
       pendingMessages: [{
         id: "queued-user",
@@ -176,7 +176,7 @@ describe("SessionComposerDock", () => {
     store.getState().initializeFromSnapshot({
       rootSessionId: "session-2",
       eventCursor: -1,
-      agentName: "engineer",
+      agentName: "lead",
       ...modelState,
       pendingMessages: [],
     });

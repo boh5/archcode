@@ -1,60 +1,50 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import {
-  delegationScopesOverlap,
-  normalizeScopeRef,
-  validateScopeRefInWorkspace,
-} from "./contract";
+import { describe, expect, test } from "bun:test";
+import { DelegationRequestSchema } from "./schema";
 
-const TMP = join(import.meta.dir, "__test_tmp__", crypto.randomUUID());
-const WORKSPACE = join(TMP, "workspace");
-const OUTSIDE = join(TMP, "outside");
+function request(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    agent_type: "build",
+    profile: "deep",
+    title: "Implement parser",
+    objective: "Implement and verify the parser change.",
+    skills: ["safe-refactor"],
+    background: false,
+    ...overrides,
+  };
+}
 
-beforeEach(async () => {
-  await mkdir(join(WORKSPACE, "src"), { recursive: true });
-  await mkdir(OUTSIDE, { recursive: true });
-  await writeFile(join(WORKSPACE, "src", "file.ts"), "export {}\n");
-});
+describe("DelegationRequestSchema", () => {
+  test("accepts only the six-field hard-cut contract", () => {
+    expect(DelegationRequestSchema.safeParse(request()).success).toBe(true);
+    expect(() => DelegationRequestSchema.parse(request({ owned_scope: [] }))).toThrow();
+    expect(() => DelegationRequestSchema.parse(request({ write_scope: [] }))).toThrow();
+    expect(() => DelegationRequestSchema.parse(request({ profile: undefined }))).toThrow();
+    expect(() => DelegationRequestSchema.parse(request({ skills: undefined }))).toThrow();
+  });
 
-afterEach(async () => {
-  await rm(TMP, { recursive: true, force: true });
-});
-
-describe("delegation contract", () => {
-  it("normalizes relative paths and rejects absolute, traversal, glob, and Windows separators", () => {
-    expect(normalizeScopeRef({ kind: "tree", path: "./src/lib" })).toEqual({ kind: "tree", path: "src/lib" });
-    for (const path of ["/tmp/file", "../file", "src/*.ts", "src\\file.ts"]) {
-      expect(() => normalizeScopeRef({ kind: "file", path })).toThrow();
+  test("rejects removed and non-runnable Agent identities", () => {
+    for (const agent_type of ["lead", "engineer", "plan", "reviewer", "shaper", "visual"]) {
+      expect(() => DelegationRequestSchema.parse(request({ agent_type }))).toThrow();
     }
   });
 
-  it("checks existing and missing paths through the nearest existing ancestor", async () => {
-    await expect(validateScopeRefInWorkspace({ kind: "file", path: "src/file.ts" }, WORKSPACE))
-      .resolves.toEqual({ kind: "file", path: "src/file.ts" });
-    await expect(validateScopeRefInWorkspace({ kind: "file", path: "src/missing/new.ts" }, WORKSPACE))
-      .resolves.toEqual({ kind: "file", path: "src/missing/new.ts" });
+  test("enforces the target Profile matrix before child creation", () => {
+    expect(DelegationRequestSchema.parse(request({ agent_type: "analyst", profile: "deep" })).profile).toBe("deep");
+    expect(() => DelegationRequestSchema.parse(request({ agent_type: "analyst", profile: "fast" }))).toThrow();
+    expect(DelegationRequestSchema.parse(request({ agent_type: "build", profile: "fast" })).profile).toBe("fast");
+    expect(DelegationRequestSchema.parse(request({ agent_type: "build", profile: "deep" })).profile).toBe("deep");
+    for (const agent_type of ["explore", "librarian"]) {
+      expect(DelegationRequestSchema.parse(request({ agent_type, profile: "fast" })).profile).toBe("fast");
+      expect(() => DelegationRequestSchema.parse(request({ agent_type, profile: "deep" }))).toThrow();
+    }
+    expect(() => DelegationRequestSchema.parse(request({ profile: "principal" }))).toThrow();
+    expect(() => DelegationRequestSchema.parse(request({ profile: "visual" }))).toThrow();
   });
 
-  it("rejects existing and missing leaves beneath an escaping symlink", async () => {
-    await symlink(OUTSIDE, join(WORKSPACE, "escape"));
-    await writeFile(join(OUTSIDE, "secret.ts"), "secret\n");
-    await expect(validateScopeRefInWorkspace({ kind: "file", path: "escape/secret.ts" }, WORKSPACE)).rejects.toThrow("outside");
-    await expect(validateScopeRefInWorkspace({ kind: "file", path: "escape/missing.ts" }, WORKSPACE)).rejects.toThrow("outside");
+  test("keeps objective, title, and Skill names strict and non-empty", () => {
+    expect(() => DelegationRequestSchema.parse(request({ title: " " }))).toThrow();
+    expect(() => DelegationRequestSchema.parse(request({ objective: "" }))).toThrow();
+    expect(() => DelegationRequestSchema.parse(request({ skills: ["Bad Skill"] }))).toThrow();
+    expect(() => DelegationRequestSchema.parse(request({ background: "false" }))).toThrow();
   });
-
-  it("canonicalizes an in-workspace symlink alias for overlap-safe ownership", async () => {
-    await symlink(join(WORKSPACE, "src"), join(WORKSPACE, "source-alias"));
-    await expect(validateScopeRefInWorkspace({ kind: "file", path: "source-alias/file.ts" }, WORKSPACE))
-      .resolves.toEqual({ kind: "file", path: "src/file.ts" });
-    await expect(validateScopeRefInWorkspace({ kind: "file", path: "source-alias/missing.ts" }, WORKSPACE))
-      .resolves.toEqual({ kind: "file", path: "src/missing.ts" });
-  });
-
-  it("detects exact and tree-ancestor overlap only", () => {
-    expect(delegationScopesOverlap([{ kind: "tree", path: "src" }], [{ kind: "file", path: "src/a.ts" }])).toBe(true);
-    expect(delegationScopesOverlap([{ kind: "file", path: "src/a.ts" }], [{ kind: "file", path: "src/a.ts" }])).toBe(true);
-    expect(delegationScopesOverlap([{ kind: "file", path: "src/a.ts" }], [{ kind: "file", path: "src/ab.ts" }])).toBe(false);
-  });
-
 });

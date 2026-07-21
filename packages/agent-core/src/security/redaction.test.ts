@@ -28,7 +28,7 @@ describe("redaction primitives", () => {
 
   it("preserves recognized absolute paths without weakening conservative detection", () => {
     const detectorPositivePath =
-      "Symbols: Interface Agent (/Users/bo/Developer/AI/archcode/src/agents/engineer-agent.ts:19:1)";
+      "Symbols: Interface Agent (/Users/bo/Developer/AI/archcode/src/agents/lead-agent.ts:19:1)";
     expect(containsSecretPattern(detectorPositivePath).found).toBe(true);
     expect(redactString(detectorPositivePath)).toBe(detectorPositivePath);
 

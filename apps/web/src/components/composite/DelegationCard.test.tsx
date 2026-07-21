@@ -158,6 +158,8 @@ describe("DelegationCard", () => {
     focusStoreSessionId: "session-root-1",
     agentType: "explore",
     agentDisplayName: "Explore",
+    profile: "fast",
+    skills: [],
     taskTitle: "Find relevant files",
     executionStatus: "running" as const,
     depth: 1,

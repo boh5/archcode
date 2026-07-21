@@ -12,7 +12,7 @@ import { expectTextDraft } from "../test-results";
 const testDir = join(tmpdir(), "archcode-wait-for-reminder", crypto.randomUUID());
 
 function makeStore(): StoreApi<SessionStoreState> {
-  const store = storeManager.create(`wait-reminder-test-${crypto.randomUUID()}`, testDir, { agentName: "engineer" });
+  const store = storeManager.create(`wait-reminder-test-${crypto.randomUUID()}`, testDir, { agentName: "lead" });
   store.setState({ rootSessionId: store.getState().sessionId });
   return store;
 }

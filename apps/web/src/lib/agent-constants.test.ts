@@ -16,18 +16,18 @@ import {
 describe("AGENT_TYPES", () => {
   test("contains all expected agent types", () => {
     expect(AGENT_TYPES).toEqual([
-      "engineer", "plan", "build", "reviewer", "explore", "librarian", "shaper",
+      "lead", "analyst", "build", "explore", "librarian",
     ]);
   });
 
   test("is a readonly tuple", () => {
-    expect(AGENT_TYPES.length).toBe(7);
+    expect(AGENT_TYPES.length).toBe(5);
   });
 });
 
 describe("resolveAgentInitial", () => {
   test("derives the initial from the runtime display name", () => {
-    expect(resolveAgentInitial("Engineer")).toBe("E");
+    expect(resolveAgentInitial("Lead")).toBe("L");
     expect(resolveAgentInitial("Goal Lead")).toBe("G");
     expect(resolveAgentInitial("Quality Advocate")).toBe("Q");
   });
@@ -68,13 +68,11 @@ describe("AGENT_BADGE_COLORS", () => {
 describe("AGENT_BORDER_CLASS", () => {
   test("preserves the semantic border token for every built-in Agent", () => {
     expect(AGENT_BORDER_CLASS).toEqual({
-      engineer: "border-agent-engineer",
-      plan: "border-agent-plan",
+      lead: "border-agent-lead",
+      analyst: "border-agent-analyst",
       build: "border-agent-build",
-      reviewer: "border-agent-reviewer",
       explore: "border-agent-explore",
       librarian: "border-agent-librarian",
-      shaper: "border-agent-shaper",
     });
   });
 
@@ -90,8 +88,8 @@ describe("AGENT_BORDER_CLASS", () => {
 
 describe("isValidAgentType", () => {
   test("returns true for valid agent types", () => {
-    expect(isValidAgentType("engineer")).toBe(true);
-    expect(isValidAgentType("plan")).toBe(true);
+    expect(isValidAgentType("lead")).toBe(true);
+    expect(isValidAgentType("analyst")).toBe(true);
     expect(isValidAgentType("build")).toBe(true);
     expect(isValidAgentType("explore")).toBe(true);
   });
@@ -106,21 +104,21 @@ describe("isValidAgentType", () => {
   });
 
   test("narrows the type", () => {
-    const value: string = "engineer";
+    const value: string = "lead";
     if (isValidAgentType(value)) {
       const typed: AgentType = value;
-      expect(typed).toBe("engineer");
+      expect(typed).toBe("lead");
     }
   });
 });
 
 describe("agent catalog presentation", () => {
   const descriptors = [
-    { name: "engineer", displayName: "Engineer" },
+    { name: "lead", displayName: "Lead" },
   ];
 
   test("resolves display names from the server catalog", () => {
-    expect(resolveAgentDisplayName("engineer", descriptors)).toBe("Engineer");
+    expect(resolveAgentDisplayName("lead", descriptors)).toBe("Lead");
   });
 
   test("preserves an unknown Agent name instead of substituting a known role", () => {

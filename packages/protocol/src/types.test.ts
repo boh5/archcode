@@ -100,7 +100,7 @@ describe("current tool and config wire types", () => {
   test("represents only editable MCP and GitHub config fields", () => {
     const config = {
       provider: {},
-      agents: {} as ServerConfigUpdate["agents"],
+      profiles: {} as ServerConfigUpdate["profiles"],
       mcp: { servers: { docs: { url: "https://mcp.example.test", timeout: 30000 } } },
       integrations: { github: { enabled: true, tokenEnv: "GITHUB_TOKEN" } },
     } satisfies ServerConfigUpdate;
@@ -124,7 +124,7 @@ describe("current tool and config wire types", () => {
           },
         },
       },
-      agents: {} as ServerConfigUpdate["agents"],
+      profiles: {} as ServerConfigUpdate["profiles"],
     } satisfies ServerConfigUpdate;
 
     expect(serializeRoundTrip(config)).toEqual(config);
@@ -164,7 +164,7 @@ describe("global SSE wire protocol types", () => {
       eventId: 42,
       createdAt: 1,
       payload: { type: "text-delta", text: "hello" },
-      agentName: "engineer",
+      agentName: "lead",
     };
 
     const parsed = serializeRoundTrip(event);
@@ -177,7 +177,7 @@ describe("global SSE wire protocol types", () => {
     expect(parsed.createdAt).toBe(1);
     expect(parsed.payload.type).toBe("text-delta");
     expect(parsed.payload).toEqual({ type: "text-delta", text: "hello" });
-    expect(parsed.agentName).toBe("engineer");
+    expect(parsed.agentName).toBe("lead");
   });
 
   test("distinguishes matching event IDs by composite identity", () => {
@@ -188,7 +188,7 @@ describe("global SSE wire protocol types", () => {
       eventId: 42,
       createdAt: 1,
       payload: { type: "text-delta", text: "hello" },
-      agentName: "engineer",
+      agentName: "lead",
     };
     const second: GlobalSessionEventEnvelope<TextDeltaEvent> = {
       ...first,
@@ -252,7 +252,7 @@ describe("global SSE wire protocol types", () => {
         eventId: 42,
         createdAt: 1,
         payload: { type: "text-delta", text: "hello" },
-        agentName: "engineer",
+        agentName: "lead",
       },
       { type: "heartbeat", createdAt: 2 },
       { type: "reset", slug: "proj-a", sessionId: "s1", reason: "store_unavailable" },

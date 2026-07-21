@@ -86,7 +86,7 @@ export async function createDurableTestSessionContext(
   cwd = workspaceRoot,
 ): Promise<DurableTestSessionContext> {
   const storeManager = new SessionStoreManager({ logger: silentLogger });
-  const store = storeManager.create(sessionId, workspaceRoot, { cwd, agentName: "engineer" });
+  const store = storeManager.create(sessionId, workspaceRoot, { cwd, agentName: "lead" });
   await storeManager.flushSession(sessionId, workspaceRoot);
 
   const projectContext = createTestProjectContext(workspaceRoot, storeManager);

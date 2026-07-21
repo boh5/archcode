@@ -21,6 +21,7 @@ import {
 export const exploreAgentDefinition = {
   name: "explore",
   displayName: "Explore",
+  profiles: ["fast"],
   roleContract: exploreRoleContract,
   tools: {
     tools: [

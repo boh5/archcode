@@ -16,7 +16,7 @@ const MessageBodySchema = z.strictObject({
     .refine((value) => value.trim().length > 0, { message: "text is required" }),
   clientRequestId: z.uuid(),
   requestedModelSelection: z.strictObject({
-    mode: z.enum(["agent_default", "session_override"]),
+    mode: z.enum(["profile_default", "session_override"]),
     selection: z.strictObject({
       model: z.string().trim().min(1),
       variant: z.string().trim().min(1).optional(),

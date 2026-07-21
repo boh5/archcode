@@ -605,7 +605,7 @@ describe("CompressionBlock", () => {
       parentToolCallId: "tc-delegate-1",
       toolName: "delegate",
       childSessionId: "child-sess-1",
-      childAgentName: "explore",
+      childAgentName: "explore", childProfile: "fast", childSkillNames: [],
       depth: 1,
       background: false,
       status: "completed",
@@ -648,7 +648,7 @@ describe("CompressionBlock", () => {
                 toolName: "delegate",
                 input: {
                   agent_type: "explore", title: "Explore codebase", objective: "Explore codebase",
-                  owned_scope: [], skills: [], background: false,
+                  skills: [], background: false,
                 },
                 result: {
                   isError: false,

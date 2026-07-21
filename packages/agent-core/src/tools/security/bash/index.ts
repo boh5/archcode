@@ -1,4 +1,4 @@
-export { analyzeBash } from "./analyze";
+export { analyzeBash, hasBashMutationWithinRoots } from "./analyze";
 export type {
   AnalyzeBashOptions,
   BashAccess,

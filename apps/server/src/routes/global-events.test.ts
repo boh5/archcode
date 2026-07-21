@@ -80,7 +80,7 @@ function sessionEvent(input: { slug: string; sessionId: string; eventId: number;
     eventId: input.eventId,
     createdAt: 123 + input.eventId,
     payload: { type: "system-notice", message: input.message },
-    agentName: "engineer",
+    agentName: "lead",
   };
 }
 

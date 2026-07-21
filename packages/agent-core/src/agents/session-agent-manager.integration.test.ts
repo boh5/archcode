@@ -11,7 +11,7 @@ import type { ToolRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
 import { createTextToolResult } from "../tools/results";
 import { createTestToolRegistryFixture, type TestToolRegistryFixture } from "../tools/test-registry";
-import { engineerAgentDefinition } from "./definitions";
+import { leadAgentDefinition } from "./definitions";
 import { SessionAgentManager } from "./session-agent-manager";
 import { createTestProjectContextResolver } from "./test-project-context-resolver";
 
@@ -40,7 +40,7 @@ describe("SessionAgentManager Git cwd validation", () => {
     await gitInit(projectRoot);
     const storeManager = new SessionStoreManager({ logger: silentLogger });
     const sessionId = crypto.randomUUID();
-    storeManager.create(sessionId, projectRoot, { cwd: outside, agentName: "engineer" });
+    storeManager.create(sessionId, projectRoot, { cwd: outside, agentName: "lead" });
     const manager = createManager(storeManager);
 
     await expect(manager.getOrCreate(projectRoot, sessionId)).rejects.toMatchObject({
@@ -58,7 +58,7 @@ describe("SessionAgentManager Git cwd validation", () => {
     await symlink(realProjectRoot, projectRoot, "dir");
     const storeManager = new SessionStoreManager({ logger: silentLogger });
     const sessionId = crypto.randomUUID();
-    storeManager.create(sessionId, projectRoot, { cwd: realProjectRoot, agentName: "engineer" });
+    storeManager.create(sessionId, projectRoot, { cwd: realProjectRoot, agentName: "lead" });
     const manager = createManager(storeManager);
 
     await expect(manager.getOrCreate(projectRoot, sessionId)).rejects.toMatchObject({
@@ -70,7 +70,7 @@ describe("SessionAgentManager Git cwd validation", () => {
 
 function createManager(storeManager: SessionStoreManager): SessionAgentManager {
   return new SessionAgentManager({
-    definitions: [engineerAgentDefinition],
+    definitions: [leadAgentDefinition],
     toolRegistry: createTestRegistry([makeTool("unknown_tool")]),
     skillService: new SkillService({ builtinSkills: {} }),
     storeManager,

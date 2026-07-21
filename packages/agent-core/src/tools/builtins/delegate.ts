@@ -115,7 +115,7 @@ export const delegateTool = defineTool({
   name: "delegate",
   description: [
     "Create one direct child Session from a strict DelegationRequest.",
-    "Put all task requirements in objective. Build requires non-empty owned_scope; other roles require an empty owned_scope.",
+    "Select the allowed child Agent and Profile for task intensity, list the workflow Skills to load, and put all task requirements in objective.",
     "The child returns a normal final response. Use resume_session for corrections or follow-up on the same responsibility.",
     "background=false waits and returns the completed execution's final output. background=true returns the Session ID; wait for its terminal reminder, then use background_output.",
   ].join("\n"),

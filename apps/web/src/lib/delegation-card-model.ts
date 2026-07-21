@@ -12,6 +12,8 @@ export interface DelegationCardViewModel {
   focusStoreSessionId: string;
   agentType: string;
   agentDisplayName: string;
+  profile: string;
+  skills: string[];
   taskTitle?: string;
   executionStatus: BadgeStatus;
   depth: number;
@@ -70,6 +72,8 @@ export function buildDelegationCardViewModel({
   const sessionId = link?.childSessionId ?? "";
   const agentType = link?.childAgentName ?? (parsedInput?.agent_type as string) ?? "unknown";
   const agentDisplayName = resolveAgentDisplayName(agentType, agentDescriptors);
+  const profile = link?.childProfile ?? (parsedInput?.profile as string) ?? "unknown";
+  const skills = link?.childSkillNames ?? (Array.isArray(parsedInput?.skills) ? parsedInput.skills.filter((skill): skill is string => typeof skill === "string") : []);
   const taskTitle = link?.title ?? (parsedInput?.title as string);
   const taskSummary = typeof parsedInput?.objective === "string" ? parsedInput.objective : "";
   const executionStatus: BadgeStatus = link
@@ -87,6 +91,8 @@ export function buildDelegationCardViewModel({
     focusStoreSessionId,
     agentType,
     agentDisplayName,
+    profile,
+    skills,
     taskTitle,
     executionStatus,
     depth,

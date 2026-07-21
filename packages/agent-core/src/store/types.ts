@@ -131,6 +131,8 @@ export interface SessionToolBatchCall {
   readonly state: SessionToolCallState;
   readonly attempt: number;
   readonly result?: FinalizedToolResult;
+  /** Durable marker that this successful call ended its owning Execution. */
+  readonly executionCompleted?: true;
   readonly blocker?: SessionToolCallBlocker;
   readonly recoveryFailure?: SessionToolRecoveryFailure;
 }
@@ -157,6 +159,14 @@ export interface SessionToolBatch {
   readonly continuationCompletedAt?: string;
   readonly archivedAt?: string;
   readonly manualInspectionReason?: SessionToolManualInspectionReason;
+}
+
+/** Runtime-authored provenance for one Goal completion review attempt. */
+export interface GoalReviewBinding {
+  readonly goalInstanceId: string;
+  readonly goalGeneration: number;
+  readonly rootSessionId: string;
+  readonly createdAt: number;
 }
 
 export interface SessionStoreState {
@@ -191,13 +201,15 @@ export interface SessionStoreState {
   childSessionLinks: ToolChildSessionLink[];
   /** Immutable parent-to-child handoff. Required for every child Session. */
   delegationRequest?: DelegationRequest;
+  /** Present only on a runtime-created direct Analyst Goal review child. */
+  goalReviewBinding?: GoalReviewBinding;
   /** Complete tool-batch audit history; at most one entry may be active (no archivedAt). */
   toolBatches: SessionToolBatch[];
   // Identity is assigned at creation/load and treated as immutable afterwards.
   // Descendant relationships are derived from child files, not parent-side caches.
   rootSessionId: string;
   parentSessionId?: string;
-  /** Only root Engineer Sessions may own a Goal. */
+  /** Only ordinary root Lead Sessions may own a Goal. */
   goal?: SessionGoal;
 
   // Running state

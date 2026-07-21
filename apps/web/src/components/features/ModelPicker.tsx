@@ -11,7 +11,6 @@ import type {
 
 export interface ModelPickerProps {
   catalog: ModelRuntimeCatalog;
-  agentName: string;
   next: SessionNextModelSelection;
   active?: ExecutionModelBindingSummary;
   onSelect: (selection: RequestedModelSelection) => void;
@@ -29,7 +28,7 @@ function bindingLabel(binding: ExecutionModelBindingSummary): string {
 }
 
 function modeLabel(selection: RequestedModelSelection): string {
-  return selection.mode === "agent_default" ? "Agent default" : "Override";
+  return selection.mode === "profile_default" ? "Principal profile" : "Override";
 }
 
 function catalogSelectionLabel(model: ModelRuntimeModelDescriptor, variant?: string): string {
@@ -44,7 +43,6 @@ function catalogRefLabel(catalog: ModelRuntimeCatalog, selection: ModelSelection
 
 export function ModelPicker({
   catalog,
-  agentName,
   next,
   active,
   onSelect,
@@ -55,7 +53,7 @@ export function ModelPicker({
   const [query, setQuery] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const agentDefault = catalog.agentDefaults[agentName];
+  const principalProfile = catalog.profileDefaults.principal;
 
   useEffect(() => {
     if (!open) return;
@@ -168,20 +166,20 @@ export function ModelPicker({
           <div className="min-h-0 overflow-y-auto overscroll-contain p-1.5">
             <button
               type="button"
-              disabled={!agentDefault}
+              disabled={!principalProfile}
               onClick={() => {
-                if (agentDefault) select({ mode: "agent_default", selection: agentDefault });
+                if (principalProfile) select({ mode: "profile_default", selection: principalProfile });
               }}
               className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left hover:bg-bg-hover focus-visible:outline-2 focus-visible:outline-accent"
-              data-testid="model-picker-agent-default"
+              data-testid="model-picker-principal-profile"
             >
               <span className="flex-1">
-                <span className="block text-[12.5px] font-medium text-text-primary">Agent default</span>
+                <span className="block text-[12.5px] font-medium text-text-primary">Principal profile</span>
                 <span className="block truncate text-[10.5px] text-text-muted">
-                  {agentDefault ? catalogRefLabel(catalog, agentDefault) : `No default for ${agentName}`}
+                  {principalProfile ? catalogRefLabel(catalog, principalProfile) : "Principal profile is unavailable"}
                 </span>
               </span>
-              {agentDefault && next.requested.mode === "agent_default" && <Check size={13} className="shrink-0 text-accent" aria-label="Selected" />}
+              {principalProfile && next.requested.mode === "profile_default" && <Check size={13} className="shrink-0 text-accent" aria-label="Selected" />}
             </button>
 
             <div className="my-1 h-px bg-border-subtle" />

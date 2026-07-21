@@ -23,6 +23,7 @@ import type {
   SessionTodo,
   SessionGoal,
 } from "@archcode/protocol";
+import { createClientUuid } from "../lib/client-uuid";
 
 const MAX_IDLE_SESSION_STORES = 20;
 const MAX_PENDING_REMOTE_EVENTS = 1000;
@@ -138,7 +139,7 @@ function appendEnvelopeToState(
 
   const partial = reduceStreamEvent(state as SessionProjection, envelope.payload, {
     timestamp: envelope.createdAt,
-    generateId: () => crypto.randomUUID(),
+    generateId: createClientUuid,
   });
 
   // A durable queued/canonical message carries the same clientRequestId as the

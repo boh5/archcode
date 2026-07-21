@@ -65,7 +65,7 @@ function message(index: number): StoredMessage {
 }
 
 function createStore(messageCount = 6) {
-  const store = storeManager.create(`auto-compact-wrapper-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, { agentName: "engineer" });
+  const store = storeManager.create(`auto-compact-wrapper-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, { agentName: "lead" });
   store.setState({ messages: Array.from({ length: messageCount }, (_, index) => message(index + 1)) });
   return store;
 }
@@ -87,7 +87,7 @@ function binding(context = 1000): ExecutionModelBinding {
       modelId: "mock",
       providerDisplayName: "Test",
       modelDisplayName: "Mock",
-      resolution: "agent_default",
+      resolution: "profile_default",
       modelRuntimeRevision: "test-revision",
     },
   };

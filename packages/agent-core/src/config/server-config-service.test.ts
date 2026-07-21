@@ -19,7 +19,7 @@ afterAll(async () => {
 });
 
 function config(): Record<string, unknown> {
-  const agent = { model: "local:test-model" };
+  const profile = { model: "local:test-model" };
   return {
     provider: {
       local: {
@@ -41,14 +41,10 @@ function config(): Record<string, unknown> {
         },
       },
     },
-    agents: {
-      engineer: agent,
-      plan: agent,
-      build: { ...agent, variant: "fast" },
-      reviewer: agent,
-      explore: agent,
-      librarian: agent,
-      shaper: agent,
+    profiles: {
+      principal: profile,
+      deep: profile,
+      fast: { ...profile, variant: "fast" },
     },
     mcp: {
       servers: {
@@ -117,7 +113,7 @@ function adapterConfig(adapter: ProviderAdapter): Record<string, any> {
       setNested(options, secretPath, `original:${adapter.npmPackage}:${secretPath}`);
     }
   }
-  const agent = { model: "local:test-model" };
+  const profile = { model: "local:test-model" };
   return {
     provider: {
       local: {
@@ -133,14 +129,10 @@ function adapterConfig(adapter: ProviderAdapter): Record<string, any> {
         },
       },
     },
-    agents: {
-      engineer: agent,
-      plan: agent,
-      build: agent,
-      reviewer: agent,
-      explore: agent,
-      librarian: agent,
-      shaper: agent,
+    profiles: {
+      principal: profile,
+      deep: profile,
+      fast: profile,
     },
   };
 }
@@ -304,7 +296,7 @@ describe("ServerConfigService", () => {
     const service = await createService();
     const snapshot = await service.getSnapshot();
     const invalid = preserveSecrets(snapshot.config);
-    invalid.agents.engineer.model = "missing:model";
+    invalid.profiles.principal.model = "missing:model";
     const before = await readFile(service.configPath, "utf8");
     const beforeRuntime = service.modelRuntime.current;
 
@@ -317,7 +309,7 @@ describe("ServerConfigService", () => {
     const saved = await service.save({ expectedRevision: snapshot.revision, config: valid });
     const contents = await readFile(service.configPath, "utf8");
     expect(contents).toEndWith("\n");
-    expect(contents).toContain('\n  "agents":');
+    expect(contents).toContain('\n  "profiles":');
     expect((await stat(service.configPath)).mode & 0o777).toBe(0o600);
     expect(saved.modelRuntimeRevision).toBe(saved.revision);
     expect(saved.restartRequiredSections).toEqual([]);
@@ -346,7 +338,7 @@ describe("ServerConfigService", () => {
   test("rejects unsupported provider packages, unknown variants, and invalid MCP URLs before writing", async () => {
     for (const mutate of [
       (draft: ServerConfigUpdate) => { draft.provider.local.npm = "unsupported"; },
-      (draft: ServerConfigUpdate) => { draft.agents.engineer.variant = "missing"; },
+      (draft: ServerConfigUpdate) => { draft.profiles.principal.variant = "missing"; },
       (draft: ServerConfigUpdate) => { draft.mcp!.servers.custom.url = "file:///not-http"; },
     ]) {
       const service = await createService();

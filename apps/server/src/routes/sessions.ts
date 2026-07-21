@@ -10,6 +10,7 @@ import {
   SessionGoalServiceError,
   SessionModelSelectionConflictError,
   SessionModelSelectionInvalidError,
+  SessionModelSelectionNotAllowedError,
 } from "@archcode/agent-core";
 import type { AgentRuntime } from "@archcode/agent-core";
 import { z } from "zod/v4";
@@ -27,7 +28,7 @@ const RootSessionParamsSchema = z.strictObject({
   rootSessionId: z.string().min(1),
 });
 const ModelSelectionSchema = z.strictObject({
-  mode: z.enum(["agent_default", "session_override"]),
+  mode: z.enum(["profile_default", "session_override"]),
   selection: z.strictObject({
     model: z.string().trim().min(1),
     variant: z.string().trim().min(1).optional(),
@@ -58,7 +59,7 @@ export function createSessionsRoutes(runtime: AgentRuntime): Hono {
   app.post("/", zValidator("param", ProjectParamsSchema), async (c) => {
     await rejectRequestBody(c.req.text());
     const project = await resolveProject(runtime, c.req.valid("param").slug);
-    return c.json(await runtime.createSession(project.workspaceRoot, { agentName: "engineer" }), 201);
+    return c.json(await runtime.createSession(project.workspaceRoot, { agentName: "lead" }), 201);
   });
 
   app.get("/:sessionId", zValidator("param", SessionParamsSchema), async (c) => {
@@ -102,6 +103,13 @@ export function createSessionsRoutes(runtime: AgentRuntime): Hono {
           ...c.req.valid("json"),
         }));
       } catch (error) {
+        if (error instanceof SessionModelSelectionNotAllowedError) {
+          throw new BadRequestError(error.message, {
+            scopeCode: "SESSION_MODEL_SELECTION_NOT_ALLOWED",
+            sessionId: error.sessionId,
+            reason: error.reason,
+          });
+        }
         if (error instanceof SessionModelSelectionConflictError) {
           throw new ServerError("BAD_REQUEST", error.message, 409, {
             scopeCode: "SESSION_MODEL_SELECTION_CONFLICT",

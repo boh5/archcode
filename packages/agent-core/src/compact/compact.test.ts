@@ -205,7 +205,7 @@ const mockBinding: ExecutionModelBinding = {
   summary: {
     selection: { model: mockModelInfo.qualifiedId }, providerId: "test", modelId: "test-model",
     providerDisplayName: "Test Provider", modelDisplayName: "Test Model",
-    resolution: "agent_default", modelRuntimeRevision: "test-revision",
+    resolution: "profile_default", modelRuntimeRevision: "test-revision",
   },
 };
 
@@ -336,7 +336,7 @@ describe("compact", () => {
       makeUserMessage("u6", "Sixth message (incomplete)"),
     ];
 
-    const store = storeManager.create("test-session-txn", TEST_WORKSPACE_ROOT, { agentName: "engineer" });
+    const store = storeManager.create("test-session-txn", TEST_WORKSPACE_ROOT, { agentName: "lead" });
     const originalMessageCount = store.getState().messages.length;
 
     let error: CompactError | null = null;
@@ -586,7 +586,7 @@ describe("compact", () => {
   // -------------------------------------------------------------------------
 
   test("commitCompact dispatches compact event to store", () => {
-    const store = storeManager.create("test-commit-session", TEST_WORKSPACE_ROOT, { agentName: "engineer" });
+    const store = storeManager.create("test-commit-session", TEST_WORKSPACE_ROOT, { agentName: "lead" });
 
     // Add some messages first
     const messageId = crypto.randomUUID();

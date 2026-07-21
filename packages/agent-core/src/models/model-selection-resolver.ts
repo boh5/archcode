@@ -4,7 +4,7 @@ import type {
   ModelSelectionRef,
   RequestedModelSelection,
 } from "@archcode/protocol";
-import type { ModelCallOptions } from "../config";
+import type { ModelCallOptions, ProfileName } from "../config";
 import type { ExecutionModelBinding } from "./execution-model-binding";
 import { cloneAndFreeze, deepFreeze } from "./immutable";
 import type {
@@ -14,14 +14,14 @@ import type {
 
 export interface ResolveExecutionModelBindingInput {
   readonly snapshot: ModelRuntimeSnapshot;
-  readonly agentName: string;
+  readonly profile: ProfileName;
   readonly requested?: RequestedModelSelection;
   readonly sessionOverride?: ModelSelectionRef;
 }
 
 export class ModelSelectionResolutionError extends Error {
   constructor(
-    public readonly agentName: string,
+    public readonly profile: ProfileName,
     message: string,
   ) {
     super(message);
@@ -33,14 +33,13 @@ export class ModelSelectionResolutionError extends Error {
 export class ModelSelectionResolver {
   resolve(input: ResolveExecutionModelBindingInput): ExecutionModelBinding {
     const candidate = selectCandidate(input);
-    const agentOptions = input.snapshot.getAgentOptions(input.agentName);
     const variantOptions = candidate.resolved.selection.variant === undefined
       ? undefined
       : candidate.resolved.modelConfig.variants?.[candidate.resolved.selection.variant];
     const options = mergeModelCallOptions(
       candidate.resolved.modelConfig.options,
       variantOptions,
-      agentOptions,
+      candidate.applyProfileOptions ? input.snapshot.getProfileOptions(input.profile) : undefined,
     );
     const summary: ExecutionModelBindingSummary = deepFreeze({
       selection: candidate.resolved.selection,
@@ -65,35 +64,41 @@ export class ModelSelectionResolver {
 function selectCandidate(input: ResolveExecutionModelBindingInput): {
   readonly resolved: ResolvedSnapshotSelection;
   readonly resolution: ModelBindingResolution;
+  readonly applyProfileOptions: boolean;
 } {
   if (input.requested) {
+    if (input.requested.mode === "profile_default") {
+      return resolveProfileDefault(input);
+    }
     const requested = input.snapshot.tryResolveSelection(input.requested.selection);
-    if (requested) return { resolved: requested, resolution: "requested" };
+    if (requested) return { resolved: requested, resolution: "requested", applyProfileOptions: false };
   }
 
   if (input.sessionOverride) {
     const sessionOverride = input.snapshot.tryResolveSelection(input.sessionOverride);
     if (sessionOverride) {
-      return { resolved: sessionOverride, resolution: "session_override" };
+      return { resolved: sessionOverride, resolution: "session_override", applyProfileOptions: false };
     }
   }
 
-  const agentDefault = input.snapshot.getAgentDefault(input.agentName);
-  if (!agentDefault) {
-    throw new ModelSelectionResolutionError(
-      input.agentName,
-      `Agent "${input.agentName}" does not have a configured default model`,
-    );
-  }
-  const resolvedDefault = input.snapshot.tryResolveSelection(agentDefault);
+  return resolveProfileDefault(input);
+}
+
+function resolveProfileDefault(input: ResolveExecutionModelBindingInput): {
+  readonly resolved: ResolvedSnapshotSelection;
+  readonly resolution: "profile_default";
+  readonly applyProfileOptions: true;
+} {
+  const profileDefault = input.snapshot.getProfileDefault(input.profile);
+  const resolvedDefault = input.snapshot.tryResolveSelection(profileDefault);
   if (!resolvedDefault) {
     throw new ModelSelectionResolutionError(
-      input.agentName,
-      `Agent "${input.agentName}" has an invalid default model selection`,
+      input.profile,
+      `Profile "${input.profile}" has an invalid default model selection`,
     );
   }
 
-  return { resolved: resolvedDefault, resolution: "agent_default" };
+  return { resolved: resolvedDefault, resolution: "profile_default", applyProfileOptions: true };
 }
 
 function mergeModelCallOptions(

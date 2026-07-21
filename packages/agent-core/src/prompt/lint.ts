@@ -55,9 +55,7 @@ export function lintGuidanceAuthority(contract: Pick<PromptContractV2, "guidance
 }
 
 function completionAuthorityFor(runtime: RuntimePromptEnvelope): CompletionAuthority {
-  if (runtime.agentName === "engineer") return "ordinary-session";
-  if (runtime.agentName === "shaper") return "bound-todo";
-  if (runtime.agentName === "reviewer") return "reviewer";
+  if (runtime.agentName === "lead") return runtime.todo === "none" ? "ordinary-session" : "bound-todo";
   return "delegated-scope";
 }
 
@@ -75,27 +73,26 @@ export function assertLegalExecutionMode(runtime: RuntimePromptEnvelope): void {
   const reject = (reason: string): never => { throw new IllegalPromptExecutionModeError(runtime.agentName, reason); };
 
   if (isRoot === hasParentAgent) reject("parent Session and parent Agent identities must either both be present or both be none");
-  if (runtime.agentName !== "shaper" && runtime.todo !== "none") reject("only Shaper may have a bound Todo");
+  if (runtime.agentName !== "lead" && runtime.todo !== "none") reject("only a root Lead may have a bound Todo");
 
   switch (runtime.agentName) {
-    case "engineer": if (!isRoot) reject("Engineer requires a root Session"); break;
-    case "shaper": if (!isRoot || hasGoal || runtime.todo === "none") reject("Shaper requires an ordinary bound Todo root"); break;
-    case "plan":
-    case "build": {
-      if (isRoot || hasGoal || runtime.parentAgentName !== "engineer") reject(`${runtime.agentName} requires an Engineer parent and a DelegationRequest`);
+    case "lead": {
+      if (!isRoot) reject("Lead requires a root Session");
+      if (runtime.todo !== "none" && hasGoal) reject("a Discussion Lead cannot own a Goal");
       break;
     }
-    case "reviewer": {
-      if (isRoot || hasGoal || runtime.parentAgentName !== "engineer") reject("Reviewer requires an Engineer parent and a DelegationRequest");
+    case "analyst":
+    case "build": {
+      if (isRoot || hasGoal || runtime.parentAgentName !== "lead") reject(`${runtime.agentName} requires a Lead parent and a DelegationRequest`);
       break;
     }
     case "explore": {
-      const legalParent = !hasGoal && ["engineer", "plan", "build", "reviewer", "shaper"].includes(runtime.parentAgentName);
+      const legalParent = !hasGoal && ["lead", "analyst", "build"].includes(runtime.parentAgentName);
       if (isRoot || !legalParent) reject("Explore requires a legal parent role");
       break;
     }
     case "librarian": {
-      const legalParent = !hasGoal && ["engineer", "plan", "reviewer", "shaper"].includes(runtime.parentAgentName);
+      const legalParent = !hasGoal && ["lead", "analyst"].includes(runtime.parentAgentName);
       if (isRoot || !legalParent) reject("Librarian requires a legal parent role");
       break;
     }

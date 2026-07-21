@@ -89,7 +89,7 @@ export class RuntimeSessionDispatchGateway implements SessionDispatchGateway {
           : await this.#prepareWorktree(input.workspaceRoot, input.sessionId);
         session = await this.#sessions.createSessionFile(
           input.workspaceRoot,
-          { agentName: "engineer", cwd },
+          { agentName: "lead", cwd },
           input.sessionId,
         );
       }
@@ -136,7 +136,7 @@ export class RuntimeSessionDispatchGateway implements SessionDispatchGateway {
     if (
       session.rootSessionId !== session.sessionId
       || session.parentSessionId !== undefined
-      || session.agentName !== "engineer"
+      || session.agentName !== "lead"
     ) {
       throw new AutomationSessionIdentityError(
         session.sessionId,

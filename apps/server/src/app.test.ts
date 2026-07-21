@@ -6,10 +6,10 @@ import { globalEventBus } from "./events/global-event-bus";
 
 const mockRuntime = {
   configService: {
-    getSnapshot: mock(async () => ({ config: { provider: {}, agents: {} }, revision: "test", modelRuntimeRevision: "test", configPath: "/test", restartRequiredSections: [] })),
-    getModelRuntimeCatalog: mock(() => ({ revision: "test", providers: [], agentDefaults: {} })),
+    getSnapshot: mock(async () => ({ config: { provider: {}, profiles: {} }, revision: "test", modelRuntimeRevision: "test", configPath: "/test", restartRequiredSections: [] })),
+    getModelRuntimeCatalog: mock(() => ({ revision: "test", providers: [], profileDefaults: {} })),
     getProviderAdapterCatalog: mock(() => []),
-    save: mock(async () => ({ config: { provider: {}, agents: {} }, revision: "test", modelRuntimeRevision: "test", configPath: "/test", restartRequiredSections: [] })),
+    save: mock(async () => ({ config: { provider: {}, profiles: {} }, revision: "test", modelRuntimeRevision: "test", configPath: "/test", restartRequiredSections: [] })),
   },
   listAgentDescriptors: mock(() => []),
   subscribeSessionEvents: mock(() => () => undefined),
@@ -29,10 +29,10 @@ describe("createServerApp", () => {
   });
 
   test("mounts the runtime Agent catalog endpoint", async () => {
-    const runtime = { ...mockRuntime, listAgentDescriptors: mock(() => [{ name: "engineer", displayName: "Engineer" }]) } as unknown as AgentRuntime;
+    const runtime = { ...mockRuntime, listAgentDescriptors: mock(() => [{ name: "lead", displayName: "Lead" }]) } as unknown as AgentRuntime;
     const response = await createServerApp(runtime, { dev: true }).app.request("/api/agents");
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ agents: [{ name: "engineer", displayName: "Engineer" }] });
+    expect(await response.json()).toEqual({ agents: [{ name: "lead", displayName: "Lead" }] });
   });
 
   test("adds wildcard CORS headers in dev mode", async () => {
@@ -51,7 +51,7 @@ describe("createServerApp", () => {
     const runtime = {
       ...mockRuntime,
       subscribeSessionEvents: mock((listener: (event: GlobalSSEEvent) => void) => {
-        listener({ type: "event", slug: "proj", sessionId: "session-1", eventId: 1, createdAt: 1, agentName: "engineer", payload: {
+        listener({ type: "event", slug: "proj", sessionId: "session-1", eventId: 1, createdAt: 1, agentName: "lead", payload: {
           type: "execution-start",
           executionId: "run-1",
           binding: {
@@ -60,12 +60,12 @@ describe("createServerApp", () => {
             modelId: "test",
             providerDisplayName: "Local",
             modelDisplayName: "Test",
-            resolution: "agent_default",
+            resolution: "profile_default",
             modelRuntimeRevision: "test",
           },
           origin: "user_message",
         } });
-        listener({ type: "event", slug: "proj", sessionId: "session-1", eventId: 2, createdAt: 2, agentName: "engineer", payload: { type: "execution-end", status: "completed" } });
+        listener({ type: "event", slug: "proj", sessionId: "session-1", eventId: 2, createdAt: 2, agentName: "lead", payload: { type: "execution-end", status: "completed" } });
         return () => undefined;
       }),
     } as unknown as AgentRuntime;

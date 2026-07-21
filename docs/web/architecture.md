@@ -72,7 +72,7 @@ Responsibilities:
 
 ### Single server, multi-project model
 
-ArchCode runs one server process that can manage multiple registered workspace roots. The project registry stores known projects, derives stable slugs, and routes API calls through project-scoped contexts. Each workspace gets its own runtime context. Ordinary root Sessions persist `engineer`; a long-running Goal is an optional execution protocol stored directly on that same root Session.
+ArchCode runs one server process that can manage multiple registered workspace roots. The project registry stores known projects, derives stable slugs, and routes API calls through project-scoped contexts. Each workspace gets its own runtime context. Ordinary root Sessions persist `lead`; a long-running Goal is an optional execution protocol stored directly on that same root Session.
 
 ### Global SSE plus authoritative snapshots
 

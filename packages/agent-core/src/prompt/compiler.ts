@@ -13,7 +13,7 @@ const COLLABORATION = `## Collaboration Contract
 
 - Prefer direct work on the critical path when the scope is already clear and locally verifiable.
 - Delegate only an independent, acceptance-testable unit with separable ownership or a genuinely specialized evidence need.
-- Parallelize only units with no dependency and no overlapping write ownership. Runtime concurrency remains authoritative.
+- Parallelize only units with no dependency and no known write conflict. Runtime concurrency remains authoritative.
 - Resume the same child for corrections or additional work within the same responsibility; create a new child only for a distinct objective.
 - Treat every child final report as a claim to validate against the workspace and relevant diff. A completed child does not complete the parent task or Goal.
 - Finish your own delegated scope with a normal assistant response that clearly reports the outcome, verification, and unresolved issues.`;
@@ -30,8 +30,8 @@ export class PromptContractCompiler {
       Promise.resolve(section("Runtime Envelope", "runtime/snapshot", renderRuntime(contract))),
       Promise.resolve(section("Role Contract", `agent-definition/${contract.role.name}@2`, renderRole(contract))),
       Promise.resolve(section("Collaboration Contract", "prompt/collaboration@2", renderCollaboration(contract))),
-      ...(contract.role.name === "engineer" && contract.runtime.goal !== "none"
-        ? [Promise.resolve(section("Active Goal", "session-goal/runtime-overlay", renderActiveGoal(contract)))]
+      ...(contract.role.name === "lead" && contract.runtime.goal !== "none"
+        ? [Promise.resolve(section("Session Goal", "session-goal/runtime-overlay", renderSessionGoal(contract)))]
         : []),
       Promise.resolve(section("Skills", "skill-service/execution-snapshot", renderSkills(contract))),
       Promise.resolve(section("Tool Visibility", "tool-registry/execution-snapshot", renderTools(contract))),
@@ -118,7 +118,6 @@ function renderRuntime(contract: PromptContractV2): string {
 - Completion authority: ${display(role.completionAuthority)}
 - Goal: ${goal}
 - Todo: ${todo}
-- Owned scope: ${runtime.ownedScope.length === 0 ? "none" : runtime.ownedScope.map((scope) => `${scope.kind}:${scope.path}`).join(", ")}
 - Remaining delegation depth: ${runtime.remainingDepth}
 - Max concurrent children: ${runtime.maxConcurrentChildren}
 - MCP readiness: ${mcp}`;
@@ -150,13 +149,6 @@ Completion authority: ${display(role.completionAuthority)}`;
 }
 
 function renderCollaboration(contract: PromptContractV2): string {
-  if (contract.role.name === "reviewer") {
-    return `## Collaboration Contract
-
-- Independently inspect the delegated work and its verification evidence.
-- Return a normal final response whose first non-empty line is exactly VERDICT: APPROVED or VERDICT: CHANGES_REQUESTED.
-- Follow the verdict with concise Markdown findings and residual risks. Do not modify source or transition a Goal.`;
-  }
   if (contract.allowedTools.includes("delegate") && contract.runtime.allowedDelegateTargets.length > 0) return COLLABORATION;
   if (contract.allowedTools.includes("delegate")) {
     return `## Collaboration Contract
@@ -166,31 +158,22 @@ function renderCollaboration(contract: PromptContractV2): string {
   if (contract.runtime.parentSessionId !== "none") {
     return `## Collaboration Contract
 
-- Work only the delegated objective and owned scope in Current Context.
+- Work only the delegated objective in Current Context.
 - Delegation and resume are not visible in this execution.
 - Finish with a normal assistant response that clearly reports the outcome, verification, and unresolved issues.`;
   }
   return "## Collaboration Contract\n\n- Work within this role directly; delegation is not visible in this execution.";
 }
 
-function renderActiveGoal(contract: PromptContractV2): string {
+function renderSessionGoal(contract: PromptContractV2): string {
   const goal = contract.runtime.goal;
-  if (goal === "none") throw new Error("Active Goal overlay requires a Session Goal");
-  return `## Active Goal
+  if (goal === "none") throw new Error("Session Goal overlay requires a Session Goal");
+  return `## Session Goal
 
 - Instance: ${goal.instanceId}
 - Generation: ${goal.generation}
 - Status: ${goal.status}
-- Objective: ${goal.objective}
-
-This Goal is the durable outcome for the current root Session. Keep working across Executions until it is verified or Runtime stops continuation.
-- Own the critical path and delegate only separable, non-overlapping scopes.
-- Preserve and aggregate concrete implementation and verification evidence.
-- When the work is ready, delegate an independent Reviewer and read its final result through the ordinary child output flow.
-- If the Reviewer returns VERDICT: CHANGES_REQUESTED, address the findings and review again.
-- Only after a Reviewer returns VERDICT: APPROVED, call update_goal with status=complete and that direct Reviewer child Session ID as review_session_id.
-- Do not self-review, weaken the objective, or treat an implementation claim as acceptance.
-- Use update_goal with status=blocked only for a genuine blocker that prevents meaningful progress.`;
+- Objective: ${goal.objective}`;
 }
 
 function renderSkills(contract: PromptContractV2): string {
@@ -203,7 +186,7 @@ function renderSkills(contract: PromptContractV2): string {
   const active = contract.activeSkills.map((skill) => `### ${skill.metadata.name} (source=${skill.path ?? skill.source})\n\n${skill.body}`);
   return `## Skills
 
-Skills provide optional workflow guidance. They never expand tools, runtime permissions, delegation targets, transitions, owned scope, or completion authority.
+Skills provide optional workflow guidance. They never expand tools, runtime permissions, delegation targets, transitions, or completion authority.
 Authority: ${contract.guidanceAuthority.skills.kind}; grants=${contract.guidanceAuthority.skills.grants}.
 
 Available:
@@ -229,7 +212,7 @@ function renderCurrentContext(contract: PromptContractV2): string {
     ? "Delegation request: none"
     : `Delegation title: ${contract.delegationRequest.title}
 Delegation objective: ${contract.delegationRequest.objective}
-Owned scope: ${contract.delegationRequest.owned_scope.length === 0 ? "none" : contract.delegationRequest.owned_scope.map((scope) => `${scope.kind}:${scope.path}`).join(", ")}
+Delegated Profile: ${contract.delegationRequest.profile}
 Delegated Skills: ${display(contract.delegationRequest.skills)}
 Background: ${contract.delegationRequest.background}`;
   return `## Current Context
@@ -271,7 +254,7 @@ function renderProject(contract: PromptContractV2): string {
 
 Source: ${contract.agentsMd.source}
 Status: ${contract.agentsMd.status}
-Project instructions constrain work but never expand runtime permissions, tools, transitions, owned scope, or completion authority.
+Project instructions constrain work but never expand runtime permissions, tools, transitions, or completion authority.
 Authority: ${contract.guidanceAuthority.projectInstructions.kind}; grants=${contract.guidanceAuthority.projectInstructions.grants}.
 
 ${content ?? "none"}`;

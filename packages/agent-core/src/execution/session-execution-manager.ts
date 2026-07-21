@@ -21,6 +21,8 @@ import type { StoreApi } from "zustand";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
 import type { Agent } from "../agents/types";
 import type { AgentChildPolicy } from "../agents/factory-types";
+import { DISCUSSION_LEAD_DELEGATE_TARGETS, DISCUSSION_LEAD_MAX_DEPTH } from "../agents/definitions/lead";
+import type { ProfileName } from "../config";
 import {
   AgentChildPolicyMissingError,
   AgentRunningError,
@@ -36,7 +38,6 @@ import {
   SessionCwdTransitionInProgressError,
   SessionToolBatchActiveError,
 } from "../agents/errors";
-import { validateDelegationScopes } from "../delegation/contract";
 import { finalOutputForExecution } from "../delegation/final-output";
 import type {
   ChildExecutionHandle,
@@ -47,11 +48,13 @@ import type {
 import { getSessionDir } from "../store/sessions-dir";
 import { NotRootSessionError, SessionDeleteConflictError } from "../store/errors";
 import { scopedKey } from "../store/key";
-import type { Reminder, SessionStoreState } from "../store/types";
+import type { GoalReviewBinding, Reminder, SessionStoreState } from "../store/types";
 import type { AgentName } from "../agents/names";
+import { resolveSessionProfile } from "../agents/session-profile";
 import type { Logger } from "../logger";
 import type { ConsumeFreshUserInputRequest, FreshUserInputGrant } from "../tools/types";
 import { nextSessionTimestamp, SessionInputConflictError, type ResolvedSessionInputSnapshot, type SessionInputService } from "../session-input/service";
+import { resolveDurableSessionModelOverride } from "../session-input/model-selection-service";
 import type { ExecutionModelBinding, ModelRuntime, ModelRuntimeSnapshot } from "../models";
 import type { ModelSelectionResolver } from "../models/model-selection-resolver";
 import { sanitizeProviderError } from "../llm/provider-error-sanitizer";
@@ -77,10 +80,6 @@ import {
   type SessionWorkspaceCloseLease,
 } from "./session-workspace-control";
 import { collectSessionTreeIds } from "./session-tree";
-import {
-  BuildOwnershipLeaseRegistry,
-  type BuildOwnershipLease,
-} from "./build-ownership-lease";
 
 const ABORT_AND_WAIT_TIMEOUT_MS = 10000;
 const MAX_CWD_TRANSITIONS_PER_EXECUTION = 4;
@@ -139,7 +138,6 @@ interface InternalStartSessionExecutionInput extends StartSessionExecutionInput 
 
 interface PendingSessionExecution extends Omit<ActiveSessionExecution, "promise"> {
   promise?: Promise<void>;
-  buildOwnershipLease?: BuildOwnershipLease;
   newlyActivatedAgent?: Agent;
   familyStopLease?: SessionFamilyStopLease;
   readonly queueSnapshots?: readonly ResolvedSessionInputSnapshot[];
@@ -233,6 +231,7 @@ interface SessionExecutionManagerConfig {
       readonly title?: string;
       readonly activeSkillNames?: readonly string[];
       readonly delegationRequest?: DelegationRequest;
+      readonly goalReviewBinding?: GoalReviewBinding;
     },
   ) => StoreApi<SessionStoreState>;
   /** Durability barrier for a freshly created Session snapshot. */
@@ -248,6 +247,7 @@ interface SessionExecutionManagerConfig {
   readonly resolveSessionDepth: (workspaceRoot: string, sessionId: string) => Promise<number>;
   readonly buildSessionTree: (workspaceRoot: string, rootSessionId: string) => Promise<SessionTreeResponse>;
   readonly listSessionFamilyToolBatchHitlIds: (workspaceRoot: string, rootSessionId: string) => Promise<readonly string[]>;
+  readonly isDiscussionSession: (workspaceRoot: string, sessionId: string) => Promise<boolean>;
   readonly sessionInputService: Pick<
     SessionInputService,
     "beginQueueExecution" | "beginDirectExecution" | "claimSteer" | "commitSteers" | "rollbackSteers" | "getPendingMessages" | "recordQueueDispatchBarrier"
@@ -304,7 +304,10 @@ export class SessionSteerUnavailableError extends Error {
 
 export class DelegationExecutionAdmissionError extends Error {
   constructor(
-    public readonly code: "DELEGATION_IDENTITY_REQUIRED" | "BUILD_OWNED_SCOPE_REQUIRED",
+    public readonly code:
+      | "DELEGATION_IDENTITY_REQUIRED"
+      | "DELEGATION_PROFILE_NOT_ALLOWED"
+      | "GOAL_REVIEW_ATTEMPT_TERMINAL",
     message: string,
   ) {
     super(message);
@@ -331,7 +334,6 @@ export class SessionExecutionManager {
   readonly #familyControls = new Map<string, SessionFamilyControlState>();
   readonly #runtimeChangeListeners = new Set<SessionRuntimeChangeListener>();
   readonly #publishedRuntime = new Map<string, Pick<SessionRuntimeChange, "activity" | "steerTargetExecutionId">>();
-  readonly #buildOwnership = new BuildOwnershipLeaseRegistry();
   readonly #config: SessionExecutionManagerConfig;
   readonly #logger: Logger;
 
@@ -342,7 +344,6 @@ export class SessionExecutionManager {
 
   #claimExecution(
     input: InternalStartSessionExecutionInput,
-    preclaimedBuildOwnership?: BuildOwnershipLease,
     newlyActivatedAgent?: Agent,
   ): ActiveSessionExecution {
     this.#assertWorkspaceOpen(input.workspaceRoot);
@@ -362,18 +363,20 @@ export class SessionExecutionManager {
       throw new SessionInputConflictError("empty_queue", `Session ${sessionState.sessionId} has no queued input`);
     }
     const modelSnapshot = this.#config.modelRuntime.current;
+    const profile = resolveSessionProfile(sessionState);
+    const sessionOverride = resolveDurableSessionModelOverride(sessionState);
     const resolved = input.input.kind === "queue"
       ? resolveQueuePrefix(
         queuedAtClaim,
         modelSnapshot,
-        sessionState.agentName,
-        sessionState.modelSelection.override,
+        profile,
+        sessionOverride,
         this.#config.modelSelectionResolver,
       )
       : resolveSingleBinding(
         modelSnapshot,
-        sessionState.agentName,
-        sessionState.modelSelection.override,
+        profile,
+        sessionOverride,
         input.input.kind === "direct" ? input.input.requestedModelSelection : undefined,
         this.#config.modelSelectionResolver,
       );
@@ -390,10 +393,6 @@ export class SessionExecutionManager {
       rejectStarted = reject;
     });
     void started.catch(() => undefined);
-    let buildOwnershipLease = preclaimedBuildOwnership;
-    if (sessionState.agentName === "build" && sessionState.parentSessionId !== undefined) {
-      buildOwnershipLease ??= this.#acquireBuildOwnership(input.workspaceRoot, sessionState);
-    }
     const pending: PendingSessionExecution = {
       sessionId: input.sessionId,
       rootSessionId,
@@ -415,7 +414,6 @@ export class SessionExecutionManager {
       steerOperations: new Set(),
       resolveStarted,
       rejectStarted,
-      ...(buildOwnershipLease === undefined ? {} : { buildOwnershipLease }),
       ...(newlyActivatedAgent === undefined ? {} : { newlyActivatedAgent }),
     };
 
@@ -514,9 +512,9 @@ export class SessionExecutionManager {
     }
     const binding = this.#config.modelSelectionResolver.resolve({
       snapshot: this.#config.modelRuntime.current,
-      agentName: state.agentName,
+      profile: resolveSessionProfile(state),
       requested: input.requestedModelSelection,
-      sessionOverride: state.modelSelection.override,
+      sessionOverride: resolveDurableSessionModelOverride(state),
     });
 
     const token = Symbol(`session-command:${familyKey}`);
@@ -991,11 +989,13 @@ export class SessionExecutionManager {
       if (pending === undefined || pending.revision !== input.expectedRevision || pending.state !== "queued") {
         throw new SessionSteerUnavailableError(input.sessionId, input.expectedExecutionId);
       }
+      const steerState = this.#config.getSessionStore(input.sessionId, input.workspaceRoot)?.getState();
+      if (steerState === undefined) throw new SessionFamilyIdentityUnavailableError(input.sessionId);
       const steerBinding = this.#config.modelSelectionResolver.resolve({
         snapshot: this.#config.modelRuntime.current,
-        agentName: execution.agentName,
+        profile: resolveSessionProfile(steerState),
         requested: pending.requestedModelSelection,
-        sessionOverride: this.#config.getSessionStore(input.sessionId, input.workspaceRoot)?.getState().modelSelection.override,
+        sessionOverride: resolveDurableSessionModelOverride(steerState),
       });
       if (!sameModelSelection(steerBinding.summary.selection, execution.binding.summary.selection)) {
         throw new SessionSteerUnavailableError(input.sessionId, input.expectedExecutionId);
@@ -1125,6 +1125,7 @@ export class SessionExecutionManager {
     const factory = this.#config.sessionAgentManager.getFactory(workspaceRoot);
     const currentDepth = await this.#config.resolveSessionDepth(workspaceRoot, request.parentSessionId);
     const parentAgentName = request.parentStore.getState().agentName;
+    const parentState = request.parentStore.getState();
     const targetAgentName = request.request.agent_type as AgentName;
     const parentDefinition = factory.getDefinition(parentAgentName);
     const allowedTools = factory.resolveAllowedTools(parentDefinition, currentDepth);
@@ -1134,26 +1135,33 @@ export class SessionExecutionManager {
     }
 
     const delegateTargets = factory.getDelegateTargetsFor(parentDefinition, currentDepth);
+    const isDiscussion = parentAgentName === "lead"
+      && parentState.parentSessionId === undefined
+      && parentState.rootSessionId === parentState.sessionId
+      && await this.#config.isDiscussionSession(workspaceRoot, parentState.sessionId);
+    if (isDiscussion && !(DISCUSSION_LEAD_DELEGATE_TARGETS as readonly AgentName[]).includes(targetAgentName)) {
+      throw new DelegateTargetNotAllowedError(parentAgentName, targetAgentName, currentDepth);
+    }
     if (!delegateTargets.includes(targetAgentName)) {
       throw new DelegateTargetNotAllowedError(parentAgentName, targetAgentName, currentDepth);
     }
 
     const targetDefinition = factory.getDefinition(targetAgentName);
-    const childPolicy = parentDefinition.childPolicy;
-    if (childPolicy === undefined) {
+    const configuredChildPolicy = parentDefinition.childPolicy;
+    if (configuredChildPolicy === undefined) {
       throw new AgentChildPolicyMissingError(parentAgentName);
     }
+    const childPolicy = effectiveChildPolicy(configuredChildPolicy, isDiscussion);
 
     if (currentDepth >= childPolicy.maxDepth) {
       throw new DepthLimitError(currentDepth);
     }
 
-    const parentState = request.parentStore.getState();
-    const validatedRequest = await validateDelegationScopes(request.request, parentState.cwd);
-    if (targetDefinition.name === "build" && validatedRequest.owned_scope.length === 0) {
+    const validatedRequest = request.request;
+    if (!targetDefinition.profiles.includes(validatedRequest.profile)) {
       throw new DelegationExecutionAdmissionError(
-        "BUILD_OWNED_SCOPE_REQUIRED",
-        "Build delegation requires at least one owned_scope entry",
+        "DELEGATION_PROFILE_NOT_ALLOWED",
+        `${targetDefinition.displayName} does not allow Profile "${validatedRequest.profile}"`,
       );
     }
     const childSessionId = crypto.randomUUID();
@@ -1182,19 +1190,18 @@ export class SessionExecutionManager {
       childLaunchReserved = false;
       throw error;
     }
-    let buildOwnershipLease = targetDefinition.name === "build"
-      ? this.#buildOwnership.acquire({
-        workspaceRoot,
-        executionCwd: parentState.cwd,
-        sessionId: childSessionId,
-        ownedScope: validatedRequest.owned_scope,
-      })
-      : undefined;
     const childPrompt = validatedRequest.objective;
     let childSlotReserved = false;
     const background = validatedRequest.background;
     const childTitle = validatedRequest.title;
     const createdAt = Date.now();
+    const goalReviewBinding = createGoalReviewBinding(
+      parentState,
+      targetDefinition.name,
+      validatedRequest.profile,
+      activeSkillNames,
+      createdAt,
+    );
     let childStore: StoreApi<SessionStoreState> | undefined;
     let childLinked = false;
     let execution: ActiveSessionExecution | undefined;
@@ -1211,6 +1218,7 @@ export class SessionExecutionManager {
         title: childTitle,
         activeSkillNames,
         delegationRequest: validatedRequest,
+        ...(goalReviewBinding === undefined ? {} : { goalReviewBinding }),
       });
       await this.#config.flushSessionStore(childSessionId, workspaceRoot);
 
@@ -1233,8 +1241,7 @@ export class SessionExecutionManager {
           text: childPrompt,
         },
         origin: "tool_call",
-      }, buildOwnershipLease, newlyActivatedAgent);
-      buildOwnershipLease = undefined;
+      }, newlyActivatedAgent);
       newlyActivatedAgent = undefined;
       await execution.started;
       this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, "running", childTitle, createdAt, background);
@@ -1246,7 +1253,6 @@ export class SessionExecutionManager {
         this.#cancelExecution(execution, "Child Session link failed");
         await execution.promise.catch(() => undefined);
       }
-      buildOwnershipLease?.release();
       if (
         newlyActivatedAgent !== undefined
         && this.#config.sessionAgentManager.get(workspaceRoot, childSessionId) === newlyActivatedAgent
@@ -1403,6 +1409,7 @@ export class SessionExecutionManager {
       .catch(() => { throw new ChildSessionNotFoundError(workspaceRoot, request.sessionId); });
     const initialAdmission = await this.#validateExistingChildActivation(workspaceRoot, childStore);
     let childState = initialAdmission.childState;
+    this.#assertGoalReviewAttemptResumable(childState);
     await this.#assertFamilyToolBatchReady(workspaceRoot, initialAdmission.parentState);
     this.#assertSessionToolBatchReady(request.sessionId, childState);
     if (childState.title === null || childState.title.trim().length === 0) {
@@ -1432,7 +1439,6 @@ export class SessionExecutionManager {
     );
     let childLaunchReserved = true;
     let childSlotReserved = false;
-    let buildOwnershipLease: BuildOwnershipLease | undefined;
     let newlyActivatedAgent: Agent | undefined;
     let execution: ActiveSessionExecution | undefined;
     try {
@@ -1444,10 +1450,8 @@ export class SessionExecutionManager {
           );
         }
         childState = finalAdmission.childState;
+        this.#assertGoalReviewAttemptResumable(childState);
         await this.#assertFamilyToolBatchReady(workspaceRoot, finalAdmission.parentState);
-        buildOwnershipLease = childState.agentName === "build"
-          ? this.#acquireBuildOwnership(workspaceRoot, childState)
-          : undefined;
         this.#reserveChildSlot(workspaceRoot, request.parentSessionId, childPolicy.maxConcurrent);
         childSlotReserved = true;
         const cachedAgent = this.#config.sessionAgentManager.get(workspaceRoot, request.sessionId);
@@ -1462,8 +1466,7 @@ export class SessionExecutionManager {
             text: request.instruction,
           },
           origin: "tool_call",
-        }, buildOwnershipLease, newlyActivatedAgent);
-        buildOwnershipLease = undefined;
+        }, newlyActivatedAgent);
         newlyActivatedAgent = undefined;
         await execution.started;
         this.#appendResumeChildLinkStatus(
@@ -1480,7 +1483,6 @@ export class SessionExecutionManager {
         childLaunchReserved = false;
       });
     } catch (error) {
-      buildOwnershipLease?.release();
       if (
         newlyActivatedAgent !== undefined
         && this.#config.sessionAgentManager.get(workspaceRoot, request.sessionId) === newlyActivatedAgent
@@ -1806,8 +1808,6 @@ export class SessionExecutionManager {
   #finalizeExecution(key: string, execution: PendingSessionExecution): void {
     const ownedFamilyStopLease = execution.familyStopLease;
     execution.familyStopLease = undefined;
-    const buildOwnershipLease = execution.buildOwnershipLease;
-    execution.buildOwnershipLease = undefined;
     const current = this.#active.get(key);
     const isCurrentExecution = current?.executionToken === execution.executionToken;
     if (isCurrentExecution) {
@@ -1823,7 +1823,6 @@ export class SessionExecutionManager {
     if (ownedFamilyStopLease !== undefined) {
       void this.#finishExecutionOwnedFamilyStop(execution, ownedFamilyStopLease);
     }
-    buildOwnershipLease?.release();
   }
 
   /**
@@ -2268,7 +2267,15 @@ export class SessionExecutionManager {
     createdAt?: number,
     background?: boolean,
   ): void {
-    const run = this.#config.getSessionStore(childSessionId, workspaceRoot)?.getState().executions.at(-1);
+    const childState = this.#config.getSessionStore(childSessionId, workspaceRoot)?.getState();
+    const delegation = childState?.delegationRequest;
+    if (childState === undefined || delegation === undefined) {
+      throw new DelegationExecutionAdmissionError(
+        "DELEGATION_IDENTITY_REQUIRED",
+        `Child Session "${childSessionId}" has no canonical Profile and Skill identity`,
+      );
+    }
+    const run = childState.executions.at(-1);
     request.parentStore.getState().append({
       type: "tool-child-session-link",
       link: {
@@ -2277,6 +2284,8 @@ export class SessionExecutionManager {
         toolName: request.toolName,
         childSessionId,
         childAgentName,
+        childProfile: delegation.profile,
+        childSkillNames: [...childState.activeSkillNames],
         title,
         depth,
         background: background ?? request.request.background,
@@ -2300,7 +2309,15 @@ export class SessionExecutionManager {
     status: ToolChildSessionLinkStatus,
     createdAt: number,
   ): void {
-    const run = this.#config.getSessionStore(request.sessionId, workspaceRoot)?.getState().executions.at(-1);
+    const childState = this.#config.getSessionStore(request.sessionId, workspaceRoot)?.getState();
+    const delegation = childState?.delegationRequest;
+    if (childState === undefined || delegation === undefined) {
+      throw new DelegationExecutionAdmissionError(
+        "DELEGATION_IDENTITY_REQUIRED",
+        `Child Session "${request.sessionId}" has no canonical Profile and Skill identity`,
+      );
+    }
+    const run = childState.executions.at(-1);
     const includeRunMetadata = isTerminalChildSessionStatus(status);
     request.parentStore.getState().append({
       type: "tool-child-session-link",
@@ -2310,6 +2327,8 @@ export class SessionExecutionManager {
         toolName: request.toolName,
         childSessionId: request.sessionId,
         childAgentName,
+        childProfile: delegation.profile,
+        childSkillNames: [...childState.activeSkillNames],
         title: childTitle,
         depth,
         background: request.background,
@@ -2450,8 +2469,13 @@ export class SessionExecutionManager {
       const parentDefinition = factory.getDefinition(parentState.agentName);
       const parentDepth = await this.#config.resolveSessionDepth(workspaceRoot, parentState.sessionId);
       const childDepth = await this.#config.resolveSessionDepth(workspaceRoot, childState.sessionId);
-      const childPolicy = parentDefinition.childPolicy;
-      if (childPolicy === undefined) throw new AgentChildPolicyMissingError(parentState.agentName);
+      const configuredChildPolicy = parentDefinition.childPolicy;
+      if (configuredChildPolicy === undefined) throw new AgentChildPolicyMissingError(parentState.agentName);
+      const isDiscussion = parentState.agentName === "lead"
+        && parentState.parentSessionId === undefined
+        && parentState.rootSessionId === parentState.sessionId
+        && await this.#config.isDiscussionSession(workspaceRoot, parentState.sessionId);
+      const childPolicy = effectiveChildPolicy(configuredChildPolicy, isDiscussion);
       if (parentDepth >= childPolicy.maxDepth || childDepth !== parentDepth + 1 || childDepth > childPolicy.maxDepth) {
         throw new DepthLimitError(parentDepth);
       }
@@ -2460,6 +2484,10 @@ export class SessionExecutionManager {
         throw new DelegationToolNotAllowedError(parentState.agentName, parentDepth);
       }
       const delegateTargets = factory.getDelegateTargetsFor(parentDefinition, parentDepth);
+      if (isDiscussion
+        && !(DISCUSSION_LEAD_DELEGATE_TARGETS as readonly AgentName[]).includes(childState.agentName)) {
+        throw new DelegateTargetNotAllowedError(parentState.agentName, childState.agentName, parentDepth);
+      }
       if (!delegateTargets.includes(childState.agentName)) {
         throw new DelegateTargetNotAllowedError(parentState.agentName, childState.agentName, parentDepth);
       }
@@ -2540,10 +2568,15 @@ export class SessionExecutionManager {
         `Child Session "${state.sessionId}" delegation request does not match its durable Agent`,
       );
     }
-    if (state.agentName === "build" && request.owned_scope.length === 0) {
+    resolveDurableSessionModelOverride(state);
+    const delegatedSkillNames = [...new Set(request.skills)];
+    if (
+      delegatedSkillNames.length !== state.activeSkillNames.length
+      || delegatedSkillNames.some((name, index) => name !== state.activeSkillNames[index])
+    ) {
       throw new DelegationExecutionAdmissionError(
-        "BUILD_OWNED_SCOPE_REQUIRED",
-        `Build Session "${state.sessionId}" requires at least one durable owned scope`,
+        "DELEGATION_IDENTITY_REQUIRED",
+        `Child Session "${state.sessionId}" active Skills do not match its durable delegation request`,
       );
     }
   }
@@ -2554,11 +2587,11 @@ export class SessionExecutionManager {
   ): Promise<void> {
     if (state.parentSessionId === undefined) return;
     const request = state.delegationRequest!;
-    const validated = await validateDelegationScopes(request, state.cwd);
-    if (JSON.stringify(validated) === JSON.stringify(request)) return;
+    const definition = this.#config.sessionAgentManager.getFactory(workspaceRoot).getDefinition(state.agentName);
+    if (definition.profiles.includes(request.profile)) return;
     throw new DelegationExecutionAdmissionError(
-      "DELEGATION_IDENTITY_REQUIRED",
-      `Child Session "${state.sessionId}" delegation scope is not canonical for ${workspaceRoot}`,
+      "DELEGATION_PROFILE_NOT_ALLOWED",
+      `${definition.displayName} does not allow durable Profile "${request.profile}"`,
     );
   }
 
@@ -2581,25 +2614,24 @@ export class SessionExecutionManager {
     });
   }
 
-  #acquireBuildOwnership(
-    workspaceRoot: string,
-    state: SessionStoreState,
-  ): BuildOwnershipLease {
-    const request = state.delegationRequest;
-    if (request === undefined) {
-      throw new DelegationExecutionAdmissionError(
-        "DELEGATION_IDENTITY_REQUIRED",
-        `Build Session "${state.sessionId}" has no durable delegation request`,
-      );
-    }
-    return this.#buildOwnership.acquire({
-      workspaceRoot,
-      executionCwd: state.cwd,
-      sessionId: state.sessionId,
-      ownedScope: request.owned_scope,
-    });
+  #assertGoalReviewAttemptResumable(state: SessionStoreState): void {
+    if (state.goalReviewBinding === undefined) return;
+    if (!state.executions.some((execution) => execution.status === "completed")) return;
+    throw new DelegationExecutionAdmissionError(
+      "GOAL_REVIEW_ATTEMPT_TERMINAL",
+      `Goal review Session "${state.sessionId}" already produced a completed attempt and cannot be resumed`,
+    );
   }
 
+}
+
+function effectiveChildPolicy(
+  configured: AgentChildPolicy,
+  isDiscussion: boolean,
+): AgentChildPolicy {
+  return isDiscussion
+    ? { ...configured, maxDepth: Math.min(configured.maxDepth, DISCUSSION_LEAD_MAX_DEPTH) }
+    : configured;
 }
 
 function sanitizeBindingError(error: unknown, binding: ExecutionModelBinding): Error {
@@ -2771,20 +2803,20 @@ function subtractUsage(current: NormalizedUsage, initial: NormalizedUsage): Norm
 
 function resolveSingleBinding(
   snapshot: ModelRuntimeSnapshot,
-  agentName: AgentName,
+  profile: ProfileName,
   sessionOverride: ModelSelectionRef | undefined,
   requested: RequestedModelSelection | undefined,
   resolver: ModelSelectionResolver,
 ): { readonly binding: ExecutionModelBinding; readonly snapshots?: undefined } {
   return {
-    binding: resolver.resolve({ snapshot, agentName, requested, sessionOverride }),
+    binding: resolver.resolve({ snapshot, profile, requested, sessionOverride }),
   };
 }
 
 function resolveQueuePrefix(
   queued: readonly PendingSessionMessage[],
   snapshot: ModelRuntimeSnapshot,
-  agentName: AgentName,
+  profile: ProfileName,
   sessionOverride: ModelSelectionRef | undefined,
   resolver: ModelSelectionResolver,
 ): { readonly binding: ExecutionModelBinding; readonly snapshots: readonly ResolvedSessionInputSnapshot[] } {
@@ -2793,7 +2825,7 @@ function resolveQueuePrefix(
   for (const pending of queued) {
     const resolved = resolver.resolve({
       snapshot,
-      agentName,
+      profile,
       requested: pending.requestedModelSelection,
       sessionOverride,
     });
@@ -2813,6 +2845,31 @@ function resolveQueuePrefix(
   }
   if (binding === undefined) throw new SessionInputConflictError("empty_queue", "Queue has no resolvable input");
   return { binding, snapshots };
+}
+
+function createGoalReviewBinding(
+  parentState: SessionStoreState,
+  childAgentName: AgentName,
+  profile: ProfileName,
+  activeSkillNames: readonly string[],
+  createdAt: number,
+): GoalReviewBinding | undefined {
+  const goal = parentState.goal;
+  if (
+    parentState.agentName !== "lead"
+    || parentState.parentSessionId !== undefined
+    || parentState.rootSessionId !== parentState.sessionId
+    || goal?.status !== "active"
+    || childAgentName !== "analyst"
+    || profile !== "deep"
+    || !activeSkillNames.includes("goal-review")
+  ) return undefined;
+  return {
+    goalInstanceId: goal.instanceId,
+    goalGeneration: goal.generation,
+    rootSessionId: parentState.sessionId,
+    createdAt,
+  };
 }
 
 function modelAuditFor(
@@ -2839,7 +2896,7 @@ function effectiveDirectRequest(
     return { ...explicit, selection: { ...explicit.selection } };
   }
   return {
-    mode: binding.summary.resolution === "session_override" ? "session_override" : "agent_default",
+    mode: binding.summary.resolution === "session_override" ? "session_override" : "profile_default",
     selection: { ...binding.summary.selection },
   };
 }

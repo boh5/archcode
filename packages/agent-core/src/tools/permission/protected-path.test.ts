@@ -135,6 +135,73 @@ describe("createProtectedPathPermission", () => {
     });
   });
 
+  test("allows only a root non-Discussion Lead to write direct Markdown Plan files", async () => {
+    mkdirSync(join(WORKSPACE, ".archcode", "plans"), { recursive: true });
+    const leadStore = storeManager.create(crypto.randomUUID(), WORKSPACE, {
+      agentName: "lead",
+    });
+    const leadContext = makeCtx({ store: leadStore, agentName: "lead" });
+
+    expect(await permission({ path: ".archcode/plans/release plan.md" }, leadContext)).toEqual({ outcome: "allow" });
+    expect(await permission({ path: join(WORKSPACE, ".archcode", "plans", "release.md") }, leadContext)).toEqual({ outcome: "allow" });
+
+    for (const path of [
+      ".archcode/plans/nested/release.md",
+      ".archcode/plans/release.txt",
+      ".archcode/plans/../release.md",
+      ".archcode/memory/release.md",
+    ]) {
+      expect(await permission({ path }, leadContext), path).toMatchObject({
+        outcome: "deny",
+        errorCode: "PROTECTED_PATH_WRITE_DENIED",
+      });
+    }
+
+    storeManager.delete(leadStore.getState().sessionId, WORKSPACE);
+  });
+
+  test("denies Plan writes from child, non-Lead, Discussion, Bash, and AST contexts", async () => {
+    mkdirSync(join(WORKSPACE, ".archcode", "plans"), { recursive: true });
+    const rootId = crypto.randomUUID();
+    const rootLead = storeManager.create(rootId, WORKSPACE, { agentName: "lead" });
+    const child = storeManager.create(crypto.randomUUID(), WORKSPACE, {
+      agentName: "build",
+      rootSessionId: rootId,
+      parentSessionId: rootId,
+      delegationRequest: {
+        agent_type: "build",
+        profile: "deep",
+        title: "Build",
+        objective: "Build",
+        skills: [],
+        background: true,
+      },
+    });
+    const discussion = storeManager.create(crypto.randomUUID(), WORKSPACE, { agentName: "lead" });
+    const path = ".archcode/plans/release.md";
+
+    for (const ctx of [
+      makeCtx({ store: child, agentName: "build" }),
+      makeCtx({ store: discussion, agentName: "lead", projectContext: {
+        ...createTestProjectContext(WORKSPACE),
+        todos: {
+          state: { findByDiscussionSessionId: async () => ({ id: "todo" }) },
+        },
+      } as unknown as ToolExecutionContext["projectContext"] }),
+      makeCtx({ store: rootLead, agentName: "lead", toolName: "bash" }),
+      makeCtx({ store: rootLead, agentName: "lead", toolName: "ast_grep_replace" }),
+    ]) {
+      expect(await permission({ path }, ctx)).toMatchObject({
+        outcome: "deny",
+        errorCode: "PROTECTED_PATH_WRITE_DENIED",
+      });
+    }
+
+    storeManager.delete(child.getState().sessionId, WORKSPACE);
+    storeManager.delete(rootLead.getState().sessionId, WORKSPACE);
+    storeManager.delete(discussion.getState().sessionId, WORKSPACE);
+  });
+
   test("denies direct writes to canonical and linked-worktree Git metadata", async () => {
     for (const { input, ctx } of [
       { input: { path: ".git/config", content: "tampered" }, ctx: makeCtx() },

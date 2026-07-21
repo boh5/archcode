@@ -36,7 +36,7 @@ const confirmWorktreeTransition = async () => ({
 export const worktreeEnterTool = defineTool({
   name: TOOL_WORKTREE_ENTER,
   description: [
-    "Enter a worktree for this interactive root Engineer Session.",
+    "Enter a worktree for this ordinary interactive root Lead Session.",
     "Omit path to create or re-enter this Session's own managed worktree from the current project HEAD.",
     "Use path only when the user explicitly identifies an existing worktree.",
     "Wait for or cancel running descendant sessions before entering a worktree.",
@@ -51,7 +51,7 @@ export const worktreeEnterTool = defineTool({
 
 export const worktreeExitTool = defineTool({
   name: TOOL_WORKTREE_EXIT,
-  description: "Return this interactive root Engineer Session to its canonical project checkout after descendant sessions have stopped. This changes Session cwd but never removes the worktree.",
+  description: "Return this ordinary interactive root Lead Session to its canonical project checkout after descendant sessions have stopped. This changes Session cwd but never removes the worktree.",
   inputSchema: WorktreeExitInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   outputPolicy: { kind: "inline", previewDirection: "head" },
@@ -63,7 +63,7 @@ export async function executeWorktreeEnter(
   input: WorktreeEnterInput,
   ctx: ToolExecutionContext,
 ): Promise<RawToolResult> {
-  const eligibilityError = validateInteractiveRootSession(ctx);
+  const eligibilityError = await validateInteractiveRootSession(ctx);
   if (eligibilityError !== undefined) return eligibilityError;
 
   const projectRoot = ctx.projectContext.project.workspaceRoot;
@@ -166,7 +166,7 @@ export async function executeWorktreeExit(
   _input: Record<string, never>,
   ctx: ToolExecutionContext,
 ): Promise<RawToolResult> {
-  const eligibilityError = validateInteractiveRootSession(ctx);
+  const eligibilityError = await validateInteractiveRootSession(ctx);
   if (eligibilityError !== undefined) return eligibilityError;
 
   const projectRoot = ctx.projectContext.project.workspaceRoot;
@@ -213,17 +213,21 @@ function acquireCwdTransition(
   }
 }
 
-function validateInteractiveRootSession(ctx: ToolExecutionContext): RawToolResult | undefined {
+async function validateInteractiveRootSession(ctx: ToolExecutionContext): Promise<RawToolResult | undefined> {
   const state = ctx.store.getState();
+  const discussion = state.parentSessionId === undefined
+    ? await ctx.projectContext.todos.state.findByDiscussionSessionId(state.sessionId)
+    : undefined;
   if (
-    ctx.agentName !== "engineer"
+    ctx.agentName !== "lead"
     || state.parentSessionId !== undefined
     || (ctx.currentDepth ?? 0) !== 0
+    || discussion !== undefined
   ) {
     return createToolErrorResult({
       kind: "permission-denied",
       code: "WORKTREE_SESSION_NOT_ELIGIBLE",
-      message: "Worktree transitions are available only to root Engineer Sessions; child and other Agent Sessions inherit their execution directory.",
+      message: "Worktree transitions are available only to ordinary root Lead Sessions; Discussions, children, and other Agent Sessions inherit their execution directory.",
     });
   }
   return undefined;

@@ -30,7 +30,7 @@ describe("SessionExecutionScopeValidator", () => {
         sessionId: "session-1",
         rootSessionId: "session-1",
         cwd: projectRoot,
-        agentName: "engineer",
+        agentName: "lead",
       },
     })).resolves.toBeUndefined();
   });
@@ -47,7 +47,7 @@ describe("SessionExecutionScopeValidator", () => {
           sessionId: "session-1",
           rootSessionId: "session-1",
           cwd: join(TMP_ROOT, "outside"),
-          agentName: "engineer",
+          agentName: "lead",
         },
       });
     } catch (error) {

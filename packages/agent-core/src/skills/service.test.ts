@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { SkillNotFoundError, SkillService, SkillValidationError } from "./service";
+import { SkillService, SkillValidationError } from "./service";
 
 const tmpRoot = join(import.meta.dir, "__test_tmp__", "skill-service", crypto.randomUUID());
 
@@ -49,14 +49,14 @@ describe("SkillService", () => {
     expect(skill?.path).toBe(join(projectSkillsRoot, "git-master", "SKILL.md"));
   });
 
-  test("resolves user skills before builtin", async () => {
-    await writeSkill(userSkillsRoot, "review-work", skillMarkdown("review-work", "user review"));
+  test("resolves ordinary user skills before builtin", async () => {
+    await writeSkill(userSkillsRoot, "codemap", skillMarkdown("codemap", "user codemap"));
 
     const service = new SkillService({ userSkillsRoot });
-    const skill = await service.readForAgent(projectRoot, "review-work");
+    const skill = await service.readForAgent(projectRoot, "codemap");
 
     expect(skill?.source).toBe("user");
-    expect(skill?.metadata.description).toBe("user review");
+    expect(skill?.metadata.description).toBe("user codemap");
   });
 
   test("the reserved Automation creation skill cannot be shadowed", async () => {
@@ -67,6 +67,19 @@ describe("SkillService", () => {
     const service = new SkillService({ userSkillsRoot });
 
     expect((await service.readForAgent(projectRoot, "automation-create"))?.source).toBe("builtin");
+  });
+
+  test("reserved lifecycle Skills cannot be shadowed or loaded by an ineligible Agent", async () => {
+    for (const name of ["orchestrate-work", "plan-work", "run-goal", "shape-todo", "review-work", "goal-review"]) {
+      await writeSkill(projectSkillsRoot, name, skillMarkdown(name, `project ${name}`));
+      await writeSkill(userSkillsRoot, name, skillMarkdown(name, `user ${name}`));
+    }
+    const service = new SkillService({ userSkillsRoot });
+
+    expect((await service.readForAgent(projectRoot, "goal-review", ["goal-review"]))?.source).toBe("builtin");
+    expect(await service.readForAgent(projectRoot, "goal-review", ["codemap"])).toBeNull();
+    const listed = await service.listForAgent(projectRoot, ["codemap"]);
+    expect(listed.map((entry) => entry.name)).not.toContain("goal-review");
   });
 
   test("the removed goal-create name has no builtin reservation", async () => {
@@ -122,7 +135,7 @@ Broken.
     expect(thrown).toBeDefined();
   });
 
-  test("lists only highest priority index entries and respects allowed names", async () => {
+  test("lists all custom Skills plus only eligible builtins", async () => {
     await writeSkill(projectSkillsRoot, "safe-refactor", skillMarkdown("safe-refactor", "project safe"));
     await writeSkill(userSkillsRoot, "git-master", skillMarkdown("git-master", "user git"));
 
@@ -135,17 +148,11 @@ Broken.
     ]);
   });
 
-  test("rejects reads outside an agent allow-list", async () => {
+  test("allows a valid custom Skill outside the builtin eligibility list", async () => {
+    await writeSkill(userSkillsRoot, "team-conventions", skillMarkdown("team-conventions"));
     const service = new SkillService({ userSkillsRoot });
-    let thrown: unknown;
-    try {
-      await service.readForAgent(projectRoot, "codemap", ["git-master"]);
-    } catch (error) {
-      thrown = error;
-    }
-    expect(thrown).toMatchObject({
-      name: "SkillNotFoundError",
-      skillName: "codemap",
-    } satisfies Partial<SkillNotFoundError>);
+
+    expect((await service.readForAgent(projectRoot, "team-conventions", ["codemap"]))?.source).toBe("user");
+    expect(await service.readForAgent(projectRoot, "git-master", ["codemap"])).toBeNull();
   });
 });

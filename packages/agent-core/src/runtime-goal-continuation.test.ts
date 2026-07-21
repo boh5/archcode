@@ -10,7 +10,7 @@ function harness(overrides: {
   activity?: SessionFamilyActivity;
   hasHitl?: boolean;
   queued?: boolean;
-  isRootEngineer?: boolean;
+  isRootLead?: boolean;
   goalStatus?: GoalStatus;
   executionStatus?: ExecutionStatus;
   startContinuation?: () => Promise<void>;
@@ -29,7 +29,7 @@ function harness(overrides: {
     loadSnapshot: async () => {
       calls.push("snapshot");
       return {
-        isRootEngineer: overrides.isRootEngineer ?? true,
+        isRootLead: overrides.isRootLead ?? true,
         goalStatus: overrides.goalStatus ?? "active" as const,
         lastRootExecutionStatus: overrides.executionStatus ?? "completed" as const,
       };
@@ -73,8 +73,8 @@ describe("stateless active Goal continuation", () => {
     expect(blocked.calls).toEqual(["hitl"]);
   });
 
-  test("only an active root Engineer is eligible", async () => {
-    const child = harness({ isRootEngineer: false });
+  test("only an active root Lead is eligible", async () => {
+    const child = harness({ isRootLead: false });
     await reconcileActiveSessionGoal({ forceStartupRecovery: false }, child.dependencies);
     expect(child.calls).not.toContain("continuation");
 

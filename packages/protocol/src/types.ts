@@ -359,6 +359,10 @@ export interface ToolChildSessionLink {
   toolName: string;
   childSessionId: string;
   childAgentName: string;
+  /** Immutable Profile selected when the child was delegated. */
+  childProfile: Exclude<ProfileName, "principal">;
+  /** Immutable Skill identities selected when the child was delegated. */
+  childSkillNames: string[];
   title: string;
   /** Display-only projection derived from the child's persisted parent chain. */
   depth: number;
@@ -719,7 +723,9 @@ export interface ConfigProviderSettings<Secret> {
   models: Record<string, ConfigModelSettings>;
 }
 
-export interface ConfigAgentSettings {
+export type ProfileName = "principal" | "deep" | "fast";
+
+export interface ConfigProfileSettings {
   model: string;
   variant?: string;
   options?: ConfigModelCallOptions;
@@ -748,14 +754,10 @@ export interface ConfigGithubIntegrationSettings {
 /** The complete safe-to-edit representation of ~/.archcode/config.json. */
 export interface ServerConfigDocument<Secret> {
   provider: Record<string, ConfigProviderSettings<Secret>>;
-  agents: {
-    engineer: ConfigAgentSettings;
-    plan: ConfigAgentSettings;
-    build: ConfigAgentSettings;
-    reviewer: ConfigAgentSettings;
-    explore: ConfigAgentSettings;
-    librarian: ConfigAgentSettings;
-    shaper: ConfigAgentSettings;
+  profiles: {
+    principal: ConfigProfileSettings;
+    deep: ConfigProfileSettings;
+    fast: ConfigProfileSettings;
   };
   mcp?: { servers: Record<string, ConfigMcpServerSettings<Secret>> };
   integrations?: { github?: ConfigGithubIntegrationSettings };
@@ -1053,7 +1055,7 @@ export interface SessionProjection {
   rootSessionId: string;
   parentSessionId?: string;
   delegationRequest?: DelegationRequest;
-  /** Optional long-running execution contract owned by this root Engineer Session. */
+  /** Optional long-running execution contract owned by this root Lead Session. */
   goal?: SessionGoal;
   title: string | null;
   messages: SessionMessage[];
@@ -1115,11 +1117,13 @@ export interface SessionSummary {
   parentSessionId?: string;
   delegationRequest?: DelegationRequest;
   agentName: string;
+  /** Principal for root Lead Sessions; explicit immutable selection for children. */
+  profile: ProfileName;
   /** Persisted Skill identity; execution resolves these names against current policy. */
   activeSkillNames: string[];
   modelSelection: SessionModelSelection;
   title: string | null;
-  /** Present only on a root Engineer Session with a current Goal. */
+  /** Present only on a root Lead Session with a current Goal. */
   goal?: SessionGoal;
   createdAt: number;
   updatedAt: number;
@@ -1156,7 +1160,7 @@ export interface Session {
   cwd: string;
   rootSessionId: string;
   title: string | null;
-  /** Present only on a root Engineer Session with a current Goal. */
+  /** Present only on a root Lead Session with a current Goal. */
   goal?: SessionGoal;
   createdAt: number;
   updatedAt: number;
@@ -1176,6 +1180,8 @@ export interface Session {
   nextModelSelection: SessionNextModelSelection;
   activeModelBinding?: ExecutionModelBindingSummary;
   agentName: string;
+  /** Principal for root Lead Sessions; explicit immutable selection for children. */
+  profile: ProfileName;
   activeSkillNames: string[];
 }
 
@@ -1307,7 +1313,7 @@ export interface AutomationInvocation {
 export interface Automation {
   id: string;
   projectSlug: string;
-  /** Ordinary Engineer Session in which the user confirmed this Automation. */
+  /** Ordinary Lead Session in which the user confirmed this Automation. */
   createdFromSessionId: string;
   name: string;
   trigger: AutomationTrigger;

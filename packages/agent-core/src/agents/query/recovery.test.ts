@@ -78,7 +78,7 @@ const dummyBinding: ExecutionModelBinding = {
     modelId: dummyModelInfo.modelId,
     providerDisplayName: "Mock Provider",
     modelDisplayName: dummyModelInfo.displayName,
-    resolution: "agent_default",
+    resolution: "profile_default",
     modelRuntimeRevision: "test-revision",
   },
 };
@@ -87,7 +87,7 @@ const testSkillService = new SkillService({ builtinSkills: {} });
 const inputSchema = z.object({ message: z.string().optional() }).strict();
 
 function createStore() {
-  return storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, { agentName: "engineer" });
+  return storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, { agentName: "lead" });
 }
 
 function wrappedMessage(ref: string, text: string): string {
@@ -108,7 +108,7 @@ function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOption
     projectContext: createTestProjectContext(workspaceRoot),
     cwd: workspaceRoot,
     toolOutputAccess: outputAccessFixture.createToolOutputAccess(workspaceRoot, "test-root"),
-    agentName: "engineer",
+    agentName: "lead",
     ...overrides,
   };
 }

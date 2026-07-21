@@ -20,7 +20,7 @@ const binding: ExecutionModelBinding = {
   summary: {
     selection: { model: modelInfo.qualifiedId }, providerId: modelInfo.providerId, modelId: modelInfo.modelId,
     providerDisplayName: modelInfo.providerDisplayName, modelDisplayName: modelInfo.displayName,
-    resolution: "agent_default", modelRuntimeRevision: "test-revision",
+    resolution: "profile_default", modelRuntimeRevision: "test-revision",
   },
 };
 const skillService = new SkillService({ builtinSkills: {} });
@@ -32,7 +32,7 @@ function commandContext(store: CommandContext["store"]): CommandContext {
     binding,
     logger: silentLogger,
     cwd: import.meta.dir,
-    agentName: "engineer",
+    agentName: "lead",
     agentSkills: [],
     skillService,
   };
@@ -62,7 +62,7 @@ function compactableMessages(): StoredMessage[] {
 }
 
 function makeStore(sessionId = `compression-resilience-${crypto.randomUUID()}`) {
-  const store = storeManager.create(sessionId, TEST_WORKSPACE_ROOT, { agentName: "engineer" });
+  const store = storeManager.create(sessionId, TEST_WORKSPACE_ROOT, { agentName: "lead" });
   store.setState({ messages: compactableMessages() });
   return store;
 }
@@ -73,7 +73,7 @@ function sessionFileFixture(overrides: Record<string, unknown> = {}) {
     createdAt: 1,
     updatedAt: 1,
     cwd: TEST_WORKSPACE_ROOT,
-    agentName: "engineer",
+    agentName: "lead",
     modelInfo: null,
     title: null,
     messages: [],

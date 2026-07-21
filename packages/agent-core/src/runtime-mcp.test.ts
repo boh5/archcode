@@ -75,14 +75,10 @@ function makeProviderConfig() {
 function makeConfig(mcp?: Record<string, unknown>): Record<string, unknown> {
   const config = {
     provider: makeProviderConfig(),
-    agents: {
-      engineer: { model: "local:test-model" },
-      plan: { model: "local:test-model" },
-      build: { model: "local:test-model" },
-      reviewer: { model: "local:test-model" },
-      explore: { model: "local:test-model" },
-      librarian: { model: "local:test-model" },
-      shaper: { model: "local:test-model" },
+    profiles: {
+      principal: { model: "local:test-model" },
+      deep: { model: "local:test-model" },
+      fast: { model: "local:test-model" },
     },
   };
   return mcp === undefined ? config : { ...config, mcp };

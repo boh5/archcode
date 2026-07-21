@@ -118,7 +118,7 @@ function AutomationHeader({
 
 function AutomationConfiguration({ automation }: { automation: Automation }) {
   const action = automation.action.kind === "start_session"
-    ? `Start an Engineer Session in ${automation.action.location}`
+    ? `Start a Lead Session in ${automation.action.location}`
     : `Send to Session ${automation.action.sessionId}`;
 
   return (

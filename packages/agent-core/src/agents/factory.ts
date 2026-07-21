@@ -6,7 +6,7 @@ import type { McpServerStatus } from "@archcode/protocol";
 import type { SessionStoreManager } from "../store/session-store-manager";
 import type { SessionStoreState } from "../store/types";
 import type { Logger } from "../logger";
-import { SkillNotFoundError, type SkillService } from "../skills";
+import { RESERVED_BUILTIN_SKILL_NAMES, SkillNotFoundError, type SkillService } from "../skills";
 import { assertSkillName } from "../skills/schema";
 import type { ToolRegistry } from "../tools/index";
 import { sanitizeMcpServerNameForRegistry } from "../mcp/naming";
@@ -150,7 +150,7 @@ async function resolveDelegatedSkillNames(
 
   for (const skillName of requestedSkills) {
     assertSkillName(skillName);
-    if (!targetDefinition.skills.includes(skillName)) {
+    if (RESERVED_BUILTIN_SKILL_NAMES.has(skillName) && !targetDefinition.skills.includes(skillName)) {
       throw new SkillNotAllowedError(targetDefinition.name, skillName, targetDefinition.skills);
     }
     if (seen.has(skillName)) continue;

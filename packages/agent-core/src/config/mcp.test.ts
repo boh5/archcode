@@ -543,14 +543,10 @@ describe("archcodeConfigSchema with mcp", () => {
         },
       },
     },
-    agents: {
-      engineer: { model: "p:m" },
-      plan: { model: "p:m" },
-      build: { model: "p:m" },
-      reviewer: { model: "p:m" },
-      explore: { model: "p:m" },
-      librarian: { model: "p:m" },
-      shaper: { model: "p:m" },
+    profiles: {
+      principal: { model: "p:m" },
+      deep: { model: "p:m" },
+      fast: { model: "p:m" },
     },
   };
 

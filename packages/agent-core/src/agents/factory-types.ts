@@ -2,10 +2,12 @@ export type { ChildExecutionHandle, ChildExecutionRequest } from "../delegation/
 export type { AgentName } from "./names";
 import type { AgentName } from "./names";
 import type { RoleContract } from "../prompt/types";
+import type { ProfileName } from "../config";
 
 export interface AgentDefinition {
   readonly name: AgentName;
   readonly displayName: string;
+  readonly profiles: readonly ProfileName[];
   readonly roleContract: RoleContract;
   readonly tools: AgentToolPolicy;
   readonly mcpTools?: readonly string[];

@@ -267,17 +267,17 @@ function validateConfig(value: unknown): ArchCodeConfig {
   }
   validateSecretValuePlacement(config, issues);
 
-  for (const [agentName, agent] of Object.entries(config.agents)) {
-    const [providerId, ...modelIdParts] = agent.model.split(":");
+  for (const [profileName, profile] of Object.entries(config.profiles)) {
+    const [providerId, ...modelIdParts] = profile.model.split(":");
     const modelId = modelIdParts.join(":");
     const provider = providerId === undefined ? undefined : config.provider[providerId];
     const model = provider === undefined || modelId === "" ? undefined : provider.models[modelId];
     if (!model) {
-      issues.push({ path: `agents.${agentName}.model`, message: `Unknown model reference "${agent.model}"` });
+      issues.push({ path: `profiles.${profileName}.model`, message: `Unknown model reference "${profile.model}"` });
       continue;
     }
-    if (agent.variant !== undefined && model.variants?.[agent.variant] === undefined) {
-      issues.push({ path: `agents.${agentName}.variant`, message: `Unknown variant "${agent.variant}" for model "${agent.model}"` });
+    if (profile.variant !== undefined && model.variants?.[profile.variant] === undefined) {
+      issues.push({ path: `profiles.${profileName}.variant`, message: `Unknown variant "${profile.variant}" for model "${profile.model}"` });
     }
   }
 

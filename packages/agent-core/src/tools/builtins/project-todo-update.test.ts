@@ -35,7 +35,7 @@ function makeContext(
   const store = createMockStore({
     sessionId,
     rootSessionId: sessionId,
-    agentName: "shaper",
+    agentName: "lead",
     ...overrides,
   });
   const projectContext = {
@@ -133,7 +133,7 @@ describe("project_todo_update", () => {
     expect(jsonSchema).toContain("mark_ready");
   });
 
-  test("derives the Todo binding authorization from the current root Shaper Session", async () => {
+  test("derives the Todo binding authorization from the current bound root Lead Session", async () => {
     const { ctx, updateFromDiscussion } = makeContext();
 
     const result = await projectTodoUpdateTool.execute(input, ctx);
@@ -143,7 +143,7 @@ describe("project_todo_update", () => {
       authorization: {
         sessionId,
         rootSessionId: sessionId,
-        agentName: "shaper",
+        agentName: "lead",
         projectSlug: "test-project",
       },
       expectedRevision: 4,
@@ -218,7 +218,7 @@ describe("project_todo_update", () => {
       authorization: {
         sessionId,
         rootSessionId: sessionId,
-        agentName: "shaper",
+        agentName: "lead",
         projectSlug: "test-project",
       },
       expectedRevision: 4,
@@ -230,9 +230,9 @@ describe("project_todo_update", () => {
     });
   });
 
-  test("rejects non-Shaper and child Sessions before reaching the Todo service", async () => {
+  test("rejects non-Lead and child Sessions before reaching the Todo service", async () => {
     for (const overrides of [
-      { agentName: "engineer" as const },
+      { agentName: "analyst" as const },
       { rootSessionId: crypto.randomUUID() },
       { parentSessionId: crypto.randomUUID() },
     ]) {

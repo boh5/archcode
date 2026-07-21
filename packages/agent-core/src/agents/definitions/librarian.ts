@@ -16,6 +16,7 @@ import {
 export const librarianAgentDefinition = {
   name: "librarian",
   displayName: "Librarian",
+  profiles: ["fast"],
   roleContract: librarianRoleContract,
   tools: {
     tools: [

@@ -23,10 +23,15 @@ import type { ToolRegistry } from "../tools/index";
 import type { ToolOutputAccessService } from "../tool-output/access-service";
 import type { ConsumeFreshUserInputRequest, FreshUserInputGrant } from "../tools/types";
 import type { SessionGoalService } from "../session-goal";
-import { TOOL_WORKTREE_ENTER, TOOL_WORKTREE_EXIT } from "../tools/names";
+import { TOOL_PROJECT_TODO_UPDATE, TOOL_WORKTREE_ENTER, TOOL_WORKTREE_EXIT } from "../tools/names";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
 import type { VersionControl, VersionControlDetector } from "../version-control/detector";
 import type { AgentDefinition } from "./factory-types";
+import {
+  DISCUSSION_LEAD_DELEGATE_TARGETS,
+  DISCUSSION_LEAD_MAX_DEPTH,
+  DISCUSSION_LEAD_TOOL_NAMES,
+} from "./definitions/lead";
 import {
   createAutoInjectReminderHook,
   createHybridCompressionHook,
@@ -281,14 +286,29 @@ export class ConfiguredAgent implements Agent {
 
     try {
       await this.refreshAgentsMd();
-
-      const definitionAllowedTools = [
-        ...this.resolveAllowedTools(this.definition, this.depth),
-        ...this.resolveSessionWorktreeTools(),
-      ];
-      const allowedTools = this.resolveEffectiveTools(definitionAllowedTools, extraTools, toolProjection);
-      const agentSkills = this.definition.skills;
       const projectContext: ProjectContext = await this.projectContextResolver.resolve(this.projectRoot);
+      const state = this.store.getState();
+      const discussionTodo = this.definition.name === "lead"
+        && state.parentSessionId === undefined
+        && state.rootSessionId === state.sessionId
+        ? await projectContext.todos.state.findByDiscussionSessionId(state.sessionId)
+        : undefined;
+      const baseAllowedTools = this.resolveAllowedTools(this.definition, this.depth);
+      const definitionAllowedTools = discussionTodo === undefined
+        ? [
+            ...baseAllowedTools.filter((toolName) => toolName !== TOOL_PROJECT_TODO_UPDATE),
+            ...this.resolveSessionWorktreeTools(false),
+          ]
+        : baseAllowedTools.filter((toolName) => (
+            DISCUSSION_LEAD_TOOL_NAMES as readonly string[]
+          ).includes(toolName));
+      const allowedTools = this.resolveEffectiveTools(
+        definitionAllowedTools,
+        extraTools,
+        toolProjection,
+        discussionTodo !== undefined,
+      );
+      const agentSkills = this.definition.skills;
       const memory = await this.resolveMemorySnapshot();
       const mcpStatuses = this.resolveMcpStatuses?.() ?? new Map<string, McpServerStatus>();
       const env = buildEnv(
@@ -300,7 +320,7 @@ export class ConfiguredAgent implements Agent {
       const activeSkills: ResolvedSkill[] = [];
       try {
         availableSkills = await this.skillService.listForAgent(this.cwd, agentSkills);
-        for (const name of this.store.getState().activeSkillNames) {
+        for (const name of await this.resolveActiveSkillNames(projectContext)) {
           const skill = await this.skillService.readForAgent(this.cwd, name, this.definition.skills);
           if (skill === null) throw new SkillNotFoundError(name);
           activeSkills.push(skill);
@@ -436,10 +456,10 @@ export class ConfiguredAgent implements Agent {
     readonly binding: ExecutionModelBinding;
   }): Promise<PromptContractV2> {
     const state = this.store.getState();
-    const goal = state.sessionId === state.rootSessionId && this.definition.name === "engineer"
+    const goal = state.sessionId === state.rootSessionId && this.definition.name === "lead"
       ? state.goal
       : undefined;
-    const todo = this.definition.name === "shaper"
+    const todo = this.definition.name === "lead"
       ? await input.projectContext.todos.state.findByDiscussionSessionId(state.sessionId)
       : undefined;
     const parentAgentName = state.parentSessionId === undefined
@@ -449,9 +469,17 @@ export class ConfiguredAgent implements Agent {
       throw new Error(`Parent Session "${state.parentSessionId}" identity is unavailable while compiling the Prompt contract`);
     }
     const definitionTargets = input.allowedTools.includes("delegate")
-      ? [...(this.definition.tools.delegateTargets ?? [])]
+      ? todo === undefined
+        ? [...(this.definition.tools.delegateTargets ?? [])]
+        : [...DISCUSSION_LEAD_DELEGATE_TARGETS]
       : [];
     const allowedDelegateTargets = definitionTargets;
+    const effectiveMaxDepth = todo === undefined
+      ? this.definition.childPolicy?.maxDepth ?? this.depth
+      : Math.min(
+          this.definition.childPolicy?.maxDepth ?? DISCUSSION_LEAD_MAX_DEPTH,
+          DISCUSSION_LEAD_MAX_DEPTH,
+        );
     const runtime: RuntimePromptEnvelope = {
       agentName: this.definition.name,
       sessionId: state.sessionId,
@@ -469,8 +497,7 @@ export class ConfiguredAgent implements Agent {
             status: goal.status satisfies GoalPromptStatus,
           },
       todo: todo === undefined ? "none" : { id: todo.id, mode: "bound" },
-      ownedScope: state.delegationRequest?.owned_scope ?? [],
-      remainingDepth: Math.max(0, (this.definition.childPolicy?.maxDepth ?? this.depth) - this.depth),
+      remainingDepth: Math.max(0, effectiveMaxDepth - this.depth),
       maxConcurrentChildren: this.definition.childPolicy?.maxConcurrent ?? 0,
       mcp: Object.fromEntries((this.definition.mcpTools ?? []).map((server) => [server, mapMcpServerStatusForPrompt(input.mcpStatuses.get(server))])),
     };
@@ -546,7 +573,7 @@ export class ConfiguredAgent implements Agent {
       ];
       if (policy.todoQueryLoopContinuation) afterLoopEnd.push(todoContinuation.afterLoopEnd);
     }
-    // Memory hooks only run on a root principal Agent (depth 0).
+    // Memory hooks only run on a root Lead Agent (depth 0).
     // Sub-agents at depth > 0 must not write to project/user memory independently.
     const isRootAgent = this.depth === 0;
     const memoryEnabled = this.memoryConfig?.enabled ?? true;
@@ -567,6 +594,7 @@ export class ConfiguredAgent implements Agent {
     definitionAllowedTools: readonly string[],
     extraTools: readonly string[] | undefined,
     toolProjection: readonly string[] | undefined,
+    contextLocked = false,
   ): string[] {
     const seen = new Set<string>();
     const eligible = new Set(definitionAllowedTools);
@@ -579,6 +607,9 @@ export class ConfiguredAgent implements Agent {
     }
 
     for (const toolName of extraTools ?? []) {
+      if (contextLocked && !eligible.has(toolName)) {
+        throw new UnknownExtraToolError(toolName);
+      }
       if (
         (toolName === TOOL_WORKTREE_ENTER || toolName === TOOL_WORKTREE_EXIT)
         && !eligible.has(toolName)
@@ -603,12 +634,13 @@ export class ConfiguredAgent implements Agent {
     return [...new Set(toolProjection)];
   }
 
-  private resolveSessionWorktreeTools(): string[] {
+  private resolveSessionWorktreeTools(isDiscussion: boolean): string[] {
     const state = this.store.getState();
     if (
       this.depth !== 0
-      || this.definition.name !== "engineer"
+      || this.definition.name !== "lead"
       || state.parentSessionId !== undefined
+      || isDiscussion
     ) return [];
 
     const toolName = this.cwd === this.projectRoot ? TOOL_WORKTREE_ENTER : TOOL_WORKTREE_EXIT;
@@ -624,6 +656,24 @@ export class ConfiguredAgent implements Agent {
           reminder.delivery === "auto_inject" &&
           reminder.consumedAt === null,
       );
+  }
+
+  private async resolveActiveSkillNames(projectContext: ProjectContext): Promise<readonly string[]> {
+    const state = this.store.getState();
+    const names = [...state.activeSkillNames];
+    if (
+      this.definition.name !== "lead"
+      || state.parentSessionId !== undefined
+      || state.sessionId !== state.rootSessionId
+    ) return [...new Set(names)];
+
+    const discussionTodo = await projectContext.todos.state.findByDiscussionSessionId(state.sessionId);
+    const lifecycleSkill = discussionTodo !== undefined
+      ? "shape-todo"
+      : state.goal?.status === "active"
+        ? "run-goal"
+        : "orchestrate-work";
+    return [...new Set([lifecycleSkill, ...names])];
   }
 
 }

@@ -37,14 +37,15 @@ function createSession(input: {
     title: input.title,
     createdAt: 1,
     updatedAt: 1,
-    agentName: "engineer",
+    agentName: "lead",
+    profile: "principal",
     activeSkillNames: [],
     modelSelection: { revision: 0 },
     nextModelSelection: {
-      requested: { mode: "agent_default", selection: { model: "test:model" } },
+      requested: { mode: "profile_default", selection: { model: "test:model" } },
       resolved: {
         selection: { model: "test:model" }, providerId: "test", modelId: "model",
-        providerDisplayName: "Test", modelDisplayName: "Test Model", resolution: "agent_default",
+        providerDisplayName: "Test", modelDisplayName: "Test Model", resolution: "profile_default",
         modelRuntimeRevision: "m1",
       },
     },
@@ -374,7 +375,7 @@ describe("SessionRoute focused view store behavior", () => {
               toolName: TOOL_DELEGATE,
               input: {
                 agent_type: "explore", title: "Explore child session", objective: "Explore child session",
-                owned_scope: [], skills: [], background: false,
+                skills: [], background: false,
               },
               result: {
                 isError: false,
@@ -401,7 +402,7 @@ describe("SessionRoute focused view store behavior", () => {
           parentToolCallId: "delegate-call",
           toolName: "delegate",
           childSessionId: "child-session",
-          childAgentName: "explore",
+          childAgentName: "explore", childProfile: "fast", childSkillNames: [],
           title: "Explore child session",
           depth: 1,
           background: false,

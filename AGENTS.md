@@ -1,6 +1,6 @@
 ## Project
 
-ArchCode — **Not just a coding agent. An always-on workbench for AI engineering.** ArchCode is a self-hosted workbench for long-running AI coding work: users deploy it on a local machine or remote server, add projects, shape Todos, and let Agents plan, build, review, and wait for approval around the clock. A Goal is an optional persistent protocol on a root Engineer Session, not a separate work item. ArchCode runs as a Hono server + React Web UI rather than a one-off CLI, with seven Agent identities (Engineer, Shaper, Plan, Build, Reviewer, Explore, Librarian), HITL/Automation primitives, structured tool execution, LSP integration, persistent memory, and context compaction.
+ArchCode — **Not just a coding agent. An always-on workbench for AI engineering.** ArchCode is a self-hosted workbench for long-running AI coding work: users deploy it on a local machine or remote server, add projects, shape Todos, and let Agents plan, build, review, and wait for approval around the clock. A Goal is an optional persistent protocol on a root Lead Session, not a separate work item. ArchCode runs as a Hono server + React Web UI rather than a one-off CLI, with five Agent identities (Lead, Analyst, Build, Explore, Librarian), three model Profiles (`principal`, `deep`, `fast`), workflow Skills, HITL/Automation primitives, structured tool execution, LSP integration, persistent memory, and context compaction.
 
 ## Monorepo Structure
 
@@ -87,7 +87,7 @@ packages/agent-core/src/
 ├── config/                     # Global config service, Zod schema (.strict()), MCP/GitHub env resolution
 ├── provider/                   # Provider instance creation and immutable model metadata
 ├── models/                     # ModelRuntime snapshots, selection resolution, and Execution-owned bindings
-├── agents/definitions/         # AgentDefinition records for engineer, shaper, plan, build, reviewer, explore, librarian
+├── agents/definitions/         # AgentDefinition records for lead, analyst, build, explore, librarian
 ├── agents/factory.ts           # Agent creation and delegation through ConfiguredAgent
 ├── agents/configured-agent.ts  # Filtered tool set + own store per delegated agent
 ├── agents/session-agent-manager.ts  # Rebuildable per-Session Agent cache
@@ -125,7 +125,7 @@ packages/agent-core/src/
 ├── projects/                   # ProjectRegistry + per-workspace HITL/memory/approval context resolver
 ├── prompt/                     # PromptContractCompiler V2: typed kernel/runtime/role/collaboration/context/overlay layers + trace/eval
 ├── mcp/                        # Built-in servers (context7, grep.app, exa) + HTTP discovery → ToolDescriptors
-├── delegation/                 # DelegationRequest scope validation and Build ownership checks
+├── delegation/                 # Strict child Agent/Profile/Skill delegation contract
 ├── security/                   # 3 secret-detection regex patterns + containsSecretPattern()
 └── utils/                      # Error utilities, frontmatter parse/format, safe-file operations
 
@@ -159,10 +159,10 @@ packages/utils/src/
 **Data flow:**
 ```
 ~/.archcode/config.json → config → providers → registerBuiltinTools → fire-and-forget MCP background load
-  → Hono server → Session-scoped Engineer / Automation / HITL routes
+  → Hono server → Session-scoped Lead / Automation / HITL routes
   → SessionExecutionManager → ConfiguredAgent → query loop → store → SSE → Web UI
 
-Delegation: `delegate(DelegationRequest)` creates a durable direct child; `resume_session` preserves that identity and owned scope. Every child finishes with a normal assistant response; synchronous delegation returns that final response directly, while background work is read through `background_output`. SessionExecutionManager owns admission, scope leases, execution, and terminal records.
+Delegation: `delegate(DelegationRequest)` creates a durable direct child; `resume_session` preserves its Agent, Profile, Skills, and responsibility. Every child finishes with a normal assistant response; synchronous delegation returns that final response directly, while background work is read through `background_output`. SessionExecutionManager owns admission, concurrency, execution, and terminal records. There is no Build owned-scope or lease subsystem.
 ```
 
 **Server + Web UI:**
@@ -179,7 +179,7 @@ Delegation: `delegate(DelegationRequest)` creates a durable direct child; `resum
 **Multi-project model:**
 - `packages/agent-core/src/projects/registry.ts` persists registered workspaces under `~/.archcode/projects/index.json`, validates absolute existing directories, derives stable slugs, and tracks open times.
 - `packages/agent-core/src/projects/context-resolver.ts` creates per-workspace runtime context: durable HITL, project memory, approvals, and resource notifications. Automation state is owned by the Automation service.
-- Ordinary Session routes create an `engineer`. A root Engineer Session may own one optional `Session.goal`; no Goal-specific Session, route family, or worktree exists.
+- Ordinary Session routes create a `lead`. A root Lead Session may own one optional `Session.goal`; no Goal-specific Session, route family, or worktree exists. A Todo Discussion is a restricted root Lead derived from its authoritative Todo binding.
 - Web UI Add Project flow should register an existing workspace directory, then use project-scoped API routes (`/api/projects/:slug/...`) for sessions, files, automations, HITL, and events.
 
 **SSE + Deferred pattern:**
@@ -199,17 +199,17 @@ partitionToolCalls → global permissions
 
 Every descriptor declares an explicit `outputPolicy`. Registry is the sole Raw-to-Finalized conversion boundary: blocked requests produce no settled result, while settled and synthetic results are finalized exactly once. `ToolOutputFinalizer` owns redaction of output/details and streaming capture redacts before artifact persistence; model, Session/SSE/UI, audit, and logger consume only finalized data. Large one-shot output is recovered through authorized, bounded `output_read` and `output_search` pages rather than a full-output escape hatch.
 
-**Config** (`~/.archcode/config.json`): server-wide `provider.<id>.{npm, name, options, models}` + strict seven-agent `agents.<agentName>.{model, variant, options}` + optional `memory`, `integrations.github`, and `mcp.servers.<id>.{url, headers, timeout}`. Strict Zod. Provider values are literal; MCP URL/headers and GitHub token resolution retain their environment-variable behavior. Project directories are never searched for configuration.
+**Config** (`~/.archcode/config.json`): server-wide `provider.<id>.{npm, name, options, models}` + strict `profiles.{principal,deep,fast}.{model,variant,options}` + optional `memory`, `integrations.github`, and `mcp.servers.<id>.{url, headers, timeout}`. Strict Zod. Removed per-Agent config is rejected. Provider values are literal; MCP URL/headers and GitHub token resolution retain their environment-variable behavior. Project directories are never searched for configuration.
 
 **Model configuration** (`~/.archcode/config.json`):
 - Provider ids and model ids combine as `provider:modelId` (example: `"local:glm-5"`). Do **not** use `provider/model`.
 - All configured models use the same Prompt contracts. Provider and model differences stay in API call options rather than branching Prompt behavior.
 - `provider.<id>.models.<modelId>.options` defines base AI SDK model-call options for that model. Use AI SDK camelCase names such as `maxOutputTokens`, `temperature`, `topP`, `topK`, `presencePenalty`, `frequencyPenalty`, `stopSequences`, `seed`, `timeout`, and `providerOptions`.
-- `provider.<id>.models.<modelId>.variants.<variantName>` defines named option profiles for the same model. An agent's `variant` references one of these names and is consumed during resolution; it is never passed to the AI SDK call.
-- `agents.<agentName>.model` is required for all seven agents: `engineer`, `plan`, `build`, `reviewer`, `explore`, `librarian`, and `shaper`. Missing any required agent fails fast with an actionable config error; Shaper never falls back to another Agent's model.
-- `agents.<agentName>.options` overrides the selected model and variant options. Merge order is shallow: model `options` → selected `variants[variant]` → agent `options`.
+- `provider.<id>.models.<modelId>.variants.<variantName>` defines named option variants for the same model. A Profile or Session override may reference one; the variant name is consumed during resolution and never passed to the AI SDK call.
+- `profiles.principal`, `profiles.deep`, and `profiles.fast` are all required. Unknown or removed per-Agent keys fail strict validation.
+- Profile-default merge order is shallow: model `options` → selected `variants[variant]` → Profile `options`. A root Lead Session override resolves independently and never inherits principal Profile options.
 - `providerOptions` follows the same shallow merge rule as one top-level key: later layers replace the whole `providerOptions` object rather than deep-merging nested provider settings.
-- Unknown model ids, unknown variant names, and missing agent model config all fail fast with actionable errors.
+- Unknown model ids, unknown variant names, and missing Profile config all fail fast with actionable errors.
 - LLM execution is centralized in `packages/agent-core/src/llm/`. Non-LLM runtime code must not import `streamText` or `generateText` directly from `"ai"`; use `runLlmStream`, `runLlmText`, or `runLlmObject` instead.
 - `maxRetries` is not a configuration field. Managed calls force AI SDK `maxRetries: 0` so ArchCode owns retry/recovery, including HTTP 200 stream-body EOF/truncated-SSE failures that AI SDK retries cannot recover.
 - Retry constants are internal v1 implementation details. There is no global recovery retry config yet. Existing auto-compact behavior is preserved; emergency context-overflow compact automation is follow-up/out-of-scope.
@@ -253,41 +253,21 @@ Minimal example:
       }
     }
   },
-  "agents": {
-    "engineer": {
+  "profiles": {
+    "principal": {
       "model": "local:glm-5",
       "variant": "deep",
       "options": { "temperature": 0.25 }
     },
-    "plan": {
+    "deep": {
       "model": "local:glm-5",
       "variant": "deep",
       "options": { "temperature": 0.3 }
     },
-    "build": {
+    "fast": {
       "model": "local:glm-5",
       "variant": "fast",
       "options": { "temperature": 0.1 }
-    },
-    "reviewer": {
-      "model": "local:glm-5",
-      "variant": "deep",
-      "options": { "temperature": 0.2 }
-    },
-    "explore": {
-      "model": "local:glm-5",
-      "variant": "fast",
-      "options": { "temperature": 0, "maxOutputTokens": 12000 }
-    },
-    "librarian": {
-      "model": "local:glm-5",
-      "variant": "fast",
-      "options": { "temperature": 0, "maxOutputTokens": 8000 }
-    },
-    "shaper": {
-      "model": "local:glm-5",
-      "variant": "deep",
-      "options": { "temperature": 0.2 }
     }
   }
 }
@@ -295,35 +275,39 @@ Minimal example:
 
 ## Agent Architecture
 
-| Role | Hooks | Notes |
-|------|-------|-------|
-| **Engineer** (`"engineer"`) | auto-compact, auto-inject-reminder, title-generation, todo-continuation, memory-extraction, memory-consolidation | Default root Session Agent. Works directly, delegates to all five specialists, and may create a Session Goal after a fresh explicit user request. It completes an active Goal only by passing a direct approved Reviewer child to `update_goal`. |
-| **Plan** (`"plan"`) | auto-compact, auto-inject-reminder, todo-continuation | Source read-only planning agent for ordinary or Goal work; delegates to `explore`/`librarian`. |
-| **Build** (`"build"`) | auto-compact, auto-inject-reminder, todo-continuation | Source write agent with file write/edit, bash, LSP, git diff/status, and `ast_grep_replace`. Implements only its durable owned scope, returns a normal final report, and delegates research to `explore`. |
-| **Reviewer** (`"reviewer"`) | auto-compact, auto-inject-reminder, todo-continuation | Source read-only verifier. Returns a normal final report whose first non-empty line is exactly `VERDICT: APPROVED` or `VERDICT: CHANGES_REQUESTED`; it never controls Goal state. |
-| **Explore** (`"explore"`) | auto-compact, auto-inject-reminder, todo-continuation | Read-only local code search/LSP/git diff/status/AST search agent. No delegation and no memory extraction. |
-| **Librarian** (`"librarian"`) | auto-compact, auto-inject-reminder, todo-continuation | Read-only documentation/reference agent with local read/search, web_fetch, memory_read, and MCP docs/search tools. No delegation and no memory extraction. |
-| **Shaper** (`"shaper"`) | auto-compact, auto-inject-reminder, todo-continuation | Project Todo discussion agent. Investigates with read-only source tools and guarded Bash, updates only its bound Todo through `project_todo_update`, reads/writes Memory manually, and delegates research only to Explore/Librarian. No automatic memory extraction or execution-resource creation. |
+| Agent | Profile | Notes |
+|------|---------|-------|
+| **Lead** (`"lead"`) | root default `principal` | Sole user entry and final technical owner. Works directly, delegates bounded work, owns Plan files, Goal/Automation requests, integration, verification, and delivery. |
+| **Analyst** (`"analyst"`) | `deep` | Source-read-only architecture analysis, planning support, gap analysis, and independent review. May delegate evidence gathering to Explore/Librarian. |
+| **Build** (`"build"`) | delegated `deep` or `fast` | Source writer with file write/edit, Bash, LSP, Git diff/status, and `ast_grep_replace`. May delegate local research to Explore. |
+| **Explore** (`"explore"`) | `fast` | Terminal read-only local code search/LSP/Git/AST agent. |
+| **Librarian** (`"librarian"`) | `fast` | Terminal read-only documentation/reference agent with local read/search, web_fetch, memory_read, and MCP docs/search tools. |
 
-All seven implement `Agent`: `store: StoreApi<SessionStoreState>`, `run(options) → AgentResult`; SessionExecutionManager commits input before invoking the Agent.
+All five implement `Agent`: `store: StoreApi<SessionStoreState>`, `run(options) → AgentResult`; SessionExecutionManager commits input before invoking the Agent. Visual is documentation-only future scope and has no runtime identity.
 
 **Delegation + tool filtering:**
 - Tool sets are hardcoded by `AgentDefinition`; typed RoleContract and Prompt layers describe behavior but never change runtime permissions.
-- `engineer` uses `childPolicy.maxDepth = 3`; `plan`, `build`, `reviewer`, and `shaper` use `maxDepth = 2`.
+- Profiles route model resources only; Skills provide guidance only. Neither changes tools, delegation targets, or completion authority.
+- `lead` uses `childPolicy.maxDepth = 3`; `analyst` and `build` use `maxDepth = 2`. A Todo-bound restricted root Lead may delegate Explore/Librarian within depth 2.
+- Lead targets Analyst/Build/Explore/Librarian; Analyst targets Explore/Librarian; Build targets Explore.
 - `explore` and `librarian` have no `delegateTargets`; they are terminal read-only support agents.
 - `agents/factory.ts` resolves definition-based allowed tools and removes delegation capabilities at the runtime depth boundary; SessionExecutionManager enforces each role's child policy before child creation.
+- `delegate` persists Agent, Profile, Skills, title, objective, and background choice. `resume_session` preserves that identity. Multiple Builds share general Session concurrency; there is no owned-scope or Build lease subsystem.
+
+**Workflow Skills:**
+- Ordinary root Lead activates `orchestrate-work`; active Goal activates `run-goal`; Todo Discussion activates `shape-todo`, derived from authoritative runtime facts on every Execution.
+- `plan-work` writes an ordinary Markdown Plan under `.archcode/plans/`; Plan has no service, state, ID, API, UI, or Goal link.
+- `review-work` guides Lead review orchestration. Analyst analysis/review Skills include `analyze-work`, `review-change`, and the reserved `goal-review` final gate.
 
 **MCP visibility by agent:**
 
 | Agent | MCP servers |
 |-------|-------------|
-| `engineer` | `context7`, `exa` |
-| `plan` | `context7` |
+| `lead` | `context7`, `exa` |
+| `analyst` | `context7` |
 | `build` | — |
-| `reviewer` | — |
 | `explore` | — |
 | `librarian` | `context7`, `grep.app`, `exa` |
-| `shaper` | — |
 
 **MCP tool resolution**: `AgentDefinition.mcpTools` lists MCP server names (e.g. `["context7", "exa"]`). `factoryResolveAllowedTools` merges matching `mcp__{server}__*` tools from the registry. MCP tools load in background; agents see them on the next `run()` call after registration. See MCP section below.
 
@@ -345,13 +329,13 @@ beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-in
 | Search / AST | grep✅, glob✅, ast_grep_search✅, ast_grep_replace❌ | Search tools are workspace-scoped. `ast_grep_replace` is destructive and preview-first. |
 | Git / GitHub | git_status✅, git_diff✅, github_get_pull_request✅, github_list_pull_requests✅, github_get_pull_request_checks✅, github_list_issue_comments✅, github_create_issue_comment❌, github_list_workflow_runs✅, github_get_workflow_run✅, github_rerun_workflow_run❌ | GitHub connectors are registered globally but are not default agent tools. |
 | Shell | bash❌✅destructive | Permission: finite path-aware Bash analysis, deterministic deny/ask, default allow |
-| Interaction | ask_user✅❌not-concurrent, todo_write❌, project_todo_update❌ | ask_user serializes (interactive); `project_todo_update` derives its Todo from the current root Shaper Session and requires `expectedRevision` |
+| Interaction | ask_user✅❌not-concurrent, todo_write❌, project_todo_update❌ | ask_user serializes (interactive); `project_todo_update` derives its Todo from the current bound restricted Lead Discussion and requires `expectedRevision` |
 | Web | web_fetch✅ | — |
 | LSP | lsp_diagnostics✅, lsp_goto_definition✅, lsp_find_references✅, lsp_symbols✅ | Guard: workspace |
-| Delegation / Skills | delegate❌, resume_session❌, background_output✅, wait_for_reminder✅, cancel_session❌, skill_list✅, skill_read✅ | `delegate` accepts only strict `{ agent_type, title, objective, owned_scope, skills, background }`; `resume_session` accepts only `{ session_id, instruction, background }`; delegated roles return ordinary final assistant text. |
+| Delegation / Skills | delegate❌, resume_session❌, background_output✅, wait_for_reminder✅, cancel_session❌, skill_list✅, skill_read✅ | `delegate` accepts only strict `{ agent_type, profile, title, objective, skills, background }`; `resume_session` accepts only `{ session_id, instruction, background }`; delegated roles return ordinary final assistant text. Only Lead has family cancel. |
 | Tool output recovery | output_read✅, output_search✅ | All agents may retrieve only authorized, bounded artifact pages or search results; `view_tool_output` is removed. |
 | Memory | memory_read✅, memory_write❌ | memory_write rejects secrets |
-| Goal / Automation creation | create_goal❌, get_goal✅, update_goal❌, automation_create❌ | An Engineer may call `create_goal` only after a fresh explicit user request. `get_goal` reads the root Session Goal. `update_goal` records a genuine blocker or completes only after mechanically validating a direct Reviewer's latest `VERDICT: APPROVED`; no Review workflow state is stored. User controls edit, pause, resume, clear, and budget through the Session API/UI. |
+| Goal / Automation creation | create_goal❌, get_goal✅, update_goal❌, automation_create❌ | A non-Discussion root Lead may call strict `create_goal({ objective })` only from an exact fresh persistent user request or the current resumed ask_user authorization. `update_goal` records a genuine blocker or completes only after validating a fresh direct deep Analyst with `goal-review`; no Review workflow state is stored. User controls edit, pause, resume, clear, and budget through the Session API/UI. |
 
 (✅ = readOnly, ❌ = not readOnly, ✅destructive = only destructive tool)
 
@@ -361,7 +345,7 @@ beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-in
 
 ## Session Store
 
-Zustand vanilla store per Agent Session. `append(StreamEvent)` → `reduceStreamEvent()` → `toModelMessages()`. Strict Session identity includes `agentName`, `activeSkillNames`, root/parent ids, and cwd; an optional `goal` belongs only to a root Engineer Session. Active Skill bodies are resolved again for every Execution. Tool parts: `pending → running → completed | error`. `readSnapshots` (Map<path, mtime>) supports the edit guard. Reminders include todo continuation and child terminal notifications. Persisted to `~/.archcode/sessions/{id}.json`, validated by strict `SessionFileSchema` on load. `SessionExecutionManager` alone owns live execution admission and terminal records; load-time repair only converts restart-orphaned `running` records to `interrupted`.
+Zustand vanilla store per Agent Session. `append(StreamEvent)` → `reduceStreamEvent()` → `toModelMessages()`. Strict Session identity includes `agentName`, immutable resolved `profile`, `activeSkillNames`, root/parent ids, cwd, and delegated identity where applicable; an optional `goal` belongs only to a root Lead Session. Active Skill bodies are resolved again for every Execution. Tool parts: `pending → running → completed | error`. `readSnapshots` (Map<path, mtime>) supports the edit guard. Reminders include todo continuation and child terminal notifications. Persisted to `~/.archcode/sessions/{id}.json`, validated by strict `SessionFileSchema` on load. `SessionExecutionManager` alone owns live execution admission and terminal records; load-time repair only converts restart-orphaned `running` records to `interrupted`.
 
 ## Context Compaction
 
@@ -373,11 +357,11 @@ Project: `.archcode/memory/`, User: `~/.archcode/memory/`. Structure: `index.md`
 
 ## Session Goal System
 
-`Session.goal` is an optional persistent status record for a root Engineer Session. `packages/agent-core/src/session-goal/` owns its strict schema, user/Agent authority checks, objective, status, budget, usage, and timestamps. A fresh explicit user request lets the Engineer call `create_goal`; ordinary conversation remains ordinary Session work. The current Goal is injected before every root Engineer model call. While an active Goal family is idle and runnable, the server continues the same Engineer without a Goal-specific workflow engine. The Engineer owns the work loop: it delegates an independent Reviewer, reads the ordinary final report, fixes requested changes, and calls `update_goal({ status: "complete", review_session_id })` only after a direct Reviewer child returns `VERDICT: APPROVED`. The completion tool performs that narrow mechanical check and writes the Goal complete; it does not create Reviewers or remediation work. Goal owns neither a dedicated Session nor a worktree; HITL, worktree, and child Sessions retain their normal Session ownership.
+`Session.goal` is an optional persistent status record for a root Lead Session. `packages/agent-core/src/session-goal/` owns its strict schema, user/Agent authority checks, objective, status, budget, usage, and timestamps. `create_goal` accepts only `{ objective }` and requires either an exact fresh explicit persistent user request or the current resumed single-question ask_user authorization; ordinary conversation remains ordinary Session work. Plan is independent and never referenced by Goal. The current Goal is injected before every root Lead model call. While an active Goal family is idle and runnable, the server continues the same Lead without a Goal-specific workflow engine. Lead owns the work loop and final fix/review decisions. Completion requires a fresh direct `analyst + deep + goal-review` child bound by Runtime to the current Goal instance/generation, exactly one completed review output beginning `VERDICT: APPROVED`, no later ArchCode-known artifact write, and no active child. A completed non-approval is terminal and requires a new Analyst; `update_goal` performs the narrow mechanical check and does not create review or remediation state. Goal owns neither a dedicated Session nor a worktree.
 
 ## Project Todos
 
-Project Todos are project-owned intent, separate from Session-local `todo_write` execution checklists. Each Project opens its `/projects/:slug/todos` board by default, while `/projects/:slug` remains the Project Dashboard. `packages/agent-core/src/todos/` exclusively owns strict Todo persistence and transitions. A Shaper Discussion may update only its bound Todo; a Ready Todo can create a fresh ordinary Engineer Session whose existing Goal or Automation creation flow still requires its normal clarification and confirmation. Todo state stores only the exact source Session, immutable activation snapshot, and optional exact resource ID; Session, its Goal, and Automation lifecycles remain owned by their existing domains.
+Project Todos are project-owned intent, separate from Session-local `todo_write` execution checklists. Each Project opens its `/projects/:slug/todos` board by default, while `/projects/:slug` remains the Project Dashboard. `packages/agent-core/src/todos/` exclusively owns strict Todo persistence and transitions. A Todo-bound restricted root Lead Discussion activates `shape-todo`, may update only its bound Todo, and may delegate only Explore/Librarian; it cannot create Goal, Automation, worktree, or source writes. A Ready Todo creates a fresh ordinary Lead Session rather than reusing Discussion. Todo state stores only the exact source Session, immutable activation snapshot, and optional exact resource ID; Session, Goal, and Automation lifecycles remain owned by their existing domains.
 
 ## HITL
 
@@ -385,7 +369,7 @@ HITL is a durable project-scoped approval/question queue backed by `.archcode/hi
 
 ## Automation System
 
-`packages/agent-core/src/automations/` owns schedule calculation, durable Invocation persistence, and dispatch to the ordinary Session API. After the user confirms the creation summary, an ordinary root Engineer Session calls `automation_create`; the Runtime validates that Session as immutable provenance and commits the Automation through the existing scheduler/state path. An Automation has exactly one `once`, `interval`, or `cron + timezone` trigger and one action: create an ordinary Engineer Session or send a message to an existing Session. Session execution, Agent behavior, permissions, HITL, Session Goal state, and worktree lifecycle remain outside Automation.
+`packages/agent-core/src/automations/` owns schedule calculation, durable Invocation persistence, and dispatch to the ordinary Session API. After the user confirms the creation summary, an ordinary root Lead Session calls `automation_create`; the Runtime rejects Todo-bound Discussions and commits the Automation through the existing scheduler/state path. An Automation has exactly one `once`, `interval`, or `cron + timezone` trigger and one action: create an ordinary Lead Session or send a message to an existing Session. Session execution, Agent behavior, permissions, HITL, Session Goal state, and worktree lifecycle remain outside Automation.
 
 ## LSP Integration
 

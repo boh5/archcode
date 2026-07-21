@@ -9,7 +9,7 @@ import { executeResumeSession, ResumeSessionInputSchema } from "./resume-session
 const WORKSPACE_ROOT = import.meta.dir;
 
 function context(resumeChildSession?: ToolExecutionContext["resumeChildSession"]): ToolExecutionContext {
-  const store = storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT, { agentName: "engineer" });
+  const store = storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT, { agentName: "lead" });
   return {
     store,
     storeManager,

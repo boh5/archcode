@@ -142,8 +142,8 @@ function formatSelection(selection: { model: string; variant?: string }): string
   return selection.variant ? `${selection.model} · ${selection.variant}` : selection.model;
 }
 
-function formatMode(mode: "agent_default" | "session_override"): string {
-  return mode === "agent_default" ? "Agent default" : "Session override";
+function formatMode(mode: "profile_default" | "session_override"): string {
+  return mode === "profile_default" ? "Principal profile" : "Session override";
 }
 
 function formatReason(reason: "config_invalidated" | undefined): string {

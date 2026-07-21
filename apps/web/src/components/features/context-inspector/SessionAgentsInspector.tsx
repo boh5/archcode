@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { Fragment, useMemo } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useAgents, useSessionTree } from "../../../api/queries";
 import type { SessionTreeNode } from "../../../api/types";
@@ -10,6 +10,8 @@ interface AgentEntry {
   sessionId: string;
   name: string;
   type: string;
+  profile: string;
+  skills: string[];
   depth: number;
 }
 
@@ -20,6 +22,8 @@ function flattenAgents(node: SessionTreeNode | undefined, depth = 0): AgentEntry
       sessionId: node.session.sessionId,
       name: node.session.title || "Untitled",
       type: node.session.agentName,
+      profile: node.session.profile,
+      skills: node.session.activeSkillNames,
       depth,
     },
     ...node.children.flatMap((child) => flattenAgents(child, depth + 1)),
@@ -43,8 +47,8 @@ export function SessionAgentsInspector() {
         const displayName = resolveAgentDisplayName(agent.type, agentDescriptors);
         const appearance = resolveAgentAppearance(agent.type, displayName);
         return (
+          <Fragment key={agent.sessionId}>
           <button
-            key={agent.sessionId}
             type="button"
             aria-current={focused === agent.sessionId ? "true" : undefined}
             className={`flex w-full items-center gap-2 rounded-sm py-1.5 pr-2 text-left transition-colors ${focused === agent.sessionId ? "bg-accent-subtle text-accent" : "text-text-secondary hover:bg-bg-hover"}`}
@@ -55,8 +59,11 @@ export function SessionAgentsInspector() {
               {appearance.initial}
             </span>
             <span className="min-w-0 flex-1 truncate text-xs">{agent.name}</span>
+            <span className="max-w-[100px] truncate font-mono text-[10px] text-text-muted">{agent.profile}</span>
             <span className="text-[10px] text-text-muted">{displayName}</span>
           </button>
+          {agent.skills.length > 0 && <div className="ml-8 truncate pb-1 text-[10px] text-text-muted">Skills: {agent.skills.join(", ")}</div>}
+          </Fragment>
         );
       })}
     </nav>

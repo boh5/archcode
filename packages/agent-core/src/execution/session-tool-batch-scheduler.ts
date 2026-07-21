@@ -46,6 +46,7 @@ export interface SessionToolBatchSchedulerOptions {
 
 export type SessionToolBatchAdvanceResult =
   | { readonly status: "ready_for_continuation"; readonly sessionCwdChanged: boolean }
+  | { readonly status: "execution_completed"; readonly sessionCwdChanged: boolean }
   | { readonly status: "waiting_for_human"; readonly hitlIds: string[]; readonly sessionCwdChanged: boolean }
   | { readonly status: "manual_inspection_required"; readonly reason: SessionToolManualInspectionReason };
 
@@ -163,6 +164,7 @@ export class SessionToolBatchScheduler {
   async advance(): Promise<SessionToolBatchAdvanceResult> {
     let sessionCwdChanged = false;
     let batch = this.#requireActiveBatch();
+    let executionCompleted = batch.calls.some((call) => call.state === "completed" && call.executionCompleted === true);
     for (let partitionIndex = 0; partitionIndex < batch.partitions.length; partitionIndex += 1) {
       batch = this.#requireActiveBatch();
       const partition = batch.partitions[partitionIndex]!;
@@ -174,10 +176,12 @@ export class SessionToolBatchScheduler {
         const outcomes = await Promise.all(queued.map((call) => this.#runCall(batch.batchId, call.toolCallId)));
         for (const outcome of outcomes) {
           sessionCwdChanged ||= outcome.sessionCwdChanged;
+          executionCompleted ||= outcome.executionCompleted;
         }
       } else if (queued[0] !== undefined) {
         const outcome = await this.#runCall(batch.batchId, queued[0].toolCallId);
         sessionCwdChanged ||= outcome.sessionCwdChanged;
+        executionCompleted ||= outcome.executionCompleted;
       }
 
       batch = this.#requireActiveBatch();
@@ -195,6 +199,14 @@ export class SessionToolBatchScheduler {
           status: "ready_for_continuation",
           sessionCwdChanged,
         };
+      }
+      if (executionCompleted) {
+        await this.#failCallsAfterControlBoundary(batch.batchId, partitionIndex, {
+          code: "SESSION_EXECUTION_COMPLETED",
+          message: "Tool call skipped because a prior tool completed the current Execution",
+        });
+        await this.#archiveExecutionCompletion(batch.batchId);
+        return { status: "execution_completed", sessionCwdChanged };
       }
       if (!refreshed.every((call) => TERMINAL_CALL_STATES.has(call.state))) break;
     }
@@ -229,9 +241,12 @@ export class SessionToolBatchScheduler {
     await this.#updateBatch(batch.batchId, (current) => ({ ...current, continuationCompletedAt: now, archivedAt: now }));
   }
 
-  async #runCall(batchId: string, toolCallId: string): Promise<{ sessionCwdChanged: boolean }> {
+  async #runCall(batchId: string, toolCallId: string): Promise<{ sessionCwdChanged: boolean; executionCompleted: boolean }> {
     let call = requiredCall(this.#requireActiveBatch(), toolCallId);
-    if (call.state !== "queued") return { sessionCwdChanged: false };
+    if (call.state !== "queued") return {
+      sessionCwdChanged: false,
+      executionCompleted: call.state === "completed" && call.executionCompleted === true,
+    };
     await this.#updateBatch(batchId, (batch) => ({
       ...batch,
       calls: batch.calls.map((candidate) => candidate.toolCallId === toolCallId
@@ -254,11 +269,12 @@ export class SessionToolBatchScheduler {
         });
     if (outcome.kind === "blocked") {
       await this.#blockCall(batchId, call, outcome.requestKey, outcome.request);
-      return { sessionCwdChanged: false };
+      return { sessionCwdChanged: false, executionCompleted: false };
     }
     await this.#commitSettled(batchId, call, outcome);
     return {
       sessionCwdChanged: outcome.sidecar?.sessionCwdChanged === true,
+      executionCompleted: outcome.sidecar?.executionCompleted === true,
     };
   }
 
@@ -370,6 +386,16 @@ export class SessionToolBatchScheduler {
     return { status: "manual_inspection_required", reason };
   }
 
+  async #archiveExecutionCompletion(batchId: string): Promise<void> {
+    const now = new Date().toISOString();
+    await this.#updateBatch(batchId, (current) => ({
+      ...current,
+      continuationStartedAt: current.continuationStartedAt ?? now,
+      continuationCompletedAt: current.continuationCompletedAt ?? now,
+      archivedAt: current.archivedAt ?? now,
+    }));
+  }
+
   async #settleSystem(call: SessionToolBatchCall, step: number, raw: RawToolResult): Promise<Extract<RegistryExecutionOutcome, { kind: "settled" }>> {
     const toolCall = toToolCall(call);
     const outcome = await this.#options.registry.settleSystem(
@@ -395,6 +421,9 @@ export class SessionToolBatchScheduler {
         ...candidate,
         state: outcome.result.isError ? "failed" : "completed",
         result: outcome.result,
+        ...(outcome.sidecar?.executionCompleted === true && !outcome.result.isError
+          ? { executionCompleted: true as const }
+          : {}),
         ...(recoveryFailure === undefined ? {} : { recoveryFailure }),
         ...(markBlockerApplied && candidate.blocker !== undefined
           ? { blocker: { ...candidate.blocker, responseAppliedAt: candidate.blocker.responseAppliedAt ?? now, response: candidate.blocker.response ?? { type: "cancel", reason: "Tool batch stopped" } } }

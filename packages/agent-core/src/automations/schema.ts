@@ -46,8 +46,8 @@ export const AutomationTriggerSchema = z.discriminatedUnion("kind", [
 
 export const AutomationActionSchema = z.discriminatedUnion("kind", [
   z.strictObject({
-    kind: z.literal("start_session").describe("Start a new ordinary Engineer Session when the trigger fires."),
-    message: AutomationMessageSchema.describe("Initial user message for the new Engineer Session. Max 10000 characters."),
+    kind: z.literal("start_session").describe("Start a new ordinary Lead Session when the trigger fires."),
+    message: AutomationMessageSchema.describe("Initial user message for the new Lead Session. Max 10000 characters."),
     location: z.enum(["project", "worktree"]).describe("project uses the project workspace; worktree uses a managed worktree."),
   }),
   z.strictObject({
@@ -55,7 +55,7 @@ export const AutomationActionSchema = z.discriminatedUnion("kind", [
     sessionId: z.uuid().describe("UUID of the target existing Session."),
     message: AutomationMessageSchema.describe("Message to enqueue in the target Session. Max 10000 characters."),
   }),
-]).describe("Exactly one action: start a new Engineer Session or send a message to an existing Session.") satisfies z.ZodType<AutomationAction>;
+]).describe("Exactly one action: start a new Lead Session or send a message to an existing Session.") satisfies z.ZodType<AutomationAction>;
 
 export const AutomationSchema = z.strictObject({
   id: z.uuid(),

@@ -29,7 +29,7 @@ describe("SessionLifecycleService", () => {
         ownerId: TODO_OWNER_ID,
       }]),
     });
-    fixture.sessions.create(ORDINARY_SESSION_ID, TMP_ROOT, { agentName: "engineer" });
+    fixture.sessions.create(ORDINARY_SESSION_ID, TMP_ROOT, { agentName: "lead" });
     await fixture.sessions.flushSession(ORDINARY_SESSION_ID, TMP_ROOT);
 
     await expect(fixture.service.assertDeletable({
@@ -46,7 +46,7 @@ describe("SessionLifecycleService", () => {
 
   test("allows an ordinary Session without consulting HITL state", async () => {
     const fixture = createFixture();
-    fixture.sessions.create(ORDINARY_SESSION_ID, TMP_ROOT, { agentName: "engineer" });
+    fixture.sessions.create(ORDINARY_SESSION_ID, TMP_ROOT, { agentName: "lead" });
     await fixture.sessions.flushSession(ORDINARY_SESSION_ID, TMP_ROOT);
 
     await expect(fixture.service.assertDeletable({

@@ -51,6 +51,31 @@ export interface AnalyzeBashOptions {
   cwd?: string;
 }
 
+/** Returns only finite, parser-known writes/deletes inside one of the supplied roots. */
+export function hasBashMutationWithinRoots(
+  command: string,
+  options: AnalyzeBashOptions,
+  roots: readonly string[],
+): boolean {
+  return analyzeBash(command, options).accesses.some((access) =>
+    (access.operation === "write" || access.operation === "delete")
+    && roots.some((root) => isPathAtOrBelow(access.path, root))
+  );
+}
+
+function isPathAtOrBelow(candidate: string, root: string): boolean {
+  const canonical = (value: string) => {
+    try {
+      return realpathSync.native(value);
+    } catch {
+      return path.resolve(value);
+    }
+  };
+  const fromRoot = path.relative(canonical(root), canonical(candidate));
+  return fromRoot === ""
+    || (!fromRoot.startsWith(`..${path.sep}`) && fromRoot !== ".." && !path.isAbsolute(fromRoot));
+}
+
 interface Token {
   value: string;
   literal: boolean;

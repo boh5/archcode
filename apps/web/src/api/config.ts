@@ -1,5 +1,5 @@
 import type {
-  ConfigAgentSettings,
+  ConfigProfileSettings,
   ConfigMcpServerSettings,
   ConfigModelCallOptions,
   ConfigModelSettings,
@@ -20,7 +20,8 @@ export type ModelCallOptions = ConfigModelCallOptions;
 export type ServerModelConfig = ConfigModelSettings;
 export type ServerProviderConfig = ConfigProviderSettings<ConfigSecretMutation>;
 export type ServerMcpConfig = ConfigMcpServerSettings<ConfigSecretMutation>;
-export type ServerAgentName = keyof ServerConfig["agents"];
+export type ServerProfileName = keyof ServerConfig["profiles"];
+export type ServerProfileConfig = ConfigProfileSettings;
 export type ServerConfigSnapshot = Omit<ServerConfigSnapshotView, "config"> & { config: ServerConfig };
 export type SaveServerConfigInput = UpdateServerConfigRequest;
 

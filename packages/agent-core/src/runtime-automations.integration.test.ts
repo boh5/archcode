@@ -95,7 +95,7 @@ async function runtimeFixture(): Promise<{
     automationSchedulerTimer: new FakeTimer(clock),
   });
   activeRuntime = runtime;
-  const sourceSession = await runtime.createSession(workspaceRoot, { agentName: "engineer" });
+  const sourceSession = await runtime.createSession(workspaceRoot, { agentName: "lead" });
   return { runtime, workspaceRoot, sourceSessionId: sourceSession.sessionId };
 }
 
@@ -115,14 +115,10 @@ function config(): Record<string, unknown> {
         },
       },
     },
-    agents: {
-      engineer: { model: "local:test" },
-      plan: { model: "local:test" },
-      build: { model: "local:test" },
-      reviewer: { model: "local:test" },
-      explore: { model: "local:test" },
-      librarian: { model: "local:test" },
-      shaper: { model: "local:test" },
+    profiles: {
+      principal: { model: "local:test" },
+      deep: { model: "local:test" },
+      fast: { model: "local:test" },
     },
     mcp: { servers: {} },
   };

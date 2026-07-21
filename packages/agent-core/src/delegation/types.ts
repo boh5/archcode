@@ -25,7 +25,7 @@ export interface ChildExecutionHandle {
   readonly abort: () => void;
 }
 
-/** Resume preserves the durable Agent identity, Skills, title, and owned scope. */
+/** Resume preserves the durable Agent identity, Profile, Skills, title, and objective. */
 export interface ResumeChildRequest {
   readonly parentStore: StoreApi<SessionStoreState>;
   readonly parentSessionId: string;

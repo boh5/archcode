@@ -34,7 +34,7 @@ afterEach(async () => { await rm(TMP_DIR, { recursive: true, force: true }); });
 async function createHarness() {
   const storeManager = new SessionStoreManager({ logger: silentLogger });
   const sessionId = crypto.randomUUID();
-  const store = storeManager.create(sessionId, TMP_DIR, { agentName: "engineer" });
+  const store = storeManager.create(sessionId, TMP_DIR, { agentName: "lead" });
   const projectContext = createTestProjectContext(TMP_DIR, storeManager);
   const redactionPolicy = new SecretRedactionPolicy([]);
   const artifactStore = new ToolOutputArtifactStore({ rootDir: join(TMP_DIR, "outputs") });
@@ -53,6 +53,7 @@ async function createHarness() {
     execute: async (input) => createTextToolResult(input.value ?? "ok"),
   }));
   let permissionExecutions = 0;
+  let effectExecutions = 0;
   registry.register(defineTool({
     name: "permission_tool",
     description: "permission",
@@ -71,7 +72,18 @@ async function createHarness() {
     inputSchema: z.object({}).strict(),
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
     outputPolicy: { kind: "inline", previewDirection: "head" },
-    execute: async () => createTextToolResult("effect"),
+    execute: async () => {
+      effectExecutions += 1;
+      return createTextToolResult("effect");
+    },
+  }));
+  registry.register(defineTool({
+    name: "completion_tool",
+    description: "complete execution",
+    inputSchema: z.object({}).strict(),
+    traits: { readOnly: false, destructive: false, concurrencySafe: false },
+    outputPolicy: { kind: "inline", previewDirection: "head" },
+    execute: async () => createTextToolResult("completed", { sidecar: { executionCompleted: true } }),
   }));
   registry.register(defineTool({
     name: "cwd_tool",
@@ -102,7 +114,7 @@ async function createHarness() {
     step,
     abort: new AbortController().signal,
     startedAt: Date.now(),
-    allowedTools: new Set(["read_tool", "effect_tool", "cwd_tool", "permission_tool", "ask_user"]),
+    allowedTools: new Set(["read_tool", "effect_tool", "completion_tool", "cwd_tool", "permission_tool", "ask_user"]),
     projectContext,
     cwd: TMP_DIR,
   });
@@ -112,12 +124,23 @@ async function createHarness() {
     workspaceRoot: TMP_DIR,
     registry,
     hitlQueue,
-    agentName: "engineer",
-    allowedTools: ["read_tool", "effect_tool", "cwd_tool", "permission_tool", "ask_user"],
+    agentName: "lead",
+    allowedTools: ["read_tool", "effect_tool", "completion_tool", "cwd_tool", "permission_tool", "ask_user"],
     agentSkills: [],
     createContext,
   });
-  return { storeManager, sessionId, store, registry, scheduler, hitlQueue, createContext, artifactStore, permissionExecutions: () => permissionExecutions };
+  return {
+    storeManager,
+    sessionId,
+    store,
+    registry,
+    scheduler,
+    hitlQueue,
+    createContext,
+    artifactStore,
+    permissionExecutions: () => permissionExecutions,
+    effectExecutions: () => effectExecutions,
+  };
 }
 
 function eventResults(harness: Awaited<ReturnType<typeof createHarness>>) {
@@ -283,6 +306,29 @@ describe("SessionToolBatchScheduler hard-cut output ownership", () => {
     ], 0);
     expect(await harness.scheduler.advance()).toMatchObject({ sessionCwdChanged: true });
     expect(harness.scheduler.activeBatch()!.calls.map((call) => call.state)).toEqual(["completed", "failed"]);
+    expect(eventResults(harness)).toHaveLength(2);
+  });
+
+  test("execution completion archives the batch and rejects every later call", async () => {
+    const harness = await createHarness();
+    await harness.scheduler.createBatch([
+      { toolCallId: "complete-1", toolName: "completion_tool", input: {} },
+      { toolCallId: "effect-2", toolName: "effect_tool", input: {} },
+    ], 0);
+
+    expect(await harness.scheduler.advance()).toEqual({
+      status: "execution_completed",
+      sessionCwdChanged: false,
+    });
+    expect(harness.effectExecutions()).toBe(0);
+    expect(harness.scheduler.activeBatch()).toBeUndefined();
+    expect(harness.store.getState().toolBatches[0]).toMatchObject({
+      archivedAt: expect.any(String),
+      calls: [
+        { state: "completed", executionCompleted: true },
+        { state: "failed", result: { isError: true } },
+      ],
+    });
     expect(eventResults(harness)).toHaveLength(2);
   });
 

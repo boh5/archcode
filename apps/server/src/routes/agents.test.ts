@@ -7,8 +7,8 @@ describe("GET /api/agents", () => {
   test("returns runtime-owned Agent display metadata", async () => {
     const app = createAgentsRoutes({
       listAgentDescriptors: () => [
-        { name: "engineer", displayName: "Engineer" },
-        { name: "reviewer", displayName: "Reviewer" },
+        { name: "lead", displayName: "Lead" },
+        { name: "analyst", displayName: "Analyst" },
       ],
     } as Pick<AgentRuntime, "listAgentDescriptors">);
 
@@ -17,8 +17,8 @@ describe("GET /api/agents", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       agents: [
-        { name: "engineer", displayName: "Engineer" },
-        { name: "reviewer", displayName: "Reviewer" },
+        { name: "lead", displayName: "Lead" },
+        { name: "analyst", displayName: "Analyst" },
       ],
     });
   });

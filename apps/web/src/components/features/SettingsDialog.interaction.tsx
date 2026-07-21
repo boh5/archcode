@@ -15,7 +15,7 @@ const snapshot: ServerConfigSnapshot = {
   revision: "r1", modelRuntimeRevision: "m1", configPath: "/home/a/.archcode/config.json", restartRequiredSections: [],
   config: {
     provider: { local: { npm: "@ai-sdk/openai-compatible", name: "Local", options: { baseURL: "http://localhost/v1", apiKey: { action: "preserve" }, headers: { Authorization: { action: "preserve" } } }, models: { demo: { name: "Demo", limit: { context: 1000, output: 500 }, modalities: { input: ["text"], output: ["text"] }, variants: { fast: { temperature: 0.1 } } } } } },
-    agents: { engineer: { model: "local:demo" }, plan: { model: "local:demo" }, build: { model: "local:demo" }, reviewer: { model: "local:demo" }, explore: { model: "local:demo" }, librarian: { model: "local:demo" }, shaper: { model: "local:demo" } },
+    profiles: { principal: { model: "local:demo" }, deep: { model: "local:demo" }, fast: { model: "local:demo" } },
     mcp: { servers: { custom: { url: "https://example.com/mcp", headers: { Authorization: { action: "preserve" } } } } },
   },
 };
@@ -103,8 +103,8 @@ afterEach(() => { act(() => root.unmount()); dom.window.close(); });
 
 describe("SettingsDialog interactions", () => {
   test("opens the requested section and follows an external section change", () => {
-    act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} section="agents" /></DialogRoot>));
-    expect(container.textContent).toContain("Each of the eight agents");
+    act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} section="profiles" /></DialogRoot>));
+    expect(container.textContent).toContain("Principal, deep, and fast model bindings");
 
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} section="models" /></DialogRoot>));
     expect(container.textContent).toContain("Providers and their model profiles");
@@ -114,7 +114,7 @@ describe("SettingsDialog interactions", () => {
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
     const sections: Array<[string, string]> = [
       ["Models", "Providers and their model profiles"],
-      ["Agents", "Each of the eight agents"],
+      ["Profiles", "Principal, deep, and fast model bindings"],
       ["MCP", "MCP servers"],
       ["Memory", "Configure extraction thresholds"],
       ["GitHub", "Optional GitHub integration settings"],
@@ -227,7 +227,7 @@ describe("SettingsDialog interactions", () => {
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
     click("Add provider");
     await act(async () => { click("Save changes"); await Promise.resolve(); });
-    expect(container.textContent).toContain("Model and Agent changes applied live");
+    expect(container.textContent).toContain("Model and Profile changes applied live");
     expect(container.textContent).toContain("Restart required for: MCP, Memory");
   });
 
@@ -244,7 +244,7 @@ describe("SettingsDialog interactions", () => {
 
     click("Add provider");
     await act(async () => { click("Save changes"); await Promise.resolve(); });
-    expect(container.textContent).toContain("Model and Agent changes applied live");
+    expect(container.textContent).toContain("Model and Profile changes applied live");
 
     click("Add provider");
     await act(async () => { click("Save changes"); await Promise.resolve(); });
@@ -341,10 +341,10 @@ describe("SettingsDialog interactions", () => {
     expect(config.mcp?.servers.custom.headers?.Authorization).toEqual({ action: "delete" });
   });
 
-  test("uses variant keys from the model JSON in the agent selector", () => {
+  test("uses variant keys from the model JSON in the Profile editor", () => {
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
     change(input("Variants JSON"), JSON.stringify({ deep: { temperature: 0.2 } }));
-    click("Agents");
+    click("Profiles");
     expect(input("Model").value).toBe("local:demo");
     expect([...(input("Variant") as HTMLSelectElement).querySelectorAll("option")].map((option) => option.value)).toContain("deep");
   });
@@ -377,7 +377,7 @@ describe("SettingsDialog interactions", () => {
     expect(container.textContent).not.toContain("local:renamed-model");
     blur(modelId);
 
-    click("Agents");
+    click("Profiles");
     expect(container.textContent).toContain("local:renamed-model");
   });
 

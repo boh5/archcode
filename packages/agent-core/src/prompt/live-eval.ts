@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { buildRoleContract, engineerRoleContract, reviewerRoleContract } from "../agents/definitions/role-contracts";
+import { analystRoleContract, buildRoleContract, leadRoleContract } from "../agents/definitions/role-contracts";
 import { PromptContractCompiler } from "./compiler";
 import type { PromptContractV2, RuntimePromptEnvelope } from "./types";
 
@@ -13,7 +13,7 @@ export const PromptLiveEvalScenariosSchema = z.strictObject({
   version: z.literal(1),
   scenarios: z.array(z.strictObject({
     id: z.string().trim().min(1),
-    agent: z.enum(["engineer", "build", "reviewer"]),
+    agent: z.enum(["lead", "build", "analyst"]),
     executionMode: z.enum(["ordinary-root", "ordinary-child", "goal-activation-probe"]),
     probe: z.enum(["terminal-action", "execution-strategy"]).optional(),
     request: z.string().trim().min(1),
@@ -56,7 +56,7 @@ export async function runPromptLiveEval(
       )).prompt;
       const prompt = scenario.executionMode === "goal-activation-probe"
         ? [
-          "Classify the following user request using the Engineer Goal activation contract.",
+          "Classify the following user request using the Lead Goal activation contract.",
           "Reply with exactly CREATE_GOAL when the request explicitly asks for persistent autonomous work until a defined endpoint.",
           "Reply with exactly ASK_CLARIFY when persistent work is requested but the verifiable endpoint is unclear.",
           "Reply with exactly NO_GOAL otherwise. Do not solve the request.",
@@ -107,18 +107,17 @@ function buildLiveEvalContract(
     parentSessionId: scenario.executionMode === "ordinary-root" || scenario.executionMode === "goal-activation-probe" ? "none" : "live-eval-root",
     parentAgentName: scenario.executionMode === "ordinary-root" || scenario.executionMode === "goal-activation-probe"
       ? "none"
-      : "engineer",
+      : "lead",
     depth: scenario.executionMode === "ordinary-root" || scenario.executionMode === "goal-activation-probe" ? 0 : 1,
-    allowedDelegateTargets: scenario.agent === "reviewer" ? ["explore", "librarian"] : scenario.agent === "engineer" ? ["plan", "build", "reviewer", "explore", "librarian"] : ["explore"],
+    allowedDelegateTargets: scenario.agent === "analyst" ? ["explore", "librarian"] : scenario.agent === "lead" ? ["analyst", "build", "explore", "librarian"] : ["explore"],
     goal: "none",
     todo: "none",
-    ownedScope: scenario.agent === "build" ? [{ kind: "tree", path: "src" }] : [],
     remainingDepth: scenario.executionMode === "ordinary-root" || scenario.executionMode === "goal-activation-probe" ? 3 : 1,
     maxConcurrentChildren: 4,
     mcp: { context7: "ready" },
   };
-  const role = scenario.agent === "engineer" ? engineerRoleContract : scenario.agent === "build" ? buildRoleContract : reviewerRoleContract;
-  const allowedTools = scenario.agent === "engineer"
+  const role = scenario.agent === "lead" ? leadRoleContract : scenario.agent === "build" ? buildRoleContract : analystRoleContract;
+  const allowedTools = scenario.agent === "lead"
     ? ["file_read", "delegate", "create_goal", "get_goal", "update_goal"]
     : scenario.agent === "build"
       ? ["file_read", "file_edit", "delegate"]
@@ -137,11 +136,11 @@ function buildLiveEvalContract(
     agentsMd: { status: "absent", source: "live-eval fixture" },
     memory: { status: "absent", source: "live-eval fixture" },
     currentContext: [`liveEvalScenario=${scenario.id}`],
-    delegationRequest: scenario.agent === "engineer" ? "none" : {
+    delegationRequest: scenario.agent === "lead" ? "none" : {
       agent_type: scenario.agent,
+      profile: "deep",
       title: "Live eval delegation",
       objective: scenario.request,
-      owned_scope: scenario.agent === "build" ? [{ kind: "tree", path: "src" }] : [],
       skills: [],
       background: false,
     },

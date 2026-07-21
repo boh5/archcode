@@ -27,7 +27,7 @@ afterAll(async () => {
 });
 
 class FakeSessions implements ProjectTodoSessionCapability {
-  readonly sessions = new Map<string, { agentName: "shaper" | "engineer"; title: string }>();
+  readonly sessions = new Map<string, { agentName: "lead"; title: string }>();
   readonly executions = new Map<string, { executionId: string; userMessage: string }>();
   readonly ensureSessionCalls = new Map<string, number>();
   readonly ensureExecutionCalls = new Map<string, number>();
@@ -202,7 +202,7 @@ describe("ProjectTodoService", () => {
 
     const recovered = await service.discussTodo(todo.id, todo.revision);
     const sessionId = recovered.discussionSessionId!;
-    expect(sessions.sessions.get(sessionId)?.agentName).toBe("shaper");
+    expect(sessions.sessions.get(sessionId)?.agentName).toBe("lead");
     expect(sessions.executions.get(sessionId)?.executionId).toBe(discussionExecutionId(todo.id));
     expect(sessions.executions.get(sessionId)?.userMessage).toContain(`Todo ID: ${todo.id}`);
     expect((await service.readTodo(todo.id)).revision).toBe(checkpoint.revision);
@@ -230,14 +230,14 @@ describe("ProjectTodoService", () => {
     expect(sessions.executions.get(left.discussionSessionId!)?.executionId).toBe(discussionExecutionId(todo.id));
   });
 
-  test("Discussion update authorizes only the bound Shaper root Session", async () => {
+  test("Discussion update authorizes only the bound Lead root Session", async () => {
     const { service } = fixture();
     const idea = await service.createTodo({ title: "Shape" });
     const discussed = await service.discussTodo(idea.id, idea.revision);
     const authorization = {
       sessionId: discussed.discussionSessionId!,
       rootSessionId: discussed.discussionSessionId!,
-      agentName: "shaper",
+      agentName: "lead",
       projectSlug: "project-a",
     };
     const updated = await service.updateFromDiscussion({
@@ -248,7 +248,7 @@ describe("ProjectTodoService", () => {
     expect(updated).toMatchObject({ body: "Confirmed", status: "ready" });
 
     await expect(service.updateFromDiscussion({
-      authorization: { ...authorization, agentName: "engineer" },
+      authorization: { ...authorization, agentName: "analyst" },
       expectedRevision: updated.revision,
       patch: { body: "Denied" },
     })).rejects.toBeInstanceOf(ProjectTodoDiscussionAuthorizationError);
@@ -267,7 +267,7 @@ describe("ProjectTodoService", () => {
       authorization: {
         sessionId: unboundSessionId,
         rootSessionId: unboundSessionId,
-        agentName: "shaper",
+        agentName: "lead",
         projectSlug: "project-a",
       },
       expectedRevision: updated.revision,
@@ -314,7 +314,7 @@ describe("ProjectTodoService", () => {
     expect(sessions.executions.get(activated.activation!.sourceSessionId)?.userMessage).toStartWith("Implement the following Project Todo");
   });
 
-  test("concurrent Activation calls converge on one Engineer Session and execution", async () => {
+  test("concurrent Activation calls converge on one Lead Session and execution", async () => {
     const { service, sessions } = fixture();
     const ready = await readyTodo(service);
     const [left, right] = await Promise.all([

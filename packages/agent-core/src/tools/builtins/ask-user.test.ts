@@ -8,6 +8,7 @@ import type { ToolExecutionContext } from "../types";
 import { REDACTION_MARKER, SecretRedactionPolicy } from "../../security";
 import {
   AskUserInputSchema,
+  GOAL_AUTHORIZATION_OPTIONS,
   askUserTool,
   prepareAskUserBlock,
   resumeAskUser,
@@ -38,7 +39,7 @@ function makeCtx(secretLiterals: string[] = []): ToolExecutionContext {
     abort: new AbortController().signal,
     startedAt: Date.now(),
     allowedTools: new Set(["ask_user"]),
-    agentName: "engineer",
+    agentName: "lead",
     agentSkills: [],
     skillService: new SkillService({ builtinSkills: {} }),
     cwd: workspaceRoot,
@@ -60,6 +61,25 @@ describe("AskUserInputSchema", () => {
     expect(AskUserInputSchema.safeParse({ questions: [] }).success).toBe(false);
     expect(AskUserInputSchema.safeParse({ questions: [{ ...SINGLE_QUESTION, options: [{ label: "only label" }] }] }).success).toBe(false);
     expect(AskUserInputSchema.safeParse({ questions: [SINGLE_QUESTION], old_callback_field: true }).success).toBe(false);
+  });
+
+  test("goal authorization preset owns the semantic actions", () => {
+    const valid = AskUserInputSchema.parse({
+      questions: [{ question: "Complete the migration.", header: "Goal", custom: false, preset: "goal_authorization" }],
+    });
+    expect(prepareAskUserBlock(valid, makeCtx()).displayPayload.questions?.[0]?.options).toEqual([...GOAL_AUTHORIZATION_OPTIONS]);
+    expect(AskUserInputSchema.safeParse({
+      questions: [{
+        question: "Complete the migration.",
+        header: "Goal",
+        custom: false,
+        preset: "goal_authorization",
+        options: [{ label: "Do not start", description: "Reject the Goal." }],
+      }],
+    }).success).toBe(false);
+    expect(AskUserInputSchema.safeParse({
+      questions: [{ question: "Complete the migration.", header: "Goal", preset: "goal_authorization" }],
+    }).success).toBe(false);
   });
 });
 describe("ask_user suspend and resume", () => {

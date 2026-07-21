@@ -18,7 +18,7 @@ import type {
 } from "./types";
 
 const REQUESTED_MODEL_SELECTION = {
-  mode: "agent_default" as const,
+  mode: "profile_default" as const,
   selection: { model: "test:model" },
 };
 const TEST_BINDING = {
@@ -27,7 +27,7 @@ const TEST_BINDING = {
   modelId: "model",
   providerDisplayName: "Test",
   modelDisplayName: "Model",
-  resolution: "agent_default" as const,
+  resolution: "profile_default" as const,
   modelRuntimeRevision: "runtime-1",
 };
 
@@ -154,6 +154,8 @@ function makeChildSessionLink(overrides: Partial<ToolChildSessionLink> = {}): To
     toolName: "delegate",
     childSessionId: "child-1",
     childAgentName: "explore",
+    childProfile: "fast",
+    childSkillNames: [],
     title: "Child title",
     depth: 1,
     background: true,

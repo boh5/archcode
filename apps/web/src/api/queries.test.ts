@@ -27,7 +27,7 @@ function goal(): SessionGoal {
 describe("web Session Goal query contracts", () => {
   test("fetches the global Agent catalog", async () => {
     globalThis.document = { cookie: "" } as Document;
-    const agents: AgentDescriptor[] = [{ name: "engineer", displayName: "Engineer" }];
+    const agents: AgentDescriptor[] = [{ name: "lead", displayName: "Lead" }];
     globalThis.fetch = mock(async (input) => {
       expect(String(input)).toBe("/api/agents");
       return jsonResponse({ agents });
@@ -38,7 +38,7 @@ describe("web Session Goal query contracts", () => {
   test("returns Session summaries with their Session-owned Goal", async () => {
     globalThis.document = { cookie: "" } as Document;
     const sessions: SessionSummary[] = [{
-      sessionId: "root", cwd: "/workspace", rootSessionId: "root", agentName: "engineer", activeSkillNames: [],
+      sessionId: "root", cwd: "/workspace", rootSessionId: "root", agentName: "lead", profile: "principal", activeSkillNames: [],
       modelSelection: { revision: 0 }, title: "Root", goal: goal(), createdAt: 1, updatedAt: 2,
     }];
     globalThis.fetch = mock(async (input) => {

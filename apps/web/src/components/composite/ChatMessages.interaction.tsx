@@ -17,22 +17,22 @@ let root: Root;
 let container: HTMLDivElement;
 let fetchMock: ReturnType<typeof mock>;
 
-const requestedModelSelection = { mode: "agent_default" as const, selection: { model: "test:model" } };
-const binding = { selection: { model: "test:model" }, providerId: "test", modelId: "model", providerDisplayName: "Test", modelDisplayName: "Test Model", resolution: "agent_default" as const, modelRuntimeRevision: "m1" };
+const requestedModelSelection = { mode: "profile_default" as const, selection: { model: "test:model" } };
+const binding = { selection: { model: "test:model" }, providerId: "test", modelId: "model", providerDisplayName: "Test", modelDisplayName: "Test Model", resolution: "profile_default" as const, modelRuntimeRevision: "m1" };
 const catalogM1 = {
   revision: "m1",
   providers: [{ id: "test", displayName: "Test", models: [
     { id: "model", qualifiedId: "test:model", displayName: "Test Model", variants: [] },
     { id: "x", qualifiedId: "test:x", displayName: "X", variants: [] },
   ] }],
-  agentDefaults: { engineer: { model: "test:model" } },
+  profileDefaults: { principal: { model: "test:model" }, deep: { model: "test:model" }, fast: { model: "test:model" } },
 };
 const catalogM2 = {
   revision: "m2",
   providers: [{ id: "test", displayName: "Test", models: [
     { id: "model", qualifiedId: "test:model", displayName: "Test Model", variants: [] },
   ] }],
-  agentDefaults: { engineer: { model: "test:model" } },
+  profileDefaults: { principal: { model: "test:model" }, deep: { model: "test:model" }, fast: { model: "test:model" } },
 };
 
 function createClient(catalog = catalogM1): QueryClient {
@@ -280,7 +280,7 @@ describe("ChatMessages transcript ownership", () => {
     const store = createWebSessionStore("session-1", "project-1");
     store.getState().initializeFromSnapshot({
       rootSessionId: "session-1",
-      agentName: "engineer",
+      agentName: "lead",
       eventCursor: -1,
       messages: [
         {
@@ -321,7 +321,7 @@ describe("ChatMessages transcript ownership", () => {
           <ChatMessages
             slug="project-1"
             sessionId="session-1"
-            agents={[{ name: "engineer", displayName: "Engineer" }]}
+            agents={[{ name: "lead", displayName: "Lead Engineer" }]}
           />
         </QueryClientProvider>,
       );
@@ -355,8 +355,8 @@ describe("ChatMessages transcript ownership", () => {
 
     const agent = container.querySelector('[data-message-kind="agent"]');
     expect(agent).not.toBeNull();
-    expect(agent?.textContent).not.toContain("Engineer");
-    expect(agent?.querySelector(".border-agent-engineer")).not.toBeNull();
+    expect(agent?.textContent).not.toContain("Lead Engineer");
+    expect(agent?.querySelector(".border-agent-lead")).not.toBeNull();
     expect(agent?.getAttribute("tabindex")).toBeNull();
     const timestamp = agent?.querySelector("time");
     expect(timestamp).not.toBeNull();

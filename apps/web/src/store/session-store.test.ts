@@ -16,10 +16,10 @@ import {
 } from "./session-store";
 
 const requestedModelSelection = {
-  mode: "agent_default" as const,
+  mode: "profile_default" as const,
   selection: { model: "test:model" },
 };
-const binding = { selection: { model: "test:model" }, providerId: "test", modelId: "model", providerDisplayName: "Test", modelDisplayName: "Test Model", resolution: "agent_default" as const, modelRuntimeRevision: "m1" };
+const binding = { selection: { model: "test:model" }, providerId: "test", modelId: "model", providerDisplayName: "Test", modelDisplayName: "Test Model", resolution: "profile_default" as const, modelRuntimeRevision: "m1" };
 const sessionGoal: SessionGoal = {
   instanceId: "00000000-0000-4000-8000-000000000001",
   generation: 1,
@@ -39,7 +39,7 @@ function event(eventId: number, payload: SessionEventPayload): GlobalSessionEven
     eventId,
     createdAt: 1_700_000_000_000 + eventId,
     payload,
-    agentName: "engineer",
+    agentName: "lead",
   };
 }
 
@@ -158,7 +158,7 @@ describe("web session store registry", () => {
       parentToolCallId: "tool-call-1",
       toolName: "delegate",
       childSessionId: "child-1",
-      childAgentName: "explore",
+      childAgentName: "explore", childProfile: "fast" as const, childSkillNames: [],
       title: "Explore child",
       depth: 1,
       background: true,

@@ -15,7 +15,7 @@ const tmpRoot = join(tmpdir(), "archcode-skill-list-tool", crypto.randomUUID());
 const projectRoot = join(tmpRoot, "project");
 const userSkillsRoot = join(tmpRoot, "user", ".archcode", "skills");
 
-const engineerSkills = ["git-master", "safe-refactor", "codemap", "review-work", "research-docs"] as const;
+const leadSkills = ["git-master", "safe-refactor", "codemap", "review-work", "research-docs"] as const;
 const exploreSkills = ["codemap", "research-docs"] as const;
 
 function makeContext(agentSkills: readonly string[]): ToolExecutionContext {
@@ -43,8 +43,8 @@ describe("skill_list tool", () => {
     await rm(tmpRoot, { recursive: true, force: true });
   });
 
-  test("engineer allow-list returns all five builtin skill entries without bodies", async () => {
-    const result = await skillListTool.execute({}, makeContext(engineerSkills));
+  test("Lead allow-list returns all five builtin skill entries without bodies", async () => {
+    const result = await skillListTool.execute({}, makeContext(leadSkills));
     const entries = JSON.parse(expectTextDraft(result)) as SkillIndexEntry[];
 
     expect(entries.map((entry) => entry.name)).toEqual([
@@ -77,7 +77,7 @@ describe("skill_list tool", () => {
 
   test("input schema rejects unknown keys including agentName", () => {
     expect(SkillListInputSchema.safeParse({}).success).toBe(true);
-    expect(SkillListInputSchema.safeParse({ agentName: "engineer" }).success).toBe(false);
+    expect(SkillListInputSchema.safeParse({ agentName: "lead" }).success).toBe(false);
     expect(SkillListInputSchema.safeParse({ source: "builtin" }).success).toBe(false);
   });
 

@@ -3,6 +3,7 @@ import { createStore } from "zustand/vanilla";
 import type { ModelMessage } from "ai";
 import { createEmptySessionStats } from "@archcode/protocol";
 import type { AgentName } from "../agents/names";
+import { resolveSessionProfile } from "../agents/session-profile";
 import { collectSessionTreeIds } from "../execution/session-tree";
 import { createEmptyCompressionState, resolveCompressionOriginalRange, type CompressionOriginalRangeResult } from "../compression";
 import type {
@@ -35,6 +36,7 @@ import {
   type SessionStoreState,
   type SessionToolBatch,
   type TextPart,
+  type GoalReviewBinding,
   MAX_EVENTS,
 } from "./types";
 
@@ -65,6 +67,7 @@ export interface CreateSessionOptions {
   readonly rootSessionId?: string;
   readonly parentSessionId?: string;
   readonly delegationRequest?: DelegationRequest;
+  readonly goalReviewBinding?: GoalReviewBinding;
   readonly modelSelection?: SessionModelSelection;
   readonly title?: string;
 }
@@ -192,6 +195,7 @@ export class SessionStoreManager {
       reminders: [],
       childSessionLinks: [],
       delegationRequest: options.delegationRequest,
+      goalReviewBinding: options.goalReviewBinding,
       toolBatches: [],
       // Root/parent IDs are write-once session identity, not mutable tree state.
       rootSessionId,
@@ -1064,6 +1068,7 @@ export class SessionStoreManager {
         rootSessionId: parsed.rootSessionId,
         parentSessionId: parsed.parentSessionId,
         delegationRequest: parsed.delegationRequest,
+        goalReviewBinding: parsed.goalReviewBinding,
         agentName: parsed.agentName,
         activeSkillNames: parsed.activeSkillNames,
         modelSelection: parsed.modelSelection,
@@ -1094,6 +1099,7 @@ export class SessionStoreManager {
         reminders: parsed.reminders,
         childSessionLinks: parsed.childSessionLinks,
         delegationRequest: parsed.delegationRequest,
+        goalReviewBinding: parsed.goalReviewBinding,
         toolBatches: parsed.toolBatches,
         rootSessionId: parsed.rootSessionId,
         parentSessionId: parsed.parentSessionId,
@@ -1327,6 +1333,7 @@ function toSessionSummary(file: HydratedSessionFile): SessionSummary {
     ...(file.parentSessionId === undefined ? {} : { parentSessionId: file.parentSessionId }),
     ...(file.goal === undefined ? {} : { goal: file.goal }),
     agentName: file.agentName,
+    profile: resolveSessionProfile(file),
     activeSkillNames: file.activeSkillNames,
     modelSelection: file.modelSelection,
     title: file.title,

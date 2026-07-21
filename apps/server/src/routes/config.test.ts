@@ -23,7 +23,7 @@ const snapshot = {
         },
       },
     },
-    agents: {},
+    profiles: {},
   },
   revision: "revision-1",
   modelRuntimeRevision: "revision-1",
@@ -34,7 +34,7 @@ const snapshot = {
 const modelRuntimeCatalog = {
   revision: "revision-1",
   providers: [],
-  agentDefaults: {},
+  profileDefaults: {},
 } as const;
 
 const providerAdapterCatalog = [{
@@ -109,7 +109,7 @@ describe("config routes", () => {
   test("maps complete configuration validation failures to 422", async () => {
     const service = createService({
       save: mock(async () => {
-        throw new ConfigSemanticValidationError([{ path: "agents.engineer.model", message: "Unknown model" }]);
+        throw new ConfigSemanticValidationError([{ path: "profiles.principal.model", message: "Unknown model" }]);
       }),
     });
     const response = await createApp(service).request("/", {
@@ -123,7 +123,7 @@ describe("config routes", () => {
       error: {
         code: "CONFIG_VALIDATION_ERROR",
         message: "Configuration validation failed",
-        details: { issues: [{ path: "agents.engineer.model", message: "Unknown model" }] },
+        details: { issues: [{ path: "profiles.principal.model", message: "Unknown model" }] },
       },
     });
   });

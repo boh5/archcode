@@ -57,14 +57,10 @@ describe("Provider secret redaction integration", () => {
             },
           },
         },
-        agents: {
-          engineer: agent,
-          plan: agent,
-          build: agent,
-          reviewer: agent,
-          explore: agent,
-          librarian: agent,
-          shaper: agent,
+        profiles: {
+          principal: agent,
+          deep: agent,
+          fast: agent,
         },
       }).provider;
       const modelInfo = createProviderRegistry(providers).getModel("echo:test-model");
@@ -77,11 +73,11 @@ describe("Provider secret redaction integration", () => {
           modelId: modelInfo.modelId,
           providerDisplayName: modelInfo.providerDisplayName,
           modelDisplayName: modelInfo.displayName,
-          resolution: "agent_default",
+          resolution: "profile_default",
           modelRuntimeRevision: "integration-revision",
         },
       };
-      const store = storeManager.create(crypto.randomUUID(), testRoot.path, { agentName: "engineer" });
+      const store = storeManager.create(crypto.randomUUID(), testRoot.path, { agentName: "lead" });
       const messageId = crypto.randomUUID();
       store.getState().append({
         type: "session.messages_committed",
@@ -110,7 +106,7 @@ describe("Provider secret redaction integration", () => {
         projectContext: createTestProjectContext(testRoot.path),
         toolOutputAccess: toolFixture.createToolOutputAccess(testRoot.path, store.getState().rootSessionId),
         cwd: testRoot.path,
-        agentName: "engineer",
+        agentName: "lead",
       });
 
       expect(observedRequest).toContain(HEADER_SECRET);

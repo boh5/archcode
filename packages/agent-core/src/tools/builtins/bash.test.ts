@@ -64,7 +64,7 @@ function mockCtx(
   const sessionId = crypto.randomUUID();
   ownedSessionStores.push({ sessionId, workspaceRoot: sessionWorkspaceRoot });
   return {
-    store: storeManager.create(sessionId, sessionWorkspaceRoot, { agentName: "engineer" }),
+    store: storeManager.create(sessionId, sessionWorkspaceRoot, { agentName: "lead" }),
     toolName: "bash",
     toolCallId: "call_1",
     input: {},

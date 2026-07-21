@@ -13,7 +13,7 @@ function Probe() {
   return (
     <>
       <output data-testid="settings-state">{`${String(settingsOpen)}:${settingsSection}`}</output>
-      <button type="button" onClick={() => openSettingsModal("agents")}>Open agents</button>
+      <button type="button" onClick={() => openSettingsModal("profiles")}>Open profiles</button>
       <button type="button" onClick={() => openSettingsModal("models")}>Manage models</button>
       <button type="button" onClick={closeSettingsModal}>Close</button>
     </>
@@ -50,8 +50,8 @@ function click(label: string): void {
 describe("SettingsModalProvider", () => {
   test("tracks the requested section, including Manage models while already open", () => {
     expect(container.querySelector('[data-testid="settings-state"]')?.textContent).toBe("false:models");
-    click("Open agents");
-    expect(container.querySelector('[data-testid="settings-state"]')?.textContent).toBe("true:agents");
+    click("Open profiles");
+    expect(container.querySelector('[data-testid="settings-state"]')?.textContent).toBe("true:profiles");
     click("Manage models");
     expect(container.querySelector('[data-testid="settings-state"]')?.textContent).toBe("true:models");
     click("Close");

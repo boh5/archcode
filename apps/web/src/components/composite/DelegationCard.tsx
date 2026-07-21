@@ -39,6 +39,8 @@ export function DelegationCard({
   focusStoreSessionId,
   agentType,
   agentDisplayName,
+  profile,
+  skills,
   taskTitle,
   executionStatus,
   depth,
@@ -92,6 +94,10 @@ export function DelegationCard({
           )}
         </div>
 
+        <span className="rounded-sm bg-bg-active px-1.5 py-0.5 font-mono text-[10px] text-text-tertiary" title="Delegated model profile">
+          {profile}
+        </span>
+
         <span className="text-[11px] text-text-muted shrink-0">
           depth {depth}
         </span>
@@ -119,6 +125,13 @@ export function DelegationCard({
       {taskSummary && (
         <div className="px-3.5 py-2.5 text-[12.5px] text-text-secondary leading-[1.55] whitespace-pre-wrap">
           {taskSummary}
+        </div>
+      )}
+
+      {skills.length > 0 && (
+        <div className="flex flex-wrap gap-1 border-t border-border-subtle px-3.5 py-2">
+          <span className="mr-1 text-[10px] font-medium uppercase tracking-wide text-text-muted">Skills</span>
+          {skills.map((skill) => <span key={skill} className="rounded-sm bg-bg-active px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">{skill}</span>)}
         </div>
       )}
 

@@ -21,6 +21,12 @@ const AskUserQuestionOptionSchema = z.strictObject({
     .describe("What selecting this option means or changes."),
 });
 
+export const GOAL_AUTHORIZATION_OPTIONS = [
+  { label: "Start Goal (Recommended)", description: "Start persistent execution for this exact objective." },
+  { label: "Do not start", description: "Continue without starting a Goal." },
+  { label: "Adjust objective", description: "Revise the objective before starting a Goal." },
+] as const;
+
 const AskUserQuestionSchema = z.strictObject({
   question: boundedString(2 * 1024, "Question exceeds 2 KiB")
     .min(1)
@@ -34,6 +40,19 @@ const AskUserQuestionSchema = z.strictObject({
     .describe("Set true only when more than one choice may be selected."),
   custom: z.boolean().optional().default(true)
     .describe("When true (default), the UI adds a free-text answer choice automatically."),
+  preset: z.literal("goal_authorization").optional()
+    .describe("Use `goal_authorization` only to ask whether to start a persistent Goal for the exact question text. The runtime owns the three displayed actions; omit options and set custom to false."),
+}).superRefine((question, ctx) => {
+  if (question.preset !== "goal_authorization") return;
+  if (question.options.length > 0) {
+    ctx.addIssue({ code: "custom", path: ["options"], message: "goal_authorization owns its options; omit options" });
+  }
+  if (question.custom !== false) {
+    ctx.addIssue({ code: "custom", path: ["custom"], message: "goal_authorization requires custom: false" });
+  }
+  if (question.multiple === true) {
+    ctx.addIssue({ code: "custom", path: ["multiple"], message: "goal_authorization cannot accept multiple answers" });
+  }
 });
 
 export const AskUserInputSchema = z.strictObject({
@@ -42,6 +61,10 @@ export const AskUserInputSchema = z.strictObject({
 });
 
 export type AskUserInput = z.infer<typeof AskUserInputSchema>;
+
+function displayOptions(question: AskUserInput["questions"][number]): readonly { label: string; description: string }[] {
+  return question.preset === "goal_authorization" ? GOAL_AUTHORIZATION_OPTIONS : question.options;
+}
 
 export function prepareAskUserBlock(
   input: AskUserInput,
@@ -55,7 +78,7 @@ export function prepareAskUserBlock(
       questions: input.questions.map((question) => ({
         question: question.question,
         header: question.header,
-        options: question.options.map((option) => ({
+        options: displayOptions(question).map((option) => ({
           label: option.label,
           description: option.description,
         })),
@@ -117,6 +140,7 @@ export const askUserTool = defineTool({
     "Investigate first. Do not ask for facts available from the request, repository, tool output, or a sensible reversible default. Do not use this tool merely to report progress or to ask permission for an ordinary in-scope next step.",
     "",
     "Put a recommended option first and suffix its label with `(Recommended)`. With custom enabled, the UI adds the free-text choice automatically; do not add an `Other` option yourself.",
+    "For persistent Goal authorization, set the single question's preset to `goal_authorization`, set custom to false, and omit options. The runtime supplies the non-forgeable start, decline, and adjust actions.",
   ].join("\n"),
   inputSchema: AskUserInputSchema,
   traits: { readOnly: true, destructive: false, concurrencySafe: false },

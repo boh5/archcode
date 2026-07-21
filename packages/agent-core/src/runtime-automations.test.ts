@@ -50,7 +50,7 @@ describe("RuntimeSessionDispatchGateway", () => {
     const workspaceRoot = await tempDir("archcode-automation-gateway-");
     const sessionId = crypto.randomUUID();
     const stores = new SessionStoreManager({ logger: silentLogger });
-    await stores.createSessionFile(workspaceRoot, { agentName: "engineer" }, sessionId);
+    await stores.createSessionFile(workspaceRoot, { agentName: "lead" }, sessionId);
     const accepted: unknown[] = [];
 
     const gateway = new RuntimeSessionDispatchGateway({
@@ -86,7 +86,7 @@ describe("RuntimeSessionDispatchGateway", () => {
 });
 
 describe("AgentRuntime Automation wiring", () => {
-  test("creates a normal Engineer Session with the preallocated dispatch identities", async () => {
+  test("creates a normal Lead Session with the preallocated dispatch identities", async () => {
     const fixture = await runtimeFixture();
     const automation = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
       name: "check project",
@@ -104,14 +104,14 @@ describe("AgentRuntime Automation wiring", () => {
       sessionId: invocation.sessionId,
       rootSessionId: invocation.sessionId,
       cwd: fixture.workspaceRoot,
-      agentName: "engineer",
+      agentName: "lead",
     });
     await waitForInvocationExecution(fixture.runtime, fixture.workspaceRoot, invocation);
   });
 
   test("routes send_message through the ordinary checked Session message entry point", async () => {
     const fixture = await runtimeFixture();
-    const session = await fixture.runtime.createSession(fixture.workspaceRoot, { agentName: "engineer" });
+    const session = await fixture.runtime.createSession(fixture.workspaceRoot, { agentName: "lead" });
     const automation = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
       name: "continue session",
       trigger: { kind: "interval", everyMs: 30_000 },
@@ -152,7 +152,7 @@ describe("AgentRuntime Automation wiring", () => {
     const idea = await context.todos.createTodo({ title: "Shape through server events" });
     const discussed = await context.todos.discussTodo(idea.id, idea.revision);
     const discussionSession = await fixture.runtime.getSessionFile(fixture.workspaceRoot, discussed.discussionSessionId!);
-    expect(discussionSession.agentName).toBe("shaper");
+    expect(discussionSession.agentName).toBe("lead");
     expect(discussionSession.executions).toContainEqual(expect.objectContaining({
       id: discussionExecutionId(idea.id),
     }));
@@ -295,7 +295,7 @@ describe("AgentRuntime Automation wiring", () => {
     expect(events.every((event) => !(event && typeof event === "object" && "reason" in event))).toBe(true);
   });
 
-  test("requires an ordinary root Engineer Session in the same project as creation source", async () => {
+  test("requires an ordinary root Lead Session in the same project as creation source", async () => {
     const fixture = await runtimeFixture({ secondProject: true });
     const stores = new SessionStoreManager({ logger: silentLogger });
     const child = await stores.createSessionFile(fixture.workspaceRoot, {
@@ -304,7 +304,7 @@ describe("AgentRuntime Automation wiring", () => {
       parentSessionId: fixture.sourceSessionId,
     });
     const wrongAgent = await stores.createSessionFile(fixture.workspaceRoot, {
-      agentName: "plan",
+      agentName: "analyst",
     });
     const missingSessionId = crypto.randomUUID();
     const input = {
@@ -381,10 +381,10 @@ async function runtimeFixture(options: {
     automationSchedulerClock: clock,
     automationSchedulerTimer: timer,
   });
-  const sourceSession = await runtime.createSession(workspaceRoot, { agentName: "engineer" });
+  const sourceSession = await runtime.createSession(workspaceRoot, { agentName: "lead" });
   const secondSourceSession = secondWorkspaceRoot === undefined
     ? undefined
-    : await runtime.createSession(secondWorkspaceRoot, { agentName: "engineer" });
+    : await runtime.createSession(secondWorkspaceRoot, { agentName: "lead" });
   return {
     runtime,
     workspaceRoot,
@@ -417,14 +417,10 @@ function config(): Record<string, unknown> {
         },
       },
     },
-    agents: {
-      engineer: { model: "local:test" },
-      plan: { model: "local:test" },
-      build: { model: "local:test" },
-      reviewer: { model: "local:test" },
-      explore: { model: "local:test" },
-      librarian: { model: "local:test" },
-      shaper: { model: "local:test" },
+    profiles: {
+      principal: { model: "local:test" },
+      deep: { model: "local:test" },
+      fast: { model: "local:test" },
     },
     mcp: { servers: {} },
   };

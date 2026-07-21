@@ -31,6 +31,7 @@ import type { ProjectInfo } from "./projects/types";
 import { SessionLifecycleService } from "./projects/session-lifecycle-service";
 import { SkillService } from "./skills";
 import type { SessionFile, SessionSummary } from "./store/helpers";
+import { resolveSessionProfile } from "./agents/session-profile";
 import { NotRootSessionError } from "./store/errors";
 import type { CompressionOriginalRangeResult } from "./compression";
 import type {
@@ -101,6 +102,7 @@ import { SessionInputService, type CommandRequestReplay, type MessageAcceptance 
 import {
   SessionModelSelectionInvalidError,
   SessionModelSelectionService,
+  resolveDurableSessionModelOverride,
 } from "./session-input/model-selection-service";
 import { WorktreeService } from "./worktrees";
 import { ProjectTodoService, ProjectTodoStateManager } from "./todos";
@@ -120,7 +122,7 @@ type SessionToolBatchExecutionInput = Omit<StartSessionExecutionInput, "input" |
 type SessionToolBatchExecutor = (input: SessionToolBatchExecutionInput) => Promise<ActiveSessionExecution>;
 
 interface ActiveGoalReconciliationSnapshot {
-  readonly isRootEngineer: boolean;
+  readonly isRootLead: boolean;
   readonly goalStatus?: SessionGoal["status"];
   readonly lastRootExecutionStatus?: SessionExecutionRecord["status"];
 }
@@ -146,7 +148,7 @@ export async function reconcileActiveSessionGoal(
   if (await dependencies.startQueuedExecution()) return;
 
   const snapshot = await dependencies.loadSnapshot();
-  if (!snapshot.isRootEngineer || snapshot.goalStatus !== "active") return;
+  if (!snapshot.isRootLead || snapshot.goalStatus !== "active") return;
   if (!input.forceStartupRecovery
     && snapshot.lastRootExecutionStatus !== "completed"
     && snapshot.lastRootExecutionStatus !== "max_steps") return;
@@ -378,6 +380,7 @@ export interface AgentRuntime {
 }
 
 export type RuntimeSessionFile = SessionFile & {
+  readonly profile: import("./config").ProfileName;
   readonly nextModelSelection: SessionNextModelSelection;
   readonly activeModelBinding?: ExecutionModelBindingSummary;
 };
@@ -401,19 +404,18 @@ export async function createRuntime(
 
   const projectSessionModels = (file: SessionFile): RuntimeSessionFile => {
     const snapshot = modelRuntime.current;
-    const validOverride = file.modelSelection.override !== undefined
-      && snapshot.tryResolveSelection(file.modelSelection.override) !== undefined;
-    const agentDefault = snapshot.getAgentDefault(file.agentName);
-    if (agentDefault === undefined) {
-      throw new Error(`Agent "${file.agentName}" has no configured default model`);
-    }
+    const profile = resolveSessionProfile(file);
+    const durableOverride = resolveDurableSessionModelOverride(file);
+    const validOverride = durableOverride !== undefined
+      && snapshot.tryResolveSelection(durableOverride) !== undefined;
+    const profileDefault = snapshot.getProfileDefault(profile);
     const requested = validOverride
-      ? { mode: "session_override" as const, selection: { ...file.modelSelection.override! } }
-      : { mode: "agent_default" as const, selection: { ...agentDefault } };
+      ? { mode: "session_override" as const, selection: { ...durableOverride } }
+      : { mode: "profile_default" as const, selection: { ...profileDefault } };
     const resolved = modelSelectionResolver.resolve({
       snapshot,
-      agentName: file.agentName,
-      ...(validOverride ? { sessionOverride: file.modelSelection.override } : {}),
+      profile,
+      ...(validOverride ? { sessionOverride: durableOverride } : {}),
     }).summary;
     const activeModelBinding = [...file.executions]
       .reverse()
@@ -421,6 +423,7 @@ export async function createRuntime(
       ?.binding;
     return {
       ...file,
+      profile,
       nextModelSelection: { requested, resolved },
       ...(activeModelBinding === undefined ? {} : { activeModelBinding }),
     };
@@ -513,7 +516,6 @@ export async function createRuntime(
     const sessionStoreManager = new SessionStoreManager({ logger: runtimeLogger.child({ module: "sessions.store" }) });
     const sessionGoalService = new SessionGoalService(sessionStoreManager);
     const sessionInputService = new SessionInputService(sessionStoreManager);
-    const sessionModelSelectionService = new SessionModelSelectionService(sessionStoreManager);
     const sessionEventBridge = new SessionEventBridge({
       source: sessionStoreManager,
       resolveProjectSlug: (workspaceRoot) => projectSlugsByWorkspace.get(workspaceRoot),
@@ -688,6 +690,10 @@ export async function createRuntime(
       createAutomation: (workspaceRoot, input) => createAutomation(workspaceRoot, input),
       logger: runtimeLogger.child({ module: "projects" }),
     });
+    const isDiscussionSession = async (workspaceRoot: string, sessionId: string): Promise<boolean> => (
+      await (await contextResolver.resolve(workspaceRoot)).todos.state.findByDiscussionSessionId(sessionId)
+    ) !== undefined;
+    const sessionModelSelectionService = new SessionModelSelectionService(sessionStoreManager);
     executionScopeValidator = new SessionExecutionScopeValidator();
     let executionManager!: SessionExecutionManager;
     const sessionAgentManager = new SessionAgentManager({
@@ -735,6 +741,7 @@ export async function createRuntime(
       listSessionFamilyToolBatchHitlIds: (workspaceRoot, rootSessionId) => (
         sessionStoreManager.listSessionFamilyToolBatchHitlIds(workspaceRoot, rootSessionId)
       ),
+      isDiscussionSession,
       sessionInputService,
       trackSession,
       untrackSession,
@@ -817,9 +824,9 @@ export async function createRuntime(
             input.workspaceRoot,
           )).getState();
           return {
-            isRootEngineer: state.parentSessionId === undefined
+            isRootLead: state.parentSessionId === undefined
               && state.rootSessionId === state.sessionId
-              && state.agentName === "engineer",
+              && state.agentName === "lead",
             goalStatus: state.goal?.status,
             lastRootExecutionStatus: state.executions.at(-1)?.status,
           };
@@ -1467,11 +1474,19 @@ export async function createRuntime(
       if (
         session.sessionId !== session.rootSessionId
         || session.parentSessionId !== undefined
-        || session.agentName !== "engineer"
+        || session.agentName !== "lead"
       ) {
         throw new ResourceCreationSourceError(
           sessionId,
-          `Creation source Session ${sessionId} must be an ordinary root Engineer Session`,
+          `Creation source Session ${sessionId} must be an ordinary root Lead Session`,
+        );
+      }
+      const discussion = await (await contextResolver.resolve(workspaceRoot))
+        .todos.state.findByDiscussionSessionId(sessionId);
+      if (discussion !== undefined) {
+        throw new ResourceCreationSourceError(
+          sessionId,
+          `Creation source Session ${sessionId} is bound to a Todo Discussion`,
         );
       }
     }
@@ -1988,8 +2003,8 @@ export async function createRuntime(
 }
 
 function assertRuntimeSessionAgentScope(options: CreateRuntimeSessionOptions): void {
-  if (options.agentName !== "engineer" && options.agentName !== "shaper") {
-    throw new Error(`Root Sessions require agentName "engineer" or "shaper", got "${options.agentName}"`);
+  if (options.agentName !== "lead") {
+    throw new Error(`Root Sessions require agentName "lead", got "${options.agentName}"`);
   }
 }
 

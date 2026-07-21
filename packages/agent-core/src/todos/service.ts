@@ -21,7 +21,7 @@ export interface ProjectTodoSessionCapability {
   ensureRootSession(input: {
     readonly workspaceRoot: string;
     readonly sessionId: string;
-    readonly agentName: "shaper" | "engineer";
+    readonly agentName: "lead";
     readonly title: string;
   }): Promise<void>;
   /** Must be idempotent for the Session-scoped executionId. */
@@ -141,8 +141,8 @@ export class ProjectTodoService {
 
   async updateFromDiscussion(input: ProjectTodoDiscussionUpdateInput): Promise<ProjectTodo> {
     const authorization = input.authorization;
-    if (authorization.agentName !== "shaper") {
-      throw new ProjectTodoDiscussionAuthorizationError("only Shaper may update through a Discussion");
+    if (authorization.agentName !== "lead") {
+      throw new ProjectTodoDiscussionAuthorizationError("only Lead may update through a bound Discussion");
     }
     if (authorization.sessionId !== authorization.rootSessionId) {
       throw new ProjectTodoDiscussionAuthorizationError("Discussion must be a root Session");
@@ -241,8 +241,8 @@ export class ProjectTodoService {
       await this.#sessions.ensureRootSession({
         workspaceRoot: this.workspaceRoot,
         sessionId,
-        agentName: "shaper",
-        title: `Shape: ${todo.title}`,
+        agentName: "lead",
+        title: `Discussion: ${todo.title}`,
       });
       await this.#sessions.ensureExecution({
         workspaceRoot: this.workspaceRoot,
@@ -260,7 +260,7 @@ export class ProjectTodoService {
       await this.#sessions.ensureRootSession({
         workspaceRoot: this.workspaceRoot,
         sessionId: activation.sourceSessionId,
-        agentName: "engineer",
+        agentName: "lead",
         title: activation.snapshot.title,
       });
       await this.#sessions.ensureExecution({
@@ -333,7 +333,7 @@ function activationMessage(todo: ProjectTodo, kind: ProjectTodoActivationKind): 
   if (kind === "automation") {
     return `/skill use automation-create Create an Automation from the following Project Todo snapshot. Preserve the existing clarification and explicit confirmation flow; do not call automation_create before confirmation.\n\n${snapshot}`;
   }
-  return `Implement the following Project Todo as an ordinary Engineer Session. The snapshot is fixed at activation revision ${activation.todoRevision}.\n\n${snapshot}`;
+  return `Implement the following Project Todo as an ordinary Lead Session. The snapshot is fixed at activation revision ${activation.todoRevision}.\n\n${snapshot}`;
 }
 
 function todoSnapshot(todo: ProjectTodo): string {

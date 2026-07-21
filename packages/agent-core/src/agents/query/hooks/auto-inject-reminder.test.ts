@@ -21,7 +21,7 @@ function createReminder(overrides: Partial<Reminder> = {}): Reminder {
 
 function createContext(messages: ModelMessage[] = []): BeforeModelCallContext {
   return {
-    store: storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, { agentName: "engineer" }),
+    store: storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, { agentName: "lead" }),
     binding: undefined as never,
     logger: silentLogger,
     messages,

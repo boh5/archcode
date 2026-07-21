@@ -53,17 +53,17 @@ describe("Session Goal hard-cut boundaries", () => {
     expect(productionMatches(/open sessions,\s*goals, or automations/)).toEqual([]);
   });
 
-  test("exactly seven general-purpose agents remain", () => {
+  test("exactly five general-purpose agents remain", () => {
     expect(agentDefinitions.map((definition) => definition.name)).toEqual([
-      "engineer", "plan", "build", "reviewer", "explore", "librarian", "shaper",
+      "lead", "analyst", "build", "explore", "librarian",
     ]);
   });
 
-  test("Engineer owns conversational Goal control and other agents cannot mutate it", () => {
-    const engineer = agentDefinitions.find((definition) => definition.name === "engineer");
-    if (engineer === undefined) throw new Error("Missing engineer definition");
-    expect(engineer.tools.tools).toEqual(expect.arrayContaining([TOOL_CREATE_GOAL, TOOL_GET_GOAL, TOOL_UPDATE_GOAL]));
-    for (const definition of agentDefinitions.filter((candidate) => candidate.name !== "engineer")) {
+  test("Lead owns conversational Goal control and other agents cannot mutate it", () => {
+    const lead = agentDefinitions.find((definition) => definition.name === "lead");
+    if (lead === undefined) throw new Error("Missing Lead definition");
+    expect(lead.tools.tools).toEqual(expect.arrayContaining([TOOL_CREATE_GOAL, TOOL_GET_GOAL, TOOL_UPDATE_GOAL]));
+    for (const definition of agentDefinitions.filter((candidate) => candidate.name !== "lead")) {
       expect(definition.tools.tools).not.toContain(TOOL_CREATE_GOAL);
       expect(definition.tools.tools).not.toContain(TOOL_UPDATE_GOAL);
     }

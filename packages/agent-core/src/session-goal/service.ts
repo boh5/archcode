@@ -22,7 +22,7 @@ export interface SessionGoalTarget {
 export class SessionGoalServiceError extends Error {
   constructor(
     public readonly code:
-      | "NOT_ROOT_ENGINEER"
+      | "NOT_ROOT_LEAD"
       | "GOAL_NOT_FOUND"
       | "GOAL_ALREADY_ACTIVE"
       | "GOAL_TERMINAL"
@@ -138,7 +138,7 @@ export class SessionGoalService {
   async clear(input: SessionGoalTarget & { readonly authority: SessionGoalAuthority }): Promise<void> {
     requireAuthority(input.authority, "user_control");
     await this.sessions.commitDurableSessionMutation(input.sessionId, input.workspaceRoot, (state) => {
-      assertRootEngineer(state);
+      assertRootLead(state);
       const goal = requiredGoal(state);
       const occurredAt = Date.now();
       return {
@@ -188,15 +188,19 @@ export class SessionGoalService {
       const budgetLimited = current.status !== "complete"
         && current.tokenBudget !== undefined
         && tokens.totalTokens >= current.tokenBudget;
+      const status = budgetLimited ? "budget_limited" as const : current.status;
       const goal = checkedGoal({
         ...current,
-        status: budgetLimited ? "budget_limited" : current.status,
+        status,
         usage: {
           tokens,
           executionTimeMs: current.usage.executionTimeMs + nonNegativeInt(input.executionTimeMs, "executionTimeMs"),
           executionCount: current.usage.executionCount + 1,
         },
-        updatedAt: now,
+        // Usage is telemetry, not a semantic Goal revision. Keep updatedAt stable
+        // unless usage itself crosses the budget boundary and changes status so
+        // a review created during an Execution is not invalidated by settlement.
+        updatedAt: status === current.status ? current.updatedAt : now,
       });
       return change(goal, "usage_recorded", now);
     });
@@ -222,10 +226,12 @@ export class SessionGoalService {
   async complete(input: SessionGoalTarget & {
     readonly authority: SessionGoalAuthority;
     readonly reason: string;
+    readonly expectedInstanceId: string;
+    readonly expectedGeneration: number;
   }): Promise<SessionGoal> {
     requireAuthority(input.authority, "agent");
     return await this.mutate(input, (state, now) => {
-      const current = requireActiveGoal(state);
+      const current = activeGoalAtIdentity(state, input.expectedInstanceId, input.expectedGeneration);
       const reason = requiredText(input.reason, "reason");
       return change(checkedGoal({
         ...current,
@@ -241,7 +247,7 @@ export class SessionGoalService {
     operation: (state: Readonly<SessionStoreState>, now: number) => MutationResult,
   ): Promise<SessionGoal> {
     return await this.sessions.commitDurableSessionMutation(target.sessionId, target.workspaceRoot, (state) => {
-      assertRootEngineer(state);
+      assertRootLead(state);
       const outcome = operation(state, Date.now());
       return { result: outcome.goal, patch: { goal: outcome.goal }, events: outcome.events };
     });
@@ -278,9 +284,9 @@ function checkedGoal(value: unknown): SessionGoal {
   return SessionGoalSchema.parse(value);
 }
 
-function assertRootEngineer(state: Readonly<SessionStoreState>): void {
-  if (state.parentSessionId !== undefined || state.rootSessionId !== state.sessionId || state.agentName !== "engineer") {
-    throw new SessionGoalServiceError("NOT_ROOT_ENGINEER", "Session Goals belong only to root Engineer Sessions");
+function assertRootLead(state: Readonly<SessionStoreState>): void {
+  if (state.parentSessionId !== undefined || state.rootSessionId !== state.sessionId || state.agentName !== "lead") {
+    throw new SessionGoalServiceError("NOT_ROOT_LEAD", "Session Goals belong only to root Lead Sessions");
   }
 }
 
@@ -306,6 +312,21 @@ function goalAtGeneration(state: Readonly<SessionStoreState>, expectedGeneration
 function requireActiveGoal(state: Readonly<SessionStoreState>): SessionGoal {
   const goal = nonTerminalGoal(state);
   if (goal.status !== "active") throw new SessionGoalServiceError("INVALID_TRANSITION", `Goal is ${goal.status}, not active`);
+  return goal;
+}
+
+function activeGoalAtIdentity(
+  state: Readonly<SessionStoreState>,
+  expectedInstanceId: string,
+  expectedGeneration: number,
+): SessionGoal {
+  const goal = requireActiveGoal(state);
+  if (goal.instanceId !== expectedInstanceId || goal.generation !== expectedGeneration) {
+    throw new SessionGoalServiceError(
+      "GENERATION_CONFLICT",
+      `Expected Goal ${expectedInstanceId} generation ${expectedGeneration}, found ${goal.instanceId} generation ${goal.generation}`,
+    );
+  }
   return goal;
 }
 

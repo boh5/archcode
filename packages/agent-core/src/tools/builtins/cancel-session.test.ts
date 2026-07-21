@@ -12,7 +12,7 @@ const NON_DESCENDANT_ID = "other-session-999";
 const WORKSPACE_ROOT = "/workspace/test";
 
 function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
-  const store = storeManager.create(`cancel-parent-${crypto.randomUUID()}`, WORKSPACE_ROOT, { agentName: "engineer" });
+  const store = storeManager.create(`cancel-parent-${crypto.randomUUID()}`, WORKSPACE_ROOT, { agentName: "lead" });
   return {
     store,
     toolName: "cancel_session",
@@ -25,7 +25,7 @@ function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecuti
     cwd: WORKSPACE_ROOT,
     storeManager,
     projectContext: createTestProjectContext(WORKSPACE_ROOT),
-    agentName: "engineer",
+    agentName: "lead",
     ...overrides,
   };
 }
@@ -83,7 +83,7 @@ describe("cancel_session tool", () => {
 
     it("returns error when cancelling own session", async () => {
       const callingSessionId = "self-session-id";
-      const store = storeManager.create(callingSessionId, WORKSPACE_ROOT, { agentName: "engineer" });
+      const store = storeManager.create(callingSessionId, WORKSPACE_ROOT, { agentName: "lead" });
       const cancelChildSession = mock(() => true);
       const ctx = makeContext({
         store,

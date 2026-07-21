@@ -130,11 +130,11 @@ async function writeConfig(homeDir: string): Promise<ServerConfigService> {
       },
     },
   };
-  const agents = Object.fromEntries(
-    ["engineer", "plan", "build", "reviewer", "explore", "librarian", "shaper"]
+  const profiles = Object.fromEntries(
+    ["principal", "deep", "fast"]
       .map((name) => [name, { model: "local:test-model" }]),
   );
-  await writeFile(path, JSON.stringify({ provider, agents }));
+  await writeFile(path, JSON.stringify({ provider, profiles }));
   return new ServerConfigService({ homeDir });
 }
 
@@ -183,7 +183,7 @@ describe("Tool Output AC-05 lifecycle acceptance", () => {
       });
       expect(firstRegistration.slug).toBe("shared-project");
       const session = await runtime.createSession(originalWorkspace, {
-        agentName: "engineer",
+        agentName: "lead",
         title: "Retained Session",
       });
       const canonicalRoot = await realpath(originalWorkspace);

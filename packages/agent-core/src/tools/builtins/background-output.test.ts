@@ -20,7 +20,7 @@ function context(): ToolExecutionContext {
   const manager = new SessionStoreManager({ logger: silentLogger });
   const id = crypto.randomUUID();
   return {
-    store: manager.create(id, workspace, { agentName: "engineer" }), storeManager: manager,
+    store: manager.create(id, workspace, { agentName: "lead" }), storeManager: manager,
     toolName: "background_output", toolCallId: "call", input: {}, step: 1,
     abort: new AbortController().signal, startedAt: Date.now(), allowedTools: new Set(["background_output"]),
     cwd: workspace, projectContext: createTestProjectContext(workspace),
@@ -28,7 +28,7 @@ function context(): ToolExecutionContext {
 }
 
 function child(ctx: ToolExecutionContext) {
-  const store = ctx.storeManager.create(crypto.randomUUID(), workspace, { agentName: "engineer" });
+  const store = ctx.storeManager.create(crypto.randomUUID(), workspace, { agentName: "lead" });
   store.getState().setParentSessionId(ctx.store.getState().sessionId);
   store.setState({ rootSessionId: ctx.store.getState().rootSessionId });
   return store;

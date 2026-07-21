@@ -22,7 +22,7 @@ describe("model runtime protocol contracts", () => {
       modelId: "new-model",
       providerDisplayName: "Local",
       modelDisplayName: "New Model",
-      resolution: "agent_default",
+      resolution: "profile_default",
       modelRuntimeRevision: "revision-2",
     } satisfies ExecutionModelBindingSummary;
     const audit = {
@@ -48,8 +48,10 @@ describe("model runtime protocol contracts", () => {
           variants: ["fast", "deep"],
         }],
       }],
-      agentDefaults: {
-        engineer: { model: "local:glm-5", variant: "deep" },
+      profileDefaults: {
+        principal: { model: "local:glm-5", variant: "deep" },
+        deep: { model: "local:glm-5", variant: "deep" },
+        fast: { model: "local:glm-5", variant: "fast" },
       },
     } satisfies ModelRuntimeCatalog;
 

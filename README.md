@@ -9,10 +9,10 @@ Unlike a coding CLI that runs a task and exits, ArchCode keeps the engineering w
 ## What ArchCode gives you
 
 - **Always-on server runtime** — run ArchCode on a local machine or remote server and keep coding work moving even when your terminal is closed.
-- **Web workbench** — capture project Todos, shape them with a dedicated Agent, and manage sessions, Goal progress, automations, approvals, and reviews from a browser.
-- **AI engineering workflow** — describe the outcome naturally; the Engineer can create a persistent Session Goal, keep working, and obtain an independent review before completion.
+- **Web workbench** — capture project Todos, discuss them with a restricted Lead, and manage Sessions, Goal progress, Automations, approvals, and reviews from a browser.
+- **AI engineering workflow** — describe the outcome naturally; Lead works directly or coordinates bounded specialists and can run an explicitly authorized persistent Session Goal through independent review.
 - **Human-in-the-loop control** — approve sensitive actions, answer agent questions, and inspect what changed.
-- **Bring your own models** — configure official AI SDK language Providers or custom OpenAI-compatible/Responses endpoints and choose models per Agent role.
+- **Bring your own models** — configure official AI SDK language Providers or custom OpenAI-compatible/Responses endpoints and route work through `principal`, `deep`, and `fast` Profiles.
 - **Self-hosted by default** — your workspaces stay on the machine where ArchCode runs.
 
 ## Quick start
@@ -27,7 +27,7 @@ bun install
 
 ### 2. Configure models
 
-Create `~/.archcode/config.json`. ArchCode reads this single server-wide file for every registered project; project directories are never searched for configuration. This minimal example uses a custom OpenAI-compatible local endpoint and assigns the same model to all seven built-in Agent roles:
+Create `~/.archcode/config.json`. ArchCode reads this single server-wide file for every registered project; project directories are never searched for configuration. This minimal example uses a custom OpenAI-compatible local endpoint and assigns the same model to all three required Profiles:
 
 ```json
 {
@@ -48,14 +48,10 @@ Create `~/.archcode/config.json`. ArchCode reads this single server-wide file fo
       }
     }
   },
-  "agents": {
-    "engineer": { "model": "local:glm-5" },
-    "plan": { "model": "local:glm-5" },
-    "build": { "model": "local:glm-5" },
-    "reviewer": { "model": "local:glm-5" },
-    "explore": { "model": "local:glm-5" },
-    "librarian": { "model": "local:glm-5" },
-    "shaper": { "model": "local:glm-5" }
+  "profiles": {
+    "principal": { "model": "local:glm-5" },
+    "deep": { "model": "local:glm-5" },
+    "fast": { "model": "local:glm-5" }
   }
 }
 ```
@@ -71,7 +67,7 @@ install -m 600 .archcode.json ~/.archcode/config.json
 
 ArchCode does not read, migrate, or fall back to the old file.
 
-The Web UI edits the same global file from **Settings → Models / Agents**. Saving validates, prepares, atomically writes, and immediately applies Models and Agent defaults. MCP, Memory, and GitHub integration changes are reported as the precise restart-required sections. Direct edits to the file have no watcher; save through Settings or restart to load them.
+The Web UI edits the same global file from **Settings → Models / Profiles**. Saving validates, prepares, atomically writes, and immediately applies Models and Profile defaults. MCP, Memory, and GitHub integration changes are reported as the precise restart-required sections. Direct edits to the file have no watcher; save through Settings or restart to load them.
 
 ### 3. Start ArchCode
 
@@ -95,11 +91,11 @@ Then open the Web UI in your browser and add a project workspace.
 ## Using the workbench
 
 1. **Add a project** — register an existing workspace directory; ArchCode opens its Todos board by default.
-2. **Capture and shape intent** — record an Idea, discuss it with Shaper, then mark it Ready or Rejected.
-3. **Start a Session** — hand a Ready Todo to an Engineer Session or an Automation, or start directly without a Todo.
-4. **Let agents work** — describe the desired result in conversation. When durable autonomous execution is appropriate, the Engineer creates a Session Goal and coordinates planning, building, exploration, documentation lookup, and review.
+2. **Capture and shape intent** — record an Idea, enter its restricted Lead Discussion, then mark it Ready or Rejected.
+3. **Start a Session** — hand a Ready Todo to a fresh Lead Session or an Automation, or start directly without a Todo.
+4. **Let agents work** — describe the desired result in conversation. Lead works directly on simple tasks and delegates bounded analysis, implementation, local exploration, or documentation research when useful. A persistent Goal starts only after explicit user authorization.
 5. **Approve when needed** — sensitive actions can pause for human approval instead of running silently.
-6. **Review evidence** — inspect diffs, tool output, tests, reviewer summaries, and session history before accepting work.
+6. **Review evidence** — inspect diffs, tool output, tests, Analyst review summaries, and Session history before accepting work.
 7. **Keep it running** — leave ArchCode online so long-running coding work can continue across sessions.
 
 ## Worktree isolation
@@ -126,19 +122,17 @@ access outside the worktree.
 
 ## Agent roles
 
-ArchCode ships with seven specialized roles:
+ArchCode ships with five stable Agent identities. Profiles choose model resources; Skills provide task-specific methods without changing permissions.
 
 | Agent | Role |
 |---|---|
-| Engineer | Handles ordinary engineering sessions, including direct implementation and delegation |
-| Plan | Analyzes requirements and creates execution plans |
+| Lead | Owns the user relationship, direct work, delegation, Goal control, integration, and delivery |
+| Analyst | Performs source-read-only deep analysis, planning support, and independent review |
 | Build | Edits files, runs tools, and implements changes |
-| Reviewer | Checks completed work and validates evidence |
 | Explore | Searches and reads the local codebase |
 | Librarian | Looks up documentation and external references |
-| Shaper | Discusses and refines a bound Project Todo without starting implementation |
 
-You configure the model for each role in `~/.archcode/config.json`.
+Root Lead defaults to `principal`; Analyst uses `deep`; Explore and Librarian use `fast`; Lead chooses `deep` or `fast` for each Build delegation. A root Lead Session can override its next model selection without changing Agent identity.
 
 ## Server settings
 
@@ -189,16 +183,16 @@ Custom MCP servers use the current HTTP-only configuration shape without a trans
 
 - `~/.archcode/config.json` uses strict validation; unknown fields are rejected.
 - `$schema`, MCP `transport`, and GitHub `apiBaseUrl` are not configuration fields; HTTP and GitHub.com are fixed implementation choices.
-- The `agents` section must include `engineer`, `plan`, `build`, `reviewer`, `explore`, `librarian`, and `shaper`. Shaper has no model fallback.
+- The `profiles` section must contain exactly the required `principal`, `deep`, and `fast` entries. The removed `agents` configuration is rejected.
 - All configured models use the same Prompt contracts. Provider and model differences stay in API call options rather than branching Prompt behavior.
 - Model options use AI SDK-style camelCase names, such as `maxOutputTokens`, `temperature`, `topP`, `topK`, `timeout`, and `providerOptions`.
-- Settings edits model options, complete variant maps, and per-Agent overrides as validated JSON objects; provider-specific call settings belong under `providerOptions`.
+- Settings edits model options, complete variant maps, and per-Profile overrides as validated JSON objects; provider-specific call settings belong under `providerOptions`.
 - `maxRetries` is not configurable. ArchCode owns LLM recovery and always disables AI SDK retries internally.
-- Agent options are merged in this order: `model.options → variants[agent.variant] → agents[agent].options`.
+- Profile-default options are merged in this order: `model.options → variants[profile.variant] → profiles[profile].options`. A Session override resolves independently and does not inherit Profile options.
 - `providerOptions` is shallow-replaced by later layers, not deep-merged.
 - MCP URLs and headers retain their existing `${VAR}` / `${VAR:-default}` expansion; Provider options do not use this expansion.
 - Provider factory options are generic JSON for the selected package. Provider secrets, including API keys and custom header/query values declared by that adapter, are redacted by Settings and must be explicitly preserved, replaced, or deleted.
-- A Composer or Session model choice applies to the next Execution only. A running Execution keeps its immutable binding and model-runtime revision. When a queued Execution starts, an invalid requested selection falls back to a valid Session override, then that Agent's current validated default. ArchCode never changes a running or failed model call to another model automatically.
+- A Composer or root Lead Session model choice applies to the next Execution only. A running Execution keeps its immutable binding and model-runtime revision. When a queued Execution starts, an invalid requested selection falls back to a valid Session override, then that Session's Profile default. ArchCode never changes a running or failed model call to another model automatically.
 
 Prompt live evaluation is explicit and opt-in. Copy `packages/agent-core/src/prompt/live-eval-manifest.example.json`, list only the configured `provider:model` IDs to run, then execute:
 

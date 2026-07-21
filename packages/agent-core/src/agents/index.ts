@@ -28,10 +28,8 @@ export {
   defaultAgentDefinitions,
   exploreAgentDefinition,
   librarianAgentDefinition,
-  engineerAgentDefinition,
-  planAgentDefinition,
-  reviewerAgentDefinition,
-  shaperAgentDefinition,
+  leadAgentDefinition,
+  analystAgentDefinition,
 } from "./definitions";
 export {
   AgentRunningError,

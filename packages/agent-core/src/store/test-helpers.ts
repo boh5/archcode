@@ -11,7 +11,7 @@ export function createMockStore(
     createdAt: Date.now(),
     updatedAt: Date.now(),
     cwd: "/workspace",
-    agentName: "engineer",
+    agentName: "lead",
     activeSkillNames: [],
     modelSelection: { revision: 0 },
     title: null,

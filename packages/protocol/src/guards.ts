@@ -238,7 +238,7 @@ function isRequestedModelSelection(value: unknown): boolean {
   const requested = record(value);
   return requested !== undefined
     && exact(requested, ["mode", "selection"])
-    && oneOf(requested.mode, ["agent_default", "session_override"])
+    && oneOf(requested.mode, ["profile_default", "session_override"])
     && isModelSelectionRef(requested.selection);
 }
 
@@ -259,7 +259,7 @@ function isExecutionModelBinding(value: unknown): boolean {
     && isString(binding.modelId)
     && isString(binding.providerDisplayName)
     && isString(binding.modelDisplayName)
-    && oneOf(binding.resolution, ["requested", "session_override", "agent_default"])
+    && oneOf(binding.resolution, ["requested", "session_override", "profile_default"])
     && isString(binding.modelRuntimeRevision);
 }
 
@@ -367,11 +367,13 @@ function isToolChildSessionLink(value: unknown): boolean {
   return link !== undefined
     && exact(
       link,
-      ["parentSessionId", "parentToolCallId", "toolName", "childSessionId", "childAgentName", "title", "depth", "background", "status", "createdAt"],
+      ["parentSessionId", "parentToolCallId", "toolName", "childSessionId", "childAgentName", "childProfile", "childSkillNames", "title", "depth", "background", "status", "createdAt"],
       ["startedAt", "endedAt", "durationMs", "error"],
     )
     && isString(link.parentSessionId) && isString(link.parentToolCallId) && isString(link.toolName)
     && isString(link.childSessionId) && isString(link.childAgentName)
+    && oneOf(link.childProfile, ["principal", "deep", "fast"])
+    && Array.isArray(link.childSkillNames) && link.childSkillNames.every(isString)
     && isFiniteNumber(link.depth) && typeof link.background === "boolean"
     && oneOf(link.status, ["linked", "running", "waiting_for_human", "cancelling", "completed", "failed", "timed_out", "cancelled", "interrupted"])
     && isFiniteNumber(link.createdAt) && isString(link.title)

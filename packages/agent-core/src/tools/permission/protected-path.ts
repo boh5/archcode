@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
 import type { PermissionDecision, ToolPermission, ToolExecutionContext } from "../types";
 import type { ToolErrorKind } from "../errors";
@@ -134,18 +134,51 @@ function isLexicalProjectStatePath(input: string, projectRoot: string): boolean 
  * attacks.
  */
 export function createProtectedPathPermission(): ToolPermission {
-  return (input: unknown, ctx: ToolExecutionContext): PermissionDecision => {
+  return async (input: unknown, ctx: ToolExecutionContext): Promise<PermissionDecision> => {
     const data = input as { path?: unknown; paths?: unknown; cwd?: unknown };
     const paths = protectedPathReferences(data);
 
     for (const path of paths) {
       if (isProtectedToolWritePath(path, ctx)) {
+        if (await mayWriteLeadPlan(path, ctx)) continue;
         return denyProtectedPathMutation();
       }
     }
 
     return { outcome: "allow" };
   };
+}
+
+async function mayWriteLeadPlan(filePath: string, ctx: ToolExecutionContext): Promise<boolean> {
+  if (ctx.toolName !== "file_write" && ctx.toolName !== "file_edit") return false;
+  const lexicalInput = resolve(ctx.cwd, filePath);
+  if (extname(lexicalInput) !== ".md") return false;
+  const candidateRoots = [...new Set([ctx.cwd, ctx.projectContext.project.workspaceRoot])]
+    .filter((root) => dirname(lexicalInput) === resolve(root, PROJECT_DIR_SUFFIX, "plans"));
+  if (candidateRoots.length === 0) return false;
+  if (typeof ctx.store.getState !== "function") return false;
+  const state = ctx.store.getState();
+  const agentName = ctx.agentName ?? state.agentName;
+  if (
+    agentName !== "lead"
+    || state.agentName !== "lead"
+    || state.sessionId !== state.rootSessionId
+    || state.parentSessionId !== undefined
+  ) return false;
+
+  const discussion = await ctx.projectContext.todos.state.findByDiscussionSessionId(state.sessionId);
+  if (discussion !== undefined) return false;
+
+  for (const root of candidateRoots) {
+    const lexicalPlans = resolve(root, PROJECT_DIR_SUFFIX, "plans");
+    if (dirname(lexicalInput) !== lexicalPlans) continue;
+    const resolvedProjectState = resolveRealPath(resolve(root, PROJECT_DIR_SUFFIX));
+    const resolvedPlans = resolveRealPath(lexicalPlans);
+    if (resolvedPlans !== resolve(resolvedProjectState, "plans")) return false;
+    if (dirname(resolveRealPath(lexicalInput)) !== resolvedPlans) return false;
+    return true;
+  }
+  return false;
 }
 
 function protectedPathReferences(data: { path?: unknown; paths?: unknown; cwd?: unknown }): string[] {

@@ -31,7 +31,7 @@ export function createTestModelInfo(overrides: {
 }
 
 export const testRequestedModelSelection: RequestedModelSelection = {
-  mode: "agent_default",
+  mode: "profile_default",
   selection: { model: "test-provider:test-model" },
 };
 
@@ -41,7 +41,7 @@ export const testExecutionBinding: ExecutionModelBindingSummary = {
   modelId: "test-model",
   providerDisplayName: "Test Provider",
   modelDisplayName: "Test Model",
-  resolution: "agent_default",
+  resolution: "profile_default",
   modelRuntimeRevision: "test-model-runtime-revision",
 };
 

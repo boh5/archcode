@@ -5,7 +5,7 @@ export interface ModelSelectionRef {
 }
 
 /** The only user-visible Session selection modes. */
-export type ModelSelectionMode = "agent_default" | "session_override";
+export type ModelSelectionMode = "profile_default" | "session_override";
 
 /** The selection shown by the Composer when a message was accepted. */
 export interface RequestedModelSelection {
@@ -13,7 +13,7 @@ export interface RequestedModelSelection {
   selection: ModelSelectionRef;
 }
 
-/** Durable Session-local selection state. Absence of override means Agent default. */
+/** Durable root Lead Session selection state. Absence of override means principal Profile. */
 export interface SessionModelSelection {
   revision: number;
   override?: ModelSelectionRef;
@@ -23,7 +23,7 @@ export interface SessionModelSelection {
 export type ModelBindingResolution =
   | "requested"
   | "session_override"
-  | "agent_default";
+  | "profile_default";
 
 /**
  * Secret-free, durable identity for the model fixed to one Execution.
@@ -82,7 +82,7 @@ export interface ModelRuntimeProviderDescriptor {
 export interface ModelRuntimeCatalog {
   revision: string;
   providers: readonly ModelRuntimeProviderDescriptor[];
-  agentDefaults: Readonly<Record<string, ModelSelectionRef>>;
+  profileDefaults: Readonly<Record<"principal" | "deep" | "fast", ModelSelectionRef>>;
 }
 
 /** Secret-free Settings metadata for one common Provider factory option. */

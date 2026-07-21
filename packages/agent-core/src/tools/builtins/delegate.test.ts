@@ -11,11 +11,12 @@ import { DelegateInputSchema, executeDelegate } from "./delegate";
 const WORKSPACE_ROOT = import.meta.dir;
 
 function request(overrides: Partial<DelegationRequest> = {}): DelegationRequest {
+  const agentType = overrides.agent_type ?? "explore";
   return {
-    agent_type: "explore",
+    agent_type: agentType,
+    profile: overrides.profile ?? (agentType === "build" || agentType === "analyst" ? "deep" : "fast"),
     title: "Inspect ownership",
     objective: "Trace the owner and report exact references",
-    owned_scope: [],
     skills: [],
     background: false,
     ...overrides,
@@ -24,14 +25,14 @@ function request(overrides: Partial<DelegationRequest> = {}): DelegationRequest 
 
 function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   return {
-    store: storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT, { agentName: "engineer" }),
+    store: storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT, { agentName: "lead" }),
     storeManager,
     toolName: "delegate",
     toolCallId: "delegate-call",
     input: {},
     step: 0,
     abort: new AbortController().signal,
-    agentName: "engineer",
+    agentName: "lead",
     startedAt: 0,
     allowedTools: new Set(["delegate", "resume_session"]),
     cwd: WORKSPACE_ROOT,
@@ -58,9 +59,9 @@ function childHandle(parentSessionId: string, value: DelegationRequest): ChildEx
 describe("delegate request", () => {
   it("accepts exactly six required fields and enforces role ownership", () => {
     expect(DelegateInputSchema.safeParse(request()).success).toBe(true);
-    expect(DelegateInputSchema.safeParse(request({ agent_type: "build", owned_scope: [] })).success).toBe(false);
-    expect(DelegateInputSchema.safeParse(request({ agent_type: "build", owned_scope: [{ kind: "tree", path: "src" }] })).success).toBe(true);
-    expect(DelegateInputSchema.safeParse(request({ owned_scope: [{ kind: "tree", path: "src" }] })).success).toBe(false);
+    expect(DelegateInputSchema.safeParse(request({ agent_type: "build", profile: "deep" })).success).toBe(true);
+    expect(DelegateInputSchema.safeParse(request({ agent_type: "build", profile: "fast" })).success).toBe(true);
+    expect(DelegateInputSchema.safeParse({ ...request(), owned_scope: [] }).success).toBe(false);
     for (const field of ["non_goals", "acceptance_criteria", "evidence", "verification", "depends_on", "persona", "description", "task", "context", "session_id"]) {
       expect(DelegateInputSchema.safeParse({ ...request(), [field]: [] }).success).toBe(false);
     }
@@ -68,7 +69,7 @@ describe("delegate request", () => {
   });
 
   it("passes one canonical request and returns ordinary final output", async () => {
-    const parentStore = storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT, { agentName: "engineer" });
+    const parentStore = storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT, { agentName: "lead" });
     const value = request();
     const handle = childHandle(parentStore.getState().sessionId, value);
     let childRequest: ChildExecutionRequest | undefined;

@@ -31,7 +31,7 @@ function makeBinding(options?: ExecutionModelBinding["options"]): ExecutionModel
   return { modelInfo, options, summary: {
     selection: { model: modelInfo.qualifiedId }, providerId: modelInfo.providerId, modelId: modelInfo.modelId,
     providerDisplayName: modelInfo.providerDisplayName, modelDisplayName: modelInfo.displayName,
-    resolution: "agent_default", modelRuntimeRevision: "test-revision",
+    resolution: "profile_default", modelRuntimeRevision: "test-revision",
   } };
 }
 
@@ -93,7 +93,7 @@ describe("createTitleGenerationTask", () => {
 
   test("generates title and sets it in store on success", async () => {
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), TEST_TMP, { agentName: "engineer" });
+    const store = storeManager.create(crypto.randomUUID(), TEST_TMP, { agentName: "lead" });
     store.setState({
       messages: [
         {
@@ -174,7 +174,7 @@ describe("createTitleGenerationTask", () => {
   test("passes all whitelisted model options and strips variant", async () => {
     const now = Date.now();
     const providerOptions = { title: { mode: "full" } };
-    const store = storeManager.create(crypto.randomUUID(), TEST_TMP, { agentName: "engineer" });
+    const store = storeManager.create(crypto.randomUUID(), TEST_TMP, { agentName: "lead" });
     store.setState({
       messages: [
         {
@@ -245,7 +245,7 @@ describe("createTitleGenerationTask", () => {
   });
 
   test("does nothing when no user message exists", async () => {
-    const store = storeManager.create(crypto.randomUUID(), TEST_TMP, { agentName: "engineer" });
+    const store = storeManager.create(crypto.randomUUID(), TEST_TMP, { agentName: "lead" });
     store.setState({ messages: [] });
 
     const task = createTitleGenerationTask(store);
@@ -259,7 +259,7 @@ describe("createTitleGenerationTask", () => {
 
   test("skips command notices and titles the first textual user message", async () => {
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), TEST_TMP, { agentName: "engineer" });
+    const store = storeManager.create(crypto.randomUUID(), TEST_TMP, { agentName: "lead" });
     store.setState({
       messages: [
         {
@@ -303,7 +303,7 @@ describe("createTitleGenerationTask", () => {
     mockGenerateText.mockRejectedValue(new Error("API error"));
 
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), TEST_TMP, { agentName: "engineer" });
+    const store = storeManager.create(crypto.randomUUID(), TEST_TMP, { agentName: "lead" });
     store.setState({
       messages: [
         {
@@ -348,7 +348,7 @@ describe("createTitleGenerationTask", () => {
     mockGenerateText.mockRejectedValue(new Error("provider timeout"));
 
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), TEST_TMP, { agentName: "engineer" });
+    const store = storeManager.create(crypto.randomUUID(), TEST_TMP, { agentName: "lead" });
     store.setState({
       messages: [
         {
@@ -375,7 +375,7 @@ describe("createTitleGenerationTask", () => {
 
   test("does nothing when user message has no text parts", async () => {
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), TEST_TMP, { agentName: "engineer" });
+    const store = storeManager.create(crypto.randomUUID(), TEST_TMP, { agentName: "lead" });
     store.setState({
       messages: [
         {

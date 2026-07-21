@@ -8,6 +8,7 @@ import { getWebSessionStore, useSessionStore } from "../../store/session-store";
 import { useSettingsModal } from "../../context/settings-modal";
 import { ModelPicker } from "./ModelPicker";
 import { coherentModelRuntime } from "../../lib/model-runtime-coherence";
+import { createClientUuid } from "../../lib/client-uuid";
 
 const SLASH_COMMANDS = [
   { name: "/compact", description: "Compact conversation context" },
@@ -106,7 +107,7 @@ export function ChatInput({
   }, [showSlashMenu]);
 
   const submitMessage = useCallback((content: string, requestedModelSelection: RequestedModelSelection) => {
-    const clientRequestId = crypto.randomUUID();
+    const clientRequestId = createClientUuid();
     getWebSessionStore(sessionId, slug).getState().addLocalSendingMessage({
       clientRequestId,
       content,
@@ -286,7 +287,6 @@ export function ChatInput({
           <div className="flex min-w-0 items-center gap-2 text-[11px] text-text-tertiary" data-testid="composer-model">
             {coherentCatalog && nextModelSelection && agentName ? <ModelPicker
               catalog={coherentCatalog}
-              agentName={agentName}
               next={nextModelSelection}
               active={activeModelBinding}
               onSelect={selectModel}

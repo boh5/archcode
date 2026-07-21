@@ -1,81 +1,52 @@
 # Multi-Agent Architecture
 
-ArchCode has seven closed Agent identities. An identity determines prompt,
-tools, delegation targets, model configuration, and display metadata. A Session
-persists one `agentName`; an Execution reconstructs that Agent and never changes
-the identity per turn.
+ArchCode has five closed Agent identities. Agent identity owns tools, delegation targets, depth, and stable responsibility. Profile owns model selection. Skill owns task-specific guidance. These three axes are independent: neither a Profile nor a Skill can grant tools or widen delegation.
 
-| ID | Display name | Purpose |
+| ID | Profile | Purpose |
 |---|---|---|
-| `engineer` | Engineer | Root Session Agent. Owns the user conversation, implements directly or delegates, and may create a Session Goal from an explicit user request. |
-| `plan` | Plan | Read-only planning specialist. |
-| `build` | Build | Source-writing implementation specialist. |
-| `reviewer` | Reviewer | Read-only independent verifier. Runtime creates a dedicated Reviewer child when a Session Goal needs a completion gate. |
-| `explore` | Explore | Terminal read-only local-code investigation. |
-| `librarian` | Librarian | Terminal read-only documentation and reference research. |
-| `shaper` | Shaper | Refines a bound Project Todo without starting implementation. |
+| `lead` | root default `principal` | Sole user entry and final technical owner. Works directly or coordinates bounded children. |
+| `analyst` | `deep` | Source-read-only architecture analysis, planning support, gap analysis, and independent review. |
+| `build` | `deep` or `fast` | Source-writing implementation and verification specialist. |
+| `explore` | `fast` | Terminal read-only local-code investigation. |
+| `librarian` | `fast` | Terminal read-only documentation and external-reference research. |
 
-## Sessions and Goals
+Visual is a future placeholder only; it has no runtime identity, Profile, route, or UI entry.
 
-`Session.goal` is an optional, durable execution protocol owned by a root
-Engineer Session. It is not an Agent identity, independent resource, worktree,
-or route family.
-
-- An Engineer creates it only after a fresh, explicit user request; ordinary
-  conversation is still the default.
-- The Goal stores one objective, status, budget/usage, evaluator outcome, and
-  review state. The objective includes the intended result, constraints, and
-  verification expectation rather than splitting them into model-editable
-  acceptance fields.
-- The user control plane may edit, pause, resume, clear, or adjust its budget.
-  An edit takes effect at the next model-call boundary; pause is the immediate
-  stop control.
-- The Engineer may read the Goal, mark a genuine blocker, or request review. It
-  cannot complete, edit, pause, resume, clear, or increase its Goal.
-- Runtime owns completion: it evaluates the objective, then runs an independent
-  Reviewer gate. Only an accepted current review receipt completes the Goal.
-
-## Runtime sequencing
-
-When a root Session family becomes idle, the runtime resolves work in this
-order: durable tool/HITL waits, queued user input, an already requested review,
-review remediation, evaluator, then Goal continuation. The current Goal is
-injected before every model call, so edits and resumes are observed without a
-second coordinator Session.
-
-Reviewer work is a runtime-created child with explicit review provenance and a
-snapshot of the objective and source basis. It uses the normal read-only
-Reviewer capability surface, returns the canonical child result, and cannot use
-Goal transition tools. A changed objective, new user input, or source mutation
-invalidates a stale review basis.
-
-## Delegation
+## Delegation topology
 
 ```text
-Engineer ─┬─ Plan ───────┬─ Explore
-          ├─ Build ──────┤
-          ├─ Reviewer ───┴─ Librarian
-          ├─ Explore
-          └─ Librarian
+Lead ─┬─ Analyst ─┬─ Explore
+      │           └─ Librarian
+      ├─ Build ────── Explore
+      ├─ Explore
+      └─ Librarian
 ```
 
-- Engineer may delegate to all five specialists.
-- Plan and Reviewer may delegate to Explore and Librarian.
-- Build may delegate to Explore.
+- Lead has maximum depth 3 and may delegate Analyst, Build, Explore, or Librarian.
+- Analyst has maximum depth 2 and may delegate Explore or Librarian.
+- Build has maximum depth 2 and may delegate Explore.
 - Explore and Librarian are terminal.
-- Delegation depth and concurrency are enforced by definitions, not prompts.
+- A Todo-bound Discussion is a restricted root Lead that may delegate only Explore or Librarian at maximum depth 2.
+- Target, Profile, Skill existence, depth, direct-child ownership, and family boundaries are enforced before child creation.
 
-Specialist prompts stay context-neutral. A dedicated runtime Reviewer receives
-the Goal review contract explicitly; ordinary Reviewer delegations do not gain
-Goal-completion authority.
+`delegate` accepts only `{ agent_type, profile, title, objective, skills, background }`. A child persists this identity and `resume_session` cannot change its Agent, Profile, Skills, or responsibility. General Session concurrency applies; there is no Build path lease or owned-scope protocol.
+
+## Skills instead of role proliferation
+
+Stable Agent prompts describe identity and authority. Workflow methods live in Skills, including `orchestrate-work`, `plan-work`, `run-goal`, `shape-todo`, `review-work`, and `goal-review`. Analyst can combine analysis and review Skills without creating a new Agent identity for every professional role.
+
+A Plan is an ordinary Markdown file under `.archcode/plans/`, not a service, state machine, Session identity, or Goal dependency.
+
+## Sessions, Todos, and Goals
+
+Every user-facing Session is rooted at Lead. A Todo Discussion keeps its existing product entry but derives a restricted Lead capability surface from the authoritative Todo binding and activates `shape-todo`; Ready starts a new ordinary Lead Session.
+
+`Session.goal` is an optional persistent protocol on a root Lead Session. It starts only from an exact fresh user request with persistent intent or the current resumed `ask_user` confirmation. It is independent of Plan.
+
+Goal completion requires a fresh direct `analyst + deep + goal-review` child bound by Runtime to the current Goal instance and generation. Its first non-empty final-output line must be exactly `VERDICT: APPROVED`; any completed non-approval, later ArchCode-known artifact write, Goal edit, or active child requires a new review Analyst. Analyst reports evidence, Lead requests completion, and Runtime mechanically validates the provenance.
 
 ## UI metadata and configuration
 
-`AgentDefinition.displayName` is the single display-name source. Runtime
-exposes the definitions through `GET /api/agents`; the Web uses that catalog for
-message headers, inspectors, and delegation cards. Task titles remain separate
-from Agent display names.
+`AgentDefinition.displayName` is the display-name source. Runtime exposes the five definitions through `GET /api/agents`; Session and child surfaces also expose immutable Profile and active Skills.
 
-The server-wide `~/.archcode/config.json` requires exactly the seven current
-Agent keys under `agents`. Missing, unknown, or legacy keys fail validation.
-Display names are definition-owned and are not configurable.
+The server-wide `~/.archcode/config.json` requires exactly `profiles.principal`, `profiles.deep`, and `profiles.fast`. A root Lead Session may override its next model selection without changing Agent identity. Missing, unknown, or removed per-Agent configuration fails strict validation.

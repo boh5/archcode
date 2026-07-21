@@ -1,5 +1,5 @@
 import type { AgentName } from "../agents/names";
-import type { BuiltinToolName, DelegationRequest, ScopeRef } from "@archcode/protocol";
+import type { BuiltinToolName, DelegationRequest } from "@archcode/protocol";
 import type { ResolvedSkill, SkillIndexEntry } from "../skills/types";
 import type { VersionControl } from "../version-control/detector";
 
@@ -9,7 +9,6 @@ export type TransitionRef =
 
 export type CompletionAuthority =
   | "ordinary-session"
-  | "reviewer"
   | "delegated-scope"
   | "bound-todo";
 
@@ -48,7 +47,6 @@ export interface RuntimePromptEnvelope {
     readonly status: GoalPromptStatus;
   } | "none";
   readonly todo: { readonly id: string; readonly mode: "bound" } | "none";
-  readonly ownedScope: readonly ScopeRef[];
   readonly remainingDepth: number;
   readonly maxConcurrentChildren: number;
   readonly mcp: Readonly<Record<string, McpPromptStatus>>;

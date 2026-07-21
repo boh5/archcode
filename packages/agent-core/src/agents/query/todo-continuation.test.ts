@@ -275,7 +275,7 @@ function stateWith(overrides: Partial<SessionStoreState>): SessionStoreState {
   rootSessionId: "session-1",
   createdAt: 1,
   cwd: "/workspace",
-  agentName: "engineer",
+  agentName: "lead",
   activeSkillNames: [],
   title: null,
   messages: [],

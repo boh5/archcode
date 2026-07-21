@@ -40,7 +40,7 @@ import {
   type SSEReconnectState,
 } from "./global-sse";
 
-const binding = { selection: { model: "test:model" }, providerId: "test", modelId: "model", providerDisplayName: "Test", modelDisplayName: "Test Model", resolution: "agent_default" as const, modelRuntimeRevision: "m1" };
+const binding = { selection: { model: "test:model" }, providerId: "test", modelId: "model", providerDisplayName: "Test", modelDisplayName: "Test Model", resolution: "profile_default" as const, modelRuntimeRevision: "m1" };
 const sessionGoal: SessionGoal = {
   instanceId: "00000000-0000-4000-8000-000000000001",
   generation: 1,
@@ -243,7 +243,7 @@ describe("SSE liveness watchdog", () => {
 
 describe("parseSSEEvent", () => {
   test("parses valid event type", () => {
-    const data = JSON.stringify({ type: "event", slug: "p", sessionId: "s", eventId: 1, createdAt: 0, payload: { type: "text-start" }, agentName: "engineer" });
+    const data = JSON.stringify({ type: "event", slug: "p", sessionId: "s", eventId: 1, createdAt: 0, payload: { type: "text-start" }, agentName: "lead" });
     const result = parseSSEEvent("event", data);
     expect(result).not.toBeNull();
     expect(result!.type).toBe("event");
@@ -265,7 +265,7 @@ describe("parseSSEEvent", () => {
         message: "Retrying",
         nextRetryAt: 123,
       },
-      agentName: "engineer",
+      agentName: "lead",
     });
 
     expect(parseSSEEvent("event", data)).not.toBeNull();
@@ -279,7 +279,7 @@ describe("parseSSEEvent", () => {
       eventId: 1,
       createdAt: 0,
       payload: {},
-      agentName: "engineer",
+      agentName: "lead",
     });
     const removedKind = JSON.stringify({
       type: "event",
@@ -289,7 +289,7 @@ describe("parseSSEEvent", () => {
       createdAt: 0,
       kind: "text-start",
       payload: { type: "text-start" },
-      agentName: "engineer",
+      agentName: "lead",
     });
 
     expect(parseSSEEvent("event", missingType)).toBeNull();
@@ -431,7 +431,7 @@ describe("parseSSEEvent", () => {
   });
 
   test("returns null for unknown SSE event name", () => {
-    const result = parseSSEEvent("unknown-type", JSON.stringify({ type: "event", slug: "p", sessionId: "s", eventId: 1, createdAt: 0, payload: { type: "text-start" }, agentName: "engineer" }));
+    const result = parseSSEEvent("unknown-type", JSON.stringify({ type: "event", slug: "p", sessionId: "s", eventId: 1, createdAt: 0, payload: { type: "text-start" }, agentName: "lead" }));
     expect(result).not.toBeNull();
   });
 });
@@ -467,7 +467,7 @@ describe("handleSSEEvent", () => {
       eventId: 42,
       createdAt: Date.now(),
       payload: { type: "text-start" },
-      agentName: "engineer",
+      agentName: "lead",
     };
 
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
@@ -485,7 +485,7 @@ describe("handleSSEEvent", () => {
       sessionId: "session-1",
       eventId: 42,
       createdAt: 1,
-      agentName: "engineer",
+      agentName: "lead",
       payload: {
         type: "session.goal_changed",
         action: "usage_recorded",
@@ -520,7 +520,7 @@ describe("handleSSEEvent", () => {
       eventId: 1,
       createdAt: Date.now(),
       payload: { type: "text-start" },
-      agentName: "engineer",
+      agentName: "lead",
     };
 
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
@@ -555,7 +555,7 @@ describe("handleSSEEvent", () => {
       eventId: 1,
       createdAt: 2,
       payload: { type: "execution-start", executionId: "project-todo:todo-1:activation", binding, origin: "user_message" },
-      agentName: "engineer",
+      agentName: "lead",
     };
     handleSSEEvent({ event: "event", data: JSON.stringify(executionStart) }, deps);
 
@@ -598,7 +598,7 @@ describe("handleSSEEvent", () => {
           parentToolCallId: "call-1",
           toolName: "delegate",
           childSessionId: "child-session",
-          childAgentName: "explore",
+          childAgentName: "explore", childProfile: "fast", childSkillNames: [],
           title: "Explore files",
           depth: 1,
           background: true,
@@ -606,7 +606,7 @@ describe("handleSSEEvent", () => {
           createdAt: 123,
         },
       },
-      agentName: "engineer",
+      agentName: "lead",
     };
 
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);

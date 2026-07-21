@@ -68,7 +68,7 @@ function summary(childBlockRefs: string[] = []) {
 }
 
 function makeStore(messageCount = 6): StoreApi<SessionStoreState> {
-  const store = storeManager.create(`hybrid-compression-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, { agentName: "engineer" });
+  const store = storeManager.create(`hybrid-compression-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, { agentName: "lead" });
   store.setState({ messages: Array.from({ length: messageCount }, (_, index) => message(index + 1)) });
   return store;
 }
@@ -100,7 +100,7 @@ function binding(context = 1000): ExecutionModelBinding {
       modelId: "mock",
       providerDisplayName: "Test",
       modelDisplayName: "Mock",
-      resolution: "agent_default",
+      resolution: "profile_default",
       modelRuntimeRevision: "test-revision",
     },
   };
@@ -191,7 +191,7 @@ describe("hybrid compression hooks", () => {
   });
 
   test("forced hard compact preserves latest two complete rounds and current incomplete round", async () => {
-    const store = storeManager.create(`hybrid-compression-rounds-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, { agentName: "engineer" });
+    const store = storeManager.create(`hybrid-compression-rounds-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, { agentName: "lead" });
     store.setState({ messages: [
       message(1), message(2), message(3), message(4), message(5), message(6),
       message(7), message(8), message(9), message(10),

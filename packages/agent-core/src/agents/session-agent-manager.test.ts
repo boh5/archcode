@@ -3,10 +3,11 @@ import { z } from "zod";
 import { ModelInfo } from "../provider/model";
 import type { ExecutionModelBinding } from "../models";
 import { SkillService } from "../skills";
+import { BUILTIN_SKILL_BODIES } from "../skills/builtin/manifest";
 import { SessionStoreManager } from "../store/session-store-manager";
 import type { ToolRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
-import { engineerAgentDefinition, exploreAgentDefinition } from "./definitions";
+import { leadAgentDefinition, exploreAgentDefinition } from "./definitions";
 import { createTextToolResult } from "../tools/results";
 import { createTestToolRegistryFixture, type TestToolRegistryFixture } from "../tools/test-registry";
 import { SessionAgentManager } from "./session-agent-manager";
@@ -73,7 +74,7 @@ function makeBinding(): ExecutionModelBinding {
       modelId: model.modelId,
       providerDisplayName: model.providerDisplayName,
       modelDisplayName: model.displayName,
-      resolution: "agent_default",
+      resolution: "profile_default",
       modelRuntimeRevision: "test-revision",
     },
   };
@@ -84,7 +85,7 @@ function createManager(
   storeManager = new SessionStoreManager({ logger: silentLogger }),
 ): SessionAgentManager {
   return new SessionAgentManager({
-    definitions: [engineerAgentDefinition],
+    definitions: [leadAgentDefinition],
     toolRegistry: createTestRegistry([makeTool("unknown_tool")]),
     skillService: new SkillService({ builtinSkills: {} }),
     storeManager,
@@ -98,9 +99,9 @@ function createManager(
 const IDENTITY_SKILL_NAME = "identity-skill";
 const IDENTITY_SKILL_BODY = "Canonical child identity instructions.";
 const identityEngineerDefinition = {
-  ...engineerAgentDefinition,
+  ...leadAgentDefinition,
   roleContract: {
-    ...engineerAgentDefinition.roleContract,
+    ...leadAgentDefinition.roleContract,
     delegateTargets: ["explore"],
   },
   tools: {
@@ -117,7 +118,7 @@ const identityEngineerDefinition = {
     titleGeneration: "disabled",
   },
   includeMemoryInPrompt: false,
-  skills: [IDENTITY_SKILL_NAME],
+  skills: [IDENTITY_SKILL_NAME, "orchestrate-work"],
 } as const satisfies AgentDefinition;
 
 const identityExploreDefinition = {
@@ -165,6 +166,7 @@ function createIdentityManager(
   ]);
   const skillService = new SkillService({
     builtinSkills: {
+      ...BUILTIN_SKILL_BODIES,
       [IDENTITY_SKILL_NAME]: [
         "---",
         `name: ${IDENTITY_SKILL_NAME}`,
@@ -247,7 +249,7 @@ describe("SessionAgentManager", () => {
     const manager = createManager(undefined, storeManager);
     const workspaceRoot = TEST_WORKSPACE_ROOT;
     const sessionId = crypto.randomUUID();
-    storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" });
+    storeManager.create(sessionId, workspaceRoot, { agentName: "lead" });
 
     const [first, second] = await Promise.all([
       manager.getOrCreate(workspaceRoot, sessionId),
@@ -262,7 +264,7 @@ describe("SessionAgentManager", () => {
     const manager = createManager(25, storeManager);
     const workspaceRoot = TEST_WORKSPACE_ROOT;
     const sessionId = crypto.randomUUID();
-    storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" });
+    storeManager.create(sessionId, workspaceRoot, { agentName: "lead" });
     await storeManager.flushSession(sessionId, workspaceRoot);
 
     manager.dispose(workspaceRoot, sessionId);
@@ -279,7 +281,7 @@ describe("SessionAgentManager", () => {
     const manager = createManager(undefined, storeManager);
     const workspaceRoot = TEST_WORKSPACE_ROOT;
     const sessionId = crypto.randomUUID();
-    storeManager.create(sessionId, workspaceRoot, { agentName: "engineer" });
+    storeManager.create(sessionId, workspaceRoot, { agentName: "lead" });
     await storeManager.flushSession(sessionId, workspaceRoot);
 
     manager.dispose(workspaceRoot, sessionId);
@@ -300,16 +302,16 @@ describe("SessionAgentManager", () => {
 
     const childRequest: DelegationRequest = {
       agent_type: "explore",
+      profile: "fast",
       title: "Probe durable child identity",
       objective: "Verify that child identity survives cache and process restart.",
-      owned_scope: [],
       skills: [IDENTITY_SKILL_NAME],
       background: false,
     };
 
     for (const [depth, sessionId] of sessionIds.entries()) {
       storeManager.create(sessionId, workspaceRoot, {
-        agentName: depth === 0 ? "engineer" : "explore",
+        agentName: depth === 0 ? "lead" : "explore",
         activeSkillNames: [IDENTITY_SKILL_NAME],
         rootSessionId,
         ...(depth === 0 ? {} : {
@@ -349,7 +351,7 @@ describe("SessionAgentManager", () => {
           executionId,
           clientRequestId: `request-${messageId}`,
           modelAudit: {
-            requested: { mode: "agent_default", selection: binding.summary.selection },
+            requested: { mode: "profile_default", selection: binding.summary.selection },
             actual: binding.summary.selection,
           },
         }],

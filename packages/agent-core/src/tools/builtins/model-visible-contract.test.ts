@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { z } from "zod";
 
-import { engineerAgentDefinition } from "../../agents/definitions";
+import { leadAgentDefinition } from "../../agents/definitions";
 import { registerBuiltinTools } from "../../core/register-tools";
 import { silentLogger } from "../../logger";
 import { createTestToolRegistryFixture } from "../test-registry";
@@ -145,13 +145,12 @@ const CONTRACTS: readonly ModelVisibleContract[] = [
     tool: "delegate",
     competitorEvidenceIds: ["CC-160-A:Agent", "OC:task", "OMO-D", "CX-MA:spawn_agent"],
     runtimeSourceIds: ["tools/builtins/delegate.ts", "delegation/schema.ts", "execution/session-execution-manager.ts"],
-    descriptionPatterns: [/direct child Session/i, /strict DelegationRequest/, /all task requirements in objective/i, /Build requires non-empty owned_scope/, /other roles require an empty owned_scope/i, /normal final response/i, /resume_session/, /background=true/, /background=false/, /terminal reminder/, /background_output/],
+    descriptionPatterns: [/direct child Session/i, /strict DelegationRequest/, /Agent and Profile/i, /all task requirements in objective/i, /normal final response/i, /resume_session/, /background=true/, /background=false/, /terminal reminder/, /background_output/],
     schema: [
-      { path: ["properties", "agent_type"], expectedEnum: ["plan", "build", "reviewer", "explore", "librarian"] },
+      { path: ["properties", "agent_type"], expectedEnum: ["analyst", "build", "explore", "librarian"] },
+      { path: ["properties", "profile"], expectedEnum: ["deep", "fast"] },
       { path: ["properties", "title"] },
       { path: ["properties", "objective"] },
-      { path: ["properties", "owned_scope"] },
-      { path: ["properties", "owned_scope", "items", "properties", "kind"], expectedEnum: ["file", "tree"] },
       { path: ["properties", "skills"] },
       { path: ["properties", "background"] },
     ],
@@ -196,7 +195,8 @@ const CONTRACTS: readonly ModelVisibleContract[] = [
     tool: "create_goal",
     competitorEvidenceIds: ["CX-LOCAL:create_goal"],
     runtimeSourceIds: ["tools/builtins/session-goal.ts", "session-goal/service.ts"],
-    descriptionPatterns: [/fresh user input/i, /multiple rounds or delegated work/i, /verifiable outcome/i, /do not use for.*one-step.*question.*diagnosis.*one-time research/i, /fresh user input itself as the entire objective/i, /cannot rewrite/i, /without a Skill or confirmation ceremony/i, /root Engineer Session/i],
+    descriptionPatterns: [/persistent Goal/i, /root Lead Session/i, /fresh user input/i, /verifiable endpoint/i, /ask_user/i, /Ordinary requests.*rejected/i, /Discussion Sessions cannot create Goals/i],
+    schema: [{ path: ["properties", "objective"], descriptionPatterns: [/exact complete objective/i, /explicitly requested|confirmed/i] }],
   },
   {
     tool: "get_goal",
@@ -208,7 +208,7 @@ const CONTRACTS: readonly ModelVisibleContract[] = [
     tool: "update_goal",
     competitorEvidenceIds: ["CX-LOCAL:update_goal"],
     runtimeSourceIds: ["tools/builtins/session-goal.ts", "session-goal/service.ts"],
-    descriptionPatterns: [/status to complete or blocked/i, /Before status=complete, delegate an independent Reviewer/i, /normal final report/i, /VERDICT: APPROVED/i, /blocked immediately records a genuine blocker/i, /user-owned API\/UI actions/i, /not accepted by this tool/i],
+    descriptionPatterns: [/status to complete or blocked/i, /fresh direct deep Analyst/i, /goal-review/i, /VERDICT: APPROVED/i, /no later ArchCode-known artifact write/i, /no active child/i, /genuine blocker/i],
     schema: [
       { path: ["oneOf", "0", "properties", "status"] },
       { path: ["oneOf", "0", "properties", "review_session_id"] },
@@ -219,11 +219,11 @@ const CONTRACTS: readonly ModelVisibleContract[] = [
     tool: "automation_create",
     competitorEvidenceIds: ["CC-160-A:CronCreate", "CX-LOCAL:automation"],
     runtimeSourceIds: ["tools/builtins/automation-create.ts:13-45", "automations/schema.ts:23-58,92-96"],
-    descriptionPatterns: [/explicitly requests or accepts/i, /separately confirmed/i, /scheduled|recurring|reminder|monitor/i, /do not use.*immediately/i, /Engineer root Session/i],
+    descriptionPatterns: [/explicitly requests or accepts/i, /separately confirmed/i, /scheduled|recurring|reminder|monitor/i, /do not use.*immediately/i, /Lead root Session/i],
     schema: [
       { path: ["properties", "trigger"], descriptionPatterns: [/Exactly one trigger/, /once/, /interval/, /cron/] },
       { path: ["properties", "trigger", "oneOf", "2", "properties", "timezone"], descriptionPatterns: [/IANA timezone/, /Asia\/Shanghai/] },
-      { path: ["properties", "action"], descriptionPatterns: [/Exactly one action/, /Engineer Session/, /existing Session/] },
+      { path: ["properties", "action"], descriptionPatterns: [/Exactly one action/, /Lead Session/, /existing Session/] },
       { path: ["properties", "action", "oneOf", "0", "properties", "location"], descriptionPatterns: [/project uses the project workspace/, /worktree uses a managed worktree/] },
       { path: ["properties", "action", "oneOf", "1", "properties", "sessionId"], descriptionPatterns: [/target existing Session/] },
     ],
@@ -301,7 +301,7 @@ const CONTRACTS: readonly ModelVisibleContract[] = [
     tool: "resume_session",
     competitorEvidenceIds: ["CC-160-A:Agent continuation", "OMO-D:task_id", "CX-MA:resume_agent"],
     runtimeSourceIds: ["tools/builtins/resume-session.ts", "execution/session-execution-manager.ts"],
-    descriptionPatterns: [/stopped direct child Session/i, /same delegated responsibility/i, /instruction refines the next execution/i, /cannot change the durable Agent type, title, Skills, or owned scope/i, /normal final response bound to the new execution/i],
+    descriptionPatterns: [/stopped direct child Session/i, /same delegated responsibility/i, /instruction refines the next execution/i, /cannot change the durable Agent, Profile, Skills, title, or objective/i, /normal final response bound to the new execution/i],
     schema: [
       { path: ["properties", "session_id"] },
       { path: ["properties", "instruction"] },
@@ -330,13 +330,13 @@ const registryFixture = createTestToolRegistryFixture();
 const registry = registryFixture.registry;
 registerBuiltinTools(registry, silentLogger, { github: { enabled: false } });
 afterAll(() => registryFixture.dispose());
-const resolved = registry.resolveForAgent(engineerAgentDefinition.tools.tools);
+const resolved = registry.resolveForAgent(leadAgentDefinition.tools.tools);
 const aiTools = resolved.toAITools();
 
-describe("Engineer model-visible Tool Contract", () => {
-  it("preserves the exact 33-tool Engineer definition order", () => {
-    const expected = [...engineerAgentDefinition.tools.tools];
-    expect(expected).toHaveLength(33);
+describe("Lead model-visible Tool Contract", () => {
+  it("preserves the exact 34-tool Lead definition order", () => {
+    const expected = [...leadAgentDefinition.tools.tools];
+    expect(expected).toHaveLength(34);
     expect(resolved.descriptors.map((descriptor) => descriptor.name)).toEqual(expected);
     expect(Object.keys(aiTools)).toEqual(expected);
   });

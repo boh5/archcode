@@ -18,6 +18,7 @@ import type {
   ProjectTodoCreateInput,
   ProjectTodoUpdateInput,
 } from "./types";
+import { createClientUuid } from "../lib/client-uuid";
 
 export function useUpdateProjectName() {
   const queryClient = useQueryClient();
@@ -92,7 +93,7 @@ export type MessageAcceptance =
   | { clientRequestId: string; messageId: string; status: "queued" | "canonical" };
 
 export function postMessage({ slug, sessionId, content, clientRequestId, requestedModelSelection }: PostMessageInput): Promise<MessageAcceptance> {
-  const requestId = clientRequestId ?? crypto.randomUUID();
+  const requestId = clientRequestId ?? createClientUuid();
   return apiFetch<MessageAcceptance>(
     `/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(sessionId)}/messages`,
     {

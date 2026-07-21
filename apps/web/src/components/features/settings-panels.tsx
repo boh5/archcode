@@ -2,7 +2,7 @@ import type { ConfigSecretMutation, McpServerStatus, ProviderAdapterCatalog, Pro
 import { ChevronRight, Plus, Trash2 } from "lucide-react";
 import type { ModelCallOptions, ServerConfig, ServerMcpConfig, ServerModelConfig } from "../../api/config";
 import { Field, JsonObjectField, NumberField, RenameInput, SecretField, SecretRecordEditor, TextInput } from "./settings-fields";
-import { AGENT_NAMES, BUILT_IN_MCP_NAMES, defaultMemoryConfig, errorAtOrBelow, type FieldErrors, type SettingsSection, withDraft } from "./settings-helpers";
+import { PROFILE_NAMES, BUILT_IN_MCP_NAMES, defaultMemoryConfig, errorAtOrBelow, type FieldErrors, type SettingsSection, withDraft } from "./settings-helpers";
 
 type JsonValidationChange = (path: string, error?: string) => void;
 
@@ -135,7 +135,7 @@ const MCP_STATUS_META: Record<McpServerStatus["state"] | "unreported", { label: 
 };
 
 export function SettingsNavigation({ activeSection, onSelect }: { activeSection: SettingsSection; onSelect: (section: SettingsSection) => void }) {
-  const entries: Array<[SettingsSection, string]> = [["models", "Models"], ["agents", "Agents"], ["mcp", "MCP"], ["memory", "Memory"], ["github", "GitHub"]];
+  const entries: Array<[SettingsSection, string]> = [["models", "Models"], ["profiles", "Profiles"], ["mcp", "MCP"], ["memory", "Memory"], ["github", "GitHub"]];
   return <nav aria-label="Settings sections" className="grid grid-cols-3 gap-1 px-3 py-3 sm:flex sm:flex-col sm:px-2.5">
     <p className="col-span-3 px-2.5 pb-1.5 pt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-text-muted">Server</p>
     {entries.map(([id, label]) => <button key={id} type="button" onClick={() => onSelect(id)} aria-current={id === activeSection ? "page" : undefined} className={`relative min-w-0 rounded-sm px-3 py-2 text-left text-[12.5px] font-medium transition-colors duration-150 ${id === activeSection ? "bg-accent-subtle text-accent before:absolute before:bottom-2 before:left-0 before:top-2 before:w-0.5 before:rounded-full before:bg-accent" : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"}`}>{label}</button>)}
@@ -168,7 +168,7 @@ export function SettingsModelsPanel({ config, adapterCatalog, onChange, errors =
           onChange(withDraft(config, (draft) => {
           draft.provider[next] = draft.provider[providerId];
           delete draft.provider[providerId];
-          for (const agent of Object.values(draft.agents)) if (agent.model.startsWith(`${providerId}:`)) agent.model = `${next}:${agent.model.slice(providerId.length + 1)}`;
+          for (const profile of Object.values(draft.profiles)) if (profile.model.startsWith(`${providerId}:`)) profile.model = `${next}:${profile.model.slice(providerId.length + 1)}`;
           }));
           return true;
         }} />{providerIdLocked && <span className="text-[10.5px] font-normal text-text-muted">Replace or clear configured secrets before renaming.</span>}</Field>
@@ -225,7 +225,7 @@ function ModelEditor({ config, onChange, providerId, modelId, model, errors, onJ
           onChange(withDraft(config, (draft) => {
           draft.provider[providerId].models[next] = draft.provider[providerId].models[modelId];
           delete draft.provider[providerId].models[modelId];
-          for (const agent of Object.values(draft.agents)) if (agent.model === `${providerId}:${modelId}`) agent.model = `${providerId}:${next}`;
+          for (const profile of Object.values(draft.profiles)) if (profile.model === `${providerId}:${modelId}`) profile.model = `${providerId}:${next}`;
           }));
           return true;
         }} /></Field>
@@ -241,29 +241,29 @@ function ModelEditor({ config, onChange, providerId, modelId, model, errors, onJ
   </details>;
 }
 
-export function SettingsAgentsPanel({ config, onChange, errors, onJsonValidationChange, jsonResetVersion = 0 }: { config: ServerConfig; onChange: (config: ServerConfig) => void; errors: FieldErrors; onJsonValidationChange?: JsonValidationChange; jsonResetVersion?: number }) {
+export function SettingsProfilesPanel({ config, onChange, errors, onJsonValidationChange, jsonResetVersion = 0 }: { config: ServerConfig; onChange: (config: ServerConfig) => void; errors: FieldErrors; onJsonValidationChange?: JsonValidationChange; jsonResetVersion?: number }) {
   const models = Object.entries(config.provider).flatMap(([provider, item]) => Object.keys(item.models).map((model) => `${provider}:${model}`));
-  return <section className="space-y-5 pb-1"><PanelHeader title="Agents" description="Each of the eight agents uses an existing configured model and optional variant." />
+  return <section className="space-y-5 pb-1"><PanelHeader title="Profiles" description="Principal, deep, and fast model bindings are shared by the fixed Agent catalog." />
     <div className="overflow-hidden rounded-md border border-border-default bg-bg-surface divide-y divide-border-subtle">
-    {AGENT_NAMES.map((agent) => {
-      const item = config.agents[agent];
+    {PROFILE_NAMES.map((profile) => {
+      const item = config.profiles[profile];
       const separator = item.model.indexOf(":");
       const provider = separator < 0 ? "" : item.model.slice(0, separator);
       const model = separator < 0 ? "" : item.model.slice(separator + 1);
       const variants = config.provider[provider]?.models[model]?.variants ?? {};
-      const optionsPath = `agents.${agent}.options`;
-      return <details key={agent} className="group">
+      const optionsPath = `profiles.${profile}.options`;
+      return <details key={profile} className="group">
         <summary className="flex cursor-pointer list-none items-center gap-2.5 px-4 py-3 transition-colors duration-150 hover:bg-bg-hover [&::-webkit-details-marker]:hidden">
           <ChevronRight size={13} aria-hidden="true" className="shrink-0 text-text-muted transition-transform duration-150 group-open:rotate-90" />
-          <span className="min-w-0 flex-1 font-mono text-[12.5px] font-medium text-text-secondary">{agent}</span>
+          <span className="min-w-0 flex-1 font-mono text-[12.5px] font-medium text-text-secondary">{profile}</span>
           <span className="truncate text-[11.5px] text-text-muted">{item.model}{item.variant ? ` · ${item.variant}` : ""}</span>
         </summary>
         <div className="space-y-4 border-t border-border-subtle bg-bg-base p-4">
           <div className="grid gap-x-4 gap-y-3.5 sm:grid-cols-2">
-            <Field label="Model" error={errors[`agents.${agent}.model`]}><select className={selectClass} value={item.model} onChange={(event) => onChange(withDraft(config, (draft) => { draft.agents[agent].model = event.target.value; draft.agents[agent].variant = undefined; }))}><option value="">Select model</option>{models.map((entry) => <option key={entry} value={entry}>{entry}</option>)}</select></Field>
-            <Field label="Variant" error={errors[`agents.${agent}.variant`]}><select className={selectClass} value={item.variant ?? ""} onChange={(event) => onChange(withDraft(config, (draft) => { draft.agents[agent].variant = event.target.value || undefined; }))}><option value="">Default</option>{Object.keys(variants).map((variant) => <option key={variant} value={variant}>{variant}</option>)}</select></Field>
+            <Field label="Model" error={errors[`profiles.${profile}.model`]}><select className={selectClass} value={item.model} onChange={(event) => onChange(withDraft(config, (draft) => { draft.profiles[profile].model = event.target.value; draft.profiles[profile].variant = undefined; }))}><option value="">Select model</option>{models.map((entry) => <option key={entry} value={entry}>{entry}</option>)}</select></Field>
+            <Field label="Variant" error={errors[`profiles.${profile}.variant`]}><select className={selectClass} value={item.variant ?? ""} onChange={(event) => onChange(withDraft(config, (draft) => { draft.profiles[profile].variant = event.target.value || undefined; }))}><option value="">Default</option>{Object.keys(variants).map((variant) => <option key={variant} value={variant}>{variant}</option>)}</select></Field>
           </div>
-          <JsonObjectField label="Overrides JSON" value={item.options as Record<string, unknown> | undefined} onChange={(next) => onChange(withDraft(config, (draft) => { draft.agents[agent].options = next as ModelCallOptions | undefined; }))} error={errorAtOrBelow(errors, optionsPath)} validationPath={optionsPath} onValidationChange={onJsonValidationChange} resetVersion={jsonResetVersion} />
+          <JsonObjectField label="Overrides JSON" value={item.options as Record<string, unknown> | undefined} onChange={(next) => onChange(withDraft(config, (draft) => { draft.profiles[profile].options = next as ModelCallOptions | undefined; }))} error={errorAtOrBelow(errors, optionsPath)} validationPath={optionsPath} onValidationChange={onJsonValidationChange} resetVersion={jsonResetVersion} />
         </div>
       </details>;
     })}

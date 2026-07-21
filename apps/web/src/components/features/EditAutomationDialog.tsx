@@ -302,7 +302,7 @@ export function EditAutomationDialog({
                 <div className="grid grid-cols-2 gap-2">
                   <ChoiceCard
                     checked={actionKind === "start_session"}
-                    description="Create a new Engineer Session"
+                    description="Create a new Lead Session"
                     disabled={pending}
                     icon={Play}
                     id="automation-action-start"

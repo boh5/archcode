@@ -16,7 +16,7 @@ import {
 } from "./factory";
 import { ConfiguredAgent } from "./configured-agent";
 import type { AgentDefinition, AgentName } from "./factory-types";
-import { engineerRoleContract } from "./definitions/role-contracts";
+import { leadRoleContract } from "./definitions/role-contracts";
 import { silentLogger } from "../logger";
 import { createTestProjectContextResolver } from "./test-project-context-resolver";
 import { createTestTempRoot } from "../testing/test-temp-root";
@@ -64,9 +64,10 @@ function createSkillServiceWithBuiltins(): SkillService {
 }
 
 function definition(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
-  return { name: "engineer",
-  displayName: "Engineer",
-  roleContract: engineerRoleContract,
+  return { name: "lead",
+  displayName: "Lead Lead",
+  profiles: ["principal"],
+  roleContract: leadRoleContract,
   tools: { tools: ["unknown_tool", ...explorerTools], delegateTargets: ["explore"] },
   hooks: {
     autoCompact: true,
@@ -115,7 +116,7 @@ describe("createAgentFactory", () => {
     } catch (error) {
       expect(error).toBeInstanceOf(DuplicateAgentDefinitionError);
       expect((error as DuplicateAgentDefinitionError).name).toBe("DuplicateAgentDefinitionError");
-      expect((error as DuplicateAgentDefinitionError).definitionName).toBe("engineer");
+      expect((error as DuplicateAgentDefinitionError).definitionName).toBe("lead");
     }
   });
 
@@ -128,9 +129,9 @@ describe("createAgentFactory", () => {
 
   test("creates root agents through the factory API with a supplied store", () => {
     const factory = makeFactory();
-    const store = storeManager.create(`factory-root-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, { agentName: "engineer" });
+    const store = storeManager.create(`factory-root-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, { agentName: "lead" });
 
-    const agent = factory.createRootAgent("engineer", { store });
+    const agent = factory.createRootAgent("lead", { store });
 
     expect(agent.store).toBe(store);
     expect(agent.store.getState().sessionId).toBe(store.getState().sessionId);
@@ -144,14 +145,14 @@ describe("createAgentFactory", () => {
     ]);
     const store = storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, { agentName: "explore" });
 
-    expect(() => factory.createAgent("engineer", { store })).toThrow(AgentStoreIdentityMismatchError);
+    expect(() => factory.createAgent("lead", { store })).toThrow(AgentStoreIdentityMismatchError);
     expect(store.getState().agentName).toBe("explore");
   });
 
   test("root agents default to no active skills", () => {
     const factory = makeFactory();
 
-    const agent = factory.createRootAgent("engineer");
+    const agent = factory.createRootAgent("lead");
 
     expect(agent).toBeInstanceOf(ConfiguredAgent);
     expect(agent.store.getState().activeSkillNames).toEqual([]);
@@ -173,10 +174,10 @@ describe("createAgentFactory", () => {
     logger: silentLogger });
 
     const store = storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, {
-      agentName: "engineer",
+      agentName: "lead",
       activeSkillNames: ["git-master"],
     });
-    const agent = factory.createAgent("engineer", { store });
+    const agent = factory.createAgent("lead", { store });
 
     expect(agent).toBeInstanceOf(ConfiguredAgent);
     expect(agent.store.getState().activeSkillNames).toEqual(["git-master"]);
@@ -189,9 +190,9 @@ describe("createAgentFactory", () => {
       definition({ name: "explore", tools: { tools: nonDelegatingExplorerTools } }),
     ]);
 
-    const rootStore = storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, { agentName: "engineer", title: "Root Title" });
+    const rootStore = storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, { agentName: "lead", title: "Root Title" });
     const childStore = storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, { agentName: "explore", title: "Child Title" });
-    const root = factory.createRootAgent("engineer", { store: rootStore });
+    const root = factory.createRootAgent("lead", { store: rootStore });
     const child = factory.createAgent("explore", { store: childStore });
 
     expect(root.store.getState().title).toBe("Root Title");
@@ -215,7 +216,7 @@ describe("createAgentFactory", () => {
     const factory = makeFactory();
     const customDefinition = definition({ tools: { tools: ["grep", "missing", "delegate"] } });
     const delegatingDefinition = definition({
-      name: "engineer",
+      name: "lead",
       tools: { tools: ["unknown_tool", ...explorerTools] },
     });
 
@@ -248,16 +249,16 @@ describe("createAgentFactory", () => {
     const factory = makeFactory();
     const depthFilteredDefinition = definition({
       name: "explore",
-      tools: { tools: explorerTools, delegateTargets: ["explore", "reviewer"] },
+      tools: { tools: explorerTools, delegateTargets: ["explore", "analyst"] },
     });
     const explicitWithoutDelegate = definition({
-      name: "reviewer",
+      name: "analyst",
       tools: { tools: ["grep"], delegateTargets: ["explore"] },
     });
 
-    expect(factory.getDelegateTargetsFor(depthFilteredDefinition, 1)).toEqual(["explore", "reviewer"]);
+    expect(factory.getDelegateTargetsFor(depthFilteredDefinition, 1)).toEqual(["explore", "analyst"]);
     // depth 2 (< MAX_SUB_AGENT_DEPTH=3): delegation still allowed, targets returned
-    expect(factory.getDelegateTargetsFor(depthFilteredDefinition, 2)).toEqual(["explore", "reviewer"]);
+    expect(factory.getDelegateTargetsFor(depthFilteredDefinition, 2)).toEqual(["explore", "analyst"]);
     // depth 3 (>= MAX_SUB_AGENT_DEPTH): delegation stripped, targets empty
     expect(factory.getDelegateTargetsFor(depthFilteredDefinition, 3)).toEqual([]);
     expect(factory.getDelegateTargetsFor(explicitWithoutDelegate, 0)).toEqual([]);
@@ -271,13 +272,13 @@ describe("createAgentFactory", () => {
 
     expect(skillNames).toEqual(["codemap", "git-master"]);
     try {
-      await factory.resolveDelegatedSkillNames(target, ["research-docs"], import.meta.dir);
+      await factory.resolveDelegatedSkillNames(target, ["run-goal"], import.meta.dir);
       throw new Error("Expected delegated Skill validation to fail");
     } catch (error) {
       expect(error).toBeInstanceOf(SkillNotAllowedError);
       expect(error).toMatchObject({
         targetAgentName: "explore",
-        skillName: "research-docs",
+        skillName: "run-goal",
         allowedSkills: ["codemap", "git-master"],
       });
     }

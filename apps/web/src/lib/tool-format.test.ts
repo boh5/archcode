@@ -32,9 +32,9 @@ import {
 function delegateV2(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     agent_type: "explore",
+    profile: "fast",
     title: "Explore codebase",
     objective: "Inspect the source",
-    owned_scope: [],
     skills: [],
     background: false,
     ...overrides,
@@ -265,9 +265,9 @@ describe("formatToolInputDetails", () => {
     }));
     expect(result).toMatchObject({
       agent_type: "explore",
+      profile: "fast",
       title: "Explore codebase",
       objective: "Inspect the source",
-      owned_scope: "[]",
       skills: "[]",
       background: "false",
     });
@@ -487,7 +487,7 @@ describe("getToolInvalidInputMessage", () => {
 
   test("delegate validates the complete required V2 contract", () => {
     expect(getToolInvalidInputMessage("delegate", delegateV2({ objective: undefined }))).toBe("Invalid delegate input: missing required objective");
-    expect(getToolInvalidInputMessage("delegate", delegateV2({ owned_scope: undefined }))).toBe("Invalid delegate input: missing required owned_scope");
+    expect(getToolInvalidInputMessage("delegate", delegateV2({ profile: undefined }))).toBe("Invalid delegate input: missing required profile");
     expect(getToolInvalidInputMessage("delegate", delegateV2({ skills: undefined }))).toBe("Invalid delegate input: missing required skills");
     expect(getToolInvalidInputMessage("delegate", delegateV2({ background: undefined }))).toBe("Invalid delegate input: missing required background");
     expect(getToolInvalidInputMessage("delegate", delegateV2({ evidence: [] }))).toBe("Invalid delegate input: unexpected field evidence");

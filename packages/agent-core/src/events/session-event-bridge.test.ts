@@ -22,7 +22,7 @@ class FakeSessionEventSource {
     const event: SessionEventSourceEvent = {
       workspaceRoot: input.workspace ?? workspaceRoot,
       sessionId: input.sessionId,
-      agentName: "engineer",
+      agentName: "lead",
       envelope: {
         id: input.eventId,
         createdAt: 10 + input.eventId,
@@ -65,7 +65,7 @@ describe("SessionEventBridge", () => {
       sessionId: "root",
       eventId: 7,
       createdAt: 17,
-      agentName: "engineer",
+      agentName: "lead",
       payload: expect.objectContaining({ type: "session.message_accepted" }),
     }]);
   });

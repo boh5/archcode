@@ -21,7 +21,7 @@ afterEach(async () => {
 async function rootSession(): Promise<string> {
   await mkdir(TMP_DIR, { recursive: true });
   const sessionId = crypto.randomUUID();
-  await manager.createSessionFile(TMP_DIR, { agentName: "engineer" }, sessionId);
+  await manager.createSessionFile(TMP_DIR, { agentName: "lead" }, sessionId);
   return sessionId;
 }
 
@@ -100,7 +100,7 @@ describe("SessionGoalSchema", () => {
 });
 
 describe("SessionGoalService", () => {
-  test("creates, edits, clears, and replaces the single root Engineer Goal", async () => {
+  test("creates, edits, clears, and replaces the single root Lead Goal", async () => {
     const sessionId = await rootSession();
     const created = await service.create({
       workspaceRoot: TMP_DIR,
@@ -154,15 +154,15 @@ describe("SessionGoalService", () => {
     expect(replacement.generation).toBe(1);
   });
 
-  test("enforces user ownership and root Engineer identity", async () => {
+  test("enforces user ownership and root Lead identity", async () => {
     const sessionId = await rootSession();
     await expect(service.create({ workspaceRoot: TMP_DIR, sessionId, authority: agent, objective: "Denied" }))
       .rejects.toBeInstanceOf(SessionGoalServiceError);
 
-    const planId = crypto.randomUUID();
-    await manager.createSessionFile(TMP_DIR, { agentName: "plan" }, planId);
-    await expect(service.create({ workspaceRoot: TMP_DIR, sessionId: planId, authority: user, objective: "Denied" }))
-      .rejects.toMatchObject({ code: "NOT_ROOT_ENGINEER" });
+    const analystId = crypto.randomUUID();
+    await manager.createSessionFile(TMP_DIR, { agentName: "analyst" }, analystId);
+    await expect(service.create({ workspaceRoot: TMP_DIR, sessionId: analystId, authority: user, objective: "Denied" }))
+      .rejects.toMatchObject({ code: "NOT_ROOT_LEAD" });
   });
 
   test("pauses, resumes, and preserves user intent behind a budget gate", async () => {
@@ -197,13 +197,16 @@ describe("SessionGoalService", () => {
       tokenBudget: 7,
     });
 
+    const created = await service.get({ workspaceRoot: TMP_DIR, sessionId });
     const first = await service.recordUsage({ workspaceRoot: TMP_DIR, sessionId, authority: runtime, usage: usage(3), executionTimeMs: 10 });
     const second = await service.recordUsage({ workspaceRoot: TMP_DIR, sessionId, authority: runtime, usage: usage(4), executionTimeMs: 20 });
     expect(first).toMatchObject({ status: "active", usage: { tokens: { totalTokens: 3 }, executionCount: 1 } });
+    expect(first.updatedAt).toBe(created!.updatedAt);
     expect(second).toMatchObject({
       status: "budget_limited",
       usage: { tokens: { totalTokens: 7 }, executionTimeMs: 30, executionCount: 2 },
     });
+    expect(second.updatedAt).toBeGreaterThanOrEqual(first.updatedAt);
     expect(Object.hasOwn(second, "failureCount")).toBe(false);
     expect(Object.hasOwn(second, "nextRetryAt")).toBe(false);
 
@@ -232,11 +235,12 @@ describe("SessionGoalService", () => {
 
   test("completes active Goal once and still settles the completing Execution usage", async () => {
     const sessionId = await rootSession();
-    await service.create({ workspaceRoot: TMP_DIR, sessionId, authority: user, objective: "Finish after review." });
+    const created = await service.create({ workspaceRoot: TMP_DIR, sessionId, authority: user, objective: "Finish after review." });
+    const expected = { expectedInstanceId: created.instanceId, expectedGeneration: created.generation };
 
-    await expect(service.complete({ workspaceRoot: TMP_DIR, sessionId, authority: runtime, reason: "Denied" }))
+    await expect(service.complete({ workspaceRoot: TMP_DIR, sessionId, authority: runtime, reason: "Denied", ...expected }))
       .rejects.toMatchObject({ code: "AUTHORITY_DENIED" });
-    const completed = await service.complete({ workspaceRoot: TMP_DIR, sessionId, authority: agent, reason: "Reviewer approved" });
+    const completed = await service.complete({ workspaceRoot: TMP_DIR, sessionId, authority: agent, reason: "Analyst approved", ...expected });
     expect(completed.status).toBe("complete");
     expect(completed.completedAt).toBeNumber();
     expect(Object.hasOwn(completed, "review")).toBe(false);
@@ -256,7 +260,46 @@ describe("SessionGoalService", () => {
     });
     await expect(service.pause({ workspaceRoot: TMP_DIR, sessionId, authority: user }))
       .rejects.toMatchObject({ code: "GOAL_TERMINAL" });
-    await expect(service.complete({ workspaceRoot: TMP_DIR, sessionId, authority: agent, reason: "Again" }))
+    await expect(service.complete({ workspaceRoot: TMP_DIR, sessionId, authority: agent, reason: "Again", ...expected }))
       .rejects.toMatchObject({ code: "GOAL_TERMINAL" });
+  });
+
+  test("completes only the expected Goal instance and generation inside the durable mutation", async () => {
+    const sessionId = await rootSession();
+    const created = await service.create({ workspaceRoot: TMP_DIR, sessionId, authority: user, objective: "Finish after review." });
+    const edited = await service.edit({
+      workspaceRoot: TMP_DIR,
+      sessionId,
+      authority: user,
+      expectedGeneration: created.generation,
+      objective: "Finish the edited Goal after a fresh review.",
+    });
+
+    await expect(service.complete({
+      workspaceRoot: TMP_DIR,
+      sessionId,
+      authority: agent,
+      reason: "Stale generation",
+      expectedInstanceId: created.instanceId,
+      expectedGeneration: created.generation,
+    })).rejects.toMatchObject({ code: "GENERATION_CONFLICT" });
+    await expect(service.complete({
+      workspaceRoot: TMP_DIR,
+      sessionId,
+      authority: agent,
+      reason: "Wrong instance",
+      expectedInstanceId: crypto.randomUUID(),
+      expectedGeneration: edited.generation,
+    })).rejects.toMatchObject({ code: "GENERATION_CONFLICT" });
+
+    const completed = await service.complete({
+      workspaceRoot: TMP_DIR,
+      sessionId,
+      authority: agent,
+      reason: "Fresh identity",
+      expectedInstanceId: edited.instanceId,
+      expectedGeneration: edited.generation,
+    });
+    expect(completed.status).toBe("complete");
   });
 });

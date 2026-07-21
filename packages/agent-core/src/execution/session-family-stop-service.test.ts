@@ -25,13 +25,13 @@ describe("SessionFamilyStopService", () => {
     const childSessionId = crypto.randomUUID();
     const delegationRequest: DelegationRequest = {
       agent_type: "explore",
+      profile: "fast",
       title: "Inspect family stop",
       objective: "Provide a durable child identity for family-stop cleanup.",
-      owned_scope: [],
       skills: [],
       background: false,
     };
-    sessions.create(rootSessionId, TMP_ROOT, { agentName: "engineer" });
+    sessions.create(rootSessionId, TMP_ROOT, { agentName: "lead" });
     sessions.create(childSessionId, TMP_ROOT, {
       agentName: "explore",
       rootSessionId,
@@ -76,7 +76,7 @@ describe("SessionFamilyStopService", () => {
   test("releases the stop lease when batch cancellation fails", async () => {
     const sessions = new SessionStoreManager({ logger: silentLogger });
     const rootSessionId = crypto.randomUUID();
-    sessions.create(rootSessionId, TMP_ROOT, { agentName: "engineer" });
+    sessions.create(rootSessionId, TMP_ROOT, { agentName: "lead" });
     await sessions.flushSession(rootSessionId, TMP_ROOT);
     const release = mock(() => undefined);
     const service = new SessionFamilyStopService({

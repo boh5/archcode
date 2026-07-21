@@ -42,7 +42,7 @@ describe("lspGotoDefinitionTool", () => {
     const ctx = makeCtx({
       toolName: "lsp_goto_definition",
       toolCallId: "call-1",
-      agentName: "engineer",
+      agentName: "lead",
       agentSkills: [],
       input: { filePath: "../outside.ts", line: 1, character: 0 },
       ...durable,

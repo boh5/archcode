@@ -43,7 +43,7 @@ describe("lspFindReferencesTool", () => {
     const ctx = makeCtx({
       toolName: "lsp_find_references",
       toolCallId: "call-1",
-      agentName: "engineer",
+      agentName: "lead",
       agentSkills: [],
       input: { filePath: "../outside.ts", line: 1, character: 0 },
       ...durable,

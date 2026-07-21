@@ -16,7 +16,7 @@ const sessionIds = new Set<string>();
 function makeStore() {
   const sessionId = crypto.randomUUID();
   sessionIds.add(sessionId);
-  return storeManager.create(sessionId, tmpDir, { agentName: "engineer" });
+  return storeManager.create(sessionId, tmpDir, { agentName: "lead" });
 }
 
 describe("createMemoryConsolidationHook", () => {

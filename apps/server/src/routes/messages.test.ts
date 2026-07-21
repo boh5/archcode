@@ -7,7 +7,7 @@ import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "messages-routes");
 const requestedModelSelection = {
-  mode: "agent_default" as const,
+  mode: "profile_default" as const,
   selection: { model: "local:test", variant: "fast" },
 };
 
@@ -17,7 +17,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
     projectRegistry,
     contextResolver: undefined,
     configService: { getSnapshot: mock(async () => ({
-      config: { provider: {}, agents: {} },
+      config: { provider: {}, profiles: {} },
       revision: "test",
       modelRuntimeRevision: "test",
       configPath: "/test",

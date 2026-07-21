@@ -147,6 +147,7 @@ export { SessionInputConflictError, SessionInputService, nextSessionTimestamp } 
 export {
   SessionModelSelectionConflictError,
   SessionModelSelectionInvalidError,
+  SessionModelSelectionNotAllowedError,
   SessionModelSelectionService,
 } from "./session-input/model-selection-service";
 export type {

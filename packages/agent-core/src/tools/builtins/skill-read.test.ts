@@ -159,7 +159,7 @@ Broken body.
 
   test("input schema rejects unknown keys including agent, role, source, and path", () => {
     expect(SkillReadInputSchema.safeParse({ name: "codemap" }).success).toBe(true);
-    expect(SkillReadInputSchema.safeParse({ name: "codemap", agentName: "engineer" }).success).toBe(false);
+    expect(SkillReadInputSchema.safeParse({ name: "codemap", agentName: "lead" }).success).toBe(false);
     expect(SkillReadInputSchema.safeParse({ name: "codemap", role: "builder" }).success).toBe(false);
     expect(SkillReadInputSchema.safeParse({ name: "codemap", source: "builtin" }).success).toBe(false);
     expect(SkillReadInputSchema.safeParse({ name: "codemap", path: "/tmp/SKILL.md" }).success).toBe(false);

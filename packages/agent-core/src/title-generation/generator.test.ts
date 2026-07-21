@@ -18,7 +18,7 @@ const binding: ExecutionModelBinding = {
     modelId: modelInfo.modelId,
     providerDisplayName: modelInfo.providerDisplayName,
     modelDisplayName: modelInfo.displayName,
-    resolution: "agent_default",
+    resolution: "profile_default",
     modelRuntimeRevision: "test-revision",
   },
 };

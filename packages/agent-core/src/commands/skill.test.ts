@@ -23,7 +23,7 @@ function createCommand(agentSkills: readonly string[] = ["git-master"]) {
   return {
     command: createSkillCommand(),
     context: {
-      store: storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, { agentName: "engineer" }),
+      store: storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, { agentName: "lead" }),
       binding: undefined as never,
       cwd: TEST_WORKSPACE_ROOT,
       agentName: "test-agent",

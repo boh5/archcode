@@ -34,10 +34,17 @@ function makeContext(
   const store = createMockStore({
     sessionId: "22222222-2222-4222-8222-222222222222",
     rootSessionId: "22222222-2222-4222-8222-222222222222",
-    agentName: "engineer",
+    agentName: "lead",
     ...overrides,
   });
-  const projectContext = { createAutomation } as unknown as ToolExecutionContext["projectContext"];
+  const projectContext = {
+    createAutomation,
+    todos: {
+      state: {
+        findByDiscussionSessionId: mock(async () => undefined),
+      },
+    },
+  } as unknown as ToolExecutionContext["projectContext"];
   return {
     createAutomation,
     ctx: createToolExecutionContext({
@@ -64,7 +71,7 @@ describe("automation_create", () => {
     expect(AutomationCreateSchema.safeParse({ ...input, status: "active" }).success).toBe(false);
   });
 
-  test("derives provenance from an ordinary Engineer root Session", async () => {
+  test("derives provenance from an ordinary Lead root Session", async () => {
     const { ctx, createAutomation } = makeContext();
 
     const result = await automationCreateTool.execute(input, ctx);
@@ -76,7 +83,7 @@ describe("automation_create", () => {
     });
   });
 
-  test("rejects child and non-Engineer Sessions", async () => {
+  test("rejects child and non-Lead Sessions", async () => {
     for (const override of [
       { rootSessionId: crypto.randomUUID() },
       { parentSessionId: crypto.randomUUID() },

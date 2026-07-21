@@ -34,6 +34,7 @@ import {
 export const buildAgentDefinition = {
   name: "build",
   displayName: "Build",
+  profiles: ["deep", "fast"],
   roleContract: buildRoleContract,
   tools: {
     tools: [
@@ -81,5 +82,5 @@ export const buildAgentDefinition = {
     terminalReminders: true,
   },
   includeMemoryInPrompt: true,
-  skills: ["git-master", "safe-refactor", "codemap", "review-work", "research-docs"],
+  skills: ["git-master", "safe-refactor", "codemap", "research-docs"],
 } as const satisfies AgentDefinition;

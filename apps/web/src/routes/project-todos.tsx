@@ -177,7 +177,7 @@ export function ProjectTodosRoute() {
                 </span>
               )}
             </div>
-            <p className="mt-0.5 truncate text-[11.5px] text-text-tertiary">Capture intent, shape it with Shaper, then hand it to execution.</p>
+            <p className="mt-0.5 truncate text-[11.5px] text-text-tertiary">Capture intent, discuss it with Lead, then hand it to execution.</p>
           </div>
         </div>
         <div className="flex items-center gap-0.5 rounded-md border border-border-default bg-bg-base p-1 shadow-sm" role="group" aria-label="Todo views">

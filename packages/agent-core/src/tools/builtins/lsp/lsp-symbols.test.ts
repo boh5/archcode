@@ -60,7 +60,7 @@ describe("lspSymbolsTool", () => {
   test("workspace permission asks for document path outside workspace through registry", async () => {
     const input = { scope: "document", filePath: "../outside.ts" };
     const durable = await createDurableTestSessionContext(testDir, crypto.randomUUID());
-    const ctx = makeCtx({ toolName: "lsp_symbols", toolCallId: "call-1", agentName: "engineer", agentSkills: [], input, ...durable });
+    const ctx = makeCtx({ toolName: "lsp_symbols", toolCallId: "call-1", agentName: "lead", agentSkills: [], input, ...durable });
 
     const result = await registryFixture.registry.execute(
         { toolName: "lsp_symbols", toolCallId: "call-1", input },

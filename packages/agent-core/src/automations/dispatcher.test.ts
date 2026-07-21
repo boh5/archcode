@@ -25,7 +25,7 @@ describe("AutomationDispatcher", () => {
       createdFromSessionId: crypto.randomUUID(),
       name: "run",
       trigger: { kind: "interval", everyMs: 30_000 },
-      action: { kind: "start_session", message: "/skill use reviewer", location: "project" },
+      action: { kind: "start_session", message: "/skill use analyze-work", location: "project" },
     });
     const invocation = await manager.enqueueInvocation(automation.id, new Date(NOW).toISOString());
     const calls: unknown[] = [];
@@ -41,7 +41,7 @@ describe("AutomationDispatcher", () => {
       projectSlug: "project-a",
       sessionId: invocation.sessionId,
       clientRequestId: invocation.id,
-      message: "/skill use reviewer",
+      message: "/skill use analyze-work",
       location: "project",
     }]);
   });

@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { createEmptySessionStats, type CompressionBlockSnapshot, type DelegationRequest, type FinalizedToolResult } from "@archcode/protocol";
+import { createEmptySessionStats, type CompressionBlockSnapshot, type DelegationRequest, type FinalizedToolResult, type ToolChildSessionLink } from "@archcode/protocol";
 import { createEmptyCompressionState } from "../compression";
 import { SessionStoreManager } from "./session-store-manager";
 import { NotRootSessionError, SessionInitialPersistenceError, SessionTreeIntegrityError } from "./errors";
@@ -10,11 +10,11 @@ import { sessionFileInternals } from "./helpers";
 import { silentLogger } from "../logger";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "session-store-manager", crypto.randomUUID());
-const TEST_REQUESTED_MODEL_SELECTION = { mode: "agent_default" as const, selection: { model: "test:model" } };
+const TEST_REQUESTED_MODEL_SELECTION = { mode: "profile_default" as const, selection: { model: "test:model" } };
 const TEST_BINDING = {
   selection: { model: "test:model" }, providerId: "test", modelId: "model",
   providerDisplayName: "Test", modelDisplayName: "Model",
-  resolution: "agent_default" as const, modelRuntimeRevision: "runtime-1",
+  resolution: "profile_default" as const, modelRuntimeRevision: "runtime-1",
 };
 const executionStart = (executionId: string) => ({
   type: "execution-start" as const, executionId, binding: TEST_BINDING, origin: "user_message" as const,
@@ -74,9 +74,9 @@ describe("SessionStoreManager", () => {
   ): PersistedSessionState {
     const delegationRequest: DelegationRequest = {
       agent_type: "explore",
+      profile: "fast",
       title: "Test child",
       objective: "Exercise persisted child identity",
-      owned_scope: [],
       skills: [],
       background: false,
     };
@@ -85,7 +85,7 @@ describe("SessionStoreManager", () => {
       createdAt: 1000,
       updatedAt: 1000,
       cwd: TMP_DIR,
-      agentName: overrides.parentSessionId === undefined ? "engineer" : "explore",
+      agentName: overrides.parentSessionId === undefined ? "lead" : "explore",
       activeSkillNames: [],
       modelSelection: { revision: 0 },
       title: null,
@@ -102,7 +102,10 @@ describe("SessionStoreManager", () => {
     toolBatches: [],
       rootSessionId: id,
       ...(overrides.parentSessionId === undefined ? {} : {
-        delegationRequest,
+        delegationRequest: {
+          ...delegationRequest,
+          skills: overrides.activeSkillNames ?? [],
+        },
       }),
       ...overrides,
     };
@@ -123,7 +126,7 @@ describe("SessionStoreManager", () => {
     try {
       const manager = new SessionStoreManager({ logger: silentLogger });
       let settled = false;
-      const createdPromise = manager.createSessionFile(TMP_DIR, { agentName: "engineer" }).finally(() => { settled = true; });
+      const createdPromise = manager.createSessionFile(TMP_DIR, { agentName: "lead" }).finally(() => { settled = true; });
       await saveStarted;
       await Promise.resolve();
       expect(settled).toBe(false);
@@ -140,7 +143,7 @@ describe("SessionStoreManager", () => {
   test("publishes durable mutation events only after persistence and then releases later events in order", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
-    await manager.createSessionFile(TMP_DIR, { agentName: "engineer" }, id);
+    await manager.createSessionFile(TMP_DIR, { agentName: "lead" }, id);
     const store = manager.get(id, TMP_DIR)!;
     const received: string[] = [];
     manager.subscribeToSessionEvents(({ envelope }) => received.push(envelope.payload.type));
@@ -180,7 +183,7 @@ describe("SessionStoreManager", () => {
   test("a later multi-event transaction remains entirely behind its own persistence barrier", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
-    await manager.createSessionFile(TMP_DIR, { agentName: "engineer" }, id);
+    await manager.createSessionFile(TMP_DIR, { agentName: "lead" }, id);
     const received: string[] = [];
     manager.subscribeToSessionEvents(({ envelope }) => received.push(envelope.payload.type));
 
@@ -240,7 +243,7 @@ describe("SessionStoreManager", () => {
       const manager = new SessionStoreManager({ logger: silentLogger });
       let captured: unknown;
       try {
-        await manager.createSessionFile(TMP_DIR, { agentName: "engineer" });
+        await manager.createSessionFile(TMP_DIR, { agentName: "lead" });
       } catch (error) {
         captured = error;
       }
@@ -259,7 +262,7 @@ describe("SessionStoreManager", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
     const created = await manager.ensureSessionFile(TMP_DIR, id, {
-      agentName: "engineer",
+      agentName: "lead",
       rootSessionId: id,
       cwd: TMP_DIR,
     });
@@ -267,7 +270,7 @@ describe("SessionStoreManager", () => {
     expect(created).toMatchObject({
       sessionId: id,
       rootSessionId: id,
-      agentName: "engineer",
+      agentName: "lead",
       cwd: TMP_DIR,
     });
     expect((await manager.getSessionFile(TMP_DIR, id)).sessionId).toBe(id);
@@ -277,7 +280,7 @@ describe("SessionStoreManager", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
     const options = {
-      agentName: "engineer" as const,
+      agentName: "lead" as const,
       rootSessionId: id,
       cwd: TMP_DIR,
     };
@@ -301,7 +304,7 @@ describe("SessionStoreManager", () => {
     try {
       const manager = new SessionStoreManager({ logger: silentLogger });
       const id = sessionId();
-      const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
+      const store = manager.create(id, TMP_DIR, { agentName: "lead" });
 
       await expect(manager.flushSession(id, TMP_DIR)).rejects.toBe(failure);
       sessionFileInternals.saveSessionTranscript = originalSave;
@@ -326,7 +329,7 @@ describe("SessionStoreManager", () => {
       persistedSession(input.sessionId, {
         createdAt: input.createdAt ?? 1000,
         updatedAt: input.createdAt ?? 1000,
-        agentName: input.parentSessionId === undefined ? "engineer" : "explore",
+        agentName: input.parentSessionId === undefined ? "lead" : "explore",
         activeSkillNames: input.activeSkillNames ?? [],
         title: input.title ?? null,
         rootSessionId: input.rootSessionId ?? input.sessionId,
@@ -377,28 +380,28 @@ describe("SessionStoreManager", () => {
   test("create() returns the same store for the same sessionId+workspaceRoot", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
-    const store1 = manager.create(id, TMP_DIR, { agentName: "engineer" });
-    const store2 = manager.create(id, TMP_DIR, { agentName: "engineer" });
+    const store1 = manager.create(id, TMP_DIR, { agentName: "lead" });
+    const store2 = manager.create(id, TMP_DIR, { agentName: "lead" });
     expect(store1).toBe(store2);
   });
 
   test("create() returns different stores for different sessionIds", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
-    const store1 = manager.create(sessionId(), TMP_DIR, { agentName: "engineer" });
-    const store2 = manager.create(sessionId(), TMP_DIR, { agentName: "engineer" });
+    const store1 = manager.create(sessionId(), TMP_DIR, { agentName: "lead" });
+    const store2 = manager.create(sessionId(), TMP_DIR, { agentName: "lead" });
     expect(store1).not.toBe(store2);
   });
 
   test("create() defaults child session links to empty", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
-    const store = manager.create(sessionId(), TMP_DIR, { agentName: "engineer" });
+    const store = manager.create(sessionId(), TMP_DIR, { agentName: "lead" });
 
     expect(store.getState().childSessionLinks).toEqual([]);
   });
 
   test("create() defaults cwd to the canonical workspace root", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
-    const store = manager.create(sessionId(), TMP_DIR, { agentName: "engineer" });
+    const store = manager.create(sessionId(), TMP_DIR, { agentName: "lead" });
 
     expect(store.getState().cwd).toBe(TMP_DIR);
   });
@@ -406,7 +409,7 @@ describe("SessionStoreManager", () => {
   test("every durable snapshot advances the canonical updatedAt", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
-    const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
+    const store = manager.create(id, TMP_DIR, { agentName: "lead" });
     await manager.flushSession(id, TMP_DIR);
     const first = await readSessionJson(canonicalSessionPath(id));
     await Bun.sleep(2);
@@ -422,7 +425,7 @@ describe("SessionStoreManager", () => {
   test("flushSession makes an execution-start record durable", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
-    const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
+    const store = manager.create(id, TMP_DIR, { agentName: "lead" });
     await manager.flushSession(id, TMP_DIR);
 
     store.getState().append(executionStart("execution-1"));
@@ -439,7 +442,7 @@ describe("SessionStoreManager", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
     const worktreeCwd = join(TMP_DIR, "..", "worktree");
-    const store = manager.create(id, TMP_DIR, { cwd: worktreeCwd, agentName: "engineer" });
+    const store = manager.create(id, TMP_DIR, { cwd: worktreeCwd, agentName: "lead" });
 
     expect(store.getState().cwd).toBe(worktreeCwd);
     const persisted = await waitForSessionJson(canonicalSessionPath(id), (json) => json.cwd === worktreeCwd);
@@ -455,7 +458,7 @@ describe("SessionStoreManager", () => {
   test("updateCwd persists atomically in the canonical Session and clears read snapshots", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
-    const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
+    const store = manager.create(id, TMP_DIR, { agentName: "lead" });
     store.getState().readSnapshots.set(join(TMP_DIR, "old.ts"), 1);
     const worktreeCwd = join(TMP_DIR, "..", "atomic-worktree");
 
@@ -507,7 +510,7 @@ describe("SessionStoreManager", () => {
     try {
       const manager = new SessionStoreManager({ logger: silentLogger });
       const id = sessionId();
-      const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
+      const store = manager.create(id, TMP_DIR, { agentName: "lead" });
       await firstSaveStarted;
       store.getState().setTitle("queued before cwd transition");
       const worktreeCwd = join(TMP_DIR, "..", "queued-worktree");
@@ -530,7 +533,7 @@ describe("SessionStoreManager", () => {
   test("updateCwd rejects a stale expected cwd without changing memory or disk", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
-    const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
+    const store = manager.create(id, TMP_DIR, { agentName: "lead" });
     await waitForSessionJson(canonicalSessionPath(id), (json) => json.cwd === TMP_DIR);
 
     await expect(manager.updateCwd(id, TMP_DIR, join(TMP_DIR, "..", "next"), "/stale/cwd"))
@@ -542,20 +545,20 @@ describe("SessionStoreManager", () => {
 
   test("create rejects a relative execution cwd", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
-    expect(() => manager.create(sessionId(), TMP_DIR, { cwd: "relative/worktree", agentName: "engineer" }))
+    expect(() => manager.create(sessionId(), TMP_DIR, { cwd: "relative/worktree", agentName: "lead" }))
       .toThrow(expect.objectContaining({ name: "InvalidSessionCwdError" }));
   });
 
   test("create() does not expose legacy pending interactions", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
-    const store = manager.create(sessionId(), TMP_DIR, { agentName: "engineer" });
+    const store = manager.create(sessionId(), TMP_DIR, { agentName: "lead" });
 
     expect(store.getState()).not.toHaveProperty("pendingInteractions");
   });
 
   test("legacy pending interaction mutators are not part of the store API", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
-    const store = manager.create(sessionId(), TMP_DIR, { agentName: "engineer" });
+    const store = manager.create(sessionId(), TMP_DIR, { agentName: "lead" });
 
     expect(store.getState()).not.toHaveProperty("addPendingInteraction");
     expect(store.getState()).not.toHaveProperty("answerPendingInteraction");
@@ -565,7 +568,7 @@ describe("SessionStoreManager", () => {
   test("compression events persist compression state to disk", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
-    const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
+    const store = manager.create(id, TMP_DIR, { agentName: "lead" });
 
     store.getState().append({ type: "compression.block_committed", block: compressionBlockSnapshot() });
 
@@ -586,7 +589,7 @@ describe("SessionStoreManager", () => {
   test("get() returns existing store after create()", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
-    const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
+    const store = manager.create(id, TMP_DIR, { agentName: "lead" });
     expect(manager.get(id, TMP_DIR)).toBe(store);
   });
 
@@ -594,14 +597,14 @@ describe("SessionStoreManager", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
     expect(manager.has(id, TMP_DIR)).toBe(false);
-    manager.create(id, TMP_DIR, { agentName: "engineer" });
+    manager.create(id, TMP_DIR, { agentName: "lead" });
     expect(manager.has(id, TMP_DIR)).toBe(true);
   });
 
   test("delete() removes store from registry", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
-    manager.create(id, TMP_DIR, { agentName: "engineer" });
+    manager.create(id, TMP_DIR, { agentName: "lead" });
     expect(manager.has(id, TMP_DIR)).toBe(true);
     const result = manager.delete(id, TMP_DIR);
     expect(result).toBe(true);
@@ -617,8 +620,8 @@ describe("SessionStoreManager", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const idA = sessionId();
     const idB = sessionId();
-    manager.create(idA, TMP_DIR, { agentName: "engineer" });
-    manager.create(idB, TMP_DIR, { agentName: "engineer" });
+    manager.create(idA, TMP_DIR, { agentName: "lead" });
+    manager.create(idB, TMP_DIR, { agentName: "lead" });
     manager.clearAll();
     expect(manager.has(idA, TMP_DIR)).toBe(false);
     expect(manager.has(idB, TMP_DIR)).toBe(false);
@@ -627,7 +630,7 @@ describe("SessionStoreManager", () => {
   test("getOrLoad() returns existing store from registry without disk I/O", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
-    const created = manager.create(id, TMP_DIR, { agentName: "engineer" });
+    const created = manager.create(id, TMP_DIR, { agentName: "lead" });
     created.getState().title = "in-memory-title";
 
     const loaded = await manager.getOrLoad(id, TMP_DIR);
@@ -658,13 +661,15 @@ describe("SessionStoreManager", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const parentSessionId = sessionId();
     const childSessionId = sessionId();
-    const store = manager.create(parentSessionId, TMP_DIR, { agentName: "engineer" });
-    const link = {
+    const store = manager.create(parentSessionId, TMP_DIR, { agentName: "lead" });
+    const link: ToolChildSessionLink = {
       parentSessionId,
       parentToolCallId: "tool-call-1",
       toolName: "delegate",
       childSessionId,
       childAgentName: "explore",
+      childProfile: "fast",
+      childSkillNames: [],
       title: "Background child",
       depth: 1,
       background: true,
@@ -691,7 +696,7 @@ describe("SessionStoreManager", () => {
   test("persists attempted tools without fabricating a result during load reconciliation", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
-    const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
+    const store = manager.create(id, TMP_DIR, { agentName: "lead" });
 
     store.getState().append(executionStart("run-1"));
     store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { path: "a.ts" } });
@@ -723,7 +728,7 @@ describe("SessionStoreManager", () => {
   test("persists and reloads partial tool input for Registry recovery", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
-    const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
+    const store = manager.create(id, TMP_DIR, { agentName: "lead" });
 
     store.getState().append(executionStart("run-partial-input"));
     store.getState().append({
@@ -755,7 +760,7 @@ describe("SessionStoreManager", () => {
   test("canonicalizes undefined tool-call input in both messages and the durable event log", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
-    const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
+    const store = manager.create(id, TMP_DIR, { agentName: "lead" });
 
     store.getState().append(executionStart("run-undefined-input"));
     store.getState().append({
@@ -869,7 +874,7 @@ describe("SessionStoreManager", () => {
   test("persists completed tool results and does not downgrade them on restart", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
-    const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
+    const store = manager.create(id, TMP_DIR, { agentName: "lead" });
 
     store.getState().append(executionStart("run-1"));
     store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { path: "a.ts" } });
@@ -902,7 +907,7 @@ describe("SessionStoreManager", () => {
   test("persists execution-error in session JSON file", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
-    const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
+    const store = manager.create(id, TMP_DIR, { agentName: "lead" });
     const errorMsg = "Execution terminated due to terminal failure";
 
     store.getState().append(executionStart("run-1"));
@@ -917,7 +922,7 @@ describe("SessionStoreManager", () => {
   test("restarted SessionStoreManager reloads execution error in steps", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
-    const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
+    const store = manager.create(id, TMP_DIR, { agentName: "lead" });
     const errorMsg = "model crashed in step 0";
 
     store.getState().append(executionStart("run-1"));
@@ -937,7 +942,7 @@ describe("SessionStoreManager", () => {
   test("persists and reloads dedicated Prompt trace events", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
-    const store = manager.create(id, TMP_DIR, { agentName: "engineer" });
+    const store = manager.create(id, TMP_DIR, { agentName: "lead" });
     const trace = {
       version: "2" as const,
       status: "compiled" as const,
@@ -1025,12 +1030,12 @@ describe("SessionStoreManager", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const rootSessionId = sessionId();
     const childSessionId = sessionId();
-    manager.create(rootSessionId, TMP_DIR, { agentName: "engineer" });
+    manager.create(rootSessionId, TMP_DIR, { agentName: "lead" });
 
     const childStore = manager.create(childSessionId, TMP_DIR, {
       rootSessionId,
       parentSessionId: rootSessionId,
-      title: "child-title", agentName: "engineer"
+      title: "child-title", agentName: "lead"
     });
     await manager.getSessionFile(TMP_DIR, childSessionId);
 
@@ -1085,7 +1090,7 @@ describe("SessionStoreManager", () => {
     const sessionId = crypto.randomUUID();
 
     // Create store with in-memory state
-    const created = manager.create(sessionId, TMP_DIR, { agentName: "engineer" });
+    const created = manager.create(sessionId, TMP_DIR, { agentName: "lead" });
     created.setState({ title: "in-memory-title" });
 
     // Also save a file with different data
@@ -1150,7 +1155,7 @@ describe("SessionStoreManager", () => {
     const loadedPromise = manager.getOrLoad(sessionId, TMP_DIR);
 
     // Create a store with live state (simulating an agent starting up concurrently)
-    const liveStore = manager.create(sessionId, TMP_DIR, { agentName: "engineer" });
+    const liveStore = manager.create(sessionId, TMP_DIR, { agentName: "lead" });
     liveStore.setState({ title: "live-title" });
 
     const loaded = await loadedPromise;
@@ -1173,7 +1178,7 @@ describe("SessionStoreManager", () => {
     expect(tree.diagnostics).toEqual([]);
     expect(tree.root.session.sessionId).toBe(rootSessionId);
     expect(tree.root.session.title).toBe("root");
-    expect(tree.root.session.agentName).toBe("engineer");
+    expect(tree.root.session.agentName).toBe("lead");
     expect(tree.root.children).toEqual([]);
   });
 

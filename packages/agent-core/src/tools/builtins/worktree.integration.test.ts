@@ -31,7 +31,7 @@ describe("worktree Session tools", () => {
     const projectRoot = await createGitRepo("enter-exit");
     const manager = new SessionStoreManager({ logger: silentLogger });
     const sessionId = crypto.randomUUID();
-    const store = manager.create(sessionId, projectRoot, { agentName: "engineer" });
+    const store = manager.create(sessionId, projectRoot, { agentName: "lead" });
     const ctx = createToolExecutionContext({
       store,
       storeManager: manager,
@@ -46,7 +46,7 @@ describe("worktree Session tools", () => {
       skillService: new SkillService({ builtinSkills: {} }),
       projectContext: createTestProjectContext(projectRoot),
       cwd: projectRoot,
-      agentName: "engineer",
+      agentName: "lead",
       currentDepth: 0,
       acquireSessionCwdTransition: () => () => undefined,
     });
@@ -79,7 +79,7 @@ describe("worktree Session tools", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const sessionId = crypto.randomUUID();
     const childSessionId = crypto.randomUUID();
-    const store = manager.create(sessionId, projectRoot, { agentName: "engineer" });
+    const store = manager.create(sessionId, projectRoot, { agentName: "lead" });
     const ctx = createToolExecutionContext({
       store,
       storeManager: manager,
@@ -94,7 +94,7 @@ describe("worktree Session tools", () => {
       skillService: new SkillService({ builtinSkills: {} }),
       projectContext: createTestProjectContext(projectRoot),
       cwd: projectRoot,
-      agentName: "engineer",
+      agentName: "lead",
       currentDepth: 0,
       acquireSessionCwdTransition: () => {
         throw new SessionCwdTransitionConflictError(sessionId, [childSessionId]);
@@ -115,7 +115,7 @@ describe("worktree Session tools", () => {
   test("rejects an explicit canonical target without changing Session cwd", async () => {
     const projectRoot = await createGitRepo("canonical-target");
     const manager = new SessionStoreManager({ logger: silentLogger });
-    const store = manager.create(crypto.randomUUID(), projectRoot, { agentName: "engineer" });
+    const store = manager.create(crypto.randomUUID(), projectRoot, { agentName: "lead" });
     const ctx = createToolExecutionContext({
       store,
       storeManager: manager,
@@ -130,7 +130,7 @@ describe("worktree Session tools", () => {
       skillService: new SkillService({ builtinSkills: {} }),
       projectContext: createTestProjectContext(projectRoot),
       cwd: projectRoot,
-      agentName: "engineer",
+      agentName: "lead",
       currentDepth: 0,
       acquireSessionCwdTransition: () => () => undefined,
     });
@@ -147,7 +147,7 @@ describe("worktree Session tools", () => {
     const projectRoot = resolve(TMP_DIR, "canonical-target-alias");
     await symlink(realProjectRoot, projectRoot, "dir");
     const manager = new SessionStoreManager({ logger: silentLogger });
-    const store = manager.create(crypto.randomUUID(), projectRoot, { agentName: "engineer" });
+    const store = manager.create(crypto.randomUUID(), projectRoot, { agentName: "lead" });
     const ctx = createToolExecutionContext({
       store,
       storeManager: manager,
@@ -162,7 +162,7 @@ describe("worktree Session tools", () => {
       skillService: new SkillService({ builtinSkills: {} }),
       projectContext: createTestProjectContext(projectRoot),
       cwd: projectRoot,
-      agentName: "engineer",
+      agentName: "lead",
       currentDepth: 0,
       acquireSessionCwdTransition: () => () => undefined,
     });
@@ -178,7 +178,7 @@ describe("worktree Session tools", () => {
     const projectRoot = await createGitRepo("reject-foreign-managed-targets");
     const manager = new SessionStoreManager({ logger: silentLogger });
     const sessionId = crypto.randomUUID();
-    const store = manager.create(sessionId, projectRoot, { agentName: "engineer" });
+    const store = manager.create(sessionId, projectRoot, { agentName: "lead" });
     const ctx = createToolExecutionContext({
       store,
       storeManager: manager,
@@ -193,7 +193,7 @@ describe("worktree Session tools", () => {
       skillService: new SkillService({ builtinSkills: {} }),
       projectContext: createTestProjectContext(projectRoot),
       cwd: projectRoot,
-      agentName: "engineer",
+      agentName: "lead",
       currentDepth: 0,
       acquireSessionCwdTransition: () => () => undefined,
     });
@@ -220,7 +220,7 @@ describe("worktree Session tools", () => {
     const projectRoot = await createGitRepo("allow-own-managed-target");
     const manager = new SessionStoreManager({ logger: silentLogger });
     const sessionId = crypto.randomUUID();
-    const store = manager.create(sessionId, projectRoot, { agentName: "engineer" });
+    const store = manager.create(sessionId, projectRoot, { agentName: "lead" });
     const own = await new WorktreeService({ canonicalRoot: projectRoot }).create({
       owner: { id: sessionId },
     });
@@ -238,7 +238,7 @@ describe("worktree Session tools", () => {
       skillService: new SkillService({ builtinSkills: {} }),
       projectContext: createTestProjectContext(projectRoot),
       cwd: projectRoot,
-      agentName: "engineer",
+      agentName: "lead",
       currentDepth: 0,
       acquireSessionCwdTransition: () => () => undefined,
     });
@@ -256,7 +256,7 @@ describe("worktree Session tools", () => {
     await git(projectRoot, ["worktree", "add", "-b", "user/external-target", externalPath, "HEAD"]);
     const manager = new SessionStoreManager({ logger: silentLogger });
     const sessionId = crypto.randomUUID();
-    const store = manager.create(sessionId, projectRoot, { agentName: "engineer" });
+    const store = manager.create(sessionId, projectRoot, { agentName: "lead" });
     const ctx = createToolExecutionContext({
       store,
       storeManager: manager,
@@ -271,7 +271,7 @@ describe("worktree Session tools", () => {
       skillService: new SkillService({ builtinSkills: {} }),
       projectContext: createTestProjectContext(projectRoot),
       cwd: projectRoot,
-      agentName: "engineer",
+      agentName: "lead",
       currentDepth: 0,
       acquireSessionCwdTransition: () => () => undefined,
     });
@@ -283,10 +283,10 @@ describe("worktree Session tools", () => {
     expect(store.getState().cwd).toBe(externalPath);
   });
 
-  test("enforces Engineer eligibility at the execution boundary", async () => {
+  test("enforces Lead eligibility at the execution boundary", async () => {
     const projectRoot = await createGitRepo("agent-boundary");
     const manager = new SessionStoreManager({ logger: silentLogger });
-    const store = manager.create(crypto.randomUUID(), projectRoot, { agentName: "engineer" });
+    const store = manager.create(crypto.randomUUID(), projectRoot, { agentName: "lead" });
     const ctx = createToolExecutionContext({
       store,
       storeManager: manager,

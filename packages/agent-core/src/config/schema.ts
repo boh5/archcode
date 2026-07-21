@@ -20,7 +20,7 @@ export const integrationsConfigSchema = z
   })
   .strict();
 
-export const agentConfigSchema = z
+export const profileConfigSchema = z
   .object({
     model: z.string().min(1),
     variant: z.string().optional(),
@@ -40,20 +40,18 @@ export const archcodeConfigSchema = z
     provider: providersConfigSchema,
     mcp: mcpConfigSchema.optional(),
     integrations: integrationsConfigSchema.optional(),
-    agents: z.strictObject({
-      engineer: agentConfigSchema,
-      plan: agentConfigSchema,
-      build: agentConfigSchema,
-      reviewer: agentConfigSchema,
-      explore: agentConfigSchema,
-      librarian: agentConfigSchema,
-      shaper: agentConfigSchema,
+    profiles: z.strictObject({
+      principal: profileConfigSchema,
+      deep: profileConfigSchema,
+      fast: profileConfigSchema,
     }),
     memory: memoryExtractionConfigSchema,
   })
   .strict();
 
-export type AgentConfig = z.infer<typeof agentConfigSchema>;
+export const PROFILE_NAMES = ["principal", "deep", "fast"] as const;
+export type ProfileName = (typeof PROFILE_NAMES)[number];
+export type ProfileConfig = z.infer<typeof profileConfigSchema>;
 export type GithubIntegrationConfig = z.infer<typeof githubIntegrationConfigSchema>;
 export type IntegrationsConfig = z.infer<typeof integrationsConfigSchema>;
 export type MemoryExtractionConfig = NonNullable<z.infer<typeof memoryExtractionConfigSchema>>;

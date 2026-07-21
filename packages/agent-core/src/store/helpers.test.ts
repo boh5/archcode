@@ -25,7 +25,7 @@ const TMP_DIR = join(import.meta.dir, "__test_tmp__", "helpers", crypto.randomUU
 const TEST_BINDING = {
   selection: { model: "test:model" }, providerId: "test", modelId: "model",
   providerDisplayName: "Test", modelDisplayName: "Model",
-  resolution: "agent_default" as const, modelRuntimeRevision: "runtime-1",
+  resolution: "profile_default" as const, modelRuntimeRevision: "runtime-1",
 };
 const executionStart = (executionId: string) => ({
   type: "execution-start" as const, executionId, binding: TEST_BINDING, origin: "user_message" as const,
@@ -211,6 +211,8 @@ function sampleChildSessionLinks(): ToolChildSessionLink[] {
       toolName: "delegate",
       childSessionId: "child-session",
       childAgentName: "explore",
+      childProfile: "fast",
+      childSkillNames: [],
       title: "Explore task",
       depth: 1,
       background: true,
@@ -264,9 +266,9 @@ function persistedState(
 ): PersistedSessionState {
   const delegationRequest: DelegationRequest = {
     agent_type: "explore",
+    profile: "fast",
     title: "Test child",
     objective: "Exercise persisted child identity",
-    owned_scope: [],
     skills: [],
     background: false,
   };
@@ -275,7 +277,7 @@ function persistedState(
     createdAt: 99,
     updatedAt: 99,
     cwd: TMP_DIR,
-    agentName: parentSessionId === undefined ? "engineer" : "explore",
+    agentName: parentSessionId === undefined ? "lead" : "explore",
     activeSkillNames: [],
     modelSelection: { revision: 0 },
     title: null,
@@ -307,7 +309,7 @@ function persistedToolBatch(
     batchId: "batch-1",
     executionId: "execution-1",
     step: 0,
-    agentName: "engineer",
+    agentName: "lead",
     allowedTools: ["ask_user", "bash"],
     agentSkills: [],
     partitions: [{ type: "serial", callIds: ["call-1"] }],
@@ -525,7 +527,7 @@ describe("session transcript serialization", () => {
 
     expect(loaded.getState().sessionId).toBe(sessionId);
     expect(loaded.getState().createdAt).toBe(state.createdAt);
-    expect(loaded.getState().agentName).toBe("engineer");
+    expect(loaded.getState().agentName).toBe("lead");
     expect(loaded.getState().messages).toEqual(state.messages);
     expect(loaded.getState().steps).toEqual(state.steps);
     expect(loaded.getState().stats).toEqual(state.stats);
@@ -637,6 +639,33 @@ describe("session transcript serialization", () => {
     expect(SessionFileSchema.safeParse(legacyChild).success).toBe(false);
   });
 
+  test("child Session rejects active Skills that differ from its delegation identity", () => {
+    const child = persistedState(
+      crypto.randomUUID(),
+      sampleMessages(),
+      sampleSteps(),
+      sampleTodos(),
+      createEmptySessionStats(),
+      [],
+      [],
+      "root-session",
+      "parent-session",
+    );
+
+    expect(SessionFileSchema.safeParse({
+      ...child,
+      activeSkillNames: ["codemap"],
+    }).success).toBe(false);
+    expect(SessionFileSchema.safeParse({
+      ...child,
+      activeSkillNames: ["codemap", "research-docs"],
+      delegationRequest: {
+        ...child.delegationRequest!,
+        skills: ["codemap", "research-docs", "codemap"],
+      },
+    }).success).toBe(true);
+  });
+
   test("Session event persistence rejects known payload types with missing or extra fields", async () => {
     const sessionId = uniqueSessionId("strict-event-payload");
     await sessionFileInternals.saveSessionTranscript(persistedState(sessionId), TMP_DIR);
@@ -708,7 +737,7 @@ describe("session transcript serialization", () => {
 
     expect(summaries.map((summary) => summary.sessionId)).toEqual([rootSessionId]);
     expect(summaries[0]?.rootSessionId).toBe(rootSessionId);
-    expect(summaries[0]?.agentName).toBe("engineer");
+    expect(summaries[0]?.agentName).toBe("lead");
     expect(summaries[0]?.parentSessionId).toBeUndefined();
   });
 
@@ -1240,7 +1269,7 @@ describe("session transcript serialization", () => {
     expect(parsed).not.toHaveProperty("pendingInteractions");
     expect(parsed.reminders).toEqual([]);
     expect(parsed.childSessionLinks).toEqual([]);
-    expect(parsed.agentName).toBe("engineer");
+    expect(parsed.agentName).toBe("lead");
     expect(parsed).not.toHaveProperty("schemaVersion");
     expect(parsed.cwd).toBe(TMP_DIR);
     expect(parsed.rootSessionId).toBe(sessionId);

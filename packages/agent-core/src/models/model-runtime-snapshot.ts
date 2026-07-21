@@ -3,9 +3,10 @@ import type {
   ModelSelectionRef,
 } from "@archcode/protocol";
 import type {
-  AgentConfig,
   ArchCodeConfig,
   ModelConfig,
+  ProfileConfig,
+  ProfileName,
 } from "../config";
 import type { ModelInfo, ProviderRegistry } from "../provider";
 import { cloneAndFreeze, deepFreeze } from "./immutable";
@@ -40,7 +41,7 @@ export class ModelRuntimeSnapshot {
   readonly catalog: ModelRuntimeCatalog;
 
   readonly #models: ReadonlyMap<string, SnapshotModel>;
-  readonly #agents: ReadonlyMap<string, AgentConfig>;
+  readonly #profiles: ReadonlyMap<ProfileName, ProfileConfig>;
   readonly #providerDisplayNames: ReadonlyMap<string, string>;
 
   constructor(options: ModelRuntimeSnapshotOptions) {
@@ -60,13 +61,13 @@ export class ModelRuntimeSnapshot {
       }
     }
 
-    const agents = new Map(
-      Object.entries(config.agents as Record<string, AgentConfig>),
+    const profiles = new Map(
+      Object.entries(config.profiles) as Array<[ProfileName, ProfileConfig]>,
     );
 
     this.revision = options.revision;
     this.#models = models;
-    this.#agents = agents;
+    this.#profiles = profiles;
     this.#providerDisplayNames = new Map(
       Object.entries(config.provider).map(([providerId, provider]) => [
         providerId,
@@ -74,10 +75,10 @@ export class ModelRuntimeSnapshot {
       ]),
     );
 
-    for (const [agentName, agent] of agents) {
-      if (!this.tryResolveSelection({ model: agent.model, variant: agent.variant })) {
+    for (const [profileName, profile] of profiles) {
+      if (!this.tryResolveSelection({ model: profile.model, variant: profile.variant })) {
         throw new InvalidModelRuntimeSnapshotError(
-          `Agent "${agentName}" has invalid default selection "${formatSelection(agent)}"`,
+          `Profile "${profileName}" has invalid default selection "${formatSelection(profile)}"`,
         );
       }
     }
@@ -86,14 +87,16 @@ export class ModelRuntimeSnapshot {
     Object.freeze(this);
   }
 
-  getAgentDefault(agentName: string): ModelSelectionRef | undefined {
-    const agent = this.#agents.get(agentName);
-    if (!agent) return undefined;
-    return freezeSelection({ model: agent.model, variant: agent.variant });
+  getProfileDefault(profileName: ProfileName): ModelSelectionRef {
+    const profile = this.#profiles.get(profileName);
+    if (!profile) {
+      throw new InvalidModelRuntimeSnapshotError(`Profile "${profileName}" is absent from the model runtime snapshot`);
+    }
+    return freezeSelection({ model: profile.model, variant: profile.variant });
   }
 
-  getAgentOptions(agentName: string): AgentConfig["options"] {
-    return this.#agents.get(agentName)?.options;
+  getProfileOptions(profileName: ProfileName): ProfileConfig["options"] {
+    return this.#profiles.get(profileName)?.options;
   }
 
   getProviderDisplayName(providerId: string): string {
@@ -139,14 +142,19 @@ function buildCatalog(
       variants: Object.keys(model.variants ?? {}),
     })),
   }));
-  const agentDefaults = Object.fromEntries(
-    Object.entries(config.agents as Record<string, AgentConfig>).map(([agentName, agent]) => [
-      agentName,
-      { model: agent.model, variant: agent.variant },
-    ]),
-  );
+  const profileDefaults = {
+    principal: selectionFromProfile(config.profiles.principal),
+    deep: selectionFromProfile(config.profiles.deep),
+    fast: selectionFromProfile(config.profiles.fast),
+  };
 
-  return deepFreeze({ revision, providers, agentDefaults });
+  return deepFreeze({ revision, providers, profileDefaults });
+}
+
+function selectionFromProfile(profile: ProfileConfig): ModelSelectionRef {
+  return profile.variant === undefined
+    ? { model: profile.model }
+    : { model: profile.model, variant: profile.variant };
 }
 
 function freezeSelection(selection: ModelSelectionRef): ModelSelectionRef {

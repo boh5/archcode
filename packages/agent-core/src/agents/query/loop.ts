@@ -88,6 +88,7 @@ type ToolCallArray = Array<{
 
 interface ToolBatchExecutionResult {
   readonly sessionCwdChanged: boolean;
+  readonly executionCompleted?: boolean;
   readonly waitingForHuman?: boolean;
   readonly manualInspectionReason?: string;
 }
@@ -508,6 +509,9 @@ export async function runQueryLoop(
             cwd: store.getState().cwd,
           },
         };
+      }
+      if (toolExecution.executionCompleted) {
+        return { text: lastText, steps, status: "completed" };
       }
       if (toolExecution.waitingForHuman) {
         runEndStatus = "waiting_for_human";
@@ -992,6 +996,7 @@ function toolBatchExecutionResult(result: SessionToolBatchAdvanceResult): ToolBa
   }
   return {
     sessionCwdChanged: result.sessionCwdChanged,
+    ...(result.status === "execution_completed" ? { executionCompleted: true } : {}),
     ...(result.status === "waiting_for_human" ? { waitingForHuman: true } : {}),
   };
 }
@@ -1013,6 +1018,9 @@ function finishToolBatchAdvance(
       runEndStatus: "completed",
       result: { text, steps, status: "completed", cwdChanged: { previousCwd: executionCwd, cwd: store.getState().cwd } },
     };
+  }
+  if (result.status === "execution_completed") {
+    return { runEndStatus: "completed", result: { text, steps, status: "completed" } };
   }
   if (result.status === "waiting_for_human") {
     return { runEndStatus: "waiting_for_human", result: { text, steps, status: "waiting_for_human" } };

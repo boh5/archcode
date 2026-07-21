@@ -8,11 +8,11 @@ import { SessionInputConflictError, SessionInputService } from "./service";
 const WORKSPACE = join(import.meta.dir, "__test_tmp__", crypto.randomUUID());
 const ROOT_SESSION_ID = "00000000-0000-4000-8000-000000000001";
 const CHILD_SESSION_ID = "00000000-0000-4000-8000-000000000002";
-const REQUESTED_MODEL_SELECTION = { mode: "agent_default" as const, selection: { model: "test:model" } };
+const REQUESTED_MODEL_SELECTION = { mode: "profile_default" as const, selection: { model: "test:model" } };
 const BINDING = {
   selection: { model: "test:model" }, providerId: "test", modelId: "model",
   providerDisplayName: "Test", modelDisplayName: "Model",
-  resolution: "agent_default" as const, modelRuntimeRevision: "runtime-1",
+  resolution: "profile_default" as const, modelRuntimeRevision: "runtime-1",
 };
 const MODEL_AUDIT = { requested: REQUESTED_MODEL_SELECTION, actual: BINDING.selection };
 
@@ -24,7 +24,7 @@ describe("SessionInputService", () => {
     await mkdir(WORKSPACE, { recursive: true });
     manager = new SessionStoreManager({ logger: silentLogger });
     service = new SessionInputService(manager);
-    await manager.createSessionFile(WORKSPACE, { agentName: "engineer" }, ROOT_SESSION_ID);
+    await manager.createSessionFile(WORKSPACE, { agentName: "lead" }, ROOT_SESSION_ID);
   });
 
   afterEach(async () => {

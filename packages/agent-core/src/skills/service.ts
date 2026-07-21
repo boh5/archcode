@@ -15,7 +15,15 @@ import {
 
 const PROJECT_SKILLS_DIR = join(PROJECT_STATE_DIR_NAME, "skills");
 const SKILL_FILE = "SKILL.md";
-const RESERVED_BUILTIN_SKILLS = new Set(["automation-create"]);
+export const RESERVED_BUILTIN_SKILL_NAMES = new Set([
+  "automation-create",
+  "orchestrate-work",
+  "plan-work",
+  "run-goal",
+  "shape-todo",
+  "review-work",
+  "goal-review",
+]);
 
 export class SkillPathError extends Error {
   public readonly path: string;
@@ -108,10 +116,9 @@ export class SkillService {
     name: string,
     allowedNames?: readonly string[],
   ): Promise<ResolvedSkill | null> {
-    this.#assertAllowedName(name, allowedNames);
     assertSkillName(name);
 
-    const candidates = await this.#candidates(projectRoot, name);
+    const candidates = await this.#candidates(projectRoot, name, allowedNames);
     for (const candidate of candidates) {
       if (candidate.content === undefined) continue;
       return this.#parseCandidate(name, candidate);
@@ -129,7 +136,7 @@ export class SkillService {
 
     for (const root of [this.#projectSkillsRoot(projectRoot), this.userSkillsRoot]) {
       for (const name of await this.#listSkillDirs(root)) {
-        if (allowed !== null && !allowed.has(name)) continue;
+        if (RESERVED_BUILTIN_SKILL_NAMES.has(name)) continue;
         names.add(name);
       }
     }
@@ -142,10 +149,16 @@ export class SkillService {
     return [...names].sort();
   }
 
-  async #candidates(projectRoot: string, name: string): Promise<SkillCandidate[]> {
+  async #candidates(
+    projectRoot: string,
+    name: string,
+    allowedNames?: readonly string[],
+  ): Promise<SkillCandidate[]> {
     const builtin = this.#builtinSkills[name];
-    if (RESERVED_BUILTIN_SKILLS.has(name)) {
-      return [{ source: "builtin", content: builtin }];
+    if (RESERVED_BUILTIN_SKILL_NAMES.has(name)) {
+      return allowedNames === undefined || allowedNames.includes(name)
+        ? [{ source: "builtin", content: builtin }]
+        : [];
     }
     const projectPath = await this.#resolveSkillPath(this.#projectSkillsRoot(projectRoot), name);
     const userPath = await this.#resolveSkillPath(this.userSkillsRoot, name);
@@ -153,7 +166,9 @@ export class SkillService {
     return [
       { source: "project", path: projectPath, content: await this.#readFileOrUndefined(projectPath) },
       { source: "user", path: userPath, content: await this.#readFileOrUndefined(userPath) },
-      { source: "builtin", content: builtin },
+      ...(allowedNames === undefined || allowedNames.includes(name)
+        ? [{ source: "builtin" as const, content: builtin }]
+        : []),
     ];
   }
 
@@ -182,12 +197,6 @@ export class SkillService {
         message: error instanceof Error ? error.message : String(error),
         cause: error,
       });
-    }
-  }
-
-  #assertAllowedName(name: string, allowedNames?: readonly string[]): void {
-    if (allowedNames !== undefined && !allowedNames.includes(name)) {
-      throw new SkillNotFoundError(name);
     }
   }
 

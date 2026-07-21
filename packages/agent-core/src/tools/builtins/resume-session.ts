@@ -59,7 +59,7 @@ export const resumeSessionTool = defineTool({
   name: "resume_session",
   description: [
     "Resume one stopped direct child Session for the same delegated responsibility.",
-    "instruction refines the next execution but cannot change the durable Agent type, title, Skills, or owned scope.",
+    "instruction refines the next execution but cannot change the durable Agent, Profile, Skills, title, or objective.",
     "The resumed child returns a normal final response bound to the new execution.",
   ].join("\n"),
   inputSchema: ResumeSessionInputSchema,

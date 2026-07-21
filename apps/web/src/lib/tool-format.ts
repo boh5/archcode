@@ -286,7 +286,7 @@ const DETAIL_FIELDS_BY_TOOL: Partial<Record<BuiltinToolName, string[]>> = {
   [TOOL_LSP_GOTO_DEFINITION]: ["filePath", "path", "line", "character"],
   [TOOL_LSP_FIND_REFERENCES]: ["filePath", "path", "line", "character"],
   [TOOL_LSP_SYMBOLS]: ["filePath", "query", "scope"],
-  [TOOL_DELEGATE]: ["agent_type", "title", "objective", "owned_scope", "skills", "background"],
+  [TOOL_DELEGATE]: ["agent_type", "profile", "title", "objective", "skills", "background"],
   [TOOL_TODO_WRITE]: [],
   [TOOL_ASK_USER]: ["question"],
   [TOOL_MEMORY_READ]: ["topic", "path"],
@@ -510,19 +510,20 @@ export function getToolInvalidInputMessage(toolName: string, input: unknown): st
     if (!obj.agent_type || typeof obj.agent_type !== "string") {
       return `Invalid delegate input: missing required agent_type`;
     }
+    if (!obj.profile || typeof obj.profile !== "string") {
+      return `Invalid delegate input: missing required profile`;
+    }
     if (!obj.title || typeof obj.title !== "string") {
       return `Invalid delegate input: missing required title`;
     }
     if (!obj.objective || typeof obj.objective !== "string") {
       return `Invalid delegate input: missing required objective`;
     }
-    for (const field of ["owned_scope", "skills"] as const) {
-      if (!Array.isArray(obj[field])) return `Invalid delegate input: missing required ${field}`;
-    }
+    if (!Array.isArray(obj.skills)) return `Invalid delegate input: missing required skills`;
     if (typeof obj.background !== "boolean") {
       return `Invalid delegate input: missing required background`;
     }
-    const allowed = new Set(["agent_type", "title", "objective", "owned_scope", "skills", "background"]);
+    const allowed = new Set(["agent_type", "profile", "title", "objective", "skills", "background"]);
     const unexpected = Object.keys(obj).find((field) => !allowed.has(field));
     if (unexpected) return `Invalid delegate input: unexpected field ${unexpected}`;
   }

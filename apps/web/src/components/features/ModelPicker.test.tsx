@@ -50,8 +50,10 @@ const catalog: ModelRuntimeCatalog = {
       models: [{ id: "claude-sonnet", qualifiedId: "anthropic:claude-sonnet", displayName: "Claude Sonnet", variants: ["fast", "deep"] }],
     },
   ],
-  agentDefaults: {
-    engineer: { model: "openai:gpt-5", variant: "fast" },
+  profileDefaults: {
+    principal: { model: "openai:gpt-5", variant: "fast" },
+    deep: { model: "openai:gpt-5", variant: "fast" },
+    fast: { model: "openai:gpt-5", variant: "fast" },
   },
 };
 
@@ -93,7 +95,6 @@ function renderPicker(props: Partial<Parameters<typeof ModelPicker>[0]> = {}) {
   act(() => root.render(
     <ModelPicker
       catalog={catalog}
-      agentName="engineer"
       next={next}
       active={active}
       onSelect={onSelect}
@@ -194,27 +195,27 @@ describe("ModelPicker", () => {
     outside.remove();
   });
 
-  test("offers Agent default with its resolved model", () => {
+  test("offers the Principal profile with its resolved model", () => {
     renderPicker();
     openPicker();
-    expect(container.querySelector('[data-testid="model-picker-agent-default"]')?.textContent).toContain("GPT-5 · fast");
-    click(container.querySelector('[data-testid="model-picker-agent-default"]'));
-    expect(onSelect).toHaveBeenCalledWith({ mode: "agent_default", selection: { model: "openai:gpt-5", variant: "fast" } });
+    expect(container.querySelector('[data-testid="model-picker-principal-profile"]')?.textContent).toContain("GPT-5 · fast");
+    click(container.querySelector('[data-testid="model-picker-principal-profile"]'));
+    expect(onSelect).toHaveBeenCalledWith({ mode: "profile_default", selection: { model: "openai:gpt-5", variant: "fast" } });
   });
 
   test("keeps requested mode in the popover and exactly one selected option", () => {
     const defaultBinding = {
       ...active,
       selection: { model: "openai:gpt-5", variant: "fast" },
-      resolution: "agent_default" as const,
+      resolution: "profile_default" as const,
       modelRuntimeRevision: catalog.revision,
     };
-    renderPicker({ next: { requested: { mode: "agent_default", selection: defaultBinding.selection }, resolved: defaultBinding }, active: undefined });
+    renderPicker({ next: { requested: { mode: "profile_default", selection: defaultBinding.selection }, resolved: defaultBinding }, active: undefined });
     expect(container.querySelector('[data-testid="model-picker-trigger"]')?.textContent).toContain("GPT-5 · fast");
-    expect(container.querySelector('[data-testid="model-picker-trigger"]')?.textContent).not.toContain("Agent default");
+    expect(container.querySelector('[data-testid="model-picker-trigger"]')?.textContent).not.toContain("Principal profile");
     openPicker();
-    expect(container.querySelector('[data-testid="model-picker-next-mode"]')?.textContent).toBe("· Agent default");
-    expect(container.querySelector('[data-testid="model-picker-agent-default"] [aria-label="Selected"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="model-picker-next-mode"]')?.textContent).toBe("· Principal profile");
+    expect(container.querySelector('[data-testid="model-picker-principal-profile"] [aria-label="Selected"]')).not.toBeNull();
     expect(container.querySelector('button[data-model="openai:gpt-5"][data-variant="fast"] [aria-label="Selected"]')).toBeNull();
     act(() => document.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
 
@@ -223,7 +224,7 @@ describe("ModelPicker", () => {
     expect(container.querySelector('[data-testid="model-picker-trigger"]')?.textContent).not.toContain("Override");
     openPicker();
     expect(container.querySelector('[data-testid="model-picker-next-mode"]')?.textContent).toBe("· Override");
-    expect(container.querySelector('[data-testid="model-picker-agent-default"] [aria-label="Selected"]')).toBeNull();
+    expect(container.querySelector('[data-testid="model-picker-principal-profile"] [aria-label="Selected"]')).toBeNull();
     expect(container.querySelector('button[data-model="openai:gpt-5"][data-variant="fast"] [aria-label="Selected"]')).not.toBeNull();
   });
 
