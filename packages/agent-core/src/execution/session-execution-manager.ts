@@ -70,7 +70,6 @@ import {
 import {
   SessionFamilyActiveError,
   SessionFamilyIdentityUnavailableError,
-  SessionFamilyStopConflictError,
   SessionFamilyStopInProgressError,
   type AcquireSessionFamilyStopInput,
   type SessionFamilyStopLease,
@@ -147,6 +146,8 @@ interface PendingSessionExecution extends Omit<ActiveSessionExecution, "promise"
   steerGateOpen: boolean;
   readonly steerMailbox: ResolvedSessionInputSnapshot[];
   readonly steerOperations: Set<Promise<void>>;
+  childSlotParentSessionId?: string;
+  childSlotReleased?: boolean;
   resolveStarted(): void;
   rejectStarted(error: unknown): void;
 }
@@ -159,6 +160,8 @@ interface ActiveSessionCommand {
   readonly abortController: AbortController;
   readonly completion: Promise<void>;
   readonly binding: ExecutionModelBinding;
+  resolveCompletion(): void;
+  rejectCompletion(error: unknown): void;
 }
 
 export type SessionCommandRunResult<T> =
@@ -534,11 +537,13 @@ export class SessionExecutionManager {
       abortController,
       completion,
       binding,
+      resolveCompletion,
+      rejectCompletion,
     };
     this.#activeCommands.set(familyKey, command);
     this.#publishSessionRuntimeChange(input.workspaceRoot, state.rootSessionId);
     try {
-      const result = await execute(binding, abortController.signal);
+      const result = await raceAbort(execute(binding, abortController.signal), abortController.signal);
       resolveCompletion();
       return { kind: "executed", result };
     } catch (error) {
@@ -1243,6 +1248,8 @@ export class SessionExecutionManager {
         origin: "tool_call",
       }, newlyActivatedAgent);
       newlyActivatedAgent = undefined;
+      this.#attachChildSlotOwnership(execution, request.parentSessionId);
+      childSlotReserved = false;
       await execution.started;
       this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, "running", childTitle, createdAt, background);
       childLinked = true;
@@ -1261,6 +1268,7 @@ export class SessionExecutionManager {
       }
       if (childLaunchReserved) releaseChildLaunch();
       if (childSlotReserved) this.#releaseChildSlot(workspaceRoot, request.parentSessionId);
+      if (execution !== undefined) this.#releaseExecutionChildSlot(execution);
       if (childStore !== undefined) {
         if (childLinked) {
           this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, "failed", childTitle, createdAt, background);
@@ -1287,12 +1295,10 @@ export class SessionExecutionManager {
       .finally(() => {
         if (timeout !== undefined) clearTimeout(timeout);
         removeParentAbort();
-        if (childSlotReserved) {
-          this.#releaseChildSlot(workspaceRoot, request.parentSessionId);
-          childSlotReserved = false;
-        }
+        this.#releaseExecutionChildSlot(execution);
         const current = this.#active.get(scopedKey(workspaceRoot, childSessionId));
         if (current !== undefined && current.executionToken !== execution.executionToken) return;
+        if (this.#isParentChildLinkTerminal(workspaceRoot, childSessionId)) return;
         const status = childTerminalStatus(childStore.getState().executions.at(-1), execution.abortController.signal);
         this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, status, childTitle, createdAt, background);
         if (background && childPolicy.terminalReminders && status !== "waiting_for_human") {
@@ -1468,6 +1474,8 @@ export class SessionExecutionManager {
           origin: "tool_call",
         }, newlyActivatedAgent);
         newlyActivatedAgent = undefined;
+        this.#attachChildSlotOwnership(execution, request.parentSessionId);
+        childSlotReserved = false;
         await execution.started;
         this.#appendResumeChildLinkStatus(
           workspaceRoot,
@@ -1491,6 +1499,7 @@ export class SessionExecutionManager {
       }
       if (childLaunchReserved) releaseChildLaunch();
       if (childSlotReserved) this.#releaseChildSlot(workspaceRoot, request.parentSessionId);
+      if (execution !== undefined) this.#releaseExecutionChildSlot(execution);
       throw error;
     }
 
@@ -1509,12 +1518,10 @@ export class SessionExecutionManager {
       .finally(() => {
         if (timeout !== undefined) clearTimeout(timeout);
         removeParentAbort();
-        if (childSlotReserved) {
-          this.#releaseChildSlot(workspaceRoot, request.parentSessionId);
-          childSlotReserved = false;
-        }
+        this.#releaseExecutionChildSlot(claimedExecution);
         const current = this.#active.get(scopedKey(workspaceRoot, request.sessionId));
         if (current !== undefined && current.executionToken !== claimedExecution.executionToken) return;
+        if (this.#isParentChildLinkTerminal(workspaceRoot, request.sessionId)) return;
         const status = childTerminalStatus(childStore.getState().executions.at(-1), claimedExecution.abortController.signal);
         this.#appendResumeChildLinkStatus(
           workspaceRoot,
@@ -1911,12 +1918,14 @@ export class SessionExecutionManager {
 
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) {
-        const stuckSessionIds = [...new Set([
-          ...executions.map((execution) => execution.sessionId),
-          ...pendingChildSessionIds,
-          ...(command === undefined ? [] : [command.rootSessionId]),
-        ])].sort();
-        throw new SessionFamilyStopConflictError(rootSessionId, stuckSessionIds);
+        this.#forceTerminalizeStuckFamily({
+          workspaceRoot,
+          rootSessionId,
+          executions,
+          command,
+          pendingChildSessionIds,
+        });
+        return;
       }
 
       const pendingPromises = [
@@ -1932,6 +1941,179 @@ export class SessionExecutionManager {
         ]);
       }
     }
+  }
+
+  #forceTerminalizeStuckFamily(input: {
+    readonly workspaceRoot: string;
+    readonly rootSessionId: string;
+    readonly executions: readonly PendingSessionExecution[];
+    readonly command: ActiveSessionCommand | undefined;
+    readonly pendingChildSessionIds: readonly string[];
+  }): void {
+    const stuckSessionIds = [...new Set([
+      ...input.executions.map((execution) => execution.sessionId),
+      ...input.pendingChildSessionIds,
+      ...(input.command === undefined ? [] : [input.command.rootSessionId]),
+    ])].sort();
+
+    this.#logger.warn("session.family_stop.force_terminalize", {
+      context: {
+        rootSessionId: input.rootSessionId,
+        stuckSessionIds,
+      },
+      meta: { workspaceRoot: input.workspaceRoot },
+    });
+
+    for (const execution of input.executions) {
+      this.#forceTerminalizeExecution(execution, "Session family cancelled");
+    }
+
+    if (input.command !== undefined) {
+      this.#forceTerminalizeCommand(input.command, "Session family cancelled");
+    }
+
+    const launchKey = scopedKey(input.workspaceRoot, input.rootSessionId);
+    if (this.#pendingChildLaunches.has(launchKey)) {
+      this.#pendingChildLaunches.delete(launchKey);
+    }
+
+    this.#publishSessionRuntimeChange(input.workspaceRoot, input.rootSessionId);
+  }
+
+  #forceTerminalizeCommand(command: ActiveSessionCommand, reason: string): void {
+    const familyKey = scopedKey(command.workspaceRoot, command.rootSessionId);
+    const current = this.#activeCommands.get(familyKey);
+    if (current?.token !== command.token) return;
+
+    command.abortController.abort(new Error(reason));
+    this.#activeCommands.delete(familyKey);
+    command.rejectCompletion(new Error(reason));
+  }
+
+  #forceTerminalizeExecution(execution: PendingSessionExecution, reason: string): void {
+    const key = scopedKey(execution.workspaceRoot, execution.sessionId);
+    const current = this.#active.get(key);
+    if (current?.executionToken !== execution.executionToken) return;
+
+    this.#cancelExecution(execution, reason);
+    this.#closeSteerGate(execution);
+    if (!execution.ready) {
+      execution.rejectStarted(new Error(reason));
+    }
+
+    const store = this.#config.getSessionStore(execution.sessionId, execution.workspaceRoot);
+    if (
+      store !== undefined
+      && store.getState().isRunning
+      && store.getState().currentExecutionId === execution.executionId
+    ) {
+      const status = abortExecutionStatus(execution.abortController.signal);
+      store.getState().append({
+        type: "execution-end",
+        status,
+        error: reason,
+      });
+      void this.#config.flushSessionStore(execution.sessionId, execution.workspaceRoot).catch((error) => {
+        this.#logger.error("session.family_stop.force_terminalize_flush_failed", {
+          error,
+          context: { sessionId: execution.sessionId, rootSessionId: execution.rootSessionId },
+          meta: { workspaceRoot: execution.workspaceRoot },
+        });
+      });
+    }
+
+    this.#forceTerminalizeParentChildLink(execution, reason);
+    this.#releaseExecutionChildSlot(execution);
+
+    this.#active.delete(key);
+    if (this.#freshUserInputs.get(key)?.executionId === execution.executionId) {
+      this.#freshUserInputs.delete(key);
+    }
+  }
+
+  #attachChildSlotOwnership(
+    execution: ActiveSessionExecution | PendingSessionExecution,
+    parentSessionId: string,
+  ): void {
+    const pending = execution as PendingSessionExecution;
+    pending.childSlotParentSessionId = parentSessionId;
+    pending.childSlotReleased = false;
+  }
+
+  #releaseExecutionChildSlot(execution: ActiveSessionExecution | PendingSessionExecution): void {
+    const pending = execution as PendingSessionExecution;
+    const parentSessionId = pending.childSlotParentSessionId;
+    if (parentSessionId === undefined || pending.childSlotReleased) return;
+    pending.childSlotReleased = true;
+    this.#releaseChildSlot(execution.workspaceRoot, parentSessionId);
+  }
+
+  #isParentChildLinkTerminal(workspaceRoot: string, childSessionId: string): boolean {
+    const childStore = this.#config.getSessionStore(childSessionId, workspaceRoot);
+    const parentSessionId = childStore?.getState().parentSessionId;
+    if (parentSessionId === undefined) return false;
+    const parentStore = this.#config.getSessionStore(parentSessionId, workspaceRoot);
+    const links = parentStore?.getState().childSessionLinks ?? [];
+    for (let index = links.length - 1; index >= 0; index -= 1) {
+      const candidate = links[index];
+      if (candidate?.childSessionId === childSessionId) {
+        return isTerminalChildSessionStatus(candidate.status);
+      }
+    }
+    return false;
+  }
+
+  #forceTerminalizeParentChildLink(execution: PendingSessionExecution, reason: string): void {
+    const childStore = this.#config.getSessionStore(execution.sessionId, execution.workspaceRoot);
+    const childState = childStore?.getState();
+    const parentSessionId = childState?.parentSessionId;
+    if (parentSessionId === undefined) return;
+
+    const parentStore = this.#config.getSessionStore(parentSessionId, execution.workspaceRoot);
+    if (parentStore === undefined) return;
+
+    const links = parentStore.getState().childSessionLinks;
+    let link: ToolChildSessionLink | undefined;
+    for (let index = links.length - 1; index >= 0; index -= 1) {
+      const candidate = links[index];
+      if (candidate?.childSessionId === execution.sessionId && !isTerminalChildSessionStatus(candidate.status)) {
+        link = candidate;
+        break;
+      }
+    }
+    if (link === undefined) return;
+
+    const run = childState?.executions.at(-1);
+    const status = childTerminalStatus(run, execution.abortController.signal);
+    if (status === "waiting_for_human") return;
+
+    parentStore.getState().append({
+      type: "tool-child-session-link",
+      link: {
+        ...link,
+        status,
+        ...(run?.startedAt === undefined ? {} : { startedAt: run.startedAt }),
+        ...(run?.endedAt === undefined ? {} : { endedAt: run.endedAt }),
+        ...(run?.durationMs === undefined ? {} : { durationMs: run.durationMs }),
+        error: run?.error ?? reason,
+      },
+    });
+
+    if (link.background) {
+      appendTerminalReminder(parentStore, execution.sessionId, status);
+    }
+
+    void this.#config.flushSessionStore(parentSessionId, execution.workspaceRoot).catch((error) => {
+      this.#logger.error("session.family_stop.force_child_link_flush_failed", {
+        error,
+        context: {
+          sessionId: execution.sessionId,
+          parentSessionId,
+          rootSessionId: execution.rootSessionId,
+        },
+        meta: { workspaceRoot: execution.workspaceRoot },
+      });
+    });
   }
 
   #ancestorSessionIds(workspaceRoot: string, sessionId: string | undefined): Set<string> {
@@ -2995,4 +3177,35 @@ async function waitForCommandToStop(command: ActiveSessionCommand): Promise<void
     setTimeout(() => reject(new Error(`Timed out waiting for session command "${command.clientRequestId}" to abort`)), ABORT_AND_WAIT_TIMEOUT_MS);
   });
   await Promise.race([Promise.allSettled([command.completion]).then(() => undefined), timeout]);
+}
+
+async function raceAbort<T>(promise: Promise<T>, abort: AbortSignal): Promise<T> {
+  if (abort.aborted) throw createAbortError(abort);
+  return await new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      cleanup();
+      reject(createAbortError(abort));
+    };
+    const cleanup = () => {
+      abort.removeEventListener("abort", onAbort);
+    };
+    abort.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
+}
+
+function createAbortError(signal?: AbortSignal): DOMException {
+  const reason = signal?.reason;
+  if (reason instanceof DOMException) return reason;
+  if (reason instanceof Error) return new DOMException(reason.message, "AbortError");
+  return new DOMException("The operation was aborted.", "AbortError");
 }

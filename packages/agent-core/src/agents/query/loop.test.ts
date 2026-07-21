@@ -520,4 +520,60 @@ describe("QueryLoop Tool Output Plane hard cut", () => {
     expect(await runQueryLoop(harness.options)).toMatchObject({ status: "aborted" });
     expect(afterLoopEnd).toHaveBeenCalledTimes(1);
   });
+
+  test("aborts a hung fullStream without waiting for the next chunk", async () => {
+    const harness = await createHarness();
+    const controller = new AbortController();
+    harness.options.abort = controller.signal;
+    harness.appendUser("run");
+
+    setLlmAdapterForTest({
+      streamText: mock(() => ({
+        fullStream: (async function* () {
+          yield {
+            type: "tool-input-start",
+            id: "call-hung",
+            toolName: "file_write",
+          } as StreamPart;
+          await new Promise<never>(() => undefined);
+        })(),
+        finishReason: new Promise<string>(() => undefined),
+        usage: new Promise(() => undefined),
+        text: new Promise<string>(() => undefined),
+        toolCalls: new Promise(() => undefined),
+      }) as never),
+    });
+
+    const running = runQueryLoop(harness.options);
+    await Bun.sleep(20);
+    controller.abort(new DOMException("stopped", "AbortError"));
+
+    await expect(running).resolves.toMatchObject({ status: "aborted" });
+    expect(streamEvents(harness)).toContain("tool-input-start");
+  });
+
+  test("aborts hung finalize promises after the stream ends", async () => {
+    const harness = await createHarness();
+    const controller = new AbortController();
+    harness.options.abort = controller.signal;
+    harness.appendUser("run");
+
+    setLlmAdapterForTest({
+      streamText: mock(() => ({
+        fullStream: (async function* () {
+          yield { type: "text-delta", text: "partial" } as StreamPart;
+        })(),
+        finishReason: new Promise<string>(() => undefined),
+        usage: new Promise(() => undefined),
+        text: new Promise<string>(() => undefined),
+        toolCalls: new Promise(() => undefined),
+      }) as never),
+    });
+
+    const running = runQueryLoop(harness.options);
+    await Bun.sleep(20);
+    controller.abort(new DOMException("stopped", "AbortError"));
+
+    await expect(running).resolves.toMatchObject({ status: "aborted" });
+  });
 });

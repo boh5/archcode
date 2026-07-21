@@ -187,7 +187,7 @@ async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttem
     }
     return { outcome: "success", finalized: finalized.finalized, streamError };
   } catch (err) {
-    await settleModelResultPromises(result);
+    await settleModelResultPromises(result, abort);
     const failure = buildRetryOrTerminalFailure(err, store, step, abort, redactProviderSecrets);
     store.getState().append({
       type: "step-end",
@@ -199,14 +199,56 @@ async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttem
   }
 }
 
-async function settleModelResultPromises(result: AnyStreamTextResult | undefined): Promise<void> {
+async function settleModelResultPromises(
+  result: AnyStreamTextResult | undefined,
+  abort?: AbortSignal,
+): Promise<void> {
   if (!result) return;
-  await Promise.allSettled([
-    result.finishReason,
-    result.usage,
-    result.text,
-    result.toolCalls,
-  ]);
+  if (abort?.aborted) return;
+  try {
+    await raceAbort(
+      Promise.allSettled([
+        Promise.resolve(result.finishReason),
+        Promise.resolve(result.usage),
+        Promise.resolve(result.text),
+        Promise.resolve(result.toolCalls),
+      ]).then(() => undefined),
+      abort,
+    );
+  } catch {
+  }
+}
+
+async function raceAbort<T>(promise: Promise<T>, abort?: AbortSignal): Promise<T> {
+  if (!abort) return await promise;
+  if (abort.aborted) throw createAbortError(abort);
+  return await new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      cleanup();
+      reject(createAbortError(abort));
+    };
+    const cleanup = () => {
+      abort.removeEventListener("abort", onAbort);
+    };
+    abort.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
+}
+
+function createAbortError(signal?: AbortSignal): DOMException {
+  const reason = signal?.reason;
+  if (reason instanceof DOMException) return reason;
+  if (reason instanceof Error) return new DOMException(reason.message, "AbortError");
+  return new DOMException("The operation was aborted.", "AbortError");
 }
 
 export async function runQueryLoop(
@@ -635,46 +677,48 @@ async function consumeFullStream(
   };
 
   try {
-    for await (const chunk of fullStream) {
-      if (abort?.aborted) break;
+    await raceAbort((async () => {
+      for await (const chunk of fullStream) {
+        if (abort?.aborted) break;
 
-      if (chunk.type === "error") {
-        streamError = chunk.error;
-        continue;
-      }
+        if (chunk.type === "error") {
+          streamError = chunk.error;
+          continue;
+        }
 
-      if (chunk.type === "text-delta") {
-        appendText(textRedactor.push(chunk.text));
-        continue;
-      }
+        if (chunk.type === "text-delta") {
+          appendText(textRedactor.push(chunk.text));
+          continue;
+        }
 
-      if (chunk.type === "reasoning-delta") {
-        appendReasoning(reasoningRedactor.push(chunk.text));
-        continue;
-      }
+        if (chunk.type === "reasoning-delta") {
+          appendReasoning(reasoningRedactor.push(chunk.text));
+          continue;
+        }
 
-      if (chunk.type === "tool-input-start") {
-        assertSafeProviderToolIdentifier(chunk.id, "toolCallId", binding);
-        assertSafeProviderToolIdentifier(chunk.toolName, "toolName", binding);
-        store.getState().append({
-          type: "tool-input-start",
-          toolCallId: chunk.id,
-          toolName: chunk.toolName,
-        });
-        continue;
-      }
+        if (chunk.type === "tool-input-start") {
+          assertSafeProviderToolIdentifier(chunk.id, "toolCallId", binding);
+          assertSafeProviderToolIdentifier(chunk.toolName, "toolName", binding);
+          store.getState().append({
+            type: "tool-input-start",
+            toolCallId: chunk.id,
+            toolName: chunk.toolName,
+          });
+          continue;
+        }
 
-      if (chunk.type === "tool-call") {
-        assertSafeProviderToolIdentifier(chunk.toolCallId, "toolCallId", binding);
-        assertSafeProviderToolIdentifier(chunk.toolName, "toolName", binding);
-        store.getState().append({
-          type: "tool-call",
-          toolCallId: chunk.toolCallId,
-          toolName: chunk.toolName,
-          input: redactValue(binding.modelInfo.redactSensitiveValue(chunk.input)),
-        });
+        if (chunk.type === "tool-call") {
+          assertSafeProviderToolIdentifier(chunk.toolCallId, "toolCallId", binding);
+          assertSafeProviderToolIdentifier(chunk.toolName, "toolName", binding);
+          store.getState().append({
+            type: "tool-call",
+            toolCallId: chunk.toolCallId,
+            toolName: chunk.toolName,
+            input: redactValue(binding.modelInfo.redactSensitiveValue(chunk.input)),
+          });
+        }
       }
-    }
+    })(), abort);
   } finally {
     appendText(textRedactor.flush());
     appendReasoning(reasoningRedactor.flush());
@@ -699,9 +743,17 @@ async function finalizeModelResult(
   let text: string;
 
   try {
-    finishReason = await result.finishReason;
-    usage = await result.usage;
-    text = redactProviderSecrets(await result.text);
+    const settled = await raceAbort(
+      Promise.all([
+        Promise.resolve(result.finishReason),
+        Promise.resolve(result.usage),
+        Promise.resolve(result.text),
+      ]),
+      abort,
+    );
+    finishReason = settled[0];
+    usage = settled[1];
+    text = redactProviderSecrets(settled[2]);
   } catch (err) {
     return handleFinalizationFailure(preferStreamError(streamError, err), store, step, abort, "result", redactProviderSecrets);
   }
@@ -711,7 +763,8 @@ async function finalizeModelResult(
   }
 
   try {
-    const toolCalls = (await result.toolCalls).map((toolCall) => {
+    const rawToolCalls = await raceAbort(Promise.resolve(result.toolCalls), abort);
+    const toolCalls = rawToolCalls.map((toolCall) => {
       assertSafeProviderToolIdentifier(toolCall.toolCallId, "toolCallId", redactProviderSecrets);
       assertSafeProviderToolIdentifier(toolCall.toolName, "toolName", redactProviderSecrets);
       return {

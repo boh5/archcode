@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createEmptySessionStats, type DelegationRequest } from "@archcode/protocol";
+import { createEmptySessionStats, isTerminalChildSessionStatus, type DelegationRequest } from "@archcode/protocol";
 import type { LanguageModelV3 } from "@ai-sdk/provider";
 import type { Agent, AgentCommand, AgentCommandResult, AgentResult, AgentRunOptions } from "../agents/types";
 import type { AgentName } from "../agents/names";
@@ -19,7 +19,7 @@ import { AgentRunningError, ConcurrentLimitError, DelegateTargetNotAllowedError,
 import type { SessionAgentManager } from "../agents/session-agent-manager";
 import { NotRootSessionError, SessionDeleteConflictError, SessionFileNotFoundError } from "../store/errors";
 import { SessionDeleteInProgressError, SessionDeleteOwnerConflictError } from "./session-deletion";
-import { SessionFamilyActiveError, SessionFamilyIdentityUnavailableError, SessionFamilyStopConflictError, SessionFamilyStopInProgressError } from "./session-family-control";
+import { SessionFamilyActiveError, SessionFamilyIdentityUnavailableError, SessionFamilyStopInProgressError } from "./session-family-control";
 import type { SessionFile } from "../store/helpers";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { getSessionDir, getSessionPath } from "../store/sessions-dir";
@@ -2332,6 +2332,155 @@ describe("SessionExecutionManager", () => {
     await second.manager.stopSessionFamily(workspaceRoot, secondSessionId);
     await secondExecution.promise;
     expect(secondExecution.abortController.signal.aborted).toBe(true);
+  });
+
+  test("stopSessionFamily force-terminalizes a hung agent that ignores abort", async () => {
+    const sessionId = crypto.randomUUID();
+    class HungAgent implements Agent {
+      readonly store;
+      readonly cwd: string;
+      readonly disposeMock = mock(() => undefined);
+      readonly runMock = mock(async (_options?: AgentRunOptions): Promise<AgentResult> => {
+        await new Promise<never>(() => undefined);
+        return { text: "never", steps: 1, status: "completed" };
+      });
+      constructor(sessionId: string, workspaceRoot: string) {
+        this.store = createTestSession(storeManager, sessionId, workspaceRoot, { agentName: "lead" });
+        this.cwd = this.store.getState().cwd;
+      }
+      classifyCommand(): AgentCommand | null { return null; }
+      async executeCommand(
+        _command: AgentCommand,
+        _binding: ExecutionModelBinding,
+      ): Promise<AgentCommandResult> {
+        return { kind: "handled" };
+      }
+      run(_binding: ExecutionModelBinding, options?: AgentRunOptions): Promise<AgentResult> {
+        return this.runMock(options);
+      }
+      dispose(): void { this.disposeMock(); }
+    }
+    const hung = new HungAgent(sessionId, workspaceRoot);
+    const { manager } = createManager({ [sessionId]: hung as unknown as MockAgent }, { sessionFamilyStopTimeoutMs: 50 });
+
+    const execution = await manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId,
+      input: { kind: "direct", text: "hang" },
+    });
+    await execution.started;
+
+    await expect(manager.stopSessionFamily(workspaceRoot, sessionId)).resolves.toBeUndefined();
+    expect(execution.abortController.signal.aborted).toBe(true);
+    expect(manager.getSessionFamilyActivity(workspaceRoot, sessionId)).toBe("idle");
+    expect(manager.getExecution(workspaceRoot, sessionId)).toBeUndefined();
+    expect(hung.store.getState().executions.at(-1)).toMatchObject({
+      status: "cancelled",
+    });
+    expect(hung.store.getState().isRunning).toBe(false);
+  });
+
+  test("stopSessionFamily force-terminalizes a hung child and frees its concurrency slot", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const { manager } = createManager({}, {
+      sessionFamilyStopTimeoutMs: 50,
+      factory: makeFactoryWithChildPolicy({ maxConcurrent: 1 }),
+      childAgentFactory: (input) => ({
+        store: input.store,
+        classifyCommand: mock(() => null),
+        executeCommand: mock(async (): Promise<AgentCommandResult> => ({ kind: "handled" })),
+        run: mock(async (): Promise<AgentResult> => {
+          await new Promise<never>(() => undefined);
+          return { text: "never", steps: 1, status: "completed" };
+        }),
+        dispose: mock(() => undefined),
+      }) as unknown as MockAgent,
+    });
+
+    const child = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "hung-child-force",
+      toolName: "delegate",
+      request: delegationRequest({
+        agent_type: "explore",
+        title: "Hung child",
+        objective: "never finish",
+        skills: [],
+        background: true,
+      }),
+    });
+
+    expect(manager.getSessionFamilyActivity(workspaceRoot, parentId)).toBe("running");
+    expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({
+      childSessionId: child.sessionId,
+      status: "running",
+    });
+
+    await expect(manager.stopSessionFamily(workspaceRoot, parentId)).resolves.toBeUndefined();
+    expect(manager.getSessionFamilyActivity(workspaceRoot, parentId)).toBe("idle");
+    expect(manager.getExecution(workspaceRoot, child.sessionId)).toBeUndefined();
+    expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({
+      childSessionId: child.sessionId,
+      status: "cancelled",
+    });
+    expect(isTerminalChildSessionStatus(parentStore.getState().childSessionLinks.at(-1)!.status)).toBe(true);
+
+    const nextChild = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "after-force-delegate",
+      toolName: "delegate",
+      request: delegationRequest({
+        agent_type: "explore",
+        title: "After force",
+        objective: "should fit under maxConcurrent 1",
+        skills: [],
+        background: false,
+      }),
+    });
+    expect(nextChild.sessionId).not.toBe(child.sessionId);
+    nextChild.abort();
+    await nextChild.result.catch(() => undefined);
+  });
+
+  test("stopSessionFamily force-settles a hung session command completion", async () => {
+    const sessionId = crypto.randomUUID();
+    storeManager.create(sessionId, workspaceRoot, { agentName: "lead" });
+    const { manager } = createManager({}, { sessionFamilyStopTimeoutMs: 50 });
+
+    let commandSignal: AbortSignal | undefined;
+    let commandError: unknown;
+    const commandRun = manager.runSessionCommand({
+      workspaceRoot,
+      sessionId,
+      clientRequestId: "hung-command",
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
+    }, async (_binding, abort) => {
+      commandSignal = abort;
+      await new Promise<never>(() => undefined);
+      return "never";
+    }).then(
+      (result) => {
+        commandError = new Error(`expected command rejection, got ${JSON.stringify(result)}`);
+      },
+      (error: unknown) => {
+        commandError = error;
+      },
+    );
+
+    await waitFor(() => commandSignal !== undefined);
+    expect(manager.getSessionFamilyActivity(workspaceRoot, sessionId)).toBe("running");
+
+    await expect(manager.stopSessionFamily(workspaceRoot, sessionId)).resolves.toBeUndefined();
+    expect(manager.getSessionFamilyActivity(workspaceRoot, sessionId)).toBe("idle");
+    expect(commandSignal?.aborted).toBe(true);
+    await commandRun;
+    expect(commandError).toBeTruthy();
+    expect(String((commandError as { name?: unknown }).name ?? "")).toBe("AbortError");
+    expect(String((commandError as { message?: unknown }).message ?? "")).toMatch(/Session family cancelled|cancelled|aborted/i);
   });
 
 
