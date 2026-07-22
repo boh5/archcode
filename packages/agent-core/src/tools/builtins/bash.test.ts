@@ -379,13 +379,13 @@ describe("bashTool", () => {
     expect(spawnMock).toHaveBeenCalledTimes(0);
   });
 
-  test("worktree Bash cannot mutate canonical project state through a symlink", async () => {
+  test("worktree Bash cannot mutate canonical project runtime through a symlink", async () => {
     const root = mkdtempSync(join(tmpdir(), "bash-protected-worktree-test-"));
     const canonicalRoot = join(root, "project");
     const worktreeRoot = join(root, "worktree");
-    mkdirSync(join(canonicalRoot, ".archcode", "cache"), { recursive: true });
+    mkdirSync(join(canonicalRoot, ".archcode", "runtime", "cache"), { recursive: true });
     mkdirSync(worktreeRoot, { recursive: true });
-    symlinkSync(join(canonicalRoot, ".archcode"), join(worktreeRoot, "canonical-state"));
+    symlinkSync(join(canonicalRoot, ".archcode", "runtime"), join(worktreeRoot, "canonical-runtime"));
 
     try {
       const registry = registryFixture.registry;
@@ -398,7 +398,7 @@ describe("bashTool", () => {
           toolCallId: "protected-symlink",
           input: {
             description: "Clear a cache directory",
-            command: "rm -rf canonical-state/cache",
+            command: "rm -rf canonical-runtime/cache",
           },
         },
         mockCtx(worktreeRoot, { projectContext: createTestProjectContext(canonicalRoot) }),

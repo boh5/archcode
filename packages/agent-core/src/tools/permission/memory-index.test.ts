@@ -8,7 +8,7 @@ import { createTestProjectContext } from "../test-project-context";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "memory-index-permission", crypto.randomUUID());
 const WORKSPACE = join(TMP_DIR, "workspace");
-const INDEX_PATH = join(WORKSPACE, ".archcode", "memory", "index.md");
+const INDEX_PATH = join(WORKSPACE, ".archcode", "runtime", "memory", "index.md");
 const SYMLINK_DIR = join(TMP_DIR, "symlinks");
 
 const permission = createMemoryIndexPermission();
@@ -30,7 +30,7 @@ function makeCtx(
 }
 
 beforeAll(() => {
-  mkdirSync(join(WORKSPACE, ".archcode", "memory", "knowledge"), {
+  mkdirSync(join(WORKSPACE, ".archcode", "runtime", "memory", "knowledge"), {
     recursive: true,
   });
   writeFileSync(INDEX_PATH, "# Memory Index\n\n- [Test](test.md) — A test entry\n");
@@ -44,8 +44,8 @@ afterAll(() => {
 });
 
 describe("createMemoryIndexPermission", () => {
-  test("denies direct write to .archcode/memory/index.md (relative path)", async () => {
-    const decision = await permission({ path: ".archcode/memory/index.md" }, makeCtx());
+  test("denies direct write to .archcode/runtime/memory/index.md (relative path)", async () => {
+    const decision = await permission({ path: ".archcode/runtime/memory/index.md" }, makeCtx());
 
     expect(decision).toEqual({
       outcome: "deny",
@@ -67,7 +67,7 @@ describe("createMemoryIndexPermission", () => {
 
   test("denies path traversal to index.md", async () => {
     const decision = await permission(
-      { path: ".archcode/memory/knowledge/../index.md" },
+      { path: ".archcode/runtime/memory/knowledge/../index.md" },
       makeCtx(),
     );
 
@@ -85,7 +85,7 @@ describe("createMemoryIndexPermission", () => {
 
   test("denies edit operation on index.md (file_edit path)", async () => {
     const decision = await permission(
-      { path: ".archcode/memory/index.md", edits: [{ oldString: "foo", newString: "bar" }] },
+      { path: ".archcode/runtime/memory/index.md", edits: [{ oldString: "foo", newString: "bar" }] },
       makeCtx({ toolName: "file_edit" }),
     );
 
@@ -95,7 +95,7 @@ describe("createMemoryIndexPermission", () => {
 
   test("allows write to memory topic file in knowledge/", async () => {
     const decision = await permission(
-      { path: ".archcode/memory/knowledge/debugging.md", content: "tips" },
+      { path: ".archcode/runtime/memory/knowledge/debugging.md", content: "tips" },
       makeCtx(),
     );
 
@@ -111,7 +111,7 @@ describe("createMemoryIndexPermission", () => {
     expect(decision).toEqual({ outcome: "allow" });
   });
 
-  test("allows write to a path outside .archcode/memory", async () => {
+  test("allows write to a path outside .archcode/runtime/memory", async () => {
     const decision = await permission(
       { path: "README.md", content: "# readme" },
       makeCtx(),
@@ -122,7 +122,7 @@ describe("createMemoryIndexPermission", () => {
 
   test("allows write to knowledge/index.md (separate topic, not system index)", async () => {
     const decision = await permission(
-      { path: ".archcode/memory/knowledge/index.md", content: "# A topic called index" },
+      { path: ".archcode/runtime/memory/knowledge/index.md", content: "# A topic called index" },
       makeCtx(),
     );
 

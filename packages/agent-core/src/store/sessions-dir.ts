@@ -1,11 +1,11 @@
 import { join, resolve, sep } from "node:path";
-import { PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
+import { projectRuntimePath } from "../projects/runtime-path";
 
 let _override: ((workspaceRoot: string) => string) | undefined;
 
 export function getSessionsDir(workspaceRoot: string): string {
   if (_override) return _override(workspaceRoot);
-  return join(workspaceRoot, PROJECT_STATE_DIR_NAME, "sessions");
+  return projectRuntimePath(workspaceRoot, "sessions");
 }
 
 /**
@@ -57,7 +57,7 @@ function assertPathContained(target: string, parent: string): void {
 
 /**
  * Returns the canonical directory for one session owner.
- * Pattern: `.archcode/sessions/{sessionId}`
+ * Pattern: `.archcode/runtime/sessions/{sessionId}`
  */
 export function getSessionDir(workspaceRoot: string, sessionId: string): string {
   assertSafeSessionId(sessionId);
@@ -69,7 +69,7 @@ export function getSessionDir(workspaceRoot: string, sessionId: string): string 
 
 /**
  * Returns the canonical session file path.
- * Pattern: `.archcode/sessions/{sessionId}/session.json`
+ * Pattern: `.archcode/runtime/sessions/{sessionId}/session.json`
  */
 export function getSessionPath(workspaceRoot: string, sessionId: string): string {
   assertSafeSessionId(sessionId);

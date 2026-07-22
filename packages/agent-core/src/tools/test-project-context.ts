@@ -7,6 +7,7 @@ import { MemoryFileManager } from "../memory/file-manager";
 import { silentLogger } from "../logger";
 import { ProjectTodoService } from "../todos";
 import type { ProjectContextResolverOptions } from "../projects/context-resolver";
+import { projectRuntimePath } from "../projects/runtime-path";
 import type { ProjectContext } from "../projects/types";
 import { SessionStoreManager } from "../store/session-store-manager";
 import type { SessionStoreState } from "../store/types";
@@ -37,7 +38,7 @@ export function createTestProjectContext(
     todos,
     hitl,
     memory: new MemoryFileManager({
-      project: join(workspaceRoot, PROJECT_STATE_DIR_NAME, "memory"),
+      project: projectRuntimePath(workspaceRoot, "memory"),
       user: join(workspaceRoot, PROJECT_STATE_DIR_NAME, "user-memory"),
     }),
     approvals: new ProjectApprovalManager(silentLogger),

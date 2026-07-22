@@ -31,8 +31,8 @@ function blockedPermissionFingerprint(outcome: RegistryExecutionOutcome): string
 beforeAll(() => {
   mkdirSync(join(workspace, "dist"), { recursive: true });
   mkdirSync(join(workspace, ".git"), { recursive: true });
-  mkdirSync(join(workspace, ".archcode"), { recursive: true });
-  mkdirSync(join(workspace, ".archcode", "sub"), { recursive: true });
+  mkdirSync(join(workspace, ".archcode", "runtime", "sub"), { recursive: true });
+  mkdirSync(join(workspace, ".archcode", "plans"), { recursive: true });
   mkdirSync(join(outside, "target"), { recursive: true });
   mkdirSync(join(outside, "second"), { recursive: true });
   writeFileSync(join(workspace, "file"), "ok");
@@ -41,14 +41,14 @@ beforeAll(() => {
   writeFileSync(join(outside, ".env"), "SECRET=x");
   symlinkSync(join(outside, "target"), join(workspace, "outside-link"));
   symlinkSync(join(outside, ".env"), join(workspace, "credential-link"));
-  symlinkSync(join(workspace, ".archcode"), join(workspace, "control-link"));
+  symlinkSync(join(workspace, ".archcode", "runtime"), join(workspace, "control-link"));
   symlinkSync(join(outside, "missing.txt"), join(workspace, "dangling-outside"));
-  symlinkSync(join(workspace, ".archcode", "missing.txt"), join(workspace, "dangling-control"));
+  symlinkSync(join(workspace, ".archcode", "runtime", "missing.txt"), join(workspace, "dangling-control"));
   symlinkSync("/", join(workspace, "root-link"));
-  symlinkSync(join(workspace, ".archcode", "sub"), join(workspace, "control-child-link"));
+  symlinkSync(join(workspace, ".archcode", "runtime", "sub"), join(workspace, "control-child-link"));
   symlinkSync("/dev/disk9", join(workspace, "device-link"));
   for (const [directory, target] of [
-    ["dash-protected", join(workspace, ".archcode")],
+    ["dash-protected", join(workspace, ".archcode", "runtime")],
     ["dash-outside", join(outside, "target")],
     ["dash-credential", join(workspace, ".env")],
   ] as const) {
@@ -276,7 +276,7 @@ describe("createBashPermission", () => {
 
   test("denies background, protected state, managed Git, device, power, and global process operations", async () => {
     for (const command of [
-      "echo ok &", "bash -c 'echo ok &'", "echo x > .archcode/state", "echo x >| .archcode/state", "exec 3<> .archcode/state",
+      "echo ok &", "bash -c 'echo ok &'", "echo x > .archcode/runtime/state", "echo x >| .archcode/runtime/state", "exec 3<> .archcode/runtime/state",
       "echo x > dangling-control", "echo x >| dangling-control", "exec 3<> dangling-control", "tee dangling-control", "touch dangling-control", "cp file dangling-control",
       "cp file control-link", "install file control-link", "mv file control-link", "ln file control-link", "ln -s file control-link", "git worktree prune",
       "git branch -D archcode/topic", "git update-ref refs/heads/archcode/topic HEAD", "git -c core.foo=bar worktree prune", "git --git-dir .git worktree prune",
@@ -284,18 +284,25 @@ describe("createBashPermission", () => {
       "git clean -fn --no-dry-run -d", "git clean --dry-run --no-dry-run --force -d",
       "git clean -qfd", "git clean -xfd", "git clean -Xfd",
       "sudo git clean --force -d", "sudo git clean -d --force", "dd if=file of=/dev/disk9",
-      "git clean -fd -- .", "git clean -fd -e keep", "git clean -fd --exclude keep", "find .archcode -delete", "sed -i 's/x/y/' .archcode/state", "tar -xf file -C .archcode", "tar -rf .archcode/archive.tar file", "tar --delete -f .archcode/archive.tar old.txt",
+      "git clean -fd -- .", "git clean -fd -e keep", "git clean -fd --exclude keep", "find .archcode/runtime -delete", "sed -i 's/x/y/' .archcode/runtime/state", "tar -xf file -C .archcode/runtime", "tar -rf .archcode/runtime/archive.tar file", "tar --delete -f .archcode/runtime/archive.tar old.txt",
       "diskutil eraseDisk APFS X /dev/disk9", "shutdown now", "systemctl poweroff", "systemctl reboot -- --user", "kill -9 1",
       "sudo rm -rf /", "sudo systemctl poweroff",
       "kill -9 -1",
+      "rm -rf .archcode", "rmdir .archcode", "find .archcode -delete",
+      "mv .archcode .archcode-backup", "chmod -R 700 .archcode", "tar -xf file -C .archcode",
     ]) expect((await decide(command)).outcome, command).toBe("deny");
+    expect(await decide("rm -rf .archcode")).toMatchObject({
+      outcome: "deny",
+      ruleId: "deny-protected-path",
+      reason: "Mutations intersecting .archcode/runtime and Git metadata are system-managed",
+    });
     for (const command of [
       "touch control-child-link/../state", "rm control-child-link/../state",
       "find root-link/. -delete", "find root-link/./. -delete",
     ]) expect((await decide(command)).outcome, command).toBe("deny");
     for (const command of [
       "bash -lc 'rm -rf /'", "bash -xc 'rm -rf /'", "sh -ec 'rm -rf /'", "zsh -fc 'rm -rf /'",
-      "bash -lc 'echo ok &'", "sudo bash -lc 'rm -rf /'", "echo hi >&.archcode/state", "echo hi 1>&.archcode/state",
+      "bash -lc 'echo ok &'", "sudo bash -lc 'rm -rf /'", "echo hi >&.archcode/runtime/state", "echo hi 1>&.archcode/runtime/state",
     ]) expect((await decide(command)).outcome, command).toBe("deny");
     expect((await decide(`${"command ".repeat(13)}rm -rf /`)).outcome).toBe("deny");
     expect((await decide("dd if=file of=/dev/null")).outcome).toBe("allow");
@@ -313,21 +320,32 @@ describe("createBashPermission", () => {
     for (const command of ["sudo git clean --mystery -fd", "sudo git clean -zfd", "sudo git clean -e"]) {
       expect(await decide(command), command).toMatchObject({ outcome: "ask", ruleId: "ask-privilege", approval: { eligible: false } });
     }
-    expect((await decide("install -d -- .archcode/new-state")).outcome).toBe("deny");
+    expect((await decide("install -d -- .archcode/runtime/new-state")).outcome).toBe("deny");
     for (const command of ["cp", "install", "mv", "ln"]) {
-      expect((await decide(`${command} -t.archcode file`)).outcome, command).toBe("deny");
+      expect((await decide(`${command} -t.archcode/runtime file`)).outcome, command).toBe("deny");
     }
     for (const command of [
       "rm -rf root-link/", "find root-link/ -delete", "sudo rm -rf root-link/",
       "rm -rf control-link/", "find control-link/ -delete", "rmdir control-link/",
     ]) expect((await decide(command)).outcome, command).toBe("deny");
+    for (const command of [
+      "echo x > .archcode/plans/note.md",
+      "echo x > .archcode/state",
+      "install -d -- .archcode/new-state",
+    ]) expect((await decide(command)).outcome, command).toBe("allow");
   });
 
   test("denies protected paths reached through case-insensitive aliases", async () => {
     if (!existsSync(join(workspace, ".GIT")) || !existsSync(join(workspace, ".ARCHCODE"))) return;
 
-    for (const command of ["echo x > .GIT/config", "rm -rf .GIT", "touch .ARCHCODE/state", "mkdir .ARCHCODE"]) {
+    for (const command of [
+      "echo x > .GIT/config", "rm -rf .GIT",
+      "touch .ARCHCODE/runtime/state", "mkdir .ARCHCODE/runtime", "mkdir .ARCHCODE",
+    ]) {
       expect((await decide(command)).outcome, command).toBe("deny");
+    }
+    for (const command of ["touch .ARCHCODE/state", "echo x > .ARCHCODE/plans/note.md"]) {
+      expect((await decide(command)).outcome, command).toBe("allow");
     }
   });
 
@@ -525,11 +543,12 @@ describe("createBashPermission", () => {
     const stateTarget = join(symlinkWorkspace, "ordinary-state-target");
     mkdirSync(gitTarget, { recursive: true });
     mkdirSync(stateTarget, { recursive: true });
+    mkdirSync(join(symlinkWorkspace, ".archcode"), { recursive: true });
     writeFileSync(join(symlinkWorkspace, "file"), "source");
     writeFileSync(join(gitTarget, "child"), "git child");
     writeFileSync(join(stateTarget, "child"), "state child");
     symlinkSync(gitTarget, join(symlinkWorkspace, ".git"));
-    symlinkSync(stateTarget, join(symlinkWorkspace, ".archcode"));
+    symlinkSync(stateTarget, join(symlinkWorkspace, ".archcode", "runtime"));
     if (!existsSync(join(symlinkWorkspace, ".GIT")) || !existsSync(join(symlinkWorkspace, ".ARCHCODE"))) return;
 
     const symlinkContext: ToolExecutionContext = {
@@ -539,12 +558,16 @@ describe("createBashPermission", () => {
     };
     const local = (command: string) => createBashPermission()({ command }, symlinkContext);
     for (const command of [
-      "rm .GIT", "rm .git", "rm .ARCHCODE", "rm .archcode",
-      "mv -T file .GIT", "mv -T file .ARCHCODE",
+      "rm .GIT", "rm .git", "rm .ARCHCODE/runtime", "rm .archcode/runtime",
+      "mv -T file .GIT", "mv -T file .ARCHCODE/runtime",
     ]) {
       expect((await local(command)).outcome, command).toBe("deny");
     }
-    for (const command of ["rm .GIT/child", "rm .git/child", "rm .ARCHCODE/child", "rm .archcode/child"]) {
+    for (const command of [
+      "rm .GIT/child", "rm .git/child",
+      "rm .ARCHCODE/runtime/child", "rm .archcode/runtime/child",
+      "rm .ARCHCODE", "rm .archcode",
+    ]) {
       expect((await local(command)).outcome, command).toBe("deny");
     }
   });
@@ -646,12 +669,13 @@ describe("createBashPermission", () => {
     }
   });
 
-  test("protects canonical project state from a distinct execution worktree", async () => {
+  test("protects canonical project runtime from a distinct execution worktree", async () => {
     const projectRoot = join(testDir, "canonical-project");
     const worktreeRoot = join(testDir, "managed-worktree");
-    mkdirSync(join(projectRoot, ".archcode", "cache"), { recursive: true });
+    mkdirSync(join(projectRoot, ".archcode", "runtime", "cache"), { recursive: true });
+    mkdirSync(join(projectRoot, ".archcode", "plans"), { recursive: true });
     mkdirSync(worktreeRoot, { recursive: true });
-    symlinkSync(join(projectRoot, ".archcode"), join(worktreeRoot, "canonical-state"));
+    symlinkSync(join(projectRoot, ".archcode", "runtime"), join(worktreeRoot, "canonical-runtime"));
     const worktreeContext: ToolExecutionContext = {
       ...ctx(),
       cwd: worktreeRoot,
@@ -659,22 +683,26 @@ describe("createBashPermission", () => {
     };
 
     for (const command of [
-      "echo x > canonical-state/cache/value",
-      `touch ${join(projectRoot, ".archcode", "cache", "value")}`,
+      "echo x > canonical-runtime/cache/value",
+      `touch ${join(projectRoot, ".archcode", "runtime", "cache", "value")}`,
       "echo x > .git/config",
     ]) {
       const decision = await createBashPermission()({ command }, worktreeContext);
       expect(decision.outcome, command).toBe("deny");
     }
+    expect((await createBashPermission()(
+      { command: `echo x > ${join(projectRoot, ".archcode", "plans", "note.md")}` },
+      worktreeContext,
+    )).outcome).toBe("ask");
   });
 
-  test("protects a symlinked lexical .archcode entry but not adjacent or differently named entries", async () => {
+  test("protects a symlinked lexical .archcode/runtime entry but not adjacent or differently named entries", async () => {
     const symlinkWorkspace = join(testDir, "symlink-state-workspace");
     const externalState = join(testDir, "external-state");
-    mkdirSync(symlinkWorkspace, { recursive: true });
+    mkdirSync(join(symlinkWorkspace, ".archcode"), { recursive: true });
     mkdirSync(externalState, { recursive: true });
     writeFileSync(join(symlinkWorkspace, "file"), "source");
-    symlinkSync(externalState, join(symlinkWorkspace, ".archcode"));
+    symlinkSync(externalState, join(symlinkWorkspace, ".archcode", "runtime"));
     symlinkSync(externalState, join(symlinkWorkspace, "ordinary-control-link"));
     const symlinkContext: ToolExecutionContext = {
       ...ctx(),
@@ -683,7 +711,12 @@ describe("createBashPermission", () => {
     };
     const symlinkDecision = (command: string) => createBashPermission()({ command }, symlinkContext);
 
-    for (const command of ["rm -rf .archcode", "rmdir .archcode", "mv -T file .archcode", "ln -sT file .archcode"]) {
+    for (const command of [
+      "rm -rf .archcode/runtime",
+      "rmdir .archcode/runtime",
+      "mv -T file .archcode/runtime",
+      "ln -sT file .archcode/runtime",
+    ]) {
       expect((await symlinkDecision(command)).outcome, command).toBe("deny");
     }
     for (const command of [
@@ -692,6 +725,9 @@ describe("createBashPermission", () => {
       "mv -T file ordinary-control-link",
       "ln -sT file ordinary-control-link",
     ]) expect((await symlinkDecision(command)).outcome, command).toBe("allow");
+    for (const command of ["rm -rf .archcode", "rmdir .archcode"]) {
+      expect((await symlinkDecision(command)).outcome, command).toBe("deny");
+    }
   });
 
   test("asks only for explicit privilege, system mutation, credential, and outside paths", async () => {
@@ -963,8 +999,9 @@ describe("createBashPermission", () => {
   });
 
   test("keeps tar attached value tails out of mode detection across protected and outside paths", async () => {
-    expect(await decide("tar -cf.archcode/archive file")).toMatchObject({ outcome: "deny" });
-    expect(await decide("tar -fc.archcode/archive -- --delete")).toMatchObject({ outcome: "allow" });
+    expect(await decide("tar -cf.archcode/runtime/archive file")).toMatchObject({ outcome: "deny" });
+    expect(await decide("tar -cf.archcode/plans/archive file")).toMatchObject({ outcome: "allow" });
+    expect(await decide("tar -fc.archcode/runtime/archive -- --delete")).toMatchObject({ outcome: "allow" });
     expect(await decide("tar -fout/craux -- -c --delete")).toMatchObject({ outcome: "allow" });
 
     for (const command of [
@@ -992,9 +1029,10 @@ describe("createBashPermission", () => {
       "env -- tar -xf ../archive.tar",
       "timeout -- 1s tar -xf ../archive.tar",
     ]) {
-      expect(await decide(command, ".archcode"), command).toMatchObject({ outcome: "deny" });
+      expect(await decide(command, ".archcode/runtime"), command).toMatchObject({ outcome: "deny" });
     }
 
+    expect(await decide("tar -xf ../archive.tar", ".archcode/plans")).toMatchObject({ outcome: "allow" });
     expect(await decide("tar -xf ../archive.tar", "dist")).toMatchObject({ outcome: "allow" });
     expect(await decide("env -- tar -xf ../archive.tar", "dist")).toMatchObject({ outcome: "allow" });
     const scoped = await decide("sudo tar -xf ../archive.tar", "dist");
@@ -1124,7 +1162,7 @@ describe("createBashPermission", () => {
     if (second.kind !== "blocked") throw new Error("Expected rebound Bash permission block");
 
     unlinkSync(resumeLink);
-    symlinkSync(join(workspace, ".archcode"), resumeLink);
+    symlinkSync(join(workspace, ".archcode", "runtime"), resumeLink);
     const denied = await registry.resumeBlocked({
       toolCall: call,
       request: second.request,

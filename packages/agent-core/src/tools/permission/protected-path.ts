@@ -1,10 +1,10 @@
 import { realpathSync } from "node:fs";
-import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { PROJECT_RUNTIME_DIR_NAME, PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
 import type { PermissionDecision, ToolPermission, ToolExecutionContext } from "../types";
 import type { ToolErrorKind } from "../errors";
 
-const PROJECT_DIR_SUFFIX = join(PROJECT_STATE_DIR_NAME);
+const RUNTIME_DIR_SUFFIX = join(PROJECT_STATE_DIR_NAME, PROJECT_RUNTIME_DIR_NAME);
 
 /**
  * Resolve a file path to its real path, handling symlinks and traversing
@@ -22,14 +22,15 @@ function resolveRealPath(filePath: string): string {
 
 export function isProtectedProjectPath(filePath: string, workspaceRoot: string): boolean {
   const lexicalInput = resolve(workspaceRoot, filePath);
-  return isLexicalProjectStatePath(lexicalInput, workspaceRoot)
-    || isResolvedProjectStatePath(resolveRealPath(lexicalInput), workspaceRoot);
+  return isLexicalRuntimePath(lexicalInput, workspaceRoot)
+    || isResolvedRuntimePath(resolveRealPath(lexicalInput), workspaceRoot);
 }
 
 /**
- * Returns whether a tool mutation path targets system-managed project state.
- * Relative inputs resolve from the current Session working directory, while
- * protection covers both that directory and the canonical project root.
+ * Returns whether a tool mutation path targets or contains system-managed
+ * project runtime state. Relative inputs resolve from the current Session
+ * working directory, while protection covers both that directory and the
+ * canonical project root.
  */
 export function isProtectedToolWritePath(
   filePath: string,
@@ -38,8 +39,8 @@ export function isProtectedToolWritePath(
   return isProtectedToolWritePathFrom(filePath, ctx.cwd, ctx);
 }
 
-/** Checks an already operation-aware canonical Bash access without following its leaf again. */
-export function isProtectedCanonicalWritePath(
+/** Checks whether an already canonical mutation path intersects protected state. */
+export function isProtectedCanonicalMutationPath(
   effectiveCanonicalPath: string,
   ctx: Pick<ToolExecutionContext, "cwd" | "projectContext">,
 ): boolean {
@@ -49,8 +50,7 @@ export function isProtectedCanonicalWritePath(
     const lexicalGit = resolve(lexicalRoot, ".git");
     const resolvedGit = resolveRealPath(lexicalGit);
     if (
-      isLexicalProjectStatePath(effectiveCanonicalPath, root)
-      || isResolvedProjectStatePath(effectiveCanonicalPath, root)
+      isRuntimeTreeOverlap(effectiveCanonicalPath, root)
       || isAtOrBelow(effectiveCanonicalPath, lexicalGit)
       || isAtOrBelow(effectiveCanonicalPath, resolvedGit)
       || hasPathComponentWithin(effectiveCanonicalPath, resolvedRoot, ".git")
@@ -73,8 +73,8 @@ function isProtectedToolWritePathFrom(
 
   for (const root of protectedRoots) {
     if (
-      isLexicalProjectStatePath(lexicalInput, root)
-      || isResolvedProjectStatePath(resolvedInput, root)
+      isRuntimeTreeOverlap(lexicalInput, root)
+      || isRuntimeTreeOverlap(resolvedInput, root)
       || isGitMetadataPath(lexicalInput, resolvedInput, root)
     ) return true;
   }
@@ -101,6 +101,10 @@ function isAtOrBelow(candidate: string, root: string): boolean {
   return candidate === root || candidate.startsWith(`${root}${sep}`);
 }
 
+function treesOverlap(left: string, right: string): boolean {
+  return isAtOrBelow(left, right) || isAtOrBelow(right, left);
+}
+
 function hasPathComponentWithin(candidate: string, root: string, component: string): boolean {
   const pathFromRoot = relative(root, candidate);
   if (pathFromRoot === "" || pathFromRoot === ".." || pathFromRoot.startsWith(`..${sep}`) || isAbsolute(pathFromRoot)) {
@@ -109,26 +113,53 @@ function hasPathComponentWithin(candidate: string, root: string, component: stri
   return pathFromRoot.split(sep).includes(component);
 }
 
-function isResolvedProjectStatePath(resolvedInput: string, projectRoot: string): boolean {
-  const projectDir = resolve(projectRoot, PROJECT_DIR_SUFFIX);
-  const resolvedProjectDir = resolveRealPath(projectDir);
+function isResolvedRuntimePath(resolvedInput: string, projectRoot: string): boolean {
+  const runtimeDir = resolve(projectRoot, RUNTIME_DIR_SUFFIX);
+  const resolvedRuntimeDir = resolveRealPath(runtimeDir);
 
-  return resolvedInput.startsWith(resolvedProjectDir + sep) || resolvedInput === resolvedProjectDir;
+  return resolvedInput.startsWith(resolvedRuntimeDir + sep) || resolvedInput === resolvedRuntimeDir;
 }
 
-function isLexicalProjectStatePath(input: string, projectRoot: string): boolean {
+function isLexicalRuntimePath(input: string, projectRoot: string): boolean {
   const lexicalRoot = resolve(projectRoot);
   const resolvedRoot = resolveRealPath(lexicalRoot);
-  return isAtOrBelow(input, resolve(lexicalRoot, PROJECT_DIR_SUFFIX))
-    || isAtOrBelow(input, resolve(resolvedRoot, PROJECT_DIR_SUFFIX));
+  return isAtOrBelow(input, resolve(lexicalRoot, RUNTIME_DIR_SUFFIX))
+    || isAtOrBelow(input, resolve(resolvedRoot, RUNTIME_DIR_SUFFIX));
+}
+
+function isRuntimeTreeOverlap(input: string, projectRoot: string): boolean {
+  const lexicalRoot = resolve(projectRoot);
+  const resolvedRoot = resolveRealPath(lexicalRoot);
+  const lexicalRuntime = resolve(lexicalRoot, RUNTIME_DIR_SUFFIX);
+  const resolvedRootRuntime = resolve(resolvedRoot, RUNTIME_DIR_SUFFIX);
+  const resolvedRuntime = resolveRealPath(lexicalRuntime);
+  return treesOverlap(input, lexicalRuntime)
+    || treesOverlap(input, resolvedRootRuntime)
+    || treesOverlap(input, resolvedRuntime);
+}
+
+function isProtectedToolSelectionPath(
+  filePath: string,
+  ctx: Pick<ToolExecutionContext, "cwd" | "projectContext">,
+): boolean {
+  const lexicalInput = resolve(ctx.cwd, filePath);
+  const resolvedInput = resolveRealPath(lexicalInput);
+  for (const root of new Set([ctx.cwd, ctx.projectContext.project.workspaceRoot])) {
+    if (
+      isLexicalRuntimePath(lexicalInput, root)
+      || isResolvedRuntimePath(resolvedInput, root)
+      || isGitMetadataPath(lexicalInput, resolvedInput, root)
+    ) return true;
+  }
+  return false;
 }
 
 /**
- * Creates a permission guard that denies direct mutation of project state and
- * Git metadata. This protects both system-managed trees from ordinary file
- * mutation tools (file_write, file_edit) while
- * keeping lifecycle managers and normal Git CLI operations on their dedicated
- * paths.
+ * Creates a permission guard that denies direct mutation of project runtime
+ * state, ancestors whose mutation would affect it, and Git metadata. This keeps
+ * lifecycle managers and normal Git CLI operations on their dedicated paths.
+ * Direct plan, Skill, and other non-runtime `.archcode` artifact mutations stay
+ * outside the protected runtime tree.
  *
  * The guard performs symlink-safe realpath resolution to prevent traversal
  * attacks.
@@ -136,11 +167,13 @@ function isLexicalProjectStatePath(input: string, projectRoot: string): boolean 
 export function createProtectedPathPermission(): ToolPermission {
   return async (input: unknown, ctx: ToolExecutionContext): Promise<PermissionDecision> => {
     const data = input as { path?: unknown; paths?: unknown; cwd?: unknown };
-    const paths = protectedPathReferences(data);
+    const references = protectedPathReferences(data);
 
-    for (const path of paths) {
-      if (isProtectedToolWritePath(path, ctx)) {
-        if (await mayWriteLeadPlan(path, ctx)) continue;
+    for (const reference of references) {
+      const protectedPath = reference.kind === "selection"
+        ? isProtectedToolSelectionPath(reference.path, ctx)
+        : isProtectedToolWritePath(reference.path, ctx);
+      if (protectedPath) {
         return denyProtectedPathMutation();
       }
     }
@@ -149,45 +182,15 @@ export function createProtectedPathPermission(): ToolPermission {
   };
 }
 
-async function mayWriteLeadPlan(filePath: string, ctx: ToolExecutionContext): Promise<boolean> {
-  if (ctx.toolName !== "file_write" && ctx.toolName !== "file_edit") return false;
-  const lexicalInput = resolve(ctx.cwd, filePath);
-  if (extname(lexicalInput) !== ".md") return false;
-  const candidateRoots = [...new Set([ctx.cwd, ctx.projectContext.project.workspaceRoot])]
-    .filter((root) => dirname(lexicalInput) === resolve(root, PROJECT_DIR_SUFFIX, "plans"));
-  if (candidateRoots.length === 0) return false;
-  if (typeof ctx.store.getState !== "function") return false;
-  const state = ctx.store.getState();
-  const agentName = ctx.agentName ?? state.agentName;
-  if (
-    agentName !== "lead"
-    || state.agentName !== "lead"
-    || state.sessionId !== state.rootSessionId
-    || state.parentSessionId !== undefined
-  ) return false;
-
-  const discussion = await ctx.projectContext.todos.state.findByDiscussionSessionId(state.sessionId);
-  if (discussion !== undefined) return false;
-
-  for (const root of candidateRoots) {
-    const lexicalPlans = resolve(root, PROJECT_DIR_SUFFIX, "plans");
-    if (dirname(lexicalInput) !== lexicalPlans) continue;
-    const resolvedProjectState = resolveRealPath(resolve(root, PROJECT_DIR_SUFFIX));
-    const resolvedPlans = resolveRealPath(lexicalPlans);
-    if (resolvedPlans !== resolve(resolvedProjectState, "plans")) return false;
-    if (dirname(resolveRealPath(lexicalInput)) !== resolvedPlans) return false;
-    return true;
-  }
-  return false;
-}
-
-function protectedPathReferences(data: { path?: unknown; paths?: unknown; cwd?: unknown }): string[] {
-  const paths: string[] = [];
-  if (typeof data.path === "string") paths.push(data.path);
-  if (typeof data.cwd === "string") paths.push(data.cwd);
+function protectedPathReferences(
+  data: { path?: unknown; paths?: unknown; cwd?: unknown },
+): Array<{ readonly path: string; readonly kind: "mutation" | "selection" }> {
+  const paths: Array<{ readonly path: string; readonly kind: "mutation" | "selection" }> = [];
+  if (typeof data.path === "string") paths.push({ path: data.path, kind: "mutation" });
+  if (typeof data.cwd === "string") paths.push({ path: data.cwd, kind: "mutation" });
   if (Array.isArray(data.paths)) {
     for (const path of data.paths) {
-      if (typeof path === "string") paths.push(path);
+      if (typeof path === "string") paths.push({ path, kind: "selection" });
     }
   }
   return paths;
@@ -197,7 +200,7 @@ function denyProtectedPathMutation(): PermissionDecision {
   return {
     outcome: "deny",
     reason:
-      `The ${PROJECT_STATE_DIR_NAME}/ directory and Git metadata are system-managed and cannot be edited directly. ` +
+      `Mutations intersecting ${PROJECT_STATE_DIR_NAME}/${PROJECT_RUNTIME_DIR_NAME}/ and Git metadata are system-managed and cannot be performed directly. ` +
       "Use the appropriate internal lifecycle or Git tools instead.",
     errorKind: "permission-denied" as ToolErrorKind,
     errorCode: "PROTECTED_PATH_WRITE_DENIED",

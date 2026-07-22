@@ -1,7 +1,6 @@
-import { join } from "node:path";
-import { PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
 import { z } from "zod";
 import type { Logger } from "../../logger";
+import { projectRuntimePath } from "../../projects/runtime-path";
 import { atomicWrite } from "../../utils/safe-file";
 import type { PermissionApprovalScope } from "./policy-types";
 
@@ -92,7 +91,7 @@ function scopeKey(scope: PermissionApprovalScope): string {
 }
 
 function approvalsPath(workspaceRoot: string): string {
-  return join(workspaceRoot, PROJECT_STATE_DIR_NAME, PERMISSIONS_FILE);
+  return projectRuntimePath(workspaceRoot, PERMISSIONS_FILE);
 }
 
 export class ProjectApprovalManager {

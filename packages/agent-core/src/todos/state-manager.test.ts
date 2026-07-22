@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
+import { projectRuntimePath } from "../projects/runtime-path";
 import {
   ProjectTodoActivationConflictError,
   ProjectTodoInvalidTransitionError,
@@ -36,7 +37,7 @@ describe("ProjectTodoStateManager", () => {
     const reloaded = new ProjectTodoStateManager(TMP_ROOT);
     expect(await reloaded.readTodo(todo.id)).toEqual(todo);
 
-    const path = join(TMP_ROOT, ".archcode", "todos", "state.json");
+    const path = projectRuntimePath(TMP_ROOT, "todos", "state.json");
     const raw = await Bun.file(path).json() as { todos: Array<Record<string, unknown>> };
     raw.todos[0]!.closed = true;
     await Bun.write(path, JSON.stringify(raw));
@@ -206,7 +207,7 @@ describe("ProjectTodoStateManager", () => {
     });
     const active = await manager.checkpointActivation(ready.id, ready.revision, "session", crypto.randomUUID());
 
-    const path = join(TMP_ROOT, ".archcode", "todos", "state.json");
+    const path = projectRuntimePath(TMP_ROOT, "todos", "state.json");
     const raw = await Bun.file(path).json() as {
       todos: Array<{ id?: string; activation?: { sourceSessionId: string; resourceId?: string } }>;
     };

@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { PROJECT_STATE_DIR_NAME, USER_DATA_DIR_NAME } from "@archcode/protocol";
+import { USER_DATA_DIR_NAME } from "@archcode/protocol";
 
 import { HitlBoundaryCodec, ProjectHitlQueue, type ProjectHitlQueueOptions } from "../hitl";
 import { MemoryFileManager } from "../memory/file-manager";
@@ -10,6 +10,7 @@ import { ProjectApprovalManager } from "../tools/permission/project-approvals";
 import type { ProjectContext, ProjectInfo } from "./types";
 import type { Automation, AutomationAction, AutomationTrigger } from "@archcode/protocol";
 import type { ProjectTodoService } from "../todos";
+import { projectRuntimePath } from "./runtime-path";
 
 export interface ProjectContextResolverOptions {
   /** Runtime-wide strict HITL boundary shared with ToolRegistry. */
@@ -57,7 +58,7 @@ export class ProjectContextResolver {
     this.#hitlFactory = options.hitlFactory ?? ((input) => new ProjectHitlQueue(input));
     this.#memoryFactory = options.memoryFactory ?? ((workspaceRoot) => {
       return new MemoryFileManager({
-        project: join(workspaceRoot, PROJECT_STATE_DIR_NAME, "memory"),
+        project: projectRuntimePath(workspaceRoot, "memory"),
         user: join(homedir(), USER_DATA_DIR_NAME, "memory"),
       });
     });

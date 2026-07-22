@@ -1,7 +1,7 @@
 import type { Automation, AutomationAction, AutomationInvocation, AutomationTrigger } from "@archcode/protocol";
-import { join } from "node:path";
 import { z } from "zod/v4";
 
+import { projectRuntimePath } from "../projects/runtime-path";
 import { atomicWrite } from "../utils/safe-file";
 import { nextFireAt, validateAutomationTrigger } from "./schedule";
 import { AutomationCreateSchema, AutomationStateFileSchema, AutomationUpdateSchema, type AutomationStateFile } from "./schema";
@@ -51,7 +51,7 @@ export class AutomationStateManager {
 
   constructor(workspaceRoot: string, options: AutomationStateManagerOptions = {}) {
     this.workspaceRoot = workspaceRoot;
-    this.#filePath = join(workspaceRoot, ".archcode", "automations", "state.json");
+    this.#filePath = projectRuntimePath(workspaceRoot, "automations", "state.json");
     this.#now = options.now ?? Date.now;
   }
 

@@ -73,8 +73,8 @@ afterAll(async () => {
 });
 
 describe("fileWriteTool", () => {
-  test("hard-denies an absolute canonical project-state path from a worktree Session", async () => {
-    const target = join(canonicalProjectDir, ".archcode", "blocked.json");
+  test("hard-denies an absolute canonical project runtime path from a worktree Session", async () => {
+    const target = join(canonicalProjectDir, ".archcode", "runtime", "blocked.json");
 
     const result = await executeThroughRegistry(
       { path: target, content: "{}" },

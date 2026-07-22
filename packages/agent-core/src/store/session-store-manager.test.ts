@@ -133,7 +133,7 @@ describe("SessionStoreManager", () => {
 
       releaseSave();
       const created = await createdPromise;
-      expect(await Bun.file(join(TMP_DIR, ".archcode", "sessions", created.sessionId, "session.json")).exists()).toBe(true);
+      expect(await Bun.file(join(TMP_DIR, ".archcode", "runtime", "sessions", created.sessionId, "session.json")).exists()).toBe(true);
     } finally {
       releaseSave();
       sessionFileInternals.saveSessionTranscript = originalSave;
@@ -252,7 +252,7 @@ describe("SessionStoreManager", () => {
       const persistenceError = captured as SessionInitialPersistenceError;
       expect(persistenceError.cause).toBe(failure);
       expect(manager.has(persistenceError.sessionId, TMP_DIR)).toBe(false);
-      expect(await Bun.file(join(TMP_DIR, ".archcode", "sessions", persistenceError.sessionId, "session.json")).exists()).toBe(false);
+      expect(await Bun.file(join(TMP_DIR, ".archcode", "runtime", "sessions", persistenceError.sessionId, "session.json")).exists()).toBe(false);
     } finally {
       sessionFileInternals.saveSessionTranscript = originalSave;
     }
@@ -354,11 +354,11 @@ describe("SessionStoreManager", () => {
   }
 
   function canonicalSessionPath(sessionId: string): string {
-    return join(TMP_DIR, ".archcode", "sessions", sessionId, "session.json");
+    return join(TMP_DIR, ".archcode", "runtime", "sessions", sessionId, "session.json");
   }
 
   async function writeRawSessionFile(sessionId: string, content: string): Promise<void> {
-    await mkdir(join(TMP_DIR, ".archcode", "sessions", sessionId), { recursive: true });
+    await mkdir(join(TMP_DIR, ".archcode", "runtime", "sessions", sessionId), { recursive: true });
     await Bun.write(canonicalSessionPath(sessionId), content);
   }
 
@@ -483,7 +483,7 @@ describe("SessionStoreManager", () => {
       previousCwd: TMP_DIR,
       cwd: worktreeCwd,
     });
-    expect(await Bun.file(join(worktreeCwd, ".archcode", "sessions", id, "session.json")).exists()).toBe(false);
+    expect(await Bun.file(join(worktreeCwd, ".archcode", "runtime", "sessions", id, "session.json")).exists()).toBe(false);
     await expect(manager.updateCwd(id, TMP_DIR, "relative/path")).rejects.toMatchObject({ name: "InvalidSessionCwdError" });
   });
 
@@ -1045,8 +1045,8 @@ describe("SessionStoreManager", () => {
       parentSessionId: rootSessionId,
       title: "child-title",
     });
-    expect(await Bun.file(join(TMP_DIR, ".archcode", "sessions", `${childSessionId}.json`)).exists()).toBe(false);
-    expect(await Bun.file(join(TMP_DIR, ".archcode", "sessions", rootSessionId, `${childSessionId}.json`)).exists()).toBe(false);
+    expect(await Bun.file(join(TMP_DIR, ".archcode", "runtime", "sessions", `${childSessionId}.json`)).exists()).toBe(false);
+    expect(await Bun.file(join(TMP_DIR, ".archcode", "runtime", "sessions", rootSessionId, `${childSessionId}.json`)).exists()).toBe(false);
     const childPath = canonicalSessionPath(childSessionId);
     await waitForFile(childPath);
     const childFile = JSON.parse(await Bun.file(childPath).text()) as Record<string, unknown>;
@@ -1392,7 +1392,7 @@ describe("SessionStoreManager", () => {
       rootSessionId,
       parentSessionId: childSessionId,
     });
-    const sessionsDirEntries = await readdir(join(TMP_DIR, ".archcode", "sessions"), { withFileTypes: true });
+    const sessionsDirEntries = await readdir(join(TMP_DIR, ".archcode", "runtime", "sessions"), { withFileTypes: true });
     expect(sessionsDirEntries.filter((entry) => entry.isFile()).map((entry) => entry.name)).toEqual([]);
     expect(sessionsDirEntries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort()).toEqual([
       childSessionId,
@@ -1402,7 +1402,7 @@ describe("SessionStoreManager", () => {
     ].sort());
 
     const childAsRootManager = new SessionStoreManager({ logger: silentLogger });
-    await Bun.write(join(TMP_DIR, ".archcode", "sessions", `${childSessionId}.json`), JSON.stringify({
+    await Bun.write(join(TMP_DIR, ".archcode", "runtime", "sessions", `${childSessionId}.json`), JSON.stringify({
       ...childFile,
       rootSessionId: childSessionId,
       parentSessionId: rootSessionId,

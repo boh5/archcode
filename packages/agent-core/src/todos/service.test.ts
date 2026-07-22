@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { silentLogger } from "../logger";
 import { ProjectRegistry } from "../projects/registry";
+import { projectRuntimePath } from "../projects/runtime-path";
 import { ProjectTodoDiscussionAuthorizationError, ProjectTodoReturnToReadyConflictError, ProjectTodoRevisionConflictError } from "./errors";
 import {
   ProjectTodoService,
@@ -147,7 +148,7 @@ describe("ProjectTodoService", () => {
     expect(await reopenedService.listTodos()).toEqual([originalTodo]);
     expect(await reopenedService.readTodo(originalTodo.id)).toEqual(originalTodo);
 
-    const persisted = await Bun.file(join(secondWorkspace, ".archcode", "todos", "state.json")).json() as {
+    const persisted = await Bun.file(projectRuntimePath(secondWorkspace, "todos", "state.json")).json() as {
       todos: Array<Record<string, unknown>>;
     };
     expect(persisted.todos[0]).not.toHaveProperty("projectSlug");

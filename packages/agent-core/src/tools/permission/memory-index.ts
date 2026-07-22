@@ -1,10 +1,15 @@
 import { realpathSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
-import { PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
+import { PROJECT_RUNTIME_DIR_NAME, PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
 import type { PermissionDecision, ToolPermission, ToolExecutionContext } from "../types";
 import type { ToolErrorKind } from "../errors";
 
-const MEMORY_INDEX_SUFFIX = join(PROJECT_STATE_DIR_NAME, "memory", "index.md");
+const MEMORY_INDEX_SUFFIX = join(
+  PROJECT_STATE_DIR_NAME,
+  PROJECT_RUNTIME_DIR_NAME,
+  "memory",
+  "index.md",
+);
 
 function resolveRealPath(filePath: string): string {
   try {

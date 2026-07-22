@@ -62,9 +62,9 @@ describe("HITL hard-cut architecture", () => {
     const files = productionTsFiles("packages/agent-core/src/hitl");
     const violations = files.flatMap((file) => {
       const text = readFileSync(file, "utf8");
-      return /from\s+["']\.\.\/(?:agents|execution|goals|projects|store|tools)\//.test(text)
-        ? [relative(projectRoot, file)]
-        : [];
+      const forbidden = /from\s+["']\.\.\/(?:agents|execution|goals|store|tools)\//.test(text)
+        || /from\s+["']\.\.\/projects\/(?!runtime-path)/.test(text);
+      return forbidden ? [relative(projectRoot, file)] : [];
     });
     expect(violations).toEqual([]);
   });

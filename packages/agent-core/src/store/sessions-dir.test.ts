@@ -15,9 +15,9 @@ const VALID_UUID = "550e8400-e29b-41d4-a716-446655440000";
 // ---------------------------------------------------------------------------
 
 describe("getSessionsDir", () => {
-  test("returns workspaceRoot/.archcode/sessions/", () => {
+  test("returns workspaceRoot/.archcode/runtime/sessions/", () => {
     expect(getSessionsDir("/tmp/project-a")).toBe(
-      join("/tmp/project-a", ".archcode", "sessions"),
+      join("/tmp/project-a", ".archcode", "runtime", "sessions"),
     );
   });
 
@@ -25,8 +25,8 @@ describe("getSessionsDir", () => {
     const dirA = getSessionsDir("/tmp/project-a");
     const dirB = getSessionsDir("/tmp/project-b");
     expect(dirA).not.toBe(dirB);
-    expect(dirA).toBe(join("/tmp/project-a", ".archcode", "sessions"));
-    expect(dirB).toBe(join("/tmp/project-b", ".archcode", "sessions"));
+    expect(dirA).toBe(join("/tmp/project-a", ".archcode", "runtime", "sessions"));
+    expect(dirB).toBe(join("/tmp/project-b", ".archcode", "runtime", "sessions"));
   });
 });
 
@@ -46,7 +46,7 @@ describe("__setSessionsDirForTest", () => {
 
     __setSessionsDirForTest(undefined);
     expect(getSessionsDir("/tmp/project")).toBe(
-      join("/tmp/project", ".archcode", "sessions"),
+      join("/tmp/project", ".archcode", "runtime", "sessions"),
     );
   });
 });
@@ -182,15 +182,15 @@ describe("owner-local session paths", () => {
     __setSessionsDirForTest(undefined);
   });
 
-  test("getSessionDir returns .archcode/sessions/{sessionId}", () => {
+  test("getSessionDir returns .archcode/runtime/sessions/{sessionId}", () => {
     expect(getSessionDir("/tmp/project", VALID_UUID)).toBe(
-      join("/tmp/project", ".archcode", "sessions", VALID_UUID),
+      join("/tmp/project", ".archcode", "runtime", "sessions", VALID_UUID),
     );
   });
 
-  test("getSessionPath returns .archcode/sessions/{sessionId}/session.json", () => {
+  test("getSessionPath returns .archcode/runtime/sessions/{sessionId}/session.json", () => {
     expect(getSessionPath("/tmp/project", VALID_UUID)).toBe(
-      join("/tmp/project", ".archcode", "sessions", VALID_UUID, "session.json"),
+      join("/tmp/project", ".archcode", "runtime", "sessions", VALID_UUID, "session.json"),
     );
   });
 

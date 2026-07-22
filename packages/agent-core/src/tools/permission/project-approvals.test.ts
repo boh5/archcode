@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { silentLogger, type Logger } from "../../logger";
+import { projectRuntimePath } from "../../projects/runtime-path";
 import type { PermissionApprovalScope } from "./policy-types";
 import {
   PermissionApprovalFileSchema,
@@ -12,7 +13,12 @@ import {
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "project-approvals", crypto.randomUUID());
 const WORKSPACE = join(TMP_DIR, "workspace");
-const PERMISSIONS_PATH = join(WORKSPACE, ".archcode", "permissions.json");
+const PERMISSIONS_PATH = projectRuntimePath(WORKSPACE, "permissions.json");
+
+function writePermissionsFixture(content: string): void {
+  mkdirSync(dirname(PERMISSIONS_PATH), { recursive: true });
+  writeFileSync(PERMISSIONS_PATH, content);
+}
 
 const FILE_SCOPE: PermissionApprovalScope = {
   kind: "file-path",
@@ -60,8 +66,7 @@ describe("ProjectApprovalManager", () => {
   });
 
   test("malformed permissions file fails closed with a typed load error", async () => {
-    mkdirSync(join(WORKSPACE, ".archcode"), { recursive: true });
-    writeFileSync(PERMISSIONS_PATH, "{ malformed json");
+    writePermissionsFixture("{ malformed json");
     const logger: Logger = {
       debug: mock(),
       info: mock(),
@@ -79,8 +84,7 @@ describe("ProjectApprovalManager", () => {
   });
 
   test("removed permissions file version fails closed instead of resetting authority", async () => {
-    mkdirSync(join(WORKSPACE, ".archcode"), { recursive: true });
-    writeFileSync(PERMISSIONS_PATH, JSON.stringify({ version: 1, approvals: [] }));
+    writePermissionsFixture(JSON.stringify({ version: 1, approvals: [] }));
     const manager = makeManager();
 
     await expect(manager.load(WORKSPACE)).rejects.toMatchObject({
@@ -238,8 +242,7 @@ describe("ProjectApprovalManager", () => {
     { kind: "bash-command", command: "bun", subcommands: ["test"], argumentMode: "any", effects: ["execute-code"] },
     { kind: "bash-exact", normalized: "bun test", effects: ["execute-code"] },
   ])("rejects a file containing legacy Bash scope $kind with cleanup guidance", async (scope) => {
-    mkdirSync(join(WORKSPACE, ".archcode"), { recursive: true });
-    writeFileSync(PERMISSIONS_PATH, JSON.stringify({
+    writePermissionsFixture(JSON.stringify({
       approvals: [{
         id: crypto.randomUUID(),
         scope,
@@ -253,8 +256,7 @@ describe("ProjectApprovalManager", () => {
   });
 
   test("rejects a mixed valid non-Bash and legacy Bash file with its path and cleanup guidance", async () => {
-    mkdirSync(join(WORKSPACE, ".archcode"), { recursive: true });
-    writeFileSync(PERMISSIONS_PATH, JSON.stringify({
+    writePermissionsFixture(JSON.stringify({
       approvals: [
         {
           id: crypto.randomUUID(), scope: FILE_SCOPE, display: "Write file", reason: "Valid non-Bash approval", grantedAt: new Date().toISOString(),

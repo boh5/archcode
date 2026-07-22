@@ -26,6 +26,14 @@ afterAll(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });
 });
 
+describe("projectHitlQueuePath", () => {
+  test("resolves under .archcode/runtime/hitl-queue.json", () => {
+    expect(projectHitlQueuePath(TMP_ROOT)).toBe(
+      join(TMP_ROOT, ".archcode", "runtime", "hitl-queue.json"),
+    );
+  });
+});
+
 describe("ProjectHitlQueue", () => {
   test("persists every Session-owned request in the one project queue", async () => {
     const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT, codec });
@@ -34,7 +42,11 @@ describe("ProjectHitlQueue", () => {
 
     expect(session.created).toBe(true);
     expect(permission.created).toBe(true);
+    expect(projectHitlQueuePath(TMP_ROOT)).toBe(
+      join(TMP_ROOT, ".archcode", "runtime", "hitl-queue.json"),
+    );
     expect(await Bun.file(projectHitlQueuePath(TMP_ROOT)).exists()).toBe(true);
+    expect(await Bun.file(join(TMP_ROOT, ".archcode", "hitl-queue.json")).exists()).toBe(false);
     expect(await Bun.file(join(TMP_ROOT, ".archcode", "sessions", "session-1", "hitl.json")).exists()).toBe(false);
     expect(await Bun.file(join(TMP_ROOT, ".archcode", "goals", "goal-1", "hitl.json")).exists()).toBe(false);
     expect((await queue.list()).map((record) => record.requestKey)).toEqual(["question-1", "permission-1"]);

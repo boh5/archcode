@@ -5,10 +5,10 @@ import type {
   ProjectTodoSessionOwner,
   ProjectTodoUpdateInput,
 } from "@archcode/protocol";
-import { join } from "node:path";
 
 import type { Logger } from "../logger";
 import { silentLogger } from "../logger";
+import { projectRuntimePath } from "../projects/runtime-path";
 import { atomicWrite } from "../utils/safe-file";
 import {
   ProjectTodoActivationConflictError,
@@ -57,7 +57,7 @@ export class ProjectTodoStateManager {
 
   constructor(workspaceRoot: string, options: ProjectTodoStateManagerOptions = {}) {
     this.workspaceRoot = workspaceRoot;
-    this.#filePath = join(workspaceRoot, ".archcode", "todos", "state.json");
+    this.#filePath = projectRuntimePath(workspaceRoot, "todos", "state.json");
     this.#now = options.now ?? Date.now;
     this.#onCommitted = options.onCommitted;
     this.#logger = (options.logger ?? silentLogger).child({ module: "todos.state" });

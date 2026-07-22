@@ -87,10 +87,10 @@ function resetWorkspace(): void {
   rmSync(WORKSPACE, { recursive: true, force: true });
   rmSync(OUTSIDE, { recursive: true, force: true });
   mkdirSync(join(WORKSPACE, "src"), { recursive: true });
-  mkdirSync(join(WORKSPACE, ".archcode", "memory"), { recursive: true });
+  mkdirSync(join(WORKSPACE, ".archcode", "runtime", "memory"), { recursive: true });
   mkdirSync(OUTSIDE, { recursive: true });
   writeFileSync(join(WORKSPACE, "src", "main.ts"), "export const value = 1;\n");
-  writeFileSync(join(WORKSPACE, ".archcode", "permissions.json"), '{"approvals":[]}\n');
+  writeFileSync(join(WORKSPACE, ".archcode", "runtime", "permissions.json"), '{"approvals":[]}\n');
   writeFileSync(join(OUTSIDE, "outside.txt"), "outside\n");
 }
 
@@ -258,7 +258,7 @@ describe("permission integration regressions", () => {
   });
 
   test("malformed approvals file aborts permission context loading with a typed error", async () => {
-    writeFileSync(join(WORKSPACE, ".archcode", "permissions.json"), "{ malformed json");
+    writeFileSync(join(WORKSPACE, ".archcode", "runtime", "permissions.json"), "{ malformed json");
     const warn = mock();
     const manager = new ProjectApprovalManager(makeLogger({ warn }));
 
@@ -268,10 +268,10 @@ describe("permission integration regressions", () => {
     expect(manager.listApprovals()).toEqual([]);
   });
 
-  test(".archcode direct mutation is denied through registry file-tool style guard", async () => {
+  test(".archcode runtime memory mutation is denied through registry file-tool style guard", async () => {
     const { result, request } = await executeWithConfirmation(
       archcodeProtectedTool(),
-      { path: ".archcode/memory/index.md", content: "# hacked" },
+      { path: ".archcode/runtime/memory/index.md", content: "# hacked" },
       "approve_always",
     );
 

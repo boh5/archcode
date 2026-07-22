@@ -1,11 +1,12 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { PROJECT_STATE_DIR_NAME, type DelegationRequest } from "@archcode/protocol";
+import type { DelegationRequest } from "@archcode/protocol";
 
 import { silentLogger } from "../logger";
 import { createProcessRunner } from "../process/runner";
 import type { ProcessRunner } from "../process/types";
+import { projectRuntimePath } from "../projects/runtime-path";
 import { SessionCwdPathBarrierError, SessionCwdReferenceScanError } from "../store/errors";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { getSessionDir, getSessionPath } from "../store/sessions-dir";
@@ -35,7 +36,7 @@ afterAll(async () => {
 describe("SessionCwdReferenceMigrationService", () => {
   test("rejects a migration journal carrying the removed version field", async () => {
     const digest = new Bun.CryptoHasher("sha256").update(WORKTREE_ROOT).digest("hex");
-    const journalPath = join(PROJECT_ROOT, PROJECT_STATE_DIR_NAME, "session-cwd-migrations", `${digest}.json`);
+    const journalPath = join(projectRuntimePath(PROJECT_ROOT, "session-cwd-migrations"), `${digest}.json`);
     await mkdir(dirname(journalPath), { recursive: true });
     await writeFile(journalPath, JSON.stringify({
       version: 1,
@@ -368,7 +369,7 @@ describe("SessionCwdReferenceMigrationService", () => {
     const validId = crypto.randomUUID();
     const invalidId = crypto.randomUUID();
     await persistAtCwd(stores, validId, WORKTREE_ROOT);
-    await mkdir(join(PROJECT_ROOT, ".archcode", "sessions", invalidId), { recursive: true });
+    await mkdir(getSessionDir(PROJECT_ROOT, invalidId), { recursive: true });
     await Bun.write(getSessionPath(PROJECT_ROOT, invalidId), "{ definitely-not-json");
     const acquireFamilies = mock(() => () => undefined);
     const operation = mock(async () => ({ removed: true }));

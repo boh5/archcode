@@ -271,8 +271,8 @@ async function runAgent(
 describe("ConfiguredAgent", () => {
   beforeAll(async () => {
     await rm(tmpRoot, { recursive: true, force: true });
-    await mkdir(join(tmpRoot, ".archcode", "memory"), { recursive: true });
-    await writeFile(join(tmpRoot, ".archcode", "memory", "index.md"), "");
+    await mkdir(join(tmpRoot, ".archcode", "runtime", "memory"), { recursive: true });
+    await writeFile(join(tmpRoot, ".archcode", "runtime", "memory", "index.md"), "");
     await writeFile(join(tmpRoot, "AGENTS.md"), "# Test Project\n\nMinimal project context.");
     await mkdir(worktreeRoot, { recursive: true });
     await writeFile(join(worktreeRoot, "AGENTS.md"), "# Worktree Instructions\n\nUse the worktree checkout.");
@@ -618,7 +618,7 @@ describe("ConfiguredAgent", () => {
         })),
       ],
     });
-    await writeFile(join(tmpRoot, ".archcode", "memory", "index.md"), `${Array.from({ length: 251 }, (_, index) => `topic-${index}`).join("\n")}\n`);
+    await writeFile(join(tmpRoot, ".archcode", "runtime", "memory", "index.md"), `${Array.from({ length: 251 }, (_, index) => `topic-${index}`).join("\n")}\n`);
 
     const agent = createAgent({ definition: leadAgentDefinition, store, btm });
     await runAgent(agent, "root run");
@@ -649,7 +649,7 @@ describe("ConfiguredAgent", () => {
         },
       ],
     });
-    await writeFile(join(tmpRoot, ".archcode", "memory", "index.md"), `${Array.from({ length: 251 }, (_, index) => `topic-${index}`).join("\n")}\n`);
+    await writeFile(join(tmpRoot, ".archcode", "runtime", "memory", "index.md"), `${Array.from({ length: 251 }, (_, index) => `topic-${index}`).join("\n")}\n`);
 
     const agent = createAgent({
       definition: leadAgentDefinition,

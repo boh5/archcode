@@ -176,7 +176,7 @@ async function waitForInvocationExecution(
 }
 
 async function waitForPersistedTitle(workspaceRoot: string, sessionId: string): Promise<void> {
-  const path = join(workspaceRoot, ".archcode", "sessions", sessionId, "session.json");
+  const path = join(workspaceRoot, ".archcode", "runtime", "sessions", sessionId, "session.json");
   await waitFor(async () => {
     if (!await Bun.file(path).exists()) return false;
     const session = await Bun.file(path).json() as { title?: string | null };

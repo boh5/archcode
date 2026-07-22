@@ -1,7 +1,7 @@
 import { rm } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
-import { PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
 
+import { projectRuntimePath } from "../projects/runtime-path";
 import { SessionCwdReferenceMigrationError } from "../store/errors";
 import { atomicWrite, isContained } from "../utils/safe-file";
 import {
@@ -378,7 +378,7 @@ export class SessionCwdReferenceMigrationService {
 
   #journalPath(input: SessionCwdReferenceMigrationInput): string {
     const digest = new Bun.CryptoHasher("sha256").update(resolve(input.fromCwd)).digest("hex");
-    const root = resolve(input.projectRoot, PROJECT_STATE_DIR_NAME, "session-cwd-migrations");
+    const root = projectRuntimePath(input.projectRoot, "session-cwd-migrations");
     const path = resolve(root, `${digest}.json`);
     if (!isContained(path, root)) throw this.#contractError(input, "Migration journal path escaped project state");
     return path;

@@ -6,7 +6,7 @@ import { analyzeBash, type BashAccess, type BashAnalysis, type BashInvocation } 
 import { approvalFingerprint } from "./approval-fingerprint";
 import type { PermissionApprovalScope } from "./policy-types";
 import { classifySensitivePath } from "./sensitive-file";
-import { isProtectedCanonicalWritePath } from "./protected-path";
+import { isProtectedCanonicalMutationPath } from "./protected-path";
 import type { PermissionDecision, ToolExecutionContext, ToolPermission } from "../types";
 
 const ASK_PROMPT = "Review this bash command before execution.";
@@ -96,8 +96,11 @@ function denyReason(analysis: BashAnalysis, ctx: ToolExecutionContext): { reason
   for (const invocation of analysis.invocations) {
     const { command, argv } = invocation;
     for (const access of invocation.accesses) {
-      if ((access.operation === "write" || access.operation === "delete") && isProtectedCanonicalWritePath(access.path, ctx)) {
-        return { reason: "The .archcode directory and Git metadata are system-managed", ruleId: "deny-protected-path" };
+      if ((access.operation === "write" || access.operation === "delete") && isProtectedCanonicalMutationPath(access.path, ctx)) {
+        return {
+          reason: "Mutations intersecting .archcode/runtime and Git metadata are system-managed",
+          ruleId: "deny-protected-path",
+        };
       }
       if (access.operation === "write" && isDangerousDevice(access.path)) {
         return { reason: "Writing to a block device is not allowed", ruleId: "deny-device-write" };

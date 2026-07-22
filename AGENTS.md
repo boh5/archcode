@@ -182,6 +182,23 @@ Delegation: `delegate(DelegationRequest)` creates a durable direct child; `resum
 - Ordinary Session routes create a `lead`. A root Lead Session may own one optional `Session.goal`; no Goal-specific Session, route family, or worktree exists. A Todo Discussion is a restricted root Lead derived from its authoritative Todo binding.
 - Web UI Add Project flow should register an existing workspace directory, then use project-scoped API routes (`/api/projects/:slug/...`) for sessions, files, automations, HITL, and events.
 
+**Project `.archcode` layout** (per registered workspace root; user-global `~/.archcode` is unchanged):
+```text
+.archcode/
+├── runtime/                         # system-managed authority state
+│   ├── sessions/{id}/session.json
+│   ├── hitl-queue.json
+│   ├── permissions.json
+│   ├── todos/state.json
+│   ├── automations/state.json
+│   ├── session-cwd-migrations/
+│   └── memory/{index.md,preferences.md,knowledge/...}
+├── plans/*.md                       # ordinary Markdown Plans (plan-work)
+└── skills/**                        # project Skills
+```
+- Agent mutation tools hard-deny `.archcode/runtime/**`, mutations of ancestors that would affect that runtime tree, and `.git/**` (reads remain allowed). Direct mutations under `plans/` and `skills/` stay outside runtime and are not denied by that guard.
+- System services still persist under `runtime/` via their own writers (not agent mutation tools). Hard-cut: no dual-path reads of pre-runtime project paths.
+
 **SSE + Deferred pattern:**
 - Session streaming lives in `apps/server/src/routes/events.ts`; clients connect to `/api/projects/:slug/sessions/:sessionId/events`.
 - Event names are `stream`, `permission.request`, `question.request`, `heartbeat`, and shutdown-related lifecycle notifications. `stream` carries flattened store events such as text deltas, reasoning deltas, tool calls/results, compaction, steps, reminders, and todos.
@@ -345,7 +362,7 @@ beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-in
 
 ## Session Store
 
-Zustand vanilla store per Agent Session. `append(StreamEvent)` → `reduceStreamEvent()` → `toModelMessages()`. Strict Session identity includes `agentName`, immutable resolved `profile`, `activeSkillNames`, root/parent ids, cwd, and delegated identity where applicable; an optional `goal` belongs only to a root Lead Session. Active Skill bodies are resolved again for every Execution. Tool parts: `pending → running → completed | error`. `readSnapshots` (Map<path, mtime>) supports the edit guard. Reminders include todo continuation and child terminal notifications. Persisted to `~/.archcode/sessions/{id}.json`, validated by strict `SessionFileSchema` on load. `SessionExecutionManager` alone owns live execution admission and terminal records; load-time repair only converts restart-orphaned `running` records to `interrupted`.
+Zustand vanilla store per Agent Session. `append(StreamEvent)` → `reduceStreamEvent()` → `toModelMessages()`. Strict Session identity includes `agentName`, immutable resolved `profile`, `activeSkillNames`, root/parent ids, cwd, and delegated identity where applicable; an optional `goal` belongs only to a root Lead Session. Active Skill bodies are resolved again for every Execution. Tool parts: `pending → running → completed | error`. `readSnapshots` (Map<path, mtime>) supports the edit guard. Reminders include todo continuation and child terminal notifications. Persisted under the project workspace at `.archcode/runtime/sessions/{id}/session.json`, validated by strict `SessionFileSchema` on load. `SessionExecutionManager` alone owns live execution admission and terminal records; load-time repair only converts restart-orphaned `running` records to `interrupted`.
 
 ## Context Compaction
 
@@ -353,7 +370,7 @@ ArchCode has two intentionally separate context-reduction paths. Dynamic DCP-lik
 
 ## Memory System
 
-Project: `.archcode/memory/`, User: `~/.archcode/memory/`. Structure: `index.md` (topic index), `preferences.md`, `knowledge/{topic}.md` (frontmatter + markdown). Types: `"user" | "feedback" | "project" | "reference"`. `MemoryFileManager`: atomic writes, path validation, frontmatter parse/format, index rebuild/search. Extraction (background task via `runLlmObject`) → writes topics. Consolidation (background task) → reorganizes index. Injection: ConfiguredAgent resolves one immutable Execution snapshot; PromptContractCompiler labels it non-authoritative and emits its source/status in the durable Prompt trace. `memory_write` rejects secrets.
+Project: `.archcode/runtime/memory/`, User: `~/.archcode/memory/` (user-global, not under project runtime). Structure: `index.md` (topic index), `preferences.md`, `knowledge/{topic}.md` (frontmatter + markdown). Types: `"user" | "feedback" | "project" | "reference"`. `MemoryFileManager`: atomic writes, path validation, frontmatter parse/format, index rebuild/search. Extraction (background task via `runLlmObject`) → writes topics. Consolidation (background task) → reorganizes index. Injection: ConfiguredAgent resolves one immutable Execution snapshot; PromptContractCompiler labels it non-authoritative and emits its source/status in the durable Prompt trace. `memory_write` rejects secrets.
 
 ## Session Goal System
 
@@ -365,7 +382,7 @@ Project Todos are project-owned intent, separate from Session-local `todo_write`
 
 ## HITL
 
-HITL is a durable project-scoped approval/question queue backed by `.archcode/hitl-queue.json`. Server and Web routes expose redacted `displayPayload` data for approval/dashboard views; raw sensitive payloads must not be rendered or persisted in UI state. Deferred permission/question flows resolve safely on timeout, cancellation, or shutdown so long-running agent execution is not left hanging.
+HITL is a durable project-scoped approval/question queue backed by `.archcode/runtime/hitl-queue.json`. Server and Web routes expose redacted `displayPayload` data for approval/dashboard views; raw sensitive payloads must not be rendered or persisted in UI state. Deferred permission/question flows resolve safely on timeout, cancellation, or shutdown so long-running agent execution is not left hanging.
 
 ## Automation System
 

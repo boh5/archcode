@@ -127,13 +127,13 @@ afterAll(async () => {
 });
 
 describe("fileEditTool", () => {
-  test("hard-denies canonical project state through a worktree symlink", async () => {
-    const canonicalState = join(canonicalProjectDir, ".archcode");
-    const target = join(canonicalState, "blocked.txt");
-    const stateLink = join(testDir, "canonical-state");
-    await mkdir(canonicalState, { recursive: true });
+  test("hard-denies canonical project runtime through a worktree symlink", async () => {
+    const canonicalRuntime = join(canonicalProjectDir, ".archcode", "runtime");
+    const target = join(canonicalRuntime, "blocked.txt");
+    const stateLink = join(testDir, "canonical-runtime");
+    await mkdir(canonicalRuntime, { recursive: true });
     await Bun.write(target, "before\n");
-    await symlink(canonicalState, stateLink);
+    await symlink(canonicalRuntime, stateLink);
 
     const result = await executeThroughRegistry(
       {

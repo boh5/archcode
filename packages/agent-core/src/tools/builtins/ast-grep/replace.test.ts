@@ -286,13 +286,13 @@ describe("ast_grep_replace tool", () => {
     }
   });
 
-  test("apply mode refuses preview matches under .archcode before mutation", async () => {
+  test("apply mode refuses preview matches under .archcode/runtime before mutation", async () => {
     const workspace = tempWorkspace();
     try {
-      const artifact = join(workspace, ".archcode", "goals", "00000000-0000-0000-0000-000000000001", "goal.json");
-      mkdirSync(join(workspace, ".archcode", "goals", "00000000-0000-0000-0000-000000000001"), { recursive: true });
+      const artifact = join(workspace, ".archcode", "runtime", "memory", "index.md");
+      mkdirSync(join(workspace, ".archcode", "runtime", "memory"), { recursive: true });
       writeFileSync(artifact, "console.log(message)", "utf-8");
-      const run = mock((cmd: readonly [string, ...string[]]) => { void cmd; return spawnResult(replacementJsonFor(".archcode/goals/00000000-0000-0000-0000-000000000001/goal.json")); });
+      const run = mock((cmd: readonly [string, ...string[]]) => { void cmd; return spawnResult(replacementJsonFor(".archcode/runtime/memory/index.md")); });
       setProcessRunnerForTest(run);
 
       const result = await astGrepReplaceTool.execute(
@@ -308,12 +308,36 @@ describe("ast_grep_replace tool", () => {
     }
   });
 
+  test("apply mode allows preview matches under .archcode/plans", async () => {
+    const workspace = tempWorkspace();
+    try {
+      const artifact = join(workspace, ".archcode", "plans", "plan.md");
+      mkdirSync(join(workspace, ".archcode", "plans"), { recursive: true });
+      writeFileSync(artifact, "console.log(message)", "utf-8");
+      const run = mock((cmd: readonly [string, ...string[]]) => {
+        if (cmd.includes("--update-all")) writeFileSync(artifact, "logger.info(message)", "utf-8");
+        return spawnResult(replacementJsonFor(".archcode/plans/plan.md"));
+      });
+      setProcessRunnerForTest(run);
+
+      const result = await astGrepReplaceTool.execute(
+        { pattern: "console.log($MSG)", rewrite: "logger.info($MSG)", dryRun: false },
+        ctx({ cwd: workspace, projectContext: createTestProjectContext(workspace), store: createSnapshotStore(artifact) }),
+      );
+
+      expect(run).toHaveBeenCalledTimes(3);
+      expect(JSON.parse(draftText(result).trim())).toMatchObject({ file: ".archcode/plans/plan.md", replacement: "logger.info(message)" });
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
   test("apply mode refuses preview matches under canonical project state from a worktree Session", async () => {
     const projectRoot = tempWorkspace();
     const worktree = tempWorkspace();
     try {
-      const artifact = join(projectRoot, ".archcode", "memory", "index.md");
-      mkdirSync(join(projectRoot, ".archcode", "memory"), { recursive: true });
+      const artifact = join(projectRoot, ".archcode", "runtime", "memory", "index.md");
+      mkdirSync(join(projectRoot, ".archcode", "runtime", "memory"), { recursive: true });
       writeFileSync(artifact, "console.log(message)", "utf-8");
       const run = mock((cmd: readonly [string, ...string[]]) => {
         void cmd;
@@ -347,13 +371,13 @@ describe("ast_grep_replace tool", () => {
     const projectRoot = tempWorkspace();
     const worktree = tempWorkspace();
     try {
-      const artifact = join(projectRoot, ".archcode", "memory", "index.md");
-      mkdirSync(join(projectRoot, ".archcode", "memory"), { recursive: true });
+      const artifact = join(projectRoot, ".archcode", "runtime", "memory", "index.md");
+      mkdirSync(join(projectRoot, ".archcode", "runtime", "memory"), { recursive: true });
       writeFileSync(artifact, "console.log(message)", "utf-8");
       symlinkSync(join(projectRoot, ".archcode"), join(worktree, "canonical-state"));
       const run = mock((cmd: readonly [string, ...string[]]) => {
         void cmd;
-        return spawnResult(replacementJsonFor("canonical-state/memory/index.md"));
+        return spawnResult(replacementJsonFor("canonical-state/runtime/memory/index.md"));
       });
       setProcessRunnerForTest(run);
 
@@ -383,9 +407,9 @@ describe("ast_grep_replace tool", () => {
     const worktree = tempWorkspace();
     try {
       const sourceFile = join(worktree, "source.ts");
-      const artifact = join(projectRoot, ".archcode", "memory", "index.md");
+      const artifact = join(projectRoot, ".archcode", "runtime", "memory", "index.md");
       writeFileSync(sourceFile, "console.log(message)", "utf-8");
-      mkdirSync(join(projectRoot, ".archcode", "memory"), { recursive: true });
+      mkdirSync(join(projectRoot, ".archcode", "runtime", "memory"), { recursive: true });
       writeFileSync(artifact, "console.log(message)", "utf-8");
       let callCount = 0;
       const run = mock((cmd: readonly [string, ...string[]]) => {
@@ -714,13 +738,21 @@ describe("ast_grep_replace tool", () => {
     expect(applyScope.operation).toBe("write");
   });
 
-  test("checks protected .archcode permission for explicit paths", async () => {
+  test("checks protected .archcode/runtime permission for explicit paths", async () => {
     const protectedPermission = astGrepReplaceTool.permissions![1];
 
-    const decision = await protectedPermission({ pattern: "x", rewrite: "y", dryRun: false, paths: [".archcode/goals/goal_test/goal.json"] }, ctx());
+    const decision = await protectedPermission({ pattern: "x", rewrite: "y", dryRun: false, paths: [".archcode/runtime/memory/index.md"] }, ctx());
 
     expect(decision.outcome).toBe("deny");
     expect(decision.errorCode).toBe("PROTECTED_PATH_WRITE_DENIED");
+  });
+
+  test("does not protect-path-deny explicit .archcode/plans paths", async () => {
+    const protectedPermission = astGrepReplaceTool.permissions![1];
+
+    const decision = await protectedPermission({ pattern: "x", rewrite: "y", dryRun: false, paths: [".archcode/plans/plan.md"] }, ctx());
+
+    expect(decision.outcome).toBe("allow");
   });
 
   test("checks canonical project .archcode permission for explicit paths from a worktree Session", async () => {
@@ -731,7 +763,7 @@ describe("ast_grep_replace tool", () => {
         pattern: "x",
         rewrite: "y",
         dryRun: false,
-        paths: [join(projectRoot, ".archcode", "memory")],
+        paths: [join(projectRoot, ".archcode", "runtime", "memory")],
       },
       ctx({
         cwd: "/worktrees/session-1",

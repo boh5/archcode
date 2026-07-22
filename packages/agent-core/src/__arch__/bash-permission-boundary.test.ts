@@ -68,7 +68,7 @@ describe("Bash permission hard-cut architecture", () => {
       .filter((file) => /export function classifySensitivePath\s*\(/.test(readFileSync(file, "utf8")))
       .map((file) => relative(projectRoot, file));
     const protectedOwners = production
-      .filter((file) => /export function isProtectedCanonicalWritePath\s*\(/.test(readFileSync(file, "utf8")))
+      .filter((file) => /export function isProtectedCanonicalMutationPath\s*\(/.test(readFileSync(file, "utf8")))
       .map((file) => relative(projectRoot, file));
 
     expect(sensitiveOwners).toEqual(["packages/agent-core/src/tools/permission/sensitive-file.ts"]);

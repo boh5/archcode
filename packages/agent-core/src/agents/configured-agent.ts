@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { PROJECT_STATE_DIR_NAME, USER_DATA_DIR_NAME, type McpServerStatus, type ProjectTodo, type PromptTraceSnapshot, type SessionGoal } from "@archcode/protocol";
+import { USER_DATA_DIR_NAME, type McpServerStatus, type ProjectTodo, type PromptTraceSnapshot, type SessionGoal } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 import type { BackgroundTaskManager } from "../background/manager";
 import { BackgroundTaskManager as DefaultBackgroundTaskManager } from "../background/manager";
@@ -10,6 +10,7 @@ import type { ExecutionModelBinding } from "../models";
 import type { MemoryRoots } from "../memory";
 import { MemoryFileManager } from "../memory/file-manager";
 import type { ProjectContextResolver } from "../projects/context-resolver";
+import { projectRuntimePath } from "../projects/runtime-path";
 import type { ProjectContext } from "../projects/types";
 import { SkillNotFoundError, type SkillService } from "../skills";
 import type { ResolvedSkill } from "../skills/types";
@@ -202,7 +203,7 @@ export class ConfiguredAgent implements Agent {
     this.resolveMcpStatuses = options.resolveMcpStatuses;
     this.memoryConfig = options.memoryConfig;
     this.memoryRoots = {
-      project: join(this.projectRoot, PROJECT_STATE_DIR_NAME, "memory"),
+      project: projectRuntimePath(this.projectRoot, "memory"),
       user: join(homedir(), USER_DATA_DIR_NAME, "memory"),
     };
 

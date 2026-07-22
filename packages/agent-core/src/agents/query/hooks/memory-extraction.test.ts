@@ -29,7 +29,7 @@ const storeManager = {
   delete: (sessionId: string, root: string) => persistentStoreManager.delete(sessionId, root),
 };
 const mockMemoryRoots: MemoryRoots = {
-  project: `${workspaceRoot}/.archcode/memory`,
+  project: `${workspaceRoot}/.archcode/runtime/memory`,
   user: `${workspaceRoot}/user-memory`,
 };
 

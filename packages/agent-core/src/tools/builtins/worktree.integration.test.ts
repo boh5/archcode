@@ -59,7 +59,7 @@ describe("worktree Session tools", () => {
     expect(worktreeCwd).not.toBe(projectRoot);
     expect(await Bun.file(join(worktreeCwd, "README.md")).exists()).toBe(true);
     expect((await manager.getSessionFile(projectRoot, sessionId)).cwd).toBe(worktreeCwd);
-    expect(await Bun.file(join(worktreeCwd, ".archcode", "sessions", sessionId, "session.json")).exists()).toBe(false);
+    expect(await Bun.file(join(worktreeCwd, ".archcode", "runtime", "sessions", sessionId, "session.json")).exists()).toBe(false);
 
     const exited = await executeWorktreeExit({}, { ...ctx, toolName: "worktree_exit", cwd: worktreeCwd });
     if (typeof exited === "string") throw new Error("Expected structured exit result");

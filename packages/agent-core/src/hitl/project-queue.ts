@@ -1,7 +1,4 @@
-import { join } from "node:path";
-
 import {
-  PROJECT_STATE_DIR_NAME,
   type HitlAllowedAction,
   type HitlDisplayPayload,
   type HitlOwner,
@@ -11,6 +8,7 @@ import {
   type HitlView,
 } from "@archcode/protocol";
 import { sortJsonValue } from "@archcode/utils";
+import { projectRuntimePath } from "../projects/runtime-path";
 import { atomicWrite } from "../utils/safe-file";
 import { HitlBoundaryCodec } from "./boundary-codec";
 
@@ -286,7 +284,7 @@ export class ProjectHitlQueue {
 }
 
 export function projectHitlQueuePath(workspaceRoot: string): string {
-  return join(workspaceRoot, PROJECT_STATE_DIR_NAME, "hitl-queue.json");
+  return projectRuntimePath(workspaceRoot, "hitl-queue.json");
 }
 
 export function toHitlView(record: HitlRecord): HitlView {

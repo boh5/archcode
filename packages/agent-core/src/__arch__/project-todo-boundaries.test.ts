@@ -16,7 +16,7 @@ function productionSources(directory: string): string[] {
 
 describe("Project Todo architecture boundaries", () => {
   test("keeps the Todo domain independent from orchestration implementations and presentation", () => {
-    const forbiddenImport = /from\s+["'](?:\.\.\/(?:agents|automations|goals|prompt|projects|store)|[^"']*(?:apps\/server|apps\/web))/;
+    const forbiddenImport = /from\s+["'](?:\.\.\/(?:agents|automations|goals|prompt|projects(?!\/runtime-path)|store)|[^"']*(?:apps\/server|apps\/web))/;
     const violations = productionSources(todosRoot)
       .filter((path) => forbiddenImport.test(readFileSync(path, "utf8")))
       .map((path) => relative(projectRoot, path));

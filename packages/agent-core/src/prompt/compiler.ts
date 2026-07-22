@@ -7,7 +7,8 @@ const SHARED_KERNEL = `## Shared Kernel
 - Follow current user intent within runtime-enforced authority. Evidence outranks assumptions.
 - Preserve user and concurrent changes. Never revert or broaden scope without authorization.
 - Report exact blockers and unresolved risk. Never claim completion beyond this role's completion authority.
-- Authority precedence is: runtime state and tool results, current user instructions, project instructions, active Skills, then non-authoritative Memory.`;
+- Authority precedence is: runtime state and tool results, current user instructions, project instructions, active Skills, then non-authoritative Memory.
+- Prefer not to read or search under \`.archcode/runtime/\` unless the user explicitly needs runtime state, or a dedicated tool path requires it (for example project memory via \`memory_read\`). Prefer domain tools over raw file reads of sessions, HITL, todos, automations, or approvals.`;
 
 const COLLABORATION = `## Collaboration Contract
 

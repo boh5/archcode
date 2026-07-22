@@ -1,6 +1,8 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { USER_DATA_DIR_NAME } from "@archcode/protocol";
 
 import { HitlBoundaryCodec, ProjectHitlQueue } from "../hitl";
 import { MemoryFileManager } from "../memory/file-manager";
@@ -121,7 +123,8 @@ describe("ProjectContextResolver", () => {
     expect(context.hitl).toBeInstanceOf(ProjectHitlQueue);
     expect(context.memory).toBeInstanceOf(MemoryFileManager);
     expect(context.todos).toBeInstanceOf(ProjectTodoService);
-    expect(context.memory.projectRoot).toBe(join(workspace, ".archcode", "memory"));
+    expect(context.memory.projectRoot).toBe(join(workspace, ".archcode", "runtime", "memory"));
+    expect(context.memory.userRoot).toBe(join(homedir(), USER_DATA_DIR_NAME, "memory"));
     expect(record.goalArtifacts).toBeUndefined();
     expect(record.workflowState).toBeUndefined();
   });
