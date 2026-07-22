@@ -167,25 +167,25 @@ export function ToolOutputViewer({ projectSlug, sessionId, outputRef }: ToolOutp
   return (
     <div data-testid="tool-output-viewer" className="border-t border-border-subtle bg-bg-surface">
       <div className="flex items-center gap-2 border-b border-border-subtle px-3 py-2">
-        <span className="font-mono text-[11px] text-text-muted truncate">{outputRef}</span>
+        <span className="truncate font-mono text-[11px] text-text-tertiary">{outputRef}</span>
         {readState.status === "ready" && (
-          <span className="ml-auto text-[10.5px] text-text-muted">{readState.completeness}</span>
+          <span className="ml-auto text-[11px] text-text-tertiary">{readState.completeness}</span>
         )}
       </div>
 
-      <form className="flex gap-1.5 border-b border-border-subtle px-3 py-2" onSubmit={runSearch}>
+      <form className="flex gap-2 border-b border-border-subtle px-3 py-2" onSubmit={runSearch}>
         <label className="sr-only" htmlFor={`tool-output-search-${outputRef}`}>Search output</label>
         <input
           id={`tool-output-search-${outputRef}`}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Search this output"
-          className="min-w-0 flex-1 rounded-sm border border-border-default bg-bg-base px-2 py-1 text-[11.5px] text-text-primary outline-none focus:border-accent"
+          className="h-8 min-w-0 flex-1 rounded-sm border border-border-control bg-bg-base px-3 text-[12px] text-text-primary outline-none focus:border-brand focus:ring-2 focus:ring-brand-subtle"
         />
         <button
           type="submit"
           disabled={!query.trim() || searchState.status === "loading"}
-          className="inline-flex items-center gap-1 rounded-sm bg-bg-active px-2 py-1 text-[11px] text-text-secondary hover:bg-bg-hover disabled:opacity-40"
+          className="inline-flex h-8 items-center gap-1 rounded-sm bg-bg-active px-3 text-[12px] text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-40"
         >
           <Search size={11} /> Search
         </button>
@@ -194,27 +194,27 @@ export function ToolOutputViewer({ projectSlug, sessionId, outputRef }: ToolOutp
       {searchState.status !== "idle" && (
         <div className="border-b border-border-subtle px-3 py-2">
           {(searchState.status === "loading" || searchState.status === "ready") && (
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col gap-2">
               {searchState.matches.map((match, index) => (
-                <div key={`${match.outputRef}-${match.canonicalStart}-${index}`} className="rounded-sm border border-border-subtle bg-bg-elevated px-2 py-1.5">
-                  <div className="mb-0.5 font-mono text-[10px] text-text-muted">{match.segment} · {match.canonicalStart}–{match.canonicalEnd}</div>
+                <div key={`${match.outputRef}-${match.canonicalStart}-${index}`} className="rounded-sm border border-border-subtle bg-bg-elevated px-2 py-2">
+                  <div className="mb-1 font-mono text-[11px] text-text-tertiary">{match.segment} · {match.canonicalStart}–{match.canonicalEnd}</div>
                   <pre className="whitespace-pre-wrap break-all font-mono text-[11px] text-text-secondary">{match.snippet}</pre>
                 </div>
               ))}
               {searchState.status === "loading" && <LoadingLabel label="Searching…" />}
               {searchState.status === "ready" && searchState.matches.length === 0 && (
-                <span className="text-[11px] text-text-muted">No matches</span>
+                <span className="text-[11px] text-text-tertiary">No matches</span>
               )}
               {searchState.status === "ready" && searchState.nextCursor && (
-                <button type="button" onClick={loadNextSearchPage} className="self-start text-[11px] text-accent hover:underline">More matches</button>
+                <button type="button" onClick={loadNextSearchPage} className="self-start text-[11px] text-brand hover:underline">More matches</button>
               )}
               {searchState.status === "ready" && searchState.limitReached && (
-                <span className="text-[10.5px] text-text-muted">Viewer limit reached. Refine the search to continue.</span>
+                <span className="text-[11px] text-text-tertiary">Viewer limit reached. Refine the search to continue.</span>
               )}
             </div>
           )}
           {searchState.status === "terminal" && (
-            <div data-testid="tool-output-expired" className="flex items-center gap-1.5 text-[11px] text-warning">
+            <div data-testid="tool-output-expired" className="flex items-center gap-2 text-[11px] text-warning">
               <TriangleAlert size={11} /> {searchState.message}
             </div>
           )}
@@ -225,27 +225,27 @@ export function ToolOutputViewer({ projectSlug, sessionId, outputRef }: ToolOutp
       <div className="max-h-80 overflow-y-auto px-3 py-2">
         {readState.status === "error" && <span className="text-[11px] text-error">{readState.message}</span>}
         {(readState.status === "loading" || readState.status === "ready") && (
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-2">
             {readState.records.map((record, index) => (
               <div key={`${record.segment}-${record.canonicalStart}-${index}`}>
-                <div className="mb-0.5 font-mono text-[10px] text-text-muted">{record.segment} · {record.canonicalStart}–{record.canonicalEnd}</div>
-                <pre className="whitespace-pre-wrap break-all rounded-sm border border-border-subtle bg-bg-elevated p-2 font-mono text-[11.5px] leading-relaxed text-text-secondary">{record.text}</pre>
+                <div className="mb-1 font-mono text-[11px] text-text-tertiary">{record.segment} · {record.canonicalStart}–{record.canonicalEnd}</div>
+                <pre className="whitespace-pre-wrap break-all rounded-sm border border-border-subtle bg-bg-elevated p-2 font-mono text-[12px] leading-[18px] text-text-secondary">{record.text}</pre>
               </div>
             ))}
             {readState.status === "ready" && readState.gap && (
-              <div className="rounded-sm border border-warning/20 bg-warning-muted px-2 py-1 text-[10.5px] text-warning">
+              <div className="rounded-sm border border-warning/20 bg-warning-muted px-2 py-1 text-[11px] text-warning">
                 Omitted canonical range {readState.gap.canonicalStart}–{readState.gap.canonicalEnd}
               </div>
             )}
             {readState.status === "loading" && <LoadingLabel label="Loading output…" />}
             {readState.status === "ready" && readState.records.length === 0 && (
-              <span className="text-[11px] text-text-muted">No output records</span>
+              <span className="text-[11px] text-text-tertiary">No output records</span>
             )}
             {readState.status === "ready" && readState.nextCursor && (
-              <button type="button" onClick={loadNext} className="self-start text-[11px] text-accent hover:underline">Continue loading</button>
+              <button type="button" onClick={loadNext} className="self-start text-[11px] text-brand hover:underline">Continue loading</button>
             )}
             {readState.status === "ready" && readState.limitReached && (
-              <span className="text-[10.5px] text-text-muted">Viewer limit reached. Use search to narrow the output.</span>
+              <span className="text-[11px] text-text-tertiary">Viewer limit reached. Use search to narrow the output.</span>
             )}
           </div>
         )}
@@ -256,8 +256,8 @@ export function ToolOutputViewer({ projectSlug, sessionId, outputRef }: ToolOutp
 
 function LoadingLabel({ label }: { label: string }) {
   return (
-    <span className="inline-flex items-center gap-1.5 text-[11px] text-text-muted">
-      <LoaderCircle size={11} className="animate-spin" /> {label}
+    <span className="inline-flex items-center gap-2 text-[11px] text-text-tertiary">
+      <LoaderCircle size={11} className="animate-activity" /> {label}
     </span>
   );
 }

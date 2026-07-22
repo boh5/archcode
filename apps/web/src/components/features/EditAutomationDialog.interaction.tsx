@@ -121,6 +121,11 @@ describe("EditAutomationDialog limits", () => {
     const name = field("automation-name");
     const message = field("automation-message");
     const timezone = field("automation-timezone");
+    for (const input of [name, field("automation-cron"), timezone]) {
+      expect(input.className).toContain("border-border-control");
+      expect(input.className).toContain("bg-bg-base");
+      expect(input.className).toContain("focus:border-brand");
+    }
     expect(name.maxLength).toBe(AUTOMATION_NAME_MAX_LENGTH);
     expect(message.maxLength).toBe(AUTOMATION_MESSAGE_MAX_LENGTH);
     expect(timezone.maxLength).toBe(AUTOMATION_TIMEZONE_MAX_LENGTH);

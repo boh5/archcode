@@ -58,14 +58,14 @@ export function ResizeHandle({ label, controls, value, min, max, direction, onCh
       aria-valuenow={value}
       aria-valuetext={`${value} pixels`}
       tabIndex={0}
-      className="group relative z-30 h-full w-2 shrink-0 cursor-col-resize touch-none bg-transparent outline-none focus:bg-accent/30"
+      className="group relative z-30 h-full w-2 shrink-0 cursor-col-resize touch-none bg-transparent outline-none focus:bg-brand/30"
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerEnd}
       onPointerCancel={handlePointerEnd}
       onKeyDown={handleKeyDown}
     >
-      <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border-subtle transition-colors group-hover:bg-accent group-focus:bg-accent" />
+      <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border-subtle transition-colors group-hover:bg-brand group-focus:bg-brand" />
     </div>
   );
 }

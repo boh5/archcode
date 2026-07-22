@@ -1,7 +1,12 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useId, useState } from "react";
+import { Clock3, Cpu, Pause, Pencil, Play, Trash2, Workflow } from "lucide-react";
 import type { SessionGoalView } from "../../api/types";
 import { useEditSessionGoal, useSessionGoalControl, useSetSessionGoalBudget } from "../../api/mutations";
 import { DialogContent, DialogDescription, DialogRoot, DialogTitle } from "../ui/Dialog";
+import { IconAction } from "../primitives/IconAction";
+import { GoalStatusMark } from "./GoalStatusMark";
+import { presentSessionGoalStatus } from "../../lib/session-goal-presentation";
+import { STATUS_TONE_CLASS } from "../../lib/status-visuals";
 
 export function SessionGoalProgressRow({
   slug,
@@ -19,6 +24,7 @@ export function SessionGoalProgressRow({
   const [objective, setObjective] = useState("");
   const [budget, setBudgetValue] = useState("");
   const [removeBudget, setRemoveBudget] = useState(false);
+  const blockedReasonId = useId();
 
   if (!goal) return null;
 
@@ -35,6 +41,7 @@ export function SessionGoalProgressRow({
     || removeBudget
     || (Number.isSafeInteger(parsedBudget) && parsedBudget > goal.usage.tokens.totalTokens);
   const canSave = trimmedObjective.length > 0 && (objectiveChanged || budgetChanged) && budgetValid && !busy;
+  const goalPresentation = presentSessionGoalStatus(goal.status);
 
   const openEditor = () => {
     editGoal.reset();
@@ -72,28 +79,31 @@ export function SessionGoalProgressRow({
   return (
     <>
       <section
-        className="flex min-h-[34px] min-w-0 shrink-0 items-center gap-2 rounded-[10px] border border-accent/25 bg-accent-subtle px-2 py-1.5"
+        className="flex min-h-[42px] min-w-0 shrink-0 items-center gap-2 rounded-md border border-border-default bg-bg-surface px-2 py-2"
         data-testid="session-goal-progress-row"
         aria-label="Session goal"
       >
-        <span aria-hidden="true" className="shrink-0 text-xs text-accent">◎</span>
-        <strong className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-accent">{goalLabel(goal.status)}</strong>
-        <span className="shrink-0 rounded-sm bg-bg-base/70 px-1.5 py-px text-[10px] font-medium text-text-secondary max-[560px]:hidden">{goal.status}</span>
+        <GoalStatusMark identity={goal.instanceId} status={goal.status} size={18} label={`Goal ${goalPresentation.label}`} />
+        <strong className={`shrink-0 text-[12px] font-semibold max-[559px]:hidden ${STATUS_TONE_CLASS[goalPresentation.tone]}`}>{goalPresentation.label}</strong>
         <span
-          className="min-w-0 flex-1 truncate text-xs text-text-primary"
+          aria-describedby={goal.blockedReason ? blockedReasonId : undefined}
+          className="min-w-[48px] flex-1 truncate text-[13px] font-medium leading-5 text-text-primary min-[560px]:min-w-24 min-[800px]:min-w-[120px]"
           title={goal.blockedReason ? `${goal.objective}\n${goal.blockedReason}` : goal.objective}
         >
           {goal.objective}
         </span>
-        <span className="shrink-0 whitespace-nowrap text-[10px] text-text-tertiary max-[700px]:hidden">
-          {goal.usage.executionCount} turns · {goal.usage.tokens.totalTokens.toLocaleString()} tokens · {formatDuration(Math.round(goal.usage.executionTimeMs / 1_000))}
+        {goal.blockedReason && <span id={blockedReasonId} className="sr-only">{goal.blockedReason}</span>}
+        <span className="flex shrink-0 items-center gap-2 whitespace-nowrap text-[11px] text-text-tertiary max-[799px]:hidden">
+          <span className="inline-flex items-center gap-1" title={`${goal.usage.executionCount} executions`}><Workflow size={12} aria-hidden="true" />{goal.usage.executionCount}<span className="max-[1099px]:hidden"> executions</span></span>
+          <span className="inline-flex items-center gap-1" title={`${goal.usage.tokens.totalTokens.toLocaleString()} tokens`}><Cpu size={12} aria-hidden="true" />{goal.usage.tokens.totalTokens.toLocaleString()}<span className="max-[1099px]:hidden"> tokens</span></span>
+          <span className="inline-flex items-center gap-1" title={`${Math.round(goal.usage.executionTimeMs / 1_000)} seconds`}><Clock3 size={12} aria-hidden="true" />{formatDuration(Math.round(goal.usage.executionTimeMs / 1_000))}</span>
         </span>
-        {rowMutationError && <span className="max-w-40 truncate text-[10px] text-error" role="alert" title={rowMutationError}>{rowMutationError}</span>}
+        {rowMutationError && <span className="max-w-40 truncate text-[11px] text-error" role="alert" title={rowMutationError}>{rowMutationError}</span>}
         <div className="flex shrink-0 items-center gap-1">
-          {controls.edit && <ControlButton disabled={busy} onClick={openEditor}>Edit</ControlButton>}
-          {controls.pause && <ControlButton disabled={busy} onClick={() => controlGoal.mutate({ slug, sessionId, action: "pause" })}>Pause</ControlButton>}
-          {controls.resume && <ControlButton disabled={busy} onClick={() => controlGoal.mutate({ slug, sessionId, action: "resume" })}>Resume</ControlButton>}
-          {controls.clear && <ControlButton danger disabled={busy} onClick={() => controlGoal.mutate({ slug, sessionId, action: "clear" })}>Clear</ControlButton>}
+          {controls.edit && <IconAction label="Edit goal" disabled={busy} onClick={openEditor}><Pencil size={14} aria-hidden="true" /></IconAction>}
+          {controls.pause && <IconAction label="Pause goal" disabled={busy} onClick={() => controlGoal.mutate({ slug, sessionId, action: "pause" })}><Pause size={14} aria-hidden="true" /></IconAction>}
+          {controls.resume && <IconAction label="Resume goal" disabled={busy} onClick={() => controlGoal.mutate({ slug, sessionId, action: "resume" })}><Play size={14} aria-hidden="true" /></IconAction>}
+          {controls.clear && <IconAction danger label="Clear goal" disabled={busy} onClick={() => controlGoal.mutate({ slug, sessionId, action: "clear" })}><Trash2 size={14} aria-hidden="true" /></IconAction>}
         </div>
       </section>
 
@@ -101,16 +111,16 @@ export function SessionGoalProgressRow({
         <DialogContent>
           <div className="p-5">
             <DialogTitle className="text-base font-semibold text-text-primary">Edit goal</DialogTitle>
-            <DialogDescription className="mt-1 text-xs text-text-muted">
+            <DialogDescription className="mt-1 text-xs text-text-tertiary">
               Update the objective{goal.status === "budget_limited" ? " and recover from the current token limit" : ""}.
             </DialogDescription>
 
-            <label className="mt-4 grid gap-1.5 text-xs text-text-secondary">
+            <label className="mt-4 grid gap-2 text-xs text-text-secondary">
               Objective
               <textarea
                 aria-label="Goal objective"
                 autoFocus
-                className="min-h-28 resize-y rounded-md border border-border-default bg-bg-base px-3 py-2 text-sm leading-relaxed text-text-primary outline-none focus:border-accent"
+                className="min-h-28 resize-y rounded-sm border border-border-control bg-bg-base px-3 py-2 text-[13px] leading-5 text-text-primary outline-none focus:border-brand focus:ring-2 focus:ring-brand-subtle"
                 disabled={busy}
                 maxLength={4000}
                 onChange={(event) => setObjective(event.target.value)}
@@ -123,7 +133,7 @@ export function SessionGoalProgressRow({
                 <legend className="text-xs font-medium text-text-secondary">Token budget</legend>
                 <input
                   aria-label="Goal token budget"
-                  className="w-full rounded-md border border-border-default bg-bg-base px-3 py-2 text-sm text-text-primary outline-none focus:border-accent disabled:opacity-50"
+                  className="h-8 w-full rounded-sm border border-border-control bg-bg-base px-3 text-[12px] leading-4 text-text-primary outline-none focus:border-brand focus:ring-2 focus:ring-brand-subtle disabled:opacity-50"
                   disabled={busy || removeBudget}
                   min={goal.usage.tokens.totalTokens + 1}
                   onChange={(event) => setBudgetValue(event.target.value)}
@@ -156,29 +166,6 @@ export function SessionGoalProgressRow({
   );
 }
 
-function ControlButton({
-  children,
-  danger = false,
-  disabled,
-  onClick,
-}: {
-  children: ReactNode;
-  danger?: boolean;
-  disabled: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      className={`rounded-sm px-1.5 py-1 text-[10px] font-medium text-text-secondary hover:bg-bg-hover disabled:cursor-not-allowed disabled:opacity-50 ${danger ? "hover:text-error" : "hover:text-text-primary"}`}
-    >
-      {children}
-    </button>
-  );
-}
-
 function DialogButton({
   children,
   disabled,
@@ -192,8 +179,8 @@ function DialogButton({
 }) {
   return (
     <button
-      className={`rounded-md border px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50 ${primary
-        ? "border-accent bg-accent text-white"
+      className={`h-8 rounded-sm border px-3 text-[12px] font-medium leading-4 transition-colors duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50 ${primary
+        ? "border-brand bg-brand text-bg-overlay"
         : "border-border-default bg-bg-base text-text-secondary hover:text-text-primary"
       }`}
       disabled={disabled}
@@ -209,14 +196,6 @@ function formatDuration(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)}s`;
   const minutes = Math.floor(seconds / 60);
   return minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-}
-
-function goalLabel(status: SessionGoalView["status"]): string {
-  if (status === "active") return "Pursuing goal";
-  if (status === "paused") return "Goal paused";
-  if (status === "blocked") return "Goal blocked";
-  if (status === "budget_limited") return "Goal budget limited";
-  return "Goal complete";
 }
 
 export function sessionGoalControlVisibility(status: SessionGoalView["status"]): {

@@ -9,6 +9,8 @@ import { useSettingsModal } from "../../context/settings-modal";
 import { ModelPicker } from "./ModelPicker";
 import { coherentModelRuntime } from "../../lib/model-runtime-coherence";
 import { createClientUuid } from "../../lib/client-uuid";
+import type { StatusTone, VisualStatusKind } from "../../lib/status-visuals";
+import { StatusGlyph } from "../primitives/StatusGlyph";
 
 const SLASH_COMMANDS = [
   { name: "/compact", description: "Compact conversation context" },
@@ -28,13 +30,13 @@ function composerStatus(
   activity: SessionFamilyActivity | undefined,
   hitlReady: boolean,
   hasPendingHitl: boolean,
-): { label: string; dotClass: string } {
-  if (activity === undefined) return { label: "Connecting", dotClass: "bg-text-muted" };
-  if (!hitlReady) return { label: "Syncing", dotClass: "bg-text-muted" };
-  if (activity === "stopping") return { label: "Stopping", dotClass: "bg-warning" };
-  if (hasPendingHitl) return { label: "Waiting for input", dotClass: "bg-warning" };
-  if (activity === "running") return { label: "Running", dotClass: "bg-accent" };
-  return { label: "Ready", dotClass: "bg-success" };
+): { label: string; kind: VisualStatusKind; tone?: StatusTone } {
+  if (activity === undefined) return { label: "Connecting", kind: "running", tone: "neutral" };
+  if (!hitlReady) return { label: "Syncing", kind: "running", tone: "info" };
+  if (activity === "stopping") return { label: "Stopping", kind: "running", tone: "warning" };
+  if (hasPendingHitl) return { label: "Waiting for input", kind: "needs_you" };
+  if (activity === "running") return { label: "Running", kind: "running" };
+  return { label: "Ready", kind: "idle" };
 }
 
 export function ChatInput({
@@ -236,28 +238,28 @@ export function ChatInput({
       {showSlashMenu && filteredCommands.length > 0 && canCompose && !isRunning && !hasPendingHitl && (
         <div
           ref={slashMenuRef}
-          className="absolute bottom-[calc(100%+8px)] left-0 right-0 z-20 max-h-[200px] overflow-y-auto rounded-[12px] border border-border-default bg-bg-elevated p-1 shadow-lg"
+          className="absolute bottom-[calc(100%+8px)] left-0 right-0 z-20 max-h-[200px] overflow-y-auto rounded-lg border border-border-default bg-bg-overlay p-1 shadow-md"
           data-testid="composer-slash-menu"
         >
           {filteredCommands.map((command, index) => (
             <button
               type="button"
               key={command.name}
-              className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] transition-colors duration-100 ${
+              className={`flex w-full items-center gap-2 rounded-sm px-3 py-2 text-left text-[13px] transition-colors duration-[var(--motion-hover)] ${
                 index === slashActiveIndex ? "bg-bg-hover" : "hover:bg-bg-hover"
               }`}
               onClick={() => selectSlashCommand(command)}
               onMouseEnter={() => setSlashActiveIndex(index)}
             >
-              <span className="font-mono text-accent">{command.name}</span>
-              <span className="text-xs text-text-muted">{command.description}</span>
+              <span className="font-mono text-brand">{command.name}</span>
+              <span className="text-[12px] leading-4 text-text-tertiary">{command.description}</span>
             </button>
           ))}
         </div>
       )}
 
       <div
-        className="overflow-visible rounded-[16px] border border-border-default bg-bg-elevated shadow-md transition-[border-color,box-shadow] duration-150 focus-within:border-accent focus-within:shadow-[0_0_0_3px_var(--accent-subtle),var(--shadow-md)]"
+        className="overflow-visible rounded-lg border border-border-control bg-bg-elevated shadow-sm transition-[border-color,box-shadow] duration-[var(--motion-hover)] focus-within:border-brand focus-within:ring-2 focus-within:ring-brand"
         data-testid="composer-card"
       >
         <textarea
@@ -280,10 +282,10 @@ export function ChatInput({
                     : "Send a message…"
           }
           rows={1}
-          className="block min-h-[48px] max-h-[200px] w-full resize-none overflow-y-auto border-0 bg-transparent px-[14px] pb-[8px] pt-[12px] font-sans text-[13.5px] leading-[1.55] text-text-primary outline-none placeholder:text-text-tertiary disabled:cursor-not-allowed disabled:text-text-tertiary"
+          className="block min-h-[48px] max-h-[200px] w-full resize-none overflow-y-auto border-0 bg-transparent px-4 pb-2 pt-3 font-sans text-[13px] leading-5 text-text-primary outline-none placeholder:text-text-tertiary disabled:cursor-not-allowed disabled:text-text-tertiary"
         />
 
-        <div className="flex min-h-[38px] items-center justify-between gap-3 px-[10px] pb-[9px]">
+        <div className="flex min-h-[38px] items-center justify-between gap-3 px-3 pb-2">
           <div className="flex min-w-0 items-center gap-2 text-[11px] text-text-tertiary" data-testid="composer-model">
             {coherentCatalog && nextModelSelection && agentName ? <ModelPicker
               catalog={coherentCatalog}
@@ -294,21 +296,21 @@ export function ChatInput({
               disabled={patchModelSelection.isPending}
             /> : <span className="max-w-[180px] truncate">Loading model…</span>}
             <span className="h-3 w-px shrink-0 bg-border-default" aria-hidden="true" />
-            <span className="flex shrink-0 items-center gap-1.5" aria-live="polite">
-              <span className={`h-1.5 w-1.5 rounded-full ${status.dotClass}`} aria-hidden="true" />
+            <span className="flex shrink-0 items-center gap-2" aria-live="polite">
+              <StatusGlyph kind={status.kind} tone={status.tone} size={11} />
               {status.label}
             </span>
           </div>
 
-          <div className="flex shrink-0 items-center gap-1.5">
-            <span className="mr-1 text-[10.5px] text-text-muted max-[720px]:hidden">
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="mr-1 text-[11px] text-text-tertiary max-[720px]:hidden">
               {isRunning ? "Enter to queue" : "Shift+Enter for newline"}
             </span>
             <button
               type="button"
-              className={`flex h-8 w-8 items-center justify-center rounded-lg shadow-sm transition-[background-color,color,transform] active:scale-95 disabled:cursor-not-allowed disabled:bg-bg-active disabled:text-text-muted disabled:shadow-none ${isRunning
-                ? "bg-text-primary text-bg-base hover:bg-error hover:text-white"
-                : "bg-text-primary text-bg-base hover:bg-accent-hover hover:text-white"
+              className={`flex h-8 w-8 items-center justify-center rounded-sm transition-colors duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:bg-bg-active disabled:text-text-muted ${isRunning
+                ? "bg-text-primary text-bg-base hover:bg-error hover:text-bg-overlay"
+                : "bg-text-primary text-bg-base hover:bg-brand-hover hover:text-bg-overlay"
               }`}
               disabled={isRunning ? stopSession.isPending : !canSubmit}
               onClick={isRunning
@@ -319,10 +321,10 @@ export function ChatInput({
             >
               {isRunning
                 ? stopSession.isPending
-                  ? <Loader2 size={14} className="animate-spin" />
+                  ? <Loader2 size={14} className="animate-activity" />
                   : <Square size={11} fill="currentColor" />
                 : isStopping || isPending
-                  ? <Loader2 size={14} className="animate-spin" />
+                  ? <Loader2 size={14} className="animate-activity" />
                   : <ArrowUp size={16} strokeWidth={2} />}
             </button>
           </div>

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { SessionExecutionRecord, ToolChildSessionLinkStatus } from "@archcode/protocol";
-import { presentChildExecutionStatus, presentExecutionStatus } from "./execution-status-presentation";
+import { childExecutionVisualKind, executionVisualKind, presentChildExecutionStatus, presentExecutionStatus } from "./execution-status-presentation";
 
 describe("execution status presentation", () => {
   test("shows an unresolved input checkpoint as current action", () => {
@@ -75,5 +75,18 @@ describe("execution status presentation", () => {
       expect(presentation.label).toBe(label);
       expect(presentation.detail).toBe(detail);
     }
+  });
+
+  test("keeps failure visuals distinct from neutral stops without changing copy", () => {
+    expect(executionVisualKind("failed")).toBe("failed");
+    expect(executionVisualKind("timed_out")).toBe("failed");
+    expect(executionVisualKind("max_steps")).toBe("failed");
+    expect(executionVisualKind("cancelled")).toBe("stopped");
+    expect(executionVisualKind("interrupted")).toBe("stopped");
+    expect(childExecutionVisualKind("failed")).toBe("failed");
+    expect(childExecutionVisualKind("timed_out")).toBe("failed");
+    expect(childExecutionVisualKind("cancelled")).toBe("stopped");
+    expect(childExecutionVisualKind("interrupted")).toBe("stopped");
+    expect(childExecutionVisualKind("waiting_for_human")).toBe("needs_you");
   });
 });

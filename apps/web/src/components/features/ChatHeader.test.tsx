@@ -99,7 +99,9 @@ describe("ChatHeader", () => {
     expect(container.querySelector('[data-testid="session-execution-status"]')?.textContent).toContain("Running");
     expect(container.querySelector('[data-testid="session-execution-status"]')?.getAttribute("data-execution-status")).toBe("running");
     expect(container.querySelector('[data-testid="session-execution-meta"]')?.textContent).toBe("Execution 1 · Test Model · deep");
-    expect(container.querySelector('[data-testid="goal-status-badge"]')?.textContent).toContain("Goal · active");
+    expect(container.querySelector('[data-testid="goal-status-badge"]')?.textContent).toContain("Active");
+    expect(container.querySelector('[data-testid="goal-status-badge"] [data-visual-kind="goal-active"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="session-execution-status"] [data-testid="activity-arc"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="session-worktree-badge"]')?.getAttribute("title")).toBe("/workspace/.archcode/worktrees/build");
   });
 

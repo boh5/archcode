@@ -31,6 +31,25 @@ function findByType(value: unknown, type: unknown): ElementLike | undefined {
   }
   return undefined;
 }
+function findAllWithClass(value: unknown, className: string): ElementLike[] {
+  const matches: ElementLike[] = [];
+  const visit = (node: unknown): void => {
+    if (Array.isArray(node)) { for (const child of node) visit(child); return; }
+    if (!isElement(node)) return;
+    if (typeof node.props?.className === "string" && node.props.className.includes(className)) matches.push(node);
+    for (const child of childrenOf(node)) visit(child);
+  };
+  visit(value);
+  return matches;
+}
+function findByData(value: unknown, key: string, expected: string): ElementLike | undefined {
+  if (isElement(value) && value.props?.[key] === expected) return value;
+  for (const child of childrenOf(value)) {
+    const found = findByData(child, key, expected);
+    if (found) return found;
+  }
+  return undefined;
+}
 
 const Fragment = Symbol.for("react.fragment");
 const jsx = mock((type: unknown, props: Record<string, unknown> | null, key?: unknown) => {
@@ -43,6 +62,8 @@ const setState = mock(() => {});
 
 mock.module("react", () => ({
   default: {},
+  useEffect: (_callback: () => void | (() => void), _deps?: unknown[]) => {},
+  useRef: <T,>(initial: T) => ({ current: initial }),
   useState: <T,>(initial: T): [T, (value: T) => void] => [
     (stateValues[stateIndex++] ?? initial) as T,
     setState,
@@ -50,10 +71,21 @@ mock.module("react", () => ({
 }));
 mock.module("react/jsx-dev-runtime", () => ({ Fragment, jsxDEV: jsx, jsx, jsxs: jsx }));
 mock.module("lucide-react", () => ({
+  Ban: () => null,
+  Calendar: () => null,
   Check: () => null,
   ChevronRight: () => null,
   Clock: () => null,
+  Clock3: () => null,
+  Circle: () => null,
+  CircleAlert: () => null,
+  CircleCheck: () => null,
+  CircleDashed: () => null,
+  CirclePause: () => null,
+  CircleStop: () => null,
+  CircleX: () => null,
   FileText: () => null,
+  Gauge: () => null,
   Pencil: () => null,
   Search: () => null,
   GitBranch: () => null,
@@ -67,7 +99,8 @@ mock.module("lucide-react", () => ({
   Plug: () => null,
   CircleQuestionMark: () => null,
   Target: () => null,
-  LoaderCircle: () => null,
+  LoaderCircle: (props: Record<string, unknown>) => ({ type: "svg", props }),
+  MessageCircleQuestion: () => null,
   TriangleAlert: () => null,
   X: () => null,
 }));
@@ -189,9 +222,13 @@ describe("ToolCard strict result consumer", () => {
     const running: RunningToolPart = { type: "tool", id: "r", state: "running", toolCallId: "r", toolName: "grep", input: { pattern: "needle" }, createdAt: 1, startedAt: 2 };
     const pendingElement = ToolCard({ part: pending, projectSlug: "demo", sessionId: "root-1" });
     const runningElement = ToolCard({ part: running, projectSlug: "demo", sessionId: "root-1" });
-    expect(textContent(pendingElement)).toContain("pending");
-    expect(textContent(runningElement)).toContain("running…");
+    expect(textContent(pendingElement)).toContain("Pending");
+    expect(textContent(runningElement)).toContain("Running");
     expect(textContent(runningElement)).toContain("needle");
+    const statusBase = findByData(runningElement, "data-tool-visual-kind", "loading");
+    expect(statusBase).toBeDefined();
+    expect(String(statusBase?.props?.className)).not.toContain("animate-");
+    expect(findAllWithClass(runningElement, "animate-activity")).toHaveLength(1);
   });
 
   test("uses bash description, presents invalid inputs safely, and styles completed state", () => {
@@ -204,7 +241,7 @@ describe("ToolCard strict result consumer", () => {
     const invalidPart: CompletedToolPart = { ...completed({ isError: false, output: baseOutput }), input: { command: "pwd" } };
     const invalid = ToolCard({ part: invalidPart, projectSlug: "demo", sessionId: "root-1" });
     expect(textContent(invalid)).toContain("Invalid bash input: missing required description");
-    expect(textContent(valid)).toContain("done");
+    expect(textContent(valid)).toContain("Completed");
   });
 
   test("keeps strict diff and ask_user presentations out of collapsed cards", () => {
@@ -238,7 +275,8 @@ describe("ToolCard strict result consumer", () => {
     };
     const element = ToolCard({ part, projectSlug: "demo", sessionId: "root-1" });
     expect(textContent(element)).toContain("mcp__docs__lookup");
-    expect(textContent(element)).toContain("unknown");
+    expect(textContent(element)).toContain("Unknown");
     expect(textContent(element)).toContain("TOOL_UNKNOWN_RESULT");
+    expect(findByData(element, "data-tool-visual-kind", "warning")).toBeDefined();
   });
 });

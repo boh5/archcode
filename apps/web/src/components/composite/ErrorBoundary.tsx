@@ -34,10 +34,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     return (
       <div className="flex flex-col items-center justify-center min-h-screen gap-4 p-8 bg-bg-base text-text-primary">
         <div className="flex flex-col items-center gap-3 max-w-md text-center">
-          <div className="w-12 h-12 rounded-full bg-error-muted flex items-center justify-center text-error text-xl font-bold">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-error-muted text-[16px] font-bold leading-[22px] text-error">
             !
           </div>
-          <h1 className="text-lg font-semibold text-text-primary">
+          <h1 className="text-[16px] font-semibold leading-[22px] text-text-primary">
             Something went wrong
           </h1>
           <p className="text-sm text-text-secondary">
@@ -52,7 +52,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         <button
           type="button"
           onClick={this.handleReload}
-          className="mt-2 px-4 py-2 rounded-md bg-accent text-white text-sm font-medium hover:bg-accent-hover transition-colors cursor-pointer"
+          className="mt-2 h-8 cursor-pointer rounded-sm bg-brand px-4 text-[12px] font-medium text-bg-overlay transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
         >
           Reload
         </button>

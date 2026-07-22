@@ -27,19 +27,19 @@ const STRATEGY_LABEL: Record<CompressionStrategy, string> = {
 };
 
 const STRATEGY_CLASS: Record<CompressionStrategy, string> = {
-  "dynamic-range": "text-accent bg-accent-subtle",
+  "dynamic-range": "text-brand bg-brand-subtle",
 };
 
 const TRIGGER_LABEL: Record<CompressionTrigger, string> = {
-  model_tool_call: "model",
-  soft_nudge_response: "soft nudge",
-  strong_nudge_response: "strong nudge",
+  model_tool_call: "Model",
+  soft_nudge_response: "Soft nudge",
+  strong_nudge_response: "Strong nudge",
 };
 
 const STATUS_LABEL: Record<CompressionBlockStatus, string> = {
-  active: "active",
-  inactive: "inactive",
-  superseded: "superseded",
+  active: "Active",
+  inactive: "Inactive",
+  superseded: "Superseded",
 };
 
 type ExpansionState =
@@ -97,26 +97,26 @@ export function CompressionBlock({ part, projectSlug, sessionId, focusStoreSessi
   const protectedCount = snapshot?.protectedRefs?.length;
 
   return (
-    <div className="bg-bg-surface border border-border-default rounded-lg overflow-hidden shrink-0 transition-colors duration-150 hover:border-border-strong">
-      <div className="flex items-center gap-2 px-3 py-2 bg-bg-elevated border-b border-border-subtle w-full text-left select-none">
-        <ChevronRight size={14} className={`text-text-muted transition-transform duration-150 ${expanded ? "rotate-90" : ""}`} />
+    <div className="shrink-0 overflow-hidden rounded-md border border-border-subtle bg-bg-elevated">
+      <div className="flex w-full select-none items-center gap-2 border-b border-border-subtle bg-transparent px-3 py-2 text-left">
+        <ChevronRight size={14} className={`text-text-muted transition-transform duration-[var(--motion-hover)] ${expanded ? "rotate-90" : ""}`} aria-hidden="true" />
         <Layers size={14} className="text-text-secondary shrink-0" />
         <span className="font-mono text-[12px] text-text-primary font-semibold">{part.blockRef}</span>
-        <span className={`px-1.5 py-0.5 rounded-sm text-[10.5px] font-semibold ${STRATEGY_CLASS[part.strategy]}`}>
+        <span className={`px-2 py-1 rounded-sm text-[11px] font-semibold ${STRATEGY_CLASS[part.strategy]}`}>
           {STRATEGY_LABEL[part.strategy]}
         </span>
-        <span className="text-[11px] text-text-muted">
+        <span className="text-[11px] text-text-tertiary">
           {TRIGGER_LABEL[part.trigger]}
         </span>
-        <span className="text-[11px] text-text-muted ml-auto">
+        <span className="ml-auto text-[11px] text-text-tertiary">
           {STATUS_LABEL[part.status]}
         </span>
-        <span className="text-[11px] text-text-muted">
+        <span className="text-[11px] text-text-tertiary">
           {formatRelativeTime(part.committedAt)}
         </span>
       </div>
 
-      <div className="px-3 py-2 flex flex-wrap gap-1.5 border-b border-border-subtle">
+      <div className="px-3 py-2 flex flex-wrap gap-2 border-b border-border-subtle">
         <MetaPill label="range" value={`${part.startRef}–${part.endRef}`} />
         {part.childBlockRefs.length > 0 && (
           <MetaPill label="children" value={part.childBlockRefs.join(", ")} />
@@ -129,14 +129,14 @@ export function CompressionBlock({ part, projectSlug, sessionId, focusStoreSessi
         )}
       </div>
 
-      <div className="px-3 py-2.5 text-[12.5px] text-text-secondary leading-[1.55]">
+      <div className="px-3 py-3 text-[13px] text-text-secondary leading-5">
         <MarkdownContent>{part.summary}</MarkdownContent>
       </div>
 
       <div className="px-3 pb-2">
         <button
           type="button"
-          className="inline-flex items-center gap-1 px-2 py-1 rounded-sm text-[11px] font-medium text-accent bg-accent-subtle hover:bg-accent-muted cursor-pointer transition-colors duration-150"
+          className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-sm bg-brand-subtle px-3 text-[12px] font-medium text-brand transition-colors duration-[var(--motion-hover)] hover:bg-brand-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
           onClick={handleToggleOriginalRange}
         >
           {expanded ? "Hide original range ↑" : "Show original range ↓"}
@@ -146,18 +146,18 @@ export function CompressionBlock({ part, projectSlug, sessionId, focusStoreSessi
       {expanded && (
         <div className="border-t border-border-subtle">
           {expansion.status === "loading" && (
-            <div className="flex items-center gap-2 px-3 py-2.5 text-[12px] text-text-muted">
-              <LoaderCircle size={12} className="animate-spin" />
+            <div className="flex items-center gap-2 px-3 py-3 text-[12px] text-text-tertiary">
+              <LoaderCircle size={12} className="animate-activity" />
               <span>Loading original range…</span>
             </div>
           )}
           {expansion.status === "error" && (
-            <div className="flex items-center gap-2 px-3 py-2.5 text-[12px] text-error">
+            <div className="flex items-center gap-2 px-3 py-3 text-[12px] text-error">
               <TriangleAlert size={12} />
               <span className="flex-1">{expansion.message}</span>
               <button
                 type="button"
-                className="flex items-center gap-1 px-2 py-0.5 rounded-sm text-[11px] font-medium text-text-secondary bg-bg-active hover:bg-bg-hover cursor-pointer"
+                className="flex h-8 cursor-pointer items-center gap-1 rounded-sm bg-bg-active px-3 text-[12px] font-medium text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                 onClick={handleRetry}
               >
                 <RotateCw size={11} />
@@ -183,8 +183,8 @@ export function CompressionBlock({ part, projectSlug, sessionId, focusStoreSessi
 
 function MetaPill({ label, value }: { label: string; value: string }) {
   return (
-    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm bg-bg-active text-[10.5px] text-text-tertiary font-mono">
-      <span className="text-text-muted">{label}</span>
+    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-sm bg-bg-active text-[11px] text-text-tertiary font-mono">
+      <span className="text-text-tertiary">{label}</span>
       <span className="text-text-secondary">{value}</span>
     </span>
   );
@@ -204,8 +204,8 @@ function OriginalRangeView({
   agentDescriptors: readonly AgentDescriptor[];
 }) {
   return (
-    <div className="px-3 py-2.5 flex flex-col gap-2">
-      <div className="flex flex-wrap gap-1.5">
+    <div className="px-3 py-3 flex flex-col gap-2">
+      <div className="flex flex-wrap gap-2">
         <MetaPill label="block" value={data.blockRef} />
         <MetaPill label="strategy" value={data.strategy} />
         <MetaPill label="covered" value={`${data.coveredRefs.length} msgs`} />
@@ -243,11 +243,11 @@ function OriginalRangeEntry({
   const { ref, message } = entry;
   return (
     <div className="border border-border-subtle rounded-md overflow-hidden">
-      <div className="flex items-center gap-2 px-2.5 py-1.5 bg-bg-overlay border-b border-border-subtle">
-        <span className="font-mono text-[11px] text-text-muted">{ref}</span>
+      <div className="flex items-center gap-2 px-3 py-2 bg-bg-overlay border-b border-border-subtle">
+        <span className="font-mono text-[11px] text-text-tertiary">{ref}</span>
         <span className="text-[11px] text-text-tertiary">{message.role}</span>
       </div>
-      <div className="px-2.5 py-1.5 flex flex-col gap-1.5">
+      <div className="px-3 py-2 flex flex-col gap-2">
         {message.parts.map((part) => (
           <OriginalRangePartView
             key={part.id}
@@ -279,15 +279,15 @@ function OriginalRangePartView({
   switch (part.type) {
     case "text":
       return (
-        <div className="flex items-start gap-1.5 text-[12.5px] text-text-secondary leading-relaxed">
-          <FileText size={11} className="text-text-muted shrink-0 mt-0.5" />
+        <div className="flex items-start gap-2 text-[13px] leading-5 text-text-secondary">
+          <FileText size={11} className="text-text-muted shrink-0 mt-1" aria-hidden="true" />
           <span className="whitespace-pre-wrap break-words">{part.text}</span>
         </div>
       );
     case "reasoning":
       return (
-        <div className="flex items-start gap-1.5 text-[12px] text-text-tertiary italic leading-relaxed">
-          <FileText size={11} className="text-text-muted shrink-0 mt-0.5" />
+        <div className="flex items-start gap-2 text-[12px] leading-4 text-text-tertiary italic">
+          <FileText size={11} className="text-text-muted shrink-0 mt-1" aria-hidden="true" />
           <span className="whitespace-pre-wrap break-words">{part.text}</span>
         </div>
       );
@@ -306,22 +306,22 @@ function OriginalRangePartView({
       return <ToolCard part={part} projectSlug={projectSlug} sessionId={focusStoreSessionId} />;
     case "system-notice":
       return (
-        <div className="flex items-start gap-1.5 text-[11px] text-text-muted">
-          <AlertCircle size={11} className="shrink-0 mt-0.5" />
+        <div className="flex items-start gap-2 text-[11px] text-text-tertiary">
+          <AlertCircle size={11} className="shrink-0 mt-1" />
           <span>{part.notice}</span>
         </div>
       );
     case "compaction":
       return (
-        <div className="flex items-start gap-1.5 text-[11px] text-text-muted">
-          <Layers size={11} className="shrink-0 mt-0.5" />
+        <div className="flex items-start gap-2 text-[11px] text-text-tertiary">
+          <Layers size={11} className="shrink-0 mt-1" />
           <span>Hard context compaction: {part.summary.slice(0, 80)}{part.summary.length > 80 ? "…" : ""}</span>
         </div>
       );
     case "recovery-notice":
       return (
-        <div className="flex items-start gap-1.5 text-[11px] text-text-muted">
-          <AlertCircle size={11} className="shrink-0 mt-0.5" />
+        <div className="flex items-start gap-2 text-[11px] text-text-tertiary">
+          <AlertCircle size={11} className="shrink-0 mt-1" />
           <span>{part.message}</span>
         </div>
       );

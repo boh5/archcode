@@ -193,7 +193,9 @@ describe("deriveDashboardSections", () => {
       "automation:alpha:failed:latest",
     ]);
     expect(result.running.map((item) => item.rootSessionId)).toEqual(["running", "stopping"]);
+    expect(result.running.map((item) => item.activity)).toEqual(["running", "stopping"]);
     expect(result.continueWorking.map((item) => item.rootSessionId)).toEqual(["newer-idle", "older-idle"]);
+    expect(result.continueWorking.every((item) => item.activity === "idle")).toBe(true);
     expect(result.upcoming.map((item) => item.automationId)).toEqual(["earlier", "later"]);
 
     const sectionOwners = [

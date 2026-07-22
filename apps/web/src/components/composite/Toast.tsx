@@ -1,11 +1,12 @@
 import { Check, Info, TriangleAlert, X, type LucideIcon } from "lucide-react";
 import type { Toast as ToastData, ToastVariant } from "../../hooks/use-toast";
+import { IconAction } from "../primitives/IconAction";
 
 const VARIANT_CLASSES: Record<ToastVariant, string> = {
-  error: "bg-error-muted border-error text-error",
-  success: "bg-success-muted border-success text-success",
-  warning: "bg-warning-muted border-warning text-warning",
-  info: "bg-info-muted border-info text-info",
+  error: "border-l-error text-error",
+  success: "border-l-success text-success",
+  warning: "border-l-warning text-warning",
+  info: "border-l-info text-info",
 };
 
 const VARIANT_ICON: Record<ToastVariant, LucideIcon> = {
@@ -25,18 +26,17 @@ export function Toast({ toast, onDismiss }: ToastProps) {
   return (
     <div
       role="alert"
-      className={`flex items-center gap-2 px-3 py-2 rounded-md border text-sm font-medium shadow-md animate-[slideIn_0.2s_ease-out] ${VARIANT_CLASSES[toast.variant]}`}
+      className={`animate-overlay-enter flex items-center gap-2 rounded-lg border border-l-2 border-border-default bg-bg-overlay px-3 py-2 text-[13px] font-medium shadow-md ${VARIANT_CLASSES[toast.variant]}`}
     >
       <Icon size={16} className="shrink-0" />
       <span className="flex-1 min-w-0 break-words">{toast.message}</span>
-      <button
-        type="button"
+      <IconAction
+        label="Dismiss"
         onClick={() => onDismiss(toast.id)}
-        className="shrink-0 ml-1 opacity-60 hover:opacity-100 transition-opacity cursor-pointer"
-        aria-label="Dismiss"
+        className="ml-1 opacity-60 hover:opacity-100"
       >
-        <X size={14} />
-      </button>
+        <X aria-hidden="true" size={14} />
+      </IconAction>
     </div>
   );
 }

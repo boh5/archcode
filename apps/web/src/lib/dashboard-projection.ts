@@ -78,6 +78,7 @@ export interface DashboardSessionRow {
   readonly rootSessionId: string;
   readonly title: string | null;
   readonly updatedAt: number;
+  readonly activity: "running" | "stopping" | "idle";
   readonly goal?: SessionGoal;
 }
 
@@ -89,6 +90,7 @@ export interface DashboardAutomationRow {
   readonly projectName: string;
   readonly automationId: string;
   readonly name: string;
+  readonly status: DashboardAutomation["status"];
   readonly nextFireAt: string;
 }
 
@@ -135,7 +137,10 @@ export function deriveDashboardSections(input: DeriveDashboardSectionsInput): Da
       const activity = input.activityFor(session.projectSlug, session.rootSessionId);
       return activity === "running" || activity === "stopping";
     })
-    .map(toSessionRow)
+    .map((session) => toSessionRow(
+      session,
+      input.activityFor(session.projectSlug, session.rootSessionId) ?? "idle",
+    ))
     .sort((left, right) => {
       const leftActivity = input.activityFor(left.projectSlug, left.rootSessionId);
       const rightActivity = input.activityFor(right.projectSlug, right.rootSessionId);
@@ -152,7 +157,7 @@ export function deriveDashboardSections(input: DeriveDashboardSectionsInput): Da
         && !runningOwnerKeys.has(ownerKey)
         && input.activityFor(session.projectSlug, session.rootSessionId) === "idle";
     })
-    .map(toSessionRow)
+    .map((session) => toSessionRow(session, "idle"))
     .sort((left, right) => right.updatedAt - left.updatedAt || left.identity.localeCompare(right.identity))
     .slice(0, 10);
 
@@ -238,7 +243,10 @@ function toSessionFailureAttention(session: DashboardRootSession): DashboardSess
   }];
 }
 
-function toSessionRow(session: DashboardRootSession): DashboardSessionRow {
+function toSessionRow(
+  session: DashboardRootSession,
+  activity: DashboardSessionRow["activity"],
+): DashboardSessionRow {
   return {
     kind: "session",
     identity: sessionFamilyKey(session.projectSlug, session.rootSessionId),
@@ -248,6 +256,7 @@ function toSessionRow(session: DashboardRootSession): DashboardSessionRow {
     rootSessionId: session.rootSessionId,
     title: session.sessionTitle,
     updatedAt: session.updatedAt,
+    activity,
     goal: session.goal,
   };
 }
@@ -261,6 +270,7 @@ function toAutomationRow(automation: DashboardAutomation): DashboardAutomationRo
     projectName: automation.projectName,
     automationId: automation.id,
     name: automation.name,
+    status: automation.status,
     nextFireAt: automation.nextFireAt!,
   };
 }

@@ -192,16 +192,16 @@ afterEach(() => {
 
 describe("ExecutionWorkstream", () => {
   test("projects every authoritative Execution status without inferring state from messages", async () => {
-    const statuses: Array<[SessionExecutionRecord["status"], string, string?]> = [
-      ["running", "Running"],
-      ["waiting_for_human", "Needs you"],
-      ["completed", "Completed"],
-      ["max_steps", "Stopped", "Max steps"],
-      ["failed", "Stopped", "Failed"],
-      ["aborted", "Stopped", "Aborted"],
-      ["cancelled", "Stopped", "Cancelled"],
-      ["timed_out", "Stopped", "Timed out"],
-      ["interrupted", "Stopped", "Interrupted"],
+    const statuses: Array<[SessionExecutionRecord["status"], string, string | undefined, string]> = [
+      ["running", "Running", undefined, "running"],
+      ["waiting_for_human", "Needs you", undefined, "needs_you"],
+      ["completed", "Completed", undefined, "completed"],
+      ["max_steps", "Stopped", "Max steps", "failed"],
+      ["failed", "Stopped", "Failed", "failed"],
+      ["aborted", "Stopped", "Aborted", "stopped"],
+      ["cancelled", "Stopped", "Cancelled", "stopped"],
+      ["timed_out", "Stopped", "Timed out", "failed"],
+      ["interrupted", "Stopped", "Interrupted", "stopped"],
     ];
     initializeSession(
       statuses.map(([status], index) => message(
@@ -216,9 +216,10 @@ describe("ExecutionWorkstream", () => {
 
     await renderWorkstream();
 
-    for (const [status, label, detail] of statuses) {
+    for (const [status, label, detail, visualKind] of statuses) {
       expect(card(`execution-${status}`).textContent).toContain(label);
       if (detail) expect(card(`execution-${status}`).textContent).toContain(detail);
+      expect(card(`execution-${status}`).getAttribute("data-visual-kind")).toBe(visualKind);
     }
     expect(card("execution-waiting_for_human").textContent).not.toContain("Paused for input");
   });
@@ -314,8 +315,9 @@ describe("ExecutionWorkstream", () => {
 
     const user = container.querySelector<HTMLElement>('[data-message-kind="canonical-user"]');
     const userBubble = user?.querySelector<HTMLElement>(".justify-end > div");
-    expect(userBubble?.className).toContain("rounded-2xl");
-    expect(userBubble?.className).toContain("bg-bg-overlay");
+    expect(userBubble?.className).toContain("rounded-md");
+    expect(userBubble?.className).toContain("bg-bg-elevated");
+    expect(userBubble?.className).not.toContain("shadow-");
 
     const agent = container.querySelector<HTMLElement>('[data-message-kind="agent"]');
     expect(agent).not.toBeNull();

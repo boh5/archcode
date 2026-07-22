@@ -41,19 +41,19 @@ export function SessionComposerDock({
 
   return (
     <div
-      className="flex max-h-[min(60dvh,640px)] shrink-0 flex-col overflow-hidden border-t border-border-subtle bg-bg-base max-[799px]:max-h-[min(70dvh,620px)]"
+      className="flex max-h-[min(60dvh,640px)] shrink-0 flex-col overflow-hidden border-t border-border-default bg-bg-elevated max-[799px]:max-h-[min(70dvh,620px)]"
       data-testid="session-composer-dock"
       style={{ scrollbarGutter: "stable" }}
     >
-      <ConversationRail className="flex min-h-0 flex-col gap-[8px] pb-[12px] pt-[8px]" data-testid="conversation-composer-rail">
+      <ConversationRail className="flex min-h-0 flex-col gap-2 pb-3 pt-2" data-testid="conversation-composer-rail">
         <SessionGoalProgressRow slug={slug} sessionId={sessionId} goal={goal} />
         <ComposerQueueList slug={slug} sessionId={sessionId} />
         {hasPendingHitl && (
           <div
-            className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto rounded-[14px] border border-border-subtle bg-bg-surface p-[10px] shadow-sm"
+            className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto rounded-md border border-border-subtle bg-bg-surface p-3"
             data-testid="composer-attention-stack"
           >
-            <div className="flex flex-col gap-[8px]" aria-label="Requests needing attention">
+            <div className="flex flex-col gap-2" aria-label="Requests needing attention">
               {familyHitl.map((entry) => <HitlDecisionCard key={`${entry.projectSlug}:${entry.ownerSessionId}:${entry.view.hitlId}`} entry={entry} />)}
             </div>
           </div>

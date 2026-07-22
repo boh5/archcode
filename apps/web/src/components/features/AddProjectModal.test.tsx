@@ -118,6 +118,15 @@ mock.module("react/jsx-dev-runtime", () => ({
   jsxs: jsxDEV,
 }));
 
+const Icon = (props: Record<string, unknown>) => jsxDEV("svg", props);
+mock.module("lucide-react", () => ({
+  Check: Icon,
+  Folder: Icon,
+  LoaderCircle: Icon,
+  Search: Icon,
+  X: Icon,
+}));
+
 mock.module("react-router-dom", () => ({
   useNavigate,
 }));

@@ -1,10 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentDescriptor, ToolChildSessionLink, ToolPart } from "@archcode/protocol";
-import type { BadgeStatus } from "./agent-constants";
 import {
   buildDelegationCardViewModel,
   formatDelegationLinkStatus,
-  mapDelegationLinkStatusToBadge,
   parseDelegationInput,
 } from "./delegation-card-model";
 
@@ -49,23 +47,9 @@ describe("delegation card view-model", () => {
     expect(parseDelegationInput(undefined)).toBeNull();
     expect(parseDelegationInput("invalid")).toBeNull();
 
-    const statuses: Array<Parameters<typeof mapDelegationLinkStatusToBadge>[0]> = [
+    const statuses: ToolChildSessionLink["status"][] = [
       "linked", "running", "waiting_for_human", "cancelling", "completed", "failed", "timed_out", "cancelled", "interrupted",
     ];
-    const expected: Record<typeof statuses[number], BadgeStatus> = {
-      linked: "running",
-      running: "running",
-      waiting_for_human: "pending",
-      cancelling: "running",
-      completed: "completed",
-      failed: "error",
-      timed_out: "error",
-      cancelled: "error",
-      interrupted: "error",
-    };
-    for (const status of statuses) {
-      expect(mapDelegationLinkStatusToBadge(status)).toBe(expected[status]);
-    }
     expect(statuses.map(formatDelegationLinkStatus)).toEqual([
       "Running", "Running", "Needs you", "Running", "Completed", "Stopped", "Stopped", "Stopped", "Stopped",
     ]);
@@ -88,7 +72,7 @@ describe("delegation card view-model", () => {
       agentDisplayName: "Explore",
       taskTitle: "Child title",
       taskSummary: "Inspect the source",
-      executionStatus: "running",
+      visualKind: "running",
       executionStatusLabel: "Running",
       startedAt: 140,
       background: false,
@@ -110,7 +94,7 @@ describe("delegation card view-model", () => {
       agentDisplayName: "Explore",
       taskTitle: "Inspect source",
       taskSummary: "Inspect the source",
-      executionStatus: "error",
+      visualKind: "failed",
       executionStatusLabel: "Stopped",
       executionStatusDetail: "Error",
       startedAt: 120,
@@ -140,13 +124,13 @@ describe("delegation card view-model", () => {
   test("maps terminal child execution states without a second task status", () => {
     const terminalCases = [
       ["completed", "completed"],
-      ["failed", "error"],
-      ["timed_out", "error"],
-      ["cancelled", "error"],
-      ["interrupted", "error"],
+      ["failed", "failed"],
+      ["timed_out", "failed"],
+      ["cancelled", "stopped"],
+      ["interrupted", "stopped"],
     ] as const;
 
-    for (const [linkStatus, executionStatus] of terminalCases) {
+    for (const [linkStatus, visualKind] of terminalCases) {
       const model = buildDelegationCardViewModel({
         part: makePart({ state: linkStatus === "completed" ? "completed" : "error" }),
         projectSlug: "demo",
@@ -154,7 +138,7 @@ describe("delegation card view-model", () => {
         childSessionLinks: [makeLink({ status: linkStatus })],
         agentDescriptors: agents,
       });
-      expect(model.executionStatus).toBe(executionStatus);
+      expect(model.visualKind).toBe(visualKind);
       if (linkStatus !== "completed") {
         expect(model.executionStatusLabel).toBe("Stopped");
       }
@@ -167,7 +151,7 @@ describe("delegation card view-model", () => {
         part: makePart(), projectSlug: "demo", focusStoreSessionId: "root-1",
         childSessionLinks: [makeLink({ status: linkStatus })], agentDescriptors: agents,
       });
-      expect(model.executionStatus).toBe(linkStatus === "waiting_for_human" ? "pending" : "running");
+      expect(model.visualKind).toBe(linkStatus === "waiting_for_human" ? "needs_you" : "running");
     }
   });
 
@@ -176,6 +160,6 @@ describe("delegation card view-model", () => {
       part: makePart({ state: "completed" }), projectSlug: "demo", focusStoreSessionId: "root-1",
       childSessionLinks: [], agentDescriptors: agents,
     });
-    expect(completed.executionStatus).toBe("completed");
+    expect(completed.visualKind).toBe("completed");
   });
 });

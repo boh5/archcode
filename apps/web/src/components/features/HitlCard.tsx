@@ -1,11 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronRight, CircleQuestionMark, Loader2 } from "lucide-react";
 import { useCancelHitl, useRespondHitl } from "../../api/mutations";
 import type { ScopedHitlView } from "../../store/hitl-store";
 import type { HitlDisplayPayload, HitlQuestionDisplayItem, HitlResponse, HitlSource } from "../../api/types";
+import { StatusGlyph } from "../primitives/StatusGlyph";
 
-const PRIMARY_ACTION_CLASS = "rounded-md bg-text-primary px-2.5 py-1.5 text-xs font-medium text-bg-base transition-colors hover:bg-accent-hover hover:text-white disabled:cursor-not-allowed disabled:opacity-40";
-const SECONDARY_ACTION_CLASS = "rounded-md border border-border-default bg-transparent px-2.5 py-1.5 text-xs text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40";
+const PRIMARY_ACTION_CLASS = "h-8 rounded-sm bg-text-primary px-3 text-[12px] font-medium leading-4 text-bg-base transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover hover:text-bg-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40";
+const SECONDARY_ACTION_CLASS = "h-8 rounded-sm border border-border-default bg-transparent px-3 text-[12px] font-medium leading-4 text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40";
 
 function questions(payload: HitlDisplayPayload): HitlQuestionDisplayItem[] {
   return payload.questions?.length ? payload.questions : [{ question: payload.summary ?? payload.title, header: "Q1", custom: true }];
@@ -33,6 +34,7 @@ export function HitlDecisionCard({ entry }: { entry: ScopedHitlView }) {
   const [answers, setAnswers] = useState<string[][]>([]);
   const [customAnswers, setCustomAnswers] = useState<string[]>([]);
   const [activeQuestionStep, setActiveQuestionStep] = useState(0);
+  const previousStatus = useRef(view.status);
   const items = useMemo(() => questions(view.displayPayload), [view.displayPayload]);
   const resolvedAnswers = useMemo(
     () => items.map((item, index) => answerForQuestion(item, answers[index] ?? [], customAnswers[index])),
@@ -49,6 +51,11 @@ export function HitlDecisionCard({ entry }: { entry: ScopedHitlView }) {
   const allAnswered = resolvedAnswers.every((answer) => answer.length > 0);
   const showSummary = view.displayPayload.summary !== undefined
     && (view.source.type !== "ask_user" || !items.some((item) => item.question === view.displayPayload.summary));
+  const attentionTransition = previousStatus.current !== "pending" && view.status === "pending";
+
+  useEffect(() => {
+    previousStatus.current = view.status;
+  }, [view.status]);
 
   const submit = (decision: Parameters<typeof responseFor>[2]) => {
     if (view.source.type === "ask_user" && !allAnswered) return;
@@ -106,16 +113,16 @@ export function HitlDecisionCard({ entry }: { entry: ScopedHitlView }) {
       className="min-w-0"
     >
       <div className="mb-1 text-[11px] uppercase tracking-wide text-text-muted">{item.header}</div>
-      <div className="mb-2 break-words text-[13px] leading-relaxed text-text-primary">{item.question}</div>
+      <div className="mb-2 break-words text-[13px] leading-5 text-text-primary">{item.question}</div>
       {item.options?.length ? (
-        <div className="mb-2 flex min-w-0 flex-col gap-1.5">
+        <div className="mb-2 flex min-w-0 flex-col gap-2">
           {item.options.map((option) => {
             const selected = answers[index]?.includes(option.label) ?? false;
             return (
               <label
                 key={option.label}
-                className={`flex min-w-0 cursor-pointer items-start gap-2 rounded-md border px-2.5 py-2 text-xs transition-colors ${selected
-                  ? "border-accent bg-accent-subtle text-text-primary"
+                className={`flex min-w-0 cursor-pointer items-start gap-2 rounded-sm border px-3 py-2 text-xs transition-colors ${selected
+                  ? "border-brand bg-brand-subtle text-text-primary"
                   : "border-border-default text-text-secondary hover:border-border-strong hover:bg-bg-hover"
                 }`}
               >
@@ -128,7 +135,7 @@ export function HitlDecisionCard({ entry }: { entry: ScopedHitlView }) {
                   onChange={() => toggleOption(index, option.label, item.multiple)}
                 />
                 <span className="min-w-0 flex-1 break-words font-medium">{option.label}</span>
-                {option.description && <span className="min-w-0 max-w-[55%] break-words text-right text-[11px] text-text-muted">{option.description}</span>}
+                {option.description && <span className="min-w-0 max-w-[55%] break-words text-right text-[11px] text-text-tertiary">{option.description}</span>}
               </label>
             );
           })}
@@ -137,7 +144,7 @@ export function HitlDecisionCard({ entry }: { entry: ScopedHitlView }) {
       {item.custom && (
         <input
           aria-label={`${item.header} custom answer`}
-          className="block w-full min-w-0 rounded-md border border-border-default bg-bg-base px-2.5 py-2 text-xs text-text-primary outline-none placeholder:text-text-muted focus:border-accent"
+          className="block h-8 w-full min-w-0 rounded-sm border border-border-control bg-bg-base px-3 text-[12px] leading-4 text-text-primary outline-none placeholder:text-text-muted focus:border-brand focus:ring-2 focus:ring-brand-subtle"
           placeholder={item.options?.length ? "Type your own answer" : "Type your answer"}
           value={customAnswers[index] ?? ""}
           onChange={(event) => updateCustomAnswer(index, event.target.value, item.multiple)}
@@ -154,11 +161,14 @@ export function HitlDecisionCard({ entry }: { entry: ScopedHitlView }) {
 
   const sourceLabel = view.source.type === "ask_user" ? "Question" : "Permission";
   return (
-    <article id={`hitl-decision-${view.hitlId}`} className="min-w-0 overflow-hidden rounded-[10px] border border-border-subtle bg-bg-elevated p-3" data-testid="hitl-decision-card" data-hitl-id={view.hitlId}>
+    <article id={`hitl-decision-${view.hitlId}`} className="min-w-0 overflow-hidden rounded-md border border-border-default border-l-2 border-l-warning bg-bg-elevated p-3" data-testid="hitl-decision-card" data-hitl-id={view.hitlId}>
       <div className="mb-2 flex min-w-0 items-start justify-between gap-2">
-        <div className="min-w-0">
+        <div className="flex min-w-0 items-start gap-2">
+          <StatusGlyph kind="needs_you" label="Needs you" size={16} transition={attentionTransition ? "attention" : undefined} />
+          <div className="min-w-0">
           <div className="text-[12px] uppercase tracking-wider text-text-muted">{sourceLabel}</div>
           <h4 className="break-words text-sm font-medium text-text-primary">{view.displayPayload.title}</h4>
+          </div>
         </div>
       </div>
       {showSummary && <p className="mb-2 break-words text-xs text-text-secondary">{view.displayPayload.summary}</p>}
@@ -166,7 +176,7 @@ export function HitlDecisionCard({ entry }: { entry: ScopedHitlView }) {
         <dl className="mb-2 grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-xs">
           {view.displayPayload.fields.map((field, index) => (
             <div key={`${field.label}-${index}`} className="contents">
-              <dt className="text-text-muted">{field.label}</dt>
+              <dt className="text-text-tertiary">{field.label}</dt>
               <dd className="min-w-0 break-words text-text-secondary">{field.value}</dd>
             </div>
           ))}
@@ -192,9 +202,9 @@ export function HitlDecisionCard({ entry }: { entry: ScopedHitlView }) {
                 aria-selected={selected}
                 aria-controls={`hitl-question-panel-${view.hitlId}-${index}`}
                 onClick={() => setActiveQuestionStep(index)}
-                className={`flex min-w-0 items-center justify-center gap-1 border-b-2 px-1.5 py-1.5 text-[11px] font-medium transition-colors ${selected
-                  ? "border-accent text-text-primary"
-                  : "border-transparent text-text-muted hover:text-text-secondary"
+                className={`flex min-w-0 items-center justify-center gap-1 border-b-2 px-2 py-2 text-[11px] font-medium transition-colors ${selected
+                  ? "border-brand text-text-primary"
+                  : "border-transparent text-text-tertiary hover:text-text-secondary"
                 }`}
                 title={item.header}
               >
@@ -211,9 +221,9 @@ export function HitlDecisionCard({ entry }: { entry: ScopedHitlView }) {
             aria-selected={isConfirmStep}
             aria-controls={`hitl-confirm-panel-${view.hitlId}`}
             onClick={() => setActiveQuestionStep(confirmStep)}
-            className={`flex min-w-0 items-center justify-center gap-1 border-b-2 px-1.5 py-1.5 text-[11px] font-medium transition-colors ${isConfirmStep
-              ? "border-accent text-text-primary"
-              : "border-transparent text-text-muted hover:text-text-secondary"
+            className={`flex min-w-0 items-center justify-center gap-1 border-b-2 px-2 py-2 text-[11px] font-medium transition-colors ${isConfirmStep
+              ? "border-brand text-text-primary"
+              : "border-transparent text-text-tertiary hover:text-text-secondary"
             }`}
           >
             {allAnswered && <Check size={11} className="shrink-0 text-success" aria-hidden="true" />}
@@ -229,7 +239,7 @@ export function HitlDecisionCard({ entry }: { entry: ScopedHitlView }) {
               data-testid="hitl-confirm-pane"
               role="tabpanel"
               aria-labelledby={`hitl-confirm-tab-${view.hitlId}`}
-              className="flex min-w-0 flex-col gap-1.5"
+              className="flex min-w-0 flex-col gap-2"
             >
               <div className="text-xs font-medium text-text-primary">Review your answers</div>
               {items.map((item, index) => {
@@ -239,14 +249,14 @@ export function HitlDecisionCard({ entry }: { entry: ScopedHitlView }) {
                     key={`${item.header}-${index}`}
                     type="button"
                     onClick={() => setActiveQuestionStep(index)}
-                    className="flex w-full min-w-0 items-start gap-2 rounded-md border border-border-subtle bg-bg-base px-2.5 py-2 text-left transition-colors hover:border-border-default hover:bg-bg-hover"
+                    className="flex w-full min-w-0 items-start gap-2 rounded-sm border border-border-subtle bg-bg-base px-3 py-2 text-left transition-colors hover:border-border-default hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                   >
-                    <span className={`mt-0.5 shrink-0 ${answer ? "text-success" : "text-warning"}`} aria-hidden="true">
+                    <span className={`mt-1 shrink-0 ${answer ? "text-success" : "text-warning"}`} aria-hidden="true">
                       {answer ? <Check size={13} /> : <CircleQuestionMark size={13} />}
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block break-words text-[11px] text-text-muted">{item.header} · {item.question}</span>
-                      <span className={`mt-0.5 block break-words text-xs ${answer ? "text-text-primary" : "text-warning"}`}>{answer || "Answer required"}</span>
+                      <span className="block break-words text-[11px] text-text-tertiary">{item.header} · {item.question}</span>
+                      <span className={`mt-1 block break-words text-xs ${answer ? "text-text-primary" : "text-warning"}`}>{answer || "Answer required"}</span>
                     </span>
                     <ChevronRight size={13} className="mt-1 shrink-0 text-text-muted" aria-hidden="true" />
                   </button>
@@ -257,7 +267,7 @@ export function HitlDecisionCard({ entry }: { entry: ScopedHitlView }) {
         </div>
       )}
       {actionable ? <>
-        {(!isMultiQuestion || isConfirmStep) && <textarea className="mb-2 block w-full min-w-0 resize-y rounded-md border border-border-default bg-bg-base px-2.5 py-1.5 text-xs text-text-primary outline-none placeholder:text-text-muted focus:border-accent" placeholder="Comment (optional)" value={comment} onChange={(event) => setComment(event.target.value)} />}
+        {(!isMultiQuestion || isConfirmStep) && <textarea className="mb-2 block w-full min-w-0 resize-y rounded-sm border border-border-control bg-bg-base px-3 py-2 text-[12px] leading-4 text-text-primary outline-none placeholder:text-text-muted focus:border-brand focus:ring-2 focus:ring-brand-subtle" placeholder="Comment (optional)" value={comment} onChange={(event) => setComment(event.target.value)} />}
         <div className="flex flex-wrap gap-2">
           {view.source.type === "tool_permission" && <>
             <button disabled={busy} onClick={() => submit("approve_once")} className={PRIMARY_ACTION_CLASS}>Allow once</button>
@@ -269,7 +279,7 @@ export function HitlDecisionCard({ entry }: { entry: ScopedHitlView }) {
           {view.source.type === "ask_user" && isConfirmStep && <button data-testid="hitl-approve-button" disabled={busy || !allAnswered} onClick={() => submit("approved")} className={PRIMARY_ACTION_CLASS}>Confirm Answers</button>}
           <button data-testid="hitl-cancel-button" disabled={busy} onClick={() => cancel.mutate({ projectSlug, hitlId: view.hitlId })} className={SECONDARY_ACTION_CLASS}>Cancel</button>
         </div>
-        {busy && <Loader2 size={13} className="animate-spin mt-2" aria-label="Working" />}
+        {busy && <Loader2 size={13} className="mt-2 animate-activity" aria-label="Working" />}
         {mutationError && <p className="mt-2 text-xs text-error" role="alert">{mutationError instanceof Error ? mutationError.message : "Could not update this request. Please try again."}</p>}
       </> : (
         <p className="text-xs text-warning" role="status">Manual inspection is required. This request can no longer accept actions.</p>

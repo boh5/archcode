@@ -78,7 +78,6 @@ const useNavigate = mock(() => navigate);
 const useParams = mock(() => ({ slug: "demo-project" }));
 const useProjects = mock(() => ({ data: [project] }));
 const toggleTheme = mock(() => {});
-const useTheme = mock(() => ({ theme: "dark", toggleTheme }));
 
 let ProjectBar: ProjectBarComponent;
 
@@ -124,10 +123,6 @@ mock.module("../../api/queries", () => ({
   useDirectorySearch: (_query: string, _limit?: number) => ({ data: { entries: [], truncated: false }, isLoading: false, error: null }),
 }));
 
-mock.module("../../hooks/use-theme", () => ({
-  useTheme,
-}));
-
 mock.module("../../store/hitl-store", () => ({
   useAttentionVisibleScopedHitl: () => attentionVisibleHitl,
 }));
@@ -169,7 +164,7 @@ mock.module("../../api/mutations", () => ({
 ({ ProjectBar } = await import("./ProjectBar"));
 
 function render(): unknown {
-  return ProjectBar({ onAddProject, onSettings });
+  return ProjectBar({ onAddProject, onSettings, theme: "dark", toggleTheme });
 }
 
 function projectNode(tree: unknown) {
@@ -180,7 +175,7 @@ function projectNode(tree: unknown) {
 describe("ProjectBar", () => {
   beforeEach(() => {
     attentionVisibleHitl = [];
-    for (const fn of [navigate, onAddProject, onSettings, setState, useState, useCallback, useNavigate, useParams, useProjects, toggleTheme, useTheme]) {
+    for (const fn of [navigate, onAddProject, onSettings, setState, useState, useCallback, useNavigate, useParams, useProjects, toggleTheme]) {
       fn.mockClear();
     }
   });

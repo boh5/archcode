@@ -61,6 +61,7 @@ mock.module("react", () => ({
   },
   useCallback: <T extends (...args: never[]) => unknown>(callback: T) => callback,
   useEffect: (_callback: () => void | (() => void), _deps?: unknown[]) => {},
+  useRef: <T,>(initial: T) => ({ current: initial }),
   useMemo: <T,>(factory: () => T) => factory(),
 }));
 
@@ -73,17 +74,29 @@ mock.module("react/jsx-dev-runtime", () => ({
 
 const Icon = (props: Record<string, unknown>) => jsxDEV("svg", props);
 mock.module("lucide-react", () => ({
+  Ban: Icon,
   Brain: Icon,
+  Calendar: Icon,
   Check: Icon,
+  Circle: Icon,
+  CircleAlert: Icon,
+  CircleCheck: Icon,
+  CircleDashed: Icon,
+  CirclePause: Icon,
+  CircleStop: Icon,
+  CircleX: Icon,
   ChevronDown: Icon,
   ChevronRight: Icon,
   CircleQuestionMark: Icon,
   Clock: Icon,
+  Clock3: Icon,
   FileText: Icon,
   GitBranch: Icon,
   Globe: Icon,
+  Gauge: Icon,
   Handshake: Icon,
   LoaderCircle: Icon,
+  MessageCircleQuestion: Icon,
   MessageSquare: Icon,
   Pencil: Icon,
   Plug: Icon,

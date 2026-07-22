@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 
-type Theme = "light" | "dark";
+export type Theme = "light" | "dark";
 
 const STORAGE_KEY = "archcodeTheme";
 
 function getInitialTheme(): Theme {
   if (typeof window === "undefined") return "dark";
 
-  const stored = localStorage.getItem(STORAGE_KEY);
+  const stored = window.localStorage.getItem(STORAGE_KEY);
   if (stored === "light" || stored === "dark") return stored;
 
   return window.matchMedia("(prefers-color-scheme: dark)").matches
@@ -22,10 +22,11 @@ function applyTheme(theme: Theme) {
 export function useTheme() {
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
 
-  // Apply theme on mount
+  // Keep the document attribute owned by the root theme state, including
+  // responsive shell remounts and same-tab updates.
   useEffect(() => {
     applyTheme(theme);
-  }, []); // only on mount — toggleTheme handles subsequent changes
+  }, [theme]);
 
   // Sync across tabs
   useEffect(() => {
@@ -44,7 +45,7 @@ export function useTheme() {
   const toggleTheme = useCallback(() => {
     setTheme((prev) => {
       const next = prev === "dark" ? "light" : "dark";
-      localStorage.setItem(STORAGE_KEY, next);
+      window.localStorage.setItem(STORAGE_KEY, next);
       applyTheme(next);
       return next;
     });

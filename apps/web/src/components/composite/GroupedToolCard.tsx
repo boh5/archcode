@@ -57,18 +57,18 @@ export function GroupedToolCard({ tools, projectSlug, sessionId }: {
     <div className="shrink-0">
       <button
         type="button"
-        className="flex items-center gap-2 w-full px-2.5 py-1.5 text-xs text-text-secondary rounded-md border border-border-subtle bg-bg-overlay hover:bg-bg-hover transition-colors"
+        className="flex w-full items-center gap-2 rounded-md border border-border-subtle bg-bg-elevated px-3 py-2 text-[12px] text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
         onClick={() => setExpanded((v) => !v)}
         aria-expanded={expanded}
       >
         <ChevronRight
           size={12}
-          className={`transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}
+          className={`transition-transform duration-[var(--motion-hover)] ${expanded ? "rotate-90" : ""}`}
           aria-hidden="true"
         />
         <Icon size={12} className="text-text-muted" aria-hidden="true" />
         <span className="font-medium">{label}</span>
-        <span className="ml-auto text-[11px] text-text-muted bg-bg-active px-1.5 py-0.5 rounded-full">
+        <span className="ml-auto rounded-sm bg-bg-active px-2 py-1 text-[10px] font-semibold leading-[14px] text-text-tertiary">
           {count}
         </span>
       </button>

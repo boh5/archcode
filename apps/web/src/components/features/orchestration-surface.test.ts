@@ -44,12 +44,38 @@ describe("orchestration workbench surface", () => {
 
   test("uses only authoritative runtime and child-link statuses in the Agent tree", () => {
     expect(resolveInspectorAgentStatus("running").label).toBe("Running");
+    expect(resolveInspectorAgentStatus("running").kind).toBe("running");
     expect(resolveInspectorAgentStatus("idle").label).toBe("Idle");
+    expect(resolveInspectorAgentStatus("stopping")).toMatchObject({ label: "Stopping", kind: "running", tone: "warning" });
     expect(resolveInspectorAgentStatus(undefined, "waiting_for_human").label).toBe("Needs you");
+    expect(resolveInspectorAgentStatus(undefined, "waiting_for_human").kind).toBe("needs_you");
     expect(resolveInspectorAgentStatus(undefined, "cancelled").label).toBe("Stopped");
+    expect(resolveInspectorAgentStatus(undefined, "cancelled").kind).toBe("stopped");
     expect(resolveInspectorAgentStatus(undefined, "cancelled").detail).toBe("Cancelled");
     expect(resolveInspectorAgentStatus(undefined, "completed").label).toBe("Completed");
     expect(resolveInspectorAgentStatus(undefined).label).toBe("Status unavailable");
+  });
+
+  test("hard-cuts legacy state dots, pulse, raw Goal badges, and Todo spinners", async () => {
+    const [sidebar, header, goal, composer, todo] = await Promise.all([
+      source("components/features/Sidebar.tsx"),
+      source("components/features/ChatHeader.tsx"),
+      source("components/features/SessionGoalProgressRow.tsx"),
+      source("components/features/ChatInput.tsx"),
+      source("components/features/TodoProgressButton.tsx"),
+    ]);
+    expect(sidebar).not.toContain("STATUS_DOT_COLORS");
+    expect(sidebar).not.toContain("AUTOMATION_STATUS_DOT_COLORS");
+    expect(sidebar).not.toContain("animate-pulse");
+    expect(sidebar).not.toContain("Goal ·");
+    expect(header).not.toContain("EXECUTION_STATUS_CLASS");
+    expect(header).not.toContain("Goal ·");
+    expect(goal).not.toContain("◎");
+    expect(goal).not.toContain("Pursuing goal");
+    expect(goal).toContain("IconAction");
+    expect(composer).not.toContain("dotClass");
+    expect(todo).not.toContain("STATE_CLASS");
+    expect(todo).not.toContain("animate-spin");
   });
 
   test("resolves nested child status from each authoritative parent Session link", () => {

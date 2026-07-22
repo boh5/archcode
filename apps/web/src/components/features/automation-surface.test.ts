@@ -47,4 +47,45 @@ describe("Automation navigation and detail actions", () => {
     expect(context).toContain("Created here");
     expect(context).not.toContain("Executing Goal");
   });
+
+  test("Automation enablement uses static domain status glyphs", async () => {
+    const sidebar = await source("components/features/Sidebar.tsx");
+    const list = await source("routes/automations.tsx");
+    const detail = await source("routes/automation-detail.tsx");
+    expect(sidebar).toContain("automationVisualKind");
+    expect(list).toContain("automationVisualKind(automation.status)");
+    expect(detail).toContain("automationVisualKind(automation.status)");
+    expect(sidebar).not.toContain("AUTOMATION_STATUS_DOT_COLORS");
+    expect(sidebar).not.toContain("bg-success shadow");
+  });
+
+  test("detail header uses the locked control language", async () => {
+    const detail = await source("routes/automation-detail.tsx");
+    expect(detail).toContain('<IconAction label="Edit automation"');
+    expect(detail).toContain('<IconAction danger label="Delete automation"');
+    expect(detail).toContain('aria-label="Back to automations"');
+    expect(detail).toContain('text-[16px] font-semibold leading-[22px]');
+    expect(detail).toContain("min-[640px]:flex-nowrap");
+    expect(detail).toContain('className="flex w-full basis-full shrink-0 items-center justify-end gap-2 min-[640px]:w-auto min-[640px]:basis-auto"');
+    expect(detail).toContain('className="inline-flex h-8 shrink-0 items-center');
+    expect(detail).not.toContain('title="Edit Automation"');
+    expect(detail).not.toContain('title="Delete Automation"');
+    expect(detail).not.toContain("px-3 py-2 text-sm");
+  });
+
+  test("list header and creation controls use the locked page and control scale", async () => {
+    const list = await source("routes/automations.tsx");
+    expect(list).toContain('<h1 className="text-[16px] font-semibold leading-[22px]">Automations</h1>');
+    expect(list.match(/inline-flex h-8 items-center/g)?.length).toBe(2);
+    expect(list).not.toContain("px-3 py-2 text-sm");
+    expect(list).toContain('text-[11px] leading-4 text-text-tertiary');
+    expect(list).not.toContain('mt-1 text-xs text-text-muted');
+  });
+
+  test("detail keeps schedule and due metadata readable", async () => {
+    const detail = await source("routes/automation-detail.tsx");
+    expect(detail.match(/text-\[11px\] leading-4 text-text-tertiary/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(detail).not.toContain('<dt className="text-text-muted">');
+    expect(detail).not.toContain('<span className="ml-2 text-text-muted">due');
+  });
 });

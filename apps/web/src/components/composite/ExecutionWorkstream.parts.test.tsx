@@ -234,7 +234,7 @@ describe("CompressionBlock", () => {
 
     expect(text).toContain("b1");
     expect(text).toContain("Dynamic Range");
-    expect(text).toContain("model");
+    expect(text).toContain("Model");
     expect(text).toContain("Keep going");
     expect(text).toContain("User Constraints");
     expect(text).toContain("m0001");
@@ -250,7 +250,7 @@ describe("CompressionBlock", () => {
     const text = textContent(el);
 
     expect(text).toContain("Dynamic Range");
-    expect(text).toContain("model");
+    expect(text).toContain("Model");
   });
 
   test("renders token savings and protected refs count from snapshot", () => {

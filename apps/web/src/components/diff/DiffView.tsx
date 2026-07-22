@@ -74,12 +74,12 @@ export function DiffLineRow({
   const lineNum = line.type === "delete" ? oldLine : newLine;
 
   return (
-    <div className={`flex ${bgClass}`}>
+    <div className={`flex font-mono text-[12px] leading-[18px] ${bgClass}`}>
       <div className={`sticky left-0 z-10 flex shrink-0 ${gutterBg}`}>
-        <span className="w-[32px] shrink-0 text-right pr-2 text-[10px] text-text-muted select-none">
+        <span className="w-[32px] shrink-0 select-none pr-2 text-right text-text-tertiary">
           {lineNum}
         </span>
-        <span className="shrink-0 w-[14px] text-[11px] select-none">{marker}</span>
+        <span className="w-[14px] shrink-0 select-none">{marker}</span>
       </div>
       <span className="whitespace-pre">
         {line.content}
@@ -93,8 +93,8 @@ export function DiffHunkBlock({ hunk }: { hunk: DiffHunk }) {
   let newLine = hunk.newStart;
 
   return (
-    <div className="border border-border-subtle rounded-sm mb-px">
-      <div className="bg-bg-elevated px-3 py-1 text-[11px] text-text-muted cursor-default whitespace-pre sticky left-0 z-20 min-w-full">
+    <div className="mb-px overflow-hidden rounded-md border border-border-subtle">
+      <div className="sticky left-0 z-20 min-w-full cursor-default whitespace-pre bg-bg-elevated px-3 py-1 font-mono text-[12px] leading-[18px] text-text-tertiary">
         {hunk.header}
       </div>
       {hunk.lines.map((line, i) => {
@@ -128,22 +128,23 @@ export function DiffFileAccordion({
   return (
     <div className="border-b border-border-subtle">
       <button
-        className="flex w-full items-center gap-2 px-3 py-[6px] cursor-pointer text-left transition-colors duration-150 bg-bg-elevated hover:bg-bg-hover"
+        type="button"
+        className="flex w-full cursor-pointer items-center gap-2 bg-bg-elevated px-3 py-2 text-left transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
         onClick={onToggle}
       >
-        <span className="text-text-muted shrink-0">
+        <span className="shrink-0 text-text-muted" aria-hidden="true">
           {isExpanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
         </span>
         <span
-          className={`shrink-0 rounded-[3px] px-[6px] py-px text-[10px] font-semibold ${STATUS_STYLES[status] ?? "bg-bg-elevated text-text-muted"}`}
+          className={`shrink-0 rounded-sm px-2 py-px text-[12px] font-semibold leading-4 ${STATUS_STYLES[status] ?? "bg-bg-elevated text-text-tertiary"}`}
         >
           {STATUS_LABELS[status] ?? "?"}
         </span>
-        <span className="truncate font-mono text-[12px] font-medium text-text-primary">
+        <span className="truncate font-mono text-[12px] font-normal leading-[18px] text-text-primary">
           {file.path}
         </span>
         {(file.additions !== undefined || file.deletions !== undefined) && (
-          <span className="ml-auto shrink-0 text-[10px] text-text-muted">
+          <span className="ml-auto shrink-0 text-[10px] text-text-tertiary">
             {file.additions !== undefined && (
               <span className="text-success">+{file.additions}</span>
             )}

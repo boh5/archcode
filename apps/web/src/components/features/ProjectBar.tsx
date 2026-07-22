@@ -2,7 +2,7 @@ import { useState, useCallback } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Moon, Plus, Settings, Sun } from "lucide-react";
 import { useProjects } from "../../api/queries";
-import { useTheme } from "../../hooks/use-theme";
+import type { Theme } from "../../hooks/use-theme";
 import { useAttentionVisibleScopedHitl } from "../../store/hitl-store";
 import { HitlBell } from "./HitlBell";
 import { ProjectActionContextMenu } from "./ProjectActionMenu";
@@ -14,17 +14,18 @@ interface ProjectBarProps {
   onAddProject?: () => void;
   onSettings?: () => void;
   showBell?: boolean;
+  theme: Theme;
+  toggleTheme: () => void;
 }
 
 function getInitials(slug: string): string {
   return slug.slice(0, 2).toLowerCase();
 }
 
-export function ProjectBar({ onAddProject, onSettings, showBell = true }: ProjectBarProps) {
+export function ProjectBar({ onAddProject, onSettings, showBell = true, theme, toggleTheme }: ProjectBarProps) {
   const navigate = useNavigate();
   const { slug: activeSlug } = useParams<{ slug: string }>();
   const { data: projects } = useProjects();
-  const { theme, toggleTheme } = useTheme();
   const attentionVisibleHitl = useAttentionVisibleScopedHitl();
 
   const [editingProject, setEditingProject] = useState<Project | null>(null);
@@ -59,11 +60,11 @@ export function ProjectBar({ onAddProject, onSettings, showBell = true }: Projec
   );
 
   return (
-    <nav className="flex h-full flex-col items-center gap-0.5 overflow-visible py-2" aria-label="Projects">
+    <nav className="flex h-full flex-col items-center gap-1 overflow-visible py-2" aria-label="Projects">
       <button
         type="button"
         aria-label="Open dashboard"
-        className="mb-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-bg-elevated focus-visible:outline-2 focus-visible:outline-accent"
+        className="mb-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-sm bg-bg-elevated text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
         onClick={() => navigate("/")}
       >
         <img src="/logo.svg" alt="ArchCode" width={20} height={20} />
@@ -84,22 +85,22 @@ export function ProjectBar({ onAddProject, onSettings, showBell = true }: Projec
               aria-label={`Open ${project.name}`}
               aria-current={isActive ? "page" : undefined}
               aria-describedby={`project-tooltip-${project.slug}`}
-              className={`group w-9 h-9 rounded-md flex items-center justify-center font-semibold text-[13px] cursor-pointer transition-all duration-150 relative shrink-0 ${
+              className={`group relative flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-md text-[13px] font-semibold transition-[background-color,color] duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${
                 isActive
-                  ? "bg-accent-muted text-accent"
+                  ? "bg-brand-muted text-brand"
                   : "text-text-tertiary hover:bg-bg-hover hover:text-text-secondary"
               }`}
               onClick={(e) => handleProjectClick(project.slug, e)}
             >
               {isActive && (
-                <div className="absolute -left-2 top-2 bottom-2 w-[3px] rounded-r-sm bg-accent" />
+                <div className="absolute -left-2 top-2 bottom-2 w-[3px] rounded-r-sm bg-brand" />
               )}
               {getInitials(project.slug)}
-              {attentionCount > 0 && <span className="absolute -right-1 -top-1 grid min-h-4 min-w-4 place-items-center rounded-full bg-warning px-1 text-[9px] font-bold text-bg-base" aria-label={`${attentionCount} requests need attention`}>{attentionCount > 99 ? "99+" : attentionCount}</span>}
+              {attentionCount > 0 && <span className="absolute -right-1 -top-1 grid min-h-4 min-w-4 place-items-center rounded-full bg-warning px-1 text-[10px] font-semibold leading-[14px] text-bg-base" aria-label={`${attentionCount} requests need attention`}>{attentionCount > 99 ? "99+" : attentionCount}</span>}
               <span
                 id={`project-tooltip-${project.slug}`}
                 role="tooltip"
-                className="pointer-events-none absolute left-12 z-50 whitespace-nowrap rounded-sm border border-border-default bg-bg-elevated px-2.5 py-1 text-xs text-text-primary opacity-0 shadow-md transition-opacity duration-150 group-hover:opacity-100 group-focus:opacity-100"
+                className="pointer-events-none absolute left-12 z-50 whitespace-nowrap rounded-lg border border-border-default bg-bg-overlay px-2 py-1 text-[11px] leading-4 text-text-primary opacity-0 shadow-md transition-opacity duration-[var(--motion-hover)] group-hover:opacity-100 group-focus-visible:opacity-100"
               >
                 {project.name}
               </span>
@@ -111,11 +112,11 @@ export function ProjectBar({ onAddProject, onSettings, showBell = true }: Projec
       <button
         type="button"
         aria-label="Open project"
-        className="group w-9 h-9 rounded-md flex items-center justify-center font-semibold text-[13px] text-text-tertiary cursor-pointer transition-all duration-150 relative shrink-0 hover:bg-bg-hover hover:text-text-secondary"
+        className="group relative flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-md text-[13px] font-semibold text-text-tertiary transition-[background-color,color] duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
         onClick={handleAddProject}
       >
         <Plus size={16} aria-hidden="true" />
-        <span role="tooltip" className="pointer-events-none absolute left-12 z-50 whitespace-nowrap rounded-sm border border-border-default bg-bg-elevated px-2.5 py-1 text-xs text-text-primary opacity-0 shadow-md transition-opacity duration-150 group-hover:opacity-100 group-focus:opacity-100">
+        <span role="tooltip" className="pointer-events-none absolute left-12 z-50 whitespace-nowrap rounded-lg border border-border-default bg-bg-overlay px-2 py-1 text-[11px] leading-4 text-text-primary opacity-0 shadow-md transition-opacity duration-[var(--motion-hover)] group-hover:opacity-100 group-focus-visible:opacity-100">
           Open project
         </span>
       </button>
@@ -126,7 +127,7 @@ export function ProjectBar({ onAddProject, onSettings, showBell = true }: Projec
         {showBell && <HitlBell />}
         <button
           type="button"
-          className="w-8 h-8 rounded-sm flex items-center justify-center text-text-muted cursor-pointer transition-all duration-150 text-[15px] hover:bg-bg-hover hover:text-text-secondary"
+          className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-sm text-text-tertiary transition-[background-color,color] duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
           title="Settings"
           aria-label="Settings"
           onClick={handleSettingsClick}
@@ -135,7 +136,7 @@ export function ProjectBar({ onAddProject, onSettings, showBell = true }: Projec
         </button>
         <button
           type="button"
-          className="w-8 h-8 rounded-sm flex items-center justify-center text-text-muted cursor-pointer transition-all duration-150 text-[15px] hover:bg-bg-hover hover:text-text-secondary"
+          className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-sm text-text-tertiary transition-[background-color,color] duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
           title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
           aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
           onClick={toggleTheme}

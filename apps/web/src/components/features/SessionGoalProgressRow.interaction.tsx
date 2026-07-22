@@ -103,22 +103,45 @@ function renderGoal(client: QueryClient, goal: SessionGoalView): void {
 }
 
 function button(label: string): HTMLButtonElement {
-  const match = [...document.querySelectorAll("button")].find((candidate) => candidate.textContent === label);
+  const match = [...document.querySelectorAll("button")].find((candidate) => candidate.textContent === label || candidate.getAttribute("aria-label") === label);
   if (!(match instanceof dom.window.HTMLButtonElement)) throw new Error(`Missing ${label} button`);
   return match;
 }
 
 describe("SessionGoalProgressRow", () => {
+  test("reveals completion once only for the same mounted Goal identity", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    renderGoal(client, activeGoal);
+    expect(container.querySelector('[data-visual-kind="goal-active"]')).not.toBeNull();
+
+    renderGoal(client, { ...activeGoal, status: "complete" });
+    expect(container.querySelector('[data-visual-kind="completed"]')?.className).toContain("animate-status-complete");
+
+    renderGoal(client, { ...activeGoal, status: "complete", updatedAt: 3 });
+    expect(container.querySelector('[data-visual-kind="completed"]')?.className).not.toContain("animate-status-complete");
+
+    renderGoal(client, { ...activeGoal, instanceId: "goal-2", status: "complete" });
+    expect(container.querySelector('[data-visual-kind="completed"]')?.className).not.toContain("animate-status-complete");
+
+    act(() => root.unmount());
+    root = createRoot(container);
+    renderGoal(client, { ...activeGoal, status: "complete" });
+    expect(container.querySelector('[data-visual-kind="completed"]')?.className).not.toContain("animate-status-complete");
+  });
+
   test("keeps one summary row and puts budget adjustment and removal only in budget-limited Edit", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     renderGoal(client, activeGoal);
 
     const row = container.querySelector('[data-testid="session-goal-progress-row"]');
     expect(row?.querySelector("textarea")).toBeNull();
-    expect(row?.textContent).toContain("EditPauseClear");
+    expect(row?.textContent).toContain("Active");
+    expect(row?.querySelector('button[aria-label="Edit goal"]')).not.toBeNull();
+    expect(row?.querySelector('button[aria-label="Pause goal"]')).not.toBeNull();
+    expect(row?.querySelector('button[aria-label="Clear goal"]')).not.toBeNull();
     expect(row?.textContent).not.toContain("Adjust budget");
     await act(async () => {
-      button("Edit").click();
+      button("Edit goal").click();
       await Promise.resolve();
     });
     expect(document.querySelector('[data-testid="goal-budget-editor"]')).toBeNull();
@@ -131,11 +154,12 @@ describe("SessionGoalProgressRow", () => {
       blockedReason: "Token budget reached",
     };
     renderGoal(client, budgetLimitedGoal);
-    expect(container.textContent).toContain("EditClear");
-    expect(container.textContent).not.toContain("Pause");
-    expect(container.textContent).not.toContain("Resume");
+    expect(container.querySelector('button[aria-label="Edit goal"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Clear goal"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Pause goal"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="Resume goal"]')).toBeNull();
     await act(async () => {
-      button("Edit").click();
+      button("Edit goal").click();
       await Promise.resolve();
     });
 
@@ -163,7 +187,7 @@ describe("SessionGoalProgressRow", () => {
 
     renderGoal(client, { ...budgetLimitedGoal, tokenBudget: 6_500, objective: "Finish and verify the Composer hard cut", generation: 3 });
     await act(async () => {
-      button("Edit").click();
+      button("Edit goal").click();
       await Promise.resolve();
     });
     const removeLimit = document.querySelector('input[type="checkbox"]');

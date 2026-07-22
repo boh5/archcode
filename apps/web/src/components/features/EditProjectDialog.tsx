@@ -73,7 +73,7 @@ export function EditProjectDialog({
           <div className="px-5 py-4">
             <label
               htmlFor="edit-project-name"
-              className="mb-1.5 block text-[13px] font-medium text-text-secondary"
+              className="mb-2 block text-[12px] font-medium leading-4 text-text-secondary"
             >
               Name
             </label>
@@ -82,7 +82,7 @@ export function EditProjectDialog({
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none transition-colors duration-150"
+              className="h-8 w-full rounded-sm border border-border-control bg-bg-base px-3 text-[12px] text-text-primary transition-colors duration-[var(--motion-hover)] placeholder:text-text-muted focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-subtle"
               autoFocus
               disabled={updateName.isPending}
             />
@@ -96,14 +96,14 @@ export function EditProjectDialog({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-sm bg-bg-active px-4 py-2 text-[13px] font-medium text-text-primary transition-colors duration-150 hover:bg-bg-hover"
+              className="h-8 rounded-sm bg-bg-active px-4 text-[12px] font-medium text-text-primary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
               disabled={updateName.isPending}
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="rounded-sm bg-accent px-4 py-2 text-[13px] font-medium text-bg-base transition-colors duration-150 hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-40"
+              className="h-8 rounded-sm bg-brand px-4 text-[12px] font-medium text-bg-overlay transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
               disabled={!isChanged || updateName.isPending}
             >
               {updateName.isPending ? "Saving…" : "Save"}

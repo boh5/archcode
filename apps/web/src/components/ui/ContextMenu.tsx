@@ -10,7 +10,7 @@ function ContextMenuContent({
   return (
     <ContextMenuPrimitive.Portal>
       <ContextMenuPrimitive.Content
-        className={`z-50 min-w-[8rem] overflow-hidden rounded-md border border-border-default bg-bg-elevated p-1 shadow-md data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 ${className ?? ""}`}
+        className={`z-50 min-w-[8rem] overflow-hidden rounded-lg border border-border-default bg-bg-overlay p-1 shadow-md data-[state=open]:animate-overlay-enter data-[state=closed]:animate-overlay-exit ${className ?? ""}`}
         {...props}
       />
     </ContextMenuPrimitive.Portal>
@@ -23,7 +23,7 @@ function ContextMenuItem({
 }: React.ComponentPropsWithoutRef<typeof ContextMenuPrimitive.Item>) {
   return (
     <ContextMenuPrimitive.Item
-      className={`flex items-center gap-2 rounded-sm px-2.5 py-1.5 text-[13px] text-text-primary outline-none transition-colors duration-150 hover:bg-bg-hover focus:bg-bg-hover cursor-pointer data-[highlighted]:bg-bg-hover data-[disabled]:pointer-events-none data-[disabled]:opacity-50 ${className ?? ""}`}
+      className={`flex min-h-8 cursor-pointer items-center gap-2 rounded-sm px-3 py-2 text-[13px] text-text-primary outline-none transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus:bg-bg-hover data-[highlighted]:bg-bg-hover data-[disabled]:pointer-events-none data-[disabled]:opacity-50 ${className ?? ""}`}
       {...props}
     />
   );

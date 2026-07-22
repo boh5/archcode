@@ -6,25 +6,25 @@ import { PROFILE_NAMES, BUILT_IN_MCP_NAMES, defaultMemoryConfig, errorAtOrBelow,
 
 type JsonValidationChange = (path: string, error?: string) => void;
 
-const secondaryActionClass = "inline-flex h-8 items-center justify-center gap-1.5 rounded-sm bg-bg-active px-2.5 text-[12px] font-medium text-text-secondary transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary";
-const subtleActionClass = "inline-flex h-7 items-center justify-center gap-1.5 rounded-sm px-2 text-[11.5px] font-medium text-accent transition-colors duration-150 hover:bg-accent-subtle";
-const dangerActionClass = "inline-flex h-7 items-center justify-center gap-1.5 rounded-sm px-2 text-[11.5px] font-medium text-error transition-colors duration-150 hover:bg-error-muted";
-const selectClass = "h-9 w-full rounded-sm border border-border-default bg-bg-base px-3 text-[13px] text-text-primary outline-none transition-colors duration-150 hover:border-border-strong focus:border-accent";
+const secondaryActionClass = "inline-flex h-8 items-center justify-center gap-2 rounded-sm bg-bg-active px-3 text-[12px] font-medium text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary";
+const subtleActionClass = "inline-flex h-7 items-center justify-center gap-2 rounded-sm px-2 text-[12px] font-medium text-brand transition-colors duration-[var(--motion-hover)] hover:bg-brand-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand";
+const dangerActionClass = "inline-flex h-7 items-center justify-center gap-2 rounded-sm px-2 text-[12px] font-medium text-error transition-colors duration-[var(--motion-hover)] hover:bg-error-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand";
+const selectClass = "h-8 w-full rounded-sm border border-border-control bg-bg-base px-3 text-[12px] text-text-primary outline-none transition-colors duration-[var(--motion-hover)] hover:border-text-secondary focus:border-brand focus:ring-2 focus:ring-brand-subtle";
 
 function PanelHeader({ title, description }: { title: string; description: string }) {
   return <header className="border-b border-border-subtle pb-4">
-    <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-text-muted">Server settings</p>
-    <h1 className="text-[19px] font-semibold tracking-tight text-text-primary">{title}</h1>
-    <p className="mt-1 text-[12.5px] text-text-tertiary">{description}</p>
+    <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-text-tertiary">Server settings</p>
+    <h1 className="text-[16px] font-semibold leading-[22px] text-text-primary">{title}</h1>
+    <p className="mt-1 text-[13px] leading-5 text-text-tertiary">{description}</p>
   </header>;
 }
 
 function SettingsToggle({ checked, onChange, label, description }: { checked: boolean; onChange: (checked: boolean) => void; label: string; description: string }) {
-  return <label className="flex cursor-pointer items-start gap-3 rounded-sm border border-border-subtle bg-bg-elevated px-3 py-3 transition-colors duration-150 hover:border-border-default">
-    <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="mt-0.5 h-4 w-4 accent-accent" />
-    <span className="flex flex-col gap-0.5">
+  return <label className="flex cursor-pointer items-start gap-3 rounded-sm border border-border-subtle bg-bg-elevated px-3 py-3 transition-colors duration-[var(--motion-hover)] hover:border-border-default">
+    <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="mt-1 h-4 w-4 accent-brand" />
+    <span className="flex flex-col gap-1">
       <span className="text-[13px] font-medium text-text-secondary">{label}</span>
-      <span className="text-[11.5px] text-text-muted">{description}</span>
+      <span className="text-[11px] leading-4 text-text-tertiary">{description}</span>
     </span>
   </label>;
 }
@@ -136,9 +136,9 @@ const MCP_STATUS_META: Record<McpServerStatus["state"] | "unreported", { label: 
 
 export function SettingsNavigation({ activeSection, onSelect }: { activeSection: SettingsSection; onSelect: (section: SettingsSection) => void }) {
   const entries: Array<[SettingsSection, string]> = [["models", "Models"], ["profiles", "Profiles"], ["mcp", "MCP"], ["memory", "Memory"], ["github", "GitHub"]];
-  return <nav aria-label="Settings sections" className="grid grid-cols-3 gap-1 px-3 py-3 sm:flex sm:flex-col sm:px-2.5">
-    <p className="col-span-3 px-2.5 pb-1.5 pt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-text-muted">Server</p>
-    {entries.map(([id, label]) => <button key={id} type="button" onClick={() => onSelect(id)} aria-current={id === activeSection ? "page" : undefined} className={`relative min-w-0 rounded-sm px-3 py-2 text-left text-[12.5px] font-medium transition-colors duration-150 ${id === activeSection ? "bg-accent-subtle text-accent before:absolute before:bottom-2 before:left-0 before:top-2 before:w-0.5 before:rounded-full before:bg-accent" : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"}`}>{label}</button>)}
+  return <nav aria-label="Settings sections" className="grid grid-cols-3 gap-1 px-3 py-3 sm:flex sm:flex-col sm:px-3">
+    <p className="col-span-3 px-3 pb-2 pt-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-text-tertiary">Server</p>
+    {entries.map(([id, label]) => <button key={id} type="button" onClick={() => onSelect(id)} aria-current={id === activeSection ? "page" : undefined} className={`relative min-w-0 rounded-sm px-3 py-2 text-left text-[12px] font-medium transition-colors duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand ${id === activeSection ? "bg-brand-subtle text-brand before:absolute before:bottom-2 before:left-0 before:top-2 before:w-0.5 before:rounded-full before:bg-brand" : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"}`}>{label}</button>)}
   </nav>;
 }
 
@@ -157,11 +157,11 @@ export function SettingsModelsPanel({ config, adapterCatalog, onChange, errors =
       const options = optionRecord(provider.options);
       return <article key={providerId} className="overflow-hidden rounded-md border border-border-default bg-bg-surface">
       <div className="flex items-center justify-between gap-3 border-b border-border-subtle bg-bg-elevated px-4 py-3">
-        <div className="min-w-0"><p className="text-[9.5px] font-semibold uppercase tracking-[0.14em] text-text-muted">Provider</p><h2 className="truncate font-mono text-[13px] font-semibold text-text-primary">{providerId}</h2></div>
+        <div className="min-w-0"><p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-text-tertiary">Provider</p><h2 className="truncate font-mono text-[13px] font-semibold leading-5 text-text-primary">{providerId}</h2></div>
         <button type="button" aria-label={`Remove provider ${providerId}`} onClick={() => onChange(withDraft(config, (draft) => { delete draft.provider[providerId]; }))} className={dangerActionClass}><Trash2 size={12} aria-hidden="true" />Remove</button>
       </div>
       <div className="space-y-4 p-4">
-      <div className="grid gap-x-4 gap-y-3.5 sm:grid-cols-2">
+      <div className="grid gap-x-4 gap-y-4 sm:grid-cols-2">
         <Field label="Provider ID"><RenameInput value={providerId} readOnly={providerIdLocked} onCommit={(next) => {
           if (next === providerId) return true;
           if (draftHasProvider(config, next)) return false;
@@ -171,14 +171,14 @@ export function SettingsModelsPanel({ config, adapterCatalog, onChange, errors =
           for (const profile of Object.values(draft.profiles)) if (profile.model.startsWith(`${providerId}:`)) profile.model = `${next}:${profile.model.slice(providerId.length + 1)}`;
           }));
           return true;
-        }} />{providerIdLocked && <span className="text-[10.5px] font-normal text-text-muted">Replace or clear configured secrets before renaming.</span>}</Field>
+        }} />{providerIdLocked && <span className="text-[11px] font-normal leading-4 text-text-tertiary">Replace or clear configured secrets before renaming.</span>}</Field>
         <Field label="Display name"><TextInput value={provider.name} onChange={(next) => onChange(withDraft(config, (draft) => { draft.provider[providerId].name = next; }))} /></Field>
         <Field label="Provider package" error={errors[`provider.${providerId}.npm`]}><select className={selectClass} value={provider.npm} onChange={(event) => onChange(withDraft(config, (draft) => { draft.provider[providerId].npm = event.target.value; }))}>{!adapter && <option value={provider.npm}>{provider.npm} (unsupported)</option>}{adapterCatalog.map((entry) => <option key={entry.npmPackage} value={entry.npmPackage}>{entry.displayName} — {entry.npmPackage}</option>)}</select></Field>
       </div>
-      {adapter ? <div className="grid gap-x-4 gap-y-3.5 sm:grid-cols-2">{adapter.fields.map((field) => <ProviderOptionField key={field.path} field={field} providerId={providerId} value={getOption(options, field.path)} config={config} onChange={onChange} errors={errors} onJsonValidationChange={onJsonValidationChange} jsonResetVersion={jsonResetVersion} />)}</div> : <p role="alert" className="text-xs text-warning">This package is not available in the server adapter catalog. Choose a supported adapter before saving.</p>}
+      {adapter ? <div className="grid gap-x-4 gap-y-4 sm:grid-cols-2">{adapter.fields.map((field) => <ProviderOptionField key={field.path} field={field} providerId={providerId} value={getOption(options, field.path)} config={config} onChange={onChange} errors={errors} onJsonValidationChange={onJsonValidationChange} jsonResetVersion={jsonResetVersion} />)}</div> : <p role="alert" className="text-xs text-warning">This package is not available in the server adapter catalog. Choose a supported adapter before saving.</p>}
       <JsonObjectField label="Advanced options JSON" value={advancedOptions(options, adapter)} onChange={(next) => onChange(withDraft(config, (draft) => { draft.provider[providerId].options = mergeAdvancedOptions(optionRecord(draft.provider[providerId].options), adapter, next) as ServerConfig["provider"][string]["options"]; }))} error={errors[`provider.${providerId}.options`]} validationPath={`provider.${providerId}.options`} onValidationChange={onJsonValidationChange} resetVersion={jsonResetVersion} />
-      <div className="space-y-2.5 border-t border-border-subtle pt-4">
-        <div className="flex items-center justify-between"><div className="flex items-center gap-2"><h3 className="text-[12.5px] font-semibold text-text-secondary">Models</h3><span className="rounded-sm bg-bg-active px-1.5 py-0.5 text-[10px] text-text-muted">{Object.keys(provider.models).length}</span></div><button type="button" onClick={() => onChange(withDraft(config, (draft) => {
+      <div className="space-y-3 border-t border-border-subtle pt-4">
+        <div className="flex items-center justify-between"><div className="flex items-center gap-2"><h3 className="text-[12px] font-semibold leading-4 text-text-secondary">Models</h3><span className="rounded-sm bg-bg-active px-2 py-1 text-[10px] font-semibold leading-[14px] text-text-tertiary">{Object.keys(provider.models).length}</span></div><button type="button" onClick={() => onChange(withDraft(config, (draft) => {
           const id = nextGeneratedId("model", draft.provider[providerId].models);
           draft.provider[providerId].models[id] = {
             name: "New model",
@@ -191,7 +191,7 @@ export function SettingsModelsPanel({ config, adapterCatalog, onChange, errors =
       </div>
     </article>;
     })}
-    <button type="button" disabled={adapterCatalog.length === 0} onClick={addProvider} className="flex w-full items-center justify-center gap-2 rounded-sm border border-dashed border-border-default bg-bg-surface px-3 py-3 text-[12.5px] font-medium text-text-secondary transition-colors duration-150 hover:border-border-strong hover:bg-bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"><Plus size={14} aria-hidden="true" />Add provider</button>
+    <button type="button" disabled={adapterCatalog.length === 0} onClick={addProvider} className="flex w-full items-center justify-center gap-2 rounded-sm border border-dashed border-border-default bg-bg-surface px-3 py-3 text-[12px] font-medium text-text-secondary transition-colors duration-[var(--motion-hover)] hover:border-border-strong hover:bg-bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"><Plus size={14} aria-hidden="true" />Add provider</button>
   </section>;
 }
 
@@ -211,14 +211,14 @@ function ModelEditor({ config, onChange, providerId, modelId, model, errors, onJ
   const update = (apply: (target: ServerModelConfig) => void) => onChange(withDraft(config, (draft) => apply(draft.provider[providerId].models[modelId])));
   const path = `provider.${providerId}.models.${modelId}`;
   return <details className="group rounded-sm border border-border-subtle bg-bg-base open:border-border-default">
-    <summary className="flex cursor-pointer list-none items-center gap-2.5 px-3 py-2.5 transition-colors duration-150 hover:bg-bg-hover [&::-webkit-details-marker]:hidden">
-      <ChevronRight size={13} aria-hidden="true" className="shrink-0 text-text-muted transition-transform duration-150 group-open:rotate-90" />
+    <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-3 transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover [&::-webkit-details-marker]:hidden">
+      <ChevronRight size={13} aria-hidden="true" className="shrink-0 text-text-muted transition-transform duration-[var(--motion-icon)] group-open:rotate-90" />
       <span className="min-w-0 flex-1 truncate font-mono text-[12px] font-medium text-text-secondary">{modelId}</span>
-      <span className="truncate text-[11.5px] text-text-muted">{model.name}</span>
+      <span className="truncate text-[11px] text-text-tertiary">{model.name}</span>
     </summary>
     <div className="space-y-4 border-t border-border-subtle bg-bg-surface p-4">
       <div className="flex justify-end"><button type="button" aria-label={`Remove model ${modelId}`} onClick={() => onChange(withDraft(config, (draft) => { delete draft.provider[providerId].models[modelId]; }))} className={dangerActionClass}><Trash2 size={12} aria-hidden="true" />Remove model</button></div>
-      <div className="grid gap-x-4 gap-y-3.5 sm:grid-cols-2">
+      <div className="grid gap-x-4 gap-y-4 sm:grid-cols-2">
         <Field label="Model ID"><RenameInput value={modelId} onCommit={(next) => {
           if (next === modelId) return true;
           if (config.provider[providerId].models[next]) return false;
@@ -253,13 +253,13 @@ export function SettingsProfilesPanel({ config, onChange, errors, onJsonValidati
       const variants = config.provider[provider]?.models[model]?.variants ?? {};
       const optionsPath = `profiles.${profile}.options`;
       return <details key={profile} className="group">
-        <summary className="flex cursor-pointer list-none items-center gap-2.5 px-4 py-3 transition-colors duration-150 hover:bg-bg-hover [&::-webkit-details-marker]:hidden">
-          <ChevronRight size={13} aria-hidden="true" className="shrink-0 text-text-muted transition-transform duration-150 group-open:rotate-90" />
-          <span className="min-w-0 flex-1 font-mono text-[12.5px] font-medium text-text-secondary">{profile}</span>
-          <span className="truncate text-[11.5px] text-text-muted">{item.model}{item.variant ? ` · ${item.variant}` : ""}</span>
+        <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3 transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover [&::-webkit-details-marker]:hidden">
+          <ChevronRight size={13} aria-hidden="true" className="shrink-0 text-text-muted transition-transform duration-[var(--motion-icon)] group-open:rotate-90" />
+          <span className="min-w-0 flex-1 font-mono text-[12px] font-medium text-text-secondary">{profile}</span>
+          <span className="truncate text-[11px] text-text-tertiary">{item.model}{item.variant ? ` · ${item.variant}` : ""}</span>
         </summary>
         <div className="space-y-4 border-t border-border-subtle bg-bg-base p-4">
-          <div className="grid gap-x-4 gap-y-3.5 sm:grid-cols-2">
+          <div className="grid gap-x-4 gap-y-4 sm:grid-cols-2">
             <Field label="Model" error={errors[`profiles.${profile}.model`]}><select className={selectClass} value={item.model} onChange={(event) => onChange(withDraft(config, (draft) => { draft.profiles[profile].model = event.target.value; draft.profiles[profile].variant = undefined; }))}><option value="">Select model</option>{models.map((entry) => <option key={entry} value={entry}>{entry}</option>)}</select></Field>
             <Field label="Variant" error={errors[`profiles.${profile}.variant`]}><select className={selectClass} value={item.variant ?? ""} onChange={(event) => onChange(withDraft(config, (draft) => { draft.profiles[profile].variant = event.target.value || undefined; }))}><option value="">Default</option>{Object.keys(variants).map((variant) => <option key={variant} value={variant}>{variant}</option>)}</select></Field>
           </div>
@@ -280,15 +280,15 @@ export function SettingsMcpPanel({ config, servers, onChange, errors = {} }: { c
       const status = servers[name];
       const builtIn = BUILT_IN_MCP_NAMES.includes(name as typeof BUILT_IN_MCP_NAMES[number]);
       const statusMeta = MCP_STATUS_META[status?.state ?? "unreported"];
-      return <article key={name} className="px-4 py-3.5 transition-colors duration-150 hover:bg-bg-hover/40">
+      return <article key={name} className="px-4 py-4 transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover/40">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 className="truncate font-mono text-sm">{name}</h2>
             <p className={`mt-1 text-xs ${status?.state === "failed" ? "text-error" : "text-text-tertiary"}`}>{describeStatus(status)}</p>
           </div>
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-            {builtIn && <span className="rounded-sm bg-bg-active px-1.5 py-0.5 text-[10.5px] font-medium text-text-tertiary">Built-in</span>}
-            <span role="status" aria-label={`MCP status: ${statusMeta.label}`} className={`inline-flex items-center gap-1.5 rounded-sm border px-1.5 py-0.5 text-[10.5px] font-medium ${statusMeta.badgeClass}`}>
+            {builtIn && <span className="rounded-sm bg-bg-active px-2 py-1 text-[11px] font-medium text-text-tertiary">Built-in</span>}
+            <span role="status" aria-label={`MCP status: ${statusMeta.label}`} className={`inline-flex items-center gap-2 rounded-sm border px-2 py-1 text-[11px] font-medium ${statusMeta.badgeClass}`}>
               <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${statusMeta.dotClass}`} />
               {statusMeta.label}
             </span>
@@ -305,7 +305,7 @@ export function SettingsMcpPanel({ config, servers, onChange, errors = {} }: { c
 function McpEditor({ name, server, config, onChange, errors }: { name: string; server: ServerMcpConfig; config: ServerConfig; onChange: (config: ServerConfig) => void; errors: FieldErrors }) {
   const update = (apply: (target: ServerMcpConfig) => void) => onChange(withDraft(config, (draft) => apply(draft.mcp!.servers[name])));
   const nameLocked = hasPreservedSecretRecord(server.headers);
-  return <div className="mt-4 space-y-4 border-t border-border-subtle pt-4"><div className="grid gap-x-4 gap-y-3.5 sm:grid-cols-2"><Field label="Name"><RenameInput value={name} readOnly={nameLocked} onCommit={(next) => { if (next === name) return true; if (BUILT_IN_MCP_NAMES.includes(next as typeof BUILT_IN_MCP_NAMES[number]) || config.mcp!.servers[next]) return false; onChange(withDraft(config, (draft) => { draft.mcp!.servers[next] = draft.mcp!.servers[name]; delete draft.mcp!.servers[name]; })); return true; }} />{nameLocked && <span className="text-[10.5px] font-normal text-text-muted">Replace or clear configured headers before renaming.</span>}</Field><Field label="HTTP URL" error={errors[`mcp.servers.${name}.url`]}><TextInput value={server.url} onChange={(next) => update((draft) => { draft.url = next; })} /></Field><Field label="Timeout"><NumberField value={server.timeout} onChange={(next) => update((draft) => { draft.timeout = next; })} /></Field></div><SecretRecordEditor label="Headers" value={server.headers} onChange={(next) => update((draft) => { draft.headers = next; })} errors={errors} path={`mcp.servers.${name}.headers`} /><button type="button" onClick={() => onChange(withDraft(config, (draft) => { delete draft.mcp!.servers[name]; }))} className={dangerActionClass}><Trash2 size={12} aria-hidden="true" />Delete {name}</button></div>;
+  return <div className="mt-4 space-y-4 border-t border-border-subtle pt-4"><div className="grid gap-x-4 gap-y-4 sm:grid-cols-2"><Field label="Name"><RenameInput value={name} readOnly={nameLocked} onCommit={(next) => { if (next === name) return true; if (BUILT_IN_MCP_NAMES.includes(next as typeof BUILT_IN_MCP_NAMES[number]) || config.mcp!.servers[next]) return false; onChange(withDraft(config, (draft) => { draft.mcp!.servers[next] = draft.mcp!.servers[name]; delete draft.mcp!.servers[name]; })); return true; }} />{nameLocked && <span className="text-[11px] font-normal text-text-tertiary">Replace or clear configured headers before renaming.</span>}</Field><Field label="HTTP URL" error={errors[`mcp.servers.${name}.url`]}><TextInput value={server.url} onChange={(next) => update((draft) => { draft.url = next; })} /></Field><Field label="Timeout"><NumberField value={server.timeout} onChange={(next) => update((draft) => { draft.timeout = next; })} /></Field></div><SecretRecordEditor label="Headers" value={server.headers} onChange={(next) => update((draft) => { draft.headers = next; })} errors={errors} path={`mcp.servers.${name}.headers`} /><button type="button" onClick={() => onChange(withDraft(config, (draft) => { delete draft.mcp!.servers[name]; }))} className={dangerActionClass}><Trash2 size={12} aria-hidden="true" />Delete {name}</button></div>;
 }
 
 function draftHasProvider(config: ServerConfig, providerId: string): boolean {
@@ -314,13 +314,13 @@ function draftHasProvider(config: ServerConfig, providerId: string): boolean {
 
 export function SettingsMemoryPanel({ config, onChange, errors }: { config: ServerConfig; onChange: (config: ServerConfig) => void; errors: FieldErrors }) {
   const memory = { ...defaultMemoryConfig(), ...config.memory };
-  return <section className="space-y-5 pb-1"><PanelHeader title="Memory" description="Configure extraction thresholds for durable project memory." /><div className="space-y-4 rounded-md border border-border-default bg-bg-surface p-4"><SettingsToggle checked={memory?.enabled ?? true} onChange={(enabled) => onChange(withDraft(config, (draft) => { draft.memory = { ...(draft.memory ?? defaultMemoryConfig()), enabled }; }))} label="Memory extraction" description="Allow completed sessions to contribute durable memory." /><div className="grid gap-x-4 gap-y-3.5 border-t border-border-subtle pt-4 sm:grid-cols-2">{(["minMessages", "minContentLength", "cooldownMs"] as const).map((key) => <Field key={key} label={key} error={errors[`memory.${key}`]}><NumberField value={memory?.[key]} onChange={(next) => onChange(withDraft(config, (draft) => { draft.memory = { ...(draft.memory ?? defaultMemoryConfig()), [key]: next ?? 0 }; }))} /></Field>)}</div></div></section>;
+  return <section className="space-y-5 pb-1"><PanelHeader title="Memory" description="Configure extraction thresholds for durable project memory." /><div className="space-y-4 rounded-md border border-border-default bg-bg-surface p-4"><SettingsToggle checked={memory?.enabled ?? true} onChange={(enabled) => onChange(withDraft(config, (draft) => { draft.memory = { ...(draft.memory ?? defaultMemoryConfig()), enabled }; }))} label="Memory extraction" description="Allow completed sessions to contribute durable memory." /><div className="grid gap-x-4 gap-y-4 border-t border-border-subtle pt-4 sm:grid-cols-2">{(["minMessages", "minContentLength", "cooldownMs"] as const).map((key) => <Field key={key} label={key} error={errors[`memory.${key}`]}><NumberField value={memory?.[key]} onChange={(next) => onChange(withDraft(config, (draft) => { draft.memory = { ...(draft.memory ?? defaultMemoryConfig()), [key]: next ?? 0 }; }))} /></Field>)}</div></div></section>;
 }
 
 export function SettingsGithubPanel({ config, onChange }: { config: ServerConfig; onChange: (config: ServerConfig) => void; errors: FieldErrors }) {
   const github = config.integrations?.github;
   const set = (key: "tokenEnv" | "defaultOwner" | "defaultRepo", value: string) => onChange(withDraft(config, (draft) => { draft.integrations ??= {}; draft.integrations.github ??= {}; draft.integrations.github[key] = value || undefined; }));
-  return <section className="space-y-5 pb-1"><PanelHeader title="GitHub" description="Optional GitHub integration settings for repository operations." /><div className="space-y-4 rounded-md border border-border-default bg-bg-surface p-4"><SettingsToggle checked={github ? (github.enabled ?? true) : false} onChange={(enabled) => onChange(withDraft(config, (draft) => { draft.integrations ??= {}; draft.integrations.github = { ...(draft.integrations.github ?? {}), enabled }; }))} label="GitHub integration" description="Expose configured GitHub repository operations to supported agents." /><div className="grid gap-x-4 gap-y-3.5 border-t border-border-subtle pt-4 sm:grid-cols-2"><Field label="Token environment variable"><TextInput value={github?.tokenEnv} onChange={(next) => set("tokenEnv", next)} /></Field><Field label="Default owner"><TextInput value={github?.defaultOwner} onChange={(next) => set("defaultOwner", next)} /></Field><Field label="Default repository"><TextInput value={github?.defaultRepo} onChange={(next) => set("defaultRepo", next)} /></Field></div></div></section>;
+  return <section className="space-y-5 pb-1"><PanelHeader title="GitHub" description="Optional GitHub integration settings for repository operations." /><div className="space-y-4 rounded-md border border-border-default bg-bg-surface p-4"><SettingsToggle checked={github ? (github.enabled ?? true) : false} onChange={(enabled) => onChange(withDraft(config, (draft) => { draft.integrations ??= {}; draft.integrations.github = { ...(draft.integrations.github ?? {}), enabled }; }))} label="GitHub integration" description="Expose configured GitHub repository operations to supported agents." /><div className="grid gap-x-4 gap-y-4 border-t border-border-subtle pt-4 sm:grid-cols-2"><Field label="Token environment variable"><TextInput value={github?.tokenEnv} onChange={(next) => set("tokenEnv", next)} /></Field><Field label="Default owner"><TextInput value={github?.defaultOwner} onChange={(next) => set("defaultOwner", next)} /></Field><Field label="Default repository"><TextInput value={github?.defaultRepo} onChange={(next) => set("defaultRepo", next)} /></Field></div></div></section>;
 }
 
 function describeStatus(status?: McpServerStatus) {

@@ -217,7 +217,7 @@ describe("SessionComposerDock", () => {
     expect(queue?.className).toContain("overflow-y-auto");
     expect(inputSlot?.className).toContain("shrink-0");
     expect(goal?.className).toContain("shrink-0");
-    expect(card?.className).toContain("rounded-[16px]");
+    expect(card?.className).toContain("rounded-lg");
     expect(textarea?.className).toContain("border-0");
     expect(container.textContent).toContain("Queued request");
     expect(container.textContent).toContain("Retry this exact request");

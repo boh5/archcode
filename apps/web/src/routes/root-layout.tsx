@@ -11,6 +11,7 @@ import { Sidebar } from "../components/features/Sidebar";
 import { ContextInspector } from "../components/features/ContextInspector";
 import { ResizeHandle } from "../components/features/ResizeHandle";
 import { HitlBell } from "../components/features/HitlBell";
+import { StatusGlyph } from "../components/primitives/StatusGlyph";
 import { hitlAttentionPath, hitlStore, scopedHitlIdentity } from "../store/hitl-store";
 import { resolveHitlNoticeEntries, useGlobalSSE } from "../context/global-sse";
 import {
@@ -23,6 +24,7 @@ import {
   resolveInspectorGeometry,
 } from "../lib/workbench-layout";
 import { focusElementAfterLayoutChange } from "../lib/focus-control";
+import { useTheme } from "../hooks/use-theme";
 
 export function RootLayout() {
   return (
@@ -36,6 +38,7 @@ function WorkbenchShell() {
   const location = useLocation();
   const { openAddProjectModal } = useAddProjectModal();
   const { openSettingsModal } = useSettingsModal();
+  const { theme, toggleTheme } = useTheme();
   const layout = useWorkbenchLayout();
   const { hitlNoticeIdentities } = useGlobalSSE();
   const hitlViews = useStore(hitlStore, (state) => state.views);
@@ -87,7 +90,7 @@ function WorkbenchShell() {
       {showNavigation && !layout.isMobile && (
         <div className="hidden h-full shrink-0 min-[800px]:flex">
           <div className="relative z-40 w-[52px] shrink-0 border-r border-border-default bg-bg-surface">
-            <ProjectBar onAddProject={openAddProjectModal} onSettings={openSettingsModal} />
+            <ProjectBar onAddProject={openAddProjectModal} onSettings={openSettingsModal} theme={theme} toggleTheme={toggleTheme} />
           </div>
           {showSidebar && (
             <>
@@ -120,7 +123,7 @@ function WorkbenchShell() {
             aria-label="Expand project sidebar"
             aria-controls="project-sidebar"
             aria-expanded="false"
-            className="absolute left-0 top-12 z-20 hidden h-8 w-6 items-center justify-center rounded-r-sm border border-l-0 border-border-default bg-bg-surface text-text-muted hover:text-text-primary min-[800px]:flex"
+            className="absolute left-0 top-12 z-20 hidden h-8 w-6 items-center justify-center rounded-r-sm border border-l-0 border-border-default bg-bg-surface text-text-tertiary hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand min-[800px]:flex"
             onClick={expandSidebar}
           >
             <PanelLeftOpen size={14} />
@@ -130,7 +133,7 @@ function WorkbenchShell() {
           <button
             type="button"
             aria-label="Exit focus mode"
-            className="absolute left-0 top-12 z-20 hidden h-8 w-6 items-center justify-center rounded-r-sm border border-l-0 border-border-default bg-bg-surface text-accent hover:text-accent-hover min-[800px]:flex"
+            className="absolute left-0 top-12 z-20 hidden h-8 w-6 items-center justify-center rounded-r-sm border border-l-0 border-border-default bg-bg-surface text-brand hover:text-brand-hover min-[800px]:flex"
             onClick={exitFocusMode}
           >
             <Focus size={14} />
@@ -147,15 +150,15 @@ function WorkbenchShell() {
             <Link
               key={scopedHitlIdentity(entry)}
               to={hitlAttentionPath(entry)}
-              className="flex items-start gap-2 rounded-lg border border-warning/50 bg-bg-elevated p-3 shadow-lg transition-colors hover:border-warning hover:bg-bg-hover"
+              className="flex items-start gap-2 rounded-lg border border-warning/50 bg-bg-overlay p-3 shadow-md transition-colors duration-[var(--motion-hover)] hover:border-warning hover:bg-bg-hover"
               data-testid="hitl-live-toast"
             >
-              <span className="mt-0.5 text-warning" aria-hidden="true">●</span>
+              <StatusGlyph kind="needs_you" size={14} className="mt-1" />
               <span className="min-w-0 flex-1">
                 <span className="block text-xs font-medium text-text-primary">{entry.view.displayPayload.title}</span>
-                <span className="mt-0.5 block text-[11px] text-text-muted">{entry.projectSlug} · {entry.view.source.type === "ask_user" ? "Question waiting" : "Permission waiting"}</span>
+                <span className="mt-1 block text-[11px] text-text-tertiary">{entry.projectSlug} · {entry.view.source.type === "ask_user" ? "Question waiting" : "Permission waiting"}</span>
               </span>
-              <span className="text-xs font-medium text-accent">Open</span>
+              <span className="text-xs font-medium text-brand">Open</span>
             </Link>
           ))}
         </div>
@@ -205,7 +208,7 @@ function WorkbenchShell() {
           >
             <div className="flex h-full min-w-0">
               <div className="w-[52px] shrink-0 border-r border-border-default bg-bg-surface">
-                <ProjectBar onAddProject={openAddProjectModal} onSettings={openSettingsModal} showBell={false} />
+                <ProjectBar onAddProject={openAddProjectModal} onSettings={openSettingsModal} showBell={false} theme={theme} toggleTheme={toggleTheme} />
               </div>
               {hasProject && <div className="min-w-0 flex-1 bg-bg-surface"><Sidebar /></div>}
             </div>

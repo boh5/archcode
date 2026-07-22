@@ -21,6 +21,11 @@ import {
   useSessionRuntimeInitialized,
 } from "../../store/session-runtime-store";
 import { selectSessionFamilyHitl, useAttentionVisibleScopedHitl } from "../../store/hitl-store";
+import { StatusGlyph } from "../primitives/StatusGlyph";
+import { GoalStatusMark } from "./GoalStatusMark";
+import { presentSessionGoalStatus } from "../../lib/session-goal-presentation";
+import { automationVisualKind } from "../../lib/automation-status-presentation";
+import { sessionFamilyVisual } from "../../lib/session-family-presentation";
 
 // Helpers
 
@@ -53,25 +58,14 @@ export function deriveSidebarTabFromPath(pathname: string): SidebarTab | null {
 
 // Status dots
 
-const STATUS_DOT_COLORS: Record<SessionFamilyActivity | "unknown", string> = {
-  running: "bg-success shadow-[0_0_6px_var(--success)] animate-pulse",
-  stopping: "bg-warning animate-pulse",
-  idle: "bg-text-muted",
-  unknown: "border border-text-muted",
-};
-
-function SessionStatusDot({ activity }: { activity: SessionFamilyActivity | undefined }) {
-  return <div className={`w-[7px] h-[7px] rounded-full shrink-0 ${STATUS_DOT_COLORS[activity ?? "unknown"]}`} />;
+function SessionStatusGlyph({ activity }: { activity: SessionFamilyActivity | undefined }) {
+  const visual = sessionFamilyVisual(activity);
+  const label = activity === undefined ? "Status unavailable" : activity === "stopping" ? "Stopping" : activity === "running" ? "Running" : "Idle";
+  return <StatusGlyph kind={visual.kind} tone={visual.tone} label={label} size={10} />;
 }
 
-const AUTOMATION_STATUS_DOT_COLORS: Record<Automation["status"], string> = {
-  active: "bg-success shadow-[0_0_6px_var(--success)] animate-pulse",
-  paused: "bg-warning",
-  disabled: "bg-text-muted",
-};
-
-function AutomationStatusDot({ status }: { status: Automation["status"] }) {
-  return <div className={`w-[7px] h-[7px] rounded-full shrink-0 ${AUTOMATION_STATUS_DOT_COLORS[status] ?? ""}`} />;
+function AutomationStatusGlyph({ status }: { status: Automation["status"] }) {
+  return <StatusGlyph kind={automationVisualKind(status)} label={`Automation ${status}`} size={10} />;
 }
 
 // List items
@@ -93,8 +87,8 @@ function SessionItem({
 
   return (
     <div
-      className={`flex items-center gap-2 px-3.5 py-[7px] cursor-pointer transition-colors duration-150 relative ${
-        isActive ? "bg-accent-subtle" : "hover:bg-bg-hover"
+      className={`flex items-center gap-2 px-4 py-2 cursor-pointer transition-colors duration-[var(--motion-hover)] relative ${
+        isActive ? "bg-brand-subtle" : "hover:bg-bg-hover"
       }`}
       onClick={onClick}
       role="button"
@@ -104,21 +98,26 @@ function SessionItem({
       }}
     >
       {isActive && (
-        <div className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r-sm bg-accent" />
+        <div className="absolute left-0 top-2 bottom-2 w-0.5 rounded-r-sm bg-brand" />
       )}
-      <SessionStatusDot activity={activity} />
+      <SessionStatusGlyph activity={activity} />
       <div className="flex-1 min-w-0">
-        <div className="text-[12.5px] font-medium text-text-primary whitespace-nowrap overflow-hidden text-ellipsis">
+        <div className="text-[13px] font-medium text-text-primary whitespace-nowrap overflow-hidden text-ellipsis">
           {session.title || "Untitled"}
         </div>
-        <div className="flex items-center gap-1.5 text-[11px] text-text-muted mt-px">
+        <div className="mt-px flex items-center gap-2 text-[11px] text-text-tertiary">
           <span>
             {activity ?? "status unavailable"} · {formatRelativeTime(updatedAt)}
           </span>
-          {session.goal && <span className="rounded-sm bg-accent-muted px-1 py-px text-[10px] font-medium text-accent">Goal · {session.goal.status}</span>}
+          {session.goal && (
+            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-text-secondary">
+              <GoalStatusMark identity={session.goal.instanceId} status={session.goal.status} size={11} label={`Goal ${presentSessionGoalStatus(session.goal.status).label}`} />
+              {presentSessionGoalStatus(session.goal.status).label}
+            </span>
+          )}
         </div>
       </div>
-      {attentionCount > 0 && <span className="grid min-h-4 min-w-4 place-items-center rounded-full bg-warning px-1 text-[9px] font-bold text-bg-base" aria-label={`${attentionCount} requests need attention`}>{attentionCount > 99 ? "99+" : attentionCount}</span>}
+      {attentionCount > 0 && <span className="grid min-h-4 min-w-4 place-items-center rounded-full bg-warning px-1 text-[10px] font-semibold leading-[14px] text-bg-base" aria-label={`${attentionCount} requests need attention`}>{attentionCount > 99 ? "99+" : attentionCount}</span>}
     </div>
   );
 }
@@ -136,8 +135,8 @@ function AutomationItem({
 
   return (
     <div
-      className={`flex items-center gap-2 px-3.5 py-[7px] cursor-pointer transition-colors duration-150 relative ${
-        isActive ? "bg-accent-subtle" : "hover:bg-bg-hover"
+      className={`flex items-center gap-2 px-4 py-2 cursor-pointer transition-colors duration-[var(--motion-hover)] relative ${
+        isActive ? "bg-brand-subtle" : "hover:bg-bg-hover"
       }`}
       onClick={onClick}
       role="button"
@@ -147,14 +146,14 @@ function AutomationItem({
       }}
     >
       {isActive && (
-        <div className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r-sm bg-accent" />
+        <div className="absolute left-0 top-2 bottom-2 w-0.5 rounded-r-sm bg-brand" />
       )}
-      <AutomationStatusDot status={automation.status} />
+      <AutomationStatusGlyph status={automation.status} />
       <div className="flex-1 min-w-0">
-        <div className="text-[12.5px] font-medium text-text-primary whitespace-nowrap overflow-hidden text-ellipsis">
+        <div className="text-[13px] font-medium text-text-primary whitespace-nowrap overflow-hidden text-ellipsis">
           {automation.name}
         </div>
-        <div className="flex items-center gap-1.5 text-[11px] text-text-muted mt-px">
+        <div className="mt-px flex items-center gap-2 text-[11px] text-text-tertiary">
           <span className="font-mono">{automation.id.slice(0, 8)}</span>
           {scheduleLabel && <span className="truncate">{scheduleLabel}</span>}
           <span className="capitalize">{automation.action.kind.replaceAll("_", " ")}</span>
@@ -167,7 +166,7 @@ function AutomationItem({
 // Shared sub-components
 
 const SEARCH_INPUT_CLASS =
-  "w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none transition-colors duration-150";
+  "w-full rounded-sm border border-border-control bg-bg-base px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted focus:border-brand focus:outline-none transition-colors duration-[var(--motion-hover)]";
 
 function CreateButton({
   onClick,
@@ -187,7 +186,7 @@ function CreateButton({
       disabled={disabled}
       title={title}
       aria-label={title}
-      className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-sm border border-accent/50 bg-accent-subtle px-2.5 text-[12px] font-semibold text-accent shadow-[0_0_0_1px_rgba(255,255,255,0.02)] transition-colors duration-150 hover:border-accent hover:bg-accent/15 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-45"
+      className="inline-flex h-8 shrink-0 items-center justify-center gap-2 rounded-sm border border-brand/50 bg-brand-subtle px-3 text-[12px] font-semibold text-brand transition-colors duration-[var(--motion-hover)] hover:border-brand hover:bg-brand/15 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-45"
     >
       <Plus size={13} />
       <span className="whitespace-nowrap">{label}</span>
@@ -197,7 +196,7 @@ function CreateButton({
 
 function SubGroupHeader({ title, count }: { title: string; count?: number }) {
   return (
-    <div className="flex items-center justify-between px-3.5 py-1.5 text-[11px] font-semibold text-text-muted uppercase tracking-wider cursor-pointer select-none hover:text-text-tertiary">
+    <div className="flex items-center justify-between px-4 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider cursor-pointer select-none hover:text-text-tertiary">
       <span>{title}</span>
       {count !== undefined && (
         <span style={{ fontSize: 10, textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>
@@ -209,7 +208,7 @@ function SubGroupHeader({ title, count }: { title: string; count?: number }) {
 }
 
 function EmptyRow({ children }: { children: React.ReactNode }) {
-  return <div className="px-3.5 py-2 text-[11px] text-text-muted">{children}</div>;
+  return <div className="px-4 py-2 text-[11px] text-text-tertiary">{children}</div>;
 }
 
 function DashboardLinkButton({
@@ -225,8 +224,8 @@ function DashboardLinkButton({
     <Link
       to={to}
       aria-current={isActive ? "page" : undefined}
-      className={`group flex h-8 items-center gap-2 rounded-sm border px-2.5 text-[12px] font-medium transition-colors ${isActive
-        ? "border-accent/40 bg-accent-subtle text-accent"
+      className={`group flex h-8 items-center gap-2 rounded-sm border px-3 text-[12px] font-medium transition-colors ${isActive
+        ? "border-brand/40 bg-brand-subtle text-brand"
         : "border-border-subtle bg-bg-base text-text-secondary hover:border-border-default hover:bg-bg-hover hover:text-text-primary"
       }`}
     >
@@ -360,19 +359,19 @@ export function Sidebar({
 
   return (
     <div id="project-sidebar" className="h-full bg-bg-surface flex flex-col overflow-hidden">
-      <div className="shrink-0 border-b border-border-subtle px-3.5 pb-2 pt-2.5 max-[799px]:pr-12">
+      <div className="shrink-0 border-b border-border-subtle px-4 pb-2 pt-3 max-[799px]:pr-12">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
             <div className="font-semibold text-[13px] text-text-primary truncate">
               {activeProject?.name ?? "Project unavailable"}
             </div>
             {activeProject && (
-              <div className="font-mono text-[11px] text-text-muted truncate mt-px">
+              <div className="mt-px truncate font-mono text-[11px] text-text-tertiary">
                 {activeProject.workspaceRoot}
               </div>
             )}
           </div>
-          <div className="flex shrink-0 items-center gap-0.5">
+          <div className="flex shrink-0 items-center gap-1">
           {activeProject && (
             <ProjectActionDropdown
               project={activeProject}
@@ -380,7 +379,8 @@ export function Sidebar({
               onClose={setClosingProject}
               trigger={
                 <button
-                  className="w-6 h-6 rounded-sm flex items-center justify-center text-text-muted hover:bg-bg-hover hover:text-text-secondary transition-colors duration-150 text-sm shrink-0"
+                  aria-label="Project actions"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-sm text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                   title="Project actions"
                 >
                   ⋯
@@ -390,7 +390,7 @@ export function Sidebar({
           )}
             <button
               type="button"
-              className="flex h-6 w-6 items-center justify-center rounded-sm text-text-muted hover:bg-bg-hover hover:text-text-primary focus-visible:outline-2 focus-visible:outline-accent max-[799px]:hidden"
+              className="flex h-7 w-7 items-center justify-center rounded-sm text-text-tertiary hover:bg-bg-hover hover:text-text-primary focus-visible:outline-2 focus-visible:outline-brand max-[799px]:hidden"
               aria-label="Collapse project sidebar"
               aria-controls="project-sidebar"
               aria-expanded="true"
@@ -400,7 +400,7 @@ export function Sidebar({
             </button>
             <button
               type="button"
-              className="flex h-6 w-6 items-center justify-center rounded-sm text-text-muted hover:bg-bg-hover hover:text-text-primary focus-visible:outline-2 focus-visible:outline-accent"
+              className="flex h-7 w-7 items-center justify-center rounded-sm text-text-tertiary hover:bg-bg-hover hover:text-text-primary focus-visible:outline-2 focus-visible:outline-brand"
               aria-label="Enter focus mode"
               onClick={onEnterFocusMode ?? toggleFocusMode}
             >
@@ -438,9 +438,9 @@ export function Sidebar({
               role="tab"
               aria-selected={isActive}
               aria-controls={`sidebar-panel-${tab.id}`}
-              className={`flex-1 px-3 py-2 text-[12px] font-medium transition-colors duration-150 cursor-pointer border-b-2 ${
+              className={`flex-1 px-3 py-2 text-[12px] font-medium transition-colors duration-[var(--motion-hover)] cursor-pointer border-b-2 ${
                 isActive
-                  ? "text-text-primary border-accent"
+                  ? "text-text-primary border-brand"
                   : "text-text-tertiary border-transparent hover:text-text-secondary"
               }`}
               onClick={() => setSelectedTab(tab.id)}

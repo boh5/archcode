@@ -17,14 +17,14 @@ function DialogContent({
   const sizeClass = size === "x-large"
     ? "h-[min(calc(100vh-32px),600px)] w-[min(calc(100vw-32px),960px)]"
     : size === "large"
-      ? "max-h-[calc(100vh-32px)] w-[min(calc(100vw-32px),900px)]"
-      : "w-[min(480px,90vw)]";
+      ? "h-fit max-h-[calc(100vh-32px)] w-[min(calc(100vw-32px),900px)]"
+      : "h-fit w-[min(480px,90vw)]";
 
   return (
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/50 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0" />
+      <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/50 opacity-0 transition-opacity duration-[var(--motion-overlay)] ease-[var(--ease-enter)] data-[state=open]:opacity-100 data-[state=closed]:ease-[var(--ease-exit)]" />
       <DialogPrimitive.Content
-        className={`!fixed left-1/2 top-1/2 z-50 ${sizeClass} -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border-default bg-bg-surface shadow-lg focus:outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 ${className ?? ""}`}
+        className={`!fixed inset-0 z-50 m-auto ${sizeClass} rounded-xl border border-border-strong bg-bg-overlay shadow-lg focus:outline-none data-[state=open]:animate-overlay-enter data-[state=closed]:animate-overlay-exit ${className ?? ""}`}
         {...props}
       >
         {children}

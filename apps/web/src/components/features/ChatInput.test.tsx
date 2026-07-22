@@ -84,7 +84,12 @@ mock.module("react", () => ({
 mock.module("react/jsx-dev-runtime", () => ({ Fragment, jsxDEV, jsx: jsxDEV, jsxs: jsxDEV }));
 
 const Icon = (props: Record<string, unknown>) => jsxDEV("svg", props);
-mock.module("lucide-react", () => ({ ArrowUp: Icon, Check: Icon, ChevronDown: Icon, Loader2: Icon, Search: Icon, Square: Icon }));
+mock.module("lucide-react", () => ({
+  ArrowUp: Icon, Ban: Icon, Calendar: Icon, Check: Icon, ChevronDown: Icon, Circle: Icon,
+  CircleAlert: Icon, CircleCheck: Icon, CircleDashed: Icon,
+  CirclePause: Icon, CircleStop: Icon, CircleX: Icon, Clock3: Icon, Gauge: Icon,
+  Loader2: Icon, LoaderCircle: Icon, MessageCircleQuestion: Icon, Search: Icon, Square: Icon, TriangleAlert: Icon,
+}));
 
 mock.module("../../api/mutations", () => ({
   usePostMessage: () => ({ mutate: postMessageMutate, isPending: false }),
@@ -152,10 +157,10 @@ describe("ChatInput runtime controls", () => {
     const card = findAll(tree, (element) => element.props?.["data-testid"] === "composer-card")[0];
     const textarea = findAll(tree, (element) => element.type === "textarea")[0];
 
-    expect(card?.props?.className).toContain("rounded-[16px]");
+    expect(card?.props?.className).toContain("rounded-lg");
     expect(card?.props?.className).toContain("overflow-visible");
     expect(card?.props?.className).not.toContain("overflow-hidden");
-    expect(card?.props?.className).toContain("focus-within:border-accent");
+    expect(card?.props?.className).toContain("focus-within:border-brand");
     expect(textarea?.props?.className).toContain("border-0");
     expect(textarea?.props?.className).toContain("bg-transparent");
     expect(findAll(tree, (element) => element.props?.title === "Attach file")).toHaveLength(0);

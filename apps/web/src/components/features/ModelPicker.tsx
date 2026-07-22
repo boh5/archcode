@@ -119,7 +119,7 @@ export function ModelPicker({
         aria-controls="model-picker-popover"
         disabled={disabled}
         onClick={() => setOpen((current) => !current)}
-        className="flex max-w-[260px] min-w-0 items-center gap-1 rounded-sm px-1.5 py-1 text-left text-[11px] text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50 max-[390px]:max-w-[190px]"
+        className="flex max-w-[260px] min-w-0 items-center gap-1 rounded-sm px-2 py-1 text-left text-[11px] text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-2 focus-visible:outline-brand disabled:cursor-not-allowed disabled:opacity-50 max-[390px]:max-w-[190px]"
         data-testid="model-picker-trigger"
       >
         <span className="truncate">{runningDifferentModel ? `Next: ${nextLabel}` : nextLabel}</span>
@@ -131,21 +131,21 @@ export function ModelPicker({
           id="model-picker-popover"
           role="dialog"
           aria-label="Choose model"
-          className="absolute bottom-[calc(100%+8px)] left-0 z-50 flex max-h-[min(70vh,480px)] w-[min(360px,calc(100vw-24px))] flex-col overflow-hidden rounded-[12px] border border-border-default bg-bg-elevated shadow-lg max-[390px]:fixed max-[390px]:bottom-[72px] max-[390px]:left-3 max-[390px]:right-3 max-[390px]:w-auto"
+          className="absolute bottom-[calc(100%+8px)] left-0 z-50 flex max-h-[min(70vh,480px)] w-[min(360px,calc(100vw-24px))] flex-col overflow-hidden rounded-lg border border-border-default bg-bg-overlay shadow-md max-[390px]:fixed max-[390px]:bottom-[72px] max-[390px]:left-3 max-[390px]:right-3 max-[390px]:w-auto"
           data-testid="model-picker-popover"
         >
-          <div className="grid gap-1 border-b border-border-subtle bg-bg-surface px-3 py-2.5 text-[11px]">
+          <div className="grid gap-1 border-b border-border-subtle bg-bg-surface px-3 py-3 text-[11px]">
             {active && (
               <div className="flex min-w-0 items-center justify-between gap-3">
-                <span className="text-text-muted">Running with</span>
+                <span className="text-text-tertiary">Running with</span>
                 <span className="truncate font-medium text-text-secondary">{bindingLabel(active)}</span>
               </div>
             )}
             <div className="flex min-w-0 items-center justify-between gap-3">
-              <span className="text-text-muted">Next</span>
-              <div className="flex min-w-0 items-center gap-1.5 font-medium text-text-primary">
+              <span className="text-text-tertiary">Next</span>
+              <div className="flex min-w-0 items-center gap-2 font-medium text-text-primary">
                 <span className="truncate">{bindingLabel(next.resolved)}</span>
-                <span className="shrink-0 text-text-muted" data-testid="model-picker-next-mode">· {modeLabel(next.requested)}</span>
+                <span className="shrink-0 text-text-tertiary" data-testid="model-picker-next-mode">· {modeLabel(next.requested)}</span>
               </div>
             </div>
           </div>
@@ -159,34 +159,34 @@ export function ModelPicker({
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search providers, models, variants…"
-              className="h-8 w-full rounded-md border border-border-default bg-bg-base pl-8 pr-3 text-[12px] text-text-primary outline-none placeholder:text-text-muted focus:border-accent"
+              className="h-8 w-full rounded-sm border border-border-control bg-bg-base pl-8 pr-3 text-[12px] text-text-primary outline-none placeholder:text-text-muted focus:border-brand focus:ring-2 focus:ring-brand-subtle"
             />
           </label>
 
-          <div className="min-h-0 overflow-y-auto overscroll-contain p-1.5">
+          <div className="min-h-0 overflow-y-auto overscroll-contain p-2">
             <button
               type="button"
               disabled={!principalProfile}
               onClick={() => {
                 if (principalProfile) select({ mode: "profile_default", selection: principalProfile });
               }}
-              className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left hover:bg-bg-hover focus-visible:outline-2 focus-visible:outline-accent"
+              className="flex w-full items-center gap-2 rounded-sm px-3 py-2 text-left hover:bg-bg-hover focus-visible:outline-2 focus-visible:outline-brand"
               data-testid="model-picker-principal-profile"
             >
               <span className="flex-1">
-                <span className="block text-[12.5px] font-medium text-text-primary">Principal profile</span>
-                <span className="block truncate text-[10.5px] text-text-muted">
+                <span className="block text-[12px] font-medium text-text-primary">Principal profile</span>
+                <span className="block truncate text-[11px] text-text-tertiary">
                   {principalProfile ? catalogRefLabel(catalog, principalProfile) : "Principal profile is unavailable"}
                 </span>
               </span>
-              {principalProfile && next.requested.mode === "profile_default" && <Check size={13} className="shrink-0 text-accent" aria-label="Selected" />}
+              {principalProfile && next.requested.mode === "profile_default" && <Check size={13} className="shrink-0 text-brand" aria-label="Selected" />}
             </button>
 
             <div className="my-1 h-px bg-border-subtle" />
 
             {providers.map(({ provider, models }) => (
               <section key={provider.id} aria-label={provider.displayName} className="py-1">
-                <div className="flex items-center justify-between gap-2 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-text-muted">
+                <div className="flex items-center justify-between gap-2 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-text-muted">
                   <span className="truncate">{provider.displayName}</span>
                   <span className="truncate font-mono font-normal normal-case tracking-normal">{provider.id}</span>
                 </div>
@@ -198,15 +198,15 @@ export function ModelPicker({
                       type="button"
                       key={`${model.qualifiedId}\0${variant ?? "default"}`}
                       onClick={() => select({ mode: "session_override", selection })}
-                      className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left hover:bg-bg-hover focus-visible:outline-2 focus-visible:outline-accent"
+                      className="flex w-full items-center gap-2 rounded-sm px-3 py-2 text-left hover:bg-bg-hover focus-visible:outline-2 focus-visible:outline-brand"
                       data-model={model.qualifiedId}
                       data-variant={variant ?? ""}
                     >
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-[12px] text-text-primary">{catalogSelectionLabel(model, variant)}</span>
-                        <span className="block truncate font-mono text-[10px] text-text-muted">{model.qualifiedId}</span>
+                        <span className="block truncate font-mono text-[11px] text-text-tertiary">{model.qualifiedId}</span>
                       </span>
-                      {selected && <Check size={13} className="shrink-0 text-accent" aria-label="Selected" />}
+                      {selected && <Check size={13} className="shrink-0 text-brand" aria-label="Selected" />}
                     </button>
                   );
                 }))}
@@ -214,15 +214,15 @@ export function ModelPicker({
             ))}
 
             {providers.length === 0 && (
-              <div className="px-3 py-7 text-center text-[12px] text-text-muted">No models match “{query}”</div>
+              <div className="px-3 py-7 text-center text-[12px] text-text-tertiary">No models match “{query}”</div>
             )}
           </div>
 
-          <div className="border-t border-border-subtle p-1.5">
+          <div className="border-t border-border-subtle p-2">
             <button
               type="button"
               onClick={manageModels}
-              className="w-full rounded-md px-2.5 py-2 text-left text-[12px] font-medium text-accent hover:bg-accent-subtle focus-visible:outline-2 focus-visible:outline-accent"
+              className="w-full rounded-sm px-3 py-2 text-left text-[12px] font-medium text-brand hover:bg-brand-subtle focus-visible:outline-2 focus-visible:outline-brand"
             >
               Manage models…
             </button>

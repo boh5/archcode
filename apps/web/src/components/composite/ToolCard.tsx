@@ -5,15 +5,7 @@ import type {
   ToolPart,
   ToolProcessDetails,
 } from "@archcode/protocol";
-import {
-  Check,
-  ChevronRight,
-  Clock,
-  LoaderCircle,
-  TriangleAlert,
-  X,
-  type LucideIcon,
-} from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import {
   formatToolInputDetails,
   getToolInvalidInputMessage,
@@ -21,31 +13,30 @@ import {
   summarizeToolDiffMetadata,
 } from "../../lib/tool-format";
 import { DiffView } from "../diff/DiffView";
+import { StatusGlyph } from "../primitives/StatusGlyph";
+import { useStatusTransition } from "../primitives/useStatusTransition";
 import { ToolOutputViewer } from "./ToolOutputViewer";
-
-const STATUS_CONFIG: Record<
-  ToolPart["state"],
-  { icon: LucideIcon; bgClass: string; textClass: string; animate?: string }
-> = {
-  pending: { icon: Clock, bgClass: "bg-warning-muted", textClass: "text-warning" },
-  running: { icon: LoaderCircle, bgClass: "bg-info-muted", textClass: "text-info", animate: "animate-spin" },
-  completed: { icon: Check, bgClass: "bg-success-muted", textClass: "text-success" },
-  error: { icon: X, bgClass: "bg-error-muted", textClass: "text-error" },
-};
+import {
+  STATUS_SUBTLE_CLASS,
+  STATUS_TONE_CLASS,
+  statusVisual,
+  type VisualStatusKind,
+} from "../../lib/status-visuals";
 
 const STATUS_LABEL: Record<ToolPart["state"], string> = {
-  pending: "pending",
-  running: "running…",
-  completed: "done",
-  error: "error",
+  pending: "Pending",
+  running: "Running",
+  completed: "Completed",
+  error: "Error",
 };
 
-const NAME_CLASS: Record<ToolPart["state"], string> = {
-  completed: "text-text-tertiary",
-  running: "text-accent",
-  pending: "text-text-secondary",
-  error: "text-text-secondary",
-};
+function toolVisualKind(state: ToolPart["state"], unknownResult: boolean): VisualStatusKind {
+  if (unknownResult) return "warning";
+  if (state === "pending") return "pending";
+  if (state === "running") return "loading";
+  if (state === "completed") return "completed";
+  return "failed";
+}
 
 export interface ToolCardProps {
   readonly part: ToolPart;
@@ -69,10 +60,9 @@ export function ToolCard({ part, projectSlug, sessionId }: ToolCardProps) {
   const recovery = settled?.output.recovery;
   const artifactRecovery = recovery?.kind === "artifact" ? recovery : undefined;
 
-  const config = isUnknownResult
-    ? { icon: TriangleAlert, bgClass: "bg-warning-muted", textClass: "text-warning" }
-    : STATUS_CONFIG[part.state];
-  const nameClass = isUnknownResult ? "text-warning" : NAME_CLASS[part.state];
+  const visualKind = toolVisualKind(part.state, isUnknownResult);
+  const statusTransition = useStatusTransition(part.id, visualKind);
+  const tone = statusVisual(visualKind).tone;
   const summary = getToolSummary(part.toolName, "input" in part ? part.input : undefined);
   const inputDetails = "input" in part ? formatToolInputDetails(part.toolName, part.input) : null;
   const invalidMessage = "input" in part ? getToolInvalidInputMessage(part.toolName, part.input) : null;
@@ -84,38 +74,40 @@ export function ToolCard({ part, projectSlug, sessionId }: ToolCardProps) {
     || settled !== undefined
     || diffPresentation !== undefined
     || askPresentation !== undefined;
-  const StatusIcon = config.icon;
   const ToolIcon = summary.icon;
 
   return (
-    <div className="bg-bg-overlay border border-border-default rounded-md overflow-hidden shrink-0">
+    <div className="shrink-0 overflow-hidden rounded-md border border-border-subtle bg-bg-elevated">
       <button
         type="button"
         disabled={!hasDetails}
         aria-expanded={hasDetails ? expanded : undefined}
-        className={`flex items-center gap-2 px-2.5 py-1.5 select-none transition-colors duration-150 w-full text-left ${
+        className={`flex w-full select-none items-center gap-2 px-3 py-2 text-left transition-colors duration-[var(--motion-hover)] ${
           hasDetails ? "cursor-pointer hover:bg-bg-hover" : "cursor-default disabled:opacity-100"
         }`}
         onClick={() => { if (hasDetails) setExpanded((value) => !value); }}
       >
-        <span className={`w-[18px] h-[18px] rounded flex items-center justify-center shrink-0 ${config.bgClass} ${config.textClass} ${config.animate ?? ""}`} aria-hidden="true">
-          <StatusIcon size={10} />
+        <span
+          className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-sm ${STATUS_SUBTLE_CLASS[tone]}`}
+          data-tool-visual-kind={visualKind}
+        >
+          <StatusGlyph kind={visualKind} size={11} transition={statusTransition} />
         </span>
-        <span className={`text-xs font-medium font-mono shrink-0 whitespace-nowrap ${nameClass}`}>
-          {ToolIcon ? <ToolIcon size={12} className="inline-block align-text-bottom mr-0.5" /> : null}{part.toolName}
+        <span className={`shrink-0 whitespace-nowrap font-mono text-[12px] font-medium ${isUnknownResult ? "text-warning" : "text-text-secondary"}`}>
+          {ToolIcon ? <ToolIcon size={12} className="mr-1 inline-block align-text-bottom" /> : null}{part.toolName}
         </span>
         <span className="text-xs text-text-secondary truncate">{summary.primary}</span>
-        {summary.secondary && <span className="text-[11px] text-text-muted truncate hidden sm:inline">{summary.secondary}</span>}
+        {summary.secondary && <span className="hidden truncate text-[11px] text-text-tertiary sm:inline">{summary.secondary}</span>}
         {diffSummary && (
-          <span className="text-[11px] text-text-muted whitespace-nowrap">
+          <span className="whitespace-nowrap text-[11px] text-text-tertiary">
             {diffSummary.fileCount} {diffSummary.fileCount === 1 ? "file" : "files"}
             {diffSummary.additions !== undefined && diffSummary.deletions !== undefined
               ? ` · +${diffSummary.additions} −${diffSummary.deletions}`
               : null}
           </span>
         )}
-        <span className="ml-auto text-[11px] text-text-muted">{isUnknownResult ? "unknown" : STATUS_LABEL[part.state]}</span>
-        {hasDetails && <ChevronRight size={10} className={`text-text-muted transition-transform duration-150 ${expanded ? "rotate-90" : ""}`} aria-hidden="true" />}
+        <span className={`ml-auto text-[11px] ${STATUS_TONE_CLASS[tone]}`}>{isUnknownResult ? "Unknown" : STATUS_LABEL[part.state]}</span>
+        {hasDetails && <ChevronRight size={10} className={`text-text-muted transition-transform duration-[var(--motion-icon)] ${expanded ? "rotate-90" : ""}`} aria-hidden="true" />}
       </button>
 
       {expanded && inputDetails && askPresentation === undefined && (
@@ -123,12 +115,12 @@ export function ToolCard({ part, projectSlug, sessionId }: ToolCardProps) {
       )}
 
       {expanded && invalidMessage && (
-        <div className="border-t border-border-subtle px-2.5 py-1.5 text-[11px] text-warning">{invalidMessage}</div>
+        <div className="border-t border-border-subtle px-3 py-2 text-[11px] text-warning">{invalidMessage}</div>
       )}
 
       {expanded && isUnknownResult && (
-        <div className="border-t border-border-subtle px-2.5 py-1.5 text-[11px] text-warning inline-flex items-center gap-1 w-full">
-          <TriangleAlert size={11} aria-hidden="true" /> Result unknown — execution was interrupted before completion
+        <div className="inline-flex w-full items-center gap-1 border-t border-border-subtle px-3 py-2 text-[11px] text-warning">
+          <StatusGlyph kind="warning" size={11} /> Result unknown — execution was interrupted before completion
         </div>
       )}
 
@@ -154,16 +146,16 @@ export function ToolCard({ part, projectSlug, sessionId }: ToolCardProps) {
       )}
 
       {expanded && artifactRecovery && (
-        <div className="border-t border-border-subtle px-2.5 py-2">
+        <div className="border-t border-border-subtle px-3 py-2">
           <button
             type="button"
             data-testid="tool-output-open"
-            className="rounded-sm bg-accent-subtle px-2 py-1 text-[11px] font-medium text-accent hover:bg-accent-muted"
+            className="h-8 rounded-sm bg-brand-subtle px-3 text-[12px] font-medium text-brand transition-colors duration-[var(--motion-hover)] hover:bg-brand-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
             onClick={() => setViewerOpen((value) => !value)}
           >
             {viewerOpen ? "关闭输出" : "查看输出"}
           </button>
-          <span className="ml-2 text-[10.5px] text-text-muted">expires {new Date(artifactRecovery.expiresAt).toLocaleString()}</span>
+          <span className="ml-2 text-[11px] text-text-tertiary">expires {new Date(artifactRecovery.expiresAt).toLocaleString()}</span>
         </div>
       )}
 
@@ -176,11 +168,11 @@ export function ToolCard({ part, projectSlug, sessionId }: ToolCardProps) {
 
 function KeyValueRows({ entries }: { entries: Record<string, string> }) {
   return (
-    <div className="border-t border-border-subtle px-2.5 py-1.5">
-      <div className="flex flex-col gap-0.5">
+    <div className="border-t border-border-subtle px-3 py-2">
+      <div className="flex flex-col gap-1">
         {Object.entries(entries).map(([key, value]) => (
-          <div key={key} className="flex gap-1.5 text-[11px]">
-            <span className="text-text-muted font-mono shrink-0">{key}:</span>
+          <div key={key} className="flex gap-2 text-[11px]">
+            <span className="shrink-0 font-mono text-text-tertiary">{key}:</span>
             <span className="text-text-secondary font-mono break-all">{value}</span>
           </div>
         ))}
@@ -191,14 +183,14 @@ function KeyValueRows({ entries }: { entries: Record<string, string> }) {
 
 function AskUserResult({ presentation }: { presentation: ToolAskUserPresentation }) {
   return (
-    <div className="border-t border-border-subtle px-2.5 py-2" data-testid="ask-user-result">
+    <div className="border-t border-border-subtle px-3 py-2" data-testid="ask-user-result">
       <div className="flex flex-col gap-2">
         {presentation.answers.map((exchange, index) => (
-          <div key={`${exchange.question}-${index}`} className="rounded-sm border border-border-subtle bg-bg-elevated px-2.5 py-2">
-            <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-1 text-[12px] leading-relaxed">
-              <span className="text-text-muted">Question</span>
+          <div key={`${exchange.question}-${index}`} className="rounded-sm border border-border-subtle bg-bg-elevated px-3 py-2">
+            <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-1 text-[12px] leading-4">
+              <span className="text-text-tertiary">Question</span>
               <span className="text-text-primary break-words">{exchange.question}</span>
-              <span className="text-text-muted">Answer</span>
+              <span className="text-text-tertiary">Answer</span>
               <span className="text-success break-words">{exchange.answers.join(", ")}</span>
             </div>
           </div>
@@ -224,8 +216,8 @@ function ToolOutputSummary({ partState, output }: {
   output: Extract<ToolPart, { state: "completed" | "error" }>["result"]["output"];
 }) {
   return (
-    <div className="border-t border-border-subtle px-2.5 py-2">
-      <div className="mb-1.5 flex flex-wrap gap-1.5 text-[10.5px] text-text-muted">
+    <div className="border-t border-border-subtle px-3 py-2">
+      <div className="mb-2 flex flex-wrap gap-2 text-[11px] text-text-tertiary">
         <span>{output.completeness}</span>
         <span>observed {formatCount(output.observed)}</span>
         <span>canonical {formatCount(output.canonical)}</span>
@@ -233,7 +225,7 @@ function ToolOutputSummary({ partState, output }: {
         {(output.omitted.bytes > 0 || output.omitted.lines > 0) && <span>omitted {formatCount(output.omitted)}</span>}
       </div>
       {output.preview.length > 0 && (
-        <pre className={`font-mono text-[11.5px] leading-relaxed bg-bg-elevated p-1.5 rounded-sm border border-border-subtle whitespace-pre-wrap break-all overflow-x-auto ${
+        <pre className={`font-mono text-[12px] leading-[18px] bg-bg-elevated p-2 rounded-sm border border-border-subtle whitespace-pre-wrap break-all overflow-x-auto ${
           partState === "completed" ? "text-success" : "text-error"
         }`}>{output.preview}</pre>
       )}

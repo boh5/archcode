@@ -13,7 +13,7 @@ export function DiffTab({ slug, sessionId, selectedPath }: DiffTabProps) {
   if (isLoading) {
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-sm text-text-muted">Loading diff…</p>
+        <p className="text-sm text-text-tertiary">Loading diff…</p>
       </div>
     );
   }

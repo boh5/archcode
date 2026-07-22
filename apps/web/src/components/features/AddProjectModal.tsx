@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { Check, Folder, LoaderCircle, Search, X } from "lucide-react";
 import { useAddProject } from "../../api/mutations";
 import { useDirectoryList, useDirectorySearch } from "../../api/queries";
 import type { DirectoryEntry } from "../../api/types";
@@ -149,40 +150,28 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
   return (
     <div
       ref={overlayRef}
-      className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh] bg-black/60 backdrop-blur-[2px]"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 pt-[15vh] backdrop-blur-[2px] animate-overlay-enter"
       onClick={handleOverlayClick}
     >
-      <div className="w-[min(560px,92vw)] max-h-[60vh] flex flex-col rounded-lg border border-border-default bg-bg-surface shadow-lg overflow-hidden">
-        <div className="flex items-center justify-between border-b border-border-subtle px-5 py-3.5 shrink-0">
-          <h2 className="text-sm font-semibold text-text-primary tracking-wide uppercase">
+      <div className="flex max-h-[60vh] w-[min(560px,92vw)] flex-col overflow-hidden rounded-xl border border-border-strong bg-bg-overlay shadow-lg">
+        <div className="flex items-center justify-between border-b border-border-subtle px-5 py-4 shrink-0">
+          <h2 className="text-[14px] font-semibold leading-5 text-text-primary">
             Add Project
           </h2>
           <button
             type="button"
             onClick={onClose}
-            className="flex h-6 w-6 items-center justify-center rounded-sm text-text-muted transition-colors duration-150 hover:bg-bg-hover hover:text-text-secondary"
+            className="flex h-7 w-7 items-center justify-center rounded-sm text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
             aria-label="Close"
           >
-            ✕
+            <X size={14} aria-hidden="true" />
           </button>
         </div>
 
         <div className="px-4 pt-4 pb-2 shrink-0">
           <div className="relative">
             <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-              <svg
-                className="h-4 w-4 text-text-muted"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                strokeWidth={2}
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"
-                />
-              </svg>
+              <Search size={14} className="text-text-muted" aria-hidden="true" />
             </div>
             <input
               ref={inputRef}
@@ -195,12 +184,12 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
               onKeyDown={handleKeyDown}
               placeholder="Search or type a folder path…"
               autoFocus
-              className="w-full rounded-sm border border-border-default bg-bg-base pl-9 pr-3 py-2.5 text-[13.5px] text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none transition-colors duration-150"
+              className="h-8 w-full rounded-sm border border-border-control bg-bg-base pl-9 pr-3 text-[13px] text-text-primary transition-colors duration-[var(--motion-hover)] placeholder:text-text-muted hover:border-text-secondary focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-subtle"
               disabled={isPending}
             />
             {isLoading && (
               <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3">
-                <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-text-muted border-t-transparent" />
+                <LoaderCircle size={14} className="animate-activity text-neutral" aria-label="Loading directories" />
               </div>
             )}
           </div>
@@ -209,7 +198,7 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
         {showCandidates && (
           <div ref={listRef} className="flex-1 overflow-y-auto min-h-0 px-2 pb-2">
             {!isLoading && !hasError && !hasCandidates && (
-              <div className="flex items-center justify-center py-8 text-text-muted text-xs">
+              <div className="flex items-center justify-center py-8 text-text-tertiary text-xs">
                 No directories found
               </div>
             )}
@@ -221,7 +210,7 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
             )}
 
             {hasCandidates && (
-              <ul className="space-y-0.5 py-1">
+              <ul className="space-y-1 py-1">
                 {candidates.map((entry, index) => {
                   const isActive = index === activeIndex;
                   const isSelected = entry.path === selectedPath;
@@ -231,12 +220,12 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
                         type="button"
                         data-index={index}
                         className={[
-                          "flex w-full items-center gap-2.5 rounded-sm px-3 py-2 text-left text-[13px] transition-colors duration-100",
+                          "flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-[13px] transition-colors duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand",
                           isActive
                             ? "bg-bg-hover text-text-primary"
                             : "text-text-secondary hover:bg-bg-hover hover:text-text-primary",
                           isSelected && !isActive
-                            ? "ring-1 ring-accent-subtle"
+                            ? "ring-1 ring-brand-subtle"
                             : "",
                         ].join(" ")}
                         onClick={() => {
@@ -245,20 +234,8 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
                         }}
                         onMouseEnter={() => setActiveIndex(index)}
                       >
-                        <svg
-                          className="h-4 w-4 shrink-0 text-text-muted"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                          strokeWidth={1.5}
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"
-                          />
-                        </svg>
-                        <span className="truncate font-mono text-[12.5px]">
+                        <Folder size={15} className="shrink-0 text-text-muted" aria-hidden="true" />
+                        <span className="truncate font-mono text-[13px]">
                           {entry.path}
                         </span>
                       </button>
@@ -269,7 +246,7 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
             )}
 
             {hasCandidates && truncated && (
-              <div className="flex items-center justify-center py-2 text-text-muted text-[11px]">
+              <div className="flex items-center justify-center py-2 text-text-tertiary text-[11px]">
                 More results available
               </div>
             )}
@@ -281,22 +258,10 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
         )}
 
         <div className="flex items-center justify-between border-t border-border-subtle px-5 py-3 shrink-0">
-          <div className="text-[11px] text-text-muted">
+          <div className="text-[11px] text-text-tertiary">
             {selectedPath ? (
-              <span className="flex items-center gap-1.5">
-                <svg
-                  className="h-3 w-3 text-accent"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                  strokeWidth={2}
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M4.5 12.75l6 6 9-13.5"
-                  />
-                </svg>
+              <span className="flex items-center gap-2">
+                <Check size={12} className="text-brand" aria-hidden="true" />
                 <span className="font-mono truncate max-w-[320px]">
                   {selectedPath}
                 </span>
@@ -313,7 +278,7 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
             <button
               type="button"
               onClick={onClose}
-              className="rounded-sm bg-bg-active px-4 py-2 text-[13px] font-medium text-text-primary transition-colors duration-150 hover:bg-bg-hover"
+              className="h-8 rounded-sm bg-bg-active px-4 text-[12px] font-medium text-text-primary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
               disabled={isPending}
             >
               Cancel
@@ -321,7 +286,7 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
             <button
               type="button"
               onClick={handleSubmit}
-              className="rounded-sm bg-accent px-4 py-2 text-[13px] font-medium text-bg-base transition-colors duration-150 hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-40"
+              className="h-8 rounded-sm bg-brand px-4 text-[12px] font-medium text-bg-overlay transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
               disabled={!selectedPath || isPending}
             >
               {isPending ? "Adding…" : "Add Project"}

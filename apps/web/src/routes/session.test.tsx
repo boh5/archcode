@@ -486,7 +486,7 @@ describe("SessionRoute focused view store behavior", () => {
 
       await waitFor(() => {
         expect(getWebSessionStore("root-session", "demo").getState().focusSessionId).toBe("child-session");
-        expect(container.textContent).toContain("← Back to Root Session");
+        expect(container.textContent).toContain("Back to Root Session");
         expect(container.textContent).toContain("Child Session");
         expect(container.querySelector('button[aria-label^="Todo progress"]')).not.toBeNull();
         expect(container.querySelector('button[aria-controls~="context-inspector"]')).not.toBeNull();
@@ -576,7 +576,7 @@ describe("SessionRoute focused view store behavior", () => {
         expect(rail?.className).toContain("max-w-[880px]");
         expect(rail?.className).toContain("px-[16px]");
         expect(rail?.className).toContain("sm:px-[20px]");
-        expect(attention?.className).toContain("rounded-[14px]");
+        expect(attention?.className).toContain("rounded-md");
         expect(container.textContent).toContain("Need input");
         expect(container.querySelector('[data-testid="hitl-owner-link"]')).toBeNull();
         expect(container.querySelector('input[type="radio"]')).not.toBeNull();
@@ -747,7 +747,7 @@ describe("SessionRoute focused view store behavior", () => {
         expect(container.querySelector('[data-testid="location"]')?.textContent).toBe(
           "/projects/demo/sessions/root-1?focus=child-1|REPLACE",
         );
-        expect(container.textContent).toContain("← Back to Root Session");
+        expect(container.textContent).toContain("Back to Root Session");
       });
 
         expect(container.querySelector("textarea")).not.toBeNull();

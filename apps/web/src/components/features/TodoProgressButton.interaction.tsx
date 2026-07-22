@@ -56,10 +56,14 @@ describe("TodoProgressButton interactions", () => {
     const trigger = container.querySelector('[data-testid="todo-progress-trigger"]') as HTMLButtonElement;
     expect(trigger).not.toBeNull();
     expect(trigger.getAttribute("aria-label")).toContain("1 of 3 complete, running");
+    expect(trigger.textContent).toBe("1/3Todos");
+    expect(trigger.querySelector('[data-testid="progress-ring"]')?.getAttribute("data-percent")).toBe("33");
+    expect(trigger.querySelector(".animate-spin")).toBeNull();
 
     await act(async () => trigger.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true })));
     expect(container.querySelector('[role="region"]')?.textContent).toContain("Completed");
     expect(container.querySelector('[aria-current="step"]')?.textContent).toContain("Current");
+    expect(container.querySelector('[aria-current="step"] .animate-spin')).toBeNull();
     expect(container.querySelector('[role="region"]')?.textContent).toContain("Upcoming");
     expect(container.querySelector('[role="region"]')?.textContent).toContain("P0");
     expect(container.querySelector('[role="region"]')?.textContent).toContain("Run tests");
@@ -67,6 +71,9 @@ describe("TodoProgressButton interactions", () => {
 
     await act(async () => trigger.click());
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    const popover = container.querySelector('[role="region"]') as HTMLElement;
+    expect(popover.className).toContain("fixed left-3 right-3 top-[100px]");
+    expect(popover.className).toContain("sm:absolute sm:left-auto sm:right-0");
     expect(container.querySelector('button[aria-label="Close todo progress"]')).not.toBeNull();
 
     const currentStore = getWebSessionStore("session", "demo");

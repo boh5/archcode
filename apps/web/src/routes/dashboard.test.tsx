@@ -56,11 +56,25 @@ mock.module("../hooks/use-dashboard-projection", () => ({
 }));
 mock.module("lucide-react", () => ({
   AlertCircle: "AlertCircle",
+  Ban: "Ban",
+  Calendar: "Calendar",
+  Activity: "Activity",
+  Circle: "Circle",
+  CircleAlert: "CircleAlert",
+  CircleCheck: "CircleCheck",
+  CircleDashed: "CircleDashed",
   CircleDot: "CircleDot",
+  CirclePause: "CirclePause",
+  CircleStop: "CircleStop",
+  CircleX: "CircleX",
   Clock3: "Clock3",
+  Gauge: "Gauge",
   Loader2: "Loader2",
+  LoaderCircle: "LoaderCircle",
+  MessageCircleQuestion: "MessageCircleQuestion",
   Play: "Play",
   Target: "Target",
+  TriangleAlert: "TriangleAlert",
 }));
 
 const { Dashboard } = await import("./dashboard");

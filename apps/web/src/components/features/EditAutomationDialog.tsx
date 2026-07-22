@@ -40,7 +40,7 @@ const INTERVAL_UNIT_MS: Record<IntervalUnit, number> = {
 };
 
 const INPUT_CLASS =
-  "w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted transition-colors duration-150 focus:border-accent focus:outline-none disabled:cursor-not-allowed disabled:opacity-50";
+  "w-full rounded-sm border border-border-control bg-bg-base px-3 py-2 text-[12px] text-text-primary placeholder:text-text-muted transition-colors duration-[var(--motion-hover)] hover:border-text-secondary focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-subtle disabled:cursor-not-allowed disabled:opacity-50";
 
 export function intervalToMilliseconds(value: number, unit: IntervalUnit): number {
   return value * INTERVAL_UNIT_MS[unit];
@@ -144,14 +144,14 @@ export function EditAutomationDialog({
       <DialogContent size="large" className="overflow-hidden p-0">
         <form onSubmit={submit} className="flex max-h-[calc(100vh-32px)] flex-col">
           <header className="flex shrink-0 items-center gap-3 border-b border-border-subtle px-5 py-4">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-accent/30 bg-accent-subtle text-accent">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-brand/30 bg-brand-subtle text-brand">
               <Clock size={17} aria-hidden="true" />
             </div>
             <div className="min-w-0 flex-1">
               <DialogTitle className="text-base font-semibold text-text-primary">
                 Edit Automation
               </DialogTitle>
-              <DialogDescription className="mt-0.5 text-[12px] text-text-muted">
+              <DialogDescription className="mt-1 text-[12px] text-text-tertiary">
                 Schedule an ordinary Session message. The Session keeps its existing tools and permissions.
               </DialogDescription>
             </div>
@@ -160,7 +160,7 @@ export function EditAutomationDialog({
               onClick={onClose}
               disabled={pending}
               aria-label="Close"
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary disabled:opacity-40"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-40"
             >
               <X size={15} aria-hidden="true" />
             </button>
@@ -178,7 +178,7 @@ export function EditAutomationDialog({
                   maxLength={AUTOMATION_NAME_MAX_LENGTH}
                   autoFocus
                   disabled={pending}
-                  className={INPUT_CLASS}
+                  className={`${INPUT_CLASS} h-8`}
                 />
               </div>
 
@@ -229,7 +229,7 @@ export function EditAutomationDialog({
                         value={onceAt}
                         onChange={(event) => setOnceAt(event.target.value)}
                         disabled={pending}
-                        className={INPUT_CLASS}
+                        className={`${INPUT_CLASS} h-8`}
                       />
                       <FieldHint>Uses your current local time.</FieldHint>
                     </div>
@@ -246,14 +246,14 @@ export function EditAutomationDialog({
                           value={intervalValue}
                           onChange={(event) => setIntervalValue(Number(event.target.value))}
                           disabled={pending}
-                          className={INPUT_CLASS}
+                          className={`${INPUT_CLASS} h-8`}
                         />
                         <select
                           aria-label="Interval unit"
                           value={intervalUnit}
                           onChange={(event) => setIntervalUnit(event.target.value as IntervalUnit)}
                           disabled={pending}
-                          className={INPUT_CLASS}
+                          className={`${INPUT_CLASS} h-8`}
                         >
                           <option value="seconds">Seconds</option>
                           <option value="minutes">Minutes</option>
@@ -273,7 +273,7 @@ export function EditAutomationDialog({
                           onChange={(event) => setCron(event.target.value)}
                           placeholder="*/15 * * * *"
                           disabled={pending}
-                          className={`${INPUT_CLASS} font-mono`}
+                          className={`${INPUT_CLASS} h-8 font-mono`}
                         />
                       </div>
                       <div>
@@ -285,7 +285,7 @@ export function EditAutomationDialog({
                           placeholder="Asia/Shanghai"
                           maxLength={AUTOMATION_TIMEZONE_MAX_LENGTH}
                           disabled={pending}
-                          className={INPUT_CLASS}
+                          className={`${INPUT_CLASS} h-8`}
                         />
                       </div>
                     </div>
@@ -325,7 +325,7 @@ export function EditAutomationDialog({
                 <div className="mt-3">
                   {actionKind === "start_session" ? (
                     <fieldset>
-                      <legend className="mb-1.5 text-[12px] font-medium text-text-secondary">Run location</legend>
+                      <legend className="mb-2 text-[12px] font-medium text-text-secondary">Run location</legend>
                       <div className="grid grid-cols-2 gap-2">
                         <CompactChoice
                           checked={location === "project"}
@@ -358,7 +358,7 @@ export function EditAutomationDialog({
                         onChange={(event) => setSessionId(event.target.value)}
                         placeholder="Paste an existing Session ID"
                         disabled={pending}
-                        className={`${INPUT_CLASS} font-mono`}
+                        className={`${INPUT_CLASS} h-8 font-mono`}
                       />
                     </div>
                   )}
@@ -391,14 +391,14 @@ export function EditAutomationDialog({
                 type="button"
                 onClick={onClose}
                 disabled={pending}
-                className="rounded-sm bg-bg-active px-4 py-2 text-[13px] font-medium text-text-primary transition-colors duration-150 hover:bg-bg-hover disabled:cursor-not-allowed disabled:opacity-40"
+                className="h-8 rounded-sm bg-bg-active px-4 text-[12px] font-medium text-text-primary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={!valid || pending}
-                className="rounded-sm bg-accent px-4 py-2 text-[13px] font-medium text-bg-base transition-colors duration-150 hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-40"
+                className="h-8 rounded-sm bg-brand px-4 text-[12px] font-medium text-bg-overlay transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {pending ? "Saving…" : "Save changes"}
               </button>
@@ -421,9 +421,9 @@ function FormSection({
 }) {
   return (
     <section>
-      <div className="mb-2.5">
+      <div className="mb-3">
         <h3 className="text-[13px] font-semibold text-text-primary">{title}</h3>
-        <p className="mt-0.5 text-[11.5px] leading-4 text-text-muted">{description}</p>
+        <p className="mt-1 text-[11px] leading-4 text-text-tertiary">{description}</p>
       </div>
       {children}
     </section>
@@ -452,8 +452,8 @@ function ChoiceCard({
   return (
     <label
       htmlFor={id}
-      className={`flex min-w-0 cursor-pointer flex-col rounded-sm border px-2.5 py-2 transition-colors duration-150 ${checked
-        ? "border-accent/60 bg-accent-subtle text-text-primary"
+      className={`flex min-w-0 cursor-pointer flex-col rounded-sm border px-3 py-2 transition-colors duration-[var(--motion-hover)] ${checked
+        ? "border-brand/60 bg-brand-subtle text-text-primary"
         : "border-border-subtle bg-bg-base text-text-secondary hover:border-border-default hover:bg-bg-hover"
       } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
     >
@@ -466,11 +466,11 @@ function ChoiceCard({
         disabled={disabled}
         className="sr-only"
       />
-      <span className="flex items-center gap-1.5 text-[12px] font-medium">
-        <Icon size={13} className={checked ? "text-accent" : "text-text-muted"} aria-hidden="true" />
+      <span className="flex items-center gap-2 text-[12px] font-medium">
+        <Icon size={13} className={checked ? "text-brand" : "text-text-muted"} aria-hidden="true" />
         {label}
       </span>
-      <span className="mt-1 truncate text-[10.5px] text-text-muted">{description}</span>
+      <span className="mt-1 truncate text-[11px] text-text-tertiary">{description}</span>
     </label>
   );
 }
@@ -497,8 +497,8 @@ function CompactChoice({
   return (
     <label
       htmlFor={id}
-      className={`flex cursor-pointer items-start gap-2 rounded-sm border p-2.5 transition-colors duration-150 ${checked
-        ? "border-accent/60 bg-accent-subtle"
+      className={`flex cursor-pointer items-start gap-2 rounded-sm border p-3 transition-colors duration-[var(--motion-hover)] ${checked
+        ? "border-brand/60 bg-brand-subtle"
         : "border-border-subtle bg-bg-base hover:border-border-default hover:bg-bg-hover"
       } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
     >
@@ -511,10 +511,10 @@ function CompactChoice({
         disabled={disabled}
         className="sr-only"
       />
-      <Icon size={14} className={`mt-0.5 shrink-0 ${checked ? "text-accent" : "text-text-muted"}`} aria-hidden="true" />
+      <Icon size={14} className={`mt-1 shrink-0 ${checked ? "text-brand" : "text-text-muted"}`} aria-hidden="true" />
       <span className="min-w-0">
         <span className="block text-[12px] font-medium text-text-secondary">{label}</span>
-        <span className="mt-0.5 block text-[10.5px] leading-4 text-text-muted">{description}</span>
+        <span className="mt-1 block text-[11px] leading-4 text-text-tertiary">{description}</span>
       </span>
     </label>
   );
@@ -522,12 +522,12 @@ function CompactChoice({
 
 function FieldLabel({ htmlFor, children }: { htmlFor: string; children: React.ReactNode }) {
   return (
-    <label htmlFor={htmlFor} className="mb-1.5 block text-[12px] font-medium text-text-secondary">
+    <label htmlFor={htmlFor} className="mb-2 block text-[12px] font-medium text-text-secondary">
       {children}
     </label>
   );
 }
 
 function FieldHint({ children }: { children: React.ReactNode }) {
-  return <p className="mt-1.5 text-[10.5px] leading-4 text-text-muted">{children}</p>;
+  return <p className="mt-2 text-[11px] leading-4 text-text-tertiary">{children}</p>;
 }

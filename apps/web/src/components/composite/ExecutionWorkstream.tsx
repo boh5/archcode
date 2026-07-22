@@ -36,9 +36,12 @@ import {
 import { buildDelegationCardViewModel } from "../../lib/delegation-card-model";
 import { groupReadOnlyToolParts } from "../../lib/group-tools";
 import { formatRelativeTime } from "../../lib/time-format";
-import { presentExecutionStatus, type ProductExecutionStatus } from "../../lib/execution-status-presentation";
+import { executionVisualKind, presentExecutionStatus } from "../../lib/execution-status-presentation";
+import { STATUS_TONE_CLASS, statusVisual } from "../../lib/status-visuals";
 import { MarkdownContent } from "../primitives/MarkdownContent";
 import { ConversationRail } from "../primitives/ConversationRail";
+import { StatusGlyph } from "../primitives/StatusGlyph";
+import { useStatusTransition } from "../primitives/useStatusTransition";
 import { CompressionBlock } from "./CompressionBlock";
 import { DelegationCard } from "./DelegationCard";
 import { GroupedToolCard } from "./GroupedToolCard";
@@ -120,20 +123,19 @@ function ReasoningBlock({ part }: { part: ReasoningPart }) {
   const streaming = !part.completedAt;
 
   return (
-    <div className="shrink-0 overflow-hidden rounded-md border border-border-subtle bg-bg-overlay">
+    <div className="shrink-0 overflow-hidden rounded-md border border-border-subtle bg-bg-elevated">
       <button
         type="button"
-        className="flex w-full cursor-pointer select-none items-center gap-1.5 px-2.5 py-1.5 text-left text-xs text-text-tertiary hover:bg-bg-hover"
+        className="flex w-full cursor-pointer select-none items-center gap-2 px-3 py-2 text-left text-[12px] text-text-tertiary hover:bg-bg-hover"
         onClick={() => setExpanded((value) => !value)}
         aria-expanded={expanded}
       >
-        <ChevronRight size={12} className={`transition-transform duration-150 ${expanded ? "rotate-90" : ""}`} />
-        <Sparkles size={12} className="text-text-muted" />
+        <ChevronRight size={12} className={`transition-transform duration-[var(--motion-icon)] ${expanded ? "rotate-90" : ""}`} />
+        <Sparkles size={12} className={`text-text-muted ${streaming ? "animate-streaming" : ""}`} aria-hidden="true" />
         <span>{streaming ? "Thinking…" : "Reasoning"}</span>
-        {streaming && <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse-dot" />}
       </button>
       {expanded && (
-        <div className="border-t border-border-subtle px-2.5 pb-2 text-[12.5px] italic leading-relaxed text-text-secondary">
+        <div className="border-t border-border-subtle px-3 pb-2 text-[13px] italic leading-5 text-text-secondary">
           <MarkdownContent isStreaming={streaming}>{part.text}</MarkdownContent>
         </div>
       )}
@@ -168,7 +170,7 @@ export function MsgUser({
         if (part.type === "text") {
           return (
             <div key={part.id} className="flex justify-end">
-              <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-2xl rounded-br-sm border border-border-subtle bg-bg-overlay px-3.5 py-2 text-[13.5px] leading-relaxed text-text-primary shadow-sm">
+              <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-md rounded-br-sm border border-border-subtle bg-bg-elevated px-3 py-2 text-[13px] leading-5 text-text-primary">
                 {part.text}
               </div>
             </div>
@@ -186,7 +188,7 @@ export function MsgUser({
           </div>
         );
       })}
-      <div className="flex flex-wrap items-center justify-end gap-x-2 text-[11px] text-text-muted">
+      <div className="flex flex-wrap items-center justify-end gap-x-2 text-[11px] text-text-tertiary">
         {modelChanged && message.modelAudit && (
           <span className="text-warning" data-testid={`message-model-change-${message.id}`}>
             Model changed: {selectionLabel(message.modelAudit.requested.selection)} → {selectionLabel(message.modelAudit.actual)}
@@ -195,7 +197,7 @@ export function MsgUser({
         {modelChanged && onInspectModelAudit && (
           <button
             type="button"
-            className="text-text-tertiary hover:text-accent"
+            className="text-text-tertiary hover:text-brand"
             onClick={() => onInspectModelAudit(message.id)}
           >
             Details
@@ -211,8 +213,8 @@ function SystemNoticeBlock({ part }: { part: SystemNoticePart }) {
   return (
     <div className="my-1 flex items-center gap-3">
       <div className="h-px flex-1 bg-border-subtle" />
-      <Info size={12} className="shrink-0 text-text-muted" />
-      <span className="text-[11px] text-text-muted">{part.notice}</span>
+      <Info size={12} className="shrink-0 text-text-muted" aria-hidden="true" />
+      <span className="text-[11px] text-text-tertiary">{part.notice}</span>
       <div className="h-px flex-1 bg-border-subtle" />
     </div>
   );
@@ -220,13 +222,13 @@ function SystemNoticeBlock({ part }: { part: SystemNoticePart }) {
 
 function CompactionBlock({ part }: { part: Extract<SessionPart, { type: "compaction" }> }) {
   return (
-    <div className="shrink-0 overflow-hidden rounded-lg border border-border-subtle bg-bg-surface">
-      <div className="flex items-center gap-2 border-b border-border-subtle bg-bg-elevated px-3 py-1.5">
-        <Info size={12} className="shrink-0 text-text-muted" />
-        <span className="text-[11px] font-medium text-text-muted">Hard context compaction</span>
-        <span className="ml-auto text-[11px] text-text-muted">{formatRelativeTime(part.compactedAt)}</span>
+    <div className="shrink-0 overflow-hidden rounded-md border border-border-subtle bg-bg-elevated">
+      <div className="flex items-center gap-2 border-b border-border-subtle bg-transparent px-3 py-2">
+        <Info size={12} className="shrink-0 text-text-muted" aria-hidden="true" />
+        <span className="text-[11px] font-medium text-text-tertiary">Hard context compaction</span>
+        <span className="ml-auto text-[11px] text-text-tertiary">{formatRelativeTime(part.compactedAt)}</span>
       </div>
-      <div className="whitespace-pre-wrap px-3 py-2 text-[12px] leading-relaxed text-text-secondary">
+      <div className="whitespace-pre-wrap px-3 py-2 text-[12px] leading-4 text-text-secondary">
         {part.summary}
       </div>
     </div>
@@ -235,7 +237,7 @@ function CompactionBlock({ part }: { part: Extract<SessionPart, { type: "compact
 
 function InterruptedBadge() {
   return (
-    <span className="inline-flex items-center gap-1 rounded-sm border border-warning/20 bg-warning-muted px-1.5 py-0.5 text-[11px] font-medium text-warning">
+    <span className="inline-flex items-center gap-1 rounded-sm border border-warning/20 bg-warning-muted px-2 py-1 text-[11px] font-medium text-warning">
       <TriangleAlert size={12} /> Response was interrupted
     </span>
   );
@@ -258,7 +260,7 @@ export function PartRenderer({
     case "text": {
       const interrupted = (part.meta as Record<string, unknown> | undefined)?.interrupted === true;
       return (
-        <div className="max-w-[720px] text-[13.5px] leading-relaxed text-text-primary">
+        <div className="max-w-[720px] text-[13px] leading-5 text-text-primary">
           {interrupted && <InterruptedBadge />}
           <MarkdownContent isStreaming={!part.completedAt}>{part.text}</MarkdownContent>
         </div>
@@ -337,7 +339,7 @@ function MsgAgent({
           );
         })}
       </div>
-      <div className="mt-1.5 flex flex-wrap items-center gap-1 text-[11px] text-text-muted" data-testid={`agent-message-meta-${message.id}`}>
+      <div className="mt-2 flex flex-wrap items-center gap-1 text-[11px] text-text-tertiary" data-testid={`agent-message-meta-${message.id}`}>
         <span>{identity.displayName ?? identity.agentName}</span>
         <span aria-hidden="true">·</span>
         <span>{identity.profile}</span>
@@ -389,13 +391,6 @@ function SessionMessageView({
   );
 }
 
-const STATUS_CLASS: Record<ProductExecutionStatus, string> = {
-  running: "text-success",
-  needs_you: "text-text-secondary",
-  completed: "text-success",
-  stopped: "text-text-tertiary",
-};
-
 function formatDuration(record: SessionExecutionRecord): string {
   const durationMs = record.durationMs
     ?? (record.endedAt !== undefined ? Math.max(0, record.endedAt - record.startedAt) : Math.max(0, Date.now() - record.startedAt));
@@ -436,6 +431,9 @@ function ExecutionCard({
   continuationExecutionNumber?: number;
 }) {
   const status = presentExecutionStatus(execution.record.status, checkpoint);
+  const visualKind = executionVisualKind(execution.record.status, checkpoint);
+  const statusTransition = useStatusTransition(execution.id, visualKind);
+  const statusTone = statusVisual(visualKind).tone;
   const title = execution.title ?? "Untitled execution";
   const countLabel = [
     execution.toolCount > 0 ? `${execution.toolCount} ${execution.toolCount === 1 ? "tool" : "tools"}` : null,
@@ -445,36 +443,40 @@ function ExecutionCard({
 
   return (
     <article
-      className={`overflow-hidden rounded-lg border bg-bg-surface transition-colors ${execution.record.status === "running" ? "border-border-strong shadow-sm" : "border-border-default"}`}
+      className={`overflow-hidden rounded-md border border-l-2 bg-bg-surface transition-colors duration-[var(--motion-hover)] ${execution.record.status === "running" ? "border-border-default border-l-info" : "border-border-default border-l-transparent"}`}
       data-testid={`execution-card-${execution.id}`}
       data-execution-expanded={expanded ? "true" : "false"}
       data-product-status={status.productStatus}
+      data-visual-kind={visualKind}
       title={`Model: ${modelBindingLabel(execution.record.binding)}${status.detail ? ` · ${status.label}: ${status.detail}` : ""}`}
     >
       <button
         type="button"
-        className="grid min-h-[56px] w-full grid-cols-[28px_minmax(0,1fr)_auto_18px] items-center gap-2.5 px-3 py-2.5 text-left hover:bg-bg-hover max-[520px]:grid-cols-[26px_minmax(0,1fr)_18px]"
+        className="grid min-h-[56px] w-full grid-cols-[28px_minmax(0,1fr)_auto_18px] items-center gap-3 px-3 py-2 text-left hover:bg-bg-hover max-[520px]:grid-cols-[26px_minmax(0,1fr)_18px]"
         onClick={onToggle}
         aria-expanded={expanded}
         aria-controls={`execution-body-${execution.id}`}
       >
-        <span className={`grid h-7 w-7 place-items-center rounded-full text-[10px] font-semibold ${execution.record.status === "running" ? "bg-accent-muted text-accent" : "bg-bg-active text-text-tertiary"}`}>
+        <span className="grid h-7 w-7 place-items-center rounded-full bg-bg-active text-[10px] font-semibold text-text-tertiary">
           {execution.number}
         </span>
         <span className="min-w-0">
-          <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-text-muted">
-            <span className={STATUS_CLASS[status.productStatus]}>{status.label}</span>
-            {status.detail && <span className="font-medium normal-case tracking-normal text-text-muted">· {status.detail}</span>}
-            <span>{formatDuration(execution.record)}</span>
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-text-tertiary">
+            <span className={`inline-flex items-center gap-2 text-[12px] font-semibold ${STATUS_TONE_CLASS[statusTone]}`}>
+              <StatusGlyph kind={visualKind} size={14} transition={statusTransition} />
+              {status.label}
+            </span>
+            {status.detail && <span className="font-medium text-text-tertiary">· {status.detail}</span>}
+            <span className="text-text-tertiary">{formatDuration(execution.record)}</span>
           </span>
-          <span className="mt-0.5 block truncate text-[13px] font-medium text-text-primary" title={execution.title ?? undefined}>
+          <span className="mt-1 block truncate text-[13px] font-medium text-text-primary" title={execution.title ?? undefined}>
             {title}
           </span>
         </span>
-        <span className="whitespace-nowrap text-[11px] text-text-muted max-[520px]:hidden">
+        <span className="whitespace-nowrap text-[11px] text-text-tertiary max-[520px]:hidden">
           {countLabel}
         </span>
-        <ChevronDown size={15} className={`text-text-muted transition-transform ${expanded ? "" : "-rotate-90"}`} />
+        <ChevronDown size={15} className={`text-text-muted transition-transform duration-[var(--motion-icon)] ${expanded ? "" : "-rotate-90"}`} aria-hidden="true" />
       </button>
       {expanded && (
         <div
@@ -495,7 +497,7 @@ function ExecutionCard({
             />
           ))}
           {execution.messages.length === 0 && (
-            <div className="py-1 text-xs text-text-muted">No messages recorded for this execution.</div>
+            <div className="py-1 text-xs text-text-tertiary">No messages recorded for this execution.</div>
           )}
           {status.productStatus === "stopped" && status.detail && (
             <div
@@ -503,7 +505,7 @@ function ExecutionCard({
               data-testid={`execution-stop-detail-${execution.id}`}
             >
               <span className="font-medium">Stop reason · {status.detail}</span>
-              {execution.record.error && <span className="mt-1 block text-text-muted">{execution.record.error}</span>}
+              {execution.record.error && <span className="mt-1 block text-error">{execution.record.error}</span>}
             </div>
           )}
           {continuationExecutionNumber !== undefined && (
@@ -515,7 +517,7 @@ function ExecutionCard({
             </div>
           )}
           <div
-            className="border-t border-border-subtle pt-2 text-[11px] text-text-muted"
+            className="border-t border-border-subtle pt-2 text-[11px] text-text-tertiary"
             data-testid={`execution-model-${execution.id}`}
             title={`${execution.record.binding.providerDisplayName} · ${selectionLabel(execution.record.binding.selection)}`}
           >
@@ -550,7 +552,7 @@ function DiagnosticBlock({
       : `Duplicate Execution id ${diagnostic.executionId}`;
 
   return (
-    <section className="overflow-hidden rounded-lg border border-error/40 bg-error-muted/30" data-testid={`workstream-diagnostic-${diagnostic.code}`}>
+    <section className="overflow-hidden rounded-md border border-error/40 bg-error-muted" data-testid={`workstream-diagnostic-${diagnostic.code}`}>
       <div className="flex items-center gap-2 border-b border-error/20 px-3 py-2 text-xs font-medium text-error">
         <CircleAlert size={14} />
         <span>{title}</span>
@@ -732,17 +734,17 @@ export function ExecutionWorkstream({
         data-testid="execution-workstream-rail"
       >
         {isEmpty ? (
-          <div className="text-sm text-text-muted">No executions yet</div>
+          <div className="text-sm text-text-tertiary">No executions yet</div>
         ) : (
           <>
-            <header className="mb-1 flex items-end justify-between gap-4 px-0.5">
+            <header className="mb-1 flex items-end justify-between gap-4 px-1">
               <div className="min-w-0">
                 <h2 className="text-sm font-semibold text-text-primary">Execution workstream</h2>
-                <p className="mt-0.5 truncate text-[11px] text-text-muted">
+                <p className="mt-1 truncate text-[11px] text-text-tertiary">
                   {projection.session.displayName ?? projection.session.agentName} · {projection.session.profile}
                 </p>
               </div>
-              <span className="shrink-0 text-[11px] text-text-muted">
+              <span className="shrink-0 text-[11px] text-text-tertiary">
                 {projection.executions.length} {projection.executions.length === 1 ? "execution" : "executions"}
               </span>
             </header>
@@ -794,7 +796,7 @@ export function ExecutionWorkstream({
                 );
               }
               return (
-                <section key={`activity-${item.id}`} className="rounded-lg border border-border-subtle bg-bg-surface px-3 py-3">
+                <section key={`activity-${item.id}`} className="rounded-md border border-border-subtle bg-bg-surface px-3 py-3">
                   <SessionMessageView
                     message={item.message}
                     identity={projection.session}

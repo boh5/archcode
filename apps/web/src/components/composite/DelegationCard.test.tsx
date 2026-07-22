@@ -107,7 +107,7 @@ describe("DelegationCard", () => {
     profile: "fast",
     skills: ["analyze-work"],
     taskTitle: "Find relevant files",
-    executionStatus: "running" as const,
+    visualKind: "running" as const,
     executionStatusLabel: "Running",
     startedAt: Date.now() - 60000,
     taskSummary: "Searching for relevant files",
@@ -133,10 +133,11 @@ describe("DelegationCard", () => {
     const result = DelegationCard(baseProps);
     const text = textContent(result);
     expect(text).toContain("Running");
+    expect(findAll(result, (element) => element.props?.["data-child-visual-kind"] === "running")).toHaveLength(1);
   });
 
   test("renders execution completion", () => {
-    const result = DelegationCard({ ...baseProps, executionStatus: "completed", executionStatusLabel: "Completed" });
+    const result = DelegationCard({ ...baseProps, visualKind: "completed", executionStatusLabel: "Completed" });
     const text = textContent(result);
     expect(text).toContain("Completed");
   });
@@ -144,12 +145,13 @@ describe("DelegationCard", () => {
   test("renders a unified stopped state with its specific reason", () => {
     const result = DelegationCard({
       ...baseProps,
-      executionStatus: "error",
+      visualKind: "stopped",
       executionStatusLabel: "Stopped",
       executionStatusDetail: "Cancelled",
     });
     expect(textContent(result)).toContain("Stopped");
     expect(textContent(result)).toContain("Cancelled");
+    expect(findAll(result, (element) => element.props?.["data-child-visual-kind"] === "stopped")).toHaveLength(1);
   });
 
   test("renders foreground mode when background is false", () => {

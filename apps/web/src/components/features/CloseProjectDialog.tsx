@@ -59,17 +59,17 @@ export function CloseProjectDialog({
         </DialogDescription>
 
         <div className="px-5 py-4">
-          <p className="text-[13px] text-text-secondary leading-relaxed">
+          <p className="text-[13px] leading-5 text-text-secondary">
             Are you sure you want to close{" "}
             <span className="font-semibold text-text-primary">
               {project.name}
             </span>
             ?
           </p>
-          <p className="mt-1.5 font-mono text-[12px] text-text-muted truncate">
+          <p className="mt-2 truncate font-mono text-[12px] text-text-tertiary">
             {project.workspaceRoot}
           </p>
-          <p className="mt-3 text-[12px] text-text-muted leading-relaxed">
+          <p className="mt-3 text-[12px] leading-4 text-text-tertiary">
             The workspace folder will <strong>not</strong> be deleted. This only
             removes the project from the sidebar.
           </p>
@@ -83,7 +83,7 @@ export function CloseProjectDialog({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-sm bg-bg-active px-4 py-2 text-[13px] font-medium text-text-primary transition-colors duration-150 hover:bg-bg-hover"
+            className="h-8 rounded-sm bg-bg-active px-4 text-[12px] font-medium text-text-primary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
             disabled={deleteProject.isPending}
           >
             Cancel
@@ -91,7 +91,7 @@ export function CloseProjectDialog({
           <button
             type="button"
             onClick={handleConfirm}
-            className="rounded-sm bg-error px-4 py-2 text-[13px] font-medium text-white transition-colors duration-150 hover:bg-error/90 disabled:cursor-not-allowed disabled:opacity-40"
+            className="h-8 rounded-sm bg-error px-4 text-[12px] font-medium text-bg-overlay transition-colors duration-[var(--motion-hover)] hover:bg-error/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
             disabled={deleteProject.isPending}
           >
             {deleteProject.isPending ? "Closing…" : "Close Project"}

@@ -117,14 +117,14 @@ describe("RecoveryNotice", () => {
     expect(text).toContain("attempt 1");
   });
 
-  test("retrying status renders retrying label with spin animation", () => {
+  test("retrying status renders retrying label with the shared activity animation", () => {
     const part = makeRecoveryNotice({ status: "retrying", attempt: 2 });
     const el = RecoveryNotice({ part });
     const text = textContent(el);
     expect(text).toContain("Retrying");
     expect(text).toContain("attempt 2");
-    const spinEls = findAllWithClass(el, "animate-spin");
-    expect(spinEls.length).toBeGreaterThan(0);
+    const activityGlyphs = findAllWithClass(el, "animate-activity");
+    expect(activityGlyphs).toHaveLength(1);
   });
 
   test("recovered status renders recovered label with success styling", () => {

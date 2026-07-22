@@ -1,4 +1,5 @@
 import { type ReactNode, useCallback, useMemo, useState } from "react";
+import { LoaderCircle, TriangleAlert } from "lucide-react";
 import type {
   ExecutionModelBindingSummary,
   ModelRuntimeCatalog,
@@ -19,6 +20,8 @@ import { coherentModelRuntime } from "../../lib/model-runtime-coherence";
 import { useSessionFamilySteerTargetExecutionId } from "../../store/session-runtime-store";
 import { getWebSessionStore, useSessionStore, type WebSessionStoreState } from "../../store/session-store";
 import { DialogContent, DialogDescription, DialogRoot, DialogTitle } from "../ui/Dialog";
+import { ActivityArc } from "../primitives/ActivityArc";
+import { StatusGlyph } from "../primitives/StatusGlyph";
 
 type LocalSendingMessage = WebSessionStoreState["localSendingMessages"][number];
 
@@ -127,24 +130,30 @@ function DurableQueueRow({
       data-queue-state={message.state}
       data-testid={`composer-queue-${message.id}`}
     >
-      <span className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">
-        {message.state === "steering" ? "Steering" : "Queued"}
-      </span>
+      {message.state === "steering" ? (
+        <span className="inline-flex items-center gap-1 text-[11px] font-semibold leading-4 text-info" data-queue-visual="steering">
+          <ActivityArc label="Steering" size={12} /> Steering
+        </span>
+      ) : (
+        <span className="inline-flex items-center gap-1 text-[11px] font-semibold leading-4 text-neutral" data-queue-visual="queued">
+          <StatusGlyph kind="pending" label="Queued" size={12} /> Queued
+        </span>
+      )}
       <span className="min-w-0 truncate text-xs text-text-secondary" title={message.content}>{message.content}</span>
       <span
-        className={`max-w-[240px] truncate text-[10px] text-text-muted max-[560px]:max-w-16 ${invalidationLabel ? "text-warning" : ""}`}
+        className={`max-w-[240px] truncate text-[11px] text-text-tertiary max-[560px]:max-w-16 ${invalidationLabel ? "text-warning" : ""}`}
         data-testid={invalidationLabel ? `pending-model-invalidation-${message.id}` : `pending-requested-model-${message.id}`}
         title={invalidationLabel ?? selectionLabel(message.requestedModelSelection.selection)}
       >
         {invalidationLabel ?? selectionLabel(message.requestedModelSelection.selection)}
       </span>
-      <div className="flex shrink-0 items-center justify-end gap-2 whitespace-nowrap text-[10px] text-text-muted max-[560px]:gap-1">
+      <div className="flex shrink-0 items-center justify-end gap-2 whitespace-nowrap text-[11px] text-text-tertiary max-[560px]:gap-1">
         {mutationError && <span className="max-w-32 truncate text-error" role="alert" title={mutationError}>{mutationError}</span>}
         {message.state === "queued" && (
           <>
             {canSteer && (
               <button
-                className="text-accent hover:underline disabled:opacity-40"
+                className="text-brand hover:underline disabled:opacity-40"
                 disabled={busy}
                 onClick={() => steerMessage.mutate({
                   slug,
@@ -175,15 +184,15 @@ function DurableQueueRow({
         <DialogContent>
           <div className="p-5">
             <DialogTitle className="text-base font-semibold text-text-primary">Edit queued message</DialogTitle>
-            <DialogDescription className="mt-1 text-xs text-text-muted">
+            <DialogDescription className="mt-1 text-xs text-text-tertiary">
               This updates the queued instruction without changing its requested model.
             </DialogDescription>
-            <label className="mt-4 grid gap-1.5 text-xs text-text-secondary">
+            <label className="mt-4 grid gap-2 text-xs text-text-secondary">
               Message
               <textarea
                 aria-label="Edit queued message"
                 autoFocus
-                className="min-h-28 resize-y rounded-md border border-border-default bg-bg-base px-3 py-2 text-sm leading-relaxed text-text-primary outline-none focus:border-accent"
+                className="min-h-28 resize-y rounded-sm border border-border-control bg-bg-base px-3 py-2 text-[13px] leading-5 text-text-primary outline-none focus:border-brand focus:ring-2 focus:ring-brand-subtle"
                 disabled={editMessage.isPending}
                 onChange={(event) => setDraft(event.target.value)}
                 value={draft}
@@ -251,17 +260,23 @@ function LocalQueueRow({ message, slug, sessionId }: { message: LocalSendingMess
       data-queue-state={message.status}
       data-testid={`composer-local-message-${message.clientRequestId}`}
     >
-      <span className={`text-[10px] font-semibold uppercase tracking-wide ${retryable ? "text-warning" : "text-text-muted"}`}>
-        {retryable ? "Retryable" : "Sending"}
-      </span>
+      {retryable ? (
+        <span className="inline-flex items-center gap-1 text-[11px] font-semibold leading-4 text-warning" data-queue-visual="retryable">
+          <TriangleAlert aria-hidden="true" size={12} /> Retryable
+        </span>
+      ) : (
+        <span className="inline-flex items-center gap-1 text-[11px] font-semibold leading-4 text-info" data-queue-visual="sending">
+          <LoaderCircle aria-hidden="true" className="animate-activity" size={12} /> Sending
+        </span>
+      )}
       <span className="min-w-0 truncate text-xs text-text-secondary" title={message.content}>{message.content}</span>
-      <span className="max-w-[240px] truncate text-[10px] text-text-muted max-[560px]:max-w-16" data-testid={`local-requested-model-${message.clientRequestId}`} title={selectionLabel(message.requestedModelSelection.selection)}>
+      <span className="max-w-[240px] truncate text-[11px] text-text-tertiary max-[560px]:max-w-16" data-testid={`local-requested-model-${message.clientRequestId}`} title={selectionLabel(message.requestedModelSelection.selection)}>
         {selectionLabel(message.requestedModelSelection.selection)}
       </span>
-      <div className="flex shrink-0 items-center justify-end gap-2 whitespace-nowrap text-[10px] text-text-muted max-[560px]:gap-1">
+      <div className="flex shrink-0 items-center justify-end gap-2 whitespace-nowrap text-[11px] text-text-tertiary max-[560px]:gap-1">
         <span className="max-[560px]:hidden">{retryable ? "Send status unknown" : "Sending…"}</span>
         {retryable && (
-          <button className="text-accent hover:underline" onClick={retryMessage} type="button" aria-label="Retry sending message">Retry</button>
+          <button className="text-brand hover:underline" onClick={retryMessage} type="button" aria-label="Retry sending message">Retry</button>
         )}
       </div>
     </div>
@@ -313,8 +328,8 @@ function DialogButton({
 }) {
   return (
     <button
-      className={`rounded-md border px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50 ${primary
-        ? "border-accent bg-accent text-white"
+      className={`h-8 rounded-sm border px-3 text-[12px] font-medium leading-4 transition-colors duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50 ${primary
+        ? "border-brand bg-brand text-bg-overlay"
         : "border-border-default bg-bg-base text-text-secondary hover:text-text-primary"
       }`}
       disabled={disabled}

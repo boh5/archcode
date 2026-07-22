@@ -4,8 +4,9 @@ import type {
   ToolChildSessionLinkStatus,
   ToolPart,
 } from "@archcode/protocol";
-import { BADGE_LABELS, resolveAgentDisplayName, type BadgeStatus } from "./agent-constants";
-import { presentChildExecutionStatus } from "./execution-status-presentation";
+import { resolveAgentDisplayName } from "./agent-constants";
+import { childExecutionVisualKind, presentChildExecutionStatus } from "./execution-status-presentation";
+import type { VisualStatusKind } from "./status-visuals";
 
 export interface DelegationCardViewModel {
   sessionId: string;
@@ -14,7 +15,7 @@ export interface DelegationCardViewModel {
   profile?: string;
   skills: string[];
   taskTitle?: string;
-  executionStatus: BadgeStatus;
+  visualKind: VisualStatusKind;
   executionStatusLabel: string;
   executionStatusDetail?: string;
   startedAt?: number;
@@ -45,20 +46,6 @@ export function parseDelegationInput(input: unknown): Record<string, unknown> | 
   return null;
 }
 
-export function mapDelegationLinkStatusToBadge(status: ToolChildSessionLinkStatus): BadgeStatus {
-  switch (status) {
-    case "completed": return "completed";
-    case "waiting_for_human": return "pending";
-    case "running":
-    case "linked":
-    case "cancelling": return "running";
-    case "failed":
-    case "timed_out":
-    case "cancelled":
-    case "interrupted": return "error";
-  }
-}
-
 export function formatDelegationLinkStatus(status: ToolChildSessionLinkStatus): string {
   return presentChildExecutionStatus(status).label;
 }
@@ -86,18 +73,21 @@ export function buildDelegationCardViewModel({
   const taskSummary = typeof parsedInput?.objective === "string" ? parsedInput.objective : undefined;
   const background = link?.background
     ?? (typeof parsedInput?.background === "boolean" ? parsedInput.background : undefined);
-  const executionStatus: BadgeStatus = link
-    ? mapDelegationLinkStatusToBadge(link.status)
-    : part.state === "error" ? "error"
+  const visualKind: VisualStatusKind = link
+    ? childExecutionVisualKind(link.status)
+    : part.state === "error" ? "failed"
       : part.state === "completed" ? "completed"
         : part.state === "pending" ? "pending"
           : "running";
   const executionStatusLabel = link
     ? formatDelegationLinkStatus(link.status)
-    : executionStatus === "error" ? "Stopped" : BADGE_LABELS[executionStatus];
+    : visualKind === "failed" ? "Stopped"
+      : visualKind === "completed" ? "Completed"
+        : visualKind === "pending" ? "Pending"
+          : "Running";
   const executionStatusDetail = link
     ? presentChildExecutionStatus(link.status).detail
-    : executionStatus === "error" ? "Error" : undefined;
+    : visualKind === "failed" ? "Error" : undefined;
   const startedAt = link?.startedAt
     ?? ("startedAt" in part ? (part as { startedAt: number }).startedAt : part.createdAt);
 
@@ -108,7 +98,7 @@ export function buildDelegationCardViewModel({
     profile,
     skills,
     taskTitle,
-    executionStatus,
+    visualKind,
     executionStatusLabel,
     executionStatusDetail,
     startedAt,

@@ -3,6 +3,7 @@ import type {
   SessionExecutionRecord,
   ToolChildSessionLinkStatus,
 } from "@archcode/protocol";
+import type { VisualStatusKind } from "./status-visuals";
 
 export type ProductExecutionStatus = "running" | "needs_you" | "completed" | "stopped";
 
@@ -85,4 +86,26 @@ export function presentChildExecutionStatus(
     case "interrupted":
       return { productStatus: "stopped", label: "Stopped", detail: "Interrupted" };
   }
+}
+
+/**
+ * Selects visual semantics without changing the four-state product presentation.
+ * Terminal failure facts remain distinguishable from user/system stops even
+ * though both intentionally keep the visible `Stopped · reason` presentation.
+ */
+export function executionVisualKind(
+  status: ExecutionStatus,
+  checkpoint?: SessionExecutionInputCheckpoint,
+): VisualStatusKind {
+  const presentation = presentExecutionStatus(status, checkpoint);
+  if (presentation.productStatus !== "stopped") return presentation.productStatus;
+  return status === "failed" || status === "timed_out" || status === "max_steps"
+    ? "failed"
+    : "stopped";
+}
+
+export function childExecutionVisualKind(status: ToolChildSessionLinkStatus): VisualStatusKind {
+  const presentation = presentChildExecutionStatus(status);
+  if (presentation.productStatus !== "stopped") return presentation.productStatus;
+  return status === "failed" || status === "timed_out" ? "failed" : "stopped";
 }

@@ -9,7 +9,10 @@ import { useSessionFamilyActivity } from "../../../store/session-runtime-store";
 import { useSessionStore } from "../../../store/session-store";
 import { InspectorNotice } from "./InspectorPrimitives";
 import { buildAgentFocusSearch } from "./session-canvas-navigation";
-import { presentChildExecutionStatus } from "../../../lib/execution-status-presentation";
+import { childExecutionVisualKind, presentChildExecutionStatus } from "../../../lib/execution-status-presentation";
+import { STATUS_TONE_CLASS, statusVisual, type StatusTone, type VisualStatusKind } from "../../../lib/status-visuals";
+import { StatusGlyph } from "../../primitives/StatusGlyph";
+import { sessionFamilyVisual } from "../../../lib/session-family-presentation";
 
 interface AgentEntry {
   sessionId: string;
@@ -23,7 +26,8 @@ interface AgentEntry {
 
 interface AgentStatusPresentation {
   label: string;
-  className: string;
+  kind: VisualStatusKind;
+  tone?: StatusTone;
   detail?: string;
 }
 
@@ -33,16 +37,11 @@ export function resolveInspectorAgentStatus(
 ): AgentStatusPresentation {
   if (childStatus !== undefined) {
     const status = presentChildExecutionStatus(childStatus);
-    const className = status.productStatus === "running" ? "text-success"
-      : status.productStatus === "needs_you" ? "text-warning"
-        : status.productStatus === "completed" ? "text-accent"
-          : "text-text-tertiary";
-    return { label: status.label, className, detail: status.detail };
+    return { label: status.label, kind: childExecutionVisualKind(childStatus), detail: status.detail };
   }
-  if (rootActivity === "running") return { label: "Running", className: "text-success" };
-  if (rootActivity === "stopping") return { label: "Stopping", className: "text-warning" };
-  if (rootActivity === "idle") return { label: "Idle", className: "text-text-tertiary" };
-  return { label: "Status unavailable", className: "text-text-muted" };
+  const visual = sessionFamilyVisual(rootActivity);
+  const label = rootActivity === "running" ? "Running" : rootActivity === "stopping" ? "Stopping" : rootActivity === "idle" ? "Idle" : "Status unavailable";
+  return { label, ...visual };
 }
 
 function flattenAgents(node: SessionTreeNode | undefined, depth = 0): AgentEntry[] {
@@ -117,25 +116,26 @@ export function SessionAgentsInspector() {
           <button
             type="button"
             aria-current={focused === agent.sessionId ? "true" : undefined}
-            className={`flex w-full items-center gap-2 rounded-sm py-1.5 pr-2 text-left transition-colors ${focused === agent.sessionId ? "bg-accent-subtle text-accent" : "text-text-secondary hover:bg-bg-hover"}`}
+            className={`flex w-full items-center gap-2 rounded-sm py-2 pr-2 text-left transition-colors ${focused === agent.sessionId ? "bg-brand-subtle text-brand" : "text-text-secondary hover:bg-bg-hover"}`}
             style={{ paddingLeft: 8 + (agent.depth * 16) }}
             onClick={() => navigate({ search: buildAgentFocusSearch(searchParams, sessionId, agent.sessionId) })}
           >
             <span className="min-w-0 flex-1 truncate text-xs">{agent.name}</span>
-            <span className="max-w-[100px] truncate font-mono text-[10px] text-text-muted">{agent.profile}</span>
-            <span className="text-[10px] text-text-muted">{displayName}</span>
+            <span className="max-w-[100px] truncate font-mono text-[11px] text-text-tertiary">{agent.profile}</span>
+            <span className="text-[11px] text-text-tertiary">{displayName}</span>
             <span
-              className={`whitespace-nowrap text-[10px] ${status.className}`}
+              className={`inline-flex items-center gap-1 whitespace-nowrap text-[11px] ${STATUS_TONE_CLASS[status.tone ?? statusVisual(status.kind).tone]}`}
               data-agent-status={status.label}
               title={status.detail ? `${status.label} · ${status.detail}` : status.label}
             >
+              <StatusGlyph kind={status.kind} tone={status.tone} size={11} />
               {status.label}
-              {status.detail && <span className="ml-1 text-text-muted">· {status.detail}</span>}
+              {status.detail && <span className="ml-1 text-text-tertiary">· {status.detail}</span>}
             </span>
           </button>
           {agent.skills.length > 0 && (
             <div
-              className="truncate pb-1 pr-2 text-[10px] text-text-muted"
+              className="truncate pb-1 pr-2 text-[11px] text-text-tertiary"
               style={{ paddingLeft: 8 + (agent.depth * 16) }}
             >
               Skills: {agent.skills.join(", ")}

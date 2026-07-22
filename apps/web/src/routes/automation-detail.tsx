@@ -8,6 +8,9 @@ import { EditAutomationDialog } from "../components/features/EditAutomationDialo
 import { deriveAutomationHitlAttention, type AutomationHitlAttention } from "../lib/automation-hitl-attention";
 import { hitlAttentionPath, useAttentionVisibleScopedHitl } from "../store/hitl-store";
 import { formatTrigger } from "./automations";
+import { StatusGlyph } from "../components/primitives/StatusGlyph";
+import { IconAction } from "../components/primitives/IconAction";
+import { automationInvocationStatusLabel, automationStatusLabel, automationVisualKind } from "../lib/automation-status-presentation";
 
 export function AutomationDetailRoute() {
   const { slug = "", automationId = "" } = useParams<{ slug: string; automationId: string }>();
@@ -67,7 +70,7 @@ function AutomationProvenance({ slug, sessionId }: { slug: string; sessionId: st
       {sessionId && source.isLoading ? (
         <p className="mt-2 text-sm text-text-tertiary">Loading…</p>
       ) : sessionId && source.data ? (
-        <Link className="mt-2 block text-sm text-accent hover:underline" to={`/projects/${slug}/sessions/${sessionId}`}>
+        <Link className="mt-2 block text-sm text-brand hover:underline" to={`/projects/${slug}/sessions/${sessionId}`}>
           {source.data.title || sessionId}
         </Link>
       ) : (
@@ -96,22 +99,33 @@ function AutomationHeader({
   onRunNow: () => void;
   slug: string;
 }) {
+  const statusLabel = automationStatusLabel(automation.status);
   return (
-    <header className="flex h-12 items-center gap-3 border-b border-border-subtle px-4">
-      <Link className="text-text-tertiary" to={`/projects/${slug}/automations`}>
-        <ArrowLeft size={15} />
+    <header className="flex min-h-12 flex-wrap items-center gap-2 border-b border-border-subtle px-4 py-2 min-[640px]:h-12 min-[640px]:flex-nowrap min-[640px]:gap-3 min-[640px]:py-0">
+      <Link
+        aria-label="Back to automations"
+        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-transparent text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:border-border-default hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+        to={`/projects/${slug}/automations`}
+      >
+        <ArrowLeft aria-hidden="true" size={15} />
       </Link>
-      <h1 className="min-w-0 flex-1 truncate font-semibold">{automation.name}</h1>
-      <button onClick={onEdit} title="Edit Automation"><Settings2 size={15} /></button>
-      <button className="inline-flex items-center gap-1 rounded-sm bg-accent px-3 py-1.5 text-sm text-bg-base" disabled={isRunningNow} onClick={onRunNow}>
-        <Play size={14} /> Run now
-      </button>
-      {automation.status === "paused" ? (
-        <button onClick={onResume}><Play size={15} /> Resume</button>
-      ) : (
-        <button onClick={onPause}><Pause size={15} /> Pause</button>
-      )}
-      <button onClick={onDelete} title="Delete Automation"><Trash2 size={15} /></button>
+      <h1 className="min-w-0 flex-1 truncate text-[16px] font-semibold leading-[22px]">{automation.name}</h1>
+      <span className="inline-flex shrink-0 items-center gap-2 text-xs text-text-secondary">
+        <StatusGlyph kind={automationVisualKind(automation.status)} label={`Automation ${statusLabel}`} size={14} />
+        {statusLabel}
+      </span>
+      <div className="flex w-full basis-full shrink-0 items-center justify-end gap-2 min-[640px]:w-auto min-[640px]:basis-auto">
+        <IconAction label="Edit automation" onClick={onEdit}><Settings2 aria-hidden="true" size={15} /></IconAction>
+        <button className="inline-flex h-8 shrink-0 items-center gap-2 whitespace-nowrap rounded-sm bg-brand px-3 text-[12px] font-medium text-bg-overlay transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40" disabled={isRunningNow} onClick={onRunNow}>
+          <Play aria-hidden="true" size={14} /> Run now
+        </button>
+        {automation.status === "paused" ? (
+          <button className="inline-flex h-8 shrink-0 items-center gap-2 whitespace-nowrap rounded-sm bg-bg-active px-3 text-[12px] font-medium text-text-primary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand" onClick={onResume}><Play aria-hidden="true" size={15} /> Resume</button>
+        ) : (
+          <button className="inline-flex h-8 shrink-0 items-center gap-2 whitespace-nowrap rounded-sm bg-bg-active px-3 text-[12px] font-medium text-text-primary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand" onClick={onPause}><Pause aria-hidden="true" size={15} /> Pause</button>
+        )}
+        <IconAction danger label="Delete automation" onClick={onDelete}><Trash2 aria-hidden="true" size={15} /></IconAction>
+      </div>
     </header>
   );
 }
@@ -134,7 +148,7 @@ function AutomationConfiguration({ automation }: { automation: Automation }) {
 }
 
 function AutomationDefinition({ children, label }: { children: React.ReactNode; label: string }) {
-  return <div><dt className="text-text-muted">{label}</dt><dd>{children}</dd></div>;
+  return <div><dt className="text-[11px] leading-4 text-text-tertiary">{label}</dt><dd>{children}</dd></div>;
 }
 
 function AutomationAttention({
@@ -152,17 +166,17 @@ function AutomationAttention({
     <section className="rounded-md border border-border-default bg-bg-surface p-4">
       <h2 className="font-semibold">Attention</h2>
       {failedInvocation ? (
-        <p className="mt-2 text-sm text-error">Dispatch failed: {failedInvocation.error ?? failedInvocation.id}</p>
+        <p className="mt-2 inline-flex items-center gap-2 text-sm text-error"><StatusGlyph kind="failed" size={14} />Dispatch failed: {failedInvocation.error ?? failedInvocation.id}</p>
       ) : null}
       {hitlAttention.kind === "start_session" ? hitlAttention.sessions.map((session) => (
         <div className="mt-2 flex items-center justify-between gap-3 text-sm" key={session.invocationId}>
-          <span>Invocation {session.invocationId}: Needs you</span>
-          <Link className="text-accent hover:underline" to={hitlAttentionPath(session.entries[0]!)}>Open Session</Link>
+          <span className="inline-flex items-center gap-2"><StatusGlyph kind="needs_you" size={14} />Invocation {session.invocationId}: Needs you</span>
+          <Link className="text-brand hover:underline" to={hitlAttentionPath(session.entries[0]!)}>Open Session</Link>
         </div>
       )) : hitlAttention.entries[0] ? (
         <div className="mt-2 flex items-center justify-between gap-3 text-sm">
-          <span>Target Session needs attention</span>
-          <Link className="text-accent hover:underline" to={hitlAttentionPath(hitlAttention.entries[0])}>Open Session</Link>
+          <span className="inline-flex items-center gap-2"><StatusGlyph kind="needs_you" size={14} />Target Session needs attention</span>
+          <Link className="text-brand hover:underline" to={hitlAttentionPath(hitlAttention.entries[0])}>Open Session</Link>
         </div>
       ) : null}
       {!failedInvocation && !hasHitl ? (
@@ -202,13 +216,13 @@ function InvocationRow({ item, slug, targeted }: { item: AutomationInvocation; s
   return (
     <div
       ref={rowRef}
-      className={`rounded-sm py-2 text-sm outline-none ${targeted ? "bg-accent-subtle ring-1 ring-accent/50" : ""}`}
+      className={`rounded-sm py-2 text-sm outline-none ${targeted ? "bg-brand-subtle ring-1 ring-brand/50" : ""}`}
       data-invocation-id={item.id}
       tabIndex={targeted ? -1 : undefined}
     >
-      <span className="font-medium">{item.status}</span>
-      <span className="ml-2 text-text-muted">due {new Date(item.dueAt).toLocaleString()}</span>
-      {item.sessionId ? <Link className="ml-2 text-accent hover:underline" to={`/projects/${slug}/sessions/${item.sessionId}`}>Open Session</Link> : null}
+      <span className="font-medium">{automationInvocationStatusLabel(item.status)}</span>
+      <span className="ml-2 text-[11px] leading-4 text-text-tertiary">due {new Date(item.dueAt).toLocaleString()}</span>
+      {item.sessionId ? <Link className="ml-2 text-brand hover:underline" to={`/projects/${slug}/sessions/${item.sessionId}`}>Open Session</Link> : null}
       {item.error ? <p className="text-error">{item.error}</p> : null}
     </div>
   );

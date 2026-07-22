@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useAutomations, useSession } from "../../../api/queries";
 import { useSessionStore } from "../../../store/session-store";
 import { InspectorNotice, InspectorRows, InspectorSection, InspectorValue } from "./InspectorPrimitives";
+import { automationStatusLabel } from "../../../lib/automation-status-presentation";
 
 export function SessionContextDetails() {
   const { slug = "", sessionId = "" } = useParams<{ slug: string; sessionId: string }>();
@@ -85,16 +86,16 @@ export function SessionContextDetails() {
       {relatedAutomations.length > 0 && (
         <InspectorSection title="Related work">
           <div className="space-y-1">
-            <div className="px-2 text-[10px] font-semibold uppercase tracking-wide text-text-muted">Created here</div>
+            <div className="px-2 text-[11px] font-semibold uppercase tracking-wide text-text-muted">Created here</div>
             {relatedAutomations.map((automation) => (
               <Link
                 key={`automation-${automation.id}`}
-                className="block rounded-sm px-2 py-1.5 text-xs hover:bg-bg-hover focus-visible:outline-2 focus-visible:outline-accent"
+                className="block rounded-sm px-2 py-2 text-xs hover:bg-bg-hover focus-visible:outline-2 focus-visible:outline-brand"
                 to={`/projects/${slug}/automations/${automation.id}`}
               >
                 <span className="font-medium text-text-primary">{automation.name}</span>
-                <span className="ml-2 text-text-muted">Automation · {automation.status}</span>
-                {automation.nextFireAt && <span className="ml-2 text-text-muted">next {new Date(automation.nextFireAt).toLocaleString()}</span>}
+                <span className="ml-2 text-text-tertiary">Automation · {automationStatusLabel(automation.status)}</span>
+                {automation.nextFireAt && <span className="ml-2 text-text-tertiary">next {new Date(automation.nextFireAt).toLocaleString()}</span>}
               </Link>
             ))}
           </div>
@@ -127,7 +128,7 @@ function InspectedMessageModelAudit({
       ref={sectionRef}
       id="inspected-message-model-audit"
       tabIndex={-1}
-      className="rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      className="rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-brand"
     >
       <InspectorSection title="Inspected message model audit">
         {rows

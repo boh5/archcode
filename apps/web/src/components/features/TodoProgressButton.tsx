@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Circle, ListTodo, Loader2, X } from "lucide-react";
+import { Check, Circle, CircleDot, X } from "lucide-react";
 import type { SessionTodo } from "@archcode/protocol";
 import { useSessionStore } from "../../store/session-store";
 import { deriveTodoProgress, presentTodoContent, type TodoPriority, type TodoProgressState } from "../../lib/todo-progress";
+import { ProgressRing } from "../primitives/ProgressRing";
+import { IconAction } from "../primitives/IconAction";
+import { STATUS_SUBTLE_CLASS, STATUS_TONE_CLASS, type StatusTone } from "../../lib/status-visuals";
 
 const STATE_LABEL: Record<TodoProgressState, string> = {
   running: "Running",
@@ -13,13 +16,13 @@ const STATE_LABEL: Record<TodoProgressState, string> = {
   idle: "Ready",
 };
 
-const STATE_CLASS: Record<TodoProgressState, string> = {
-  running: "text-accent border-accent/40 bg-accent-subtle",
-  waiting: "text-warning border-warning/40 bg-warning-muted",
-  blocked: "text-warning border-warning/40 bg-warning-muted",
-  failed: "text-error border-error/40 bg-error-muted",
-  completed: "text-success border-success/40 bg-success-muted",
-  idle: "text-text-secondary border-border-default bg-bg-elevated",
+const STATE_TONE: Record<TodoProgressState, StatusTone> = {
+  running: "info",
+  waiting: "warning",
+  blocked: "warning",
+  failed: "error",
+  completed: "success",
+  idle: "neutral",
 };
 
 const PRIORITY_LABEL: Record<TodoPriority, string> = {
@@ -31,7 +34,7 @@ const PRIORITY_LABEL: Record<TodoPriority, string> = {
 const PRIORITY_CLASS: Record<TodoPriority, string> = {
   high: "bg-error-muted text-error",
   medium: "bg-warning-muted text-warning",
-  low: "bg-bg-active text-text-muted",
+  low: "bg-bg-active text-text-tertiary",
 };
 
 export function TodoProgressButton({ slug, sessionId }: { slug: string; sessionId: string }) {
@@ -79,6 +82,7 @@ export function TodoProgressButton({ slug, sessionId }: { slug: string; sessionI
   if (progress === null) return null;
   const popoverId = `todo-progress-${sessionId}`;
   const completedLabel = `${progress.completed} of ${progress.total} complete`;
+  const tone = STATE_TONE[progress.state];
 
   const close = () => {
     setPinned(false);
@@ -110,7 +114,7 @@ export function TodoProgressButton({ slug, sessionId }: { slug: string; sessionI
         aria-label={`Todo progress, ${completedLabel}, ${STATE_LABEL[progress.state].toLowerCase()}`}
         aria-expanded={open}
         aria-controls={popoverId}
-        className={`flex h-[30px] items-center gap-1.5 rounded-sm border px-2 text-[11px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-accent ${STATE_CLASS[progress.state]}`}
+        className={`flex h-8 items-center gap-2 rounded-sm border border-border-default px-2 text-[11px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-brand ${STATUS_SUBTLE_CLASS[tone]} ${STATUS_TONE_CLASS[tone]}`}
         onFocus={() => {
           if (ignoreNextFocusPreview.current) {
             ignoreNextFocusPreview.current = false;
@@ -123,9 +127,9 @@ export function TodoProgressButton({ slug, sessionId }: { slug: string; sessionI
           setPreviewOpen(false);
         }}
       >
-        {progress.state === "running" ? <Loader2 size={13} className="animate-spin" /> : <ListTodo size={13} />}
+        <ProgressRing percent={progress.percent} tone={tone} />
         <span>{progress.completed}/{progress.total}</span>
-        <span className="hidden sm:inline">{STATE_LABEL[progress.state]}</span>
+        <span className="hidden sm:inline">Todos</span>
       </button>
 
       {open && (
@@ -133,23 +137,23 @@ export function TodoProgressButton({ slug, sessionId }: { slug: string; sessionI
           id={popoverId}
           role="region"
           aria-label="Todo progress details"
-          className="absolute right-0 top-[calc(100%+8px)] z-50 w-[min(360px,calc(100vw-24px))] rounded-md border border-border-default bg-bg-elevated p-3 shadow-lg"
+          className="fixed left-3 right-3 top-[100px] z-50 w-auto rounded-lg border border-border-default bg-bg-overlay p-3 shadow-md sm:absolute sm:left-auto sm:right-0 sm:top-[calc(100%+8px)] sm:w-[360px]"
         >
           <div className="mb-2 flex items-start justify-between gap-3">
             <div>
               <div className="text-xs font-semibold text-text-primary">Next steps</div>
-              <div aria-live="polite" className="mt-0.5 text-[11px] text-text-muted">
+              <div aria-live="polite" className="mt-1 text-[11px] text-text-tertiary">
                 {completedLabel} · {STATE_LABEL[progress.state]}
               </div>
             </div>
             {pinned && (
-              <button type="button" aria-label="Close todo progress" className="text-text-muted hover:text-text-primary" onClick={close}>
-                <X size={14} />
-              </button>
+              <IconAction label="Close todo progress" onClick={close}>
+                <X aria-hidden="true" size={14} />
+              </IconAction>
             )}
           </div>
           <div className="mb-3 h-1 overflow-hidden rounded-full bg-bg-active" aria-hidden="true">
-            <div className="h-full rounded-full bg-accent transition-[width]" style={{ width: `${progress.percent}%` }} />
+            <div className="h-full rounded-full bg-brand transition-[width]" style={{ width: `${progress.percent}%` }} />
           </div>
           <div className="max-h-[min(50vh,360px)] space-y-1 overflow-y-auto">
             {todos.map((todo) => <TodoProgressItem key={todo.id} todo={todo} />)}
@@ -171,21 +175,21 @@ function TodoProgressItem({ todo }: { todo: SessionTodo }) {
         : "Upcoming";
   return (
     <div
-      className="flex items-start gap-2 rounded-sm px-1.5 py-1.5"
+      className="flex items-start gap-2 rounded-sm px-2 py-2"
       aria-current={todo.status === "in_progress" ? "step" : undefined}
     >
-      <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
-        {todo.status === "completed" ? <Check size={13} className="text-success" /> : todo.status === "in_progress" ? <Loader2 size={13} className="animate-spin text-accent" /> : todo.status === "cancelled" ? <X size={13} className="text-text-muted" /> : <Circle size={11} className="text-text-muted" />}
+      <span className="mt-1 flex h-4 w-4 shrink-0 items-center justify-center">
+        {todo.status === "completed" ? <Check size={13} className="text-success" /> : todo.status === "in_progress" ? <CircleDot size={13} className="text-info" /> : todo.status === "cancelled" ? <X size={13} className="text-neutral" /> : <Circle size={11} className="text-neutral" />}
       </span>
-      <span className={`min-w-0 flex-1 text-xs leading-5 ${todo.status === "completed" || todo.status === "cancelled" ? "text-text-muted line-through" : "text-text-secondary"}`}>
+      <span className={`min-w-0 flex-1 text-xs leading-5 ${todo.status === "completed" || todo.status === "cancelled" ? "text-text-tertiary line-through" : "text-text-secondary"}`}>
         {presentation.content}
       </span>
       {presentation.priority && (
-        <span className={`shrink-0 rounded-[3px] px-[5px] py-px text-[10px] font-semibold ${PRIORITY_CLASS[presentation.priority]}`}>
+        <span className={`shrink-0 rounded-sm px-1 py-px text-[11px] font-semibold ${PRIORITY_CLASS[presentation.priority]}`}>
           {PRIORITY_LABEL[presentation.priority]}
         </span>
       )}
-      <span className="shrink-0 text-[10px] text-text-muted">{label}</span>
+      <span className={`shrink-0 text-[11px] ${todo.status === "in_progress" ? "text-info" : todo.status === "completed" ? "text-success" : todo.status === "cancelled" ? "text-neutral" : "text-text-tertiary"}`}>{label}</span>
     </div>
   );
 }
