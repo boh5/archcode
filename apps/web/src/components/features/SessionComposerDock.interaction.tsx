@@ -9,6 +9,8 @@ import { sessionRuntimeStore } from "../../store/session-runtime-store";
 import { __resetWebSessionStoresForTest, createWebSessionStore } from "../../store/session-store";
 import { SessionComposerDock } from "./SessionComposerDock";
 import { SettingsModalProvider } from "../../context/settings-modal";
+import type { SessionGoalView } from "../../api/types";
+import { queryKeys } from "../../api/queries";
 
 let dom: JSDOM;
 let root: Root;
@@ -29,6 +31,31 @@ const modelState = {
   modelSelection: { revision: 0 },
   nextModelSelection: { requested: requestedModelSelection, resolved: binding },
 };
+const modelRuntime = {
+  revision: "m1",
+  providers: [{ id: "test", displayName: "Test", models: [{ id: "model", qualifiedId: "test:model", displayName: "Test Model", variants: [] }] }],
+  profileDefaults: { principal: { model: "test:model" }, deep: { model: "test:model" }, fast: { model: "test:model" } },
+};
+const activeGoal: SessionGoalView = {
+  instanceId: "goal-1",
+  generation: 2,
+  objective: "Finish the Composer hard cut",
+  status: "active",
+  usage: {
+    executionCount: 3,
+    executionTimeMs: 90_000,
+    tokens: {
+      inputTokens: 1_000,
+      outputTokens: 500,
+      totalTokens: 1_500,
+      reasoningTokens: 0,
+      cachedInputTokens: 0,
+    },
+  },
+  createdAt: 1,
+  activatedAt: 1,
+  updatedAt: 2,
+};
 
 beforeEach(() => {
   dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost" });
@@ -40,8 +67,12 @@ beforeEach(() => {
     Element: dom.window.Element,
     HTMLElement: dom.window.HTMLElement,
     HTMLButtonElement: dom.window.HTMLButtonElement,
+    HTMLInputElement: dom.window.HTMLInputElement,
     HTMLTextAreaElement: dom.window.HTMLTextAreaElement,
+    DocumentFragment: dom.window.DocumentFragment,
     Event: dom.window.Event,
+    CustomEvent: dom.window.CustomEvent,
+    KeyboardEvent: dom.window.KeyboardEvent,
     MouseEvent: dom.window.MouseEvent,
     MutationObserver: dom.window.MutationObserver,
     getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
@@ -78,7 +109,7 @@ afterEach(() => {
 });
 
 describe("SessionComposerDock", () => {
-  test("owns HITL above the composer without taking queued messages out of chat", async () => {
+  test("owns Goal, Queue, HITL, and Input in fixed order with bounded independent scroll surfaces", async () => {
     const store = createWebSessionStore("session-1", "project-1");
     store.getState().initializeFromSnapshot({
       rootSessionId: "session-1",
@@ -95,6 +126,17 @@ describe("SessionComposerDock", () => {
         acceptedAt: 3,
         updatedAt: 3,
         requestedModelSelection,
+      }, {
+        id: "steering-user",
+        clientRequestId: "steering-request",
+        content: "Steering request",
+        source: "user",
+        state: "steering",
+        revision: 2,
+        acceptedAt: 4,
+        updatedAt: 5,
+        targetExecutionId: "execution-1",
+        requestedModelSelection,
       }],
     });
     store.getState().addLocalSendingMessage({
@@ -104,6 +146,12 @@ describe("SessionComposerDock", () => {
       createdAt: 4,
     });
     store.getState().setLocalSendingMessageStatus("request-retry", "retryable");
+    store.getState().addLocalSendingMessage({
+      clientRequestId: "request-sending",
+      content: "Sending this request",
+      requestedModelSelection,
+      createdAt: 6,
+    });
     sessionRuntimeStore.getState().applySnapshot({
       type: "session.runtime.snapshot",
       projectSlugs: ["project-1"],
@@ -136,13 +184,14 @@ describe("SessionComposerDock", () => {
       createdAt: 1,
     });
     const client = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+      defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } },
     });
+    client.setQueryData(queryKeys.modelRuntime, modelRuntime);
 
     await act(async () => {
       root.render(
         <QueryClientProvider client={client}>
-          <SettingsModalProvider><SessionComposerDock slug="project-1" sessionId="session-1" /></SettingsModalProvider>
+          <SettingsModalProvider><SessionComposerDock slug="project-1" sessionId="session-1" goal={activeGoal} /></SettingsModalProvider>
         </QueryClientProvider>,
       );
       await Promise.resolve();
@@ -151,24 +200,44 @@ describe("SessionComposerDock", () => {
     const dock = container.querySelector('[data-testid="session-composer-dock"]');
     const rail = container.querySelector('[data-testid="conversation-composer-rail"]');
     const attention = container.querySelector('[data-testid="composer-attention-stack"]');
+    const queue = container.querySelector('[data-testid="composer-queue-list"]');
+    const inputSlot = container.querySelector('[data-testid="composer-input-slot"]');
+    const goal = container.querySelector('[data-testid="session-goal-progress-row"]');
     const card = container.querySelector('[data-testid="composer-card"]');
     const textarea = card?.querySelector("textarea");
-    expect(dock?.classList.contains("border-t")).toBe(false);
+    expect(dock?.className).toContain("max-h-[min(60dvh,640px)]");
+    expect((dock as HTMLElement | null)?.style.scrollbarGutter).toBe("stable");
+    expect(dock?.className).toContain("max-[799px]:max-h-[min(70dvh,620px)]");
+    expect(dock?.classList.contains("border-t")).toBe(true);
     expect(rail?.className).toContain("max-w-[880px]");
     expect(attention).not.toBeNull();
+    expect(attention?.className).toContain("overflow-y-auto");
+    expect(queue?.className).toContain("max-h-[160px]");
+    expect(queue?.className).toContain("max-[799px]:max-h-[116px]");
+    expect(queue?.className).toContain("overflow-y-auto");
+    expect(inputSlot?.className).toContain("shrink-0");
+    expect(goal?.className).toContain("shrink-0");
     expect(card?.className).toContain("rounded-[16px]");
     expect(textarea?.className).toContain("border-0");
-    expect(container.textContent).not.toContain("Queued request");
-    expect(container.textContent).not.toContain("Retry this exact request");
+    expect(container.textContent).toContain("Queued request");
+    expect(container.textContent).toContain("Retry this exact request");
+    expect(container.textContent).toContain("Steering request");
+    expect(container.textContent).toContain("Sending this request");
     expect(container.textContent).toContain("Choose a direction");
-    expect(container.querySelector('[data-testid="composer-pending-messages"]')).toBeNull();
+    const ordered = Array.from(rail?.children ?? []);
+    expect(ordered.map((element) => element.getAttribute("data-testid"))).toEqual([
+      "session-goal-progress-row",
+      "composer-queue-list",
+      "composer-attention-stack",
+      "composer-input-slot",
+    ]);
     expect(container.querySelector('[data-testid="hitl-owner-link"]')).toBeNull();
     expect(container.querySelector('button[aria-label="Queue message"]')).toBeNull();
     expect(container.querySelector('button[aria-label="Stop session"]')).not.toBeNull();
-    expect(container.textContent).not.toContain("Steer");
+    expect(container.textContent).toContain("Steer");
     expect(container.querySelector('button[title="Attach file"]')).toBeNull();
-    expect(container.querySelector('button[aria-label="Retry sending message"]')).toBeNull();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('button[aria-label="Retry sending message"]')).not.toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(0);
   });
 
   test("steps through multi-question Ask User and submits only from Confirm", async () => {
@@ -231,8 +300,9 @@ describe("SessionComposerDock", () => {
       createdAt: 1,
     });
     const client = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+      defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } },
     });
+    client.setQueryData(queryKeys.modelRuntime, modelRuntime);
 
     await act(async () => {
       root.render(
@@ -282,7 +352,7 @@ describe("SessionComposerDock", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     const responseCall = fetchMock.mock.calls.find(([path]) => String(path).endsWith("/hitl/hitl-multi/respond"));
     if (!responseCall) throw new Error("Missing HITL response request");
     const [path, init] = responseCall as unknown as [string, RequestInit];

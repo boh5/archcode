@@ -1,7 +1,10 @@
 import { useEffect } from "react";
 import { ArrowLeft } from "lucide-react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { ChatMessages } from "../components/composite/ChatMessages";
+import {
+  ExecutionWorkstream,
+  retainExecutionWorkstreamUiState,
+} from "../components/composite/ExecutionWorkstream";
 import { ChatHeader } from "../components/features/ChatHeader";
 import { SessionComposerDock } from "../components/features/SessionComposerDock";
 import { DiffTab } from "../components/features/DiffTab";
@@ -63,12 +66,14 @@ export function SessionRoute() {
         agentName,
         stats,
         executions,
+        executionInputCheckpoints,
         childSessionLinks,
         eventCursor,
         modelSelection,
         nextModelSelection,
         activeModelBinding,
         cwd,
+        compression,
       } = focusedSession;
       childStore.getState().initializeFromSnapshot({
         messages,
@@ -82,12 +87,14 @@ export function SessionRoute() {
         agentName,
         stats,
         executions,
+        executionInputCheckpoints,
         childSessionLinks,
         eventCursor,
         modelSelection,
         nextModelSelection,
         activeModelBinding,
         cwd,
+        compression,
       });
     }
   }, [focusSessionId, focusedSession, slug]);
@@ -99,6 +106,11 @@ export function SessionRoute() {
       markSessionForeground(slug, rootSessionId, false);
     };
   }, [rootSessionId, session, slug, sessionId]);
+
+  useEffect(
+    () => retainExecutionWorkstreamUiState(slug, rootSessionId),
+    [rootSessionId, slug],
+  );
 
   useEffect(() => {
     if (session) {
@@ -115,12 +127,14 @@ export function SessionRoute() {
         agentName,
         stats,
         executions,
+        executionInputCheckpoints,
         childSessionLinks,
         eventCursor,
         modelSelection,
         nextModelSelection,
         activeModelBinding,
         cwd,
+        compression,
       } = session;
       store.getState().initializeFromSnapshot({
         messages,
@@ -134,12 +148,14 @@ export function SessionRoute() {
         agentName,
         stats,
         executions,
+        executionInputCheckpoints,
         childSessionLinks,
         eventCursor,
         modelSelection,
         nextModelSelection,
         activeModelBinding,
         cwd,
+        compression,
       });
     }
   }, [session, sessionId, slug]);
@@ -253,9 +269,15 @@ export function SessionRoute() {
           </div>
         ) : (
           <>
-            <ChatMessages
+            <ExecutionWorkstream
+              key={focusSessionId}
               slug={slug}
               sessionId={focusSessionId}
+              routeScopeId={rootSessionId}
+              sessionIdentity={{
+                agentName: focusedSession!.agentName,
+                profile: focusedSession!.profile,
+              }}
               agents={agents}
               onInspectModelAudit={inspectModelAudit}
             />
@@ -320,9 +342,12 @@ export function SessionRoute() {
         </div>
       ) : (
         <>
-          <ChatMessages
+          <ExecutionWorkstream
+            key={rootSessionId}
             slug={slug}
             sessionId={rootSessionId}
+            routeScopeId={rootSessionId}
+            sessionIdentity={{ agentName: session.agentName, profile: session.profile }}
             agents={agents}
             onInspectModelAudit={inspectModelAudit}
           />

@@ -4,22 +4,22 @@ import type {
   ToolChildSessionLinkStatus,
   ToolPart,
 } from "@archcode/protocol";
-import { resolveAgentDisplayName, type BadgeStatus } from "./agent-constants";
+import { BADGE_LABELS, resolveAgentDisplayName, type BadgeStatus } from "./agent-constants";
+import { presentChildExecutionStatus } from "./execution-status-presentation";
 
-export type DelegationToolStatus = "success" | "error" | "default";
 export interface DelegationCardViewModel {
   sessionId: string;
   focusStoreSessionId: string;
-  agentType: string;
-  agentDisplayName: string;
-  profile: string;
+  agentDisplayName?: string;
+  profile?: string;
   skills: string[];
   taskTitle?: string;
   executionStatus: BadgeStatus;
-  depth: number;
-  startedAt: number;
-  taskSummary: string;
-  tools: Array<{ name: string; status: DelegationToolStatus; input?: unknown }>;
+  executionStatusLabel: string;
+  executionStatusDetail?: string;
+  startedAt?: number;
+  taskSummary?: string;
+  background?: boolean;
   projectSlug: string;
   canNavigate?: boolean;
 }
@@ -59,6 +59,10 @@ export function mapDelegationLinkStatusToBadge(status: ToolChildSessionLinkStatu
   }
 }
 
+export function formatDelegationLinkStatus(status: ToolChildSessionLinkStatus): string {
+  return presentChildExecutionStatus(status).label;
+}
+
 export function buildDelegationCardViewModel({
   part,
   projectSlug,
@@ -70,35 +74,46 @@ export function buildDelegationCardViewModel({
   const link = childSessionLinks.find((candidate) => candidate.parentToolCallId === part.toolCallId);
 
   const sessionId = link?.childSessionId ?? "";
-  const agentType = link?.childAgentName ?? (parsedInput?.agent_type as string) ?? "unknown";
-  const agentDisplayName = resolveAgentDisplayName(agentType, agentDescriptors);
-  const profile = link?.childProfile ?? (parsedInput?.profile as string) ?? "unknown";
+  const agentType = link?.childAgentName
+    ?? (typeof parsedInput?.agent_type === "string" ? parsedInput.agent_type : undefined);
+  const agentDisplayName = agentType === undefined
+    ? undefined
+    : resolveAgentDisplayName(agentType, agentDescriptors);
+  const profile = link?.childProfile
+    ?? (typeof parsedInput?.profile === "string" ? parsedInput.profile : undefined);
   const skills = link?.childSkillNames ?? (Array.isArray(parsedInput?.skills) ? parsedInput.skills.filter((skill): skill is string => typeof skill === "string") : []);
-  const taskTitle = link?.title ?? (parsedInput?.title as string);
-  const taskSummary = typeof parsedInput?.objective === "string" ? parsedInput.objective : "";
+  const taskTitle = link?.title ?? (typeof parsedInput?.title === "string" ? parsedInput.title : undefined);
+  const taskSummary = typeof parsedInput?.objective === "string" ? parsedInput.objective : undefined;
+  const background = link?.background
+    ?? (typeof parsedInput?.background === "boolean" ? parsedInput.background : undefined);
   const executionStatus: BadgeStatus = link
     ? mapDelegationLinkStatusToBadge(link.status)
     : part.state === "error" ? "error"
       : part.state === "completed" ? "completed"
         : part.state === "pending" ? "pending"
           : "running";
-  const depth = link?.depth ?? 1;
+  const executionStatusLabel = link
+    ? formatDelegationLinkStatus(link.status)
+    : executionStatus === "error" ? "Stopped" : BADGE_LABELS[executionStatus];
+  const executionStatusDetail = link
+    ? presentChildExecutionStatus(link.status).detail
+    : executionStatus === "error" ? "Error" : undefined;
   const startedAt = link?.startedAt
     ?? ("startedAt" in part ? (part as { startedAt: number }).startedAt : part.createdAt);
 
   return {
     sessionId,
     focusStoreSessionId,
-    agentType,
     agentDisplayName,
     profile,
     skills,
     taskTitle,
     executionStatus,
-    depth,
+    executionStatusLabel,
+    executionStatusDetail,
     startedAt,
     taskSummary,
-    tools: [],
+    background,
     projectSlug,
     canNavigate: Boolean(link?.childSessionId),
   };

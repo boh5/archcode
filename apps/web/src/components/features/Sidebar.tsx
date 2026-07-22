@@ -45,10 +45,10 @@ const TABS: Array<{ id: SidebarTab; label: string }> = [
   { id: "automations", label: "Automations" },
 ];
 
-function deriveTabFromPath(pathname: string): SidebarTab {
+export function deriveSidebarTabFromPath(pathname: string): SidebarTab | null {
   if (pathname.includes("/sessions/")) return "sessions";
   if (pathname.includes("/automations")) return "automations";
-  return "sessions";
+  return null;
 }
 
 // Status dots
@@ -262,7 +262,7 @@ export function Sidebar({
 
   const [sessionsSearch, setSessionsSearch] = useState("");
   const [automationsSearch, setAutomationsSearch] = useState("");
-  const [selectedTab, setSelectedTab] = useState<SidebarTab>(deriveTabFromPath(location.pathname));
+  const [selectedTab, setSelectedTab] = useState<SidebarTab>(deriveSidebarTabFromPath(location.pathname) ?? "sessions");
 
   const { data: projects } = useProjects();
   const activeProject = projects?.find(p => p.slug === slug) ?? null;
@@ -272,11 +272,11 @@ export function Sidebar({
   const runtimeFamilies = useSessionRuntimeFamilies();
   const attentionVisibleHitl = useAttentionVisibleScopedHitl([slug]);
 
-  const routeTab: SidebarTab = deriveTabFromPath(location.pathname);
+  const routeTab = deriveSidebarTabFromPath(location.pathname);
   const activeTab = selectedTab;
 
   useEffect(() => {
-    setSelectedTab(routeTab);
+    if (routeTab !== null) setSelectedTab(routeTab);
   }, [routeTab]);
 
   // Handlers
@@ -410,15 +410,15 @@ export function Sidebar({
         </div>
         <div className="mt-2">
           <DashboardLinkButton
-            to={`/projects/${slug}/todos`}
-            label="Todos"
-            isActive={location.pathname === `/projects/${slug}/todos`}
-          />
-          <div className="h-1" />
-          <DashboardLinkButton
             to={`/projects/${slug}`}
             label="Project Dashboard"
             isActive={location.pathname === `/projects/${slug}`}
+          />
+          <div className="h-1" />
+          <DashboardLinkButton
+            to={`/projects/${slug}/todos`}
+            label="Todos"
+            isActive={location.pathname === `/projects/${slug}/todos`}
           />
         </div>
       </div>

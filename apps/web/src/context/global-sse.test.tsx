@@ -611,6 +611,7 @@ describe("handleSSEEvent", () => {
 
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
 
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.session("proj", "parent-session") });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "sessions"] });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "sessions", "root-session", "tree"] });
     expect(mockCreateWebSessionStore).toHaveBeenCalledWith("child-session", "proj");

@@ -8,15 +8,15 @@ describe("SessionGoalProgressRow controls", () => {
       edit: false,
       pause: false,
       resume: false,
-      adjustBudget: false,
       clear: true,
     });
   });
 
-  test("exposes exactly the recovery control for each non-terminal stopped state", () => {
-    expect(sessionGoalControlVisibility("paused")).toMatchObject({ resume: true, adjustBudget: false, clear: true });
-    expect(sessionGoalControlVisibility("blocked")).toMatchObject({ resume: true, adjustBudget: false, clear: true });
-    expect(sessionGoalControlVisibility("budget_limited")).toMatchObject({ resume: false, adjustBudget: true, clear: true });
+  test("returns the exact five-state control matrix", () => {
+    expect(sessionGoalControlVisibility("active")).toEqual({ edit: true, pause: true, resume: false, clear: true });
+    expect(sessionGoalControlVisibility("paused")).toEqual({ edit: true, pause: false, resume: true, clear: true });
+    expect(sessionGoalControlVisibility("blocked")).toEqual({ edit: true, pause: false, resume: true, clear: true });
+    expect(sessionGoalControlVisibility("budget_limited")).toEqual({ edit: true, pause: false, resume: false, clear: true });
   });
 
   test("surfaces the actionable API error instead of hiding it behind generic copy", () => {

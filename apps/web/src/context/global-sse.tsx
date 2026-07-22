@@ -369,6 +369,7 @@ export function handleSSEEvent(
 
       if (envelope.payload.type === "tool-child-session-link") {
         const { link } = envelope.payload;
+        deps.invalidateQueries({ queryKey: queryKeys.session(envelope.slug, envelope.sessionId) });
         deps.invalidateQueries({ queryKey: queryKeys.sessions(envelope.slug) });
         deps.invalidateQueries({ queryKey: queryKeys.tree(envelope.slug, store.getState().rootSessionId) });
         const childStore = deps.findStore(link.childSessionId, envelope.slug)

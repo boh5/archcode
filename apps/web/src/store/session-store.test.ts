@@ -109,6 +109,24 @@ describe("web session store registry", () => {
     expect(store.getState().activeModelBinding).toBeUndefined();
   });
 
+  test("hydrates the read-only Execution input checkpoint projection", () => {
+    const store = createWebSessionStore("input-checkpoint", "demo");
+    store.getState().initializeFromSnapshot({
+      executionInputCheckpoints: [{
+        executionId: "execution-1",
+        state: "continued",
+        continuationExecutionId: "execution-2",
+      }],
+      eventCursor: -1,
+    });
+
+    expect(store.getState().executionInputCheckpoints).toEqual([{
+      executionId: "execution-1",
+      state: "continued",
+      continuationExecutionId: "execution-2",
+    }]);
+  });
+
   test("tracks Session cwd from snapshots and formal cwd transition events", () => {
     const store = createWebSessionStore("session-1", "demo");
     store.getState().initializeFromSnapshot({ cwd: "/repo", eventCursor: -1 });
@@ -763,36 +781,20 @@ describe("compression events and snapshot hydration", () => {
     expect(store.getState().compression?.refMap.messageRefsById.first).toBe("m0001");
   });
 
-  test("initializeFromSnapshot hydrates compression and compressionBlocks from session snapshot", () => {
+  test("initializeFromSnapshot hydrates only the authoritative compression snapshot", () => {
     const store = createWebSessionStore("compress-snap", "demo");
     const block = makeCompressionBlock();
     const compression = makeCompressionState(block);
 
     store.getState().initializeFromSnapshot({
       compression,
-      compressionBlocks: [
-        {
-          type: "compression-block",
-          id: "compression:b1:part-1",
-          blockRef: "b1",
-          status: "active",
-          strategy: "dynamic-range",
-          trigger: "model_tool_call",
-          summary: "## Current Objective\nKeep going",
-          startRef: "m0001",
-          endRef: "m0002",
-          childBlockRefs: [],
-          committedAt: 123456789,
-        },
-      ],
       eventCursor: 0,
     });
 
     const state = store.getState();
     expect(state.compression?.blocksByRef.b1?.strategy).toBe("dynamic-range");
     expect(state.compression?.activeBlockRefs).toEqual(["b1"]);
-    expect(state.compressionBlocks).toHaveLength(1);
-    expect(state.compressionBlocks?.[0]?.blockRef).toBe("b1");
+    expect(state.compressionBlocks).toEqual([]);
   });
 
   test("does not overwrite compression when SSE is ahead of snapshot", () => {
@@ -814,7 +816,6 @@ describe("compression events and snapshot hydration", () => {
     const staleBlock = makeCompressionBlock({ ref: "b2", id: "block-2" });
     store.getState().initializeFromSnapshot({
       compression: makeCompressionState(staleBlock),
-      compressionBlocks: [],
       eventCursor: 0,
     });
 

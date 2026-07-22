@@ -156,7 +156,7 @@ function AutomationAttention({
       ) : null}
       {hitlAttention.kind === "start_session" ? hitlAttention.sessions.map((session) => (
         <div className="mt-2 flex items-center justify-between gap-3 text-sm" key={session.invocationId}>
-          <span>Invocation {session.invocationId}: Waiting for you</span>
+          <span>Invocation {session.invocationId}: Needs you</span>
           <Link className="text-accent hover:underline" to={hitlAttentionPath(session.entries[0]!)}>Open Session</Link>
         </div>
       )) : hitlAttention.entries[0] ? (

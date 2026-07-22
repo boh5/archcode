@@ -138,7 +138,7 @@ const EXECUTABLE_DCP_PARITY_COVERAGE = {
       anchors: ["coveredRefs", "coveredMessageIds", "body.messages"],
     },
     {
-      file: "apps/web/src/components/composite/ChatMessages.test.tsx",
+      file: "apps/web/src/components/composite/ExecutionWorkstream.parts.test.tsx",
       testName: "fetches original range only after clicking Show original range (expand)",
       anchors: ["Show original range", "toHaveBeenCalledTimes(0)", "toHaveBeenCalledTimes(1)"],
     },

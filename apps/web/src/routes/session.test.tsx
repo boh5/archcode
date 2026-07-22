@@ -57,6 +57,7 @@ function createSession(input: {
     childSessionLinks: input.childSessionLinks ?? [],
     stats: createEmptySessionStats(),
     executions: [],
+    executionInputCheckpoints: [],
     eventCursor: 0,
   };
 }
@@ -365,6 +366,7 @@ describe("SessionRoute focused view store behavior", () => {
         {
           id: "root-message",
           role: "assistant",
+          executionId: "root-execution",
           createdAt: 1,
           parts: [
             {
@@ -414,6 +416,15 @@ describe("SessionRoute focused view store behavior", () => {
         },
       ],
     });
+    rootSession.executions = [{
+      id: "root-execution",
+      origin: "tool_call",
+      status: "completed",
+      startedAt: 1,
+      endedAt: 2,
+      durationMs: 1,
+      binding: rootSession.nextModelSelection.resolved,
+    }];
     const childSession = createSession({
       id: "child-session",
       rootSessionId: "root-session",
@@ -423,11 +434,21 @@ describe("SessionRoute focused view store behavior", () => {
         {
           id: "child-message",
           role: "assistant",
+          executionId: "child-execution",
           createdAt: 2,
           parts: [{ type: "text", id: "child-text", text: "Child content", createdAt: 2 }],
         },
       ],
     });
+    childSession.executions = [{
+      id: "child-execution",
+      origin: "goal_continuation",
+      status: "completed",
+      startedAt: 2,
+      endedAt: 3,
+      durationMs: 1,
+      binding: childSession.nextModelSelection.resolved,
+    }];
     childSession.todos = [{ id: "child-todo", content: "Inspect child output", status: "in_progress" }];
 
     const fetchMock = mock(async (input: Parameters<typeof fetch>[0]) => {
@@ -453,12 +474,12 @@ describe("SessionRoute focused view store behavior", () => {
 
       await waitFor(() => {
         expect(getWebSessionStore("root-session", "demo").getState().focusSessionId).toBeNull();
-        expect(container.textContent).toContain("View full conversation");
+        expect(container.textContent).toContain("Open child session");
         expect(container.querySelector('[data-testid="hitl-inbox"]')).toBeNull();
       });
 
       await act(async () => {
-        findElementByText(container, "View full conversation").dispatchEvent(
+        findElementByText(container, "Open child session").dispatchEvent(
           new dom.window.MouseEvent("click", { bubbles: true }),
         );
       });
@@ -550,7 +571,7 @@ describe("SessionRoute focused view store behavior", () => {
         const attention = container.querySelector('[data-testid="composer-attention-stack"]');
         const decision = container.querySelector('[data-testid="hitl-decision-card"]');
         expect(decision).not.toBeNull();
-        expect(surface?.classList.contains("border-t")).toBe(false);
+        expect(surface?.classList.contains("border-t")).toBe(true);
         expect(surface?.classList.contains("px-5")).toBe(false);
         expect(rail?.className).toContain("max-w-[880px]");
         expect(rail?.className).toContain("px-[16px]");

@@ -1,6 +1,7 @@
 import { type ReactNode, useState } from "react";
 import type { SessionGoalView } from "../../api/types";
 import { useEditSessionGoal, useSessionGoalControl, useSetSessionGoalBudget } from "../../api/mutations";
+import { DialogContent, DialogDescription, DialogRoot, DialogTitle } from "../ui/Dialog";
 
 export function SessionGoalProgressRow({
   slug,
@@ -15,116 +16,189 @@ export function SessionGoalProgressRow({
   const controlGoal = useSessionGoalControl();
   const setBudget = useSetSessionGoalBudget();
   const [editing, setEditing] = useState(false);
-  const [editingBudget, setEditingBudget] = useState(false);
-  const [objective, setObjective] = useState(goal?.objective ?? "");
-  const [budget, setBudgetValue] = useState(String(Math.max(
-    goal?.tokenBudget ?? 0,
-    (goal?.usage.tokens.totalTokens ?? 0) + 10_000,
-  )));
+  const [objective, setObjective] = useState("");
+  const [budget, setBudgetValue] = useState("");
+  const [removeBudget, setRemoveBudget] = useState(false);
 
   if (!goal) return null;
 
   const busy = editGoal.isPending || controlGoal.isPending || setBudget.isPending;
   const controls = sessionGoalControlVisibility(goal.status);
-  const mutationError = sessionGoalMutationError(editGoal.error, controlGoal.error, setBudget.error);
-  const save = () => {
-    const next = objective.trim();
-    if (!next || next === goal.objective) {
+  const rowMutationError = sessionGoalMutationError(controlGoal.error);
+  const dialogMutationError = sessionGoalMutationError(editGoal.error, setBudget.error);
+  const trimmedObjective = objective.trim();
+  const parsedBudget = Number(budget);
+  const objectiveChanged = trimmedObjective !== goal.objective;
+  const budgetChanged = goal.status === "budget_limited"
+    && (removeBudget ? goal.tokenBudget !== undefined : parsedBudget !== goal.tokenBudget);
+  const budgetValid = !budgetChanged
+    || removeBudget
+    || (Number.isSafeInteger(parsedBudget) && parsedBudget > goal.usage.tokens.totalTokens);
+  const canSave = trimmedObjective.length > 0 && (objectiveChanged || budgetChanged) && budgetValid && !busy;
+
+  const openEditor = () => {
+    editGoal.reset();
+    setBudget.reset();
+    setObjective(goal.objective);
+    setBudgetValue(String(goal.tokenBudget ?? goal.usage.tokens.totalTokens + 10_000));
+    setRemoveBudget(false);
+    setEditing(true);
+  };
+
+  const save = async () => {
+    if (!canSave) return;
+    try {
+      if (objectiveChanged) {
+        await editGoal.mutateAsync({
+          slug,
+          sessionId,
+          objective: trimmedObjective,
+          expectedGeneration: goal.generation,
+        });
+      }
+      if (budgetChanged) {
+        await setBudget.mutateAsync({
+          slug,
+          sessionId,
+          tokenBudget: removeBudget ? null : parsedBudget,
+        });
+      }
       setEditing(false);
-      return;
+    } catch {
+      // Mutation state owns the actionable API error shown in the Dialog.
     }
-    editGoal.mutate({ slug, sessionId, objective: next, expectedGeneration: goal.generation }, { onSuccess: () => setEditing(false) });
   };
 
   return (
-    <section
-      className="rounded-[14px] border border-accent/25 bg-accent-subtle px-3 py-2.5"
-      data-testid="session-goal-progress-row"
-      aria-label="Session goal"
-    >
-      <div className="flex min-w-0 items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="mb-1 flex flex-wrap items-center gap-1.5 text-[10.5px] text-text-tertiary">
-            <span className="font-semibold uppercase tracking-wide text-accent">{goalLabel(goal.status)}</span>
-            <span className="rounded-sm bg-bg-base/70 px-1.5 py-px font-medium text-text-secondary">{goal.status}</span>
-            <span>{goal.usage.executionCount} turns</span>
-            <span>{goal.usage.tokens.totalTokens.toLocaleString()} tokens</span>
-            <span>{formatDuration(Math.round(goal.usage.executionTimeMs / 1_000))}</span>
-          </div>
-          {editing ? (
-            <textarea
-              aria-label="Goal objective"
-              value={objective}
-              disabled={busy}
-              onChange={(event) => setObjective(event.target.value)}
-              rows={3}
-              maxLength={4000}
-              className="w-full resize-y rounded-md border border-border-default bg-bg-base px-2 py-1.5 text-xs leading-5 text-text-primary outline-none focus:border-accent"
-            />
-          ) : (
-            <p className="whitespace-pre-wrap break-words text-xs leading-5 text-text-primary">{goal.objective}</p>
-          )}
-          {editingBudget && (
-            <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              <label className="text-[11px] text-text-secondary" htmlFor={`goal-budget-${sessionId}`}>Token budget</label>
-              <input
-                id={`goal-budget-${sessionId}`}
-                aria-label="Goal token budget"
-                type="number"
-                min={goal.usage.tokens.totalTokens + 1}
-                step={1000}
-                value={budget}
+    <>
+      <section
+        className="flex min-h-[34px] min-w-0 shrink-0 items-center gap-2 rounded-[10px] border border-accent/25 bg-accent-subtle px-2 py-1.5"
+        data-testid="session-goal-progress-row"
+        aria-label="Session goal"
+      >
+        <span aria-hidden="true" className="shrink-0 text-xs text-accent">◎</span>
+        <strong className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-accent">{goalLabel(goal.status)}</strong>
+        <span className="shrink-0 rounded-sm bg-bg-base/70 px-1.5 py-px text-[10px] font-medium text-text-secondary max-[560px]:hidden">{goal.status}</span>
+        <span
+          className="min-w-0 flex-1 truncate text-xs text-text-primary"
+          title={goal.blockedReason ? `${goal.objective}\n${goal.blockedReason}` : goal.objective}
+        >
+          {goal.objective}
+        </span>
+        <span className="shrink-0 whitespace-nowrap text-[10px] text-text-tertiary max-[700px]:hidden">
+          {goal.usage.executionCount} turns · {goal.usage.tokens.totalTokens.toLocaleString()} tokens · {formatDuration(Math.round(goal.usage.executionTimeMs / 1_000))}
+        </span>
+        {rowMutationError && <span className="max-w-40 truncate text-[10px] text-error" role="alert" title={rowMutationError}>{rowMutationError}</span>}
+        <div className="flex shrink-0 items-center gap-1">
+          {controls.edit && <ControlButton disabled={busy} onClick={openEditor}>Edit</ControlButton>}
+          {controls.pause && <ControlButton disabled={busy} onClick={() => controlGoal.mutate({ slug, sessionId, action: "pause" })}>Pause</ControlButton>}
+          {controls.resume && <ControlButton disabled={busy} onClick={() => controlGoal.mutate({ slug, sessionId, action: "resume" })}>Resume</ControlButton>}
+          {controls.clear && <ControlButton danger disabled={busy} onClick={() => controlGoal.mutate({ slug, sessionId, action: "clear" })}>Clear</ControlButton>}
+        </div>
+      </section>
+
+      <DialogRoot open={editing} onOpenChange={(open) => { if (!open && !busy) setEditing(false); }}>
+        <DialogContent>
+          <div className="p-5">
+            <DialogTitle className="text-base font-semibold text-text-primary">Edit goal</DialogTitle>
+            <DialogDescription className="mt-1 text-xs text-text-muted">
+              Update the objective{goal.status === "budget_limited" ? " and recover from the current token limit" : ""}.
+            </DialogDescription>
+
+            <label className="mt-4 grid gap-1.5 text-xs text-text-secondary">
+              Objective
+              <textarea
+                aria-label="Goal objective"
+                autoFocus
+                className="min-h-28 resize-y rounded-md border border-border-default bg-bg-base px-3 py-2 text-sm leading-relaxed text-text-primary outline-none focus:border-accent"
                 disabled={busy}
-                onChange={(event) => setBudgetValue(event.target.value)}
-                className="w-32 rounded-sm border border-border-default bg-bg-base px-2 py-1 text-[11px] text-text-primary"
+                maxLength={4000}
+                onChange={(event) => setObjective(event.target.value)}
+                value={objective}
               />
-              <ControlButton disabled={busy || !Number.isSafeInteger(Number(budget)) || Number(budget) <= goal.usage.tokens.totalTokens} onClick={() => {
-                setBudget.mutate({ slug, sessionId, tokenBudget: Number(budget) }, { onSuccess: () => setEditingBudget(false) });
-              }}>Apply</ControlButton>
-              <ControlButton disabled={busy} onClick={() => {
-                setBudget.mutate({ slug, sessionId, tokenBudget: null }, { onSuccess: () => setEditingBudget(false) });
-              }}>Remove limit</ControlButton>
-              <ControlButton disabled={busy} onClick={() => setEditingBudget(false)}>Cancel</ControlButton>
+            </label>
+
+            {goal.status === "budget_limited" && (
+              <fieldset className="mt-4 grid gap-2" data-testid="goal-budget-editor">
+                <legend className="text-xs font-medium text-text-secondary">Token budget</legend>
+                <input
+                  aria-label="Goal token budget"
+                  className="w-full rounded-md border border-border-default bg-bg-base px-3 py-2 text-sm text-text-primary outline-none focus:border-accent disabled:opacity-50"
+                  disabled={busy || removeBudget}
+                  min={goal.usage.tokens.totalTokens + 1}
+                  onChange={(event) => setBudgetValue(event.target.value)}
+                  step={1000}
+                  type="number"
+                  value={budget}
+                />
+                <label className="flex items-center gap-2 text-xs text-text-secondary">
+                  <input
+                    checked={removeBudget}
+                    disabled={busy}
+                    onChange={(event) => setRemoveBudget(event.target.checked)}
+                    type="checkbox"
+                  />
+                  Remove token limit
+                </label>
+                {!budgetValid && <p className="text-xs text-error" role="alert">The new budget must be greater than used tokens.</p>}
+              </fieldset>
+            )}
+
+            {dialogMutationError && <p className="mt-3 text-xs text-error" role="alert">{dialogMutationError}</p>}
+            <div className="mt-5 flex justify-end gap-2">
+              <DialogButton disabled={busy} onClick={() => setEditing(false)}>Cancel</DialogButton>
+              <DialogButton primary disabled={!canSave} onClick={() => { void save(); }}>Save</DialogButton>
             </div>
-          )}
-          {latestReason(goal) && <p className="mt-1.5 break-words text-[11px] leading-4 text-text-secondary">{latestReason(goal)}</p>}
-        </div>
-        <div className="flex shrink-0 flex-wrap justify-end gap-1">
-          {editing ? (
-            <>
-              <ControlButton disabled={busy} onClick={save}>Save</ControlButton>
-              <ControlButton disabled={busy} onClick={() => { setObjective(goal.objective); setEditing(false); }}>Cancel</ControlButton>
-            </>
-          ) : (
-            <>
-              {controls.edit && <ControlButton disabled={busy} onClick={() => { setObjective(goal.objective); setEditing(true); }}>Edit</ControlButton>}
-              {controls.pause && <ControlButton disabled={busy} onClick={() => controlGoal.mutate({ slug, sessionId, action: "pause" })}>Pause</ControlButton>}
-              {controls.resume && (
-                <ControlButton disabled={busy} onClick={() => controlGoal.mutate({ slug, sessionId, action: "resume" })}>Resume</ControlButton>
-              )}
-              {controls.adjustBudget && (
-                <ControlButton disabled={busy} onClick={() => {
-                  setBudgetValue(String(Math.max(goal.tokenBudget ?? 0, goal.usage.tokens.totalTokens + 10_000)));
-                  setEditingBudget(true);
-                }}>Adjust budget</ControlButton>
-              )}
-              {controls.clear && <ControlButton disabled={busy} onClick={() => controlGoal.mutate({ slug, sessionId, action: "clear" })}>Clear</ControlButton>}
-            </>
-          )}
-        </div>
-      </div>
-      {mutationError && <p className="mt-1.5 text-[11px] text-error">{mutationError}</p>}
-    </section>
+          </div>
+        </DialogContent>
+      </DialogRoot>
+    </>
   );
 }
 
-function ControlButton({ children, disabled, onClick }: { children: ReactNode; disabled: boolean; onClick: () => void }) {
+function ControlButton({
+  children,
+  danger = false,
+  disabled,
+  onClick,
+}: {
+  children: ReactNode;
+  danger?: boolean;
+  disabled: boolean;
+  onClick: () => void;
+}) {
   return (
     <button
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className="rounded-sm border border-border-default bg-bg-base px-2 py-1 text-[11px] font-medium text-text-secondary hover:border-accent hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+      className={`rounded-sm px-1.5 py-1 text-[10px] font-medium text-text-secondary hover:bg-bg-hover disabled:cursor-not-allowed disabled:opacity-50 ${danger ? "hover:text-error" : "hover:text-text-primary"}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function DialogButton({
+  children,
+  disabled,
+  onClick,
+  primary = false,
+}: {
+  children: ReactNode;
+  disabled: boolean;
+  onClick: () => void;
+  primary?: boolean;
+}) {
+  return (
+    <button
+      className={`rounded-md border px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50 ${primary
+        ? "border-accent bg-accent text-white"
+        : "border-border-default bg-bg-base text-text-secondary hover:text-text-primary"
+      }`}
+      disabled={disabled}
+      onClick={onClick}
+      type="button"
     >
       {children}
     </button>
@@ -135,10 +209,6 @@ function formatDuration(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)}s`;
   const minutes = Math.floor(seconds / 60);
   return minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-}
-
-function latestReason(goal: SessionGoalView): string | undefined {
-  return goal.blockedReason;
 }
 
 function goalLabel(status: SessionGoalView["status"]): string {
@@ -153,14 +223,12 @@ export function sessionGoalControlVisibility(status: SessionGoalView["status"]):
   edit: boolean;
   pause: boolean;
   resume: boolean;
-  adjustBudget: boolean;
   clear: true;
 } {
   return {
     edit: status !== "complete",
     pause: status === "active",
     resume: status === "paused" || status === "blocked",
-    adjustBudget: status === "budget_limited",
     clear: true,
   };
 }

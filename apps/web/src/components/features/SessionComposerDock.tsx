@@ -6,6 +6,7 @@ import { ChatInput } from "./ChatInput";
 import { HitlDecisionCard } from "./HitlCard";
 import type { SessionGoalView } from "../../api/types";
 import { SessionGoalProgressRow } from "./SessionGoalProgressRow";
+import { ComposerQueueList } from "./ComposerQueueList";
 
 export function SessionComposerDock({
   slug,
@@ -39,20 +40,25 @@ export function SessionComposerDock({
   }, [focusHitlId, hitlReady, familyHitl]);
 
   return (
-    <div className="shrink-0 bg-bg-base" data-testid="session-composer-dock">
-      <ConversationRail className="pb-[12px] pt-[8px]" data-testid="conversation-composer-rail">
-        <div className="flex flex-col gap-[8px]">
-          <SessionGoalProgressRow slug={slug} sessionId={sessionId} goal={goal} />
-          {hasPendingHitl && (
-            <div
-              className="max-h-[min(64vh,560px)] min-w-0 overflow-x-hidden overflow-y-auto rounded-[14px] border border-border-subtle bg-bg-surface p-[10px] shadow-sm"
-              data-testid="composer-attention-stack"
-            >
-              <div className="flex flex-col gap-[8px]" aria-label="Requests needing attention">
-                {familyHitl.map((entry) => <HitlDecisionCard key={`${entry.projectSlug}:${entry.ownerSessionId}:${entry.view.hitlId}`} entry={entry} />)}
-              </div>
+    <div
+      className="flex max-h-[min(60dvh,640px)] shrink-0 flex-col overflow-hidden border-t border-border-subtle bg-bg-base max-[799px]:max-h-[min(70dvh,620px)]"
+      data-testid="session-composer-dock"
+      style={{ scrollbarGutter: "stable" }}
+    >
+      <ConversationRail className="flex min-h-0 flex-col gap-[8px] pb-[12px] pt-[8px]" data-testid="conversation-composer-rail">
+        <SessionGoalProgressRow slug={slug} sessionId={sessionId} goal={goal} />
+        <ComposerQueueList slug={slug} sessionId={sessionId} />
+        {hasPendingHitl && (
+          <div
+            className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto rounded-[14px] border border-border-subtle bg-bg-surface p-[10px] shadow-sm"
+            data-testid="composer-attention-stack"
+          >
+            <div className="flex flex-col gap-[8px]" aria-label="Requests needing attention">
+              {familyHitl.map((entry) => <HitlDecisionCard key={`${entry.projectSlug}:${entry.ownerSessionId}:${entry.view.hitlId}`} entry={entry} />)}
             </div>
-          )}
+          </div>
+        )}
+        <div className="shrink-0" data-testid="composer-input-slot">
           <ChatInput
             slug={slug}
             sessionId={sessionId}

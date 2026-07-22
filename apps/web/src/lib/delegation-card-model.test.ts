@@ -3,6 +3,7 @@ import type { AgentDescriptor, ToolChildSessionLink, ToolPart } from "@archcode/
 import type { BadgeStatus } from "./agent-constants";
 import {
   buildDelegationCardViewModel,
+  formatDelegationLinkStatus,
   mapDelegationLinkStatusToBadge,
   parseDelegationInput,
 } from "./delegation-card-model";
@@ -16,7 +17,7 @@ function makePart(overrides: Partial<ToolPart> = {}): ToolPart {
     state: "running",
     toolCallId: "call-1",
     toolName: "delegate",
-    input: { agent_type: "explore", title: "Inspect source", objective: "Inspect the source" },
+    input: { agent_type: "explore", profile: "fast", skills: ["analyze-work"], background: true, title: "Inspect source", objective: "Inspect the source" },
     createdAt: 100,
     startedAt: 120,
     ...overrides,
@@ -65,6 +66,9 @@ describe("delegation card view-model", () => {
     for (const status of statuses) {
       expect(mapDelegationLinkStatusToBadge(status)).toBe(expected[status]);
     }
+    expect(statuses.map(formatDelegationLinkStatus)).toEqual([
+      "Running", "Running", "Needs you", "Running", "Completed", "Stopped", "Stopped", "Stopped", "Stopped",
+    ]);
   });
 
   test("uses persisted child-link metadata over tool input", () => {
@@ -81,15 +85,14 @@ describe("delegation card view-model", () => {
 
     expect(model).toMatchObject({
       sessionId: "child-1",
-      agentType: "explore",
       agentDisplayName: "Explore",
       taskTitle: "Child title",
       taskSummary: "Inspect the source",
       executionStatus: "running",
-      depth: 3,
+      executionStatusLabel: "Running",
       startedAt: 140,
+      background: false,
       canNavigate: true,
-      tools: [],
     });
   });
 
@@ -104,14 +107,34 @@ describe("delegation card view-model", () => {
 
     expect(model).toMatchObject({
       sessionId: "",
-      agentType: "explore",
+      agentDisplayName: "Explore",
       taskTitle: "Inspect source",
       taskSummary: "Inspect the source",
       executionStatus: "error",
-      depth: 1,
+      executionStatusLabel: "Stopped",
+      executionStatusDetail: "Error",
       startedAt: 120,
+      profile: "fast",
+      skills: ["analyze-work"],
+      background: true,
       canNavigate: false,
     });
+  });
+
+  test("omits metadata that is absent instead of fabricating defaults", () => {
+    const model = buildDelegationCardViewModel({
+      part: makePart({ input: {} }),
+      projectSlug: "demo",
+      focusStoreSessionId: "root-1",
+      childSessionLinks: [],
+      agentDescriptors: agents,
+    });
+
+    expect(model.agentDisplayName).toBeUndefined();
+    expect(model.profile).toBeUndefined();
+    expect(model.background).toBeUndefined();
+    expect(model.taskTitle).toBeUndefined();
+    expect(model.taskSummary).toBeUndefined();
   });
 
   test("maps terminal child execution states without a second task status", () => {
@@ -132,6 +155,9 @@ describe("delegation card view-model", () => {
         agentDescriptors: agents,
       });
       expect(model.executionStatus).toBe(executionStatus);
+      if (linkStatus !== "completed") {
+        expect(model.executionStatusLabel).toBe("Stopped");
+      }
     }
   });
 

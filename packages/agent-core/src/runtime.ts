@@ -31,6 +31,10 @@ import type { ProjectInfo } from "./projects/types";
 import { SessionLifecycleService } from "./projects/session-lifecycle-service";
 import { SkillService } from "./skills";
 import type { SessionFile, SessionSummary } from "./store/helpers";
+import {
+  projectSessionCompression,
+  projectSessionExecutionInputCheckpoints,
+} from "./store/session-read-projection";
 import { resolveSessionProfile } from "./agents/session-profile";
 import { NotRootSessionError } from "./store/errors";
 import type { CompressionOriginalRangeResult } from "./compression";
@@ -56,6 +60,8 @@ import type {
   RequestedModelSelection,
   SessionFamilyActivity,
   SessionExecutionRecord,
+  SessionExecutionInputCheckpoint,
+  CompressionStateSnapshot,
   SessionGoal,
   SessionTreeResponse,
 } from "@archcode/protocol";
@@ -379,7 +385,9 @@ export interface AgentRuntime {
   notifyRuntimeShutdown(reason: string): void;
 }
 
-export type RuntimeSessionFile = SessionFile & {
+export type RuntimeSessionFile = Omit<SessionFile, "compression"> & {
+  readonly compression: CompressionStateSnapshot;
+  readonly executionInputCheckpoints: SessionExecutionInputCheckpoint[];
   readonly profile: import("./config").ProfileName;
   readonly nextModelSelection: SessionNextModelSelection;
   readonly activeModelBinding?: ExecutionModelBindingSummary;
@@ -423,6 +431,8 @@ export async function createRuntime(
       ?.binding;
     return {
       ...file,
+      compression: projectSessionCompression(file.compression),
+      executionInputCheckpoints: projectSessionExecutionInputCheckpoints(file.executions, file.toolBatches),
       profile,
       nextModelSelection: { requested, resolved },
       ...(activeModelBinding === undefined ? {} : { activeModelBinding }),

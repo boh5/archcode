@@ -5,7 +5,6 @@ export type {
   DirectoryListResponse,
   DirectorySearchResponse,
   SessionSummary,
-  Session,
   SessionTreeResponse,
   SessionTreeNode,
   SessionTreeDiagnostic,
@@ -50,7 +49,17 @@ export type {
   DashboardProjectError,
 } from "@archcode/protocol";
 
-import type { AutomationAction, AutomationTrigger, Session, SessionGoal, SessionSummary } from "@archcode/protocol";
+import type {
+  AutomationAction,
+  AutomationTrigger,
+  Session as ProtocolSession,
+  SessionGoal,
+  SessionProjection,
+  SessionSummary,
+} from "@archcode/protocol";
+
+/** Complete persisted Session file returned by the Session detail endpoint. */
+export type Session = ProtocolSession & Pick<SessionProjection, "compression">;
 
 /** Visible Session-owned Goal projection, returned by Session and dashboard APIs. */
 export type SessionGoalView = SessionGoal;

@@ -3,7 +3,6 @@ import { useStore } from "zustand/react";
 import { createStore } from "zustand/vanilla";
 import { MAX_EVENTS, createEmptySessionStats, isStreamEvent, reduceStreamEvent } from "@archcode/protocol";
 import type {
-  CompressionBlockPart,
   CompressionStateSnapshot,
   GlobalSessionEventEnvelope,
   Reminder,
@@ -18,6 +17,7 @@ import type {
   SessionNextModelSelection,
   SessionProjection,
   SessionExecutionRecord,
+  SessionExecutionInputCheckpoint,
   SessionStats,
   SessionStep,
   SessionTodo,
@@ -79,13 +79,13 @@ export interface WebSessionStoreState extends Omit<SessionProjection, "cwd" | "a
     agentName?: string | null;
     stats?: SessionStats;
     executions?: SessionExecutionRecord[];
+    executionInputCheckpoints?: SessionExecutionInputCheckpoint[];
     eventCursor?: number;
     events?: SessionEventEnvelope[];
     modelSelection?: SessionModelSelection;
     nextModelSelection?: SessionNextModelSelection;
     activeModelBinding?: ExecutionModelBindingSummary;
     compression?: CompressionStateSnapshot;
-    compressionBlocks?: CompressionBlockPart[];
     /** `undefined` is a legitimate clear from the authoritative Session snapshot. */
     goal?: SessionGoal | undefined;
   }) => void;
@@ -255,6 +255,7 @@ export function createWebSessionStore(
     steps: [],
     stats: createEmptySessionStats(),
     executions: [],
+    executionInputCheckpoints: [],
     todos: [],
     reminders: [],
     childSessionLinks: [],
@@ -377,6 +378,9 @@ export function createWebSessionStore(
         if (data.executions !== undefined && !stale) {
           updates.executions = data.executions;
         }
+        if (data.executionInputCheckpoints !== undefined && !stale) {
+          updates.executionInputCheckpoints = data.executionInputCheckpoints;
+        }
         if (data.rootSessionId !== undefined) {
           updates.rootSessionId = data.rootSessionId;
         }
@@ -397,9 +401,6 @@ export function createWebSessionStore(
         }
         if (data.compression !== undefined && !stale) {
           updates.compression = data.compression;
-        }
-        if (data.compressionBlocks !== undefined && !stale) {
-          updates.compressionBlocks = data.compressionBlocks;
         }
         if ("goal" in data && !stale) {
           updates.goal = data.goal;

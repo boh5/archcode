@@ -1,5 +1,5 @@
 /**
- * Time formatting helpers — deduplicated from ChatMessages, DelegationCard, and Sidebar.
+ * Shared relative and elapsed time formatting helpers.
  */
 
 export function formatRelativeTime(timestamp: number): string {

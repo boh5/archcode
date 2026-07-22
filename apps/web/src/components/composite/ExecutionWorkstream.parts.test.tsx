@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { CompressionBlockPart, CompressionBlockSnapshot, CompactionPart, ToolChildSessionLink, RecoveryNoticePart, SessionMessage, TextPart, ReasoningPart } from "@archcode/protocol";
-import { MsgUser, PartRenderer } from "./ChatMessages";
+import { MsgUser, PartRenderer } from "./ExecutionWorkstream";
 import { CompressionBlock } from "./CompressionBlock";
 import type { CompressionOriginalRangeSuccess } from "../../api/compression";
 
@@ -703,7 +703,7 @@ describe("CompressionBlock", () => {
 
     expect(text).toContain("Explore codebase");
     expect(text).toContain("Code Explorer");
-    expect(text).toContain("Execution: Completed");
+    expect(text).toContain("Completed");
     expect(text).not.toContain("Task:");
   });
 });

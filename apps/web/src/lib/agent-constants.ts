@@ -14,59 +14,8 @@ export const AGENT_TYPES = [
 
 export type AgentType = (typeof AGENT_TYPES)[number];
 
-export const AGENT_ICON_COLORS: Record<AgentType, string> = {
-  lead: "bg-agent-lead/20 text-agent-lead",
-  analyst: "bg-agent-analyst/20 text-agent-analyst",
-  build: "bg-agent-build/20 text-agent-build",
-  explore: "bg-agent-explore/20 text-agent-explore",
-  librarian: "bg-agent-librarian/20 text-agent-librarian",
-};
-
-export const AGENT_BADGE_COLORS: Record<AgentType, string> = AGENT_ICON_COLORS;
-
-export const AGENT_BORDER_CLASS: Record<AgentType, string> = {
-  lead: "border-agent-lead",
-  analyst: "border-agent-analyst",
-  build: "border-agent-build",
-  explore: "border-agent-explore",
-  librarian: "border-agent-librarian",
-};
-
 export function isValidAgentType(value: string): value is AgentType {
   return (AGENT_TYPES as readonly string[]).includes(value);
-}
-
-export interface AgentAppearance {
-  initial: string;
-  iconClass: string;
-  borderClass: string;
-}
-
-const UNKNOWN_AGENT_APPEARANCE = {
-  iconClass: "bg-bg-active text-text-muted",
-  borderClass: "border-border-default",
-} as const;
-
-export function resolveAgentInitial(displayName: string | null | undefined): string {
-  return displayName?.trim().slice(0, 1).toUpperCase() || "?";
-}
-
-export function resolveAgentAppearance(
-  agentName: string | null | undefined,
-  displayName: string | null | undefined = agentName,
-): AgentAppearance {
-  if (agentName !== null && agentName !== undefined && isValidAgentType(agentName)) {
-    return {
-      initial: resolveAgentInitial(displayName),
-      iconClass: AGENT_ICON_COLORS[agentName],
-      borderClass: AGENT_BORDER_CLASS[agentName],
-    };
-  }
-
-  return {
-    initial: resolveAgentInitial(displayName),
-    ...UNKNOWN_AGENT_APPEARANCE,
-  };
 }
 
 export function resolveAgentDisplayName(

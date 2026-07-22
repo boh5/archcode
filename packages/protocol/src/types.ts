@@ -71,6 +71,13 @@ export interface SessionExecutionRecord {
   origin: SessionExecutionOrigin;
 }
 
+/** Read-only product projection for an Execution that yielded at a HITL tool boundary. */
+export interface SessionExecutionInputCheckpoint {
+  executionId: string;
+  state: "pending_response" | "response_received" | "continuing" | "continued" | "cancelled";
+  continuationExecutionId?: string;
+}
+
 export type SessionMessageSource = "user" | "automation";
 
 export interface PendingSessionMessage {
@@ -1066,6 +1073,8 @@ export interface SessionProjection {
   childSessionLinks: ToolChildSessionLink[];
   stats: SessionStats;
   executions: SessionExecutionRecord[];
+  /** Snapshot-only semantic join over durable tool-batch and Execution history. */
+  executionInputCheckpoints?: SessionExecutionInputCheckpoint[];
   promptTraces?: PromptTraceSnapshot[];
   executionCount: number;
   isRunning: boolean;
@@ -1172,6 +1181,7 @@ export interface Session {
   childSessionLinks: ToolChildSessionLink[];
   stats: SessionStats;
   executions: SessionExecutionRecord[];
+  executionInputCheckpoints: SessionExecutionInputCheckpoint[];
   events?: SessionEventEnvelope[];
   parentSessionId?: string;
   delegationRequest?: DelegationRequest;

@@ -1,0 +1,1932 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ArchCode · Execution Workstream Demo</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg-base: #09090b;
+      --bg-surface: #111113;
+      --bg-elevated: #18181b;
+      --bg-overlay: #1c1c20;
+      --bg-hover: #1f1f23;
+      --bg-active: #27272a;
+      --border-default: #27272a;
+      --border-subtle: #1e1e22;
+      --border-strong: #3f3f46;
+      --text-primary: #fafafa;
+      --text-secondary: #a1a1aa;
+      --text-tertiary: #71717a;
+      --text-muted: #52525b;
+      --accent: #6366f1;
+      --accent-hover: #818cf8;
+      --accent-muted: #4f46e520;
+      --accent-subtle: #6366f115;
+      --success: #22c55e;
+      --success-muted: #22c55e20;
+      --warning: #eab308;
+      --warning-muted: #eab30820;
+      --error: #ef4444;
+      --error-muted: #ef444420;
+      --info: #3b82f6;
+      --info-muted: #3b82f620;
+      --agent-lead: #8b5cf6;
+      --agent-analyst: #3b82f6;
+      --agent-build: #06b6d4;
+      --agent-explore: #64748b;
+      --agent-librarian: #8b5cf6;
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, .36);
+      --shadow-md: 0 18px 50px rgba(0, 0, 0, .46);
+      --radius-sm: 6px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: var(--bg-base); color: var(--text-primary); }
+    body { min-width: 320px; font-size: 13px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+    button, textarea, input { font: inherit; }
+    button { color: inherit; }
+    button:focus-visible, textarea:focus-visible, input:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .mono { font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace; }
+    .app {
+      min-height: 100vh;
+      display: grid;
+      background: var(--bg-base);
+    }
+    .app.screen-dashboard { grid-template-columns: 52px minmax(0, 1fr); }
+    .app.screen-project-dashboard,
+    .app.screen-session { grid-template-columns: 52px 230px minmax(0, 1fr); }
+    .dashboard-only, .project-dashboard-only, .session-only, .project-sidebar { display: none !important; }
+    .screen-dashboard .dashboard-only { display: flex !important; }
+    .screen-project-dashboard .project-dashboard-only { display: flex !important; }
+    .screen-project-dashboard .project-sidebar,
+    .screen-session .project-sidebar { display: flex !important; }
+    .screen-session .session-only { display: flex !important; }
+    .child-focus-only { display: none !important; }
+    .app.child-focus .root-focus-only { display: none !important; }
+    .app.child-focus .child-focus-only { display: flex !important; }
+    .child-panel { display: none; }
+    .app.focus-build [data-child-panel="build"],
+    .app.focus-analyst [data-child-panel="analyst"] { display: block; }
+
+    .state-block, .state-flex, .state-inline, .state-grid { display: none !important; }
+    .scenario-running .when-running.state-block,
+    .scenario-waiting .when-waiting.state-block,
+    .scenario-resolved .when-resolved.state-block { display: block !important; }
+    .scenario-running .when-running.state-flex,
+    .scenario-waiting .when-waiting.state-flex,
+    .scenario-resolved .when-resolved.state-flex { display: flex !important; }
+    .scenario-running .when-running.state-inline,
+    .scenario-waiting .when-waiting.state-inline,
+    .scenario-resolved .when-resolved.state-inline { display: inline-flex !important; }
+    .scenario-running .when-running.state-grid,
+    .scenario-waiting .when-waiting.state-grid,
+    .scenario-resolved .when-resolved.state-grid { display: grid !important; }
+
+    /* Project rail */
+    .project-rail {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 0;
+      border-right: 1px solid var(--border-subtle);
+      background: var(--bg-surface);
+    }
+    .rail-brand, .project-mark, .rail-button {
+      position: relative;
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border: 0;
+      border-radius: var(--radius-md);
+      background: transparent;
+      color: var(--text-tertiary);
+      cursor: pointer;
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .rail-brand { background: var(--accent); color: #fff; font-size: 14px; box-shadow: var(--shadow-sm); }
+    .project-mark:hover, .rail-button:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .project-mark.active { background: var(--accent-subtle); color: var(--accent-hover); }
+    .project-mark.active::before {
+      content: "";
+      position: absolute;
+      left: -9px;
+      top: 8px;
+      width: 3px;
+      height: 18px;
+      border-radius: 0 3px 3px 0;
+      background: var(--accent);
+    }
+    .rail-separator { width: 20px; height: 1px; margin: 2px 0; background: var(--border-default); }
+    .rail-spacer { flex: 1; }
+    .rail-button.attention::after {
+      content: "1";
+      position: absolute;
+      top: -2px;
+      right: -2px;
+      min-width: 15px;
+      height: 15px;
+      padding: 0 3px;
+      border: 2px solid var(--bg-surface);
+      border-radius: 9px;
+      background: var(--warning);
+      color: var(--bg-base);
+      font-size: 9px;
+      line-height: 11px;
+    }
+
+    /* Project sidebar */
+    .sidebar {
+      position: sticky;
+      top: 0;
+      z-index: 25;
+      min-width: 0;
+      height: 100vh;
+      flex-direction: column;
+      border-right: 1px solid var(--border-subtle);
+      background: var(--bg-surface);
+    }
+    .sidebar-header { padding: 14px 12px 11px; border-bottom: 1px solid var(--border-subtle); }
+    .project-title { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12.5px; font-weight: 650; }
+    .live-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px var(--success-muted); }
+    .project-path { margin-top: 4px; overflow: hidden; color: var(--text-muted); font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
+    .primary-nav { display: grid; gap: 2px; margin-top: 12px; }
+    .nav-row {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 8px;
+      border: 0;
+      border-radius: var(--radius-sm);
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      text-align: left;
+      font-size: 11px;
+    }
+    .nav-row:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .nav-row.active { background: var(--accent-subtle); color: var(--accent-hover); }
+    .screen-project-dashboard .nav-row[data-screen="project-dashboard"] { background: var(--accent-subtle); color: var(--accent-hover); }
+    .nav-icon { width: 14px; color: var(--text-muted); text-align: center; }
+    .nav-count { margin-left: auto; color: var(--text-muted); font-size: 9px; }
+    .sidebar-tabs {
+      display: flex;
+      height: 39px;
+      padding: 0 8px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .sidebar-tab {
+      flex: 1;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      background: transparent;
+      color: var(--text-tertiary);
+      cursor: pointer;
+      font-size: 10.5px;
+    }
+    .sidebar-tab.active { border-bottom-color: var(--accent); color: var(--text-primary); }
+    .sidebar-content { min-height: 0; flex: 1; overflow: auto; padding: 10px 8px 14px; }
+    .sidebar-label {
+      padding: 6px 7px 5px;
+      color: var(--text-muted);
+      font-size: 8.5px;
+      font-weight: 700;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+    }
+    .session-row {
+      position: relative;
+      width: 100%;
+      display: block;
+      margin: 1px 0;
+      padding: 8px 8px 8px 23px;
+      border: 0;
+      border-radius: var(--radius-md);
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      text-align: left;
+    }
+    .session-row:hover { background: var(--bg-hover); }
+    .session-row.active { background: var(--bg-active); color: var(--text-primary); }
+    .session-row::before {
+      content: "";
+      position: absolute;
+      left: 9px;
+      top: 13px;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--text-muted);
+    }
+    .session-row.running::before { background: var(--success); box-shadow: 0 0 0 3px var(--success-muted); }
+    .session-row.waiting::before { background: var(--warning); box-shadow: 0 0 0 3px var(--warning-muted); }
+    .session-title { display: block; overflow: hidden; font-size: 10.5px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+    .session-meta { display: flex; gap: 6px; margin-top: 3px; color: var(--text-muted); font-size: 8.5px; }
+    .sidebar-footer { padding: 9px; border-top: 1px solid var(--border-subtle); }
+    .new-session {
+      width: 100%;
+      padding: 7px 9px;
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md);
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 10.5px;
+      text-align: left;
+    }
+    .new-session:hover { border-color: var(--border-strong); color: var(--text-primary); }
+
+    /* Shared canvas shell */
+    .canvas-shell { min-width: 0; min-height: 100vh; flex-direction: column; overflow: hidden; }
+    .screen-session .canvas-shell { height: 100vh; min-height: 0; }
+    .mobile-bar {
+      display: none;
+      height: 45px;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 9px;
+      border-bottom: 1px solid var(--border-subtle);
+      background: var(--bg-surface);
+    }
+    .icon-button {
+      width: 30px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md);
+      background: transparent;
+      color: var(--text-tertiary);
+      cursor: pointer;
+    }
+    .icon-button:hover { border-color: var(--border-strong); color: var(--text-primary); }
+
+    /* Dashboard */
+    .dashboard {
+      min-height: 100vh;
+      overflow: auto;
+      background: var(--bg-base);
+    }
+    .project-dashboard-shell { min-width: 0; min-height: 100vh; flex-direction: column; overflow: hidden; }
+    .project-dashboard-shell .dashboard { min-height: 0; flex: 1; }
+    .project-dashboard-shell .dashboard-inner { width: min(100%, 1040px); }
+    .dashboard-inner { width: min(100%, 1120px); margin: 0 auto; padding: 42px 34px 72px; }
+    .dashboard-header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 28px;
+      margin-bottom: 35px;
+    }
+    .dashboard-title h1 { margin: 0; font-size: 25px; font-weight: 620; letter-spacing: -.035em; }
+    .dashboard-title p { max-width: 570px; margin: 6px 0 0; color: var(--text-tertiary); font-size: 11.5px; }
+    .dashboard-pulse {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      padding: 9px 12px;
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md);
+      background: var(--bg-surface);
+    }
+    .pulse-item { min-width: 62px; }
+    .pulse-item span { display: block; color: var(--text-muted); font-size: 8px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
+    .pulse-item strong { display: flex; align-items: center; gap: 6px; margin-top: 2px; color: var(--text-secondary); font-size: 11px; font-weight: 600; }
+    .pulse-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+    .pulse-item.running strong { color: var(--success); }
+    .pulse-item.attention strong { color: var(--warning); }
+    .dashboard-section {
+      display: grid;
+      grid-template-columns: 155px minmax(0, 1fr);
+      gap: 22px;
+      padding: 22px 0;
+      border-top: 1px solid var(--border-subtle);
+    }
+    .section-heading { padding: 3px 0; }
+    .section-heading strong { display: flex; align-items: center; gap: 8px; font-size: 11.5px; font-weight: 600; }
+    .section-heading p { margin: 5px 0 0 16px; color: var(--text-muted); font-size: 9.5px; }
+    .section-symbol { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
+    .section-symbol.warning { background: var(--warning); box-shadow: 0 0 0 4px var(--warning-muted); }
+    .section-symbol.success { background: var(--success); box-shadow: 0 0 0 4px var(--success-muted); }
+    .section-symbol.accent { background: var(--accent); box-shadow: 0 0 0 4px var(--accent-muted); }
+    .dashboard-rows { display: grid; gap: 6px; }
+    .work-row {
+      width: 100%;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 18px;
+      align-items: center;
+      min-height: 59px;
+      padding: 10px 12px;
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md);
+      background: var(--bg-surface);
+      color: inherit;
+      cursor: pointer;
+      text-align: left;
+      transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+    }
+    .work-row:hover { border-color: var(--border-strong); background: var(--bg-hover); transform: translateY(-1px); }
+    .work-row.attention { border-color: rgba(234, 179, 8, .34); background: linear-gradient(90deg, var(--warning-muted), var(--bg-surface) 42%); }
+    .row-main { min-width: 0; }
+    .row-title { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 11.5px; font-weight: 600; }
+    .row-title span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .project-chip, .goal-chip {
+      flex: 0 0 auto;
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: var(--bg-active);
+      color: var(--text-tertiary);
+      font-size: 8.5px;
+      font-weight: 550;
+    }
+    .goal-chip { background: var(--accent-muted); color: var(--accent-hover); }
+    .row-detail { margin-top: 4px; overflow: hidden; color: var(--text-tertiary); font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
+    .row-action { display: flex; align-items: center; gap: 10px; color: var(--text-muted); font-size: 9.5px; white-space: nowrap; }
+    .row-action strong { color: var(--warning); font-weight: 550; }
+    .empty-row {
+      min-height: 50px;
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      border: 1px dashed var(--border-default);
+      border-radius: var(--radius-md);
+      color: var(--text-muted);
+      font-size: 10px;
+    }
+
+    /* Session header and layout */
+    .session-header {
+      min-height: 58px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 8px 14px 8px 17px;
+      border-bottom: 1px solid var(--border-subtle);
+      background: rgba(9, 9, 11, .96);
+      backdrop-filter: blur(12px);
+    }
+    .child-session-header { justify-content: space-between; }
+    .child-back {
+      min-width: 0;
+      border: 0;
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 10px;
+      text-align: left;
+    }
+    .child-back:hover { color: var(--text-primary); }
+    .child-heading { min-width: 0; flex: 1; overflow: hidden; color: var(--text-primary); font-size: 11px; font-weight: 600; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+    .build-focus-label, .analyst-focus-label { display: none; }
+    .app.focus-build .build-focus-label, .app.focus-analyst .analyst-focus-label { display: block; }
+    .session-heading { min-width: 0; flex: 1; }
+    .session-title-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .session-title-line h1 { margin: 0; overflow: hidden; font-size: 13px; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
+    .status-pill {
+      align-items: center;
+      gap: 5px;
+      padding: 2px 7px;
+      border-radius: 10px;
+      font-size: 8.5px;
+      font-weight: 650;
+    }
+    .status-pill.running { background: var(--success-muted); color: var(--success); }
+    .status-pill.waiting { background: var(--warning-muted); color: var(--warning); }
+    .status-pill.resolved { background: var(--accent-muted); color: var(--accent-hover); }
+    .status-pill i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+    .status-pill.running i { animation: pulse 1.8s ease-in-out infinite; }
+    @keyframes pulse { 50% { opacity: .35; transform: scale(.78); } }
+    .session-subline { display: flex; align-items: center; gap: 7px; margin-top: 4px; color: var(--text-muted); font-size: 9px; }
+    .session-subline span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sub-separator { color: var(--border-strong); }
+    .scenario-switch {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      padding: 3px;
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md);
+      background: var(--bg-surface);
+    }
+    .scenario-switch span { padding: 0 5px; color: var(--text-muted); font-size: 8px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    .scenario-switch button {
+      padding: 5px 7px;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: var(--text-tertiary);
+      cursor: pointer;
+      font-size: 9px;
+    }
+    .scenario-switch button:hover { color: var(--text-primary); }
+    .scenario-running .scenario-switch [data-scenario="running"],
+    .scenario-waiting.hitl-permission .scenario-switch [data-hitl="permission"],
+    .scenario-waiting.hitl-questions .scenario-switch [data-hitl="questions"],
+    .scenario-resolved .scenario-switch [data-scenario="resolved"] {
+      background: var(--bg-active);
+      color: var(--text-primary);
+    }
+    .session-body {
+      position: relative;
+      min-height: 0;
+      flex: 1;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 282px;
+      overflow: hidden;
+    }
+    .session-center { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--bg-base); }
+    .workstream-scroll { min-height: 0; flex: 1; overflow: auto; }
+    .workstream { width: min(100%, 1040px); margin: 0 auto; padding: 23px 22px 34px; }
+    .workstream-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; margin-bottom: 16px; padding: 0 2px; }
+    .workstream-heading h2 { margin: 0; font-size: 15px; font-weight: 620; letter-spacing: -.015em; }
+    .workstream-heading p { margin: 4px 0 0; color: var(--text-tertiary); font-size: 9.5px; }
+    .workstream-legend { display: flex; align-items: center; gap: 12px; color: var(--text-muted); font-size: 8.5px; }
+    .legend-item { display: flex; align-items: center; gap: 5px; }
+    .legend-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--text-muted); }
+    .legend-dot.live { background: var(--success); }
+    .legend-dot.human { background: var(--warning); }
+
+    /* Execution chapters */
+    .execution {
+      position: relative;
+      margin-top: 9px;
+      overflow: hidden;
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-lg);
+      background: var(--bg-surface);
+      box-shadow: var(--shadow-sm);
+    }
+    .execution.current { border-color: var(--border-strong); box-shadow: 0 0 0 1px rgba(99, 102, 241, .08), var(--shadow-sm); }
+    .execution.waiting-border { border-color: rgba(234, 179, 8, .38); }
+    .execution-summary {
+      width: 100%;
+      min-height: 53px;
+      display: grid;
+      grid-template-columns: 22px minmax(0, 1fr) auto 16px;
+      gap: 9px;
+      align-items: center;
+      padding: 9px 12px;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+      text-align: left;
+    }
+    .execution-summary:hover { background: var(--bg-hover); }
+    .execution-index {
+      width: 22px;
+      height: 22px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--bg-active);
+      color: var(--text-tertiary);
+      font-size: 8px;
+      font-weight: 700;
+    }
+    .execution.current .execution-index { background: var(--accent-muted); color: var(--accent-hover); }
+    .execution-copy { min-width: 0; }
+    .execution-meta { display: flex; align-items: center; gap: 7px; color: var(--text-muted); font-size: 8px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
+    .execution-meta .complete { color: var(--success); }
+    .execution-meta .running { color: var(--success); }
+    .execution-meta .waiting { color: var(--warning); }
+    .execution-meta .resolved { color: var(--accent-hover); }
+    .execution-name { margin-top: 3px; overflow: hidden; color: var(--text-primary); font-size: 11px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+    .execution-counts { color: var(--text-muted); font-size: 8.5px; white-space: nowrap; }
+    .chevron { color: var(--text-muted); font-size: 12px; transition: transform 150ms ease; }
+    .execution.collapsed .chevron { transform: rotate(-90deg); }
+    .execution-details { padding: 0 13px 14px 42px; border-top: 1px solid var(--border-subtle); }
+    .execution.collapsed .execution-details { display: none; }
+    .message-row { min-width: 0; display: flex; margin: 12px 0; }
+    .message-row.user { justify-content: flex-end; }
+    .message-row.agent { align-items: flex-start; }
+    .message-stack { min-width: 0; max-width: min(78%, 680px); }
+    .user-bubble {
+      padding: 8px 11px;
+      border: 1px solid var(--border-subtle);
+      border-radius: 14px 14px 4px 14px;
+      background: var(--bg-overlay);
+      color: var(--text-primary);
+      font-size: 10.5px;
+      line-height: 1.55;
+      box-shadow: var(--shadow-sm);
+    }
+    .message-meta { margin-top: 4px; color: var(--text-muted); font-size: 8px; }
+    .message-row.user .message-meta { text-align: right; }
+    .agent-message { min-width: 0; max-width: min(78%, 680px); }
+    .agent-message-copy { color: var(--text-secondary); font-size: 10.5px; line-height: 1.68; }
+    .agent-message-copy strong { color: var(--text-primary); font-weight: 600; }
+    .agent-message .message-meta { margin-top: 5px; text-align: left; }
+    .delegate-card {
+      margin: 7px 0 10px;
+      overflow: hidden;
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-lg);
+      background: var(--bg-base);
+      transition: border-color 150ms ease, background 150ms ease;
+    }
+    .delegate-card:hover { border-color: var(--border-strong); }
+    .scenario-waiting .delegate-card.current-delegation { border-color: rgba(234, 179, 8, .34); }
+    .delegate-card-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      padding: 10px 11px 9px;
+      background: var(--bg-surface);
+    }
+    .delegate-heading { min-width: 0; }
+    .delegate-kicker { display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 7.8px; text-transform: uppercase; letter-spacing: .07em; }
+    .delegate-kicker code { color: var(--accent-hover); font-size: 8px; text-transform: none; }
+    .delegate-heading strong { display: block; margin-top: 3px; overflow: hidden; color: var(--text-primary); font-size: 10.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+    .delegate-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 7px;
+      border-radius: 10px;
+      background: var(--success-muted);
+      color: var(--success);
+      font-size: 8px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+    .delegate-status.waiting { background: var(--warning-muted); color: var(--warning); }
+    .delegate-status.completed { background: var(--accent-muted); color: var(--accent-hover); }
+    .delegate-status i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+    .delegate-objective { padding: 9px 11px; color: var(--text-secondary); font-size: 9.5px; line-height: 1.55; }
+    .delegate-footer {
+      min-height: 31px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 8px 6px 11px;
+      border-top: 1px solid var(--border-subtle);
+      color: var(--text-muted);
+      font-size: 8px;
+    }
+    .delegate-agent { color: var(--agent-build); font-weight: 650; }
+    .delegate-agent.analyst { color: var(--agent-analyst); }
+    .delegate-footer .spacer { flex: 1; }
+    .delegate-footer button {
+      padding: 3px 6px;
+      border: 0;
+      border-radius: 4px;
+      background: transparent;
+      color: var(--text-tertiary);
+      cursor: pointer;
+      font-size: 8px;
+    }
+    .delegate-footer button:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .delegate-footer .open-child { background: var(--accent-subtle); color: var(--accent-hover); }
+    .delegate-details { display: none; padding: 3px 11px 9px; border-top: 1px solid var(--border-subtle); }
+    .delegate-card.expanded .delegate-details { display: block; }
+    .delegate-detail-row { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 8px; padding: 3px 0; color: var(--text-muted); font-size: 8px; }
+    .delegate-detail-row code, .delegate-detail-row strong { overflow: hidden; color: var(--text-tertiary); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+    .activity-group {
+      margin: 6px 0;
+      overflow: hidden;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      background: var(--bg-base);
+    }
+    .activity-group > button {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 9px;
+      border: 0;
+      background: transparent;
+      color: var(--text-tertiary);
+      cursor: pointer;
+      text-align: left;
+      font-size: 8.8px;
+    }
+    .activity-group > button:hover { background: var(--bg-hover); color: var(--text-secondary); }
+    .activity-group > button span:last-child { margin-left: auto; color: var(--text-muted); }
+    .activity-group-details { display: none; padding: 4px 9px 8px; border-top: 1px solid var(--border-subtle); }
+    .activity-group.expanded .activity-group-details { display: block; }
+    .tool-call + .tool-call { border-top: 1px solid var(--border-subtle); }
+    .tool-line {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 68px minmax(0, 1fr) auto 12px;
+      gap: 8px;
+      align-items: center;
+      padding: 6px 1px;
+      border: 0;
+      background: transparent;
+      color: var(--text-tertiary);
+      cursor: pointer;
+      text-align: left;
+      font-size: 8.5px;
+    }
+    .tool-line:hover { color: var(--text-secondary); }
+    .tool-line strong { color: var(--text-secondary); font-weight: 550; }
+    .tool-line code { overflow: hidden; color: var(--text-muted); text-overflow: ellipsis; white-space: nowrap; }
+    .tool-ok { color: var(--success); }
+    .tool-chevron { color: var(--text-muted); font-size: 10px; transition: transform 150ms ease; }
+    .tool-call.expanded .tool-chevron { transform: rotate(90deg); }
+    .tool-call-details { display: none; padding: 1px 0 8px 76px; }
+    .tool-call.expanded .tool-call-details { display: block; }
+    .tool-detail-row {
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr);
+      gap: 7px;
+      margin-top: 5px;
+      color: var(--text-muted);
+      font-size: 7.8px;
+    }
+    .tool-detail-row span { padding-top: 4px; text-transform: uppercase; letter-spacing: .06em; }
+    .tool-detail-row pre {
+      min-width: 0;
+      margin: 0;
+      padding: 5px 6px;
+      overflow: auto;
+      border: 1px solid var(--border-subtle);
+      border-radius: 4px;
+      background: var(--bg-surface);
+      color: var(--text-tertiary);
+      font: 7.8px/1.45 "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .tool-detail-meta { margin: 6px 0 0 49px; color: var(--text-muted); font-size: 7.5px; }
+    /* Session-family approval */
+    .approval-card {
+      margin: 8px 0 7px;
+      overflow: hidden;
+      border: 1px solid rgba(234, 179, 8, .38);
+      border-radius: var(--radius-lg);
+      background: var(--bg-elevated);
+      box-shadow: 0 12px 34px rgba(0, 0, 0, .24);
+    }
+    .approval-header {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 10px 11px;
+      border-bottom: 1px solid rgba(234, 179, 8, .16);
+      background: var(--warning-muted);
+    }
+    .approval-symbol {
+      width: 23px;
+      height: 23px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: rgba(234, 179, 8, .14);
+      color: var(--warning);
+      font-size: 11px;
+    }
+    .approval-title { min-width: 0; flex: 1; }
+    .approval-title strong { display: block; font-size: 10.5px; font-weight: 620; }
+    .approval-title span { display: block; margin-top: 1px; color: var(--text-tertiary); font-size: 8.5px; }
+    .approval-status { color: var(--warning); font-size: 8px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+    .approval-body { padding: 11px; }
+    .approval-reason { margin: 0 0 10px; color: var(--text-secondary); font-size: 9.5px; }
+    .approval-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .approval-fact { min-width: 0; padding: 7px 8px; border-radius: var(--radius-sm); background: var(--bg-base); }
+    .approval-fact span { display: block; color: var(--text-muted); font-size: 7.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+    .approval-fact strong { display: block; margin-top: 3px; overflow: hidden; color: var(--text-secondary); font-size: 8.7px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+    .approval-comment {
+      width: 100%;
+      min-height: 38px;
+      margin-top: 7px;
+      resize: vertical;
+      padding: 8px;
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-sm);
+      background: var(--bg-base);
+      color: var(--text-primary);
+      font-size: 9px;
+    }
+    .approval-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-top: 9px; }
+    .button {
+      padding: 6px 9px;
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-sm);
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 8.8px;
+      font-weight: 550;
+    }
+    .button:hover { border-color: var(--border-strong); color: var(--text-primary); }
+    .button.primary { border-color: var(--accent); background: var(--accent); color: #fff; }
+    .button.danger { color: var(--error); }
+    /* Goal, HITL and composer */
+    .composer-dock {
+      flex: 0 0 auto;
+      border-top: 1px solid var(--border-subtle);
+      background: rgba(17, 17, 19, .97);
+      backdrop-filter: blur(14px);
+    }
+    .composer-inner { width: min(100%, 1040px); margin: 0 auto; padding: 9px 22px 11px; }
+    .goal-progress {
+      min-width: 0;
+      min-height: 32px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-bottom: 5px;
+      padding: 5px 7px 5px 9px;
+      border: 1px solid rgba(99, 102, 241, .25);
+      border-radius: var(--radius-md);
+      background: var(--accent-subtle);
+    }
+    .goal-symbol { flex: 0 0 auto; color: var(--accent-hover); font-size: 10px; }
+    .goal-label { flex: 0 0 auto; color: var(--accent-hover); font-size: 8px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+    .goal-objective { min-width: 40px; flex: 1; overflow: hidden; color: var(--text-primary); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+    .goal-stats { flex: 0 0 auto; color: var(--text-tertiary); font-size: 8px; white-space: nowrap; }
+    .goal-actions { display: flex; flex: 0 0 auto; gap: 3px; }
+    .goal-actions button { padding: 3px 6px; border: 0; border-radius: 4px; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 8px; }
+    .goal-actions button:hover { border-color: var(--accent); color: var(--text-primary); }
+    .goal-actions .goal-clear:hover { color: var(--error); }
+
+    .queued-list {
+      max-height: 30dvh;
+      flex-direction: column;
+      margin-bottom: 5px;
+      overflow-x: hidden;
+      overflow-y: auto;
+      border-top: 1px solid var(--border-subtle);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .queued-row {
+      min-width: 0;
+      min-height: 29px;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto auto;
+      align-items: center;
+      gap: 7px;
+      padding: 4px 7px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .queued-row:last-child { border-bottom: 0; }
+    .queued-state { color: var(--text-muted); font-size: 7.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+    .queued-copy { min-width: 0; overflow: hidden; color: var(--text-secondary); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+    .queued-model { color: var(--text-muted); font-size: 7.8px; white-space: nowrap; }
+    .queued-actions { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .queued-actions button { padding: 0; border: 0; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 8px; }
+    .queued-actions button:hover { color: var(--text-primary); }
+    .queued-actions .steer { color: var(--accent-hover); }
+    .queued-actions .delete:hover { color: var(--error); }
+
+    .composer-attention { max-height: min(52vh, 430px); margin-bottom: 5px; overflow: auto; padding: 7px; border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--bg-surface); }
+    .request-stack-label { margin: 0 0 6px 2px; color: var(--warning); font-size: 7.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+    .composer-attention .approval-card { margin: 0; }
+    .permission-request, .question-request { display: none; }
+    .hitl-permission .permission-request, .hitl-questions .question-request { display: block; }
+    .question-request {
+      overflow: hidden;
+      border: 1px solid rgba(234, 179, 8, .38);
+      border-radius: var(--radius-lg);
+      background: var(--bg-elevated);
+    }
+    .question-head { display: flex; align-items: flex-start; gap: 8px; padding: 9px 10px 7px; }
+    .question-head-copy { min-width: 0; flex: 1; }
+    .question-head-copy strong { display: block; font-size: 10px; font-weight: 620; }
+    .question-head-copy span { display: block; margin-top: 1px; color: var(--text-tertiary); font-size: 8px; }
+    .question-counter { display: flex; align-items: center; gap: 5px; color: var(--text-tertiary); font-size: 8px; white-space: nowrap; }
+    .question-counter button { width: 21px; height: 21px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--text-secondary); cursor: pointer; }
+    .question-counter button:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); }
+    .question-counter button:disabled { color: var(--text-muted); cursor: default; }
+    .question-progress { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--border-subtle); border-bottom: 1px solid var(--border-subtle); }
+    .question-progress button { min-width: 0; padding: 6px 7px; overflow: hidden; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+    .question-progress button.active { border-bottom-color: var(--accent); color: var(--text-primary); }
+    .question-progress button.answered::before { content: "✓ "; color: var(--success); }
+    .question-panel { padding: 9px 10px 10px; }
+    .question-kicker { margin-bottom: 3px; color: var(--text-muted); font-size: 7.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+    .question-copy { margin: 0 0 7px; color: var(--text-primary); font-size: 9.5px; }
+    .question-options { display: grid; gap: 4px; }
+    .question-option { display: flex; align-items: flex-start; gap: 7px; padding: 6px 7px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-secondary); cursor: pointer; font-size: 8.5px; }
+    .question-option:hover { border-color: var(--border-strong); background: var(--bg-hover); color: var(--text-primary); }
+    .question-option input { margin: 2px 0 0; accent-color: var(--accent); }
+    .question-option span { min-width: 0; flex: 1; }
+    .question-option small { color: var(--text-muted); font-size: 7.8px; }
+    .question-freeform { width: 100%; min-height: 50px; resize: vertical; padding: 7px 8px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-base); color: var(--text-primary); font-size: 9px; }
+    .question-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
+    .composer-box {
+      padding: 8px 9px 7px;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-lg);
+      background: var(--bg-base);
+      box-shadow: var(--shadow-sm);
+    }
+    .composer-box textarea {
+      width: 100%;
+      min-height: 38px;
+      max-height: 120px;
+      resize: none;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--text-primary);
+      font-size: 10.5px;
+      line-height: 1.5;
+    }
+    .composer-box textarea::placeholder { color: var(--text-muted); }
+    .composer-actions { display: flex; align-items: center; gap: 7px; margin-top: 4px; }
+    .model-chip { color: var(--text-muted); font-size: 8px; }
+    .composer-helper { color: var(--text-muted); font-size: 8px; }
+    .composer-spacer { flex: 1; }
+    .send-button {
+      min-width: 27px;
+      height: 25px;
+      padding: 0 8px;
+      border: 0;
+      border-radius: var(--radius-sm);
+      background: var(--accent);
+      color: #fff;
+      cursor: pointer;
+      font-size: 8.5px;
+      font-weight: 650;
+    }
+
+    /* Context inspector */
+    .inspector {
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      border-left: 1px solid var(--border-subtle);
+      background: var(--bg-surface);
+    }
+    .inspector-tabs { display: flex; height: 42px; padding: 0 8px; border-bottom: 1px solid var(--border-subtle); }
+    .inspector-tab {
+      flex: 1;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      background: transparent;
+      color: var(--text-tertiary);
+      cursor: pointer;
+      font-size: 9px;
+    }
+    .inspector-tab.active { border-bottom-color: var(--accent); color: var(--text-primary); }
+    .inspector-panel { display: none; min-height: 0; flex: 1; overflow: auto; padding: 13px 11px 20px; }
+    .inspector-panel.active { display: block; }
+    .inspector-section { padding: 10px 0; border-top: 1px solid var(--border-subtle); }
+    .inspector-section:first-child { padding-top: 0; border-top: 0; }
+    .inspector-label { margin-bottom: 7px; color: var(--text-muted); font-size: 7.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    .agent-row {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      padding: 7px 8px;
+      border: 0;
+      border-radius: var(--radius-sm);
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      text-align: left;
+    }
+    .agent-row:hover, .agent-row.active { background: var(--bg-hover); }
+    .agent-row.child { margin-left: 12px; width: calc(100% - 12px); }
+    .agent-copy { min-width: 0; flex: 1; }
+    .agent-copy strong { display: block; font-size: 9.5px; font-weight: 550; }
+    .agent-copy span { display: block; margin-top: 1px; color: var(--text-muted); font-size: 8px; }
+    .agent-skill { margin-left: 8px; padding: 0 0 4px; color: var(--text-muted); font-size: 8px; }
+    .agent-skill.child { margin-left: 20px; }
+    .details-grid { display: grid; gap: 7px; }
+    .detail-row { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 8px; font-size: 8.5px; }
+    .detail-row span { color: var(--text-muted); }
+    .detail-row strong { overflow: hidden; color: var(--text-secondary); font-weight: 500; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+    .file-summary { display: flex; justify-content: space-between; margin-bottom: 8px; color: var(--text-muted); font-size: 8.5px; }
+    .file-summary .plus { color: var(--success); }
+    .file-summary .minus { color: var(--error); }
+    .file-row {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 12px minmax(0, 1fr) auto;
+      gap: 7px;
+      align-items: center;
+      padding: 6px 5px;
+      border: 0;
+      border-radius: var(--radius-sm);
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      text-align: left;
+      font-size: 8.3px;
+    }
+    .file-row:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .file-row code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .file-stat { color: var(--text-muted); font-size: 7.5px; }
+    .full-diff {
+      width: 100%;
+      margin-top: 9px;
+      padding: 7px;
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-sm);
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 8.5px;
+    }
+    .full-diff:hover { border-color: var(--border-strong); color: var(--text-primary); }
+
+    .toast {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      z-index: 100;
+      max-width: min(340px, calc(100vw - 32px));
+      padding: 9px 11px;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-md);
+      background: var(--bg-elevated);
+      color: var(--text-secondary);
+      box-shadow: var(--shadow-md);
+      font-size: 9px;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(8px);
+      transition: opacity 160ms ease, transform 160ms ease;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    .scrim { display: none; }
+    .edit-dialog {
+      width: min(480px, calc(100vw - 28px));
+      padding: 0;
+      overflow: hidden;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-lg);
+      background: var(--bg-elevated);
+      color: var(--text-primary);
+      box-shadow: var(--shadow-md);
+    }
+    .edit-dialog::backdrop { background: rgba(0, 0, 0, .62); backdrop-filter: blur(2px); }
+    .dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 12px; border-bottom: 1px solid var(--border-subtle); }
+    .dialog-head strong { font-size: 11px; font-weight: 620; }
+    .dialog-close { width: 24px; height: 24px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--text-tertiary); cursor: pointer; }
+    .dialog-close:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .dialog-body { display: grid; gap: 10px; padding: 12px; }
+    .dialog-field { display: grid; gap: 4px; color: var(--text-secondary); font-size: 8.5px; }
+    .dialog-field textarea, .dialog-field input { width: 100%; padding: 8px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-base); color: var(--text-primary); font-size: 9.5px; }
+    .dialog-field textarea { min-height: 96px; resize: vertical; }
+    .dialog-hint { color: var(--text-muted); font-size: 8px; }
+    .dialog-actions { display: flex; justify-content: flex-end; gap: 6px; padding: 0 12px 12px; }
+
+    @media (max-width: 1100px) {
+      .session-body { grid-template-columns: minmax(0, 1fr); }
+      .inspector {
+        position: fixed;
+        z-index: 60;
+        inset: 0 0 0 auto;
+        width: min(310px, calc(100vw - 48px));
+        box-shadow: var(--shadow-md);
+        transform: translateX(102%);
+        transition: transform 180ms ease;
+      }
+      .app.inspector-open .inspector { transform: translateX(0); }
+      .scrim {
+        position: fixed;
+        z-index: 55;
+        inset: 0;
+        background: rgba(0, 0, 0, .48);
+      }
+      .app.inspector-open .scrim { display: block; }
+    }
+    @media (max-width: 799px) {
+      .app.screen-dashboard, .app.screen-project-dashboard, .app.screen-session { grid-template-columns: minmax(0, 1fr); }
+      .project-rail { display: none; }
+      .sidebar {
+        position: fixed;
+        z-index: 70;
+        inset: 0 auto 0 0;
+        width: min(250px, calc(100vw - 48px));
+        box-shadow: var(--shadow-md);
+        transform: translateX(-102%);
+        transition: transform 180ms ease;
+      }
+      .screen-project-dashboard.nav-open .sidebar,
+      .screen-session.nav-open .sidebar { display: flex !important; transform: translateX(0); }
+      .app.nav-open .scrim { display: block; z-index: 65; }
+      .mobile-bar { display: flex; }
+      .session-header { min-height: 54px; padding: 7px 10px; }
+      .scenario-switch span { display: none; }
+      .scenario-switch button { padding: 5px 6px; font-size: 8px; }
+      .session-subline .optional-meta { display: none; }
+      .dashboard-inner { padding: 25px 16px 56px; }
+      .dashboard-header { align-items: flex-start; flex-direction: column; margin-bottom: 23px; }
+      .dashboard-pulse { width: 100%; justify-content: space-between; }
+      .dashboard-section { grid-template-columns: 1fr; gap: 10px; padding: 18px 0; }
+      .section-heading p { display: none; }
+      .workstream { padding: 17px 10px 26px; }
+      .workstream-legend { display: none; }
+      .execution-summary { grid-template-columns: 22px minmax(0, 1fr) 16px; }
+      .execution-counts { display: none; }
+      .execution-details { padding: 0 10px 12px; }
+      .message-stack, .agent-message { max-width: 92%; }
+      .activity-group, .approval-card, .delegate-card { margin-left: 0; }
+      .delegate-card-head { grid-template-columns: minmax(0, 1fr); }
+      .delegate-status { grid-column: 1; justify-self: start; }
+      .delegate-footer { flex-wrap: wrap; }
+      .tool-call-details { padding-left: 0; }
+      .tool-detail-row { grid-template-columns: 1fr; gap: 3px; }
+      .tool-detail-meta { margin-left: 0; }
+      .approval-facts { grid-template-columns: 1fr; }
+      .composer-inner { padding: 8px 9px 9px; }
+      .goal-stats { display: none; }
+      .queued-model { display: none; }
+      .queued-actions { gap: 5px; }
+      .queued-actions button { font-size: 7.5px; }
+      .question-option { flex-wrap: wrap; }
+      .question-option small { width: 100%; padding-left: 20px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app screen-dashboard scenario-running hitl-permission" id="app">
+    <aside class="project-rail" aria-label="Projects">
+      <button class="rail-brand" type="button" data-screen="dashboard" aria-label="Dashboard">A</button>
+      <div class="rail-separator"></div>
+      <button class="project-mark active" type="button" data-screen="session" data-scenario-target="running" data-focus-root title="ArchCode">AC</button>
+      <button class="project-mark" type="button" data-toast="Perler project selected in the real product." title="Perler">PL</button>
+      <button class="project-mark" type="button" data-toast="OpenMontage project selected in the real product." title="OpenMontage">OM</button>
+      <div class="rail-spacer"></div>
+      <button class="rail-button attention" type="button" data-screen="session" data-scenario-target="waiting" data-hitl-target="permission" data-focus-child="build" aria-label="Pending request">◇</button>
+      <button class="rail-button" type="button" data-toast="Settings remain unchanged." aria-label="Settings">⚙</button>
+    </aside>
+
+    <aside class="sidebar project-sidebar" id="project-sidebar" aria-label="Project navigation">
+      <div class="sidebar-header">
+        <div class="project-title"><span class="live-dot"></span><span>ArchCode</span></div>
+        <div class="project-path mono">/Users/bo/Developer/AI/archcode</div>
+        <nav class="primary-nav">
+          <button class="nav-row" type="button" data-screen="project-dashboard"><span class="nav-icon">⌂</span>Project Dashboard</button>
+          <button class="nav-row" type="button" data-toast="Todos keeps its existing Idea → Ready → Done model."><span class="nav-icon">◇</span>Todos<span class="nav-count">4</span></button>
+        </nav>
+      </div>
+      <div class="sidebar-tabs" role="tablist" aria-label="Sidebar sections">
+        <button class="sidebar-tab active" type="button">Sessions</button>
+        <button class="sidebar-tab" type="button" data-toast="Automations keep their existing list and detail pages.">Automations</button>
+      </div>
+      <div class="sidebar-content">
+        <div class="sidebar-label">Active</div>
+        <button class="session-row active running" type="button" data-screen="session" data-scenario-row="running" data-focus-root>
+          <span class="session-title">Refine Bash permission policy</span>
+          <span class="session-meta"><span>Lead</span><span class="when-running state-inline">running</span><span class="when-waiting state-inline">waiting</span><span class="when-resolved state-inline">idle</span></span>
+        </button>
+        <button class="session-row running" type="button" data-toast="This would open another existing Root Session.">
+          <span class="session-title">UI/UX workbench research</span>
+          <span class="session-meta"><span>Goal · active</span><span>18m</span></span>
+        </button>
+        <div class="sidebar-label">Recent</div>
+        <button class="session-row" type="button" data-toast="This would open the selected Root Session.">
+          <span class="session-title">Dashboard projection cleanup</span>
+          <span class="session-meta"><span>Lead</span><span>2h</span></span>
+        </button>
+        <button class="session-row" type="button" data-toast="This would open the selected Root Session.">
+          <span class="session-title">Model runtime recovery</span>
+          <span class="session-meta"><span>Lead</span><span>Yesterday</span></span>
+        </button>
+      </div>
+      <div class="sidebar-footer"><button class="new-session" type="button" data-toast="Uses the existing New Session flow.">＋ New session</button></div>
+    </aside>
+
+    <main class="canvas-shell dashboard-only">
+      <div class="mobile-bar">
+        <strong>ArchCode</strong>
+        <button class="icon-button" type="button" data-toast="Project picker opens here.">AC</button>
+      </div>
+      <section class="dashboard" aria-label="Dashboard">
+        <div class="dashboard-inner">
+          <header class="dashboard-header">
+            <div class="dashboard-title">
+              <h1>Dashboard</h1>
+              <p>跨项目发现需要介入、正在运行、可以继续和即将触发的工作。这里负责分流，不承担完整工作流展示。</p>
+            </div>
+            <div class="dashboard-pulse" aria-label="Current workbench state">
+              <div class="pulse-item attention"><span>Needs you</span><strong><i class="pulse-dot"></i>1</strong></div>
+              <div class="pulse-item running"><span>Running</span><strong><i class="pulse-dot"></i>2</strong></div>
+              <div class="pulse-item"><span>Projects</span><strong>3</strong></div>
+            </div>
+          </header>
+
+          <section class="dashboard-section" id="needs-attention">
+            <div class="section-heading">
+              <strong><i class="section-symbol warning"></i>Needs attention</strong>
+              <p>需要你的决定</p>
+            </div>
+            <div class="dashboard-rows">
+              <button class="work-row attention" type="button" data-screen="session" data-scenario-target="waiting" data-focus-child="build">
+                <span class="row-main">
+                  <span class="row-title"><span>Approve bash</span><span class="project-chip">ArchCode</span></span>
+                  <span class="row-detail">Refine Bash permission policy · Build 请求读取工作区外路径</span>
+                </span>
+                <span class="row-action"><strong>Waiting 6m</strong><span>Open →</span></span>
+              </button>
+            </div>
+          </section>
+
+          <section class="dashboard-section">
+            <div class="section-heading">
+              <strong><i class="section-symbol success"></i>Running now</strong>
+              <p>仍在执行</p>
+            </div>
+            <div class="dashboard-rows">
+              <button class="work-row" type="button" data-screen="session" data-scenario-target="running" data-focus-root>
+                <span class="row-main">
+                  <span class="row-title"><span>Refine Bash permission policy</span><span class="project-chip">ArchCode</span><span class="goal-chip">Goal · active</span></span>
+                  <span class="row-detail">Root Lead Session · updated moments ago</span>
+                </span>
+                <span class="row-action"><span style="color:var(--success)">● Running</span><span>Open →</span></span>
+              </button>
+              <button class="work-row" type="button" data-toast="Opens the existing Root Session in its project.">
+                <span class="row-main">
+                  <span class="row-title"><span>Payment provider eligibility research</span><span class="project-chip">Perler</span></span>
+                  <span class="row-detail">Root Lead Session · updated 11m ago</span>
+                </span>
+                <span class="row-action"><span style="color:var(--success)">● Running</span><span>Open →</span></span>
+              </button>
+            </div>
+          </section>
+
+          <section class="dashboard-section">
+            <div class="section-heading">
+              <strong><i class="section-symbol accent"></i>Continue working</strong>
+              <p>最近的工作上下文</p>
+            </div>
+            <div class="dashboard-rows">
+              <button class="work-row" type="button" data-screen="session" data-scenario-target="resolved" data-focus-root>
+                <span class="row-main">
+                  <span class="row-title"><span>Dashboard projection cleanup</span><span class="project-chip">ArchCode</span></span>
+                  <span class="row-detail">Root Lead Session · updated 2h ago</span>
+                </span>
+                <span class="row-action"><span>Continue →</span></span>
+              </button>
+              <button class="work-row" type="button" data-toast="Opens the existing Root Session in its project.">
+                <span class="row-main">
+                  <span class="row-title"><span>Short-video pacing adjustments</span><span class="project-chip">OpenMontage</span></span>
+                  <span class="row-detail">Root Lead Session · updated yesterday</span>
+                </span>
+                <span class="row-action"><span>Continue →</span></span>
+              </button>
+            </div>
+          </section>
+
+          <section class="dashboard-section">
+            <div class="section-heading">
+              <strong><i class="section-symbol"></i>Upcoming</strong>
+              <p>计划触发的 Automation</p>
+            </div>
+            <div class="dashboard-rows">
+              <button class="work-row" type="button" data-toast="Opens the existing Automation detail page.">
+                <span class="row-main">
+                  <span class="row-title"><span>Nightly integration tests</span><span class="project-chip">ArchCode</span></span>
+                  <span class="row-detail">Cron · Asia/Shanghai</span>
+                </span>
+                <span class="row-action"><span>Next run 02:00</span><span>Open →</span></span>
+              </button>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <main class="project-dashboard-shell project-dashboard-only">
+      <div class="mobile-bar">
+        <button class="icon-button" type="button" data-mobile-nav aria-label="Open navigation">☰</button>
+        <strong>Project Dashboard</strong>
+        <button class="icon-button" type="button" data-screen="session" data-scenario-target="running" data-focus-root aria-label="Open active session">◎</button>
+      </div>
+      <section class="dashboard" aria-label="ArchCode project dashboard">
+        <div class="dashboard-inner">
+          <header class="dashboard-header">
+            <div class="dashboard-title">
+              <h1>Project Dashboard</h1>
+              <p>ArchCode 项目内需要介入、正在运行、可以继续和即将触发的工作。项目导航和 Session 列表保持在原位。</p>
+            </div>
+            <div class="dashboard-pulse" aria-label="ArchCode project state">
+              <div class="pulse-item attention"><span>Needs you</span><strong><i class="pulse-dot"></i>1</strong></div>
+              <div class="pulse-item running"><span>Running</span><strong><i class="pulse-dot"></i>2</strong></div>
+              <div class="pulse-item"><span>Todos</span><strong>4</strong></div>
+            </div>
+          </header>
+
+          <section class="dashboard-section">
+            <div class="section-heading">
+              <strong><i class="section-symbol warning"></i>Needs attention</strong>
+              <p>需要你的决定</p>
+            </div>
+            <div class="dashboard-rows">
+              <button class="work-row attention" type="button" data-screen="session" data-scenario-target="waiting" data-focus-child="build">
+                <span class="row-main">
+                  <span class="row-title"><span>Approve bash</span></span>
+                  <span class="row-detail">Refine Bash permission policy · Build 请求读取工作区外路径</span>
+                </span>
+                <span class="row-action"><strong>Waiting 6m</strong><span>Open →</span></span>
+              </button>
+            </div>
+          </section>
+
+          <section class="dashboard-section">
+            <div class="section-heading">
+              <strong><i class="section-symbol success"></i>Running now</strong>
+              <p>项目内仍在执行</p>
+            </div>
+            <div class="dashboard-rows">
+              <button class="work-row" type="button" data-screen="session" data-scenario-target="running" data-focus-root>
+                <span class="row-main">
+                  <span class="row-title"><span>Refine Bash permission policy</span><span class="goal-chip">Goal · active</span></span>
+                  <span class="row-detail">Root Lead Session · updated moments ago</span>
+                </span>
+                <span class="row-action"><span style="color:var(--success)">● Running</span><span>Open →</span></span>
+              </button>
+              <button class="work-row" type="button" data-toast="Opens the existing UI/UX workbench research Session.">
+                <span class="row-main">
+                  <span class="row-title"><span>UI/UX workbench research</span><span class="goal-chip">Goal · active</span></span>
+                  <span class="row-detail">Root Lead Session · updated 18m ago</span>
+                </span>
+                <span class="row-action"><span style="color:var(--success)">● Running</span><span>Open →</span></span>
+              </button>
+            </div>
+          </section>
+
+          <section class="dashboard-section">
+            <div class="section-heading">
+              <strong><i class="section-symbol accent"></i>Continue working</strong>
+              <p>最近的项目上下文</p>
+            </div>
+            <div class="dashboard-rows">
+              <button class="work-row" type="button" data-screen="session" data-scenario-target="resolved" data-focus-root>
+                <span class="row-main">
+                  <span class="row-title"><span>Dashboard projection cleanup</span></span>
+                  <span class="row-detail">Root Lead Session · updated 2h ago</span>
+                </span>
+                <span class="row-action"><span>Continue →</span></span>
+              </button>
+              <button class="work-row" type="button" data-toast="Opens the existing Model runtime recovery Session.">
+                <span class="row-main">
+                  <span class="row-title"><span>Model runtime recovery</span></span>
+                  <span class="row-detail">Root Lead Session · updated yesterday</span>
+                </span>
+                <span class="row-action"><span>Continue →</span></span>
+              </button>
+            </div>
+          </section>
+
+          <section class="dashboard-section">
+            <div class="section-heading">
+              <strong><i class="section-symbol"></i>Upcoming</strong>
+              <p>计划触发的 Automation</p>
+            </div>
+            <div class="dashboard-rows">
+              <button class="work-row" type="button" data-toast="Opens the existing Automation detail page.">
+                <span class="row-main">
+                  <span class="row-title"><span>Nightly integration tests</span></span>
+                  <span class="row-detail">Cron · Asia/Shanghai</span>
+                </span>
+                <span class="row-action"><span>Next run 02:00</span><span>Open →</span></span>
+              </button>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <main class="canvas-shell session-only">
+      <div class="mobile-bar">
+        <button class="icon-button" type="button" data-mobile-nav aria-label="Open navigation">☰</button>
+        <strong>ArchCode</strong>
+        <button class="icon-button" type="button" data-mobile-inspector aria-label="Open inspector">◎</button>
+      </div>
+      <header class="session-header root-focus-only">
+        <div class="session-heading">
+          <div class="session-title-line">
+            <h1>Refine Bash permission policy</h1>
+            <span class="status-pill running when-running state-inline"><i></i>Running</span>
+            <span class="status-pill waiting when-waiting state-inline"><i></i>Waiting for you</span>
+            <span class="status-pill resolved when-resolved state-inline"><i></i>Ready</span>
+          </div>
+          <div class="session-subline">
+            <span class="mono">/Users/bo/Developer/AI/archcode</span>
+            <span class="sub-separator">·</span>
+            <span>Goal · active</span>
+            <span class="sub-separator optional-meta">·</span>
+            <span class="optional-meta when-running state-inline">Execution 12 · Lead · principal</span>
+            <span class="optional-meta when-waiting state-inline">Execution 12 · waiting_for_human</span>
+            <span class="optional-meta when-resolved state-inline">12 executions · latest completed</span>
+          </div>
+        </div>
+        <div class="scenario-switch" aria-label="Demo state">
+          <span>Demo state</span>
+          <button type="button" data-scenario="running">Running</button>
+          <button type="button" data-scenario="waiting" data-hitl="permission">Permission</button>
+          <button type="button" data-scenario="waiting" data-hitl="questions">Questions</button>
+          <button type="button" data-scenario="resolved">Resolved</button>
+        </div>
+        <button class="icon-button" type="button" data-toggle-inspector aria-label="Toggle inspector">◎</button>
+      </header>
+
+      <header class="session-header child-session-header child-focus-only">
+        <button class="child-back" type="button" data-focus-root>← Back to Refine Bash permission policy</button>
+        <span class="child-heading build-focus-label">Verify outside-workspace read request</span>
+        <span class="child-heading analyst-focus-label">Review HITL display semantics</span>
+        <button class="icon-button" type="button" data-toggle-inspector aria-label="Toggle inspector">◎</button>
+      </header>
+
+      <div class="session-body">
+        <section class="session-center">
+          <div class="workstream-scroll root-focus-only">
+            <div class="workstream">
+              <header class="workstream-heading">
+                <div>
+                  <h2>Execution workstream</h2>
+                  <p>以执行轮次组织指令、Lead 输出、工具调用、Child Session 和结果；需要时再展开完整细节。</p>
+                </div>
+                <div class="workstream-legend">
+                  <span class="legend-item"><i class="legend-dot live"></i>active</span>
+                  <span class="legend-item"><i class="legend-dot human"></i>needs you</span>
+                </div>
+              </header>
+
+              <article class="execution collapsed" data-execution>
+                <button class="execution-summary" type="button" data-toggle-execution>
+                  <span class="execution-index">10</span>
+                  <span class="execution-copy">
+                    <span class="execution-meta"><span class="complete">Completed</span><span>8m 14s</span></span>
+                    <span class="execution-name">Audit the current Bash permission boundary</span>
+                  </span>
+                  <span class="execution-counts">11 tool calls</span>
+                  <span class="chevron">⌄</span>
+                </button>
+                <div class="execution-details">
+                  <div class="message-row user"><div class="message-stack"><div class="user-bubble">先核对当前 Bash 权限策略和工作区边界，不要修改代码。</div><div class="message-meta">You · principal · 09:48</div></div></div>
+                  <div class="message-row agent"><div class="agent-message"><div class="agent-message-copy"><strong>结论：</strong>普通动态命令默认允许，静态工作区外路径会触发确认；当前策略不应把所有 Git 读取都升级为审批。</div><div class="message-meta">Lead · principal · 09:56</div></div></div>
+                </div>
+              </article>
+
+              <article class="execution collapsed" data-execution>
+                <button class="execution-summary" type="button" data-toggle-execution>
+                  <span class="execution-index">11</span>
+                  <span class="execution-copy">
+                    <span class="execution-meta"><span class="complete">Completed</span><span>5m 37s</span></span>
+                    <span class="execution-name">Compare the policy with current product behavior</span>
+                  </span>
+                  <span class="execution-counts">7 tools · 1 child</span>
+                  <span class="chevron">⌄</span>
+                </button>
+                <div class="execution-details">
+                  <div class="message-row user"><div class="message-stack"><div class="user-bubble">对照 Web 端 HITL 展示和实际 Bash policy，确认 Demo 里不要出现产品没有的权限流程。</div><div class="message-meta">You · principal · 10:02</div></div></div>
+                  <div class="message-row agent"><div class="agent-message"><div class="agent-message-copy">我会先核对公开的 HITL 数据边界，再委派 Analyst 做一次独立复核。</div><div class="message-meta">Lead · principal · 10:03</div></div></div>
+                  <div class="delegate-card">
+                    <div class="delegate-card-head">
+                      <span class="delegate-heading"><span class="delegate-kicker"><code>delegate</code><span>Child Session</span></span><strong>Review HITL display semantics</strong></span>
+                      <span class="delegate-status completed"><i></i>Completed · 3m</span>
+                    </div>
+                    <div class="delegate-objective">独立检查审批卡能够展示的公开字段，并确认没有泄露决策历史或内部执行数据。</div>
+                    <div class="delegate-footer"><span class="delegate-agent analyst">Analyst</span><span>deep</span><span>foreground</span><span class="spacer"></span><button type="button" data-toggle-delegate aria-expanded="false">Details</button><button class="open-child" type="button" data-focus-child="analyst">Open child session →</button></div>
+                    <div class="delegate-details"><div class="delegate-detail-row"><span>Tool</span><code>delegate</code></div><div class="delegate-detail-row"><span>Skills</span><strong>review-change</strong></div><div class="delegate-detail-row"><span>Child</span><code>ses_analyst_11</code></div><div class="delegate-detail-row"><span>Background</span><strong>false</strong></div></div>
+                  </div>
+                  <div class="activity-group">
+                    <button type="button" data-toggle-activity aria-expanded="false"><span>›</span><strong>6 other tool calls</strong><span>Read-only activity</span></button>
+                    <div class="activity-group-details">
+                      <div class="tool-call">
+                        <button class="tool-line" type="button" data-toggle-tool aria-expanded="false"><strong>file_read</strong><code>tools/permission/bash.ts</code><span class="tool-ok">completed</span><span class="tool-chevron">›</span></button>
+                        <div class="tool-call-details"><div class="tool-detail-row"><span>Input</span><pre>packages/agent-core/src/tools/permission/bash.ts</pre></div><div class="tool-detail-row"><span>Output</span><pre>File contents returned · bounded read</pre></div><div class="tool-detail-meta">Lead · read only · 18ms</div></div>
+                      </div>
+                      <div class="tool-call">
+                        <button class="tool-line" type="button" data-toggle-tool aria-expanded="false"><strong>grep</strong><code>allowedActions</code><span class="tool-ok">completed</span><span class="tool-chevron">›</span></button>
+                        <div class="tool-call-details"><div class="tool-detail-row"><span>Input</span><pre>pattern: allowedActions<br />path: apps/web/src</pre></div><div class="tool-detail-row"><span>Output</span><pre>4 matches in HITL boundaries and card tests</pre></div><div class="tool-detail-meta">Lead · read only · 31ms</div></div>
+                      </div>
+                      <div class="tool-call">
+                        <button class="tool-line" type="button" data-toggle-tool aria-expanded="false"><strong>file_read</strong><code>features/HitlCard.tsx</code><span class="tool-ok">completed</span><span class="tool-chevron">›</span></button>
+                        <div class="tool-call-details"><div class="tool-detail-row"><span>Input</span><pre>apps/web/src/components/features/HitlCard.tsx</pre></div><div class="tool-detail-row"><span>Output</span><pre>File contents returned · bounded read</pre></div><div class="tool-detail-meta">Lead · read only · 14ms</div></div>
+                      </div>
+                      <div class="tool-call">
+                        <button class="tool-line" type="button" data-toggle-tool aria-expanded="false"><strong>file_read</strong><code>routes/hitl.ts</code><span class="tool-ok">completed</span><span class="tool-chevron">›</span></button>
+                        <div class="tool-call-details"><div class="tool-detail-row"><span>Input</span><pre>apps/server/src/routes/hitl.ts</pre></div><div class="tool-detail-row"><span>Output</span><pre>File contents returned · bounded read</pre></div><div class="tool-detail-meta">Lead · read only · 12ms</div></div>
+                      </div>
+                      <div class="tool-call">
+                        <button class="tool-line" type="button" data-toggle-tool aria-expanded="false"><strong>grep</strong><code>waiting_for_human</code><span class="tool-ok">completed</span><span class="tool-chevron">›</span></button>
+                        <div class="tool-call-details"><div class="tool-detail-row"><span>Input</span><pre>pattern: waiting_for_human<br />path: packages apps</pre></div><div class="tool-detail-row"><span>Output</span><pre>Session and HITL projection matches returned</pre></div><div class="tool-detail-meta">Lead · read only · 27ms</div></div>
+                      </div>
+                      <div class="tool-call">
+                        <button class="tool-line" type="button" data-toggle-tool aria-expanded="false"><strong>background_output</strong><code>ses_analyst_11</code><span class="tool-ok">completed</span><span class="tool-chevron">›</span></button>
+                        <div class="tool-call-details"><div class="tool-detail-row"><span>Input</span><pre>session_id: ses_analyst_11</pre></div><div class="tool-detail-row"><span>Output</span><pre>Review result returned to the Root Session</pre></div><div class="tool-detail-meta">Lead · read only · 9ms</div></div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="message-row agent"><div class="agent-message"><div class="agent-message-copy"><strong>复核通过：</strong>审批只应显示当前公开的请求、原因、允许动作和状态；不展示历史决定内容、决策人或交付回执。</div><div class="message-meta">Lead · principal · 10:08</div></div></div>
+                </div>
+              </article>
+
+              <article class="execution current" id="current-execution" data-execution>
+                <button class="execution-summary" type="button" data-toggle-execution>
+                  <span class="execution-index">12</span>
+                  <span class="execution-copy">
+                    <span class="execution-meta">
+                      <span class="running when-running state-inline">Running</span>
+                      <span class="waiting when-waiting state-inline">Waiting for you</span>
+                      <span class="complete when-resolved state-inline">Completed</span>
+                      <span class="when-running state-inline">6m 18s</span>
+                      <span class="when-waiting state-inline">paused safely</span>
+                      <span class="when-resolved state-inline">7m 02s</span>
+                    </span>
+                    <span class="execution-name">Verify an outside-workspace read request end to end</span>
+                  </span>
+                  <span class="execution-counts when-running state-inline">1 tool · 1 child active</span>
+                  <span class="execution-counts when-waiting state-inline">1 child needs you</span>
+                  <span class="execution-counts when-resolved state-inline">1 tool · 1 child completed</span>
+                  <span class="chevron">⌄</span>
+                </button>
+                <div class="execution-details">
+                  <div class="message-row user"><div class="message-stack"><div class="user-bubble">用一个真实会触发确认的只读命令验证流程，并把审批前后的执行关系说明清楚。</div><div class="message-meta">You · principal · 10:36</div></div></div>
+                  <div class="message-row agent"><div class="agent-message"><div class="agent-message-copy">我会把这项验证作为一次前台委派交给 Build；Child Session 返回后再整理最终结论。</div><div class="message-meta">Lead · principal · 10:36</div></div></div>
+                  <div class="delegate-card current-delegation">
+                    <div class="delegate-card-head">
+                      <span class="delegate-heading"><span class="delegate-kicker"><code>delegate</code><span>Child Session</span></span><strong>Verify outside-workspace read request</strong></span>
+                      <span class="delegate-status when-running state-inline"><i></i>Running · 6m</span>
+                      <span class="delegate-status waiting when-waiting state-inline"><i></i>Waiting for approval</span>
+                      <span class="delegate-status completed when-resolved state-inline"><i></i>Completed · 7m</span>
+                    </div>
+                    <div class="delegate-objective">用一个会触发确认的只读命令核对 Bash 权限边界，并返回验证结论；完整消息和工具活动保留在 Child Session。</div>
+                    <div class="delegate-footer"><span class="delegate-agent">Build</span><span>deep</span><span>foreground</span><span class="spacer"></span><button type="button" data-toggle-delegate aria-expanded="false">Details</button><button class="open-child" type="button" data-focus-child="build">Open child session →</button></div>
+                    <div class="delegate-details"><div class="delegate-detail-row"><span>Tool</span><code>delegate</code></div><div class="delegate-detail-row"><span>Profile</span><strong>deep</strong></div><div class="delegate-detail-row"><span>Child</span><code>ses_build_12</code></div><div class="delegate-detail-row"><span>Background</span><strong>false</strong></div></div>
+                  </div>
+
+                  <div class="message-row agent when-resolved state-flex"><div class="agent-message"><div class="agent-message-copy"><strong>验证完成：</strong>Build 返回的结果确认，该固定工作区外读取会按现有 policy 进入确认，权限边界与预期一致。</div><div class="message-meta">Lead · principal · 10:43</div></div></div>
+                </div>
+              </article>
+
+            </div>
+          </div>
+
+          <div class="workstream-scroll child-focus-only">
+            <div class="workstream">
+              <section class="child-panel" data-child-panel="build">
+                <header class="workstream-heading">
+                  <div><h2>Build session</h2><p>只读聚焦视图：这里保留 Child Session 自己的 Prompt、消息和工具调用；根 Session 的编排关系不被复制进来。</p></div>
+                  <div class="workstream-legend"><span class="legend-item"><i class="legend-dot live"></i>Build · deep</span><span class="legend-item when-waiting state-inline"><i class="legend-dot human"></i>needs you</span></div>
+                </header>
+                <article class="execution current" data-execution>
+                  <button class="execution-summary" type="button" data-toggle-execution>
+                    <span class="execution-index">1</span>
+                    <span class="execution-copy"><span class="execution-meta"><span class="running when-running state-inline">Running</span><span class="waiting when-waiting state-inline">Waiting for you</span><span class="complete when-resolved state-inline">Completed</span></span><span class="execution-name">Verify outside-workspace read request</span></span>
+                    <span class="execution-counts">Build · deep · 1 tool</span><span class="chevron">⌄</span>
+                  </button>
+                  <div class="execution-details">
+                    <div class="message-row user"><div class="message-stack"><div class="user-bubble">用一个会触发确认的只读命令核对 Bash 权限边界，并返回验证结论。</div><div class="message-meta">Delegated by Lead · deep · 10:36</div></div></div>
+                    <div class="message-row agent"><div class="agent-message"><div class="agent-message-copy">我会先执行固定的工作区外 Git 读取；若 policy 请求确认，将在当前 Child Session 暂停。</div><div class="message-meta">Build · deep · 10:37</div></div></div>
+                    <div class="activity-group expanded">
+                      <button type="button" data-toggle-activity aria-expanded="true"><span>⌄</span><strong>1 tool call</strong><span class="when-running state-inline">executing</span><span class="when-waiting state-inline">permission requested</span><span class="when-resolved state-inline">completed</span></button>
+                      <div class="activity-group-details">
+                        <div class="tool-call">
+                          <button class="tool-line" type="button" data-toggle-tool aria-expanded="false"><strong>bash</strong><code>git -C ../shared-repo status</code><span class="when-running state-inline">running</span><span class="when-waiting state-inline" style="color:var(--warning)">waiting</span><span class="tool-ok when-resolved state-inline">completed</span><span class="tool-chevron">›</span></button>
+                          <div class="tool-call-details"><div class="tool-detail-row"><span>Input</span><pre>git -C ../shared-repo status</pre></div><div class="tool-detail-row"><span>Policy</span><pre>Static path outside the registered workspace requires confirmation.</pre></div><div class="tool-detail-row when-resolved state-grid"><span>Output</span><pre>On branch main · working tree clean</pre></div><div class="tool-detail-meta">Build · permission-aware · call_bash_8f2a</div></div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="message-row agent when-resolved state-flex"><div class="agent-message"><div class="agent-message-copy"><strong>验证完成：</strong>确认后命令执行成功；工作区外静态路径仍按 policy 请求人工许可。</div><div class="message-meta">Build · deep · 10:42</div></div></div>
+                  </div>
+                </article>
+              </section>
+
+              <section class="child-panel" data-child-panel="analyst">
+                <header class="workstream-heading"><div><h2>Analyst session</h2><p>已完成的只读 Child Session；完整复核结论留在这里，父 Session 只接收最终返回。</p></div><div class="workstream-legend"><span class="legend-item"><i class="legend-dot"></i>Analyst · deep</span></div></header>
+                <article class="execution current" data-execution>
+                  <button class="execution-summary" type="button" data-toggle-execution><span class="execution-index">1</span><span class="execution-copy"><span class="execution-meta"><span class="complete">Completed</span><span>3m 02s</span></span><span class="execution-name">Review HITL display semantics</span></span><span class="execution-counts">5 tools</span><span class="chevron">⌄</span></button>
+                  <div class="execution-details">
+                    <div class="message-row user"><div class="message-stack"><div class="user-bubble">独立检查审批卡能够展示的公开字段，并确认没有泄露决策历史或内部执行数据。</div><div class="message-meta">Delegated by Lead · review-change</div></div></div>
+                    <div class="activity-group"><button type="button" data-toggle-activity aria-expanded="false"><span>›</span><strong>5 tool calls</strong><span>Read-only activity</span></button><div class="activity-group-details"><div class="tool-call"><button class="tool-line" type="button" data-toggle-tool aria-expanded="false"><strong>file_read</strong><code>features/HitlCard.tsx</code><span class="tool-ok">completed</span><span class="tool-chevron">›</span></button><div class="tool-call-details"><div class="tool-detail-row"><span>Input</span><pre>apps/web/src/components/features/HitlCard.tsx</pre></div><div class="tool-detail-row"><span>Output</span><pre>Current permission actions and display fields inspected</pre></div><div class="tool-detail-meta">Analyst · read only</div></div></div></div></div>
+                    <div class="message-row agent"><div class="agent-message"><div class="agent-message-copy"><strong>复核通过：</strong>审批卡只展示公开 payload、允许动作和当前状态；不应伪造决策历史或交付回执。</div><div class="message-meta">Analyst · deep</div></div></div>
+                  </div>
+                </article>
+              </section>
+            </div>
+          </div>
+
+          <div class="composer-dock">
+            <div class="composer-inner">
+              <section class="goal-progress" id="goal-row" aria-label="Session goal">
+                <span class="goal-symbol" aria-hidden="true">◎</span>
+                <strong class="goal-label" id="goal-status">Pursuing goal</strong>
+                <span class="goal-objective" id="goal-objective">Verify Bash permission behavior without weakening the existing trust boundary.</span>
+                <span class="goal-stats">12 turns · 184,220 tokens · 47m</span>
+                <div class="goal-actions">
+                  <button type="button" id="edit-goal">Edit</button>
+                  <button type="button" id="toggle-goal">Pause</button>
+                  <button class="goal-clear" type="button" id="clear-goal">Clear</button>
+                </div>
+              </section>
+
+              <div class="queued-list when-running when-waiting state-flex" id="queued-list" aria-label="Queued messages">
+                <div class="queued-row" data-queued-row="queue-1">
+                  <span class="queued-state">Queued</span>
+                  <span class="queued-copy">审批完成后，再补充验证 denied 路径不会执行命令。</span>
+                  <span class="queued-model">principal</span>
+                  <span class="queued-actions"><button class="steer" type="button" data-queue-action="steer">Steer</button><button type="button" data-queue-action="edit">Edit</button><button class="delete" type="button" data-queue-action="delete">Delete</button></span>
+                </div>
+                <div class="queued-row" data-queued-row="queue-2">
+                  <span class="queued-state">Queued</span>
+                  <span class="queued-copy">再检查一次多项目切换后当前 Session 的模型绑定是否保持一致。</span>
+                  <span class="queued-model">principal</span>
+                  <span class="queued-actions"><button class="steer" type="button" data-queue-action="steer">Steer</button><button type="button" data-queue-action="edit">Edit</button><button class="delete" type="button" data-queue-action="delete">Delete</button></span>
+                </div>
+              </div>
+
+              <div class="composer-attention when-waiting state-block" aria-label="Requests needing attention">
+                <div class="request-stack-label">Needs input</div>
+                <div class="approval-card permission-request">
+                  <div class="approval-header"><span class="approval-symbol">◇</span><span class="approval-title"><strong>Allow Build to run this command?</strong><span>Build · tool permission · call_bash_8f2a</span></span><span class="approval-status">Waiting for you</span></div>
+                  <div class="approval-body">
+                    <p class="approval-reason">Bash path access outside the workspace requires confirmation.</p>
+                    <div class="approval-facts"><div class="approval-fact"><span>Input</span><strong class="mono">git -C ../shared-repo status</strong></div><div class="approval-fact"><span>Owner</span><strong>Build · ses_build_12</strong></div><div class="approval-fact"><span>Child state</span><strong>waiting_for_human</strong></div><div class="approval-fact"><span>Persistent approval</span><strong>Eligible</strong></div></div>
+                    <textarea class="approval-comment" aria-label="Approval comment" placeholder="Comment (optional)"></textarea>
+                    <div class="approval-actions" style="justify-content:flex-start"><button class="button primary" type="button" data-resolve-permission="Allow once">Allow once</button><button class="button" type="button" data-resolve-permission="Always allow">Always allow</button><button class="button danger" type="button" data-resolve-permission="Deny">Deny</button><button class="button" type="button" data-resolve-permission="Cancel">Cancel</button></div>
+                  </div>
+                </div>
+
+                <article class="question-request" aria-label="Multiple questions">
+                  <div class="question-head">
+                    <span class="approval-symbol">?</span>
+                    <span class="question-head-copy"><strong>Choose how the verification should continue</strong><span>Lead · ask_user · 3 questions</span></span>
+                    <span class="question-counter"><button type="button" id="question-back" aria-label="Previous question">‹</button><span id="question-counter">1 of 3</span><button type="button" id="question-forward" aria-label="Next question">›</button></span>
+                  </div>
+                  <nav class="question-progress" aria-label="Questions">
+                    <button class="active" type="button" data-question-step="0">Scope</button>
+                    <button type="button" data-question-step="1">Areas</button>
+                    <button type="button" data-question-step="2">Verification</button>
+                  </nav>
+                  <div class="question-panel" data-question-panel="0">
+                    <div class="question-kicker">Scope</div>
+                    <p class="question-copy">Which approach should the agent use?</p>
+                    <div class="question-options">
+                      <label class="question-option"><input type="radio" name="scope" value="Minimal fix"><span>Minimal fix</span><small>Keep the change narrowly scoped.</small></label>
+                      <label class="question-option"><input type="radio" name="scope" value="Broader cleanup"><span>Broader cleanup</span><small>Include adjacent inconsistencies.</small></label>
+                    </div>
+                    <div class="question-actions"><button class="button" type="button" data-cancel-questions>Cancel</button><button class="button primary" type="button" data-next-question>Continue</button></div>
+                  </div>
+                  <div class="question-panel" data-question-panel="1" hidden>
+                    <div class="question-kicker">Areas</div>
+                    <p class="question-copy">Which surfaces should be included?</p>
+                    <div class="question-options">
+                      <label class="question-option"><input type="checkbox" name="areas" value="Server"><span>Server</span><small>Routes and runtime behavior.</small></label>
+                      <label class="question-option"><input type="checkbox" name="areas" value="Web"><span>Web</span><small>Composer and request surfaces.</small></label>
+                      <label class="question-option"><input type="checkbox" name="areas" value="Protocol"><span>Protocol</span><small>Shared request contracts.</small></label>
+                    </div>
+                    <div class="question-actions"><button class="button" type="button" data-cancel-questions>Cancel</button><button class="button primary" type="button" data-next-question>Continue</button></div>
+                  </div>
+                  <div class="question-panel" data-question-panel="2" hidden>
+                    <div class="question-kicker">Verification</div>
+                    <p class="question-copy">What evidence should be included in the final result?</p>
+                    <textarea class="question-freeform" id="verification-answer" aria-label="Verification answer" placeholder="例如：相关测试、浏览器检查和最终 diff…"></textarea>
+                    <div class="question-actions"><button class="button" type="button" data-cancel-questions>Cancel</button><button class="button primary" type="button" id="submit-questions">Submit answers</button></div>
+                  </div>
+                </article>
+              </div>
+              <div class="composer-box">
+                <textarea class="when-running state-block" aria-label="Message" placeholder="Queue a message…"></textarea>
+                <textarea class="when-waiting state-block" aria-label="Message" placeholder="Queue a message…"></textarea>
+                <textarea class="when-resolved state-block" aria-label="Message" placeholder="Send a message…"></textarea>
+                <div class="composer-actions">
+                  <span class="model-chip">principal · current model</span><span class="composer-helper when-running state-inline">· Running</span><span class="composer-helper when-waiting state-inline">· Pending request</span><span class="composer-helper when-resolved state-inline">· Ready</span>
+                  <span class="composer-spacer"></span>
+                  <span class="composer-helper when-running state-inline">Enter to queue</span><span class="composer-helper when-waiting state-inline">Shift+Enter for newline</span><span class="composer-helper when-resolved state-inline">Shift+Enter for newline</span>
+                  <button class="send-button when-running state-inline" type="button" data-toast="Stops the active Session family." aria-label="Stop session">■</button>
+                  <button class="send-button when-waiting state-inline" type="button" data-toast="Queues a message while the request is pending." aria-label="Queue message">↑</button>
+                  <button class="send-button when-resolved state-inline" type="button" data-toast="Sends a new message." aria-label="Send message">↑</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <aside class="inspector" id="context-inspector" aria-label="Context inspector">
+          <div class="inspector-tabs" role="tablist">
+            <button class="inspector-tab active" type="button" data-inspector-tab="agents">Agents</button>
+            <button class="inspector-tab" type="button" data-inspector-tab="changes">Changes</button>
+            <button class="inspector-tab" type="button" data-inspector-tab="context">Context</button>
+          </div>
+          <div class="inspector-panel active" data-inspector-panel="agents">
+            <section class="inspector-section">
+              <div class="inspector-label">Session family</div>
+              <button class="agent-row root-agent-row active" type="button" data-focus-root>
+                <span class="agent-copy"><strong>Refine Bash permission policy</strong><span>principal · Lead</span></span>
+              </button>
+              <div class="agent-skill">Skills: orchestrate-work</div>
+              <button class="agent-row child build-agent-row" type="button" data-focus-child="build">
+                <span class="agent-copy"><strong>Verify outside-workspace read request</strong><span>deep · Build</span></span>
+              </button>
+              <button class="agent-row child analyst-agent-row" type="button" data-focus-child="analyst">
+                <span class="agent-copy"><strong>Review HITL display semantics</strong><span>deep · Analyst</span></span>
+              </button>
+              <div class="agent-skill child">Skills: review-change</div>
+            </section>
+          </div>
+          <div class="inspector-panel" data-inspector-panel="changes">
+            <section class="inspector-section">
+              <div class="inspector-label">Changed files</div>
+              <div class="file-summary"><span>6 files</span><span><b class="plus">+148</b> <b class="minus">−37</b></span></div>
+              <button class="file-row" type="button" data-toast="Opens the existing full Diff canvas."><span>◇</span><code>bash.ts</code><span class="file-stat">+24 −8</span></button>
+              <button class="file-row" type="button" data-toast="Opens the existing full Diff canvas."><span>◇</span><code>bash.test.ts</code><span class="file-stat">+61 −4</span></button>
+              <button class="file-row" type="button" data-toast="Opens the existing full Diff canvas."><span>◇</span><code>registry.ts</code><span class="file-stat">+18 −9</span></button>
+              <button class="file-row" type="button" data-toast="Opens the existing full Diff canvas."><span>◇</span><code>HitlCard.tsx</code><span class="file-stat">+27 −12</span></button>
+              <button class="file-row" type="button" data-toast="Opens the existing full Diff canvas."><span>◇</span><code>ChatMessages.tsx</code><span class="file-stat">+18 −4</span></button>
+              <button class="full-diff" type="button" data-toast="Full Diff still replaces the Session canvas.">Open full diff in canvas</button>
+            </section>
+          </div>
+          <div class="inspector-panel" data-inspector-panel="context">
+            <section class="inspector-section">
+              <div class="inspector-label">Working directory</div>
+              <code class="mono" style="display:block;overflow-wrap:anywhere;color:var(--text-secondary);font-size:8.5px">/Users/bo/Developer/AI/archcode</code>
+            </section>
+            <section class="inspector-section">
+              <div class="inspector-label">Model</div>
+              <div style="color:var(--text-secondary);font-size:8.5px">Current model · <span class="when-running state-inline">principal</span><span class="when-waiting state-inline">principal</span><span class="when-resolved state-inline">principal</span></div>
+            </section>
+            <section class="inspector-section">
+              <div class="inspector-label">Execution</div>
+              <div class="details-grid">
+                <div class="detail-row"><span>Messages</span><strong>28</strong></div>
+                <div class="detail-row"><span>Tool calls</span><strong>36</strong></div>
+                <div class="detail-row"><span>Tokens</span><strong>184,220</strong></div>
+                <div class="detail-row"><span>Executions</span><strong>12</strong></div>
+              </div>
+            </section>
+          </div>
+        </aside>
+      </div>
+    </main>
+
+    <dialog class="edit-dialog" id="goal-dialog">
+      <form method="dialog" id="goal-form">
+        <div class="dialog-head"><strong>Edit goal</strong><button class="dialog-close" type="button" data-close-dialog="goal-dialog" aria-label="Close">×</button></div>
+        <div class="dialog-body">
+          <label class="dialog-field">Objective<textarea id="goal-objective-input" maxlength="4000"></textarea></label>
+          <label class="dialog-field">Token budget<input id="goal-budget-input" type="number" min="184221" step="1000" value="250000" /></label>
+          <span class="dialog-hint">Removing or increasing the limit uses the existing Goal budget controls.</span>
+        </div>
+        <div class="dialog-actions"><button class="button" type="button" data-close-dialog="goal-dialog">Cancel</button><button class="button primary" type="button" id="save-goal">Save</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="edit-dialog" id="queue-dialog">
+      <form method="dialog" id="queue-form">
+        <div class="dialog-head"><strong>Edit queued message</strong><button class="dialog-close" type="button" data-close-dialog="queue-dialog" aria-label="Close">×</button></div>
+        <div class="dialog-body"><label class="dialog-field">Message<textarea id="queue-message-input"></textarea></label></div>
+        <div class="dialog-actions"><button class="button" type="button" data-close-dialog="queue-dialog">Cancel</button><button class="button primary" type="button" id="save-queue-message">Save</button></div>
+      </form>
+    </dialog>
+
+    <button class="scrim" id="scrim" type="button" aria-label="Close overlay"></button>
+    <div class="toast" id="toast" role="status"></div>
+  </div>
+
+  <script>
+    const app = document.getElementById("app");
+    const toast = document.getElementById("toast");
+    let toastTimer;
+
+    function showToast(message) {
+      toast.textContent = message;
+      toast.classList.add("show");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove("show"), 2200);
+    }
+
+    function setScreen(screen) {
+      app.classList.toggle("screen-dashboard", screen === "dashboard");
+      app.classList.toggle("screen-project-dashboard", screen === "project-dashboard");
+      app.classList.toggle("screen-session", screen === "session");
+      document.querySelector("[data-scenario-row]").classList.toggle("active", screen === "session");
+      if (screen !== "session") focusRoot();
+      app.classList.remove("nav-open", "inspector-open");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    function focusChild(child) {
+      app.classList.add("child-focus");
+      app.classList.toggle("focus-build", child === "build");
+      app.classList.toggle("focus-analyst", child === "analyst");
+      document.querySelector(".root-agent-row").classList.remove("active");
+      document.querySelector(".build-agent-row").classList.toggle("active", child === "build");
+      document.querySelector(".analyst-agent-row").classList.toggle("active", child === "analyst");
+      app.classList.remove("inspector-open");
+    }
+
+    function focusRoot() {
+      app.classList.remove("child-focus", "focus-build", "focus-analyst");
+      document.querySelector(".root-agent-row")?.classList.add("active");
+      document.querySelector(".build-agent-row")?.classList.remove("active");
+      document.querySelector(".analyst-agent-row")?.classList.remove("active");
+    }
+
+    function setScenario(scenario, hitlType) {
+      app.classList.remove("scenario-running", "scenario-waiting", "scenario-resolved");
+      app.classList.add("scenario-" + scenario);
+      if (scenario === "waiting") {
+        app.classList.remove("hitl-permission", "hitl-questions");
+        app.classList.add("hitl-" + (hitlType || "permission"));
+      }
+      const current = document.getElementById("current-execution");
+      current.classList.toggle("waiting-border", scenario === "waiting");
+      document.querySelector("[data-scenario-row]").classList.toggle("waiting", scenario === "waiting");
+      document.querySelector("[data-scenario-row]").classList.toggle("running", scenario === "running");
+    }
+
+    document.querySelectorAll("[data-screen]").forEach((button) => {
+      button.addEventListener("click", () => {
+        if (button.dataset.scenarioTarget) setScenario(button.dataset.scenarioTarget, button.dataset.hitlTarget);
+        setScreen(button.dataset.screen);
+      });
+    });
+
+    document.querySelectorAll("[data-scenario]").forEach((button) => {
+      button.addEventListener("click", () => setScenario(button.dataset.scenario, button.dataset.hitl));
+    });
+
+    document.querySelectorAll("[data-focus-child]").forEach((button) => {
+      button.addEventListener("click", () => focusChild(button.dataset.focusChild));
+    });
+    document.querySelectorAll("[data-focus-root]").forEach((button) => {
+      button.addEventListener("click", focusRoot);
+    });
+
+    document.querySelectorAll("[data-toggle-execution]").forEach((button) => {
+      button.addEventListener("click", () => button.closest("[data-execution]").classList.toggle("collapsed"));
+    });
+
+    document.querySelectorAll("[data-toggle-activity]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const group = button.closest(".activity-group");
+        const expanded = group.classList.toggle("expanded");
+        button.setAttribute("aria-expanded", String(expanded));
+        button.querySelector("span").textContent = expanded ? "⌄" : "›";
+      });
+    });
+
+    document.querySelectorAll("[data-toggle-tool]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const toolCall = button.closest(".tool-call");
+        const expanded = toolCall.classList.toggle("expanded");
+        button.setAttribute("aria-expanded", String(expanded));
+      });
+    });
+
+    document.querySelectorAll("[data-toggle-delegate]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const card = button.closest(".delegate-card");
+        const expanded = card.classList.toggle("expanded");
+        button.setAttribute("aria-expanded", String(expanded));
+        button.textContent = expanded ? "Hide details" : "Details";
+      });
+    });
+
+    document.querySelectorAll("[data-inspector-tab]").forEach((button) => {
+      button.addEventListener("click", () => {
+        document.querySelectorAll("[data-inspector-tab]").forEach((item) => item.classList.toggle("active", item === button));
+        document.querySelectorAll("[data-inspector-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.inspectorPanel === button.dataset.inspectorTab));
+      });
+    });
+
+    document.querySelectorAll("[data-toggle-inspector], [data-mobile-inspector]").forEach((button) => {
+      button.addEventListener("click", () => app.classList.toggle("inspector-open"));
+    });
+    document.querySelectorAll("[data-mobile-nav]").forEach((button) => {
+      button.addEventListener("click", () => app.classList.toggle("nav-open"));
+    });
+    document.getElementById("scrim").addEventListener("click", () => app.classList.remove("nav-open", "inspector-open"));
+
+    document.querySelectorAll("[data-resolve-permission]").forEach((button) => {
+      button.addEventListener("click", () => {
+        setScenario("resolved");
+        showToast(`${button.dataset.resolvePermission}. The pending permission request is resolved.`);
+      });
+    });
+
+    let goalPaused = false;
+    const goalDialog = document.getElementById("goal-dialog");
+    document.getElementById("edit-goal").addEventListener("click", () => {
+      document.getElementById("goal-objective-input").value = document.getElementById("goal-objective").textContent;
+      goalDialog.showModal();
+    });
+    document.getElementById("save-goal").addEventListener("click", () => {
+      const objective = document.getElementById("goal-objective-input").value.trim();
+      if (!objective) return;
+      document.getElementById("goal-objective").textContent = objective;
+      goalDialog.close();
+      showToast("Goal updated.");
+    });
+    document.getElementById("toggle-goal").addEventListener("click", (event) => {
+      goalPaused = !goalPaused;
+      document.getElementById("goal-status").textContent = goalPaused ? "Goal paused" : "Pursuing goal";
+      event.currentTarget.textContent = goalPaused ? "Resume" : "Pause";
+      showToast(goalPaused ? "Goal paused." : "Goal resumed.");
+    });
+    document.getElementById("clear-goal").addEventListener("click", () => {
+      document.getElementById("goal-row").remove();
+      showToast("Goal cleared from this Session.");
+    });
+
+    let editingQueuedRow = null;
+    const queueDialog = document.getElementById("queue-dialog");
+    document.querySelectorAll("[data-queue-action]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const row = button.closest("[data-queued-row]");
+        const action = button.dataset.queueAction;
+        if (action === "steer") {
+          row.querySelector(".queued-state").textContent = "Steering";
+          button.disabled = true;
+          showToast("Queued instruction marked for the current steer target.");
+          return;
+        }
+        if (action === "delete") {
+          row.remove();
+          if (!document.querySelector("[data-queued-row]")) document.getElementById("queued-list").remove();
+          showToast("Queued instruction removed.");
+          return;
+        }
+        editingQueuedRow = row;
+        document.getElementById("queue-message-input").value = row.querySelector(".queued-copy").textContent;
+        queueDialog.showModal();
+      });
+    });
+    document.getElementById("save-queue-message").addEventListener("click", () => {
+      const content = document.getElementById("queue-message-input").value.trim();
+      if (!content || !editingQueuedRow) return;
+      editingQueuedRow.querySelector(".queued-copy").textContent = content;
+      queueDialog.close();
+      showToast("Queued instruction updated.");
+    });
+
+    let questionIndex = 0;
+    const questionPanels = [...document.querySelectorAll("[data-question-panel]")];
+    const questionSteps = [...document.querySelectorAll("[data-question-step]")];
+    function questionAnswered(index) {
+      if (index === 0) return document.querySelector('input[name="scope"]:checked') !== null;
+      if (index === 1) return document.querySelector('input[name="areas"]:checked') !== null;
+      return document.getElementById("verification-answer").value.trim().length > 0;
+    }
+    function renderQuestion(index) {
+      questionIndex = Math.max(0, Math.min(questionPanels.length - 1, index));
+      questionPanels.forEach((panel, panelIndex) => { panel.hidden = panelIndex !== questionIndex; });
+      questionSteps.forEach((step, stepIndex) => {
+        step.classList.toggle("active", stepIndex === questionIndex);
+        step.classList.toggle("answered", questionAnswered(stepIndex));
+      });
+      document.getElementById("question-counter").textContent = `${questionIndex + 1} of ${questionPanels.length}`;
+      document.getElementById("question-back").disabled = questionIndex === 0;
+      document.getElementById("question-forward").disabled = questionIndex === questionPanels.length - 1;
+    }
+    questionSteps.forEach((button) => button.addEventListener("click", () => renderQuestion(Number(button.dataset.questionStep))));
+    document.getElementById("question-back").addEventListener("click", () => renderQuestion(questionIndex - 1));
+    document.getElementById("question-forward").addEventListener("click", () => renderQuestion(questionIndex + 1));
+    document.querySelectorAll("[data-next-question]").forEach((button) => {
+      button.addEventListener("click", () => {
+        if (!questionAnswered(questionIndex)) {
+          showToast("Answer this question before continuing.");
+          return;
+        }
+        renderQuestion(questionIndex + 1);
+      });
+    });
+    document.querySelectorAll('.question-request input, .question-request textarea').forEach((control) => control.addEventListener("input", () => renderQuestion(questionIndex)));
+    document.querySelectorAll("[data-cancel-questions]").forEach((button) => button.addEventListener("click", () => {
+      setScenario("running");
+      showToast("Question request cancelled.");
+    }));
+    document.getElementById("submit-questions").addEventListener("click", () => {
+      if (!questionAnswered(2)) {
+        showToast("Answer the final question before submitting.");
+        return;
+      }
+      setScenario("resolved");
+      showToast("Three answers submitted. The Session can continue.");
+    });
+    renderQuestion(0);
+
+    document.querySelectorAll("[data-close-dialog]").forEach((button) => {
+      button.addEventListener("click", () => document.getElementById(button.dataset.closeDialog).close());
+    });
+
+    document.querySelectorAll("[data-toast]").forEach((button) => {
+      button.addEventListener("click", () => showToast(button.dataset.toast));
+    });
+  </script>
+</body>
+</html>
