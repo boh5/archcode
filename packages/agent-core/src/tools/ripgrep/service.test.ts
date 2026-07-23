@@ -30,23 +30,40 @@ describe("RipgrepService", () => {
     expect(await svc.ensure()).toBe("/usr/local/bin/rg");
   });
 
-  test("ensure() memoizes the resolved path and does not search again", async () => {
+  test("ensure() reuses a still-executable BinaryManager path", async () => {
     let callCount = 0;
     const seam = createMockSeam({
       which: (cmd) => {
         callCount++;
         return cmd === "rg" ? "/usr/bin/rg" : undefined;
       },
+      exists: (path) => path === "/usr/bin/rg",
+      isExecutable: (path) => path === "/usr/bin/rg",
     });
     const svc = createRipgrepService(seam);
 
-    // First call – should go through which().
     expect(await svc.ensure()).toBe("/usr/bin/rg");
     expect(callCount).toBe(1);
+    expect(await svc.ensure()).toBe("/usr/bin/rg");
+    expect(callCount).toBe(1);
+  });
 
-    // Second call – should use memoized value, which() NOT called again.
-    expect(await svc.ensure()).toBe("/usr/bin/rg");
-    expect(callCount).toBe(1);
+  test("ensure() does not hide a stale BinaryManager path", async () => {
+    let path = "/managed/rg-v1";
+    const executablePaths = new Set([path]);
+    const seam = createMockSeam({
+      which: (cmd) => (cmd === "rg" ? path : undefined),
+      exists: (candidate) => executablePaths.has(candidate),
+      isExecutable: (candidate) => executablePaths.has(candidate),
+    });
+    const svc = createRipgrepService(seam);
+
+    expect(await svc.ensure()).toBe("/managed/rg-v1");
+    executablePaths.delete(path);
+    path = "/managed/rg-v2";
+    executablePaths.add(path);
+
+    expect(await svc.ensure()).toBe("/managed/rg-v2");
   });
 
   test("ensure() throws RipgrepNotFoundError when rg is nowhere", async () => {

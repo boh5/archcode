@@ -1,5 +1,6 @@
 import { ToolOutputArtifactStore } from "../artifact-store";
 import { createScopeBoundToolOutputAccess } from "../access-service";
+import { createHermeticArtifactSearchRunner } from "./hermetic-search-runner";
 
 const [rootDir, workspaceRoot, rootSessionId, outputRef, pattern] = Bun.argv.slice(2);
 
@@ -7,7 +8,10 @@ if (!rootDir || !workspaceRoot || !rootSessionId || !outputRef || !pattern) {
   throw new Error("Expected artifact root, workspace, root Session, outputRef, and pattern");
 }
 
-const store = new ToolOutputArtifactStore({ rootDir });
+const store = new ToolOutputArtifactStore({
+  rootDir,
+  searchRunner: createHermeticArtifactSearchRunner(),
+});
 
 try {
   const access = createScopeBoundToolOutputAccess(store, { workspaceRoot, rootSessionId });

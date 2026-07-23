@@ -66,7 +66,6 @@ function createRipgrepBinaryManagerSeam(seam?: DiscoverySeam): BinaryManagerSeam
  */
 export function createRipgrepService(seam?: DiscoverySeam): RipgrepService {
   let manager: ReturnType<typeof createBinaryManager> | undefined;
-  let memoizedPath: string | null = null;
 
   function getManager(): ReturnType<typeof createBinaryManager> {
     if (manager === undefined) {
@@ -77,13 +76,8 @@ export function createRipgrepService(seam?: DiscoverySeam): RipgrepService {
 
   return {
     async ensure(): Promise<string> {
-      if (memoizedPath !== null) {
-        return memoizedPath;
-      }
-
       try {
-        memoizedPath = await getManager().resolve("rg");
-        return memoizedPath;
+        return await getManager().resolve("rg");
       } catch (error) {
         if (error instanceof Error && error.name.startsWith("Binary")) {
           throw new RipgrepNotFoundError(

@@ -22,6 +22,7 @@ import type { ToolExecutionContext } from "../tools/types";
 import { createScopeBoundToolOutputAccess, type ToolOutputAccessService } from "./access-service";
 import { ToolOutputArtifactStore } from "./artifact-store";
 import { ToolOutputFinalizer } from "./finalizer";
+import { createHermeticArtifactSearchRunner } from "./fixtures/hermetic-search-runner";
 import { isOutputRef } from "./ref";
 import { createTestModelInfo, testExecutionStart } from "../testing/test-execution-fixtures";
 
@@ -35,7 +36,6 @@ interface OutputPlane {
 
 interface StoryHarness {
   readonly root: string;
-  readonly home: string;
   readonly workspace: string;
   readonly artifactRoot: string;
   readonly sessions: SessionStoreManager;
@@ -46,18 +46,13 @@ interface StoryHarness {
 }
 
 let harness: StoryHarness;
-let previousHome: string | undefined;
 const activeStores = new Set<ToolOutputArtifactStore>();
 
 beforeEach(async () => {
   const root = await mkdtemp(join(tmpdir(), "archcode-tool-output-story-"));
-  const home = join(root, "home");
   const workspace = join(root, "workspace");
-  const artifactRoot = join(home, ".archcode", "tool-outputs");
-  await Promise.all([mkdir(home, { recursive: true }), mkdir(workspace, { recursive: true })]);
-
-  previousHome = Bun.env.HOME;
-  Bun.env.HOME = home;
+  const artifactRoot = join(root, "tool-outputs");
+  await mkdir(workspace, { recursive: true });
 
   const sessions = new SessionStoreManager({ logger: silentLogger });
   const rootSessionId = crypto.randomUUID();
@@ -88,7 +83,6 @@ beforeEach(async () => {
 
   harness = {
     root,
-    home,
     workspace,
     artifactRoot,
     sessions,
@@ -103,8 +97,6 @@ afterEach(async () => {
   setLlmAdapterForTest(undefined);
   await Promise.all([...activeStores].map((store) => store.dispose()));
   activeStores.clear();
-  if (previousHome === undefined) delete Bun.env.HOME;
-  else Bun.env.HOME = previousHome;
   await rm(harness.root, { recursive: true, force: true });
 });
 
@@ -382,7 +374,10 @@ describe("Tool Output Plane real user stories", () => {
 });
 
 function createOutputPlane(rootDir: string): OutputPlane {
-  const store = new ToolOutputArtifactStore({ rootDir });
+  const store = new ToolOutputArtifactStore({
+    rootDir,
+    searchRunner: createHermeticArtifactSearchRunner(),
+  });
   activeStores.add(store);
   const redactionPolicy = new SecretRedactionPolicy([]);
   const registry = createRegistry({
@@ -529,7 +524,6 @@ async function reopenInChildProcess(
     ],
     cwd: harness.workspace,
     env: {
-      HOME: harness.home,
       PATH: Bun.env.PATH,
       LANG: Bun.env.LANG,
     },

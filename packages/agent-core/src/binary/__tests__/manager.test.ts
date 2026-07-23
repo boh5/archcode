@@ -51,6 +51,20 @@ describe("BinaryManager", () => {
     expect(seam.calls.which).toBe(1);
   });
 
+  test("re-resolves a cached binary after its path disappears", async () => {
+    const seam = createSeam();
+    const manager = new BinaryManager(seam);
+
+    const first = await manager.resolve("rg");
+    seam.deleteInstalled(first);
+    const second = await manager.resolve("rg");
+
+    expect(second).toBe(first);
+    expect(seam.calls.which).toBe(2);
+    expect(seam.calls.download).toBe(2);
+    expect(seam.calls.install).toBe(2);
+  });
+
   test("returns PATH hit without download after validation", async () => {
     const seam = createSeam({ pathHits: { rg: "/usr/local/bin/rg" } });
     const manager = new BinaryManager(seam);
@@ -252,6 +266,7 @@ describe("binary tool error taxonomy", () => {
 
 interface TestSeam extends BinaryManagerSeam {
   readonly calls: Record<"which" | "exists" | "isExecutable" | "download" | "verifySha256" | "install" | "validateBinary", number>;
+  deleteInstalled(path: string): void;
 }
 
 function createSeam(options: {
@@ -266,9 +281,13 @@ function createSeam(options: {
   validateBinaryResults?: boolean[];
 } = {}): TestSeam {
   const calls = { which: 0, exists: 0, isExecutable: 0, download: 0, verifySha256: 0, install: 0, validateBinary: 0 };
+  const installedPaths = new Set<string>();
 
   return {
     calls,
+    deleteInstalled(path) {
+      installedPaths.delete(path);
+    },
     processRunner: options.processRunner,
     platform: options.platform ?? "darwin",
     arch: options.arch ?? "arm64",
@@ -276,13 +295,13 @@ function createSeam(options: {
       calls.which++;
       return options.pathHits?.[binaryName];
     },
-    exists() {
+    exists(path) {
       calls.exists++;
-      return options.cacheHit ?? false;
+      return installedPaths.has(path) || (options.cacheHit ?? false);
     },
-    isExecutable() {
+    isExecutable(path) {
       calls.isExecutable++;
-      return options.cacheHit ?? false;
+      return installedPaths.has(path) || (options.cacheHit ?? false);
     },
     async download(params) {
       calls.download++;
@@ -294,7 +313,9 @@ function createSeam(options: {
     },
     async install(params) {
       calls.install++;
-      return options.install ? options.install(params) : params.cachePath;
+      const path = options.install ? await options.install(params) : params.cachePath;
+      installedPaths.add(path);
+      return path;
     },
     async validateBinary(_path: string, _binaryId: string) {
       calls.validateBinary++;

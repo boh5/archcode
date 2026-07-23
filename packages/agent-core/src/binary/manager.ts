@@ -170,7 +170,16 @@ export class BinaryManager {
 
   async resolve(binaryId: SupportedBinaryId): Promise<string> {
     const cached = this.resolvedBinaryCache.get(binaryId);
-    if (cached) return cached;
+    if (cached) {
+      try {
+        if ((await this.seam.exists(cached)) && (await this.seam.isExecutable(cached))) {
+          return cached;
+        }
+      } catch {
+        // Treat an unreadable cached path as stale and use the normal recovery path.
+      }
+      this.resolvedBinaryCache.delete(binaryId);
+    }
 
     const existingLock = this.installLocks.get(binaryId);
     if (existingLock) return existingLock;
