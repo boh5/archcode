@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "specra",
+      "name": "archcode",
       "dependencies": {
         "@archcode/agent-core": "workspace:*",
         "@archcode/protocol": "workspace:*",
@@ -24,7 +24,7 @@
     },
     "apps/server": {
       "name": "@archcode/server",
-      "version": "0.1.0",
+      "version": "0.0.1",
       "bin": {
         "archcode": "./src/main.ts",
       },
@@ -44,7 +44,7 @@
     },
     "apps/web": {
       "name": "@archcode/web",
-      "version": "0.1.0",
+      "version": "0.0.1",
       "dependencies": {
         "@archcode/protocol": "workspace:*",
         "@radix-ui/react-context-menu": "^2.2.16",
@@ -75,7 +75,7 @@
     },
     "packages/agent-core": {
       "name": "@archcode/agent-core",
-      "version": "0.1.0",
+      "version": "0.0.1",
       "dependencies": {
         "@ai-sdk/alibaba": "^1.0.0",
         "@ai-sdk/amazon-bedrock": "^4.0.0",

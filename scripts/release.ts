@@ -7,6 +7,13 @@ import { parse } from "semver";
 const rootDir = join(import.meta.dir, "..");
 const packageJsonPath = join(rootDir, "package.json");
 const changelogPath = join(rootDir, "CHANGELOG.md");
+const workspacePackageJsonPaths = [
+  "apps/server/package.json",
+  "apps/web/package.json",
+  "packages/agent-core/package.json",
+  "packages/protocol/package.json",
+  "packages/utils/package.json",
+] as const;
 export const releaseTargets = [
   {
     archive: "archcode-aarch64-apple-darwin.tar.gz",
@@ -66,6 +73,20 @@ export function parseReleaseVersion(value: unknown): string {
 export function isPrereleaseVersion(value: string): boolean {
   parseReleaseVersion(value);
   return parse(value)!.prerelease.length > 0;
+}
+
+export function assertWorkspacePackageVersions(
+  packages: ReadonlyArray<{ name?: unknown; version?: unknown }>,
+  expectedVersion: string,
+): void {
+  for (const packageJson of packages) {
+    const name = typeof packageJson.name === "string" ? packageJson.name : "(unknown package)";
+    if (packageJson.version !== expectedVersion) {
+      throw new Error(
+        `${name} version ${JSON.stringify(packageJson.version)} does not match ${expectedVersion}`,
+      );
+    }
+  }
 }
 
 export function classifyExistingRelease(
@@ -169,6 +190,15 @@ export async function compareReleaseAssetDirectories(
 
 async function runPreflight(tag: string | undefined): Promise<void> {
   const version = await readReleaseVersion();
+  const workspacePackages = await Promise.all(
+    workspacePackageJsonPaths.map(
+      (path) => Bun.file(join(rootDir, path)).json() as Promise<{
+        name?: unknown;
+        version?: unknown;
+      }>,
+    ),
+  );
+  assertWorkspacePackageVersions(workspacePackages, version);
   extractReleaseNotes(await Bun.file(changelogPath).text(), version);
 
   if (tag && tag !== `v${version}`) {

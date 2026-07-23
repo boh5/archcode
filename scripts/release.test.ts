@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  assertWorkspacePackageVersions,
   classifyExistingRelease,
   compareReleaseAssetDirectories,
   extractReleaseNotes,
@@ -53,6 +54,17 @@ describe("release metadata", () => {
   test("distinguishes prereleases from build metadata", () => {
     expect(isPrereleaseVersion("1.2.3-beta.1+build.7")).toBe(true);
     expect(isPrereleaseVersion("1.2.3+build-7")).toBe(false);
+  });
+
+  test("requires every private workspace package to match the product version", () => {
+    expect(() => assertWorkspacePackageVersions([
+      { name: "@archcode/server", version: "0.0.1" },
+      { name: "@archcode/web", version: "0.0.1" },
+    ], "0.0.1")).not.toThrow();
+    expect(() => assertWorkspacePackageVersions([
+      { name: "@archcode/server", version: "0.0.1" },
+      { name: "@archcode/web", version: "0.1.0" },
+    ], "0.0.1")).toThrow("@archcode/web version \"0.1.0\" does not match 0.0.1");
   });
 
   test("classifies existing drafts as recoverable and exact published releases as complete", () => {
