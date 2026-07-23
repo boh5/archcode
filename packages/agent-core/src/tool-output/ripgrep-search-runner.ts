@@ -4,6 +4,7 @@ import type {
   ArtifactSearchRunnerMatch,
   ArtifactSearchSegment,
 } from "./artifact-types";
+import { createBinaryManager } from "../binary/manager";
 import { decodeUtf8, safeUtf8End, utf8ByteLength } from "./utf8";
 
 interface RunnerCursor {
@@ -128,8 +129,38 @@ async function drain(stream: ReadableStream<Uint8Array>): Promise<void> {
   }
 }
 
+export interface RipgrepArtifactSearchProcess {
+  readonly stdout: ReadableStream<Uint8Array>;
+  readonly stderr: ReadableStream<Uint8Array>;
+  readonly exited: Promise<number>;
+  kill(): void;
+}
+
+export interface RipgrepArtifactSearchRunnerOptions {
+  readonly binaryResolver?: {
+    resolve(binaryId: "rg"): Promise<string>;
+  };
+  readonly spawn?: (argv: readonly string[]) => RipgrepArtifactSearchProcess;
+}
+
+function spawnRipgrep(argv: readonly string[]): RipgrepArtifactSearchProcess {
+  const process = Bun.spawn([...argv], { stdout: "pipe", stderr: "pipe" });
+  return {
+    stdout: process.stdout,
+    stderr: process.stderr,
+    exited: process.exited,
+    kill: () => process.kill(),
+  };
+}
+
 export class RipgrepArtifactSearchRunner implements ArtifactSearchRunner {
-  constructor(private readonly binary = "rg") {}
+  private readonly binaryResolver: NonNullable<RipgrepArtifactSearchRunnerOptions["binaryResolver"]>;
+  private readonly spawn: (argv: readonly string[]) => RipgrepArtifactSearchProcess;
+
+  constructor(options: RipgrepArtifactSearchRunnerOptions = {}) {
+    this.binaryResolver = options.binaryResolver ?? createBinaryManager();
+    this.spawn = options.spawn ?? spawnRipgrep;
+  }
 
   async search(input: Parameters<ArtifactSearchRunner["search"]>[0]): Promise<{
     matches: readonly ArtifactSearchRunnerMatch[];
@@ -138,6 +169,18 @@ export class RipgrepArtifactSearchRunner implements ArtifactSearchRunner {
     const cursor = parseCursor(input.cursor);
     if (cursor.segmentIndex > input.segments.length) {
       throw new ToolOutputError("TOOL_OUTPUT_INVALID_CURSOR");
+    }
+    if (cursor.segmentIndex === input.segments.length) {
+      return { matches: [] };
+    }
+    let binary: string;
+    try {
+      binary = await this.binaryResolver.resolve("rg");
+    } catch {
+      throw new ToolOutputError("TOOL_OUTPUT_UNAVAILABLE");
+    }
+    if (input.signal.aborted || Date.now() >= input.deadlineAt) {
+      throw new ToolOutputError("TOOL_OUTPUT_SEARCH_TIMEOUT");
     }
     const matches: ArtifactSearchRunnerMatch[] = [];
     let contentBytes = 0;
@@ -152,20 +195,24 @@ export class RipgrepArtifactSearchRunner implements ArtifactSearchRunner {
       let ordinal = -1;
       const skipOrdinal = segmentIndex === cursor.segmentIndex ? cursor.ordinal : -1;
       let stoppedForPage = false;
-      const process = Bun.spawn(
-        [
-          this.binary,
-          "--no-heading",
-          "--color=never",
-          "--line-number",
-          "--byte-offset",
-          "--only-matching",
-          "--regexp",
-          input.pattern,
-          segment.path,
-        ],
-        { stdout: "pipe", stderr: "pipe" },
-      );
+      let process: RipgrepArtifactSearchProcess;
+      try {
+        process = this.spawn(
+          [
+            binary,
+            "--no-heading",
+            "--color=never",
+            "--line-number",
+            "--byte-offset",
+            "--only-matching",
+            "--regexp",
+            input.pattern,
+            segment.path,
+          ],
+        );
+      } catch {
+        throw new ToolOutputError("TOOL_OUTPUT_UNAVAILABLE");
+      }
       const abort = () => process.kill();
       input.signal.addEventListener("abort", abort, { once: true });
       const stderr = drain(process.stderr);

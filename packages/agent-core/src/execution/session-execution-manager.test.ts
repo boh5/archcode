@@ -3916,12 +3916,13 @@ describe("SessionExecutionManager", () => {
   test("re-checks the synchronous cwd-transition guard after cold root loading", async () => {
     const rootId = crypto.randomUUID();
     const childId = crypto.randomUUID();
-    const rootStore = storeManager.create(rootId, workspaceRoot, { agentName: "lead" });
-    storeManager.create(childId, workspaceRoot, {
+    await storeManager.createSessionFile(workspaceRoot, { agentName: "lead" }, rootId);
+    const rootStore = await storeManager.getOrLoad(rootId, workspaceRoot);
+    await storeManager.createSessionFile(workspaceRoot, {
       rootSessionId: rootId,
       parentSessionId: rootId,
       agentName: "explore",
-    });
+    }, childId);
     const rootLoad = deferred<typeof rootStore>();
     let rootLoadStarted = false;
     const callbacks = storeCallbacks(storeManager);

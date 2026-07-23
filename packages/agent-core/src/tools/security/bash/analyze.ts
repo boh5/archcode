@@ -2,6 +2,20 @@ import { lstatSync, readdirSync, readlinkSync, realpathSync, statSync } from "no
 import { homedir } from "node:os";
 import path from "node:path";
 
+const STANDARD_DEVICE_ALIAS_PATHS: ReadonlySet<string> = new Set([
+  "/dev/null",
+  "/dev/stdin",
+  "/dev/stdout",
+  "/dev/stderr",
+  "/dev/fd/0",
+  "/dev/fd/1",
+  "/dev/fd/2",
+]);
+
+export function isStandardDeviceAliasPath(input: string): boolean {
+  return STANDARD_DEVICE_ALIAS_PATHS.has(input);
+}
+
 export type BashAccessOperation = "read" | "write" | "delete" | "execute";
 
 export interface BashAccess {
@@ -964,6 +978,7 @@ function literalPath(token: Token | undefined, cwd: string, followFinalSymlink: 
   if (!token.literal && fixed === undefined) return undefined;
   if (!token.quoted && !token.escaped && DYNAMIC_PATTERN.test(token.value) && fixed === undefined) return undefined;
   const input = fixed ?? (path.isAbsolute(token.value) ? token.value : `${cwd}${path.sep}${token.value}`);
+  if (isStandardDeviceAliasPath(input)) return input;
   return realpathNearest(input, followFinalSymlink);
 }
 

@@ -2,7 +2,13 @@ import { realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { containsSecretPattern } from "../../security/patterns";
-import { analyzeBash, type BashAccess, type BashAnalysis, type BashInvocation } from "../security/bash";
+import {
+  analyzeBash,
+  isStandardDeviceAliasPath,
+  type BashAccess,
+  type BashAnalysis,
+  type BashInvocation,
+} from "../security/bash";
 import { approvalFingerprint } from "./approval-fingerprint";
 import type { PermissionApprovalScope } from "./policy-types";
 import { classifySensitivePath } from "./sensitive-file";
@@ -13,7 +19,6 @@ const ASK_PROMPT = "Review this bash command before execution.";
 const CATASTROPHE_SYSTEM_ROOTS = ["/", "/Users", "/home", "/etc", "/usr", "/bin", "/sbin", "/boot", "/var", "/opt", "/System", "/Library", "/Applications", "/Volumes"];
 const INTERPRETERS = new Set(["sh", "bash", "zsh", "dash", "ksh", "python", "python3", "node", "ruby", "perl", "bun", "deno"]);
 const NETWORK_READERS = new Set(["curl", "wget"]);
-const SAFE_DEVICE_PATHS = new Set(["/dev/null", "/dev/stdin", "/dev/stdout", "/dev/stderr", "/dev/fd/0", "/dev/fd/1", "/dev/fd/2"]);
 type GitPathspecMode = NonNullable<BashInvocation["gitPathspecMode"]>;
 
 const SYSTEM_MUTATIONS: Readonly<Record<string, ReadonlySet<string>>> = {
@@ -149,7 +154,7 @@ function classifyRmMode(argv: readonly string[]): { recursive: boolean; forced: 
 }
 
 function isDangerousDevice(filePath: string): boolean {
-  if (SAFE_DEVICE_PATHS.has(filePath)) return false;
+  if (isStandardDeviceAliasPath(filePath)) return false;
   if (/^\/dev\/(?:r?disk)/.test(filePath)) return true;
   try { return statSync(filePath).isBlockDevice(); } catch { return false; }
 }
@@ -763,7 +768,7 @@ function classifyKill(invocation: BashInvocation): { globalTarget: boolean; supp
 }
 
 function isOutsideWorkspace(access: BashAccess, workspaceRoot: string): boolean {
-  if (SAFE_DEVICE_PATHS.has(access.path)) return false;
+  if (isStandardDeviceAliasPath(access.path)) return false;
   const root = real(workspaceRoot);
   return !isAtOrBelow(access.path, root);
 }

@@ -347,7 +347,22 @@ describe("ToolOutputArtifactStore", () => {
   });
 
   test("keeps every read/search response within item and 50 KiB content limits", async () => {
-    const store = new ToolOutputArtifactStore({ rootDir: join(TEST_ROOT, "response-bounds") });
+    const store = new ToolOutputArtifactStore({
+      rootDir: join(TEST_ROOT, "response-bounds"),
+      searchRunner: {
+        async search() {
+          return {
+            matches: Array.from({ length: 50 }, (_, index) => ({
+              segment: "full" as const,
+              canonicalStart: index * 1_025,
+              canonicalEnd: index * 1_025 + 1_024,
+              snippet: "x".repeat(1_024),
+            })),
+            nextCursor: "runner-page-2",
+          };
+        },
+      },
+    });
     const readArtifact = await createTestArtifact(store, { owner: OWNER, canonical: "r".repeat(60 * 1024) });
     const readPage = await store.read({ ...OWNER, outputRef: readArtifact.outputRef, limit: 1_000 });
     expect(readPage.records.length).toBeLessThanOrEqual(1_000);
@@ -420,6 +435,7 @@ describe("ToolOutputArtifactStore", () => {
       };
     };
     const store = makeStore(join(TEST_ROOT, "bounded-read-windows"), {
+      now: () => 0,
       openReadHandle,
       limits: {
         artifactMaxBytes: 512 * 1024,

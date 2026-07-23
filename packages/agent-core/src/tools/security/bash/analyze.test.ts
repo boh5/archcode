@@ -434,6 +434,17 @@ describe("analyzeBash", () => {
     expect(unsupported.hasDynamicReferences).toBe(true);
   });
 
+  test("preserves only the finite standard device aliases across platform realpath differences", () => {
+    expect(analyze("dd if=/dev/stdin of=/dev/stdout").accesses).toEqual([
+      { operation: "read", path: "/dev/stdin" },
+      { operation: "write", path: "/dev/stdout" },
+    ]);
+    expect(analyze("dd if=/dev/null of=/dev/fd/1").accesses).toEqual([
+      { operation: "read", path: "/dev/null" },
+      { operation: "write", path: "/dev/fd/1" },
+    ]);
+  });
+
   test("treats only stdout ampersand-word redirections as file writes", () => {
     expect(analyze("echo hi >&out/result").accesses).toEqual([{ operation: "write", path: join(root, "out", "result") }]);
     expect(analyze("echo hi 1>&out/result").accesses).toEqual([{ operation: "write", path: join(root, "out", "result") }]);

@@ -1,4 +1,8 @@
-export { analyzeBash, hasBashMutationWithinRoots } from "./analyze";
+export {
+  analyzeBash,
+  hasBashMutationWithinRoots,
+  isStandardDeviceAliasPath,
+} from "./analyze";
 export type {
   AnalyzeBashOptions,
   BashAccess,
