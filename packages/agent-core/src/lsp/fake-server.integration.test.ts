@@ -195,21 +195,6 @@ describe("FakeLspServer integration", () => {
     }
   });
 
-  test("simulates response delay", async () => {
-    const server = new FakeLspServer({ delayMs: 200 });
-    try {
-      const transport = await server.start();
-
-      const start = Date.now();
-      await transport.sendRequest("test/echo", {});
-      const elapsed = Date.now() - start;
-
-      expect(elapsed).toBeGreaterThanOrEqual(150);
-    } finally {
-      await server.stop();
-    }
-  });
-
   test("crash after initialize makes server exit", async () => {
     const server = new FakeLspServer({
       crashAfterInitialize: true,

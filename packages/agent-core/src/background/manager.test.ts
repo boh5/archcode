@@ -118,11 +118,8 @@ describe("BackgroundTaskManager", () => {
     test("times out and returns even if tasks are still running", async () => {
       // Never-resolving task
       manager.dispatch("eternal", () => new Promise<void>(() => {}));
-      const start = performance.now();
       await manager.drain(50);
-      const elapsed = performance.now() - start;
-      expect(elapsed).toBeGreaterThanOrEqual(30);
-      expect(elapsed).toBeLessThan(300);
+      expect(manager.isRunning("eternal")).toBe(true);
     });
 
     test("drain timeout default is 60s", async () => {

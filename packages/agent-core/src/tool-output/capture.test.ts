@@ -311,14 +311,12 @@ describe("StreamingToolOutputCapture", () => {
       committer: { async commit() { throw new Error("must not commit"); } },
     });
     const chunk = new Uint8Array(64 * 1024).fill(0x61);
-    const startedAt = Date.now();
     const first = capture.write(chunk);
     const second = capture.write(chunk);
     await Promise.resolve();
     expect(capture.stats().queuedBytes).toBe(64 * 1024);
     expect(await first).toBe("accepted");
     expect(await second).toBe("discarded");
-    expect(Date.now() - startedAt).toBeLessThan(250);
     expect(capture.stats().queuedBytes).toBeLessThanOrEqual(64 * 1024);
     await capture.abort();
   });

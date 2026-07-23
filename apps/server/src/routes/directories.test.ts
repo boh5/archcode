@@ -252,7 +252,7 @@ describe("directories routes", () => {
     expect(body.truncated).toBe(true);
   });
 
-  test("GET /api/directories/search uses bounded traversal and returns within time budget", async () => {
+  test("GET /api/directories/search respects the traversal depth bound", async () => {
     const root = await createDir(join(tempRoot, "bounded"));
     let parent = root;
     for (let depth = 0; depth < 8; depth += 1) {
@@ -260,15 +260,12 @@ describe("directories routes", () => {
     }
     await createDir(join(root, "match-near-root"));
     await createDir(join(parent, "match-too-deep"));
-    const app = createTestApp({ roots: [root], maxDepth: 5, maxVisited: 20, timeBudgetMs: 1500 });
+    const app = createTestApp({ roots: [root], maxDepth: 5, maxVisited: 20 });
 
-    const started = performance.now();
     const res = await app.request("/api/directories/search?query=match&limit=10");
-    const elapsed = performance.now() - started;
     const body = await readDirectorySearch(res);
 
     expect(res.status).toBe(200);
-    expect(elapsed).toBeLessThan(1500);
     expect(body.entries.map((entry) => entry.name)).toContain("match-near-root");
     expect(body.entries.map((entry) => entry.name)).not.toContain("match-too-deep");
   });

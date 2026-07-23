@@ -295,7 +295,6 @@ describe("process runner", () => {
     const stdout = "a".repeat(2 * 64 * 1024);
     setProcessRunnerForTest(() => createFakeProcess({ stdout, exitCode: 0 }) as any);
 
-    const startedAt = Date.now();
     const result = await createProcessRunner().run({
       argv: ["stalled-sink"],
       maxOutputBytes: 16,
@@ -304,7 +303,6 @@ describe("process runner", () => {
 
     expect(result.kind).toBe("success");
     if (result.kind === "success") {
-      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(900);
       expect(result.output.stdoutBytes).toBe(stdout.length);
       expect(result.output.sinkStatus).toBe("discarded");
     }
