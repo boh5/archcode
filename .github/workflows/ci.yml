@@ -42,3 +42,34 @@ jobs:
 
       - name: Build
         run: bun run build
+
+      - name: Smoke test compiled binary
+        env:
+          ARCHCODE_PORT: 41967
+        run: |
+          mkdir -p ~/.archcode
+          install -m 600 .github/fixtures/smoke-config.json ~/.archcode/config.json
+          ./dist/archcode > "$RUNNER_TEMP/archcode-smoke.log" 2>&1 &
+          server_pid=$!
+          cleanup() {
+            kill "$server_pid" 2>/dev/null || true
+            wait "$server_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          ready=0
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if curl --silent --fail http://127.0.0.1:41967/api/health > "$RUNNER_TEMP/archcode-health.json"; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+
+          if [ "$ready" -ne 1 ]; then
+            sed -n '1,160p' "$RUNNER_TEMP/archcode-smoke.log"
+            exit 1
+          fi
+
+          curl --silent --fail http://127.0.0.1:41967/ > "$RUNNER_TEMP/archcode-index.html"
+          bun -e 'const html = await Bun.file(process.argv[1]).text(); if (!html.includes("<div id=\"root\"></div>")) process.exit(1)' "$RUNNER_TEMP/archcode-index.html"

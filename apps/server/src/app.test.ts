@@ -40,6 +40,26 @@ describe("createServerApp", () => {
     expect(res.headers.get("access-control-allow-origin")).toBe("*");
   });
 
+  test("serves explicitly injected Web assets outside development mode", async () => {
+    const embeddedWebAssets = new Map([["/index.html", import.meta.path]]);
+    const app = createServerApp(mockRuntime, { dev: false, embeddedWebAssets }).app;
+
+    const indexResponse = await app.request("/");
+    expect(indexResponse.status).toBe(200);
+    expect(indexResponse.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(await indexResponse.text()).toContain("createServerApp");
+
+    expect((await app.request("/assets/missing.js")).status).toBe(404);
+    expect((await app.request("/api/health")).status).toBe(200);
+  });
+
+  test("rejects an embedded Web asset map without its SPA entrypoint", () => {
+    expect(() => createServerApp(mockRuntime, {
+      dev: false,
+      embeddedWebAssets: new Map(),
+    })).toThrow("Embedded Web assets must include /index.html");
+  });
+
   test("requires Basic auth when configured", async () => {
     const app = createServerApp(mockRuntime, { dev: true, password: "secret" }).app;
     expect((await app.request("/api/health")).status).toBe(401);

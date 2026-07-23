@@ -23,11 +23,15 @@ import { createProjectsRoutes } from "./routes/projects";
 import { createSessionsRoutes } from "./routes/sessions";
 import { createTodosRoutes } from "./routes/todos";
 import { createToolOutputRoutes } from "./routes/tool-outputs";
-import { createEmbeddedAssetHandler } from "./serve-web";
+import {
+  createEmbeddedAssetHandler,
+  type EmbeddedWebAssets,
+} from "./serve-web";
 import { globalEventBus } from "./events/global-event-bus";
 
 export interface CreateServerAppOptions {
   dev?: boolean;
+  embeddedWebAssets?: EmbeddedWebAssets;
   password?: string;
 }
 
@@ -130,8 +134,8 @@ export function createServerApp(
   app.route("/api/files", new Hono());
   app.route("/api/directories", directories);
 
-  if (!options.dev) {
-    app.use("/*", createEmbeddedAssetHandler());
+  if (options.embeddedWebAssets) {
+    app.use("/*", createEmbeddedAssetHandler(options.embeddedWebAssets));
   }
 
   wireHitlRealtimeBridge(serverRuntime, globalEventBus);

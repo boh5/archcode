@@ -1,0 +1,36 @@
+{
+  "provider": {
+    "smoke": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "CI Smoke",
+      "options": {
+        "baseURL": "http://127.0.0.1:1/v1",
+        "apiKey": "ci-smoke-only"
+      },
+      "models": {
+        "test": {
+          "name": "CI Smoke",
+          "limit": {
+            "context": 8192,
+            "output": 1024
+          },
+          "modalities": {
+            "input": ["text"],
+            "output": ["text"]
+          }
+        }
+      }
+    }
+  },
+  "profiles": {
+    "principal": {
+      "model": "smoke:test"
+    },
+    "deep": {
+      "model": "smoke:test"
+    },
+    "fast": {
+      "model": "smoke:test"
+    }
+  }
+}

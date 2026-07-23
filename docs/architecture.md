@@ -18,7 +18,7 @@ archcode/
 │   └── agent-core/  — @archcode/agent-core — runtime: agents, tools, store, config,
 │                                            provider, MCP, LSP, memory, compact, etc.
 ├── scripts/
-│   └── build.ts     — production binary build (Vite → web-manifest → Bun.build)
+│   └── build.ts     — production binary build (Vite → temporary entrypoint → Bun.build)
 ├── docs/            — documentation (root-level per user decision)
 └── dist/            — compiled output (binary + artifacts)
 ```
@@ -130,7 +130,7 @@ This was removed because production uses the **compiled binary** (`dist/archcode
 |------|--------|--------|
 | 1. TypeCheck | `tsc --noEmit` | Pass/fail |
 | 2. Vite build | `scripts/build.ts` → `runWebBuild()` | `apps/web/dist/` |
-| 3. Generate manifest | `scripts/build.ts` → `generateManifest()` | `apps/server/src/web-manifest.ts` |
+| 3. Generate entrypoint | `scripts/build.ts` → `writeProductionEntrypoint()` | `dist/.build/main.ts` (temporary) |
 | 4. Compile binary | `scripts/build.ts` → `compileBinary()` | `dist/archcode` |
 
 No `bun run start` script is needed because `dist/archcode` is the deployment artifact.
@@ -144,17 +144,20 @@ bun run build
   ├── tsc --noEmit               (type check)
   └── scripts/build.ts
         ├── runWebBuild()         (Vite build → apps/web/dist/)
-        ├── generateManifest()    (scan dist/ → web-manifest.ts with Bun.file() imports)
-        └── compileBinary()       (Bun.build({ compile: true, plugins: [cssTreePatchPlugin] }))
+        ├── writeProductionEntrypoint()
+        │                          (scan Web dist → dist/.build/main.ts)
+        ├── compileBinary()       (Bun.build({ compile: true,
+                                             entrypoints: ["dist/.build/main.ts"] }))
                                     → dist/archcode
+        └── finally               (remove dist/.build/)
 ```
 
 ### Key details
 
 1. **Vite build** (`runWebBuild`): Spawns `bun run --cwd apps/web build` and fails if exit code ≠ 0.
-2. **Web manifest** (`generateManifest`): Scans `apps/web/dist/`, emits `apps/server/src/web-manifest.ts` with an `import ... with { type: "file" }` per asset and a `Map<string, string>` lookup. This embeds all frontend assets into the binary at compile time.
+2. **Production entrypoint** (`writeProductionEntrypoint`): Scans `apps/web/dist/` and writes ignored `dist/.build/main.ts` with an `import ... with { type: "file" }` per asset. The entrypoint constructs the URL-to-file map and passes it to the dedicated production startup function, which rejects a map without `/index.html` before runtime initialization. The temporary entrypoint is always removed after compilation, including failure paths.
 3. **Binary compilation** (`compileBinary`):
-   - Entry: `apps/server/src/main.ts`
+   - Entry: `dist/.build/main.ts`
    - Target: `bun` with `compile: true`
    - Minification: enabled
    - Plugin: `css-tree-patch` — inlines `mdn-data/css/*.json` imports and patches the `css-tree` library (used by Tailwind at runtime) to avoid dynamic `require()` calls that Bun compile cannot resolve.
@@ -162,7 +165,7 @@ bun run build
    - Serves embedded assets from the `Map` by request path
    - Falls back to SPA mode (serves `index.html` for non-`/api`/`/assets/` paths)
    - API routes (`/api/*`) take precedence and skip asset handling
-5. **Output**: Single portable binary at `dist/archcode`.
+5. **Output**: Single portable binary at `dist/archcode`. CI starts this compiled artifact and verifies both `/api/health` and the embedded SPA root.
 
 ---
 
@@ -204,5 +207,5 @@ The following situations **require an architecture decision** (documented update
 | `tsconfig.base.json` | Shared TypeScript config |
 | `packages/agent-core/src/__arch__/architecture.test.ts` | Enforced boundary rules |
 | `apps/server/src/serve-web.ts` | Embedded web asset handler |
-| `apps/server/src/web-manifest.ts` | Auto-generated asset manifest (do not hand-edit) |
+| `apps/server/src/main.ts` | Shared source entry and production startup function |
 | `scripts/build.ts` | Production binary builder |

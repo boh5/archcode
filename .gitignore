@@ -8,7 +8,6 @@ bun.lockb
 .archcode
 .specra
 .playwright-mcp
-apps/server/src/web-manifest.ts
 __test_tmp__/
 __test__/
 .turbo/

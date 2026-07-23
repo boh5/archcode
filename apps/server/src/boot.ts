@@ -3,12 +3,21 @@ import { ENV_OPEN_BROWSER, ENV_PORT, ENV_SERVER_PASSWORD, PRODUCT_DISPLAY_NAME }
 import { createServerApp } from "./app";
 import { setupGracefulShutdown } from "./lifecycle";
 import { startServer } from "./listen";
+import type { EmbeddedWebAssets } from "./serve-web";
 
-export async function bootServer(runtime: AgentRuntime): Promise<void> {
+export interface BootServerOptions {
+  embeddedWebAssets?: EmbeddedWebAssets;
+}
+
+export async function bootServer(
+  runtime: AgentRuntime,
+  options: BootServerOptions = {},
+): Promise<void> {
   const compiled = import.meta.url.startsWith("file:///$bunfs/");
   const dev = !compiled && !Bun.env[ENV_SERVER_PASSWORD];
   const { app } = createServerApp(runtime, {
     dev,
+    embeddedWebAssets: options.embeddedWebAssets,
     password: Bun.env[ENV_SERVER_PASSWORD],
   });
 

@@ -1,14 +1,15 @@
 import type { MiddlewareHandler } from "hono";
 
-// Lazy-loaded: only imported in production mode when the embedded asset handler is actually used.
-// This avoids requiring web/dist/ to exist during development (bun --hot dev mode).
-let webManifestCache: typeof import("./web-manifest") | null = null;
+export type EmbeddedWebAssets = ReadonlyMap<string, string>;
 
-async function loadWebManifest() {
-  if (!webManifestCache) {
-    webManifestCache = await import("./web-manifest");
+export function requireEmbeddedWebAssets(
+  embeddedWebAssets: EmbeddedWebAssets,
+): EmbeddedWebAssets {
+  if (!embeddedWebAssets.get("/index.html")) {
+    throw new Error("Embedded Web assets must include /index.html");
   }
-  return webManifestCache;
+
+  return embeddedWebAssets;
 }
 
 const contentTypes = new Map<string, string>([
@@ -27,7 +28,10 @@ function contentTypeForPath(path: string): string {
   return (extension && contentTypes.get(extension)) || "application/octet-stream";
 }
 
-export function createEmbeddedAssetHandler(): MiddlewareHandler {
+export function createEmbeddedAssetHandler(embeddedWebAssets: EmbeddedWebAssets): MiddlewareHandler {
+  const validatedAssets = requireEmbeddedWebAssets(embeddedWebAssets);
+  const embeddedIndexPath = validatedAssets.get("/index.html")!;
+
   return async (c, next) => {
     const requestPath = new URL(c.req.url).pathname;
 
@@ -41,10 +45,8 @@ export function createEmbeddedAssetHandler(): MiddlewareHandler {
       return;
     }
 
-    const { embeddedWebAssets, embeddedIndexPath } = await loadWebManifest();
-
     const normalizedPath = requestPath === "/" ? "/index.html" : requestPath;
-    const assetPath = embeddedWebAssets.get(normalizedPath);
+    const assetPath = validatedAssets.get(normalizedPath);
     if (assetPath) {
       return new Response(Bun.file(assetPath), {
         headers: { "Content-Type": contentTypeForPath(normalizedPath) },

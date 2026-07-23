@@ -49,7 +49,7 @@ Useful commands:
 | `bun run typecheck` | Type check all workspaces |
 | `bun run test` | Run the Bun test suite through Turborepo |
 | `bun run web:build` | Build the Vite Web UI only |
-| `bun run build` | Type check, build web assets, generate manifest, and compile `dist/archcode` |
+| `bun run build` | Type check, build web assets, generate a temporary production entrypoint, and compile `dist/archcode` |
 
 Validation order is `typecheck` before `test`.
 
