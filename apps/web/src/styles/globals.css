@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 @source "../../node_modules/streamdown/dist/*.js";
 @source "../../node_modules/@streamdown/code/dist/*.js";
 
@@ -163,6 +164,17 @@
   --color-text-tertiary: var(--text-tertiary);
   --color-text-muted: var(--text-muted);
 
+  /* Streamdown's shadcn-compatible theme contract. These aliases keep the
+     renderer on ArchCode's visual authority without a second token system. */
+  --color-background: var(--bg-elevated);
+  --color-foreground: var(--text-primary);
+  --color-sidebar: var(--bg-surface);
+  --color-muted: var(--bg-hover);
+  --color-muted-foreground: var(--text-tertiary);
+  --color-border: var(--border-default);
+  --color-primary: var(--brand);
+  --color-primary-foreground: var(--brand-ink);
+
   /* Brand */
   --color-brand: var(--brand);
   --color-brand-hover: var(--brand-hover);
@@ -325,8 +337,7 @@
   }
 }
 
-/* Session conversation density is intentionally local. Streamdown is also used
- * outside this surface, so none of these rhythm overrides may be global. */
+/* Session conversation density is intentionally local. */
 .conversation-surface .msg-parts {
   display: flex;
   flex-direction: column;
@@ -340,48 +351,4 @@
 .conversation-surface .conversation-part[data-conversation-part="tool"]
   + .conversation-part[data-conversation-part="tool"] {
   margin-top: -4px;
-}
-
-.conversation-markdown-body > :not(:last-child) {
-  margin-block-end: 8px !important;
-}
-
-.conversation-markdown-body :where(
-  p,
-  [data-streamdown="ordered-list"],
-  [data-streamdown="unordered-list"],
-  [data-streamdown="blockquote"],
-  [data-streamdown="code-block"],
-  [data-streamdown="mermaid-block"]
-) {
-  margin-block: 0 !important;
-}
-
-.conversation-markdown-body :where(
-  [data-streamdown="heading-1"],
-  [data-streamdown="heading-2"],
-  [data-streamdown="heading-3"],
-  [data-streamdown="heading-4"],
-  [data-streamdown="heading-5"],
-  [data-streamdown="heading-6"]
-) {
-  margin-block: 8px 4px !important;
-}
-
-.conversation-markdown-body :where(
-  p,
-  [data-streamdown="ordered-list"],
-  [data-streamdown="unordered-list"],
-  [data-streamdown="blockquote"],
-  [data-streamdown="code-block"],
-  [data-streamdown="mermaid-block"]
-) + :where(
-  p,
-  [data-streamdown="ordered-list"],
-  [data-streamdown="unordered-list"],
-  [data-streamdown="blockquote"],
-  [data-streamdown="code-block"],
-  [data-streamdown="mermaid-block"]
-) {
-  margin-top: 8px !important;
 }

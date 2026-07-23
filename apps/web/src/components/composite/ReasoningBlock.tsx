@@ -21,7 +21,7 @@ export function ReasoningBlock({ part }: { readonly part: ReasoningPart }) {
       </button>
       {expanded && (
         <div className="border-t border-border-subtle px-3 pb-2 text-[13px] italic leading-5 text-text-secondary">
-          <MarkdownContent isStreaming={streaming}>{part.text}</MarkdownContent>
+          <MarkdownContent isStreaming={streaming} variant="compact">{part.text}</MarkdownContent>
         </div>
       )}
     </div>

@@ -1,0 +1,520 @@
+.markdown-content,
+[data-markdown-table-context="dialog"] {
+  --markdown-text: var(--text-secondary);
+  --markdown-heading: var(--text-primary);
+  --markdown-muted: var(--text-tertiary);
+  --markdown-inline-code: color-mix(
+    in srgb,
+    var(--bg-surface) 72%,
+    var(--bg-hover)
+  );
+  --markdown-inline-border: color-mix(
+    in srgb,
+    var(--border-subtle) 68%,
+    transparent
+  );
+  --markdown-panel-shell: var(--bg-surface);
+  --markdown-panel-body: color-mix(
+    in srgb,
+    var(--bg-elevated) 84%,
+    var(--bg-base)
+  );
+  --markdown-code-gutter: color-mix(
+    in srgb,
+    var(--bg-surface) 72%,
+    var(--bg-base)
+  );
+}
+
+.markdown-content {
+  min-width: 0;
+  color: var(--markdown-text);
+  font-size: 14px;
+  line-height: 22px;
+  overflow-wrap: anywhere;
+}
+
+.markdown-content--compact {
+  font-size: 13px;
+  line-height: 20px;
+}
+
+/* Markdown owns semantic rhythm. The renderer's uniform root spacing is
+ * neutralized once, then headings and technical blocks establish hierarchy. */
+.markdown-content > * {
+  margin-block: 0;
+}
+
+.markdown-content > :not(:first-child) {
+  margin-block-start: 8px;
+}
+
+.markdown-content
+  > :where(
+    [data-streamdown="heading-1"],
+    [data-streamdown="heading-2"]
+  ):not(:first-child) {
+  margin-block-start: 22px;
+}
+
+.markdown-content
+  > :where(
+    [data-streamdown="heading-3"],
+    [data-streamdown="heading-4"],
+    [data-streamdown="heading-5"],
+    [data-streamdown="heading-6"]
+  ):not(:first-child) {
+  margin-block-start: 16px;
+}
+
+.markdown-content
+  > :where(
+    [data-streamdown="code-block"],
+    [data-streamdown="table-wrapper"],
+    [data-streamdown="mermaid-block"]
+  ):not(:first-child) {
+  margin-block-start: 12px;
+}
+
+.markdown-content
+  > :where(
+    [data-streamdown="heading-1"],
+    [data-streamdown="heading-2"],
+    [data-streamdown="heading-3"],
+    [data-streamdown="heading-4"],
+    [data-streamdown="heading-5"],
+    [data-streamdown="heading-6"]
+  )
+  + * {
+  margin-block-start: 6px;
+}
+
+.markdown-content--compact > :not(:first-child) {
+  margin-block-start: 6px;
+}
+
+.markdown-content--compact
+  > :where(
+    [data-streamdown="heading-1"],
+    [data-streamdown="heading-2"]
+  ):not(:first-child) {
+  margin-block-start: 12px;
+}
+
+.markdown-content--compact
+  > :where(
+    [data-streamdown="heading-3"],
+    [data-streamdown="heading-4"],
+    [data-streamdown="heading-5"],
+    [data-streamdown="heading-6"]
+  ):not(:first-child) {
+  margin-block-start: 10px;
+}
+
+.markdown-content--compact
+  > :where(
+    [data-streamdown="code-block"],
+    [data-streamdown="table-wrapper"],
+    [data-streamdown="mermaid-block"]
+  ):not(:first-child) {
+  margin-block-start: 8px;
+}
+
+.markdown-content--compact
+  > :where(
+    [data-streamdown="heading-1"],
+    [data-streamdown="heading-2"],
+    [data-streamdown="heading-3"],
+    [data-streamdown="heading-4"],
+    [data-streamdown="heading-5"],
+    [data-streamdown="heading-6"]
+  )
+  + * {
+  margin-block-start: 4px;
+}
+
+.markdown-content :where(
+  [data-streamdown="heading-1"],
+  [data-streamdown="heading-2"],
+  [data-streamdown="heading-3"],
+  [data-streamdown="heading-4"],
+  [data-streamdown="heading-5"],
+  [data-streamdown="heading-6"]
+) {
+  color: var(--markdown-heading);
+  font-weight: 600;
+  letter-spacing: -0.012em;
+}
+
+.markdown-content [data-streamdown="heading-1"] {
+  font-size: 20px;
+  line-height: 26px;
+}
+
+.markdown-content [data-streamdown="heading-2"] {
+  font-size: 17px;
+  line-height: 24px;
+}
+
+.markdown-content [data-streamdown="heading-3"] {
+  font-size: 15px;
+  line-height: 22px;
+}
+
+.markdown-content :where(
+  [data-streamdown="heading-4"],
+  [data-streamdown="heading-5"],
+  [data-streamdown="heading-6"]
+) {
+  font-size: 14px;
+  line-height: 21px;
+}
+
+.markdown-content--compact [data-streamdown="heading-1"] {
+  font-size: 15px;
+  line-height: 22px;
+}
+
+.markdown-content--compact [data-streamdown="heading-2"] {
+  font-size: 14px;
+  line-height: 21px;
+}
+
+.markdown-content--compact :where(
+  [data-streamdown="heading-3"],
+  [data-streamdown="heading-4"],
+  [data-streamdown="heading-5"],
+  [data-streamdown="heading-6"]
+) {
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.markdown-content [data-streamdown="strong"] {
+  color: var(--markdown-heading);
+  font-weight: 600;
+}
+
+.markdown-content [data-streamdown="link"] {
+  border-radius: var(--shape-control);
+  color: var(--brand);
+  font-weight: 500;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.markdown-content [data-streamdown="link"]:hover {
+  color: var(--brand-hover);
+}
+
+.markdown-content [data-streamdown="link"]:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}
+
+.markdown-content :where(
+  [data-streamdown="ordered-list"],
+  [data-streamdown="unordered-list"]
+) {
+  padding-inline-start: 21px;
+  list-style-position: outside;
+}
+
+.markdown-content [data-streamdown="list-item"] {
+  padding-block: 1px;
+  padding-inline-start: 1px;
+}
+
+.markdown-content [data-streamdown="list-item"]::marker {
+  color: var(--markdown-muted);
+}
+
+.markdown-content
+  [data-streamdown="list-item"]
+  > :where(
+    [data-streamdown="ordered-list"],
+    [data-streamdown="unordered-list"]
+  ) {
+  margin-block-start: 4px;
+}
+
+.markdown-content [data-streamdown="blockquote"] {
+  border-inline-start: 2px solid var(--border-strong);
+  padding-block: 1px;
+  padding-inline-start: 12px;
+  color: var(--markdown-text);
+  font-style: normal;
+}
+
+.markdown-content hr {
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.markdown-content [data-streamdown="inline-code"] {
+  border: 0;
+  border-radius: 3px;
+  background: var(--markdown-inline-code);
+  box-decoration-break: clone;
+  padding: 0 3px;
+  box-shadow: inset 0 0 0 1px var(--markdown-inline-border);
+  color: var(--markdown-heading);
+  font-family: var(--font-stack-mono);
+  font-size: 0.9em;
+  font-style: normal;
+  font-variant-ligatures: none;
+  -webkit-box-decoration-break: clone;
+}
+
+/* Streamdown owns rendering behavior; this component layer only composes its
+ * code primitives into one workbench-native technical panel. */
+.markdown-content [data-streamdown="code-block"] {
+  position: relative;
+  gap: 0;
+  overflow: clip;
+  border: 1px solid var(--border-default);
+  border-radius: var(--shape-card);
+  background: var(--markdown-panel-shell);
+  padding: 0;
+  font-style: normal;
+}
+
+.markdown-content [data-streamdown="code-block-header"] {
+  height: 32px;
+  border-bottom: 1px solid var(--border-subtle);
+  padding-inline: 11px;
+  color: var(--markdown-muted);
+}
+
+.markdown-content [data-streamdown="code-block-header"] > span,
+.markdown-content
+  [data-streamdown="code-block-header"]:not(
+    :has(> span:not(:empty))
+  )::before {
+  margin-inline-start: 0;
+  font-family: var(--font-stack-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.markdown-content [data-streamdown="code-block-header"] > span:empty {
+  display: none;
+}
+
+.markdown-content
+  [data-streamdown="code-block-header"]:not(
+    :has(> span:not(:empty))
+  )::before {
+  content: "CODE";
+}
+
+.markdown-content
+  [data-streamdown="code-block-header"]
+  + div:has(> [data-streamdown="code-block-actions"]) {
+  top: 0;
+  height: 32px;
+  margin-top: -32px;
+}
+
+.markdown-content [data-streamdown="code-block-actions"] {
+  gap: 1px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 2px 4px;
+  backdrop-filter: none;
+}
+
+.markdown-content :where(
+  [data-streamdown="code-block-copy-button"],
+  [data-streamdown="code-block-download-button"]
+),
+.markdown-table-action {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  place-items: center;
+  border-radius: var(--shape-control);
+  padding: 0;
+  color: var(--markdown-muted);
+  transition:
+    color var(--motion-hover) var(--ease-standard),
+    background-color var(--motion-hover) var(--ease-standard);
+}
+
+.markdown-content :where(
+  [data-streamdown="code-block-copy-button"],
+  [data-streamdown="code-block-download-button"]
+):hover,
+.markdown-table-action:hover {
+  background: var(--bg-hover);
+  color: var(--markdown-heading);
+}
+
+.markdown-content :where(
+  [data-streamdown="code-block-copy-button"],
+  [data-streamdown="code-block-download-button"]
+):focus-visible,
+.markdown-table-action:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--brand);
+}
+
+.markdown-content :where(
+  [data-streamdown="code-block-copy-button"],
+  [data-streamdown="code-block-download-button"]
+):disabled,
+.markdown-table-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.markdown-content [data-streamdown="code-block-body"] {
+  border: 0;
+  border-radius: 0;
+  background: var(--markdown-panel-body);
+  padding: 0;
+  font-family: var(--font-stack-mono);
+  font-size: 12.5px;
+  font-style: normal;
+  line-height: 20px;
+}
+
+.markdown-content [data-streamdown="code-block-body"] pre {
+  min-width: 100%;
+  width: max-content;
+  margin: 0;
+  background: transparent;
+  padding-block: 12px;
+  font: inherit;
+  font-variant-ligatures: none;
+  tab-size: 2;
+}
+
+.markdown-content [data-streamdown="code-block-body"] code > span {
+  min-height: 20px;
+  padding-inline-end: 14px;
+}
+
+.markdown-content [data-streamdown="code-block-body"] code > span::before {
+  box-sizing: border-box;
+  width: 38px;
+  margin-inline-end: 12px;
+  border-inline-end: 1px solid var(--border-subtle);
+  background: var(--markdown-code-gutter);
+  padding-inline-end: 9px;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: inherit;
+}
+
+/* The project-owned table adapter defines one stable panel contract. Streamdown
+ * still owns parsing and transfer behavior, while clipping belongs exclusively
+ * to the inner scroll viewport so action menus can escape the panel. */
+[data-markdown-table="surface"] {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid var(--border-default);
+  border-radius: var(--shape-card);
+  background: var(--markdown-panel-shell);
+}
+
+[data-markdown-table-context="dialog"] {
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+[data-markdown-table="toolbar"] {
+  display: flex;
+  min-height: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 2px 4px 2px 11px;
+}
+
+[data-markdown-table="label"] {
+  color: var(--markdown-muted);
+  font-family: var(--font-stack-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  line-height: 20px;
+  text-transform: uppercase;
+}
+
+[data-markdown-table="actions"] {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+[data-markdown-table="scroll"] {
+  min-width: 0;
+  overflow: auto;
+  border: 0;
+  border-radius: 0 0 calc(var(--shape-card) - 1px)
+    calc(var(--shape-card) - 1px);
+  background: var(--markdown-panel-body);
+}
+
+[data-markdown-table-context="dialog"]
+  [data-markdown-table="scroll"] {
+  min-height: 0;
+  flex: 1 1 auto;
+  border-radius: 0;
+}
+
+[data-markdown-table="surface"] [data-streamdown="table"] {
+  min-width: 440px;
+  border-color: var(--border-default);
+  color: var(--markdown-text);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+[data-markdown-table="surface"] [data-streamdown="table-header"] {
+  background: var(--markdown-panel-shell);
+}
+
+[data-markdown-table="surface"]
+  [data-streamdown="table-header-cell"] {
+  height: 36px;
+  color: var(--markdown-heading);
+  font-weight: 600;
+}
+
+[data-markdown-table="surface"] :where(
+  [data-streamdown="table-header-cell"],
+  [data-streamdown="table-cell"]
+) {
+  padding: 8px 10px;
+}
+
+[data-markdown-table="surface"] :where(
+  [data-streamdown="table-header-cell"],
+  [data-streamdown="table-cell"]
+):first-child {
+  width: 1%;
+  white-space: nowrap;
+}
+
+[data-markdown-table="surface"]
+  :where(
+    [data-streamdown="table-header-cell"],
+    [data-streamdown="table-cell"]
+  )
+  [data-streamdown="inline-code"] {
+  white-space: nowrap;
+}

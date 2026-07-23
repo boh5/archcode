@@ -128,7 +128,7 @@ export function CompressionBlock({ part, projectSlug, sessionId, focusStoreSessi
       </div>
 
       <div className="px-3 py-3 text-[13px] text-text-secondary leading-5">
-        <MarkdownContent>{part.summary}</MarkdownContent>
+        <MarkdownContent variant="compact">{part.summary}</MarkdownContent>
       </div>
 
       <div className="px-3 pb-2">

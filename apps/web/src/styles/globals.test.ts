@@ -146,6 +146,15 @@ describe("workbench visual tokens", () => {
     expect(css).toContain("--color-signal: var(--signal)");
     expect(css).toContain("--color-signal-foreground: var(--signal-foreground)");
     expect(css).toContain("--color-rail: var(--rail)");
+    expect(css).toContain("--color-background: var(--bg-elevated)");
+    expect(css).toContain("--color-foreground: var(--text-primary)");
+    expect(css).toContain("--color-sidebar: var(--bg-surface)");
+    expect(css).toContain("--color-muted: var(--bg-hover)");
+    expect(css).toContain("--color-muted-foreground: var(--text-tertiary)");
+    expect(css).toContain("--color-border: var(--border-default)");
+    expect(css).toContain("--color-primary: var(--brand)");
+    expect(css).toContain("--color-primary-foreground: var(--brand-ink)");
+    expect(css).toContain('@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));');
     expect(css).toContain('font-stack-sans: "Avenir Next", Avenir');
     expect(css).toContain('font-stack-mono: "SFMono-Regular"');
     expect(css).toContain("overlay-exit var(--motion-overlay) var(--ease-exit)");
