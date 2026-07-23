@@ -1,0 +1,734 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="ArchCode Indigo Ink and Signal Lime visual direction prototype"
+    />
+    <title>ArchCode — Signal Workbench Design Prototype</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <!--
+      THESIS: ArchCode is a workbench that visibly stays alive; it refuses both cold enterprise dashboards and cheerful AI chat toys.
+      OWN-WORLD: Warm mineral surfaces, indigo-ink actions, one signal-lime live state, tight square controls, and evidence organized by rules rather than nested cards.
+      STORY: The user delegates a consequential task, watches the Agent continue, inspects evidence, and decides what happens next.
+      FIRST VIEWPORT: Project rail and Threads frame one readable work canvas; a lime execution line is the memorable center; Changes remain one glance to the right.
+      FORM: Desktop engineering workbench, precisely pinned by the approved Claude-structure/Codex-information/ArchCode-color direction; no concept seed required.
+    -->
+    <a class="skip-link" href="#work-canvas">跳到工作区</a>
+
+    <div class="app-shell">
+      <nav class="project-rail" aria-label="Projects">
+        <button class="brand-mark" aria-label="ArchCode home" data-action="打开首页">A</button>
+        <div class="rail-projects">
+          <button class="rail-project active" aria-label="ArchCode project" data-action="切换到 ArchCode">AC</button>
+          <button class="rail-project" aria-label="Perler project" data-action="切换到 Perler">BP</button>
+          <button class="rail-project" aria-label="OpenMontage project" data-action="切换到 OpenMontage">OM</button>
+        </div>
+        <button class="rail-icon" aria-label="Open project" data-action="打开项目" data-icon="plus"></button>
+        <div class="rail-spacer"></div>
+        <button class="rail-icon" aria-label="Requests needing attention" data-action="打开待处理请求" data-icon="bell">
+          <span class="rail-attention-count">1</span>
+        </button>
+        <button class="rail-icon" aria-label="Settings" data-action="打开设置" data-icon="settings"></button>
+        <button
+          class="rail-icon"
+          aria-label="Switch to dark theme"
+          title="Switch to dark theme"
+          data-theme-toggle
+          data-icon="moon"
+        ></button>
+      </nav>
+
+      <aside class="thread-sidebar" id="thread-sidebar">
+        <div
+          class="layout-resize-handle sidebar-resize"
+          role="separator"
+          aria-label="Resize project navigation"
+          aria-orientation="vertical"
+          aria-valuemin="210"
+          aria-valuemax="340"
+          aria-valuenow="248"
+          tabindex="0"
+          data-resize-sidebar
+        ></div>
+        <header class="sidebar-head">
+          <div class="project-title">
+            <strong>ArchCode</strong>
+            <span>/Users/bo/Developer/AI/archcode</span>
+          </div>
+          <div class="sidebar-head-actions">
+            <button class="icon-button" aria-label="Project actions" data-action="打开项目操作">•••</button>
+            <button class="icon-button desktop-sidebar-action" aria-label="Collapse project sidebar" data-collapse-sidebar data-icon="collapse"></button>
+            <button class="icon-button" aria-label="Enter focus mode" aria-pressed="false" data-focus-mode data-icon="focus"></button>
+            <button class="icon-button mobile-close" aria-label="Close sidebar" data-close-sidebar data-icon="close"></button>
+          </div>
+        </header>
+
+        <div class="project-links">
+          <button data-canvas-target="dashboard"><span data-icon="dashboard"></span>Project Dashboard<span data-icon="chevron-right"></span></button>
+          <button data-canvas-target="todos"><span data-icon="todo"></span>Todos<span data-icon="chevron-right"></span></button>
+        </div>
+
+        <div class="sidebar-tabs" role="tablist" aria-label="Sidebar sections">
+          <button role="tab" aria-selected="true" data-sidebar-tab="sessions">Sessions</button>
+          <button role="tab" aria-selected="false" data-sidebar-tab="automations">Automations</button>
+        </div>
+
+        <div class="sidebar-panel active" role="tabpanel" data-sidebar-panel="sessions">
+          <div class="sidebar-toolbar">
+            <label class="search-field">
+              <span class="sr-only">Search sessions</span>
+              <span data-icon="search"></span>
+              <input type="search" placeholder="Search sessions…" />
+            </label>
+            <button class="compact-create" data-action="创建 Session"><span data-icon="plus"></span>New session</button>
+          </div>
+
+          <div class="sidebar-section">
+            <div class="section-label"><span>Active</span><span>2</span></div>
+            <button class="thread active" data-thread="runtime">
+              <span class="thread-state live" aria-hidden="true"></span>
+              <span class="thread-copy"><strong>Runtime authority migration</strong><small>running · just now</small></span>
+              <time></time>
+            </button>
+            <button class="thread" data-thread="provider">
+              <span class="thread-state live" aria-hidden="true"></span>
+              <span class="thread-copy"><strong>Provider stream recovery</strong><small>running · 6m ago</small></span>
+              <time></time>
+            </button>
+          </div>
+
+          <div class="sidebar-section history">
+            <div class="section-label"><span>Sessions</span><span></span></div>
+            <button class="thread attention" data-thread="output">
+              <span class="thread-state wait" aria-hidden="true"></span>
+              <span class="thread-copy"><strong>Tool output boundary</strong><small>idle · Review active</small></span>
+              <span class="attention-badge">1</span>
+            </button>
+            <button class="thread" data-thread="model">
+              <span class="thread-state done" aria-hidden="true"></span>
+              <span class="thread-copy"><strong>Model runtime snapshots</strong><small>idle · Tuesday</small></span>
+              <time></time>
+            </button>
+            <button class="thread" data-thread="hitl">
+              <span class="thread-state done" aria-hidden="true"></span>
+              <span class="thread-copy"><strong>HITL queue cleanup</strong><small>idle · Monday</small></span>
+              <time></time>
+            </button>
+          </div>
+        </div>
+
+        <div class="sidebar-panel" role="tabpanel" data-sidebar-panel="automations" hidden>
+          <div class="project-links automation-link">
+            <button data-action="打开 Automations Dashboard"><span data-icon="automation"></span>Automations<span data-icon="chevron-right"></span></button>
+          </div>
+          <div class="sidebar-toolbar">
+            <label class="search-field">
+              <span class="sr-only">Search automations</span>
+              <span data-icon="search"></span>
+              <input type="search" placeholder="Search automations…" />
+            </label>
+            <button class="compact-create" data-action="创建 Automation"><span data-icon="plus"></span>New automation</button>
+          </div>
+          <div class="sidebar-section">
+            <div class="section-label"><span>Automations</span><span>2</span></div>
+            <button class="thread" data-action="打开 Nightly regression review">
+              <span class="thread-state live" aria-hidden="true"></span>
+              <span class="thread-copy"><strong>Nightly regression review</strong><small>cron 0 2 * * * · review</small></span>
+            </button>
+            <button class="thread" data-action="打开 Dependency watch">
+              <span class="thread-state done" aria-hidden="true"></span>
+              <span class="thread-copy"><strong>Dependency watch</strong><small>interval 24h · active</small></span>
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      <main class="work-canvas" id="work-canvas" tabindex="-1">
+        <section class="canvas-view session-view active" data-canvas-view="session">
+          <header class="work-header">
+            <button class="icon-button mobile-menu" aria-label="Open sidebar" data-open-sidebar data-icon="menu"></button>
+            <button class="icon-button sidebar-expand" aria-label="Expand project sidebar" data-expand-sidebar data-icon="expand"></button>
+            <div class="work-title">
+              <strong>Runtime authority migration</strong>
+              <span>ArchCode / codex/runtime-authority</span>
+            </div>
+            <div class="work-actions">
+              <button class="secondary-button todo-button" data-action="打开 Session Todo">
+                <span data-icon="todo"></span>
+                Todo
+                <span class="button-count">3/5</span>
+              </button>
+              <button class="secondary-button inspector-trigger" data-open-inspector aria-expanded="true" aria-controls="changes-inspector">
+                <span data-icon="panel"></span>
+                Inspector
+              </button>
+            </div>
+          </header>
+
+          <div class="conversation">
+            <section class="task-heading" aria-labelledby="task-title">
+              <div class="task-meta">
+                <span class="agent-chip"><span class="mini-mark">A</span> Lead</span>
+                <span>principal</span>
+                <span>started 14 minutes ago</span>
+              </div>
+              <h1 id="task-title">Move project runtime authority into <code>.archcode/runtime</code></h1>
+              <p>One protected home for system-owned project state. No dual reads, no compatibility aliases, no hidden fallback paths.</p>
+            </section>
+
+            <section class="message user-message" aria-label="User message">
+              <div class="message-author">You</div>
+              <p>Move all project-owned runtime state under <code>.archcode/runtime</code>. Make it a hard cut, and keep plans and skills directly editable.</p>
+            </section>
+
+            <section class="agent-response" aria-label="ArchCode response">
+              <header class="response-author">
+                <span class="agent-avatar">A</span>
+                <div><strong>ArchCode</strong><span>Lead Agent</span></div>
+              </header>
+              <p class="response-copy">I mapped every runtime reader and writer before changing the boundary. The migration touches Sessions, HITL, approvals, Todos, Automations, and memory.</p>
+
+              <section class="execution" aria-label="Execution">
+                <button class="execution-head" type="button" aria-expanded="true" data-execution-toggle>
+                  <span class="execution-identity">
+                    <span class="live-pulse"></span>
+                    <strong>Execution</strong>
+                    <span class="running-badge">Running</span>
+                  </span>
+                  <span class="execution-head-meta">
+                    <span>4 steps · 7 calls</span>
+                    <span class="elapsed">14:32</span>
+                    <span class="execution-chevron" data-icon="chevron"></span>
+                  </span>
+                </button>
+                <div class="execution-body" data-execution-body>
+                  <div class="execution-binding">
+                    <span>Lead · principal</span>
+                    <span>GLM-5 · deep</span>
+                    <span>Working continuously</span>
+                  </div>
+                  <ol class="execution-list">
+                    <li class="tool-group-event complete">
+                      <div class="tool-group-card">
+                        <button class="tool-group-toggle" type="button" aria-expanded="false" data-tool-group-toggle>
+                          <span class="tool-group-chevron" data-icon="chevron-right"></span>
+                          <span class="tool-group-icon" data-icon="search"></span>
+                          <span class="tool-group-copy">
+                            <strong>Ran 4 read-only tools</strong>
+                            <small>file_read · grep · glob · lsp_diagnostics</small>
+                          </span>
+                          <span class="tool-group-count">4</span>
+                        </button>
+                        <div class="tool-group-children" data-tool-group-children hidden>
+                          <div class="tool-child">
+                            <button type="button" aria-expanded="false" data-tool-child-toggle>
+                              <span class="tool-child-status" data-icon="check"></span>
+                              <code>file_read</code>
+                              <span>registry.ts</span>
+                              <small>Completed</small>
+                              <span class="tool-child-chevron" data-icon="chevron-right"></span>
+                            </button>
+                            <div class="tool-child-detail" hidden>
+                              <code>packages/agent-core/src/projects/registry.ts</code>
+                              <span>complete · 18.4 KB / 412 lines</span>
+                            </div>
+                          </div>
+                          <div class="tool-child">
+                            <button type="button" aria-expanded="false" data-tool-child-toggle>
+                              <span class="tool-child-status" data-icon="check"></span>
+                              <code>grep</code>
+                              <span>.archcode/runtime</span>
+                              <small>Completed</small>
+                              <span class="tool-child-chevron" data-icon="chevron-right"></span>
+                            </button>
+                            <div class="tool-child-detail" hidden>
+                              <code>packages/agent-core/src</code>
+                              <span>48 matches across 21 files</span>
+                            </div>
+                          </div>
+                          <div class="tool-child">
+                            <button type="button" aria-expanded="false" data-tool-child-toggle>
+                              <span class="tool-child-status" data-icon="check"></span>
+                              <code>glob</code>
+                              <span>**/*runtime*</span>
+                              <small>Completed</small>
+                              <span class="tool-child-chevron" data-icon="chevron-right"></span>
+                            </button>
+                            <div class="tool-child-detail" hidden>
+                              <code>packages/agent-core</code>
+                              <span>12 paths returned</span>
+                            </div>
+                          </div>
+                          <div class="tool-child">
+                            <button type="button" aria-expanded="false" data-tool-child-toggle>
+                              <span class="tool-child-status" data-icon="check"></span>
+                              <code>lsp_diagnostics</code>
+                              <span>runtime.ts</span>
+                              <small>Completed</small>
+                              <span class="tool-child-chevron" data-icon="chevron-right"></span>
+                            </button>
+                            <div class="tool-child-detail" hidden>
+                              <code>packages/agent-core/src/runtime.ts</code>
+                              <span>No diagnostics</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </li>
+                    <li class="tool-call-event complete">
+                      <div class="tool-call-card">
+                        <button class="tool-call-toggle" type="button" aria-expanded="true" aria-controls="tool-call-file-edit-detail" data-tool-call-toggle>
+                          <span class="tool-call-status" data-icon="check"></span>
+                          <code>file_edit</code>
+                          <span class="tool-call-summary">workspace-guard.ts</span>
+                          <span class="tool-call-diff">1 file · +24 −10</span>
+                          <span class="tool-call-state">Completed</span>
+                          <span class="tool-call-chevron" data-icon="chevron-right"></span>
+                        </button>
+                        <div class="tool-call-detail" id="tool-call-file-edit-detail" data-tool-call-detail>
+                          <dl class="tool-input-details">
+                            <div><dt>path</dt><dd>packages/agent-core/src/tools/hooks/workspace-guard.ts</dd></div>
+                            <div><dt>operation</dt><dd>replace protected-path resolution</dd></div>
+                          </dl>
+                          <div class="tool-diff-preview">
+                            <header><span data-icon="changes"></span><strong>workspace-guard.ts</strong><span>+24 −10</span></header>
+                            <pre><span class="diff-remove">− const protectedRoot = resolve(workspace, ".archcode");</span>
+<span class="diff-add">+ const protectedRoot = resolve(workspace, ".archcode/runtime");</span>
+<span class="diff-add">+ return isWithinPath(target, protectedRoot);</span></pre>
+                          </div>
+                          <div class="tool-output-meta">
+                            <span>complete</span>
+                            <span>observed 1.2 KB / 31 lines</span>
+                            <span>stored 1.2 KB / 31 lines</span>
+                          </div>
+                        </div>
+                      </div>
+                    </li>
+                    <li class="delegation">
+                      <span class="step-glyph delegation-glyph" data-icon="delegate"></span>
+                      <div><strong>Delegated to Build</strong><p>Verify mutation guards and runtime path hygiene independently.</p></div>
+                      <span class="step-state">Completed</span>
+                    </li>
+                    <li class="current">
+                      <span class="step-glyph active-glyph" data-icon="terminal"></span>
+                      <div><strong>Bash</strong><p>Running architecture tests against ancestor mutations and legacy paths.</p></div>
+                      <span class="running-word">RUNNING</span>
+                    </li>
+                  </ol>
+                  <div class="terminal-line">
+                    <span>$</span>
+                    <code>bun run test --filter runtime-path-hygiene</code>
+                    <span class="terminal-cursor" aria-hidden="true"></span>
+                  </div>
+                </div>
+              </section>
+
+              <p class="response-copy final-copy">The new boundary is in place. Plans and Skills remain outside the protected runtime subtree; I’m finishing the last verification pass now.</p>
+            </section>
+          </div>
+
+          <section class="session-composer-dock" aria-label="Session composer">
+            <div class="composer-shell">
+              <section class="composer-attention" aria-label="HITL permission request">
+                <div class="composer-status-mark attention-mark">!</div>
+                <div class="composer-status-copy">
+                  <div><strong>HITL · Permission required</strong><span>bash</span></div>
+                  <code>bun run test --filter runtime-path-hygiene</code>
+                  <small>ArchCode is waiting for this decision before it can continue.</small>
+                </div>
+                <div class="attention-actions">
+                  <button type="button" data-action="拒绝权限">Deny</button>
+                  <button class="attention-primary" type="button" data-action="允许本次执行">Allow once</button>
+                </div>
+              </section>
+
+              <form class="composer" id="composer">
+                <div class="composer-meta">
+                  <button class="composer-goal-summary" type="button" data-action="打开 Goal 控制">
+                    <span class="composer-status-mark goal-mark">G</span>
+                    <span>
+                      <strong>Goal active</strong>
+                      <small>Move runtime authority without compatibility paths</small>
+                    </span>
+                    <span data-icon="chevron-right"></span>
+                  </button>
+                </div>
+                <section class="composer-queue" aria-label="Queued messages">
+                  <span class="queue-count">1 queued</span>
+                  <p>After the tests, summarize the remaining migration risk.</p>
+                  <button type="button" data-action="编辑队列消息">Edit</button>
+                </section>
+                <label for="follow-up">Continue the task</label>
+                <textarea id="follow-up" rows="1" placeholder="Queue a message while ArchCode is running…"></textarea>
+                <div class="composer-foot">
+                  <div class="composer-context">
+                    <button type="button" data-action="选择 Agent"><span class="agent-dot"></span> Lead</button>
+                    <button type="button" data-action="选择 Profile">principal <span data-icon="chevron"></span></button>
+                    <button type="button" data-action="选择下一次模型">GLM-5 · deep <span data-icon="chevron"></span></button>
+                  </div>
+                  <div class="composer-actions">
+                    <button class="stop-button" type="button" aria-label="Stop Session" data-action="停止 Session" data-icon="stop"></button>
+                    <button class="queue-button" type="submit">
+                      Queue
+                      <span data-icon="arrow"></span>
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </div>
+          </section>
+        </section>
+
+        <section class="canvas-view dashboard-view" data-canvas-view="dashboard" hidden>
+          <header class="work-header page-work-header">
+            <button class="icon-button mobile-menu" aria-label="Open sidebar" data-open-sidebar data-icon="menu"></button>
+            <button class="icon-button sidebar-expand" aria-label="Expand project sidebar" data-expand-sidebar data-icon="expand"></button>
+            <div class="work-title">
+              <strong>ArchCode</strong>
+              <span>Project Dashboard</span>
+            </div>
+          </header>
+
+          <div class="dashboard-scroll">
+            <div class="dashboard-content">
+              <section class="dashboard-intro">
+                <span class="page-mark" data-icon="dashboard"></span>
+                <div>
+                  <h1>Dashboard</h1>
+                  <p>What needs you, what is moving, and where to continue.</p>
+                </div>
+              </section>
+
+              <section class="dashboard-section attention-section">
+                <header class="dashboard-section-head">
+                  <span class="status-orbit warning"></span>
+                  <h2>Needs attention</h2>
+                  <span class="section-count">1</span>
+                </header>
+                <button class="dashboard-row attention-row" data-action="打开 Coverage set">
+                  <span class="status-orbit warning"></span>
+                  <span class="dashboard-row-copy">
+                    <strong>Coverage set</strong>
+                    <small>Which UI states and viewports must the manual Visual QA checklist cover?</small>
+                  </span>
+                  <span class="dashboard-row-meta"><small>Discussion · 13h ago</small><span>Open</span></span>
+                </button>
+              </section>
+
+              <section class="dashboard-section running-section">
+                <header class="dashboard-section-head">
+                  <span class="status-orbit live"></span>
+                  <h2>Running now</h2>
+                  <span class="section-count live-count">1</span>
+                </header>
+                <button class="dashboard-row running-row" data-action="打开 Runtime authority migration">
+                  <span class="status-orbit live"></span>
+                  <span class="dashboard-row-copy">
+                    <strong>Runtime authority migration</strong>
+                    <small>Lead is validating runtime path hygiene after 12 file changes.</small>
+                  </span>
+                  <span class="dashboard-row-meta"><small class="live-word">RUNNING · 14:32</small><span>Open</span></span>
+                </button>
+              </section>
+
+              <section class="dashboard-section">
+                <header class="dashboard-section-head">
+                  <span class="status-orbit brand"></span>
+                  <h2>Continue working</h2>
+                  <span class="section-count">3</span>
+                </header>
+                <div class="dashboard-list">
+                  <button class="dashboard-row" data-thread-jump="output">
+                    <span class="status-orbit quiet"></span>
+                    <span class="dashboard-row-copy"><strong>Tool output boundary</strong><small>Review active · waiting for a decision</small></span>
+                    <span class="dashboard-row-meta"><small>12m ago</small><span>Open</span></span>
+                  </button>
+                  <button class="dashboard-row" data-thread-jump="model">
+                    <span class="status-orbit quiet"></span>
+                    <span class="dashboard-row-copy"><strong>Model runtime snapshots</strong><small>Idle · last execution completed</small></span>
+                    <span class="dashboard-row-meta"><small>Tuesday</small><span>Open</span></span>
+                  </button>
+                  <button class="dashboard-row" data-thread-jump="hitl">
+                    <span class="status-orbit quiet"></span>
+                    <span class="dashboard-row-copy"><strong>HITL queue cleanup</strong><small>Idle · no pending requests</small></span>
+                    <span class="dashboard-row-meta"><small>Monday</small><span>Open</span></span>
+                  </button>
+                </div>
+              </section>
+
+              <section class="dashboard-section">
+                <header class="dashboard-section-head">
+                  <span class="status-orbit brand"></span>
+                  <h2>Upcoming</h2>
+                  <span class="section-count">1</span>
+                </header>
+                <button class="dashboard-row" data-action="打开 Nightly regression review">
+                  <span class="status-orbit quiet"></span>
+                  <span class="dashboard-row-copy"><strong>Nightly regression review</strong><small>Automation · active</small></span>
+                  <span class="dashboard-row-meta"><small>Tomorrow · 02:00</small><span>Open</span></span>
+                </button>
+              </section>
+            </div>
+          </div>
+        </section>
+
+        <section class="canvas-view todos-view" data-canvas-view="todos" hidden>
+          <header class="work-header page-work-header todos-work-header">
+            <button class="icon-button mobile-menu" aria-label="Open sidebar" data-open-sidebar data-icon="menu"></button>
+            <button class="icon-button sidebar-expand" aria-label="Expand project sidebar" data-expand-sidebar data-icon="expand"></button>
+            <div class="work-title">
+              <strong>Todos</strong>
+              <span>Capture intent, shape it with Lead, then connect it to execution.</span>
+            </div>
+            <div class="todo-view-tabs" role="group" aria-label="Todo views">
+              <button aria-pressed="true" data-todo-view="board">Board</button>
+              <button aria-pressed="false" data-todo-view="rejected">Rejected</button>
+              <button aria-pressed="false" data-todo-view="archived">Archived</button>
+            </div>
+          </header>
+
+          <div class="todos-scroll">
+            <div class="todos-content">
+              <form class="todo-capture" id="todo-capture">
+                <span data-icon="plus"></span>
+                <label class="sr-only" for="new-todo-title">New Todo title</label>
+                <input id="new-todo-title" type="text" placeholder="Capture something to shape later…" />
+                <button class="primary-button" type="submit">New Todo</button>
+              </form>
+
+              <div class="todo-panel board-panel active" data-todo-panel="board">
+                <section class="todo-lane" aria-label="Ideas">
+                  <header class="todo-lane-head"><span class="status-orbit brand"></span><span><strong>Ideas</strong><small>Capture first, shape later</small></span><span>1</span></header>
+                  <div class="todo-lane-list">
+                    <button class="todo-card" data-todo-card="visual-qa">
+                      <span class="todo-card-state"><span class="status-orbit brand"></span>Idea</span>
+                      <strong>Visual QA for the workbench</strong>
+                      <small><span data-icon="review"></span>Discussion · waiting for you</small>
+                      <span class="todo-next">Continue Discussion</span>
+                    </button>
+                  </div>
+                </section>
+
+                <section class="todo-lane" aria-label="Ready">
+                  <header class="todo-lane-head"><span class="status-orbit quiet"></span><span><strong>Ready</strong><small>Clear enough to hand off</small></span><span>1</span></header>
+                  <div class="todo-lane-list">
+                    <button class="todo-card" data-todo-card="output-boundary">
+                      <span class="todo-card-state"><span class="status-orbit quiet"></span>Ready</span>
+                      <strong>Finalize tool output boundary</strong>
+                      <small>No linked work yet</small>
+                      <span class="todo-next">Start Session</span>
+                    </button>
+                  </div>
+                </section>
+
+                <section class="todo-lane" aria-label="In Progress">
+                  <header class="todo-lane-head"><span class="status-orbit live"></span><span><strong>In Progress</strong><small>Connected to active work</small></span><span>2</span></header>
+                  <div class="todo-lane-list">
+                    <button class="todo-card" data-todo-card="runtime">
+                      <span class="todo-card-state"><span class="status-orbit live"></span>In Progress</span>
+                      <strong>Move runtime authority</strong>
+                      <small><span data-icon="terminal"></span>Session · running · 14:32</small>
+                      <span class="todo-next">Open Session</span>
+                    </button>
+                    <button class="todo-card" data-todo-card="regression">
+                      <span class="todo-card-state"><span class="status-orbit quiet"></span>In Progress</span>
+                      <strong>Nightly regression review</strong>
+                      <small><span data-icon="automation"></span>Automation · active</small>
+                      <span class="todo-next">Open Automation</span>
+                    </button>
+                  </div>
+                </section>
+
+                <section class="todo-lane" aria-label="Done">
+                  <header class="todo-lane-head"><span class="status-orbit success"></span><span><strong>Done</strong><small>Explicitly completed</small></span><span>1</span></header>
+                  <div class="todo-lane-list">
+                    <button class="todo-card" data-todo-card="model">
+                      <span class="todo-card-state"><span class="status-orbit success"></span>Done</span>
+                      <strong>Model runtime snapshots</strong>
+                      <small>Completed Tuesday</small>
+                      <span class="todo-next">Reopen</span>
+                    </button>
+                  </div>
+                </section>
+              </div>
+
+              <section class="todo-panel flat-todo-panel" data-todo-panel="rejected" hidden>
+                <header class="flat-todo-head">
+                  <div><h1>Rejected Todos</h1><p>Declined intent stays visible with the reason preserved.</p></div>
+                  <span>2 items</span>
+                </header>
+                <button class="flat-todo-row" data-todo-card="legacy-aliases">
+                  <span class="status-orbit warning"></span>
+                  <span><strong>Keep compatibility aliases for runtime paths</strong><small>Rejected: the hard cut requires one authority path.</small></span>
+                  <span>Restore to Idea</span>
+                </button>
+                <button class="flat-todo-row" data-todo-card="dashboard-metrics">
+                  <span class="status-orbit warning"></span>
+                  <span><strong>Add velocity metrics to Project Dashboard</strong><small>Rejected: activity counts would not help the next decision.</small></span>
+                  <span>Restore to Idea</span>
+                </button>
+              </section>
+
+              <section class="todo-panel flat-todo-panel" data-todo-panel="archived" hidden>
+                <header class="flat-todo-head">
+                  <div><h1>Archived Todos</h1><p>Inactive work stays recoverable without crowding the active workflow.</p></div>
+                  <span>2 items</span>
+                </header>
+                <button class="flat-todo-row" data-todo-card="old-provider-audit">
+                  <span class="status-orbit quiet"></span>
+                  <span><strong>Audit retired provider configuration</strong><small>Archived after the configuration hard cut · June 18</small></span>
+                  <span>Restore</span>
+                </button>
+                <button class="flat-todo-row" data-todo-card="memory-notes">
+                  <span class="status-orbit quiet"></span>
+                  <span><strong>Collect memory extraction notes</strong><small>Archived from Done · May 29</small></span>
+                  <span>Restore</span>
+                </button>
+              </section>
+            </div>
+          </div>
+
+          <div class="todo-detail-scrim" data-close-todo-detail></div>
+          <aside class="todo-detail" aria-label="Todo details">
+            <header class="todo-detail-head">
+              <div><strong data-todo-detail-title>Visual QA for the workbench</strong><span data-todo-detail-state>Idea · Discussion waiting for you</span></div>
+              <button class="icon-button" aria-label="Close Todo details" data-close-todo-detail data-icon="close"></button>
+            </header>
+            <div class="todo-detail-body">
+              <section>
+                <h2>Objective</h2>
+                <p data-todo-detail-objective>Define the visual acceptance surface before handing implementation to a new Lead Session.</p>
+              </section>
+              <section>
+                <h2>Confirmed decisions</h2>
+                <ul>
+                  <li>Preserve every functional entity and lifecycle action.</li>
+                  <li>Use Signal Workbench as the shared visual system.</li>
+                  <li class="needs-decision">Coverage and acceptance evidence still need confirmation.</li>
+                </ul>
+              </section>
+              <section>
+                <h2>Linked work</h2>
+                <p data-todo-detail-link>Discussion Session · waiting for your response</p>
+              </section>
+              <div class="todo-detail-actions">
+                <button class="primary-button" data-todo-detail-primary>Continue Discussion</button>
+                <div data-todo-detail-secondary></div>
+              </div>
+            </div>
+          </aside>
+        </section>
+      </main>
+
+      <aside class="changes-inspector" id="changes-inspector" aria-label="Context inspector">
+        <div
+          class="layout-resize-handle inspector-resize"
+          role="separator"
+          aria-label="Resize context inspector"
+          aria-orientation="vertical"
+          aria-valuemin="280"
+          aria-valuemax="460"
+          aria-valuenow="330"
+          tabindex="0"
+          data-resize-inspector
+        ></div>
+        <header class="inspector-head">
+          <div><strong>Context inspector</strong><span>Session</span></div>
+          <button class="icon-button inspector-close" aria-label="Close context inspector" data-close-inspector data-icon="close"></button>
+        </header>
+
+        <div class="inspector-tabs" role="tablist" aria-label="Session context sections">
+          <button role="tab" aria-selected="true" data-inspector-tab="agents">Agents</button>
+          <button role="tab" aria-selected="false" data-inspector-tab="changes">Changes</button>
+          <button role="tab" aria-selected="false" data-inspector-tab="context">Context</button>
+        </div>
+
+        <div class="inspector-panel active" role="tabpanel" data-inspector-panel="agents">
+          <nav class="agent-tree" aria-label="Agents">
+            <button class="agent-row active" data-action="聚焦 Lead Session">
+              <span class="tree-line root-line"></span>
+              <span class="agent-role lead-role">L</span>
+              <span class="agent-row-copy"><strong>Runtime authority migration</strong><small>orchestrate-work</small></span>
+              <span class="agent-profile">principal</span>
+              <span class="agent-status running"><span></span>Running</span>
+            </button>
+            <button class="agent-row child" data-action="聚焦 Analyst Session">
+              <span class="tree-line"></span>
+              <span class="agent-role analyst-role">A</span>
+              <span class="agent-row-copy"><strong>Map runtime authority</strong><small>analyze-work</small></span>
+              <span class="agent-profile">deep</span>
+              <span class="agent-status complete"><span data-icon="check"></span>Completed</span>
+            </button>
+            <button class="agent-row child" data-action="聚焦 Build Session">
+              <span class="tree-line"></span>
+              <span class="agent-role build-role">B</span>
+              <span class="agent-row-copy"><strong>Verify path guards</strong><small>runtime hygiene</small></span>
+              <span class="agent-profile">deep</span>
+              <span class="agent-status running"><span></span>Running</span>
+            </button>
+          </nav>
+        </div>
+
+        <div class="inspector-panel" role="tabpanel" data-inspector-panel="changes" hidden>
+          <div class="change-summary">
+            <div><strong>12</strong><span>files</span></div>
+            <div class="insertions"><strong>+184</strong><span>insertions</span></div>
+            <div class="deletions"><strong>−97</strong><span>deletions</span></div>
+          </div>
+          <div class="file-list">
+            <button class="file-row" data-file="registry">
+              <span data-icon="file"></span>
+              <span><strong>registry.ts</strong><small>packages/agent-core/src/projects</small></span>
+              <span class="file-stat">modified</span>
+            </button>
+            <button class="file-row" data-file="persist">
+              <span data-icon="file"></span>
+              <span><strong>persist.ts</strong><small>packages/agent-core/src/store</small></span>
+              <span class="file-stat">modified</span>
+            </button>
+            <button class="file-row" data-file="guard">
+              <span data-icon="file"></span>
+              <span><strong>workspace-guard.ts</strong><small>packages/agent-core/src/tools</small></span>
+              <span class="file-stat">modified</span>
+            </button>
+            <button class="file-row" data-file="tests">
+              <span data-icon="file"></span>
+              <span><strong>runtime-path-hygiene.test.ts</strong><small>packages/agent-core/src/__arch__</small></span>
+              <span class="file-stat">modified</span>
+            </button>
+          </div>
+          <button class="full-diff-button" data-action="在主画布打开完整 Diff">Open full diff in canvas</button>
+        </div>
+
+        <div class="inspector-panel context-panel" role="tabpanel" data-inspector-panel="context" hidden>
+          <section class="context-section">
+            <h2>Working directory</h2>
+            <code>/Users/bo/Developer/AI/archcode</code>
+          </section>
+          <section class="context-section">
+            <h2>Model</h2>
+            <p>GLM-5 <span>· deep</span></p>
+          </section>
+          <section class="context-section">
+            <h2>Execution</h2>
+            <dl>
+              <div><dt>Messages</dt><dd>18</dd></div>
+              <div><dt>Tool calls</dt><dd>11</dd></div>
+              <div><dt>Tokens</dt><dd>42,806</dd></div>
+              <div><dt>Executions</dt><dd>1</dd></div>
+            </dl>
+          </section>
+        </div>
+      </aside>
+    </div>
+
+    <div class="scrim" data-close-overlays></div>
+    <div class="toast" role="status" aria-live="polite"></div>
+    <script src="./app.js"></script>
+  </body>
+</html>
