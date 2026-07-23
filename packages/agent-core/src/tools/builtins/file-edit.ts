@@ -15,7 +15,7 @@ import type { RawToolResult, ToolExecutionContext } from "../types";
 
 const FileEditInputSchema = z
   .object({
-    path: z.string().describe("Absolute or current-Session-cwd-relative path of the existing file to edit, for example `src/config.ts`."),
+    path: z.string().describe("Absolute or current-Session-cwd-relative path of an existing file to modify, for example `src/config.ts`. The target path must already exist; use file_write only for a genuinely new file."),
     edits: z.array(
       z
         .object({
@@ -319,7 +319,9 @@ function applyEdits(content: string, matches: EditMatch[]): string {
 export const fileEditTool = defineTool({
   name: "file_edit",
   description: [
-    "Apply one or more targeted replacements to an existing file. Use file_write only for a genuinely new file.",
+    "MODIFY EXISTING FILE ONLY. Use file_edit for EVERY modification to an existing file, including when most or all of its content must change. Never use file_write to replace, rewrite, or update an existing file; file_write is only for a genuinely new path.",
+    "",
+    "Apply one or more targeted replacements to the existing file.",
     "",
     "Required workflow:",
     "1. Read the file first. Copy oldString from the file content without the `N: ` line-number prefix and preserve exact indentation.",

@@ -15,7 +15,7 @@ import type { RawToolResult } from "../types";
 
 const FileWriteInputSchema = z
   .object({
-    path: z.string().describe("Absolute or current-Session-cwd-relative path for the new file, for example `src/new-module.ts`. Missing parent directories are created automatically."),
+    path: z.string().describe("Absolute or current-Session-cwd-relative path for a genuinely new file, for example `src/new-module.ts`. The target path must not already exist; use file_edit for every existing file. Missing parent directories are created automatically."),
     content: z.string().describe("Complete text content for the new file. Do not use placeholders, ellipses, or omit required sections."),
   })
   .strict();
@@ -25,9 +25,11 @@ const FileWriteInputSchema = z
 export const fileWriteTool = defineTool({
   name: "file_write",
   description: [
-    "Create one new text file and any missing parent directories. Use it only when the requested file does not exist; prefer file_edit for every existing file.",
+    "CREATE NEW TEXT FILE ONLY. The target path MUST NOT already exist. Never use file_write to replace, rewrite, or update an existing file; every modification to an existing file MUST use file_edit.",
     "",
-    "Provide the complete final content in one call, without placeholders or omitted sections. Example: `file_write({\"path\":\"src/new-module.ts\",\"content\":\"export const enabled = true;\\n\"})`. The call fails rather than overwriting an existing path; after that error, read the existing file and use file_edit instead.",
+    "If you do not know whether the path exists, check with file_read or glob before calling file_write. Do not call file_write merely to probe existence.",
+    "",
+    "Create any missing parent directories and provide the complete final content in one call, without placeholders or omitted sections. Example: `file_write({\"path\":\"src/new-module.ts\",\"content\":\"export const enabled = true;\\n\"})`. The call always fails rather than overwriting an existing path.",
   ].join("\n"),
   inputSchema: FileWriteInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
