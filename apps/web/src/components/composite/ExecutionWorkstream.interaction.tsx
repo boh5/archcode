@@ -315,12 +315,14 @@ describe("ExecutionWorkstream", () => {
 
     const user = container.querySelector<HTMLElement>('[data-message-kind="canonical-user"]');
     const userBubble = user?.querySelector<HTMLElement>(".justify-end > div");
-    expect(userBubble?.className).toContain("rounded-md");
-    expect(userBubble?.className).toContain("bg-bg-elevated");
+    expect(userBubble?.className).toContain("max-w-[640px]");
+    expect(userBubble?.className).toContain("rounded-xl");
+    expect(userBubble?.className).toContain("bg-bg-active");
     expect(userBubble?.className).not.toContain("shadow-");
 
     const agent = container.querySelector<HTMLElement>('[data-message-kind="agent"]');
     expect(agent).not.toBeNull();
+    expect(agent?.className).toContain("max-w-[740px]");
     expect(agent?.className).not.toContain("rounded");
     expect(agent?.className).not.toContain("border-agent");
     expect(agent?.className).not.toContain("bg-agent");

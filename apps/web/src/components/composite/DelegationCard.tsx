@@ -52,7 +52,7 @@ export function DelegationCard({
         {canNavigate ? (
           <button
             type="button"
-            className="h-8 shrink-0 rounded-sm bg-brand-subtle px-3 text-[12px] font-medium text-brand transition-colors duration-[var(--motion-hover)] hover:bg-brand-muted focus-visible:outline-2 focus-visible:outline-brand"
+            className="h-8 shrink-0 rounded-sm bg-brand-subtle px-3 text-[12px] font-medium text-brand transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-2 focus-visible:outline-brand"
             onClick={handleViewConversation}
           >
             Open child session

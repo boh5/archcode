@@ -77,12 +77,12 @@ export function ToolCard({ part, projectSlug, sessionId }: ToolCardProps) {
   const ToolIcon = summary.icon;
 
   return (
-    <div className="shrink-0 overflow-hidden rounded-md border border-border-subtle bg-bg-elevated">
+    <div className="shrink-0 overflow-hidden rounded-md border border-border-subtle bg-bg-elevated" data-tool-card="">
       <button
         type="button"
         disabled={!hasDetails}
         aria-expanded={hasDetails ? expanded : undefined}
-        className={`flex w-full select-none items-center gap-2 px-3 py-2 text-left transition-colors duration-[var(--motion-hover)] ${
+        className={`grid min-h-10 w-full select-none grid-cols-[18px_auto_minmax(0,1fr)_auto_auto_12px] items-center gap-2 px-2.5 py-1.5 text-left transition-colors duration-[var(--motion-hover)] max-[560px]:grid-cols-[18px_auto_minmax(0,1fr)_auto_12px] ${
           hasDetails ? "cursor-pointer hover:bg-bg-hover" : "cursor-default disabled:opacity-100"
         }`}
         onClick={() => { if (hasDetails) setExpanded((value) => !value); }}
@@ -96,17 +96,17 @@ export function ToolCard({ part, projectSlug, sessionId }: ToolCardProps) {
         <span className={`shrink-0 whitespace-nowrap font-mono text-[12px] font-medium ${isUnknownResult ? "text-warning" : "text-text-secondary"}`}>
           {ToolIcon ? <ToolIcon size={12} className="mr-1 inline-block align-text-bottom" /> : null}{part.toolName}
         </span>
-        <span className="text-xs text-text-secondary truncate">{summary.primary}</span>
-        {summary.secondary && <span className="hidden truncate text-[11px] text-text-tertiary sm:inline">{summary.secondary}</span>}
+        <span className="truncate text-[10px] text-text-secondary">{summary.primary}</span>
+        {summary.secondary && <span className="truncate text-[9px] text-text-tertiary max-[560px]:hidden">{summary.secondary}</span>}
         {diffSummary && (
-          <span className="whitespace-nowrap text-[11px] text-text-tertiary">
+          <span className="whitespace-nowrap font-mono text-[9px] tabular-nums text-text-tertiary max-[560px]:hidden">
             {diffSummary.fileCount} {diffSummary.fileCount === 1 ? "file" : "files"}
             {diffSummary.additions !== undefined && diffSummary.deletions !== undefined
               ? ` · +${diffSummary.additions} −${diffSummary.deletions}`
               : null}
           </span>
         )}
-        <span className={`ml-auto text-[11px] ${STATUS_TONE_CLASS[tone]}`}>{isUnknownResult ? "Unknown" : STATUS_LABEL[part.state]}</span>
+        <span className={`text-[9px] font-semibold ${part.state === "running" ? "text-signal-foreground" : STATUS_TONE_CLASS[tone]}`}>{isUnknownResult ? "Unknown" : STATUS_LABEL[part.state]}</span>
         {hasDetails && <ChevronRight size={10} className={`text-text-muted transition-transform duration-[var(--motion-icon)] ${expanded ? "rotate-90" : ""}`} aria-hidden="true" />}
       </button>
 
@@ -150,7 +150,7 @@ export function ToolCard({ part, projectSlug, sessionId }: ToolCardProps) {
           <button
             type="button"
             data-testid="tool-output-open"
-            className="h-8 rounded-sm bg-brand-subtle px-3 text-[12px] font-medium text-brand transition-colors duration-[var(--motion-hover)] hover:bg-brand-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+            className="h-8 rounded-sm bg-brand-subtle px-3 text-[12px] font-medium text-brand transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
             onClick={() => setViewerOpen((value) => !value)}
           >
             {viewerOpen ? "关闭输出" : "查看输出"}

@@ -1,9 +1,9 @@
-export const SIDEBAR_DEFAULT_WIDTH = 280;
-export const SIDEBAR_MIN_WIDTH = 220;
-export const SIDEBAR_MAX_WIDTH = 420;
-export const INSPECTOR_DEFAULT_WIDTH = 360;
-export const INSPECTOR_MIN_WIDTH = 300;
-export const INSPECTOR_MAX_WIDTH = 560;
+export const SIDEBAR_DEFAULT_WIDTH = 248;
+export const SIDEBAR_MIN_WIDTH = 210;
+export const SIDEBAR_MAX_WIDTH = 340;
+export const INSPECTOR_DEFAULT_WIDTH = 330;
+export const INSPECTOR_MIN_WIDTH = 280;
+export const INSPECTOR_MAX_WIDTH = 460;
 export const WORKBENCH_PREFERENCES_KEY = "archcode.workbench.layout";
 
 export type InspectorKind = "session";

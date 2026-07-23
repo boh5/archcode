@@ -26,7 +26,7 @@ describe("status visuals", () => {
     for (const kind of expectedKinds) {
       const visual = statusVisual(kind);
       expect(visual.glyph).toBeDefined();
-      expect(["brand", "info", "success", "warning", "error", "neutral"]).toContain(visual.tone);
+      expect(["brand", "info", "signal", "success", "warning", "error", "neutral"]).toContain(visual.tone);
       expect(typeof visual.loops).toBe("boolean");
       expect("label" in visual).toBe(false);
     }
@@ -34,7 +34,8 @@ describe("status visuals", () => {
 
   test("loops only for authoritative activity primitives", () => {
     expect(expectedKinds.filter((kind) => statusVisual(kind).loops)).toEqual(["running", "loading"]);
-    expect(statusVisual("running").tone).toBe("info");
+    expect(statusVisual("running").tone).toBe("signal");
+    expect(statusVisual("loading").tone).toBe("signal");
     expect(statusVisual("completed").tone).toBe("success");
     expect(statusVisual("failed").tone).toBe("error");
     expect(statusVisual("stopped").tone).toBe("neutral");

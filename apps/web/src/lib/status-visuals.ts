@@ -16,7 +16,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-export type StatusTone = "brand" | "info" | "success" | "warning" | "error" | "neutral";
+export type StatusTone = "brand" | "info" | "signal" | "success" | "warning" | "error" | "neutral";
 
 export type VisualStatusKind =
   | "running"
@@ -44,8 +44,8 @@ export interface StatusVisualSpec {
 }
 
 export const STATUS_VISUALS: Readonly<Record<VisualStatusKind, StatusVisualSpec>> = {
-  running: { glyph: "activity-arc", tone: "info", loops: true },
-  loading: { glyph: LoaderCircle, tone: "info", loops: true },
+  running: { glyph: "activity-arc", tone: "signal", loops: true },
+  loading: { glyph: LoaderCircle, tone: "signal", loops: true },
   warning: { glyph: TriangleAlert, tone: "warning", loops: false },
   needs_you: { glyph: MessageCircleQuestion, tone: "warning", loops: false },
   pending: { glyph: Clock3, tone: "neutral", loops: false },
@@ -64,6 +64,7 @@ export const STATUS_VISUALS: Readonly<Record<VisualStatusKind, StatusVisualSpec>
 export const STATUS_TONE_CLASS: Readonly<Record<StatusTone, string>> = {
   brand: "text-brand",
   info: "text-info",
+  signal: "text-signal-foreground",
   success: "text-success",
   warning: "text-warning",
   error: "text-error",
@@ -73,6 +74,7 @@ export const STATUS_TONE_CLASS: Readonly<Record<StatusTone, string>> = {
 export const STATUS_SUBTLE_CLASS: Readonly<Record<StatusTone, string>> = {
   brand: "bg-brand-subtle",
   info: "bg-info-muted",
+  signal: "bg-signal-field",
   success: "bg-success-muted",
   warning: "bg-warning-muted",
   error: "bg-error-muted",

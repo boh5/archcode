@@ -47,10 +47,10 @@ export interface ProjectTodoAssociationPresentation {
 
 const CARD_PRESENTATIONS: Readonly<Record<ProjectTodoCardPresentation["label"], ProjectTodoCardPresentation>> = {
   Idea: { label: "Idea", Icon: Lightbulb, tone: "brand" },
-  Ready: { label: "Ready", Icon: CircleDot, tone: "info" },
-  "In Progress": { label: "In Progress", Icon: Play, tone: "info" },
+  Ready: { label: "Ready", Icon: CircleDot, tone: "neutral" },
+  "In Progress": { label: "In Progress", Icon: Play, tone: "neutral" },
   Done: { label: "Done", Icon: CircleCheck, tone: "success" },
-  Rejected: { label: "Rejected", Icon: CircleX, tone: "error" },
+  Rejected: { label: "Rejected", Icon: CircleX, tone: "warning" },
   Archived: { label: "Archived", Icon: Archive, tone: "neutral" },
 };
 
@@ -69,7 +69,7 @@ export const PROJECT_TODO_LANE_PRESENTATIONS: Readonly<Record<ProjectTodoLane, P
     emptyTitle: "Nothing ready",
     emptyHint: "Shape an idea to move it here.",
     Icon: CircleDot,
-    tone: "info",
+    tone: "neutral",
   },
   in_progress: {
     title: "In Progress",
@@ -77,7 +77,7 @@ export const PROJECT_TODO_LANE_PRESENTATIONS: Readonly<Record<ProjectTodoLane, P
     emptyTitle: "No active work",
     emptyHint: "Start a ready Todo to link work.",
     Icon: Play,
-    tone: "info",
+    tone: "signal",
   },
   done: {
     title: "Done",
@@ -119,12 +119,12 @@ export function presentProjectTodoAssociation(input: {
   readonly automationStatus?: ProjectTodoAutomationStatus;
 }): ProjectTodoAssociationPresentation {
   if (input.resourceId !== undefined && input.resourceLoading) return { Icon: LoaderCircle, tone: "neutral", motion: "loop" };
-  if (input.sessionActivity === "running") return { Icon: "activity-arc", tone: "info", motion: "loop" };
+  if (input.sessionActivity === "running") return { Icon: "activity-arc", tone: "signal", motion: "loop" };
   if (input.sessionActivity === "stopping") return { Icon: "activity-arc", tone: "warning", motion: "loop" };
   if (input.resourceId === undefined) return { Icon: Clock3, tone: "neutral", motion: "none" };
   if (input.resourceAvailable === false) return { Icon: TriangleAlert, tone: "warning", motion: "none" };
   if (!input.runtimeInitialized) return { Icon: CircleDashed, tone: "neutral", motion: "none" };
-  if (input.automationStatus === "active") return { Icon: Calendar, tone: "info", motion: "none" };
+  if (input.automationStatus === "active") return { Icon: Calendar, tone: "brand", motion: "none" };
   if (input.automationStatus === "paused") return { Icon: CirclePause, tone: "warning", motion: "none" };
   if (input.automationStatus === "disabled") return { Icon: Ban, tone: "neutral", motion: "none" };
   return { Icon: CircleDot, tone: "neutral", motion: "none" };

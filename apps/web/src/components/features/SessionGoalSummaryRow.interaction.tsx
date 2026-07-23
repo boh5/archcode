@@ -5,13 +5,13 @@ import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import type { SessionGoalView } from "../../api/types";
 
-type SessionGoalProgressRowComponent = typeof import("./SessionGoalProgressRow").SessionGoalProgressRow;
+type SessionGoalSummaryRowComponent = typeof import("./SessionGoalSummaryRow").SessionGoalSummaryRow;
 
 let dom: JSDOM;
 let root: Root;
 let container: HTMLDivElement;
 let fetchMock: ReturnType<typeof mock>;
-let SessionGoalProgressRow: SessionGoalProgressRowComponent;
+let SessionGoalSummaryRow: SessionGoalSummaryRowComponent;
 
 const activeGoal: SessionGoalView = {
   instanceId: "goal-1",
@@ -84,7 +84,7 @@ beforeEach(async () => {
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  ({ SessionGoalProgressRow } = await import("./SessionGoalProgressRow"));
+  ({ SessionGoalSummaryRow } = await import("./SessionGoalSummaryRow"));
 });
 
 afterEach(() => {
@@ -96,7 +96,7 @@ function renderGoal(client: QueryClient, goal: SessionGoalView): void {
   act(() => {
     root.render(
       <QueryClientProvider client={client}>
-        <SessionGoalProgressRow slug="project-1" sessionId="session-goal" goal={goal} />
+        <SessionGoalSummaryRow slug="project-1" sessionId="session-goal" goal={goal} />
       </QueryClientProvider>,
     );
   });
@@ -108,7 +108,7 @@ function button(label: string): HTMLButtonElement {
   return match;
 }
 
-describe("SessionGoalProgressRow", () => {
+describe("SessionGoalSummaryRow", () => {
   test("reveals completion once only for the same mounted Goal identity", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     renderGoal(client, activeGoal);
@@ -133,8 +133,9 @@ describe("SessionGoalProgressRow", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     renderGoal(client, activeGoal);
 
-    const row = container.querySelector('[data-testid="session-goal-progress-row"]');
+    const row = container.querySelector('[data-testid="session-goal-summary-row"]');
     expect(row?.querySelector("textarea")).toBeNull();
+    expect(row?.querySelector("progress, [role=progressbar]")).toBeNull();
     expect(row?.textContent).toContain("Active");
     expect(row?.querySelector('button[aria-label="Edit goal"]')).not.toBeNull();
     expect(row?.querySelector('button[aria-label="Pause goal"]')).not.toBeNull();

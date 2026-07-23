@@ -44,7 +44,7 @@ export function ComposerQueueList({ slug, sessionId }: { slug: string; sessionId
   return (
     <section
       aria-label="Queued messages"
-      className="min-h-0 max-h-[160px] shrink overflow-x-hidden overflow-y-auto border-y border-border-subtle max-[799px]:max-h-[116px]"
+      className="min-h-0 max-h-[160px] shrink overflow-x-hidden overflow-y-auto border-b border-border-subtle max-[799px]:max-h-[116px]"
       data-testid="composer-queue-list"
     >
       {entries.map((entry) => entry.kind === "durable" ? (
@@ -126,7 +126,7 @@ function DurableQueueRow({
 
   return (
     <div
-      className="grid min-h-[32px] min-w-0 grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 border-b border-border-subtle px-2 py-1 last:border-b-0 max-[560px]:gap-1"
+      className="grid min-h-9 min-w-0 grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 border-b border-border-subtle px-1 py-1.5 last:border-b-0 max-[560px]:gap-1"
       data-queue-state={message.state}
       data-testid={`composer-queue-${message.id}`}
     >
@@ -139,7 +139,7 @@ function DurableQueueRow({
           <StatusGlyph kind="pending" label="Queued" size={12} /> Queued
         </span>
       )}
-      <span className="min-w-0 truncate text-xs text-text-secondary" title={message.content}>{message.content}</span>
+      <span className="min-w-0 truncate text-[12px] leading-5 text-text-secondary" title={message.content}>{message.content}</span>
       <span
         className={`max-w-[240px] truncate text-[11px] text-text-tertiary max-[560px]:max-w-16 ${invalidationLabel ? "text-warning" : ""}`}
         data-testid={invalidationLabel ? `pending-model-invalidation-${message.id}` : `pending-requested-model-${message.id}`}
@@ -256,7 +256,7 @@ function LocalQueueRow({ message, slug, sessionId }: { message: LocalSendingMess
 
   return (
     <div
-      className="grid min-h-[32px] min-w-0 grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 border-b border-border-subtle px-2 py-1 last:border-b-0 max-[560px]:gap-1"
+      className="grid min-h-9 min-w-0 grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 border-b border-border-subtle px-1 py-1.5 last:border-b-0 max-[560px]:gap-1"
       data-queue-state={message.status}
       data-testid={`composer-local-message-${message.clientRequestId}`}
     >

@@ -55,7 +55,7 @@ function WorkbenchShell() {
   const desktopNavigationWidth = showNavigation ? 52 + (showSidebar ? panelSizes.sidebarWidth + 8 : 0) : 0;
   const inspectorGeometry = resolveInspectorGeometry(
     panelSizes.inspectorWidth,
-    viewportWidth < 1280 ? viewportWidth - desktopNavigationWidth : INSPECTOR_MAX_WIDTH,
+    viewportWidth <= 1180 ? viewportWidth - desktopNavigationWidth : INSPECTOR_MAX_WIDTH,
   );
   const setRenderedInspectorWidth = (width: number) => {
     panelSizes.setInspectorWidth(Math.min(inspectorGeometry.max, Math.max(inspectorGeometry.min, width)));
@@ -88,8 +88,8 @@ function WorkbenchShell() {
   return (
     <div className="relative flex h-screen min-w-0 overflow-hidden bg-bg-base text-text-primary">
       {showNavigation && !layout.isMobile && (
-        <div className="hidden h-full shrink-0 min-[800px]:flex">
-          <div className="relative z-40 w-[52px] shrink-0 border-r border-border-default bg-bg-surface">
+        <div className="hidden h-full shrink-0 min-[761px]:flex">
+          <div className="relative z-40 w-[52px] shrink-0 border-r border-border-default bg-rail">
             <ProjectBar onAddProject={openAddProjectModal} onSettings={openSettingsModal} theme={theme} toggleTheme={toggleTheme} />
           </div>
           {showSidebar && (
@@ -111,9 +111,22 @@ function WorkbenchShell() {
         </div>
       )}
 
+      {showNavigation && layout.isMobile && (
+        <div className="relative z-[55] w-11 shrink-0 border-r border-border-default bg-rail">
+          <ProjectBar
+            onAddProject={openAddProjectModal}
+            onSettings={openSettingsModal}
+            showBell={false}
+            theme={theme}
+            toggleTheme={toggleTheme}
+          />
+        </div>
+      )}
+
       <main className="relative flex min-w-0 flex-1 flex-col" aria-label="Work canvas">
         <CompactToolbar
           inspectorAvailable={inspectorKind !== null}
+          navigationAvailable={hasProject}
           navigationTriggerRef={navigationTriggerRef}
           inspectorTriggerRef={inspectorTriggerRef}
         />
@@ -123,7 +136,7 @@ function WorkbenchShell() {
             aria-label="Expand project sidebar"
             aria-controls="project-sidebar"
             aria-expanded="false"
-            className="absolute left-0 top-12 z-20 hidden h-8 w-6 items-center justify-center rounded-r-sm border border-l-0 border-border-default bg-bg-surface text-text-tertiary hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand min-[800px]:flex"
+            className="absolute left-0 top-12 z-20 hidden h-8 w-6 items-center justify-center rounded-r-sm border border-l-0 border-border-default bg-bg-surface text-text-tertiary hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand min-[761px]:flex"
             onClick={expandSidebar}
           >
             <PanelLeftOpen size={14} />
@@ -133,7 +146,7 @@ function WorkbenchShell() {
           <button
             type="button"
             aria-label="Exit focus mode"
-            className="absolute left-0 top-12 z-20 hidden h-8 w-6 items-center justify-center rounded-r-sm border border-l-0 border-border-default bg-bg-surface text-brand hover:text-brand-hover min-[800px]:flex"
+            className="absolute left-0 top-12 z-20 hidden h-8 w-6 items-center justify-center rounded-r-sm border border-l-0 border-border-default bg-bg-surface text-brand hover:text-brand-hover min-[761px]:flex"
             onClick={exitFocusMode}
           >
             <Focus size={14} />
@@ -166,7 +179,7 @@ function WorkbenchShell() {
 
       {showInspector && inspectorKind && !layout.isMobile && (
         <>
-          <div className="hidden min-[1280px]:block">
+          <div className="hidden min-[1181px]:block">
             <ResizeHandle
               label="Resize context inspector"
               controls="context-inspector"
@@ -178,10 +191,10 @@ function WorkbenchShell() {
             />
           </div>
           <div
-            className="z-30 hidden h-full shrink-0 bg-bg-surface min-[800px]:block max-[1279px]:absolute max-[1279px]:inset-y-0 max-[1279px]:right-0 max-[1279px]:shadow-lg"
+            className="z-30 hidden h-full shrink-0 bg-bg-surface min-[761px]:block max-[1180px]:absolute max-[1180px]:inset-y-0 max-[1180px]:right-0 max-[1180px]:shadow-lg"
             style={{ width: inspectorGeometry.value }}
           >
-            <div className="absolute inset-y-0 left-0 z-40 hidden min-[800px]:block min-[1280px]:hidden">
+            <div className="absolute inset-y-0 left-0 z-40 hidden min-[761px]:block min-[1181px]:hidden">
               <ResizeHandle
                 label="Resize context inspector overlay"
                 controls="context-inspector"
@@ -203,15 +216,11 @@ function WorkbenchShell() {
             open={layout.mobileNavigationOpen && !layout.focusMode}
             label="Work navigation"
             side="left"
+            offsetForProjectRail
             returnFocusRef={navigationTriggerRef}
             onClose={() => layout.setMobileNavigationOpen(false)}
           >
-            <div className="flex h-full min-w-0">
-              <div className="w-[52px] shrink-0 border-r border-border-default bg-bg-surface">
-                <ProjectBar onAddProject={openAddProjectModal} onSettings={openSettingsModal} showBell={false} theme={theme} toggleTheme={toggleTheme} />
-              </div>
-              {hasProject && <div className="min-w-0 flex-1 bg-bg-surface"><Sidebar /></div>}
-            </div>
+            {hasProject && <div className="h-full min-w-0 bg-bg-surface"><Sidebar /></div>}
           </Drawer>
 
           <Drawer
@@ -231,23 +240,26 @@ function WorkbenchShell() {
 
 function CompactToolbar({
   inspectorAvailable,
+  navigationAvailable,
   navigationTriggerRef,
   inspectorTriggerRef,
 }: {
   inspectorAvailable: boolean;
+  navigationAvailable: boolean;
   navigationTriggerRef: RefObject<HTMLButtonElement | null>;
   inspectorTriggerRef: RefObject<HTMLButtonElement | null>;
 }) {
   const layout = useWorkbenchLayout();
   return (
-    <div className="hidden h-11 shrink-0 items-center justify-between border-b border-border-default bg-bg-surface px-2 max-[799px]:flex" aria-label="Compact workbench toolbar">
+    <div className="hidden h-11 shrink-0 items-center justify-between border-b border-border-default bg-bg-surface px-2 max-[760px]:flex" aria-label="Compact workbench toolbar">
       <button
         ref={navigationTriggerRef}
         type="button"
         aria-label={layout.focusMode ? "Exit focus mode" : "Open work navigation"}
         aria-expanded={layout.mobileNavigationOpen}
         aria-controls="mobile-work-navigation"
-        className="flex h-8 w-8 items-center justify-center rounded-sm text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+        disabled={!navigationAvailable && !layout.focusMode}
+        className="flex h-8 w-8 items-center justify-center rounded-sm text-text-secondary hover:bg-bg-hover hover:text-text-primary disabled:invisible"
         onClick={() => {
           if (layout.focusMode) layout.toggleFocusMode();
           else {
@@ -285,6 +297,7 @@ function Drawer({
   open,
   label,
   side,
+  offsetForProjectRail = false,
   returnFocusRef,
   onClose,
   children,
@@ -292,6 +305,7 @@ function Drawer({
   open: boolean;
   label: string;
   side: "left" | "right";
+  offsetForProjectRail?: boolean;
   returnFocusRef?: RefObject<HTMLElement | null>;
   onClose: () => void;
   children: React.ReactNode;
@@ -299,10 +313,16 @@ function Drawer({
   return (
     <DialogPrimitive.Root open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/60 min-[800px]:hidden" />
+        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/60 min-[761px]:hidden" />
         <DialogPrimitive.Content
           aria-describedby={undefined}
-          className={`fixed inset-y-0 z-50 w-[min(92vw,360px)] bg-bg-surface shadow-lg outline-none min-[800px]:hidden ${side === "left" ? "left-0" : "right-0"}`}
+          className={`fixed inset-y-0 z-50 bg-bg-surface shadow-lg outline-none min-[761px]:hidden ${
+            side === "left"
+              ? offsetForProjectRail
+                ? "left-11 w-[min(calc(92vw-44px),340px)]"
+                : "left-0 w-[min(92vw,360px)]"
+              : "right-0 w-[min(92vw,360px)]"
+          }`}
           id={side === "left" ? "mobile-work-navigation" : undefined}
           onCloseAutoFocus={returnFocusRef ? (event) => {
             event.preventDefault();

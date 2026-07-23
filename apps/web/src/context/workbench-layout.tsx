@@ -49,7 +49,7 @@ export function WorkbenchLayoutProvider({ children }: { children: ReactNode }) {
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(() => (
     typeof window !== "undefined" && typeof window.matchMedia === "function"
-      ? window.matchMedia("(max-width: 799px)").matches
+      ? window.matchMedia("(max-width: 760px)").matches
       : false
   ));
   const mobileInspectorReturnFocusRef = useRef<HTMLElement | null>(null);
@@ -60,7 +60,7 @@ export function WorkbenchLayoutProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
-    const query = window.matchMedia("(max-width: 799px)");
+    const query = window.matchMedia("(max-width: 760px)");
     const update = () => {
       const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       const mobileFocusSelector = query.matches && activeElement

@@ -42,6 +42,7 @@ export function GroupedToolCard({ tools, projectSlug, sessionId }: {
 
   const count = tools.length;
   const isAllSame = tools.every((t) => t.toolName === tools[0].toolName);
+  const toolNames = [...new Set(tools.map((tool) => tool.toolName))].join(" · ");
 
   const Icon = ICON_BY_TOOL[tools[0].toolName] ?? FileText;
 
@@ -54,10 +55,10 @@ export function GroupedToolCard({ tools, projectSlug, sessionId }: {
   }
 
   return (
-    <div className="shrink-0">
+    <div className="shrink-0" data-testid="grouped-tool-card">
       <button
         type="button"
-        className="flex w-full items-center gap-2 rounded-md border border-border-subtle bg-bg-elevated px-3 py-2 text-[12px] text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+        className="grid min-h-11 w-full grid-cols-[14px_22px_minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-border-subtle bg-bg-elevated px-2.5 py-1.5 text-left text-[12px] text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
         onClick={() => setExpanded((v) => !v)}
         aria-expanded={expanded}
       >
@@ -66,14 +67,19 @@ export function GroupedToolCard({ tools, projectSlug, sessionId }: {
           className={`transition-transform duration-[var(--motion-hover)] ${expanded ? "rotate-90" : ""}`}
           aria-hidden="true"
         />
-        <Icon size={12} className="text-text-muted" aria-hidden="true" />
-        <span className="font-medium">{label}</span>
+        <span className="grid h-[22px] w-[22px] place-items-center rounded-sm bg-brand-subtle text-brand">
+          <Icon size={12} aria-hidden="true" />
+        </span>
+        <span className="min-w-0">
+          <span className="block truncate text-[11px] font-semibold">{label}</span>
+          <span className="mt-0.5 block truncate font-mono text-[8px] text-text-tertiary">{toolNames}</span>
+        </span>
         <span className="ml-auto rounded-sm bg-bg-active px-2 py-1 text-[10px] font-semibold leading-[14px] text-text-tertiary">
           {count}
         </span>
       </button>
       {expanded && (
-        <div className="mt-1 ml-2 border-l border-border-subtle pl-2 flex flex-col gap-1">
+        <div className="ml-4 flex flex-col border-l border-border-default pl-2 pt-1 [&_[data-tool-card]]:rounded-none [&_[data-tool-card]]:border-x-0 [&_[data-tool-card]]:border-b-0 [&_[data-tool-card]:last-child]:border-b">
           {tools.map((tool) => (
             <ToolCard key={tool.id} part={tool} projectSlug={projectSlug} sessionId={sessionId} />
           ))}

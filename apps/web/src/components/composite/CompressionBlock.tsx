@@ -136,7 +136,7 @@ export function CompressionBlock({ part, projectSlug, sessionId, focusStoreSessi
       <div className="px-3 pb-2">
         <button
           type="button"
-          className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-sm bg-brand-subtle px-3 text-[12px] font-medium text-brand transition-colors duration-[var(--motion-hover)] hover:bg-brand-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+          className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-sm bg-brand-subtle px-3 text-[12px] font-medium text-brand transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
           onClick={handleToggleOriginalRange}
         >
           {expanded ? "Hide original range ↑" : "Show original range ↓"}

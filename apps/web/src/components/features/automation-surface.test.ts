@@ -75,7 +75,7 @@ describe("Automation navigation and detail actions", () => {
 
   test("list header and creation controls use the locked page and control scale", async () => {
     const list = await source("routes/automations.tsx");
-    expect(list).toContain('<h1 className="text-[16px] font-semibold leading-[22px]">Automations</h1>');
+    expect(list).toContain('<h1 className="text-[16px] font-semibold leading-[22px] text-text-primary">Automations</h1>');
     expect(list.match(/inline-flex h-8 items-center/g)?.length).toBe(2);
     expect(list).not.toContain("px-3 py-2 text-sm");
     expect(list).toContain('text-[11px] leading-4 text-text-tertiary');

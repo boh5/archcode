@@ -170,7 +170,7 @@ export function MsgUser({
         if (part.type === "text") {
           return (
             <div key={part.id} className="flex justify-end">
-              <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-md rounded-br-sm border border-border-subtle bg-bg-elevated px-3 py-2 text-[13px] leading-5 text-text-primary">
+              <div className="max-w-[640px] whitespace-pre-wrap break-words rounded-xl rounded-br-sm bg-bg-active px-4 py-3 text-[13px] leading-[1.65] text-text-primary">
                 {part.text}
               </div>
             </div>
@@ -260,7 +260,7 @@ export function PartRenderer({
     case "text": {
       const interrupted = (part.meta as Record<string, unknown> | undefined)?.interrupted === true;
       return (
-        <div className="max-w-[720px] text-[13px] leading-5 text-text-primary">
+        <div className="max-w-[740px] text-[13px] leading-[1.7] text-text-secondary">
           {interrupted && <InterruptedBadge />}
           <MarkdownContent isStreaming={!part.completedAt}>{part.text}</MarkdownContent>
         </div>
@@ -315,7 +315,7 @@ function MsgAgent({
   agents: readonly AgentDescriptor[];
 }) {
   return (
-    <div className="min-w-0" data-message-kind="agent">
+    <div className="min-w-0 max-w-[740px]" data-message-kind="agent">
       <div className="msg-parts">
         {groupReadOnlyToolParts(message.parts).map((entry) => {
           const partKind = entry.type === "grouped-tools" || entry.type === "tool" ? "tool" : "content";
@@ -443,7 +443,7 @@ function ExecutionCard({
 
   return (
     <article
-      className={`overflow-hidden rounded-md border border-l-2 bg-bg-surface transition-colors duration-[var(--motion-hover)] ${execution.record.status === "running" ? "border-border-default border-l-info" : "border-border-default border-l-transparent"}`}
+      className={`overflow-hidden border-y border-r border-l-[3px] transition-colors duration-[var(--motion-hover)] ${execution.record.status === "running" ? "border-y-signal/40 border-r-signal/40 border-l-signal bg-signal-field" : "border-y-border-default border-r-transparent border-l-transparent bg-transparent"}`}
       data-testid={`execution-card-${execution.id}`}
       data-execution-expanded={expanded ? "true" : "false"}
       data-product-status={status.productStatus}
@@ -452,17 +452,17 @@ function ExecutionCard({
     >
       <button
         type="button"
-        className="grid min-h-[56px] w-full grid-cols-[28px_minmax(0,1fr)_auto_18px] items-center gap-3 px-3 py-2 text-left hover:bg-bg-hover max-[520px]:grid-cols-[26px_minmax(0,1fr)_18px]"
+        className="grid min-h-12 w-full grid-cols-[24px_minmax(0,1fr)_auto_18px] items-center gap-3 px-1 py-2 text-left hover:bg-bg-hover max-[520px]:grid-cols-[22px_minmax(0,1fr)_18px]"
         onClick={onToggle}
         aria-expanded={expanded}
         aria-controls={`execution-body-${execution.id}`}
       >
-        <span className="grid h-7 w-7 place-items-center rounded-full bg-bg-active text-[10px] font-semibold text-text-tertiary">
+        <span className={`grid h-7 w-7 place-items-center rounded-full text-[9px] font-semibold tabular-nums ${execution.record.status === "running" ? "bg-signal text-signal-ink" : "bg-bg-active text-text-tertiary"}`}>
           {execution.number}
         </span>
         <span className="min-w-0">
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-text-tertiary">
-            <span className={`inline-flex items-center gap-2 text-[12px] font-semibold ${STATUS_TONE_CLASS[statusTone]}`}>
+            <span className={`inline-flex items-center gap-2 text-[11px] font-semibold ${execution.record.status === "running" ? "text-signal-foreground" : STATUS_TONE_CLASS[statusTone]}`}>
               <StatusGlyph kind={visualKind} size={14} transition={statusTransition} />
               {status.label}
             </span>
@@ -481,7 +481,7 @@ function ExecutionCard({
       {expanded && (
         <div
           id={`execution-body-${execution.id}`}
-          className="flex flex-col gap-4 border-t border-border-subtle px-3 py-4 sm:px-4"
+          className="flex flex-col gap-4 border-t border-border-subtle px-1 py-4 sm:px-2"
           data-testid={`execution-body-${execution.id}`}
         >
           {execution.messages.map((message) => (
@@ -517,7 +517,7 @@ function ExecutionCard({
             </div>
           )}
           <div
-            className="border-t border-border-subtle pt-2 text-[11px] text-text-tertiary"
+            className="border-t border-border-subtle pt-2 font-mono text-[9px] text-text-tertiary"
             data-testid={`execution-model-${execution.id}`}
             title={`${execution.record.binding.providerDisplayName} · ${selectionLabel(execution.record.binding.selection)}`}
           >
@@ -725,26 +725,27 @@ export function ExecutionWorkstream({
     <div
       ref={scrollerRef}
       onScroll={handleScroll}
-      className="conversation-scroller min-h-0 w-full flex-1 overflow-y-auto overflow-x-hidden"
+      className="conversation-scroller min-h-0 w-full flex-1 overflow-y-auto overflow-x-hidden bg-bg-base"
       style={{ scrollbarGutter: "stable" }}
       data-testid="execution-workstream-scroller"
     >
       <ConversationRail
-        className={`conversation-surface flex min-h-full flex-col py-5 ${isEmpty ? "items-center justify-center" : "gap-3"}`}
+        className={`conversation-surface flex min-h-full flex-col py-8 max-[639px]:py-5 ${isEmpty ? "items-center justify-center" : "gap-5"}`}
         data-testid="execution-workstream-rail"
       >
         {isEmpty ? (
           <div className="text-sm text-text-tertiary">No executions yet</div>
         ) : (
           <>
-            <header className="mb-1 flex items-end justify-between gap-4 px-1">
+            <header className="mb-1 flex items-end justify-between gap-4 border-b border-border-default px-1 pb-3">
               <div className="min-w-0">
-                <h2 className="text-sm font-semibold text-text-primary">Execution workstream</h2>
-                <p className="mt-1 truncate text-[11px] text-text-tertiary">
+                <div className="mb-1 text-[9px] font-semibold uppercase tracking-[0.12em] text-text-muted">Session activity</div>
+                <h2 className="text-[14px] font-semibold tracking-[-0.01em] text-text-primary">Execution workstream</h2>
+                <p className="mt-1 truncate text-[10px] text-text-tertiary">
                   {projection.session.displayName ?? projection.session.agentName} · {projection.session.profile}
                 </p>
               </div>
-              <span className="shrink-0 text-[11px] text-text-tertiary">
+              <span className="shrink-0 font-mono text-[9px] tabular-nums text-text-tertiary">
                 {projection.executions.length} {projection.executions.length === 1 ? "execution" : "executions"}
               </span>
             </header>

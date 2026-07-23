@@ -13,6 +13,7 @@ import { GoalStatusMark } from "../components/features/GoalStatusMark";
 import { presentSessionGoalStatus } from "../lib/session-goal-presentation";
 import { automationVisualKind } from "../lib/automation-status-presentation";
 import { sessionFamilyVisual } from "../lib/session-family-presentation";
+import { STATUS_TONE_CLASS, statusVisual } from "../lib/status-visuals";
 
 const HOME_SCOPE: DashboardScope = { kind: "global" };
 
@@ -22,10 +23,18 @@ export function Dashboard({ scope = HOME_SCOPE }: { scope?: DashboardScope }) {
 
   return (
     <main className="h-full overflow-y-auto bg-bg-base" data-testid={`dashboard-${scope.kind}`}>
-      <div className="mx-auto flex max-w-[1200px] flex-col gap-6 px-4 py-5 sm:px-6 sm:py-6">
-        <header className="flex items-center gap-3">
-          <Target size={22} className="text-brand" aria-hidden="true" />
-          <h1 className="text-[16px] font-semibold leading-[22px] text-text-primary">Dashboard</h1>
+      <div className="mx-auto flex max-w-[1100px] flex-col gap-8 px-4 pb-15 pt-8 min-[761px]:px-8">
+        <header className="flex items-start gap-3">
+          <span className="mt-0.5 flex h-5 w-2 shrink-0 items-center justify-center bg-brand" aria-hidden="true" />
+          <div>
+            <div className="flex items-center gap-2">
+              <Target size={17} className="text-brand" aria-hidden="true" />
+              <h1 className="text-[18px] font-semibold leading-6 text-text-primary">Dashboard</h1>
+            </div>
+            <p className="mt-1 text-[13px] leading-5 text-text-tertiary">
+              See what needs attention, what is running, and where to continue.
+            </p>
+          </div>
         </header>
 
         {error ? <DashboardLoadError scope={scope} /> : null}
@@ -57,7 +66,7 @@ export function Dashboard({ scope = HOME_SCOPE }: { scope?: DashboardScope }) {
         </DashboardSection>
 
         <DashboardSection
-          icon={<Activity aria-label="Running now" className="text-info" role="img" size={16} strokeWidth={1.75} />}
+          icon={<Activity size={16} className="text-signal-foreground" aria-hidden="true" />}
           title="Running now"
           count={sections.running.length}
           emptyMessage="No sessions are running."
@@ -89,7 +98,7 @@ export function Dashboard({ scope = HOME_SCOPE }: { scope?: DashboardScope }) {
 
 function DashboardLoadError({ scope }: { scope: DashboardScope }) {
   return (
-    <div role="alert" className="rounded-md border border-error/40 bg-error-muted px-4 py-3 text-sm text-error">
+    <div role="alert" className="border-y border-error/40 bg-error-muted px-4 py-3 text-sm text-error">
       {scope.kind === "project" ? "Couldn’t load this project’s dashboard." : "Couldn’t load the dashboard."}
     </div>
   );
@@ -111,15 +120,15 @@ function DashboardSection({
   children: React.ReactNode;
 }) {
   return (
-    <section id={id} data-testid={`dashboard-section-${title.toLowerCase().replaceAll(" ", "-")}`} className="flex flex-col gap-3">
+    <section id={id} data-testid={`dashboard-section-${title.toLowerCase().replaceAll(" ", "-")}`} className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
         {icon}
         <h2 className="text-[14px] font-semibold leading-5 text-text-primary">{title}</h2>
-        <span className="rounded-full bg-bg-active px-2 py-px text-[10px] font-semibold leading-[14px] text-text-secondary">{count}</span>
+        <span className="text-[10px] font-semibold leading-[14px] tabular-nums text-text-tertiary">{count}</span>
       </div>
-      <div className="flex flex-col gap-2">
+      <div className="divide-y divide-border-subtle border-y border-border-subtle">
         {count === 0 ? (
-          <div className="rounded-md border border-dashed border-border-default bg-bg-surface px-4 py-4 text-[12px] text-text-tertiary">
+          <div className="flex min-h-16 items-center px-3 text-[12px] text-text-tertiary">
             {emptyMessage}
           </div>
         ) : children}
@@ -135,7 +144,7 @@ function AttentionRow({ item, showProject }: { item: DashboardAttentionItem; sho
   const detail = attentionDetail(item);
 
   return (
-    <div className={`flex items-center gap-3 rounded-md border px-4 py-3 ${inspection ? "border-error/50 bg-error-muted" : "border-warning/40 bg-bg-surface"}`}>
+    <div className={`relative flex min-h-16 items-center gap-3 px-4 py-3 before:absolute before:inset-y-0 before:left-0 before:w-[3px] ${inspection ? "bg-error-muted before:bg-error" : "bg-warning-muted before:bg-warning"}`}>
       <StatusGlyph kind={inspection || item.kind === "automation_failure" || item.kind === "session_failure" ? "failed" : item.kind === "goal" && item.goal.status === "budget_limited" ? "budget_limited" : item.kind === "goal" ? "blocked" : "needs_you"} size={15} label={title} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
@@ -152,9 +161,14 @@ function AttentionRow({ item, showProject }: { item: DashboardAttentionItem; sho
 function SessionRow({ item, showProject }: { item: DashboardSessionRow; showProject: boolean }) {
   const visual = sessionFamilyVisual(item.activity);
   const label = item.activity === "running" ? "Running" : item.activity === "stopping" ? "Stopping" : "Idle";
+  const running = item.activity === "running";
+  const staticActivity = visual.kind === "running";
+  const tone = visual.tone ?? statusVisual(visual.kind).tone;
   return (
-    <div className="flex items-center gap-3 rounded-md border border-border-default bg-bg-surface px-4 py-3">
-      <StatusGlyph kind={visual.kind} tone={visual.tone} label={label} size={15} />
+    <div className={`relative flex min-h-16 items-center gap-3 px-4 py-3 ${running ? "bg-signal-field before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-signal" : "bg-bg-base"}`}>
+      {staticActivity
+        ? <Activity size={15} className={STATUS_TONE_CLASS[tone]} aria-hidden="true" />
+        : <StatusGlyph kind={visual.kind} tone={visual.tone} label={label} size={15} />}
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className="truncate text-[13px] font-medium text-text-primary">{item.title ?? "Untitled session"}</span>
@@ -171,7 +185,7 @@ function SessionRow({ item, showProject }: { item: DashboardSessionRow; showProj
 
 function AutomationRow({ item, showProject }: { item: DashboardAutomationRow; showProject: boolean }) {
   return (
-    <div className="flex items-center gap-3 rounded-md border border-border-default bg-bg-surface px-4 py-3">
+    <div className="flex min-h-16 items-center gap-3 bg-bg-base px-4 py-3">
       <StatusGlyph kind={automationVisualKind(item.status)} label={`Automation ${item.status}`} size={15} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">

@@ -14,7 +14,7 @@ async function productionSources(): Promise<Array<{ path: string; source: string
 }
 
 describe("visual system hard cut", () => {
-  test("locks the 4px geometry unit and named type scale independently of root font size", async () => {
+  test("locks the dense 2/4px geometry unit and named type scale independently of root font size", async () => {
     const globals = await Bun.file(`${sourceRoot}/styles/globals.css`).text();
     expect(globals).toContain("--spacing: 4px;");
     expect(globals).toContain("--text-xs: 12px;");
@@ -42,14 +42,13 @@ describe("visual system hard cut", () => {
       ["arbitrary shadow", /shadow-\[/],
       ["unlocked extra-large shadow", /\bshadow-xl\b/],
       ["fractional type size", /text-\[\d+\.5px\]/],
-      ["off-grid spacing step", /\b(?:gap(?:-[xy])?|space-[xy]|[pm][trblxy]?)-\d+\.5\b/],
       ["out-of-scale named type size", /\btext-(?:lg|xl|2xl|3xl|4xl|5xl|6xl|7xl|8xl|9xl)\b/],
       ["unlocked named line height", /\bleading-(?:tight|snug|relaxed|loose)\b/],
       ["undersized compact control", /(?:\bh-6\s+w-6\b|\bw-6\s+h-6\b)/],
       ["unlocked 30px control", /\b[hw]-\[30px\]/],
       ["zoom overlay motion", /zoom-(?:in|out)/],
       ["retired slide animation", /slideIn/],
-      ["double-faded semantic subtle background", /\bbg-(?:brand|info|success|warning|error|neutral)-muted\/\d+\b/],
+      ["double-faded semantic subtle background", /\bbg-(?:brand|info|signal|success|warning|error|neutral)-muted\/\d+\b/],
       ["transparent structural surface", /\bbg-bg-(?:base|surface|elevated|overlay)\/\d+\b/],
     ];
     const violations: string[] = [];
@@ -58,7 +57,9 @@ describe("visual system hard cut", () => {
       ["routes/project-todos.tsx", 1],
       ["components/ui/ContextMenu.tsx", 1],
       ["components/ui/DropdownMenu.tsx", 1],
-      ["components/features/ChatInput.tsx", 2],
+      ["components/features/ChatInput.tsx", 1],
+      ["components/features/AddProjectModal.tsx", 1],
+      ["components/ui/Dialog.tsx", 1],
       ["components/features/ModelPicker.tsx", 1],
       ["components/features/TodoProgressButton.tsx", 1],
       ["components/features/HitlBell.tsx", 1],
@@ -66,20 +67,30 @@ describe("visual system hard cut", () => {
       ["components/primitives/IconAction.tsx", 1],
       ["components/composite/Toast.tsx", 1],
     ]);
+    const roundedXlAllowlist = new Map<string, number>([
+      ["components/features/ChatInput.tsx", 1],
+      ["components/composite/ExecutionWorkstream.tsx", 1],
+    ]);
     const shadowSmAllowlist = new Map<string, number>([["components/features/ChatInput.tsx", 1]]);
     for (const { path, source } of sources) {
       for (const [name, rule] of globalRules) {
         if (rule.test(source)) violations.push(`${path}: ${name}`);
       }
       for (const match of source.matchAll(/\b[pm][trblxy]?-\[(\d+)px\]/g)) {
-        if (Number(match[1]) % 4 !== 0) violations.push(`${path}: off-grid arbitrary spacing ${match[0]}`);
+        if (![2, 4, 6, 8, 10, 12, 14, 18, 24, 30, 40].includes(Number(match[1]))) {
+          violations.push(`${path}: off-grid arbitrary spacing ${match[0]}`);
+        }
       }
       for (const match of source.matchAll(/\btext-\[(\d+(?:\.\d+)?)px\]/g)) {
-        if (![10, 11, 12, 13, 14, 16].includes(Number(match[1]))) violations.push(`${path}: out-of-scale type size ${match[0]}`);
+        if (![8, 9, 10, 11, 12, 13, 14, 16, 18, 22, 30].includes(Number(match[1]))) violations.push(`${path}: out-of-scale type size ${match[0]}`);
       }
       const roundedLgCount = [...source.matchAll(/\brounded-lg\b/g)].length;
       if (roundedLgCount !== (roundedLgAllowlist.get(path) ?? 0)) {
         violations.push(`${path}: rounded-lg ownership expected ${roundedLgAllowlist.get(path) ?? 0}, received ${roundedLgCount}`);
+      }
+      const roundedXlCount = [...source.matchAll(/\brounded-xl\b/g)].length;
+      if (roundedXlCount !== (roundedXlAllowlist.get(path) ?? 0)) {
+        violations.push(`${path}: rounded-xl ownership expected ${roundedXlAllowlist.get(path) ?? 0}, received ${roundedXlCount}`);
       }
       if (path.endsWith(".tsx")) {
         const shadowSmCount = [...source.matchAll(/\bshadow-sm\b/g)].length;

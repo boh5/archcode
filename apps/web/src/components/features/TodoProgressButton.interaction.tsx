@@ -37,6 +37,12 @@ async function render(sessionId = "session"): Promise<void> {
   await act(async () => root.render(<TodoProgressButton slug="demo" sessionId={sessionId} />));
 }
 
+async function wait(milliseconds: number): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, milliseconds));
+  });
+}
+
 describe("TodoProgressButton interactions", () => {
   test("hides when the Session has no todos", async () => {
     await render();
@@ -61,7 +67,12 @@ describe("TodoProgressButton interactions", () => {
     expect(trigger.querySelector(".animate-spin")).toBeNull();
 
     await act(async () => trigger.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true })));
-    expect(container.querySelector('[role="region"]')?.textContent).toContain("Completed");
+    await wait(120);
+    const preview = container.querySelector('[role="region"]') as HTMLElement;
+    const hoverLayer = container.querySelector('[data-testid="todo-progress-hover-layer"]') as HTMLElement;
+    expect(preview.textContent).toContain("Completed");
+    expect(preview.className).toContain("select-text");
+    expect(hoverLayer.className).toContain("sm:pt-2");
     expect(container.querySelector('[aria-current="step"]')?.textContent).toContain("Current");
     expect(container.querySelector('[aria-current="step"] .animate-spin')).toBeNull();
     expect(container.querySelector('[role="region"]')?.textContent).toContain("Upcoming");
@@ -69,11 +80,24 @@ describe("TodoProgressButton interactions", () => {
     expect(container.querySelector('[role="region"]')?.textContent).toContain("Run tests");
     expect(container.querySelector('[role="region"]')?.textContent).not.toContain("P0 Run tests");
 
+    await act(async () => {
+      trigger.dispatchEvent(new dom.window.MouseEvent("mouseout", {
+        bubbles: true,
+        relatedTarget: hoverLayer,
+      }));
+      hoverLayer.dispatchEvent(new dom.window.MouseEvent("mouseover", {
+        bubbles: true,
+        relatedTarget: trigger,
+      }));
+    });
+    await wait(220);
+    expect(container.querySelector('[role="region"]')).not.toBeNull();
+
     await act(async () => trigger.click());
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
-    const popover = container.querySelector('[role="region"]') as HTMLElement;
-    expect(popover.className).toContain("fixed left-3 right-3 top-[100px]");
-    expect(popover.className).toContain("sm:absolute sm:left-auto sm:right-0");
+    const pinnedLayer = container.querySelector('[data-testid="todo-progress-hover-layer"]') as HTMLElement;
+    expect(pinnedLayer.className).toContain("fixed left-3 right-3 top-[100px]");
+    expect(pinnedLayer.className).toContain("sm:absolute sm:left-auto sm:right-0");
     expect(container.querySelector('button[aria-label="Close todo progress"]')).not.toBeNull();
 
     const currentStore = getWebSessionStore("session", "demo");
@@ -98,6 +122,33 @@ describe("TodoProgressButton interactions", () => {
     await act(async () => nextTrigger.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
     expect(container.querySelector('[role="region"]')).toBeNull();
     expect(document.activeElement).toBe(nextTrigger);
+  });
+
+  test("holds the hover preview open while text selection crosses its boundary", async () => {
+    getWebSessionStore("session", "demo").setState({
+      todos: [{ id: "copy", content: "Copy this Todo text", status: "in_progress" }],
+      isRunning: true,
+    });
+    await render();
+    const trigger = container.querySelector('[data-testid="todo-progress-trigger"]') as HTMLButtonElement;
+    await act(async () => trigger.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true })));
+    await wait(120);
+
+    const layer = container.querySelector('[data-testid="todo-progress-hover-layer"]') as HTMLElement;
+    expect(layer.textContent).toContain("Copy this Todo text");
+    await act(async () => {
+      layer.dispatchEvent(new dom.window.MouseEvent("mousedown", { bubbles: true }));
+      layer.dispatchEvent(new dom.window.MouseEvent("mouseout", {
+        bubbles: true,
+        relatedTarget: document.body,
+      }));
+    });
+    await wait(220);
+    expect(container.querySelector('[role="region"]')).not.toBeNull();
+
+    await act(async () => document.body.dispatchEvent(new dom.window.MouseEvent("mouseup", { bubbles: true })));
+    await wait(220);
+    expect(container.querySelector('[role="region"]')).toBeNull();
   });
 
   test("announces failed and completed execution states from real Session state", async () => {

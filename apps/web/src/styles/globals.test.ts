@@ -23,10 +23,6 @@ function rgb(hex: string): Rgb {
   return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
 }
 
-function blend(foreground: Rgb, background: Rgb, alpha: number): Rgb {
-  return foreground.map((channel, index) => channel * alpha + background[index] * (1 - alpha)) as unknown as Rgb;
-}
-
 function luminance(color: Rgb): number {
   const channels = color.map((channel) => {
     const normalized = channel / 255;
@@ -58,25 +54,25 @@ function reducedMotionDeclarations(): string {
 }
 
 const locked = {
-  dark: {
-    selector: ":root",
-    alpha: 0.08,
-    surface: ["#0b0d10", "#101318", "#151922", "#1b202a"],
-    interaction: ["#202632", "#282f3d"],
-    border: ["#222936", "#2c3544", "#3b4658"],
-    text: ["#f2f4f7", "#a8b0bf", "#818b99", "#626d7d"],
-    semantic: ["#8b7ff5", "#6ea0ff", "#4ccb7a", "#e4b454", "#ff6b72", "#818b99"],
-    agents: ["#a78bfa", "#60a5fa", "#22d3ee", "#94a3b8", "#c084fc"],
-  },
   light: {
-    selector: '[data-theme="light"]',
-    alpha: 0.06,
-    surface: ["#f1f3f6", "#f7f8fa", "#fcfcfd", "#ffffff"],
-    interaction: ["#eceff3", "#e3e7ed"],
-    border: ["#e6e9ee", "#d7dce4", "#b8c0cc"],
-    text: ["#151820", "#4e5665", "#66707f", "#8d96a4"],
-    semantic: ["#6254d8", "#315fd0", "#187a43", "#8c5c12", "#bf3e45", "#606a79"],
-    agents: ["#6d28d9", "#1d4ed8", "#0e7490", "#475569", "#7e22ce"],
+    selector: ":root",
+    surface: ["#f3f1e9", "#faf9f4", "#ffffff", "#ffffff"],
+    interaction: ["#e4e1d7", "#dcd9ce"],
+    border: ["#e2ded3", "#d2cec2", "#aaa69b"],
+    text: ["#24241f", "#5e5d55", "#696860", "#6f6e66"],
+    semantic: ["#4b50c8", "#397454", "#91651c", "#b4473f", "#696860"],
+    signal: ["#b8d94a", "#edf4cf", "#53631d", "#252c0b"],
+    rail: ["#24241f", "#f4f2e9", "#85847a"],
+  },
+  dark: {
+    selector: '[data-theme="dark"]',
+    surface: ["#141512", "#1b1d19", "#22241f", "#22241f"],
+    interaction: ["#2f322b", "#383b33"],
+    border: ["#292b26", "#393c34", "#595d51"],
+    text: ["#f1f0e8", "#b8b7ad", "#a3a198", "#85847c"],
+    semantic: ["#858bff", "#72b88a", "#dfb85d", "#ec7b72", "#a3a198"],
+    signal: ["#c5e85a", "#2c3518", "#c5e85a", "#1c2206"],
+    rail: ["#0f100e", "#f1f0e8", "#74746d"],
   },
 } as const;
 
@@ -85,12 +81,13 @@ const groups = {
   interaction: ["bg-hover", "bg-active"],
   border: ["border-subtle", "border-default", "border-strong"],
   text: ["text-primary", "text-secondary", "text-tertiary", "text-muted"],
-  semantic: ["brand", "info", "success", "warning", "error", "neutral"],
-  agents: ["agent-lead", "agent-analyst", "agent-build", "agent-explore", "agent-librarian"],
+  semantic: ["brand", "success", "warning", "error", "neutral"],
+  signal: ["signal", "signal-field", "signal-foreground", "signal-ink"],
+  rail: ["rail", "rail-ink", "rail-muted"],
 } as const;
 
 describe("workbench visual tokens", () => {
-  test("matches the locked dark and light palettes exactly", () => {
+  test("matches the locked mineral light and dark palettes exactly", () => {
     for (const theme of Object.values(locked)) {
       const source = block(theme.selector);
       for (const [groupName, names] of Object.entries(groups)) {
@@ -103,29 +100,33 @@ describe("workbench visual tokens", () => {
     for (const theme of Object.values(locked)) {
       const source = block(theme.selector);
       const surfaces = [rgb(variable(source, "bg-surface")), rgb(variable(source, "bg-elevated"))];
-      const readable = [...groups.text.slice(0, 3), ...groups.semantic, ...groups.agents];
+      const readable = [...groups.text.slice(0, 3), ...groups.semantic];
       for (const name of readable) {
         const foreground = rgb(variable(source, name));
         for (const surface of surfaces) expect(contrast(foreground, surface)).toBeGreaterThanOrEqual(4.5);
       }
       const brand = rgb(variable(source, "brand"));
       for (const surface of surfaces) expect(contrast(brand, surface)).toBeGreaterThanOrEqual(3);
-      expect(variable(source, "control-border")).toBe("var(--text-tertiary)");
-      const controlBoundary = rgb(variable(source, "text-tertiary"));
-      for (const surface of surfaces) expect(contrast(controlBoundary, surface)).toBeGreaterThanOrEqual(3);
+      expect(variable(source, "control-border")).toBe("var(--border-default)");
     }
   });
 
-  test("keeps semantic foreground readable on generated subtle backgrounds", () => {
+  test("reserves lime for signal state fields and eliminates the agent rainbow", () => {
     for (const theme of Object.values(locked)) {
       const source = block(theme.selector);
-      for (const surfaceName of ["bg-surface", "bg-elevated"] as const) {
-        const surface = rgb(variable(source, surfaceName));
-        for (const semanticName of groups.semantic) {
-          const foreground = rgb(variable(source, semanticName));
-          expect(contrast(foreground, blend(foreground, surface, theme.alpha))).toBeGreaterThanOrEqual(4.5);
-        }
-      }
+      expect(variable(source, "info")).toBe(variable(source, "brand"));
+      expect(variable(source, "signal")).not.toBe(variable(source, "brand"));
+      expect(variable(source, "signal-field")).not.toBe(variable(source, "brand-field"));
+      expect(
+        contrast(rgb(variable(source, "signal-foreground")), rgb(variable(source, "signal-field"))),
+      ).toBeGreaterThanOrEqual(4.5);
+      expect(
+        contrast(rgb(variable(source, "signal-foreground")), rgb(variable(source, "bg-surface"))),
+      ).toBeGreaterThanOrEqual(4.5);
+      expect(
+        contrast(rgb(variable(source, "signal-ink")), rgb(variable(source, "signal"))),
+      ).toBeGreaterThanOrEqual(4.5);
+      expect(source).not.toContain("--agent-");
     }
   });
 
@@ -134,13 +135,19 @@ describe("workbench visual tokens", () => {
     expect(css).not.toContain("pulse-dot");
     expect(css).not.toContain("pulse-ring");
     expect(css).not.toContain("--background:");
-    expect(css).toContain("--motion-hover: 120ms");
+    expect(css).not.toContain("--brand-muted");
+    expect(css).toContain("--motion-hover: 140ms");
     expect(css).toContain("--motion-icon: 160ms");
     expect(css).toContain("--motion-overlay: 220ms");
-    expect(css).toContain("--motion-activity: 1600ms");
+    expect(css).toContain("--motion-activity: 1800ms");
     expect(css).toContain("--motion-attention: 700ms");
     expect(css).toContain("--motion-complete: 180ms");
     expect(css).toContain("--color-border-control: var(--control-border)");
+    expect(css).toContain("--color-signal: var(--signal)");
+    expect(css).toContain("--color-signal-foreground: var(--signal-foreground)");
+    expect(css).toContain("--color-rail: var(--rail)");
+    expect(css).toContain('font-stack-sans: "Avenir Next", Avenir');
+    expect(css).toContain('font-stack-mono: "SFMono-Regular"');
     expect(css).toContain("overlay-exit var(--motion-overlay) var(--ease-exit)");
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
     expect(css).toContain("animation: status-attention var(--motion-attention) var(--ease-standard) 2");

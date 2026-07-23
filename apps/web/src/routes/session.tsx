@@ -232,7 +232,7 @@ export function SessionRoute() {
 
     return (
       <div className="flex h-full flex-col">
-        <div className="flex items-center justify-between gap-3 border-b border-border-default bg-bg-elevated px-4 py-2 text-[13px]">
+        <div className="flex min-h-11 items-center justify-between gap-3 border-b border-border-default bg-bg-surface px-4 py-2 text-[13px] sm:px-5">
           <button
             type="button"
             className="inline-flex items-center gap-1 text-text-secondary transition-colors duration-[var(--motion-hover)] hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
@@ -248,7 +248,7 @@ export function SessionRoute() {
             expanded={layout.inspectorExpanded}
             onToggle={toggleInspectorSurface}
             iconSize={14}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-border-default text-text-tertiary hover:bg-bg-hover hover:text-text-primary max-[799px]:hidden"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-border-default text-text-tertiary hover:bg-bg-hover hover:text-text-primary max-[760px]:hidden"
           />
         </div>
         {focusedError ? (
@@ -304,7 +304,7 @@ export function SessionRoute() {
         inspectorExpanded={layout.inspectorExpanded}
       />
       {linkedProjectTodo && (
-        <div className="flex shrink-0 items-center gap-2 border-b border-border-default bg-bg-elevated px-4 py-2 text-[12px]">
+        <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle bg-bg-base px-4 py-2 text-[11px] sm:px-5">
           <span className="text-text-tertiary">{linkedProjectTodoContext}</span>
           <Link
             className="min-w-0 truncate font-medium text-brand hover:underline"

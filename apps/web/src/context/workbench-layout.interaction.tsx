@@ -17,7 +17,7 @@ function installDom(initialMatches = true): JSDOM & { mutableMedia: MutableMedia
   const listeners = new Set<(event: MediaQueryListEvent) => void>();
   const media = {
     matches: initialMatches,
-    media: "(max-width: 799px)",
+    media: "(max-width: 760px)",
     onchange: null,
     addEventListener: (_type: string, listener: (event: MediaQueryListEvent) => void) => listeners.add(listener),
     removeEventListener: (_type: string, listener: (event: MediaQueryListEvent) => void) => listeners.delete(listener),

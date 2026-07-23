@@ -109,7 +109,7 @@ afterEach(() => {
 });
 
 describe("SessionComposerDock", () => {
-  test("owns Goal, Queue, HITL, and Input in fixed order with bounded independent scroll surfaces", async () => {
+  test("keeps HITL first, then Goal, Queue, and Input with bounded independent scroll surfaces", async () => {
     const store = createWebSessionStore("session-1", "project-1");
     store.getState().initializeFromSnapshot({
       rootSessionId: "session-1",
@@ -202,14 +202,14 @@ describe("SessionComposerDock", () => {
     const attention = container.querySelector('[data-testid="composer-attention-stack"]');
     const queue = container.querySelector('[data-testid="composer-queue-list"]');
     const inputSlot = container.querySelector('[data-testid="composer-input-slot"]');
-    const goal = container.querySelector('[data-testid="session-goal-progress-row"]');
+    const goal = container.querySelector('[data-testid="session-goal-summary-row"]');
     const card = container.querySelector('[data-testid="composer-card"]');
     const textarea = card?.querySelector("textarea");
     expect(dock?.className).toContain("max-h-[min(60dvh,640px)]");
     expect((dock as HTMLElement | null)?.style.scrollbarGutter).toBe("stable");
     expect(dock?.className).toContain("max-[799px]:max-h-[min(70dvh,620px)]");
     expect(dock?.classList.contains("border-t")).toBe(true);
-    expect(rail?.className).toContain("max-w-[880px]");
+    expect(rail?.className).toContain("max-w-[800px]");
     expect(attention).not.toBeNull();
     expect(attention?.className).toContain("overflow-y-auto");
     expect(queue?.className).toContain("max-h-[160px]");
@@ -217,7 +217,7 @@ describe("SessionComposerDock", () => {
     expect(queue?.className).toContain("overflow-y-auto");
     expect(inputSlot?.className).toContain("shrink-0");
     expect(goal?.className).toContain("shrink-0");
-    expect(card?.className).toContain("rounded-lg");
+    expect(card?.className).toContain("rounded-xl");
     expect(textarea?.className).toContain("border-0");
     expect(container.textContent).toContain("Queued request");
     expect(container.textContent).toContain("Retry this exact request");
@@ -226,13 +226,16 @@ describe("SessionComposerDock", () => {
     expect(container.textContent).toContain("Choose a direction");
     const ordered = Array.from(rail?.children ?? []);
     expect(ordered.map((element) => element.getAttribute("data-testid"))).toEqual([
-      "session-goal-progress-row",
-      "composer-queue-list",
       "composer-attention-stack",
+      "session-goal-summary-row",
+      "composer-queue-list",
       "composer-input-slot",
     ]);
+    expect(attention?.querySelector('[data-testid="hitl-decision-card"]')).not.toBeNull();
+    expect(container.querySelector("progress, [role=progressbar]")).toBeNull();
+    expect(Array.from(container.querySelectorAll("button")).some((button) => /expand composer|collapse composer/i.test(button.getAttribute("aria-label") ?? button.textContent ?? ""))).toBe(false);
     expect(container.querySelector('[data-testid="hitl-owner-link"]')).toBeNull();
-    expect(container.querySelector('button[aria-label="Queue message"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="Queue message"]')).not.toBeNull();
     expect(container.querySelector('button[aria-label="Stop session"]')).not.toBeNull();
     expect(container.textContent).toContain("Steer");
     expect(container.querySelector('button[title="Attach file"]')).toBeNull();

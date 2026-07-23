@@ -157,7 +157,7 @@ describe("ChatInput runtime controls", () => {
     const card = findAll(tree, (element) => element.props?.["data-testid"] === "composer-card")[0];
     const textarea = findAll(tree, (element) => element.type === "textarea")[0];
 
-    expect(card?.props?.className).toContain("rounded-lg");
+    expect(card?.props?.className).toContain("rounded-xl");
     expect(card?.props?.className).toContain("overflow-visible");
     expect(card?.props?.className).not.toContain("overflow-hidden");
     expect(card?.props?.className).toContain("focus-within:border-brand");
@@ -249,20 +249,22 @@ describe("ChatInput runtime controls", () => {
     expect(findAll(tree, (element) => element.props?.title === "Stop")).toHaveLength(0);
   });
 
-  test("running family replaces Send with one Stop action for the entire root family", () => {
+  test("running family keeps Queue and Stop as independent visible actions", () => {
     activity = "running";
     const tree = renderChatInput();
     const stop = findAll(tree, (element) => element.props?.title === "Stop")[0];
+    const queue = findAll(tree, (element) => element.props?.title === "Queue message")[0];
 
     expect(stop).toBeDefined();
-    expect(findAll(tree, (element) => element.props?.title === "Queue message")).toHaveLength(0);
+    expect(queue).toBeDefined();
+    expect(queue?.props?.disabled).toBe(true);
     expect(findAll(tree, (element) => element.props?.title === "Send message")).toHaveLength(0);
     expect(stop?.props?.disabled).not.toBe(true);
     (stop?.props?.onClick as () => void)();
     expect(stopSessionMutate).toHaveBeenCalledWith({ slug: "proj", rootSessionId: "root-1" });
   });
 
-  test("running family keeps Enter enabled for queued sends while the button remains Stop", () => {
+  test("running family queues from Enter or the independent Queue action", () => {
     activity = "running";
     hitlReady = true;
     let tree = renderChatInput();
@@ -273,6 +275,25 @@ describe("ChatInput runtime controls", () => {
     expect(findAll(tree, (element) => element.props?.title === "Stop")).toHaveLength(1);
 
     (textarea?.props?.onChange as (event: unknown) => void)({ target: { value: "Queue while running" } });
+    hookCursor = 0;
+    tree = renderChatInput();
+    textarea = findAll(tree, (element) => element.type === "textarea")[0];
+    const queue = findAll(tree, (element) => element.props?.title === "Queue message")[0];
+    expect(queue?.props?.disabled).toBe(false);
+    (queue?.props?.onClick as () => void)();
+
+    expect(postMessageMutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        slug: "proj",
+        sessionId: "root-1",
+        content: "Queue while running",
+        clientRequestId: expect.any(String),
+        requestedModelSelection,
+      }),
+      expect.any(Object),
+    );
+
+    (textarea?.props?.onChange as (event: unknown) => void)({ target: { value: "Queue from Enter" } });
     hookCursor = 0;
     tree = renderChatInput();
     textarea = findAll(tree, (element) => element.type === "textarea")[0];
@@ -287,7 +308,7 @@ describe("ChatInput runtime controls", () => {
       expect.objectContaining({
         slug: "proj",
         sessionId: "root-1",
-        content: "Queue while running",
+        content: "Queue from Enter",
         clientRequestId: expect.any(String),
         requestedModelSelection,
       }),

@@ -8,6 +8,7 @@ describe("status primitives", () => {
   test("ActivityArc rotates only its active SVG arc", () => {
     const html = renderToStaticMarkup(<ActivityArc label="Execution running" />);
     expect(html).toContain('data-motion="loop"');
+    expect(html).toContain('data-tone="signal"');
     expect(html).toContain('aria-label="Execution running"');
     expect(html.match(/animate-activity/g)?.length).toBe(1);
     expect(html).not.toContain("box-shadow");

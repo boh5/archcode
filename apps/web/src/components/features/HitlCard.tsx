@@ -161,7 +161,7 @@ export function HitlDecisionCard({ entry }: { entry: ScopedHitlView }) {
 
   const sourceLabel = view.source.type === "ask_user" ? "Question" : "Permission";
   return (
-    <article id={`hitl-decision-${view.hitlId}`} className="min-w-0 overflow-hidden rounded-md border border-border-default border-l-2 border-l-warning bg-bg-elevated p-3" data-testid="hitl-decision-card" data-hitl-id={view.hitlId}>
+    <article id={`hitl-decision-${view.hitlId}`} className="min-w-0 overflow-hidden rounded-md border-y border-r border-warning/40 border-l-[3px] border-l-warning bg-warning-muted p-3" data-testid="hitl-decision-card" data-hitl-id={view.hitlId}>
       <div className="mb-2 flex min-w-0 items-start justify-between gap-2">
         <div className="flex min-w-0 items-start gap-2">
           <StatusGlyph kind="needs_you" label="Needs you" size={16} transition={attentionTransition ? "attention" : undefined} />

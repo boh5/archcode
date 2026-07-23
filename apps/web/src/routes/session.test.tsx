@@ -187,6 +187,12 @@ describe("SessionRoute store-level behavior", () => {
     __resetWebSessionStoresForTest();
   });
 
+  test("keeps the child Inspector reopen control aligned with the 760px layout boundary", async () => {
+    const source = await Bun.file(new URL("./session.tsx", import.meta.url)).text();
+    expect(source).toContain("max-[760px]:hidden");
+    expect(source).not.toContain("max-[799px]:hidden");
+  });
+
   test("markSessionForeground(true) pins the store against eviction", () => {
     const store = createWebSessionStore("fg-pin", "demo");
     markSessionForeground("demo", "fg-pin", true);
@@ -573,10 +579,10 @@ describe("SessionRoute focused view store behavior", () => {
         expect(decision).not.toBeNull();
         expect(surface?.classList.contains("border-t")).toBe(true);
         expect(surface?.classList.contains("px-5")).toBe(false);
-        expect(rail?.className).toContain("max-w-[880px]");
-        expect(rail?.className).toContain("px-[16px]");
-        expect(rail?.className).toContain("sm:px-[20px]");
-        expect(attention?.className).toContain("rounded-md");
+        expect(rail?.className).toContain("max-w-[800px]");
+        expect(rail?.className).toContain("px-4");
+        expect(rail?.className).toContain("sm:px-5");
+        expect(attention?.firstElementChild?.firstElementChild).toBe(decision);
         expect(container.textContent).toContain("Need input");
         expect(container.querySelector('[data-testid="hitl-owner-link"]')).toBeNull();
         expect(container.querySelector('input[type="radio"]')).not.toBeNull();

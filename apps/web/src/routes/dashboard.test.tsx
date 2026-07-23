@@ -82,10 +82,14 @@ const { Dashboard } = await import("./dashboard");
 describe("Dashboard empty sections", () => {
   test("always renders all four sections with a dedicated placeholder", () => {
     const dashboard = Dashboard({ scope: { kind: "global" } });
+    const pageContainer = findAll(dashboard, (element) => (
+      element.type === "div" && String(element.props?.className).includes("max-w-[1100px]")
+    ));
     const sections = findAll(dashboard, (element) => (
       typeof element.type === "function" && element.type.name === "DashboardSection"
     ));
 
+    expect(pageContainer).toHaveLength(1);
     expect(sections.map((section) => section.props?.title)).toEqual([
       "Needs attention",
       "Running now",
@@ -93,6 +97,8 @@ describe("Dashboard empty sections", () => {
       "Upcoming",
     ]);
     expect(sections.map((section) => section.props?.count)).toEqual([0, 0, 0, 0]);
+    const runningIcon = sections[1]?.props?.icon;
+    expect(isElement(runningIcon) ? runningIcon.type : null).toBe("Activity");
 
     const renderedSections = sections.map((section) => (
       (section.type as (props: Record<string, unknown>) => unknown)(section.props ?? {})
@@ -103,5 +109,20 @@ describe("Dashboard empty sections", () => {
       "Continue working0No recent sessions to continue.",
       "Upcoming0No scheduled automations.",
     ]);
+    for (const section of renderedSections) {
+      const rows = findAll(section, (element) => (
+        element.type === "div" && String(element.props?.className).includes("divide-y")
+      ));
+      expect(rows).toHaveLength(1);
+      expect(String(rows[0]?.props?.className)).not.toContain("rounded");
+    }
+  });
+
+  test("keeps Dashboard running activity static without changing live Session surfaces", async () => {
+    const source = await Bun.file(new URL("./dashboard.tsx", import.meta.url)).text();
+    expect(source).not.toContain('<StatusGlyph kind="running"');
+    expect(source).toContain('icon={<Activity size={16} className="text-signal-foreground"');
+    expect(source).toContain('staticActivity');
+    expect(source).toContain('<Activity size={15} className={STATUS_TONE_CLASS[tone]}');
   });
 });

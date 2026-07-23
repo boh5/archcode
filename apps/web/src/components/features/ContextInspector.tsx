@@ -57,7 +57,7 @@ function InspectorShell<T extends string>({
 
   return (
     <aside id={id} className="flex h-full min-w-0 flex-col bg-bg-surface" aria-label="Context inspector">
-      <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border-default px-3 max-[799px]:pl-12">
+      <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border-default px-3 max-[760px]:pl-12">
         <div className="min-w-0 flex-1">
           <div className="text-[12px] font-semibold leading-4 text-text-primary">Context inspector</div>
           <div className="text-[11px] leading-4 capitalize text-text-tertiary">{kind}</div>
@@ -69,7 +69,7 @@ function InspectorShell<T extends string>({
             aria-controls={id}
             aria-expanded="true"
             title="Collapse context inspector"
-            className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-sm text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand min-[800px]:flex min-[1280px]:hidden"
+            className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-sm text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand min-[761px]:flex min-[1181px]:hidden"
             onClick={onCollapse}
           >
             <PanelRightClose size={15} aria-hidden="true" />

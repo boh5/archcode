@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
-import { sessionGoalControlVisibility, sessionGoalMutationError } from "./SessionGoalProgressRow";
+import { sessionGoalControlVisibility, sessionGoalMutationError } from "./SessionGoalSummaryRow";
 
-describe("SessionGoalProgressRow controls", () => {
+describe("SessionGoalSummaryRow controls", () => {
   test("keeps complete Goals clearable but immutable", () => {
     expect(sessionGoalControlVisibility("complete")).toEqual({
       edit: false,

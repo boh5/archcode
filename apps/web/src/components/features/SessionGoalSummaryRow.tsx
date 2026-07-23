@@ -8,7 +8,7 @@ import { GoalStatusMark } from "./GoalStatusMark";
 import { presentSessionGoalStatus } from "../../lib/session-goal-presentation";
 import { STATUS_TONE_CLASS } from "../../lib/status-visuals";
 
-export function SessionGoalProgressRow({
+export function SessionGoalSummaryRow({
   slug,
   sessionId,
   goal,
@@ -79,21 +79,22 @@ export function SessionGoalProgressRow({
   return (
     <>
       <section
-        className="flex min-h-[42px] min-w-0 shrink-0 items-center gap-2 rounded-md border border-border-default bg-bg-surface px-2 py-2"
-        data-testid="session-goal-progress-row"
+        className="flex min-h-10 min-w-0 shrink-0 items-center gap-2 border-b border-border-subtle bg-transparent px-1 py-2"
+        data-testid="session-goal-summary-row"
         aria-label="Session goal"
       >
-        <GoalStatusMark identity={goal.instanceId} status={goal.status} size={18} label={`Goal ${goalPresentation.label}`} />
-        <strong className={`shrink-0 text-[12px] font-semibold max-[559px]:hidden ${STATUS_TONE_CLASS[goalPresentation.tone]}`}>{goalPresentation.label}</strong>
+        <GoalStatusMark identity={goal.instanceId} status={goal.status} size={16} label={`Goal ${goalPresentation.label}`} />
+        <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.08em] text-text-muted max-[559px]:hidden">Goal</span>
+        <strong className={`shrink-0 text-[11px] font-semibold max-[559px]:hidden ${STATUS_TONE_CLASS[goalPresentation.tone]}`}>{goalPresentation.label}</strong>
         <span
           aria-describedby={goal.blockedReason ? blockedReasonId : undefined}
-          className="min-w-[48px] flex-1 truncate text-[13px] font-medium leading-5 text-text-primary min-[560px]:min-w-24 min-[800px]:min-w-[120px]"
+          className="min-w-[48px] flex-1 truncate text-[12px] font-medium leading-5 text-text-primary min-[560px]:min-w-24 min-[800px]:min-w-[120px]"
           title={goal.blockedReason ? `${goal.objective}\n${goal.blockedReason}` : goal.objective}
         >
           {goal.objective}
         </span>
         {goal.blockedReason && <span id={blockedReasonId} className="sr-only">{goal.blockedReason}</span>}
-        <span className="flex shrink-0 items-center gap-2 whitespace-nowrap text-[11px] text-text-tertiary max-[799px]:hidden">
+        <span className="flex shrink-0 items-center gap-2 whitespace-nowrap font-mono text-[9px] tabular-nums text-text-tertiary max-[799px]:hidden">
           <span className="inline-flex items-center gap-1" title={`${goal.usage.executionCount} executions`}><Workflow size={12} aria-hidden="true" />{goal.usage.executionCount}<span className="max-[1099px]:hidden"> executions</span></span>
           <span className="inline-flex items-center gap-1" title={`${goal.usage.tokens.totalTokens.toLocaleString()} tokens`}><Cpu size={12} aria-hidden="true" />{goal.usage.tokens.totalTokens.toLocaleString()}<span className="max-[1099px]:hidden"> tokens</span></span>
           <span className="inline-flex items-center gap-1" title={`${Math.round(goal.usage.executionTimeMs / 1_000)} seconds`}><Clock3 size={12} aria-hidden="true" />{formatDuration(Math.round(goal.usage.executionTimeMs / 1_000))}</span>

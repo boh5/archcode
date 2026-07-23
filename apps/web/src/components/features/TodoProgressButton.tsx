@@ -7,6 +7,9 @@ import { ProgressRing } from "../primitives/ProgressRing";
 import { IconAction } from "../primitives/IconAction";
 import { STATUS_SUBTLE_CLASS, STATUS_TONE_CLASS, type StatusTone } from "../../lib/status-visuals";
 
+const HOVER_OPEN_DELAY_MS = 100;
+const HOVER_CLOSE_DELAY_MS = 180;
+
 const STATE_LABEL: Record<TodoProgressState, string> = {
   running: "Running",
   waiting: "Waiting",
@@ -53,7 +56,55 @@ export function TodoProgressButton({ slug, sessionId }: { slug: string; sessionI
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const ignoreNextFocusPreview = useRef(false);
+  const hoverOpenTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hoverCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const selectingInPreview = useRef(false);
   const open = previewOpen || pinned;
+
+  const clearHoverOpenTimer = () => {
+    if (hoverOpenTimer.current === null) return;
+    clearTimeout(hoverOpenTimer.current);
+    hoverOpenTimer.current = null;
+  };
+
+  const clearHoverCloseTimer = () => {
+    if (hoverCloseTimer.current === null) return;
+    clearTimeout(hoverCloseTimer.current);
+    hoverCloseTimer.current = null;
+  };
+
+  const keepPreviewOpen = () => {
+    clearHoverCloseTimer();
+    if (!pinned) setPreviewOpen(true);
+  };
+
+  const schedulePreviewOpen = () => {
+    clearHoverCloseTimer();
+    clearHoverOpenTimer();
+    if (pinned) return;
+    hoverOpenTimer.current = setTimeout(() => {
+      hoverOpenTimer.current = null;
+      setPreviewOpen(true);
+    }, HOVER_OPEN_DELAY_MS);
+  };
+
+  const schedulePreviewClose = () => {
+    clearHoverOpenTimer();
+    clearHoverCloseTimer();
+    if (pinned || selectingInPreview.current) return;
+    hoverCloseTimer.current = setTimeout(() => {
+      hoverCloseTimer.current = null;
+      setPreviewOpen(false);
+    }, HOVER_CLOSE_DELAY_MS);
+  };
+
+  const resetOpenState = () => {
+    clearHoverOpenTimer();
+    clearHoverCloseTimer();
+    selectingInPreview.current = false;
+    setPinned(false);
+    setPreviewOpen(false);
+  };
 
   useEffect(() => {
     if (!pinned) return;
@@ -68,16 +119,27 @@ export function TodoProgressButton({ slug, sessionId }: { slug: string; sessionI
   }, [pinned]);
 
   useEffect(() => {
-    setPinned(false);
-    setPreviewOpen(false);
+    resetOpenState();
   }, [sessionId]);
 
   useEffect(() => {
-    if (todos.length === 0) {
-      setPinned(false);
-      setPreviewOpen(false);
-    }
+    if (todos.length === 0) resetOpenState();
   }, [todos.length]);
+
+  useEffect(() => {
+    const finishSelection = (event: MouseEvent) => {
+      if (!selectingInPreview.current) return;
+      selectingInPreview.current = false;
+      if (!containerRef.current?.contains(event.target as Node)) schedulePreviewClose();
+    };
+    document.addEventListener("mouseup", finishSelection);
+    return () => document.removeEventListener("mouseup", finishSelection);
+  });
+
+  useEffect(() => () => {
+    clearHoverOpenTimer();
+    clearHoverCloseTimer();
+  }, []);
 
   if (progress === null) return null;
   const popoverId = `todo-progress-${sessionId}`;
@@ -85,8 +147,7 @@ export function TodoProgressButton({ slug, sessionId }: { slug: string; sessionI
   const tone = STATE_TONE[progress.state];
 
   const close = () => {
-    setPinned(false);
-    setPreviewOpen(false);
+    resetOpenState();
     ignoreNextFocusPreview.current = true;
     triggerRef.current?.focus();
   };
@@ -95,10 +156,11 @@ export function TodoProgressButton({ slug, sessionId }: { slug: string; sessionI
     <div
       ref={containerRef}
       className="relative"
-      onMouseEnter={() => setPreviewOpen(true)}
-      onMouseLeave={() => setPreviewOpen(false)}
+      onMouseEnter={schedulePreviewOpen}
+      onMouseLeave={schedulePreviewClose}
+      onFocusCapture={keepPreviewOpen}
       onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setPreviewOpen(false);
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) schedulePreviewClose();
       }}
       onKeyDown={(event) => {
         if (event.key === "Escape" && open) {
@@ -123,6 +185,8 @@ export function TodoProgressButton({ slug, sessionId }: { slug: string; sessionI
           setPreviewOpen(true);
         }}
         onClick={() => {
+          clearHoverOpenTimer();
+          clearHoverCloseTimer();
           setPinned((current) => !current);
           setPreviewOpen(false);
         }}
@@ -134,29 +198,40 @@ export function TodoProgressButton({ slug, sessionId }: { slug: string; sessionI
 
       {open && (
         <div
-          id={popoverId}
-          role="region"
-          aria-label="Todo progress details"
-          className="fixed left-3 right-3 top-[100px] z-50 w-auto rounded-lg border border-border-default bg-bg-overlay p-3 shadow-md sm:absolute sm:left-auto sm:right-0 sm:top-[calc(100%+8px)] sm:w-[360px]"
+          data-testid="todo-progress-hover-layer"
+          className="fixed left-3 right-3 top-[100px] z-50 w-auto sm:absolute sm:left-auto sm:right-0 sm:top-full sm:w-[360px] sm:pt-2"
+          onMouseEnter={keepPreviewOpen}
+          onMouseLeave={schedulePreviewClose}
+          onMouseDown={() => {
+            selectingInPreview.current = true;
+            clearHoverCloseTimer();
+          }}
         >
-          <div className="mb-2 flex items-start justify-between gap-3">
-            <div>
-              <div className="text-xs font-semibold text-text-primary">Next steps</div>
-              <div aria-live="polite" className="mt-1 text-[11px] text-text-tertiary">
-                {completedLabel} · {STATE_LABEL[progress.state]}
+          <div
+            id={popoverId}
+            role="region"
+            aria-label="Todo progress details"
+            className="select-text rounded-lg border border-border-default bg-bg-overlay p-3 shadow-md"
+          >
+            <div className="mb-2 flex items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-semibold text-text-primary">Next steps</div>
+                <div aria-live="polite" className="mt-1 text-[11px] text-text-tertiary">
+                  {completedLabel} · {STATE_LABEL[progress.state]}
+                </div>
               </div>
+              {pinned && (
+                <IconAction label="Close todo progress" onClick={close}>
+                  <X aria-hidden="true" size={14} />
+                </IconAction>
+              )}
             </div>
-            {pinned && (
-              <IconAction label="Close todo progress" onClick={close}>
-                <X aria-hidden="true" size={14} />
-              </IconAction>
-            )}
-          </div>
-          <div className="mb-3 h-1 overflow-hidden rounded-full bg-bg-active" aria-hidden="true">
-            <div className="h-full rounded-full bg-brand transition-[width]" style={{ width: `${progress.percent}%` }} />
-          </div>
-          <div className="max-h-[min(50vh,360px)] space-y-1 overflow-y-auto">
-            {todos.map((todo) => <TodoProgressItem key={todo.id} todo={todo} />)}
+            <div className="mb-3 h-1 overflow-hidden rounded-full bg-bg-active" aria-hidden="true">
+              <div className="h-full rounded-full bg-brand transition-[width]" style={{ width: `${progress.percent}%` }} />
+            </div>
+            <div className="max-h-[min(50vh,360px)] space-y-1 overflow-y-auto">
+              {todos.map((todo) => <TodoProgressItem key={todo.id} todo={todo} />)}
+            </div>
           </div>
         </div>
       )}

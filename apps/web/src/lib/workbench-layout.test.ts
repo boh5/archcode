@@ -17,18 +17,18 @@ describe("workbench layout", () => {
   });
 
   test("clamps resizable panel widths to their supported ranges", () => {
-    expect(clampSidebarWidth(120)).toBe(220);
+    expect(clampSidebarWidth(120)).toBe(210);
     expect(clampSidebarWidth(320)).toBe(320);
-    expect(clampSidebarWidth(600)).toBe(420);
-    expect(clampInspectorWidth(120)).toBe(300);
+    expect(clampSidebarWidth(600)).toBe(340);
+    expect(clampInspectorWidth(120)).toBe(280);
     expect(clampInspectorWidth(420)).toBe(420);
-    expect(clampInspectorWidth(900)).toBe(560);
+    expect(clampInspectorWidth(900)).toBe(460);
   });
 
   test("keeps medium inspector resize semantics aligned with the available canvas", () => {
-    expect(resolveInspectorGeometry(560, 320)).toEqual({ value: 320, min: 300, max: 320 });
+    expect(resolveInspectorGeometry(460, 320)).toEqual({ value: 320, min: 280, max: 320 });
     expect(resolveInspectorGeometry(280, 240)).toEqual({ value: 240, min: 240, max: 240 });
-    expect(resolveInspectorGeometry(360, 800)).toEqual({ value: 360, min: 300, max: 560 });
+    expect(resolveInspectorGeometry(330, 800)).toEqual({ value: 330, min: 280, max: 460 });
   });
 
   test("only object detail routes expose a context inspector", () => {
@@ -72,8 +72,8 @@ describe("workbench layout", () => {
       inspectorCollapsed: "no",
       focusMode: true,
     }))).toEqual({
-      sidebarWidth: 420,
-      inspectorWidth: 300,
+      sidebarWidth: 340,
+      inspectorWidth: 280,
       sidebarCollapsed: true,
       inspectorCollapsed: false,
       focusMode: true,

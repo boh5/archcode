@@ -149,7 +149,7 @@ describe("GroupedToolCard", () => {
 
     expect(findButtons(el)).toHaveLength(1);
     expect(textContent(el)).toContain("Read 2 items");
-    expect(textContent(el)).not.toContain("file_read");
+    expect(textContent(el)).toContain("file_read");
     expect(textContent(el)).not.toContain("a.ts");
     expect(textContent(el)).not.toContain("b.ts");
   });

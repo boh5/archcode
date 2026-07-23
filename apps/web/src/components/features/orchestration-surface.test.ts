@@ -29,17 +29,20 @@ describe("orchestration workbench surface", () => {
     expect(deriveSidebarTabFromPath("/projects/demo/todos")).toBeNull();
   });
 
-  test("renders the Agent tree as indented text without appearance UI", async () => {
+  test("renders the Agent tree with named role identity and one neutral icon language", async () => {
     const inspector = await source("components/features/context-inspector/SessionAgentsInspector.tsx");
 
-    expect(inspector).toContain("agent.depth * 16");
+    expect(inspector).toContain("agent.depth * 14");
     expect(inspector).toContain("agent.profile");
     expect(inspector).toContain("displayName");
+    expect(inspector).toContain("AGENT_ROLE_ICON");
+    expect(inspector).toContain("data-agent-role-icon");
     expect(inspector).toContain("data-agent-status");
     expect(inspector).toContain("buildAgentFocusSearch");
     expect(inspector).not.toContain("resolveAgentAppearance");
     expect(inspector).not.toContain("appearance.initial");
     expect(inspector).not.toContain("agent-avatar");
+    expect(inspector).not.toContain("AGENT_ROLE_COLOR");
   });
 
   test("uses only authoritative runtime and child-link statuses in the Agent tree", () => {
@@ -60,7 +63,7 @@ describe("orchestration workbench surface", () => {
     const [sidebar, header, goal, composer, todo] = await Promise.all([
       source("components/features/Sidebar.tsx"),
       source("components/features/ChatHeader.tsx"),
-      source("components/features/SessionGoalProgressRow.tsx"),
+      source("components/features/SessionGoalSummaryRow.tsx"),
       source("components/features/ChatInput.tsx"),
       source("components/features/TodoProgressButton.tsx"),
     ]);

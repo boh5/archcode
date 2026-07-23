@@ -86,16 +86,12 @@ function SessionItem({
   const updatedAt = session.updatedAt;
 
   return (
-    <div
-      className={`flex items-center gap-2 px-4 py-2 cursor-pointer transition-colors duration-[var(--motion-hover)] relative ${
+    <button
+      type="button"
+      className={`relative flex w-full items-center gap-2 px-4 py-2 text-left transition-colors duration-[var(--motion-hover)] ${
         isActive ? "bg-brand-subtle" : "hover:bg-bg-hover"
       }`}
       onClick={onClick}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") onClick();
-      }}
     >
       {isActive && (
         <div className="absolute left-0 top-2 bottom-2 w-0.5 rounded-r-sm bg-brand" />
@@ -118,7 +114,7 @@ function SessionItem({
         </div>
       </div>
       {attentionCount > 0 && <span className="grid min-h-4 min-w-4 place-items-center rounded-full bg-warning px-1 text-[10px] font-semibold leading-[14px] text-bg-base" aria-label={`${attentionCount} requests need attention`}>{attentionCount > 99 ? "99+" : attentionCount}</span>}
-    </div>
+    </button>
   );
 }
 
@@ -134,16 +130,12 @@ function AutomationItem({
   const scheduleLabel = automation.trigger.kind === "once" ? "once" : automation.trigger.kind === "interval" ? `interval ${automation.trigger.everyMs}ms` : `cron ${automation.trigger.expression}`;
 
   return (
-    <div
-      className={`flex items-center gap-2 px-4 py-2 cursor-pointer transition-colors duration-[var(--motion-hover)] relative ${
+    <button
+      type="button"
+      className={`relative flex w-full items-center gap-2 px-4 py-2 text-left transition-colors duration-[var(--motion-hover)] ${
         isActive ? "bg-brand-subtle" : "hover:bg-bg-hover"
       }`}
       onClick={onClick}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") onClick();
-      }}
     >
       {isActive && (
         <div className="absolute left-0 top-2 bottom-2 w-0.5 rounded-r-sm bg-brand" />
@@ -159,14 +151,14 @@ function AutomationItem({
           <span className="capitalize">{automation.action.kind.replaceAll("_", " ")}</span>
         </div>
       </div>
-    </div>
+    </button>
   );
 }
 
 // Shared sub-components
 
 const SEARCH_INPUT_CLASS =
-  "w-full rounded-sm border border-border-control bg-bg-base px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted focus:border-brand focus:outline-none transition-colors duration-[var(--motion-hover)]";
+  "w-full rounded-md border border-border-control bg-bg-elevated px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted transition-colors duration-[var(--motion-hover)] focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-subtle";
 
 function CreateButton({
   onClick,
@@ -186,7 +178,7 @@ function CreateButton({
       disabled={disabled}
       title={title}
       aria-label={title}
-      className="inline-flex h-8 shrink-0 items-center justify-center gap-2 rounded-sm border border-brand/50 bg-brand-subtle px-3 text-[12px] font-semibold text-brand transition-colors duration-[var(--motion-hover)] hover:border-brand hover:bg-brand/15 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-45"
+      className="inline-flex h-8 shrink-0 items-center justify-center gap-2 rounded-md border border-brand bg-brand px-3 text-[12px] font-semibold text-brand-ink transition-colors duration-[var(--motion-hover)] hover:border-brand-hover hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-45"
     >
       <Plus size={13} />
       <span className="whitespace-nowrap">{label}</span>
@@ -224,11 +216,12 @@ function DashboardLinkButton({
     <Link
       to={to}
       aria-current={isActive ? "page" : undefined}
-      className={`group flex h-8 items-center gap-2 rounded-sm border px-3 text-[12px] font-medium transition-colors ${isActive
-        ? "border-brand/40 bg-brand-subtle text-brand"
-        : "border-border-subtle bg-bg-base text-text-secondary hover:border-border-default hover:bg-bg-hover hover:text-text-primary"
+      className={`group relative flex h-8 items-center gap-2 rounded-sm px-3 text-[12px] font-medium transition-colors ${isActive
+        ? "bg-brand-subtle text-brand"
+        : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
       }`}
     >
+      {isActive && <span className="absolute inset-y-1 left-0 w-0.5 rounded-r-sm bg-brand" aria-hidden="true" />}
       <LayoutDashboard size={13} className="shrink-0" aria-hidden="true" />
       <span className="min-w-0 flex-1 truncate">{label}</span>
       <ChevronRight size={12} className="shrink-0 text-text-muted transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
@@ -359,7 +352,7 @@ export function Sidebar({
 
   return (
     <div id="project-sidebar" className="h-full bg-bg-surface flex flex-col overflow-hidden">
-      <div className="shrink-0 border-b border-border-subtle px-4 pb-2 pt-3 max-[799px]:pr-12">
+      <div className="shrink-0 border-b border-border-subtle px-4 pb-2 pt-3 max-[760px]:pr-12">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
             <div className="font-semibold text-[13px] text-text-primary truncate">
@@ -390,7 +383,7 @@ export function Sidebar({
           )}
             <button
               type="button"
-              className="flex h-7 w-7 items-center justify-center rounded-sm text-text-tertiary hover:bg-bg-hover hover:text-text-primary focus-visible:outline-2 focus-visible:outline-brand max-[799px]:hidden"
+              className="flex h-7 w-7 items-center justify-center rounded-sm text-text-tertiary hover:bg-bg-hover hover:text-text-primary focus-visible:outline-2 focus-visible:outline-brand max-[760px]:hidden"
               aria-label="Collapse project sidebar"
               aria-controls="project-sidebar"
               aria-expanded="true"

@@ -35,7 +35,7 @@ export function AutomationDetailRoute() {
   const hitlAttention = deriveAutomationHitlAttention(value, invocations.data ?? [], scopedHitl);
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col bg-bg-base">
       <AutomationHeader
         automation={value}
         isRunningNow={runNow.isPending}
@@ -46,7 +46,7 @@ export function AutomationDetailRoute() {
         onRunNow={() => runNow.mutate({ slug, automationId })}
         slug={slug}
       />
-      <main className="mx-auto w-full max-w-4xl space-y-4 overflow-y-auto p-4">
+      <main className="mx-auto w-full max-w-[1100px] overflow-y-auto px-4 py-5 sm:px-6">
         <AutomationConfiguration automation={value} />
         <AutomationProvenance slug={slug} sessionId={(value as Automation & { createdFromSessionId: string }).createdFromSessionId} />
         <AutomationAttention failedInvocation={failedInvocation} hitlAttention={hitlAttention} />
@@ -65,8 +65,8 @@ export function AutomationDetailRoute() {
 function AutomationProvenance({ slug, sessionId }: { slug: string; sessionId: string }) {
   const source = useSession(slug, sessionId);
   return (
-    <section className="rounded-md border border-border-default bg-bg-surface p-4">
-      <h2 className="font-semibold">Created from</h2>
+    <section className="border-t border-border-subtle py-4">
+      <h2 className="text-[13px] font-semibold text-text-primary">Created from</h2>
       {sessionId && source.isLoading ? (
         <p className="mt-2 text-sm text-text-tertiary">Loading…</p>
       ) : sessionId && source.data ? (
@@ -101,7 +101,7 @@ function AutomationHeader({
 }) {
   const statusLabel = automationStatusLabel(automation.status);
   return (
-    <header className="flex min-h-12 flex-wrap items-center gap-2 border-b border-border-subtle px-4 py-2 min-[640px]:h-12 min-[640px]:flex-nowrap min-[640px]:gap-3 min-[640px]:py-0">
+    <header className="flex min-h-14 flex-wrap items-center gap-2 border-b border-border-default bg-bg-surface px-4 py-2 min-[640px]:flex-nowrap min-[640px]:gap-3 min-[640px]:px-5">
       <Link
         aria-label="Back to automations"
         className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-transparent text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:border-border-default hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
@@ -136,8 +136,8 @@ function AutomationConfiguration({ automation }: { automation: Automation }) {
     : `Send to Session ${automation.action.sessionId}`;
 
   return (
-    <section className="rounded-md border border-border-default bg-bg-surface p-4">
-      <h2 className="font-semibold">Configuration</h2>
+    <section className="border-t border-border-subtle py-4">
+      <h2 className="text-[13px] font-semibold text-text-primary">Configuration</h2>
       <dl className="mt-3 grid gap-2 text-sm">
         <AutomationDefinition label="Schedule">{formatTrigger(automation.trigger)}</AutomationDefinition>
         <AutomationDefinition label="Action">{action}</AutomationDefinition>
@@ -163,8 +163,8 @@ function AutomationAttention({
     : hitlAttention.entries.length > 0;
 
   return (
-    <section className="rounded-md border border-border-default bg-bg-surface p-4">
-      <h2 className="font-semibold">Attention</h2>
+    <section className="border-t border-border-subtle py-4">
+      <h2 className="text-[13px] font-semibold text-text-primary">Attention</h2>
       {failedInvocation ? (
         <p className="mt-2 inline-flex items-center gap-2 text-sm text-error"><StatusGlyph kind="failed" size={14} />Dispatch failed: {failedInvocation.error ?? failedInvocation.id}</p>
       ) : null}
@@ -193,8 +193,8 @@ function InvocationHistory({ invocations, isLoading, slug, targetInvocationId }:
   targetInvocationId: string | null;
 }) {
   return (
-    <section className="rounded-md border border-border-default bg-bg-surface p-4">
-      <h2 className="font-semibold">Invocation History</h2>
+    <section className="border-t border-border-subtle py-4">
+      <h2 className="text-[13px] font-semibold text-text-primary">Invocation History</h2>
       {isLoading ? <p className="mt-2 text-sm text-text-tertiary">Loading history…</p> : null}
       {!isLoading && !invocations?.length ? <p className="mt-2 text-sm text-text-tertiary">No invocations yet.</p> : null}
       {invocations?.length ? <div className="mt-2 divide-y divide-border-subtle">{invocations.map((item) => (
@@ -216,7 +216,7 @@ function InvocationRow({ item, slug, targeted }: { item: AutomationInvocation; s
   return (
     <div
       ref={rowRef}
-      className={`rounded-sm py-2 text-sm outline-none ${targeted ? "bg-brand-subtle ring-1 ring-brand/50" : ""}`}
+      className={`border-l-2 py-2 pl-3 text-sm outline-none ${targeted ? "border-l-brand bg-brand-subtle" : "border-l-transparent"}`}
       data-invocation-id={item.id}
       tabIndex={targeted ? -1 : undefined}
     >

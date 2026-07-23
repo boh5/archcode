@@ -150,10 +150,10 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
   return (
     <div
       ref={overlayRef}
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 pt-[15vh] backdrop-blur-[2px] animate-overlay-enter"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 pt-[15vh] animate-overlay-enter"
       onClick={handleOverlayClick}
     >
-      <div className="flex max-h-[60vh] w-[min(560px,92vw)] flex-col overflow-hidden rounded-xl border border-border-strong bg-bg-overlay shadow-lg">
+      <div className="flex max-h-[60vh] w-[min(560px,92vw)] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-overlay shadow-lg">
         <div className="flex items-center justify-between border-b border-border-subtle px-5 py-4 shrink-0">
           <h2 className="text-[14px] font-semibold leading-5 text-text-primary">
             Add Project

@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
-const webSource = `${import.meta.dir}/../../`;
+const webSource = new URL("../../", import.meta.url);
 
 async function source(path: string): Promise<string> {
-  return await Bun.file(`${webSource}${path}`).text();
+  return await Bun.file(new URL(path, webSource)).text();
 }
 
 describe("compact icon control hard cut", () => {
@@ -90,7 +90,7 @@ describe("compact icon control hard cut", () => {
     const dock = await source("components/features/SessionComposerDock.tsx");
     const iconAction = await source("components/primitives/IconAction.tsx");
     const projectBar = await source("components/features/ProjectBar.tsx");
-    expect(bell).toContain("rounded-xl border border-border-strong bg-bg-overlay p-3 shadow-lg");
+    expect(bell).toContain("rounded-md border border-border-strong bg-bg-overlay p-3 shadow-lg");
     expect(bell).toContain("rounded-lg border border-border-default bg-bg-overlay p-3 shadow-md");
     expect(bell).not.toContain("shadow-xl");
     expect(dock).not.toContain("shadow-sm");
@@ -102,7 +102,7 @@ describe("compact icon control hard cut", () => {
 
   test("Project Todo and Goal editors use control radius and 32px actions", async () => {
     const todos = await source("routes/project-todos.tsx");
-    const goal = await source("components/features/SessionGoalProgressRow.tsx");
+    const goal = await source("components/features/SessionGoalSummaryRow.tsx");
     expect(todos).toContain('aria-label="New Todo"');
     expect(todos).not.toContain('aria-label="New Todo" onClick={handleCreate} disabled={createTodo.isPending} className="inline-flex h-8 shrink-0 items-center gap-2 rounded-md');
     expect(todos).not.toContain("gap-2 rounded-md border px-3 py-2 text-[12px]");

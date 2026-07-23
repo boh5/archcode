@@ -60,11 +60,15 @@ export function ProjectBar({ onAddProject, onSettings, showBell = true, theme, t
   );
 
   return (
-    <nav className="flex h-full flex-col items-center gap-1 overflow-visible py-2" aria-label="Projects">
+    <nav
+      className="flex h-full flex-col items-center gap-1 overflow-visible py-2 text-rail-muted"
+      aria-label="Projects"
+      data-testid="project-bar"
+    >
       <button
         type="button"
         aria-label="Open dashboard"
-        className="mb-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-sm bg-bg-elevated text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+        className="mb-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-sm bg-rail-ink/8 text-rail-ink transition-colors duration-[var(--motion-hover)] hover:bg-rail-ink/12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
         onClick={() => navigate("/")}
       >
         <img src="/logo.svg" alt="ArchCode" width={20} height={20} />
@@ -87,13 +91,13 @@ export function ProjectBar({ onAddProject, onSettings, showBell = true, theme, t
               aria-describedby={`project-tooltip-${project.slug}`}
               className={`group relative flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-md text-[13px] font-semibold transition-[background-color,color] duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${
                 isActive
-                  ? "bg-brand-muted text-brand"
-                  : "text-text-tertiary hover:bg-bg-hover hover:text-text-secondary"
+                  ? "bg-rail-ink/10 text-rail-ink"
+                  : "text-rail-muted hover:bg-rail-ink/8 hover:text-rail-ink"
               }`}
               onClick={(e) => handleProjectClick(project.slug, e)}
             >
               {isActive && (
-                <div className="absolute -left-2 top-2 bottom-2 w-[3px] rounded-r-sm bg-brand" />
+                <div className="absolute -left-2 bottom-2 top-2 w-[3px] rounded-r-sm bg-signal max-[760px]:-left-1" />
               )}
               {getInitials(project.slug)}
               {attentionCount > 0 && <span className="absolute -right-1 -top-1 grid min-h-4 min-w-4 place-items-center rounded-full bg-warning px-1 text-[10px] font-semibold leading-[14px] text-bg-base" aria-label={`${attentionCount} requests need attention`}>{attentionCount > 99 ? "99+" : attentionCount}</span>}
@@ -112,7 +116,7 @@ export function ProjectBar({ onAddProject, onSettings, showBell = true, theme, t
       <button
         type="button"
         aria-label="Open project"
-        className="group relative flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-md text-[13px] font-semibold text-text-tertiary transition-[background-color,color] duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+        className="group relative flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-md text-[13px] font-semibold text-rail-muted transition-[background-color,color] duration-[var(--motion-hover)] hover:bg-rail-ink/8 hover:text-rail-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
         onClick={handleAddProject}
       >
         <Plus size={16} aria-hidden="true" />
@@ -123,11 +127,11 @@ export function ProjectBar({ onAddProject, onSettings, showBell = true, theme, t
 
       <div className="flex-1" />
 
-      <div className="flex flex-col items-center gap-1 pt-2 border-t border-border-subtle mt-2">
-        {showBell && <HitlBell />}
+      <div className="mt-2 flex flex-col items-center gap-1 border-t border-rail-ink/10 pt-2">
+        {showBell && <HitlBell variant="rail" />}
         <button
           type="button"
-          className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-sm text-text-tertiary transition-[background-color,color] duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+          className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-sm text-rail-muted transition-[background-color,color] duration-[var(--motion-hover)] hover:bg-rail-ink/8 hover:text-rail-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
           title="Settings"
           aria-label="Settings"
           onClick={handleSettingsClick}
@@ -136,7 +140,7 @@ export function ProjectBar({ onAddProject, onSettings, showBell = true, theme, t
         </button>
         <button
           type="button"
-          className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-sm text-text-tertiary transition-[background-color,color] duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+          className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-sm text-rail-muted transition-[background-color,color] duration-[var(--motion-hover)] hover:bg-rail-ink/8 hover:text-rail-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
           title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
           aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
           onClick={toggleTheme}

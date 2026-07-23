@@ -5,7 +5,7 @@ import { ConversationRail } from "../primitives/ConversationRail";
 import { ChatInput } from "./ChatInput";
 import { HitlDecisionCard } from "./HitlCard";
 import type { SessionGoalView } from "../../api/types";
-import { SessionGoalProgressRow } from "./SessionGoalProgressRow";
+import { SessionGoalSummaryRow } from "./SessionGoalSummaryRow";
 import { ComposerQueueList } from "./ComposerQueueList";
 
 export function SessionComposerDock({
@@ -41,16 +41,14 @@ export function SessionComposerDock({
 
   return (
     <div
-      className="flex max-h-[min(60dvh,640px)] shrink-0 flex-col overflow-hidden border-t border-border-default bg-bg-elevated max-[799px]:max-h-[min(70dvh,620px)]"
+      className="relative z-[4] flex max-h-[min(60dvh,640px)] shrink-0 flex-col overflow-hidden border-t border-border-default bg-bg-surface max-[799px]:max-h-[min(70dvh,620px)]"
       data-testid="session-composer-dock"
       style={{ scrollbarGutter: "stable" }}
     >
-      <ConversationRail className="flex min-h-0 flex-col gap-2 pb-3 pt-2" data-testid="conversation-composer-rail">
-        <SessionGoalProgressRow slug={slug} sessionId={sessionId} goal={goal} />
-        <ComposerQueueList slug={slug} sessionId={sessionId} />
+      <ConversationRail className="flex min-h-0 flex-col pb-3 pt-2" data-testid="conversation-composer-rail">
         {hasPendingHitl && (
           <div
-            className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto rounded-md border border-border-subtle bg-bg-surface p-3"
+            className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto pb-2"
             data-testid="composer-attention-stack"
           >
             <div className="flex flex-col gap-2" aria-label="Requests needing attention">
@@ -58,7 +56,9 @@ export function SessionComposerDock({
             </div>
           </div>
         )}
-        <div className="shrink-0" data-testid="composer-input-slot">
+        <SessionGoalSummaryRow slug={slug} sessionId={sessionId} goal={goal} />
+        <ComposerQueueList slug={slug} sessionId={sessionId} />
+        <div className="shrink-0 pt-2" data-testid="composer-input-slot">
           <ChatInput
             slug={slug}
             sessionId={sessionId}

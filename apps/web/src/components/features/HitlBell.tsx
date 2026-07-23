@@ -3,7 +3,13 @@ import { Bell, X } from "lucide-react";
 import { useAttentionVisibleScopedHitl } from "../../store/hitl-store";
 import { HitlAttentionList } from "./HitlAttentionList";
 
-export function HitlBell({ mobile = false }: { mobile?: boolean }) {
+export function HitlBell({
+  mobile = false,
+  variant = "surface",
+}: {
+  mobile?: boolean;
+  variant?: "surface" | "rail";
+}) {
   const entries = useAttentionVisibleScopedHitl();
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -37,7 +43,10 @@ export function HitlBell({ mobile = false }: { mobile?: boolean }) {
         aria-label="Open requests needing attention"
         aria-expanded={open}
         aria-controls="hitl-bell-panel"
-        className="relative flex h-8 w-8 items-center justify-center rounded-sm text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+        className={`relative flex h-8 w-8 items-center justify-center rounded-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${variant === "rail"
+          ? "text-rail-muted hover:bg-white/7 hover:text-rail-ink"
+          : "text-text-tertiary hover:bg-bg-hover hover:text-text-primary"
+        }`}
         onClick={() => {
           if (open) close();
           else setOpen(true);
@@ -53,7 +62,7 @@ export function HitlBell({ mobile = false }: { mobile?: boolean }) {
           role="dialog"
           aria-label="Requests needing attention"
           className={mobile
-            ? "fixed inset-x-2 bottom-2 z-50 max-h-[min(76vh,560px)] overflow-y-auto rounded-xl border border-border-strong bg-bg-overlay p-3 shadow-lg"
+            ? "fixed inset-x-2 bottom-2 z-50 max-h-[min(76vh,560px)] overflow-y-auto rounded-md border border-border-strong bg-bg-overlay p-3 shadow-lg"
             : "absolute bottom-10 left-10 z-50 w-[min(360px,calc(100vw-1rem))] rounded-lg border border-border-default bg-bg-overlay p-3 shadow-md"
           }
         >

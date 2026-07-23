@@ -45,17 +45,17 @@ export function ChatHeader({ slug, sessionId, goal, projectRoot, onToggleInspect
   const isWorktree = cwd !== null && projectRoot !== undefined && cwd !== projectRoot;
 
   return (
-    <header className="flex min-h-[58px] shrink-0 items-center gap-3 border-b border-border-subtle bg-bg-surface px-4 py-2">
+    <header className="flex min-h-14 shrink-0 items-center gap-3 border-b border-border-default bg-bg-surface px-4 py-2 sm:px-5">
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
-          <h1 className="min-w-0 truncate text-[16px] font-semibold leading-[22px] text-text-primary">{title ?? "Untitled"}</h1>
+          <h1 className="min-w-0 truncate text-[18px] font-semibold leading-6 tracking-[-0.02em] text-text-primary">{title ?? "Untitled"}</h1>
           {executionStatus && (
             <span
               data-testid="session-execution-status"
               data-execution-status={execution?.status}
               data-product-status={executionStatus.productStatus}
               title={executionStatus.detail ? `${executionStatus.label} · ${executionStatus.detail}` : executionStatus.label}
-              className={`inline-flex h-[22px] shrink-0 items-center gap-2 rounded-full px-2 text-[12px] font-semibold ${executionKind ? STATUS_SUBTLE_CLASS[statusVisual(executionKind).tone] : ""} ${executionKind ? STATUS_TONE_CLASS[statusVisual(executionKind).tone] : ""}`}
+              className={`inline-flex h-[22px] shrink-0 items-center gap-1.5 border-l-2 px-2 text-[11px] font-semibold ${execution?.status === "running" ? "border-l-signal bg-signal-field text-signal-foreground" : `border-l-border-strong ${executionKind ? STATUS_SUBTLE_CLASS[statusVisual(executionKind).tone] : ""} ${executionKind ? STATUS_TONE_CLASS[statusVisual(executionKind).tone] : ""}`}`}
             >
               {executionKind && <StatusGlyph kind={executionKind} size={13} />}
               {executionStatus.label}

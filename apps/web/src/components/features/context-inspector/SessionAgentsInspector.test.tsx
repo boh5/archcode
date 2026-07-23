@@ -162,6 +162,12 @@ describe("SessionAgentsInspector", () => {
       expect.stringContaining("child"),
       expect.stringContaining("grandchild"),
     ]);
+    expect(rows[0]?.textContent).toContain("Lead");
+    expect(rows[1]?.textContent).toContain("Build");
+    expect(rows[2]?.textContent).toContain("Explore");
+    expect(rows[0]?.querySelector('[data-agent-role-icon="lead"]')).not.toBeNull();
+    expect(rows[1]?.querySelector('[data-agent-role-icon="build"]')).not.toBeNull();
+    expect(rows[2]?.querySelector('[data-agent-role-icon="explore"]')).not.toBeNull();
     expect(rows[1]?.querySelector('[data-agent-status="Completed"]')).not.toBeNull();
     expect(rows[2]?.querySelector('[data-agent-status="Needs you"]')).not.toBeNull();
 

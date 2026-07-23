@@ -3,7 +3,7 @@ import { STATUS_TONE_CLASS } from "../../lib/status-visuals";
 
 export function ActivityArc({
   size = 14,
-  tone = "info",
+  tone = "signal",
   label,
 }: {
   size?: number;
@@ -14,6 +14,7 @@ export function ActivityArc({
     <span
       className={`inline-grid shrink-0 place-items-center ${STATUS_TONE_CLASS[tone]}`}
       data-motion="loop"
+      data-tone={tone}
       data-testid="activity-arc"
       role={label ? "img" : undefined}
       aria-label={label}

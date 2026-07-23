@@ -259,7 +259,7 @@ export function ChatInput({
       )}
 
       <div
-        className="overflow-visible rounded-lg border border-border-control bg-bg-elevated shadow-sm transition-[border-color,box-shadow] duration-[var(--motion-hover)] focus-within:border-brand focus-within:ring-2 focus-within:ring-brand"
+        className="overflow-visible rounded-xl border border-border-control bg-bg-elevated shadow-sm transition-[border-color,box-shadow] duration-[var(--motion-hover)] focus-within:border-brand focus-within:ring-2 focus-within:ring-brand"
         data-testid="composer-card"
       >
         <textarea
@@ -282,7 +282,7 @@ export function ChatInput({
                     : "Send a message…"
           }
           rows={1}
-          className="block min-h-[48px] max-h-[200px] w-full resize-none overflow-y-auto border-0 bg-transparent px-4 pb-2 pt-3 font-sans text-[13px] leading-5 text-text-primary outline-none placeholder:text-text-tertiary disabled:cursor-not-allowed disabled:text-text-tertiary"
+          className="block min-h-[48px] max-h-[200px] w-full resize-none overflow-y-auto border-0 bg-transparent px-4 pb-2 pt-3 font-sans text-[16px] leading-6 text-text-primary outline-none placeholder:text-text-tertiary disabled:cursor-not-allowed disabled:text-text-tertiary sm:text-[13px] sm:leading-5"
         />
 
         <div className="flex min-h-[38px] items-center justify-between gap-3 px-3 pb-2">
@@ -306,6 +306,20 @@ export function ChatInput({
             <span className="mr-1 text-[11px] text-text-tertiary max-[720px]:hidden">
               {isRunning ? "Enter to queue" : "Shift+Enter for newline"}
             </span>
+            {isRunning && (
+              <button
+                type="button"
+                className="flex h-8 w-8 items-center justify-center rounded-sm bg-text-primary text-bg-base transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover hover:text-bg-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:bg-bg-active disabled:text-text-muted"
+                disabled={!canSubmit}
+                onClick={sendMessage}
+                title="Queue message"
+                aria-label="Queue message"
+              >
+                {postMessage.isPending
+                  ? <Loader2 size={14} className="animate-activity" />
+                  : <ArrowUp size={16} strokeWidth={2} />}
+              </button>
+            )}
             <button
               type="button"
               className={`flex h-8 w-8 items-center justify-center rounded-sm transition-colors duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:bg-bg-active disabled:text-text-muted ${isRunning

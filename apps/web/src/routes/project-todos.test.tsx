@@ -4,8 +4,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { JSDOM } from "jsdom";
-import { ProjectTodosRoute, deriveProjectTodoGroups } from "./project-todos";
 import { runtimeFamilyKey, sessionRuntimeStore } from "../store/session-runtime-store";
+
+type ProjectTodosModule = typeof import("./project-todos");
 
 const todos = [
   { id: "idea", title: "Idea", body: "Shape this", status: "idea", revision: 1, createdAt: 1, updatedAt: 1 },
@@ -17,13 +18,34 @@ const todos = [
   { id: "discussed", title: "Discussed", body: "Continue this", status: "idea", discussionSessionId: "discussion", revision: 1, createdAt: 1, updatedAt: 1 },
 ] as const;
 
-const DOM_GLOBAL_NAMES = ["window", "document", "navigator", "HTMLElement", "MouseEvent", "IS_REACT_ACT_ENVIRONMENT", "requestAnimationFrame", "cancelAnimationFrame", "fetch"] as const;
+const DOM_GLOBAL_NAMES = [
+  "window",
+  "document",
+  "navigator",
+  "Node",
+  "NodeFilter",
+  "Element",
+  "HTMLElement",
+  "HTMLInputElement",
+  "HTMLTextAreaElement",
+  "Event",
+  "CustomEvent",
+  "MouseEvent",
+  "MutationObserver",
+  "getComputedStyle",
+  "IS_REACT_ACT_ENVIRONMENT",
+  "requestAnimationFrame",
+  "cancelAnimationFrame",
+  "fetch",
+] as const;
 type DomGlobalName = (typeof DOM_GLOBAL_NAMES)[number];
 
 let originalGlobals: Map<DomGlobalName, PropertyDescriptor | undefined>;
 let root: Root;
 let container: HTMLDivElement;
 let observedRequests: Array<{ path: string; method: string; body?: unknown }>;
+let ProjectTodosRoute: ProjectTodosModule["ProjectTodosRoute"];
+let deriveProjectTodoGroups: ProjectTodosModule["deriveProjectTodoGroups"];
 
 function installDom() {
   originalGlobals = new Map(DOM_GLOBAL_NAMES.map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
@@ -35,8 +57,17 @@ function installDom() {
   Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
   Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
   Object.defineProperty(globalThis, "navigator", { value: dom.window.navigator, configurable: true });
+  Object.defineProperty(globalThis, "Node", { value: dom.window.Node, configurable: true });
+  Object.defineProperty(globalThis, "NodeFilter", { value: dom.window.NodeFilter, configurable: true });
+  Object.defineProperty(globalThis, "Element", { value: dom.window.Element, configurable: true });
   Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
+  Object.defineProperty(globalThis, "HTMLInputElement", { value: dom.window.HTMLInputElement, configurable: true });
+  Object.defineProperty(globalThis, "HTMLTextAreaElement", { value: dom.window.HTMLTextAreaElement, configurable: true });
+  Object.defineProperty(globalThis, "Event", { value: dom.window.Event, configurable: true });
+  Object.defineProperty(globalThis, "CustomEvent", { value: dom.window.CustomEvent, configurable: true });
   Object.defineProperty(globalThis, "MouseEvent", { value: dom.window.MouseEvent, configurable: true });
+  Object.defineProperty(globalThis, "MutationObserver", { value: dom.window.MutationObserver, configurable: true });
+  Object.defineProperty(globalThis, "getComputedStyle", { value: dom.window.getComputedStyle.bind(dom.window), configurable: true });
   Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { value: true, configurable: true });
   Object.defineProperty(globalThis, "requestAnimationFrame", { value: (callback: FrameRequestCallback) => setTimeout(() => callback(performance.now()), 0), configurable: true });
   Object.defineProperty(globalThis, "cancelAnimationFrame", { value: clearTimeout, configurable: true });
@@ -104,20 +135,20 @@ async function waitFor(assertion: () => void) {
 }
 
 async function expand(id: string): Promise<HTMLElement> {
-  const card = container.querySelector(`[data-testid="todo-${id}"]`) as HTMLElement;
-  await act(async () => (card.querySelector("button") as HTMLButtonElement).click());
-  return card;
+  const trigger = container.querySelector(`[data-testid="todo-open-${id}"]`) as HTMLButtonElement;
+  await act(async () => trigger.click());
+  await waitFor(() => expect(document.querySelector('[data-testid="todo-detail-drawer"]')).not.toBeNull());
+  return document.querySelector('[data-testid="todo-detail-drawer"]') as HTMLElement;
 }
 
-function actionLabels(card: HTMLElement): string[] {
-  return Array.from(card.querySelectorAll("button"))
-    .slice(1)
+function actionLabels(drawer: HTMLElement): string[] {
+  return Array.from(drawer.querySelectorAll("button"))
     .map((button) => button.textContent?.trim() ?? "")
     .filter(Boolean);
 }
 
-async function clickAction(card: HTMLElement, label: string): Promise<void> {
-  const button = Array.from(card.querySelectorAll("button")).find((candidate) => candidate.textContent?.trim() === label);
+async function clickAction(drawer: HTMLElement, label: string): Promise<void> {
+  const button = Array.from(drawer.querySelectorAll("button")).find((candidate) => candidate.textContent?.trim() === label);
   if (!button) throw new Error(`Missing ${label} action`);
   observedRequests = [];
   await act(async () => {
@@ -152,14 +183,18 @@ function changeValue(element: HTMLInputElement | HTMLTextAreaElement, value: str
 }
 
 describe("ProjectTodosRoute presentation contracts", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     installDom();
+    ({ ProjectTodosRoute, deriveProjectTodoGroups } = await import("./project-todos"));
     observedRequests = [];
     sessionRuntimeStore.getState().reset();
   });
 
   afterEach(async () => {
-    await act(async () => root.unmount());
+    await act(async () => {
+      root.unmount();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
     restoreDom();
     sessionRuntimeStore.getState().reset();
   });
@@ -171,8 +206,8 @@ describe("ProjectTodosRoute presentation contracts", () => {
     await render();
     const board = container.querySelector("main > div");
     expect(board?.className).toContain("grid-cols-1");
-    expect(board?.className).toContain("min-[800px]:grid-cols-2");
-    expect(board?.className).toContain("min-[1200px]:grid-cols-4");
+    expect(board?.className).toContain("min-[621px]:grid-cols-2");
+    expect(board?.className).toContain("min-[1181px]:grid-cols-4");
     expect(board?.className).not.toContain("min-w-[880px]");
     expect(Array.from(container.querySelectorAll("section[aria-label]")).map((lane) => lane.getAttribute("aria-label"))).toEqual(["Ideas", "Ready", "In Progress", "Done"]);
   });
@@ -181,6 +216,7 @@ describe("ProjectTodosRoute presentation contracts", () => {
     await render("/projects/demo/todos?todo=archived", "Archived Todos");
     await waitFor(() => expect(container.querySelector('[data-testid="todo-archived"]')?.textContent).toContain("Archived"));
     expect(container.querySelector('[data-testid="todo-archived"] button')?.getAttribute("aria-expanded")).toBe("true");
+    expect(document.querySelector('[data-testid="todo-detail-drawer"]')).not.toBeNull();
     expect(container.textContent).toContain("Archived Todos");
   });
 
@@ -200,10 +236,9 @@ describe("ProjectTodosRoute presentation contracts", () => {
 
   test("keeps the original editable body affordance", async () => {
     await render();
-    const card = container.querySelector('[data-testid="todo-idea"]') as HTMLElement;
-    await act(async () => (card.querySelector("button") as HTMLButtonElement).click());
-    await act(async () => Array.from(card.querySelectorAll("button")).find((button) => button.textContent === "Edit")?.dispatchEvent(new window.MouseEvent("click", { bubbles: true })));
-    const textarea = card.querySelector('textarea[aria-label="Todo body"]') as HTMLTextAreaElement;
+    const drawer = await expand("idea");
+    await act(async () => Array.from(drawer.querySelectorAll("button")).find((button) => button.textContent === "Edit")?.dispatchEvent(new window.MouseEvent("click", { bubbles: true })));
+    const textarea = drawer.querySelector('textarea[aria-label="Todo body"]') as HTMLTextAreaElement;
     expect(textarea.rows).toBe(4);
     expect(textarea.className).toContain("resize-y");
     expect(textarea.className).not.toContain("min-h-");
@@ -289,7 +324,7 @@ describe("ProjectTodosRoute presentation contracts", () => {
     expect(observedRequests).toContainEqual({ path: "/api/projects/demo/todos/idea/archive", method: "POST", body: { expectedRevision: 1 } });
 
     await renderFresh("/projects/demo/todos?todo=rejected", "Rejected Todos");
-    await clickAction(container.querySelector('[data-testid="todo-rejected"]') as HTMLElement, "Restore to Idea");
+    await clickAction(document.querySelector('[data-testid="todo-detail-drawer"]') as HTMLElement, "Restore to Idea");
     expect(observedRequests).toContainEqual({ path: "/api/projects/demo/todos/rejected", method: "PATCH", body: { expectedRevision: 1, patch: { status: "idea" } } });
   });
 
@@ -317,5 +352,20 @@ describe("ProjectTodosRoute presentation contracts", () => {
       method: "PATCH",
       body: { expectedRevision: 1, patch: { title: "Edited title", body: "Edited body" } },
     });
+  });
+
+  test("keeps the 320px and 390px Todo drawer above the persistent project rail", async () => {
+    const todoSource = await Bun.file(new URL("./project-todos.tsx", import.meta.url)).text();
+    const layoutSource = await Bun.file(new URL("./root-layout.tsx", import.meta.url)).text();
+
+    expect(layoutSource).toContain('className="relative z-[55] w-11');
+    expect(todoSource).toContain('className="fixed inset-0 z-[60]');
+    expect(todoSource).toContain('right-0 z-[61] flex w-[min(430px,calc(100%-18px))]');
+
+    for (const viewportWidth of [320, 390]) {
+      const drawerWidth = Math.min(430, viewportWidth - 18);
+      expect(viewportWidth - drawerWidth).toBe(18);
+      expect(drawerWidth).toBeGreaterThan(viewportWidth - 44);
+    }
   });
 });

@@ -78,7 +78,7 @@ function installDom(): JSDOM {
   Object.defineProperty(dom.window, "matchMedia", {
     value: () => ({
       matches: false,
-      media: "(max-width: 799px)",
+      media: "(max-width: 760px)",
       onchange: null,
       addEventListener: () => {},
       removeEventListener: () => {},
